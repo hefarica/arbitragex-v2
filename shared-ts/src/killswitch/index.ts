@@ -1,4 +1,4 @@
-import Redis, { type Redis as IORedis } from "ioredis";
+import { Redis as IORedis } from "ioredis";
 import { KillSwitchStateSchema, type KillSwitchState } from "../contracts/index.js";
 import { killswitchEnabled } from "../metrics/index.js";
 
@@ -18,7 +18,7 @@ export class KillSwitchClient {
   private readonly ttlMs: number;
 
   constructor(private readonly opts: KillSwitchClientOpts) {
-    this.redis = new Redis(opts.redisUrl, { lazyConnect: false, maxRetriesPerRequest: 3 });
+    this.redis = new IORedis(opts.redisUrl, { lazyConnect: false, maxRetriesPerRequest: 3 });
     this.ttlMs = opts.cacheTtlMs ?? 1000;
   }
 
@@ -68,9 +68,10 @@ export class KillSwitchClient {
 
   /** Optional subscription to invalidate cache immediately on change. */
   async subscribeChanges(onChange?: (s: KillSwitchState) => void): Promise<void> {
-    this.sub = new Redis(this.opts.redisUrl, { lazyConnect: false });
-    await this.sub.subscribe(KILLSWITCH_CHANNEL);
-    this.sub.on("message", (_channel, message) => {
+    const sub = new IORedis(this.opts.redisUrl, { lazyConnect: false });
+    this.sub = sub;
+    await sub.subscribe(KILLSWITCH_CHANNEL);
+    sub.on("message", (_channel: string, message: string) => {
       try {
         const state = KillSwitchStateSchema.parse(JSON.parse(message));
         this.cache = { state, at: Date.now() };

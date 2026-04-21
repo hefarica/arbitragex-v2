@@ -27,7 +27,7 @@ export interface CircuitBreakerOpts {
 }
 
 export class CircuitBreakerOpenError extends Error {
-  public readonly name = "CircuitBreakerOpenError";
+  public override readonly name = "CircuitBreakerOpenError";
   constructor(public readonly breakerName: string, public readonly reason: string | null) {
     super(`circuit breaker '${breakerName}' is open${reason ? `: ${reason}` : ""}`);
   }
@@ -105,18 +105,19 @@ export class CircuitBreaker extends EventEmitter {
   }
 
   private onSuccess(): void {
-    if (this._state === "half_open") {
+    const s: CircuitState = this._state;
+    if (s === "half_open") {
       this.probeSuccessCount++;
       if (this.probeSuccessCount >= this.probeTarget) {
-        const was = this._state;
         this._state = "closed";
         this.failures = [];
         this.openedAt = null;
         this.lastTripReason = null;
         this.probeSuccessCount = 0;
-        if (was !== "closed") this.emit("reset", { name: this.opts.name, ts: Date.now() });
+        // We just transitioned half_open -> closed, always emit reset.
+        this.emit("reset", { name: this.opts.name, ts: Date.now() });
       }
-    } else if (this._state === "closed") {
+    } else if (s === "closed") {
       // drop oldest failures outside window proactively (memory)
       this.pruneWindow();
     }
