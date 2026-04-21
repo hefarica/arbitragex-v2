@@ -11,7 +11,7 @@
  * For S3, we support immediate add/remove and list; TTL sweeper is deferred.
  */
 
-import type Redis from "ioredis";
+import type { Redis } from "ioredis";
 
 function keyBlack(chainId: number): string { return `arbx:blacklist:tokens:${chainId}`; }
 function keyWhite(chainId: number): string { return `arbx:whitelist:tokens:${chainId}`; }

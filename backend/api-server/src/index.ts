@@ -1,6 +1,6 @@
 import express from "express";
 import pg from "pg";
-import Redis from "ioredis";
+import { Redis } from "ioredis";
 import { z } from "zod";
 import {
   loadAppConfig,

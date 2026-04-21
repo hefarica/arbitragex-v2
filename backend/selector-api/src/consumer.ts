@@ -10,7 +10,7 @@
  * for HA; for now, single consumer + manual cleanup if needed).
  */
 
-import Redis from "ioredis";
+import { Redis } from "ioredis";
 import type pg from "pg";
 import type { Logger } from "pino";
 import type { AppConfig, CircuitBreaker, KillSwitchClient } from "@arbx/shared";

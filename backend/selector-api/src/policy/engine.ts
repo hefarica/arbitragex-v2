@@ -5,7 +5,7 @@
  * decide runs AFTER score + safety are known.
  */
 
-import type Redis from "ioredis";
+import type { Redis } from "ioredis";
 import type { Opportunity, SimulationResult, AppConfig, CircuitBreaker } from "@arbx/shared";
 import type { ScoredOpportunity } from "../scoring/engine.js";
 import type { TokenSafetyRecord } from "../token_safety/cache.js";
