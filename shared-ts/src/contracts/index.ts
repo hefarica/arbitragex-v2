@@ -57,7 +57,7 @@ export type ExecutionRequest = z.infer<typeof ExecutionRequestSchema>;
 
 export const ExecutionResultSchema = z.object({
   opportunity_id: Uuid,
-  status: z.enum(["submitted","included","reverted","dropped","replaced","not_implemented"]),
+  status: z.enum(["submitted","included","reverted","dropped","replaced","not_implemented","not_submitted"]),
   tx_hash: HexTx.nullable(),
   relay_used: z.string().nullable(),
   block_included: z.number().int().nonnegative().nullable(),

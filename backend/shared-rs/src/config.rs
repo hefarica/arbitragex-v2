@@ -100,9 +100,27 @@ pub struct RiskCfg {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionCfg {
     pub private_only: bool,
+    #[serde(default = "default_paper_mode")]
+    pub paper_mode: bool,
     pub max_parallel_executions: u32,
     pub retry_limit: u32,
+    #[serde(default = "default_one")]
+    pub target_block_offset: u64,
+    #[serde(default = "default_five")]
+    pub max_inclusion_wait_blocks: u32,
+    #[serde(default = "default_max_value")]
+    pub max_value_eth: f64,
+    #[serde(default = "default_submit_timeout")]
+    pub flashbots_submit_timeout_ms: u64,
+    #[serde(default = "default_priority_fee_inc")]
+    pub priority_fee_increment_pct: f64,
 }
+fn default_paper_mode() -> bool { true }
+fn default_one() -> u64 { 1 }
+fn default_five() -> u32 { 5 }
+fn default_max_value() -> f64 { 1.0 }
+fn default_submit_timeout() -> u64 { 5000 }
+fn default_priority_fee_inc() -> f64 { 10.0 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObsCfg {
@@ -125,6 +143,8 @@ pub struct RelayCfg {
     pub name: String,
     pub enabled: bool,
     pub chains: Vec<u64>,
+    #[serde(default)]
+    pub endpoint: Option<String>,
 }
 
 impl AppConfig {

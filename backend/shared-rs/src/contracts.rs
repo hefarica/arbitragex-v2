@@ -58,7 +58,7 @@ pub struct SimulationResult {
     pub trace_id: Uuid,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionStatus {
     Submitted,
@@ -67,6 +67,9 @@ pub enum ExecutionStatus {
     Dropped,
     Replaced,
     NotImplemented,
+    /// S5+: paper-mode or pre-submit reject (e.g., value cap exceeded).
+    /// No on-chain side effect; `tx_hash` is always null.
+    NotSubmitted,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -12,7 +12,7 @@
     "opportunity_id":    { "type": "string", "format": "uuid" },
     "status": {
       "type": "string",
-      "enum": ["submitted","included","reverted","dropped","replaced","not_implemented"]
+      "enum": ["submitted","included","reverted","dropped","replaced","not_implemented","not_submitted"]
     },
     "tx_hash":           { "type": ["string","null"], "pattern": "^0x[0-9a-fA-F]{64}$" },
     "relay_used":        { "type": ["string","null"] },

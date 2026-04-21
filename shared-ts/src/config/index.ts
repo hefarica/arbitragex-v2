@@ -14,6 +14,7 @@ const RelayCfg = z.object({
   name: z.string().min(1),
   enabled: z.boolean(),
   chains: z.array(z.number().int().positive()).min(1),
+  endpoint: z.string().optional(),
 }).strict();
 
 const ScoringCfg = z.object({
@@ -68,8 +69,14 @@ export const AppConfigSchema = z.object({
   }).strict(),
   execution: z.object({
     private_only: z.boolean(),
+    paper_mode: z.boolean().optional().default(true),
     max_parallel_executions: z.number().int().nonnegative(),
     retry_limit: z.number().int().nonnegative(),
+    target_block_offset: z.number().int().nonnegative().optional().default(1),
+    max_inclusion_wait_blocks: z.number().int().min(1).optional().default(5),
+    max_value_eth: z.number().nonnegative().optional().default(1.0),
+    flashbots_submit_timeout_ms: z.number().int().min(100).optional().default(5000),
+    priority_fee_increment_pct: z.number().nonnegative().optional().default(10),
   }).strict(),
   observability: z.object({
     prometheus_enabled: z.boolean(),
