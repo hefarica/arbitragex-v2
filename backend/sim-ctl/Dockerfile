@@ -1,4 +1,4 @@
-FROM rust:1.79-slim-bookworm AS builder
+FROM rust:1.85-slim-bookworm AS builder
 WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config libssl-dev ca-certificates \
