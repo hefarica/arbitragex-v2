@@ -1,0 +1,51 @@
+groups:
+  - name: arbitragex-core
+    interval: 30s
+    rules:
+      - alert: ServiceDown
+        expr: arbx_service_up == 0
+        for: 1m
+        labels: { severity: critical, platform: arbitragex }
+        annotations:
+          summary: "{{ $labels.service }} is DOWN"
+          description: "Service {{ $labels.service }} reports arbx_service_up=0 for >= 1m."
+
+      - alert: KillSwitchActivated
+        expr: arbx_killswitch_enabled == 1
+        for: 0m
+        labels: { severity: warning, platform: arbitragex }
+        annotations:
+          summary: "Kill switch is ON"
+          description: "The global kill switch is armed. All executions are refused."
+
+      - alert: HighHTTP5xxRate
+        expr: |
+          (
+            sum by (service) (rate(arbx_http_requests_total{status=~"5.."}[5m]))
+          /
+            sum by (service) (rate(arbx_http_requests_total[5m]))
+          ) > 0.10
+        for: 5m
+        labels: { severity: warning, platform: arbitragex }
+        annotations:
+          summary: "Elevated 5xx on {{ $labels.service }}"
+          description: ">10% of requests are 5xx on {{ $labels.service }} for 5m."
+
+      - alert: LatencyP95High
+        expr: |
+          histogram_quantile(0.95,
+            sum by (service, le) (rate(arbx_http_request_duration_seconds_bucket[5m]))
+          ) > 1.0
+        for: 10m
+        labels: { severity: warning, platform: arbitragex }
+        annotations:
+          summary: "p95 latency > 1s on {{ $labels.service }}"
+          description: "Investigate {{ $labels.service }} slowdown."
+
+      - alert: NoOpportunitiesDetectedLongWindow
+        expr: increase(arbx_opportunity_total{status="detected"}[15m]) == 0
+        for: 15m
+        labels: { severity: info, platform: arbitragex }
+        annotations:
+          summary: "No opportunities detected in the last 15m"
+          description: "Searcher-rs may be idle or kill-switched; verify both."

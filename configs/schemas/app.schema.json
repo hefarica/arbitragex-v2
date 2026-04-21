@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arbitragex.v2/schemas/app.schema.json",
+  "title": "ArbitrageX v2 Application Config",
+  "description": "Authoritative schema for configs/app.toml. Loaded + validated at boot by every service via shared-rs (Rust) and shared-ts (TS).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["system","risk","execution","observability","chains","relays"],
+  "properties": {
+    "system": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["env","kill_switch_enabled_default"],
+      "properties": {
+        "env":                           { "type": "string", "enum": ["development","staging","production","production-like"] },
+        "kill_switch_enabled_default":   { "type": "boolean" },
+        "service_name_prefix":           { "type": "string" }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_revert_rate_pct","max_execution_variance_pct",
+        "min_token_safety_score","simulation_required_for_new_routes",
+        "max_gas_price_gwei","max_slippage_pct"
+      ],
+      "properties": {
+        "max_revert_rate_pct":               { "type": "number", "minimum": 0, "maximum": 100 },
+        "max_execution_variance_pct":        { "type": "number", "minimum": 0 },
+        "min_token_safety_score":            { "type": "integer", "minimum": 0, "maximum": 100 },
+        "simulation_required_for_new_routes":{ "type": "boolean" },
+        "max_gas_price_gwei":                { "type": "number", "minimum": 0 },
+        "max_slippage_pct":                  { "type": "number", "minimum": 0 }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["private_only","max_parallel_executions","retry_limit"],
+      "properties": {
+        "private_only":             { "type": "boolean" },
+        "max_parallel_executions":  { "type": "integer", "minimum": 0 },
+        "retry_limit":              { "type": "integer", "minimum": 0 }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prometheus_enabled","structured_logs"],
+      "properties": {
+        "prometheus_enabled":  { "type": "boolean" },
+        "structured_logs":     { "type": "boolean" },
+        "log_level":           { "type": "string", "enum": ["trace","debug","info","warn","error"] }
+      }
+    },
+    "chains": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["chain_id","name","enabled"],
+        "properties": {
+          "chain_id":  { "type": "integer", "minimum": 1 },
+          "name":      { "type": "string", "minLength": 1 },
+          "enabled":   { "type": "boolean" }
+        }
+      }
+    },
+    "relays": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name","enabled","chains"],
+        "properties": {
+          "name":      { "type": "string", "minLength": 1 },
+          "enabled":   { "type": "boolean" },
+          "chains":    { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 1 }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+[package]
+name = "searcher-rs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ArbitrageX v2 — MEV opportunity searcher. S2: real mempool ingestion + calldata decode + DEX candidate detection."
+
+[dependencies]
+shared-rs.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+redis.workspace = true
+prometheus.workspace = true
+once_cell.workspace = true
+sqlx.workspace = true
+ethers.workspace = true
+futures-util.workspace = true
+lru.workspace = true
+hex.workspace = true
+bigdecimal.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros","rt-multi-thread","test-util"] }

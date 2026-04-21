@@ -1,0 +1,9 @@
+
+version: '3.9'
+services:
+  searcher:
+    image: arbitragex/searcher
+  selector:
+    image: arbitragex/selector
+  sim:
+    image: arbitragex/sim

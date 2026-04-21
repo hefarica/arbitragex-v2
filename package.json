@@ -1,0 +1,23 @@
+{
+  "name": "arbitragex-v2-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ArbitrageX v2 — npm workspace root (shared-ts, services, frontend, edge).",
+  "workspaces": [
+    "shared-ts",
+    "backend/selector-api",
+    "backend/api-server",
+    "edge/worker",
+    "edge/dev-local",
+    "frontend"
+  ],
+  "scripts": {
+    "build": "npm run -ws build --if-present",
+    "test": "npm run -ws test --if-present",
+    "lint": "npm run -ws lint --if-present",
+    "typecheck": "npm run -ws typecheck --if-present"
+  },
+  "engines": {
+    "node": ">=20.11"
+  }
+}

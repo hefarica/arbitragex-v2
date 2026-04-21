@@ -1,0 +1,65 @@
+# ArbitrageX v2 — .gitignore
+# Never commit secrets, local data, or build artifacts.
+
+# Secrets
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.jks
+*.p12
+*.pfx
+signer.txt
+
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock
+!/backend/*/Cargo.lock
+!/backend/shared-rs/Cargo.lock
+
+# Node / TS
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Cloudflare
+.wrangler/
+.dev.vars
+wrangler.toml.local
+
+# Python (tools)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs
+.idea/
+.vscode/
+!.vscode/settings.json.example
+*.swp
+
+# Local data
+data/
+logs/
+tmp/
+*.sqlite
+*.db
+
+# Docker
+docker-compose.override.yml

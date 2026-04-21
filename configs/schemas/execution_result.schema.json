@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arbitragex.v2/schemas/execution_result.schema.json",
+  "title": "ExecutionResult",
+  "description": "Produced by relays-client per submission attempt.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "opportunity_id","status","submitted_at","trace_id"
+  ],
+  "properties": {
+    "opportunity_id":    { "type": "string", "format": "uuid" },
+    "status": {
+      "type": "string",
+      "enum": ["submitted","included","reverted","dropped","replaced","not_implemented"]
+    },
+    "tx_hash":           { "type": ["string","null"], "pattern": "^0x[0-9a-fA-F]{64}$" },
+    "relay_used":        { "type": ["string","null"] },
+    "block_included":    { "type": ["integer","null"], "minimum": 0 },
+    "gas_used_wei":      { "type": ["string","null"], "pattern": "^[0-9]+$" },
+    "actual_profit_usd": { "type": ["number","null"] },
+    "error_message":     { "type": ["string","null"] },
+    "submitted_at":      { "type": "string", "format": "date-time" },
+    "trace_id":          { "type": "string", "format": "uuid" }
+  }
+}

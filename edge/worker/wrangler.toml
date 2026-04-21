@@ -1,0 +1,32 @@
+# ArbitrageX v2 — edge/worker wrangler config
+# Deploys the public edge Worker. Secrets set via `wrangler secret put`, never in this file.
+
+name = "arbx-edge"
+main = "src/index.ts"
+compatibility_date = "2024-09-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[vars]
+# Non-secret operational vars.
+ARBX_ENV = "production-like"
+API_SERVER_URL = "http://api-server:8080" # override per environment
+ALLOWED_ORIGINS = "*"
+
+# Secrets NEVER in this file. Set via:
+#   wrangler secret put ARBX_EDGE_TOKEN
+#   wrangler secret put JWT_SECRET
+#
+# KV namespace for read cache.
+[[kv_namespaces]]
+binding = "ARBX_CACHE"
+id = "replace_with_real_kv_id_in_CI"
+
+# D1 for lightweight telemetry (S8 usage).
+[[d1_databases]]
+binding = "ARBX_TELEMETRY"
+database_name = "arbx-telemetry"
+database_id = "replace_with_real_d1_id_in_CI"
+
+[build]
+command = "npm run build"

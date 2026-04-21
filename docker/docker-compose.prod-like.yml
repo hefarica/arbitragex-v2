@@ -1,0 +1,247 @@
+# ArbitrageX v2 — production-like local stack.
+# One compose file; all services on internal network. Only `edge` exposes a public port in prod.
+# In dev, we expose additional ports for debugging.
+
+version: "3.9"
+
+name: arbitragex-v2
+
+networks:
+  arbx-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  grafana_data:
+  loki_data:
+
+x-common-logging: &common-logging
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+
+services:
+
+  # ───────── Data plane ─────────
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: arbitragex
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports: ["5432:5432"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U postgres -d arbitragex"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [arbx-net]
+    <<: *common-logging
+
+  redis:
+    image: redis:7.2
+    command: ["redis-server","--save","","--appendonly","no"]
+    ports: ["6379:6379"]
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: ["CMD","redis-cli","PING"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [arbx-net]
+    <<: *common-logging
+
+  # Disabled by default (geth needs 1TB+ storage). Enable via `--profile chain`.
+  geth:
+    image: ethereum/client-go:v1.13.18
+    profiles: ["chain"]
+    command:
+      - --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3,txpool,debug
+      - --ws   --ws.addr=0.0.0.0   --ws.port=8546   --ws.api=eth,net,web3,txpool,debug
+      - --syncmode=snap --cache=4096
+    ports: ["8545:8545","8546:8546"]
+    networks: [arbx-net]
+    <<: *common-logging
+
+  # ───────── Backend services ─────────
+
+  searcher-rs:
+    build:
+      context: ../backend
+      dockerfile: searcher-rs/Dockerfile
+    env_file: ["../.env"]
+    environment:
+      ARBX_CONFIG_PATH: /app/configs/app.toml
+      REDIS_URL: redis://redis:6379
+      SEARCHER_HEALTH_PORT: "9001"
+    depends_on:
+      redis: { condition: service_healthy }
+    networks: [arbx-net]
+    <<: *common-logging
+
+  sim-ctl:
+    build:
+      context: ../backend
+      dockerfile: sim-ctl/Dockerfile
+    env_file: ["../.env"]
+    environment:
+      ARBX_CONFIG_PATH: /app/configs/app.toml
+      SIM_PORT: "3003"
+    ports: ["3003:3003"]
+    networks: [arbx-net]
+    <<: *common-logging
+
+  relays-client:
+    build:
+      context: ../backend
+      dockerfile: relays-client/Dockerfile
+    env_file: ["../.env"]
+    environment:
+      ARBX_CONFIG_PATH: /app/configs/app.toml
+      REDIS_URL: redis://redis:6379
+      RELAYS_PORT: "3005"
+    ports: ["3005:3005"]
+    depends_on:
+      redis: { condition: service_healthy }
+    networks: [arbx-net]
+    <<: *common-logging
+
+  recon:
+    build:
+      context: ../backend
+      dockerfile: recon/Dockerfile
+    env_file: ["../.env"]
+    environment:
+      ARBX_CONFIG_PATH: /app/configs/app.toml
+      DATABASE_URL: postgres://arbx_rw:${ARBX_RW_PASSWORD:-arbx_rw_dev_only}@postgres:5432/arbitragex
+      RECON_PORT: "3004"
+    ports: ["3004:3004"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [arbx-net]
+    <<: *common-logging
+
+  selector-api:
+    build:
+      context: ..
+      dockerfile: backend/selector-api/Dockerfile
+    env_file: ["../.env"]
+    environment:
+      ARBX_CONFIG_PATH: /app/configs/app.toml
+      DATABASE_URL: postgres://arbx_rw:${ARBX_RW_PASSWORD:-arbx_rw_dev_only}@postgres:5432/arbitragex
+      REDIS_URL: redis://redis:6379
+      SELECTOR_PORT: "3002"
+    ports: ["3002:3002"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [arbx-net]
+    <<: *common-logging
+
+  api-server:
+    build:
+      context: ..
+      dockerfile: backend/api-server/Dockerfile
+    env_file: ["../.env"]
+    environment:
+      ARBX_CONFIG_PATH: /app/configs/app.toml
+      REDIS_URL: redis://redis:6379
+      ARBX_ADMIN_TOKEN: ${ARBX_ADMIN_TOKEN:-dev_admin_token_change_me}
+      API_PORT: "8080"
+      SELECTOR_URL: http://selector-api:3002
+      SIM_URL: http://sim-ctl:3003
+      RECON_URL: http://recon:3004
+      RELAYS_URL: http://relays-client:3005
+      SEARCHER_URL: http://searcher-rs:9001
+    ports: ["8080:8080"]
+    depends_on:
+      redis: { condition: service_healthy }
+    networks: [arbx-net]
+    <<: *common-logging
+
+  # ───────── Edge (DEV LOCAL — CF worker not in compose) ─────────
+
+  edge:
+    build:
+      context: ..
+      dockerfile: edge/dev-local/Dockerfile
+    env_file: ["../.env"]
+    environment:
+      API_SERVER_URL: http://api-server:8080
+      ARBX_EDGE_TOKEN: ${ARBX_EDGE_TOKEN:-dev_edge_token_change_me}
+      EDGE_PORT: "8787"
+    ports: ["8787:8787"]
+    depends_on: [api-server]
+    networks: [arbx-net]
+    <<: *common-logging
+
+  # ───────── Frontend ─────────
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+    environment:
+      NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:-http://localhost:8787}
+    ports: ["5173:5173"]
+    depends_on: [edge]
+    networks: [arbx-net]
+    <<: *common-logging
+
+  # ───────── Observability ─────────
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    ports: ["9090:9090"]
+    volumes:
+      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/alerts.rules.yml:/etc/prometheus/alerts.rules.yml:ro
+    networks: [arbx-net]
+    <<: *common-logging
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ../monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ../monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on: [prometheus]
+    networks: [arbx-net]
+    <<: *common-logging
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    ports: ["9093:9093"]
+    volumes:
+      - ../monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    networks: [arbx-net]
+    <<: *common-logging
+
+  loki:
+    image: grafana/loki:2.9.7
+    ports: ["3100:3100"]
+    command: ["-config.file=/etc/loki/config.yml"]
+    volumes:
+      - ../monitoring/loki/loki-config.yml:/etc/loki/config.yml:ro
+      - loki_data:/loki
+    networks: [arbx-net]
+    <<: *common-logging
+
+  promtail:
+    image: grafana/promtail:2.9.7
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - ../monitoring/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on: [loki]
+    networks: [arbx-net]
+    <<: *common-logging

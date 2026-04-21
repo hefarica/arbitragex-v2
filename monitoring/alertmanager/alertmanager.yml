@@ -1,0 +1,14 @@
+route:
+  group_by: ["alertname","service"]
+  group_wait: 10s
+  group_interval: 30s
+  repeat_interval: 1h
+  receiver: default
+
+# S1: webhook receiver is a placeholder target on api-server that logs the alert.
+# S8 replaces with Slack/PagerDuty/email using real secrets loaded from docker secret.
+receivers:
+  - name: default
+    webhook_configs:
+      - url: "http://api-server:8080/admin/alertmanager/webhook"
+        send_resolved: true

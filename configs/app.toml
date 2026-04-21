@@ -1,0 +1,78 @@
+# ArbitrageX v2 — Canonical application config.
+# Validated at boot against configs/schemas/app.schema.json.
+# Secrets NEVER live here. Use env vars / docker secret / Vault.
+
+[system]
+env = "production-like"
+kill_switch_enabled_default = true   # fail-closed in non-dev
+service_name_prefix = "arbx"
+
+[risk]
+max_revert_rate_pct = 5.0
+max_execution_variance_pct = 20.0
+min_token_safety_score = 70
+simulation_required_for_new_routes = true
+max_gas_price_gwei = 200.0
+max_slippage_pct = 1.5
+
+[execution]
+private_only = true
+max_parallel_executions = 8
+retry_limit = 2
+
+[observability]
+prometheus_enabled = true
+structured_logs = true
+log_level = "info"
+
+# Chains are configurable: no hardcoding inside services.
+[[chains]]
+chain_id = 1
+name = "ethereum"
+enabled = true
+
+[[chains]]
+chain_id = 10
+name = "optimism"
+enabled = false
+
+[[chains]]
+chain_id = 137
+name = "polygon"
+enabled = false
+
+[[chains]]
+chain_id = 42161
+name = "arbitrum"
+enabled = false
+
+[[chains]]
+chain_id = 8453
+name = "base"
+enabled = false
+
+# Relays are configurable: selector-api loads this list and scores them per relay_scores table.
+[[relays]]
+name = "flashbots"
+enabled = true
+chains = [1]
+
+[[relays]]
+name = "bloxroute"
+enabled = false
+chains = [1]
+
+[[relays]]
+name = "eden"
+enabled = false
+chains = [1]
+
+[[relays]]
+name = "beaver"
+enabled = false
+chains = [1]
+
+[[relays]]
+name = "titan"
+enabled = false
+chains = [1]
