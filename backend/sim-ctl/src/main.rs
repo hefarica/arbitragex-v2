@@ -1,10 +1,15 @@
-//! sim-ctl — simulation controller.
+//! sim-ctl main. Spawns:
+//!   - Axum HTTP (/health, /metrics, /simulate)
+//!   - Redis Streams consumer (if ANVIL_URL + DB reachable)
 //!
-//! Sprint 1: `/simulate` returns HTTP 501 with a canonical `NotImplementedPayload`.
-//! Real Anvil fork + `debug_traceCall` + gas accuracy arrives in Sprint 4.
-//!
-//! Returning 501 instead of a fake pass/fail is DELIBERATE. Any upstream that
-//! interprets a fake pass would flow into execution with no safety.
+//! When ANVIL_URL unset or anvil unreachable, /simulate keeps responding 501
+//! and the consumer logs idle; never fabricates results.
+
+mod consumer;
+mod fork_manager;
+mod persistence;
+mod sim_engine;
+mod tx_builder;
 
 use axum::{
     extract::State,
@@ -13,63 +18,138 @@ use axum::{
     routing::post,
     Json, Router,
 };
+use ethers::types::Address;
 use shared_rs::{
     config::AppConfig,
-    contracts::NotImplementedPayload,
+    contracts::{NotImplementedPayload, Opportunity},
     health::{build_health_router, ServiceInfo},
+    killswitch::KillSwitchClient,
     logging::init_tracing,
     metrics::init_metrics,
 };
-use std::{net::SocketAddr, sync::Arc};
-use tracing::info;
+use sqlx::postgres::PgPoolOptions;
+use std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
+use tracing::{info, warn};
 
-const SERVICE_NAME: &str = "sim-ctl";
-const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
+use crate::consumer::Consumer;
+use crate::fork_manager::ForkManager;
+use crate::sim_engine::SimEngine;
+
+const SERVICE: &str = "sim-ctl";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const DEFAULT_SIGNER: &str = "0x000000000000000000000000000000000000dEaD";
 
 #[derive(Clone)]
 struct AppState {
+    engine: Arc<SimEngine>,
     env: String,
 }
 
 async fn simulate_handler(
-    State(_st): State<Arc<AppState>>,
+    State(st): State<Arc<AppState>>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    shared_rs::metrics::SIMULATIONS_TOTAL
-        .with_label_values(&["not_implemented", "false"])
-        .inc();
-    let payload = NotImplementedPayload::new(
-        vec!["ANVIL_FORK_URL", "RPC_HTTP_<chain_id>"],
-        "S4",
-        format!(
-            "sim-ctl received opportunity but fork-based simulation is not yet wired. Received keys: {}",
-            body.as_object()
-                .map(|m| m.keys().cloned().collect::<Vec<_>>().join(","))
-                .unwrap_or_default()
-        ),
-    );
-    (StatusCode::NOT_IMPLEMENTED, Json(payload))
+    // If fork is absent, keep 501 by design.
+    if st.engine.fork.is_none() {
+        let payload = NotImplementedPayload::new(
+            vec!["ANVIL_URL", "ANVIL_FORK_URL"],
+            "S4",
+            format!("sim-ctl up but anvil not configured (env={})", st.env),
+        );
+        return (StatusCode::NOT_IMPLEMENTED, Json(serde_json::to_value(payload).unwrap()));
+    }
+    let opp: Opportunity = match serde_json::from_value(body) {
+        Ok(o) => o,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error":"invalid_body","detail":e.to_string()})));
+        }
+    };
+    let sim = st.engine.simulate(&opp).await;
+    (StatusCode::OK, Json(serde_json::to_value(sim).unwrap()))
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cfg = AppConfig::load()?;
-    init_tracing(SERVICE_NAME, &cfg.observability.log_level)?;
+    init_tracing(SERVICE, &cfg.observability.log_level)?;
     init_metrics();
 
-    let port: u16 = std::env::var("SIM_PORT")
-        .ok().and_then(|v| v.parse().ok()).unwrap_or(3003);
+    // Try to connect to anvil. If absent or unreachable → engine without fork → 501.
+    let anvil_url = std::env::var("ANVIL_URL").unwrap_or_default();
+    let sim_cfg = cfg.simulation.clone();
+    let sim_timeout = sim_cfg.as_ref().map(|c| Duration::from_millis(c.sim_timeout_ms)).unwrap_or(Duration::from_secs(3));
+    let max_slippage = sim_cfg.as_ref().map(|c| c.max_slippage_for_pass_pct).unwrap_or(5.0);
+    let pool_size = sim_cfg.as_ref().map(|c| c.snapshot_pool_size).unwrap_or(4);
 
-    let state = Arc::new(AppState { env: cfg.system.env.clone() });
+    let fork = if anvil_url.is_empty() {
+        warn!(event = "sim.anvil_not_configured",
+              "ANVIL_URL empty — /simulate will return 501, consumer stays idle");
+        None
+    } else {
+        match ForkManager::connect(&anvil_url, pool_size, 5000).await {
+            Ok(fm) => {
+                let bn = fm.current_block().await.unwrap_or(0);
+                info!(event = "sim.anvil_connected", url = %anvil_url, block = bn);
+                Some(fm)
+            }
+            Err(e) => {
+                warn!(event = "sim.anvil_unreachable", url = %anvil_url, error = %e,
+                      "continuing with 501 responses; no fabrication");
+                None
+            }
+        }
+    };
 
-    let app = build_health_router(ServiceInfo::new(SERVICE_NAME, SERVICE_VERSION))
+    let signer = Address::from_str(&std::env::var("SIM_SIGNER_ADDRESS").unwrap_or_else(|_| DEFAULT_SIGNER.into()))
+        .unwrap_or_else(|_| Address::zero());
+
+    let engine = Arc::new(SimEngine {
+        fork: fork.clone(),
+        signer_from: signer,
+        timeout: sim_timeout,
+        max_slippage_for_pass_pct: max_slippage,
+    });
+
+    let state = Arc::new(AppState { engine: engine.clone(), env: cfg.system.env.clone() });
+
+    // HTTP server
+    let port: u16 = std::env::var("SIM_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(3003);
+    let app = build_health_router(ServiceInfo::new(SERVICE, VERSION))
         .route("/simulate", post(simulate_handler))
         .with_state(state);
-
-    info!(event = "service.boot", service = SERVICE_NAME, env = %cfg.system.env, port,
-          "sim-ctl listening — /simulate responds 501 (S1 design)");
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    info!(event = "service.boot", service = SERVICE, env = %cfg.system.env, port,
+          fork_ready = fork.is_some(),
+          "sim-ctl listening");
+
+    // Spawn consumer if we have fork AND DB + Redis.
+    if fork.is_some() {
+        if let (Ok(db_url), Ok(redis_url)) = (std::env::var("DATABASE_URL"), std::env::var("REDIS_URL")) {
+            let pool = PgPoolOptions::new().max_connections(4).connect(&db_url).await?;
+            let redis_client = redis::Client::open(redis_url.clone())?;
+            let redis_conn = redis_client.get_connection_manager().await?;
+            let killswitch = KillSwitchClient::connect(&redis_url, cfg.system.kill_switch_enabled_default).await
+                .map_err(|e| anyhow::anyhow!("killswitch: {e}"))?;
+            let consumer = Consumer {
+                redis: redis_conn,
+                pool,
+                engine: SimEngine { fork, signer_from: signer, timeout: sim_timeout, max_slippage_for_pass_pct: max_slippage },
+                killswitch,
+                consumer_name: std::env::var("HOSTNAME").unwrap_or_else(|_| "sim-1".into()),
+            };
+            tokio::spawn(async move {
+                if let Err(e) = consumer.run().await {
+                    tracing::error!(event = "sim_consumer.fatal", error = %e);
+                }
+            });
+            info!(event = "sim_consumer.spawned");
+        } else {
+            warn!(event = "sim_consumer.not_spawned", reason = "DATABASE_URL or REDIS_URL missing");
+        }
+    }
+
     axum::serve(listener, app)
         .with_graceful_shutdown(async { tokio::signal::ctrl_c().await.ok(); })
         .await?;

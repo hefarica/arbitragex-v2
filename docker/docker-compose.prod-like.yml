@@ -66,6 +66,30 @@ services:
     networks: [arbx-net]
     <<: *common-logging
 
+  # S4: Anvil fork for simulations. Enable via `--profile sim`.
+  # Requires ANVIL_FORK_URL env var pointing at a real RPC (Alchemy/Infura free tier works).
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    profiles: ["sim"]
+    entrypoint: ["anvil"]
+    command: >
+      --host 0.0.0.0
+      --port 8545
+      --fork-url ${ANVIL_FORK_URL}
+      --fork-block-number ${ANVIL_FORK_BLOCK:-latest}
+      --block-time 1
+      --accounts 10
+      --balance 10000
+      --chain-id ${ANVIL_CHAIN_ID:-1}
+    ports: ["8545:8545"]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- --post-data='{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_blockNumber\",\"params\":[]}' --header='Content-Type:application/json' http://localhost:8545 | grep -q result || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks: [arbx-net]
+    <<: *common-logging
+
   # ───────── Backend services ─────────
 
   searcher-rs:
@@ -92,9 +116,15 @@ services:
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
       SIM_PORT: "3003"
+      DATABASE_URL: postgres://arbx_rw:${ARBX_RW_PASSWORD:-arbx_rw_dev_only}@postgres:5432/arbitragex
+      REDIS_URL: redis://redis:6379
+      ANVIL_URL: http://anvil:8545
     volumes:
       - ../configs:/app/configs:ro
     ports: ["3003:3003"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
     networks: [arbx-net]
     <<: *common-logging
 

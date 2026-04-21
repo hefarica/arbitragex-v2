@@ -5,7 +5,7 @@
   "description": "Authoritative schema for configs/app.toml. Loaded + validated at boot by every service via shared-rs (Rust) and shared-ts (TS).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["system","risk","execution","observability","chains","relays","scoring","token_safety","circuit_breakers"],
+  "required": ["system","risk","execution","observability","chains","relays","scoring","token_safety","circuit_breakers","simulation"],
   "properties": {
     "system": {
       "type": "object",
@@ -121,6 +121,21 @@
           "window_ms":   { "type": "integer", "minimum": 100 },
           "cooldown_ms": { "type": "integer", "minimum": 100 }
         }
+      }
+    },
+    "simulation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider","fork_block","snapshot_pool_size","sim_timeout_ms","reset_interval_s","gas_limit_safety_factor","max_slippage_for_pass_pct","probe_amount_fraction"],
+      "properties": {
+        "provider":                  { "type": "string", "enum": ["anvil","tenderly","not_implemented"] },
+        "fork_block":                { "type": "string" },
+        "snapshot_pool_size":        { "type": "integer", "minimum": 1 },
+        "sim_timeout_ms":            { "type": "integer", "minimum": 100 },
+        "reset_interval_s":          { "type": "integer", "minimum": 60 },
+        "gas_limit_safety_factor":   { "type": "number", "minimum": 1.0 },
+        "max_slippage_for_pass_pct": { "type": "number", "minimum": 0 },
+        "probe_amount_fraction":     { "type": "number", "minimum": 0, "maximum": 1 }
       }
     }
   }

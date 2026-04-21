@@ -29,6 +29,54 @@ pub struct AppConfig {
     pub observability: ObsCfg,
     pub chains: Vec<ChainCfg>,
     pub relays: Vec<RelayCfg>,
+    #[serde(default)]
+    pub simulation: Option<SimulationCfg>,
+    #[serde(default)]
+    pub scoring: Option<ScoringCfg>,
+    #[serde(default)]
+    pub token_safety: Option<TokenSafetyCfg>,
+    #[serde(default)]
+    pub circuit_breakers: Vec<CircuitBreakerCfg>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulationCfg {
+    pub provider: String,
+    pub fork_block: String,
+    pub snapshot_pool_size: u32,
+    pub sim_timeout_ms: u64,
+    pub reset_interval_s: u64,
+    pub gas_limit_safety_factor: f64,
+    pub max_slippage_for_pass_pct: f64,
+    pub probe_amount_fraction: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScoringCfg {
+    pub min_accept_score: f64,
+    pub weight_liquidity: f64,
+    pub weight_depth: f64,
+    pub weight_safety: f64,
+    pub weight_slippage: f64,
+    pub weight_gas: f64,
+    pub weight_risk: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenSafetyCfg {
+    pub provider: String,
+    pub api_call_timeout_ms: u64,
+    pub ttl_seconds_ok: u64,
+    pub ttl_seconds_bad: u64,
+    pub min_acceptable_score: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CircuitBreakerCfg {
+    pub name: String,
+    pub threshold: u32,
+    pub window_ms: u64,
+    pub cooldown_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

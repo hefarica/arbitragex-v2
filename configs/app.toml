@@ -59,6 +59,22 @@ threshold = 20
 window_ms = 60000
 cooldown_ms = 30000
 
+[[circuit_breakers]]
+name = "sim_engine"
+threshold = 8
+window_ms = 60000
+cooldown_ms = 60000
+
+[simulation]
+provider = "not_implemented"            # "anvil" | "tenderly" | "not_implemented"
+fork_block = "latest"
+snapshot_pool_size = 4
+sim_timeout_ms = 3000
+reset_interval_s = 600
+gas_limit_safety_factor = 1.3
+max_slippage_for_pass_pct = 5.0
+probe_amount_fraction = 1.0
+
 # Chains are configurable: no hardcoding inside services.
 [[chains]]
 chain_id = 1

@@ -41,6 +41,17 @@ const CircuitBreakerCfg = z.object({
   cooldown_ms: z.number().int().min(100),
 }).strict();
 
+const SimulationCfg = z.object({
+  provider: z.enum(["anvil","tenderly","not_implemented"]),
+  fork_block: z.string(),
+  snapshot_pool_size: z.number().int().min(1),
+  sim_timeout_ms: z.number().int().min(100),
+  reset_interval_s: z.number().int().min(60),
+  gas_limit_safety_factor: z.number().min(1.0),
+  max_slippage_for_pass_pct: z.number().min(0),
+  probe_amount_fraction: z.number().min(0).max(1),
+}).strict();
+
 export const AppConfigSchema = z.object({
   system: z.object({
     env: z.enum(["development","staging","production","production-like"]),
@@ -70,6 +81,7 @@ export const AppConfigSchema = z.object({
   scoring: ScoringCfg,
   token_safety: TokenSafetyCfg,
   circuit_breakers: z.array(CircuitBreakerCfg),
+  simulation: SimulationCfg,
 }).strict();
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
