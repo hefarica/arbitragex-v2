@@ -47,18 +47,18 @@ export function createHttpLogger(service: string, level: LogLevel = "info") {
       res.setHeader("x-arbx-trace-id", id);
       return id;
     },
-    customLogLevel: (_req, res, err) => {
+    customLogLevel: (_req: unknown, res: { statusCode: number }, err: Error | undefined) => {
       if (err || res.statusCode >= 500) return "error";
       if (res.statusCode >= 400) return "warn";
       return level;
     },
     serializers: {
-      req: (req) => ({
+      req: (req: { method?: string; url?: string; id?: string }) => ({
         method: req.method,
         url: req.url,
         traceId: req.id,
       }),
-      res: (res) => ({ statusCode: res.statusCode }),
+      res: (res: { statusCode: number }) => ({ statusCode: res.statusCode }),
     },
   });
 }
