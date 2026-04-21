@@ -18,7 +18,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && groupadd -r arbx && useradd -r -g arbx arbx
 WORKDIR /app
 COPY --from=builder /build/target/release/recon /usr/local/bin/recon
-COPY configs /app/configs
 USER arbx
 ENV ARBX_CONFIG_PATH=/app/configs/app.toml
 EXPOSE 3004

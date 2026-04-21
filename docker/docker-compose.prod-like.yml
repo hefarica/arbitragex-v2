@@ -2,8 +2,6 @@
 # One compose file; all services on internal network. Only `edge` exposes a public port in prod.
 # In dev, we expose additional ports for debugging.
 
-version: "3.9"
-
 name: arbitragex-v2
 
 networks:
@@ -79,6 +77,8 @@ services:
       ARBX_CONFIG_PATH: /app/configs/app.toml
       REDIS_URL: redis://redis:6379
       SEARCHER_HEALTH_PORT: "9001"
+    volumes:
+      - ../configs:/app/configs:ro
     depends_on:
       redis: { condition: service_healthy }
     networks: [arbx-net]
@@ -92,6 +92,8 @@ services:
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
       SIM_PORT: "3003"
+    volumes:
+      - ../configs:/app/configs:ro
     ports: ["3003:3003"]
     networks: [arbx-net]
     <<: *common-logging
@@ -105,6 +107,8 @@ services:
       ARBX_CONFIG_PATH: /app/configs/app.toml
       REDIS_URL: redis://redis:6379
       RELAYS_PORT: "3005"
+    volumes:
+      - ../configs:/app/configs:ro
     ports: ["3005:3005"]
     depends_on:
       redis: { condition: service_healthy }
@@ -120,6 +124,8 @@ services:
       ARBX_CONFIG_PATH: /app/configs/app.toml
       DATABASE_URL: postgres://arbx_rw:${ARBX_RW_PASSWORD:-arbx_rw_dev_only}@postgres:5432/arbitragex
       RECON_PORT: "3004"
+    volumes:
+      - ../configs:/app/configs:ro
     ports: ["3004:3004"]
     depends_on:
       postgres: { condition: service_healthy }

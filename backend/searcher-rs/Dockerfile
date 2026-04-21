@@ -23,7 +23,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && groupadd -r arbx && useradd -r -g arbx arbx
 WORKDIR /app
 COPY --from=builder /build/target/release/searcher-rs /usr/local/bin/searcher-rs
-COPY configs /app/configs
 USER arbx
 ENV ARBX_CONFIG_PATH=/app/configs/app.toml
 EXPOSE 9001
