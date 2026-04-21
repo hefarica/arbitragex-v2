@@ -25,6 +25,40 @@ prometheus_enabled = true
 structured_logs = true
 log_level = "info"
 
+[scoring]
+min_accept_score = 55.0
+weight_liquidity = 0.20
+weight_depth = 0.15
+weight_safety = 0.20
+weight_slippage = 0.15
+weight_gas = 0.15
+weight_risk = 0.15
+
+[token_safety]
+provider = "internal_only"          # "goplus" | "honeypot_is" | "internal_only"
+api_call_timeout_ms = 1500
+ttl_seconds_ok = 3600
+ttl_seconds_bad = 86400
+min_acceptable_score = 70
+
+[[circuit_breakers]]
+name = "token_safety_api"
+threshold = 5
+window_ms = 60000
+cooldown_ms = 120000
+
+[[circuit_breakers]]
+name = "db_writes"
+threshold = 10
+window_ms = 30000
+cooldown_ms = 60000
+
+[[circuit_breakers]]
+name = "stream_consumer"
+threshold = 20
+window_ms = 60000
+cooldown_ms = 30000
+
 # Chains are configurable: no hardcoding inside services.
 [[chains]]
 chain_id = 1

@@ -5,7 +5,7 @@
   "description": "Authoritative schema for configs/app.toml. Loaded + validated at boot by every service via shared-rs (Rust) and shared-ts (TS).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["system","risk","execution","observability","chains","relays"],
+  "required": ["system","risk","execution","observability","chains","relays","scoring","token_safety","circuit_breakers"],
   "properties": {
     "system": {
       "type": "object",
@@ -79,6 +79,47 @@
           "name":      { "type": "string", "minLength": 1 },
           "enabled":   { "type": "boolean" },
           "chains":    { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 1 }
+        }
+      }
+    },
+    "scoring": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min_accept_score","weight_liquidity","weight_depth","weight_safety","weight_slippage","weight_gas","weight_risk"],
+      "properties": {
+        "min_accept_score":  { "type": "number", "minimum": 0, "maximum": 100 },
+        "weight_liquidity":  { "type": "number", "minimum": 0, "maximum": 1 },
+        "weight_depth":      { "type": "number", "minimum": 0, "maximum": 1 },
+        "weight_safety":     { "type": "number", "minimum": 0, "maximum": 1 },
+        "weight_slippage":   { "type": "number", "minimum": 0, "maximum": 1 },
+        "weight_gas":        { "type": "number", "minimum": 0, "maximum": 1 },
+        "weight_risk":       { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "token_safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider","api_call_timeout_ms","ttl_seconds_ok","ttl_seconds_bad","min_acceptable_score"],
+      "properties": {
+        "provider":              { "type": "string", "enum": ["goplus","honeypot_is","internal_only"] },
+        "api_call_timeout_ms":   { "type": "integer", "minimum": 100 },
+        "ttl_seconds_ok":        { "type": "integer", "minimum": 60 },
+        "ttl_seconds_bad":       { "type": "integer", "minimum": 60 },
+        "min_acceptable_score":  { "type": "integer", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "circuit_breakers": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name","threshold","window_ms","cooldown_ms"],
+        "properties": {
+          "name":        { "type": "string", "minLength": 1 },
+          "threshold":   { "type": "integer", "minimum": 1 },
+          "window_ms":   { "type": "integer", "minimum": 100 },
+          "cooldown_ms": { "type": "integer", "minimum": 100 }
         }
       }
     }

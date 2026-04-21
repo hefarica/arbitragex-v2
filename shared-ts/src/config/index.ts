@@ -16,6 +16,31 @@ const RelayCfg = z.object({
   chains: z.array(z.number().int().positive()).min(1),
 }).strict();
 
+const ScoringCfg = z.object({
+  min_accept_score: z.number().min(0).max(100),
+  weight_liquidity: z.number().min(0).max(1),
+  weight_depth: z.number().min(0).max(1),
+  weight_safety: z.number().min(0).max(1),
+  weight_slippage: z.number().min(0).max(1),
+  weight_gas: z.number().min(0).max(1),
+  weight_risk: z.number().min(0).max(1),
+}).strict();
+
+const TokenSafetyCfg = z.object({
+  provider: z.enum(["goplus","honeypot_is","internal_only"]),
+  api_call_timeout_ms: z.number().int().min(100),
+  ttl_seconds_ok: z.number().int().min(60),
+  ttl_seconds_bad: z.number().int().min(60),
+  min_acceptable_score: z.number().int().min(0).max(100),
+}).strict();
+
+const CircuitBreakerCfg = z.object({
+  name: z.string().min(1),
+  threshold: z.number().int().min(1),
+  window_ms: z.number().int().min(100),
+  cooldown_ms: z.number().int().min(100),
+}).strict();
+
 export const AppConfigSchema = z.object({
   system: z.object({
     env: z.enum(["development","staging","production","production-like"]),
@@ -42,6 +67,9 @@ export const AppConfigSchema = z.object({
   }).strict(),
   chains: z.array(ChainCfg).min(1),
   relays: z.array(RelayCfg).min(1),
+  scoring: ScoringCfg,
+  token_safety: TokenSafetyCfg,
+  circuit_breakers: z.array(CircuitBreakerCfg),
 }).strict();
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;

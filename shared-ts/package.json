@@ -12,7 +12,8 @@
     "./logging": "./dist/logging/index.js",
     "./metrics": "./dist/metrics/index.js",
     "./middleware": "./dist/middleware/index.js",
-    "./contracts": "./dist/contracts/index.js"
+    "./contracts": "./dist/contracts/index.js",
+    "./circuit_breaker": "./dist/circuit_breaker/index.js"
   },
   "files": ["dist"],
   "scripts": {

@@ -1,5 +1,6 @@
 import express from "express";
 import pg from "pg";
+import Redis from "ioredis";
 import { z } from "zod";
 import {
   loadAppConfig,
@@ -14,25 +15,69 @@ import {
   SimulationResultSchema,
   opportunitiesTotal,
   initMetrics,
+  KillSwitchClient,
+  CircuitBreaker,
+  globalRegistry,
+  selectorDecisionsTotal,
+  selectorProcessingSeconds,
+  selectorInvalidMessagesTotal,
+  selectorConsumerLag,
+  cbStateGauge,
+  cbTripsTotal,
 } from "@arbx/shared";
 import { scoreOpportunity } from "./score.js";
+import { StreamConsumer } from "./consumer.js";
 
 const SERVICE = "selector-api";
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 const cfg = loadAppConfig();
 const logger = createLogger({ service: SERVICE, level: cfg.observability.log_level ?? "info" });
 initMetrics(SERVICE);
 
 const DATABASE_URL = requireEnv("DATABASE_URL");
-const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 10, idleTimeoutMillis: 30_000 });
+const REDIS_URL = requireEnv("REDIS_URL");
 
-// Verify DB on boot — fail fast if unreachable.
+const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 10, idleTimeoutMillis: 30_000 });
 pool.query("SELECT 1").catch((e: Error) => {
   logger.error({ event: "db.check.fail", err: e.message }, "cannot reach postgres at boot");
   process.exit(1);
 });
 
+const redis = new Redis(REDIS_URL, { lazyConnect: false, maxRetriesPerRequest: 3 });
+const killSwitch = new KillSwitchClient({
+  redisUrl: REDIS_URL,
+  defaultWhenAbsent: cfg.system.kill_switch_enabled_default,
+});
+killSwitch.subscribeChanges().catch(() => {});
+
+// ─── Circuit breakers (registered centrally, metrics on events) ───
+const cbByName = new Map<string, CircuitBreaker>();
+for (const c of cfg.circuit_breakers) {
+  const cb = new CircuitBreaker(c);
+  cb.on("trip", (e: { name: string; reason: string }) => {
+    cbStateGauge.labels(e.name).set(2);
+    cbTripsTotal.labels(e.name, e.reason.slice(0, 60)).inc();
+    logger.warn({ event: "cb.trip", ...e });
+  });
+  cb.on("reset", (e: { name: string }) => {
+    cbStateGauge.labels(e.name).set(0);
+    logger.info({ event: "cb.reset", ...e });
+  });
+  cb.on("half_open", (e: { name: string }) => {
+    cbStateGauge.labels(e.name).set(1);
+  });
+  cbStateGauge.labels(c.name).set(0);
+  globalRegistry.register(cb);
+  cbByName.set(c.name, cb);
+}
+const mustCb = (name: string): CircuitBreaker => {
+  const cb = cbByName.get(name);
+  if (!cb) throw new Error(`circuit breaker '${name}' not configured in app.toml`);
+  return cb;
+};
+
+// ─── Express app (HTTP surface) ───
 const ScoreRequest = z.object({
   opportunity: OpportunitySchema,
   simulation: SimulationResultSchema.nullable().optional(),
@@ -78,7 +123,7 @@ app.get("/opportunities", async (req, res) => {
     const result = await pool.query(
       `SELECT id, chain_id, strategy_kind, dex_a, dex_b, pair_symbol,
               token_in, token_out, amount_in_wei, expected_profit_usd,
-              status, detected_at, trace_id
+              status, risk_score, rejection_reason, detected_at, updated_at, trace_id
          FROM opportunities
         WHERE status = $1
         ORDER BY detected_at DESC
@@ -90,14 +135,38 @@ app.get("/opportunities", async (req, res) => {
   }
 });
 
+// ─── Stream consumer (S3 core) ───
+const consumer = new StreamConsumer({
+  redis, pool, logger, cfg,
+  killSwitch,
+  tokenSafetyCb: mustCb("token_safety_api"),
+  dbWritesCb: mustCb("db_writes"),
+  streamConsumerCb: mustCb("stream_consumer"),
+  metrics: {
+    decisionsTotal: (labels) => selectorDecisionsTotal.labels(labels).inc(),
+    processingSeconds: (s) => selectorProcessingSeconds.observe(s),
+    invalidMessagesTotal: () => selectorInvalidMessagesTotal.inc(),
+    lagGauge: (n) => selectorConsumerLag.labels("arbx:opps:detected", "selector-g0").set(n),
+  },
+});
+consumer.start().catch((e: Error) =>
+  logger.error({ event: "consumer.start_failed", err: e.message }));
+
+// ─── HTTP server ───
 const PORT = Number(process.env["SELECTOR_PORT"] ?? 3002);
-app.listen(PORT, () => {
-  logger.info({ event: "service.boot", port: PORT, env: cfg.system.env }, `${SERVICE} listening`);
+const server = app.listen(PORT, () => {
+  logger.info({ event: "service.boot", port: PORT, env: cfg.system.env,
+    circuit_breakers: Array.from(cbByName.keys()) },
+    `${SERVICE} listening (consumer + HTTP)`);
 });
 
-// Graceful shutdown
+// ─── Shutdown ───
 const shutdown = async (sig: string) => {
-  logger.info({ event: "service.shutdown", signal: sig }, "shutting down");
+  logger.info({ event: "service.shutdown", signal: sig });
+  await consumer.stop();
+  server.close();
+  await killSwitch.close().catch(() => {});
+  await redis.quit().catch(() => {});
   await pool.end().catch(() => {});
   process.exit(0);
 };
