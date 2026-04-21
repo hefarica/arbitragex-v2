@@ -42,7 +42,7 @@ impl Default for KillSwitchState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct KillSwitchClient {
     mgr: redis::aio::ConnectionManager,
     default_when_absent: bool,
