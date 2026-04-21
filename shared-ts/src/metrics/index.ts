@@ -53,6 +53,69 @@ export const serviceUp = new Gauge({
   registers: [registry],
 });
 
+// ─────────── Sprint 3: selector-api metrics ───────────
+export const selectorDecisionsTotal = new Counter({
+  name: "arbx_selector_decisions_total",
+  help: "Selector decisions by accept/reject + reason + chain",
+  labelNames: ["decision","reason","chain_id"] as const,
+  registers: [registry],
+});
+
+export const selectorProcessingSeconds = new Histogram({
+  name: "arbx_selector_consumer_processing_seconds",
+  help: "End-to-end time per opportunity in selector consumer",
+  buckets: [0.005,0.01,0.025,0.05,0.1,0.25,0.5,1,2.5,5],
+  registers: [registry],
+});
+
+export const selectorInvalidMessagesTotal = new Counter({
+  name: "arbx_selector_invalid_messages_total",
+  help: "Messages that failed schema parse; dropped after XACK",
+  registers: [registry],
+});
+
+export const selectorConsumerLag = new Gauge({
+  name: "arbx_selector_consumer_lag",
+  help: "Pending messages in XREADGROUP group",
+  labelNames: ["stream","group"] as const,
+  registers: [registry],
+});
+
+export const tokenSafetyCallsTotal = new Counter({
+  name: "arbx_token_safety_calls_total",
+  help: "Token safety lookups by provider + result",
+  labelNames: ["provider","result"] as const,
+  registers: [registry],
+});
+
+export const tokenSafetyCacheHitsTotal = new Counter({
+  name: "arbx_token_safety_cache_hits_total",
+  help: "Token safety cache hits vs misses",
+  labelNames: ["hit"] as const,
+  registers: [registry],
+});
+
+export const blacklistHitsTotal = new Counter({
+  name: "arbx_blacklist_hits_total",
+  help: "Opportunities rejected because of blacklist",
+  labelNames: ["chain_id","reason"] as const,
+  registers: [registry],
+});
+
+export const cbStateGauge = new Gauge({
+  name: "arbx_cb_state",
+  help: "Circuit breaker state (0=closed,1=half_open,2=open)",
+  labelNames: ["name"] as const,
+  registers: [registry],
+});
+
+export const cbTripsTotal = new Counter({
+  name: "arbx_cb_trips_total",
+  help: "Circuit breaker trips by name + reason",
+  labelNames: ["name","reason"] as const,
+  registers: [registry],
+});
+
 export function initMetrics(serviceName: string) {
   serviceUp.labels(serviceName).set(1);
 }
