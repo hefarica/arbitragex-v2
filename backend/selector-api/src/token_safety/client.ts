@@ -37,8 +37,9 @@ export async function checkToken(
     try {
       const fetched = await cb.execute(async () => {
         if (cfg.token_safety.provider === "goplus") {
+          const apiKey = process.env["GOPLUS_API_KEY"];
           return fetchGoPlus(chainId, address, {
-            apiKey: process.env["GOPLUS_API_KEY"],
+            ...(apiKey ? { apiKey } : {}),
             timeoutMs: cfg.token_safety.api_call_timeout_ms,
           });
         }
