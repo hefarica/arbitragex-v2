@@ -37,28 +37,34 @@ export function createLogger(opts: CreateLoggerOpts): Logger {
 }
 
 /** Express/Fastify-compatible HTTP logger middleware. Requires/propagates `x-arbx-trace-id`. */
+/** Express/Fastify-compatible HTTP logger. Uses `any` in callbacks to avoid
+ *  overload conflicts between genReqId and customLogLevel — pino-http's
+ *  generic Options<Req,Res> doesn't compose cleanly under strict TS.
+ */
 export function createHttpLogger(service: string, level: LogLevel = "info") {
   const logger = createLogger({ service, level });
-  return pinoHttp({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handler: any = pinoHttp({
     logger,
-    genReqId: (req: { headers: Record<string, string | string[] | undefined> }, res: { setHeader: (n: string, v: string) => void }) => {
-      const existing = req.headers["x-arbx-trace-id"];
+    genReqId: (req: any, res: any): string => {
+      const existing = req.headers?.["x-arbx-trace-id"];
       const id = typeof existing === "string" && existing.length > 0 ? existing : randomUUID();
-      res.setHeader("x-arbx-trace-id", id);
+      if (typeof res.setHeader === "function") res.setHeader("x-arbx-trace-id", id);
       return id;
     },
-    customLogLevel: (_req: unknown, res: { statusCode: number }, err: Error | undefined) => {
-      if (err || res.statusCode >= 500) return "error";
-      if (res.statusCode >= 400) return "warn";
+    customLogLevel: (_req: any, res: any, err: any): LogLevel => {
+      if (err || (res && res.statusCode >= 500)) return "error";
+      if (res && res.statusCode >= 400) return "warn";
       return level;
     },
     serializers: {
-      req: (req: { method?: string; url?: string; id?: string }) => ({
+      req: (req: any) => ({
         method: req.method,
         url: req.url,
         traceId: req.id,
       }),
-      res: (res: { statusCode: number }) => ({ statusCode: res.statusCode }),
+      res: (res: any) => ({ statusCode: res.statusCode }),
     },
   });
+  return handler;
 }
