@@ -8,6 +8,8 @@
     "noImplicitOverride": true,
     "exactOptionalPropertyTypes": true,
     "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "declaration": true,
     "sourceMap": true,

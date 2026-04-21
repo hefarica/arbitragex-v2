@@ -41,7 +41,7 @@ export function createHttpLogger(service: string, level: LogLevel = "info") {
   const logger = createLogger({ service, level });
   return pinoHttp({
     logger,
-    genReqId: (req, res) => {
+    genReqId: (req: { headers: Record<string, string | string[] | undefined> }, res: { setHeader: (n: string, v: string) => void }) => {
       const existing = req.headers["x-arbx-trace-id"];
       const id = typeof existing === "string" && existing.length > 0 ? existing : randomUUID();
       res.setHeader("x-arbx-trace-id", id);
