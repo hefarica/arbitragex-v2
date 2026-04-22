@@ -1,11 +1,20 @@
-//! recon — PnL reconciliation.
+//! recon — PnL reconciliation + learning loop.
 //!
-//! Sprint 1 behavior (no fabrication):
-//!   - `GET /pnl/:opportunity_id` — reads executions; returns 404 if absent.
-//!   - `GET /pnl/summary` — aggregates over real rows; if zero rows, returns explicit zeros
-//!     with `sample_count: 0` so callers can tell the difference between "no data" and "zero PnL".
+//! S6 additions:
+//!   - Consumer on `arbx:opps:executed` → pnl_engine.compute → persist recon_reports.
+//!   - Aggregator task (periodic) rolls executions into strategy_scores / relay_scores.
+//!   - Anomaly detector flags high revert rate + (optional) trips kill-switch.
 //!
-//! S6 extends this with: variance analysis, adaptive scoring writers, incident correlators.
+//! S1 HTTP endpoints (read-only) are preserved:
+//!   - GET /pnl/:opportunity_id — 404 if no execution.
+//!   - GET /pnl/summary — real aggregation.
+
+mod aggregator;
+mod anomaly;
+mod consumer;
+mod persistence;
+mod pnl_engine;
+mod variance;
 
 use axum::{
     extract::{Path, Query, State},
@@ -15,16 +24,18 @@ use axum::{
     Json, Router,
 };
 use chrono::{DateTime, Utc};
+use ethers::providers::{Http, Provider};
 use serde::{Deserialize, Serialize};
 use shared_rs::{
     config::{require_env, AppConfig},
     health::{build_health_router, ServiceInfo},
+    killswitch::KillSwitchClient,
     logging::init_tracing,
     metrics::init_metrics,
 };
 use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, sync::Arc};
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 const SERVICE_NAME: &str = "recon";
@@ -167,7 +178,56 @@ async fn main() -> anyhow::Result<()> {
         .merge(pnl_router);
 
     info!(event = "service.boot", service = SERVICE_NAME, env = %cfg.system.env, port,
-          "recon listening — reads DB; 404 when no row (S1)");
+          "recon listening — S6: consumer + aggregator active when infra ready");
+
+    // S6: spawn consumer if RPC + REDIS + recon cfg present.
+    if let Some(recon_cfg) = cfg.recon.clone() {
+        let rpc_url = std::env::var("RPC_HTTP_1").unwrap_or_default();
+        let redis_url = std::env::var("REDIS_URL").unwrap_or_default();
+        if !rpc_url.is_empty() && !redis_url.is_empty() {
+            match Provider::<Http>::try_from(rpc_url.as_str()) {
+                Ok(provider) => {
+                    let provider = Arc::new(provider);
+                    let db_for_consumer = PgPoolOptions::new().max_connections(4).connect(&db_url).await?;
+                    let db_for_aggregator = PgPoolOptions::new().max_connections(2).connect(&db_url).await?;
+                    let redis_client = redis::Client::open(redis_url.clone())?;
+                    let redis_conn = redis_client.get_connection_manager().await?;
+                    let killswitch = KillSwitchClient::connect(&redis_url, cfg.system.kill_switch_enabled_default).await
+                        .map_err(|e| anyhow::anyhow!("killswitch: {e}"))?;
+
+                    // Consumer
+                    let consumer = consumer::Consumer {
+                        redis: redis_conn,
+                        pool: db_for_consumer,
+                        provider,
+                        cfg: recon_cfg.clone(),
+                        consumer_name: std::env::var("HOSTNAME").unwrap_or_else(|_| "recon-1".into()),
+                    };
+                    tokio::spawn(async move {
+                        if let Err(e) = consumer.run().await {
+                            tracing::error!(event = "recon_consumer.fatal", error = %e);
+                        }
+                    });
+                    info!(event = "recon_consumer.spawned");
+
+                    // Aggregator
+                    let cfg_agg = recon_cfg.clone();
+                    tokio::spawn(async move {
+                        aggregator::run_periodic(db_for_aggregator, cfg_agg, killswitch).await;
+                    });
+                    info!(event = "aggregator.spawned");
+                }
+                Err(e) => warn!(event = "recon.rpc_invalid", error = %e),
+            }
+        } else {
+            warn!(event = "recon.consumer_not_spawned",
+                  "RPC_HTTP_1 or REDIS_URL absent; running read-only");
+        }
+    } else {
+        warn!(event = "recon.cfg_absent",
+              "[recon] config section missing; running read-only without consumer+aggregator");
+    }
+
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app)

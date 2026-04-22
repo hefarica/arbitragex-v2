@@ -89,11 +89,22 @@ pub struct ExecutionResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReconReport {
     pub opportunity_id: Uuid,
+    pub execution_id: Option<Uuid>,
+    pub tx_hash: Option<String>,
+    pub chain_id: u64,
+
+    pub expected_amount_out_wei: Option<String>,
+    pub actual_amount_out_wei: Option<String>,
+    pub variance_native_units: Option<String>,
+    pub variance_pct: Option<f64>,
+
     pub expected_profit_usd: f64,
     pub actual_profit_usd: f64,
-    pub variance_usd: f64,
-    pub variance_pct: f64,
+    pub pnl_source: String,
+
     pub actual_gas_used_wei: Option<String>,
+    pub actual_gas_price_wei: Option<String>,
+    pub fail_reason: Option<String>,
     pub notes: Option<String>,
     pub created_at: DateTime<Utc>,
     pub trace_id: Uuid,

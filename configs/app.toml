@@ -81,6 +81,17 @@ gas_limit_safety_factor = 1.3
 max_slippage_for_pass_pct = 5.0
 probe_amount_fraction = 1.0
 
+[recon]
+pnl_source_default = "native_only"              # "native_only"|"oracle_chainlink"|"oracle_uniswap_twap"
+variance_threshold_pct = 20.0
+receipt_fetch_timeout_ms = 5000
+aggregator_interval_seconds = 300
+strategy_score_window_hours = 1
+anomaly_window_minutes = 15
+anomaly_min_samples = 10
+anomaly_revert_rate_pct = 50.0
+auto_trip_on_high_revert_rate = true
+
 # Chains are configurable: no hardcoding inside services.
 [[chains]]
 chain_id = 1

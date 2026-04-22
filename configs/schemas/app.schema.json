@@ -5,7 +5,7 @@
   "description": "Authoritative schema for configs/app.toml. Loaded + validated at boot by every service via shared-rs (Rust) and shared-ts (TS).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["system","risk","execution","observability","chains","relays","scoring","token_safety","circuit_breakers","simulation"],
+  "required": ["system","risk","execution","observability","chains","relays","scoring","token_safety","circuit_breakers","simulation","recon"],
   "properties": {
     "system": {
       "type": "object",
@@ -143,6 +143,22 @@
         "gas_limit_safety_factor":   { "type": "number", "minimum": 1.0 },
         "max_slippage_for_pass_pct": { "type": "number", "minimum": 0 },
         "probe_amount_fraction":     { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "recon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pnl_source_default","variance_threshold_pct","receipt_fetch_timeout_ms","aggregator_interval_seconds","strategy_score_window_hours","anomaly_window_minutes","anomaly_min_samples","anomaly_revert_rate_pct","auto_trip_on_high_revert_rate"],
+      "properties": {
+        "pnl_source_default":            { "type": "string", "enum": ["native_only","oracle_chainlink","oracle_uniswap_twap"] },
+        "variance_threshold_pct":        { "type": "number", "minimum": 0 },
+        "receipt_fetch_timeout_ms":      { "type": "integer", "minimum": 100 },
+        "aggregator_interval_seconds":   { "type": "integer", "minimum": 30 },
+        "strategy_score_window_hours":   { "type": "integer", "minimum": 1 },
+        "anomaly_window_minutes":        { "type": "integer", "minimum": 1 },
+        "anomaly_min_samples":           { "type": "integer", "minimum": 1 },
+        "anomaly_revert_rate_pct":       { "type": "number", "minimum": 0, "maximum": 100 },
+        "auto_trip_on_high_revert_rate": { "type": "boolean" }
       }
     }
   }

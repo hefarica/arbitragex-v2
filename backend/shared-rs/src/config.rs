@@ -37,6 +37,21 @@ pub struct AppConfig {
     pub token_safety: Option<TokenSafetyCfg>,
     #[serde(default)]
     pub circuit_breakers: Vec<CircuitBreakerCfg>,
+    #[serde(default)]
+    pub recon: Option<ReconCfg>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReconCfg {
+    pub pnl_source_default: String,
+    pub variance_threshold_pct: f64,
+    pub receipt_fetch_timeout_ms: u64,
+    pub aggregator_interval_seconds: u64,
+    pub strategy_score_window_hours: u64,
+    pub anomaly_window_minutes: u64,
+    pub anomaly_min_samples: u64,
+    pub anomaly_revert_rate_pct: f64,
+    pub auto_trip_on_high_revert_rate: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

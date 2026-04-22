@@ -1,33 +1,37 @@
-//! Redis Streams consumer: arbx:opps:simulated -> execute -> persist -> XACK.
+//! Redis Streams consumer: arbx:opps:executed → PnlEngine → persist → XACK.
 
-use crate::persistence::persist_execution;
-use crate::submit_engine::SubmitEngine;
+use crate::pnl_engine;
+use crate::persistence::{insert_risk_event, persist_recon_report};
+use crate::variance;
 use anyhow::{Context, Result};
+use ethers::providers::{Http, Provider};
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
-use shared_rs::contracts::Opportunity;
+use shared_rs::config::ReconCfg;
+use shared_rs::contracts::{ExecutionResult, Opportunity};
 use sqlx::postgres::PgPool;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
-const STREAM: &str = "arbx:opps:simulated";
-const GROUP: &str = "relays-client-g0";
+const STREAM: &str = "arbx:opps:executed";
+const GROUP: &str = "recon-g0";
 
 pub struct Consumer {
     pub redis: ConnectionManager,
     pub pool: PgPool,
-    pub engine: SubmitEngine,
+    pub provider: Arc<Provider<Http>>,
+    pub cfg: ReconCfg,
     pub consumer_name: String,
 }
 
 impl Consumer {
     pub async fn run(mut self) -> Result<()> {
         self.ensure_group().await.ok();
-        info!(event = "relays_consumer.started", stream = STREAM, group = GROUP,
-              consumer = %self.consumer_name);
+        info!(event = "recon_consumer.started", stream = STREAM, group = GROUP, consumer = %self.consumer_name);
         loop {
             if let Err(e) = self.read_batch().await {
-                error!(event = "relays_consumer.batch_err", error = %e);
+                error!(event = "recon_consumer.batch_err", error = %e);
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         }
@@ -38,7 +42,7 @@ impl Consumer {
             .arg("CREATE").arg(STREAM).arg(GROUP).arg("$").arg("MKSTREAM")
             .query_async(&mut self.redis).await;
         match res {
-            Ok(_) => { info!(event = "relays_consumer.group_created"); Ok(()) }
+            Ok(_) => { info!(event = "recon_consumer.group_created"); Ok(()) }
             Err(e) if e.to_string().contains("BUSYGROUP") => Ok(()),
             Err(e) => Err(e.into()),
         }
@@ -71,38 +75,42 @@ impl Consumer {
 
     async fn process_one(&mut self, id: String, kv: Vec<redis::Value>) -> Result<()> {
         let Some(json) = extract_field(&kv, "json") else {
-            warn!(event = "relays_consumer.no_json", id = %id);
+            warn!(event = "recon_consumer.no_json", id = %id);
             let _: () = self.redis.xack(STREAM, GROUP, &id).await?;
             return Ok(());
         };
-        let opp: Opportunity = match serde_json::from_str(&json) {
-            Ok(o) => o,
+        #[derive(serde::Deserialize)]
+        struct Combined { opportunity: Opportunity, execution: ExecutionResult }
+        let combined: Combined = match serde_json::from_str(&json) {
+            Ok(c) => c,
             Err(e) => {
-                warn!(event = "relays_consumer.parse_err", id = %id, error = %e);
+                warn!(event = "recon_consumer.parse_err", id = %id, error = %e);
                 let _: () = self.redis.xack(STREAM, GROUP, &id).await?;
                 return Ok(());
             }
         };
 
-        let result = self.engine.execute(&opp).await;
-        debug!(event = "relays_consumer.executed", opp = %opp.id, status = ?result.status);
+        let report = pnl_engine::compute(
+            &combined.opportunity, &combined.execution,
+            self.provider.as_ref(),
+            self.cfg.receipt_fetch_timeout_ms,
+        ).await;
+        debug!(event = "recon_consumer.computed", opp = %combined.opportunity.id,
+               variance_pct = ?report.variance_pct, fail = ?report.fail_reason);
 
-        if let Err(e) = persist_execution(&self.pool, &result, opp.chain_id as i64).await {
-            error!(event = "relays_consumer.persist_err", opp = %opp.id, error = %e);
-            // Do NOT ack → retry
-            return Ok(());
+        // Persist the report (even on fail, to record the attempt).
+        if let Err(e) = persist_recon_report(&self.pool, &report).await {
+            error!(event = "recon_consumer.persist_err", opp = %combined.opportunity.id, error = %e);
+            return Ok(()); // don't ack; retry
         }
 
-        // Publish to arbx:opps:executed for recon (S6).
-        let payload = serde_json::json!({
-            "opportunity": opp,
-            "execution": result,
-        });
-        let payload_s = serde_json::to_string(&payload).unwrap_or_default();
-        let _: redis::RedisResult<String> = redis::cmd("XADD")
-            .arg("arbx:opps:executed").arg("MAXLEN").arg("~").arg(10_000)
-            .arg("*").arg("json").arg(payload_s)
-            .query_async(&mut self.redis).await;
+        // Variance check → risk_event
+        if let Some(evt) = variance::check(&report, self.cfg.variance_threshold_pct) {
+            if let Err(e) = insert_risk_event(&self.pool, &evt.event_type, &evt.severity,
+                                              evt.payload, evt.trace_id, evt.opportunity_id).await {
+                warn!(event = "recon_consumer.risk_event_err", error = %e);
+            }
+        }
 
         let _: () = self.redis.xack(STREAM, GROUP, &id).await.context("xack")?;
         Ok(())
