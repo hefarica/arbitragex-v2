@@ -12,6 +12,7 @@ use crate::signer::Signer;
 use anyhow::{Context, Result};
 use ethers::abi::{encode, Token};
 use ethers::prelude::*;
+use ethers::core::types::transaction::eip2718::TypedTransaction;
 use shared_rs::chains::{routers_for_chain, RouterKind};
 use shared_rs::contracts::{Opportunity, StrategyKind};
 use std::sync::Arc;

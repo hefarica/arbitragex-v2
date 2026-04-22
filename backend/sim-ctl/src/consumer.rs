@@ -93,14 +93,14 @@ impl Consumer {
         let json = extract_field(&kv, "json");
         let Some(json) = json else {
             warn!(event = "sim_consumer.invalid_msg_no_json", id=%id);
-            let _: () = self.redis.xack(STREAM_IN, GROUP, &id).await?;
+            let _: () = self.redis.xack::<_,_,&[&str],_>(STREAM_IN, GROUP, &[id.as_str()]).await?;
             return Ok(());
         };
         let opportunity: Opportunity = match serde_json::from_str(&json) {
             Ok(o) => o,
             Err(e) => {
                 warn!(event = "sim_consumer.invalid_msg_parse", id=%id, error=%e);
-                let _: () = self.redis.xack(STREAM_IN, GROUP, &id).await?;
+                let _: () = self.redis.xack::<_,_,&[&str],_>(STREAM_IN, GROUP, &[id.as_str()]).await?;
                 return Ok(());
             }
         };
@@ -121,7 +121,7 @@ impl Consumer {
                 .query_async(&mut self.redis).await;
         }
 
-        let _: () = self.redis.xack(STREAM_IN, GROUP, &id).await.context("xack")?;
+        let _: () = self.redis.xack::<_,_,&[&str],_>(STREAM_IN, GROUP, &[id.as_str()]).await.context("xack")?;
         Ok(())
     }
 }

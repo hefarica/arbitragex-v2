@@ -10,6 +10,7 @@ use crate::tx_builder::{build_probe, BuildError};
 use chrono::Utc;
 use ethers::abi::{decode as abi_decode, ParamType};
 use ethers::prelude::*;
+use ethers::core::types::transaction::eip2718::TypedTransaction;
 use shared_rs::contracts::{Opportunity, SimulationResult, SimulatorKind, StrategyKind};
 use std::time::Duration;
 use tokio::time::timeout;
