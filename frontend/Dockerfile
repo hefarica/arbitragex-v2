@@ -21,5 +21,6 @@ COPY --from=builder /build/frontend/public /app/frontend/public
 USER arbx
 WORKDIR /app/frontend
 EXPOSE 5173
+# node_modules is hoisted to /app/node_modules by npm workspaces.
 ENTRYPOINT ["/usr/bin/tini","--"]
-CMD ["node","node_modules/next/dist/bin/next","start","-p","5173"]
+CMD ["node","/app/node_modules/next/dist/bin/next","start","-p","5173"]

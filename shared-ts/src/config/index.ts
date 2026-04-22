@@ -53,6 +53,18 @@ const SimulationCfg = z.object({
   probe_amount_fraction: z.number().min(0).max(1),
 }).strict();
 
+const ReconCfg = z.object({
+  pnl_source_default: z.enum(["native_only","oracle_chainlink","oracle_uniswap_twap"]),
+  variance_threshold_pct: z.number().nonnegative(),
+  receipt_fetch_timeout_ms: z.number().int().min(100),
+  aggregator_interval_seconds: z.number().int().min(30),
+  strategy_score_window_hours: z.number().int().min(1),
+  anomaly_window_minutes: z.number().int().min(1),
+  anomaly_min_samples: z.number().int().min(1),
+  anomaly_revert_rate_pct: z.number().min(0).max(100),
+  auto_trip_on_high_revert_rate: z.boolean(),
+}).strict();
+
 export const AppConfigSchema = z.object({
   system: z.object({
     env: z.enum(["development","staging","production","production-like"]),
@@ -89,6 +101,7 @@ export const AppConfigSchema = z.object({
   token_safety: TokenSafetyCfg,
   circuit_breakers: z.array(CircuitBreakerCfg),
   simulation: SimulationCfg,
+  recon: ReconCfg.optional(),
 }).strict();
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
