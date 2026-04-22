@@ -29,7 +29,10 @@ services:
       POSTGRES_DB: arbitragex
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-    ports: ["5432:5432"]
+    # SECURITY: bind to loopback only. Never expose postgres to 0.0.0.0 — previous
+    # incident: Akira ransomware scanned port, dropped DB with default password.
+    # Internal containers resolve via docker DNS over the `arbx-net` network.
+    ports: ["127.0.0.1:5432:5432"]
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ../database/init:/docker-entrypoint-initdb.d:ro
@@ -44,7 +47,8 @@ services:
   redis:
     image: redis:7.2
     command: ["redis-server","--save","","--appendonly","no"]
-    ports: ["6379:6379"]
+    # SECURITY: loopback only. Same reasoning as postgres.
+    ports: ["127.0.0.1:6379:6379"]
     volumes: [redis_data:/data]
     healthcheck:
       test: ["CMD","redis-cli","PING"]
