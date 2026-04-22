@@ -96,6 +96,31 @@ app.get("/status", (c) => proxy(c, "/status", "arbx:cache:status", 2));
 app.get("/api/opportunities/live", (c) => proxy(c, "/api/v1/opportunities/live", "arbx:cache:opps", 2));
 // Risk alerts view (read-only). No cache in S1; S3 adds.
 app.get("/api/risk/alerts", (c) => proxy(c, "/api/v1/risk/alerts"));
+// S7: executions feed, recon summary, config view.
+app.get("/api/executions/recent", (c) => proxy(c, "/api/v1/executions/recent", "arbx:cache:execs", 5));
+app.get("/api/recon/summary",    (c) => proxy(c, "/api/v1/recon/summary",    "arbx:cache:recon", 10));
+app.get("/api/config/current",   (c) => proxy(c, "/api/v1/config/current",   "arbx:cache:config", 30));
+
+// S7: admin kill-switch POST. Forwards caller's x-arbx-admin-token in addition
+// to the edge token. Rejected by api-server if the admin token is missing/wrong.
+app.post("/admin/killswitch", async (c) => {
+  const adminToken = c.req.header("x-arbx-admin-token");
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const body = await c.req.text();
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/admin/killswitch`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": adminToken,
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    },
+    body,
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 401 | 403 | 500 | 502);
+});
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError((err, c) => {

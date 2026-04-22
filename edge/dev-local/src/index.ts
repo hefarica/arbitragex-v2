@@ -85,6 +85,34 @@ async function proxy(path: string, req: express.Request, res: express.Response) 
 app.get("/status", (req, res) => proxy("/status", req, res));
 app.get("/api/opportunities/live", (req, res) => proxy("/api/v1/opportunities/live", req, res));
 app.get("/api/risk/alerts", (req, res) => proxy("/api/v1/risk/alerts", req, res));
+// S7: new operator-console endpoints.
+app.get("/api/executions/recent", (req, res) => proxy("/api/v1/executions/recent", req, res));
+app.get("/api/recon/summary", (req, res) => proxy("/api/v1/recon/summary", req, res));
+app.get("/api/config/current", (req, res) => proxy("/api/v1/config/current", req, res));
+
+// S7: admin kill-switch POST. Forwards caller's x-arbx-admin-token in addition
+// to the edge token. Rejected by api-server if the admin token is missing/wrong.
+app.use(express.json({ limit: "64kb" }));
+app.post("/admin/killswitch", async (req, res) => {
+  const adminToken = req.header("x-arbx-admin-token");
+  if (!adminToken) { res.status(401).json({ error: "missing_admin_token" }); return; }
+  try {
+    const upstream = await fetch(`${API_SERVER_URL}/admin/killswitch`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-arbx-edge-token": ARBX_EDGE_TOKEN,
+        "x-arbx-admin-token": adminToken,
+        "x-arbx-trace-id": (req as express.Request & { traceId?: string }).traceId ?? "",
+      },
+      body: JSON.stringify(req.body ?? {}),
+    });
+    const text = await upstream.text();
+    res.status(upstream.status).setHeader("content-type", upstream.headers.get("content-type") ?? "application/json").send(text);
+  } catch (e) {
+    res.status(502).json({ error: "upstream_unreachable", detail: (e as Error).message });
+  }
+});
 
 const PORT = Number(process.env["EDGE_PORT"] ?? 8787);
 app.listen(PORT, () => {

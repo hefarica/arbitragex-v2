@@ -217,6 +217,171 @@ app.get("/admin/scoring/weights", requireAdminToken(ARBX_ADMIN_TOKEN), (_req, re
   res.status(200).json(cfg.scoring);
 });
 
+// ─────── Sprint 7: public v1 read endpoints consumed by frontend + edge ───────
+//
+// Contract: every endpoint below must return HTTP 503 with { error: "db_unavailable" }
+// when the pool is null or a query fails. NEVER synthesize data.
+
+function requireDbPool(): pg.Pool | null {
+  return pool;
+}
+
+app.get("/api/v1/opportunities/live", async (req, res) => {
+  const p = requireDbPool();
+  if (!p) { res.status(503).json({ error: "db_unavailable", detail: "DATABASE_URL not configured" }); return; }
+  const limit = Math.max(1, Math.min(200, Number(req.query["limit"] ?? 50)));
+  try {
+    const q = await p.query(
+      `SELECT id, chain_id, strategy_kind, dex_a, dex_b, pair_symbol,
+              token_in, token_out, amount_in_wei::text AS amount_in_wei,
+              expected_profit_usd::float AS expected_profit_usd,
+              roi_pct::float AS roi_pct, risk_score::float AS risk_score,
+              block_number, status, detected_at, trace_id
+         FROM opportunities
+        WHERE status IN ('detected','validated','simulated','scored')
+        ORDER BY detected_at DESC
+        LIMIT $1`, [limit],
+    );
+    res.status(200).json({
+      count: q.rows.length,
+      window: "latest",
+      items: q.rows,
+      ts: new Date().toISOString(),
+    });
+  } catch (e) {
+    logger.warn({ event: "opportunities.live.query_failed", err: (e as Error).message });
+    res.status(503).json({ error: "query_failed", detail: (e as Error).message });
+  }
+});
+
+app.get("/api/v1/risk/alerts", async (req, res) => {
+  const p = requireDbPool();
+  if (!p) { res.status(503).json({ error: "db_unavailable" }); return; }
+  const hours = Math.max(1, Math.min(168, Number(req.query["hours"] ?? 24)));
+  try {
+    const q = await p.query(
+      `SELECT id, event_type, severity, source_service, payload,
+              trace_id, opportunity_id, created_at
+         FROM risk_events
+        WHERE severity IN ('warning','critical')
+          AND created_at >= NOW() - ($1::text || ' hours')::interval
+        ORDER BY created_at DESC
+        LIMIT 500`, [String(hours)],
+    );
+    const ks = await killSwitch.state().catch(() => null);
+    res.status(200).json({
+      window_hours: hours,
+      killswitch: ks,
+      alerts: q.rows,
+      ts: new Date().toISOString(),
+    });
+  } catch (e) {
+    logger.warn({ event: "risk.alerts.query_failed", err: (e as Error).message });
+    res.status(503).json({ error: "query_failed", detail: (e as Error).message });
+  }
+});
+
+app.get("/api/v1/executions/recent", async (req, res) => {
+  const p = requireDbPool();
+  if (!p) { res.status(503).json({ error: "db_unavailable" }); return; }
+  const limit = Math.max(1, Math.min(500, Number(req.query["limit"] ?? 50)));
+  try {
+    const q = await p.query(
+      `SELECT e.id, e.tx_hash, e.bundle_hash, e.relay_name, e.status,
+              e.block_included,
+              e.gas_used_wei::text         AS gas_used_wei,
+              e.gas_price_effective_wei::text AS gas_price_effective_wei,
+              e.expected_profit_usd::float AS expected_profit_usd,
+              e.actual_profit_usd::float   AS actual_profit_usd,
+              e.error_message, e.trace_id, e.submitted_at, e.confirmed_at,
+              o.chain_id, o.strategy_kind, o.pair_symbol
+         FROM executions e
+         JOIN opportunities o ON o.id = e.opportunity_id
+        ORDER BY e.submitted_at DESC
+        LIMIT $1`, [limit],
+    );
+    res.status(200).json({
+      count: q.rows.length,
+      items: q.rows,
+      ts: new Date().toISOString(),
+    });
+  } catch (e) {
+    logger.warn({ event: "executions.recent.query_failed", err: (e as Error).message });
+    res.status(503).json({ error: "query_failed", detail: (e as Error).message });
+  }
+});
+
+app.get("/api/v1/recon/summary", async (req, res) => {
+  const p = requireDbPool();
+  if (!p) { res.status(503).json({ error: "db_unavailable" }); return; }
+  const hours = Math.max(1, Math.min(168, Number(req.query["hours"] ?? 1)));
+  try {
+    const [agg, top, anomalies] = await Promise.all([
+      p.query(
+        `SELECT COUNT(*)::int AS total,
+                SUM(CASE WHEN status='included' THEN 1 ELSE 0 END)::int AS included,
+                SUM(CASE WHEN status='reverted' THEN 1 ELSE 0 END)::int AS reverted,
+                SUM(CASE WHEN status='dropped'  THEN 1 ELSE 0 END)::int AS dropped,
+                AVG(CASE WHEN status='included' AND actual_profit_usd IS NOT NULL
+                         THEN actual_profit_usd END)::float           AS avg_pnl_included_usd,
+                AVG(CASE WHEN confirmed_at IS NOT NULL
+                         THEN EXTRACT(EPOCH FROM (confirmed_at - submitted_at)) * 1000.0 END)::float
+                                                                       AS avg_confirm_latency_ms
+           FROM executions
+          WHERE submitted_at >= NOW() - ($1::text || ' hours')::interval`, [String(hours)],
+      ),
+      p.query(
+        `SELECT strategy_kind, chain_id, sample_count,
+                success_rate::float AS success_rate,
+                revert_rate::float  AS revert_rate,
+                avg_profit_usd::float AS avg_profit_usd,
+                score::float AS score,
+                window_end
+           FROM strategy_scores
+          WHERE window_end >= NOW() - ($1::text || ' hours')::interval
+          ORDER BY score DESC NULLS LAST, window_end DESC
+          LIMIT 10`, [String(Math.max(24, hours))],
+      ),
+      p.query(
+        `SELECT event_type, severity, source_service, payload, created_at
+           FROM risk_events
+          WHERE severity = 'critical'
+            AND created_at >= NOW() - INTERVAL '24 hours'
+          ORDER BY created_at DESC
+          LIMIT 20`,
+      ),
+    ]);
+    const row = agg.rows[0] ?? { total: 0, included: 0, reverted: 0, dropped: 0,
+                                  avg_pnl_included_usd: null, avg_confirm_latency_ms: null };
+    const revertRate = row.total > 0 ? (row.reverted / row.total) : null;
+    res.status(200).json({
+      window_hours: hours,
+      totals: row,
+      revert_rate: revertRate,
+      top_strategies: top.rows,
+      critical_anomalies_24h: anomalies.rows,
+      ts: new Date().toISOString(),
+    });
+  } catch (e) {
+    logger.warn({ event: "recon.summary.query_failed", err: (e as Error).message });
+    res.status(503).json({ error: "query_failed", detail: (e as Error).message });
+  }
+});
+
+app.get("/api/v1/config/current", (_req, res) => {
+  res.status(200).json({
+    system: cfg.system,
+    risk: cfg.risk,
+    execution: cfg.execution,
+    observability: cfg.observability,
+    chains: cfg.chains,
+    relays: cfg.relays,
+    scoring: cfg.scoring,
+    token_safety: cfg.token_safety,
+    circuit_breakers: cfg.circuit_breakers,
+  });
+});
+
 const PORT = Number(process.env["API_PORT"] ?? 8080);
 app.listen(PORT, () => {
   logger.info({ event: "service.boot", port: PORT, env: cfg.system.env,
