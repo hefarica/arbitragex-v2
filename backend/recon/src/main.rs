@@ -67,7 +67,8 @@ async fn pnl_one(
     State(st): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> impl IntoResponse {
-    let row = sqlx::query!(
+    use sqlx::Row;
+    let row = sqlx::query(
         r#"
         SELECT o.id AS opportunity_id,
                COALESCE(o.expected_profit_usd, 0)::FLOAT8 AS expected_profit_usd,
@@ -79,22 +80,24 @@ async fn pnl_one(
         ORDER BY e.submitted_at DESC NULLS LAST
         LIMIT 1
         "#,
-        id
-    ).fetch_optional(&st.db).await;
+    )
+    .bind(id)
+    .fetch_optional(&st.db).await;
 
     match row {
         Ok(Some(r)) => {
-            let expected = r.expected_profit_usd.unwrap_or(0.0);
-            let actual   = r.actual_profit_usd.unwrap_or(0.0);
+            let expected: f64 = r.try_get("expected_profit_usd").unwrap_or(0.0);
+            let actual: f64 = r.try_get("actual_profit_usd").unwrap_or(0.0);
+            let created_at: Option<DateTime<Utc>> = r.try_get("created_at").ok();
             let variance_usd = actual - expected;
             let variance_pct = if expected.abs() > 1e-9 { (variance_usd / expected) * 100.0 } else { 0.0 };
             (StatusCode::OK, Json(serde_json::to_value(PnlRow {
-                opportunity_id: r.opportunity_id,
+                opportunity_id: r.try_get::<Uuid, _>("opportunity_id").unwrap_or(id),
                 expected_profit_usd: expected,
                 actual_profit_usd: actual,
                 variance_usd,
                 variance_pct,
-                created_at: r.created_at.unwrap_or_else(Utc::now),
+                created_at: created_at.unwrap_or_else(Utc::now),
             }).unwrap()))
         }
         Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({
@@ -110,7 +113,8 @@ async fn pnl_summary(
     State(st): State<Arc<AppState>>,
     Query(q): Query<SummaryQuery>,
 ) -> impl IntoResponse {
-    let row = sqlx::query!(
+    use sqlx::Row;
+    let row = sqlx::query(
         r#"
         SELECT COUNT(*)::INT8 AS sample_count,
                COALESCE(SUM(o.expected_profit_usd), 0)::FLOAT8 AS total_expected_usd,
@@ -124,15 +128,16 @@ async fn pnl_summary(
         JOIN opportunities o ON o.id = e.opportunity_id
         WHERE e.submitted_at >= $1 AND e.status = 'included'
         "#,
-        q.since
-    ).fetch_one(&st.db).await;
+    )
+    .bind(q.since)
+    .fetch_one(&st.db).await;
 
     match row {
         Ok(r) => (StatusCode::OK, Json(serde_json::to_value(PnlSummary {
-            sample_count: r.sample_count.unwrap_or(0),
-            total_expected_usd: r.total_expected_usd.unwrap_or(0.0),
-            total_actual_usd: r.total_actual_usd.unwrap_or(0.0),
-            avg_variance_pct: r.avg_variance_pct.unwrap_or(0.0),
+            sample_count: r.try_get::<i64, _>("sample_count").unwrap_or(0),
+            total_expected_usd: r.try_get::<f64, _>("total_expected_usd").unwrap_or(0.0),
+            total_actual_usd: r.try_get::<f64, _>("total_actual_usd").unwrap_or(0.0),
+            avg_variance_pct: r.try_get::<f64, _>("avg_variance_pct").unwrap_or(0.0),
             since: q.since,
         }).unwrap())),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
