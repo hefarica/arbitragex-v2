@@ -154,10 +154,12 @@ async fn main() -> anyhow::Result<()> {
     let port: u16 = std::env::var("RECON_PORT")
         .ok().and_then(|v| v.parse().ok()).unwrap_or(3004);
 
-    let app = build_health_router(ServiceInfo::new(SERVICE_NAME, SERVICE_VERSION))
+    let pnl_router = Router::new()
         .route("/pnl/:id", get(pnl_one))
         .route("/pnl/summary", get(pnl_summary))
         .with_state(state);
+    let app = build_health_router(ServiceInfo::new(SERVICE_NAME, SERVICE_VERSION))
+        .merge(pnl_router);
 
     info!(event = "service.boot", service = SERVICE_NAME, env = %cfg.system.env, port,
           "recon listening — reads DB; 404 when no row (S1)");

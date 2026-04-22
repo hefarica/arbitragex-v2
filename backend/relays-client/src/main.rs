@@ -140,9 +140,11 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let port: u16 = std::env::var("RELAYS_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(3005);
-    let app = build_health_router(ServiceInfo::new(SERVICE, VERSION))
+    let exec_router = Router::new()
         .route("/execute", post(execute_handler))
         .with_state(state);
+    let app = build_health_router(ServiceInfo::new(SERVICE, VERSION))
+        .merge(exec_router);
 
     info!(
         event = "service.boot",

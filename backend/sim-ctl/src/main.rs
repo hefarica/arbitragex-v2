@@ -115,9 +115,11 @@ async fn main() -> anyhow::Result<()> {
 
     // HTTP server
     let port: u16 = std::env::var("SIM_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(3003);
-    let app = build_health_router(ServiceInfo::new(SERVICE, VERSION))
+    let sim_router = Router::new()
         .route("/simulate", post(simulate_handler))
         .with_state(state);
+    let app = build_health_router(ServiceInfo::new(SERVICE, VERSION))
+        .merge(sim_router);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!(event = "service.boot", service = SERVICE, env = %cfg.system.env, port,
