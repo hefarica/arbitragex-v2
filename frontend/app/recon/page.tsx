@@ -8,17 +8,21 @@ import { CriticalAnomalies } from "@/features/recon/CriticalAnomalies";
 import { AttemptsBreakdown } from "@/features/charts/AttemptsBreakdown";
 import { RevertRateGauge } from "@/features/charts/RevertRateGauge";
 import { StrategyScoreBarChart } from "@/features/charts/StrategyScoreBarChart";
+import { ReconPnLChart } from "@/features/charts/ReconPnLChart";
 import { MotionItem, MotionStagger } from "@/components/motion";
-import { getReconSummary } from "@/lib/api-client";
+import { getReconSummary, getReconTimeseries } from "@/lib/api-client";
 import { fmtTime } from "@/lib/formatters";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function ReconPage() {
-  const res = await getReconSummary(1);
+  const [summaryRes, tsRes] = await Promise.all([
+    getReconSummary(1),
+    getReconTimeseries(24, 60),
+  ]);
 
-  if (!res.ok) {
+  if (!summaryRes.ok) {
     return (
       <>
         <PageHeader
@@ -29,13 +33,13 @@ export default async function ReconPage() {
         <Alert variant="destructive">
           <AlertCircleIcon />
           <AlertTitle>edge error</AlertTitle>
-          <AlertDescription><code className="font-mono text-xs">{res.error}</code></AlertDescription>
+          <AlertDescription><code className="font-mono text-xs">{summaryRes.error}</code></AlertDescription>
         </Alert>
       </>
     );
   }
 
-  const s = res.data;
+  const s = summaryRes.data;
 
   return (
     <>
@@ -47,6 +51,20 @@ export default async function ReconPage() {
       />
 
       <ReconKpiGrid summary={s} />
+
+      {tsRes.ok ? (
+        <div className="mb-8">
+          <ReconPnLChart response={tsRes.data} />
+        </div>
+      ) : (
+        <Alert variant="destructive" className="mb-8">
+          <AlertCircleIcon />
+          <AlertTitle>timeseries unavailable</AlertTitle>
+          <AlertDescription>
+            <code className="font-mono text-xs">{tsRes.error}</code>
+          </AlertDescription>
+        </Alert>
+      )}
 
       <MotionStagger className="mb-8 grid gap-4 lg:grid-cols-3">
         <MotionItem><AttemptsBreakdown totals={s.totals} /></MotionItem>

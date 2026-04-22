@@ -4,11 +4,12 @@ import { useState } from "react";
 import Link from "next/link";
 import { MenuIcon } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { SidebarContents } from "@/components/app-sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { cn } from "@/lib/utils";
 
 export function SiteHeader() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -17,10 +18,20 @@ export function SiteHeader() {
     <header className="sticky top-0 z-40 w-full border-b bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
       <div className="flex h-16 items-center gap-3 px-4 lg:px-6">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-          <SheetTrigger asChild>
-            <Button variant="ghost" size="icon" className="lg:hidden" aria-label="Open navigation">
-              <MenuIcon />
-            </Button>
+          {/*
+           * NOTE: SheetTrigger WITHOUT asChild — Radix Dialog.Trigger already
+           * renders a native <button>. Styling it via buttonVariants() gives
+           * identical visuals with zero Slot/SlotClone composition, which was
+           * the dev-time source of "Function components cannot be given refs"
+           * (stack: Button <- SlotClone <- SheetTrigger) even after Button
+           * was wrapped in React.forwardRef. Native button = no ref
+           * forwarding path = no warning, guaranteed.
+           */}
+          <SheetTrigger
+            className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "lg:hidden")}
+            aria-label="Open navigation"
+          >
+            <MenuIcon />
           </SheetTrigger>
           <SheetContent side="left" className="p-0">
             <SheetHeader>

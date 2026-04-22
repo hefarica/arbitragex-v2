@@ -7,6 +7,15 @@ export default function Loading() {
     <>
       <SkeletonPageHeader />
       <SkeletonKpiGrid count={6} />
+      <Card className="mb-8">
+        <CardHeader>
+          <Skeleton className="h-5 w-48" />
+          <Skeleton className="mt-2 h-3 w-80" />
+        </CardHeader>
+        <CardContent>
+          <Skeleton className="h-64 w-full" />
+        </CardContent>
+      </Card>
       <div className="mb-8 grid gap-4 lg:grid-cols-3">
         {Array.from({ length: 3 }).map((_, i) => (
           <Card key={i}>

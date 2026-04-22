@@ -157,6 +157,8 @@ export type {
   ExecutionRow,
   ExecutionsRecent,
   ReconSummary,
+  ReconTimeseriesPoint,
+  ReconTimeseriesResponse,
   AppConfigView,
   RelayRow,
   RelaysResponse,
@@ -183,6 +185,13 @@ export function getExecutionsRecent(limit = 50) {
 
 export function getReconSummary(hours = 1) {
   return getValidated(`/api/recon/summary?hours=${hours}`, S.ReconSummarySchema);
+}
+
+export function getReconTimeseries(hours = 24, bucketMinutes = 60) {
+  return getValidated(
+    `/api/recon/timeseries?hours=${hours}&bucket_minutes=${bucketMinutes}`,
+    S.ReconTimeseriesResponseSchema,
+  );
 }
 
 export function getConfigCurrent() {

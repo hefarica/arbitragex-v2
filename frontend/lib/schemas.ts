@@ -128,6 +128,22 @@ export const ReconSummarySchema = z.object({
   ts: z.string(),
 });
 
+export const ReconTimeseriesPointSchema = z.object({
+  bucket_start: z.string(),
+  attempts: z.number(),
+  included: z.number(),
+  reverted: z.number(),
+  avg_pnl_included_usd: z.number().nullable(),
+  revert_rate: z.number().nullable(),
+});
+
+export const ReconTimeseriesResponseSchema = z.object({
+  window_hours: z.number(),
+  bucket_minutes: z.number(),
+  points: z.array(ReconTimeseriesPointSchema),
+  ts: z.string(),
+});
+
 export const AppConfigViewSchema = z.object({
   system: z.object({
     env: z.string(),
@@ -216,6 +232,8 @@ export type RiskAlertsResponse = z.infer<typeof RiskAlertsResponseSchema>;
 export type ExecutionRow = z.infer<typeof ExecutionRowSchema>;
 export type ExecutionsRecent = z.infer<typeof ExecutionsRecentSchema>;
 export type ReconSummary = z.infer<typeof ReconSummarySchema>;
+export type ReconTimeseriesPoint = z.infer<typeof ReconTimeseriesPointSchema>;
+export type ReconTimeseriesResponse = z.infer<typeof ReconTimeseriesResponseSchema>;
 export type AppConfigView = z.infer<typeof AppConfigViewSchema>;
 export type RelayRow = z.infer<typeof RelayRowSchema>;
 export type RelaysResponse = z.infer<typeof RelaysResponseSchema>;
