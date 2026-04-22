@@ -1,45 +1,56 @@
-import { getRiskAlerts } from "../../lib/api-client";
+import { getRiskAlerts, type RiskAlertRow } from "../../lib/api-client";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const SEV_COLOR: Record<string, string> = {
-  critical: "#ef4444",
-  warning: "#f59e0b",
-  info: "#60a5fa",
-};
+function sevBadge(s: RiskAlertRow["severity"]): string {
+  switch (s) {
+    case "critical": return "badge badge--danger";
+    case "warning":  return "badge badge--warning";
+    case "info":     return "badge badge--info";
+  }
+}
 
 export default async function RiskPage() {
   const res = await getRiskAlerts(24);
 
   if (!res.ok) {
     return (
-      <section>
-        <h1>Risk & alerts</h1>
-        <p style={{ color: "#f87171" }}>edge error: <code>{res.error}</code></p>
-      </section>
+      <>
+        <section className="hero">
+          <h1>Risk &amp; alerts</h1>
+          <p className="hero__lede">Circuit-breakers, anomalies, blacklist hits, kill-switch log.</p>
+        </section>
+        <div className="err">edge error: <code>{res.error}</code></div>
+      </>
     );
   }
 
   const { alerts, window_hours, killswitch, ts } = res.data;
 
   return (
-    <section>
-      <h1>Risk & alerts</h1>
-      <p style={{ color: "#9ca3af" }}>
-        Last {window_hours}h · snapshot {new Date(ts).toLocaleString()}
-      </p>
+    <>
+      <section className="hero">
+        <h1>Risk &amp; alerts</h1>
+        <p className="hero__lede">
+          Active kill-switch state and every risk event recorded by services in the last {window_hours}h.
+        </p>
+        <div className="hero__meta">
+          <span>window: last {window_hours}h</span>
+          <span>snapshot {new Date(ts).toLocaleTimeString()}</span>
+        </div>
+      </section>
 
       {killswitch && (
-        <div style={{ padding: 12, borderRadius: 6,
-                      background: killswitch.enabled ? "#2a1010" : "#0a2010",
-                      border: `1px solid ${killswitch.enabled ? "#ef4444" : "#22c55e"}`,
-                      marginBottom: 16 }}>
-          <strong style={{ color: killswitch.enabled ? "#ef4444" : "#22c55e" }}>
-            Kill-switch: {killswitch.enabled ? "ARMED" : "disabled"}
-          </strong>
-          {killswitch.reason && <> — reason: <em>{killswitch.reason}</em></>}
-          <div style={{ color: "#9ca3af", fontSize: 12 }}>
+        <div className={killswitch.enabled ? "banner banner--bad" : "banner banner--ok"}>
+          <div className="row">
+            <span className={killswitch.enabled ? "dot dot--danger" : "dot dot--success"} aria-hidden />
+            <span className="banner__title">
+              Kill-switch: {killswitch.enabled ? "ARMED — executions blocked" : "disabled — executions permitted"}
+            </span>
+          </div>
+          {killswitch.reason && <div>reason: <em>{killswitch.reason}</em></div>}
+          <div className="banner__meta">
             updated {new Date(killswitch.updated_at).toLocaleString()}
             {killswitch.triggered_by && <> · by <code>{killswitch.triggered_by}</code></>}
           </div>
@@ -48,40 +59,36 @@ export default async function RiskPage() {
 
       <h2>Recent events</h2>
       {alerts.length === 0 ? (
-        <p style={{ color: "#9ca3af" }}>no warnings or criticals in the last {window_hours}h.</p>
+        <div className="empty">
+          <strong>No warnings or criticals.</strong>
+          <div className="muted mt-2">Nothing of concern logged in the last {window_hours}h.</div>
+        </div>
       ) : (
-        <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
-          <thead>
-            <tr>
-              {["time", "severity", "type", "source", "details"].map((h) => (
-                <th key={h} align="left" style={{ padding: "4px 8px", borderBottom: "1px solid #1f2937" }}>
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {alerts.map((a) => (
-              <tr key={a.id}>
-                <td style={{ padding: "4px 8px", borderBottom: "1px solid #111827", color: "#9ca3af" }}>
-                  {new Date(a.created_at).toLocaleTimeString()}
-                </td>
-                <td style={{ padding: "4px 8px", borderBottom: "1px solid #111827",
-                             color: SEV_COLOR[a.severity] ?? "#e7e9eb" }}>
-                  {a.severity}
-                </td>
-                <td style={{ padding: "4px 8px", borderBottom: "1px solid #111827" }}>{a.event_type}</td>
-                <td style={{ padding: "4px 8px", borderBottom: "1px solid #111827" }}>{a.source_service}</td>
-                <td style={{ padding: "4px 8px", borderBottom: "1px solid #111827", fontFamily: "monospace",
-                             color: "#9ca3af", maxWidth: 400, overflow: "hidden", textOverflow: "ellipsis",
-                             whiteSpace: "nowrap" }}>
-                  {JSON.stringify(a.payload).slice(0, 120)}
-                </td>
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Severity</th>
+                <th>Type</th>
+                <th>Source</th>
+                <th>Details</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {alerts.map((a) => (
+                <tr key={a.id}>
+                  <td className="muted">{new Date(a.created_at).toLocaleTimeString()}</td>
+                  <td><span className={sevBadge(a.severity)}>{a.severity}</span></td>
+                  <td>{a.event_type}</td>
+                  <td className="mono">{a.source_service}</td>
+                  <td className="mono truncate">{JSON.stringify(a.payload).slice(0, 200)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
-    </section>
+    </>
   );
 }
