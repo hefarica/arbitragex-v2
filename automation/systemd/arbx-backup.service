@@ -1,0 +1,47 @@
+[Unit]
+Description=ArbitrageX v2 — nightly encrypted Postgres backup + offsite push
+Documentation=https://github.com/hefarica/arbitragex-v2/tree/main/docs/runbooks/db-restore.md
+Wants=network-online.target
+After=network-online.target
+# docker compose stack must be up; postgres reachable.
+After=docker.service
+
+[Service]
+Type=oneshot
+# Inputs — the operator provides these via /etc/arbx/backup.env, which is
+# rendered by vault-agent at boot. The file is mode 0600, owned by root.
+EnvironmentFile=/etc/arbx/backup.env
+
+# Paths inside the backup script:
+#   BACKUP_DIR            e.g. /var/backups/arbx
+#   AGE_RECIPIENT         operator age public key
+#   DATABASE_READONLY_URL postgres://arbx_ro:...@127.0.0.1:5432/arbitragex
+#   RETAIN_DAYS           e.g. 14
+#   RCLONE_REMOTE, RCLONE_BUCKET for offsite push
+
+WorkingDirectory=/opt/arbitragex-v2
+ExecStartPre=/usr/bin/install -d -m 0700 -o root -g root ${BACKUP_DIR}
+ExecStart=/opt/arbitragex-v2/automation/scripts/backup-pg.sh
+ExecStartPost=/opt/arbitragex-v2/automation/scripts/backup-offsite.sh
+
+# Hardening.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/var/backups/arbx /tmp
+CapabilityBoundingSet=
+AmbientCapabilities=
+# If you host-mount docker socket for PG access via a container, expand above.
+
+# Fail loudly — systemd will log the exit code and journal captures stdout/err.
+StandardOutput=journal
+StandardError=journal
+
+# Don't leave an in-flight backup if restart during run.
+KillMode=control-group
+TimeoutStartSec=30m
+
+[Install]
+WantedBy=multi-user.target
