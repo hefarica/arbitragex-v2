@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getStatus, toggleKillswitch, type KillSwitchState } from "../../lib/api-client";
+import { AlertCircleIcon, CheckCircle2Icon, RefreshCwIcon, ShieldCheckIcon, ShieldOffIcon } from "lucide-react";
+
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { PageHeader } from "@/components/page-header";
+import { getStatus, toggleKillswitch, type KillSwitchState } from "@/lib/api-client";
 
 export default function KillSwitchPage() {
   const [state, setState] = useState<KillSwitchState | null>(null);
@@ -13,7 +21,7 @@ export default function KillSwitchPage() {
   const [lastOutcome, setLastOutcome] = useState<string | null>(null);
 
   useEffect(() => {
-    const t = typeof window !== "undefined" ? window.localStorage.getItem("arbx_admin_token") ?? "" : "";
+    const t = typeof window !== "undefined" ? (window.localStorage.getItem("arbx_admin_token") ?? "") : "";
     setToken(t);
     void refresh();
   }, []);
@@ -43,89 +51,81 @@ export default function KillSwitchPage() {
 
   return (
     <>
-      <section className="hero">
-        <h1>Kill-switch</h1>
-        <p className="hero__lede">
-          Arming blocks every hot-path service from submitting new executions within ≤ 5&nbsp;s.
-          This is the first step of every incident runbook. Every toggle is recorded in the audit log.
-        </p>
-      </section>
+      <PageHeader
+        title="Kill-switch"
+        lede="Arming blocks every hot-path service from submitting new executions within ≤ 5 s. This is the first step of every incident runbook. Every toggle is recorded in the audit log."
+      />
 
-      {loading && <div className="muted">loading current state…</div>}
+      {loading && <p className="text-sm text-muted-foreground">loading current state…</p>}
 
       {state && (
-        <div className={state.enabled ? "banner banner--bad" : "banner banner--ok"}>
-          <div className="row">
-            <span className={state.enabled ? "dot dot--danger" : "dot dot--success"} aria-hidden />
-            <span className="banner__title">
-              {state.enabled ? "ARMED — executions blocked" : "DISABLED — executions permitted"}
-            </span>
-          </div>
-          {state.reason && <div>reason: <em>{state.reason}</em></div>}
-          <div className="banner__meta">
-            updated {new Date(state.updated_at).toLocaleString()}
-            {state.triggered_by && <> · by <code>{state.triggered_by}</code></>}
-          </div>
-        </div>
+        <Alert variant={state.enabled ? "destructive" : "success"} className="mb-6">
+          {state.enabled ? <ShieldOffIcon /> : <ShieldCheckIcon />}
+          <AlertTitle className="text-base">
+            {state.enabled ? "ARMED — executions blocked" : "DISABLED — executions permitted"}
+          </AlertTitle>
+          <AlertDescription>
+            {state.reason && <div>reason: <em>{state.reason}</em></div>}
+            <div className="text-xs">
+              updated {new Date(state.updated_at).toLocaleString()}
+              {state.triggered_by && <> · by <code className="font-mono">{state.triggered_by}</code></>}
+            </div>
+          </AlertDescription>
+        </Alert>
       )}
 
-      {error && <div className="err mt-4">error: <code>{error}</code></div>}
+      {error && (
+        <Alert variant="destructive" className="mb-4">
+          <AlertCircleIcon />
+          <AlertTitle>error</AlertTitle>
+          <AlertDescription><code className="font-mono text-xs">{error}</code></AlertDescription>
+        </Alert>
+      )}
       {lastOutcome && (
-        <div className="banner banner--ok mt-4">
-          <div>{lastOutcome}</div>
-        </div>
+        <Alert variant="success" className="mb-4">
+          <CheckCircle2Icon />
+          <AlertDescription>{lastOutcome}</AlertDescription>
+        </Alert>
       )}
 
-      <h2>Toggle</h2>
-      <div className="card max-w-form">
-        <div className="col gap-4">
-          <label className="label">
-            admin token (stored in localStorage)
-            <input
-              className="input"
+      <Card className="max-w-xl">
+        <CardHeader>
+          <CardTitle>Toggle</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-5">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="ks-token">admin token <span className="text-muted-foreground">(stored in localStorage)</span></Label>
+            <Input
+              id="ks-token"
               type="password"
               value={token}
               onChange={(e) => setToken(e.target.value)}
               autoComplete="off"
             />
-          </label>
-          <label className="label">
-            reason (required; goes to audit_log)
-            <input
-              className="input"
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="ks-reason">reason <span className="text-muted-foreground">(required — goes to audit_log)</span></Label>
+            <Input
+              id="ks-reason"
               type="text"
               value={reason}
               placeholder="e.g. investigating high revert rate"
               onChange={(e) => setReason(e.target.value)}
             />
-          </label>
-          <div className="row">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => onToggle(true)}
-              className="btn btn--danger"
-            >
-              Arm kill-switch
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => onToggle(false)}
-              className="btn btn--success"
-            >
-              Disable
-            </button>
-            <button
-              type="button"
-              onClick={() => void refresh()}
-              className="btn btn--ghost"
-            >
-              Refresh
-            </button>
           </div>
-        </div>
-      </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="destructive" disabled={busy} onClick={() => onToggle(true)}>
+              <ShieldOffIcon /> Arm kill-switch
+            </Button>
+            <Button type="button" variant="success" disabled={busy} onClick={() => onToggle(false)}>
+              <ShieldCheckIcon /> Disable
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => void refresh()}>
+              <RefreshCwIcon /> Refresh
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
     </>
   );
 }
