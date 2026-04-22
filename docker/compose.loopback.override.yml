@@ -1,0 +1,59 @@
+# ArbitrageX v2 — loopback-only port override.
+#
+# Use when running compose.dev.yml on a VPS with a public IP. Every host port
+# is force-rebound to 127.0.0.1 so the services are ONLY reachable over SSH
+# tunnels, never directly over the Internet. This mitigates the fact that the
+# dev-compose defaults (dev_admin_token, admin/admin Grafana, etc) would be
+# catastrophic if exposed publicly.
+#
+# Usage:
+#   docker compose -f docker/compose.dev.yml \
+#                  -f docker/compose.loopback.override.yml up -d
+#
+# Then from your laptop:
+#   ssh -N \
+#     -L 5173:127.0.0.1:5173 \
+#     -L 8787:127.0.0.1:8787 \
+#     -L 8080:127.0.0.1:8080 \
+#     -L 3000:127.0.0.1:3000 \
+#     -L 9090:127.0.0.1:9090 \
+#     -L 9093:127.0.0.1:9093 \
+#     arbx
+# (Keep the tunnel open, then open http://localhost:5173 in your browser.)
+
+name: arbitragex-v2
+
+services:
+  prometheus:
+    ports:
+      - "127.0.0.1:9090:9090"
+  grafana:
+    ports:
+      - "127.0.0.1:3000:3000"
+  alertmanager:
+    ports:
+      - "127.0.0.1:9093:9093"
+  loki:
+    ports:
+      - "127.0.0.1:3100:3100"
+  frontend:
+    ports:
+      - "127.0.0.1:5173:5173"
+  edge:
+    ports:
+      - "127.0.0.1:8787:8787"
+  api-server:
+    ports:
+      - "127.0.0.1:8080:8080"
+  sim-ctl:
+    ports:
+      - "127.0.0.1:3003:3003"
+  relays-client:
+    ports:
+      - "127.0.0.1:3005:3005"
+  recon:
+    ports:
+      - "127.0.0.1:3004:3004"
+  selector-api:
+    ports:
+      - "127.0.0.1:3002:3002"
