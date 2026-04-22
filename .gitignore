@@ -62,5 +62,11 @@ tmp/
 *.sqlite
 *.db
 
+# Playwright
+tests/e2e/node_modules/
+tests/e2e/playwright-report/
+tests/e2e/test-results/
+tests/e2e/.playwright-cache/
+
 # Docker
 docker-compose.override.yml

@@ -15,7 +15,9 @@
     "build": "npm run -ws build --if-present",
     "test": "npm run -ws test --if-present",
     "lint": "npm run -ws lint --if-present",
-    "typecheck": "npm run -ws typecheck --if-present"
+    "typecheck": "npm run -ws typecheck --if-present",
+    "e2e": "cd tests/e2e && npm install && npm run install-browsers && npm test",
+    "e2e:smoke": "cd tests/e2e && npm install && npm run install-browsers && npm run test:smoke"
   },
   "engines": {
     "node": ">=20.11"
