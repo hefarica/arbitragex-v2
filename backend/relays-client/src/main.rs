@@ -12,6 +12,7 @@ mod bundle_builder;
 mod consumer;
 mod nonce_manager;
 mod persistence;
+mod relay_catalog;
 mod relay_flashbots;
 mod signer;
 mod submit_engine;
@@ -111,22 +112,80 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let nonce = provider.clone().map(|p| Arc::new(NonceManager::new(p)));
+
+    // DB pool — required for reading the operator-owned relay catalog (migration
+    // 013). If DB is down at boot we still start the service and expose /health
+    // so the on-call can see the failure; the catalog is simply empty until DB
+    // is back and the service is restarted. No-hardcode doctrine: we never
+    // silently fall back to a baked-in relay URL.
+    let db_pool_opt: Option<sqlx::postgres::PgPool> = match std::env::var("DATABASE_URL") {
+        Ok(url) if !url.is_empty() => {
+            match PgPoolOptions::new().max_connections(4).connect(&url).await {
+                Ok(pool) => {
+                    info!(event = "db.connected", "postgres pool up");
+                    Some(pool)
+                }
+                Err(e) => {
+                    warn!(
+                        event = "db.connect_failed", error = %e,
+                        "continuing without DB — relay catalog will be empty until restart"
+                    );
+                    None
+                }
+            }
+        }
+        _ => {
+            warn!(
+                event = "db.not_configured",
+                "DATABASE_URL not set; relay catalog cannot be loaded, consumer will not spawn"
+            );
+            None
+        }
+    };
+
+    // Resolve flashbots endpoint under the no-hardcode doctrine. Order:
+    //   1. DB `relays` table (operator-owned catalog, migration 013).
+    //   2. FLASHBOTS_RELAY_URL env override (break-glass during onboarding).
+    //   3. Nothing → flashbots disabled + warn.
+    //
+    // cfg.relays (configs/app.toml) is NOT consulted anymore — the TOML block
+    // was reduced to a seed-only document in commit 0210d27 and the DB is
+    // authoritative from this point on.
     let flashbots = {
-        // No-hardcode doctrine: the Flashbots relay URL must come from one of
-        // the allowed sources — env var, config file, or (once Phase 0.5 R10
-        // lands) the DB `relays` catalog. We never fall back to the canonical
-        // Flashbots URL in code; silently calling a third-party relay without
-        // operator sign-off is a policy violation.
-        let endpoint = std::env::var("FLASHBOTS_RELAY_URL")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .or_else(|| cfg.relays.iter()
-                .find(|r| r.name == "flashbots" && r.enabled)
-                .and_then(|r| r.endpoint.clone())
-                .filter(|s| !s.is_empty()));
+        let mut endpoint: Option<String> = None;
+        let mut source: &'static str = "unset";
+
+        if let Some(pool) = db_pool_opt.as_ref() {
+            match relay_catalog::load_enabled(pool, chain_id as i32).await {
+                Ok(catalog) => {
+                    if let Some(fb) = relay_catalog::find_flashbots(&catalog, chain_id as i32) {
+                        endpoint = Some(fb.endpoint.clone());
+                        source = "db";
+                    }
+                    relay_catalog::warn_if_empty(&catalog, chain_id as i32);
+                }
+                Err(e) => {
+                    warn!(
+                        event = "relay_catalog.query_failed",
+                        error = %e,
+                        "could not load relay catalog from DB — will check env override only"
+                    );
+                }
+            }
+        }
+
+        if endpoint.is_none() {
+            if let Ok(url) = std::env::var("FLASHBOTS_RELAY_URL") {
+                if !url.is_empty() {
+                    endpoint = Some(url);
+                    source = "env";
+                }
+            }
+        }
+
         match endpoint {
             Some(url) => {
-                info!(event = "flashbots.configured", url = %url, "flashbots relay enabled");
+                info!(event = "flashbots.configured", url = %url, source, "flashbots relay enabled");
                 Some(Arc::new(FlashbotsClient::new(
                     url,
                     Duration::from_millis(cfg.execution.flashbots_submit_timeout_ms),
@@ -136,8 +195,9 @@ async fn main() -> anyhow::Result<()> {
                 warn!(
                     event = "flashbots.disabled",
                     reason = "no_endpoint",
-                    "flashbots relay disabled: no endpoint in env (FLASHBOTS_RELAY_URL) or config. \
-                     Set it in onboarding step 4."
+                    "flashbots relay disabled: no row in relays table for chain {chain_id} and \
+                     no FLASHBOTS_RELAY_URL env override. Populate via POST /admin/relays \
+                     (onboarding step 4).",
                 );
                 None
             }
@@ -175,32 +235,40 @@ async fn main() -> anyhow::Result<()> {
         "relays-client listening"
     );
 
-    // Consumer spawned only when both signer and provider are available AND
-    // DATABASE_URL is set.
-    if signer.is_some() && provider.is_some() {
-        if let Ok(db_url) = std::env::var("DATABASE_URL") {
-            if !db_url.is_empty() {
-                let pool = PgPoolOptions::new().max_connections(4).connect(&db_url).await?;
-                let redis_client = redis::Client::open(redis_url.clone())?;
-                let redis_conn = redis_client.get_connection_manager().await?;
-                let consumer = consumer::Consumer {
-                    redis: redis_conn,
-                    pool,
-                    engine: SubmitEngine {
-                        signer, provider, nonce, flashbots,
-                        kill_switch: killswitch.clone(),
-                        cfg: cfg.clone(),
-                    },
-                    consumer_name: std::env::var("HOSTNAME").unwrap_or_else(|_| "relay-1".into()),
-                };
-                tokio::spawn(async move {
-                    if let Err(e) = consumer.run().await {
-                        tracing::error!(event = "relays_consumer.fatal", error = %e);
-                    }
-                });
-                info!(event = "relays_consumer.spawned");
+    // Consumer spawns only when signer + provider + DB pool are all present.
+    // We reuse the pool opened above for the relay catalog lookup, so we don't
+    // double up connections.
+    if signer.is_some() && provider.is_some() && db_pool_opt.is_some() {
+        let pool = db_pool_opt.clone().unwrap();
+        let redis_client = redis::Client::open(redis_url.clone())?;
+        let redis_conn = redis_client.get_connection_manager().await?;
+        let consumer = consumer::Consumer {
+            redis: redis_conn,
+            pool,
+            engine: SubmitEngine {
+                signer: signer.clone(),
+                provider: provider.clone(),
+                nonce,
+                flashbots,
+                kill_switch: killswitch.clone(),
+                cfg: cfg.clone(),
+            },
+            consumer_name: std::env::var("HOSTNAME").unwrap_or_else(|_| "relay-1".into()),
+        };
+        tokio::spawn(async move {
+            if let Err(e) = consumer.run().await {
+                tracing::error!(event = "relays_consumer.fatal", error = %e);
             }
-        }
+        });
+        info!(event = "relays_consumer.spawned");
+    } else {
+        info!(
+            event = "relays_consumer.skipped",
+            has_signer = signer.is_some(),
+            has_provider = provider.is_some(),
+            has_db = db_pool_opt.is_some(),
+            "consumer not spawned — prerequisites missing (service stays up, /execute 501)"
+        );
     }
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
