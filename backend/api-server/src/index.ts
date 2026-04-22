@@ -2,6 +2,7 @@ import express from "express";
 import pg from "pg";
 import { Redis } from "ioredis";
 import { z } from "zod";
+import { clampBucketMinutes, clampHours, rowToPoint } from "./recon-timeseries.js";
 import {
   loadAppConfig,
   createHttpLogger,
@@ -364,6 +365,60 @@ app.get("/api/v1/recon/summary", async (req, res) => {
     });
   } catch (e) {
     logger.warn({ event: "recon.summary.query_failed", err: (e as Error).message });
+    res.status(503).json({ error: "query_failed", detail: (e as Error).message });
+  }
+});
+
+// Timeseries of realised PnL / attempts / revert-rate bucketed over time.
+// Source: executions table (same as /recon/summary). Backfills empty buckets
+// with zeros so the chart never shows a hole — that matches the "honesty
+// contract": if there were no attempts in a bucket, we say zero explicitly.
+app.get("/api/v1/recon/timeseries", async (req, res) => {
+  const p = requireDbPool();
+  if (!p) { res.status(503).json({ error: "db_unavailable" }); return; }
+  const hours = clampHours(req.query["hours"]);
+  const bucketMinutes = clampBucketMinutes(req.query["bucket_minutes"]);
+  try {
+    const q = await p.query(
+      `WITH buckets AS (
+         SELECT generate_series(
+                  date_bin(($1::text || ' minutes')::interval,
+                           NOW() - ($2::text || ' hours')::interval,
+                           TIMESTAMP 'epoch'),
+                  date_bin(($1::text || ' minutes')::interval, NOW(), TIMESTAMP 'epoch'),
+                  ($1::text || ' minutes')::interval
+                ) AS bucket_start
+       ),
+       agg AS (
+         SELECT date_bin(($1::text || ' minutes')::interval, submitted_at, TIMESTAMP 'epoch') AS bucket_start,
+                COUNT(*)::int AS attempts,
+                SUM(CASE WHEN status='included' THEN 1 ELSE 0 END)::int AS included,
+                SUM(CASE WHEN status='reverted' THEN 1 ELSE 0 END)::int AS reverted,
+                AVG(CASE WHEN status='included' AND actual_profit_usd IS NOT NULL
+                         THEN actual_profit_usd END)::float AS avg_pnl_included_usd
+           FROM executions
+          WHERE submitted_at >= NOW() - ($2::text || ' hours')::interval
+          GROUP BY 1
+       )
+       SELECT b.bucket_start,
+              COALESCE(a.attempts, 0)::int AS attempts,
+              COALESCE(a.included, 0)::int AS included,
+              COALESCE(a.reverted, 0)::int AS reverted,
+              a.avg_pnl_included_usd
+         FROM buckets b
+         LEFT JOIN agg a USING (bucket_start)
+         ORDER BY b.bucket_start ASC`,
+      [String(bucketMinutes), String(hours)],
+    );
+    const points = q.rows.map(rowToPoint);
+    res.status(200).json({
+      window_hours: hours,
+      bucket_minutes: bucketMinutes,
+      points,
+      ts: new Date().toISOString(),
+    });
+  } catch (e) {
+    logger.warn({ event: "recon.timeseries.query_failed", err: (e as Error).message });
     res.status(503).json({ error: "query_failed", detail: (e as Error).message });
   }
 });

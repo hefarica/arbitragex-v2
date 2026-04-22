@@ -24,20 +24,24 @@ const badgeVariants = cva(
   },
 );
 
-function Badge({
-  className,
-  variant,
-  asChild = false,
-  ...props
-}: React.ComponentProps<"span"> & VariantProps<typeof badgeVariants> & { asChild?: boolean }) {
-  const Comp = asChild ? Slot : "span";
-  return (
-    <Comp
-      data-slot="badge"
-      className={cn(badgeVariants({ variant }), className)}
-      {...props}
-    />
-  );
-}
+export type BadgeProps = React.HTMLAttributes<HTMLSpanElement> &
+  VariantProps<typeof badgeVariants> & { asChild?: boolean };
+
+// forwardRef for parity with Button — future Radix composition (Tooltip.Trigger,
+// Popover.Trigger) may wrap a Badge with asChild and expect a ref.
+const Badge = React.forwardRef<HTMLSpanElement, BadgeProps>(
+  ({ className, variant, asChild = false, ...props }, ref) => {
+    const Comp = asChild ? Slot : "span";
+    return (
+      <Comp
+        ref={ref}
+        data-slot="badge"
+        className={cn(badgeVariants({ variant }), className)}
+        {...props}
+      />
+    );
+  },
+);
+Badge.displayName = "Badge";
 
 export { Badge, badgeVariants };

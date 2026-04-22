@@ -4,266 +4,223 @@
  * Honesty contract: every helper returns a discriminated union
  *   { ok: true, data } | { ok: false, error }
  * Pages consume `error` verbatim; we NEVER fabricate data on failure.
+ *
+ * Defensive posture:
+ *  - 5s timeout via AbortController (configurable per-call).
+ *  - GET retries with exponential backoff on network errors / 5xx (never on 4xx,
+ *    never on POST — mutations must not be replayed).
+ *  - Every response is parsed through a Zod schema; shape drift fails loudly
+ *    with a truncated diagnostic instead of rendering broken UI.
  */
 
+import type { z } from "zod";
+import * as S from "@/lib/schemas";
+
 const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL || "http://localhost:8787";
+const DEFAULT_TIMEOUT_MS = 5000;
+const DEFAULT_RETRIES = 2;
+const MAX_ERROR_PREVIEW = 200;
+const MAX_SCHEMA_ISSUES = 3;
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
-async function get<T>(path: string): Promise<Result<T>> {
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const r = await fetch(`${EDGE_URL}${path}`, {
-      next: { revalidate: 0 },
-      headers: { accept: "application/json" },
-    });
-    const text = await r.text();
-    if (!r.ok) {
-      return { ok: false, error: `edge HTTP ${r.status}${text ? `: ${text.slice(0, 200)}` : ""}` };
-    }
-    return { ok: true, data: JSON.parse(text) as T };
-  } catch (e) {
-    return { ok: false, error: (e as Error).message };
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
   }
 }
 
-// ─────── /status ───────
-
-export type StatusResponse = {
-  ok: boolean;
-  services: Record<string, { ok: boolean; status?: number; detail?: string }>;
-  killswitch: KillSwitchState | null;
-  env: string;
-  version: string;
-  ts: string;
-};
-export type KillSwitchState = {
-  enabled: boolean;
-  reason: string | null;
-  triggered_by: string | null;
-  updated_at: string;
-};
-export async function getStatus() { return get<StatusResponse>("/status"); }
-
-// ─────── /api/opportunities/live ───────
-
-export type OpportunityRow = {
-  id: string;
-  chain_id: number;
-  strategy_kind: string;
-  dex_a: string;
-  dex_b: string | null;
-  pair_symbol: string | null;
-  token_in: string;
-  token_out: string;
-  amount_in_wei: string;
-  expected_profit_usd: number | null;
-  roi_pct: number | null;
-  risk_score: number | null;
-  block_number: number | null;
-  status: string;
-  detected_at: string;
-  trace_id: string;
-};
-export type OpportunitiesLive = {
-  count: number;
-  window: string;
-  items: OpportunityRow[];
-  ts: string;
-};
-export async function getOpportunitiesLive(limit = 50) {
-  return get<OpportunitiesLive>(`/api/opportunities/live?limit=${limit}`);
+function backoff(attempt: number): Promise<void> {
+  const delay = 200 * 2 ** attempt; // 200, 400, 800 ms
+  return new Promise((r) => setTimeout(r, delay));
 }
 
-// ─────── /api/risk/alerts ───────
-
-export type RiskAlertRow = {
-  id: string;
-  event_type: "circuit_breaker" | "kill_switch" | "blacklist_hit" | "degradation" | "manual";
-  severity: "info" | "warning" | "critical";
-  source_service: string;
-  payload: unknown;
-  trace_id: string | null;
-  opportunity_id: string | null;
-  created_at: string;
-};
-export type RiskAlertsResponse = {
-  window_hours: number;
-  killswitch: KillSwitchState | null;
-  alerts: RiskAlertRow[];
-  ts: string;
-};
-export async function getRiskAlerts(hours = 24) {
-  return get<RiskAlertsResponse>(`/api/risk/alerts?hours=${hours}`);
+function formatSchemaIssues(err: z.ZodError): string {
+  return err.issues
+    .slice(0, MAX_SCHEMA_ISSUES)
+    .map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`)
+    .join("; ");
 }
 
-// ─────── /api/executions/recent ───────
+async function getValidated<T>(
+  path: string,
+  schema: z.ZodType<T>,
+  opts: { timeoutMs?: number; retries?: number } = {},
+): Promise<Result<T>> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const retries = opts.retries ?? DEFAULT_RETRIES;
+  const url = `${EDGE_URL}${path}`;
+  const init: RequestInit = {
+    next: { revalidate: 0 },
+    headers: { accept: "application/json" },
+  } as RequestInit;
 
-export type ExecutionRow = {
-  id: string;
-  tx_hash: string | null;
-  bundle_hash: string | null;
-  relay_name: string;
-  status: "submitted" | "included" | "reverted" | "dropped" | "replaced" | "not_implemented";
-  block_included: number | null;
-  gas_used_wei: string | null;
-  gas_price_effective_wei: string | null;
-  expected_profit_usd: number | null;
-  actual_profit_usd: number | null;
-  error_message: string | null;
-  trace_id: string;
-  submitted_at: string;
-  confirmed_at: string | null;
-  chain_id: number;
-  strategy_kind: string;
-  pair_symbol: string | null;
-};
-export type ExecutionsRecent = {
-  count: number;
-  items: ExecutionRow[];
-  ts: string;
-};
-export async function getExecutionsRecent(limit = 50) {
-  return get<ExecutionsRecent>(`/api/executions/recent?limit=${limit}`);
+  let lastError = "unknown error";
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const r = await fetchWithTimeout(url, init, timeoutMs);
+      const text = await r.text();
+
+      if (!r.ok) {
+        const errMsg = `edge HTTP ${r.status}${text ? `: ${text.slice(0, MAX_ERROR_PREVIEW)}` : ""}`;
+        if (r.status >= 500 && attempt < retries) {
+          lastError = errMsg;
+          await backoff(attempt);
+          continue;
+        }
+        return { ok: false, error: errMsg };
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch (e) {
+        return { ok: false, error: `edge returned invalid JSON: ${(e as Error).message}` };
+      }
+
+      const result = schema.safeParse(parsed);
+      if (!result.success) {
+        return { ok: false, error: `edge response shape invalid: ${formatSchemaIssues(result.error)}` };
+      }
+      return { ok: true, data: result.data };
+    } catch (e) {
+      const err = e as Error;
+      lastError = err.name === "AbortError" ? `edge timeout after ${timeoutMs}ms` : err.message;
+      if (attempt < retries) {
+        await backoff(attempt);
+        continue;
+      }
+    }
+  }
+  return { ok: false, error: lastError };
 }
 
-// ─────── /api/recon/summary ───────
-
-export type ReconSummary = {
-  window_hours: number;
-  totals: {
-    total: number;
-    included: number;
-    reverted: number;
-    dropped: number;
-    avg_pnl_included_usd: number | null;
-    avg_confirm_latency_ms: number | null;
-  };
-  revert_rate: number | null;
-  top_strategies: Array<{
-    strategy_kind: string;
-    chain_id: number;
-    sample_count: number;
-    success_rate: number | null;
-    revert_rate: number | null;
-    avg_profit_usd: number | null;
-    score: number | null;
-    window_end: string;
-  }>;
-  critical_anomalies_24h: Array<{
-    event_type: string;
-    severity: string;
-    source_service: string;
-    payload: unknown;
-    created_at: string;
-  }>;
-  ts: string;
-};
-export async function getReconSummary(hours = 1) {
-  return get<ReconSummary>(`/api/recon/summary?hours=${hours}`);
+async function postValidated<T>(
+  path: string,
+  body: unknown,
+  extraHeaders: Record<string, string>,
+  schema: z.ZodType<T>,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): Promise<Result<T>> {
+  const url = `${EDGE_URL.replace(/\/$/, "")}${path}`;
+  try {
+    const r = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", ...extraHeaders },
+        body: JSON.stringify(body),
+      },
+      timeoutMs,
+    );
+    const text = await r.text();
+    if (!r.ok) {
+      return { ok: false, error: `HTTP ${r.status}: ${text.slice(0, MAX_ERROR_PREVIEW)}` };
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      return { ok: false, error: `edge returned invalid JSON: ${(e as Error).message}` };
+    }
+    const result = schema.safeParse(parsed);
+    if (!result.success) {
+      return { ok: false, error: `edge response shape invalid: ${formatSchemaIssues(result.error)}` };
+    }
+    return { ok: true, data: result.data };
+  } catch (e) {
+    const err = e as Error;
+    return {
+      ok: false,
+      error: err.name === "AbortError" ? `edge timeout after ${timeoutMs}ms` : err.message,
+    };
+  }
 }
 
-// ─────── /api/config/current ───────
+// ─────── Types (re-exported from schemas for backward compat) ───────
 
-export type AppConfigView = {
-  system: { env: string; kill_switch_enabled_default: boolean; service_name_prefix: string };
-  risk: Record<string, number | boolean>;
-  execution: Record<string, number | boolean | string>;
-  observability: Record<string, boolean | string>;
-  chains: Array<{ chain_id: number; name: string; enabled: boolean }>;
-  relays: Array<{ name: string; enabled: boolean; chains: number[]; endpoint: string }>;
-  scoring: Record<string, number>;
-  token_safety: Record<string, string | number>;
-  circuit_breakers: Array<{ name: string; threshold: number; window_ms: number; cooldown_ms: number }>;
-};
-export async function getConfigCurrent() {
-  return get<AppConfigView>("/api/config/current");
+export type {
+  KillSwitchState,
+  StatusResponse,
+  OpportunityRow,
+  OpportunitiesLive,
+  RiskAlertRow,
+  RiskAlertsResponse,
+  ExecutionRow,
+  ExecutionsRecent,
+  ReconSummary,
+  AppConfigView,
+  RelayRow,
+  RelaysResponse,
+  OnboardingStatus,
+} from "@/lib/schemas";
+
+// ─────── GET endpoints ───────
+
+export function getStatus() {
+  return getValidated("/status", S.StatusResponseSchema);
 }
 
-// ─────── /api/relays ───────
-
-export type RelayRow = {
-  name: string;
-  chain_id: number;
-  endpoint: string | null;
-  auth_scheme: "none" | "x-flashbots-signature" | "bearer" | "header-auth" | "custom";
-  enabled: boolean;
-  priority: number;
-};
-export type RelaysResponse = { count: number; items: RelayRow[]; ts: string };
-export async function getRelays() { return get<RelaysResponse>("/api/relays"); }
-
-// ─────── /api/onboarding/status ───────
-
-export type OnboardingStatus = {
-  org_id: string;
-  phase_1_completed_at: string | null;
-  phase_1_completed_by: string | null;
-  phase_1_vault_sealed_healthy: boolean;
-  phase_2_completed_at: string | null;
-  phase_2_completed_by: string | null;
-  phase_2_rpc_probe_ok: boolean;
-  phase_3_completed_at: string | null;
-  phase_3_completed_by: string | null;
-  phase_4_completed_at: string | null;
-  phase_4_completed_by: string | null;
-  phase_4_signer_zero_balance_verified: boolean;
-  phase_5_completed_at: string | null;
-  phase_5_completed_by: string | null;
-  phase_5_paper_mode_off_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
-export async function getOnboardingStatus() {
-  return get<OnboardingStatus>("/api/onboarding/status");
+export function getOpportunitiesLive(limit = 50) {
+  return getValidated(`/api/opportunities/live?limit=${limit}`, S.OpportunitiesLiveSchema);
 }
 
-export async function completeOnboardingPhase1(
+export function getRiskAlerts(hours = 24) {
+  return getValidated(`/api/risk/alerts?hours=${hours}`, S.RiskAlertsResponseSchema);
+}
+
+export function getExecutionsRecent(limit = 50) {
+  return getValidated(`/api/executions/recent?limit=${limit}`, S.ExecutionsRecentSchema);
+}
+
+export function getReconSummary(hours = 1) {
+  return getValidated(`/api/recon/summary?hours=${hours}`, S.ReconSummarySchema);
+}
+
+export function getConfigCurrent() {
+  return getValidated("/api/config/current", S.AppConfigViewSchema);
+}
+
+export function getRelays() {
+  return getValidated("/api/relays", S.RelaysResponseSchema);
+}
+
+export function getOnboardingStatus() {
+  return getValidated("/api/onboarding/status", S.OnboardingStatusSchema);
+}
+
+// ─────── POST endpoints (no retry — mutations must not be replayed) ───────
+
+export function completeOnboardingPhase1(
   confirmedBy: string,
   vaultSealedHealthy: boolean,
   notes: string,
   adminToken: string,
-): Promise<Result<{ phase_1_completed_at: string; phase_1_completed_by: string; phase_1_vault_sealed_healthy: boolean }>> {
-  try {
-    const r = await fetch(`${EDGE_URL.replace(/\/$/, "")}/admin/onboarding/1/complete`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-arbx-admin-token": adminToken,
-        "x-arbx-actor": confirmedBy,
-      },
-      body: JSON.stringify({ confirmed_by: confirmedBy, vault_sealed_healthy: vaultSealedHealthy, notes }),
-    });
-    const text = await r.text();
-    if (!r.ok) return { ok: false, error: `HTTP ${r.status}: ${text.slice(0, 300)}` };
-    return { ok: true, data: JSON.parse(text) };
-  } catch (e) {
-    return { ok: false, error: (e as Error).message };
-  }
+) {
+  return postValidated(
+    "/admin/onboarding/1/complete",
+    { confirmed_by: confirmedBy, vault_sealed_healthy: vaultSealedHealthy, notes },
+    { "x-arbx-admin-token": adminToken, "x-arbx-actor": confirmedBy },
+    S.OnboardingPhase1ResultSchema,
+  );
 }
 
-// ─────── Admin: killswitch toggle (POST, edge does not proxy yet) ───────
-// This call goes direct to api-server because the edge worker is intentionally
-// read-only. In production the operator console runs behind the ops.* tunnel,
-// which reaches api-server via nginx + basic-auth.
-
-export async function toggleKillswitch(
-  enabled: boolean,
-  reason: string,
-  adminToken: string,
-): Promise<Result<KillSwitchState>> {
-  try {
-    const r = await fetch(`${EDGE_URL.replace(/\/$/, "")}/admin/killswitch`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-arbx-admin-token": adminToken,
-      },
-      body: JSON.stringify({ enabled, reason }),
-    });
-    const text = await r.text();
-    if (!r.ok) return { ok: false, error: `HTTP ${r.status}: ${text.slice(0, 200)}` };
-    return { ok: true, data: JSON.parse(text) as KillSwitchState };
-  } catch (e) {
-    return { ok: false, error: (e as Error).message };
-  }
+// Admin: killswitch toggle — direct to api-server (edge worker is read-only).
+// In production the operator console runs behind the ops.* tunnel, which reaches
+// api-server via nginx + basic-auth.
+export function toggleKillswitch(enabled: boolean, reason: string, adminToken: string) {
+  return postValidated(
+    "/admin/killswitch",
+    { enabled, reason },
+    { "x-arbx-admin-token": adminToken },
+    S.KillSwitchStateSchema,
+  );
 }

@@ -36,6 +36,8 @@
     "app/**/*.tsx",
     "components/**/*.ts",
     "components/**/*.tsx",
+    "features/**/*.ts",
+    "features/**/*.tsx",
     "lib/**/*.ts",
     ".next/types/**/*.ts"
   ],

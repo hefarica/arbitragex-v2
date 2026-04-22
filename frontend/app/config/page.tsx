@@ -30,7 +30,7 @@ export default async function ConfigPage() {
   if (!res.ok) {
     return (
       <>
-        <PageHeader title="Current config" lede="Loaded application settings — secrets redacted at the edge." />
+        <PageHeader title="Current config" lede="Loaded application settings — secrets redacted at the edge." showRefresh />
         <Alert variant="destructive">
           <AlertCircleIcon />
           <AlertTitle>edge error</AlertTitle>
@@ -48,6 +48,7 @@ export default async function ConfigPage() {
       <PageHeader
         title="Current config"
         lede="Loaded from configs/app.toml at service boot. Secrets are never rendered here — to rotate keys see the rotate-secrets runbook."
+        showRefresh
       />
 
       {paperOn && (

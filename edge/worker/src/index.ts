@@ -67,15 +67,20 @@ app.use("*", async (c, next) => {
 app.get("/health", (c) => c.json({ ok: true, service: "edge-worker", env: c.env.ARBX_ENV }));
 
 async function proxy(c: import("hono").Context<{ Bindings: Env }>, path: string, cacheKey?: string, ttl = 2) {
-  if (cacheKey) {
-    const cached = await c.env.ARBX_CACHE.get(cacheKey);
+  // Forward incoming query string so `?limit=`, `?hours=`, etc. reach api-server.
+  // Cache key is query-scoped to prevent cross-variant collisions.
+  const incomingQs = new URL(c.req.url).search;
+  const upstreamPath = incomingQs ? `${path}${incomingQs}` : path;
+  const fullCacheKey = cacheKey ? `${cacheKey}${incomingQs}` : undefined;
+  if (fullCacheKey) {
+    const cached = await c.env.ARBX_CACHE.get(fullCacheKey);
     if (cached) {
       c.header("x-arbx-cache", "HIT");
       c.header("content-type", "application/json");
       return c.body(cached);
     }
   }
-  const upstream = await fetch(`${c.env.API_SERVER_URL}${path}`, {
+  const upstream = await fetch(`${c.env.API_SERVER_URL}${upstreamPath}`, {
     headers: {
       "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
       "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
@@ -84,8 +89,8 @@ async function proxy(c: import("hono").Context<{ Bindings: Env }>, path: string,
     cf: { cacheTtl: 0, cacheEverything: false },
   });
   const body = await upstream.text();
-  if (cacheKey && upstream.ok) {
-    await c.env.ARBX_CACHE.put(cacheKey, body, { expirationTtl: ttl });
+  if (fullCacheKey && upstream.ok) {
+    await c.env.ARBX_CACHE.put(fullCacheKey, body, { expirationTtl: ttl });
   }
   c.header("x-arbx-cache", "MISS");
   c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
@@ -99,6 +104,7 @@ app.get("/api/risk/alerts", (c) => proxy(c, "/api/v1/risk/alerts"));
 // S7: executions feed, recon summary, config view.
 app.get("/api/executions/recent", (c) => proxy(c, "/api/v1/executions/recent", "arbx:cache:execs", 5));
 app.get("/api/recon/summary",    (c) => proxy(c, "/api/v1/recon/summary",    "arbx:cache:recon", 10));
+app.get("/api/recon/timeseries", (c) => proxy(c, "/api/v1/recon/timeseries", "arbx:cache:recon-ts", 15));
 app.get("/api/config/current",   (c) => proxy(c, "/api/v1/config/current",   "arbx:cache:config", 30));
 
 // S7: admin kill-switch POST. Forwards caller's x-arbx-admin-token in addition
