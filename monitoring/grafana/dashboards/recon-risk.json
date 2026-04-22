@@ -1,0 +1,82 @@
+{
+  "uid": "arbx-recon-risk",
+  "title": "ArbitrageX — Recon & risk",
+  "tags": ["arbitragex", "recon", "risk", "circuit-breakers"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Blacklist hits / hour",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum(rate(arbx_blacklist_hits_total[5m])) * 3600", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "/h", "decimals": 1 } },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 2, "type": "stat", "title": "Token-safety cache hit ratio",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum(rate(arbx_token_safety_cache_hits_total{hit=\"true\"}[5m])) / clamp_min(sum(rate(arbx_token_safety_cache_hits_total[5m])), 0.0001)", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 0.5 }, { "color": "green", "value": 0.85 }] } } },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3, "type": "stat", "title": "CB trips / hour",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum(rate(arbx_cb_trips_total[5m])) * 3600", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "/h", "decimals": 1, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 5 }] } } },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4, "type": "stat", "title": "Selector consumer lag (max)",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "max(arbx_selector_consumer_lag)", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 50 }, { "color": "red", "value": 500 }] } } },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Circuit-breaker state (0=closed, 1=half-open, 2=open)",
+      "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "max by (name) (arbx_cb_state)", "legendFormat": "{{name}}", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short", "decimals": 0, "min": 0, "max": 2,
+          "custom": { "lineInterpolation": "stepAfter", "lineWidth": 2, "fillOpacity": 20 },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "closed" }, "1": { "text": "half-open" }, "2": { "text": "open" } } }
+          ]
+        }
+      }
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Token-safety provider calls (result)",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum by (provider, result) (rate(arbx_token_safety_calls_total[5m]))", "legendFormat": "{{provider}} · {{result}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "stacking": { "mode": "normal" }, "fillOpacity": 25 } } }
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Selector invalid-message rate",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum(rate(arbx_selector_invalid_messages_total[5m]))", "legendFormat": "invalid/s", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "ops", "color": { "mode": "fixed", "fixedColor": "red" }, "custom": { "fillOpacity": 30 } } }
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Blacklist hits by chain × reason",
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum by (chain_id, reason) (rate(arbx_blacklist_hits_total[5m]))", "legendFormat": "chain {{chain_id}} · {{reason}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "lineInterpolation": "smooth", "fillOpacity": 15 } } }
+    }
+  ]
+}

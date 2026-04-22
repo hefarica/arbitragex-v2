@@ -1,0 +1,22 @@
+# ArbitrageX v2 — Grafana dashboards provisioning.
+# Loaded by Grafana at startup via the mounted volume at
+# /etc/grafana/provisioning/dashboards.
+#
+# No-hardcode doctrine: every panel query (`expr`) references an `arbx_*`
+# metric declared in shared-rs/src/metrics.rs or shared-ts/src/metrics/index.ts.
+# automation/tools/verify-dashboard-metrics.sh enforces this at commit time.
+
+apiVersion: 1
+
+providers:
+  - name: arbitragex-dashboards
+    orgId: 1
+    folder: ArbitrageX
+    type: file
+    disableDeletion: true
+    editable: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false
