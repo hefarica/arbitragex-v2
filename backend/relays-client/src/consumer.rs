@@ -72,14 +72,14 @@ impl Consumer {
     async fn process_one(&mut self, id: String, kv: Vec<redis::Value>) -> Result<()> {
         let Some(json) = extract_field(&kv, "json") else {
             warn!(event = "relays_consumer.no_json", id = %id);
-            let _: () = self.redis.xack::<_,_,&[&str],_>(STREAM, GROUP, &[id.as_str()]).await?;
+            let _: () = self.redis.xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()]).await?;
             return Ok(());
         };
         let opp: Opportunity = match serde_json::from_str(&json) {
             Ok(o) => o,
             Err(e) => {
                 warn!(event = "relays_consumer.parse_err", id = %id, error = %e);
-                let _: () = self.redis.xack::<_,_,&[&str],_>(STREAM, GROUP, &[id.as_str()]).await?;
+                let _: () = self.redis.xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()]).await?;
                 return Ok(());
             }
         };
@@ -104,7 +104,7 @@ impl Consumer {
             .arg("*").arg("json").arg(payload_s)
             .query_async(&mut self.redis).await;
 
-        let _: () = self.redis.xack::<_,_,&[&str],_>(STREAM, GROUP, &[id.as_str()]).await.context("xack")?;
+        let _: () = self.redis.xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()]).await.context("xack")?;
         Ok(())
     }
 }
