@@ -3,6 +3,7 @@ import {
   AlertTriangleIcon,
   GaugeIcon,
   HouseIcon,
+  ListChecksIcon,
   PowerIcon,
   SettingsIcon,
   type LucideIcon,
@@ -14,7 +15,7 @@ export type NavItem = {
   href: string;
   label: string;
   icon: LucideIcon;
-  group: "observe" | "control";
+  group: "observe" | "control" | "setup";
   exact?: boolean;
 };
 
@@ -27,4 +28,5 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/recon",         label: "Recon & PnL",      icon: GaugeIcon,         group: "observe" },
   { href: "/config",        label: "Config",           icon: SettingsIcon,      group: "control" },
   { href: "/killswitch",    label: "Kill-switch",      icon: PowerIcon,         group: "control" },
+  { href: "/onboarding",    label: "Onboarding",       icon: ListChecksIcon,    group: "setup" },
 ];

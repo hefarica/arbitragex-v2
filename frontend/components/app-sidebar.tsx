@@ -67,6 +67,12 @@ export function SidebarContents({ onNavigate }: { onNavigate?: () => void } = {}
         </div>
         <NavList group="control" {...(onNavigate ? { onNavigate } : {})} />
       </div>
+      <div>
+        <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
+          Setup
+        </div>
+        <NavList group="setup" {...(onNavigate ? { onNavigate } : {})} />
+      </div>
       <div className="mt-auto rounded-md border bg-card/40 p-3 text-xs text-muted-foreground">
         <div className="flex items-center gap-2 font-medium text-foreground">
           <span className="size-1.5 rounded-full bg-success" aria-hidden />

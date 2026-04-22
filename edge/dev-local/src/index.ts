@@ -89,30 +89,40 @@ app.get("/api/risk/alerts", (req, res) => proxy("/api/v1/risk/alerts", req, res)
 app.get("/api/executions/recent", (req, res) => proxy("/api/v1/executions/recent", req, res));
 app.get("/api/recon/summary", (req, res) => proxy("/api/v1/recon/summary", req, res));
 app.get("/api/config/current", (req, res) => proxy("/api/v1/config/current", req, res));
+// Phase 0.5: relays catalog (public list of enabled) + onboarding status.
+app.get("/api/relays", (req, res) => proxy("/api/v1/relays", req, res));
+app.get("/api/onboarding/status", (req, res) => proxy("/api/v1/onboarding/status", req, res));
 
-// S7: admin kill-switch POST. Forwards caller's x-arbx-admin-token in addition
-// to the edge token. Rejected by api-server if the admin token is missing/wrong.
+// S7: admin POST proxies — forward caller's x-arbx-admin-token alongside the
+// edge token. Rejected by api-server if admin token is missing/wrong.
 app.use(express.json({ limit: "64kb" }));
-app.post("/admin/killswitch", async (req, res) => {
+
+async function adminPost(path: string, req: express.Request, res: express.Response): Promise<void> {
   const adminToken = req.header("x-arbx-admin-token");
   if (!adminToken) { res.status(401).json({ error: "missing_admin_token" }); return; }
   try {
-    const upstream = await fetch(`${API_SERVER_URL}/admin/killswitch`, {
+    const upstream = await fetch(`${API_SERVER_URL}${path}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "x-arbx-edge-token": ARBX_EDGE_TOKEN,
         "x-arbx-admin-token": adminToken,
         "x-arbx-trace-id": (req as express.Request & { traceId?: string }).traceId ?? "",
+        "x-arbx-actor": req.header("x-arbx-actor") ?? "",
       },
       body: JSON.stringify(req.body ?? {}),
     });
     const text = await upstream.text();
-    res.status(upstream.status).setHeader("content-type", upstream.headers.get("content-type") ?? "application/json").send(text);
+    res.status(upstream.status)
+      .setHeader("content-type", upstream.headers.get("content-type") ?? "application/json")
+      .send(text);
   } catch (e) {
     res.status(502).json({ error: "upstream_unreachable", detail: (e as Error).message });
   }
-});
+}
+
+app.post("/admin/killswitch",                 (req, res) => adminPost("/admin/killswitch", req, res));
+app.post("/admin/onboarding/1/complete",      (req, res) => adminPost("/admin/onboarding/1/complete", req, res));
 
 const PORT = Number(process.env["EDGE_PORT"] ?? 8787);
 app.listen(PORT, () => {

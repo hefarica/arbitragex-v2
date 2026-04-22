@@ -368,6 +368,177 @@ app.get("/api/v1/recon/summary", async (req, res) => {
   }
 });
 
+// ─────── Sprint 7 / Phase 0.5 — relay catalog CRUD (admin) ───────
+//
+// Relays live in the DB (migration 013). Hot-path services will migrate to
+// query this table directly in a follow-up PR; for now api-server is the
+// single writer.
+
+const RelayCreate = z.object({
+  name: z.string().min(1).max(64),
+  chain_id: z.number().int().positive(),
+  endpoint: z.string().min(8).optional(),
+  auth_scheme: z.enum(["none","x-flashbots-signature","bearer","header-auth","custom"]).default("none"),
+  auth_secret_ref: z.string().max(512).optional(),
+  enabled: z.boolean().default(false),
+  priority: z.number().int().min(0).max(1000).default(100),
+  notes: z.string().max(500).optional(),
+});
+const RelayUpdate = RelayCreate.partial();
+
+app.get("/admin/relays", requireAdminToken(ARBX_ADMIN_TOKEN), async (_req, res) => {
+  const p = requireDbPool();
+  if (!p) { res.status(503).json({ error: "db_unavailable" }); return; }
+  const q = await p.query(
+    `SELECT id, name, chain_id, endpoint, auth_scheme, auth_secret_ref,
+            enabled, priority, notes, created_by, created_at, updated_at
+       FROM relays ORDER BY chain_id, priority, name`,
+  );
+  res.status(200).json({ count: q.rows.length, items: q.rows });
+});
+
+app.post("/admin/relays", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+  const p = requireDbPool();
+  if (!p) { res.status(503).json({ error: "db_unavailable" }); return; }
+  const parsed = RelayCreate.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "invalid_request", details: parsed.error.flatten() }); return; }
+  const b = parsed.data;
+  if (b.enabled && (!b.endpoint || b.endpoint.length < 8)) {
+    res.status(400).json({ error: "enabled_requires_endpoint" });
+    return;
+  }
+  const actor = req.header("x-arbx-actor") ?? "admin";
+  try {
+    const q = await p.query(
+      `INSERT INTO relays (name, chain_id, endpoint, auth_scheme, auth_secret_ref, enabled, priority, notes, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING id, name, chain_id, endpoint, auth_scheme, enabled, priority, notes, created_at`,
+      [b.name, b.chain_id, b.endpoint ?? null, b.auth_scheme, b.auth_secret_ref ?? null,
+       b.enabled, b.priority, b.notes ?? null, actor],
+    );
+    await writeAudit("relay.create", actor, "relay", q.rows[0].id, null, b,
+                     req.ip ?? null, (req as any).traceId ?? null);
+    res.status(201).json(q.rows[0]);
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (msg.includes("relays_uq_name_chain")) { res.status(409).json({ error: "duplicate_relay" }); return; }
+    logger.warn({ event: "relay.create.failed", err: msg });
+    res.status(500).json({ error: "db_error", detail: msg });
+  }
+});
+
+app.put("/admin/relays/:id", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+  const p = requireDbPool();
+  if (!p) { res.status(503).json({ error: "db_unavailable" }); return; }
+  const parsed = RelayUpdate.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "invalid_request", details: parsed.error.flatten() }); return; }
+  const before = await p.query(`SELECT * FROM relays WHERE id = $1`, [req.params.id]);
+  if (before.rowCount === 0) { res.status(404).json({ error: "not_found" }); return; }
+  const existing = before.rows[0];
+  const merged = { ...existing, ...parsed.data };
+  if (merged.enabled && (!merged.endpoint || merged.endpoint.length < 8)) {
+    res.status(400).json({ error: "enabled_requires_endpoint" });
+    return;
+  }
+  const actor = req.header("x-arbx-actor") ?? "admin";
+  const q = await p.query(
+    `UPDATE relays
+        SET endpoint        = COALESCE($2, endpoint),
+            auth_scheme     = COALESCE($3, auth_scheme),
+            auth_secret_ref = COALESCE($4, auth_secret_ref),
+            enabled         = COALESCE($5, enabled),
+            priority        = COALESCE($6, priority),
+            notes           = COALESCE($7, notes)
+      WHERE id = $1
+  RETURNING id, name, chain_id, endpoint, auth_scheme, enabled, priority, notes, updated_at`,
+    [req.params.id,
+     parsed.data.endpoint ?? null,
+     parsed.data.auth_scheme ?? null,
+     parsed.data.auth_secret_ref ?? null,
+     parsed.data.enabled ?? null,
+     parsed.data.priority ?? null,
+     parsed.data.notes ?? null],
+  );
+  await writeAudit("relay.update", actor, "relay", req.params.id ?? "",
+                   existing, parsed.data, req.ip ?? null, (req as any).traceId ?? null);
+  res.status(200).json(q.rows[0]);
+});
+
+app.delete("/admin/relays/:id", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+  const p = requireDbPool();
+  if (!p) { res.status(503).json({ error: "db_unavailable" }); return; }
+  const before = await p.query(`SELECT * FROM relays WHERE id = $1`, [req.params.id]);
+  if (before.rowCount === 0) { res.status(404).json({ error: "not_found" }); return; }
+  await p.query(`DELETE FROM relays WHERE id = $1`, [req.params.id]);
+  const actor = req.header("x-arbx-actor") ?? "admin";
+  await writeAudit("relay.delete", actor, "relay", req.params.id ?? "",
+                   before.rows[0], null, req.ip ?? null, (req as any).traceId ?? null);
+  res.status(204).end();
+});
+
+// Public read — used by /config page + relays-client Rust loader (future PR).
+app.get("/api/v1/relays", async (_req, res) => {
+  const p = requireDbPool();
+  if (!p) { res.status(503).json({ error: "db_unavailable" }); return; }
+  const q = await p.query(
+    `SELECT name, chain_id, endpoint, auth_scheme, enabled, priority
+       FROM relays WHERE enabled = TRUE
+      ORDER BY chain_id, priority, name`,
+  );
+  res.status(200).json({ count: q.rows.length, items: q.rows, ts: new Date().toISOString() });
+});
+
+// ─────── Sprint 7 / Phase 0.5 R9 — onboarding ───────
+
+app.get("/api/v1/onboarding/status", async (_req, res) => {
+  const p = requireDbPool();
+  if (!p) { res.status(503).json({ error: "db_unavailable" }); return; }
+  const q = await p.query(
+    `SELECT org_id,
+            phase_1_completed_at, phase_1_completed_by, phase_1_vault_sealed_healthy,
+            phase_2_completed_at, phase_2_completed_by, phase_2_rpc_probe_ok,
+            phase_3_completed_at, phase_3_completed_by,
+            phase_4_completed_at, phase_4_completed_by, phase_4_signer_zero_balance_verified,
+            phase_5_completed_at, phase_5_completed_by, phase_5_paper_mode_off_at,
+            created_at, updated_at
+       FROM onboarding_progress WHERE org_id = 'default'`,
+  );
+  if (q.rowCount === 0) { res.status(503).json({ error: "onboarding_row_missing" }); return; }
+  res.status(200).json(q.rows[0]);
+});
+
+const OnboardingPhase1 = z.object({
+  confirmed_by: z.string().min(1).max(200),
+  vault_sealed_healthy: z.boolean(),
+  notes: z.string().max(1000).optional(),
+});
+app.post("/admin/onboarding/1/complete", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+  const p = requireDbPool();
+  if (!p) { res.status(503).json({ error: "db_unavailable" }); return; }
+  const parsed = OnboardingPhase1.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "invalid_request", details: parsed.error.flatten() }); return; }
+  if (!parsed.data.vault_sealed_healthy) {
+    res.status(412).json({
+      error: "precondition_failed",
+      detail: "phase 1 requires Vault to be unsealed and reachable — see docs/governance/DATA-MATRIX.md M8",
+    });
+    return;
+  }
+  const q = await p.query(
+    `UPDATE onboarding_progress
+        SET phase_1_completed_at = NOW(),
+            phase_1_completed_by = $1,
+            phase_1_vault_sealed_healthy = TRUE
+      WHERE org_id = 'default'
+  RETURNING phase_1_completed_at, phase_1_completed_by, phase_1_vault_sealed_healthy`,
+    [parsed.data.confirmed_by],
+  );
+  const actor = req.header("x-arbx-actor") ?? parsed.data.confirmed_by;
+  await writeAudit("onboarding.phase1.complete", actor, "onboarding", "default",
+                   null, parsed.data, req.ip ?? null, (req as any).traceId ?? null);
+  res.status(200).json(q.rows[0]);
+});
+
 app.get("/api/v1/config/current", (_req, res) => {
   res.status(200).json({
     system: cfg.system,

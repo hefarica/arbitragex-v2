@@ -179,6 +179,68 @@ export async function getConfigCurrent() {
   return get<AppConfigView>("/api/config/current");
 }
 
+// ─────── /api/relays ───────
+
+export type RelayRow = {
+  name: string;
+  chain_id: number;
+  endpoint: string | null;
+  auth_scheme: "none" | "x-flashbots-signature" | "bearer" | "header-auth" | "custom";
+  enabled: boolean;
+  priority: number;
+};
+export type RelaysResponse = { count: number; items: RelayRow[]; ts: string };
+export async function getRelays() { return get<RelaysResponse>("/api/relays"); }
+
+// ─────── /api/onboarding/status ───────
+
+export type OnboardingStatus = {
+  org_id: string;
+  phase_1_completed_at: string | null;
+  phase_1_completed_by: string | null;
+  phase_1_vault_sealed_healthy: boolean;
+  phase_2_completed_at: string | null;
+  phase_2_completed_by: string | null;
+  phase_2_rpc_probe_ok: boolean;
+  phase_3_completed_at: string | null;
+  phase_3_completed_by: string | null;
+  phase_4_completed_at: string | null;
+  phase_4_completed_by: string | null;
+  phase_4_signer_zero_balance_verified: boolean;
+  phase_5_completed_at: string | null;
+  phase_5_completed_by: string | null;
+  phase_5_paper_mode_off_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+export async function getOnboardingStatus() {
+  return get<OnboardingStatus>("/api/onboarding/status");
+}
+
+export async function completeOnboardingPhase1(
+  confirmedBy: string,
+  vaultSealedHealthy: boolean,
+  notes: string,
+  adminToken: string,
+): Promise<Result<{ phase_1_completed_at: string; phase_1_completed_by: string; phase_1_vault_sealed_healthy: boolean }>> {
+  try {
+    const r = await fetch(`${EDGE_URL.replace(/\/$/, "")}/admin/onboarding/1/complete`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-arbx-admin-token": adminToken,
+        "x-arbx-actor": confirmedBy,
+      },
+      body: JSON.stringify({ confirmed_by: confirmedBy, vault_sealed_healthy: vaultSealedHealthy, notes }),
+    });
+    const text = await r.text();
+    if (!r.ok) return { ok: false, error: `HTTP ${r.status}: ${text.slice(0, 300)}` };
+    return { ok: true, data: JSON.parse(text) };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
 // ─────── Admin: killswitch toggle (POST, edge does not proxy yet) ───────
 // This call goes direct to api-server because the edge worker is intentionally
 // read-only. In production the operator console runs behind the ops.* tunnel,
