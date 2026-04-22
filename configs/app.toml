@@ -118,12 +118,25 @@ chain_id = 8453
 name = "base"
 enabled = false
 
-# Relays are configurable: selector-api loads this list and scores them per relay_scores table.
+# Relay catalog skeleton.
+#
+# No-hardcode doctrine: endpoints + enabled flags are operator decisions, not
+# code defaults. The `endpoint = ""` placeholders below force the operator to
+# fill them explicitly.
+#
+# Three allowed population paths:
+#   1. Env overrides per relay (e.g. FLASHBOTS_RELAY_URL=wss://...)
+#   2. Editing this file in the `/config/relays` admin UI (reload on save).
+#   3. Post-Phase-0.5 R10: DB table `relays` replaces this block entirely; the
+#      loader reads from DB and this file becomes a migration seed only.
+#
+# `enabled=true` with an empty endpoint is REJECTED by the schema validator.
+
 [[relays]]
 name = "flashbots"
-enabled = true
+enabled = false
 chains = [1]
-endpoint = "https://relay.flashbots.net"
+endpoint = ""
 
 [[relays]]
 name = "bloxroute"

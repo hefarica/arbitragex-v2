@@ -112,16 +112,36 @@ async fn main() -> anyhow::Result<()> {
 
     let nonce = provider.clone().map(|p| Arc::new(NonceManager::new(p)));
     let flashbots = {
+        // No-hardcode doctrine: the Flashbots relay URL must come from one of
+        // the allowed sources — env var, config file, or (once Phase 0.5 R10
+        // lands) the DB `relays` catalog. We never fall back to the canonical
+        // Flashbots URL in code; silently calling a third-party relay without
+        // operator sign-off is a policy violation.
         let endpoint = std::env::var("FLASHBOTS_RELAY_URL")
             .ok()
+            .filter(|s| !s.is_empty())
             .or_else(|| cfg.relays.iter()
                 .find(|r| r.name == "flashbots" && r.enabled)
-                .and_then(|r| r.endpoint.clone()))
-            .unwrap_or_else(|| "https://relay.flashbots.net".to_string());
-        Some(Arc::new(FlashbotsClient::new(
-            endpoint,
-            Duration::from_millis(cfg.execution.flashbots_submit_timeout_ms),
-        )))
+                .and_then(|r| r.endpoint.clone())
+                .filter(|s| !s.is_empty()));
+        match endpoint {
+            Some(url) => {
+                info!(event = "flashbots.configured", url = %url, "flashbots relay enabled");
+                Some(Arc::new(FlashbotsClient::new(
+                    url,
+                    Duration::from_millis(cfg.execution.flashbots_submit_timeout_ms),
+                )))
+            }
+            None => {
+                warn!(
+                    event = "flashbots.disabled",
+                    reason = "no_endpoint",
+                    "flashbots relay disabled: no endpoint in env (FLASHBOTS_RELAY_URL) or config. \
+                     Set it in onboarding step 4."
+                );
+                None
+            }
+        }
     };
 
     let engine = Arc::new(SubmitEngine {

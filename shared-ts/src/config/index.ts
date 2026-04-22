@@ -33,7 +33,20 @@ const TokenSafetyCfg = z.object({
   ttl_seconds_ok: z.number().int().min(60),
   ttl_seconds_bad: z.number().int().min(60),
   min_acceptable_score: z.number().int().min(0).max(100),
-}).strict();
+  /**
+   * Required when provider="goplus". Empty/absent otherwise.
+   * No-hardcode doctrine: we never default to gopluslabs.io in code.
+   * Operator sets this explicitly in onboarding step 3.
+   */
+  goplus_base_url: z.string().url().optional(),
+  honeypot_is_base_url: z.string().url().optional(),
+}).strict().refine(
+  (v) => v.provider !== "goplus" || (typeof v.goplus_base_url === "string" && v.goplus_base_url.length > 0),
+  { message: "goplus_base_url is required when provider='goplus'" },
+).refine(
+  (v) => v.provider !== "honeypot_is" || (typeof v.honeypot_is_base_url === "string" && v.honeypot_is_base_url.length > 0),
+  { message: "honeypot_is_base_url is required when provider='honeypot_is'" },
+);
 
 const CircuitBreakerCfg = z.object({
   name: z.string().min(1),

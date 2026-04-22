@@ -37,7 +37,9 @@ use crate::sim_engine::SimEngine;
 
 const SERVICE: &str = "sim-ctl";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const DEFAULT_SIGNER: &str = "0x000000000000000000000000000000000000dEaD";
+// DEV-ONLY sentinel "caller" address used when simulating a probe and no signer
+// is configured. Must NEVER be selected in staging/prod — guarded at use site.
+const DEV_SENTINEL_SIGNER: &str = "0x000000000000000000000000000000000000dEaD";
 
 #[derive(Clone)]
 struct AppState {
@@ -101,8 +103,24 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    let signer = Address::from_str(&std::env::var("SIM_SIGNER_ADDRESS").unwrap_or_else(|_| DEFAULT_SIGNER.into()))
-        .unwrap_or_else(|_| Address::zero());
+    let signer = match std::env::var("SIM_SIGNER_ADDRESS") {
+        Ok(v) if !v.is_empty() => Address::from_str(&v).unwrap_or_else(|_| Address::zero()),
+        _ => {
+            if cfg.system.env != "development" {
+                anyhow::bail!(
+                    "SIM_SIGNER_ADDRESS is required in {} (non-development). The dev sentinel \
+                     signer is not allowed outside local dev — no-hardcode doctrine.",
+                    cfg.system.env
+                );
+            }
+            warn!(
+                event = "sim.signer.dev_sentinel",
+                sentinel = DEV_SENTINEL_SIGNER,
+                "SIM_SIGNER_ADDRESS not set; using dev sentinel (development env only)"
+            );
+            Address::from_str(DEV_SENTINEL_SIGNER).unwrap_or_else(|_| Address::zero())
+        }
+    };
 
     let engine = Arc::new(SimEngine {
         fork: fork.clone(),

@@ -86,7 +86,14 @@
           "enabled":   { "type": "boolean" },
           "chains":    { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 1 },
           "endpoint":  { "type": "string" }
-        }
+        },
+        "allOf": [
+          {
+            "_comment": "No-hardcode doctrine: a relay cannot be enabled without a non-empty endpoint.",
+            "if":   { "properties": { "enabled": { "const": true } } },
+            "then": { "required": ["endpoint"], "properties": { "endpoint": { "minLength": 8 } } }
+          }
+        ]
       }
     },
     "scoring": {
@@ -112,8 +119,20 @@
         "api_call_timeout_ms":   { "type": "integer", "minimum": 100 },
         "ttl_seconds_ok":        { "type": "integer", "minimum": 60 },
         "ttl_seconds_bad":       { "type": "integer", "minimum": 60 },
-        "min_acceptable_score":  { "type": "integer", "minimum": 0, "maximum": 100 }
-      }
+        "min_acceptable_score":  { "type": "integer", "minimum": 0, "maximum": 100 },
+        "goplus_base_url":       { "type": "string", "format": "uri" },
+        "honeypot_is_base_url":  { "type": "string", "format": "uri" }
+      },
+      "allOf": [
+        {
+          "if":   { "properties": { "provider": { "const": "goplus" } } },
+          "then": { "required": ["goplus_base_url"] }
+        },
+        {
+          "if":   { "properties": { "provider": { "const": "honeypot_is" } } },
+          "then": { "required": ["honeypot_is_base_url"] }
+        }
+      ]
     },
     "circuit_breakers": {
       "type": "array",

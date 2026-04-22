@@ -1,0 +1,36 @@
+name: no-hardcode
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run no-hardcode lint
+        run: bash automation/tools/lint-no-hardcode.sh
+      - name: Post-run advice on failure
+        if: failure()
+        run: |
+          cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ## no-hardcode doctrine violation
+
+          Your change introduces a value that the doctrine forbids from living in
+          code. See `docs/governance/NO-HARDCODE-DOCTRINE.md` for the allowed
+          sources and remediation paths.
+
+          Common fixes:
+          - Move the value to an env var (read via the existing `require_env`/`requireEnv` loaders).
+          - Move it to the Vault-rendered `.env` template in `infra/vault-agent/templates/`.
+          - Move it to a DB-backed catalog (relays, scoring_weights, execution_policy, ...).
+          - If it's a canonical protocol constant (e.g. Uniswap router), add it
+            to `backend/shared-rs/src/chains.rs` (or a new `tokens.rs`) WITH a
+            byte-asserting test.
+          EOF

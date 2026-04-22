@@ -38,9 +38,15 @@ export async function checkToken(
       const fetched = await cb.execute(async () => {
         if (cfg.token_safety.provider === "goplus") {
           const apiKey = process.env["GOPLUS_API_KEY"];
+          const baseUrl = cfg.token_safety.goplus_base_url;
+          if (!baseUrl) {
+            // Config schema's refine should block this; second line of defence.
+            throw new Error("goplus_base_url missing — operator has not configured GoPlus endpoint");
+          }
           return fetchGoPlus(chainId, address, {
             ...(apiKey ? { apiKey } : {}),
             timeoutMs: cfg.token_safety.api_call_timeout_ms,
+            baseUrl,
           });
         }
         // honeypot_is provider not implemented yet; fall through to internal.

@@ -1,14 +1,18 @@
-# ArbitrageX v2 — DEVELOPMENT stack.
+# ArbitrageX v2 — PRODUCTION stack.
 #
-# This file keeps dev-friendly `${VAR:-default}` fallbacks so a developer can
-# `docker compose -f docker/compose.dev.yml up` with zero env setup and get
-# a working stack.
+# Every secret is required — compose will refuse to start if any env var below
+# is unset. This is enforced by the `${VAR:?message}` syntax which makes `docker
+# compose up` fail immediately when the variable is absent.
 #
-# DO NOT USE IN PRODUCTION. See `docker/compose.prod.yml` for the strict version
-# that fails fast if any secret is unset. The no-hardcode doctrine forbids these
-# defaults in prod: they exist here for local iteration only.
+# Expected boot sequence in production:
+#   1. Operator unseals Vault.
+#   2. vault-agent renders /run/secrets/arbx.env from its template.
+#   3. `docker compose -f docker/compose.prod.yml --env-file /run/secrets/arbx.env up -d`
 #
-# If you edit this file, add the same service changes to `compose.prod.yml`.
+# Paths exposed to the Internet:
+#   - Only the Cloudflare Tunnel reaches this stack. No port is bound to 0.0.0.0.
+#   - Postgres, Redis, Grafana, Prometheus, Loki bound to 127.0.0.1 only.
+#   - edge service is the public entry point (behind CF Worker + Tunnel).
 
 name: arbitragex-v2
 
@@ -36,10 +40,7 @@ services:
     environment:
       POSTGRES_DB: arbitragex
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-    # SECURITY: bind to loopback only. Never expose postgres to 0.0.0.0 — previous
-    # incident: Akira ransomware scanned port, dropped DB with default password.
-    # Internal containers resolve via docker DNS over the `arbx-net` network.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required for prod stack}
     ports: ["127.0.0.1:5432:5432"]
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -55,7 +56,6 @@ services:
   redis:
     image: redis:7.2
     command: ["redis-server","--save","","--appendonly","no"]
-    # SECURITY: loopback only. Same reasoning as postgres.
     ports: ["127.0.0.1:6379:6379"]
     volumes: [redis_data:/data]
     healthcheck:
@@ -66,41 +66,7 @@ services:
     networks: [arbx-net]
     <<: *common-logging
 
-  # Disabled by default (geth needs 1TB+ storage). Enable via `--profile chain`.
-  geth:
-    image: ethereum/client-go:v1.13.18
-    profiles: ["chain"]
-    command:
-      - --http --http.addr=0.0.0.0 --http.port=8545 --http.api=eth,net,web3,txpool,debug
-      - --ws   --ws.addr=0.0.0.0   --ws.port=8546   --ws.api=eth,net,web3,txpool,debug
-      - --syncmode=snap --cache=4096
-    ports: ["8545:8545","8546:8546"]
-    networks: [arbx-net]
-    <<: *common-logging
-
-  # S4: Anvil fork for simulations. Enable via `--profile sim`.
-  # Requires ANVIL_FORK_URL env var pointing at a real RPC (Alchemy/Infura free tier works).
-  anvil:
-    image: ghcr.io/foundry-rs/foundry:latest
-    profiles: ["sim"]
-    entrypoint: ["anvil"]
-    command: >
-      --host 0.0.0.0
-      --port 8545
-      --fork-url ${ANVIL_FORK_URL}
-      --fork-block-number ${ANVIL_FORK_BLOCK:-latest}
-      --block-time 1
-      --accounts 10
-      --balance 10000
-      --chain-id ${ANVIL_CHAIN_ID:-1}
-    ports: ["8545:8545"]
-    healthcheck:
-      test: ["CMD-SHELL","wget -qO- --post-data='{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_blockNumber\",\"params\":[]}' --header='Content-Type:application/json' http://localhost:8545 | grep -q result || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 15
-    networks: [arbx-net]
-    <<: *common-logging
+  # geth and anvil are dev profiles; not started in prod.
 
   # ───────── Backend services ─────────
 
@@ -113,10 +79,14 @@ services:
       ARBX_CONFIG_PATH: /app/configs/app.toml
       REDIS_URL: redis://redis:6379
       SEARCHER_HEALTH_PORT: "9001"
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
+      RPC_WS_1: ${RPC_WS_1:?RPC_WS_1 required for mainnet detection}
+      RPC_HTTP_1: ${RPC_HTTP_1:?RPC_HTTP_1 required for mainnet receipts}
     volumes:
       - ../configs:/app/configs:ro
     depends_on:
       redis: { condition: service_healthy }
+      postgres: { condition: service_healthy }
     networks: [arbx-net]
     <<: *common-logging
 
@@ -128,12 +98,12 @@ services:
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
       SIM_PORT: "3003"
-      DATABASE_URL: postgres://arbx_rw:${ARBX_RW_PASSWORD:-arbx_rw_dev_only}@postgres:5432/arbitragex
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
       REDIS_URL: redis://redis:6379
       ANVIL_URL: http://anvil:8545
     volumes:
       - ../configs:/app/configs:ro
-    ports: ["3003:3003"]
+    ports: ["127.0.0.1:3003:3003"]
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -149,9 +119,12 @@ services:
       ARBX_CONFIG_PATH: /app/configs/app.toml
       REDIS_URL: redis://redis:6379
       RELAYS_PORT: "3005"
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
+      # FLASHBOTS_SIGNER_KEY, BLOXROUTE_AUTH, EDEN_AUTH come from vault-agent
+      # via env_file above. Relay itself is disabled until the matching secret exists.
     volumes:
       - ../configs:/app/configs:ro
-    ports: ["3005:3005"]
+    ports: ["127.0.0.1:3005:3005"]
     depends_on:
       redis: { condition: service_healthy }
     networks: [arbx-net]
@@ -164,11 +137,11 @@ services:
     env_file: ["../.env"]
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
-      DATABASE_URL: postgres://arbx_rw:${ARBX_RW_PASSWORD:-arbx_rw_dev_only}@postgres:5432/arbitragex
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
       RECON_PORT: "3004"
     volumes:
       - ../configs:/app/configs:ro
-    ports: ["3004:3004"]
+    ports: ["127.0.0.1:3004:3004"]
     depends_on:
       postgres: { condition: service_healthy }
     networks: [arbx-net]
@@ -181,10 +154,10 @@ services:
     env_file: ["../.env"]
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
-      DATABASE_URL: postgres://arbx_rw:${ARBX_RW_PASSWORD:-arbx_rw_dev_only}@postgres:5432/arbitragex
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
       REDIS_URL: redis://redis:6379
       SELECTOR_PORT: "3002"
-    ports: ["3002:3002"]
+    ports: ["127.0.0.1:3002:3002"]
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -199,20 +172,24 @@ services:
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
       REDIS_URL: redis://redis:6379
-      ARBX_ADMIN_TOKEN: ${ARBX_ADMIN_TOKEN:-dev_admin_token_change_me}
+      ARBX_ADMIN_TOKEN: ${ARBX_ADMIN_TOKEN:?ARBX_ADMIN_TOKEN required}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
       API_PORT: "8080"
       SELECTOR_URL: http://selector-api:3002
       SIM_URL: http://sim-ctl:3003
       RECON_URL: http://recon:3004
       RELAYS_URL: http://relays-client:3005
       SEARCHER_URL: http://searcher-rs:9001
-    ports: ["8080:8080"]
+    ports: ["127.0.0.1:8080:8080"]
     depends_on:
       redis: { condition: service_healthy }
     networks: [arbx-net]
     <<: *common-logging
 
-  # ───────── Edge (DEV LOCAL — CF worker not in compose) ─────────
+  # ───────── Edge ─────────
+  # In production the public Cloudflare Worker (deployed separately via wrangler)
+  # fronts this stack. This `edge` service is the internal Express shim used by
+  # the Cloudflare Tunnel for admin-only traffic (ops.<domain>).
 
   edge:
     build:
@@ -221,9 +198,9 @@ services:
     env_file: ["../.env"]
     environment:
       API_SERVER_URL: http://api-server:8080
-      ARBX_EDGE_TOKEN: ${ARBX_EDGE_TOKEN:-dev_edge_token_change_me}
+      ARBX_EDGE_TOKEN: ${ARBX_EDGE_TOKEN:?ARBX_EDGE_TOKEN required}
       EDGE_PORT: "8787"
-    ports: ["8787:8787"]
+    ports: ["127.0.0.1:8787:8787"]
     depends_on: [api-server]
     networks: [arbx-net]
     <<: *common-logging
@@ -235,8 +212,8 @@ services:
       context: ..
       dockerfile: frontend/Dockerfile
     environment:
-      NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:-http://localhost:8787}
-    ports: ["5173:5173"]
+      NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:?NEXT_PUBLIC_EDGE_URL required (public edge URL)}
+    ports: ["127.0.0.1:5173:5173"]
     depends_on: [edge]
     networks: [arbx-net]
     <<: *common-logging
@@ -245,7 +222,7 @@ services:
 
   prometheus:
     image: prom/prometheus:v2.52.0
-    ports: ["9090:9090"]
+    ports: ["127.0.0.1:9090:9090"]
     volumes:
       - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ../monitoring/alerts.rules.yml:/etc/prometheus/alerts.rules.yml:ro
@@ -254,10 +231,12 @@ services:
 
   grafana:
     image: grafana/grafana:10.4.2
-    ports: ["3000:3000"]
+    ports: ["127.0.0.1:3000:3000"]
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
       GF_USERS_ALLOW_SIGN_UP: "false"
+    secrets:
+      - grafana_admin_password
     volumes:
       - ../monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
       - ../monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
@@ -268,7 +247,7 @@ services:
 
   alertmanager:
     image: prom/alertmanager:v0.27.0
-    ports: ["9093:9093"]
+    ports: ["127.0.0.1:9093:9093"]
     volumes:
       - ../monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     networks: [arbx-net]
@@ -276,7 +255,7 @@ services:
 
   loki:
     image: grafana/loki:2.9.7
-    ports: ["3100:3100"]
+    ports: ["127.0.0.1:3100:3100"]
     command: ["-config.file=/etc/loki/config.yml"]
     volumes:
       - ../monitoring/loki/loki-config.yml:/etc/loki/config.yml:ro
@@ -293,3 +272,13 @@ services:
     depends_on: [loki]
     networks: [arbx-net]
     <<: *common-logging
+
+# ─────────── Secrets (rendered by vault-agent into host-side files) ───────────
+#
+# The files below are NOT committed. They are rendered at boot by vault-agent
+# reading from Vault and writing to /run/secrets/ on the host. See
+# `infra/vault-agent/templates/` for the rendering templates.
+
+secrets:
+  grafana_admin_password:
+    file: /run/secrets/arbx/grafana_admin_password

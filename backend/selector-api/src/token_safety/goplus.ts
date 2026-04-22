@@ -23,9 +23,17 @@ import type { TokenSafetyRecord } from "./cache.js";
 import { normalizeAddress } from "./cache.js";
 
 export interface GoPlusClientOpts {
+  /** GoPlus API key (optional — unauth is allowed but rate-limited). */
   apiKey?: string;
   timeoutMs: number;
-  baseUrl?: string;
+  /**
+   * GoPlus API base URL. REQUIRED. The operator opts in to external token-safety
+   * calls by setting this in `configs/app.toml` → `[token_safety].goplus_base_url`
+   * when they choose provider=`goplus`. We do NOT default to
+   * `https://api.gopluslabs.io` — silently reaching out to a third party without
+   * operator sign-off violates the no-hardcode doctrine.
+   */
+  baseUrl: string;
 }
 
 export async function fetchGoPlus(
@@ -33,8 +41,11 @@ export async function fetchGoPlus(
   address: string,
   opts: GoPlusClientOpts,
 ): Promise<Omit<TokenSafetyRecord, "updated_at"> | null> {
+  if (!opts.baseUrl) {
+    throw new Error("goplus_base_url_required: set [token_safety].goplus_base_url in config");
+  }
   const a = normalizeAddress(address);
-  const url = `${opts.baseUrl ?? "https://api.gopluslabs.io"}/api/v1/token_security/${chainId}?contract_addresses=${a}`;
+  const url = `${opts.baseUrl.replace(/\/+$/, "")}/api/v1/token_security/${chainId}?contract_addresses=${a}`;
 
   const ctrl = new AbortController();
   const to = setTimeout(() => ctrl.abort(), opts.timeoutMs);

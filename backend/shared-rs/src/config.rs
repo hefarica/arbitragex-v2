@@ -84,6 +84,12 @@ pub struct TokenSafetyCfg {
     pub ttl_seconds_ok: u64,
     pub ttl_seconds_bad: u64,
     pub min_acceptable_score: i32,
+    /// Required when provider="goplus". No-hardcode doctrine: the operator opts
+    /// in by setting this in `configs/app.toml`. We never default in code.
+    #[serde(default)]
+    pub goplus_base_url: Option<String>,
+    #[serde(default)]
+    pub honeypot_is_base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
