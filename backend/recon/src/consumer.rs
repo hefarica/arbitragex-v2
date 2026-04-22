@@ -76,7 +76,7 @@ impl Consumer {
     async fn process_one(&mut self, id: String, kv: Vec<redis::Value>) -> Result<()> {
         let Some(json) = extract_field(&kv, "json") else {
             warn!(event = "recon_consumer.no_json", id = %id);
-            let _: () = self.redis.xack::<_,_,&[&str],_>(STREAM, GROUP, &[id.as_str()]).await?;
+            let _: () = self.redis.xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()]).await?;
             return Ok(());
         };
         #[derive(serde::Deserialize)]
@@ -85,7 +85,7 @@ impl Consumer {
             Ok(c) => c,
             Err(e) => {
                 warn!(event = "recon_consumer.parse_err", id = %id, error = %e);
-                let _: () = self.redis.xack::<_,_,&[&str],_>(STREAM, GROUP, &[id.as_str()]).await?;
+                let _: () = self.redis.xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()]).await?;
                 return Ok(());
             }
         };
@@ -112,7 +112,7 @@ impl Consumer {
             }
         }
 
-        let _: () = self.redis.xack::<_,_,&[&str],_>(STREAM, GROUP, &[id.as_str()]).await.context("xack")?;
+        let _: () = self.redis.xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()]).await.context("xack")?;
         Ok(())
     }
 }
