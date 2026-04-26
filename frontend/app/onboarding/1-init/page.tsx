@@ -8,9 +8,11 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ClearAdminTokenButton } from "@/components/clear-admin-token";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/page-header";
+import { adminTokenExpiresInMs, fmtRemaining, getAdminToken, setAdminToken } from "@/lib/admin-token";
 import {
   completeOnboardingPhase1,
   getOnboardingStatus,
@@ -20,7 +22,8 @@ import {
 export default function Phase1InitPage() {
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [adminToken, setAdminToken] = useState("");
+  const [adminToken, setAdminTokenState] = useState("");
+  const [tokenExpiresIn, setTokenExpiresIn] = useState(0);
   const [confirmedBy, setConfirmedBy] = useState("");
   const [notes, setNotes] = useState("");
   const [ackAdminToken, setAckAdminToken] = useState(false);
@@ -38,10 +41,8 @@ export default function Phase1InitPage() {
       if (!r.ok) { setLoadErr(r.error); return; }
       setStatus(r.data);
     })();
-    if (typeof window !== "undefined") {
-      const t = window.localStorage.getItem("arbx_admin_token") ?? "";
-      setAdminToken(t);
-    }
+    setAdminTokenState(getAdminToken());
+    setTokenExpiresIn(adminTokenExpiresInMs());
   }, []);
 
   const allAcked = ackAdminToken && ackEdgeToken && ackJwt && ackGrafana && ackVault;
@@ -51,7 +52,8 @@ export default function Phase1InitPage() {
     setBusy(true);
     setResultOk(null);
     setResultErr(null);
-    window.localStorage.setItem("arbx_admin_token", adminToken);
+    setAdminToken(adminToken);
+    setTokenExpiresIn(adminTokenExpiresInMs());
     const r = await completeOnboardingPhase1(confirmedBy.trim(), true, notes.trim(), adminToken);
     setBusy(false);
     if (!r.ok) { setResultErr(r.error); return; }
@@ -168,12 +170,19 @@ export default function Phase1InitPage() {
               type="password"
               placeholder="paste ARBX_ADMIN_TOKEN"
               value={adminToken}
-              onChange={(e) => setAdminToken(e.target.value)}
+              onChange={(e) => setAdminTokenState(e.target.value)}
               autoComplete="off"
             />
-            <p className="text-xs text-muted-foreground">
-              Stored locally in <code>localStorage</code> for this browser only. Never sent to a third party.
-            </p>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">
+                Stored locally in <code>localStorage</code> for this browser only. {tokenExpiresIn > 0
+                  ? <>Auto-clears in <strong>{fmtRemaining(tokenExpiresIn)}</strong>.</>
+                  : <>Never sent to a third party.</>}
+              </p>
+              <ClearAdminTokenButton
+                onCleared={() => { setAdminTokenState(""); setTokenExpiresIn(0); }}
+              />
+            </div>
           </div>
 
           <div className="flex flex-col gap-2">

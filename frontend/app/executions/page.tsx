@@ -1,6 +1,7 @@
 import { AlertCircleIcon } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { FocusOnMount } from "@/components/focus-on-mount";
 import { PageHeader } from "@/components/page-header";
 import { ExecutionsTable } from "@/features/executions/ExecutionsTable";
 import { ExecutionsEmpty } from "@/features/executions/ExecutionsEmpty";
@@ -26,11 +27,13 @@ export default async function ExecutionsPage() {
       />
 
       {!res.ok ? (
-        <Alert variant="destructive">
-          <AlertCircleIcon />
-          <AlertTitle>edge error</AlertTitle>
-          <AlertDescription><code className="font-mono text-xs">{res.error}</code></AlertDescription>
-        </Alert>
+        <FocusOnMount>
+          <Alert variant="destructive">
+            <AlertCircleIcon />
+            <AlertTitle>edge error</AlertTitle>
+            <AlertDescription><code className="font-mono text-xs">{res.error}</code></AlertDescription>
+          </Alert>
+        </FocusOnMount>
       ) : res.data.count === 0 ? (
         <ExecutionsEmpty />
       ) : (

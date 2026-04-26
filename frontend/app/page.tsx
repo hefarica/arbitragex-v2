@@ -13,6 +13,11 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { HomeKpiStrip } from "@/features/home/HomeKpiStrip";
+import { getReconSummary, getStatus } from "@/lib/api-client";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type Tile = {
   href: string;
@@ -32,7 +37,9 @@ const TILES: Tile[] = [
   { href: "/killswitch",    title: "Kill-switch",        blurb: "Arm or disable execution at the platform level. Admin token required.",              icon: PowerIcon,         tag: "control" },
 ];
 
-export default function Home() {
+export default async function Home() {
+  const [status, recon] = await Promise.all([getStatus(), getReconSummary(1)]);
+  const edgeUrl = process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
   return (
     <>
       <div className="mb-8 space-y-2">
@@ -48,9 +55,11 @@ export default function Home() {
         <div className="flex flex-wrap gap-2 pt-2">
           <Badge variant="info">paper-mode ON</Badge>
           <Badge variant="outline">S1 – S6 merged</Badge>
-          <Badge variant="outline" className="font-mono">{process.env.NEXT_PUBLIC_EDGE_URL}</Badge>
+          <Badge variant="outline" className="font-mono">{edgeUrl}</Badge>
         </div>
       </div>
+
+      <HomeKpiStrip status={status} recon={recon} />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {TILES.map((t) => {

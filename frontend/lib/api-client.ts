@@ -222,9 +222,10 @@ export function completeOnboardingPhase1(
   );
 }
 
-// Admin: killswitch toggle — direct to api-server (edge worker is read-only).
-// In production the operator console runs behind the ops.* tunnel, which reaches
-// api-server via nginx + basic-auth.
+// Admin: killswitch toggle. The edge (CF Worker in prod, dev-local Express in dev)
+// proxies POST /admin/killswitch and forwards the operator's x-arbx-admin-token to
+// api-server. The worker rejects unauthenticated callers itself; api-server enforces
+// the actual token check.
 export function toggleKillswitch(enabled: boolean, reason: string, adminToken: string) {
   return postValidated(
     "/admin/killswitch",

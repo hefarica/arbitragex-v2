@@ -74,9 +74,10 @@ export function ReconPnLChart({ response }: { response: ReconTimeseriesResponse 
                     fontSize: "12px",
                     color: "var(--popover-foreground)",
                   }}
-                  formatter={(value: number | null, name: string) => {
-                    if (name === "pnl") return [fmtMoney(value), "Avg PnL (incl.)"];
-                    return [value, name];
+                  formatter={(value, name) => {
+                    const n = typeof value === "number" ? value : value == null ? null : Number(value);
+                    if (name === "pnl") return [fmtMoney(n), "Avg PnL (incl.)"];
+                    return [String(value), String(name)];
                   }}
                 />
                 <Line

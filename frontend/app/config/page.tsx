@@ -2,6 +2,7 @@ import { Fragment } from "react";
 import { AlertCircleIcon, ShieldCheckIcon } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { FocusOnMount } from "@/components/focus-on-mount";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -31,11 +32,13 @@ export default async function ConfigPage() {
     return (
       <>
         <PageHeader title="Current config" lede="Loaded application settings — secrets redacted at the edge." showRefresh />
-        <Alert variant="destructive">
-          <AlertCircleIcon />
-          <AlertTitle>edge error</AlertTitle>
-          <AlertDescription><code className="font-mono text-xs">{res.error}</code></AlertDescription>
-        </Alert>
+        <FocusOnMount>
+          <Alert variant="destructive">
+            <AlertCircleIcon />
+            <AlertTitle>edge error</AlertTitle>
+            <AlertDescription><code className="font-mono text-xs">{res.error}</code></AlertDescription>
+          </Alert>
+        </FocusOnMount>
       </>
     );
   }

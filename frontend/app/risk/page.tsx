@@ -1,6 +1,7 @@
 import { AlertCircleIcon } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { FocusOnMount } from "@/components/focus-on-mount";
 import { PageHeader } from "@/components/page-header";
 import { KillswitchBanner } from "@/features/risk/KillswitchBanner";
 import { RiskAlertsTable } from "@/features/risk/RiskAlertsTable";
@@ -21,11 +22,13 @@ export default async function RiskPage() {
           lede="Circuit-breakers, anomalies, blacklist hits, kill-switch log."
           showRefresh
         />
-        <Alert variant="destructive">
-          <AlertCircleIcon />
-          <AlertTitle>edge error</AlertTitle>
-          <AlertDescription><code className="font-mono text-xs">{res.error}</code></AlertDescription>
-        </Alert>
+        <FocusOnMount>
+          <Alert variant="destructive">
+            <AlertCircleIcon />
+            <AlertTitle>edge error</AlertTitle>
+            <AlertDescription><code className="font-mono text-xs">{res.error}</code></AlertDescription>
+          </Alert>
+        </FocusOnMount>
       </>
     );
   }

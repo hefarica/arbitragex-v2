@@ -6,60 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
 import { getOnboardingStatus, type OnboardingStatus } from "@/lib/api-client";
+import { PHASES } from "@/lib/onboarding-phases";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
-type Phase = {
-  n: 1 | 2 | 3 | 4 | 5;
-  slug: string;
-  title: string;
-  blurb: string;
-  solicits: string[];
-};
-
-const PHASES: Phase[] = [
-  {
-    n: 1,
-    slug: "/onboarding/1-init",
-    title: "Install & boot",
-    blurb:
-      "Generate infra tokens (admin, edge, JWT), unseal Vault, set the Grafana admin password. The stack must reach healthy /status before phase 2 unlocks.",
-    solicits: ["ARBX_ADMIN_TOKEN", "ARBX_EDGE_TOKEN", "JWT_SECRET", "GRAFANA_ADMIN_PASSWORD", "vault unseal shares"],
-  },
-  {
-    n: 2,
-    slug: "/onboarding/2-connect",
-    title: "Connect primary services",
-    blurb:
-      "Attach real RPCs per enabled chain so searcher-rs stops being idle. Optionally add a Slack webhook for warning-level alerts.",
-    solicits: ["RPC_HTTP_1 + RPC_WS_1 (per chain)", "SLACK_WEBHOOK_URL (optional)"],
-  },
-  {
-    n: 3,
-    slug: "/onboarding/3-advanced",
-    title: "Advanced features",
-    blurb:
-      "Choose a simulation provider, a token-safety provider, sign off on the scoring weights, import any initial blacklist.",
-    solicits: ["ANVIL_FORK_URL or Tenderly", "token-safety provider + base URL + API key", "scoring_weights set + sign-off"],
-  },
-  {
-    n: 4,
-    slug: "/onboarding/4-testing",
-    title: "Real testing (paper-mode)",
-    blurb:
-      "Populate the relay catalog (DB, not code), attach a zero-balance Flashbots signer, deploy the Cloudflare Tunnel for admin access.",
-    solicits: ["relay catalog entries", "FLASHBOTS_SIGNER_KEY (zero balance)", "CF_API_TOKEN + domain + tunnel token"],
-  },
-  {
-    n: 5,
-    slug: "/onboarding/5-production",
-    title: "Production operation",
-    blurb:
-      "Flip paper-mode off, wire PagerDuty, wire off-site backups, record incident contacts, confirm a capital cap signed by the operator.",
-    solicits: ["PAGERDUTY_INTEGRATION_KEY", "B2 creds + age pubkey", "incident contacts", "capital cap sign-off"],
-  },
-];
 
 type PhaseStatus = "done" | "locked" | "next";
 
@@ -171,20 +121,22 @@ export default async function OnboardingIndexPage() {
                     . Vault healthy: {s.phase_1_vault_sealed_healthy ? "yes" : "no"}.
                   </p>
                 )}
-                {st === "next" && p.n === 1 ? (
+                {st === "next" ? (
                   <Link
-                    href="/onboarding/1-init"
+                    href={`/onboarding/${p.slug}`}
                     className="inline-flex w-max items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
                   >
-                    Start phase 1 →
+                    Start phase {p.n} →
                   </Link>
-                ) : st === "next" ? (
-                  <p className="text-xs text-muted-foreground">
-                    This phase's UI form ships with a later PR. Today it can be completed by
-                    calling the admin endpoint directly (see{" "}
-                    <code>docs/governance/DATA-MATRIX.md</code>).
-                  </p>
                 ) : null}
+                {st === "locked" && (
+                  <Link
+                    href={`/onboarding/${p.slug}`}
+                    className="inline-flex w-max items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-accent"
+                  >
+                    Preview phase {p.n}
+                  </Link>
+                )}
               </CardContent>
             </Card>
           );

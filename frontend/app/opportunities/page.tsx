@@ -1,6 +1,7 @@
 import { AlertCircleIcon } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { FocusOnMount } from "@/components/focus-on-mount";
 import { PageHeader } from "@/components/page-header";
 import { OpportunitiesTable } from "@/features/opportunities/OpportunitiesTable";
 import { OpportunitiesEmpty } from "@/features/opportunities/OpportunitiesEmpty";
@@ -27,13 +28,15 @@ export default async function OpportunitiesPage() {
       />
 
       {!res.ok ? (
-        <Alert variant="destructive">
-          <AlertCircleIcon />
-          <AlertTitle>edge error</AlertTitle>
-          <AlertDescription>
-            <code className="font-mono text-xs">{res.error}</code>
-          </AlertDescription>
-        </Alert>
+        <FocusOnMount>
+          <Alert variant="destructive">
+            <AlertCircleIcon />
+            <AlertTitle>edge error</AlertTitle>
+            <AlertDescription>
+              <code className="font-mono text-xs">{res.error}</code>
+            </AlertDescription>
+          </Alert>
+        </FocusOnMount>
       ) : res.data.count === 0 ? (
         <OpportunitiesEmpty />
       ) : (

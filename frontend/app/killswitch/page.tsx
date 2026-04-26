@@ -6,9 +6,11 @@ import { AlertCircleIcon, CheckCircle2Icon, RefreshCwIcon, ShieldCheckIcon, Shie
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ClearAdminTokenButton } from "@/components/clear-admin-token";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/page-header";
+import { adminTokenExpiresInMs, fmtRemaining, getAdminToken, setAdminToken } from "@/lib/admin-token";
 import { getStatus, toggleKillswitch, type KillSwitchState } from "@/lib/api-client";
 
 export default function KillSwitchPage() {
@@ -16,13 +18,14 @@ export default function KillSwitchPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState<string>("");
+  const [tokenExpiresIn, setTokenExpiresIn] = useState<number>(0);
   const [reason, setReason] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [lastOutcome, setLastOutcome] = useState<string | null>(null);
 
   useEffect(() => {
-    const t = typeof window !== "undefined" ? (window.localStorage.getItem("arbx_admin_token") ?? "") : "";
-    setToken(t);
+    setToken(getAdminToken());
+    setTokenExpiresIn(adminTokenExpiresInMs());
     void refresh();
   }, []);
 
@@ -39,7 +42,8 @@ export default function KillSwitchPage() {
     if (!token) { setError("admin token required"); return; }
     if (!reason.trim()) { setError("reason is required for the audit log"); return; }
     setBusy(true);
-    window.localStorage.setItem("arbx_admin_token", token);
+    setAdminToken(token);
+    setTokenExpiresIn(adminTokenExpiresInMs());
     const r = await toggleKillswitch(next, reason.trim(), token);
     setBusy(false);
     if (!r.ok) { setError(r.error); setLastOutcome(null); return; }
@@ -102,6 +106,16 @@ export default function KillSwitchPage() {
               onChange={(e) => setToken(e.target.value)}
               autoComplete="off"
             />
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">
+                Persists in this browser only. {tokenExpiresIn > 0
+                  ? <>Auto-clears in <strong>{fmtRemaining(tokenExpiresIn)}</strong>.</>
+                  : <>Clear it before leaving a shared workstation.</>}
+              </p>
+              <ClearAdminTokenButton
+                onCleared={() => { setToken(""); setTokenExpiresIn(0); }}
+              />
+            </div>
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="ks-reason">reason <span className="text-muted-foreground">(required — goes to audit_log)</span></Label>

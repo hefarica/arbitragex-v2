@@ -1,6 +1,7 @@
 import { AlertCircleIcon } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { FocusOnMount } from "@/components/focus-on-mount";
 import { PageHeader } from "@/components/page-header";
 import { ReconKpiGrid } from "@/features/recon/ReconKpiGrid";
 import { TopStrategiesTable } from "@/features/recon/TopStrategiesTable";
@@ -30,11 +31,13 @@ export default async function ReconPage() {
           lede="Realised PnL, adaptive strategy scores, critical anomalies."
           showRefresh
         />
-        <Alert variant="destructive">
-          <AlertCircleIcon />
-          <AlertTitle>edge error</AlertTitle>
-          <AlertDescription><code className="font-mono text-xs">{summaryRes.error}</code></AlertDescription>
-        </Alert>
+        <FocusOnMount>
+          <Alert variant="destructive">
+            <AlertCircleIcon />
+            <AlertTitle>edge error</AlertTitle>
+            <AlertDescription><code className="font-mono text-xs">{summaryRes.error}</code></AlertDescription>
+          </Alert>
+        </FocusOnMount>
       </>
     );
   }

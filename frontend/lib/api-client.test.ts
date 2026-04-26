@@ -19,8 +19,8 @@ const VALID_STATUS = {
 };
 
 describe("api-client — GET happy path", () => {
-  beforeEach(() => vi.restoreAllMocks());
-  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => { vi.restoreAllMocks(); });
 
   it("returns validated data on a well-formed 200 response", async () => {
     const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue(jsonResponse(VALID_STATUS));
@@ -32,8 +32,8 @@ describe("api-client — GET happy path", () => {
 });
 
 describe("api-client — validation failures", () => {
-  beforeEach(() => vi.restoreAllMocks());
-  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => { vi.restoreAllMocks(); });
 
   it("fails with shape-invalid error when response doesn't match schema", async () => {
     vi.spyOn(global, "fetch").mockResolvedValue(jsonResponse({ ok: "not-a-bool" }));
@@ -53,8 +53,8 @@ describe("api-client — validation failures", () => {
 });
 
 describe("api-client — HTTP error handling", () => {
-  beforeEach(() => vi.restoreAllMocks());
-  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => { vi.restoreAllMocks(); });
 
   it("returns HTTP error on 4xx without retrying", async () => {
     const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue(
@@ -71,7 +71,7 @@ describe("api-client — HTTP error handling", () => {
     try {
       const fetchSpy = vi
         .spyOn(global, "fetch")
-        .mockResolvedValue(new Response("boom", { status: 503 }));
+        .mockImplementation(async () => new Response("boom", { status: 503 }));
       const promise = getStatus();
       await vi.runAllTimersAsync();
       const res = await promise;
@@ -102,8 +102,8 @@ describe("api-client — HTTP error handling", () => {
 });
 
 describe("api-client — network errors / timeout", () => {
-  beforeEach(() => vi.restoreAllMocks());
-  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => { vi.restoreAllMocks(); });
 
   it("retries on fetch rejection and surfaces the last error", async () => {
     vi.useFakeTimers();
@@ -140,8 +140,8 @@ describe("api-client — network errors / timeout", () => {
 });
 
 describe("api-client — POST mutations do not retry", () => {
-  beforeEach(() => vi.restoreAllMocks());
-  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => { vi.restoreAllMocks(); });
 
   it("toggleKillswitch does not retry on 5xx (mutations must not replay)", async () => {
     const fetchSpy = vi
