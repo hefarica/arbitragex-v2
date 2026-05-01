@@ -116,6 +116,21 @@ export const cbTripsTotal = new Counter({
   registers: [registry],
 });
 
+// ─────────── PR-2.b: Audit-Log metrics ───────────
+export const auditEventsTotal = new Counter({
+  name: "arbx_audit_events_total",
+  help: "Audit log events written by action",
+  labelNames: ["action"] as const,
+  registers: [registry],
+});
+
+export const auditEmitFailedTotal = new Counter({
+  name: "arbx_audit_emit_failed_total",
+  help: "Audit events that failed to emit from the edge by reason",
+  labelNames: ["reason"] as const,
+  registers: [registry],
+});
+
 export function initMetrics(serviceName: string) {
   serviceUp.labels(serviceName).set(1);
 }

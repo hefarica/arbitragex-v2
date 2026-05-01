@@ -3,6 +3,8 @@ import pg from "pg";
 import { Redis } from "ioredis";
 import { z } from "zod";
 import { clampBucketMinutes, clampHours, rowToPoint } from "./recon-timeseries.js";
+import { verifyAll } from "./readiness/verifiers/index.js";
+import type { ReadinessReport } from "./readiness/types.js";
 import {
   loadAppConfig,
   createHttpLogger,
@@ -16,6 +18,7 @@ import {
   requireEdgeToken,
   KillSwitchClient,
   initMetrics,
+  auditEventsTotal,
 } from "@arbx/shared";
 
 const SERVICE = "api-server";
@@ -187,6 +190,7 @@ async function writeAudit(action: string, actor: string, targetKind: string | nu
        VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::inet,$8)`,
       [actor, action, targetKind, targetId, JSON.stringify(before), JSON.stringify(after), ip, traceId],
     );
+    auditEventsTotal.labels({ action }).inc();
   } catch (e) {
     logger.warn({ event: "audit.write_failed", err: (e as Error).message });
   }
@@ -652,6 +656,28 @@ app.get("/api/v1/config/current", (_req, res) => {
     token_safety: cfg.token_safety,
     circuit_breakers: cfg.circuit_breakers,
   });
+});
+
+// Live readiness checklist — 17 items verified dynamically (option C from spec).
+// 30s in-memory cache to avoid hammering verifiers on UI poll.
+const READINESS_CACHE_MS = 30_000;
+let readinessCache: { report: ReadinessReport; expires: number } | null = null;
+app.get("/api/v1/readiness", async (_req, res) => {
+  const now = Date.now();
+  if (readinessCache && now < readinessCache.expires) {
+    res.setHeader("x-arbx-cache", "HIT");
+    res.status(200).json(readinessCache.report);
+    return;
+  }
+  try {
+    const report = await verifyAll({ pool });
+    readinessCache = { report, expires: now + READINESS_CACHE_MS };
+    res.setHeader("x-arbx-cache", "MISS");
+    res.status(200).json(report);
+  } catch (e) {
+    logger.error({ err: (e as Error).message }, "readiness verifyAll failed");
+    res.status(500).json({ error: "verifier_error", detail: (e as Error).message });
+  }
 });
 
 const PORT = Number(process.env["API_PORT"] ?? 8080);
