@@ -13,6 +13,7 @@ import {
   traceIdMiddleware,
   requireEnv,
   requireAdminToken,
+  requireEdgeToken,
   KillSwitchClient,
   initMetrics,
 } from "@arbx/shared";
@@ -26,6 +27,7 @@ initMetrics(SERVICE);
 
 const REDIS_URL = requireEnv("REDIS_URL");
 const ARBX_ADMIN_TOKEN = requireEnv("ARBX_ADMIN_TOKEN");
+const ARBX_EDGE_TOKEN = requireEnv("ARBX_EDGE_TOKEN");
 
 const killSwitch = new KillSwitchClient({
   redisUrl: REDIS_URL,
@@ -95,11 +97,21 @@ app.post("/admin/killswitch", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, r
     return;
   }
   const actorHeader = req.header("x-arbx-actor") ?? "admin";
+  // Capture before-state for audit trail.
+  const beforeState = await killSwitch.state().catch(() => null);
   const out = await killSwitch.set({
     enabled: parsed.data.enabled,
     reason: parsed.data.reason ?? null,
     triggered_by: parsed.data.triggered_by ?? actorHeader,
   });
+  const action = parsed.data.enabled ? "killswitch.armed" : "killswitch.disabled";
+  const ip = req.ip ?? req.socket.remoteAddress ?? null;
+  const traceId = (req as express.Request & { traceId?: string }).traceId ?? null;
+  await writeAudit(
+    action, actorHeader, "killswitch", "global",
+    beforeState, { enabled: parsed.data.enabled, reason: parsed.data.reason ?? null },
+    ip, traceId,
+  );
   logger.warn({ event: "admin.killswitch", actor: actorHeader, state: out }, "kill-switch toggled");
   res.status(200).json(out);
 });
@@ -117,6 +129,40 @@ app.get("/admin/config", requireAdminToken(ARBX_ADMIN_TOKEN), (_req, res) => {
     token_safety: cfg.token_safety,
     circuit_breakers: cfg.circuit_breakers,
   });
+});
+
+// ─── PR-2: Internal audit endpoint for edge auth events ───
+const AuditAuthBody = z.object({
+  action: z.enum([
+    "auth.login_ok", "auth.login_fail", "auth.logout",
+    "auth.lockout_triggered", "auth.rate_limited", "auth.locked_attempt",
+  ]),
+  actor: z.string().min(1).max(64),
+  target_kind: z.literal("ip"),
+  target_id: z.string().min(1).max(64),
+  ip_address: z.string().min(1).max(64),
+  user_agent: z.string().max(512).optional(),
+  trace_id: z.string().uuid().optional(),
+  after_state: z.record(z.unknown()).optional(),
+});
+
+app.post("/internal/audit/auth", requireEdgeToken(ARBX_EDGE_TOKEN), async (req, res) => {
+  const parsed = AuditAuthBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_request", details: parsed.error.flatten() });
+    return;
+  }
+  await writeAudit(
+    parsed.data.action,
+    parsed.data.actor,
+    parsed.data.target_kind,
+    parsed.data.target_id,
+    null,
+    parsed.data.after_state ?? null,
+    parsed.data.ip_address,
+    parsed.data.trace_id ?? null,
+  );
+  res.status(204).end();
 });
 
 // ─────── Sprint 3: admin endpoints for blacklist + circuit breakers ───────

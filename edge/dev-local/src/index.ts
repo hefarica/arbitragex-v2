@@ -21,11 +21,13 @@ import {
 // admin-session-limits.ts (pure module so unit tests don't trigger config load).
 import {
   LOCKOUT_MS,
+  LOCKOUT_THRESHOLD,
   hitAdminSession,
   isLockedOut,
   recordAuthFailure,
   recordAuthSuccess,
 } from "./admin-session-limits.js";
+import { emitAuditEvent, tokenFingerprint } from "./audit-emit.js";
 
 const SERVICE = "edge-dev-local";
 const VERSION = "0.1.0";
@@ -129,14 +131,26 @@ function parseCookies(header: string | undefined): Record<string, string> {
 app.post("/admin/session", async (req, res) => {
   const ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim()
     ?? req.socket.remoteAddress ?? "unknown";
+  const ua = req.header("user-agent");
+  const traceId = (req as express.Request & { traceId?: string }).traceId;
 
+  // ── Event 8: locked_attempt ──
   if (isLockedOut(ip)) {
+    emitAuditEvent(API_SERVER_URL, ARBX_EDGE_TOKEN, {
+      action: "auth.locked_attempt", actor: "anonymous", ipAddress: ip,
+      userAgent: ua, traceId, afterState: { locked: true },
+    });
     res.status(429).json({ error: "locked_out", retry_after_s: LOCKOUT_MS / 1000 });
     return;
   }
   const rate = hitAdminSession(ip);
   res.setHeader("x-ratelimit-admin-session-remaining", String(rate.remaining));
+  // ── Event 7: rate_limited ──
   if (!rate.ok) {
+    emitAuditEvent(API_SERVER_URL, ARBX_EDGE_TOKEN, {
+      action: "auth.rate_limited", actor: "anonymous", ipAddress: ip,
+      userAgent: ua, traceId, afterState: { remaining: 0 },
+    });
     res.status(429).json({ error: "rate_limited" });
     return;
   }
@@ -153,12 +167,24 @@ app.post("/admin/session", async (req, res) => {
         "x-arbx-admin-token": token,
       },
       // Dry probe: send a no-op body that api-server rejects gracefully.
-      // We only care if auth passes (200/4xx with token accepted) vs 401.
       body: JSON.stringify({ enabled: null, reason: "__session_probe__" }),
     });
     // api-server returns 401 if admin token is wrong.
     if (probe.status === 401 || probe.status === 403) {
       recordAuthFailure(ip);
+      // ── Event 4: login_fail ──
+      emitAuditEvent(API_SERVER_URL, ARBX_EDGE_TOKEN, {
+        action: "auth.login_fail", actor: "anonymous", ipAddress: ip,
+        userAgent: ua, traceId,
+      });
+      // ── Event 6: lockout_triggered (if threshold just crossed) ──
+      if (isLockedOut(ip)) {
+        emitAuditEvent(API_SERVER_URL, ARBX_EDGE_TOKEN, {
+          action: "auth.lockout_triggered", actor: "anonymous", ipAddress: ip,
+          userAgent: ua, traceId,
+          afterState: { blocked_until_ms: Date.now() + LOCKOUT_MS, total_fails: LOCKOUT_THRESHOLD },
+        });
+      }
       res.status(401).json({ error: "invalid_admin_token" });
       return;
     }
@@ -173,15 +199,33 @@ app.post("/admin/session", async (req, res) => {
     `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_S}`,
     `${SESSION_TTL_COOKIE}=${expiresAtMs}; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_S}`,
   ]);
+  // ── Event 3: login_ok ──
+  const fp = tokenFingerprint(token);
+  emitAuditEvent(API_SERVER_URL, ARBX_EDGE_TOKEN, {
+    action: "auth.login_ok", actor: fp, ipAddress: ip,
+    userAgent: ua, traceId, afterState: { remaining_rate: rate.remaining },
+  });
   res.json({ ok: true, expires_at: expiresAtMs });
 });
 
 // POST /admin/session/logout — clear httpOnly cookie.
-app.post("/admin/session/logout", (_req, res) => {
+app.post("/admin/session/logout", (req, res) => {
+  const ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim()
+    ?? req.socket.remoteAddress ?? "unknown";
+  const ua = req.header("user-agent");
+  const traceId = (req as express.Request & { traceId?: string }).traceId;
+  const cookies = parseCookies(req.headers.cookie);
+  const sessionToken = cookies[SESSION_COOKIE];
+  const actor = sessionToken ? tokenFingerprint(sessionToken) : "anonymous";
   res.setHeader("set-cookie", [
     `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`,
     `${SESSION_TTL_COOKIE}=; SameSite=Strict; Path=/; Max-Age=0`,
   ]);
+  // ── Event 5: logout ──
+  emitAuditEvent(API_SERVER_URL, ARBX_EDGE_TOKEN, {
+    action: "auth.logout", actor, ipAddress: ip,
+    userAgent: ua, traceId,
+  });
   res.json({ ok: true });
 });
 
