@@ -6,6 +6,7 @@ import {
   ListChecksIcon,
   PowerIcon,
   SettingsIcon,
+  ShieldCheckIcon,
   type LucideIcon,
   SatelliteDishIcon,
   ZapIcon,
@@ -28,5 +29,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/recon",         label: "Recon & PnL",      icon: GaugeIcon,         group: "observe" },
   { href: "/config",        label: "Config",           icon: SettingsIcon,      group: "control" },
   { href: "/killswitch",    label: "Kill-switch",      icon: PowerIcon,         group: "control" },
+  { href: "/audit-logs",    label: "Audit Logs",       icon: ShieldCheckIcon,   group: "control" },
+  { href: "/live-readiness",label: "Live readiness",   icon: ListChecksIcon,    group: "control" },
   { href: "/onboarding",    label: "Onboarding",       icon: ListChecksIcon,    group: "setup" },
 ];

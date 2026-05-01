@@ -173,6 +173,8 @@ export type {
   RelayRow,
   RelaysResponse,
   OnboardingStatus,
+  AuditLogRow,
+  AuditLogsResponse,
 } from "@/lib/schemas";
 
 // ─────── GET endpoints ───────
@@ -218,6 +220,16 @@ export function getOnboardingStatus() {
 
 export function getReadiness() {
   return getValidated("/api/readiness", S.ReadinessReportSchema);
+}
+
+export function getAuditLogs(limit = 50, cursor?: string, action?: string, actor?: string, targetKind?: string) {
+  const url = new URL(`${EDGE_URL}/admin/audit`);
+  url.searchParams.set("limit", String(limit));
+  if (cursor) url.searchParams.set("cursor", cursor);
+  if (action) url.searchParams.set("action", action);
+  if (actor) url.searchParams.set("actor", actor);
+  if (targetKind) url.searchParams.set("target_kind", targetKind);
+  return getValidated(url.pathname + url.search, S.AuditLogsResponseSchema);
 }
 
 // ─────── POST endpoints (no retry — mutations must not be replayed) ───────

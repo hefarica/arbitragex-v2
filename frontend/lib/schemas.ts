@@ -280,3 +280,26 @@ export type ReadinessStatus = z.infer<typeof ReadinessStatusSchema>;
 export type ReadinessGroup = z.infer<typeof ReadinessGroupSchema>;
 export type ReadinessItem = z.infer<typeof ReadinessItemSchema>;
 export type ReadinessReport = z.infer<typeof ReadinessReportSchema>;
+
+export const AuditLogRowSchema = z.object({
+  id: z.string(),
+  actor: z.string(),
+  action: z.string(),
+  target_kind: z.string().nullable(),
+  target_id: z.string().nullable(),
+  before_state: z.unknown().nullable(),
+  after_state: z.unknown().nullable(),
+  ip_address: z.string().nullable(),
+  user_agent: z.string().nullable(),
+  trace_id: z.string().nullable(),
+  created_at: z.string(),
+});
+
+export const AuditLogsResponseSchema = z.object({
+  items: z.array(AuditLogRowSchema),
+  next_cursor: z.string().nullable(),
+  ts: z.string(),
+});
+
+export type AuditLogRow = z.infer<typeof AuditLogRowSchema>;
+export type AuditLogsResponse = z.infer<typeof AuditLogsResponseSchema>;
