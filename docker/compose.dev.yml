@@ -37,6 +37,11 @@ services:
       POSTGRES_DB: arbitragex
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # Role passwords — used by migrate.sh (001b) to set role passwords.
+      # Dev defaults match compose.dev convention. Prod requires explicit values.
+      ARBX_MIGRATOR_PASSWORD: ${ARBX_MIGRATOR_PASSWORD:-arbx_migrator_dev_only}
+      ARBX_RW_PASSWORD: ${ARBX_RW_PASSWORD:-arbx_rw_dev_only}
+      ARBX_RO_PASSWORD: ${ARBX_RO_PASSWORD:-arbx_ro_dev_only}
     # SECURITY: bind to loopback only. Never expose postgres to 0.0.0.0 — previous
     # incident: Akira ransomware scanned port, dropped DB with default password.
     # Internal containers resolve via docker DNS over the `arbx-net` network.
@@ -206,7 +211,17 @@ services:
       RECON_URL: http://recon:3004
       RELAYS_URL: http://relays-client:3005
       SEARCHER_URL: http://searcher-rs:9001
+      # Live Readiness verifiers reach Prometheus + Grafana + Frontend by service name.
+      FRONTEND_INTERNAL_URL: http://frontend:5173
+      PROMETHEUS_INTERNAL_URL: http://prometheus:9090
+      GRAFANA_INTERNAL_URL: http://grafana:3000
     ports: ["8080:8080"]
+    volumes:
+      # Read-only mount of repo source for static-source verifiers
+      # (V-NH-1 lint script, V-DB-1 migrations, V-AT-1 admin-token.ts, runbooks).
+      # Production deployments without this mount return status='yellow' with
+      # explicit reason — honesty doctrine, no false greens.
+      - ..:/repo:ro
     depends_on:
       redis: { condition: service_healthy }
     networks: [arbx-net]
@@ -241,6 +256,8 @@ services:
         NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:-http://localhost:8787}
     environment:
       NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:-http://localhost:8787}
+      # Server Components resolve edge via Docker DNS; browser uses NEXT_PUBLIC above.
+      INTERNAL_EDGE_URL: http://edge:8787
     ports: ["5173:5173"]
     depends_on: [edge]
     networks: [arbx-net]

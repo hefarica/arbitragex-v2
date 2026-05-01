@@ -16,7 +16,15 @@
 import type { z } from "zod";
 import * as S from "@/lib/schemas";
 
-const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL || "http://localhost:8787";
+// Server Components run inside Docker — INTERNAL_EDGE_URL reaches the edge via
+// Docker DNS (http://edge:8787). The browser uses NEXT_PUBLIC_EDGE_URL which
+// resolves via the operator's SSH tunnel (http://localhost:8787).
+const EDGE_URL =
+  (typeof window === "undefined"
+    ? process.env.INTERNAL_EDGE_URL
+    : undefined) ??
+  process.env.NEXT_PUBLIC_EDGE_URL ??
+  "http://localhost:8787";
 const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_RETRIES = 2;
 const MAX_ERROR_PREVIEW = 200;
@@ -118,6 +126,8 @@ async function postValidated<T>(
         method: "POST",
         headers: { "content-type": "application/json", ...extraHeaders },
         body: JSON.stringify(body),
+        // V-AT-1: include credentials so browser sends the httpOnly admin cookie.
+        credentials: "include",
       },
       timeoutMs,
     );
@@ -204,6 +214,10 @@ export function getRelays() {
 
 export function getOnboardingStatus() {
   return getValidated("/api/onboarding/status", S.OnboardingStatusSchema);
+}
+
+export function getReadiness() {
+  return getValidated("/api/readiness", S.ReadinessReportSchema);
 }
 
 // ─────── POST endpoints (no retry — mutations must not be replayed) ───────
