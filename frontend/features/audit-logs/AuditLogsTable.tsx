@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { format } from "date-fns";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -88,7 +87,7 @@ export function AuditLogsTable({ items }: { items: AuditLogRow[] }) {
             <div className="space-y-6">
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <div><span className="text-muted-foreground">ID:</span> <br/>{selectedRow.id.split("-")[0]}...</div>
-                <div><span className="text-muted-foreground">Time:</span> <br/>{format(new Date(selectedRow.created_at), "yyyy-MM-dd HH:mm:ss")}</div>
+                <div><span className="text-muted-foreground">Time:</span> <br/>{fmtTime(selectedRow.created_at)}</div>
                 {selectedRow.target_kind && (
                   <div><span className="text-muted-foreground">Target Kind:</span> <br/>{selectedRow.target_kind}</div>
                 )}
