@@ -1,0 +1,22 @@
+[Unit]
+Description=ArbitrageX v2 — Daily Audit Log Partition Retention
+Wants=network-online.target
+After=network-online.target
+# Docker compose stack must be up so the postgres container is reachable
+After=docker.service
+
+[Service]
+Type=oneshot
+# Allow overriding AUDIT_RETENTION_DAYS in the .env file
+Environment=AUDIT_RETENTION_DAYS=90
+EnvironmentFile=-/opt/arbitragex-v2/.env
+WorkingDirectory=/opt/arbitragex-v2
+
+# Using the postgres user inside the container to execute the retention function
+ExecStart=/usr/bin/docker exec arbitragex-v2-postgres-1 psql -U postgres -d arbitragex -c "SELECT arbx_drop_old_audit_partitions(${AUDIT_RETENTION_DAYS});"
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
