@@ -33,6 +33,7 @@ use shared_rs::{
     killswitch::KillSwitchClient,
     logging::init_tracing,
     metrics::init_metrics,
+    rpc_failover::HttpRpcPool,
 };
 use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
@@ -97,18 +98,52 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // Try to connect provider (RPC HTTP).
-    let provider: Option<Arc<Provider<Http>>> = match std::env::var("RPC_HTTP_1") {
-        Ok(url) if !url.is_empty() => {
-            match Provider::<Http>::try_from(url.as_str()) {
-                Ok(p) => Some(Arc::new(p)),
+    // RPC failover discipline (G-RPC-1): build a multi-vendor HTTP pool from
+    // env `RPC_HTTP_<chain_id>` (CSV `name=url,name=url`). The pool validates
+    // each provider's chain_id at boot, exposes Prometheus metrics, drift
+    // detection and per-provider circuit breakers via the spawned health loop.
+    //
+    // For backwards compat with single-vendor onboarding the pool accepts a
+    // bare URL (named "primary"). The selected primary feeds the engine; a
+    // later pass (Sprint 5, G-PEC-5) will upgrade per-call read sites to
+    // `pool.with_retry(...)` for sub-second failover on individual ops.
+    let provider: Option<Arc<Provider<Http>>> = match HttpRpcPool::from_env(chain_id).await {
+        Ok(Some(pool)) => {
+            let pool = Arc::new(pool);
+            let _health_task = pool.spawn_health_loop();
+            match pool.pick() {
+                Ok(entry) => {
+                    info!(
+                        event = "rpc_pool.primary_selected",
+                        provider = %entry.name,
+                        chain_id,
+                        "relays-client primary RPC selected"
+                    );
+                    Some(entry.provider.clone())
+                }
                 Err(e) => {
-                    warn!(event = "provider.invalid_rpc_url", error = %e);
+                    warn!(event = "rpc_pool.no_healthy", error = %e);
                     None
                 }
             }
         }
-        _ => None,
+        Ok(None) => {
+            warn!(
+                event = "rpc_pool.absent",
+                chain_id,
+                "RPC_HTTP_{chain_id} not set; relays-client stays in 501 mode"
+            );
+            None
+        }
+        Err(e) => {
+            warn!(
+                event = "rpc_pool.invalid",
+                chain_id,
+                error = %e,
+                "RPC_HTTP_{chain_id} value did not parse; relays-client stays in 501 mode"
+            );
+            None
+        }
     };
 
     let nonce = provider.clone().map(|p| Arc::new(NonceManager::new(p)));

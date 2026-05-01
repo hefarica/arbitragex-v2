@@ -1,7 +1,10 @@
 /**
  * @vitest-environment node
  *
- * We polyfill a minimal localStorage so the module can be tested without jsdom.
+ * V-AT-1: admin-token now uses httpOnly cookies via edge endpoints.
+ * These tests cover the cookie-reading utilities (getAdminToken,
+ * adminTokenExpiresInMs, fmtRemaining) and verify that setAdminToken
+ * and clearAdminToken call the correct edge endpoints.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -11,73 +14,97 @@ import {
   DEFAULT_TTL_MS,
   fmtRemaining,
   getAdminToken,
+  hasAdminSession,
   setAdminToken,
 } from "./admin-token";
 
-class MemoryStorage implements Storage {
-  private map = new Map<string, string>();
-  get length(): number { return this.map.size; }
-  clear(): void { this.map.clear(); }
-  getItem(k: string): string | null { return this.map.get(k) ?? null; }
-  key(i: number): string | null { return Array.from(this.map.keys())[i] ?? null; }
-  removeItem(k: string): void { this.map.delete(k); }
-  setItem(k: string, v: string): void { this.map.set(k, v); }
-}
+// Mock fetch for setAdminToken / clearAdminToken edge calls.
+const mockFetch = vi.fn();
 
 beforeEach(() => {
-  // @ts-expect-error injecting a partial window for the module to find.
-  globalThis.window = { localStorage: new MemoryStorage() };
+  // @ts-expect-error injecting document.cookie for the cookie-reading functions.
+  globalThis.document = { cookie: "" };
+  globalThis.fetch = mockFetch;
+  mockFetch.mockReset();
 });
 
 afterEach(() => {
   // @ts-expect-error tearing down our shim.
-  delete globalThis.window;
+  delete globalThis.document;
   vi.useRealTimers();
 });
 
-describe("admin-token storage", () => {
-  it("stores and retrieves a token within TTL", () => {
-    setAdminToken("secret-abc");
-    expect(getAdminToken()).toBe("secret-abc");
+describe("admin-token cookie session", () => {
+  it("getAdminToken returns empty when no session cookie exists", () => {
+    expect(getAdminToken()).toBe("");
+    expect(hasAdminSession()).toBe(false);
   });
 
-  it("clears both keys when expired", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-    setAdminToken("secret-abc", 1000); // 1s TTL
-    vi.setSystemTime(new Date("2026-01-01T00:00:02Z")); // 2s later
+  it("getAdminToken returns sentinel when session TTL cookie is valid", () => {
+    const future = Date.now() + 3600_000; // 1h from now
+    // @ts-expect-error setting cookie
+    globalThis.document = { cookie: `arbx_admin_session_ttl=${future}` };
+    expect(getAdminToken()).toBe("__session_active__");
+    expect(hasAdminSession()).toBe(true);
+  });
+
+  it("getAdminToken returns empty when session TTL cookie is expired", () => {
+    const past = Date.now() - 1000;
+    // @ts-expect-error setting cookie
+    globalThis.document = { cookie: `arbx_admin_session_ttl=${past}` };
     expect(getAdminToken()).toBe("");
+    expect(hasAdminSession()).toBe(false);
+  });
+
+  it("adminTokenExpiresInMs returns remaining time from TTL cookie", () => {
+    const future = Date.now() + 3600_000;
+    // @ts-expect-error setting cookie
+    globalThis.document = { cookie: `arbx_admin_session_ttl=${future}` };
+    const remaining = adminTokenExpiresInMs();
+    expect(remaining).toBeGreaterThan(3599_000);
+    expect(remaining).toBeLessThanOrEqual(3600_000);
+  });
+
+  it("adminTokenExpiresInMs returns 0 when no cookie", () => {
     expect(adminTokenExpiresInMs()).toBe(0);
   });
 
-  it("clearAdminToken wipes both keys", () => {
-    setAdminToken("secret-abc");
-    expect(getAdminToken()).toBe("secret-abc");
-    clearAdminToken();
-    expect(getAdminToken()).toBe("");
-    expect(adminTokenExpiresInMs()).toBe(0);
+  it("setAdminToken calls edge POST /admin/session", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => ({ ok: true }) });
+    const result = await setAdminToken("my-secret-token");
+    expect(result).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toContain("/admin/session");
+    expect(opts.method).toBe("POST");
+    expect(opts.credentials).toBe("include");
+    expect(JSON.parse(opts.body as string)).toEqual({ token: "my-secret-token" });
+  });
+
+  it("setAdminToken returns false on failure", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 401 });
+    const result = await setAdminToken("bad-token");
+    expect(result).toBe(false);
+  });
+
+  it("setAdminToken returns false on network error", async () => {
+    mockFetch.mockRejectedValueOnce(new Error("network fail"));
+    const result = await setAdminToken("any-token");
+    expect(result).toBe(false);
+  });
+
+  it("clearAdminToken calls edge POST /admin/session/logout", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true });
+    await clearAdminToken();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toContain("/admin/session/logout");
+    expect(opts.method).toBe("POST");
+    expect(opts.credentials).toBe("include");
   });
 
   it("default TTL is 8 hours", () => {
     expect(DEFAULT_TTL_MS).toBe(8 * 60 * 60 * 1000);
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-    setAdminToken("secret-abc");
-    const remaining = adminTokenExpiresInMs();
-    expect(remaining).toBeGreaterThan(7 * 60 * 60 * 1000);
-    expect(remaining).toBeLessThanOrEqual(DEFAULT_TTL_MS);
-  });
-
-  it("ignores corrupted expiry records and clears them", () => {
-    // Pre-seed a corrupt expiry value directly.
-    window.localStorage.setItem("arbx_admin_token", "secret-abc");
-    window.localStorage.setItem("arbx_admin_token_expires_at", "not-a-number");
-    expect(getAdminToken()).toBe("");
-  });
-
-  it("returns empty string when nothing is stored", () => {
-    expect(getAdminToken()).toBe("");
-    expect(adminTokenExpiresInMs()).toBe(0);
   });
 });
 

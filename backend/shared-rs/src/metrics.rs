@@ -122,6 +122,87 @@ pub static SEARCHER_WS_RECONNECTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     c
 });
 
+// ---- RPC failover pool metrics (G-RPC-1, doctrine: arbx-rpc-failover-discipline) ----
+
+pub static RPC_PROVIDER_STATE: Lazy<prometheus::IntGaugeVec> = Lazy::new(|| {
+    let g = prometheus::IntGaugeVec::new(
+        prometheus::opts!(
+            "arbx_rpc_provider_state",
+            "RPC provider state: 0=Healthy 1=Degraded 2=Open"
+        ),
+        &["provider", "kind"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(g.clone())).expect("register");
+    g
+});
+
+pub static RPC_PROVIDER_LATENCY_MS: Lazy<HistogramVec> = Lazy::new(|| {
+    let h = HistogramVec::new(
+        prometheus::histogram_opts!(
+            "arbx_rpc_provider_latency_ms",
+            "RPC provider call latency in milliseconds (success path only)",
+            vec![5.0, 10.0, 25.0, 50.0, 100.0, 200.0, 400.0, 800.0, 1600.0, 3200.0, 6400.0]
+        ),
+        &["provider", "kind"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(h.clone())).expect("register");
+    h
+});
+
+pub static RPC_PROVIDER_ERRORS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_rpc_provider_errors_total",
+            "RPC provider errors by classified cause"
+        ),
+        &["provider", "kind", "cause"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
+pub static RPC_PROVIDER_BLOCK_HEIGHT: Lazy<prometheus::IntGaugeVec> = Lazy::new(|| {
+    let g = prometheus::IntGaugeVec::new(
+        prometheus::opts!(
+            "arbx_rpc_provider_block_height",
+            "Latest block height observed per provider — drift detector input"
+        ),
+        &["provider", "kind"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(g.clone())).expect("register");
+    g
+});
+
+pub static RPC_POOL_FAILOVERS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_rpc_pool_failovers_total",
+            "Times the pool fell back to a backup provider after a primary error"
+        ),
+        &["chain_id"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
+pub static RPC_POOL_DRIFT_DETECTED_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_rpc_pool_drift_detected_total",
+            "Times a provider was demoted to Degraded for drifting behind tip"
+        ),
+        &["provider", "chain_id"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
 pub fn init_metrics() {
     // Force Lazy init so all collectors are registered.
     let _ = &*HTTP_REQUESTS_TOTAL;
@@ -137,6 +218,12 @@ pub fn init_metrics() {
     let _ = &*SEARCHER_UNDECODED_TOTAL;
     let _ = &*SEARCHER_DROPPED_TOTAL;
     let _ = &*SEARCHER_WS_RECONNECTS_TOTAL;
+    let _ = &*RPC_PROVIDER_STATE;
+    let _ = &*RPC_PROVIDER_LATENCY_MS;
+    let _ = &*RPC_PROVIDER_ERRORS_TOTAL;
+    let _ = &*RPC_PROVIDER_BLOCK_HEIGHT;
+    let _ = &*RPC_POOL_FAILOVERS_TOTAL;
+    let _ = &*RPC_POOL_DRIFT_DETECTED_TOTAL;
     SERVICE_UP.set(1);
 }
 

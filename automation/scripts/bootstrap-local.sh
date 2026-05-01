@@ -123,11 +123,11 @@ if [[ -n "${RPC_WS_1:-}" ]]; then RPC_WS_SET=1; fi
 if [[ "$RPC_WS_SET" -eq 0 ]]; then
   warn "RPC_WS_1 / RPC_HTTP_1 not set — searcher-rs is idle. No opportunities will appear until you:"
   cat <<'EOF'
-      1. Create a free Alchemy app:   https://dashboard.alchemy.com/
-         (New app → Ethereum Mainnet → copy HTTP + WSS URLs.)
+      1. Choose an EVM RPC provider and create a free account.
+         See ONBOARDING.md Step 2 for recommended providers and URL patterns.
       2. Add to .env in repo root:
-           RPC_HTTP_1=https://eth-mainnet.g.alchemy.com/v2/<KEY>
-           RPC_WS_1=wss://eth-mainnet.g.alchemy.com/v2/<KEY>
+           RPC_HTTP_1=<YOUR_PROVIDER_HTTP_URL>
+           RPC_WS_1=<YOUR_PROVIDER_WS_URL>
       3. Restart searcher-rs only:
            docker compose -f docker/compose.dev.yml restart searcher-rs
       4. Confirm:

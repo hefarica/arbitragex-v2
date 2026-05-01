@@ -260,7 +260,7 @@ async function adminProxy(path: string, req: express.Request, res: express.Respo
         "x-arbx-trace-id": (req as express.Request & { traceId?: string }).traceId ?? "",
         "x-arbx-actor": req.header("x-arbx-actor") ?? "",
       },
-      body: method !== "GET" && method !== "HEAD" ? JSON.stringify(req.body ?? {}) : undefined,
+      body: method !== "GET" && method !== "HEAD" ? JSON.stringify(req.body ?? {}) : null,
     });
     const text = await upstream.text();
     res.status(upstream.status)

@@ -7,10 +7,10 @@ import { Button } from "@/components/ui/button";
 import { clearAdminToken } from "@/lib/admin-token";
 
 /**
- * Clears the locally-stored admin token. The token is held in localStorage
- * so the operator doesn't have to paste it on every action; this button is
- * the explicit revocation path (e.g. shared workstation, end of shift,
- * suspected leak).
+ * Clears the admin session. V-AT-1: the token is now stored in an httpOnly
+ * cookie managed by the edge; this button calls the logout endpoint to
+ * clear it server-side. This is the explicit revocation path (e.g. shared
+ * workstation, end of shift, suspected leak).
  */
 export function ClearAdminTokenButton({
   onCleared,
@@ -21,8 +21,8 @@ export function ClearAdminTokenButton({
 }) {
   const [cleared, setCleared] = useState(false);
 
-  function clear() {
-    clearAdminToken();
+  async function clear() {
+    await clearAdminToken();
     setCleared(true);
     onCleared?.();
     // Reset the "cleared" badge after a few seconds so a second click is meaningful.
@@ -36,10 +36,10 @@ export function ClearAdminTokenButton({
       size="sm"
       onClick={clear}
       className={className}
-      aria-label="Clear admin token from local storage"
+      aria-label="Clear admin session"
     >
       <Trash2Icon />
-      {cleared ? "cleared" : "Clear admin token"}
+      {cleared ? "cleared" : "Clear admin session"}
     </Button>
   );
 }

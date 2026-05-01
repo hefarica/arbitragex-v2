@@ -36,7 +36,19 @@ while IFS= read -r -d '' f; do
     continue
   fi
   echo "  APPLY $version"
-  psql_cmd -v ON_ERROR_STOP=1 -f "$f" >/dev/null
+  # 001b_role_passwords needs psql -v variables for env-injected passwords.
+  if [[ "$version" == "001b_role_passwords" ]]; then
+    _migrator_pw="${ARBX_MIGRATOR_PASSWORD:-arbx_migrator_dev_only}"
+    _rw_pw="${ARBX_RW_PASSWORD:-arbx_rw_dev_only}"
+    _ro_pw="${ARBX_RO_PASSWORD:-arbx_ro_dev_only}"
+    psql_cmd -v ON_ERROR_STOP=1 \
+      -v "arbx_migrator_pw=$_migrator_pw" \
+      -v "arbx_rw_pw=$_rw_pw" \
+      -v "arbx_ro_pw=$_ro_pw" \
+      -f "$f" >/dev/null
+  else
+    psql_cmd -v ON_ERROR_STOP=1 -f "$f" >/dev/null
+  fi
   psql_cmd -v ON_ERROR_STOP=1 -c "INSERT INTO schema_migrations(version) VALUES ('$version');" >/dev/null
   applied+=("$version")
 done < <(find "$MIG_DIR" -maxdepth 1 -type f -name '*.sql' -print0 | sort -z)

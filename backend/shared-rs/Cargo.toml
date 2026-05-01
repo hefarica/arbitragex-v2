@@ -25,6 +25,7 @@ once_cell.workspace = true
 redis.workspace = true
 reqwest.workspace = true
 jsonschema.workspace = true
+ethers.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros","rt-multi-thread","test-util","time"] }

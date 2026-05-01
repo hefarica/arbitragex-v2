@@ -49,3 +49,35 @@ groups:
         annotations:
           summary: "No opportunities detected in the last 15m"
           description: "Searcher-rs may be idle or kill-switched; verify both."
+
+      - alert: RpcAllProvidersUnhealthy
+        expr: count(arbx_rpc_provider_state == 0) == 0 and count(arbx_rpc_provider_state) > 0
+        for: 2m
+        labels: { severity: critical, platform: arbitragex }
+        annotations:
+          summary: "All RPC providers unhealthy"
+          description: "Pool has providers configured but none are Healthy. Reads will fall back to Degraded if any; otherwise pool returns AllUnhealthy. See runbooks/rpc-down.md."
+
+      - alert: RpcCircuitBreakerOpen
+        expr: arbx_rpc_provider_state == 2
+        for: 1m
+        labels: { severity: warning, platform: arbitragex }
+        annotations:
+          summary: "RPC provider {{ $labels.provider }} circuit breaker OPEN"
+          description: "Provider {{ $labels.provider }} ({{ $labels.kind }}) tripped on sustained errors. Will half-open after 30s."
+
+      - alert: RpcSingleVendorPool
+        expr: count by (kind) (arbx_rpc_provider_state) < 2
+        for: 30m
+        labels: { severity: info, platform: arbitragex }
+        annotations:
+          summary: "RPC pool has < 2 providers ({{ $labels.kind }})"
+          description: "arbx-rpc-failover-discipline requires ≥2 vendors per chain. Add a backup in env RPC_HTTP_<chain_id> / RPC_WS_<chain_id> before flipping paper_mode=false."
+
+      - alert: RpcDriftDetected
+        expr: increase(arbx_rpc_pool_drift_detected_total[10m]) > 0
+        for: 0m
+        labels: { severity: warning, platform: arbitragex }
+        annotations:
+          summary: "RPC provider {{ $labels.provider }} drifted behind tip"
+          description: "Provider was demoted to Degraded for falling >2 blocks behind the tip for >60s. Investigate vendor health."

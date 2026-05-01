@@ -21,6 +21,7 @@ use shared_rs::{
     config::AppConfig,
     killswitch::KillSwitchClient,
     metrics::OPPORTUNITIES_TOTAL,
+    rpc_failover::{WsEndpoint, WsRpcPool},
 };
 use sqlx::postgres::PgPool;
 use std::{sync::Arc, time::Duration};
@@ -40,26 +41,39 @@ pub async fn run_chain(
     db: Option<PgPool>,
     dedup: Arc<Dedup>,
 ) -> anyhow::Result<ScannerHandle> {
-    let env_key = format!("RPC_WS_{chain_id}");
-    let url = std::env::var(&env_key).unwrap_or_default();
+    // RPC failover discipline (G-RPC-1): build a multi-vendor pool from env.
+    // CSV format `name=url,name=url`; bare URLs accepted for back-compat.
+    let pool = match WsRpcPool::from_env(chain_id) {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            warn!(
+                event = "scanner.no_rpc",
+                chain_id,
+                env_key = format!("RPC_WS_{chain_id}"),
+                "RPC_WS not configured; scanner stays idle for this chain (no detection, no fabrication)"
+            );
+            tokio::spawn(async move {
+                idle_chain_loop(chain_id, killswitch).await;
+            });
+            return Ok(ScannerHandle { chain_id });
+        }
+        Err(e) => {
+            error!(
+                event = "scanner.rpc_pool_invalid",
+                chain_id,
+                error = %e,
+                "RPC_WS env value did not parse — scanner idle"
+            );
+            tokio::spawn(async move {
+                idle_chain_loop(chain_id, killswitch).await;
+            });
+            return Ok(ScannerHandle { chain_id });
+        }
+    };
 
-    if url.is_empty() {
-        warn!(
-            event = "scanner.no_rpc",
-            chain_id,
-            env_key,
-            "RPC_WS not configured; scanner stays idle for this chain (no detection, no fabrication)"
-        );
-        // Stay alive so the service as a whole is healthy; loop + sleep + log every 60s.
-        tokio::spawn(async move {
-            idle_chain_loop(chain_id, killswitch).await;
-        });
-        return Ok(ScannerHandle { chain_id });
-    }
-
-    // Spawn the detection loop.
+    // Spawn the detection loop with the full endpoint list.
     tokio::spawn(detection_loop(
-        chain_id, url, cfg, killswitch, redis, db, dedup,
+        chain_id, pool.endpoints, cfg, killswitch, redis, db, dedup,
     ));
     Ok(ScannerHandle { chain_id })
 }
@@ -80,7 +94,7 @@ async fn idle_chain_loop(chain_id: u64, killswitch: KillSwitchClient) {
 
 async fn detection_loop(
     chain_id: u64,
-    url: String,
+    endpoints: Vec<WsEndpoint>,
     _cfg: Arc<AppConfig>,
     killswitch: KillSwitchClient,
     mut redis: redis::aio::ConnectionManager,
@@ -88,6 +102,7 @@ async fn detection_loop(
     dedup: Arc<Dedup>,
 ) {
     let mut backoff_ms: u64 = 1000;
+    let mut idx: usize = 0;
     loop {
         if killswitch.is_enabled().await {
             info!(event = "scanner.paused", chain_id, "kill-switch ON; sleeping 5s");
@@ -95,21 +110,52 @@ async fn detection_loop(
             continue;
         }
 
-        let client = match WsChainClient::connect(chain_id, &url).await {
+        // Pick the next endpoint round-robin. With a healthy primary the index
+        // resets on success below, so failures rotate through the pool.
+        let endpoint = &endpoints[idx % endpoints.len()];
+        let client = match WsChainClient::connect(chain_id, &endpoint.url).await {
             Ok(c) => {
+                if idx != 0 {
+                    info!(
+                        event = "scanner.connected_via_backup",
+                        chain_id,
+                        provider = %endpoint.name,
+                        "connected via backup WS provider after primary failures"
+                    );
+                }
                 backoff_ms = 1000;
+                idx = 0;
                 c
             }
             Err(e) => {
-                error!(event = "scanner.connect_error", chain_id, error = %e);
-                sleep_with_backoff(&mut backoff_ms).await;
+                error!(
+                    event = "scanner.connect_error",
+                    chain_id,
+                    provider = %endpoint.name,
+                    error = %e,
+                    "rotating to next WS provider"
+                );
+                idx = (idx + 1) % endpoints.len();
+                if idx == 0 {
+                    // Exhausted the ring — back off before another round.
+                    sleep_with_backoff(&mut backoff_ms).await;
+                }
                 continue;
             }
         };
 
         if let Err(e) = run_subscription(&client, &killswitch, &mut redis, db.as_ref(), &dedup).await {
-            error!(event = "scanner.subscription_error", chain_id, error = %e);
-            sleep_with_backoff(&mut backoff_ms).await;
+            error!(
+                event = "scanner.subscription_error",
+                chain_id,
+                provider = %endpoint.name,
+                error = %e
+            );
+            // Rotate on subscription death too — the WS connection died, try next.
+            idx = (idx + 1) % endpoints.len();
+            if idx == 0 {
+                sleep_with_backoff(&mut backoff_ms).await;
+            }
         }
     }
 }

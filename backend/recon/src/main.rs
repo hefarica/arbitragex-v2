@@ -32,6 +32,7 @@ use shared_rs::{
     killswitch::KillSwitchClient,
     logging::init_tracing,
     metrics::init_metrics,
+    rpc_failover::HttpRpcPool,
 };
 use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, sync::Arc};
@@ -182,46 +183,79 @@ async fn main() -> anyhow::Result<()> {
 
     // S6: spawn consumer if RPC + REDIS + recon cfg present.
     if let Some(recon_cfg) = cfg.recon.clone() {
-        let rpc_url = std::env::var("RPC_HTTP_1").unwrap_or_default();
+        let chain_id = cfg.chains.iter().find(|c| c.enabled).map(|c| c.chain_id).unwrap_or(1);
         let redis_url = std::env::var("REDIS_URL").unwrap_or_default();
-        if !rpc_url.is_empty() && !redis_url.is_empty() {
-            match Provider::<Http>::try_from(rpc_url.as_str()) {
-                Ok(provider) => {
-                    let provider = Arc::new(provider);
-                    let db_for_consumer = PgPoolOptions::new().max_connections(4).connect(&db_url).await?;
-                    let db_for_aggregator = PgPoolOptions::new().max_connections(2).connect(&db_url).await?;
-                    let redis_client = redis::Client::open(redis_url.clone())?;
-                    let redis_conn = redis_client.get_connection_manager().await?;
-                    let killswitch = KillSwitchClient::connect(&redis_url, cfg.system.kill_switch_enabled_default).await
-                        .map_err(|e| anyhow::anyhow!("killswitch: {e}"))?;
-
-                    // Consumer
-                    let consumer = consumer::Consumer {
-                        redis: redis_conn,
-                        pool: db_for_consumer,
-                        provider,
-                        cfg: recon_cfg.clone(),
-                        consumer_name: std::env::var("HOSTNAME").unwrap_or_else(|_| "recon-1".into()),
-                    };
-                    tokio::spawn(async move {
-                        if let Err(e) = consumer.run().await {
-                            tracing::error!(event = "recon_consumer.fatal", error = %e);
-                        }
-                    });
-                    info!(event = "recon_consumer.spawned");
-
-                    // Aggregator
-                    let cfg_agg = recon_cfg.clone();
-                    tokio::spawn(async move {
-                        aggregator::run_periodic(db_for_aggregator, cfg_agg, killswitch).await;
-                    });
-                    info!(event = "aggregator.spawned");
-                }
-                Err(e) => warn!(event = "recon.rpc_invalid", error = %e),
-            }
+        if redis_url.is_empty() {
+            warn!(event = "recon.consumer_not_spawned", reason = "redis_url_missing");
         } else {
-            warn!(event = "recon.consumer_not_spawned",
-                  "RPC_HTTP_1 or REDIS_URL absent; running read-only");
+            // RPC failover discipline (G-RPC-1): build a multi-vendor HTTP
+            // pool from env. recon's consumer fetches receipts on chain — we
+            // pick the primary at boot and let the pool's health loop publish
+            // metrics + drift detection + per-provider circuit state.
+            let provider_arc: Option<Arc<Provider<Http>>> = match HttpRpcPool::from_env(chain_id).await {
+                Ok(Some(pool)) => {
+                    let pool = Arc::new(pool);
+                    let _health_task = pool.spawn_health_loop();
+                    match pool.pick() {
+                        Ok(e) => {
+                            info!(
+                                event = "rpc_pool.primary_selected",
+                                provider = %e.name, chain_id,
+                                "recon primary RPC selected"
+                            );
+                            Some(e.provider.clone())
+                        }
+                        Err(e) => {
+                            warn!(event = "rpc_pool.no_healthy", error = %e);
+                            None
+                        }
+                    }
+                }
+                Ok(None) => {
+                    warn!(
+                        event = "rpc_pool.absent",
+                        chain_id,
+                        "RPC_HTTP_{chain_id} not set; recon stays read-only (no receipt fetching)"
+                    );
+                    None
+                }
+                Err(e) => {
+                    warn!(event = "rpc_pool.invalid", chain_id, error = %e);
+                    None
+                }
+            };
+
+            if let Some(provider) = provider_arc {
+                let db_for_consumer = PgPoolOptions::new().max_connections(4).connect(&db_url).await?;
+                let db_for_aggregator = PgPoolOptions::new().max_connections(2).connect(&db_url).await?;
+                let redis_client = redis::Client::open(redis_url.clone())?;
+                let redis_conn = redis_client.get_connection_manager().await?;
+                let killswitch = KillSwitchClient::connect(&redis_url, cfg.system.kill_switch_enabled_default).await
+                    .map_err(|e| anyhow::anyhow!("killswitch: {e}"))?;
+
+                let consumer = consumer::Consumer {
+                    redis: redis_conn,
+                    pool: db_for_consumer,
+                    provider,
+                    cfg: recon_cfg.clone(),
+                    consumer_name: std::env::var("HOSTNAME").unwrap_or_else(|_| "recon-1".into()),
+                };
+                tokio::spawn(async move {
+                    if let Err(e) = consumer.run().await {
+                        tracing::error!(event = "recon_consumer.fatal", error = %e);
+                    }
+                });
+                info!(event = "recon_consumer.spawned");
+
+                let cfg_agg = recon_cfg.clone();
+                tokio::spawn(async move {
+                    aggregator::run_periodic(db_for_aggregator, cfg_agg, killswitch).await;
+                });
+                info!(event = "aggregator.spawned");
+            } else {
+                warn!(event = "recon.consumer_not_spawned",
+                      "RPC pool empty/unhealthy or absent; running read-only");
+            }
         }
     } else {
         warn!(event = "recon.cfg_absent",

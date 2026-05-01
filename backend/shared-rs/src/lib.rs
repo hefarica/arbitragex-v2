@@ -17,9 +17,14 @@ pub mod health;
 pub mod killswitch;
 pub mod logging;
 pub mod metrics;
+pub mod rpc_failover;
 
 pub use config::{AppConfig, ConfigError};
 pub use health::{ServiceInfo, build_health_router};
 pub use killswitch::{KillSwitchClient, KillSwitchError, KillSwitchState};
 pub use logging::init_tracing;
 pub use metrics::{init_metrics, metrics_handler};
+pub use rpc_failover::{
+    HttpRpcPool, PoolError, ProviderState, RpcPoolSnapshot, RpcProviderSnapshot, WsEndpoint,
+    WsRpcPool,
+};

@@ -6,8 +6,9 @@ From zero to live dashboard with real mempool data in ≈ 5 minutes.
 
 - Docker + Docker Compose v2
 - Node 20+ (only if you plan to run `npm` commands outside of compose)
-- A free [Alchemy](https://dashboard.alchemy.com/) account (or equivalent RPC
-  provider) for real mempool detection. Optional for UI-only sandbox.
+- A free account with an EVM RPC provider for real mempool detection.
+  See **Step 2** below for recommended providers and URL patterns.
+  Optional for UI-only sandbox.
 
 ## Step 1 — One-shot bootstrap
 
@@ -41,24 +42,30 @@ so there are no opportunities to detect. This is expected.
 
 ## Step 2 — Attach a real RPC (optional, needed for live detection)
 
+### Recommended EVM RPC providers
+
+| Provider | Free tier | Signup | HTTP URL pattern | WSS URL pattern |
+|---|---|---|---|---|
+| **Alchemy** | 300M CU/month | [dashboard.alchemy.com](https://dashboard.alchemy.com/) | `https://eth-mainnet.g.alchemy.com/v2/<KEY>` | `wss://eth-mainnet.g.alchemy.com/v2/<KEY>` |
+| **Infura** | 100k req/day | [app.infura.io](https://app.infura.io/) | `https://mainnet.infura.io/v3/<KEY>` | `wss://mainnet.infura.io/ws/v3/<KEY>` |
+| **Ankr** | 1M req/month | [ankr.com/rpc](https://www.ankr.com/rpc/) | `https://rpc.ankr.com/eth/<KEY>` | `wss://rpc.ankr.com/eth/ws/<KEY>` |
+
+Pick any provider, create a free account, and copy the HTTP + WSS endpoints.
+
 ```bash
-# 1. Create a free Alchemy app:
-#    https://dashboard.alchemy.com/apps → "Create new app" → Ethereum Mainnet.
-#    Copy the HTTPS and WSS endpoints.
+# 1. Edit .env in the repo root — the key is YOUR credential, never committed:
+RPC_HTTP_1=<YOUR_PROVIDER_HTTP_URL>
+RPC_WS_1=<YOUR_PROVIDER_WS_URL>
 
-# 2. Edit .env in the repo root — the key is YOUR credential, never committed:
-RPC_HTTP_1=https://eth-mainnet.g.alchemy.com/v2/<YOUR_KEY>
-RPC_WS_1=wss://eth-mainnet.g.alchemy.com/v2/<YOUR_KEY>
-
-# 3. Restart only the services that need it:
+# 2. Restart only the services that need it:
 docker compose -f docker/compose.dev.yml restart searcher-rs sim-ctl relays-client
 
-# 4. Confirm the scanner connected to the wire:
+# 3. Confirm the scanner connected to the wire:
 docker compose -f docker/compose.dev.yml logs --tail=30 searcher-rs | grep scanner
 #    Expect: event="scanner.subscribed" chain_id=1
 #    NOT:    event="scanner.no_rpc"  or  event="scanner.idle"
 
-# 5. Confirm detection started:
+# 4. Confirm detection started:
 curl -s http://localhost:9001/metrics | grep 'arbx_opportunity_total'
 #    Counter should be incrementing every few seconds.
 ```

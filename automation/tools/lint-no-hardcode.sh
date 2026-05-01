@@ -73,7 +73,7 @@ done < <(run_grep "$ADDR_RE" \
 #   - image/CI references (ghcr.io, docker.io, crates.io, npmjs.com, github.com actions)
 #   - test files
 URL_RE='https?://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-URL_ALLOW='(^docs/|\.env\.example|\.md:|\.test\.(ts|js|tsx)|(ghcr|docker|crates|npmjs|github|githubusercontent|actions)\.(io|com|org)|schema\.json|JSONSchema|w3\.org|prom-client|localhost:|127\.0\.0\.[0-9]+:|api-server:|anvil:|redis:|postgres:|edge:|selector-api:|sim-ctl:|recon:|relays-client:|grafana:|prometheus:|alertmanager:|loki:|bootstrap-local\.sh|<KEY>|<YOUR_KEY>)'
+URL_ALLOW='(^docs/|\.env\.example|\.md:|\.test\.(ts|js|tsx)|(ghcr|docker|crates|npmjs|github|githubusercontent|actions)\.(io|com|org)|schema\.json|JSONSchema|w3\.org|prom-client|localhost:|127\.0\.0\.[0-9]+:|api-server:|anvil:|redis:|postgres:|edge:|selector-api:|sim-ctl:|recon:|relays-client:|grafana:|prometheus:|alertmanager:|loki:|<KEY>|<YOUR_KEY>)'
 while IFS= read -r hit; do
   [ -z "$hit" ] && continue
   file="${hit%%:*}"; rest="${hit#*:}"; line="${rest%%:*}"; content="${rest#*:}"

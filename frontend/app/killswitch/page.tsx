@@ -42,8 +42,11 @@ export default function KillSwitchPage() {
     if (!token) { setError("admin token required"); return; }
     if (!reason.trim()) { setError("reason is required for the audit log"); return; }
     setBusy(true);
-    setAdminToken(token);
+    // V-AT-1: setAdminToken is now async — establishes httpOnly cookie session.
+    const sessionOk = await setAdminToken(token);
+    if (!sessionOk) { setBusy(false); setError("failed to establish admin session — check token"); return; }
     setTokenExpiresIn(adminTokenExpiresInMs());
+    // Token is now in the httpOnly cookie; the header is a fallback for this request.
     const r = await toggleKillswitch(next, reason.trim(), token);
     setBusy(false);
     if (!r.ok) { setError(r.error); setLastOutcome(null); return; }
@@ -98,7 +101,7 @@ export default function KillSwitchPage() {
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="ks-token">admin token <span className="text-muted-foreground">(stored in localStorage)</span></Label>
+            <Label htmlFor="ks-token">admin token <span className="text-muted-foreground">(stored in secure httpOnly session)</span></Label>
             <Input
               id="ks-token"
               type="password"

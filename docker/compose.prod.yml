@@ -41,6 +41,9 @@ services:
       POSTGRES_DB: arbitragex
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required for prod stack}
+      ARBX_MIGRATOR_PASSWORD: ${ARBX_MIGRATOR_PASSWORD:?ARBX_MIGRATOR_PASSWORD required for prod}
+      ARBX_RW_PASSWORD: ${ARBX_RW_PASSWORD:?ARBX_RW_PASSWORD required for prod}
+      ARBX_RO_PASSWORD: ${ARBX_RO_PASSWORD:?ARBX_RO_PASSWORD required for prod}
     ports: ["127.0.0.1:5432:5432"]
     volumes:
       - postgres_data:/var/lib/postgresql/data
