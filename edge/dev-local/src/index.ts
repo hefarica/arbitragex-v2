@@ -57,6 +57,21 @@ function hit(ip: string): { ok: boolean; remaining: number } {
 const startedAt = new Date();
 const app = express();
 app.disable("x-powered-by");
+
+// DEV-ONLY: permissive CORS so the browser-side frontend (localhost:5173 via
+// SSH tunnel) can reach this edge shim. Production uses CF Workers CORS.
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader("access-control-allow-origin", origin);
+    res.setHeader("access-control-allow-credentials", "true");
+    res.setHeader("access-control-allow-headers", "content-type, x-arbx-admin-token, x-arbx-trace-id, x-arbx-actor");
+    res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
+  }
+  if (req.method === "OPTIONS") { res.status(204).end(); return; }
+  next();
+});
+
 app.use(traceIdMiddleware());
 app.use(createHttpLogger(SERVICE));
 app.use(metricsMiddleware(SERVICE));
@@ -103,6 +118,7 @@ app.get("/api/config/current", (req, res) => proxy("/api/v1/config/current", req
 // Phase 0.5: relays catalog (public list of enabled) + onboarding status.
 app.get("/api/relays", (req, res) => proxy("/api/v1/relays", req, res));
 app.get("/api/onboarding/status", (req, res) => proxy("/api/v1/onboarding/status", req, res));
+app.get("/api/readiness", (req, res) => proxy("/api/v1/readiness", req, res));
 
 // S7: admin POST proxies — forward caller's x-arbx-admin-token alongside the
 // edge token. Rejected by api-server if admin token is missing/wrong.
