@@ -268,6 +268,67 @@ app.get("/admin/scoring/weights", requireAdminToken(ARBX_ADMIN_TOKEN), (_req, re
   res.status(200).json(cfg.scoring);
 });
 
+const AuditLogFilterSchema = z.object({
+  action: z.string().optional(),
+  actor: z.string().optional(),
+  target_kind: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  cursor: z.string().optional(), // Expected to be an ISO timestamp for pagination
+});
+
+app.get("/admin/audit", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+  const p = requireDbPool();
+  if (!p) { res.status(503).json({ error: "db_unavailable" }); return; }
+  
+  const parsed = AuditLogFilterSchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_request", details: parsed.error.flatten() });
+    return;
+  }
+  
+  const { action, actor, target_kind, limit, cursor } = parsed.data;
+  
+  const filters: string[] = [];
+  const params: any[] = [];
+  let paramIdx = 1;
+  
+  if (action) { filters.push(`action = $${paramIdx++}`); params.push(action); }
+  if (actor) { filters.push(`actor = $${paramIdx++}`); params.push(actor); }
+  if (target_kind) { filters.push(`target_kind = $${paramIdx++}`); params.push(target_kind); }
+  if (cursor) {
+    filters.push(`created_at < $${paramIdx++}`);
+    params.push(cursor);
+  }
+  
+  const whereClause = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+  
+  // Also get total count (approx or exact if fast)
+  // For simplicity we just return the paginated rows
+  const query = `
+    SELECT id, actor, action, target_kind, target_id, before_state, after_state,
+           ip_address, user_agent, trace_id, created_at
+      FROM audit_log
+     ${whereClause}
+     ORDER BY created_at DESC
+     LIMIT $${paramIdx}
+  `;
+  params.push(limit);
+  
+  try {
+    const q = await p.query(query, params);
+    const nextCursor = q.rows.length === limit ? q.rows[q.rows.length - 1].created_at.toISOString() : null;
+    
+    res.status(200).json({
+      items: q.rows,
+      next_cursor: nextCursor,
+      ts: new Date().toISOString()
+    });
+  } catch (e) {
+    logger.warn({ event: "audit.read_failed", err: (e as Error).message });
+    res.status(500).json({ error: "query_failed", detail: (e as Error).message });
+  }
+});
+
 // ─────── Sprint 7: public v1 read endpoints consumed by frontend + edge ───────
 //
 // Contract: every endpoint below must return HTTP 503 with { error: "db_unavailable" }

@@ -245,14 +245,14 @@ app.post("/admin/session/logout", (req, res) => {
   res.json({ ok: true });
 });
 
-async function adminPost(path: string, req: express.Request, res: express.Response): Promise<void> {
+async function adminProxy(path: string, req: express.Request, res: express.Response, method: string = "POST"): Promise<void> {
   // Accept admin token from: (1) header (CLI/programmatic), (2) httpOnly cookie (browser).
   const cookies = parseCookies(req.headers.cookie);
   const adminToken = req.header("x-arbx-admin-token") || cookies[SESSION_COOKIE];
   if (!adminToken) { res.status(401).json({ error: "missing_admin_token" }); return; }
   try {
     const upstream = await fetch(`${API_SERVER_URL}${path}`, {
-      method: "POST",
+      method,
       headers: {
         "content-type": "application/json",
         "x-arbx-edge-token": ARBX_EDGE_TOKEN,
@@ -260,7 +260,7 @@ async function adminPost(path: string, req: express.Request, res: express.Respon
         "x-arbx-trace-id": (req as express.Request & { traceId?: string }).traceId ?? "",
         "x-arbx-actor": req.header("x-arbx-actor") ?? "",
       },
-      body: JSON.stringify(req.body ?? {}),
+      body: method !== "GET" && method !== "HEAD" ? JSON.stringify(req.body ?? {}) : undefined,
     });
     const text = await upstream.text();
     res.status(upstream.status)
@@ -271,8 +271,18 @@ async function adminPost(path: string, req: express.Request, res: express.Respon
   }
 }
 
-app.post("/admin/killswitch",                 (req, res) => adminPost("/admin/killswitch", req, res));
-app.post("/admin/onboarding/1/complete",      (req, res) => adminPost("/admin/onboarding/1/complete", req, res));
+app.post("/admin/killswitch",                 (req, res) => adminProxy("/admin/killswitch", req, res, "POST"));
+app.post("/admin/onboarding/1/complete",      (req, res) => adminProxy("/admin/onboarding/1/complete", req, res, "POST"));
+
+// PR-2.b Audit Log endpoint
+app.get("/admin/audit", (req, res) => {
+  // forward query parameters safely
+  const url = new URL(`${API_SERVER_URL}/admin/audit`);
+  for (const [k, v] of Object.entries(req.query)) {
+    if (typeof v === "string") url.searchParams.set(k, v);
+  }
+  adminProxy(url.pathname + url.search, req, res, "GET");
+});
 
 const PORT = Number(process.env["EDGE_PORT"] ?? 8787);
 app.listen(PORT, () => {

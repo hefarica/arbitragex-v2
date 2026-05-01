@@ -154,6 +154,7 @@ app.get("/api/executions/recent", (c) => proxy(c, "/api/v1/executions/recent", "
 app.get("/api/recon/summary",    (c) => proxy(c, "/api/v1/recon/summary",    "arbx:cache:recon", 10));
 app.get("/api/recon/timeseries", (c) => proxy(c, "/api/v1/recon/timeseries", "arbx:cache:recon-ts", 15));
 app.get("/api/config/current",   (c) => proxy(c, "/api/v1/config/current",   "arbx:cache:config", 30));
+app.get("/api/readiness",        (c) => proxy(c, "/api/v1/readiness",        "arbx:cache:readiness", 15));
 
 // V-AT-1 hardening: httpOnly cookie session for the admin token.
 // POST /admin/session — validate token, set httpOnly cookie. Rate-limited (5/min/IP)
@@ -235,6 +236,28 @@ app.post("/admin/killswitch", async (c) => {
   const text = await upstream.text();
   c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
   return c.body(text, upstream.status as 200 | 400 | 401 | 403 | 500 | 502);
+});
+
+// PR-2.b Audit Log proxy
+app.get("/admin/audit", async (c) => {
+  const adminToken = c.req.header("x-arbx-admin-token") ?? getCookie(c, SESSION_COOKIE);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  
+  const incomingQs = new URL(c.req.url).search;
+  const upstreamPath = incomingQs ? `/admin/audit${incomingQs}` : `/admin/audit`;
+  
+  const upstream = await fetch(`${c.env.API_SERVER_URL}${upstreamPath}`, {
+    method: "GET",
+    headers: {
+      "accept": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": adminToken,
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    },
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as any);
 });
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
