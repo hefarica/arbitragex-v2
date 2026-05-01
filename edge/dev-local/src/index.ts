@@ -17,6 +17,15 @@ import {
   requireEnv,
   initMetrics,
 } from "@arbx/shared";
+// Stricter per-path rate-limit + 401 lockout for /admin/session POST live in
+// admin-session-limits.ts (pure module so unit tests don't trigger config load).
+import {
+  LOCKOUT_MS,
+  hitAdminSession,
+  isLockedOut,
+  recordAuthFailure,
+  recordAuthSuccess,
+} from "./admin-session-limits.js";
 
 const SERVICE = "edge-dev-local";
 const VERSION = "0.1.0";
@@ -97,8 +106,89 @@ app.get("/api/onboarding/status", (req, res) => proxy("/api/v1/onboarding/status
 // edge token. Rejected by api-server if admin token is missing/wrong.
 app.use(express.json({ limit: "64kb" }));
 
+// ─── V-AT-1 hardening: httpOnly cookie session for admin token ───
+// The admin token (T1 per secrets.policy.md) is stored in an httpOnly cookie
+// instead of localStorage, eliminating the XSS attack vector.
+const SESSION_COOKIE = "arbx_admin_session";
+const SESSION_TTL_COOKIE = "arbx_admin_session_ttl";
+const SESSION_TTL_S = 8 * 60 * 60; // 8 hours
+
+function parseCookies(header: string | undefined): Record<string, string> {
+  if (!header) return {};
+  const out: Record<string, string> = {};
+  for (const pair of header.split(";")) {
+    const idx = pair.indexOf("=");
+    if (idx < 0) continue;
+    out[pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim();
+  }
+  return out;
+}
+
+// POST /admin/session — validate token, set httpOnly cookie.
+// Hardened: per-path rate-limit (5/min/IP) + 401 lockout (10 fails → 15min block).
+app.post("/admin/session", async (req, res) => {
+  const ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim()
+    ?? req.socket.remoteAddress ?? "unknown";
+
+  if (isLockedOut(ip)) {
+    res.status(429).json({ error: "locked_out", retry_after_s: LOCKOUT_MS / 1000 });
+    return;
+  }
+  const rate = hitAdminSession(ip);
+  res.setHeader("x-ratelimit-admin-session-remaining", String(rate.remaining));
+  if (!rate.ok) {
+    res.status(429).json({ error: "rate_limited" });
+    return;
+  }
+
+  const { token } = req.body as { token?: string };
+  if (!token) { res.status(400).json({ error: "token_required" }); return; }
+  try {
+    // Validate the token by probing api-server's admin health endpoint.
+    const probe = await fetch(`${API_SERVER_URL}/admin/killswitch`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-arbx-edge-token": ARBX_EDGE_TOKEN,
+        "x-arbx-admin-token": token,
+      },
+      // Dry probe: send a no-op body that api-server rejects gracefully.
+      // We only care if auth passes (200/4xx with token accepted) vs 401.
+      body: JSON.stringify({ enabled: null, reason: "__session_probe__" }),
+    });
+    // api-server returns 401 if admin token is wrong.
+    if (probe.status === 401 || probe.status === 403) {
+      recordAuthFailure(ip);
+      res.status(401).json({ error: "invalid_admin_token" });
+      return;
+    }
+  } catch (e) {
+    res.status(502).json({ error: "upstream_unreachable", detail: (e as Error).message });
+    return;
+  }
+  recordAuthSuccess(ip);
+  const expiresAtMs = Date.now() + SESSION_TTL_S * 1000;
+  // Set the actual token in an httpOnly cookie (JS cannot read it).
+  res.setHeader("set-cookie", [
+    `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_S}`,
+    `${SESSION_TTL_COOKIE}=${expiresAtMs}; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_S}`,
+  ]);
+  res.json({ ok: true, expires_at: expiresAtMs });
+});
+
+// POST /admin/session/logout — clear httpOnly cookie.
+app.post("/admin/session/logout", (_req, res) => {
+  res.setHeader("set-cookie", [
+    `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`,
+    `${SESSION_TTL_COOKIE}=; SameSite=Strict; Path=/; Max-Age=0`,
+  ]);
+  res.json({ ok: true });
+});
+
 async function adminPost(path: string, req: express.Request, res: express.Response): Promise<void> {
-  const adminToken = req.header("x-arbx-admin-token");
+  // Accept admin token from: (1) header (CLI/programmatic), (2) httpOnly cookie (browser).
+  const cookies = parseCookies(req.headers.cookie);
+  const adminToken = req.header("x-arbx-admin-token") || cookies[SESSION_COOKIE];
   if (!adminToken) { res.status(401).json({ error: "missing_admin_token" }); return; }
   try {
     const upstream = await fetch(`${API_SERVER_URL}${path}`, {
@@ -128,3 +218,4 @@ const PORT = Number(process.env["EDGE_PORT"] ?? 8787);
 app.listen(PORT, () => {
   logger.info({ event: "service.boot", port: PORT, api_server: API_SERVER_URL, env: cfg.system.env }, "edge-dev-local listening");
 });
+

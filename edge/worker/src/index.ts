@@ -14,6 +14,7 @@
  */
 
 import { Hono } from "hono";
+import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 
 type Env = {
   ARBX_ENV: string;
@@ -41,6 +42,53 @@ function rateLimit(key: string, now: number): { ok: boolean; remaining: number }
   if (cur.count > RL_MAX) return { ok: false, remaining: 0 };
   return { ok: true, remaining: RL_MAX - cur.count };
 }
+
+// Stricter per-path limit for /admin/session (anti brute-force).
+// 5 attempts / 60s / IP. In-memory per-isolate (S7 will move to KV).
+const ADMIN_SESSION_WINDOW_MS = 60_000;
+const ADMIN_SESSION_MAX = 5;
+const adminRlState = new Map<string, { count: number; windowStart: number }>();
+function rateLimitAdminSession(key: string, now: number): { ok: boolean; remaining: number } {
+  const cur = adminRlState.get(key);
+  if (!cur || now - cur.windowStart > ADMIN_SESSION_WINDOW_MS) {
+    adminRlState.set(key, { count: 1, windowStart: now });
+    return { ok: true, remaining: ADMIN_SESSION_MAX - 1 };
+  }
+  cur.count++;
+  if (cur.count > ADMIN_SESSION_MAX) return { ok: false, remaining: 0 };
+  return { ok: true, remaining: ADMIN_SESSION_MAX - cur.count };
+}
+
+// 401 lockout: 10 consecutive auth failures from same IP → block 15 min.
+const LOCKOUT_THRESHOLD = 10;
+const LOCKOUT_MS = 15 * 60_000;
+const lockoutState = new Map<string, { fails: number; blockedUntil: number }>();
+function isLockedOut(key: string, now: number): boolean {
+  const s = lockoutState.get(key);
+  return !!s && s.blockedUntil > now;
+}
+function recordAuthFailure(key: string, now: number): void {
+  const s = lockoutState.get(key);
+  if (!s) {
+    lockoutState.set(key, { fails: 1, blockedUntil: 0 });
+    return;
+  }
+  // If a previous lockout has now elapsed, start fresh.
+  // (blockedUntil === 0 means "never locked yet" — keep counting.)
+  if (s.blockedUntil > 0 && s.blockedUntil < now) {
+    lockoutState.set(key, { fails: 1, blockedUntil: 0 });
+    return;
+  }
+  s.fails++;
+  if (s.fails >= LOCKOUT_THRESHOLD) s.blockedUntil = now + LOCKOUT_MS;
+}
+function recordAuthSuccess(key: string): void {
+  lockoutState.delete(key);
+}
+
+const SESSION_COOKIE = "arbx_admin_session";
+const SESSION_TTL_COOKIE = "arbx_admin_session_ttl";
+const SESSION_TTL_S = 8 * 60 * 60; // 8 hours
 
 app.use("*", async (c, next) => {
   const origin = c.req.header("origin") ?? "";
@@ -107,10 +155,71 @@ app.get("/api/recon/summary",    (c) => proxy(c, "/api/v1/recon/summary",    "ar
 app.get("/api/recon/timeseries", (c) => proxy(c, "/api/v1/recon/timeseries", "arbx:cache:recon-ts", 15));
 app.get("/api/config/current",   (c) => proxy(c, "/api/v1/config/current",   "arbx:cache:config", 30));
 
+// V-AT-1 hardening: httpOnly cookie session for the admin token.
+// POST /admin/session — validate token, set httpOnly cookie. Rate-limited (5/min/IP)
+// and protected by 401 lockout (10 consecutive failures → 15 min block).
+app.post("/admin/session", async (c) => {
+  const ip = c.req.header("cf-connecting-ip") ?? "anon";
+  const now = Date.now();
+
+  if (isLockedOut(ip, now)) {
+    return c.json({ error: "locked_out", retry_after_s: LOCKOUT_MS / 1000 }, 429);
+  }
+  const rate = rateLimitAdminSession(ip, now);
+  c.header("x-ratelimit-admin-session-remaining", String(rate.remaining));
+  if (!rate.ok) return c.json({ error: "rate_limited" }, 429);
+
+  const body = await c.req
+    .json<{ token?: string }>()
+    .catch((): { token?: string } => ({}));
+  const token = body.token;
+  if (!token) return c.json({ error: "token_required" }, 400);
+
+  // Validate by probing api-server with a sentinel killswitch body.
+  const probe = await fetch(`${c.env.API_SERVER_URL}/admin/killswitch`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": token,
+    },
+    body: JSON.stringify({ enabled: null, reason: "__session_probe__" }),
+  });
+  if (probe.status === 401 || probe.status === 403) {
+    recordAuthFailure(ip, now);
+    return c.json({ error: "invalid_admin_token" }, 401);
+  }
+
+  recordAuthSuccess(ip);
+  const expiresAtMs = now + SESSION_TTL_S * 1000;
+  setCookie(c, SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "Strict",
+    path: "/",
+    maxAge: SESSION_TTL_S,
+  });
+  setCookie(c, SESSION_TTL_COOKIE, String(expiresAtMs), {
+    secure: true,
+    sameSite: "Strict",
+    path: "/",
+    maxAge: SESSION_TTL_S,
+  });
+  return c.json({ ok: true, expires_at: expiresAtMs });
+});
+
+// POST /admin/session/logout — clear httpOnly cookie.
+app.post("/admin/session/logout", (c) => {
+  deleteCookie(c, SESSION_COOKIE, { path: "/", secure: true, sameSite: "Strict" });
+  deleteCookie(c, SESSION_TTL_COOKIE, { path: "/", secure: true, sameSite: "Strict" });
+  return c.json({ ok: true });
+});
+
 // S7: admin kill-switch POST. Forwards caller's x-arbx-admin-token in addition
 // to the edge token. Rejected by api-server if the admin token is missing/wrong.
+// Accepts admin token from header (CLI) or httpOnly cookie (browser, V-AT-1).
 app.post("/admin/killswitch", async (c) => {
-  const adminToken = c.req.header("x-arbx-admin-token");
+  const adminToken = c.req.header("x-arbx-admin-token") ?? getCookie(c, SESSION_COOKIE);
   if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
   const body = await c.req.text();
   const upstream = await fetch(`${c.env.API_SERVER_URL}/admin/killswitch`, {
