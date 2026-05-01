@@ -1,5 +1,10 @@
 FROM node:20-bookworm-slim AS builder
 WORKDIR /build
+# arbx-no-hardcode-doctrine: edge URL must be supplied at build time by the
+# caller (compose passes it via build.args). next.config.js asserts it is set
+# when NODE_ENV=production. No default here on purpose.
+ARG NEXT_PUBLIC_EDGE_URL
+ENV NEXT_PUBLIC_EDGE_URL=$NEXT_PUBLIC_EDGE_URL
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY package.json ./

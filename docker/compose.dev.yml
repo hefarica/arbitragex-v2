@@ -234,6 +234,11 @@ services:
     build:
       context: ..
       dockerfile: frontend/Dockerfile
+      args:
+        # NEXT_PUBLIC_* are inlined at build time by Next.js. Must flow into the
+        # builder stage via build args (not just runtime env), or next.config.js
+        # throws under NODE_ENV=production. Dev fallback matches the runtime env.
+        NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:-http://localhost:8787}
     environment:
       NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:-http://localhost:8787}
     ports: ["5173:5173"]
