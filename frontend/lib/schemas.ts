@@ -221,6 +221,43 @@ export const OnboardingPhase1ResultSchema = z.object({
   phase_1_vault_sealed_healthy: z.boolean(),
 });
 
+// Live readiness checklist (PR Live-Readiness, option C dynamic verifiers)
+export const ReadinessStatusSchema = z.enum(["green", "yellow", "red", "pending"]);
+export const ReadinessGroupSchema = z.enum([
+  "security_compliance",
+  "audit_trail",
+  "risk_doctrines",
+  "tokens_strategies",
+  "contracts",
+  "operations",
+]);
+export const ReadinessEvidenceSchema = z.object({
+  kind: z.enum(["commit", "file", "endpoint", "db_query", "shell", "config"]),
+  ref: z.string(),
+});
+export const ReadinessItemSchema = z.object({
+  id: z.string(),
+  group: ReadinessGroupSchema,
+  label: z.string(),
+  status: ReadinessStatusSchema,
+  reason: z.string(),
+  evidence: ReadinessEvidenceSchema.optional(),
+  doctrine: z.string().optional(),
+  verified_at: z.string(),
+});
+export const ReadinessReportSchema = z.object({
+  items: z.array(ReadinessItemSchema),
+  summary: z.object({
+    green: z.number().int().nonnegative(),
+    yellow: z.number().int().nonnegative(),
+    red: z.number().int().nonnegative(),
+    pending: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  }),
+  flip_blocked: z.boolean(),
+  generated_at: z.string(),
+});
+
 // ─────── Derived types ───────
 
 export type KillSwitchState = z.infer<typeof KillSwitchStateSchema>;
@@ -239,3 +276,7 @@ export type RelayRow = z.infer<typeof RelayRowSchema>;
 export type RelaysResponse = z.infer<typeof RelaysResponseSchema>;
 export type OnboardingStatus = z.infer<typeof OnboardingStatusSchema>;
 export type OnboardingPhase1Result = z.infer<typeof OnboardingPhase1ResultSchema>;
+export type ReadinessStatus = z.infer<typeof ReadinessStatusSchema>;
+export type ReadinessGroup = z.infer<typeof ReadinessGroupSchema>;
+export type ReadinessItem = z.infer<typeof ReadinessItemSchema>;
+export type ReadinessReport = z.infer<typeof ReadinessReportSchema>;
