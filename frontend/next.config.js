@@ -1,9 +1,11 @@
 /** @type {import('next').NextConfig} */
 
-// No-hardcode doctrine: in production builds, NEXT_PUBLIC_EDGE_URL must be set
-// explicitly (operator's public edge). In development we allow the well-known
-// local compose port so `npm run dev` works with no env setup.
+// ─── Environment validation ───
+// NEXT_PUBLIC_EDGE_URL: browser→edge REST/API calls (mandatory in prod).
+// NEXT_PUBLIC_WS_URL:   browser→api-server WebSocket (Socket.IO) (mandatory in prod).
 const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL;
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL;
+
 if (!EDGE_URL) {
   if (process.env.NODE_ENV === "production") {
     throw new Error(
@@ -13,22 +15,29 @@ if (!EDGE_URL) {
   console.warn("[arbx] NEXT_PUBLIC_EDGE_URL not set — defaulting to http://localhost:8787 (dev only)");
 }
 
+if (!WS_URL) {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "NEXT_PUBLIC_WS_URL is required for production builds. WebSocket/Socket.IO endpoint must be explicit."
+    );
+  }
+  console.warn("[arbx] NEXT_PUBLIC_WS_URL not set — defaulting to http://localhost:3000 (dev only)");
+}
+
+// ─── CSP ───
 // CSP-Report-Only: strict policy that LOGS violations but does not enforce.
-// Switch the header key to "Content-Security-Policy" once the report stream
-// is clean for ≥7 days (planned PR-1.b). Until then, breaking the app on a
-// CSP regression would be worse than the marginal protection.
+// Switch to "Content-Security-Policy" once the report stream is clean ≥7 days.
 //
 // 'unsafe-inline'/'unsafe-eval' on script-src are required by Next 14 RSC
-// hydration. PR-1.b will replace them with a per-request nonce via a
-// `middleware.ts`. Tracked in MEMORY.
-const csp = (edgeUrl) => [
+// hydration. Will be replaced with a per-request nonce via middleware.ts.
+const csp = (edgeUrl, wsUrl) => [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
-  // Allow API Server (3000), Edge Server (8787), Next HMR WS, and Socket.io WS
-  `connect-src 'self' ${edgeUrl} http://localhost:3000 ws://localhost:3000 ws://localhost:3001 ws://localhost:8787`,
+  // Parameterized connect-src: only declared endpoints, no hardcoded localhost.
+  `connect-src 'self' ${edgeUrl} ${wsUrl}`,
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -42,17 +51,19 @@ const nextConfig = {
   poweredByHeader: false,
   env: {
     NEXT_PUBLIC_EDGE_URL: EDGE_URL || "http://localhost:8787",
+    NEXT_PUBLIC_WS_URL: WS_URL || "http://localhost:3000",
   },
   async headers() {
+    const resolvedEdge = EDGE_URL || "http://localhost:8787";
+    const resolvedWs = WS_URL || "http://localhost:3000";
     const headers = [
       { key: "x-frame-options", value: "DENY" },
       { key: "x-content-type-options", value: "nosniff" },
       { key: "referrer-policy", value: "no-referrer" },
       { key: "permissions-policy", value: "camera=(), microphone=(), geolocation=()" },
-      { key: "content-security-policy-report-only", value: csp(EDGE_URL || "http://localhost:8787") },
+      { key: "content-security-policy-report-only", value: csp(resolvedEdge, resolvedWs) },
     ];
     // HSTS requires a valid TLS certificate. Enable only when HTTPS is configured.
-    // Sending HSTS over plain HTTP causes browsers to refuse future HTTP loads.
     // if (process.env.NODE_ENV === "production" && process.env.ARBX_TLS_ENABLED === "true") {
     //   headers.push({
     //     key: "strict-transport-security",

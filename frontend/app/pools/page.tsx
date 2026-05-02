@@ -1,89 +1,80 @@
+// ZERO MOCKS DOCTRINE (rule_00): This page fetches data ONLY through the edge.
 "use client";
 import React, { useEffect, useState } from "react";
-import { Droplet, TrendingUp } from "lucide-react";
+import { Activity, AlertTriangle } from "lucide-react";
 import { motion } from "framer-motion";
+import { getDefiPools } from "@/lib/api-client";
+import type { DefiPoolsResponse } from "@/lib/schemas";
 
 export default function PoolsPage() {
-  const [pools, setPools] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  // ZERO MOCKS DOCTRINE: Hold the real error. NEVER fabricate pool data.
-  const [error, setError] = useState<string | null>(null);
-
-  // ZERO MOCKS DOCTRINE (rule_00): NEVER inject fallback/dummy data in catch blocks.
-  // If the API fails, display the error honestly. The operator must fix the backend.
-  const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
+  const [result, setResult] = useState<{ ok: true; data: DefiPoolsResponse } | { ok: false; error: string } | null>(null);
 
   useEffect(() => {
-    fetch(`${API_URL}/api/pools`)
-      .then(res => res.json())
-      .then(data => {
-        setPools(data.data ?? []);
-        setLoading(false);
-      })
-      .catch((err) => {
-        setError(err.message ?? "API unreachable");
-        setLoading(false);
-      });
+    getDefiPools().then(setResult);
   }, []);
 
-  if (loading) return <div className="p-8 text-blue-400 animate-pulse">Loading Pool State...</div>;
+  if (!result) return <div className="p-8 text-emerald-400 animate-pulse">Loading Pool Registry...</div>;
 
-  if (error) return (
+  if (!result.ok) return (
     <div className="p-8 min-h-screen bg-[#020617] text-slate-200">
       <div className="p-4 bg-rose-950/50 border border-rose-800 rounded-xl text-rose-300">
-        <h3 className="font-bold">API ERROR — ZERO TRUST</h3>
-        <p className="text-sm mt-1">{error}</p>
-        <p className="text-xs mt-2 text-rose-400/70">The API server is unreachable. No fabricated pool data will be shown.</p>
+        <h3 className="font-bold flex items-center gap-2"><AlertTriangle size={18} /> EDGE ERROR — ZERO TRUST</h3>
+        <p className="text-sm mt-1">{result.error}</p>
+        <p className="text-xs mt-2 text-rose-400/70">The edge/API server is unreachable. No fabricated pool data will be shown.</p>
       </div>
     </div>
   );
 
+  const pools = result.data.data;
+
   return (
-    <div className="p-8 space-y-8 min-h-screen bg-[#020617] text-slate-200">
-      <div className="flex justify-between items-center border-b border-slate-800 pb-4">
-        <h1 className="text-4xl font-extrabold tracking-tight bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
-          Live Pool Explorer
-        </h1>
-        <div className="flex items-center gap-2 bg-indigo-950/40 text-indigo-400 px-3 py-1.5 rounded-full border border-indigo-800/50">
-          <Droplet size={16} />
-          <span className="text-sm font-semibold tracking-wide">SYNC_WORKER ACTIVE</span>
+    <div className="p-8 space-y-6 min-h-screen bg-[#020617] text-slate-200">
+      <div className="flex justify-between items-center">
+        <h1 className="text-3xl font-bold tracking-tight text-slate-100">Pool Registry</h1>
+        <div className="flex items-center gap-2 bg-emerald-950/40 text-emerald-400 px-3 py-1.5 rounded-full border border-emerald-800/50">
+          <Activity size={16} className="animate-pulse" />
+          <span className="text-sm font-semibold tracking-wide">LIVE</span>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {pools.map((pool, i) => (
-          <motion.div 
-            key={i}
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: i * 0.1 }}
-            className="bg-[#0f172a] border border-slate-800 rounded-2xl shadow-xl overflow-hidden group hover:border-indigo-500/50 transition-all duration-300"
-          >
-            <div className="p-6 border-b border-slate-800/50 flex justify-between items-center">
-              <div>
-                <h3 className="font-bold text-lg text-slate-100 flex items-center gap-2">
-                  {pool.token0} / {pool.token1}
-                  <span className="px-2 py-0.5 rounded bg-slate-800 text-xs text-slate-400 font-mono border border-slate-700">{pool.fee / 10000}%</span>
-                </h3>
-                <p className="font-mono text-xs text-slate-500 mt-1">{pool.address}</p>
-              </div>
-              <div className="bg-blue-500/10 p-2 rounded-lg text-blue-400">
-                <TrendingUp size={20} />
-              </div>
-            </div>
-            
-            <div className="p-6 grid grid-cols-2 gap-4 bg-slate-900/50">
-              <div>
-                <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Reserve 0 ({pool.token0})</p>
-                <p className="font-mono font-semibold text-slate-300 text-lg">{Number(pool.reserve0).toLocaleString()}</p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Reserve 1 ({pool.token1})</p>
-                <p className="font-mono font-semibold text-slate-300 text-lg">{Number(pool.reserve1).toLocaleString()}</p>
-              </div>
-            </div>
-          </motion.div>
-        ))}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-slate-800 text-slate-400 text-sm uppercase tracking-wider">
+              <th className="p-4 border-b border-slate-700">Pair</th>
+              <th className="p-4 border-b border-slate-700">DEX</th>
+              <th className="p-4 border-b border-slate-700">Address</th>
+              <th className="p-4 border-b border-slate-700">Status</th>
+            </tr>
+          </thead>
+          <tbody className="text-slate-300">
+            {pools.map((pool, i) => (
+              <motion.tr
+                key={i}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: i * 0.05 }}
+                className="hover:bg-slate-800/50 transition-colors"
+              >
+                <td className="p-4 border-b border-slate-800 font-medium text-blue-300">
+                  {pool.token0_symbol ?? "?"}/{pool.token1_symbol ?? "?"}
+                </td>
+                <td className="p-4 border-b border-slate-800">{pool.dex ?? "—"}</td>
+                <td className="p-4 border-b border-slate-800 font-mono text-xs text-slate-400 truncate max-w-[200px]">{pool.address ?? "—"}</td>
+                <td className="p-4 border-b border-slate-800">
+                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${pool.active ? 'bg-emerald-900/30 text-emerald-400 border-emerald-800/50' : 'bg-rose-900/30 text-rose-400 border-rose-800/50'}`}>
+                    {pool.active ? "ACTIVE" : "DISABLED"}
+                  </span>
+                </td>
+              </motion.tr>
+            ))}
+            {pools.length === 0 && (
+              <tr>
+                <td colSpan={4} className="p-8 text-center text-slate-500 italic">No pools registered. Waiting for backend data...</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );

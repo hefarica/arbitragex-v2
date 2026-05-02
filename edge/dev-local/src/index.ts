@@ -119,6 +119,11 @@ app.get("/api/config/current", (req, res) => proxy("/api/v1/config/current", req
 app.get("/api/relays", (req, res) => proxy("/api/v1/relays", req, res));
 app.get("/api/onboarding/status", (req, res) => proxy("/api/v1/onboarding/status", req, res));
 app.get("/api/readiness", (req, res) => proxy("/api/v1/readiness", req, res));
+// DeFi data routes (defiRouter is mounted at /api in api-server, no /v1/ prefix).
+app.get("/api/chains",  (req, res) => proxy("/api/chains", req, res));
+app.get("/api/rpcs",    (req, res) => proxy("/api/rpcs", req, res));
+app.get("/api/pools",   (req, res) => proxy("/api/pools", req, res));
+app.get("/api/metrics/defi", (req, res) => proxy("/api/metrics", req, res));
 
 // S7: admin POST proxies — forward caller's x-arbx-admin-token alongside the
 // edge token. Rejected by api-server if admin token is missing/wrong.

@@ -303,3 +303,63 @@ export const AuditLogsResponseSchema = z.object({
 
 export type AuditLogRow = z.infer<typeof AuditLogRowSchema>;
 export type AuditLogsResponse = z.infer<typeof AuditLogsResponseSchema>;
+
+// ─────── DeFi data schemas (defiRouter in api-server) ───────
+// Rows use passthrough() because DB columns may change; we validate the envelope.
+
+export const DefiChainRowSchema = z.object({
+  chain_id: z.number(),
+  name: z.string(),
+  rpc_url: z.string().optional(),
+  is_active: z.boolean().optional(),
+}).passthrough();
+
+export const DefiChainsResponseSchema = z.object({
+  success: z.boolean(),
+  data: z.array(DefiChainRowSchema),
+});
+
+export const DefiRpcRowSchema = z.object({
+  chain_id: z.number().optional(),
+  url: z.string().optional(),
+  type: z.string().optional(),
+  latency_ms: z.number().nullable().optional(),
+  health_status: z.string().optional(),
+}).passthrough();
+
+export const DefiRpcsResponseSchema = z.object({
+  success: z.boolean(),
+  data: z.array(DefiRpcRowSchema),
+});
+
+export const DefiPoolRowSchema = z.object({
+  address: z.string().optional(),
+  token0_symbol: z.string().optional(),
+  token1_symbol: z.string().optional(),
+  dex: z.string().optional(),
+  active: z.boolean().optional(),
+}).passthrough();
+
+export const DefiPoolsResponseSchema = z.object({
+  success: z.boolean(),
+  data: z.array(DefiPoolRowSchema),
+});
+
+export const DefiMetricsResponseSchema = z.object({
+  success: z.boolean(),
+  data: z.object({
+    active_workers: z.number(),
+    cpu_usage_pct: z.number(),
+    memory_usage_mb: z.number(),
+    uptime_seconds: z.number(),
+    kernel_bypass_active: z.boolean(),
+  }),
+});
+
+export type DefiChainRow = z.infer<typeof DefiChainRowSchema>;
+export type DefiChainsResponse = z.infer<typeof DefiChainsResponseSchema>;
+export type DefiRpcRow = z.infer<typeof DefiRpcRowSchema>;
+export type DefiRpcsResponse = z.infer<typeof DefiRpcsResponseSchema>;
+export type DefiPoolRow = z.infer<typeof DefiPoolRowSchema>;
+export type DefiPoolsResponse = z.infer<typeof DefiPoolsResponseSchema>;
+export type DefiMetricsResponse = z.infer<typeof DefiMetricsResponseSchema>;

@@ -9,12 +9,14 @@ export default function OpportunitiesPage() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [wsStatus, setWsStatus] = useState<"CONNECTING" | "LIVE" | "STALE">("CONNECTING");
 
-  const API_URL =
-    process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
+  // WebSocket URL: in prod points to a WS-capable endpoint (edge or dedicated).
+  // ZERO MOCKS DOCTRINE: NEXT_PUBLIC_WS_URL is the ONLY source for Socket.IO connections.
+  const WS_URL =
+    process.env.NEXT_PUBLIC_WS_URL ?? "http://localhost:3000";
 
   useEffect(() => {
     const handle = createOpportunitySocket({
-      url: API_URL,
+      url: WS_URL,
       ioFactory: io,
       onStatus: setWsStatus,
       onOpportunity: (opp) => setOpportunities((prev) => [opp, ...prev].slice(0, 20)),

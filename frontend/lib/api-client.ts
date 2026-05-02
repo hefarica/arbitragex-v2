@@ -232,6 +232,24 @@ export function getAuditLogs(limit = 50, cursor?: string, action?: string, actor
   return getValidated(url.pathname + url.search, S.AuditLogsResponseSchema);
 }
 
+// ─────── DeFi data (via edge proxy → api-server defiRouter) ───────
+
+export function getDefiChains() {
+  return getValidated("/api/chains", S.DefiChainsResponseSchema);
+}
+
+export function getDefiRpcs() {
+  return getValidated("/api/rpcs", S.DefiRpcsResponseSchema);
+}
+
+export function getDefiPools() {
+  return getValidated("/api/pools", S.DefiPoolsResponseSchema);
+}
+
+export function getDefiMetrics() {
+  return getValidated("/api/metrics/defi", S.DefiMetricsResponseSchema);
+}
+
 // ─────── POST endpoints (no retry — mutations must not be replayed) ───────
 
 export function completeOnboardingPhase1(
