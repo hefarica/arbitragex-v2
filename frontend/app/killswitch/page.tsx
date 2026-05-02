@@ -24,7 +24,10 @@ export default function KillSwitchPage() {
   const [lastOutcome, setLastOutcome] = useState<string | null>(null);
 
   useEffect(() => {
-    setToken(getAdminToken());
+    const t = getAdminToken();
+    if (t !== "__session_active__") {
+      setToken(t);
+    }
     setTokenExpiresIn(adminTokenExpiresInMs());
     void refresh();
   }, []);
@@ -39,15 +42,21 @@ export default function KillSwitchPage() {
   }
 
   async function onToggle(next: boolean) {
-    if (!token) { setError("admin token required"); return; }
+    if (!token && getAdminToken() !== "__session_active__") { setError("admin token required"); return; }
     if (!reason.trim()) { setError("reason is required for the audit log"); return; }
     setBusy(true);
-    // V-AT-1: setAdminToken is now async — establishes httpOnly cookie session.
-    const sessionOk = await setAdminToken(token);
-    if (!sessionOk) { setBusy(false); setError("failed to establish admin session — check token"); return; }
+    let tokenToUse = token;
+    if (!token && getAdminToken() === "__session_active__") {
+      // If they have an active session but didn't enter a new token, let the proxy use the cookie.
+      tokenToUse = "";
+    } else {
+      // V-AT-1: setAdminToken is now async — establishes httpOnly cookie session.
+      const sessionOk = await setAdminToken(token);
+      if (!sessionOk) { setBusy(false); setError("failed to establish admin session — check token"); return; }
+    }
     setTokenExpiresIn(adminTokenExpiresInMs());
     // Token is now in the httpOnly cookie; the header is a fallback for this request.
-    const r = await toggleKillswitch(next, reason.trim(), token);
+    const r = await toggleKillswitch(next, reason.trim(), tokenToUse);
     setBusy(false);
     if (!r.ok) { setError(r.error); setLastOutcome(null); return; }
     setError(null);
