@@ -3,38 +3,46 @@ route:
   group_wait: 10s
   group_interval: 30s
   repeat_interval: 1h
-  receiver: telegram-alerts
+  receiver: default
   routes:
     # Critical alerts go immediately
     - match:
         severity: critical
-      receiver: telegram-alerts
+      receiver: default
       group_wait: 0s
       repeat_interval: 15m
     # Warnings follow normal flow
     - match:
         severity: warning
-      receiver: telegram-alerts
+      receiver: default
     # Info-level also notified but less urgently
     - match:
         severity: info
-      receiver: telegram-alerts
+      receiver: default
       repeat_interval: 4h
 
 receivers:
-  - name: telegram-alerts
-    telegram_configs:
-      - bot_token_file: /run/secrets/telegram_bot_token
-        chat_id: 0
-        parse_mode: HTML
-        message: |
-          {{ if eq .Status "firing" }}🔴{{ else }}🟢{{ end }} <b>{{ .Status | toUpper }}</b>
-          {{ range .Alerts }}
-          <b>{{ .Labels.alertname }}</b> [{{ .Labels.severity }}]
-          {{ .Annotations.summary }}
-          {{ .Annotations.description }}
-          {{ end }}
-    # Fallback: also send to api-server webhook for internal logging
+  - name: default
     webhook_configs:
       - url: "http://api-server:8080/admin/alertmanager/webhook"
         send_resolved: true
+
+# === TELEGRAM RECEIVER (activate when bot token is ready) ===
+# To enable:
+# 1. Create bot via @BotFather on Telegram
+# 2. Get your chat_id via @userinfobot
+# 3. Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to .env
+# 4. Uncomment below and change route receiver to "telegram-alerts"
+#
+#  - name: telegram-alerts
+#    telegram_configs:
+#      - bot_token: "YOUR_BOT_TOKEN"
+#        chat_id: YOUR_CHAT_ID
+#        parse_mode: HTML
+#        message: |
+#          {{ if eq .Status "firing" }}🔴{{ else }}🟢{{ end }} <b>{{ .Status | toUpper }}</b>
+#          {{ range .Alerts }}
+#          <b>{{ .Labels.alertname }}</b> [{{ .Labels.severity }}]
+#          {{ .Annotations.summary }}
+#          {{ .Annotations.description }}
+#          {{ end }}
