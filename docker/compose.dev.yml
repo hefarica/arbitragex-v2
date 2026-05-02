@@ -23,6 +23,7 @@ volumes:
   loki_data:
 
 x-common-logging: &common-logging
+  restart: unless-stopped
   logging:
     driver: json-file
     options: { max-size: "10m", max-file: "5" }
