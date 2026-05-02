@@ -9,6 +9,7 @@ COPY searcher-rs ./searcher-rs
 COPY sim-ctl ./sim-ctl
 COPY relays-client ./relays-client
 COPY recon ./recon
+COPY math-engine ./math-engine
 ENV SQLX_OFFLINE=true
 RUN cargo build --release -p recon
 

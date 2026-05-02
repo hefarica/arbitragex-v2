@@ -14,6 +14,7 @@ COPY searcher-rs ./searcher-rs
 COPY sim-ctl ./sim-ctl
 COPY relays-client ./relays-client
 COPY recon ./recon
+COPY math-engine ./math-engine
 RUN cargo build --release -p searcher-rs
 
 FROM debian:bookworm-slim AS runtime
