@@ -204,6 +204,8 @@ services:
     env_file: ["../.env"]
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
+      DATABASE_URL: postgres://arbx_rw:${ARBX_RW_PASSWORD:-arbx_rw_dev_only}@postgres:5432/arbitragex
+      DATABASE_READONLY_URL: postgres://arbx_ro:${ARBX_RO_PASSWORD:-arbx_ro_dev_only}@postgres:5432/arbitragex
       REDIS_URL: redis://redis:6379
       ARBX_ADMIN_TOKEN: ${ARBX_ADMIN_TOKEN:-dev_admin_token_change_me}
       API_PORT: "8080"
