@@ -33,7 +33,8 @@ const csp = (edgeUrl) => [
   "base-uri 'self'",
   "form-action 'self'",
   "object-src 'none'",
-  "upgrade-insecure-requests",
+  // NOTE: Do NOT add 'upgrade-insecure-requests' here until the VPS has HTTPS.
+  // It forces the browser to convert http:// to https://, breaking HTTP-only deployments.
 ].join("; ");
 
 const nextConfig = {
@@ -50,13 +51,14 @@ const nextConfig = {
       { key: "permissions-policy", value: "camera=(), microphone=(), geolocation=()" },
       { key: "content-security-policy-report-only", value: csp(EDGE_URL || "http://localhost:8787") },
     ];
-    // HSTS only in production (HTTPS-only environments). Dev runs over http://.
-    if (process.env.NODE_ENV === "production") {
-      headers.push({
-        key: "strict-transport-security",
-        value: "max-age=63072000; includeSubDomains; preload",
-      });
-    }
+    // HSTS requires a valid TLS certificate. Enable only when HTTPS is configured.
+    // Sending HSTS over plain HTTP causes browsers to refuse future HTTP loads.
+    // if (process.env.NODE_ENV === "production" && process.env.ARBX_TLS_ENABLED === "true") {
+    //   headers.push({
+    //     key: "strict-transport-security",
+    //     value: "max-age=63072000; includeSubDomains; preload",
+    //   });
+    // }
     return [{ source: "/:path*", headers }];
   },
 };
