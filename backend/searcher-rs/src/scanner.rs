@@ -173,7 +173,15 @@ async fn run_subscription(
 ) -> anyhow::Result<()> {
     let mut stream = client.subscribe_pending().await?;
     info!(event = "scanner.subscribed", chain_id = client.chain_id);
+    
+    let mut counter = 0u64;
     while let Some(hash) = stream.next().await {
+        counter = counter.wrapping_add(1);
+        // Mempool sampling: Process only 1 out of every 20 transactions to respect Alchemy Pay-As-You-Go limits (330 CU/s)
+        if counter % 20 != 0 {
+            continue;
+        }
+
         // We no longer pause the scanner on kill-switch. It must always scan and emit.
         if let Err(e) = process_pending(client, hash, redis, db, dedup).await {
             debug!(event = "scanner.process_err", hash = %hash, error = %e);
