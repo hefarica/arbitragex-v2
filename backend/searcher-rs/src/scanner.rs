@@ -104,11 +104,9 @@ async fn detection_loop(
     let mut backoff_ms: u64 = 1000;
     let mut idx: usize = 0;
     loop {
-        if killswitch.is_enabled().await {
-            info!(event = "scanner.paused", chain_id, "kill-switch ON; sleeping 5s");
-            tokio::time::sleep(Duration::from_secs(5)).await;
-            continue;
-        }
+        // The searcher-rs scanner runs continuously, even if the kill-switch is ARMED.
+        // The kill-switch blocks execution downstream (relays-client), but the intelligence
+        // layer always detects opportunities to populate the real-time dashboards.
 
         // Pick the next endpoint round-robin. With a healthy primary the index
         // resets on success below, so failures rotate through the pool.
@@ -176,9 +174,7 @@ async fn run_subscription(
     let mut stream = client.subscribe_pending().await?;
     info!(event = "scanner.subscribed", chain_id = client.chain_id);
     while let Some(hash) = stream.next().await {
-        if killswitch.is_enabled().await {
-            return Ok(()); // caller re-enters loop, which will pause
-        }
+        // We no longer pause the scanner on kill-switch. It must always scan and emit.
         if let Err(e) = process_pending(client, hash, redis, db, dedup).await {
             debug!(event = "scanner.process_err", hash = %hash, error = %e);
         }

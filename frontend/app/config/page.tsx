@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/page-header";
 import { getConfigCurrent } from "@/lib/api-client";
+import { PaperModeToggle } from "@/components/paper-mode-toggle";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -54,13 +55,24 @@ export default async function ConfigPage() {
         showRefresh
       />
 
-      {paperOn && (
-        <Alert variant="success" className="mb-6">
-          <ShieldCheckIcon />
-          <AlertTitle>Paper-mode is ON</AlertTitle>
-          <AlertDescription>Executions stop at simulation; the relay pipeline is active but capital is not at risk.</AlertDescription>
-        </Alert>
-      )}
+      <div className="mb-6 flex items-center justify-between">
+        {paperOn ? (
+          <Alert variant="success" className="flex-1 mr-4">
+            <ShieldCheckIcon />
+            <AlertTitle>Paper-mode is ON</AlertTitle>
+            <AlertDescription>Executions stop at simulation; the relay pipeline is active but capital is not at risk.</AlertDescription>
+          </Alert>
+        ) : (
+          <Alert variant="destructive" className="flex-1 mr-4">
+            <AlertCircleIcon />
+            <AlertTitle>Paper-mode is OFF</AlertTitle>
+            <AlertDescription>LIVE CAPITAL EXECUTION ENABLED. Opportunities will be sent to the mempool.</AlertDescription>
+          </Alert>
+        )}
+        <div className="flex-shrink-0 p-4 border rounded-xl bg-card">
+          <PaperModeToggle initialValue={paperOn} />
+        </div>
+      </div>
 
       <div className="mb-6 grid gap-4 lg:grid-cols-2">
         <Card>

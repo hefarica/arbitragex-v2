@@ -636,7 +636,37 @@ app.put("/admin/relays/:id", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, re
   );
   await writeAudit("relay.update", actor, "relay", req.params.id ?? "",
                    existing, parsed.data, req.ip ?? null, (req as any).traceId ?? null);
-  res.status(200).json(q.rows[0]);
+});
+
+app.post("/admin/config/paper-mode", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+  const actor = req.header("x-arbx-actor") ?? "admin";
+  const { enabled, updated_by } = req.body;
+  if (typeof enabled !== "boolean") {
+    res.status(400).json({ error: "invalid_body", detail: "enabled must be boolean" });
+    return;
+  }
+  try {
+    const rc = getRedisClient();
+    if (!rc) {
+      res.status(503).json({ error: "redis_unavailable" });
+      return;
+    }
+    const state = {
+      enabled,
+      updated_at: new Date().toISOString(),
+      updated_by: updated_by ?? actor,
+    };
+    const json = JSON.stringify(state);
+    await rc.set("arbx:papermode", json);
+    await rc.publish("arbx:papermode:changes", json);
+    
+    await writeAudit("config.papermode.update", actor, "config", "papermode",
+                     null, state, req.ip ?? null, (req as any).traceId ?? null);
+    res.status(200).json(state);
+  } catch (e) {
+    logger.error({ err: (e as Error).message }, "papermode update failed");
+    res.status(500).json({ error: "redis_error" });
+  }
 });
 
 app.delete("/admin/relays/:id", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
@@ -714,11 +744,26 @@ app.post("/admin/onboarding/1/complete", requireAdminToken(ARBX_ADMIN_TOKEN), as
   res.status(200).json(q.rows[0]);
 });
 
-app.get("/api/v1/config/current", (_req, res) => {
+app.get("/api/v1/config/current", async (_req, res) => {
+  // Merge dynamic paper_mode from Redis if available
+  let dynamicPaperMode = cfg.execution.paper_mode;
+  try {
+    const rc = getRedisClient();
+    if (rc) {
+      const pmStr = await rc.get("arbx:papermode");
+      if (pmStr) {
+        const pm = JSON.parse(pmStr);
+        dynamicPaperMode = pm.enabled;
+      }
+    }
+  } catch (e) {
+    logger.warn({ err: (e as Error).message }, "failed to read dynamic papermode from redis");
+  }
+
   res.status(200).json({
     system: cfg.system,
     risk: cfg.risk,
-    execution: cfg.execution,
+    execution: { ...cfg.execution, paper_mode: dynamicPaperMode },
     observability: cfg.observability,
     chains: cfg.chains,
     relays: cfg.relays,

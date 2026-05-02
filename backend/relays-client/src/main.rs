@@ -31,6 +31,7 @@ use shared_rs::{
     contracts::{NotImplementedPayload, Opportunity},
     health::{build_health_router, ServiceInfo},
     killswitch::KillSwitchClient,
+    paper_mode::PaperModeClient,
     logging::init_tracing,
     metrics::init_metrics,
     rpc_failover::HttpRpcPool,
@@ -84,6 +85,9 @@ async fn main() -> anyhow::Result<()> {
     let redis_url = require_env("REDIS_URL")?;
     let killswitch = KillSwitchClient::connect(&redis_url, cfg.system.kill_switch_enabled_default).await
         .map_err(|e| anyhow::anyhow!("killswitch: {e}"))?;
+        
+    let paper_mode = PaperModeClient::connect(&redis_url, cfg.execution.paper_mode).await
+        .map_err(|e| anyhow::anyhow!("papermode: {e}"))?;
 
     // Try to load signer.
     let chain_id = cfg.chains.iter().find(|c| c.enabled).map(|c| c.chain_id).unwrap_or(1);
@@ -245,6 +249,7 @@ async fn main() -> anyhow::Result<()> {
         nonce: nonce.clone(),
         flashbots: flashbots.clone(),
         kill_switch: killswitch.clone(),
+        paper_mode: paper_mode.clone(),
         cfg: cfg.clone(),
     });
 
@@ -286,6 +291,7 @@ async fn main() -> anyhow::Result<()> {
                 nonce,
                 flashbots,
                 kill_switch: killswitch.clone(),
+                paper_mode: paper_mode.clone(),
                 cfg: cfg.clone(),
             },
             consumer_name: std::env::var("HOSTNAME").unwrap_or_else(|_| "relay-1".into()),

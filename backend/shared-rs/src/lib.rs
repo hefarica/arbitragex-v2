@@ -15,6 +15,7 @@ pub mod config;
 pub mod contracts;
 pub mod health;
 pub mod killswitch;
+pub mod paper_mode;
 pub mod logging;
 pub mod metrics;
 pub mod rpc_failover;

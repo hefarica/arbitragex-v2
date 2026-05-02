@@ -277,6 +277,7 @@ async function adminProxy(path: string, req: express.Request, res: express.Respo
 }
 
 app.post("/admin/killswitch",                 (req, res) => adminProxy("/admin/killswitch", req, res, "POST"));
+app.post("/admin/config/paper-mode",          (req, res) => adminProxy("/admin/config/paper-mode", req, res, "POST"));
 app.post("/admin/onboarding/1/complete",      (req, res) => adminProxy("/admin/onboarding/1/complete", req, res, "POST"));
 
 // PR-2.b Audit Log endpoint

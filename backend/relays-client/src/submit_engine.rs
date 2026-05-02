@@ -15,6 +15,7 @@ use shared_rs::{
     config::AppConfig,
     contracts::{ExecutionResult, ExecutionStatus, Opportunity},
     killswitch::KillSwitchClient,
+    paper_mode::PaperModeClient,
 };
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -25,6 +26,7 @@ pub struct SubmitEngine {
     pub nonce: Option<Arc<NonceManager>>,
     pub flashbots: Option<Arc<FlashbotsClient>>,
     pub kill_switch: KillSwitchClient,
+    pub paper_mode: PaperModeClient,
     pub cfg: Arc<AppConfig>,
 }
 
@@ -47,11 +49,11 @@ impl SubmitEngine {
             return Self::not_submitted(opp, "nonce_manager_not_initialized");
         };
 
-        // 3. Paper mode — honored both in config AND env (env overrides).
+        // 3. Paper mode — dynamic from Redis + env override.
         let paper_env = std::env::var("ARBX_PAPER_MODE").ok()
             .map(|v| v.to_ascii_lowercase() == "true").unwrap_or(false);
-        let paper_cfg = self.cfg.execution.paper_mode;
-        let paper = paper_cfg || paper_env;
+        let paper_dynamic = self.paper_mode.is_enabled().await;
+        let paper = paper_dynamic || paper_env;
 
         // 4. Build + sign.
         let bundle = match build_and_sign(
