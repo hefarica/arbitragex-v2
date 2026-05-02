@@ -3,12 +3,38 @@ route:
   group_wait: 10s
   group_interval: 30s
   repeat_interval: 1h
-  receiver: default
+  receiver: telegram-alerts
+  routes:
+    # Critical alerts go immediately
+    - match:
+        severity: critical
+      receiver: telegram-alerts
+      group_wait: 0s
+      repeat_interval: 15m
+    # Warnings follow normal flow
+    - match:
+        severity: warning
+      receiver: telegram-alerts
+    # Info-level also notified but less urgently
+    - match:
+        severity: info
+      receiver: telegram-alerts
+      repeat_interval: 4h
 
-# S1: webhook receiver is a placeholder target on api-server that logs the alert.
-# S8 replaces with Slack/PagerDuty/email using real secrets loaded from docker secret.
 receivers:
-  - name: default
+  - name: telegram-alerts
+    telegram_configs:
+      - bot_token_file: /run/secrets/telegram_bot_token
+        chat_id: 0
+        parse_mode: HTML
+        message: |
+          {{ if eq .Status "firing" }}🔴{{ else }}🟢{{ end }} <b>{{ .Status | toUpper }}</b>
+          {{ range .Alerts }}
+          <b>{{ .Labels.alertname }}</b> [{{ .Labels.severity }}]
+          {{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          {{ end }}
+    # Fallback: also send to api-server webhook for internal logging
     webhook_configs:
       - url: "http://api-server:8080/admin/alertmanager/webhook"
         send_resolved: true
