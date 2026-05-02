@@ -27,7 +27,8 @@ const csp = (edgeUrl) => [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
-  `connect-src 'self' ${edgeUrl}`,
+  // Allow API Server (3000), Edge Server (8787), Next HMR WS, and Socket.io WS
+  `connect-src 'self' ${edgeUrl} http://localhost:3000 ws://localhost:3000 ws://localhost:3001 ws://localhost:8787`,
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
