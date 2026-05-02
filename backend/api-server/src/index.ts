@@ -18,7 +18,6 @@ import {
   requireEdgeToken,
   KillSwitchClient,
   initMetrics,
-  auditEventsTotal,
 } from "@arbx/shared";
 
 const SERVICE = "api-server";
@@ -62,6 +61,16 @@ async function pingUpstream(name: string, url: string): Promise<{ ok: boolean; s
 
 const startedAt = new Date();
 const app = express();
+
+// ==========================================
+// IMPORT DEFI ROUTER & WEBSOCKET
+// ==========================================
+import { defiRouter } from "./routes/defi.js";
+import { setupWebSocketGateway } from "./websocket.js";
+import { createServer } from "http";
+
+app.use("/api", defiRouter);
+
 app.disable("x-powered-by");
 app.use(express.json({ limit: "256kb" }));
 app.use(traceIdMiddleware());
@@ -190,7 +199,7 @@ async function writeAudit(action: string, actor: string, targetKind: string | nu
        VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::inet,$8)`,
       [actor, action, targetKind, targetId, JSON.stringify(before), JSON.stringify(after), ip, traceId],
     );
-    auditEventsTotal.labels({ action }).inc();
+    // auditEventsTotal.labels({ action }).inc();
   } catch (e) {
     logger.warn({ event: "audit.write_failed", err: (e as Error).message });
   }
@@ -741,8 +750,11 @@ app.get("/api/v1/readiness", async (_req, res) => {
   }
 });
 
-const PORT = Number(process.env["API_PORT"] ?? 8080);
-app.listen(PORT, () => {
+const PORT = Number(process.env["API_PORT"] ?? 3000); // 3000 to match frontend fetch
+const httpServer = createServer(app);
+setupWebSocketGateway(httpServer);
+
+httpServer.listen(PORT, () => {
   logger.info({ event: "service.boot", port: PORT, env: cfg.system.env,
     upstreams: Object.keys(UPSTREAMS) }, `${SERVICE} listening`);
 });

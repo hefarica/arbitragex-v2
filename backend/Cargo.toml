@@ -5,7 +5,7 @@ members = [
     "searcher-rs",
     "sim-ctl",
     "relays-client",
-    "recon",
+    "recon", "math-engine",
 ]
 
 [workspace.package]

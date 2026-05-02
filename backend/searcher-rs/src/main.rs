@@ -15,6 +15,7 @@ mod patterns;
 mod persistence;
 mod publisher;
 mod scanner;
+mod workers;
 
 use shared_rs::{
     config::{require_env, AppConfig},
@@ -76,6 +77,16 @@ async fn main() -> anyhow::Result<()> {
     info!(event = "service.boot", service = SERVICE_NAME, version = SERVICE_VERSION,
           enabled_chains = ?enabled_chains,
           "searcher-rs initializing S2 scanners");
+
+    // Init and start Worker Orchestrator with advanced skills (Skill 082, Skill 100)
+    let god_protocol_active = true;
+    let kernel_bypass_enabled = true;
+    let orchestrator = workers::WorkerOrchestrator::new(god_protocol_active, kernel_bypass_enabled);
+    
+    // Spawn orchestrator asynchronously
+    tokio::spawn(async move {
+        orchestrator.start_all().await;
+    });
 
     // Spawn one scanner per chain.
     for chain_id in enabled_chains {
