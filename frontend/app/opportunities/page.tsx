@@ -1,57 +1,108 @@
 "use client";
-import React, { useEffect, useState } from "react";
-import { Zap, WifiOff, ShieldAlert } from "lucide-react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
+import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { io } from "socket.io-client";
-import { createOpportunitySocket, type Opportunity } from "@/features/opportunities/socket-lifecycle";
+
+interface Opportunity {
+  id: string;
+  timestamp: number | string;
+  route: string;
+  expected_profit_usd: number;
+  net_roi_pct: number;
+  score: number;
+}
+
+type FeedStatus = "POLLING" | "LIVE" | "ERROR";
+
+const POLL_INTERVAL_MS = 5_000; // 5s — matches searcher-rs scan cycle
 
 export default function OpportunitiesPage() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
-  const [wsStatus, setWsStatus] = useState<"CONNECTING" | "LIVE" | "STALE">("CONNECTING");
+  const [feedStatus, setFeedStatus] = useState<FeedStatus>("POLLING");
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // WebSocket URL: in prod points to a WS-capable endpoint (edge or dedicated).
-  // ZERO MOCKS DOCTRINE: NEXT_PUBLIC_WS_URL is the ONLY source for Socket.IO connections.
-  const WS_URL =
-    process.env.NEXT_PUBLIC_WS_URL ?? "http://localhost:3000";
+  const EDGE_URL =
+    process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
+
+  const fetchOpportunities = useCallback(async () => {
+    try {
+      const res = await fetch(`${EDGE_URL}/api/opportunities/live`, {
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(4000),
+      });
+      if (!res.ok) {
+        setFeedStatus("ERROR");
+        setErrorMsg(`Edge returned ${res.status}`);
+        return;
+      }
+      const data = await res.json();
+      setOpportunities(data.items ?? []);
+      setFeedStatus("POLLING");
+      setLastRefresh(new Date());
+      setErrorMsg(null);
+    } catch (e) {
+      setFeedStatus("ERROR");
+      setErrorMsg((e as Error).message);
+    }
+  }, [EDGE_URL]);
 
   useEffect(() => {
-    const handle = createOpportunitySocket({
-      url: WS_URL,
-      ioFactory: io,
-      onStatus: setWsStatus,
-      onOpportunity: (opp) => setOpportunities((prev) => [opp, ...prev].slice(0, 20)),
-    });
-    return () => handle.dispose();
-    // Effect owns the socket for the component lifetime — see socket-lifecycle.ts.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    fetchOpportunities();
+    intervalRef.current = setInterval(fetchOpportunities, POLL_INTERVAL_MS);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [fetchOpportunities]);
 
   return (
-    <div className={`p-8 min-h-screen transition-colors duration-500 ${wsStatus === 'STALE' ? 'bg-rose-950/20' : 'bg-[#020617]'} text-slate-200`}>
+    <div className={`p-8 min-h-screen transition-colors duration-500 ${feedStatus === 'ERROR' ? 'bg-rose-950/20' : 'bg-[#020617]'} text-slate-200`}>
       <div className="flex justify-between items-center border-b border-slate-800 pb-4 mb-8">
         <div>
-          <h1 className={`text-4xl font-extrabold tracking-tight bg-clip-text text-transparent ${wsStatus === 'STALE' ? 'bg-gradient-to-r from-rose-500 to-red-600' : 'bg-gradient-to-r from-emerald-400 to-teal-400'}`}>
+          <h1 className={`text-4xl font-extrabold tracking-tight bg-clip-text text-transparent ${feedStatus === 'ERROR' ? 'bg-gradient-to-r from-rose-500 to-red-600' : 'bg-gradient-to-r from-emerald-400 to-teal-400'}`}>
             Live MEV Feed
           </h1>
-          <p className="text-slate-500 mt-2 text-sm">Differential Snapshots via WebSockets</p>
+          <p className="text-slate-500 mt-2 text-sm">
+            Polling edge every {POLL_INTERVAL_MS / 1000}s · {lastRefresh ? `Last: ${lastRefresh.toLocaleTimeString()}` : "Loading..."}
+          </p>
         </div>
         
-        <div className={`flex items-center gap-2 px-4 py-2 rounded-full border shadow-lg ${
-          wsStatus === 'LIVE' ? 'bg-emerald-900/30 border-emerald-500/50 text-emerald-400' : 
-          wsStatus === 'STALE' ? 'bg-rose-900/50 border-rose-500/80 text-rose-400 shadow-rose-900/50 animate-pulse' : 
-          'bg-amber-900/30 border-amber-500/50 text-amber-400'
-        }`}>
-          {wsStatus === 'LIVE' ? <Zap size={18} className="animate-pulse" /> : wsStatus === 'STALE' ? <ShieldAlert size={18} /> : <WifiOff size={18} />}
-          <span className="text-sm font-bold tracking-widest">{wsStatus}</span>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={fetchOpportunities}
+            className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors border border-slate-700"
+            title="Force refresh"
+          >
+            <RefreshCw size={16} className="text-slate-400" />
+          </button>
+          <div className={`flex items-center gap-2 px-4 py-2 rounded-full border shadow-lg ${
+            feedStatus === 'POLLING' ? 'bg-emerald-900/30 border-emerald-500/50 text-emerald-400' : 
+            feedStatus === 'ERROR' ? 'bg-rose-900/50 border-rose-500/80 text-rose-400 shadow-rose-900/50 animate-pulse' : 
+            'bg-cyan-900/30 border-cyan-500/50 text-cyan-400'
+          }`}>
+            {feedStatus === 'POLLING' ? <Radio size={18} className="animate-pulse" /> : feedStatus === 'ERROR' ? <ShieldAlert size={18} /> : <Zap size={18} />}
+            <span className="text-sm font-bold tracking-widest">{feedStatus}</span>
+          </div>
         </div>
       </div>
 
-      {wsStatus === 'STALE' && (
+      {feedStatus === 'ERROR' && (
         <div className="mb-8 p-4 bg-rose-950/50 border border-rose-800 rounded-xl flex items-center gap-4 text-rose-300">
           <ShieldAlert size={24} />
           <div>
-            <h3 className="font-bold">ZERO-TRUST PROTOCOL TRIGGERED</h3>
-            <p className="text-sm">WebSocket connection lost. Displayed data is considered STALE. Manual execution is LOCKED to prevent financial loss.</p>
+            <h3 className="font-bold">EDGE CONNECTION ERROR</h3>
+            <p className="text-sm">Cannot reach edge API: {errorMsg}. Retrying every {POLL_INTERVAL_MS / 1000}s.</p>
+          </div>
+        </div>
+      )}
+
+      {feedStatus === 'POLLING' && opportunities.length === 0 && (
+        <div className="mb-8 p-4 bg-slate-800/50 border border-slate-700 rounded-xl flex items-center gap-4 text-slate-400">
+          <Radio size={24} />
+          <div>
+            <h3 className="font-bold">SCANNING MEMPOOL</h3>
+            <p className="text-sm">Searcher is actively monitoring. Paper-mode enabled — no capital at risk. Opportunities appear here when detected.</p>
           </div>
         </div>
       )}
@@ -90,8 +141,7 @@ export default function OpportunitiesPage() {
                   </td>
                   <td className="p-4 text-center">
                     <button 
-                      disabled={wsStatus === 'STALE'}
-                      className="px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold transition-colors shadow-lg shadow-indigo-900/20"
+                      className="px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-colors shadow-lg shadow-indigo-900/20"
                     >
                       SIMULATE
                     </button>
@@ -101,7 +151,7 @@ export default function OpportunitiesPage() {
             </AnimatePresence>
             {opportunities.length === 0 && (
               <tr>
-                <td colSpan={6} className="p-8 text-center text-slate-500 italic">No opportunities detected. Waiting for mempool deltas...</td>
+                <td colSpan={6} className="p-8 text-center text-slate-500 italic">No opportunities detected. Searcher scanning mempool...</td>
               </tr>
             )}
           </tbody>
@@ -110,3 +160,4 @@ export default function OpportunitiesPage() {
     </div>
   );
 }
+
