@@ -6,10 +6,6 @@ import React, { useEffect, useState } from "react";
 import { Activity } from "lucide-react";
 import { motion } from "framer-motion";
 
-export const metadata = {
-  title: "RPC Health Registry | ArbitrageX",
-};
-
 export default function RpcHealthPage() {
   const [rpcs, setRpcs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
