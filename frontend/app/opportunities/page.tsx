@@ -56,12 +56,12 @@ export default function OpportunitiesPage() {
 
     // WebSocket setup
     import('socket.io-client').then(({ io }) => {
-      const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "http://localhost:3000";
-      const socket = io(wsUrl, {
-        transports: ['websocket', 'polling'],
-        reconnectionDelayMax: 10000,
-      });
-      socketRef.current = socket;
+      import('@/lib/api-client').then(({ getWsBaseUrl }) => {
+        const socket = io(getWsBaseUrl(), {
+          transports: ['websocket', 'polling'],
+          reconnectionDelayMax: 10000,
+        });
+        socketRef.current = socket;
 
       socket.on('connect', () => {
         setFeedStatus("LIVE");
@@ -87,6 +87,7 @@ export default function OpportunitiesPage() {
       socket.on('connect_error', (err) => {
         console.warn('WS Connect Error:', err.message);
         setFeedStatus("POLLING"); // Show polling while it tries to reconnect
+      });
       });
     });
 

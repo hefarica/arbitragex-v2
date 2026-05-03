@@ -19,13 +19,51 @@ import * as S from "@/lib/schemas";
 // Server Components run inside Docker — INTERNAL_EDGE_URL reaches the edge via
 // Docker DNS (http://edge:8787). The browser uses NEXT_PUBLIC_EDGE_URL which
 // resolves via the operator's SSH tunnel (http://localhost:8787).
-const EDGE_URL =
-  (typeof window === "undefined"
-    ? process.env.INTERNAL_EDGE_URL
-    : undefined) ??
-  process.env.NEXT_PUBLIC_EDGE_URL ??
-  "http://localhost:8787";
+const isBrowser = typeof window !== "undefined";
+
+export function getApiBaseUrl(): string {
+  const envUrl = isBrowser ? process.env.NEXT_PUBLIC_EDGE_URL : process.env.INTERNAL_EDGE_URL;
+  
+  const isProd = process.env.NODE_ENV === "production";
+
+  if (isProd && envUrl && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(envUrl)) {
+    throw new Error("Production API base URL cannot point to localhost");
+  }
+
+  if (envUrl && envUrl.trim().length > 0) {
+    return envUrl.replace(/\/$/, "");
+  }
+
+  if (isBrowser) {
+    return window.location.origin;
+  }
+
+  return "";
+}
+
+export function getWsBaseUrl(): string {
+  const envUrl = process.env.NEXT_PUBLIC_WS_URL;
+  const isProd = process.env.NODE_ENV === "production";
+
+  if (isProd && envUrl && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(envUrl)) {
+    throw new Error("Production WS base URL cannot point to localhost");
+  }
+
+  if (envUrl && envUrl.trim().length > 0) {
+    return envUrl.replace(/\/$/, "");
+  }
+
+  if (isBrowser) {
+    const loc = window.location;
+    const protocol = loc.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${loc.host}`;
+  }
+
+  return "";
+}
+
 const DEFAULT_TIMEOUT_MS = 5000;
+
 const DEFAULT_RETRIES = 2;
 const MAX_ERROR_PREVIEW = 200;
 const MAX_SCHEMA_ISSUES = 3;
@@ -65,7 +103,7 @@ async function getValidated<T>(
 ): Promise<Result<T>> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const retries = opts.retries ?? DEFAULT_RETRIES;
-  const url = `${EDGE_URL}${path}`;
+  const url = `${getApiBaseUrl()}${path}`;
   const init: RequestInit = {
     next: { revalidate: 0 },
     headers: { accept: "application/json" },
@@ -118,7 +156,7 @@ async function postValidated<T>(
   schema: z.ZodType<T>,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<Result<T>> {
-  const url = `${EDGE_URL.replace(/\/$/, "")}${path}`;
+  const url = `${getApiBaseUrl()}${path}`;
   try {
     const r = await fetchWithTimeout(
       url,
@@ -223,7 +261,7 @@ export function getReadiness() {
 }
 
 export function getAuditLogs(limit = 50, cursor?: string, action?: string, actor?: string, targetKind?: string) {
-  const url = new URL(`${EDGE_URL}/admin/audit`);
+  const url = new URL(`${getApiBaseUrl()}/admin/audit`);
   url.searchParams.set("limit", String(limit));
   if (cursor) url.searchParams.set("cursor", cursor);
   if (action) url.searchParams.set("action", action);

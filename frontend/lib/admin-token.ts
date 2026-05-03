@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from "@/lib/api-client";
 /**
  * Admin token session management via httpOnly cookie.
  *
@@ -20,8 +21,6 @@
  */
 
 const SESSION_TTL_COOKIE = "arbx_admin_session_ttl";
-const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL || "http://localhost:8787";
-
 export const DEFAULT_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
 
 function now(): number {
@@ -34,7 +33,7 @@ function now(): number {
  */
 export async function setAdminToken(token: string, _ttlMs?: number): Promise<boolean> {
   try {
-    const res = await fetch(`${EDGE_URL}/admin/session`, {
+    const res = await fetch(`${getApiBaseUrl()}/admin/session`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ token }),
@@ -79,7 +78,7 @@ export function hasAdminSession(): boolean {
  */
 export async function clearAdminToken(): Promise<void> {
   try {
-    await fetch(`${EDGE_URL}/admin/session/logout`, {
+    await fetch(`${getApiBaseUrl()}/admin/session/logout`, {
       method: "POST",
       credentials: "include",
     });

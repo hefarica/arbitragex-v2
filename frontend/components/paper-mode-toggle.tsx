@@ -1,4 +1,5 @@
 "use client";
+import { getApiBaseUrl } from "@/lib/api-client";
 
 import { useState, useEffect } from "react";
 import { Switch } from "@/components/ui/switch";
@@ -21,9 +22,8 @@ export function PaperModeToggle({ initialValue }: { initialValue: boolean }) {
     setLoading(true);
     setChecked(val);
     try {
-      const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL || "http://localhost:8787";
       const token = getAdminToken() || "";
-      const res = await fetch(`${EDGE_URL.replace(/\/$/, "")}/admin/config/paper-mode`, {
+      const res = await fetch(`${getApiBaseUrl().replace(/\/$/, "")}/admin/config/paper-mode`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

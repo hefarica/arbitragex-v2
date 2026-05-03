@@ -6,23 +6,6 @@
 const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL;
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL;
 
-if (!EDGE_URL) {
-  if (process.env.NODE_ENV === "production") {
-    throw new Error(
-      "NEXT_PUBLIC_EDGE_URL is required for production builds. See docs/governance/DATA-MATRIX.md (M6)."
-    );
-  }
-  console.warn("[arbx] NEXT_PUBLIC_EDGE_URL not set — defaulting to http://localhost:8787 (dev only)");
-}
-
-if (!WS_URL) {
-  if (process.env.NODE_ENV === "production") {
-    throw new Error(
-      "NEXT_PUBLIC_WS_URL is required for production builds. WebSocket/Socket.IO endpoint must be explicit."
-    );
-  }
-  console.warn("[arbx] NEXT_PUBLIC_WS_URL not set — defaulting to http://localhost:8080 (dev only)");
-}
 
 // ─── CSP ───
 // CSP-Report-Only: strict policy that LOGS violations but does not enforce.
@@ -50,12 +33,12 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   env: {
-    NEXT_PUBLIC_EDGE_URL: EDGE_URL || "http://localhost:8787",
-    NEXT_PUBLIC_WS_URL: WS_URL || "http://localhost:8080",
+    NEXT_PUBLIC_EDGE_URL: EDGE_URL,
+    NEXT_PUBLIC_WS_URL: WS_URL,
   },
   async headers() {
-    const resolvedEdge = EDGE_URL || "http://localhost:8787";
-    const resolvedWs = WS_URL || "http://localhost:8080";
+    const resolvedEdge = EDGE_URL || "";
+    const resolvedWs = WS_URL || "";
     const headers = [
       { key: "x-frame-options", value: "DENY" },
       { key: "x-content-type-options", value: "nosniff" },

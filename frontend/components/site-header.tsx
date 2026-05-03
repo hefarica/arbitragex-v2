@@ -1,4 +1,5 @@
 "use client";
+import { getApiBaseUrl } from "@/lib/api-client";
 
 import { useState } from "react";
 import Link from "next/link";
@@ -66,7 +67,7 @@ export function SiteHeader() {
 
         <div className="ml-auto flex items-center gap-2">
           <code className="hidden md:inline-flex rounded-md border bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground">
-            {process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787"}
+            {getApiBaseUrl()}
           </code>
           <ThemeToggle />
         </div>

@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from "@/lib/api-client";
 import Link from "next/link";
 import {
   ActivityIcon,
@@ -39,7 +40,6 @@ const TILES: Tile[] = [
 
 export default async function Home() {
   const [status, recon] = await Promise.all([getStatus(), getReconSummary(1)]);
-  const edgeUrl = process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
   return (
     <>
       <div className="mb-8 space-y-2">
@@ -55,7 +55,7 @@ export default async function Home() {
         <div className="flex flex-wrap gap-2 pt-2">
           <Badge variant="info">paper-mode ON</Badge>
           <Badge variant="outline">S1 – S6 merged</Badge>
-          <Badge variant="outline" className="font-mono">{edgeUrl}</Badge>
+          <Badge variant="outline" className="font-mono">{getApiBaseUrl()}</Badge>
         </div>
       </div>
 

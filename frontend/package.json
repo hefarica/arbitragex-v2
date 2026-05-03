@@ -2,14 +2,15 @@
   "name": "@arbx/frontend",
   "version": "0.1.0",
   "private": true,
-  "description": "ArbitrageX v2 — operator dashboard. Next.js 14 App Router. Consumes edge only; never internal services.",
+  "description": "ArbitrageX v2 \u2014 operator dashboard. Next.js 14 App Router. Consumes edge only; never internal services.",
   "scripts": {
     "dev": "next dev -p 5173",
     "build": "next build",
     "start": "next start -p 5173",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "validate:prod-api": "node scripts/assert-no-localhost-production.js"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
