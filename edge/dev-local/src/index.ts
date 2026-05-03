@@ -112,10 +112,7 @@ async function proxy(path: string, req: express.Request, res: express.Response) 
 const wsProxy = createProxyMiddleware({ 
   target: API_SERVER_URL, 
   ws: true, 
-  changeOrigin: true,
-  pathRewrite: {
-    '^/': '/socket.io/'
-  }
+  changeOrigin: true
 });
 app.use('/socket.io', wsProxy);
 
