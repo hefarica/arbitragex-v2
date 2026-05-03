@@ -30,6 +30,7 @@ lru.workspace = true
 hex.workspace = true
 bigdecimal.workspace = true
 rand.workspace = true
+prioritization-spine = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros","rt-multi-thread","test-util"] }

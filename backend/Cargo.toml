@@ -6,6 +6,7 @@ members = [
     "sim-ctl",
     "relays-client",
     "recon", "math-engine",
+    "prioritization-spine",
 ]
 
 [workspace.package]
@@ -40,6 +41,7 @@ jsonschema    = { version = "0.17", default-features = false }
 config        = { version = "0.14", default-features = false, features = ["toml"] }
 validator     = { version = "0.18", features = ["derive"] }
 shared-rs     = { path = "shared-rs" }
+prioritization-spine = { path = "prioritization-spine" }
 ethers        = { version = "2", default-features = false, features = ["ws","rustls"] }
 futures-util  = "0.3"
 lru           = "0.12"

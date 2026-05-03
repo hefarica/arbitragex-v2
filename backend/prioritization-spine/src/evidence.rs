@@ -1,0 +1,36 @@
+use serde::{Deserialize, Serialize};
+use crate::decision::{ExecutionDecision, RejectReason};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpportunityEvidence {
+    pub chain_id: u64,
+    pub block_number: u64,
+    pub rpc_url_hash: String,
+    pub rpc_latency_ms: u64,
+    pub state_read_timestamp: i64,
+    pub pool_addresses: Vec<String>,
+    pub token_addresses: Vec<String>,
+    pub dex_adapters: Vec<String>,
+    pub route_fingerprint: String,
+    pub amount_in: f64,
+    pub expected_amount_out: f64,
+    pub min_amount_out: f64,
+    pub gross_profit: f64,
+    pub gas_units_estimated: u64,
+    pub gas_price: f64,
+    pub gas_cost: f64,
+    pub bribe: f64,
+    pub flashloan_fee: f64,
+    pub net_expected_profit: f64,
+    pub roi_net: f64,
+    pub simulation_status: String,
+    pub simulation_trace_hash: Option<String>,
+    pub bundle_simulation_status: Option<String>,
+    pub token_risk_score: f64,
+    pub liquidity_confidence: f64,
+    pub state_freshness_ms: u64,
+    pub landing_probability: f64,
+    pub final_score: f64,
+    pub decision: ExecutionDecision,
+    pub reject_reason: Option<RejectReason>,
+}

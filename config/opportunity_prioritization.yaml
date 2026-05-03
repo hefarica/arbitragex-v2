@@ -1,0 +1,16 @@
+min_net_profit_usd: 1.0
+min_roi_bps: 5
+max_route_length: 4
+max_state_freshness_ms: 12000
+min_liquidity_usd: 10000.0
+min_token_safety_score: 0.8
+min_landing_probability: 0.5
+max_slippage_bps: 300
+max_gas_volatility_bps: 1500
+max_reorg_risk: 0.1
+beam_width: 5
+max_candidates_per_block: 100
+simulation_required: true
+bundle_simulation_required: false
+shadow_mode_enabled: true
+execution_enabled: false
