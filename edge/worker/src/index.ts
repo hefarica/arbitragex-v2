@@ -220,7 +220,7 @@ app.post("/admin/session/logout", (c) => {
 // to the edge token. Rejected by api-server if the admin token is missing/wrong.
 // Accepts admin token from header (CLI) or httpOnly cookie (browser, V-AT-1).
 app.post("/admin/killswitch", async (c) => {
-  const adminToken = c.req.header("x-arbx-admin-token") ?? getCookie(c, SESSION_COOKIE);
+  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : getCookie(c, SESSION_COOKIE);
   if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
   const body = await c.req.text();
   const upstream = await fetch(`${c.env.API_SERVER_URL}/admin/killswitch`, {
@@ -240,7 +240,7 @@ app.post("/admin/killswitch", async (c) => {
 
 // PR-2.b Audit Log proxy
 app.get("/admin/audit", async (c) => {
-  const adminToken = c.req.header("x-arbx-admin-token") ?? getCookie(c, SESSION_COOKIE);
+  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : getCookie(c, SESSION_COOKIE);
   if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
   
   const incomingQs = new URL(c.req.url).search;
@@ -282,7 +282,7 @@ app.get("/api/trading-config", async (c) => {
 
 // Trading Config — admin upsert (PUT). Mirror of /admin/killswitch auth pattern.
 app.put("/admin/trading-config/:chain_id", async (c) => {
-  const adminToken = c.req.header("x-arbx-admin-token") ?? getCookie(c, SESSION_COOKIE);
+  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : getCookie(c, SESSION_COOKIE);
   if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
   const chainId = c.req.param("chain_id");
   const body = await c.req.text();

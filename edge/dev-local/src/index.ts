@@ -285,8 +285,17 @@ app.post("/admin/session/logout", (req, res) => {
 
 async function adminProxy(path: string, req: express.Request, res: express.Response, method: string = "POST"): Promise<void> {
   // Accept admin token from: (1) header (CLI/programmatic), (2) httpOnly cookie (browser).
+  // The browser flow sends the literal sentinel "__session_active__" in the header
+  // (frontend's getAdminToken() never returns the real secret) — when we see the
+  // sentinel we MUST defer to the cookie, otherwise api-server validates the
+  // sentinel string against ARBX_ADMIN_TOKEN and 401s every browser-driven write.
   const cookies = parseCookies(req.headers.cookie);
-  const adminToken = req.header("x-arbx-admin-token") || cookies[SESSION_COOKIE];
+  const headerToken = req.header("x-arbx-admin-token");
+  const cookieToken = cookies[SESSION_COOKIE];
+  const adminToken =
+    headerToken && headerToken !== "__session_active__"
+      ? headerToken
+      : cookieToken;
   if (!adminToken) { res.status(401).json({ error: "missing_admin_token" }); return; }
   try {
     const upstream = await fetch(`${API_SERVER_URL}${path}`, {
