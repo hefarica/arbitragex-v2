@@ -16,6 +16,9 @@ COPY relays-client ./relays-client
 COPY recon ./recon
 COPY math-engine ./math-engine
 COPY prioritization-spine ./prioritization-spine
+# simulator-v2: workspace member added in Sprint 4. Optional dep of searcher-rs
+# (feature `v2-simulator`); metadata resolution requires the path to exist.
+COPY simulator-v2 ./simulator-v2
 RUN cargo build --release -p searcher-rs
 
 FROM debian:bookworm-slim AS runtime
