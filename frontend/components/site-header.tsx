@@ -1,7 +1,7 @@
 "use client";
 import { getApiBaseUrl } from "@/lib/api-client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { MenuIcon } from "lucide-react";
 
@@ -14,6 +14,13 @@ import { cn } from "@/lib/utils";
 
 export function SiteHeader() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+
+  // Hydration safety: getApiBaseUrl() returns different strings on SSR (INTERNAL_EDGE_URL) 
+  // vs CSR (NEXT_PUBLIC_EDGE_URL). We must delay rendering it until the client mounts.
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   return (
     <header className="sticky top-0 z-40 w-full border-b bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
@@ -67,7 +74,7 @@ export function SiteHeader() {
 
         <div className="ml-auto flex items-center gap-2">
           <code className="hidden md:inline-flex rounded-md border bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground">
-            {getApiBaseUrl()}
+            {isMounted ? getApiBaseUrl() : "—"}
           </code>
           <ThemeToggle />
         </div>
