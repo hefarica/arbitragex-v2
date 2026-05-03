@@ -6,6 +6,7 @@ import "./globals.css";
 import { SiteHeader } from "@/components/site-header";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeScript } from "@/components/theme-toggle";
+import { Toaster } from "sonner";
 
 export const metadata = {
   title: "ArbitrageX v2 — Operator Console",
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             </main>
           </div>
         </div>
+        <Toaster richColors position="top-right" />
       </body>
     </html>
   );
