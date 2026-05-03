@@ -12,7 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { getAdminToken } from "@/lib/admin-token";
+import { adminTokenExpiresInMs, fmtRemaining, getAdminToken, setAdminToken } from "@/lib/admin-token";
 import { putTradingConfig } from "@/lib/api-client";
 import type {
   GasPriceStrategy,
@@ -115,11 +115,17 @@ export function TradingConfigForm({
   const [form, setForm] = useState<FormState>(() => fromInitial(initial));
   const [busy, setBusy] = useState(false);
   const [actor, setActor] = useState("");
+  const [adminTokenInput, setAdminTokenInput] = useState("");
+  const [sessionTtlMs, setSessionTtlMs] = useState(0);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const router = useRouter();
 
   useEffect(() => {
     setMounted(true);
+    setSessionTtlMs(adminTokenExpiresInMs());
+    // Refresh TTL display every 30s so the operator sees the session winding down.
+    const id = setInterval(() => setSessionTtlMs(adminTokenExpiresInMs()), 30_000);
+    return () => clearInterval(id);
   }, []);
 
   const validate = useMemo(() => {
@@ -145,13 +151,24 @@ export function TradingConfigForm({
     const errs = validate();
     setValidationErrors(errs);
     if (errs.length > 0) return;
-    const token = getAdminToken();
-    if (!token) {
-      toast.error("Admin token missing — sign in first via /admin/session");
-      return;
-    }
     setBusy(true);
     try {
+      // If the operator typed a token in the inline input, establish the session
+      // (POST /admin/session → httpOnly cookie). Otherwise reuse the existing one.
+      if (adminTokenInput.trim().length > 0) {
+        const ok = await setAdminToken(adminTokenInput.trim());
+        if (!ok) {
+          toast.error("Admin sign-in failed — token rejected by edge");
+          return;
+        }
+        setAdminTokenInput("");
+        setSessionTtlMs(adminTokenExpiresInMs());
+      }
+      const token = getAdminToken();
+      if (!token) {
+        toast.error("Admin token missing — paste it in the field above and Save again");
+        return;
+      }
       const body: Omit<TradingConfigConfigured, "chain_id" | "configured" | "updated_at" | "updated_by"> = {
         capital_usd: form.capital_usd,
         base_token_symbol: form.base_token_symbol.trim(),
@@ -460,7 +477,11 @@ export function TradingConfigForm({
 
       <Card>
         <CardHeader>
-          <CardTitle>Lifecycle</CardTitle>
+          <CardTitle>Lifecycle &amp; admin sign-in</CardTitle>
+          <CardDescription>
+            Saving this form requires an admin session. Paste your admin token below if no
+            session is active; the edge stores it in an httpOnly cookie that lasts 8h.
+          </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2">
           <div className="flex items-center gap-3">
@@ -480,6 +501,29 @@ export function TradingConfigForm({
               value={actor}
               onChange={(e) => setActor(e.target.value)}
               placeholder="ops@example.com"
+            />
+          </div>
+          <div className="md:col-span-2">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="admin-token">
+                Admin token{" "}
+                <span className="text-muted-foreground font-normal">
+                  (only required if no session is active)
+                </span>
+              </Label>
+              <span className="text-xs font-mono text-muted-foreground">
+                {sessionTtlMs > 0
+                  ? `session active · auto-clears in ${fmtRemaining(sessionTtlMs)}`
+                  : "no active session"}
+              </span>
+            </div>
+            <Input
+              id="admin-token"
+              type="password"
+              value={adminTokenInput}
+              onChange={(e) => setAdminTokenInput(e.target.value)}
+              placeholder={sessionTtlMs > 0 ? "(leave blank to reuse current session)" : "paste admin token to sign in"}
+              autoComplete="off"
             />
           </div>
         </CardContent>
