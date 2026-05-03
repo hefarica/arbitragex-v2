@@ -17,7 +17,7 @@ interface Opportunity {
 
 type FeedStatus = "POLLING" | "LIVE" | "ERROR";
 
-const POLL_INTERVAL_MS = 5_000;
+const POLL_INTERVAL_MS = 4_000;
 
 export type OpportunitiesSnapshot = {
   opportunities: Opportunity[];
@@ -70,12 +70,13 @@ export default function OpportunitiesClient({
     setIsMounted(true);
     setNow(Date.now());
     
-    // Polling setup
+    // Polling setup — runs unconditionally to catch new opportunities
+    // even when WebSocket is connected (WS handles instant push,
+    // polling is the safety net that guarantees the table always refreshes).
     let alive = true;
+    fetchOpportunities(); // Immediate first fetch on mount
     const timer = setInterval(() => {
-      if (alive && socketRef.current && !socketRef.current.connected) {
-        fetchOpportunities();
-      }
+      if (alive) fetchOpportunities();
     }, POLL_INTERVAL_MS);
 
     // WebSocket setup
@@ -203,7 +204,8 @@ export default function OpportunitiesClient({
                 const detectedTime = new Date(opp.detected_at).getTime();
                 const ageSecs = isMounted ? Math.floor((now - detectedTime) / 1000) : 0;
                 const isStale = ageSecs > 12;
-                const isCriticalTriage = opp.risk_score > 95;
+                const scorePercent = Number(opp.risk_score ?? 0) * 100;
+                const isCriticalTriage = scorePercent > 95;
                 
                 return (
                   <motion.tr 
@@ -262,12 +264,12 @@ export default function OpportunitiesClient({
                     </td>
                     <td className="p-4 text-right font-mono text-slate-300">
                       <span className="bg-slate-800/80 px-2 py-1 rounded border border-slate-700/50">
-                        {Number(opp.roi_pct).toFixed(2)}%
+                        {Number(opp.roi_pct ?? 0).toFixed(2)}%
                       </span>
                     </td>
                     <td className="p-4 text-center">
-                      <span className={`px-3 py-1 rounded-full text-xs font-bold border ${opp.risk_score > 95 ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50 shadow-[0_0_15px_rgba(234,179,8,0.3)] animate-pulse' : opp.risk_score > 90 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-blue-500/10 text-blue-400 border-blue-500/30'}`}>
-                        {opp.risk_score}
+                      <span className={`px-3 py-1 rounded-full text-xs font-bold border ${scorePercent > 95 ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50 shadow-[0_0_15px_rgba(234,179,8,0.3)] animate-pulse' : scorePercent > 70 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-blue-500/10 text-blue-400 border-blue-500/30'}`}>
+                        {scorePercent.toFixed(1)}%
                       </span>
                     </td>
                     <td className="p-4 text-center">
