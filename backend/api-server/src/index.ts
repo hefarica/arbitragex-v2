@@ -68,6 +68,7 @@ const app = express();
 import { defiRouter } from "./routes/defi.js";
 import { buildTradingConfigRouter } from "./routes/trading-config.js";
 import { buildOperationsRouter } from "./routes/operations.js";
+import { buildStrategyCatalogRouter } from "./routes/strategy-catalog.js";
 import { setupWebSocketGateway, broadcastOpportunity } from "./websocket.js";
 import { createServer } from "http";
 
@@ -764,6 +765,9 @@ app.use(buildOperationsRouter({
   adminToken: ARBX_ADMIN_TOKEN,
   logger,
 }));
+
+// ── Strategy catalog (Sprint 2 — read-only universal MEV strategy library) ─
+app.use(buildStrategyCatalogRouter({ pool, logger }));
 
 app.get("/api/v1/config/current", async (_req, res) => {
   // Merge dynamic paper_mode from Redis if available

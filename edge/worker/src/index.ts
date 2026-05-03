@@ -349,6 +349,32 @@ app.get("/api/operations/variance", async (c) => {
   return c.body(text, upstream.status as 200 | 400 | 500 | 503);
 });
 
+// Strategy catalog — Sprint 2 universal MEV strategy library (read-only).
+app.get("/api/strategy-catalog", async (c) => {
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/strategy-catalog`, {
+    method: "GET",
+    headers: { "accept": "application/json", "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN },
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 500 | 503);
+});
+
+app.get("/api/strategy-catalog/active", async (c) => {
+  const url = new URL(c.req.url);
+  const chain = url.searchParams.get("chain_id") ?? "1";
+  const upstream = await fetch(
+    `${c.env.API_SERVER_URL}/api/v1/strategy-catalog/active?chain_id=${encodeURIComponent(chain)}`,
+    {
+      method: "GET",
+      headers: { "accept": "application/json", "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN },
+    },
+  );
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 500 | 503);
+});
+
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError((err, c) => {
   console.error(JSON.stringify({ event: "edge.error", err: err.message }));

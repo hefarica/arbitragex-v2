@@ -146,6 +146,12 @@ app.get("/api/operations/variance", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
   proxy(`/api/v1/operations/variance?chain_id=${encodeURIComponent(chain)}`, req, res);
 });
+// Strategy catalog (Sprint 2 — universal MEV strategy library, read-only).
+app.get("/api/strategy-catalog", (req, res) => proxy("/api/v1/strategy-catalog", req, res));
+app.get("/api/strategy-catalog/active", (req, res) => {
+  const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
+  proxy(`/api/v1/strategy-catalog/active?chain_id=${encodeURIComponent(chain)}`, req, res);
+});
 // DeFi data routes (defiRouter is mounted at /api in api-server, no /v1/ prefix).
 app.get("/api/chains",  (req, res) => proxy("/api/chains", req, res));
 app.get("/api/rpcs",    (req, res) => proxy("/api/rpcs", req, res));
