@@ -158,6 +158,70 @@ Ejecutar build del workspace afectado ANTES de hacer commit/push. Si falla, reso
 | R5 | Auditoría de componentes transitivos en toda corrección de mismatch | `SKILL.md` §5.R5 |
 | R6 | Todo servicio productor DEBE tener `DATABASE_URL` + `depends_on: postgres` | `SKILL.md` §5.R6 |
 | R7 | Trazabilidad E2E: auditoría capa-por-capa cuando datos no llegan al Dashboard | `SKILL.md` §5.R7 |
+| R8 | (Propuesta) Cualquier "fix" que tape un error con `rand`/literal/sentinel hardcodeado upstream del consumidor de datos viola RULE 00 — el error debe propagar honestamente al frontend y la causa raíz se arregla en su capa de origen. | `anti_reincidencia.md §Incidente #6` |
+
+---
+
+## Incidente #6: Mock Random Profit Injection en searcher-rs (RULE 00 violada en hot-path)
+
+**Fecha del aprendizaje:** 3 de Mayo de 2026 (Sesión 3 — auditoría E2E ~14:18 UTC)
+
+**Qué ocurrió:**
+Auditoría E2E ordenada por el operador ("haz una auditoria en las oportunidades y dime si todo está llegando, bien, si los caculos, son reales y las oportunidades tambien"). R7 ejecutado capa por capa:
+- ✅ Alchemy WSS detecta pending txs reales (12ms latency)
+- ✅ Decoder de calldata Univ2/Univ3 produce token addresses reales
+- ✅ Redis Stream `arbx:opps:detected` XLEN=2621, fluyendo
+- ✅ PostgreSQL persiste (1714 rows, latest hace 7s)
+- ✅ api-server + Edge Worker sirven JSON consistente
+- ❌ **`expected_profit_usd` mostrado en el dashboard es `rand::thread_rng().gen_range(5.0..55.0)`**
+
+El dashboard mostraba "Net Profit $47.44 / ROI 1776%" — números puramente aleatorios. 364 rows persistidas en última hora con 34% reportando ROI > 100% (irreal para arbs DEX), 12% con ROI = 0 contra profit > 0, 100% con `block_number = NULL`.
+
+**Qué salió mal:**
+Tres mocks encadenados:
+
+1. `backend/prioritization-spine/src/simulator.rs:33-44` — el simulador REVM ejecuta una transacción VACÍA contra dirección dummy `0x2222...2222` con calldata vacío. Comentario en código admite: *"For now, we set up a mock transaction environment to satisfy the Spine."* Siempre devuelve PASS. Por eso el spine recibe `gross_profit = 0`.
+
+2. `backend/searcher-rs/src/scanner.rs:243-248` — al recibir `expected_profit_usd <= 0.0` del spine, el scanner inyecta `rand::thread_rng().gen_range(5.0..55.0)` y persiste el random. Comentario admite: *"MOCK: S2 currently outputs 0.0 profit. We inject a random positive profit to bypass the NegativeProfit spine error and allow dashboard visualization."*
+
+3. Los inputs de `OpportunityEvidence` en `scanner.rs:272-296` están todos hardcoded: `gas_units=120000`, `gas_price=30 gwei`, `bribe=0`, `flashloan_fee=0`, `token_risk_score=1.0`, `liquidity_confidence=0.9`, `landing_probability=0.95`. Y la fórmula de ROI en `scanner.rs:309` (`amount_in_f64 * 2000.0`) asume `token_in` siempre WETH.
+
+**Causa raíz:**
+El fix `254f750 fix: mock expected profit to bypass spine NegativeProfit rejection` se hizo con buena intención pero violó la doctrina: **un dato mockeado en el upstream contamina TODA la cadena downstream, incluida la UI que el operador usa para tomar decisiones**. El simulador REVM stub debería haberse priorizado o el spine debería haber persistido las opps con `Reject(NegativeProfit)` honestamente, no taparse con `rand`.
+
+**Regla nueva (R8 propuesta):**
+> Cualquier "fix" que enmascare un error de capa N inyectando datos sintéticos antes de pasarlos a capa N+1 viola RULE 00. El error debe propagar a través del pipeline (sentinelas honestas tipo `roi=-1`, `risk=0`, status="rejected") hasta el frontend, y la causa raíz se arregla en la capa donde nace, no se tapa downstream. **Lo opuesto del mock pattern: fail-honest pattern.**
+
+**Validación obligatoria:**
+- Después de eliminar el bypass, en PostgreSQL las nuevas opps deben mostrar:
+  ```sql
+  SELECT expected_profit_usd, roi_pct, risk_score FROM opportunities 
+  WHERE detected_at > NOW() - INTERVAL '5 minutes' LIMIT 5;
+  -- Esperado: profit=0.00, roi_pct=-1.00, risk_score=0.00
+  ```
+- En logs del searcher: `event="spine.scoring_error"` + razón `NegativeProfit` cada vez que llega una opp.
+- En dashboard frontend: filas siguen apareciendo pero con profit=$0.00, ROI=-1, score=0 (lectura inmediata: "no viable").
+
+**Archivos o rutas relacionadas:**
+- `backend/searcher-rs/src/scanner.rs` (líneas 244-248 eliminadas, comentario de honestidad agregado en su lugar; commit `dc5d376`)
+- `backend/prioritization-spine/src/simulator.rs` (stub a reemplazar — sub-tarea separada)
+- `backend/prioritization-spine/src/scoring.rs` (lógica del spine es correcta — devuelve `Err(NegativeProfit)` cuando `gross_profit - gas_cost - bribe - flashloan_fee <= 0`)
+- Plan en sesión: `~/.claude/plans/618f8807-a40cf1775f329600-js-1-uncaught-silly-rabin.md` (decisión "Cambio A solamente" del operador 14:30 UTC)
+
+**Acción correcta en futuras ocasiones:**
+Cuando un componente upstream devuelve un valor "no útil" (0, null, error), NO inventarlo. Propagar el sentinel honestamente, mostrar en UI el estado "esperando datos veraces" o "no viable", y tracear la causa raíz hasta arreglarla en la capa de origen. **Nunca persistir `rand::thread_rng()` en una tabla que el operador consulta para tomar decisiones de capital.**
+
+**Sub-tareas pendientes (commits separados):**
+- (a) Implementar `LazyRpcDatabase` real en `simulator.rs` para fetch on-chain de pool reserves (V2: `getReserves()`) y `slot0`/`liquidity` (V3); construir calldata real de swap; ejecutar contra fork del block actual; retornar `expected_amount_out` real. → desbloquea `expected_profit_usd > 0` legítimo.
+- (b) Reemplazar hardcodes de `gas_units`, `gas_price`, `bribe`, `flashloan_fee` por valores derivados (eth_estimateGas, gas oracle, builder bribe model).
+- (c) Reemplazar hardcodes de `token_risk_score`, `liquidity_confidence`, `landing_probability` por inputs reales (token allowlist + safety filter, TVL del pool, builder landing rate histórica).
+- (d) Corregir denominador del ROI en `scanner.rs:309`: ya no asumir `token_in == WETH`; usar el precio real del token_in (Chainlink/TWAP).
+- (e) Cuando `block_number IS NULL` en mempool, marcar la opp con `status="pending_block"` y actualizar tras inclusión.
+
+**Evidencia del fix:**
+- ANTES: 1714 rows con profit aleatorio $5-55, ROI hasta 5482%, dashboard "lleno" pero mendaz.
+- DESPUÉS (post-deploy `dc5d376`): nuevas rows con profit=0, ROI=-1, risk_score=0; logs spine.scoring_error continuos; dashboard muestra "no viable" en cada fila — verdad operacional.
+- (Nota) Las 1714 rows históricas con profit mockeado quedan en PG. `TRUNCATE opportunities` opcional para limpiar el histórico.
 
 ---
 
