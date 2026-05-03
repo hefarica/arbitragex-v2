@@ -1,5 +1,7 @@
 pub mod types;
 pub mod evidence;
+pub mod simulator;
+pub mod lazy_db;
 pub mod scoring;
 pub mod gates;
 pub mod decision;

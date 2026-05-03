@@ -31,6 +31,7 @@ use prioritization_spine::evidence::{OpportunityEvidence};
 use prioritization_spine::scoring::{OpportunityScorer, PrioritizationEngine};
 use prioritization_spine::gates::{can_execute};
 use prioritization_spine::decision::{ExecutionDecision};
+use prioritization_spine::simulator::EvmSimulator;
 use std::fs::OpenOptions;
 use std::io::Write;
 
@@ -270,7 +271,12 @@ async fn process_pending(
         flashloan_fee: 0.0,
         net_expected_profit: 0.0, // computed inside scorer
         roi_net: 0.0,
-        simulation_status: "PASS".to_string(),
+        
+        // --- EVM ATOMIC SIMULATION GATE ---
+        simulation_status: {
+            let mut simulator = EvmSimulator::new(client.provider.clone());
+            simulator.simulate_candidate(&candidate)
+        },
         simulation_trace_hash: None,
         bundle_simulation_status: None,
         token_risk_score: 1.0,
@@ -307,7 +313,8 @@ async fn process_pending(
 
             if final_evidence.decision == ExecutionDecision::Reject {
                 info!(event="spine.rejected", hash=%hash, reason=?final_evidence.reject_reason);
-                return Ok(()); // Drop opportunity
+                // Do NOT return early here! We want the raw opportunity to be published to Redis 
+                // so the frontend dashboard can visualize the detection flow.
             }
         },
         Err(e) => {

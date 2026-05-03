@@ -12,3 +12,6 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 config = { workspace = true }
 chrono = { workspace = true }
+revm = { workspace = true }
+ethers = { workspace = true }
+tokio = { workspace = true }

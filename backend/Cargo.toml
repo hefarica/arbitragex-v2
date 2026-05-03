@@ -16,6 +16,8 @@ rust-version = "1.75"
 license = "Proprietary"
 
 [workspace.dependencies]
+revm          = { version = "3.5.0", default-features = false, features = ["std"] }
+alloy-primitives = { version = "0.7" }
 tokio         = { version = "1", features = ["full"] }
 anyhow        = "1"
 thiserror     = "1"
