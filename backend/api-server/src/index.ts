@@ -67,6 +67,7 @@ const app = express();
 // ==========================================
 import { defiRouter } from "./routes/defi.js";
 import { buildTradingConfigRouter } from "./routes/trading-config.js";
+import { buildOperationsRouter } from "./routes/operations.js";
 import { setupWebSocketGateway, broadcastOpportunity } from "./websocket.js";
 import { createServer } from "http";
 
@@ -753,6 +754,14 @@ app.use(buildTradingConfigRouter({
   requireAdminToken,
   adminToken: ARBX_ADMIN_TOKEN,
   writeAudit,
+  logger,
+}));
+
+// ── Operations PnL (Sprint 3 — PMI/EVM KPI surface) ────────────────────
+app.use(buildOperationsRouter({
+  pool,
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
   logger,
 }));
 
