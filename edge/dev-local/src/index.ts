@@ -109,7 +109,7 @@ async function proxy(path: string, req: express.Request, res: express.Response) 
   }
 }
 
-app.use('/socket.io', createProxyMiddleware({ 
+app.use(createProxyMiddleware('/socket.io', { 
   target: API_SERVER_URL, 
   ws: true, 
   changeOrigin: true 
