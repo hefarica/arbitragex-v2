@@ -646,7 +646,7 @@ app.post("/admin/config/paper-mode", requireAdminToken(ARBX_ADMIN_TOKEN), async 
     return;
   }
   try {
-    const rc = getRedisClient();
+    const rc = redis;
     if (!rc) {
       res.status(503).json({ error: "redis_unavailable" });
       return;
@@ -748,7 +748,7 @@ app.get("/api/v1/config/current", async (_req, res) => {
   // Merge dynamic paper_mode from Redis if available
   let dynamicPaperMode = cfg.execution.paper_mode;
   try {
-    const rc = getRedisClient();
+    const rc = redis;
     if (rc) {
       const pmStr = await rc.get("arbx:papermode");
       if (pmStr) {
