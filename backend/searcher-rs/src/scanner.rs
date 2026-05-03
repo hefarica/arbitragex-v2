@@ -239,17 +239,12 @@ async fn process_pending(
     // Extract required data
     let amount_in_f64 = opportunity.amount_in_wei.parse::<f64>().unwrap_or(0.0) / 1e18;
     
-    // MOCK: S2 currently outputs 0.0 profit. We inject a random positive profit 
-    // to bypass the NegativeProfit spine error and allow dashboard visualization.
-    let expected_profit_f64 = if opportunity.expected_profit_usd <= 0.0 {
-        rand::thread_rng().gen_range(5.0..55.0)
-    } else {
-        opportunity.expected_profit_usd
-    };
-    
-    // Also update the original opportunity so the frontend displays the mocked profit
+    // RULE 00 honesty: profit comes from the spine simulator. While the simulator is a stub
+    // (prioritization-spine/src/simulator.rs:30 TODO), this stays 0.0 and the spine returns
+    // NegativeProfit, which the fallback below maps to roi_pct=-1, risk_score=0. Dashboard
+    // displays the truth instead of rand::thread_rng() noise.
+    let expected_profit_f64 = opportunity.expected_profit_usd;
     let mut opportunity = opportunity;
-    opportunity.expected_profit_usd = expected_profit_f64;
     
     let candidate = OpportunityCandidate {
         route_fingerprint: format!("{}_{}_{}", opportunity.dex_a, opportunity.token_in, opportunity.token_out),
