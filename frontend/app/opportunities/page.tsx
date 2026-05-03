@@ -19,11 +19,12 @@ type FeedStatus = "POLLING" | "LIVE" | "ERROR";
 const POLL_INTERVAL_MS = 5_000; // 5s — matches searcher-rs scan cycle
 
 export default function OpportunitiesPage() {
+  const [isMounted, setIsMounted] = useState(false);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [feedStatus, setFeedStatus] = useState<FeedStatus>("POLLING");
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [now, setNow] = useState<number>(Date.now());
+  const [now, setNow] = useState<number>(0);
   const socketRef = useRef<any>(null);
 
   const EDGE_URL =
@@ -51,13 +52,18 @@ export default function OpportunitiesPage() {
   }, [EDGE_URL, feedStatus]);
 
   useEffect(() => {
+    setIsMounted(true);
+    setNow(Date.now());
+    
     // Initial fetch
     fetchOpportunities();
 
     // WebSocket setup
     import('socket.io-client').then(({ io }) => {
       import('@/lib/api-client').then(({ getWsBaseUrl }) => {
-        const socket = io(getWsBaseUrl(), {
+        const wsUrl = getWsBaseUrl();
+        console.log("WebSocket connecting to:", wsUrl);
+        const socket = io(wsUrl, {
           transports: ['websocket', 'polling'],
           reconnectionDelayMax: 10000,
         });
@@ -84,7 +90,7 @@ export default function OpportunitiesPage() {
         setFeedStatus("POLLING"); // Fallback to polling UI state if disconnected
       });
       
-      socket.on('connect_error', (err) => {
+      socket.on('connect_error', (err: any) => {
         console.warn('WS Connect Error:', err.message);
         setFeedStatus("POLLING"); // Show polling while it tries to reconnect
       });
@@ -109,7 +115,7 @@ export default function OpportunitiesPage() {
             Live MEV Feed
           </h1>
           <p className="text-slate-500 mt-2 text-sm">
-            Polling edge every {POLL_INTERVAL_MS / 1000}s · {lastRefresh ? `Last: ${lastRefresh.toLocaleTimeString()}` : "Loading..."}
+            Polling edge every {POLL_INTERVAL_MS / 1000}s · {isMounted && lastRefresh ? `Last: ${lastRefresh.toLocaleTimeString()}` : "Loading..."}
           </p>
         </div>
         
@@ -171,7 +177,7 @@ export default function OpportunitiesPage() {
             <AnimatePresence>
               {opportunities.map((opp) => {
                 const detectedTime = new Date(opp.detected_at).getTime();
-                const ageSecs = Math.floor((now - detectedTime) / 1000);
+                const ageSecs = isMounted ? Math.floor((now - detectedTime) / 1000) : 0;
                 const isStale = ageSecs > 12;
                 const isCriticalTriage = opp.risk_score > 95;
                 
@@ -191,10 +197,10 @@ export default function OpportunitiesPage() {
                       <div className="flex flex-col gap-1">
                         <div className={`flex items-center gap-1.5 font-bold ${isStale ? 'text-rose-400' : 'text-emerald-400'}`}>
                           {isStale ? <AlertTriangle size={12} className="animate-pulse" /> : <Clock size={12} />}
-                          {ageSecs}s ago
+                          {isMounted ? `${ageSecs}s ago` : '--'}
                         </div>
                         <div className="text-slate-500">
-                          {new Date(opp.detected_at).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          {isMounted ? new Date(opp.detected_at).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--:--'}
                         </div>
                       </div>
                     </td>
