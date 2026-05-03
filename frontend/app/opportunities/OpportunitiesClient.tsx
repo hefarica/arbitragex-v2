@@ -1,8 +1,7 @@
 "use client";
-import React, { useEffect, useState, useCallback, useRef, startTransition } from "react";
+import React, { useEffect, useState, useCallback, startTransition } from "react";
 import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, Clock, AlertTriangle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getWsBaseUrl } from "@/lib/api-client";
 
 interface Opportunity {
   id: string;
@@ -35,7 +34,6 @@ export default function OpportunitiesClient({
   const [feedStatus, setFeedStatus] = useState<FeedStatus>("POLLING");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [now, setNow] = useState<number>(0);
-  const socketRef = useRef<any>(null);
 
   const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
 
@@ -69,60 +67,20 @@ export default function OpportunitiesClient({
   useEffect(() => {
     setIsMounted(true);
     setNow(Date.now());
-    
-    // Polling setup — runs unconditionally to catch new opportunities
-    // even when WebSocket is connected (WS handles instant push,
-    // polling is the safety net that guarantees the table always refreshes).
+
+    // HTTP polling only — Socket.IO removed: edge worker has no /socket.io
+    // upgrade handler, which produced an endless reconnect storm in production.
     let alive = true;
-    fetchOpportunities(); // Immediate first fetch on mount
+    fetchOpportunities();
     const timer = setInterval(() => {
       if (alive) fetchOpportunities();
     }, POLL_INTERVAL_MS);
 
-    // WebSocket setup
-    import('socket.io-client').then(({ io }) => {
-      if (!alive) return;
-      const wsUrl = getWsBaseUrl();
-      console.log("WebSocket connecting to:", wsUrl);
-      const socket = io(wsUrl, {
-        transports: ['websocket', 'polling'],
-        reconnectionDelayMax: 10000,
-      });
-      socketRef.current = socket;
-
-      socket.on('connect', () => {
-        setFeedStatus("LIVE");
-        setErrorMsg(null);
-        socket.emit('subscribe:opportunities');
-      });
-
-      socket.on('new_opportunity', (opp: Opportunity) => {
-        setSnapshot(prev => {
-          if (prev.opportunities.some(o => o.id === opp.id)) return prev;
-          return {
-            opportunities: [opp, ...prev.opportunities].slice(0, 50),
-            serverTime: new Date().toISOString(),
-            source: "client-ws",
-          };
-        });
-      });
-
-      socket.on('disconnect', () => {
-        setFeedStatus("POLLING");
-      });
-      
-      socket.on('connect_error', (err: any) => {
-        console.warn('WS Connect Error:', err.message);
-        setFeedStatus("POLLING");
-      });
-    });
-
     return () => {
       alive = false;
       clearInterval(timer);
-      if (socketRef.current) socketRef.current.disconnect();
     };
-  }, [getWsBaseUrl, fetchOpportunities]);
+  }, [fetchOpportunities]);
 
   useEffect(() => {
     const ticker = setInterval(() => setNow(Date.now()), 1000);
