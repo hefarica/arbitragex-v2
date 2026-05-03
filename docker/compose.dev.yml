@@ -119,10 +119,15 @@ services:
       ARBX_CONFIG_PATH: /app/configs/app.toml
       REDIS_URL: redis://redis:6379
       SEARCHER_HEALTH_PORT: "9001"
+      # CRITICAL: without DATABASE_URL the scanner publishes to Redis Stream
+      # but NEVER persists to PostgreSQL. The frontend reads from PG, so
+      # opportunities vanish silently. See E2E audit 2026-05-03.
+      DATABASE_URL: postgres://arbx_rw:${ARBX_RW_PASSWORD:-arbx_rw_dev_only}@postgres:5432/arbitragex
     volumes:
       - ../configs:/app/configs:ro
     depends_on:
       redis: { condition: service_healthy }
+      postgres: { condition: service_healthy }
     networks: [arbx-net]
     <<: *common-logging
 
