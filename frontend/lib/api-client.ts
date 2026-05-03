@@ -15,6 +15,14 @@
 
 import type { z } from "zod";
 import * as S from "@/lib/schemas";
+import {
+  KpiPayloadSchema,
+  SCurvePayloadSchema,
+  VariancePayloadSchema,
+  type KpiPayload,
+  type SCurvePayload,
+  type VariancePayload,
+} from "@/lib/operations-schemas";
 
 // Server Components run inside Docker — INTERNAL_EDGE_URL reaches the edge via
 // Docker DNS (http://edge:8787). The browser uses NEXT_PUBLIC_EDGE_URL which
@@ -360,4 +368,22 @@ export function toggleKillswitch(enabled: boolean, reason: string, adminToken: s
     { "x-arbx-admin-token": adminToken },
     S.KillSwitchStateSchema,
   );
+}
+
+// ── Operations PnL (Sprint 3) ───────────────────────────────────────────
+// Public-read PMI/EVM KPIs surfaced through the edge (no admin token).
+
+export function getOperationsKpi(chainId = 1): Promise<Result<KpiPayload>> {
+  return getValidated(`/api/operations/kpi?chain_id=${chainId}`, KpiPayloadSchema);
+}
+
+export function getOperationsScurve(chainId = 1, bucketMinutes = 15): Promise<Result<SCurvePayload>> {
+  return getValidated(
+    `/api/operations/scurve?chain_id=${chainId}&bucket_minutes=${bucketMinutes}`,
+    SCurvePayloadSchema,
+  );
+}
+
+export function getOperationsVariance(chainId = 1): Promise<Result<VariancePayload>> {
+  return getValidated(`/api/operations/variance?chain_id=${chainId}`, VariancePayloadSchema);
 }

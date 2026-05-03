@@ -260,6 +260,95 @@ app.get("/admin/audit", async (c) => {
   return c.body(text, upstream.status as any);
 });
 
+// Trading Config — public read of operator-tunable strategy params (chain-scoped).
+app.get("/api/trading-config", async (c) => {
+  const url = new URL(c.req.url);
+  const chain = url.searchParams.get("chain_id") ?? "1";
+  const upstream = await fetch(
+    `${c.env.API_SERVER_URL}/api/v1/trading-config?chain_id=${encodeURIComponent(chain)}`,
+    {
+      method: "GET",
+      headers: {
+        "accept": "application/json",
+        "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+        "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+      },
+    },
+  );
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 503);
+});
+
+// Trading Config — admin upsert (PUT). Mirror of /admin/killswitch auth pattern.
+app.put("/admin/trading-config/:chain_id", async (c) => {
+  const adminToken = c.req.header("x-arbx-admin-token") ?? getCookie(c, SESSION_COOKIE);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const chainId = c.req.param("chain_id");
+  const body = await c.req.text();
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/admin/trading-config/${encodeURIComponent(chainId)}`, {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": adminToken,
+      "x-arbx-actor": c.req.header("x-arbx-actor") ?? "operator",
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    },
+    body,
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 401 | 403 | 500 | 502 | 503);
+});
+
+// Operations PnL — Sprint 3 PMI/EVM KPI surface (public read, numbers only).
+app.get("/api/operations/kpi", async (c) => {
+  const url = new URL(c.req.url);
+  const chain = url.searchParams.get("chain_id") ?? "1";
+  const upstream = await fetch(
+    `${c.env.API_SERVER_URL}/api/v1/operations/kpi?chain_id=${encodeURIComponent(chain)}`,
+    {
+      method: "GET",
+      headers: { "accept": "application/json", "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN },
+    },
+  );
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 500 | 503);
+});
+
+app.get("/api/operations/scurve", async (c) => {
+  const url = new URL(c.req.url);
+  const chain = url.searchParams.get("chain_id") ?? "1";
+  const bucket = url.searchParams.get("bucket_minutes") ?? "15";
+  const upstream = await fetch(
+    `${c.env.API_SERVER_URL}/api/v1/operations/scurve?chain_id=${encodeURIComponent(chain)}&bucket_minutes=${encodeURIComponent(bucket)}`,
+    {
+      method: "GET",
+      headers: { "accept": "application/json", "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN },
+    },
+  );
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 500 | 503);
+});
+
+app.get("/api/operations/variance", async (c) => {
+  const url = new URL(c.req.url);
+  const chain = url.searchParams.get("chain_id") ?? "1";
+  const upstream = await fetch(
+    `${c.env.API_SERVER_URL}/api/v1/operations/variance?chain_id=${encodeURIComponent(chain)}`,
+    {
+      method: "GET",
+      headers: { "accept": "application/json", "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN },
+    },
+  );
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 500 | 503);
+});
+
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError((err, c) => {
   console.error(JSON.stringify({ event: "edge.error", err: err.message }));

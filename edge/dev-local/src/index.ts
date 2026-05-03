@@ -132,6 +132,20 @@ app.get("/api/trading-config", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
   proxy(`/api/v1/trading-config?chain_id=${encodeURIComponent(chain)}`, req, res);
 });
+// Operations PnL — Sprint 3 PMI/EVM KPI surface.
+app.get("/api/operations/kpi", (req, res) => {
+  const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
+  proxy(`/api/v1/operations/kpi?chain_id=${encodeURIComponent(chain)}`, req, res);
+});
+app.get("/api/operations/scurve", (req, res) => {
+  const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
+  const bucket = typeof req.query["bucket_minutes"] === "string" ? req.query["bucket_minutes"] : "15";
+  proxy(`/api/v1/operations/scurve?chain_id=${encodeURIComponent(chain)}&bucket_minutes=${encodeURIComponent(bucket)}`, req, res);
+});
+app.get("/api/operations/variance", (req, res) => {
+  const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
+  proxy(`/api/v1/operations/variance?chain_id=${encodeURIComponent(chain)}`, req, res);
+});
 // DeFi data routes (defiRouter is mounted at /api in api-server, no /v1/ prefix).
 app.get("/api/chains",  (req, res) => proxy("/api/chains", req, res));
 app.get("/api/rpcs",    (req, res) => proxy("/api/rpcs", req, res));
