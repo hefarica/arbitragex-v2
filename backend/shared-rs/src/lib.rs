@@ -19,6 +19,7 @@ pub mod paper_mode;
 pub mod logging;
 pub mod metrics;
 pub mod rpc_failover;
+pub mod trading_config;
 
 pub use config::{AppConfig, ConfigError};
 pub use health::{ServiceInfo, build_health_router};

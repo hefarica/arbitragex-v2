@@ -22,6 +22,7 @@ use shared_rs::{
     killswitch::KillSwitchClient,
     metrics::OPPORTUNITIES_TOTAL,
     rpc_failover::{WsEndpoint, WsRpcPool},
+    trading_config::TradingConfigClient,
 };
 use sqlx::postgres::PgPool;
 use std::{sync::Arc, time::Duration};
@@ -32,6 +33,7 @@ use prioritization_spine::scoring::{OpportunityScorer, PrioritizationEngine};
 use prioritization_spine::gates::{can_execute};
 use prioritization_spine::decision::{ExecutionDecision};
 use prioritization_spine::simulator::EvmSimulator;
+use prioritization_spine::config_aware::{ConfigAwareEvaluator, ConfigGateOutcome, NetworkSignals};
 use std::fs::OpenOptions;
 use std::io::Write;
 
@@ -49,6 +51,7 @@ pub async fn run_chain(
     redis: redis::aio::ConnectionManager,
     db: Option<PgPool>,
     dedup: Arc<Dedup>,
+    trading_config: TradingConfigClient,
 ) -> anyhow::Result<ScannerHandle> {
     // RPC failover discipline (G-RPC-1): build a multi-vendor pool from env.
     // CSV format `name=url,name=url`; bare URLs accepted for back-compat.
@@ -82,7 +85,7 @@ pub async fn run_chain(
 
     // Spawn the detection loop with the full endpoint list.
     tokio::spawn(detection_loop(
-        chain_id, pool.endpoints, cfg, killswitch, redis, db, dedup,
+        chain_id, pool.endpoints, cfg, killswitch, redis, db, dedup, trading_config,
     ));
     Ok(ScannerHandle { chain_id })
 }
@@ -109,6 +112,7 @@ async fn detection_loop(
     mut redis: redis::aio::ConnectionManager,
     db: Option<PgPool>,
     dedup: Arc<Dedup>,
+    trading_config: TradingConfigClient,
 ) {
     let mut backoff_ms: u64 = 1000;
     let mut idx: usize = 0;
@@ -151,7 +155,7 @@ async fn detection_loop(
             }
         };
 
-        if let Err(e) = run_subscription(&client, &killswitch, &mut redis, db.as_ref(), &dedup).await {
+        if let Err(e) = run_subscription(&client, &killswitch, &mut redis, db.as_ref(), &dedup, &trading_config).await {
             error!(
                 event = "scanner.subscription_error",
                 chain_id,
@@ -179,14 +183,15 @@ async fn run_subscription(
     redis: &mut redis::aio::ConnectionManager,
     db: Option<&PgPool>,
     dedup: &Dedup,
+    trading_config: &TradingConfigClient,
 ) -> anyhow::Result<()> {
+    let _ = killswitch; // reserved: kill-switch only blocks downstream execution
     let mut stream = client.subscribe_pending().await?;
     info!(event = "scanner.subscribed", chain_id = client.chain_id);
-    
-    while let Some(hash) = stream.next().await {
 
+    while let Some(hash) = stream.next().await {
         // We no longer pause the scanner on kill-switch. It must always scan and emit.
-        if let Err(e) = process_pending(client, hash, redis, db, dedup).await {
+        if let Err(e) = process_pending(client, hash, redis, db, dedup, trading_config).await {
             debug!(event = "scanner.process_err", hash = %hash, error = %e);
         }
     }
@@ -199,6 +204,7 @@ async fn process_pending(
     redis: &mut redis::aio::ConnectionManager,
     db: Option<&PgPool>,
     dedup: &Dedup,
+    trading_config: &TradingConfigClient,
 ) -> anyhow::Result<()> {
     if !dedup.check_and_mark(hash, redis).await {
         return Ok(());
@@ -235,122 +241,141 @@ async fn process_pending(
     };
     let opportunity = patterns::build_dex_arb_candidate(&ctx, &decoded);
 
-    // --- SPINE INTERCEPTOR (Skill 01) ---
-    // Extract required data
+    // --- CONFIG-AWARE SPINE INTERCEPTOR ---
+    // Hot-reads operator's trading config from Redis (≤1s cache TTL). When no
+    // config exists for this chain, the scanner OBSERVES but does not score —
+    // dashboards see the detection but no fabricated profit numbers.
     let amount_in_f64 = opportunity.amount_in_wei.parse::<f64>().unwrap_or(0.0) / 1e18;
-    
-    // RULE 00 honesty: profit comes from the spine simulator. While the simulator is a stub
-    // (prioritization-spine/src/simulator.rs:30 TODO), this stays 0.0 and the spine returns
-    // NegativeProfit, which the fallback below maps to roi_pct=-1, risk_score=0. Dashboard
-    // displays the truth instead of rand::thread_rng() noise.
-    let expected_profit_f64 = opportunity.expected_profit_usd;
     let mut opportunity = opportunity;
-    
+
+    let cfg_opt = match trading_config.state(client.chain_id).await {
+        Ok(opt) => opt,
+        Err(e) => {
+            warn!(event = "trading_config.read_failed", chain_id = client.chain_id, error = %e);
+            None
+        }
+    };
+
     let candidate = OpportunityCandidate {
         route_fingerprint: format!("{}_{}_{}", opportunity.dex_a, opportunity.token_in, opportunity.token_out),
         pool_addresses: vec![],
         token_addresses: vec![opportunity.token_in.clone(), opportunity.token_out.clone()],
         dex_adapters: vec![opportunity.dex_a.clone()],
         amount_in: amount_in_f64,
-        expected_amount_out: amount_in_f64 + (expected_profit_f64 / 2000.0), // Mocked for calculation
-        gross_profit: expected_profit_f64,
+        // Until route-finder + reserves fetch wire up, expected_amount_out
+        // mirrors amount_in (gross_profit = 0) — math-engine then flags it as
+        // not viable, which is the honest signal.
+        expected_amount_out: amount_in_f64,
+        gross_profit: 0.0,
     };
 
-    let evidence = OpportunityEvidence {
-        chain_id: opportunity.chain_id,
-        block_number: opportunity.block_number.unwrap_or(0),
-        rpc_url_hash: "hash_of_rpc".to_string(),
-        rpc_latency_ms: 12,
-        state_read_timestamp: chrono::Utc::now().timestamp(),
-        pool_addresses: candidate.pool_addresses.clone(),
-        token_addresses: candidate.token_addresses.clone(),
-        dex_adapters: candidate.dex_adapters.clone(),
-        route_fingerprint: candidate.route_fingerprint.clone(),
-        amount_in: candidate.amount_in,
-        expected_amount_out: candidate.expected_amount_out,
-        min_amount_out: candidate.expected_amount_out * 0.99,
-        gross_profit: candidate.gross_profit,
-        gas_units_estimated: 120000,
-        gas_price: 30.0 * 1e9,
-        gas_cost: (120000.0 * 30.0 * 1e9) / 1e18 * 2000.0, // Gas in USD roughly
-        bribe: 0.0,
-        flashloan_fee: 0.0,
-        net_expected_profit: 0.0, // computed inside scorer
-        roi_net: 0.0,
-        
-        // --- EVM ATOMIC SIMULATION GATE ---
-        simulation_status: {
-            let mut simulator = EvmSimulator::new(client.provider.clone());
-            simulator.simulate_candidate(&candidate)
-        },
-        simulation_trace_hash: None,
-        bundle_simulation_status: None,
-        token_risk_score: 1.0,
-        liquidity_confidence: 0.9,
-        state_freshness_ms: 50,
-        landing_probability: 0.95,
-        final_score: 0.0,
-        decision: ExecutionDecision::Hold,
-        reject_reason: None,
+    let Some(cfg) = cfg_opt else {
+        // No operator config → observe-only path.
+        info!(
+            event = "scanner.no_trading_config",
+            chain_id = client.chain_id,
+            hash = %hash,
+            "configure /config/trading to enable scoring; persisting raw observation"
+        );
+        opportunity.roi_pct = None;
+        opportunity.risk_score = None;
+        if let Some(pool) = db {
+            if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
+                error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
+            }
+        }
+        publisher::publish(redis, &opportunity).await?;
+        OPPORTUNITIES_TOTAL
+            .with_label_values(&[&opportunity.chain_id.to_string(), "dex_arb", "observed_no_config"])
+            .inc();
+        return Ok(());
     };
 
-    let engine = PrioritizationEngine { min_profit_threshold: 1.0 };
-    
-    let mut final_evidence = evidence.clone();
-    
-    match engine.score(&candidate, &evidence) {
-        Ok(score) => {
-            final_evidence.net_expected_profit = score.net_expected_profit;
-            final_evidence.final_score = score.final_score;
-            final_evidence.decision = can_execute(&final_evidence, true); // Shadow mode true by default
+    if !cfg.enabled {
+        debug!(event = "config.disabled", chain_id = client.chain_id, hash = %hash);
+        return Ok(());
+    }
 
-            // --- RETROALIMENTACIÓN: conectar scores al Opportunity antes de persistir ---
-            // ROI = net_profit / capital_invertido_usd * 100
-            // capital_invertido_usd = amount_in (ETH) * precio ETH (~2000 USD)
-            let capital_usd = amount_in_f64 * 2000.0;
-            opportunity.roi_pct = Some(if capital_usd > 0.0 {
-                (score.net_expected_profit / capital_usd) * 100.0
-            } else {
-                0.0
-            });
-            // risk_score = final_score del spine (higher = better opportunity)
-            opportunity.risk_score = Some(score.final_score);
-            
-            // Log to JSONL
-            if let Ok(json) = serde_json::to_string(&final_evidence) {
-                let _ = std::fs::create_dir_all("logs/mev");
-                match OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open("logs/mev/opportunity_scored.jsonl")
-                {
-                    Ok(mut file) => {
-                        if let Err(e) = writeln!(file, "{}", json) {
-                            error!("Failed to write evidence log: {}", e);
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Failed to open logs/mev/opportunity_scored.jsonl: {}", e);
+    // Network signals — basefee/tip wiring lands with the chain-client refresh
+    // (next sprint). Fixed gas strategy in config still works in the meantime.
+    let signals = NetworkSignals::unknown(opportunity.block_number.unwrap_or(0));
+    let evaluator = ConfigAwareEvaluator::new(&cfg, signals);
+
+    // Strategy classification — when the calldata decoder grows multi-leg support,
+    // this becomes router-driven. For now every observed swap is dex_arb_v2v2.
+    let strategy_kind = "dex_arb_v2v2";
+
+    let gate_outcome = evaluator.evaluate(
+        &candidate,
+        strategy_kind,
+        client.chain_id,
+        "rpc-pool".to_string(),
+        cfg.gas_estimate_units.min(60_000), // proxy until rpc_latency tracked live
+    );
+
+    let (mut final_evidence, math_outcome, config_rejection) = match gate_outcome {
+        ConfigGateOutcome::TokenNotAllowed { token_symbol_or_addr } => {
+            debug!(event = "config.token_not_allowed", chain_id = client.chain_id, token = %token_symbol_or_addr);
+            return Ok(());
+        }
+        ConfigGateOutcome::StrategyDisabled { strategy_kind } => {
+            debug!(event = "config.strategy_disabled", chain_id = client.chain_id, strategy = %strategy_kind);
+            return Ok(());
+        }
+        ConfigGateOutcome::Evaluated { outcome, evidence, rejection } => (evidence, outcome, rejection),
+    };
+
+    // REVM atomic sim gate (still a structural placeholder until lazy state
+    // wires in — keeps the gate honest: simulator.rs returns "PASS" for empty
+    // calldata so we don't reject the entire pipeline).
+    let mut simulator = EvmSimulator::new(client.provider.clone());
+    final_evidence.simulation_status = simulator.simulate_candidate(&candidate);
+
+    // Connect math results to the persisted Opportunity row.
+    opportunity.expected_profit_usd = math_outcome.gross_profit_usd;
+    opportunity.roi_pct = Some(math_outcome.net_roi_pct);
+
+    if let Some(reason) = config_rejection {
+        info!(
+            event = "config.gate_rejected",
+            hash = %hash,
+            reason = ?reason,
+            net_profit_usd = math_outcome.net_profit_usd,
+            roi_pct = math_outcome.net_roi_pct,
+        );
+        opportunity.risk_score = Some(0.0);
+    } else {
+        // Spine scoring on REAL evidence (no more hardcoded 0.95 / 0.9 / 1.0).
+        let engine = PrioritizationEngine { min_profit_threshold: cfg.min_profit_usd };
+        match engine.score(&candidate, &final_evidence) {
+            Ok(score) => {
+                final_evidence.net_expected_profit = score.net_expected_profit;
+                final_evidence.final_score = score.final_score;
+                final_evidence.decision = can_execute(&final_evidence, true);
+                opportunity.risk_score = Some(score.final_score);
+
+                if let Ok(json) = serde_json::to_string(&final_evidence) {
+                    let _ = std::fs::create_dir_all("logs/mev");
+                    if let Ok(mut file) = OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open("logs/mev/opportunity_scored.jsonl")
+                    {
+                        let _ = writeln!(file, "{}", json);
                     }
                 }
-            }
 
-            if final_evidence.decision == ExecutionDecision::Reject {
-                info!(event="spine.rejected", hash=%hash, reason=?final_evidence.reject_reason);
-                // Do NOT return early here! We want the raw opportunity to be published to Redis 
-                // so the frontend dashboard can visualize the detection flow.
+                if final_evidence.decision == ExecutionDecision::Reject {
+                    info!(event = "spine.rejected", hash = %hash, reason = ?final_evidence.reject_reason);
+                }
             }
-        },
-        Err(e) => {
-            warn!(event="spine.scoring_error", hash=%hash, error=?e);
-            // Persist with negative indicators so the dashboard shows the detection
-            // with honest "not viable" signals instead of silently dropping it.
-            opportunity.roi_pct = Some(-1.0);
-            opportunity.risk_score = Some(0.0);
-            // Do NOT return — let it flow to persistence + publish below.
+            Err(e) => {
+                debug!(event = "spine.scoring_error", hash = %hash, error = ?e);
+                opportunity.risk_score = Some(0.0);
+            }
         }
     }
-    // --- END SPINE INTERCEPTOR ---
+    // --- END CONFIG-AWARE SPINE INTERCEPTOR ---
 
 
     // Persist + publish. Both are best-effort with their own error paths.

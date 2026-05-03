@@ -127,6 +127,11 @@ app.get("/api/config/current", (req, res) => proxy("/api/v1/config/current", req
 app.get("/api/relays", (req, res) => proxy("/api/v1/relays", req, res));
 app.get("/api/onboarding/status", (req, res) => proxy("/api/v1/onboarding/status", req, res));
 app.get("/api/readiness", (req, res) => proxy("/api/v1/readiness", req, res));
+// Trading Config — operator-tunable strategy parameters per chain.
+app.get("/api/trading-config", (req, res) => {
+  const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
+  proxy(`/api/v1/trading-config?chain_id=${encodeURIComponent(chain)}`, req, res);
+});
 // DeFi data routes (defiRouter is mounted at /api in api-server, no /v1/ prefix).
 app.get("/api/chains",  (req, res) => proxy("/api/chains", req, res));
 app.get("/api/rpcs",    (req, res) => proxy("/api/rpcs", req, res));
@@ -287,6 +292,11 @@ async function adminProxy(path: string, req: express.Request, res: express.Respo
 app.post("/admin/killswitch",                 (req, res) => adminProxy("/admin/killswitch", req, res, "POST"));
 app.post("/admin/config/paper-mode",          (req, res) => adminProxy("/admin/config/paper-mode", req, res, "POST"));
 app.post("/admin/onboarding/1/complete",      (req, res) => adminProxy("/admin/onboarding/1/complete", req, res, "POST"));
+app.put("/admin/trading-config/:chain_id",    (req, res) => {
+  const cid = req.params["chain_id"];
+  if (!cid || !/^[0-9]+$/.test(cid)) { res.status(400).json({ error: "invalid_chain_id" }); return; }
+  adminProxy(`/admin/trading-config/${cid}`, req, res, "PUT");
+});
 
 // PR-2.b Audit Log endpoint
 app.get("/admin/audit", (req, res) => {

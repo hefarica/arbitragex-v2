@@ -7,6 +7,7 @@ pub mod gates;
 pub mod decision;
 pub mod feedback;
 pub mod errors;
+pub mod config_aware;
 
 pub use types::*;
 pub use evidence::*;
@@ -14,3 +15,4 @@ pub use scoring::*;
 pub use gates::*;
 pub use decision::*;
 pub use errors::*;
+pub use config_aware::{ConfigAwareEvaluator, ConfigGateOutcome, NetworkSignals};

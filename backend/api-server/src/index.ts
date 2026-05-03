@@ -66,6 +66,7 @@ const app = express();
 // IMPORT DEFI ROUTER & WEBSOCKET
 // ==========================================
 import { defiRouter } from "./routes/defi.js";
+import { buildTradingConfigRouter } from "./routes/trading-config.js";
 import { setupWebSocketGateway, broadcastOpportunity } from "./websocket.js";
 import { createServer } from "http";
 
@@ -743,6 +744,17 @@ app.post("/admin/onboarding/1/complete", requireAdminToken(ARBX_ADMIN_TOKEN), as
                    null, parsed.data, req.ip ?? null, (req as any).traceId ?? null);
   res.status(200).json(q.rows[0]);
 });
+
+// ── Trading Config (per-chain operator-tunable strategy parameters) ─────
+// Mounted late so it inherits express.json + admin token middleware semantics.
+app.use(buildTradingConfigRouter({
+  pool,
+  redis,
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
+  writeAudit,
+  logger,
+}));
 
 app.get("/api/v1/config/current", async (_req, res) => {
   // Merge dynamic paper_mode from Redis if available

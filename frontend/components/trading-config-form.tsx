@@ -1,0 +1,522 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { CheckCircle2Icon, AlertCircleIcon, SaveIcon, ShieldAlertIcon } from "lucide-react";
+import { toast } from "sonner";
+
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { getAdminToken } from "@/lib/admin-token";
+import { putTradingConfig } from "@/lib/api-client";
+import type {
+  GasPriceStrategy,
+  TradingConfigConfigured,
+  TradingConfigResponse,
+} from "@/lib/schemas";
+
+const GAS_STRATEGIES: { value: GasPriceStrategy; label: string; help: string }[] = [
+  { value: "dynamic_basefee_plus_tip", label: "Dynamic (basefee + p75 tip)", help: "Reacts to live gas; preferred when block utilisation is volatile." },
+  { value: "percentile_75", label: "P75 of recent blocks", help: "Conservative: targets the 75th percentile of priority fees observed in the last 5 blocks." },
+  { value: "fixed", label: "Fixed gwei", help: "Operator pins a hard ceiling. Use when arbitrage edge depends on predictable bidding." },
+];
+
+const STRATEGY_OPTIONS = [
+  "dex_arb_v2v2",
+  "dex_arb_v2v3",
+  "triangular",
+  "cross_dex",
+  "flashloan_arb",
+  "cex_dex",
+];
+
+const DEFAULT_TOKENS = ["WETH", "USDC", "USDT", "DAI", "WBTC"];
+
+interface FormState {
+  capital_usd: number;
+  base_token_symbol: string;
+  base_token_price_usd: number;
+  allowed_tokens: string;
+  min_profit_usd: number;
+  min_roi_pct: number;
+  min_landing_probability: number;
+  min_liquidity_confidence: number;
+  max_token_risk_score: number;
+  gas_price_strategy: GasPriceStrategy;
+  fixed_gas_price_gwei: number;
+  gas_estimate_units: number;
+  max_slippage_pct: number;
+  failure_risk_buffer_pct: number;
+  flashloan_fee_pct: number;
+  enabled_strategies: Set<string>;
+  enabled: boolean;
+}
+
+function emptyState(): FormState {
+  // No invented productive defaults — operator must seed values explicitly.
+  // Numbers default to 0 / empty so the form forces conscious entry.
+  return {
+    capital_usd: 0,
+    base_token_symbol: "WETH",
+    base_token_price_usd: 0,
+    allowed_tokens: DEFAULT_TOKENS.join(", "),
+    min_profit_usd: 0,
+    min_roi_pct: 0,
+    min_landing_probability: 0.5,
+    min_liquidity_confidence: 0.7,
+    max_token_risk_score: 1.0,
+    gas_price_strategy: "dynamic_basefee_plus_tip",
+    fixed_gas_price_gwei: 0,
+    gas_estimate_units: 250000,
+    max_slippage_pct: 0.5,
+    failure_risk_buffer_pct: 0.001,
+    flashloan_fee_pct: 0.0009,
+    enabled_strategies: new Set(["dex_arb_v2v2"]),
+    enabled: true,
+  };
+}
+
+function fromInitial(initial: TradingConfigResponse): FormState {
+  if (!initial.configured) return emptyState();
+  return {
+    capital_usd: initial.capital_usd,
+    base_token_symbol: initial.base_token_symbol,
+    base_token_price_usd: initial.base_token_price_usd,
+    allowed_tokens: initial.allowed_token_symbols.join(", "),
+    min_profit_usd: initial.min_profit_usd,
+    min_roi_pct: initial.min_roi_pct,
+    min_landing_probability: initial.min_landing_probability,
+    min_liquidity_confidence: initial.min_liquidity_confidence,
+    max_token_risk_score: initial.max_token_risk_score,
+    gas_price_strategy: initial.gas_price_strategy,
+    fixed_gas_price_gwei: initial.fixed_gas_price_gwei ?? 0,
+    gas_estimate_units: initial.gas_estimate_units,
+    max_slippage_pct: initial.max_slippage_pct,
+    failure_risk_buffer_pct: initial.failure_risk_buffer_pct,
+    flashloan_fee_pct: initial.flashloan_fee_pct,
+    enabled_strategies: new Set(initial.enabled_strategies),
+    enabled: initial.enabled,
+  };
+}
+
+export function TradingConfigForm({
+  chainId,
+  initial,
+}: {
+  chainId: number;
+  initial: TradingConfigResponse;
+}) {
+  const [mounted, setMounted] = useState(false);
+  const [form, setForm] = useState<FormState>(() => fromInitial(initial));
+  const [busy, setBusy] = useState(false);
+  const [actor, setActor] = useState("");
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const router = useRouter();
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const validate = useMemo(() => {
+    return (): string[] => {
+      const errs: string[] = [];
+      if (form.capital_usd <= 0) errs.push("capital_usd must be > 0 (no risk-free defaults)");
+      if (form.base_token_price_usd <= 0) errs.push("base_token_price_usd must be > 0");
+      if (!form.base_token_symbol.trim()) errs.push("base_token_symbol required");
+      if (form.allowed_tokens.split(",").map((s) => s.trim()).filter(Boolean).length === 0)
+        errs.push("at least one allowed token is required");
+      if (form.min_profit_usd < 0) errs.push("min_profit_usd >= 0");
+      if (form.min_roi_pct < 0) errs.push("min_roi_pct >= 0");
+      if (form.gas_price_strategy === "fixed" && form.fixed_gas_price_gwei <= 0)
+        errs.push("fixed gas strategy requires fixed_gas_price_gwei > 0");
+      if (form.max_slippage_pct < 0 || form.max_slippage_pct > 50)
+        errs.push("max_slippage_pct in [0, 50]");
+      if (actor.trim().length < 1) errs.push("actor required (your initials/email for audit)");
+      return errs;
+    };
+  }, [form, actor]);
+
+  async function handleSubmit() {
+    const errs = validate();
+    setValidationErrors(errs);
+    if (errs.length > 0) return;
+    const token = getAdminToken();
+    if (!token) {
+      toast.error("Admin token missing — sign in first via /admin/session");
+      return;
+    }
+    setBusy(true);
+    try {
+      const body: Omit<TradingConfigConfigured, "chain_id" | "configured" | "updated_at" | "updated_by"> = {
+        capital_usd: form.capital_usd,
+        base_token_symbol: form.base_token_symbol.trim(),
+        base_token_price_usd: form.base_token_price_usd,
+        allowed_token_symbols: form.allowed_tokens
+          .split(",")
+          .map((s) => s.trim().toUpperCase())
+          .filter(Boolean),
+        min_profit_usd: form.min_profit_usd,
+        min_roi_pct: form.min_roi_pct,
+        min_landing_probability: form.min_landing_probability,
+        min_liquidity_confidence: form.min_liquidity_confidence,
+        max_token_risk_score: form.max_token_risk_score,
+        gas_price_strategy: form.gas_price_strategy,
+        fixed_gas_price_gwei:
+          form.gas_price_strategy === "fixed" ? form.fixed_gas_price_gwei : null,
+        gas_estimate_units: form.gas_estimate_units,
+        max_slippage_pct: form.max_slippage_pct,
+        failure_risk_buffer_pct: form.failure_risk_buffer_pct,
+        flashloan_fee_pct: form.flashloan_fee_pct,
+        enabled_strategies: Array.from(form.enabled_strategies),
+        enabled: form.enabled,
+      };
+      const r = await putTradingConfig(chainId, body, token, actor.trim());
+      if (!r.ok) {
+        toast.error(r.error);
+        return;
+      }
+      toast.success(
+        `Saved. ${r.data.subscribers_notified} searcher(s) notified — config takes effect within ~1s.`,
+      );
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!mounted) return null;
+
+  return (
+    <div className="grid gap-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            Capital & token universe
+            {initial.configured && initial.enabled && (
+              <Badge className="bg-emerald-100 text-emerald-900">live</Badge>
+            )}
+            {initial.configured && !initial.enabled && (
+              <Badge variant="destructive">disabled</Badge>
+            )}
+            {!initial.configured && (
+              <Badge variant="outline">not configured</Badge>
+            )}
+          </CardTitle>
+          <CardDescription>
+            Soft sizing target. Hard caps are enforced by execution_policy (migration 015) — effective amount = min(hard_cap, soft_target).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-2">
+          <div>
+            <Label htmlFor="capital_usd">Deployable capital (USD)</Label>
+            <Input
+              id="capital_usd"
+              type="number"
+              step="0.01"
+              min="0"
+              value={form.capital_usd}
+              onChange={(e) => setForm({ ...form, capital_usd: Number(e.target.value) })}
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Caps amount_in per opportunity. Larger candidates get sized down to this value.
+            </p>
+          </div>
+          <div>
+            <Label htmlFor="base_token_symbol">Base token symbol</Label>
+            <Input
+              id="base_token_symbol"
+              value={form.base_token_symbol}
+              onChange={(e) => setForm({ ...form, base_token_symbol: e.target.value })}
+              placeholder="WETH"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Used to denominate ROI and convert profit-token → USD.
+            </p>
+          </div>
+          <div>
+            <Label htmlFor="base_price">{form.base_token_symbol} price (USD)</Label>
+            <Input
+              id="base_price"
+              type="number"
+              step="0.01"
+              min="0"
+              value={form.base_token_price_usd}
+              onChange={(e) => setForm({ ...form, base_token_price_usd: Number(e.target.value) })}
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Operator-supplied for now; oracle integration replaces this in the next sprint.
+            </p>
+          </div>
+          <div>
+            <Label htmlFor="allowed">Allowed token symbols (comma-separated)</Label>
+            <Input
+              id="allowed"
+              value={form.allowed_tokens}
+              onChange={(e) => setForm({ ...form, allowed_tokens: e.target.value })}
+              placeholder="WETH, USDC, USDT, DAI, WBTC"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Anything outside this list is silently skipped by the scanner.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Profit gate thresholds</CardTitle>
+          <CardDescription>
+            Decide when a candidate is &quot;worth it&quot;. The math-engine computes net_profit and ROI deterministically; these are the floors.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-3">
+          <div>
+            <Label htmlFor="min_profit">Min net profit (USD)</Label>
+            <Input
+              id="min_profit"
+              type="number"
+              step="0.01"
+              min="0"
+              value={form.min_profit_usd}
+              onChange={(e) => setForm({ ...form, min_profit_usd: Number(e.target.value) })}
+            />
+          </div>
+          <div>
+            <Label htmlFor="min_roi">Min ROI (%)</Label>
+            <Input
+              id="min_roi"
+              type="number"
+              step="0.01"
+              min="0"
+              value={form.min_roi_pct}
+              onChange={(e) => setForm({ ...form, min_roi_pct: Number(e.target.value) })}
+            />
+          </div>
+          <div>
+            <Label htmlFor="failure_buffer">Failure risk buffer (fraction)</Label>
+            <Input
+              id="failure_buffer"
+              type="number"
+              step="0.0001"
+              min="0"
+              value={form.failure_risk_buffer_pct}
+              onChange={(e) => setForm({ ...form, failure_risk_buffer_pct: Number(e.target.value) })}
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              0.001 = 0.1% reserve against revert / inclusion failure.
+            </p>
+          </div>
+          <div>
+            <Label htmlFor="land">Min landing probability (0–1)</Label>
+            <Input
+              id="land"
+              type="number"
+              step="0.01"
+              min="0"
+              max="1"
+              value={form.min_landing_probability}
+              onChange={(e) => setForm({ ...form, min_landing_probability: Number(e.target.value) })}
+            />
+          </div>
+          <div>
+            <Label htmlFor="liq">Min liquidity confidence (0–1)</Label>
+            <Input
+              id="liq"
+              type="number"
+              step="0.01"
+              min="0"
+              max="1"
+              value={form.min_liquidity_confidence}
+              onChange={(e) => setForm({ ...form, min_liquidity_confidence: Number(e.target.value) })}
+            />
+          </div>
+          <div>
+            <Label htmlFor="risk">Max token risk score (0–1)</Label>
+            <Input
+              id="risk"
+              type="number"
+              step="0.01"
+              min="0"
+              max="1"
+              value={form.max_token_risk_score}
+              onChange={(e) => setForm({ ...form, max_token_risk_score: Number(e.target.value) })}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Gas & slippage strategy</CardTitle>
+          <CardDescription>How searcher-rs prices gas at scoring time.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <div className="grid gap-2">
+            {GAS_STRATEGIES.map((s) => (
+              <label key={s.value} className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="radio"
+                  name="gas_strategy"
+                  value={s.value}
+                  checked={form.gas_price_strategy === s.value}
+                  onChange={() => setForm({ ...form, gas_price_strategy: s.value })}
+                  className="mt-1"
+                />
+                <div>
+                  <div className="text-sm font-medium">{s.label}</div>
+                  <div className="text-xs text-muted-foreground">{s.help}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+          {form.gas_price_strategy === "fixed" && (
+            <div>
+              <Label htmlFor="fixed_gas">Fixed gas price (gwei)</Label>
+              <Input
+                id="fixed_gas"
+                type="number"
+                step="0.01"
+                min="0"
+                value={form.fixed_gas_price_gwei}
+                onChange={(e) => setForm({ ...form, fixed_gas_price_gwei: Number(e.target.value) })}
+              />
+            </div>
+          )}
+          <div className="grid gap-4 md:grid-cols-3">
+            <div>
+              <Label htmlFor="gas_units">Gas estimate (units)</Label>
+              <Input
+                id="gas_units"
+                type="number"
+                step="1000"
+                min="21000"
+                value={form.gas_estimate_units}
+                onChange={(e) => setForm({ ...form, gas_estimate_units: Number(e.target.value) })}
+              />
+            </div>
+            <div>
+              <Label htmlFor="slippage">Max slippage (%)</Label>
+              <Input
+                id="slippage"
+                type="number"
+                step="0.01"
+                min="0"
+                max="50"
+                value={form.max_slippage_pct}
+                onChange={(e) => setForm({ ...form, max_slippage_pct: Number(e.target.value) })}
+              />
+            </div>
+            <div>
+              <Label htmlFor="fl_fee">Flash-loan fee (fraction)</Label>
+              <Input
+                id="fl_fee"
+                type="number"
+                step="0.0001"
+                min="0"
+                value={form.flashloan_fee_pct}
+                onChange={(e) => setForm({ ...form, flashloan_fee_pct: Number(e.target.value) })}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Strategy mix</CardTitle>
+          <CardDescription>
+            Polymorphic dispatcher — searcher routes candidates to the strategy class flagged here.
+            Empty = permissive (everything observed is evaluated).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+            {STRATEGY_OPTIONS.map((s) => {
+              const checked = form.enabled_strategies.has(s);
+              return (
+                <label key={s} className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => {
+                      const next = new Set(form.enabled_strategies);
+                      if (e.target.checked) next.add(s);
+                      else next.delete(s);
+                      setForm({ ...form, enabled_strategies: next });
+                    }}
+                  />
+                  <span className="text-sm font-mono">{s}</span>
+                </label>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Lifecycle</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-2">
+          <div className="flex items-center gap-3">
+            <Switch
+              id="enabled"
+              checked={form.enabled}
+              onCheckedChange={(v) => setForm({ ...form, enabled: v })}
+            />
+            <Label htmlFor="enabled" className="cursor-pointer">
+              {form.enabled ? "Active — searcher uses this config" : "Disabled — searcher idles for this chain"}
+            </Label>
+          </div>
+          <div>
+            <Label htmlFor="actor">Actor (your initials/email — audit)</Label>
+            <Input
+              id="actor"
+              value={actor}
+              onChange={(e) => setActor(e.target.value)}
+              placeholder="ops@example.com"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {validationErrors.length > 0 && (
+        <Alert variant="destructive">
+          <ShieldAlertIcon />
+          <AlertTitle>Cannot save</AlertTitle>
+          <AlertDescription>
+            <ul className="list-disc ml-5 space-y-1">
+              {validationErrors.map((err, i) => (
+                <li key={i} className="text-sm font-mono">{err}</li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {initial.configured && (
+        <Alert>
+          <CheckCircle2Icon />
+          <AlertTitle>Last update</AlertTitle>
+          <AlertDescription>
+            <span className="font-mono text-xs">
+              {initial.updated_at} by {initial.updated_by ?? "n/a"}
+            </span>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <div className="flex justify-end">
+        <Button disabled={busy} onClick={handleSubmit}>
+          <SaveIcon className="mr-2 h-4 w-4" />
+          {busy ? "Saving…" : "Save & broadcast to searcher"}
+        </Button>
+      </div>
+    </div>
+  );
+}

@@ -23,6 +23,7 @@ use shared_rs::{
     killswitch::KillSwitchClient,
     logging::init_tracing,
     metrics::init_metrics,
+    trading_config::TradingConfigClient,
 };
 use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
@@ -47,6 +48,12 @@ async fn main() -> anyhow::Result<()> {
     // Shared redis connection manager for scanners.
     let redis_client = redis::Client::open(redis_url.clone())?;
     let redis_conn = redis_client.get_connection_manager().await?;
+
+    // Trading-config client (Redis-backed, hot-reload <1s) — re-uses the manager
+    // above so we don't double the open-fd count per pod. Each scanner per-chain
+    // calls `state(chain_id)` per opportunity to honour operator updates without
+    // service restart.
+    let trading_config = TradingConfigClient::from_manager(redis_conn.clone());
 
     // DB pool — optional: if DATABASE_URL absent, run without persistence.
     let db_pool = match std::env::var("DATABASE_URL") {
@@ -95,8 +102,9 @@ async fn main() -> anyhow::Result<()> {
         let redis_c = redis_conn.clone();
         let db_c = db_pool.clone();
         let dedup_c = dedup.clone();
+        let tc_c = trading_config.clone();
         tokio::spawn(async move {
-            if let Err(e) = scanner::run_chain(chain_id, cfg_c, ks, redis_c, db_c, dedup_c).await {
+            if let Err(e) = scanner::run_chain(chain_id, cfg_c, ks, redis_c, db_c, dedup_c, tc_c).await {
                 error!(event = "scanner.spawn_failed", chain_id, error = %e);
             }
         });

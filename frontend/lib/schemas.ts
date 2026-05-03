@@ -258,6 +258,54 @@ export const ReadinessReportSchema = z.object({
   generated_at: z.string(),
 });
 
+// ─────── Trading Config (operator-tunable strategy parameters) ───────
+
+export const GasPriceStrategySchema = z.enum(["fixed", "dynamic_basefee_plus_tip", "percentile_75"]);
+
+const TradingConfigBaseFields = {
+  chain_id: z.number().int().positive(),
+  capital_usd: z.number().nonnegative(),
+  base_token_symbol: z.string().min(1).max(16),
+  base_token_price_usd: z.number().positive(),
+  allowed_token_symbols: z.array(z.string().min(1).max(16)),
+  min_profit_usd: z.number().nonnegative(),
+  min_roi_pct: z.number().nonnegative(),
+  min_landing_probability: z.number().min(0).max(1),
+  min_liquidity_confidence: z.number().min(0).max(1),
+  max_token_risk_score: z.number().min(0).max(1),
+  gas_price_strategy: GasPriceStrategySchema,
+  fixed_gas_price_gwei: z.number().nullable(),
+  gas_estimate_units: z.number().int().positive(),
+  max_slippage_pct: z.number().min(0).max(50),
+  failure_risk_buffer_pct: z.number().min(0),
+  flashloan_fee_pct: z.number().min(0),
+  enabled_strategies: z.array(z.string()),
+  enabled: z.boolean(),
+  updated_at: z.string(),
+  updated_by: z.string().nullable(),
+};
+
+export const TradingConfigConfiguredSchema = z.object({
+  configured: z.literal(true),
+  ...TradingConfigBaseFields,
+});
+
+export const TradingConfigUnconfiguredSchema = z.object({
+  configured: z.literal(false),
+  chain_id: z.number().int().positive(),
+});
+
+export const TradingConfigResponseSchema = z.discriminatedUnion("configured", [
+  TradingConfigConfiguredSchema,
+  TradingConfigUnconfiguredSchema,
+]);
+
+export const TradingConfigPutResultSchema = z.object({
+  ok: z.literal(true),
+  subscribers_notified: z.number().int().nonnegative(),
+  ...TradingConfigBaseFields,
+});
+
 // ─────── Derived types ───────
 
 export type KillSwitchState = z.infer<typeof KillSwitchStateSchema>;
@@ -277,6 +325,10 @@ export type RelaysResponse = z.infer<typeof RelaysResponseSchema>;
 export type OnboardingStatus = z.infer<typeof OnboardingStatusSchema>;
 export type OnboardingPhase1Result = z.infer<typeof OnboardingPhase1ResultSchema>;
 export type ReadinessStatus = z.infer<typeof ReadinessStatusSchema>;
+export type GasPriceStrategy = z.infer<typeof GasPriceStrategySchema>;
+export type TradingConfigConfigured = z.infer<typeof TradingConfigConfiguredSchema>;
+export type TradingConfigResponse = z.infer<typeof TradingConfigResponseSchema>;
+export type TradingConfigPutResult = z.infer<typeof TradingConfigPutResultSchema>;
 export type ReadinessGroup = z.infer<typeof ReadinessGroupSchema>;
 export type ReadinessItem = z.infer<typeof ReadinessItemSchema>;
 export type ReadinessReport = z.infer<typeof ReadinessReportSchema>;

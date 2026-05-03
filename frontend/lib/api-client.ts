@@ -260,6 +260,51 @@ export function getReadiness() {
   return getValidated("/api/readiness", S.ReadinessReportSchema);
 }
 
+export function getTradingConfig(chainId: number) {
+  return getValidated(`/api/trading-config?chain_id=${chainId}`, S.TradingConfigResponseSchema);
+}
+
+// PUT helper — mutations skip the GET retry path; mirror postValidated semantics.
+export async function putTradingConfig(
+  chainId: number,
+  body: Omit<S.TradingConfigConfigured, "chain_id" | "configured" | "updated_at" | "updated_by">,
+  adminToken: string,
+  actor: string,
+): Promise<{ ok: true; data: S.TradingConfigPutResult } | { ok: false; error: string }> {
+  const url = `${getApiBaseUrl()}/admin/trading-config/${chainId}`;
+  try {
+    const r = await fetchWithTimeout(
+      url,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          "x-arbx-admin-token": adminToken,
+          "x-arbx-actor": actor,
+        },
+        credentials: "include",
+        body: JSON.stringify(body),
+      },
+      DEFAULT_TIMEOUT_MS,
+    );
+    const text = await r.text();
+    if (!r.ok) {
+      return { ok: false, error: `HTTP ${r.status}: ${text.slice(0, MAX_ERROR_PREVIEW)}` };
+    }
+    let parsed: unknown;
+    try { parsed = JSON.parse(text); }
+    catch (e) { return { ok: false, error: `edge returned invalid JSON: ${(e as Error).message}` }; }
+    const result = S.TradingConfigPutResultSchema.safeParse(parsed);
+    if (!result.success) {
+      return { ok: false, error: `edge response shape invalid: ${formatSchemaIssues(result.error)}` };
+    }
+    return { ok: true, data: result.data };
+  } catch (e) {
+    const err = e as Error;
+    return { ok: false, error: err.name === "AbortError" ? `edge timeout after ${DEFAULT_TIMEOUT_MS}ms` : err.message };
+  }
+}
+
 export function getAuditLogs(limit = 50, cursor?: string, action?: string, actor?: string, targetKind?: string) {
   const url = new URL(`${getApiBaseUrl()}/admin/audit`);
   url.searchParams.set("limit", String(limit));

@@ -31,6 +31,7 @@ hex.workspace = true
 bigdecimal.workspace = true
 rand.workspace = true
 prioritization-spine = { workspace = true }
+math-engine = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros","rt-multi-thread","test-util"] }
