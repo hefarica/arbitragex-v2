@@ -306,6 +306,29 @@ export const TradingConfigPutResultSchema = z.object({
   ...TradingConfigBaseFields,
 });
 
+// ─────── Strategy Catalog (Sprint 2 — universal MEV strategy library) ───
+
+export const StrategyCatalogEntrySchema = z.object({
+  kind: z.string(),
+  display_name: z.string(),
+  description: z.string(),
+  category: z.string(),
+  is_implemented: z.boolean(),
+  is_default: z.boolean(),
+  risk_level: z.enum(["low", "medium", "high", "very-high"]),
+  capital_required: z.string().nullable(),
+  expected_complexity: z.string().nullable(),
+  competitive_advantage: z.enum(["baja", "media", "alta", "muy-alta", "extrema"]).nullable(),
+  ethical_constraint: z.enum(["none", "defensive_only"]).nullable(),
+  skill_refs: z.array(z.string()),
+  requires_flashloan: z.boolean(),
+  chains_supported: z.array(z.number().int()),
+});
+
+export const StrategyCatalogResponseSchema = z.object({
+  entries: z.array(StrategyCatalogEntrySchema),
+});
+
 // ─────── Derived types ───────
 
 export type KillSwitchState = z.infer<typeof KillSwitchStateSchema>;
@@ -329,6 +352,8 @@ export type GasPriceStrategy = z.infer<typeof GasPriceStrategySchema>;
 export type TradingConfigConfigured = z.infer<typeof TradingConfigConfiguredSchema>;
 export type TradingConfigResponse = z.infer<typeof TradingConfigResponseSchema>;
 export type TradingConfigPutResult = z.infer<typeof TradingConfigPutResultSchema>;
+export type StrategyCatalogEntry = z.infer<typeof StrategyCatalogEntrySchema>;
+export type StrategyCatalogResponse = z.infer<typeof StrategyCatalogResponseSchema>;
 export type ReadinessGroup = z.infer<typeof ReadinessGroupSchema>;
 export type ReadinessItem = z.infer<typeof ReadinessItemSchema>;
 export type ReadinessReport = z.infer<typeof ReadinessReportSchema>;

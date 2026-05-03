@@ -387,3 +387,10 @@ export function getOperationsScurve(chainId = 1, bucketMinutes = 15): Promise<Re
 export function getOperationsVariance(chainId = 1): Promise<Result<VariancePayload>> {
   return getValidated(`/api/operations/variance?chain_id=${chainId}`, VariancePayloadSchema);
 }
+
+// ── Strategy Catalog (Sprint 2) ─────────────────────────────────────────
+// Public-read universal MEV strategy library — surfaces the dropdown for
+// "+ Add strategy from catalog" in the /strategies page.
+export function getStrategyCatalog(): Promise<Result<S.StrategyCatalogResponse>> {
+  return getValidated("/api/strategy-catalog", S.StrategyCatalogResponseSchema);
+}
