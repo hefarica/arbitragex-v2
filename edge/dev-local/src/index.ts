@@ -109,14 +109,15 @@ async function proxy(path: string, req: express.Request, res: express.Response) 
   }
 }
 
-app.use('/socket.io', createProxyMiddleware({ 
+const wsProxy = createProxyMiddleware({ 
   target: API_SERVER_URL, 
   ws: true, 
   changeOrigin: true,
   pathRewrite: {
     '^/': '/socket.io/'
   }
-}));
+});
+app.use('/socket.io', wsProxy);
 
 app.get("/status", (req, res) => proxy("/status", req, res));
 app.get("/api/opportunities/live", (req, res) => proxy("/api/v1/opportunities/live", req, res));
@@ -301,7 +302,10 @@ app.get("/admin/audit", (req, res) => {
 });
 
 const PORT = Number(process.env["EDGE_PORT"] ?? 8787);
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   logger.info({ event: "service.boot", port: PORT, api_server: API_SERVER_URL, env: cfg.system.env }, "edge-dev-local listening");
 });
+
+// IMPORTANT: Bind the upgrade event to the proxy so WebSockets correctly upgrade
+server.on('upgrade', wsProxy.upgrade);
 

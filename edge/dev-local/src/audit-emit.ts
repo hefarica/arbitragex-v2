@@ -11,7 +11,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { auditEmitFailedTotal } from "@arbx/shared";
+
 
 export type AuditAction =
   | "auth.login_ok"
@@ -74,7 +74,6 @@ export async function emitAuditEvent(
     });
     if (!resp.ok) {
       const reason = resp.status === 401 ? "bad_edge_token" : `http_${resp.status}`;
-      auditEmitFailedTotal.labels({ reason }).inc();
       console.error(JSON.stringify({
         event: "audit.emit_failed",
         action: input.action,
@@ -84,7 +83,6 @@ export async function emitAuditEvent(
     }
   } catch (e) {
     const reason = (e as Error).name === "AbortError" ? "timeout" : "network_error";
-    auditEmitFailedTotal.labels({ reason }).inc();
     console.error(JSON.stringify({
       event: "audit.emit_failed",
       action: input.action,
