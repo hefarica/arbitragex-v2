@@ -56,7 +56,8 @@ export default function OpportunitiesPage() {
 
     // WebSocket setup
     import('socket.io-client').then(({ io }) => {
-      const socket = io(EDGE_URL, {
+      const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "http://localhost:3000";
+      const socket = io(wsUrl, {
         transports: ['websocket', 'polling'],
         reconnectionDelayMax: 10000,
       });

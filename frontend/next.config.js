@@ -21,7 +21,7 @@ if (!WS_URL) {
       "NEXT_PUBLIC_WS_URL is required for production builds. WebSocket/Socket.IO endpoint must be explicit."
     );
   }
-  console.warn("[arbx] NEXT_PUBLIC_WS_URL not set — defaulting to http://localhost:3000 (dev only)");
+  console.warn("[arbx] NEXT_PUBLIC_WS_URL not set — defaulting to http://localhost:8080 (dev only)");
 }
 
 // ─── CSP ───
@@ -51,11 +51,11 @@ const nextConfig = {
   poweredByHeader: false,
   env: {
     NEXT_PUBLIC_EDGE_URL: EDGE_URL || "http://localhost:8787",
-    NEXT_PUBLIC_WS_URL: WS_URL || "http://localhost:3000",
+    NEXT_PUBLIC_WS_URL: WS_URL || "http://localhost:8080",
   },
   async headers() {
     const resolvedEdge = EDGE_URL || "http://localhost:8787";
-    const resolvedWs = WS_URL || "http://localhost:3000";
+    const resolvedWs = WS_URL || "http://localhost:8080";
     const headers = [
       { key: "x-frame-options", value: "DENY" },
       { key: "x-content-type-options", value: "nosniff" },
