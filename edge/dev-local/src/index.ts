@@ -28,6 +28,7 @@ import {
   recordAuthSuccess,
 } from "./admin-session-limits.js";
 import { emitAuditEvent, tokenFingerprint } from "./audit-emit.js";
+import { createProxyMiddleware } from "http-proxy-middleware";
 
 const SERVICE = "edge-dev-local";
 const VERSION = "0.1.0";
@@ -107,6 +108,12 @@ async function proxy(path: string, req: express.Request, res: express.Response) 
     res.status(502).json({ error: "upstream_unreachable" });
   }
 }
+
+app.use('/socket.io', createProxyMiddleware({ 
+  target: API_SERVER_URL, 
+  ws: true, 
+  changeOrigin: true 
+}));
 
 app.get("/status", (req, res) => proxy("/status", req, res));
 app.get("/api/opportunities/live", (req, res) => proxy("/api/v1/opportunities/live", req, res));
