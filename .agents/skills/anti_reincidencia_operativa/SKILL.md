@@ -1,7 +1,7 @@
 # Skill: Prevención de Reincidencia Operativa (Anti-Reincidencia)
 
-> **Versión:** 2.0 — Actualizada 2026-05-03  
-> **Origen:** Incidentes de hidratación React #425/#418/#423, fallo de WebSocket Upgrade Proxy y fuga de variables de entorno en producción.
+> **Versión:** 3.0 — Actualizada 2026-05-03T08:48Z  
+> **Origen:** Incidentes de hidratación React #425/#418/#423, fallo de WebSocket Upgrade Proxy, fuga de variables de entorno en producción, y ruptura silenciosa del pipeline E2E Alchemy→Dashboard por `DATABASE_URL` ausente.
 
 ---
 
@@ -14,10 +14,12 @@
 Esta skill se activa **automática e incondicionalmente** cuando el agente enfrente CUALQUIERA de estas situaciones:
 
 - Corrección de un bug crítico en producción (VPS 195.201.235.70).
-- Modificación de archivos en `frontend/app/`, `edge/dev-local/`, `backend/api-server/`, `docker/`, `nginx`.
+- Modificación de archivos en `frontend/app/`, `edge/dev-local/`, `backend/api-server/`, `backend/searcher-rs/`, `docker/`, `nginx`.
 - Reconstrucción o redespliegue de contenedores Docker.
 - Diagnóstico de errores de consola del navegador en la URL pública.
 - Cualquier cambio que toque SSR, hidratación, WebSockets o variables de entorno.
+- Diagnóstico de **datos faltantes** en el Dashboard (oportunidades, ejecuciones, alertas que no aparecen).
+- Modificación de `docker/compose.dev.yml` (variables de entorno, dependencias entre servicios).
 
 ## 3. Qué errores o comportamientos debe prevenir
 
@@ -31,6 +33,8 @@ Esta skill se activa **automática e incondicionalmente** cuando el agente enfre
 | 6 | Build que pasa localmente pero rompe en Docker por dependencias faltantes | **MEDIA** |
 | 7 | Despliegue sin invalidación de caché (`--no-cache` omitido) | **ALTA** |
 | 8 | Conocimiento crítico que se pierde al terminar la conversación | **MEDIA** |
+| 9 | Servicio Docker sin `DATABASE_URL` → datos fluyen pero nunca se persisten | **CRÍTICA** |
+| 10 | Pipeline E2E silenciosamente roto: Redis recibe datos pero PG está vacío | **CRÍTICA** |
 
 ## 4. Causa raíz de los problemas detectados
 
@@ -57,6 +61,19 @@ Esta skill se activa **automática e incondicionalmente** cuando el agente enfre
 2. **`pathRewrite` duplicaba la ruta.** La app montaba el proxy en `/socket.io` Y el `pathRewrite` volvía a prefijar `/socket.io/`, haciendo que la petición upstream llegara como `/socket.io/socket.io/...`.
 
 Resultado: Socket.IO degradaba a HTTP long-polling (5s latencia) en lugar de WebSocket nativo (sub-segundo).
+
+### 4.4 Pipeline E2E Silenciosamente Roto (Alchemy → Dashboard)
+
+**Causa operacional:** El servicio `searcher-rs` en `docker/compose.dev.yml` no tenía `DATABASE_URL` configurado. En `main.rs`, cuando `DATABASE_URL` está ausente, `db_pool = None`. En `scanner.rs` línea 346, el bloque de persistencia se salta silenciosamente:
+```rust
+if let Some(pool) = db {  // db es None → NUNCA se ejecuta
+    persistence::insert_opportunity(pool, &opportunity).await;
+}
+```
+
+**Consecuencia catastrófica:** El searcher detectaba oportunidades reales desde Alchemy, las simulaba con REVM, las puntuaba, y las publicaba exitosamente al Redis Stream (`arbx:opps:detected`, 827+ entries). Pero **nunca las persistía a PostgreSQL**. El frontend lee de PostgreSQL vía `api-server`, por lo que el dashboard mostraba solo 3 oportunidades viejas mientras cientos de nuevas se acumulaban invisibles en Redis.
+
+**Agravante:** No existía ningún log de ERROR. El `main.rs` emite un `WARN "db.not_configured"` al arrancar, pero este mensaje se pierde entre miles de líneas de PoolSync. El fallo era completamente silencioso en operación normal.
 
 ## 5. Reglas obligatorias para que no vuelva a pasar
 
@@ -97,6 +114,34 @@ Cuando se use `http-proxy-middleware` con `ws: true` en un servidor Express:
 Al corregir un mismatch en una página, auditar TODOS los componentes importados por esa página y por el `layout.tsx` padre:
 - `SiteHeader`, `SiteFooter`, `Sidebar`, `Breadcrumb`, `MetricCard`, `StatusBadge`.
 - Buscar: `Date.now()`, `new Date()`, `Math.random()`, `window.`, `document.`, `navigator.`, `localStorage`, `getApiBaseUrl()`.
+
+### R6 — Completitud de Variables en Docker Compose (Pipeline E2E)
+Todo servicio backend en `docker/compose.dev.yml` que persista datos DEBE tener:
+1. `DATABASE_URL` apuntando a `postgres://...@postgres:5432/arbitragex` con credenciales explícitas.
+2. `depends_on: postgres: { condition: service_healthy }` para garantizar orden de arranque.
+3. Un log verificable al arrancar que confirme la conexión (`db.connected` o equivalente).
+
+**Auditoría obligatoria al agregar un nuevo servicio:**
+- ¿El servicio produce datos que el Dashboard necesita ver?
+- ¿Tiene `DATABASE_URL`? Si no, los datos se pierden silenciosamente.
+- ¿Tiene `REDIS_URL`? Si publica a streams, ¿alguien los consume?
+- ¿Los `depends_on` incluyen TODOS los servicios de infraestructura que necesita?
+
+### R7 — Trazabilidad E2E del Pipeline de Datos
+Cuando el Dashboard muestra datos vacíos o estancados, ejecutar auditoría capa por capa:
+```bash
+# 1. ¿El searcher detecta?  (logs del scanner)
+docker logs searcher-rs --tail 200 | grep -i 'simulator.success'
+# 2. ¿Redis recibe?  (stream length)
+docker exec redis redis-cli XLEN arbx:opps:detected
+# 3. ¿PostgreSQL recibe?  (latest row)
+docker exec postgres psql -U postgres -d arbitragex -c 'SELECT MAX(detected_at) FROM opportunities;'
+# 4. ¿api-server sirve?  (endpoint directo)
+curl localhost:8787/api/opportunities/live | head
+```
+Si Redis tiene datos pero PG no → falta `DATABASE_URL` en el productor.
+Si PG tiene datos pero API no → error en el query del `api-server`.
+Si API tiene datos pero Dashboard no → error de frontend/edge/proxy.
 
 ## 6. Procedimiento paso a paso antes de actuar
 
@@ -143,10 +188,12 @@ Todo aprendizaje estructural descubierto durante un fixing loop debe documentars
 ## 9. Checklist final antes de responder al usuario
 
 - [ ] ¿Entendí la causa raíz o solo tapé el síntoma?
-- [ ] ¿Mi solución viola alguna regla inmutable preexistente (R1–R5)?
+- [ ] ¿Mi solución viola alguna regla inmutable preexistente (R1–R7)?
 - [ ] ¿El entorno productivo fue reconstruido con `--no-cache` y `--env-file .env`?
 - [ ] ¿El guard de `next.config.js` sigue intacto (R2)?
 - [ ] ¿WebSocket tiene upgrade binding correcto (R4)?
+- [ ] ¿Todos los servicios productores tienen `DATABASE_URL` (R6)?
+- [ ] ¿Verifiqué el pipeline E2E con la secuencia de R7?
 - [ ] ¿Actualicé `.agents/memory/anti_reincidencia.md` con este incidente?
 - [ ] ¿Corroboré visual o funcionalmente que la solución opera estable en el VPS?
 - [ ] ¿La UI permanece funcional si el WebSocket falla (fallback REST)?

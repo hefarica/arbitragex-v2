@@ -2,7 +2,7 @@
 
 Este archivo actúa como memoria técnica persistente para el agente. Su función es documentar los peores incidentes, los errores cometidos en la fase de resolución y las reglas operativas para prevenir futuros fracasos similares.
 
-> **Última actualización:** 2026-05-03T08:31:00Z
+> **Última actualización:** 2026-05-03T08:48:00Z
 
 ---
 
@@ -156,3 +156,68 @@ Ejecutar build del workspace afectado ANTES de hacer commit/push. Si falla, reso
 | R3 | Deploy con `--no-cache --env-file .env` siempre | `SKILL.md` §5.R3 |
 | R4 | WebSocket: `server.on('upgrade', wsProxy.upgrade)` obligatorio | `SKILL.md` §5.R4 |
 | R5 | Auditoría de componentes transitivos en toda corrección de mismatch | `SKILL.md` §5.R5 |
+| R6 | Todo servicio productor DEBE tener `DATABASE_URL` + `depends_on: postgres` | `SKILL.md` §5.R6 |
+| R7 | Trazabilidad E2E: auditoría capa-por-capa cuando datos no llegan al Dashboard | `SKILL.md` §5.R7 |
+
+---
+
+## Incidente #5: Pipeline E2E Roto — searcher-rs sin DATABASE_URL (824+ oportunidades perdidas)
+
+**Fecha del aprendizaje:** 3 de Mayo de 2026 (Sesión 2 — ~03:37 CST)
+
+**Qué ocurrió:**
+El Dashboard en `/opportunities` mostraba solo 3 oportunidades viejas del 2 de Mayo. El usuario reportó que "no salen nuevas oportunidades". Se ejecutó una auditoría end-to-end completa de las 11 capas del pipeline: Alchemy WSS → searcher-rs → Pattern Match → REVM Sim → Scoring Engine → Redis XADD → PostgreSQL INSERT → api-server → edge → frontend.
+
+**Qué salió mal:**
+El servicio `searcher-rs` en `docker/compose.dev.yml` (líneas 113-127) definía:
+```yaml
+environment:
+  ARBX_CONFIG_PATH: /app/configs/app.toml
+  REDIS_URL: redis://redis:6379
+  SEARCHER_HEALTH_PORT: "9001"
+  # ← DATABASE_URL AUSENTE
+```
+Sin `DATABASE_URL`, el `main.rs` inicializaba `db_pool = None`. En `scanner.rs` línea 346:
+```rust
+if let Some(pool) = db {  // db = None → bloque NUNCA se ejecuta
+    persistence::insert_opportunity(pool, &opportunity).await;
+}
+```
+Las capas 1-7 funcionaban perfectamente: Alchemy entregaba txs, el scanner detectaba, REVM simulaba, el scoring puntuaba y Redis Stream acumulaba 827+ entries. Pero PostgreSQL solo tenía 3 rows del día anterior. El frontend lee de PostgreSQL via api-server, no de Redis Stream.
+
+**Causa raíz:**
+Omisión de `DATABASE_URL` en la sección `environment` de `searcher-rs` dentro de `compose.dev.yml`. El código de `main.rs` trata la conexión a PostgreSQL como opcional (línea 64-68: `warn!("DATABASE_URL not set; scanner will publish to stream but NOT persist")`), lo cual es correcto para desarrollo local pero catastrófico en producción.
+
+**Agravante:** El único indicio era un `WARN` en el arranque del contenedor que se perdía entre miles de líneas de `PoolSyncWorker`. No había ningún `ERROR` ni fallo visible.
+
+**Regla nueva para prevenirlo (R6 — Completitud de Variables en Docker Compose):**
+- Todo servicio backend que produzca datos para el Dashboard DEBE tener `DATABASE_URL` en `compose.dev.yml`.
+- DEBE tener `depends_on: postgres: { condition: service_healthy }`.
+- DEBE verificarse al arranque que el log muestre `"db.connected"` o equivalente.
+
+**Regla nueva para diagnosticar (R7 — Trazabilidad E2E):**
+Cuando el Dashboard no muestra datos, ejecutar auditoría capa por capa:
+1. `docker logs searcher-rs | grep simulator.success` (detecta?)
+2. `redis-cli XLEN arbx:opps:detected` (Redis recibe?)
+3. `psql -c 'SELECT MAX(detected_at) FROM opportunities'` (PG recibe?)
+4. `curl localhost:8787/api/opportunities/live` (API sirve?)
+
+**Validación obligatoria:**
+- Después de agregar `DATABASE_URL` y reiniciar: ejecutar `SELECT COUNT(*) FROM opportunities` y confirmar que el número crece.
+- Confirmar en logs de arranque: `"postgres pool up", event: "db.connected"`.
+- Verificar en el Dashboard que aparecen oportunidades con `detected_at` reciente.
+
+**Archivos o rutas relacionadas:**
+- `docker/compose.dev.yml` (servicio `searcher-rs`, líneas 113-130)
+- `backend/searcher-rs/src/main.rs` (líneas 51-68: `DATABASE_URL` handling)
+- `backend/searcher-rs/src/scanner.rs` (línea 346: `if let Some(pool) = db`)
+- `backend/searcher-rs/src/publisher.rs` (Redis XADD a `arbx:opps:detected`)
+- `backend/searcher-rs/src/persistence.rs` (PostgreSQL INSERT)
+
+**Acción correcta en futuras ocasiones:**
+Antes de declarar que el pipeline está operativo, SIEMPRE ejecutar la secuencia R7 completa. Si Redis tiene datos pero PG no, revisar `DATABASE_URL` en el servicio productor. Confirmar con `SELECT COUNT(*)` que las filas crecen.
+
+**Evidencia del fix:**
+- Antes: 3 rows en PG, última del 2 de Mayo 23:05 UTC.
+- Después: 10+ rows y creciendo, última de hace segundos.
+- Endpoint `/api/opportunities/live`: `{ "count": 10, "items": [...] }` con datos frescos.
