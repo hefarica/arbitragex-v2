@@ -1,15 +1,17 @@
 "use client";
 import React, { useEffect, useState, useCallback, useRef } from "react";
-import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio } from "lucide-react";
+import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, Clock, AlertTriangle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface Opportunity {
   id: string;
-  timestamp: number | string;
-  route: string;
+  detected_at: string;
+  pair_symbol: string;
+  dex_a: string;
+  dex_b: string;
   expected_profit_usd: number;
-  net_roi_pct: number;
-  score: number;
+  roi_pct: number;
+  risk_score: number;
 }
 
 type FeedStatus = "POLLING" | "LIVE" | "ERROR";
@@ -21,7 +23,8 @@ export default function OpportunitiesPage() {
   const [feedStatus, setFeedStatus] = useState<FeedStatus>("POLLING");
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [now, setNow] = useState<number>(Date.now());
+  const socketRef = useRef<any>(null);
 
   const EDGE_URL =
     process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
@@ -33,28 +36,68 @@ export default function OpportunitiesPage() {
         signal: AbortSignal.timeout(4000),
       });
       if (!res.ok) {
-        setFeedStatus("ERROR");
+        if (feedStatus !== "LIVE") setFeedStatus("ERROR");
         setErrorMsg(`Edge returned ${res.status}`);
         return;
       }
       const data = await res.json();
       setOpportunities(data.items ?? []);
-      setFeedStatus("POLLING");
       setLastRefresh(new Date());
       setErrorMsg(null);
     } catch (e) {
-      setFeedStatus("ERROR");
+      if (feedStatus !== "LIVE") setFeedStatus("ERROR");
       setErrorMsg((e as Error).message);
     }
+  }, [EDGE_URL, feedStatus]);
+
+  useEffect(() => {
+    // Initial fetch
+    fetchOpportunities();
+
+    // WebSocket setup
+    import('socket.io-client').then(({ io }) => {
+      const socket = io(EDGE_URL, {
+        transports: ['websocket', 'polling'],
+        reconnectionDelayMax: 10000,
+      });
+      socketRef.current = socket;
+
+      socket.on('connect', () => {
+        setFeedStatus("LIVE");
+        setErrorMsg(null);
+        socket.emit('subscribe:opportunities');
+      });
+
+      socket.on('new_opportunity', (opp: Opportunity) => {
+        setOpportunities(prev => {
+          // Prevent duplicates
+          if (prev.some(o => o.id === opp.id)) return prev;
+          const updated = [opp, ...prev];
+          // Keep only top 50
+          return updated.slice(0, 50);
+        });
+        setLastRefresh(new Date());
+      });
+
+      socket.on('disconnect', () => {
+        setFeedStatus("POLLING"); // Fallback to polling UI state if disconnected
+      });
+      
+      socket.on('connect_error', (err) => {
+        console.warn('WS Connect Error:', err.message);
+        setFeedStatus("POLLING"); // Show polling while it tries to reconnect
+      });
+    });
+
+    return () => {
+      if (socketRef.current) socketRef.current.disconnect();
+    };
   }, [EDGE_URL]);
 
   useEffect(() => {
-    fetchOpportunities();
-    intervalRef.current = setInterval(fetchOpportunities, POLL_INTERVAL_MS);
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [fetchOpportunities]);
+    const ticker = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(ticker);
+  }, []);
 
   return (
     <div className={`p-8 min-h-screen transition-colors duration-500 ${feedStatus === 'ERROR' ? 'bg-rose-950/20' : 'bg-[#020617]'} text-slate-200`}>
@@ -98,11 +141,14 @@ export default function OpportunitiesPage() {
       )}
 
       {feedStatus === 'POLLING' && opportunities.length === 0 && (
-        <div className="mb-8 p-4 bg-slate-800/50 border border-slate-700 rounded-xl flex items-center gap-4 text-slate-400">
-          <Radio size={24} />
+        <div className="mb-8 p-4 bg-slate-800/50 border border-slate-700 rounded-xl flex items-center gap-4 text-slate-400 shadow-inner">
+          <div className="relative flex h-3 w-3">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+          </div>
           <div>
-            <h3 className="font-bold">SCANNING MEMPOOL</h3>
-            <p className="text-sm">Searcher is actively monitoring. Paper-mode enabled — no capital at risk. Opportunities appear here when detected.</p>
+            <h3 className="font-bold text-emerald-400 tracking-wide">SCANNING MEMPOOL IN REAL-TIME</h3>
+            <p className="text-sm mt-1">Searcher-rs is actively hunting for arbitrage routes. Opportunities will appear here instantly.</p>
           </div>
         </div>
       )}
@@ -111,7 +157,7 @@ export default function OpportunitiesPage() {
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="bg-slate-900 text-slate-400 text-sm uppercase tracking-wider">
-              <th className="p-4 border-b border-slate-800">Time</th>
+              <th className="p-4 border-b border-slate-800">Age / Time</th>
               <th className="p-4 border-b border-slate-800">Route</th>
               <th className="p-4 border-b border-slate-800 text-right">Net Profit (USD)</th>
               <th className="p-4 border-b border-slate-800 text-right">Net ROI</th>
@@ -121,33 +167,87 @@ export default function OpportunitiesPage() {
           </thead>
           <tbody>
             <AnimatePresence>
-              {opportunities.map((opp) => (
-                <motion.tr 
-                  key={opp.id}
-                  initial={{ opacity: 0, x: -20, backgroundColor: "rgba(16,185,129,0.2)" }}
-                  animate={{ opacity: 1, x: 0, backgroundColor: "transparent" }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.5 }}
-                  className="border-b border-slate-800/50 hover:bg-slate-800/30"
-                >
-                  <td className="p-4 font-mono text-xs text-slate-500">{new Date(opp.timestamp).toLocaleTimeString()}</td>
-                  <td className="p-4 font-medium text-blue-300">{opp.route}</td>
-                  <td className="p-4 text-right font-mono font-bold text-emerald-400">${opp.expected_profit_usd}</td>
-                  <td className="p-4 text-right font-mono text-slate-300">{opp.net_roi_pct}%</td>
-                  <td className="p-4 text-center">
-                    <span className={`px-2 py-1 rounded text-xs font-bold ${opp.score > 90 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-blue-500/20 text-blue-400'}`}>
-                      {opp.score}
-                    </span>
-                  </td>
-                  <td className="p-4 text-center">
-                    <button 
-                      className="px-4 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-colors shadow-lg shadow-indigo-900/20"
-                    >
-                      SIMULATE
-                    </button>
-                  </td>
-                </motion.tr>
-              ))}
+              {opportunities.map((opp) => {
+                const detectedTime = new Date(opp.detected_at).getTime();
+                const ageSecs = Math.floor((now - detectedTime) / 1000);
+                const isStale = ageSecs > 12;
+                const isCriticalTriage = opp.risk_score > 95;
+                
+                return (
+                  <motion.tr 
+                    key={opp.id}
+                    initial={{ opacity: 0, x: -20, backgroundColor: "rgba(16,185,129,0.2)" }}
+                    animate={{ opacity: 1, x: 0, backgroundColor: isCriticalTriage ? "rgba(234,179,8,0.05)" : "transparent" }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.5 }}
+                    className={`border-b hover:bg-slate-800/30 transition-all ${isCriticalTriage ? 'border-yellow-500/30 shadow-[inset_0_0_15px_rgba(234,179,8,0.05)] relative' : 'border-slate-800/50'}`}
+                  >
+                    <td className="p-4 font-mono text-xs">
+                      {isCriticalTriage && (
+                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-yellow-400 to-emerald-400 animate-pulse"></div>
+                      )}
+                      <div className="flex flex-col gap-1">
+                        <div className={`flex items-center gap-1.5 font-bold ${isStale ? 'text-rose-400' : 'text-emerald-400'}`}>
+                          {isStale ? <AlertTriangle size={12} className="animate-pulse" /> : <Clock size={12} />}
+                          {ageSecs}s ago
+                        </div>
+                        <div className="text-slate-500">
+                          {new Date(opp.detected_at).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="p-4">
+                      <div className="flex flex-col">
+                        <span className="font-semibold text-slate-200 text-sm">{opp.pair_symbol || 'Unknown Pair'}</span>
+                        <span className="text-xs font-mono text-indigo-400">
+                          {opp.dex_a} <span className="text-slate-500">→</span> {opp.dex_b}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="p-4 text-right">
+                      <div className="group relative inline-block cursor-help">
+                        <span className="font-mono font-bold text-emerald-400 text-base shadow-emerald-500/10 drop-shadow-md border-b border-dashed border-emerald-500/30">
+                          ${Number(opp.expected_profit_usd).toFixed(2)}
+                        </span>
+                        {/* ZERO MOCKS TOOLTIP */}
+                        <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-slate-900 border border-slate-700 rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 text-left">
+                          <div className="text-xs text-slate-300 font-sans">
+                            <div className="flex justify-between border-b border-slate-700 pb-1 mb-1">
+                              <span>Ganancia Neta (Est):</span>
+                              <span className="text-emerald-400 font-mono">${Number(opp.expected_profit_usd).toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between text-slate-500">
+                              <span>Desglose de Gas:</span>
+                              <span className="italic">Pendiente Sim.</span>
+                            </div>
+                            <div className="flex justify-between text-slate-500">
+                              <span>Bribe (MEV):</span>
+                              <span className="italic">Pendiente Sim.</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="p-4 text-right font-mono text-slate-300">
+                      <span className="bg-slate-800/80 px-2 py-1 rounded border border-slate-700/50">
+                        {Number(opp.roi_pct).toFixed(2)}%
+                      </span>
+                    </td>
+                    <td className="p-4 text-center">
+                      <span className={`px-3 py-1 rounded-full text-xs font-bold border ${opp.risk_score > 95 ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50 shadow-[0_0_15px_rgba(234,179,8,0.3)] animate-pulse' : opp.risk_score > 90 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-blue-500/10 text-blue-400 border-blue-500/30'}`}>
+                        {opp.risk_score}
+                      </span>
+                    </td>
+                    <td className="p-4 text-center">
+                      <button 
+                        className={`px-4 py-1.5 rounded text-white text-xs font-bold transition-colors shadow-lg ${isCriticalTriage ? 'bg-gradient-to-r from-yellow-600 to-amber-500 hover:from-yellow-500 hover:to-amber-400 shadow-yellow-900/40' : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-900/20'}`}
+                      >
+                        SIMULATE
+                      </button>
+                    </td>
+                  </motion.tr>
+                );
+              })}
             </AnimatePresence>
             {opportunities.length === 0 && (
               <tr>
@@ -160,4 +260,5 @@ export default function OpportunitiesPage() {
     </div>
   );
 }
+
 

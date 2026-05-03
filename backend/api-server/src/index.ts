@@ -66,7 +66,7 @@ const app = express();
 // IMPORT DEFI ROUTER & WEBSOCKET
 // ==========================================
 import { defiRouter } from "./routes/defi.js";
-import { setupWebSocketGateway } from "./websocket.js";
+import { setupWebSocketGateway, broadcastOpportunity } from "./websocket.js";
 import { createServer } from "http";
 
 app.use("/api", defiRouter);
@@ -797,7 +797,26 @@ app.get("/api/v1/readiness", async (_req, res) => {
 
 const PORT = Number(process.env["API_PORT"] ?? 3000); // 3000 to match frontend fetch
 const httpServer = createServer(app);
-setupWebSocketGateway(httpServer);
+const io = setupWebSocketGateway(httpServer);
+
+if (pool) {
+  pool.connect().then(client => {
+    client.query('LISTEN opportunities_channel');
+    client.on('notification', (msg) => {
+      if (msg.channel === 'opportunities_channel' && msg.payload) {
+        try {
+          const opp = JSON.parse(msg.payload);
+          broadcastOpportunity(io, opp);
+        } catch (e) {
+          logger.warn({ event: "websocket.parse_error" }, "failed to parse notification");
+        }
+      }
+    });
+    logger.info({ event: "websocket.listen" }, "Listening to PostgreSQL opportunities_channel for WebSockets");
+  }).catch(e => {
+    logger.error({ err: (e as Error).message }, "failed to connect pg client for LISTEN");
+  });
+}
 
 httpServer.listen(PORT, () => {
   logger.info({ event: "service.boot", port: PORT, env: cfg.system.env,
