@@ -55,6 +55,27 @@ async fn main() -> anyhow::Result<()> {
     // service restart.
     let trading_config = TradingConfigClient::from_manager(redis_conn.clone());
 
+    // Sprint 4 — opt-in v2 simulator dispatch flag.
+    // Default = v1 stub in `prioritization-spine` (current production behaviour).
+    // When ARBX_USE_SIMULATOR_V2=true the operator opts in to the new REVM-backed
+    // simulator. Until simulator-v2 Tasks 4.2 (lazy_db) + 4.3 (revm_runner) land
+    // end-to-end, this branch logs a warning and the candidate pipeline keeps
+    // using v1 — no production candidate is ever scored against an unimplemented!()
+    // path. The flag exists today so dashboards + alerting can verify the
+    // configuration plumbing now and the cutover requires zero deploy when 4.3
+    // ships.
+    let use_simulator_v2 = std::env::var("ARBX_USE_SIMULATOR_V2")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if use_simulator_v2 {
+        warn!(
+            event = "simulator.v2_requested_but_pending",
+            "ARBX_USE_SIMULATOR_V2=true acknowledged; simulator-v2 Task 4.3 not integrated yet, falling through to v1"
+        );
+    } else {
+        info!(event = "simulator.version", version = "v1", "using prioritization-spine stub simulator (default)");
+    }
+
     // DB pool — optional: if DATABASE_URL absent, run without persistence.
     let db_pool = match std::env::var("DATABASE_URL") {
         Ok(url) if !url.is_empty() => match PgPoolOptions::new().max_connections(4).connect(&url).await {

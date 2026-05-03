@@ -33,5 +33,14 @@ rand.workspace = true
 prioritization-spine = { workspace = true }
 math-engine = { workspace = true }
 
+# Sprint 4 — opt-in v2 simulator. Enabled at compile time with the
+# `v2-simulator` feature; activated at runtime by ARBX_USE_SIMULATOR_V2=true.
+# Default build path stays on the v1 stub in prioritization-spine.
+simulator-v2 = { path = "../simulator-v2", optional = true }
+
+[features]
+default = []
+v2-simulator = ["dep:simulator-v2"]
+
 [dev-dependencies]
 tokio = { version = "1", features = ["macros","rt-multi-thread","test-util"] }
