@@ -1,0 +1,26 @@
+[package]
+name = "simulator-v2"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ArbitrageX v2 — opt-in REVM simulator with Bellman-Ford negative-cycle detection. Activated by ARBX_USE_SIMULATOR_V2=true."
+
+[dependencies]
+# Workspace deps (consistent with revm 3.5 / alloy-primitives 0.7 / ethers 2 in use today).
+revm.workspace = true
+alloy-primitives.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+ethers.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+
+# Crate-specific deps (not in workspace).
+petgraph = "0.6"
+rayon    = "1.10"
+dashmap  = "5.5"
