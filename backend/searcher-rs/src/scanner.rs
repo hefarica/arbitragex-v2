@@ -312,13 +312,19 @@ async fn process_pending(
             // Log to JSONL
             if let Ok(json) = serde_json::to_string(&final_evidence) {
                 let _ = std::fs::create_dir_all("logs/mev");
-                let mut file = OpenOptions::new()
+                match OpenOptions::new()
                     .create(true)
                     .append(true)
                     .open("logs/mev/opportunity_scored.jsonl")
-                    .unwrap();
-                if let Err(e) = writeln!(file, "{}", json) {
-                    error!("Failed to write evidence log: {}", e);
+                {
+                    Ok(mut file) => {
+                        if let Err(e) = writeln!(file, "{}", json) {
+                            error!("Failed to write evidence log: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to open logs/mev/opportunity_scored.jsonl: {}", e);
+                    }
                 }
             }
 
