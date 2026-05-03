@@ -9,6 +9,7 @@ import {
   ShieldCheckIcon,
   type LucideIcon,
   SatelliteDishIcon,
+  TrendingUpIcon,
   ZapIcon,
 } from "lucide-react";
 
@@ -27,6 +28,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/executions",    label: "Executions",       icon: ZapIcon,           group: "observe" },
   { href: "/risk",          label: "Risk & alerts",    icon: AlertTriangleIcon, group: "observe" },
   { href: "/recon",         label: "Recon & PnL",      icon: GaugeIcon,         group: "observe" },
+  { href: "/operations",    label: "Operations PnL",   icon: TrendingUpIcon,    group: "observe" },
   { href: "/config",        label: "Config",           icon: SettingsIcon,      group: "control" },
   { href: "/killswitch",    label: "Kill-switch",      icon: PowerIcon,         group: "control" },
   { href: "/audit-logs",    label: "Audit Logs",       icon: ShieldCheckIcon,   group: "control" },
