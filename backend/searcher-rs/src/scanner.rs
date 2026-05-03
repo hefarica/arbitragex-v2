@@ -308,6 +308,18 @@ async fn process_pending(
             final_evidence.net_expected_profit = score.net_expected_profit;
             final_evidence.final_score = score.final_score;
             final_evidence.decision = can_execute(&final_evidence, true); // Shadow mode true by default
+
+            // --- RETROALIMENTACIÓN: conectar scores al Opportunity antes de persistir ---
+            // ROI = net_profit / capital_invertido_usd * 100
+            // capital_invertido_usd = amount_in (ETH) * precio ETH (~2000 USD)
+            let capital_usd = amount_in_f64 * 2000.0;
+            opportunity.roi_pct = Some(if capital_usd > 0.0 {
+                (score.net_expected_profit / capital_usd) * 100.0
+            } else {
+                0.0
+            });
+            // risk_score = final_score del spine (higher = better opportunity)
+            opportunity.risk_score = Some(score.final_score);
             
             // Log to JSONL
             if let Ok(json) = serde_json::to_string(&final_evidence) {
@@ -336,7 +348,11 @@ async fn process_pending(
         },
         Err(e) => {
             warn!(event="spine.scoring_error", hash=%hash, error=?e);
-            return Ok(());
+            // Persist with negative indicators so the dashboard shows the detection
+            // with honest "not viable" signals instead of silently dropping it.
+            opportunity.roi_pct = Some(-1.0);
+            opportunity.risk_score = Some(0.0);
+            // Do NOT return — let it flow to persistence + publish below.
         }
     }
     // --- END SPINE INTERCEPTOR ---
