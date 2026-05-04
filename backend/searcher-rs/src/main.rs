@@ -181,6 +181,23 @@ async fn main() -> anyhow::Result<()> {
             .await;
     });
 
+    // Heartbeat worker — pipeline-state pulse every 60s. Without this, sparse
+    // scanner events (sometimes a few per hour) make docker logs look idle even
+    // when detection is healthy. The heartbeat emits Redis stream delta + PG
+    // insertion rate + profitable-opportunity count, giving operators a steady
+    // observability signal independent of mempool tx velocity. See
+    // workers/heartbeat_worker.rs for the doctrine.
+    let heartbeat_period_secs: u64 = std::env::var("SEARCHER_HEARTBEAT_PERIOD_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60);
+    let heartbeat_redis = redis_conn.clone();
+    let heartbeat_db = db_pool.clone();
+    tokio::spawn(async move {
+        let hb = workers::heartbeat_worker::HeartbeatWorker::new(heartbeat_period_secs);
+        hb.run(heartbeat_redis, heartbeat_db).await;
+    });
+
     // Spawn one scanner per chain. The primary chain (used by the orchestrator
     // for V2 pool sync) also gets the resolved HTTP RPC URL so the scanner can
     // build a Provider for V3 QuoterV2 batched calls. Other chains get None

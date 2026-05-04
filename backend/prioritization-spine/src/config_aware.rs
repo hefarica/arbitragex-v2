@@ -146,9 +146,29 @@ impl<'a> ConfigAwareEvaluator<'a> {
 
         // 3. Capital sizing — observed amount_in capped by operator capital.
         // Convert observed amount_in (token units) → USD via config's base price.
+        //
+        // BUG-3 fix (2026-05-04 outlier): when the cap reduces effective input,
+        // expected_amount_out_usd MUST also be scaled by the same ratio. The
+        // pre-fix code capped only the input side, producing fake gross profit
+        // equal to the cap delta (e.g. observed $125 → capped $10 with full
+        // output $125 yielded a phantom $115 gross profit, ROI > 1000%).
+        //
+        // Linear scaling is conservative — it under-estimates slippage on
+        // smaller trades (real AMM output for capped input would be slightly
+        // higher per unit) — but it eliminates the asymmetric inflation that
+        // pollutes dashboards and trips the schema's numeric(10,4) ceiling.
+        // BUG-2 (token-blind USD pricing via profit_token_to_usd) is NOT
+        // addressed here and may still inflate cross-token cases; tracked
+        // separately for the price-oracle sprint.
         let observed_amount_in_usd = self.config.profit_token_to_usd(candidate.amount_in);
         let amount_in_usd = observed_amount_in_usd.min(self.config.capital_usd);
-        let expected_amount_out_usd = self.config.profit_token_to_usd(candidate.expected_amount_out);
+        let cap_ratio = if observed_amount_in_usd > 0.0 {
+            amount_in_usd / observed_amount_in_usd
+        } else {
+            1.0
+        };
+        let expected_amount_out_usd =
+            self.config.profit_token_to_usd(candidate.expected_amount_out) * cap_ratio;
 
         // 4. Math: compute net profit and ROI deterministically.
         let gas_cost_usd = estimate_gas_cost_usd(self.config, self.signals);
@@ -358,5 +378,102 @@ mod tests {
         } else {
             panic!("expected evaluated outcome");
         }
+    }
+
+    /// Regression test for BUG-3 (asymmetric capital cap).
+    ///
+    /// Reproduces the production incident on 2026-05-04 where the operator's
+    /// `capital_usd` was set to $10 and observed pending swaps (~0.05 ETH ≈ $125)
+    /// produced fake gross profits in the $113 range with ROI > 1000%.
+    ///
+    /// Root cause: the OLD code capped `amount_in_usd` at capital but left
+    /// `expected_amount_out_usd` at full (un-capped) value, so:
+    ///     gross_profit_usd = expected_amount_out_usd - amount_in_usd_capped
+    ///                      ≈ $125 - $10 = $115 (fake)
+    ///
+    /// After fix: when capital cap reduces effective input, output is scaled
+    /// proportionally → gross_profit_usd reflects the true spread, not the cap delta.
+    #[test]
+    fn capital_cap_does_not_inflate_gross_profit() {
+        let mut c = cfg();
+        c.capital_usd = 10.0;
+        c.base_token_price_usd = 2500.0;
+        c.allowed_token_symbols = vec!["WETH".into(), "BNB".into()];
+
+        // Realistic same-magnitude swap: 0.05 ETH-equivalent in, 0.05 BNB-equivalent
+        // out. No real arbitrage spread (output ≈ input in magnitude). The system
+        // must NOT report this as profit.
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "test".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "BNB".into()],
+            dex_adapters: vec!["uniswap-v3".into()],
+            amount_in: 0.05,            // observed: 0.05 ETH = $125 (>> $10 capital)
+            expected_amount_out: 0.05,  // ~same magnitude → no real spread
+            gross_profit: 0.0,
+        };
+        let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+        );
+        let outcome = match out {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome,
+            other => panic!("expected Evaluated outcome, got {:?}", other),
+        };
+
+        // With BUG-3 present: gross_profit_usd ≈ $115 (capped input vs full output).
+        // Sanity bound after fix: gross_profit must not exceed effective capital.
+        // Even with worst-case rounding, |profit| < $1 for a no-spread swap.
+        assert!(
+            outcome.gross_profit_usd.abs() < 1.0,
+            "BUG-3 reproduction: gross_profit_usd = {} (expected ≈ 0). \
+             Cap was applied to amount_in_usd but not to expected_amount_out_usd, \
+             producing fake profit equal to the cap delta.",
+            outcome.gross_profit_usd,
+        );
+    }
+
+    /// Bound test: the same scenario as the production 06:37 incident
+    /// (WETH→UNI, observed input ~0.04 ETH = $105, capped to $10) must
+    /// not produce ROI > 100%. Linear scaling is conservative but bounded.
+    #[test]
+    fn capital_cap_bounds_roi_to_realistic_range() {
+        let mut c = cfg();
+        c.capital_usd = 10.0;
+        c.base_token_price_usd = 2500.0;
+        c.allowed_token_symbols = vec!["WETH".into(), "UNI".into()];
+
+        // Mirrors the 06:37 outlier: observed 0.0423 ETH input, large UNI output.
+        // BUG-3 alone produced ROI = 735,184%. After proportional scaling output
+        // also gets reduced; ROI may still be inflated by BUG-2 (token-blind USD
+        // pricing) but must stay within sanity bounds for a regression gate.
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "test".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "UNI".into()],
+            dex_adapters: vec!["uniswap-v3".into()],
+            amount_in: 0.0423,
+            expected_amount_out: 29.56, // raw UNI units (BUG-2: spine treats as ETH)
+            gross_profit: 0.0,
+        };
+        let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+        );
+        let outcome = match out {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome,
+            other => panic!("expected Evaluated outcome, got {:?}", other),
+        };
+
+        // Pre-fix this returned ROI = 735184. Post-fix the proportional scaling
+        // bounds it: output 29.56 × ratio (10/105.75 ≈ 0.0945) ≈ 2.79 (× $2500 = $6985);
+        // gross = $6985 - $10 = $6975 → ROI ≈ 69750%. Still wrong (BUG-2 unaddressed)
+        // but order-of-magnitude bounded. Asserting < 100,000% leaves headroom while
+        // catching the BUG-3 regression specifically.
+        assert!(
+            outcome.net_roi_pct < 100_000.0,
+            "BUG-3 regression: net_roi_pct = {} (must be < 100,000% after proportional cap). \
+             Note: BUG-2 (token-blind USD) is unaddressed in this fix and may keep ROI inflated; \
+             this test only ensures BUG-3 is fixed, not BUG-2.",
+            outcome.net_roi_pct,
+        );
     }
 }
