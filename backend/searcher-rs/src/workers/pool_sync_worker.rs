@@ -1,34 +1,322 @@
-//! Worker de Sincronización de Pools (Pool Sync Worker)
+//! PoolSyncWorker — fetches V2 pool reserves via Multicall3, persists to
+//! Postgres `pool_reserves` and Redis `arbx:pool_reserves:<chain>:<addr>`.
 //!
-//! Se encarga de suscribirse a los eventos de los DEXes (ej: `Sync` event en UniV2)
-//! o realizar multicalls periódicos para actualizar los reserves/ticks de los pools
-//! monitoreados en la base de datos de manera atómica.
+//! Boot sequence:
+//!   1. Read pools+tokens+factories from Postgres (one query each, cached in struct).
+//!   2. Populate Redis `arbx:tokens:*` and `arbx:pool_index:*` from DB rows.
+//!   3. Start polling loop: every `poll_interval`, do 1 Multicall3 aggregate3 with
+//!      N `getReserves()` calls, decode results, batch INSERT into pool_reserves,
+//!      individual SET into Redis with 30s TTL.
+//!
+//! Doctrine: log structured tracing JSON (no fake metrics), report measured
+//! latency, fail-loud on RPC error (do not pretend success).
 
-use tokio::time::{sleep, Duration};
-use tracing::{info, warn, error};
+use ethers::contract::abigen;
+use ethers::providers::{Http, Middleware, Provider};
+use ethers::types::{Address, Bytes, H160, U256};
+use sqlx::PgPool;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::time::sleep;
+use tracing::{debug, info, warn};
+
+use crate::reserves::{
+    set_pool_index, set_reserves, set_token_meta, ReservesEntry, TokenMeta,
+};
+
+abigen!(
+    IUniswapV2Pair,
+    r#"[
+        function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)
+    ]"#,
+);
+
+abigen!(
+    IMulticall3,
+    r#"[
+        {
+            "inputs": [
+                {
+                    "components": [
+                        { "internalType": "address", "name": "target", "type": "address" },
+                        { "internalType": "bool", "name": "allowFailure", "type": "bool" },
+                        { "internalType": "bytes", "name": "callData", "type": "bytes" }
+                    ],
+                    "internalType": "struct Multicall3.Call3[]",
+                    "name": "calls",
+                    "type": "tuple[]"
+                }
+            ],
+            "name": "aggregate3",
+            "outputs": [
+                {
+                    "components": [
+                        { "internalType": "bool", "name": "success", "type": "bool" },
+                        { "internalType": "bytes", "name": "returnData", "type": "bytes" }
+                    ],
+                    "internalType": "struct Multicall3.Result[]",
+                    "name": "returnData",
+                    "type": "tuple[]"
+                }
+            ],
+            "stateMutability": "payable",
+            "type": "function"
+        },
+        {
+            "inputs": [],
+            "name": "getBlockNumber",
+            "outputs": [
+                { "internalType": "uint256", "name": "blockNumber", "type": "uint256" }
+            ],
+            "stateMutability": "view",
+            "type": "function"
+        }
+    ]"#,
+);
+
+const MULTICALL3_ADDR: &str = "0xcA11bde05977b3631167028862bE2a173976CA11";
+const RESERVES_TTL_SECS: u64 = 30;
+
+struct PoolRow {
+    address: H160,
+    address_lower: String,
+    sym0: String,
+    sym1: String,
+}
 
 pub struct PoolSyncWorker {
     pub poll_interval: Duration,
+    pub chain_id: u64,
 }
 
 impl PoolSyncWorker {
-    pub fn new(poll_interval_ms: u64) -> Self {
+    pub fn new(poll_interval_ms: u64, chain_id: u64) -> Self {
         Self {
             poll_interval: Duration::from_millis(poll_interval_ms),
+            chain_id,
         }
     }
 
-    pub async fn start(&self) {
-        info!("[PoolSyncWorker] Iniciando sincronización de pools de liquidez...");
-        
+    /// Bootstrap caches from DB then enter polling loop. Designed to run forever;
+    /// returns only on unrecoverable errors.
+    pub async fn run(
+        self,
+        rpc_http_url: String,
+        db: PgPool,
+        mut redis: redis::aio::ConnectionManager,
+    ) -> anyhow::Result<()> {
+        info!(event = "pool_sync.boot", chain_id = self.chain_id, rpc = %redacted(&rpc_http_url));
+
+        let provider = Arc::new(Provider::<Http>::try_from(rpc_http_url)?);
+        let multicall_addr = Address::from_str(MULTICALL3_ADDR)?;
+
+        // Bootstrap: read pools + tokens from DB and populate Redis caches.
+        let pools = self.load_pools(&db).await?;
+        info!(event = "pool_sync.pools_loaded", chain_id = self.chain_id, count = pools.len());
+
+        self.bootstrap_token_cache(&db, &mut redis).await?;
+        self.bootstrap_pool_index_cache(&pools, &mut redis).await?;
+        info!(event = "pool_sync.caches_bootstrapped", chain_id = self.chain_id);
+
+        // Build static call data once per pool — getReserves() has no args, just the selector.
+        let get_reserves_selector: [u8; 4] = ethers::utils::keccak256("getReserves()")[..4]
+            .try_into()
+            .unwrap();
+        let get_reserves_calldata = Bytes::from(get_reserves_selector.to_vec());
+
+        let multicall = IMulticall3::new(multicall_addr, provider.clone());
+
         loop {
-            // 1. Obtener pools activos desde DB
-            // 2. Ejecutar multicall via Alloy o conectar a WebSocket stream (Skill 082)
-            // 3. Escribir nuevos estados a `pool_reserves` o en la caché in-memory compartida
-            
-            info!("[PoolSyncWorker] Reservas sincronizadas para 1250 pools. Latencia: 4ms");
+            let tick_start = Instant::now();
+            let calls: Vec<_> = pools
+                .iter()
+                .map(|p| Call3 {
+                    target: p.address,
+                    allow_failure: true,
+                    call_data: get_reserves_calldata.clone(),
+                })
+                .collect();
+
+            let results = match multicall.aggregate_3(calls).call().await {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(event = "pool_sync.multicall_failed", error = %e);
+                    sleep(self.poll_interval).await;
+                    continue;
+                }
+            };
+
+            // Get current block once per tick.
+            let block_number = provider
+                .get_block_number()
+                .await
+                .map(|n| n.as_u64())
+                .unwrap_or(0);
+            let now_ts = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+
+            let mut ok_count = 0usize;
+            let mut fail_count = 0usize;
+
+            // Persist each result.
+            for (pool, result) in pools.iter().zip(results.iter()) {
+                if !result.success || result.return_data.len() < 64 {
+                    fail_count += 1;
+                    debug!(event = "pool_sync.pool_failed", pool = %pool.address_lower);
+                    continue;
+                }
+                // ABI-decode (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)
+                // Each value is left-padded to 32 bytes in returndata.
+                let bytes = &result.return_data;
+                let r0 = U256::from_big_endian(&bytes[0..32]);
+                let r1 = U256::from_big_endian(&bytes[32..64]);
+
+                let entry = ReservesEntry {
+                    r0: r0.to_string(),
+                    r1: r1.to_string(),
+                    blk: block_number,
+                    ts: now_ts,
+                };
+
+                // Redis SET with TTL.
+                if let Err(e) = set_reserves(
+                    &mut redis,
+                    self.chain_id,
+                    &pool.address_lower,
+                    &entry,
+                    RESERVES_TTL_SECS,
+                )
+                .await
+                {
+                    warn!(event = "pool_sync.redis_set_failed", pool = %pool.address_lower, error = %e);
+                }
+
+                // Postgres INSERT (best-effort; failures don't kill the loop).
+                if let Err(e) = sqlx::query(
+                    r#"INSERT INTO pool_reserves (pool_id, block_number, reserve0, reserve1, timestamp)
+                       SELECT id, $1, $2::numeric, $3::numeric, NOW()
+                       FROM pools WHERE chain_id=$4 AND address=$5"#,
+                )
+                .bind(block_number as i64)
+                .bind(&entry.r0)
+                .bind(&entry.r1)
+                .bind(self.chain_id as i64)
+                .bind(&pool.address_lower)
+                .execute(&db)
+                .await
+                {
+                    warn!(event = "pool_sync.db_insert_failed", pool = %pool.address_lower, error = %e);
+                }
+
+                ok_count += 1;
+            }
+
+            let elapsed_ms = tick_start.elapsed().as_millis();
+            info!(
+                event = "pool_sync.tick",
+                chain_id = self.chain_id,
+                pools = pools.len(),
+                ok = ok_count,
+                failed = fail_count,
+                block = block_number,
+                latency_ms = elapsed_ms as u64,
+            );
 
             sleep(self.poll_interval).await;
         }
+    }
+
+    async fn load_pools(&self, db: &PgPool) -> anyhow::Result<Vec<PoolRow>> {
+        let rows = sqlx::query_as::<_, (String, String, String)>(
+            r#"SELECT p.address, t0.symbol, t1.symbol
+               FROM pools p
+               JOIN tokens t0 ON p.token0_id = t0.id
+               JOIN tokens t1 ON p.token1_id = t1.id
+               WHERE p.chain_id = $1 AND p.is_active = TRUE"#,
+        )
+        .bind(self.chain_id as i64)
+        .fetch_all(db)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .filter_map(|(addr, sym0, sym1)| {
+                let lower = addr.to_lowercase();
+                Address::from_str(&lower)
+                    .ok()
+                    .map(|h| PoolRow {
+                        address: h,
+                        address_lower: lower,
+                        sym0,
+                        sym1,
+                    })
+            })
+            .collect())
+    }
+
+    async fn bootstrap_token_cache(
+        &self,
+        db: &PgPool,
+        redis: &mut redis::aio::ConnectionManager,
+    ) -> anyhow::Result<()> {
+        let rows = sqlx::query_as::<_, (String, String, i32, bool)>(
+            r#"SELECT address, symbol, decimals, is_stablecoin
+               FROM tokens WHERE chain_id = $1 AND is_active = TRUE"#,
+        )
+        .bind(self.chain_id as i64)
+        .fetch_all(db)
+        .await?;
+
+        for (addr, symbol, decimals, is_stable) in rows {
+            let meta = TokenMeta {
+                symbol,
+                decimals: decimals as u8,
+                is_stablecoin: is_stable,
+            };
+            if let Err(e) =
+                set_token_meta(redis, self.chain_id, &addr.to_lowercase(), &meta).await
+            {
+                warn!(event = "pool_sync.token_cache_set_failed", error = %e);
+            }
+        }
+        Ok(())
+    }
+
+    async fn bootstrap_pool_index_cache(
+        &self,
+        pools: &[PoolRow],
+        redis: &mut redis::aio::ConnectionManager,
+    ) -> anyhow::Result<()> {
+        // Group pool addresses by sorted-symbol pair.
+        use std::collections::HashMap;
+        let mut by_pair: HashMap<(String, String), Vec<String>> = HashMap::new();
+        for p in pools {
+            let (lo, hi) = if p.sym0 <= p.sym1 {
+                (p.sym0.clone(), p.sym1.clone())
+            } else {
+                (p.sym1.clone(), p.sym0.clone())
+            };
+            by_pair.entry((lo, hi)).or_default().push(p.address_lower.clone());
+        }
+        for ((sym_a, sym_b), addrs) in by_pair {
+            if let Err(e) = set_pool_index(redis, self.chain_id, &sym_a, &sym_b, &addrs).await {
+                warn!(event = "pool_sync.pool_index_set_failed", error = %e);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn redacted(rpc_url: &str) -> String {
+    // Strip API key / path. Show only scheme://host.
+    if let Some(scheme_idx) = rpc_url.find("://") {
+        let after = &rpc_url[scheme_idx + 3..];
+        let host = after.split('/').next().unwrap_or(after);
+        format!("{}://{}/...", &rpc_url[..scheme_idx], host)
+    } else {
+        "<redacted>".to_string()
     }
 }
