@@ -335,10 +335,17 @@ async fn process_pending(
 
             // ── V2 path ────────────────────────────────────────────────────
             // We don't know token0/token1 orientation from Redis alone (we'd
-            // need a pools.token0_id JOIN). For MVP we compute BOTH orientations
-            // (in=r0,out=r1 AND in=r1,out=r0) and pick the max — the wrong
-            // orientation yields a tiny output because reserves are mismatched
-            // to the swap direction.
+            // need a pools.token0_id JOIN — TODO: structural fix in next PR).
+            // For now we compute BOTH orientations and apply a magnitude
+            // heuristic: if the two outputs differ by >1e6x, one is wrong-side
+            // saturation (amount_in dominates reserve_wrong_side, output
+            // asymptotes to reserve_other). The SMALLER value is the realistic
+            // trade. If they differ by less than 1e6x, both are plausible
+            // and we take the larger (best execution price).
+            //
+            // The 1e6 threshold accounts for legit decimal-asymmetric swaps
+            // (USDC 6dec → WETH 18dec ratios reach ~1e8 but never 1e15 in practice
+            // for blue-chip pairs).
             for pool_addr in &pools_v2 {
                 let entry = match reserves::get_reserves(redis, client.chain_id, pool_addr).await.ok().flatten() {
                     Some(e) => e,
@@ -348,7 +355,23 @@ async fn process_pending(
                 let r1 = ethers::types::U256::from_dec_str(&entry.r1).unwrap_or_else(|_| ethers::types::U256::zero());
                 let out_a = amm_math::v2_amount_out(amount_in_wei_u256, r0, r1, 30);
                 let out_b = amm_math::v2_amount_out(amount_in_wei_u256, r1, r0, 30);
-                let out = std::cmp::max(out_a, out_b);
+
+                let out = if out_a.is_zero() && out_b.is_zero() {
+                    continue;
+                } else if out_a.is_zero() {
+                    out_b
+                } else if out_b.is_zero() {
+                    out_a
+                } else {
+                    let bigger = std::cmp::max(out_a, out_b);
+                    let smaller = std::cmp::min(out_a, out_b);
+                    let ratio_threshold = ethers::types::U256::from(1_000_000u64);
+                    if bigger > smaller.saturating_mul(ratio_threshold) {
+                        smaller // wrong-orientation saturation; correct is smaller
+                    } else {
+                        bigger // both plausible; best price wins
+                    }
+                };
                 outs.push(out);
             }
 
