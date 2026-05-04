@@ -22,7 +22,8 @@ use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
 use crate::reserves::{
-    set_pool_index, set_reserves, set_token_meta, ReservesEntry, TokenMeta,
+    set_pool_index, set_pool_index_v3, set_reserves, set_token_meta, ReservesEntry, TokenMeta,
+    V3PoolInfo,
 };
 
 abigen!(
@@ -112,12 +113,23 @@ impl PoolSyncWorker {
         let multicall_addr = Address::from_str(MULTICALL3_ADDR)?;
 
         // Bootstrap: read pools + tokens from DB and populate Redis caches.
+        // V2 pools enter the polling loop (getReserves every tick).
+        // V3 pools are bootstrapped into a separate index but NOT polled —
+        // V3 quoting goes through QuoterV2 at scan time (handled by scanner.rs),
+        // since V3's slot0/liquidity state alone doesn't determine swap output
+        // (tick crossing requires the on-chain math which Quoter encapsulates).
         let pools = self.load_pools(&db).await?;
         info!(event = "pool_sync.pools_loaded", chain_id = self.chain_id, count = pools.len());
 
         self.bootstrap_token_cache(&db, &mut redis).await?;
         self.bootstrap_pool_index_cache(&pools, &mut redis).await?;
-        info!(event = "pool_sync.caches_bootstrapped", chain_id = self.chain_id);
+        let v3_count = self.bootstrap_v3_pool_index_cache(&db, &mut redis).await?;
+        info!(
+            event = "pool_sync.caches_bootstrapped",
+            chain_id = self.chain_id,
+            v2_pools = pools.len(),
+            v3_pools = v3_count,
+        );
 
         // Build static call data once per pool — getReserves() has no args, just the selector.
         let get_reserves_selector: [u8; 4] = ethers::utils::keccak256("getReserves()")[..4]
@@ -230,12 +242,19 @@ impl PoolSyncWorker {
     }
 
     async fn load_pools(&self, db: &PgPool) -> anyhow::Result<Vec<PoolRow>> {
+        // V2-only filter: V3 pools don't have getReserves(), so polling them
+        // would cost an RPC call per pool per tick and always fail. V3 lives
+        // in `bootstrap_v3_pool_index_cache` (one-shot index, no per-tick poll).
         let rows = sqlx::query_as::<_, (String, String, String)>(
             r#"SELECT p.address, t0.symbol, t1.symbol
                FROM pools p
                JOIN tokens t0 ON p.token0_id = t0.id
                JOIN tokens t1 ON p.token1_id = t1.id
-               WHERE p.chain_id = $1 AND p.is_active = TRUE"#,
+               JOIN factories f ON p.factory_id = f.id
+               JOIN dexes d ON f.dex_id = d.id
+               WHERE p.chain_id = $1
+                 AND p.is_active = TRUE
+                 AND d.protocol_type = 'UNISWAP_V2'"#,
         )
         .bind(self.chain_id as i64)
         .fetch_all(db)
@@ -290,7 +309,7 @@ impl PoolSyncWorker {
         pools: &[PoolRow],
         redis: &mut redis::aio::ConnectionManager,
     ) -> anyhow::Result<()> {
-        // Group pool addresses by sorted-symbol pair.
+        // Group V2 pool addresses by sorted-symbol pair.
         use std::collections::HashMap;
         let mut by_pair: HashMap<(String, String), Vec<String>> = HashMap::new();
         for p in pools {
@@ -307,6 +326,70 @@ impl PoolSyncWorker {
             }
         }
         Ok(())
+    }
+
+    /// One-shot bootstrap of the V3 pool index. Reads V3 pools from PG (joined
+    /// to factories→dexes for protocol_type filter), groups by sorted-symbol
+    /// pair, and writes Vec<V3PoolInfo> per pair to Redis.
+    ///
+    /// V3 pools are NOT polled — QuoterV2 at scan time produces fresh quotes
+    /// directly. This index just lets the scanner discover which V3 pools cover
+    /// a given pair so it can build a Multicall3-batched Quoter request.
+    ///
+    /// Returns the number of V3 pools indexed.
+    async fn bootstrap_v3_pool_index_cache(
+        &self,
+        db: &PgPool,
+        redis: &mut redis::aio::ConnectionManager,
+    ) -> anyhow::Result<usize> {
+        let rows = sqlx::query_as::<_, (String, String, String, i32)>(
+            r#"SELECT p.address, t0.symbol, t1.symbol, p.fee_tier
+               FROM pools p
+               JOIN tokens t0 ON p.token0_id = t0.id
+               JOIN tokens t1 ON p.token1_id = t1.id
+               JOIN factories f ON p.factory_id = f.id
+               JOIN dexes d ON f.dex_id = d.id
+               WHERE p.chain_id = $1
+                 AND p.is_active = TRUE
+                 AND d.protocol_type = 'UNISWAP_V3'"#,
+        )
+        .bind(self.chain_id as i64)
+        .fetch_all(db)
+        .await?;
+
+        // Group by sorted-symbol pair.
+        use std::collections::HashMap;
+        let mut by_pair: HashMap<(String, String), Vec<V3PoolInfo>> = HashMap::new();
+        let total = rows.len();
+        for (addr, sym0, sym1, fee_tier) in rows {
+            let (lo, hi) = if sym0 <= sym1 {
+                (sym0.clone(), sym1.clone())
+            } else {
+                (sym1.clone(), sym0.clone())
+            };
+            by_pair
+                .entry((lo, hi))
+                .or_default()
+                .push(V3PoolInfo {
+                    pool_addr: addr.to_lowercase(),
+                    fee_bps: fee_tier as u32,
+                });
+        }
+
+        for ((sym_a, sym_b), pools) in &by_pair {
+            if let Err(e) =
+                set_pool_index_v3(redis, self.chain_id, sym_a, sym_b, pools).await
+            {
+                warn!(event = "pool_sync.v3_pool_index_set_failed", error = %e);
+            }
+        }
+        info!(
+            event = "pool_sync.v3_index_bootstrapped",
+            chain_id = self.chain_id,
+            pool_count = total,
+            pair_count = by_pair.len(),
+        );
+        Ok(total)
     }
 }
 
