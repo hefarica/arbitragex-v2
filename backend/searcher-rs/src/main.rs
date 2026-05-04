@@ -16,6 +16,8 @@ mod persistence;
 mod publisher;
 mod scanner;
 mod workers;
+mod amm_math;
+mod reserves;
 
 use shared_rs::{
     config::{require_env, AppConfig},
