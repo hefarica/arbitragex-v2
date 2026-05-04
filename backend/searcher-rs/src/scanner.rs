@@ -13,6 +13,8 @@
 use crate::{
     calldata, dedup::Dedup, patterns, persistence, publisher,
 };
+use crate::amm_math;
+use crate::reserves;
 use ethers::types::H256;
 use futures_util::StreamExt;
 use rand::Rng;
@@ -256,17 +258,99 @@ async fn process_pending(
         }
     };
 
+    // Sub-proyecto-1 enrichment: lookup reserves + compute V2 amount_out + spread.
+    // Order of operations: token meta → pool index → per-pool reserves → spread.
+    // Each lookup tolerates miss with explicit log; net effect on a cold cache is
+    // gross_profit=0 (same as before this sub-project) so behaviour degrades
+    // gracefully when PoolSyncWorker hasn't ticked yet.
+    let token_in_lower = opportunity.token_in.to_lowercase();
+    let token_out_lower = opportunity.token_out.to_lowercase();
+    let amount_in_wei_u256 = ethers::types::U256::from_dec_str(&opportunity.amount_in_wei)
+        .unwrap_or_else(|_| ethers::types::U256::zero());
+
+    let meta_in = reserves::get_token_meta(redis, client.chain_id, &token_in_lower).await.ok().flatten();
+    let meta_out = reserves::get_token_meta(redis, client.chain_id, &token_out_lower).await.ok().flatten();
+
+    let mut expected_amount_out_f64 = amount_in_f64;
+    let mut gross_profit_f64 = 0.0_f64;
+
+    if let (Some(m_in), Some(m_out)) = (&meta_in, &meta_out) {
+        let pools = reserves::get_pools_for_pair(redis, client.chain_id, &m_in.symbol, &m_out.symbol)
+            .await
+            .unwrap_or_default();
+        if pools.len() < 2 {
+            debug!(event = "scanner.single_pool_no_spread",
+                   pair = format!("{}-{}", m_in.symbol, m_out.symbol),
+                   pool_count = pools.len());
+        } else {
+            // Compute amount_out per pool. We don't know token0/token1 orientation from
+            // Redis alone; we'd need a pools.token0_id JOIN. For MVP we compute BOTH
+            // orientations (in=r0,out=r1 AND in=r1,out=r0) and pick the max — the wrong
+            // orientation yields a tiny output because reserves are mismatched to the
+            // swap direction.
+            let mut outs: Vec<ethers::types::U256> = Vec::with_capacity(pools.len());
+            for pool_addr in &pools {
+                let entry = match reserves::get_reserves(redis, client.chain_id, pool_addr).await.ok().flatten() {
+                    Some(e) => e,
+                    None => continue,
+                };
+                let r0 = ethers::types::U256::from_dec_str(&entry.r0).unwrap_or_else(|_| ethers::types::U256::zero());
+                let r1 = ethers::types::U256::from_dec_str(&entry.r1).unwrap_or_else(|_| ethers::types::U256::zero());
+                let out_a = amm_math::v2_amount_out(amount_in_wei_u256, r0, r1, 30);
+                let out_b = amm_math::v2_amount_out(amount_in_wei_u256, r1, r0, 30);
+                let out = std::cmp::max(out_a, out_b);
+                outs.push(out);
+            }
+            if outs.len() >= 2 {
+                outs.sort();
+                let lo = outs[0];
+                let hi = outs[outs.len() - 1];
+                let gross_profit_token_out = hi.saturating_sub(lo);
+                let decimals_out = m_out.decimals as i32;
+                let scale = 10f64.powi(decimals_out);
+                expected_amount_out_f64 = u256_to_f64_lossy(hi) / scale;
+                let spread_token_out_f64 = u256_to_f64_lossy(gross_profit_token_out) / scale;
+
+                // USD pricing rules: only price in USD when token_out matches the
+                // operator's base token (WETH) or is a known stablecoin. Otherwise
+                // we surface the spread in token_out units but leave USD=0 with a
+                // pending-oracle log — Sub-proyecto futuro adds a price oracle.
+                gross_profit_f64 = if let Some(cfg_ref) = cfg_opt.as_ref() {
+                    if m_out.symbol.eq_ignore_ascii_case(&cfg_ref.base_token_symbol) {
+                        spread_token_out_f64 * cfg_ref.base_token_price_usd
+                    } else if m_out.is_stablecoin {
+                        spread_token_out_f64
+                    } else {
+                        debug!(event = "scanner.usd_conversion_pending_oracle",
+                               token_out_symbol = %m_out.symbol);
+                        0.0
+                    }
+                } else {
+                    0.0
+                };
+
+                info!(event = "scanner.candidate_enriched",
+                      hash = %hash,
+                      pair = format!("{}-{}", m_in.symbol, m_out.symbol),
+                      pool_count = pools.len(),
+                      hi = %hi, lo = %lo,
+                      spread_token_out = %gross_profit_token_out,
+                      gross_profit_usd = gross_profit_f64);
+            }
+        }
+    } else {
+        debug!(event = "scanner.token_meta_unknown",
+               token_in = %token_in_lower, token_out = %token_out_lower);
+    }
+
     let candidate = OpportunityCandidate {
         route_fingerprint: format!("{}_{}_{}", opportunity.dex_a, opportunity.token_in, opportunity.token_out),
         pool_addresses: vec![],
         token_addresses: vec![opportunity.token_in.clone(), opportunity.token_out.clone()],
         dex_adapters: vec![opportunity.dex_a.clone()],
         amount_in: amount_in_f64,
-        // Until route-finder + reserves fetch wire up, expected_amount_out
-        // mirrors amount_in (gross_profit = 0) — math-engine then flags it as
-        // not viable, which is the honest signal.
-        expected_amount_out: amount_in_f64,
-        gross_profit: 0.0,
+        expected_amount_out: expected_amount_out_f64,
+        gross_profit: gross_profit_f64,
     };
 
     let Some(cfg) = cfg_opt else {
@@ -435,4 +519,11 @@ async fn process_pending(
         .inc();
 
     Ok(())
+}
+
+fn u256_to_f64_lossy(v: ethers::types::U256) -> f64 {
+    // U256 → f64 via decimal string. Loses precision past ~15 sig figs but
+    // f64 is what OpportunityCandidate uses; this is a one-way display path,
+    // never re-fed into on-chain arithmetic.
+    v.to_string().parse::<f64>().unwrap_or(0.0)
 }
