@@ -1,13 +1,20 @@
-//! V2 CPMM math — pure functions for amount_out + spread + USD pricing.
+//! V2 CPMM math + V3 batch quoting via Multicall3.
 //!
-//! Reference: UniswapV2Library.getAmountOut.
-//! https://github.com/Uniswap/v2-periphery/blob/master/contracts/libraries/UniswapV2Library.sol#L43-L50
+//! References:
+//! - UniswapV2Library.getAmountOut:
+//!   https://github.com/Uniswap/v2-periphery/blob/master/contracts/libraries/UniswapV2Library.sol#L43-L50
+//! - Uniswap V3 QuoterV2 (mainnet 0x61fFE014bA17989E743c5F6cB21bF9697530B21e):
+//!   https://docs.uniswap.org/contracts/v3/reference/periphery/lens/QuoterV2
+//! - Multicall3 (mainnet 0xcA11bde05977b3631167028862bE2a173976CA11):
+//!   https://github.com/mds1/multicall
 //!
 //! Doctrine: math is parametrised by `fee_bps` (basis points of 10_000). Default 30 = 0.30%
-//! used by both UniswapV2 and SushiSwap; future tiers (e.g. 25 bps Pancake) plug in via the
-//! same function without code changes.
+//! used by both UniswapV2 and SushiSwap; V3 fee tiers are 100/500/3000/10000 (uint24).
 
-use ethers::types::U256;
+use ethers::abi::{Function, Param, ParamType, StateMutability, Token};
+use ethers::providers::{Http, Provider};
+use ethers::types::{Address, Bytes, U256};
+use std::sync::Arc;
 
 /// V2 constant-product market maker output amount, post-fee.
 ///
@@ -30,6 +37,173 @@ pub fn v2_amount_out(amount_in: U256, reserve_in: U256, reserve_out: U256, fee_b
         return U256::zero();
     }
     numerator / denominator
+}
+
+// ============================================================================
+// Uniswap V3 batch quoting via Multicall3
+// ============================================================================
+
+/// Multicall3 abigen kept in a private sub-module to avoid `Call3` type-name
+/// collision with `workers::pool_sync_worker::Call3` (same ABI, different
+/// instantiations of the macro produce two distinct generated types).
+mod multicall3 {
+    use ethers::contract::abigen;
+
+    abigen!(
+        IMulticall3,
+        r#"[
+            {
+                "inputs": [
+                    {
+                        "components": [
+                            { "internalType": "address", "name": "target", "type": "address" },
+                            { "internalType": "bool", "name": "allowFailure", "type": "bool" },
+                            { "internalType": "bytes", "name": "callData", "type": "bytes" }
+                        ],
+                        "internalType": "struct Multicall3.Call3[]",
+                        "name": "calls",
+                        "type": "tuple[]"
+                    }
+                ],
+                "name": "aggregate3",
+                "outputs": [
+                    {
+                        "components": [
+                            { "internalType": "bool", "name": "success", "type": "bool" },
+                            { "internalType": "bytes", "name": "returnData", "type": "bytes" }
+                        ],
+                        "internalType": "struct Multicall3.Result[]",
+                        "name": "returnData",
+                        "type": "tuple[]"
+                    }
+                ],
+                "stateMutability": "payable",
+                "type": "function"
+            }
+        ]"#,
+    );
+}
+
+/// One V3 quote request (tied to a specific pool / fee tier / direction).
+#[derive(Clone, Debug)]
+pub struct V3QuoteRequest {
+    pub pool_addr: Address,
+    pub token_in: Address,
+    pub token_out: Address,
+    pub amount_in: U256,
+    /// V3 fee tier in basis points (uint24): 100, 500, 3000, 10000.
+    pub fee_bps: u32,
+}
+
+/// Per-pool V3 quote result. On per-pool failure (e.g. insufficient liquidity,
+/// wrong fee tier, pool revert), `success=false` and `amount_out=U256::zero()`.
+#[derive(Clone, Debug)]
+pub struct V3QuoteResult {
+    pub pool_addr: Address,
+    pub amount_out: U256,
+    pub success: bool,
+}
+
+/// Build the ABI descriptor for `quoteExactInputSingle((address,address,uint256,uint24,uint160))`.
+///
+/// We encode calldata manually rather than via `abigen!` because the inline
+/// struct-arg form has historically been finicky with the macro's parser
+/// (the same reason `pool_sync_worker.rs` uses inline JSON ABI). Manual
+/// encoding via `ethers::abi::Function::encode_input` is fully type-safe.
+fn quoter_v2_function() -> Function {
+    #[allow(deprecated)]
+    Function {
+        name: "quoteExactInputSingle".to_string(),
+        inputs: vec![Param {
+            name: "params".to_string(),
+            kind: ParamType::Tuple(vec![
+                ParamType::Address,        // tokenIn
+                ParamType::Address,        // tokenOut
+                ParamType::Uint(256),      // amountIn
+                ParamType::Uint(24),       // fee
+                ParamType::Uint(160),      // sqrtPriceLimitX96
+            ]),
+            internal_type: None,
+        }],
+        outputs: vec![
+            Param { name: "amountOut".to_string(), kind: ParamType::Uint(256), internal_type: None },
+            Param { name: "sqrtPriceX96After".to_string(), kind: ParamType::Uint(160), internal_type: None },
+            Param { name: "initializedTicksCrossed".to_string(), kind: ParamType::Uint(32), internal_type: None },
+            Param { name: "gasEstimate".to_string(), kind: ParamType::Uint(256), internal_type: None },
+        ],
+        constant: None,
+        state_mutability: StateMutability::NonPayable,
+    }
+}
+
+/// Encode a single `quoteExactInputSingle` call as calldata bytes.
+fn encode_quote_calldata(req: &V3QuoteRequest) -> anyhow::Result<Bytes> {
+    let f = quoter_v2_function();
+    let tuple = Token::Tuple(vec![
+        Token::Address(req.token_in),
+        Token::Address(req.token_out),
+        Token::Uint(req.amount_in),
+        Token::Uint(U256::from(req.fee_bps)),
+        Token::Uint(U256::zero()), // sqrtPriceLimitX96 = 0 → no limit
+    ]);
+    let encoded = f.encode_input(&[tuple])?;
+    Ok(Bytes::from(encoded))
+}
+
+/// Batch-quote multiple V3 pools in a single Multicall3 RPC.
+///
+/// On RPC failure: returns Err.
+/// On per-pool failure (e.g. insufficient liquidity, pool reverts): the
+/// corresponding `V3QuoteResult` has `success=false` and `amount_out=U256::zero()`.
+/// Empty input short-circuits and returns `Ok(vec![])` without an RPC call.
+///
+/// The returned vector has the same length and order as `quotes`.
+pub async fn v3_quote_exact_in_multicall(
+    provider: Arc<Provider<Http>>,
+    quoter_addr: Address,
+    multicall_addr: Address,
+    quotes: Vec<V3QuoteRequest>,
+) -> anyhow::Result<Vec<V3QuoteResult>> {
+    if quotes.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Build per-pool calls targeting the QuoterV2.
+    let calls: Vec<multicall3::Call3> = quotes
+        .iter()
+        .map(|q| {
+            let calldata = encode_quote_calldata(q)?;
+            Ok::<_, anyhow::Error>(multicall3::Call3 {
+                target: quoter_addr,
+                allow_failure: true,
+                call_data: calldata,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    let multicall = multicall3::IMulticall3::new(multicall_addr, provider.clone());
+    let results = multicall.aggregate_3(calls).call().await?;
+
+    // Decode each result. amountOut is the first 32 bytes of return data
+    // (uint256, big-endian, left-padded). We don't need the other return values.
+    let mut out = Vec::with_capacity(quotes.len());
+    for (req, res) in quotes.iter().zip(results.iter()) {
+        if res.success && res.return_data.len() >= 32 {
+            let amount_out = U256::from_big_endian(&res.return_data[0..32]);
+            out.push(V3QuoteResult {
+                pool_addr: req.pool_addr,
+                amount_out,
+                success: true,
+            });
+        } else {
+            out.push(V3QuoteResult {
+                pool_addr: req.pool_addr,
+                amount_out: U256::zero(),
+                success: false,
+            });
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -93,5 +267,67 @@ mod tests {
         let no_fee = v2_amount_out(amount_in, reserve_in, reserve_out, 0);
         let with_fee = v2_amount_out(amount_in, reserve_in, reserve_out, 30);
         assert!(with_fee < no_fee, "with_fee={} should be < no_fee={}", with_fee, no_fee);
+    }
+}
+
+#[cfg(test)]
+mod v3_tests {
+    use super::*;
+    use ethers::types::{Address, U256};
+    use std::str::FromStr;
+
+    #[test]
+    fn v3_quote_request_construction() {
+        let req = V3QuoteRequest {
+            pool_addr: Address::from_str("0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640").unwrap(),
+            token_in: Address::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").unwrap(),
+            token_out: Address::from_str("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap(),
+            amount_in: U256::from(10).pow(U256::from(18)),
+            fee_bps: 500,
+        };
+        // Field accessibility check.
+        assert_eq!(req.fee_bps, 500);
+    }
+
+    #[test]
+    fn fee_bps_value_is_passed_as_uint24() {
+        // Sanity: fee_bps is u32 in the struct but represents uint24 on chain.
+        // 100/500/3000/10000 should all fit in u24 (max 16_777_215).
+        for fee in [100u32, 500, 3000, 10000] {
+            assert!(fee < 1 << 24, "fee {} doesn't fit in uint24", fee);
+        }
+    }
+
+    #[test]
+    fn v3_quote_result_failure_zero_amount_out() {
+        // When the V3 quote fails (e.g., no liquidity), V3QuoteResult.success=false
+        // and amount_out=0. Verify the type contract.
+        let r = V3QuoteResult {
+            pool_addr: Address::zero(),
+            amount_out: U256::zero(),
+            success: false,
+        };
+        assert!(!r.success);
+        assert_eq!(r.amount_out, U256::zero());
+    }
+
+    #[test]
+    fn empty_quotes_returns_empty_vec() {
+        // Calling v3_quote_exact_in_multicall with empty input must short-circuit
+        // and return Ok(vec![]) — no RPC call made.
+        let provider = std::sync::Arc::new(
+            ethers::providers::Provider::<ethers::providers::Http>::try_from("http://invalid:0").unwrap()
+        );
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let result = rt.block_on(async {
+            v3_quote_exact_in_multicall(
+                provider,
+                Address::from_str("0x61fFE014bA17989E743c5F6cB21bF9697530B21e").unwrap(),
+                Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
+                vec![],
+            ).await
+        });
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
     }
 }
