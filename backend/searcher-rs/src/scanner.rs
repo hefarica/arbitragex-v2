@@ -313,13 +313,53 @@ async fn process_pending(
         cfg.gas_estimate_units.min(60_000), // proxy until rpc_latency tracked live
     );
 
+    // ── Gate outcomes ────────────────────────────────────────────────────
+    // Doctrine: silent early-returns on TokenNotAllowed / StrategyDisabled hide
+    // detector activity from the operator (the dashboard then looks idle even
+    // when 100s of pending txs/sec are filtered out). We persist these rows too
+    // with risk_score=0 + roi_pct=0 so the operator sees rejection volume +
+    // can iterate the allowlist with real evidence (RULE 00 transparency).
     let (mut final_evidence, math_outcome, config_rejection) = match gate_outcome {
         ConfigGateOutcome::TokenNotAllowed { token_symbol_or_addr } => {
-            debug!(event = "config.token_not_allowed", chain_id = client.chain_id, token = %token_symbol_or_addr);
+            info!(
+                event = "config.token_not_allowed",
+                chain_id = client.chain_id,
+                hash = %hash,
+                token = %token_symbol_or_addr,
+            );
+            opportunity.expected_profit_usd = 0.0;
+            opportunity.roi_pct = Some(0.0);
+            opportunity.risk_score = Some(0.0);
+            if let Some(pool) = db {
+                if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
+                    error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
+                }
+            }
+            publisher::publish(redis, &opportunity).await?;
+            OPPORTUNITIES_TOTAL
+                .with_label_values(&[&opportunity.chain_id.to_string(), "dex_arb", "rejected_token_allowlist"])
+                .inc();
             return Ok(());
         }
         ConfigGateOutcome::StrategyDisabled { strategy_kind } => {
-            debug!(event = "config.strategy_disabled", chain_id = client.chain_id, strategy = %strategy_kind);
+            info!(
+                event = "config.strategy_disabled",
+                chain_id = client.chain_id,
+                hash = %hash,
+                strategy = %strategy_kind,
+            );
+            opportunity.expected_profit_usd = 0.0;
+            opportunity.roi_pct = Some(0.0);
+            opportunity.risk_score = Some(0.0);
+            if let Some(pool) = db {
+                if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
+                    error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
+                }
+            }
+            publisher::publish(redis, &opportunity).await?;
+            OPPORTUNITIES_TOTAL
+                .with_label_values(&[&opportunity.chain_id.to_string(), "dex_arb", "rejected_strategy_disabled"])
+                .inc();
             return Ok(());
         }
         ConfigGateOutcome::Evaluated { outcome, evidence, rejection } => (evidence, outcome, rejection),

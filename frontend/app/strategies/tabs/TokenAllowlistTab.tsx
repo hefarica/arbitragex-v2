@@ -32,9 +32,14 @@ export function TokenAllowlistTab({ config, onSaved, adminToken, actor }: Props)
   const [msg, setMsg] = useState<string | null>(null);
 
   const add = () => {
-    const v = pending.trim().toUpperCase();
-    if (!v || v.length > 16) return;
-    setSymbols((prev) => Array.from(new Set([...prev, v])));
+    // Accept multi-symbol input: comma, semicolon, newline, or whitespace separated.
+    // "WETH, USDC, USDT" → 3 entries; "WETH" → 1 entry. Empty + over-16-char dropped.
+    const tokens = pending
+      .split(/[,;\s\n\r\t]+/)
+      .map((s) => s.trim().toUpperCase())
+      .filter((s) => s.length > 0 && s.length <= 16);
+    if (tokens.length === 0) return;
+    setSymbols((prev) => Array.from(new Set([...prev, ...tokens])));
     setPending("");
   };
 
@@ -75,7 +80,7 @@ export function TokenAllowlistTab({ config, onSaved, adminToken, actor }: Props)
         <div className="flex items-center gap-2">
           <Input
             value={pending}
-            placeholder="add symbol (e.g. WETH)"
+            placeholder="add one or more symbols — paste comma-separated: WETH, USDC, USDT"
             onChange={(e) => setPending(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
@@ -83,7 +88,7 @@ export function TokenAllowlistTab({ config, onSaved, adminToken, actor }: Props)
                 add();
               }
             }}
-            className="max-w-xs"
+            className="flex-1"
           />
           <Button variant="outline" onClick={add}>Add</Button>
           <Button onClick={onSave} disabled={saving} className="ml-auto">
