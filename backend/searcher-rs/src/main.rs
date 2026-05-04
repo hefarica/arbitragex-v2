@@ -172,14 +172,20 @@ async fn main() -> anyhow::Result<()> {
     // rpc is missing, so the existing internal gate skips cleanly.
     let db_for_orch = if primary_rpc_http.is_some() { db_pool.clone() } else { None };
     let redis_for_orch = redis_conn.clone();
-    let primary_rpc_for_orch = primary_rpc_http.unwrap_or_default();
+    // Clone — the original `primary_rpc_http` is reused below to plumb the
+    // V3 Provider into the per-chain scanner.
+    let primary_rpc_for_orch = primary_rpc_http.clone().unwrap_or_default();
     tokio::spawn(async move {
         orchestrator
             .start_all(primary_chain, primary_rpc_for_orch, db_for_orch, redis_for_orch)
             .await;
     });
 
-    // Spawn one scanner per chain.
+    // Spawn one scanner per chain. The primary chain (used by the orchestrator
+    // for V2 pool sync) also gets the resolved HTTP RPC URL so the scanner can
+    // build a Provider for V3 QuoterV2 batched calls. Other chains get None
+    // and fall through to V2-only enrichment (Sub-proyecto 2 is mainnet-only;
+    // multi-chain V3 lands in a future sub-project).
     for chain_id in enabled_chains {
         let ks = killswitch.clone();
         let cfg_c = cfg.clone();
@@ -187,8 +193,13 @@ async fn main() -> anyhow::Result<()> {
         let db_c = db_pool.clone();
         let dedup_c = dedup.clone();
         let tc_c = trading_config.clone();
+        let rpc_http = if chain_id == primary_chain {
+            primary_rpc_http.clone()
+        } else {
+            None
+        };
         tokio::spawn(async move {
-            if let Err(e) = scanner::run_chain(chain_id, cfg_c, ks, redis_c, db_c, dedup_c, tc_c).await {
+            if let Err(e) = scanner::run_chain(chain_id, cfg_c, ks, redis_c, db_c, dedup_c, tc_c, rpc_http).await {
                 error!(event = "scanner.spawn_failed", chain_id, error = %e);
             }
         });

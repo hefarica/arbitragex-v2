@@ -15,9 +15,11 @@ use crate::{
 };
 use crate::amm_math;
 use crate::reserves;
-use ethers::types::H256;
+use ethers::providers::{Http, Provider};
+use ethers::types::{Address, H256};
 use futures_util::StreamExt;
 use rand::Rng;
+use std::str::FromStr;
 use shared_rs::{
     chains::{self, RouterKind},
     config::AppConfig,
@@ -42,6 +44,14 @@ use std::io::Write;
 
 use crate::chain_client::WsChainClient;
 
+/// Mainnet QuoterV2 + Multicall3 addresses. V3 enrichment is mainnet-only for
+/// now; multi-chain V3 lands in a future sub-project (each chain needs its own
+/// per-chain lookup table). For other chains, `v3_provider` stays None and the
+/// scanner falls through to V2-only enrichment.
+const V3_QUOTER_V2_MAINNET: &str = "0x61fFE014bA17989E743c5F6cB21bF9697530B21e";
+const V3_MULTICALL3_ADDR: &str = "0xcA11bde05977b3631167028862bE2a173976CA11";
+const V3_QUOTE_CACHE_TTL_SECS: u64 = 5;
+
 pub struct ScannerHandle {
     pub chain_id: u64,
 }
@@ -54,6 +64,7 @@ pub async fn run_chain(
     db: Option<PgPool>,
     dedup: Arc<Dedup>,
     trading_config: TradingConfigClient,
+    rpc_http_url: Option<String>,
 ) -> anyhow::Result<ScannerHandle> {
     // RPC failover discipline (G-RPC-1): build a multi-vendor pool from env.
     // CSV format `name=url,name=url`; bare URLs accepted for back-compat.
@@ -85,9 +96,35 @@ pub async fn run_chain(
         }
     };
 
+    // Build the optional HTTP provider for V3 quoting (Multicall3 + QuoterV2).
+    // V3 is mainnet-only for now; other chains fall through to V2-only enrichment.
+    let v3_provider: Option<Arc<Provider<Http>>> = if chain_id == 1 {
+        rpc_http_url.as_ref().and_then(|url| {
+            match Provider::<Http>::try_from(url.clone()) {
+                Ok(p) => {
+                    info!(event = "scanner.v3_provider_ready", chain_id);
+                    Some(Arc::new(p))
+                }
+                Err(e) => {
+                    warn!(event = "scanner.v3_provider_init_failed", chain_id, error = %e);
+                    None
+                }
+            }
+        })
+    } else {
+        None
+    };
+    if v3_provider.is_none() {
+        info!(
+            event = "scanner.v3_disabled",
+            chain_id,
+            reason = if chain_id != 1 { "non-mainnet" } else { "no_rpc_http_url" },
+        );
+    }
+
     // Spawn the detection loop with the full endpoint list.
     tokio::spawn(detection_loop(
-        chain_id, pool.endpoints, cfg, killswitch, redis, db, dedup, trading_config,
+        chain_id, pool.endpoints, cfg, killswitch, redis, db, dedup, trading_config, v3_provider,
     ));
     Ok(ScannerHandle { chain_id })
 }
@@ -115,6 +152,7 @@ async fn detection_loop(
     db: Option<PgPool>,
     dedup: Arc<Dedup>,
     trading_config: TradingConfigClient,
+    v3_provider: Option<Arc<Provider<Http>>>,
 ) {
     let mut backoff_ms: u64 = 1000;
     let mut idx: usize = 0;
@@ -157,7 +195,7 @@ async fn detection_loop(
             }
         };
 
-        if let Err(e) = run_subscription(&client, &killswitch, &mut redis, db.as_ref(), &dedup, &trading_config).await {
+        if let Err(e) = run_subscription(&client, &killswitch, &mut redis, db.as_ref(), &dedup, &trading_config, v3_provider.as_ref()).await {
             error!(
                 event = "scanner.subscription_error",
                 chain_id,
@@ -186,6 +224,7 @@ async fn run_subscription(
     db: Option<&PgPool>,
     dedup: &Dedup,
     trading_config: &TradingConfigClient,
+    v3_provider: Option<&Arc<Provider<Http>>>,
 ) -> anyhow::Result<()> {
     let _ = killswitch; // reserved: kill-switch only blocks downstream execution
     let mut stream = client.subscribe_pending().await?;
@@ -193,7 +232,7 @@ async fn run_subscription(
 
     while let Some(hash) = stream.next().await {
         // We no longer pause the scanner on kill-switch. It must always scan and emit.
-        if let Err(e) = process_pending(client, hash, redis, db, dedup, trading_config).await {
+        if let Err(e) = process_pending(client, hash, redis, db, dedup, trading_config, v3_provider).await {
             debug!(event = "scanner.process_err", hash = %hash, error = %e);
         }
     }
@@ -207,6 +246,7 @@ async fn process_pending(
     db: Option<&PgPool>,
     dedup: &Dedup,
     trading_config: &TradingConfigClient,
+    v3_provider: Option<&Arc<Provider<Http>>>,
 ) -> anyhow::Result<()> {
     if !dedup.check_and_mark(hash, redis).await {
         return Ok(());
@@ -275,21 +315,31 @@ async fn process_pending(
     let mut gross_profit_f64 = 0.0_f64;
 
     if let (Some(m_in), Some(m_out)) = (&meta_in, &meta_out) {
-        let pools = reserves::get_pools_for_pair(redis, client.chain_id, &m_in.symbol, &m_out.symbol)
+        // Read both V2 and V3 pool indexes for this pair. The two indexes are
+        // independent (V2: just addresses; V3: address + fee_bps tuple) and
+        // contain disjoint pools — see reserves.rs key layout doc.
+        let pools_v2 = reserves::get_pools_for_pair(redis, client.chain_id, &m_in.symbol, &m_out.symbol)
             .await
             .unwrap_or_default();
-        if pools.len() < 2 {
+        let pools_v3 = reserves::get_pools_for_pair_v3(redis, client.chain_id, &m_in.symbol, &m_out.symbol)
+            .await
+            .unwrap_or_default();
+        let total_pools = pools_v2.len() + pools_v3.len();
+
+        if total_pools < 2 {
             debug!(event = "scanner.single_pool_no_spread",
                    pair = format!("{}-{}", m_in.symbol, m_out.symbol),
-                   pool_count = pools.len());
+                   v2 = pools_v2.len(), v3 = pools_v3.len());
         } else {
-            // Compute amount_out per pool. We don't know token0/token1 orientation from
-            // Redis alone; we'd need a pools.token0_id JOIN. For MVP we compute BOTH
-            // orientations (in=r0,out=r1 AND in=r1,out=r0) and pick the max — the wrong
-            // orientation yields a tiny output because reserves are mismatched to the
-            // swap direction.
-            let mut outs: Vec<ethers::types::U256> = Vec::with_capacity(pools.len());
-            for pool_addr in &pools {
+            let mut outs: Vec<ethers::types::U256> = Vec::with_capacity(total_pools);
+
+            // ── V2 path ────────────────────────────────────────────────────
+            // We don't know token0/token1 orientation from Redis alone (we'd
+            // need a pools.token0_id JOIN). For MVP we compute BOTH orientations
+            // (in=r0,out=r1 AND in=r1,out=r0) and pick the max — the wrong
+            // orientation yields a tiny output because reserves are mismatched
+            // to the swap direction.
+            for pool_addr in &pools_v2 {
                 let entry = match reserves::get_reserves(redis, client.chain_id, pool_addr).await.ok().flatten() {
                     Some(e) => e,
                     None => continue,
@@ -301,6 +351,90 @@ async fn process_pending(
                 let out = std::cmp::max(out_a, out_b);
                 outs.push(out);
             }
+
+            // ── V3 path ────────────────────────────────────────────────────
+            // QuoterV2 takes (tokenIn, tokenOut, amountIn, fee, sqrtPriceLimitX96).
+            // It knows direction, so a single call per pool is enough — no
+            // dual-orientation hack needed. We cache results in Redis keyed by
+            // (pool, amount_in_dec) with 5s TTL — same staleness window as V2
+            // reserves. Cache hits skip the RPC; cache misses go through one
+            // batched Multicall3 call covering all the misses.
+            let mut v3_used = 0usize;
+            if !pools_v3.is_empty() && !amount_in_wei_u256.is_zero() {
+                let amount_in_dec = amount_in_wei_u256.to_string();
+
+                // Resolve quotes from cache first.
+                let mut cached_outs: Vec<ethers::types::U256> = Vec::new();
+                let mut to_quote: Vec<amm_math::V3QuoteRequest> = Vec::new();
+
+                for info in &pools_v3 {
+                    if let Ok(Some(cached)) = reserves::get_v3_quote(
+                        redis, client.chain_id, &info.pool_addr, &amount_in_dec,
+                    ).await {
+                        let val = ethers::types::U256::from_dec_str(&cached)
+                            .unwrap_or_else(|_| ethers::types::U256::zero());
+                        cached_outs.push(val);
+                        continue;
+                    }
+                    // Build a Quoter request for cache-miss pools.
+                    let pool_a = match Address::from_str(&info.pool_addr) { Ok(a) => a, Err(_) => continue };
+                    let tin_a = match Address::from_str(&token_in_lower) { Ok(a) => a, Err(_) => continue };
+                    let tout_a = match Address::from_str(&token_out_lower) { Ok(a) => a, Err(_) => continue };
+                    to_quote.push(amm_math::V3QuoteRequest {
+                        pool_addr: pool_a,
+                        token_in: tin_a,
+                        token_out: tout_a,
+                        amount_in: amount_in_wei_u256,
+                        fee_bps: info.fee_bps,
+                    });
+                }
+
+                // Add cache hits to outs.
+                for v in &cached_outs {
+                    if !v.is_zero() {
+                        outs.push(*v);
+                        v3_used += 1;
+                    }
+                }
+
+                // Batch the misses through Multicall3 if a provider is available.
+                if !to_quote.is_empty() {
+                    if let Some(provider) = v3_provider {
+                        let quoter = Address::from_str(V3_QUOTER_V2_MAINNET).unwrap();
+                        let multicall = Address::from_str(V3_MULTICALL3_ADDR).unwrap();
+                        match amm_math::v3_quote_exact_in_multicall(
+                            provider.clone(), quoter, multicall, to_quote.clone(),
+                        ).await {
+                            Ok(results) => {
+                                for r in &results {
+                                    if r.success && !r.amount_out.is_zero() {
+                                        // Cache + push.
+                                        let pool_lower = format!("0x{:040x}", r.pool_addr);
+                                        let amount_out_dec = r.amount_out.to_string();
+                                        let _ = reserves::set_v3_quote(
+                                            redis, client.chain_id, &pool_lower,
+                                            &amount_in_dec, &amount_out_dec,
+                                            V3_QUOTE_CACHE_TTL_SECS,
+                                        ).await;
+                                        outs.push(r.amount_out);
+                                        v3_used += 1;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                debug!(event = "scanner.v3_quote_rpc_failed",
+                                       pair = format!("{}-{}", m_in.symbol, m_out.symbol),
+                                       error = %e);
+                            }
+                        }
+                    } else {
+                        debug!(event = "scanner.v3_provider_unavailable",
+                               pair = format!("{}-{}", m_in.symbol, m_out.symbol),
+                               pending_quotes = to_quote.len());
+                    }
+                }
+            }
+
             if outs.len() >= 2 {
                 outs.sort();
                 let lo = outs[0];
@@ -329,10 +463,20 @@ async fn process_pending(
                     0.0
                 };
 
-                info!(event = "scanner.candidate_enriched",
+                // Distinguish V2-only enrichment from V2+V3 in the event name so
+                // dashboards can chart V3 reach growth without parsing fields.
+                let event_name = if v3_used > 0 {
+                    "scanner.candidate_enriched_v3"
+                } else {
+                    "scanner.candidate_enriched"
+                };
+                info!(event = event_name,
                       hash = %hash,
                       pair = format!("{}-{}", m_in.symbol, m_out.symbol),
-                      pool_count = pools.len(),
+                      pool_count = total_pools,
+                      v2_pools = pools_v2.len(),
+                      v3_pools = pools_v3.len(),
+                      v3_quotes_landed = v3_used,
                       hi = %hi, lo = %lo,
                       spread_token_out = %gross_profit_token_out,
                       gross_profit_usd = gross_profit_f64);
