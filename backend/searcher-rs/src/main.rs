@@ -25,6 +25,7 @@ use shared_rs::{
     killswitch::KillSwitchClient,
     logging::init_tracing,
     metrics::init_metrics,
+    rpc_failover::HttpRpcPool,
     trading_config::TradingConfigClient,
 };
 use sqlx::postgres::PgPoolOptions;
@@ -108,14 +109,74 @@ async fn main() -> anyhow::Result<()> {
           enabled_chains = ?enabled_chains,
           "searcher-rs initializing S2 scanners");
 
-    // Init and start Worker Orchestrator with advanced skills (Skill 082, Skill 100)
+    // Init and start Worker Orchestrator. Sub-proyecto-1 wires the real
+    // PoolSyncWorker against the primary chain's HTTP RPC + DB pool + Redis.
+    // Stub workers (RouteDiscovery / Simulation) were removed.
     let god_protocol_active = true;
     let kernel_bypass_enabled = true;
     let orchestrator = workers::WorkerOrchestrator::new(god_protocol_active, kernel_bypass_enabled);
-    
-    // Spawn orchestrator asynchronously
+
+    // Pick the first enabled chain (defaults to 1 = Ethereum mainnet if config
+    // is empty — same fallback used elsewhere). The orchestrator currently
+    // syncs pools for ONE chain; multi-chain pool sync is Sprint 2 work.
+    let primary_chain: u64 = enabled_chains.first().copied().unwrap_or(1);
+
+    // Resolve the primary HTTP RPC URL using the same `HttpRpcPool::from_env`
+    // pattern used by `relays-client` and `recon`. The pool reads
+    // `RPC_HTTP_<chain_id>` (CSV `name=url,name=url`) and validates each
+    // provider's chain_id at boot. If absent or all entries unhealthy we skip
+    // PoolSyncWorker (no fake URL — RULE 00).
+    let primary_rpc_http: Option<String> = match HttpRpcPool::from_env(primary_chain).await {
+        Ok(Some(pool)) => match pool.pick() {
+            Ok(entry) => {
+                info!(
+                    event = "worker_orchestrator.rpc_selected",
+                    provider = %entry.name,
+                    chain_id = primary_chain,
+                    "primary HTTP RPC selected for pool sync"
+                );
+                Some(entry.url.clone())
+            }
+            Err(e) => {
+                warn!(
+                    event = "worker_orchestrator.rpc_no_healthy",
+                    chain_id = primary_chain,
+                    error = %e,
+                    "no healthy HTTP RPC providers; PoolSyncWorker will not start"
+                );
+                None
+            }
+        },
+        Ok(None) => {
+            warn!(
+                event = "worker_orchestrator.rpc_absent",
+                chain_id = primary_chain,
+                "RPC_HTTP_<chain_id> not set; PoolSyncWorker will not start"
+            );
+            None
+        }
+        Err(e) => {
+            warn!(
+                event = "worker_orchestrator.rpc_invalid",
+                chain_id = primary_chain,
+                error = %e,
+                "RPC_HTTP_<chain_id> value did not parse; PoolSyncWorker will not start"
+            );
+            None
+        }
+    };
+
+    // Spawn orchestrator asynchronously. When no HTTP RPC is available we
+    // still start the orchestrator (RpcHealthWorker runs) but PoolSyncWorker
+    // is gated by Some(db) AND Some(rpc) — done by passing None for db when
+    // rpc is missing, so the existing internal gate skips cleanly.
+    let db_for_orch = if primary_rpc_http.is_some() { db_pool.clone() } else { None };
+    let redis_for_orch = redis_conn.clone();
+    let primary_rpc_for_orch = primary_rpc_http.unwrap_or_default();
     tokio::spawn(async move {
-        orchestrator.start_all().await;
+        orchestrator
+            .start_all(primary_chain, primary_rpc_for_orch, db_for_orch, redis_for_orch)
+            .await;
     });
 
     // Spawn one scanner per chain.
