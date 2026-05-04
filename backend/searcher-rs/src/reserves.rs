@@ -1,15 +1,19 @@
 //! Redis cache layout for pool reserves and token metadata.
 //!
 //! Keys:
-//!   arbx:pool_reserves:<chain_id>:<pool_addr_lower>  → JSON ReservesEntry
-//!   arbx:pool_index:<chain_id>:<sym0>:<sym1>          → JSON Vec<String> (pool addrs lower)
-//!                                                       sym0 < sym1 lexicographically
-//!   arbx:tokens:<chain_id>:<addr_lower>               → JSON TokenMeta
+//!   arbx:pool_reserves:<chain_id>:<pool_addr_lower>     → JSON ReservesEntry          (V2)
+//!   arbx:pool_index:<chain_id>:<sym0>:<sym1>             → JSON Vec<String>            (V2 — pool addrs lower)
+//!   arbx:pool_index_v3:<chain_id>:<sym0>:<sym1>          → JSON Vec<V3PoolInfo>        (V3 — addr+fee_bps)
+//!   arbx:tokens:<chain_id>:<addr_lower>                  → JSON TokenMeta
+//!   arbx:v3_quote:<chain_id>:<pool_lower>:<amount_in>    → string amount_out (TTL 5s)  (scanner cache)
+//!                                                          sym0 < sym1 lexicographically in pool_index*
 //!
 //! TTLs:
-//!   pool_reserves: 30s (re-set every 5s by PoolSyncWorker; readers tolerate up to 10s lag)
-//!   pool_index   : no expiry (operator-managed via SQL); refreshed at PoolSyncWorker boot
-//!   tokens       : no expiry (rarely changes; refreshed at PoolSyncWorker boot)
+//!   pool_reserves : 30s (re-set every 5s by PoolSyncWorker; readers tolerate up to 10s lag)
+//!   pool_index    : no expiry (operator-managed via SQL); refreshed at PoolSyncWorker boot
+//!   pool_index_v3 : no expiry (operator-managed via SQL); refreshed at PoolSyncWorker boot
+//!   tokens        : no expiry (rarely changes; refreshed at PoolSyncWorker boot)
+//!   v3_quote      : 5s (aligned with PoolSyncWorker tick — same staleness window as V2 reserves)
 //!
 //! Doctrine: every Redis read returns Option (cache miss is normal at boot, scanner
 //! tolerates None by leaving gross_profit=0 and emitting `event=scanner.no_reserves_yet`).
@@ -36,6 +40,19 @@ pub struct TokenMeta {
     pub is_stablecoin: bool,
 }
 
+/// V3 pool descriptor — address + fee tier. Stored under
+/// `arbx:pool_index_v3:<chain>:<sym0>:<sym1>` as `Vec<V3PoolInfo>`.
+/// Unlike V2 (which only needs an address; reserves are fetched separately),
+/// V3 quoting goes through the on-chain QuoterV2 and the fee tier is part
+/// of the call signature, so it must travel with the address.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct V3PoolInfo {
+    /// Pool address, lowercase hex with 0x prefix.
+    pub pool_addr: String,
+    /// V3 fee tier in basis points: 100 (0.01%), 500 (0.05%), 3000 (0.30%), 10000 (1.00%).
+    pub fee_bps: u32,
+}
+
 pub fn key_pool_reserves(chain_id: u64, pool_addr_lower: &str) -> String {
     format!("arbx:pool_reserves:{}:{}", chain_id, pool_addr_lower)
 }
@@ -45,8 +62,17 @@ pub fn key_pool_index(chain_id: u64, sym_a: &str, sym_b: &str) -> String {
     format!("arbx:pool_index:{}:{}:{}", chain_id, lo, hi)
 }
 
+pub fn key_pool_index_v3(chain_id: u64, sym_a: &str, sym_b: &str) -> String {
+    let (lo, hi) = if sym_a < sym_b { (sym_a, sym_b) } else { (sym_b, sym_a) };
+    format!("arbx:pool_index_v3:{}:{}:{}", chain_id, lo, hi)
+}
+
 pub fn key_token(chain_id: u64, addr_lower: &str) -> String {
     format!("arbx:tokens:{}:{}", chain_id, addr_lower)
+}
+
+pub fn key_v3_quote(chain_id: u64, pool_addr_lower: &str, amount_in_dec: &str) -> String {
+    format!("arbx:v3_quote:{}:{}:{}", chain_id, pool_addr_lower, amount_in_dec)
 }
 
 pub async fn set_reserves(
@@ -98,6 +124,63 @@ pub async fn get_pools_for_pair(
 ) -> redis::RedisResult<Vec<String>> {
     let raw: Option<String> = redis.get(key_pool_index(chain_id, sym_a, sym_b)).await?;
     Ok(raw.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default())
+}
+
+pub async fn set_pool_index_v3(
+    redis: &mut ConnectionManager,
+    chain_id: u64,
+    sym_a: &str,
+    sym_b: &str,
+    pools: &[V3PoolInfo],
+) -> redis::RedisResult<()> {
+    let json = serde_json::to_string(pools).map_err(|e| {
+        redis::RedisError::from((redis::ErrorKind::TypeError, "serde", e.to_string()))
+    })?;
+    let _: () = redis
+        .set(key_pool_index_v3(chain_id, sym_a, sym_b), json)
+        .await?;
+    Ok(())
+}
+
+pub async fn get_pools_for_pair_v3(
+    redis: &mut ConnectionManager,
+    chain_id: u64,
+    sym_a: &str,
+    sym_b: &str,
+) -> redis::RedisResult<Vec<V3PoolInfo>> {
+    let raw: Option<String> = redis.get(key_pool_index_v3(chain_id, sym_a, sym_b)).await?;
+    Ok(raw.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default())
+}
+
+/// Cache a V3 quote result. Key is keyed by (chain, pool, amount_in) so two
+/// candidates with the same trade size against the same pool reuse the quote
+/// for up to 5s — that aligns with the PoolSyncWorker tick on V2, so V3 quote
+/// staleness matches V2 reserves staleness.
+pub async fn set_v3_quote(
+    redis: &mut ConnectionManager,
+    chain_id: u64,
+    pool_addr_lower: &str,
+    amount_in_dec: &str,
+    amount_out_dec: &str,
+    ttl_secs: u64,
+) -> redis::RedisResult<()> {
+    let _: () = redis
+        .set_ex(
+            key_v3_quote(chain_id, pool_addr_lower, amount_in_dec),
+            amount_out_dec,
+            ttl_secs,
+        )
+        .await?;
+    Ok(())
+}
+
+pub async fn get_v3_quote(
+    redis: &mut ConnectionManager,
+    chain_id: u64,
+    pool_addr_lower: &str,
+    amount_in_dec: &str,
+) -> redis::RedisResult<Option<String>> {
+    redis.get(key_v3_quote(chain_id, pool_addr_lower, amount_in_dec)).await
 }
 
 pub async fn set_token_meta(
@@ -152,5 +235,50 @@ mod tests {
         let back: ReservesEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(back.r0, entry.r0);
         assert_eq!(back.blk, entry.blk);
+    }
+
+    #[test]
+    fn pool_index_v3_key_sorts_symbols() {
+        // Same sort invariant as V2 — readers query without knowing the seed order.
+        assert_eq!(key_pool_index_v3(1, "WETH", "USDC"), "arbx:pool_index_v3:1:USDC:WETH");
+        assert_eq!(key_pool_index_v3(1, "USDC", "WETH"), "arbx:pool_index_v3:1:USDC:WETH");
+    }
+
+    #[test]
+    fn pool_index_v3_disjoint_from_v2() {
+        // V2 and V3 caches must NOT share a key — scanner reads both independently.
+        let v2 = key_pool_index(1, "USDC", "WETH");
+        let v3 = key_pool_index_v3(1, "USDC", "WETH");
+        assert_ne!(v2, v3);
+    }
+
+    #[test]
+    fn v3_pool_info_serde_roundtrip() {
+        let info = V3PoolInfo {
+            pool_addr: "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640".into(),
+            fee_bps: 500,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let back: V3PoolInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, info);
+    }
+
+    #[test]
+    fn v3_pool_info_array_serde_roundtrip() {
+        // The pool index stores Vec<V3PoolInfo> — the same pair can have multiple
+        // fee tiers on V3 (0.05% and 0.30% for WETH/USDC are common).
+        let arr = vec![
+            V3PoolInfo { pool_addr: "0xaaa".into(), fee_bps: 500 },
+            V3PoolInfo { pool_addr: "0xbbb".into(), fee_bps: 3000 },
+        ];
+        let json = serde_json::to_string(&arr).unwrap();
+        let back: Vec<V3PoolInfo> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, arr);
+    }
+
+    #[test]
+    fn v3_quote_key_layout() {
+        let key = key_v3_quote(1, "0xpool", "1000000000000000000");
+        assert_eq!(key, "arbx:v3_quote:1:0xpool:1000000000000000000");
     }
 }
