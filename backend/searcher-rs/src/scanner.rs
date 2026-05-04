@@ -343,10 +343,26 @@ async fn process_pending(
                token_in = %token_in_lower, token_out = %token_out_lower);
     }
 
+    // The downstream gate (`ConfigAwareEvaluator`) checks
+    // `cfg.allowed_token_symbols` against entries in `candidate.token_addresses`.
+    // It compares STRINGS — so if we pass hex addresses while the operator's
+    // allowlist holds symbols ("WETH", "USDC", ...), every check fails. Pass the
+    // resolved symbol when the Redis token cache knew it, otherwise fall back to
+    // the hex address (which will still fail the allowlist gate, but explicitly
+    // — that's the correct semantics for an unknown token).
+    let token_in_for_gate = meta_in
+        .as_ref()
+        .map(|m| m.symbol.clone())
+        .unwrap_or_else(|| opportunity.token_in.clone());
+    let token_out_for_gate = meta_out
+        .as_ref()
+        .map(|m| m.symbol.clone())
+        .unwrap_or_else(|| opportunity.token_out.clone());
+
     let candidate = OpportunityCandidate {
         route_fingerprint: format!("{}_{}_{}", opportunity.dex_a, opportunity.token_in, opportunity.token_out),
         pool_addresses: vec![],
-        token_addresses: vec![opportunity.token_in.clone(), opportunity.token_out.clone()],
+        token_addresses: vec![token_in_for_gate, token_out_for_gate],
         dex_adapters: vec![opportunity.dex_a.clone()],
         amount_in: amount_in_f64,
         expected_amount_out: expected_amount_out_f64,
