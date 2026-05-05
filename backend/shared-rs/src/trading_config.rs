@@ -68,6 +68,27 @@ pub struct TradingConfigState {
     #[serde(default)]
     pub token_prices_usd: HashMap<String, f64>,
 
+    /// **Simulation knob** (decoupled from operational `capital_usd`).
+    ///
+    /// When `Some(amount)`, the spine evaluator uses `amount` as the effective
+    /// capital cap for ALL math + risk policy decisions, INSTEAD of `capital_usd`.
+    /// Lets the operator preview "what would the system see if I had $X capital?"
+    /// without changing operational sizing — paper-trade mode (default) ensures
+    /// zero on-chain execution regardless.
+    ///
+    /// When `None` (default), the evaluator falls back to `capital_usd` — pure
+    /// backward-compatible behaviour.
+    ///
+    /// Example use: operator runs prod with `capital_usd: 10` (test) and sets
+    /// `simulation_capital_usd: 10000` to explore what opportunities WOULD pass
+    /// gates at $10K capital. Dashboard fills with realistic profit estimations
+    /// per pair / arbitrage type without the operator committing real funds.
+    ///
+    /// `serde(default)` ensures existing Redis configs (without this field)
+    /// deserialise correctly with `None`.
+    #[serde(default)]
+    pub simulation_capital_usd: Option<f64>,
+
     // Profit gate thresholds
     pub min_profit_usd: f64,
     pub min_roi_pct: f64,
@@ -101,6 +122,14 @@ impl TradingConfigState {
             GasPriceStrategy::DynamicBasefeePlusTip => live_basefee_gwei + live_p75_tip_gwei.max(1.0),
             GasPriceStrategy::Percentile75 => live_p75_tip_gwei.max(live_basefee_gwei),
         }
+    }
+
+    /// Returns the effective capital used for math sizing + risk policy bounds.
+    /// Honours `simulation_capital_usd` when set, otherwise falls back to the
+    /// operational `capital_usd`. Single source of truth for spine callers —
+    /// they should NEVER read `capital_usd` directly to make sizing decisions.
+    pub fn effective_capital_usd(&self) -> f64 {
+        self.simulation_capital_usd.unwrap_or(self.capital_usd)
     }
 
     /// True if `token` (case-insensitive symbol) is in the operator's allowlist.
@@ -218,6 +247,7 @@ mod tests {
             base_token_price_usd: 2000.0,
             allowed_token_symbols: vec!["WETH".into(), "USDC".into(), "USDT".into()],
             token_prices_usd: HashMap::new(),
+            simulation_capital_usd: None,
             min_profit_usd: 2.0,
             min_roi_pct: 0.3,
             min_landing_probability: 0.5,
@@ -273,5 +303,28 @@ mod tests {
     fn profit_conversion_uses_base_price() {
         let s = sample_state();
         assert_eq!(s.profit_token_to_usd(0.05), 100.0); // 0.05 ETH * 2000 USD/ETH
+    }
+
+    #[test]
+    fn effective_capital_falls_back_to_operational_capital_when_unset() {
+        let s = sample_state(); // simulation_capital_usd = None
+        assert_eq!(s.effective_capital_usd(), 1000.0);
+    }
+
+    #[test]
+    fn effective_capital_uses_simulation_value_when_set() {
+        let mut s = sample_state();
+        s.simulation_capital_usd = Some(50_000.0);
+        // operational capital is still 1000 but simulation overrides it
+        assert_eq!(s.effective_capital_usd(), 50_000.0);
+        assert_eq!(s.capital_usd, 1000.0); // operational unchanged
+    }
+
+    #[test]
+    fn simulation_capital_can_be_smaller_than_operational() {
+        // Operator may want to TEST conservative sizing without lowering prod.
+        let mut s = sample_state();
+        s.simulation_capital_usd = Some(100.0);
+        assert_eq!(s.effective_capital_usd(), 100.0);
     }
 }

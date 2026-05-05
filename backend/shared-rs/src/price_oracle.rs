@@ -127,6 +127,7 @@ mod tests {
                 "UNI".into(),
             ],
             token_prices_usd: prices,
+            simulation_capital_usd: None,
             min_profit_usd: 1.0,
             min_roi_pct: 0.1,
             min_landing_probability: 0.5,

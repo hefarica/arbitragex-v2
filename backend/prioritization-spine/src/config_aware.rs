@@ -67,7 +67,11 @@ pub enum ConfigGateOutcome {
 }
 
 /// Translate config thresholds into a RiskPolicy that math-engine consumes.
-fn policy_from_config(cfg: &TradingConfigState) -> RiskPolicy {
+/// Takes `effective_capital_usd` explicitly (not from `cfg`) so the spine
+/// honours `simulation_capital_usd` overrides — the policy uses the same
+/// capital figure the math layer uses for sizing, keeping risk gates and
+/// math sizing internally consistent.
+fn policy_from_config(cfg: &TradingConfigState, effective_capital_usd: f64) -> RiskPolicy {
     RiskPolicy {
         min_net_profit_usd: cfg.min_profit_usd,
         min_net_roi_pct: cfg.min_roi_pct,
@@ -78,10 +82,10 @@ fn policy_from_config(cfg: &TradingConfigState) -> RiskPolicy {
         // Price impact bound is implicitly enforced by liquidity confidence; for
         // now allow up to 5% impact, future PR adds a dedicated config field.
         max_price_impact_pct: 0.05,
-        // Liquidity floor — operator's capital_usd is a sensible proxy: don't
-        // touch pools that can't absorb the operator's full deployable capital.
-        min_liquidity_usd: cfg.capital_usd.max(1.0),
-        max_trade_size_usd: cfg.capital_usd,
+        // Liquidity floor — effective capital is a sensible proxy: don't
+        // touch pools that can't absorb the deployable capital being modelled.
+        min_liquidity_usd: effective_capital_usd.max(1.0),
+        max_trade_size_usd: effective_capital_usd,
     }
 }
 
@@ -181,12 +185,18 @@ impl<'a> ConfigAwareEvaluator<'a> {
             (in_price_opt.unwrap_or(0.0), out_price_opt.unwrap_or(0.0))
         };
 
-        // BUG-3 fix preserved: when the operator's capital cap reduces
-        // effective input, expected output MUST also be scaled by the same
-        // ratio. Linear scaling under-estimates slippage on smaller trades
-        // but eliminates the asymmetric inflation that pollutes dashboards.
+        // BUG-3 fix preserved: when the cap reduces effective input,
+        // expected output MUST also be scaled by the same ratio. Linear
+        // scaling under-estimates slippage on smaller trades but eliminates
+        // the asymmetric inflation that pollutes dashboards.
+        //
+        // Uses `effective_capital_usd()` so the simulation knob
+        // (`simulation_capital_usd`) overrides operational `capital_usd`
+        // when set — operator can preview "what would $X capital surface?"
+        // without touching production sizing.
+        let effective_capital = self.config.effective_capital_usd();
         let observed_amount_in_usd = candidate.amount_in * in_price;
-        let amount_in_usd = observed_amount_in_usd.min(self.config.capital_usd);
+        let amount_in_usd = observed_amount_in_usd.min(effective_capital);
         let cap_ratio = if observed_amount_in_usd > 0.0 {
             amount_in_usd / observed_amount_in_usd
         } else {
@@ -230,8 +240,11 @@ impl<'a> ConfigAwareEvaluator<'a> {
             outcome_raw
         };
 
-        // 5. Risk gate: validate against config-derived policy.
-        let policy = policy_from_config(self.config);
+        // 5. Risk gate: validate against config-derived policy. The policy
+        // gets `effective_capital` (not raw `capital_usd`) so risk thresholds
+        // align with the simulation knob — keeps math + risk gates internally
+        // consistent when previewing "what would $X capital surface".
+        let policy = policy_from_config(self.config, effective_capital);
         let risk_profile = OpportunityRiskProfile {
             gross_profit_usd: outcome.gross_profit_usd,
             net_profit_usd: outcome.net_profit_usd,
@@ -336,6 +349,7 @@ mod tests {
             base_token_price_usd: 2000.0,
             allowed_token_symbols: vec!["WETH".into(), "USDC".into()],
             token_prices_usd: HashMap::new(),
+            simulation_capital_usd: None,
             min_profit_usd: 1.0,
             min_roi_pct: 0.1,
             min_landing_probability: 0.5,
@@ -660,6 +674,79 @@ mod tests {
             rejection,
         );
         assert_eq!(outcome.gross_profit_usd, 0.0);
+    }
+
+    // ----------------------------------------------------------------
+    // simulation_capital_usd — paper-trade preview knob
+    // ----------------------------------------------------------------
+
+    /// When the operator sets `simulation_capital_usd`, the spine evaluator
+    /// uses it as the effective capital for sizing AND risk policy bounds —
+    /// allowing previews of "what would $X capital surface?" without
+    /// changing operational `capital_usd` or risking real execution.
+    #[test]
+    fn simulation_capital_overrides_operational_capital_for_sizing() {
+        let mut c = cfg(); // capital_usd = 1000, base_token_price = 2000
+        c.simulation_capital_usd = Some(50_000.0); // SIMULATE bigger book
+
+        // 5 ETH input ($10K) — would be capped to $1000 with operational
+        // capital alone (cap_ratio = 0.1 → 10x reduction). With simulation
+        // override, 5 ETH ($10K) fits within $50K cap → no scaling, real
+        // gross profit visible.
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "test".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "USDC".into()],
+            dex_adapters: vec!["uniswap-v3".into()],
+            amount_in: 5.0,             // 5 WETH = $10K (above operational $1K cap)
+            expected_amount_out: 10_500.0, // 10,500 USDC = $10,500 → 5% gross
+            gross_profit: 0.0,
+        };
+        let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+        );
+        let outcome = match out {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome,
+            other => panic!("expected Evaluated outcome, got {:?}", other),
+        };
+        // With operational capital alone: cap_ratio = 0.1, gross ≈ $50.
+        // With simulation $50K: no cap (10K < 50K), gross ≈ $500 (full spread).
+        assert!(
+            outcome.gross_profit_usd > 400.0 && outcome.gross_profit_usd < 600.0,
+            "simulation override should expose full ~$500 gross profit, got {}",
+            outcome.gross_profit_usd,
+        );
+    }
+
+    /// When `simulation_capital_usd` is None, behaviour is unchanged —
+    /// operational `capital_usd` drives everything (regression guard).
+    #[test]
+    fn simulation_capital_none_falls_back_to_operational() {
+        let c = cfg(); // simulation_capital_usd = None, capital_usd = 1000
+        // Same 5 ETH input as above — must hit the $1000 operational cap.
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "test".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "USDC".into()],
+            dex_adapters: vec!["uniswap-v3".into()],
+            amount_in: 5.0,
+            expected_amount_out: 10_500.0,
+            gross_profit: 0.0,
+        };
+        let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+        );
+        let outcome = match out {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome,
+            other => panic!("expected Evaluated outcome, got {:?}", other),
+        };
+        // Capital cap applies: $10K observed → $1K capped, ratio 0.1.
+        // gross ≈ ($10500 × 0.1) - $1000 = $50.
+        assert!(
+            outcome.gross_profit_usd > 30.0 && outcome.gross_profit_usd < 70.0,
+            "operational cap should produce ~$50 gross, got {}",
+            outcome.gross_profit_usd,
+        );
     }
 
     /// When both tokens are resolvable, the evaluator uses REAL per-token
