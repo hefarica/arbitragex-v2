@@ -104,7 +104,19 @@ Same shape as Phase 1 but for `IUniswapV3SwapRouter::exactInputSingle`,
 `exactInput`, `exactOutputSingle`, `exactOutput`. Path encoding for V3 is
 non-trivial (alternating address+fee bytes); needs careful tests.
 
-### ⏸ Phase 3 — Storage override helpers (~2-3h)
+### ✅ Phase 3 — Storage override helpers (DONE commit `5935469`)
+
+`erc20_storage.rs`: `balance_slot_for(token) → Option<u32>` + `balance_storage_slot_at(holder, slot) → H256` + convenience `balance_storage_slot(token, holder)`. Hardcoded slots verified for 8 tokens (WETH, USDT, USDC, DAI, WBTC, LINK, UNI, AAVE). 9 TDD tests including `keccak_layout_matches_solidity_canonical` regression.
+
+### ✅ Phase 4 — Round-trip executor data + helpers (DONE commit `5ae923d`)
+
+`round_trip_executor.rs`: `SimulationOutcome`, `RoundTripContext`, `RoundTripPlan`, `build_round_trip_plan`, `decode_balance_of_return`, `compute_profit_usd`. Skeleton `execute_round_trip` returns `failed("pending Phase 5")` — never fake PASS. 9 TDD tests.
+
+### ✅ Phase 5a — Allowance helpers (DONE commit pending)
+
+`erc20_storage.rs` extended: `allowance_slot_for(token)` + `allowance_storage_slot_at(owner, spender, slot_index)` + `allowance_storage_slot(token, owner, spender)`. Two-level keccak Solidity layout for `mapping(address => mapping(address => uint256))`. 8 token allowance slots hardcoded. 6 TDD tests.
+
+### ⏸ Phase 5b — Executor body + fork tests + atomic wiring (~3-4h, NEEDS RPC)
 
 When simulating, the dummy EOA `caller` (currently `0x11...11`) has zero
 token balance. To execute a swap, we need to make `IERC20.balanceOf(caller)`

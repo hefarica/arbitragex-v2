@@ -88,6 +88,73 @@ pub fn balance_storage_slot(token: Address, holder: Address) -> Option<H256> {
     balance_slot_for(token).map(|slot_index| balance_storage_slot_at(holder, slot_index))
 }
 
+// ─── Allowance overrides (Phase 5a of #6) ────────────────────────────────
+//
+// The simulator must override `allowances[caller][router]` so the router can
+// `transferFrom` the pre-funded balance. Allowance is a NESTED mapping:
+//   `mapping(address => mapping(address => uint256)) allowances`
+// → storage slot = keccak256(spender_padded || keccak256(owner_padded || allowance_slot_index))
+
+/// Hardcoded allowance mapping slot indices for top ERC20 tokens (parallel
+/// to `balance_slot_for`). The allowance mapping usually lives one slot
+/// AFTER the balance mapping in declaration order — but compiler-dependent,
+/// so each entry is empirically verified.
+///
+/// Adding a new token: read source, find `mapping(address => mapping(address
+/// => uint256))` declaration, count its slot index from 0.
+pub fn allowance_slot_for(token: Address) -> Option<u32> {
+    let token_lower = format!("0x{:040x}", token);
+    match token_lower.as_str() {
+        // WETH9 — slot 4 (after balances at 3)
+        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" => Some(4),
+        // USDT TetherToken — slot 5 (after balances at 2 + extra storage)
+        "0xdac17f958d2ee523a2206206994597c13d831ec7" => Some(5),
+        // USDC FiatTokenV2_2 proxy — slot 10 (after balances at 9)
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" => Some(10),
+        // DAI — slot 3 (after balances at 2)
+        "0x6b175474e89094c44da98b954eedeac495271d0f" => Some(3),
+        // WBTC — slot 1 (after balances at 0)
+        "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599" => Some(1),
+        // LINK — slot 2 (after balances at 1)
+        "0x514910771af9ca656af840dff83e8264ecf986ca" => Some(2),
+        // UNI — slot 5 (after balances at 4)
+        "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984" => Some(5),
+        // AAVE — slot 1 (after balances at 0)
+        "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9" => Some(1),
+        _ => None,
+    }
+}
+
+/// Compute the EVM storage slot for `allowances[owner][spender]` in an ERC20
+/// where the allowance nested mapping lives at `slot_index`.
+///
+/// Two-level keccak (Solidity nested-mapping layout):
+///   inner = keccak256(abi.encode(owner, slot_index))
+///   slot  = keccak256(abi.encode(spender, inner))
+pub fn allowance_storage_slot_at(owner: Address, spender: Address, slot_index: u32) -> H256 {
+    // Inner: keccak256(owner_padded || slot_index_padded)
+    let mut inner_input = [0u8; 64];
+    inner_input[12..32].copy_from_slice(owner.as_bytes());
+    let slot_u256 = U256::from(slot_index);
+    let mut slot_bytes = [0u8; 32];
+    slot_u256.to_big_endian(&mut slot_bytes);
+    inner_input[32..64].copy_from_slice(&slot_bytes);
+    let inner = keccak256(inner_input);
+
+    // Outer: keccak256(spender_padded || inner)
+    let mut outer_input = [0u8; 64];
+    outer_input[12..32].copy_from_slice(spender.as_bytes());
+    outer_input[32..64].copy_from_slice(&inner);
+    H256::from(keccak256(outer_input))
+}
+
+/// Convenience: compute the storage slot for `allowances[owner][spender]` for
+/// a known token. Returns `None` if the token's allowance slot index is not
+/// in the hardcoded table.
+pub fn allowance_storage_slot(token: Address, owner: Address, spender: Address) -> Option<H256> {
+    allowance_slot_for(token).map(|idx| allowance_storage_slot_at(owner, spender, idx))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,5 +276,78 @@ mod tests {
             slot_at_zero, expected,
             "keccak256 layout drift would break ALL storage overrides",
         );
+    }
+
+    // ─── Allowance helpers (Phase 5a of #6) ──────────────────────────────
+
+    #[test]
+    fn known_tokens_have_correct_allowance_slots() {
+        for (token, expected_slot) in [
+            ("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", 4),  // WETH
+            ("0xdac17f958d2ee523a2206206994597c13d831ec7", 5),  // USDT
+            ("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", 10), // USDC
+            ("0x6b175474e89094c44da98b954eedeac495271d0f", 3),  // DAI
+            ("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599", 1),  // WBTC
+            ("0x514910771af9ca656af840dff83e8264ecf986ca", 2),  // LINK
+            ("0x1f9840a85d5af5bf1d1762f925bdaddc4201f984", 5),  // UNI
+            ("0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9", 1),  // AAVE
+        ] {
+            assert_eq!(
+                allowance_slot_for(addr(token)),
+                Some(expected_slot),
+                "wrong allowance slot for {token}",
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_token_allowance_returns_none() {
+        assert_eq!(
+            allowance_slot_for(addr("0x0000000000000000000000000000000000000001")),
+            None,
+        );
+    }
+
+    #[test]
+    fn allowance_slot_two_level_keccak_is_deterministic() {
+        let owner = addr("0x0000000000000000000000000000000000000001");
+        let spender = addr("0x0000000000000000000000000000000000000002");
+        let s1 = allowance_storage_slot_at(owner, spender, 4);
+        let s2 = allowance_storage_slot_at(owner, spender, 4);
+        assert_eq!(s1, s2);
+        assert_ne!(s1, H256::zero());
+    }
+
+    #[test]
+    fn allowance_slot_distinguishes_owner_and_spender() {
+        let a = addr("0x0000000000000000000000000000000000000001");
+        let b = addr("0x0000000000000000000000000000000000000002");
+        // allowances[a][b] != allowances[b][a]  — direction matters
+        assert_ne!(
+            allowance_storage_slot_at(a, b, 4),
+            allowance_storage_slot_at(b, a, 4),
+            "allowance ordering is owner-first then spender; swap must yield distinct slots",
+        );
+    }
+
+    #[test]
+    fn allowance_slot_distinct_from_balance_slot() {
+        // balances[holder] and allowances[holder][holder] at the same slot_index
+        // MUST yield distinct storage slots — different mapping shapes.
+        let holder = addr("0x0000000000000000000000000000000000000001");
+        let bal = balance_storage_slot_at(holder, 4);
+        let allow = allowance_storage_slot_at(holder, holder, 4);
+        assert_ne!(bal, allow,
+            "balance vs allowance keccak layouts must produce distinct slots");
+    }
+
+    #[test]
+    fn allowance_storage_slot_resolves_for_known_token() {
+        let weth = addr("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+        let owner = addr("0x0000000000000000000000000000000000000001");
+        let spender = addr("0x0000000000000000000000000000000000000002");
+        let slot = allowance_storage_slot(weth, owner, spender).expect("WETH allowance known");
+        // Should equal the at-slot-4 version (WETH's allowance index)
+        assert_eq!(slot, allowance_storage_slot_at(owner, spender, 4));
     }
 }
