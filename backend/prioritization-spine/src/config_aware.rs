@@ -180,7 +180,31 @@ impl<'a> ConfigAwareEvaluator<'a> {
             max_slippage_pct: self.config.max_slippage_pct / 100.0, // pct → fraction
             failure_risk_buffer_usd: amount_in_usd * self.config.failure_risk_buffer_pct,
         };
-        let outcome = calc_net_profit_and_roi(&roi_params);
+        let outcome_raw = calc_net_profit_and_roi(&roi_params);
+
+        // 4b. Defense-in-depth sanity bound for BUG-2 (token-blind USD valuation
+        // in profit_token_to_usd, pending price-oracle sprint). Real HFT MEV
+        // ROI distribution is 0.05% – 2%; outliers above 999% are math bugs.
+        // When triggered, we clamp the persisted profit/ROI fields to zero so
+        // PostgreSQL numeric(10,4) doesn't overflow and the operator dashboard
+        // shows clean values + an explicit AnomalousMath rejection reason.
+        // This bound REMAINS even after BUG-2 is properly fixed — it acts as
+        // a regression catch for any future math error producing absurd values.
+        const ANOMALOUS_ROI_THRESHOLD_PCT: f64 = 999.0;
+        const ANOMALOUS_PROFIT_THRESHOLD_USD: f64 = 1_000_000.0;
+        let anomalous = outcome_raw.net_roi_pct.abs() > ANOMALOUS_ROI_THRESHOLD_PCT
+            || outcome_raw.gross_profit_usd.abs() > ANOMALOUS_PROFIT_THRESHOLD_USD;
+        let outcome = if anomalous {
+            DefiArbitrageOutcome {
+                is_viable: false,
+                gross_profit_usd: 0.0,
+                net_profit_usd: 0.0,
+                net_roi_pct: 0.0,
+                ..outcome_raw
+            }
+        } else {
+            outcome_raw
+        };
 
         // 5. Risk gate: validate against config-derived policy.
         let policy = policy_from_config(self.config);
@@ -202,9 +226,16 @@ impl<'a> ConfigAwareEvaluator<'a> {
             // safety screen is wired (arbx-token-safety-screen skill).
             contracts_verified: true,
         };
-        let rejection: Option<RejectReason> = match validate_opportunity_risk(&risk_profile, &policy) {
-            Ok(()) => None,
-            Err(reason) => Some(map_risk_rejection(reason)),
+        // AnomalousMath takes precedence over any risk-policy rejection — it's
+        // the most diagnostic reason and signals the operator to investigate
+        // upstream math, not adjust risk knobs.
+        let rejection: Option<RejectReason> = if anomalous {
+            Some(RejectReason::AnomalousMath)
+        } else {
+            match validate_opportunity_risk(&risk_profile, &policy) {
+                Ok(()) => None,
+                Err(reason) => Some(map_risk_rejection(reason)),
+            }
         };
 
         // 6. Build evidence with REAL numbers (no more hardcoded 0.95 / 0.9 / 1.0).
@@ -466,13 +497,118 @@ mod tests {
         // Pre-fix this returned ROI = 735184. Post-fix the proportional scaling
         // bounds it: output 29.56 × ratio (10/105.75 ≈ 0.0945) ≈ 2.79 (× $2500 = $6985);
         // gross = $6985 - $10 = $6975 → ROI ≈ 69750%. Still wrong (BUG-2 unaddressed)
-        // but order-of-magnitude bounded. Asserting < 100,000% leaves headroom while
-        // catching the BUG-3 regression specifically.
+        // but order-of-magnitude bounded. With the AnomalousMath sanity bound
+        // also active (>999% triggers clamp-to-zero), the resulting outcome is
+        // 0% — passing the < 100,000 assertion trivially. Both bounds are now
+        // exercised by this single test.
         assert!(
             outcome.net_roi_pct < 100_000.0,
-            "BUG-3 regression: net_roi_pct = {} (must be < 100,000% after proportional cap). \
-             Note: BUG-2 (token-blind USD) is unaddressed in this fix and may keep ROI inflated; \
-             this test only ensures BUG-3 is fixed, not BUG-2.",
+            "BUG-3 regression: net_roi_pct = {} (must be < 100,000% after proportional cap)",
+            outcome.net_roi_pct,
+        );
+    }
+
+    /// Defense-in-depth sanity bound for BUG-2 (token-blind USD valuation,
+    /// pending price-oracle sprint). Math layer producing ROI > 999% is always
+    /// a bug; we clamp the outcome to zero AND tag it with `AnomalousMath`
+    /// so downstream persistence sees clean values (no PG numeric overflow)
+    /// and the operator dashboard sees the rejection reason explicitly.
+    #[test]
+    fn anomalous_roi_triggers_sanity_bound() {
+        // Mirror of the BUG-3 outlier 06:37 (WETH→UNI). Pre-sanity-bound this
+        // produced ROI ≈ 69,750% even after BUG-3 fix (because BUG-2 still
+        // inflates UNI as WETH-priced). Post-sanity-bound the outcome must
+        // be zeroed and rejection must be AnomalousMath.
+        let mut c = cfg();
+        c.capital_usd = 10.0;
+        c.base_token_price_usd = 2500.0;
+        c.allowed_token_symbols = vec!["WETH".into(), "UNI".into()];
+
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "test".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "UNI".into()],
+            dex_adapters: vec!["uniswap-v3".into()],
+            amount_in: 0.0423,
+            expected_amount_out: 29.56,
+            gross_profit: 0.0,
+        };
+        let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+        );
+        let (outcome, rejection) = match out {
+            ConfigGateOutcome::Evaluated { outcome, rejection, .. } => (outcome, rejection),
+            other => panic!("expected Evaluated outcome, got {:?}", other),
+        };
+
+        assert_eq!(
+            outcome.gross_profit_usd, 0.0,
+            "anomalous gross_profit_usd should be clamped to 0, got {}",
+            outcome.gross_profit_usd,
+        );
+        assert_eq!(
+            outcome.net_roi_pct, 0.0,
+            "anomalous net_roi_pct should be clamped to 0, got {}",
+            outcome.net_roi_pct,
+        );
+        assert!(
+            !outcome.is_viable,
+            "anomalous outcome must not be marked viable",
+        );
+        assert_eq!(
+            rejection,
+            Some(RejectReason::AnomalousMath),
+            "expected AnomalousMath rejection reason, got {:?}",
+            rejection,
+        );
+    }
+
+    /// Bound is at 999% — values BELOW the boundary should NOT trigger
+    /// the sanity bound (defensive against false positives). Real HFT outliers
+    /// up to several hundred percent are theoretically possible (illiquid
+    /// token + thin spread) and shouldn't be silently zeroed.
+    #[test]
+    fn roi_below_boundary_does_not_trigger_sanity_bound() {
+        // Synthesise a ~500% ROI outcome (well under the 999% bound):
+        // amount_in_usd = $10, expected_amount_out_usd = $60
+        // → gross = $50 → ROI = 500%
+        let mut c = cfg();
+        c.capital_usd = 1_000.0; // big cap so no proportional scaling
+        c.base_token_price_usd = 2500.0;
+        c.allowed_token_symbols = vec!["WETH".into(), "USDC".into()];
+        c.gas_estimate_units = 1; // ≈ 0 gas cost
+        c.fixed_gas_price_gwei = Some(0.0);
+        c.failure_risk_buffer_pct = 0.0;
+        c.max_slippage_pct = 0.0;
+        c.flashloan_fee_pct = 0.0;
+
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "test".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "USDC".into()],
+            dex_adapters: vec!["uniswap-v2".into()],
+            amount_in: 0.004,         // 0.004 ETH ≈ $10
+            expected_amount_out: 0.024, // 0.024 ETH ≈ $60 → 500% gross
+            gross_profit: 0.0,
+        };
+        let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+        );
+        let outcome = match out {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome,
+            other => panic!("expected Evaluated outcome, got {:?}", other),
+        };
+        // Outcome should NOT be zeroed — actual values preserved.
+        // (Risk gate may still reject for other reasons; this asserts the
+        // sanity bound did not fire spuriously.)
+        assert!(
+            outcome.gross_profit_usd > 0.0,
+            "gross_profit_usd below boundary should not be clamped, got {}",
+            outcome.gross_profit_usd,
+        );
+        assert!(
+            outcome.net_roi_pct > 0.0 && outcome.net_roi_pct < 999.0,
+            "net_roi_pct should be in (0, 999), got {}",
             outcome.net_roi_pct,
         );
     }
