@@ -117,6 +117,9 @@ const wsProxy = createProxyMiddleware({
 app.use('/socket.io', wsProxy);
 
 app.get("/status", (req, res) => proxy("/status", req, res));
+// Health probe alias — REST convention for load balancers / external monitors.
+// Proxied to api-server's /api/health which returns service/version/uptime JSON.
+app.get("/api/health", (req, res) => proxy("/api/health", req, res));
 app.get("/api/opportunities/live", (req, res) => proxy("/api/v1/opportunities/live", req, res));
 app.get("/api/risk/alerts", (req, res) => proxy("/api/v1/risk/alerts", req, res));
 // S7: new operator-console endpoints.
