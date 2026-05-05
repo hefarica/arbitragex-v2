@@ -194,8 +194,9 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(60);
     let heartbeat_redis = redis_conn.clone();
     let heartbeat_db = db_pool.clone();
+    let heartbeat_chain = primary_chain;
     tokio::spawn(async move {
-        let hb = workers::heartbeat_worker::HeartbeatWorker::new(heartbeat_period_secs);
+        let hb = workers::heartbeat_worker::HeartbeatWorker::new(heartbeat_period_secs, heartbeat_chain);
         hb.run(heartbeat_redis, heartbeat_db).await;
     });
 

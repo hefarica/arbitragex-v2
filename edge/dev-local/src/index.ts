@@ -121,6 +121,10 @@ app.get("/status", (req, res) => proxy("/status", req, res));
 // Proxied to api-server's /api/health which returns service/version/uptime JSON.
 app.get("/api/health", (req, res) => proxy("/api/health", req, res));
 app.get("/api/opportunities/live", (req, res) => proxy("/api/v1/opportunities/live", req, res));
+app.get("/api/scanner/heartbeat", (req, res) => {
+  const chain = String(req.query["chain_id"] ?? 1);
+  proxy(`/api/v1/scanner/heartbeat?chain_id=${encodeURIComponent(chain)}`, req, res);
+});
 app.get("/api/risk/alerts", (req, res) => proxy("/api/v1/risk/alerts", req, res));
 // S7: new operator-console endpoints.
 app.get("/api/executions/recent", (req, res) => proxy("/api/v1/executions/recent", req, res));

@@ -381,6 +381,41 @@ app.get("/api/v1/opportunities/live", async (req, res) => {
   }
 });
 
+// Scanner heartbeat snapshot — read latest pipeline counters from Redis.
+// Persisted by searcher-rs::workers::heartbeat_worker every period (default
+// 60s) with TTL = 3× period. 404 when key absent → searcher down OR very
+// recent restart (R8 fail-honest: surface the gap, don't fabricate zeros).
+app.get("/api/v1/scanner/heartbeat", async (req, res) => {
+  const chainId = Number(req.query["chain_id"] ?? 1);
+  if (!Number.isFinite(chainId) || chainId < 1) {
+    res.status(400).json({ error: "invalid_chain_id" });
+    return;
+  }
+  const key = `arbx:heartbeat:scanner:${chainId}:latest`;
+  try {
+    const raw = await redis.get(key);
+    if (raw == null) {
+      res.status(404).json({
+        error: "heartbeat_not_available",
+        detail: `no snapshot at ${key} — searcher may be down or recently restarted`,
+        chain_id: chainId,
+      });
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      res.status(503).json({ error: "snapshot_parse_failed", detail: (e as Error).message });
+      return;
+    }
+    res.status(200).json({ chain_id: chainId, snapshot: parsed, fetched_at: new Date().toISOString() });
+  } catch (e) {
+    logger.warn({ event: "scanner.heartbeat.read_failed", err: (e as Error).message });
+    res.status(503).json({ error: "redis_read_failed", detail: (e as Error).message });
+  }
+});
+
 app.get("/api/v1/risk/alerts", async (req, res) => {
   const p = requireDbPool();
   if (!p) { res.status(503).json({ error: "db_unavailable" }); return; }

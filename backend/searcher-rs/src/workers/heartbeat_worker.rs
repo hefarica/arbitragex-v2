@@ -15,20 +15,59 @@
 
 use crate::counters::counters;
 use redis::aio::ConnectionManager;
+use redis::AsyncCommands;
+use serde::Serialize;
 use sqlx::{postgres::PgPool, Row};
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::interval;
 use tracing::{info, warn};
 
+/// Snapshot persisted to Redis after every heartbeat tick. Operator can
+/// query the latest snapshot via GET /api/v1/scanner/heartbeat (no need
+/// to grep logs). Schema mirrors the structured log fields one-to-one
+/// for documentation parity.
+///
+/// TTL on the Redis key is 3× heartbeat period — if the searcher dies
+/// the snapshot expires automatically and the API returns 404, surfacing
+/// the outage instead of stale data (R8 fail-honest).
+#[derive(Debug, Clone, Serialize)]
+pub struct HeartbeatSnapshot {
+    pub period_secs: u64,
+    pub emitted_at_unix: u64,
+    pub redis_stream_total: i64,
+    pub redis_stream_delta: i64,
+    pub pg_period_inserted: i64,
+    pub pg_period_profit_pos: i64,
+    pub pending_received: u64,
+    pub decoded_ok: u64,
+    pub enriched_v2: u64,
+    pub enriched_v3: u64,
+    pub gate_token_not_allowed: u64,
+    pub gate_strategy_disabled: u64,
+    pub gate_no_config: u64,
+    pub gate_unknown_token_price: u64,
+    pub gate_anomalous_math: u64,
+    pub gate_other_rejected: u64,
+    pub passed_all_gates: u64,
+    pub db_persisted: u64,
+    pub db_errors: u64,
+}
+
+pub fn heartbeat_redis_key(chain_id: u64) -> String {
+    format!("arbx:heartbeat:scanner:{chain_id}:latest")
+}
+
 pub struct HeartbeatWorker {
     pub period: Duration,
+    pub chain_id: u64,
 }
 
 impl HeartbeatWorker {
-    pub fn new(period_secs: u64) -> Self {
+    pub fn new(period_secs: u64, chain_id: u64) -> Self {
         Self {
             period: Duration::from_secs(period_secs.max(1)),
+            chain_id,
         }
     }
 
@@ -111,6 +150,43 @@ impl HeartbeatWorker {
                 db_errors = db_err,
                 "scanner pipeline heartbeat"
             );
+
+            // Persist snapshot to Redis for API consumption (api-server reads
+            // this key on GET /api/v1/scanner/heartbeat). TTL = 3× period so
+            // that if the searcher dies, the API returns 404 (R8 fail-honest)
+            // rather than serving stale data.
+            let snapshot = HeartbeatSnapshot {
+                period_secs: self.period.as_secs(),
+                emitted_at_unix: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+                redis_stream_total: now_redis_total,
+                redis_stream_delta: redis_delta,
+                pg_period_inserted: pg_inserted,
+                pg_period_profit_pos: pg_profit_pos,
+                pending_received: pending,
+                decoded_ok: decoded,
+                enriched_v2,
+                enriched_v3,
+                gate_token_not_allowed: gate_token_na,
+                gate_strategy_disabled: gate_strat_dis,
+                gate_no_config: gate_no_cfg,
+                gate_unknown_token_price: gate_unk_price,
+                gate_anomalous_math: gate_anom,
+                gate_other_rejected: gate_other,
+                passed_all_gates: passed,
+                db_persisted: db_ok,
+                db_errors: db_err,
+            };
+            if let Ok(json) = serde_json::to_string(&snapshot) {
+                let key = heartbeat_redis_key(self.chain_id);
+                let ttl = self.period.as_secs().saturating_mul(3);
+                let res: redis::RedisResult<()> = redis.set_ex(&key, json, ttl).await;
+                if let Err(e) = res {
+                    warn!(event = "heartbeat.redis_persist_failed", error = %e);
+                }
+            }
         }
     }
 }
