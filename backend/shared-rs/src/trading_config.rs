@@ -58,6 +58,16 @@ pub struct TradingConfigState {
     pub base_token_price_usd: f64,
     pub allowed_token_symbols: Vec<String>,
 
+    /// Per-token USD prices, keyed by symbol (case-insensitive at lookup).
+    /// Operator-managed via Redis hot-reload; consumed by `price_oracle::ConfigPriceOracle`.
+    /// `serde(default)` keeps backward compatibility with existing Redis configs
+    /// that pre-date this field — they deserialise as empty map and the oracle
+    /// falls back to base token + hardcoded stablecoin defaults. Tokens outside
+    /// all three tiers are rejected with `RejectReason::UnknownTokenPrice` (R8
+    /// Fail-Honest — no fabricated prices). See anti_reincidencia.md Incidente #7.
+    #[serde(default)]
+    pub token_prices_usd: HashMap<String, f64>,
+
     // Profit gate thresholds
     pub min_profit_usd: f64,
     pub min_roi_pct: f64,
@@ -101,9 +111,19 @@ impl TradingConfigState {
             .any(|s| s.to_ascii_uppercase() == needle)
     }
 
-    /// Convert profit denominated in base token (e.g. WETH) to USD using the
-    /// operator-supplied price. Caller is responsible for using a fresh price
-    /// when feeding live opportunities (oracle integration is the next sprint).
+    /// **DEPRECATED (BUG-2, 2026-05-05)**: this method assumes every token is
+    /// the base token, producing nonsense USD valuations for any non-base
+    /// non-stablecoin token. Use `shared_rs::price_oracle::ConfigPriceOracle`
+    /// instead, which resolves prices per-token via three tiers (base, operator
+    /// map, hardcoded stablecoins) with fail-honest `None` for unknown tokens.
+    ///
+    /// Kept for backward compatibility with any external caller; will be
+    /// removed in a future sprint once all internal call sites are migrated
+    /// (the spine evaluator was migrated in commit landing this PR).
+    #[deprecated(
+        since = "0.1.0",
+        note = "use shared_rs::price_oracle::ConfigPriceOracle::price_usd; this method ignores token identity (BUG-2)"
+    )]
     pub fn profit_token_to_usd(&self, profit_in_base_token: f64) -> f64 {
         profit_in_base_token * self.base_token_price_usd
     }
@@ -197,6 +217,7 @@ mod tests {
             base_token_symbol: "WETH".into(),
             base_token_price_usd: 2000.0,
             allowed_token_symbols: vec!["WETH".into(), "USDC".into(), "USDT".into()],
+            token_prices_usd: HashMap::new(),
             min_profit_usd: 2.0,
             min_roi_pct: 0.3,
             min_landing_probability: 0.5,
@@ -248,6 +269,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // exercises the legacy method intentionally — see #[deprecated] note
     fn profit_conversion_uses_base_price() {
         let s = sample_state();
         assert_eq!(s.profit_token_to_usd(0.05), 100.0); // 0.05 ETH * 2000 USD/ETH

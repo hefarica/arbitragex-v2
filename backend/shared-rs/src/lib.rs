@@ -18,6 +18,7 @@ pub mod killswitch;
 pub mod paper_mode;
 pub mod logging;
 pub mod metrics;
+pub mod price_oracle;
 pub mod rpc_failover;
 pub mod trading_config;
 

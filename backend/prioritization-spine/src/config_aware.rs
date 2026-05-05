@@ -30,6 +30,7 @@ use math_engine::risk_engine::{
 };
 use math_engine::roi_engine::{RoiCalculationParams, calc_net_profit_and_roi};
 use math_engine::DefiArbitrageOutcome;
+use shared_rs::price_oracle::{ConfigPriceOracle, PriceOracle};
 use shared_rs::trading_config::TradingConfigState;
 
 /// Live signals the evaluator needs in addition to config + candidate.
@@ -144,31 +145,54 @@ impl<'a> ConfigAwareEvaluator<'a> {
             };
         }
 
-        // 3. Capital sizing — observed amount_in capped by operator capital.
-        // Convert observed amount_in (token units) → USD via config's base price.
+        // 3. Per-token USD valuation via PriceOracle (BUG-2 fix, commit lands
+        // in this PR). Token symbols come from `candidate.token_addresses[0/1]`
+        // which scanner.rs populates as symbol when meta_in/meta_out are in
+        // the Redis cache, hex address otherwise. The oracle indexes by
+        // symbol — hex addresses return None and we reject fail-honest below.
         //
-        // BUG-3 fix (2026-05-04 outlier): when the cap reduces effective input,
-        // expected_amount_out_usd MUST also be scaled by the same ratio. The
-        // pre-fix code capped only the input side, producing fake gross profit
-        // equal to the cap delta (e.g. observed $125 → capped $10 with full
-        // output $125 yielded a phantom $115 gross profit, ROI > 1000%).
-        //
-        // Linear scaling is conservative — it under-estimates slippage on
-        // smaller trades (real AMM output for capped input would be slightly
-        // higher per unit) — but it eliminates the asymmetric inflation that
-        // pollutes dashboards and trips the schema's numeric(10,4) ceiling.
-        // BUG-2 (token-blind USD pricing via profit_token_to_usd) is NOT
-        // addressed here and may still inflate cross-token cases; tracked
-        // separately for the price-oracle sprint.
-        let observed_amount_in_usd = self.config.profit_token_to_usd(candidate.amount_in);
+        // Resolution order (see shared_rs::price_oracle): base token symbol,
+        // operator's `token_prices_usd` map, hardcoded stablecoin defaults.
+        // Anything outside those three tiers → None → UnknownTokenPrice.
+        let oracle = ConfigPriceOracle::new(self.config);
+        let token_in_id = candidate
+            .token_addresses
+            .first()
+            .map(String::as_str)
+            .unwrap_or("");
+        let token_out_id = candidate
+            .token_addresses
+            .get(1)
+            .map(String::as_str)
+            .unwrap_or("");
+        let in_price_opt = oracle.price_usd(token_in_id);
+        let out_price_opt = oracle.price_usd(token_out_id);
+        let unknown_price = in_price_opt.is_none() || out_price_opt.is_none();
+
+        // When either side is unknown, force BOTH to zero so downstream
+        // math collapses cleanly (gross=0, ROI=0). Forcing only the
+        // unknown side would leave gross = -known_input_usd, polluting
+        // the dashboard with negative profit numbers that mean nothing.
+        // The rejection is overridden to UnknownTokenPrice below — the
+        // operator's signal to populate `token_prices_usd` for the gap.
+        let (in_price, out_price) = if unknown_price {
+            (0.0, 0.0)
+        } else {
+            (in_price_opt.unwrap_or(0.0), out_price_opt.unwrap_or(0.0))
+        };
+
+        // BUG-3 fix preserved: when the operator's capital cap reduces
+        // effective input, expected output MUST also be scaled by the same
+        // ratio. Linear scaling under-estimates slippage on smaller trades
+        // but eliminates the asymmetric inflation that pollutes dashboards.
+        let observed_amount_in_usd = candidate.amount_in * in_price;
         let amount_in_usd = observed_amount_in_usd.min(self.config.capital_usd);
         let cap_ratio = if observed_amount_in_usd > 0.0 {
             amount_in_usd / observed_amount_in_usd
         } else {
             1.0
         };
-        let expected_amount_out_usd =
-            self.config.profit_token_to_usd(candidate.expected_amount_out) * cap_ratio;
+        let expected_amount_out_usd = candidate.expected_amount_out * out_price * cap_ratio;
 
         // 4. Math: compute net profit and ROI deterministically.
         let gas_cost_usd = estimate_gas_cost_usd(self.config, self.signals);
@@ -226,10 +250,14 @@ impl<'a> ConfigAwareEvaluator<'a> {
             // safety screen is wired (arbx-token-safety-screen skill).
             contracts_verified: true,
         };
-        // AnomalousMath takes precedence over any risk-policy rejection — it's
-        // the most diagnostic reason and signals the operator to investigate
-        // upstream math, not adjust risk knobs.
-        let rejection: Option<RejectReason> = if anomalous {
+        // Rejection precedence (most-diagnostic first):
+        //   1. UnknownTokenPrice — input itself is invalid; no math is meaningful
+        //   2. AnomalousMath     — math layer producing absurd values (BUG-2 net)
+        //   3. RiskPolicy reasons — operational gates (gas, slippage, liquidity)
+        // Higher tiers signal "fix upstream" before tweaking risk knobs.
+        let rejection: Option<RejectReason> = if unknown_price {
+            Some(RejectReason::UnknownTokenPrice)
+        } else if anomalous {
             Some(RejectReason::AnomalousMath)
         } else {
             match validate_opportunity_risk(&risk_profile, &policy) {
@@ -298,6 +326,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use shared_rs::trading_config::GasPriceStrategy;
+    use std::collections::HashMap;
 
     fn cfg() -> TradingConfigState {
         TradingConfigState {
@@ -306,6 +335,7 @@ mod tests {
             base_token_symbol: "WETH".into(),
             base_token_price_usd: 2000.0,
             allowed_token_symbols: vec!["WETH".into(), "USDC".into()],
+            token_prices_usd: HashMap::new(),
             min_profit_usd: 1.0,
             min_roi_pct: 0.1,
             min_landing_probability: 0.5,
@@ -508,21 +538,21 @@ mod tests {
         );
     }
 
-    /// Defense-in-depth sanity bound for BUG-2 (token-blind USD valuation,
-    /// pending price-oracle sprint). Math layer producing ROI > 999% is always
-    /// a bug; we clamp the outcome to zero AND tag it with `AnomalousMath`
-    /// so downstream persistence sees clean values (no PG numeric overflow)
-    /// and the operator dashboard sees the rejection reason explicitly.
+    /// Defense-in-depth sanity bound. Post-BUG-2 the natural trigger for
+    /// AnomalousMath is operator misconfiguration of `token_prices_usd` —
+    /// e.g. typo'ing UNI as $10,000 instead of $10. The bound clamps the
+    /// resulting absurd outcome and tags it `AnomalousMath` so the operator
+    /// sees the diagnostic reason and audits their config.
     #[test]
     fn anomalous_roi_triggers_sanity_bound() {
-        // Mirror of the BUG-3 outlier 06:37 (WETH→UNI). Pre-sanity-bound this
-        // produced ROI ≈ 69,750% even after BUG-3 fix (because BUG-2 still
-        // inflates UNI as WETH-priced). Post-sanity-bound the outcome must
-        // be zeroed and rejection must be AnomalousMath.
         let mut c = cfg();
         c.capital_usd = 10.0;
         c.base_token_price_usd = 2500.0;
         c.allowed_token_symbols = vec!["WETH".into(), "UNI".into()];
+        // Operator typo: UNI mis-priced as $10,000 instead of ~$8.
+        // This is the kind of mistake the sanity bound exists to catch
+        // even after BUG-2 fix (oracle has a price; price is just wrong).
+        c.token_prices_usd.insert("UNI".into(), 10_000.0);
 
         let candidate = OpportunityCandidate {
             route_fingerprint: "test".into(),
@@ -563,6 +593,129 @@ mod tests {
         );
     }
 
+    // ----------------------------------------------------------------
+    // BUG-2 fix: PriceOracle integration (per-token USD valuation)
+    // ----------------------------------------------------------------
+
+    /// When `token_in` is not resolvable by the price oracle (not base, not
+    /// in token_prices_usd, not stablecoin), the evaluator MUST reject with
+    /// `UnknownTokenPrice` and zero the outcome — never fabricate a price.
+    #[test]
+    fn unknown_token_in_triggers_unknown_token_price_rejection() {
+        let mut c = cfg();
+        c.allowed_token_symbols = vec!["PEPE".into(), "WETH".into()];
+        // PEPE has no price (not base WETH, not in map, not stablecoin)
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "test".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["PEPE".into(), "WETH".into()],
+            dex_adapters: vec!["uniswap-v3".into()],
+            amount_in: 1_000_000.0,
+            expected_amount_out: 0.5,
+            gross_profit: 0.0,
+        };
+        let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+        );
+        let (outcome, rejection) = match out {
+            ConfigGateOutcome::Evaluated { outcome, rejection, .. } => (outcome, rejection),
+            other => panic!("expected Evaluated outcome, got {:?}", other),
+        };
+        assert_eq!(
+            rejection,
+            Some(RejectReason::UnknownTokenPrice),
+            "unknown token_in should reject with UnknownTokenPrice, got {:?}",
+            rejection,
+        );
+        assert_eq!(outcome.gross_profit_usd, 0.0,
+                   "outcome must be zeroed when price unknown, got {}", outcome.gross_profit_usd);
+        assert!(!outcome.is_viable);
+    }
+
+    /// Symmetric: token_out unknown → same rejection.
+    #[test]
+    fn unknown_token_out_triggers_unknown_token_price_rejection() {
+        let mut c = cfg();
+        c.allowed_token_symbols = vec!["WETH".into(), "PEPE".into()];
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "test".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "PEPE".into()],
+            dex_adapters: vec!["uniswap-v3".into()],
+            amount_in: 0.05,
+            expected_amount_out: 1_000_000.0,
+            gross_profit: 0.0,
+        };
+        let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+        );
+        let (outcome, rejection) = match out {
+            ConfigGateOutcome::Evaluated { outcome, rejection, .. } => (outcome, rejection),
+            other => panic!("expected Evaluated outcome, got {:?}", other),
+        };
+        assert_eq!(
+            rejection,
+            Some(RejectReason::UnknownTokenPrice),
+            "unknown token_out should reject with UnknownTokenPrice, got {:?}",
+            rejection,
+        );
+        assert_eq!(outcome.gross_profit_usd, 0.0);
+    }
+
+    /// When both tokens are resolvable, the evaluator uses REAL per-token
+    /// prices. WETH→USDC profitable arb produces a sensible gross_profit
+    /// reflecting actual USD diff (not the BUG-2 fantasy of $6.5M).
+    ///
+    /// Pre-fix: expected_amount_out_usd = 2600 × $2500 (WETH-priced) = $6.5M
+    ///          → AnomalousMath clamp → gross_profit = 0
+    /// Post-fix: expected_amount_out_usd = 2600 × $1 (USDC stable) = $2600
+    ///           gross_profit = $2600 - $2500 = $100 → 4% ROI, viable
+    #[test]
+    fn both_tokens_known_evaluates_with_real_per_token_prices() {
+        let mut c = cfg(); // WETH base @ $2000, USDC stablecoin @ $1
+        // Bump capital so observed input ($2000) fits without proportional cap
+        // muddying the assertion — we want to test PRICE resolution here, not
+        // cap-ratio interaction (covered by BUG-3 tests).
+        c.capital_usd = 5_000.0;
+        // 1 ETH → 2100 USDC swap (5% gross spread, realistic arb)
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "test".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "USDC".into()],
+            dex_adapters: vec!["uniswap-v3".into()],
+            amount_in: 1.0,             // 1 WETH = $2000 (cfg base price)
+            expected_amount_out: 2100.0, // 2100 USDC = $2100 (stablecoin default)
+            gross_profit: 0.0,
+        };
+        let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+        );
+        let (outcome, rejection) = match out {
+            ConfigGateOutcome::Evaluated { outcome, rejection, .. } => (outcome, rejection),
+            other => panic!("expected Evaluated outcome, got {:?}", other),
+        };
+
+        // Real gross profit: $2100 - $2000 = $100 (~5% gross). Sanity bound
+        // (>999% ROI) does NOT trigger. UnknownTokenPrice does NOT trigger.
+        // Risk gate may still reject for other reasons (gas, slippage etc.)
+        // but those aren't AnomalousMath / UnknownTokenPrice.
+        assert_ne!(
+            rejection,
+            Some(RejectReason::UnknownTokenPrice),
+            "both tokens known — UnknownTokenPrice must not fire",
+        );
+        assert_ne!(
+            rejection,
+            Some(RejectReason::AnomalousMath),
+            "real arb math (ROI ~5%) must not trigger sanity bound",
+        );
+        assert!(
+            (outcome.gross_profit_usd - 100.0).abs() < 1.0,
+            "expected gross_profit ≈ $100, got {} (BUG-2 unfixed would give ~$5.2M)",
+            outcome.gross_profit_usd,
+        );
+    }
+
     /// Bound is at 999% — values BELOW the boundary should NOT trigger
     /// the sanity bound (defensive against false positives). Real HFT outliers
     /// up to several hundred percent are theoretically possible (illiquid
@@ -587,8 +740,10 @@ mod tests {
             pool_addresses: vec![],
             token_addresses: vec!["WETH".into(), "USDC".into()],
             dex_adapters: vec!["uniswap-v2".into()],
-            amount_in: 0.004,         // 0.004 ETH ≈ $10
-            expected_amount_out: 0.024, // 0.024 ETH ≈ $60 → 500% gross
+            // Per-token prices via oracle: WETH=$2500, USDC=$1.
+            // 0.004 WETH = $10 input, 60 USDC = $60 output → 500% gross.
+            amount_in: 0.004,
+            expected_amount_out: 60.0,
             gross_profit: 0.0,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
