@@ -30,6 +30,14 @@ pub struct Opportunity {
     pub roi_pct: Option<f64>,
     pub risk_score: Option<f64>,
     pub block_number: Option<u64>,
+    /// Diagnostic reason when the opportunity was rejected by a pre-execution
+    /// gate (allowlist, strategy, math, risk policy). NULL when the opp passed
+    /// all gates OR when a row predates the BUG-2/3 + observability sprint.
+    /// Stored as plain text for flexibility — frontend renders verbatim.
+    /// See `RejectReason` enum in `prioritization-spine::decision` for the
+    /// canonical set of values.
+    #[serde(default)]
+    pub rejection_reason: Option<String>,
     pub detected_at: DateTime<Utc>,
     pub trace_id: Uuid,
 }

@@ -609,6 +609,9 @@ async fn process_pending(
             opportunity.expected_profit_usd = 0.0;
             opportunity.roi_pct = Some(0.0);
             opportunity.risk_score = Some(0.0);
+            // GAP-2 fix: persist diagnostic reason — operator filters by
+            // `rejection_reason` in the dashboard to count and audit allowlist gaps.
+            opportunity.rejection_reason = Some(format!("TokenNotAllowed:{token_symbol_or_addr}"));
             if let Some(pool) = db {
                 if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
                     error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
@@ -630,6 +633,7 @@ async fn process_pending(
             opportunity.expected_profit_usd = 0.0;
             opportunity.roi_pct = Some(0.0);
             opportunity.risk_score = Some(0.0);
+            opportunity.rejection_reason = Some(format!("StrategyDisabled:{strategy_kind}"));
             if let Some(pool) = db {
                 if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
                     error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
@@ -663,6 +667,10 @@ async fn process_pending(
             roi_pct = math_outcome.net_roi_pct,
         );
         opportunity.risk_score = Some(0.0);
+        // GAP-2 fix: persist the spine's diagnostic rejection reason
+        // (UnknownTokenPrice / AnomalousMath / NegativeNetProfit / LowLiquidity / ...)
+        // — converted to debug string so the operator dashboard can group + filter.
+        opportunity.rejection_reason = Some(format!("{reason:?}"));
     } else {
         // Spine scoring on REAL evidence (no more hardcoded 0.95 / 0.9 / 1.0).
         let engine = PrioritizationEngine { min_profit_threshold: cfg.min_profit_usd };

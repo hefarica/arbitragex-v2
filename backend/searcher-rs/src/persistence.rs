@@ -21,18 +21,23 @@ fn strategy_kind_str(k: &StrategyKind) -> &'static str {
 pub async fn insert_opportunity(pool: &PgPool, o: &Opportunity) -> anyhow::Result<()> {
     let amount_in_wei = BigDecimal::from_str(&o.amount_in_wei)
         .context("amount_in_wei to BigDecimal")?;
+    // GAP-2 fix (2026-05-05): persist `rejection_reason` so the operator
+    // can audit WHY each opp was rejected (TokenNotAllowed vs UnknownTokenPrice
+    // vs AnomalousMath vs LowLiquidity vs ...). Pre-fix this column existed
+    // in the schema but was never written → 0 rows in 24h had it populated,
+    // making rejection analytics impossible.
     sqlx::query(
         r#"
         INSERT INTO opportunities (
             id, chain_id, strategy_kind, dex_a, dex_b, pair_symbol,
             token_in, token_out, amount_in_wei,
             expected_profit_usd, roi_pct, risk_score,
-            block_number, status, trace_id, detected_at
+            block_number, status, rejection_reason, trace_id, detected_at
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9,
             $10, $11, $12,
-            $13, 'detected', $14, $15
+            $13, 'detected', $14, $15, $16
         )
         ON CONFLICT (id) DO NOTHING
         "#,
@@ -50,6 +55,7 @@ pub async fn insert_opportunity(pool: &PgPool, o: &Opportunity) -> anyhow::Resul
     .bind(o.roi_pct)
     .bind(o.risk_score)
     .bind(o.block_number.map(|n| n as i64))
+    .bind(o.rejection_reason.as_deref())
     .bind(o.trace_id)
     .bind(o.detected_at)
     .execute(pool)
