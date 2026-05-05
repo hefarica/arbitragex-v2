@@ -16,3 +16,6 @@ chrono = { workspace = true }
 revm = { workspace = true }
 ethers = { workspace = true }
 tokio = { workspace = true }
+
+[dev-dependencies]
+hex = "0.4"

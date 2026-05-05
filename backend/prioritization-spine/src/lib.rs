@@ -9,6 +9,7 @@ pub mod feedback;
 pub mod errors;
 pub mod config_aware;
 pub mod swap_encoder;
+pub mod erc20_storage;
 
 pub use types::*;
 pub use evidence::*;
