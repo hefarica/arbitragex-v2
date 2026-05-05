@@ -84,6 +84,11 @@ struct PoolRow {
     address_lower: String,
     sym0: String,
     sym1: String,
+    /// Lowercase 0x-prefixed address of token0. Plumbed into `ReservesEntry`
+    /// so the scanner knows the swap orientation directly (which reserve is
+    /// `in` vs `out`) without computing both directions and applying the
+    /// dual-orientation magnitude heuristic. Closes the TODO at scanner.rs:350.
+    token0_address_lower: String,
 }
 
 pub struct PoolSyncWorker {
@@ -189,6 +194,9 @@ impl PoolSyncWorker {
                 let entry = ReservesEntry {
                     r0: r0.to_string(),
                     r1: r1.to_string(),
+                    // Plumb token0 from PG metadata so the scanner resolves
+                    // swap orientation directly (no dual-direction heuristic).
+                    token0_addr: Some(pool.token0_address_lower.clone()),
                     blk: block_number,
                     ts: now_ts,
                 };
@@ -245,8 +253,10 @@ impl PoolSyncWorker {
         // V2-only filter: V3 pools don't have getReserves(), so polling them
         // would cost an RPC call per pool per tick and always fail. V3 lives
         // in `bootstrap_v3_pool_index_cache` (one-shot index, no per-tick poll).
-        let rows = sqlx::query_as::<_, (String, String, String)>(
-            r#"SELECT p.address, t0.symbol, t1.symbol
+        // Selects t0.address so the scanner can resolve swap orientation
+        // without computing both V2 directions (closes scanner.rs:350 TODO).
+        let rows = sqlx::query_as::<_, (String, String, String, String)>(
+            r#"SELECT p.address, t0.symbol, t1.symbol, t0.address
                FROM pools p
                JOIN tokens t0 ON p.token0_id = t0.id
                JOIN tokens t1 ON p.token1_id = t1.id
@@ -262,7 +272,7 @@ impl PoolSyncWorker {
 
         Ok(rows
             .into_iter()
-            .filter_map(|(addr, sym0, sym1)| {
+            .filter_map(|(addr, sym0, sym1, token0_addr)| {
                 let lower = addr.to_lowercase();
                 Address::from_str(&lower)
                     .ok()
@@ -271,6 +281,7 @@ impl PoolSyncWorker {
                         address_lower: lower,
                         sym0,
                         sym1,
+                        token0_address_lower: token0_addr.to_lowercase(),
                     })
             })
             .collect())

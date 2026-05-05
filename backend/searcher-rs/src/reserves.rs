@@ -27,6 +27,14 @@ pub struct ReservesEntry {
     /// reserve0 as decimal string (uint112 fits in u128 but we use string for forward-compat)
     pub r0: String,
     pub r1: String,
+    /// Lowercase 0x-prefixed address of token0 in the pool. Required for the
+    /// scanner to determine swap orientation (which reserve is `in` vs `out`)
+    /// without computing both directions and applying a magnitude heuristic.
+    /// Optional with `serde(default)` for backward compat with legacy cache
+    /// entries — when None, the scanner falls back to the dual-orientation
+    /// heuristic. PoolSyncWorker populates this on every tick.
+    #[serde(default)]
+    pub token0_addr: Option<String>,
     /// block number at which the reserves were observed
     pub blk: u64,
     /// unix epoch seconds
@@ -228,6 +236,7 @@ mod tests {
         let entry = ReservesEntry {
             r0: "12345".into(),
             r1: "67890".into(),
+            token0_addr: Some("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".into()),
             blk: 18_500_000,
             ts: 1_714_857_600,
         };
@@ -235,6 +244,18 @@ mod tests {
         let back: ReservesEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(back.r0, entry.r0);
         assert_eq!(back.blk, entry.blk);
+        assert_eq!(back.token0_addr, entry.token0_addr);
+    }
+
+    #[test]
+    fn reserves_entry_legacy_json_without_token0_addr_deserialises() {
+        // Backward compat: cache entries written before the structural fix
+        // do NOT have token0_addr. They must still deserialise (as None)
+        // so the scanner can fall back to dual-orientation heuristic.
+        let legacy_json = r#"{"r0":"100","r1":"200","blk":1,"ts":2}"#;
+        let entry: ReservesEntry = serde_json::from_str(legacy_json).unwrap();
+        assert_eq!(entry.r0, "100");
+        assert_eq!(entry.token0_addr, None);
     }
 
     #[test]
