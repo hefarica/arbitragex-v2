@@ -2,7 +2,7 @@
 
 Este archivo actúa como memoria técnica persistente para el agente. Su función es documentar los peores incidentes, los errores cometidos en la fase de resolución y las reglas operativas para prevenir futuros fracasos similares.
 
-> **Última actualización:** 2026-05-05T11:50:00Z
+> **Última actualización:** 2026-05-05T06:50:00Z
 
 ---
 
@@ -349,7 +349,9 @@ Tests de regresión añadidos:
 - `backend/searcher-rs/src/main.rs` (líneas 184-203 wire del heartbeat)
 - `backend/searcher-rs/src/workers/mod.rs` (export del worker)
 - `backend/shared-rs/src/trading_config.rs:107` (BUG-2, pendiente de fix)
-- `backend/searcher-rs/src/scanner.rs:290` (BUG-1, pendiente de fix)
+- `backend/searcher-rs/src/scanner.rs:286-322` (BUG-1 FIXED commit `2a465e9` — usa `meta_in.decimals`)
+- `backend/searcher-rs/src/amm_math.rs:19-32` (BUG-1 helper `wei_str_to_token_units`, NUEVO)
+- `backend/searcher-rs/src/amm_math.rs:284-356` (BUG-1 tests TDD: 7 nuevos incluyendo regresión USDT)
 
 **Acción correcta en futuras ocasiones:**
 
@@ -359,13 +361,14 @@ Tests de regresión añadidos:
 
 **Sub-tareas pendientes (commits separados):**
 
-- (a) **BUG-1 fix**: usar `meta_in.decimals` en `scanner.rs:290` en lugar de hardcoded 1e18. Mismo patrón TDD (test reproduciendo USDT 6dec → ROI billion%, post-fix bound). Estimado: 30min.
+- (a) **BUG-1 fix** ✅ DONE 2026-05-05 (commit `2a465e9`): añadido helper `amm_math::wei_str_to_token_units(wei_str, decimals)` en amm_math.rs:19-32 con 7 tests TDD (incluye regresión `wei_str_bug1_regression_usdt_input` que demuestra delta vs old buggy semantic ~1e-8). scanner.rs reordenado para resolver `meta_in` antes de `amount_in_f64` y usar `meta_in.decimals` con default 18 cuando token es desconocido. Verificación: 26/26 tests searcher-rs + 6/6 spine, deploy OK 06:46:50 UTC.
 - (b) **BUG-2 fix**: implementar oráculo de precios per-token (Chainlink, TWAP, o tabla hardcoded inicial). Sprint dedicado. `profit_token_to_usd(token, amount)` debe recibir el símbolo o address del token, no asumir base.
 - (c) **Pricing oracle**: definir interfaz `PriceOracle` en `shared_rs` con implementación stub para tokens conocidos (WETH, USDC, USDT, DAI, WBTC) + fallback "no precio → no USD" honesto.
 - (d) **Limpieza histórica opcional**: las 3 rows con outliers ($113, $74, $73.888) quedan en PG. `DELETE FROM opportunities WHERE expected_profit_usd > 0 AND detected_at < '2026-05-04 11:43:13+00'` para limpiar histórico contaminado.
 
 **Evidencia del fix:**
 
-- ANTES (pre-deploy 11:43:13): 3 outliers históricos con ROI 1.127% / 739% / 735.184%; `scanner.db_error` por overflow numeric en evento live de 42B% ROI; cap asimétrico produciendo $115 fantasma reproducible numéricamente.
-- DESPUÉS (post-deploy 11:43:13 — ventana 11:43-12:00): 8 nuevas opps insertadas, todas profit=0 (filtradas por TokenNotAllowed antes del math evaluator); 0 `scanner.db_error`; heartbeat emite cada 60s con `pg_period_profit_pos=0` — pipeline limpio.
-- Caveat honesto: en la ventana corta post-deploy ningún tx llegó al math path para exercise empírico del fix; la verificación formal es el test TDD que reproduce el outlier 06:37 con precisión 0,01%.
+- ANTES (pre-deploy 11:43:13 UTC del 4 de Mayo): 3 outliers históricos con ROI 1.127% / 739% / 735.184%; `scanner.db_error` por overflow numeric en evento live de 42B% ROI; cap asimétrico produciendo $115 fantasma reproducible numéricamente.
+- DESPUÉS deploy 1 — BUG-3 fix (post-deploy 11:43:13 UTC del 4 de Mayo, commit `4b99eb8`): 8 nuevas opps insertadas, todas profit=0 (filtradas por TokenNotAllowed antes del math evaluator); 0 `scanner.db_error`; heartbeat emite cada 60s con `pg_period_profit_pos=0` — pipeline limpio.
+- DESPUÉS deploy 2 — BUG-1 fix (post-deploy 06:46:50 UTC del 5 de Mayo, commit `2a465e9`): 11 nuevas opps insertadas, 0 con ROI > 100%, 0 con profit > 0, 0 `scanner.db_error`. Boot logs limpios, heartbeat emite. Combinado con BUG-3 fix, la cadena USDT→WETH ahora produce ROI ≈ 0% en lugar de 42 mil millones %.
+- Caveat honesto persistente: la verificación empírica del fix integrado requiere un tx que pase el allowlist gate y llegue al math evaluator. En las ventanas cortas post-deploy (≤15min cada uno) ningún tx llegó al math path; la verificación formal sigue siendo los tests TDD (helper `wei_str_to_token_units` con regresión USDT y test de cap asimétrico que reproduce el outlier 06:37 con precisión 0,01%).
