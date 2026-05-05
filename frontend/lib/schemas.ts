@@ -268,6 +268,17 @@ const TradingConfigBaseFields = {
   base_token_symbol: z.string().min(1).max(16),
   base_token_price_usd: z.number().positive(),
   allowed_token_symbols: z.array(z.string().min(1).max(16)),
+  // BUG-2 fix: per-token USD prices (operator-managed). Optional in frontend
+  // type so legacy components that don't manage this field still typecheck;
+  // backend Zod has .default({}) so unset arrives as {}. Same pattern below
+  // for the simulation maps — keeps the inferred type ergonomic.
+  token_prices_usd: z.record(z.string(), z.number().positive()).optional(),
+  // Simulation knobs (paper-trade preview).
+  simulation_capital_usd: z.number().positive().nullable().optional(),
+  simulation_per_token_amounts_usd: z.record(z.string(), z.number().positive()).optional(),
+  simulation_per_strategy_caps_usd: z.record(z.string(), z.number().positive()).optional(),
+  simulation_target_profit_usd: z.number().nonnegative().nullable().optional(),
+  simulation_target_roi_pct: z.number().nonnegative().nullable().optional(),
   min_profit_usd: z.number().nonnegative(),
   min_roi_pct: z.number().nonnegative(),
   min_landing_probability: z.number().min(0).max(1),

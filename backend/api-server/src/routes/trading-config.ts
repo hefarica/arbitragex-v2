@@ -30,6 +30,20 @@ const TradingConfigSchema = z
     base_token_price_usd: z.number().positive(),
     allowed_token_symbols: z.array(z.string().min(1).max(16)).max(64),
 
+    // BUG-2 fix (PriceOracle): per-token USD prices, operator-managed.
+    token_prices_usd: z.record(z.string().min(1).max(16), z.number().positive()).default({}),
+
+    // Simulation knobs (paper-trade preview, decoupled from operational capital).
+    simulation_capital_usd: z.number().positive().nullable().optional(),
+    simulation_per_token_amounts_usd: z
+      .record(z.string().min(1).max(16), z.number().positive())
+      .default({}),
+    simulation_per_strategy_caps_usd: z
+      .record(z.string().min(1).max(64), z.number().positive())
+      .default({}),
+    simulation_target_profit_usd: z.number().nonnegative().nullable().optional(),
+    simulation_target_roi_pct: z.number().nonnegative().nullable().optional(),
+
     min_profit_usd: z.number().nonnegative(),
     min_roi_pct: z.number().nonnegative(),
     min_landing_probability: z.number().min(0).max(1).default(0.5),
@@ -83,6 +97,14 @@ interface DbRow {
   base_token_symbol: string;
   base_token_price_usd: string;
   allowed_token_symbols: string[];
+  // BUG-2 fix + simulation knobs (migration 032).
+  // pg returns JSONB as already-parsed objects; numeric NULLABLEs as string|null.
+  token_prices_usd: Record<string, number>;
+  simulation_capital_usd: string | null;
+  simulation_per_token_amounts_usd: Record<string, number>;
+  simulation_per_strategy_caps_usd: Record<string, number>;
+  simulation_target_profit_usd: string | null;
+  simulation_target_roi_pct: string | null;
   min_profit_usd: string;
   min_roi_pct: string;
   min_landing_probability: string;
@@ -103,12 +125,23 @@ interface DbRow {
 
 function rowToRedisState(row: DbRow): Record<string, unknown> {
   // Numerics stringified by pg → cast to number for Redis JSON consumed by Rust.
+  // JSONB columns come back as already-parsed objects; pass through verbatim.
+  // Nullable numerics: preserve null when absent (Rust deserialises as None).
   return {
     chain_id: row.chain_id,
     capital_usd: Number(row.capital_usd),
     base_token_symbol: row.base_token_symbol,
     base_token_price_usd: Number(row.base_token_price_usd),
     allowed_token_symbols: row.allowed_token_symbols,
+    token_prices_usd: row.token_prices_usd ?? {},
+    simulation_capital_usd:
+      row.simulation_capital_usd == null ? null : Number(row.simulation_capital_usd),
+    simulation_per_token_amounts_usd: row.simulation_per_token_amounts_usd ?? {},
+    simulation_per_strategy_caps_usd: row.simulation_per_strategy_caps_usd ?? {},
+    simulation_target_profit_usd:
+      row.simulation_target_profit_usd == null ? null : Number(row.simulation_target_profit_usd),
+    simulation_target_roi_pct:
+      row.simulation_target_roi_pct == null ? null : Number(row.simulation_target_roi_pct),
     min_profit_usd: Number(row.min_profit_usd),
     min_roi_pct: Number(row.min_roi_pct),
     min_landing_probability: Number(row.min_landing_probability),
@@ -145,7 +178,11 @@ export function buildTradingConfigRouter(deps: Deps): Router {
     try {
       const q = await deps.pool.query<DbRow>(
         `SELECT chain_id, capital_usd, base_token_symbol, base_token_price_usd,
-                allowed_token_symbols, min_profit_usd, min_roi_pct,
+                allowed_token_symbols, token_prices_usd,
+                simulation_capital_usd, simulation_per_token_amounts_usd,
+                simulation_per_strategy_caps_usd,
+                simulation_target_profit_usd, simulation_target_roi_pct,
+                min_profit_usd, min_roi_pct,
                 min_landing_probability, min_liquidity_confidence, max_token_risk_score,
                 gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
                 max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
@@ -197,20 +234,31 @@ export function buildTradingConfigRouter(deps: Deps): Router {
         const upsertQ = await deps.pool.query<DbRow>(
           `INSERT INTO trading_config (
               chain_id, capital_usd, base_token_symbol, base_token_price_usd,
-              allowed_token_symbols, min_profit_usd, min_roi_pct,
+              allowed_token_symbols, token_prices_usd,
+              simulation_capital_usd, simulation_per_token_amounts_usd,
+              simulation_per_strategy_caps_usd,
+              simulation_target_profit_usd, simulation_target_roi_pct,
+              min_profit_usd, min_roi_pct,
               min_landing_probability, min_liquidity_confidence, max_token_risk_score,
               gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
               max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
               enabled_strategies, enabled, updated_by
             )
             VALUES (
-              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+              $1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb,$9::jsonb,$10,$11,
+              $12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
             )
             ON CONFLICT (chain_id) DO UPDATE SET
               capital_usd = EXCLUDED.capital_usd,
               base_token_symbol = EXCLUDED.base_token_symbol,
               base_token_price_usd = EXCLUDED.base_token_price_usd,
               allowed_token_symbols = EXCLUDED.allowed_token_symbols,
+              token_prices_usd = EXCLUDED.token_prices_usd,
+              simulation_capital_usd = EXCLUDED.simulation_capital_usd,
+              simulation_per_token_amounts_usd = EXCLUDED.simulation_per_token_amounts_usd,
+              simulation_per_strategy_caps_usd = EXCLUDED.simulation_per_strategy_caps_usd,
+              simulation_target_profit_usd = EXCLUDED.simulation_target_profit_usd,
+              simulation_target_roi_pct = EXCLUDED.simulation_target_roi_pct,
               min_profit_usd = EXCLUDED.min_profit_usd,
               min_roi_pct = EXCLUDED.min_roi_pct,
               min_landing_probability = EXCLUDED.min_landing_probability,
@@ -227,7 +275,11 @@ export function buildTradingConfigRouter(deps: Deps): Router {
               updated_by = EXCLUDED.updated_by,
               updated_at = NOW()
             RETURNING chain_id, capital_usd, base_token_symbol, base_token_price_usd,
-                      allowed_token_symbols, min_profit_usd, min_roi_pct,
+                      allowed_token_symbols, token_prices_usd,
+                      simulation_capital_usd, simulation_per_token_amounts_usd,
+                      simulation_per_strategy_caps_usd,
+                      simulation_target_profit_usd, simulation_target_roi_pct,
+                      min_profit_usd, min_roi_pct,
                       min_landing_probability, min_liquidity_confidence, max_token_risk_score,
                       gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
                       max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
@@ -238,6 +290,12 @@ export function buildTradingConfigRouter(deps: Deps): Router {
             body.base_token_symbol,
             body.base_token_price_usd,
             body.allowed_token_symbols,
+            JSON.stringify(body.token_prices_usd ?? {}),
+            body.simulation_capital_usd ?? null,
+            JSON.stringify(body.simulation_per_token_amounts_usd ?? {}),
+            JSON.stringify(body.simulation_per_strategy_caps_usd ?? {}),
+            body.simulation_target_profit_usd ?? null,
+            body.simulation_target_roi_pct ?? null,
             body.min_profit_usd,
             body.min_roi_pct,
             body.min_landing_probability,
@@ -295,7 +353,11 @@ export function buildTradingConfigRouter(deps: Deps): Router {
       try {
         const q = await deps.pool.query<DbRow>(
           `SELECT chain_id, capital_usd, base_token_symbol, base_token_price_usd,
-                  allowed_token_symbols, min_profit_usd, min_roi_pct,
+                  allowed_token_symbols, token_prices_usd,
+                  simulation_capital_usd, simulation_per_token_amounts_usd,
+                  simulation_per_strategy_caps_usd,
+                  simulation_target_profit_usd, simulation_target_roi_pct,
+                  min_profit_usd, min_roi_pct,
                   min_landing_probability, min_liquidity_confidence, max_token_risk_score,
                   gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
                   max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,

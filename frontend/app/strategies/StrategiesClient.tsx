@@ -24,6 +24,7 @@ import { StrategyCatalogTab } from "./tabs/StrategyCatalogTab";
 import { MevRelaysTab } from "./tabs/MevRelaysTab";
 import { TokenAllowlistTab } from "./tabs/TokenAllowlistTab";
 import { AuditTab } from "./tabs/AuditTab";
+import { SimulationTab } from "./tabs/SimulationTab";
 
 interface Props {
   initialConfig: TradingConfigResponse | null;
@@ -76,6 +77,7 @@ export function StrategiesClient({ initialConfig, initialCatalog, initialError }
         <TabsTrigger value="catalog">Catálogo</TabsTrigger>
         <TabsTrigger value="relays">MEV Services</TabsTrigger>
         <TabsTrigger value="tokens">Tokens</TabsTrigger>
+        <TabsTrigger value="simulation">Simulación</TabsTrigger>
         <TabsTrigger value="audit">Auditoría</TabsTrigger>
       </TabsList>
 
@@ -99,6 +101,10 @@ export function StrategiesClient({ initialConfig, initialCatalog, initialError }
 
       <TabsContent value="tokens" className="mt-4">
         <TokenAllowlistTab config={config} onSaved={setConfig} adminToken={adminToken} actor={actor} />
+      </TabsContent>
+
+      <TabsContent value="simulation" className="mt-4">
+        <SimulationTab config={config} onSaved={setConfig} adminToken={adminToken} actor={actor} />
       </TabsContent>
 
       <TabsContent value="audit" className="mt-4">
