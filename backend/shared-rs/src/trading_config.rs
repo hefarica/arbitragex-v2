@@ -68,7 +68,7 @@ pub struct TradingConfigState {
     #[serde(default)]
     pub token_prices_usd: HashMap<String, f64>,
 
-    /// **Simulation knob** (decoupled from operational `capital_usd`).
+    /// **Simulation knob — global cap** (decoupled from operational `capital_usd`).
     ///
     /// When `Some(amount)`, the spine evaluator uses `amount` as the effective
     /// capital cap for ALL math + risk policy decisions, INSTEAD of `capital_usd`.
@@ -78,16 +78,50 @@ pub struct TradingConfigState {
     ///
     /// When `None` (default), the evaluator falls back to `capital_usd` — pure
     /// backward-compatible behaviour.
-    ///
-    /// Example use: operator runs prod with `capital_usd: 10` (test) and sets
-    /// `simulation_capital_usd: 10000` to explore what opportunities WOULD pass
-    /// gates at $10K capital. Dashboard fills with realistic profit estimations
-    /// per pair / arbitrage type without the operator committing real funds.
-    ///
-    /// `serde(default)` ensures existing Redis configs (without this field)
-    /// deserialise correctly with `None`.
     #[serde(default)]
     pub simulation_capital_usd: Option<f64>,
+
+    /// **Simulation per-token amount caps** (USD), keyed by token symbol.
+    /// When set for a given token, the evaluator caps the input side of any
+    /// candidate where `token_in == this_symbol` at the corresponding amount.
+    /// Lets the operator model "use no more than $5K when WETH is the input"
+    /// independently from other tokens. Lookup is case-insensitive.
+    ///
+    /// Combined with `simulation_capital_usd` and `simulation_per_strategy_caps_usd`
+    /// via `effective_capital_for()` — the MIN of all applicable caps wins.
+    /// Empty map (default) → no per-token override.
+    #[serde(default)]
+    pub simulation_per_token_amounts_usd: HashMap<String, f64>,
+
+    /// **Simulation per-strategy caps** (USD), keyed by strategy_kind string
+    /// (e.g. "dex_arb_v2v2", "triangular", "cex_dex"). When set, the evaluator
+    /// caps any candidate of that strategy at the corresponding amount.
+    /// Lets the operator model strategy-specific risk envelopes without
+    /// touching operational `capital_usd`. Lookup is case-insensitive.
+    ///
+    /// Combined with the global + per-token caps via `effective_capital_for()`
+    /// — the MIN of all applicable caps wins. Empty map (default) → no
+    /// per-strategy override.
+    #[serde(default)]
+    pub simulation_per_strategy_caps_usd: HashMap<String, f64>,
+
+    /// **Simulation UI filter — minimum profit** (USD) the operator wants to
+    /// see surfaced in the dashboard. Backend STORES this value but does NOT
+    /// gate on it (R8 fail-honest: persist all real candidates, let the UI
+    /// filter what to display). Frontend reads this to suppress sub-target
+    /// rows from the live opportunities view.
+    ///
+    /// `None` (default) → UI shows all opportunities regardless of profit.
+    #[serde(default)]
+    pub simulation_target_profit_usd: Option<f64>,
+
+    /// **Simulation UI filter — minimum ROI percent** the operator wants to
+    /// see surfaced in the dashboard. Same semantics as
+    /// `simulation_target_profit_usd` — UI hint only, backend persists honestly.
+    ///
+    /// `None` (default) → UI shows all opportunities regardless of ROI.
+    #[serde(default)]
+    pub simulation_target_roi_pct: Option<f64>,
 
     // Profit gate thresholds
     pub min_profit_usd: f64,
@@ -124,12 +158,74 @@ impl TradingConfigState {
         }
     }
 
-    /// Returns the effective capital used for math sizing + risk policy bounds.
-    /// Honours `simulation_capital_usd` when set, otherwise falls back to the
-    /// operational `capital_usd`. Single source of truth for spine callers —
-    /// they should NEVER read `capital_usd` directly to make sizing decisions.
+    /// Returns the effective capital used for math sizing + risk policy bounds
+    /// when neither token nor strategy context is available. Honours the global
+    /// `simulation_capital_usd` knob when set, otherwise falls back to the
+    /// operational `capital_usd`.
+    ///
+    /// **Prefer `effective_capital_for(token, strategy)` whenever the spine
+    /// has the candidate's symbols** — that one also honours per-token and
+    /// per-strategy caps, taking the MIN of all applicable ceilings.
     pub fn effective_capital_usd(&self) -> f64 {
         self.simulation_capital_usd.unwrap_or(self.capital_usd)
+    }
+
+    /// Resolves the effective capital cap for a specific (token_in, strategy)
+    /// pair, honouring all three simulation knobs:
+    ///
+    ///   1. `simulation_per_token_amounts_usd[token_in]` — case-insensitive
+    ///   2. `simulation_per_strategy_caps_usd[strategy_kind]` — case-insensitive
+    ///   3. `simulation_capital_usd` — global sim cap
+    ///   4. Operational `capital_usd` — fallback when no sim caps apply
+    ///
+    /// When MULTIPLE caps apply, the MINIMUM wins (most conservative). When
+    /// none of the simulation knobs apply, the operator's operational
+    /// `capital_usd` is returned untouched.
+    ///
+    /// Token symbols and strategy_kind are matched case-insensitively to
+    /// shield against operator typos in the Redis config.
+    pub fn effective_capital_for(&self, token_in_symbol: &str, strategy_kind: &str) -> f64 {
+        let token_cap = self.lookup_per_token_cap(token_in_symbol);
+        let strategy_cap = self.lookup_per_strategy_cap(strategy_kind);
+        let global_cap = self.simulation_capital_usd;
+
+        // Collect the sim caps that are actually set for this candidate.
+        let applicable: Vec<f64> = [global_cap, token_cap, strategy_cap]
+            .iter()
+            .filter_map(|c| *c)
+            .collect();
+
+        if applicable.is_empty() {
+            // No simulation overrides apply → operational capital governs.
+            self.capital_usd
+        } else {
+            // Most-conservative: MIN of all applicable caps.
+            applicable.into_iter().fold(f64::INFINITY, f64::min)
+        }
+    }
+
+    /// Case-insensitive lookup helper for `simulation_per_token_amounts_usd`.
+    fn lookup_per_token_cap(&self, symbol: &str) -> Option<f64> {
+        if symbol.is_empty() {
+            return None;
+        }
+        let upper = symbol.to_ascii_uppercase();
+        self.simulation_per_token_amounts_usd
+            .iter()
+            .find(|(k, _)| k.to_ascii_uppercase() == upper)
+            .map(|(_, v)| *v)
+    }
+
+    /// Case-insensitive lookup helper for `simulation_per_strategy_caps_usd`.
+    fn lookup_per_strategy_cap(&self, strategy_kind: &str) -> Option<f64> {
+        if strategy_kind.is_empty() {
+            return None;
+        }
+        let upper = strategy_kind.to_ascii_uppercase();
+        self.simulation_per_strategy_caps_usd
+            .iter()
+            .find(|(k, _)| k.to_ascii_uppercase() == upper)
+            .map(|(_, v)| *v)
     }
 
     /// True if `token` (case-insensitive symbol) is in the operator's allowlist.
@@ -248,6 +344,10 @@ mod tests {
             allowed_token_symbols: vec!["WETH".into(), "USDC".into(), "USDT".into()],
             token_prices_usd: HashMap::new(),
             simulation_capital_usd: None,
+            simulation_per_token_amounts_usd: HashMap::new(),
+            simulation_per_strategy_caps_usd: HashMap::new(),
+            simulation_target_profit_usd: None,
+            simulation_target_roi_pct: None,
             min_profit_usd: 2.0,
             min_roi_pct: 0.3,
             min_landing_probability: 0.5,
@@ -326,5 +426,83 @@ mod tests {
         let mut s = sample_state();
         s.simulation_capital_usd = Some(100.0);
         assert_eq!(s.effective_capital_usd(), 100.0);
+    }
+
+    // ----------------------------------------------------------------
+    // effective_capital_for(token, strategy) — multi-knob resolution
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn effective_capital_for_falls_back_to_operational_when_no_sim_caps() {
+        let s = sample_state(); // capital_usd=1000, all sim fields empty/None
+        assert_eq!(s.effective_capital_for("WETH", "dex_arb_v2v2"), 1000.0);
+    }
+
+    #[test]
+    fn effective_capital_for_uses_global_sim_when_only_global_set() {
+        let mut s = sample_state();
+        s.simulation_capital_usd = Some(50_000.0);
+        // Global applies regardless of token/strategy
+        assert_eq!(s.effective_capital_for("WETH", "dex_arb_v2v2"), 50_000.0);
+        assert_eq!(s.effective_capital_for("USDC", "triangular"), 50_000.0);
+    }
+
+    #[test]
+    fn effective_capital_for_per_token_cap_applies_when_token_matches() {
+        let mut s = sample_state();
+        s.simulation_capital_usd = Some(50_000.0);
+        s.simulation_per_token_amounts_usd.insert("WETH".into(), 5_000.0);
+        // WETH input: per-token $5K wins over global $50K (MIN)
+        assert_eq!(s.effective_capital_for("WETH", "dex_arb_v2v2"), 5_000.0);
+        // USDC input: per-token doesn't apply, global $50K used
+        assert_eq!(s.effective_capital_for("USDC", "dex_arb_v2v2"), 50_000.0);
+    }
+
+    #[test]
+    fn effective_capital_for_per_strategy_cap_applies_when_strategy_matches() {
+        let mut s = sample_state();
+        s.simulation_capital_usd = Some(50_000.0);
+        s.simulation_per_strategy_caps_usd.insert("triangular".into(), 2_000.0);
+        // triangular: per-strategy $2K wins over global $50K
+        assert_eq!(s.effective_capital_for("WETH", "triangular"), 2_000.0);
+        // dex_arb: per-strategy doesn't apply, global $50K used
+        assert_eq!(s.effective_capital_for("WETH", "dex_arb_v2v2"), 50_000.0);
+    }
+
+    #[test]
+    fn effective_capital_for_uses_min_when_multiple_caps_apply() {
+        let mut s = sample_state();
+        s.simulation_capital_usd = Some(50_000.0);
+        s.simulation_per_token_amounts_usd.insert("WETH".into(), 5_000.0);
+        s.simulation_per_strategy_caps_usd.insert("triangular".into(), 2_000.0);
+        // WETH + triangular: per-strategy $2K is MIN (wins over $5K and $50K)
+        assert_eq!(s.effective_capital_for("WETH", "triangular"), 2_000.0);
+        // WETH + dex_arb: per-token $5K wins (only token cap applies)
+        assert_eq!(s.effective_capital_for("WETH", "dex_arb_v2v2"), 5_000.0);
+        // USDC + triangular: per-strategy $2K wins
+        assert_eq!(s.effective_capital_for("USDC", "triangular"), 2_000.0);
+        // USDC + dex_arb: only global $50K
+        assert_eq!(s.effective_capital_for("USDC", "dex_arb_v2v2"), 50_000.0);
+    }
+
+    #[test]
+    fn effective_capital_for_lookups_are_case_insensitive() {
+        let mut s = sample_state();
+        s.simulation_per_token_amounts_usd.insert("WETH".into(), 5_000.0);
+        s.simulation_per_strategy_caps_usd.insert("dex_arb_v2v2".into(), 3_000.0);
+        // Lower-case input should still match upper-case keys
+        assert_eq!(s.effective_capital_for("weth", "dex_arb_v2v2"), 3_000.0);
+        assert_eq!(s.effective_capital_for("WeTh", "DEX_ARB_V2V2"), 3_000.0);
+    }
+
+    #[test]
+    fn effective_capital_for_per_token_alone_overrides_operational() {
+        // If operator only sets per-token caps (no global, no per-strategy),
+        // the per-token cap takes precedence over operational capital_usd.
+        let mut s = sample_state(); // capital_usd = 1000
+        s.simulation_per_token_amounts_usd.insert("WETH".into(), 250.0);
+        assert_eq!(s.effective_capital_for("WETH", "dex_arb_v2v2"), 250.0);
+        // Non-matching token: no sim cap → operational capital $1000
+        assert_eq!(s.effective_capital_for("USDC", "dex_arb_v2v2"), 1000.0);
     }
 }

@@ -190,11 +190,14 @@ impl<'a> ConfigAwareEvaluator<'a> {
         // scaling under-estimates slippage on smaller trades but eliminates
         // the asymmetric inflation that pollutes dashboards.
         //
-        // Uses `effective_capital_usd()` so the simulation knob
-        // (`simulation_capital_usd`) overrides operational `capital_usd`
-        // when set — operator can preview "what would $X capital surface?"
-        // without touching production sizing.
-        let effective_capital = self.config.effective_capital_usd();
+        // Uses `effective_capital_for(token_in_symbol, strategy_kind)` so
+        // operator's full set of simulation knobs apply — global cap,
+        // per-token caps, AND per-strategy caps. The MIN of all applicable
+        // caps wins. When no sim knobs are set, operational `capital_usd`
+        // governs (backward compat).
+        let effective_capital = self
+            .config
+            .effective_capital_for(token_in_id, strategy_kind);
         let observed_amount_in_usd = candidate.amount_in * in_price;
         let amount_in_usd = observed_amount_in_usd.min(effective_capital);
         let cap_ratio = if observed_amount_in_usd > 0.0 {
@@ -350,6 +353,10 @@ mod tests {
             allowed_token_symbols: vec!["WETH".into(), "USDC".into()],
             token_prices_usd: HashMap::new(),
             simulation_capital_usd: None,
+            simulation_per_token_amounts_usd: HashMap::new(),
+            simulation_per_strategy_caps_usd: HashMap::new(),
+            simulation_target_profit_usd: None,
+            simulation_target_roi_pct: None,
             min_profit_usd: 1.0,
             min_roi_pct: 0.1,
             min_landing_probability: 0.5,
@@ -714,6 +721,79 @@ mod tests {
         assert!(
             outcome.gross_profit_usd > 400.0 && outcome.gross_profit_usd < 600.0,
             "simulation override should expose full ~$500 gross profit, got {}",
+            outcome.gross_profit_usd,
+        );
+    }
+
+    /// Per-token simulation cap takes precedence over global sim cap when
+    /// the candidate's token_in matches. Models "use no more than $5K when
+    /// WETH is the input even though my global sim is $50K".
+    #[test]
+    fn per_token_simulation_cap_wins_over_global() {
+        let mut c = cfg(); // capital_usd = 1000, base_token_price = 2000
+        c.simulation_capital_usd = Some(50_000.0); // global big sim
+        c.simulation_per_token_amounts_usd
+            .insert("WETH".into(), 5_000.0); // WETH input capped at $5K
+
+        // 5 ETH input ($10K observed). Global $50K would NOT cap, but
+        // per-token $5K WILL → cap_ratio = 0.5 → gross ~$250 (half of full).
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "test".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "USDC".into()],
+            dex_adapters: vec!["uniswap-v3".into()],
+            amount_in: 5.0,
+            expected_amount_out: 10_500.0,
+            gross_profit: 0.0,
+        };
+        let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+        );
+        let outcome = match out {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome,
+            other => panic!("expected Evaluated outcome, got {:?}", other),
+        };
+        // ratio = $5K / $10K = 0.5; expected_out = $10500 × 0.5 = $5250;
+        // gross = $5250 - $5000 = $250
+        assert!(
+            outcome.gross_profit_usd > 200.0 && outcome.gross_profit_usd < 300.0,
+            "per-token $5K cap should yield ~$250 gross, got {}",
+            outcome.gross_profit_usd,
+        );
+    }
+
+    /// Per-strategy simulation cap applies when strategy_kind matches.
+    /// Models "no more than $2K on dex_arb_v2v2 even with bigger global".
+    #[test]
+    fn per_strategy_simulation_cap_wins_over_global_and_per_token() {
+        let mut c = cfg();
+        c.simulation_capital_usd = Some(50_000.0);
+        c.simulation_per_token_amounts_usd
+            .insert("WETH".into(), 5_000.0);
+        c.simulation_per_strategy_caps_usd
+            .insert("dex_arb_v2v2".into(), 2_000.0); // strategy cap STRICTEST
+
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "test".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "USDC".into()],
+            dex_adapters: vec!["uniswap-v3".into()],
+            amount_in: 5.0,
+            expected_amount_out: 10_500.0,
+            gross_profit: 0.0,
+        };
+        let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+        );
+        let outcome = match out {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome,
+            other => panic!("expected Evaluated outcome, got {:?}", other),
+        };
+        // MIN of $50K / $5K / $2K = $2K → ratio = $2K / $10K = 0.2
+        // expected_out = $10500 × 0.2 = $2100; gross = $2100 - $2000 = $100
+        assert!(
+            outcome.gross_profit_usd > 70.0 && outcome.gross_profit_usd < 130.0,
+            "MIN-of-3-caps should yield ~$100 gross with strategy cap winning, got {}",
             outcome.gross_profit_usd,
         );
     }
