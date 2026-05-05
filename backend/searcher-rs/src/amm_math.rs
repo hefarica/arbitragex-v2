@@ -16,6 +16,25 @@ use ethers::providers::{Http, Provider};
 use ethers::types::{Address, Bytes, U256};
 use std::sync::Arc;
 
+/// Convert a wei-denominated decimal string to f64 token units using the
+/// token's actual decimal precision.
+///
+/// `wei_str` — decimal integer string from EVM calldata (e.g. "49589584000000000").
+/// `decimals` — token's decimal precision: 18 for WETH/most ERC-20s, 6 for USDC/USDT,
+///              8 for WBTC, etc.
+///
+/// Returns 0.0 if the string fails to parse. Lossy past ~15 significant figures
+/// (f64 mantissa). Never re-fed into on-chain arithmetic — display/scoring path only.
+///
+/// **Why this exists (BUG-1, 2026-05-04):** scanner.rs previously divided by 1e18
+/// unconditionally, ignoring `TokenMeta.decimals`. For 6-decimal tokens (USDT, USDC)
+/// this collapsed amount_in to ~0, making BUG-3's capital cap a no-op and producing
+/// downstream ROI in the billions of percent. Always pass the token's true decimals.
+pub fn wei_str_to_token_units(wei_str: &str, decimals: u8) -> f64 {
+    let raw: f64 = wei_str.parse::<f64>().unwrap_or(0.0);
+    raw / 10f64.powi(decimals as i32)
+}
+
 /// V2 constant-product market maker output amount, post-fee.
 ///
 /// Formula (UniswapV2Library.getAmountOut):
@@ -267,6 +286,72 @@ mod tests {
         let no_fee = v2_amount_out(amount_in, reserve_in, reserve_out, 0);
         let with_fee = v2_amount_out(amount_in, reserve_in, reserve_out, 30);
         assert!(with_fee < no_fee, "with_fee={} should be < no_fee={}", with_fee, no_fee);
+    }
+
+    // ------------------------------------------------------------------
+    // wei_str_to_token_units — decimal-aware conversion (BUG-1 prevention)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn wei_str_weth_18_decimals() {
+        // 1 WETH = 1e18 wei → 1.0 token units
+        assert_eq!(wei_str_to_token_units("1000000000000000000", 18), 1.0);
+    }
+
+    #[test]
+    fn wei_str_usdt_6_decimals() {
+        // 1 USDT raw (6 decimals) = "1000000" → 1.0 token units.
+        // Pre-fix scanner code (always /1e18) returned 1e-12 here — the
+        // root cause of the 42-billion-% ROI in production.
+        assert_eq!(wei_str_to_token_units("1000000", 6), 1.0);
+    }
+
+    #[test]
+    fn wei_str_wbtc_8_decimals() {
+        // 1 WBTC raw (8 decimals) = "100000000" → 1.0 token units.
+        assert_eq!(wei_str_to_token_units("100000000", 8), 1.0);
+    }
+
+    #[test]
+    fn wei_str_zero_amount() {
+        assert_eq!(wei_str_to_token_units("0", 18), 0.0);
+        assert_eq!(wei_str_to_token_units("0", 6), 0.0);
+    }
+
+    #[test]
+    fn wei_str_invalid_returns_zero() {
+        // Preserves prior fallback behaviour (silent zero on parse failure)
+        // so callers don't need to distinguish "unknown" from "zero" — both
+        // safely flow into the gate as "no opportunity to act on".
+        assert_eq!(wei_str_to_token_units("not_a_number", 18), 0.0);
+        assert_eq!(wei_str_to_token_units("", 6), 0.0);
+    }
+
+    #[test]
+    fn wei_str_bug1_regression_usdt_input() {
+        // Reproduces the production live event 2026-05-04 11:01:14 (USDT-WETH):
+        //   amount_in_wei = "10000000000" (= 10,000 USDT raw with 6 decimals)
+        //   pre-fix:  10000000000 / 1e18 = 1e-8           → amount_in_usd ≈ $0
+        //   post-fix: 10000000000 / 1e6  = 10000          → amount_in_usd ≈ $10K
+        //
+        // With the right value the BUG-3 capital cap correctly limits exposure
+        // to operator capital (≤$10) instead of letting the input collapse to
+        // zero and the cap become a no-op.
+        let result = wei_str_to_token_units("10000000000", 6);
+        assert!(
+            (result - 10_000.0).abs() < 1e-6,
+            "expected 10000 USDT, got {}",
+            result
+        );
+
+        // Sanity: the old buggy semantic produced a ~1e-8 value, confirming
+        // the scenario this fix prevents.
+        let old_buggy = "10000000000".parse::<f64>().unwrap_or(0.0) / 1e18;
+        assert!(
+            old_buggy < 1e-7,
+            "old buggy value was {}, confirming the bug semantic",
+            old_buggy
+        );
     }
 }
 

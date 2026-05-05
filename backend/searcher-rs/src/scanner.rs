@@ -287,7 +287,6 @@ async fn process_pending(
     // Hot-reads operator's trading config from Redis (≤1s cache TTL). When no
     // config exists for this chain, the scanner OBSERVES but does not score —
     // dashboards see the detection but no fabricated profit numbers.
-    let amount_in_f64 = opportunity.amount_in_wei.parse::<f64>().unwrap_or(0.0) / 1e18;
     let mut opportunity = opportunity;
 
     let cfg_opt = match trading_config.state(client.chain_id).await {
@@ -310,6 +309,19 @@ async fn process_pending(
 
     let meta_in = reserves::get_token_meta(redis, client.chain_id, &token_in_lower).await.ok().flatten();
     let meta_out = reserves::get_token_meta(redis, client.chain_id, &token_out_lower).await.ok().flatten();
+
+    // BUG-1 fix (2026-05-04): use the token's actual decimals when converting
+    // amount_in_wei to f64 token units. The pre-fix code divided by 1e18
+    // unconditionally, collapsing 6-decimal tokens (USDT, USDC) to ~0 in
+    // f64 space and producing downstream ROI in the billions of percent
+    // when composed with BUG-3 (now also fixed). Defaults to 18 only when
+    // the token meta is unknown — preserving prior behaviour for unmapped
+    // tokens while honouring real decimals for the curated allowlist.
+    let amount_in_decimals: u8 = meta_in.as_ref().map(|m| m.decimals).unwrap_or(18);
+    let amount_in_f64 = amm_math::wei_str_to_token_units(
+        &opportunity.amount_in_wei,
+        amount_in_decimals,
+    );
 
     let mut expected_amount_out_f64 = amount_in_f64;
     let mut gross_profit_f64 = 0.0_f64;
