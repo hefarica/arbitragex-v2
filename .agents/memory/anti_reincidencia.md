@@ -2,7 +2,7 @@
 
 Este archivo actúa como memoria técnica persistente para el agente. Su función es documentar los peores incidentes, los errores cometidos en la fase de resolución y las reglas operativas para prevenir futuros fracasos similares.
 
-> **Última actualización:** 2026-05-03T08:48:00Z
+> **Última actualización:** 2026-05-05T11:50:00Z
 
 ---
 
@@ -285,3 +285,87 @@ Antes de declarar que el pipeline está operativo, SIEMPRE ejecutar la secuencia
 - Antes: 3 rows en PG, última del 2 de Mayo 23:05 UTC.
 - Después: 10+ rows y creciendo, última de hace segundos.
 - Endpoint `/api/opportunities/live`: `{ "count": 10, "items": [...] }` con datos frescos.
+
+---
+
+## Incidente #7: Cap de capital asimétrico inflando profit/ROI hasta 735.184% (BUG-3)
+
+**Fecha del aprendizaje:** 4 de Mayo de 2026 (Sesión 4 — auditoría R7 ~10:55 UTC, fix desplegado 11:43 UTC commit `4b99eb8`)
+
+**Qué ocurrió:**
+Auditoría R7 ordenada por el operador después de que un watcher de fondo polleaba `/api/opportunities/live` cada 25s buscando la primera oportunidad con `expected_profit_usd > 0` y no la encontraba. El diagnóstico reveló que SÍ había aparecido una a las 10:25:35 UTC con $113.97 profit y 1.127% ROI, pero también dos outliers históricos: $74.98 (ROI 739%) a las 08:08 y **$73.888,61 (ROI 735.184%)** a las 06:37. Todos con `dex_a = uniswap-v3` y `token_in = WETH`. Un evento live a las 11:01 mostró ROI de **42 mil millones por ciento** (USDT-WETH), tan alto que el INSERT a PostgreSQL falló por overflow de `numeric(10,4)`.
+
+**Qué salió mal:**
+Tres bugs encadenados en el cálculo de profit, donde el operador había configurado `capital_usd = 10` (testing) pero observaba pendientes de mempool con `amount_in ≈ 0,05 ETH` (≈ $125):
+
+1. **BUG-3 (la pistola humeante):** `backend/prioritization-spine/src/config_aware.rs:149-151` (pre-fix) capeaba `amount_in_usd` al capital del operador pero dejaba `expected_amount_out_usd` SIN cap. La fórmula `gross_profit_usd = expected_amount_out_usd - amount_in_usd` producía profit fantasma igual al delta del cap. Para 0,05 ETH input ≈ $125 con cap a $10 y output proporcional ≈ $125 → "profit" reportado = $115.
+
+2. **BUG-2 (no fixed in este PR):** `backend/shared-rs/src/trading_config.rs:107-109` define `profit_token_to_usd(x) = x * base_token_price_usd` — multiplica cualquier token amount por el precio de WETH ($2.500), ignorando el token real. Para token_out = BNB/UNI/etc., un amount como 29,56 UNI se valora como 29,56 WETH × $2.500 = $73.898. Esto explica por qué el outlier 06:37 alcanzó $73K.
+
+3. **BUG-1 (no fixed en este PR):** `backend/searcher-rs/src/scanner.rs:290` divide `amount_in_wei.parse::<f64>() / 1e18` siempre, ignorando `meta_in.decimals`. Para tokens de 6 decimales (USDT, USDC), divide por 1e12 de más → `amount_in_f64 ≈ 0` → BUG-3 dispara cap pero `amount_in_usd ≈ $0` → ROI explota a billions.
+
+**Causa raíz:**
+Asunción incorrecta de simetría: el operador define `capital_usd` como el techo del capital deployable, pero la aritmética del spine trataba el output esperado como independiente del input capeado. La fórmula matemáticamente correcta requiere `cap_ratio = amount_in_usd_capped / observed_amount_in_usd` aplicado a AMBOS lados. Sin esa proporcionalidad, todo cap del input es 100% conversión en profit fantasma.
+
+**Por qué llegó a producción sin detectarse:**
+
+- Los tests existentes en `config_aware.rs` (commit pre-fix) cubrían los gates de allowlist y disabled-strategy, pero NO el camino matemático con cap activo.
+- El test `capital_caps_amount_in` solo verificaba `total_capital_required_usd <= 1000`, que sigue siendo true pre-fix.
+- Las opps con outlier ROI eran raras (3 en 24h ≈ 1 cada 8h), perdidas en el ruido del 99% de opps con profit=0.
+- El sistema de risk gate (`LowLiquidity`) interceptaba la ejecución, así que NUNCA se intentó ejecutar una orden basada en profit fantasma — pero el dashboard mostraba los números absurdos como "oportunidades detectadas".
+
+**Regla derivada (refuerzo de R8 Fail-Honest, capa matemática):**
+> Cuando se aplica un techo (cap, clamp, max/min) a un valor X que se compone con otro valor Y vía `f(X, Y)`, el cap DEBE propagarse proporcionalmente a Y si la composición lo requiere. La asimetría sin justificación matemática produce sentinelas falsas que se persisten como datos veraces. Test obligatorio: para todo cap de capital o liquidez, escribir un test que verifique que el output downstream NO exceda lo que sería realista para el input capeado.
+
+**Fix aplicado (commit `4b99eb8`):**
+```rust
+// backend/prioritization-spine/src/config_aware.rs (post-fix)
+let observed_amount_in_usd = self.config.profit_token_to_usd(candidate.amount_in);
+let amount_in_usd = observed_amount_in_usd.min(self.config.capital_usd);
+let cap_ratio = if observed_amount_in_usd > 0.0 {
+    amount_in_usd / observed_amount_in_usd
+} else {
+    1.0
+};
+let expected_amount_out_usd =
+    self.config.profit_token_to_usd(candidate.expected_amount_out) * cap_ratio;
+```
+
+Tests de regresión añadidos:
+
+- `capital_cap_does_not_inflate_gross_profit` — reproduce el outlier 10:25 (WETH→BNB), assert `gross_profit_usd.abs() < 1.0`.
+- `capital_cap_bounds_roi_to_realistic_range` — reproduce el outlier 06:37 (WETH→UNI), assert `net_roi_pct < 100.000%`. Pre-fix el test calculó ROI = **735.104,81%**, dentro de **0,01%** del valor real de producción (735.184,72%) — la fidelidad del repro confirma que la fórmula del bug está capturada exactamente.
+
+**Validación obligatoria:**
+
+- `cargo test --lib config_aware:: -p prioritization-spine` → 6 tests PASS (4 existentes + 2 nuevos).
+- En producción post-deploy, ninguna nueva opp con `roi_pct > 100` durante ventana de observación.
+- Heartbeat worker emite cada 60s con `pg_period_profit_pos` count — espera de 0 para detección de outliers nuevos.
+
+**Archivos o rutas relacionadas:**
+
+- `backend/prioritization-spine/src/config_aware.rs` (líneas 152-167 fix; 362-455 tests regresión)
+- `backend/searcher-rs/src/workers/heartbeat_worker.rs` (NUEVO — observabilidad pulse 60s)
+- `backend/searcher-rs/src/main.rs` (líneas 184-203 wire del heartbeat)
+- `backend/searcher-rs/src/workers/mod.rs` (export del worker)
+- `backend/shared-rs/src/trading_config.rs:107` (BUG-2, pendiente de fix)
+- `backend/searcher-rs/src/scanner.rs:290` (BUG-1, pendiente de fix)
+
+**Acción correcta en futuras ocasiones:**
+
+- Cuando un valor de configuración (`capital_usd`, `max_position_size`, `min_liquidity`) limita un input que se compone con otros valores en una fórmula, escribir un test que verifique el downstream NO produzca artefactos por la asimetría del cap.
+- Cuando se observen valores absurdos en el dashboard (ROI > 100%, profit > $10K en HFT DEX arb), tratar como bug matemático antes que como oportunidad real. La distribución natural del HFT MEV está en 0,05% – 2% ROI; cualquier outlier > 100% es casi siempre un bug.
+- Schema de PostgreSQL `numeric(10,4)` actúa como última línea de defensa contra estos bugs (overflowing INSERT en lugar de persistir basura), pero no debe ser la única — los bugs deben pillarse antes de llegar a la capa de persistencia.
+
+**Sub-tareas pendientes (commits separados):**
+
+- (a) **BUG-1 fix**: usar `meta_in.decimals` en `scanner.rs:290` en lugar de hardcoded 1e18. Mismo patrón TDD (test reproduciendo USDT 6dec → ROI billion%, post-fix bound). Estimado: 30min.
+- (b) **BUG-2 fix**: implementar oráculo de precios per-token (Chainlink, TWAP, o tabla hardcoded inicial). Sprint dedicado. `profit_token_to_usd(token, amount)` debe recibir el símbolo o address del token, no asumir base.
+- (c) **Pricing oracle**: definir interfaz `PriceOracle` en `shared_rs` con implementación stub para tokens conocidos (WETH, USDC, USDT, DAI, WBTC) + fallback "no precio → no USD" honesto.
+- (d) **Limpieza histórica opcional**: las 3 rows con outliers ($113, $74, $73.888) quedan en PG. `DELETE FROM opportunities WHERE expected_profit_usd > 0 AND detected_at < '2026-05-04 11:43:13+00'` para limpiar histórico contaminado.
+
+**Evidencia del fix:**
+
+- ANTES (pre-deploy 11:43:13): 3 outliers históricos con ROI 1.127% / 739% / 735.184%; `scanner.db_error` por overflow numeric en evento live de 42B% ROI; cap asimétrico produciendo $115 fantasma reproducible numéricamente.
+- DESPUÉS (post-deploy 11:43:13 — ventana 11:43-12:00): 8 nuevas opps insertadas, todas profit=0 (filtradas por TokenNotAllowed antes del math evaluator); 0 `scanner.db_error`; heartbeat emite cada 60s con `pg_period_profit_pos=0` — pipeline limpio.
+- Caveat honesto: en la ventana corta post-deploy ningún tx llegó al math path para exercise empírico del fix; la verificación formal es el test TDD que reproduce el outlier 06:37 con precisión 0,01%.
