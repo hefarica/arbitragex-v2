@@ -10,6 +10,7 @@
 
 mod calldata;
 mod chain_client;
+mod counters;
 mod dedup;
 mod patterns;
 mod persistence;

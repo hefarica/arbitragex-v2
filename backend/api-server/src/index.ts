@@ -81,6 +81,9 @@ app.use(createHttpLogger(SERVICE, cfg.observability.log_level ?? "info"));
 app.use(metricsMiddleware(SERVICE));
 
 app.get("/health", healthHandler(SERVICE, VERSION, startedAt));
+// REST convention alias — load balancers / external monitors expect /api/health.
+// Same handler, no behaviour drift.
+app.get("/api/health", healthHandler(SERVICE, VERSION, startedAt));
 app.get("/metrics", metricsHandler);
 
 /** Public read-only snapshot of system health + kill-switch state. */

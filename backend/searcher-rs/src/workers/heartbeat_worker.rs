@@ -13,8 +13,10 @@
 //!
 //! Cost: 1 Redis XLEN + 1 PG count query per period (default 60s).
 
+use crate::counters::counters;
 use redis::aio::ConnectionManager;
 use sqlx::{postgres::PgPool, Row};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::time::interval;
 use tracing::{info, warn};
@@ -68,6 +70,24 @@ impl HeartbeatWorker {
                 None => (-1, -1),
             };
 
+            // Drain in-memory scanner counters via atomic swap → 0
+            // so each heartbeat reports the delta for the just-elapsed period.
+            // Lock-free; safe across all increment sites in scanner.rs.
+            let c = counters();
+            let pending = c.pending_received.swap(0, Ordering::Relaxed);
+            let decoded = c.decoded_ok.swap(0, Ordering::Relaxed);
+            let enriched_v2 = c.enriched_v2.swap(0, Ordering::Relaxed);
+            let enriched_v3 = c.enriched_v3.swap(0, Ordering::Relaxed);
+            let gate_token_na = c.gate_token_not_allowed.swap(0, Ordering::Relaxed);
+            let gate_strat_dis = c.gate_strategy_disabled.swap(0, Ordering::Relaxed);
+            let gate_no_cfg = c.gate_no_config.swap(0, Ordering::Relaxed);
+            let gate_unk_price = c.gate_unknown_token_price.swap(0, Ordering::Relaxed);
+            let gate_anom = c.gate_anomalous_math.swap(0, Ordering::Relaxed);
+            let gate_other = c.gate_other_rejected.swap(0, Ordering::Relaxed);
+            let passed = c.passed_all_gates.swap(0, Ordering::Relaxed);
+            let db_ok = c.db_persisted.swap(0, Ordering::Relaxed);
+            let db_err = c.db_errors.swap(0, Ordering::Relaxed);
+
             info!(
                 event = "scanner.heartbeat",
                 period_secs = self.period.as_secs(),
@@ -75,6 +95,20 @@ impl HeartbeatWorker {
                 redis_stream_delta = redis_delta,
                 pg_period_inserted = pg_inserted,
                 pg_period_profit_pos = pg_profit_pos,
+                // In-memory pipeline counters (delta this period).
+                pending_received = pending,
+                decoded_ok = decoded,
+                enriched_v2 = enriched_v2,
+                enriched_v3 = enriched_v3,
+                gate_token_not_allowed = gate_token_na,
+                gate_strategy_disabled = gate_strat_dis,
+                gate_no_config = gate_no_cfg,
+                gate_unknown_token_price = gate_unk_price,
+                gate_anomalous_math = gate_anom,
+                gate_other_rejected = gate_other,
+                passed_all_gates = passed,
+                db_persisted = db_ok,
+                db_errors = db_err,
                 "scanner pipeline heartbeat"
             );
         }
