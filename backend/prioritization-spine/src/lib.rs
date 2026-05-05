@@ -8,6 +8,7 @@ pub mod decision;
 pub mod feedback;
 pub mod errors;
 pub mod config_aware;
+pub mod swap_encoder;
 
 pub use types::*;
 pub use evidence::*;
