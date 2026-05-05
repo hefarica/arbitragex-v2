@@ -10,6 +10,7 @@ pub mod errors;
 pub mod config_aware;
 pub mod swap_encoder;
 pub mod erc20_storage;
+pub mod round_trip_executor;
 
 pub use types::*;
 pub use evidence::*;
