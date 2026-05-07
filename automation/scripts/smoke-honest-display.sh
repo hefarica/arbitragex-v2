@@ -29,9 +29,11 @@ echo ""
 
 # ── Check 1: Response shape includes token_in_info and chain_id_out ───────────
 echo "1. Verify /api/opportunities/live response shape"
+# Empty items array → vacuously true (no shape to check on a cold deploy).
+# Non-empty items array → real key-presence check on the first element.
 curl -fsS "$EDGE_URL/api/opportunities/live" \
-  | jq -e '.items[0] | has("token_in_info") and has("chain_id_out")' >/dev/null
-echo "   OK — token_in_info and chain_id_out fields present"
+  | jq -e '.items | if length > 0 then (.[0] | has("token_in_info") and has("chain_id_out")) else true end' >/dev/null
+echo "   OK — token_in_info and chain_id_out fields present (or items empty)"
 
 # ── Check 2: All SP-A items have chain_id_out == null (single-chain scope) ───
 echo "2. Verify cross-chain fields are all NULL (SP-A is single-chain)"

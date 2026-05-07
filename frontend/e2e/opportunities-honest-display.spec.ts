@@ -53,7 +53,7 @@ test("opportunities page shows enriched tokens or honest fallback", async ({ pag
     console.warn(
       "WARN: no Trust Wallet logos visible — enricher may still be warming up",
     );
-  } else {
-    expect(logos).toBeGreaterThan(0);
   }
+  // When logos > 0 the count itself is the evidence; no assertion required here.
+  // The test only fails if the profit-cell invariant above is violated.
 });
