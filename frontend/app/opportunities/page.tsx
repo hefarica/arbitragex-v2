@@ -1,4 +1,4 @@
-import OpportunitiesClient, { OpportunitiesSnapshot } from "./OpportunitiesClient";
+import OpportunitiesClient, { type OpportunitiesSnapshot } from "./OpportunitiesClient";
 import { getApiBaseUrl } from "@/lib/api-client";
 
 export const dynamic = "force-dynamic";

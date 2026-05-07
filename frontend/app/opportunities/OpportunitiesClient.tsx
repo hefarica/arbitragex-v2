@@ -3,23 +3,94 @@ import React, { useEffect, useState, useCallback, startTransition } from "react"
 import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, Clock, AlertTriangle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
-interface Opportunity {
-  id: string;
-  detected_at: string;
-  pair_symbol: string;
-  dex_a: string;
-  dex_b: string;
-  expected_profit_usd: number;
-  roi_pct: number;
-  risk_score: number;
+// ─── Local type mirrors ───────────────────────────────────────────────────────
+// @arbx/shared is a VPS-only package (not installed in local/CI node_modules).
+// We mirror the exact subset of OpportunityListItem needed here, matching
+// shared-ts/src/api-contracts.ts exactly. No cross-package import needed.
+
+/** Mirrors TokenInfoSchema from shared-ts/src/api-contracts.ts. */
+interface TokenInfo {
+  symbol: string | null;
+  decimals: number | null;
+  logo_url: string | null;
+  resolved_via: "onchain_full" | "onchain_partial" | "trustwallet_only" | "failed";
 }
+
+/** Mirrors StrategyKind from shared-ts/src/contracts/index.ts. */
+type StrategyKind =
+  | "dex_arb"
+  | "triangular"
+  | "backrun"
+  | "liquidation"
+  | "flashloan_arb";
+
+/** Mirrors StatusSchema from shared-ts/src/api-contracts.ts. */
+type OpportunityStatus =
+  | "detected"
+  | "validated"
+  | "simulated"
+  | "scored"
+  | "executing"
+  | "executed"
+  | "reconciled"
+  | "rejected"
+  | "failed";
+
+/**
+ * Mirrors OpportunityListItemSchema from shared-ts/src/api-contracts.ts.
+ * All nullable fields per R8 fail-honest semantics.
+ */
+interface OpportunityListItem {
+  id: string;
+  chain_id: number;
+  strategy_kind: StrategyKind;
+  dex_a: string;
+  dex_b: string | null;
+  pair_symbol: string | null;
+  token_in: string;
+  token_in_info: TokenInfo | null;
+  token_out: string;
+  token_out_info: TokenInfo | null;
+  amount_in_wei: string;
+  expected_profit_usd: number | null;
+  roi_pct: number | null;
+  risk_score: number | null;
+  block_number: number | null;
+  rejection_reason: string | null;
+  status: OpportunityStatus;
+  detected_at: string;
+  trace_id: string;
+  chain_id_out: number | null;
+  bridge: string | null;
+  bridge_fee_usd: number | null;
+}
+
+// ─── Component imports (Tasks 10 / 11) ───────────────────────────────────────
+import { TokenChip } from "@/components/TokenChip";
+import { StrategyBadge } from "@/components/StrategyBadge";
+import { StatusPill } from "@/components/StatusPill";
+import { CrossChainSlot } from "@/components/CrossChainSlot";
+import {
+  formatProfitUSD,
+  formatPctOrDash,
+  formatRiskOrDash,
+} from "@/lib/format";
+
+// ─── Tone → Tailwind colour map (used for PROFIT cell) ───────────────────────
+const TONE_CLASS: Record<string, string> = {
+  positive: "text-emerald-400",
+  negative: "text-rose-400",
+  zero:     "text-slate-400",
+  neutral:  "text-slate-400",
+  pending:  "text-slate-600 italic",
+};
 
 type FeedStatus = "POLLING" | "LIVE" | "ERROR";
 
 const POLL_INTERVAL_MS = 4_000;
 
 export type OpportunitiesSnapshot = {
-  opportunities: Opportunity[];
+  opportunities: OpportunityListItem[];
   serverTime: string | null;
   source: string;
 };
@@ -64,6 +135,7 @@ export default function OpportunitiesClient({
     }
   }, [EDGE_URL, feedStatus]);
 
+  // R1: All non-deterministic side effects are inside useEffect — never in render.
   useEffect(() => {
     setIsMounted(true);
     setNow(Date.now());
@@ -101,9 +173,10 @@ export default function OpportunitiesClient({
             Polling edge every {POLL_INTERVAL_MS / 1000}s · {isMounted && lastRefresh ? `Last: ${lastRefresh.toLocaleTimeString()}` : "Loading..."}
           </p>
         </div>
-        
+
         <div className="flex items-center gap-3">
-          <button 
+          <button
+            type="button"
             onClick={fetchOpportunities}
             className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors border border-slate-700"
             title="Force refresh"
@@ -111,8 +184,8 @@ export default function OpportunitiesClient({
             <RefreshCw size={16} className="text-slate-400" />
           </button>
           <div className={`flex items-center gap-2 px-4 py-2 rounded-full border shadow-lg ${
-            feedStatus === 'POLLING' ? 'bg-emerald-900/30 border-emerald-500/50 text-emerald-400' : 
-            feedStatus === 'ERROR' ? 'bg-rose-900/50 border-rose-500/80 text-rose-400 shadow-rose-900/50 animate-pulse' : 
+            feedStatus === 'POLLING' ? 'bg-emerald-900/30 border-emerald-500/50 text-emerald-400' :
+            feedStatus === 'ERROR' ? 'bg-rose-900/50 border-rose-500/80 text-rose-400 shadow-rose-900/50 animate-pulse' :
             'bg-cyan-900/30 border-cyan-500/50 text-cyan-400'
           }`}>
             {feedStatus === 'POLLING' ? <Radio size={18} className="animate-pulse" /> : feedStatus === 'ERROR' ? <ShieldAlert size={18} /> : <Zap size={18} />}
@@ -150,6 +223,7 @@ export default function OpportunitiesClient({
             <tr className="bg-slate-900 text-slate-400 text-sm uppercase tracking-wider">
               <th className="p-4 border-b border-slate-800">Age / Time</th>
               <th className="p-4 border-b border-slate-800">Route</th>
+              <th className="p-4 border-b border-slate-800">Status</th>
               <th className="p-4 border-b border-slate-800 text-right">Net Profit (USD)</th>
               <th className="p-4 border-b border-slate-800 text-right">Net ROI</th>
               <th className="p-4 border-b border-slate-800 text-center">Score</th>
@@ -162,11 +236,16 @@ export default function OpportunitiesClient({
                 const detectedTime = new Date(opp.detected_at).getTime();
                 const ageSecs = isMounted ? Math.floor((now - detectedTime) / 1000) : 0;
                 const isStale = ageSecs > 12;
+                // R8: risk_score is nullable. Use 0 as fail-safe for triage logic only
+                // (null → not critical triage, which is the safe direction).
                 const scorePercent = Number(opp.risk_score ?? 0) * 100;
                 const isCriticalTriage = scorePercent > 95;
-                
+
+                // Format profit with R8-compliant helper (null → "—").
+                const profit = formatProfitUSD(opp.expected_profit_usd);
+
                 return (
-                  <motion.tr 
+                  <motion.tr
                     key={opp.id}
                     initial={{ opacity: 0, x: -20, backgroundColor: "rgba(16,185,129,0.2)" }}
                     animate={{ opacity: 1, x: 0, backgroundColor: isCriticalTriage ? "rgba(234,179,8,0.05)" : "transparent" }}
@@ -174,6 +253,7 @@ export default function OpportunitiesClient({
                     transition={{ duration: 0.5 }}
                     className={`border-b hover:bg-slate-800/30 transition-all ${isCriticalTriage ? 'border-yellow-500/30 shadow-[inset_0_0_15px_rgba(234,179,8,0.05)] relative' : 'border-slate-800/50'}`}
                   >
+                    {/* ── AGE / TIME column — UNCHANGED ── */}
                     <td className="p-4 font-mono text-xs">
                       {isCriticalTriage && (
                         <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-yellow-400 to-emerald-400 animate-pulse"></div>
@@ -188,50 +268,99 @@ export default function OpportunitiesClient({
                         </div>
                       </div>
                     </td>
+
+                    {/* ── ROUTE column — TokenChip + StrategyBadge + CrossChainSlot + DEX path ── */}
                     <td className="p-4">
-                      <div className="flex flex-col">
-                        <span className="font-semibold text-slate-200 text-sm">{opp.pair_symbol || 'Unknown Pair'}</span>
-                        <span className="text-xs font-mono text-indigo-400">
-                          {opp.dex_a} <span className="text-slate-500">→</span> {opp.dex_b}
-                        </span>
+                      <div className="flex flex-col gap-1.5">
+                        {/* Token pair with rich metadata */}
+                        <div className="flex items-center gap-1.5">
+                          <TokenChip
+                            token_address={opp.token_in}
+                            info={opp.token_in_info}
+                            chain_id={opp.chain_id}
+                          />
+                          <span className="text-slate-600 text-xs" aria-hidden="true">→</span>
+                          <TokenChip
+                            token_address={opp.token_out}
+                            info={opp.token_out_info}
+                            chain_id={opp.chain_id_out ?? opp.chain_id}
+                          />
+                        </div>
+                        {/* Strategy badge + DEX path */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <StrategyBadge strategy_kind={opp.strategy_kind} />
+                          <span className="text-xs font-mono text-indigo-400">
+                            {opp.dex_a}
+                            {opp.dex_b != null && (
+                              <><span className="text-slate-500"> → </span>{opp.dex_b}</>
+                            )}
+                          </span>
+                        </div>
+                        {/* Cross-chain slot — renders null for single-chain opps */}
+                        <CrossChainSlot opp={opp} />
                       </div>
                     </td>
+
+                    {/* ── STATUS column — StatusPill with rejection_reason tooltip ── */}
+                    <td className="p-4">
+                      <StatusPill
+                        status={opp.status}
+                        rejection_reason={opp.rejection_reason}
+                      />
+                    </td>
+
+                    {/* ── NET PROFIT column — R8 fail-honest via formatProfitUSD ── */}
                     <td className="p-4 text-right">
                       <div className="group relative inline-block cursor-help">
-                        <span className="font-mono font-bold text-emerald-400 text-base shadow-emerald-500/10 drop-shadow-md border-b border-dashed border-emerald-500/30">
-                          ${Number(opp.expected_profit_usd).toFixed(2)}
+                        <span className={`font-mono font-bold text-base drop-shadow-md border-b border-dashed border-current/30 ${TONE_CLASS[profit.tone] ?? 'text-slate-400'}`}>
+                          {profit.display}
                         </span>
-                        {/* ZERO MOCKS TOOLTIP */}
-                        <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-slate-900 border border-slate-700 rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 text-left">
-                          <div className="text-xs text-slate-300 font-sans">
-                            <div className="flex justify-between border-b border-slate-700 pb-1 mb-1">
-                              <span>Ganancia Neta (Est):</span>
-                              <span className="text-emerald-400 font-mono">${Number(opp.expected_profit_usd).toFixed(2)}</span>
-                            </div>
-                            <div className="flex justify-between text-slate-500">
-                              <span>Desglose de Gas:</span>
-                              <span className="italic">Pendiente Sim.</span>
-                            </div>
-                            <div className="flex justify-between text-slate-500">
-                              <span>Bribe (MEV):</span>
-                              <span className="italic">Pendiente Sim.</span>
+                        {/* Tooltip: only rendered when profit data is present */}
+                        {opp.expected_profit_usd != null && (
+                          <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-slate-900 border border-slate-700 rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 text-left">
+                            <div className="text-xs text-slate-300 font-sans">
+                              <div className="flex justify-between border-b border-slate-700 pb-1 mb-1">
+                                <span>Ganancia Neta (Est):</span>
+                                <span className={`font-mono ${TONE_CLASS[profit.tone] ?? 'text-slate-400'}`}>{profit.display}</span>
+                              </div>
+                              {opp.bridge_fee_usd != null && (
+                                <div className="flex justify-between text-slate-400">
+                                  <span>Bridge Fee:</span>
+                                  <span className="font-mono">${opp.bridge_fee_usd.toFixed(4)}</span>
+                                </div>
+                              )}
+                              <div className="flex justify-between text-slate-500">
+                                <span>Desglose de Gas:</span>
+                                <span className="italic">Pendiente Sim.</span>
+                              </div>
+                              <div className="flex justify-between text-slate-500">
+                                <span>Bribe (MEV):</span>
+                                <span className="italic">Pendiente Sim.</span>
+                              </div>
                             </div>
                           </div>
-                        </div>
+                        )}
                       </div>
                     </td>
+
+                    {/* ── NET ROI column — R8 fail-honest via formatPctOrDash ── */}
                     <td className="p-4 text-right font-mono text-slate-300">
                       <span className="bg-slate-800/80 px-2 py-1 rounded border border-slate-700/50">
-                        {Number(opp.roi_pct ?? 0).toFixed(2)}%
+                        {formatPctOrDash(opp.roi_pct)}
                       </span>
                     </td>
+
+                    {/* ── SCORE column — R8 fail-honest via formatRiskOrDash ── */}
                     <td className="p-4 text-center">
                       <span className={`px-3 py-1 rounded-full text-xs font-bold border ${scorePercent > 95 ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50 shadow-[0_0_15px_rgba(234,179,8,0.3)] animate-pulse' : scorePercent > 70 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-blue-500/10 text-blue-400 border-blue-500/30'}`}>
-                        {scorePercent.toFixed(1)}%
+                        {formatRiskOrDash(opp.risk_score)}
                       </span>
                     </td>
+
+                    {/* ── ACTION column — UNCHANGED ── */}
                     <td className="p-4 text-center">
-                      <button 
+                      <button
+                        type="button"
                         className={`px-4 py-1.5 rounded text-white text-xs font-bold transition-colors shadow-lg ${isCriticalTriage ? 'bg-gradient-to-r from-yellow-600 to-amber-500 hover:from-yellow-500 hover:to-amber-400 shadow-yellow-900/40' : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-900/20'}`}
                       >
                         SIMULATE
@@ -243,7 +372,7 @@ export default function OpportunitiesClient({
             </AnimatePresence>
             {opportunities.length === 0 && (
               <tr>
-                <td colSpan={6} className="p-8 text-center text-slate-500 italic">No opportunities detected. Searcher scanning mempool...</td>
+                <td colSpan={7} className="p-8 text-center text-slate-500 italic">No opportunities detected. Searcher scanning mempool...</td>
               </tr>
             )}
           </tbody>
