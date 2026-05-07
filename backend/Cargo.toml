@@ -8,6 +8,7 @@ members = [
     "recon", "math-engine",
     "prioritization-spine",
     "simulator-v2",
+    "token-enricher",
 ]
 
 [workspace.package]
