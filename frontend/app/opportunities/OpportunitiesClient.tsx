@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState, useCallback, startTransition } from "react";
-import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, Clock, AlertTriangle } from "lucide-react";
+import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, Clock, AlertTriangle, EyeOff, Eye } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 // ─── Local type mirrors ───────────────────────────────────────────────────────
@@ -105,12 +105,16 @@ export default function OpportunitiesClient({
   const [feedStatus, setFeedStatus] = useState<FeedStatus>("POLLING");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [now, setNow] = useState<number>(0);
+  // R1: viableOnly initialises to true (deterministic SSR-safe value).
+  // localStorage read happens in useEffect — never in render.
+  const [viableOnly, setViableOnly] = useState(true);
 
   const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
 
   const fetchOpportunities = useCallback(async () => {
     try {
-      const res = await fetch(`${EDGE_URL}/api/opportunities/live`, {
+      const url = `${EDGE_URL}/api/opportunities/live?viable_only=${viableOnly}&limit=50`;
+      const res = await fetch(url, {
         headers: { accept: "application/json" },
         signal: AbortSignal.timeout(4000),
         cache: "no-store",
@@ -133,7 +137,18 @@ export default function OpportunitiesClient({
       setFeedStatus(prev => prev !== "LIVE" ? "ERROR" : prev);
       setErrorMsg((e as Error).message);
     }
-  }, [EDGE_URL]);
+  }, [EDGE_URL, viableOnly]);
+
+  // R1: localStorage read happens here — never during render (SSR has no localStorage).
+  useEffect(() => {
+    const stored = localStorage.getItem("arbx-opps-viable-only");
+    if (stored === "false") setViableOnly(false);
+  }, []);
+
+  const onToggleViableOnly = useCallback((newValue: boolean) => {
+    setViableOnly(newValue);
+    localStorage.setItem("arbx-opps-viable-only", String(newValue));
+  }, []);
 
   // R1: All non-deterministic side effects are inside useEffect — never in render.
   useEffect(() => {
@@ -161,6 +176,8 @@ export default function OpportunitiesClient({
 
   const opportunities = snapshot.opportunities;
   const lastRefresh = snapshot.serverTime ? new Date(snapshot.serverTime) : null;
+  const viableCount = opportunities.filter((o) => o.status !== "rejected" && o.status !== "failed").length;
+  const rejectedCount = opportunities.filter((o) => o.status === "rejected").length;
 
   return (
     <div className={`p-8 min-h-screen transition-colors duration-500 ${feedStatus === 'ERROR' ? 'bg-rose-950/20' : 'bg-[#020617]'} text-slate-200`}>
@@ -172,9 +189,43 @@ export default function OpportunitiesClient({
           <p className="text-slate-500 mt-2 text-sm" suppressHydrationWarning>
             Polling edge every {POLL_INTERVAL_MS / 1000}s · {isMounted && lastRefresh ? `Last: ${lastRefresh.toLocaleTimeString()}` : "Loading..."}
           </p>
+          {/* Counter: shown only after mount to avoid SSR mismatch */}
+          {isMounted && (
+            <p className="text-xs mt-1 text-slate-500">
+              {viableOnly ? (
+                <span>
+                  <span className="text-emerald-400 font-semibold">{opportunities.length}</span> viable
+                </span>
+              ) : (
+                <span>
+                  <span className="text-emerald-400 font-semibold">{viableCount}</span> viable
+                  {" / "}
+                  <span className="text-slate-300 font-semibold">{opportunities.length}</span> total
+                  {rejectedCount > 0 && (
+                    <span className="text-rose-400"> ({rejectedCount} rejected)</span>
+                  )}
+                </span>
+              )}
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Viable-only toggle — R1: state is client-only, localStorage read in useEffect */}
+          <button
+            type="button"
+            onClick={() => onToggleViableOnly(!viableOnly)}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
+              viableOnly
+                ? "bg-emerald-900/30 border-emerald-500/50 text-emerald-400 hover:bg-emerald-900/50"
+                : "bg-rose-900/20 border-rose-500/40 text-rose-400 hover:bg-rose-900/30"
+            }`}
+            title={viableOnly ? "Showing viable only — click to show all including rejected" : "Showing all including rejected — click to show viable only"}
+            aria-pressed={viableOnly ? "false" : "true"}
+          >
+            {viableOnly ? <Eye size={14} /> : <EyeOff size={14} />}
+            <span>{viableOnly ? "Viable only" : "Show all"}</span>
+          </button>
           <button
             type="button"
             onClick={fetchOpportunities}
@@ -212,7 +263,11 @@ export default function OpportunitiesClient({
           </div>
           <div>
             <h3 className="font-bold text-emerald-400 tracking-wide">SCANNING MEMPOOL IN REAL-TIME</h3>
-            <p className="text-sm mt-1">Searcher-rs is actively hunting for arbitrage routes. Opportunities will appear here instantly.</p>
+            <p className="text-sm mt-1">
+              {viableOnly
+                ? "No viable opportunities yet. Toggle \"Show all\" to inspect rejected detections."
+                : "Searcher-rs is actively hunting for arbitrage routes. Opportunities will appear here instantly."}
+            </p>
           </div>
         </div>
       )}
@@ -301,12 +356,19 @@ export default function OpportunitiesClient({
                       </div>
                     </td>
 
-                    {/* ── STATUS column — StatusPill with rejection_reason tooltip ── */}
+                    {/* ── STATUS column — StatusPill with rejection_reason tooltip + visible badge ── */}
                     <td className="p-4">
                       <StatusPill
                         status={opp.status}
                         rejection_reason={opp.rejection_reason}
                       />
+                      {/* R8 fail-honest: show rejection reason as visible badge in show-all mode */}
+                      {!viableOnly && opp.rejection_reason && (
+                        <span className="mt-1 flex items-center gap-1 text-xs text-rose-400 font-mono">
+                          <span className="inline-block w-1 h-1 rounded-full bg-rose-400 flex-shrink-0" aria-hidden="true" />
+                          {opp.rejection_reason}
+                        </span>
+                      )}
                     </td>
 
                     {/* ── NET PROFIT column — R8 fail-honest via formatProfitUSD ── */}
