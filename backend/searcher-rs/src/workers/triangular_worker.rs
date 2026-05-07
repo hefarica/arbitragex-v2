@@ -138,26 +138,24 @@ impl TickStats {
 /// is direction-dependent in a CPMM (the spot product on one side may be > 1
 /// while < 1 on the other).
 ///
-/// First five cycles use blue-chip Ethereum tokens (V2 pools seeded by
-/// migrations 029 + 030). The next four are long-tail majors (PEPE, SHIB,
-/// MKR, COMP) added 2026-05-07 to widen the search universe — these pairs
-/// have less colocated competition than blue-chip majors and are more
-/// likely to surface emit-able opportunities. Cycles whose pools are
-/// missing from the V2 index simply skip with `cycle_missing_pool` log.
+/// All five cycles use blue-chip Ethereum tokens whose V2 pools exist on
+/// Uniswap V2 mainnet (seeded by migrations 029 + 030 + 037).
+///
+/// Long-tail tokens (PEPE/SHIB/MKR/COMP) deliberately omitted from the cycle
+/// list: these tokens trade primarily on Uniswap V3 — there is no V2 pool
+/// against USDC for them, so any cycle of the form `X-WETH-USDC-X` would
+/// always skip with `cycle_missing_pool`. The `known_token_address` and
+/// `resolve_token` fallbacks below still resolve them, ready for the
+/// next sub-project that extends the worker with a V3 quoter.
+///
 /// Operator can extend by editing this constant; future sub-project lifts
 /// the list to PG so the operator can manage cycles via UI.
 pub const MVP_CYCLES: &[(&str, &str, &str)] = &[
-    // Blue-chip majors
     ("WETH", "USDC", "DAI"),
     ("WETH", "USDC", "USDT"),
-    ("WETH", "USDT", "DAI"),
-    ("WETH", "WBTC", "USDC"),
-    ("USDC", "DAI", "USDT"),
-    // Long-tail majors (Tier 1 allowlist, less competed than blue chips)
-    ("PEPE", "WETH", "USDC"),
-    ("SHIB", "WETH", "USDC"),
-    ("MKR",  "WETH", "USDC"),
-    ("COMP", "WETH", "USDC"),
+    ("WETH", "USDT", "DAI"),     // unblocked by migration 037 (DAI/USDT V2)
+    ("WETH", "WBTC", "USDC"),    // unblocked by migration 037 (WBTC/USDC V2)
+    ("USDC", "DAI", "USDT"),     // unblocked by migration 037 (DAI/USDT V2)
 ];
 
 /// Fee-multiplier `γ = 1 - fee`. For V2 default fee 30 bps → γ = 0.997.
