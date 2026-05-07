@@ -29,7 +29,11 @@ COPY simulator-v2 ./simulator-v2
 # to have a readable manifest, otherwise `cargo build -p searcher-rs` errors
 # with "failed to load manifest for workspace member /build/token-enricher".
 COPY token-enricher ./token-enricher
-RUN cargo build --release --locked --frozen -p searcher-rs
+# --locked enforces reproducibility (Cargo.lock must match Cargo.toml).
+# --frozen would also enable --offline, which requires a pre-populated
+# ~/.cargo/registry index — not available in this fresh build context.
+# token-enricher Dockerfile dropped --frozen for the same reason in 8d9b5f3.
+RUN cargo build --release --locked -p searcher-rs
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
