@@ -357,21 +357,30 @@ app.get("/api/v1/opportunities/live", async (req, res) => {
   const p = requireDbPool();
   if (!p) { res.status(503).json({ error: "db_unavailable", detail: "DATABASE_URL not configured" }); return; }
   const limit = Math.max(1, Math.min(200, Number(req.query["limit"] ?? 50)));
+  // viable_only filters out rows persisted as gate rejections (rejection_reason
+  // populated by spine when an opportunity is rejected before profit eval).
+  // Default true so /opportunities UI no longer shows a wall of $0.00 rows
+  // dominated by TokenNotAllowed et al. Rejections still surface in the
+  // Pipeline Funnel widget on /operations and via direct PG query.
+  const viableOnly = String(req.query["viable_only"] ?? "true").toLowerCase() !== "false";
   try {
     const q = await p.query(
       `SELECT id, chain_id, strategy_kind, dex_a, dex_b, pair_symbol,
               token_in, token_out, amount_in_wei::text AS amount_in_wei,
               expected_profit_usd::float AS expected_profit_usd,
               roi_pct::float AS roi_pct, risk_score::float AS risk_score,
+              rejection_reason,
               block_number, status, detected_at, trace_id
          FROM opportunities
         WHERE status IN ('detected','validated','simulated','scored')
+          AND ($2::bool = false OR rejection_reason IS NULL)
         ORDER BY detected_at DESC
-        LIMIT $1`, [limit],
+        LIMIT $1`, [limit, viableOnly],
     );
     res.status(200).json({
       count: q.rows.length,
       window: "latest",
+      viable_only: viableOnly,
       items: q.rows,
       ts: new Date().toISOString(),
     });
