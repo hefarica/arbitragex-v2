@@ -12,29 +12,48 @@ import { AlertCircleIcon } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent } from "@/components/ui/card";
-import { getOperationsKpi, getOperationsScurve } from "@/lib/api-client";
-import type { KpiPayload, SCurvePayload } from "@/lib/operations-schemas";
+import { getOperationsKpi, getOperationsScurve, getScannerHeartbeat } from "@/lib/api-client";
+import type {
+  KpiPayload,
+  SCurvePayload,
+  ScannerHeartbeatResponse,
+} from "@/lib/operations-schemas";
 
 import { KPICard } from "./components/KPICard";
+import { PipelineFunnelCard } from "./components/PipelineFunnelCard";
 import { SCurveChart } from "./components/SCurveChart";
 
 interface Props {
   initialKpi: KpiPayload | null;
   initialScurve: SCurvePayload | null;
+  initialHeartbeat: ScannerHeartbeatResponse | null;
+  initialHeartbeatError: string | null;
   initialError: string | null;
 }
 
 const POLL_MS = 30_000;
 
-export function OperationsClient({ initialKpi, initialScurve, initialError }: Props) {
+export function OperationsClient({
+  initialKpi,
+  initialScurve,
+  initialHeartbeat,
+  initialHeartbeatError,
+  initialError,
+}: Props) {
   const [kpi, setKpi] = useState<KpiPayload | null>(initialKpi);
   const [scurve, setScurve] = useState<SCurvePayload | null>(initialScurve);
+  const [heartbeat, setHeartbeat] = useState<ScannerHeartbeatResponse | null>(initialHeartbeat);
+  const [heartbeatError, setHeartbeatError] = useState<string | null>(initialHeartbeatError);
   const [error, setError] = useState<string | null>(initialError);
 
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
-      const [k, s] = await Promise.all([getOperationsKpi(1), getOperationsScurve(1, 15)]);
+      const [k, s, h] = await Promise.all([
+        getOperationsKpi(1),
+        getOperationsScurve(1, 15),
+        getScannerHeartbeat(1),
+      ]);
       if (cancelled) return;
       if (k.ok) {
         setKpi(k.data);
@@ -43,6 +62,12 @@ export function OperationsClient({ initialKpi, initialScurve, initialError }: Pr
         setError(k.error);
       }
       if (s.ok) setScurve(s.data);
+      if (h.ok) {
+        setHeartbeat(h.data);
+        setHeartbeatError(null);
+      } else {
+        setHeartbeatError(h.error);
+      }
     };
     const id = setInterval(tick, POLL_MS);
     return () => {
@@ -124,6 +149,13 @@ export function OperationsClient({ initialKpi, initialScurve, initialError }: Pr
           value={kpi.ops_completed.toString()}
           hint={`target ${kpi.ops_target_per_day}/day`}
           positive={kpi.ops_completed > 0}
+        />
+      </div>
+      <div className="mb-6">
+        <PipelineFunnelCard
+          snapshot={heartbeat?.snapshot ?? null}
+          error={heartbeatError}
+          fetchedAt={heartbeat?.fetched_at ?? null}
         />
       </div>
       {scurve && <SCurveChart data={scurve} />}

@@ -19,9 +19,11 @@ import {
   KpiPayloadSchema,
   SCurvePayloadSchema,
   VariancePayloadSchema,
+  ScannerHeartbeatResponseSchema,
   type KpiPayload,
   type SCurvePayload,
   type VariancePayload,
+  type ScannerHeartbeatResponse,
 } from "@/lib/operations-schemas";
 
 // Server Components run inside Docker — INTERNAL_EDGE_URL reaches the edge via
@@ -386,6 +388,13 @@ export function getOperationsScurve(chainId = 1, bucketMinutes = 15): Promise<Re
 
 export function getOperationsVariance(chainId = 1): Promise<Result<VariancePayload>> {
   return getValidated(`/api/operations/variance?chain_id=${chainId}`, VariancePayloadSchema);
+}
+
+// Scanner pipeline heartbeat — latest funnel snapshot persisted by
+// searcher-rs::workers::heartbeat_worker. 404 when key absent (searcher
+// down or recently restarted) — UI treats as "loading" state.
+export function getScannerHeartbeat(chainId = 1): Promise<Result<ScannerHeartbeatResponse>> {
+  return getValidated(`/api/scanner/heartbeat?chain_id=${chainId}`, ScannerHeartbeatResponseSchema);
 }
 
 // ── Strategy Catalog (Sprint 2) ─────────────────────────────────────────
