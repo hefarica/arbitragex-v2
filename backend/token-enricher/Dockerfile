@@ -20,7 +20,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy the entire backend workspace so all members are available.
 COPY . ./
 
-RUN cargo build --release --locked --frozen -p token-enricher
+# --locked ensures Cargo.lock is honored (supply-chain pinning).
+# --frozen was attempted but requires registry pre-population in the layer;
+# without an explicit `cargo fetch` step it errors on first build. Trade-off:
+# we keep --locked for lockfile integrity; first build can hit crates.io.
+RUN cargo build --release --locked -p token-enricher
 
 # ---------------------------------------------------------------------------
 # Runtime image
