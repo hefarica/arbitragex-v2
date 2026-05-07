@@ -908,14 +908,32 @@ impl TriangularWorker {
         // silently dropped. Operator sees `triangular_worker.sanity_reject`
         // events with the math snapshot.
         const SANITY_PROFIT_MULT_OF_CAP: f64 = 5.0;
-        let profit_cap_ratio = result.expected_profit_usd / cap_usd;
+        // X10THINK defense: result.expected_profit_usd is Option<f64>. R8 fail-
+        // honest — if None/NaN/Inf/negative, refuse to emit. evaluate_cycle
+        // *should* have already filtered these (token_a price required, math
+        // returns Some only on positive profit) but this is the last gate
+        // before persistence; trust nothing.
+        let profit_usd = match result.expected_profit_usd {
+            Some(v) if v.is_finite() && v >= 0.0 => v,
+            _ => {
+                stats.skip_no_profit += 1;
+                warn!(
+                    event = "triangular_worker.malformed_profit",
+                    chain_id = self.chain_id,
+                    cycle = %cycle_key,
+                    raw = ?result.expected_profit_usd,
+                );
+                return Some(cycle_block);
+            }
+        };
+        let profit_cap_ratio = profit_usd / cap_usd;
         if profit_cap_ratio > SANITY_PROFIT_MULT_OF_CAP {
             stats.skip_no_profit += 1; // bucketed under no_profit for tick_stats
             warn!(
                 event = "triangular_worker.sanity_reject",
                 chain_id = self.chain_id,
                 cycle = %cycle_key,
-                expected_profit_usd = result.expected_profit_usd,
+                expected_profit_usd = profit_usd,
                 cap_usd = cap_usd,
                 profit_cap_ratio = profit_cap_ratio,
                 threshold = SANITY_PROFIT_MULT_OF_CAP,
