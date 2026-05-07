@@ -19,6 +19,10 @@ target/
 Cargo.lock
 !/backend/*/Cargo.lock
 !/backend/shared-rs/Cargo.lock
+# Workspace root lockfile — REQUIRED to be tracked because the searcher-rs
+# Dockerfile builds with `--locked --frozen` (offline mode). Untracking it
+# regresses the build — see commit 621776a context.
+!/backend/Cargo.lock
 
 # Node / TS
 node_modules/
