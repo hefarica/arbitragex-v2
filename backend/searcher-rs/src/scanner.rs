@@ -607,7 +607,24 @@ async fn process_pending(
     // Network signals — basefee/tip wiring lands with the chain-client refresh
     // (next sprint). Fixed gas strategy in config still works in the meantime.
     let signals = NetworkSignals::unknown(opportunity.block_number.unwrap_or(0));
-    let evaluator = ConfigAwareEvaluator::new(&cfg, signals);
+
+    // Cascade price oracle: fetch the latest live snapshot from Redis hash
+    // `arbx:token_prices:<chain>` (populated every 30s by `price_worker`).
+    // The cascade then resolves token USD prices in this priority:
+    //   tier 1: this snapshot (Alchemy → Coingecko fallback, sub-30s old)
+    //   tier 2: ConfigPriceOracle (operator manual + stables + base)
+    //   miss   → None → RejectReason::UnknownTokenPrice (R8 fail-honest)
+    //
+    // Empty snapshot (Redis miss / worker not yet ticked) is fine — cascade
+    // degrades cleanly to ConfigPriceOracle. The async fetch happens here so
+    // the `evaluate()` hot path stays sync.
+    let snapshot_map = shared_rs::price_oracle::RedisCachedPriceOracle::snapshot_from_redis(
+        redis,
+        client.chain_id,
+    )
+    .await
+    .into_snapshot();
+    let evaluator = ConfigAwareEvaluator::with_cache(&cfg, signals, snapshot_map);
 
     // Strategy classification — when the calldata decoder grows multi-leg support,
     // this becomes router-driven. For now every observed swap is dex_arb_v2v2.

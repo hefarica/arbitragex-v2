@@ -7,6 +7,7 @@ pub mod execution_worker;
 pub mod heartbeat_worker;
 pub mod hft_mempool_listener;
 pub mod pool_sync_worker;
+pub mod price_worker;
 pub mod rpc_health_worker;
 
 use sqlx::PgPool;

@@ -182,6 +182,35 @@ async fn main() -> anyhow::Result<()> {
             .await;
     });
 
+    // Price worker — fetches live USD token prices from Alchemy (primary) +
+    // Coingecko (fallback) every PRICE_WORKER_INTERVAL_SECS (default 30s) and
+    // populates Redis hash `arbx:token_prices:<chain>`. The spine evaluator's
+    // CascadePriceOracle reads this snapshot on the hot path, displacing the
+    // old operator-toil ConfigPriceOracle as PRIMARY price source.
+    //
+    // No Alchemy key in env → worker logs warning and skips the Alchemy tier
+    // (Coingecko fallback only). No mapping for chain_id → worker exits early.
+    // Worker writing failures cascade to ConfigPriceOracle gracefully — see
+    // `workers/price_worker.rs` for the full failure-mode matrix.
+    let price_period_secs: u64 = std::env::var("PRICE_WORKER_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(workers::price_worker::DEFAULT_PERIOD_SECS);
+    let price_alchemy_key = workers::price_worker::alchemy_key_from_env(primary_chain);
+    let price_redis = redis_conn.clone();
+    let price_chain = primary_chain;
+    tokio::spawn(async move {
+        let cfg = workers::price_worker::PriceWorkerConfig::new(
+            price_chain,
+            price_period_secs,
+            price_alchemy_key,
+        );
+        match workers::price_worker::PriceWorker::new(cfg) {
+            Ok(worker) => worker.run(price_redis).await,
+            Err(e) => warn!(event = "price_worker.boot_failed", chain_id = price_chain, error = %e),
+        }
+    });
+
     // Heartbeat worker — pipeline-state pulse every 60s. Without this, sparse
     // scanner events (sometimes a few per hour) make docker logs look idle even
     // when detection is healthy. The heartbeat emits Redis stream delta + PG

@@ -52,6 +52,19 @@ pub struct ScannerCounters {
     pub db_persisted: AtomicU64,
     /// PG insert failed (unique violation, numeric overflow, etc.).
     pub db_errors: AtomicU64,
+    /// Price worker: tokens whose price came from Alchemy this period.
+    /// Heartbeat surfaces this so the operator sees primary-source health.
+    pub price_alchemy_hits: AtomicU64,
+    /// Price worker: tokens whose price came from Coingecko fallback.
+    /// Spike here = Alchemy degraded; verify with `price_worker_errors`.
+    pub price_coingecko_hits: AtomicU64,
+    /// Price worker: tokens with no price after BOTH sources tried.
+    /// These will trigger `gate_unknown_token_price` downstream until the
+    /// operator either enables them upstream or removes them from allowlist.
+    pub price_cache_misses: AtomicU64,
+    /// Price worker: HTTP / parse / Redis errors per period.
+    /// Steady non-zero = config or upstream API regression.
+    pub price_worker_errors: AtomicU64,
 }
 
 /// Process-global counters. First call initialises; subsequent calls return

@@ -21,6 +21,7 @@ axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true
 redis.workspace = true
+reqwest.workspace = true
 prometheus.workspace = true
 once_cell.workspace = true
 sqlx.workspace = true
@@ -44,3 +45,8 @@ v2-simulator = ["dep:simulator-v2"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros","rt-multi-thread","test-util"] }
+# Used by `workers::price_worker` tests to mock Alchemy + Coingecko HTTP
+# responses without hitting real endpoints (RULE 00 — no external calls in
+# unit tests). Production code path uses `reqwest` directly; wiremock spawns
+# a localhost server the worker treats as the configured base URL.
+wiremock = "0.6"

@@ -30,8 +30,11 @@ use math_engine::risk_engine::{
 };
 use math_engine::roi_engine::{RoiCalculationParams, calc_net_profit_and_roi};
 use math_engine::DefiArbitrageOutcome;
-use shared_rs::price_oracle::{ConfigPriceOracle, PriceOracle};
+use shared_rs::price_oracle::{
+    CascadePriceOracle, ConfigPriceOracle, PriceOracle, RedisCachedPriceOracle,
+};
 use shared_rs::trading_config::TradingConfigState;
+use std::collections::HashMap;
 
 /// Live signals the evaluator needs in addition to config + candidate.
 /// Sourced from chain-client (`eth_gasPrice`, `eth_feeHistory`) at scoring time.
@@ -109,11 +112,45 @@ pub fn strategy_key(chain_id: u64, strategy_kind: &str) -> String {
 pub struct ConfigAwareEvaluator<'a> {
     pub config: &'a TradingConfigState,
     pub signals: NetworkSignals,
+    /// Pre-fetched live price snapshot (Alchemy → Coingecko populated via
+    /// `searcher-rs::workers::price_worker`). When present, takes priority
+    /// over `ConfigPriceOracle`. When empty (boot, all sources down), the
+    /// cascade falls through to ConfigPriceOracle (operator overrides +
+    /// stablecoins + base token), and finally to `None` →
+    /// `RejectReason::UnknownTokenPrice` (R8 fail-honest).
+    ///
+    /// Snapshot is fetched ONCE per evaluation tick by the caller (async) and
+    /// passed in here, keeping `evaluate()` sync on the hot path.
+    pub price_cache_snapshot: HashMap<String, f64>,
 }
 
 impl<'a> ConfigAwareEvaluator<'a> {
+    /// Backward-compatible constructor. Equivalent to `with_cache(cfg, signals, empty)`
+    /// — the cascade still runs but tier 1 (live cache) is empty so behaviour
+    /// degrades to ConfigPriceOracle alone (the previous semantics).
     pub fn new(config: &'a TradingConfigState, signals: NetworkSignals) -> Self {
-        Self { config, signals }
+        Self {
+            config,
+            signals,
+            price_cache_snapshot: HashMap::new(),
+        }
+    }
+
+    /// Construct with a pre-fetched live price snapshot. Production path used
+    /// by `searcher-rs::scanner::process_pending` after calling
+    /// `RedisCachedPriceOracle::snapshot_from_redis(&mut redis, chain_id).await`.
+    /// The snapshot field map is `symbol_uppercase → usd_price`; non-finite or
+    /// non-positive entries are filtered when the snapshot is built.
+    pub fn with_cache(
+        config: &'a TradingConfigState,
+        signals: NetworkSignals,
+        price_cache_snapshot: HashMap<String, f64>,
+    ) -> Self {
+        Self {
+            config,
+            signals,
+            price_cache_snapshot,
+        }
     }
 
     /// Single-shot evaluation. Returns the gate outcome (allowlist, strategy,
@@ -149,16 +186,22 @@ impl<'a> ConfigAwareEvaluator<'a> {
             };
         }
 
-        // 3. Per-token USD valuation via PriceOracle (BUG-2 fix, commit lands
-        // in this PR). Token symbols come from `candidate.token_addresses[0/1]`
-        // which scanner.rs populates as symbol when meta_in/meta_out are in
-        // the Redis cache, hex address otherwise. The oracle indexes by
-        // symbol — hex addresses return None and we reject fail-honest below.
+        // 3. Per-token USD valuation via cascade PriceOracle.
+        //   tier 1: RedisCachedPriceOracle (live Alchemy/Coingecko snapshot)
+        //   tier 2: ConfigPriceOracle      (operator manual + stables + base)
+        //   miss   → None → RejectReason::UnknownTokenPrice (R8 fail-honest)
         //
-        // Resolution order (see shared_rs::price_oracle): base token symbol,
-        // operator's `token_prices_usd` map, hardcoded stablecoin defaults.
-        // Anything outside those three tiers → None → UnknownTokenPrice.
-        let oracle = ConfigPriceOracle::new(self.config);
+        // Snapshot is owned by the evaluator (passed in via `with_cache`); the
+        // cascade is rebuilt per-evaluate so the lifetimes line up cleanly with
+        // `&self.config`. Construction cost is microseconds — two `Box::new`s
+        // and a `Vec::push` — negligible vs the math + risk + serde work below.
+        let cache_oracle =
+            RedisCachedPriceOracle::from_snapshot(self.price_cache_snapshot.clone());
+        let config_oracle = ConfigPriceOracle::new(self.config);
+        let oracle: CascadePriceOracle = CascadePriceOracle::new(vec![
+            Box::new(cache_oracle),
+            Box::new(config_oracle),
+        ]);
         let token_in_id = candidate
             .token_addresses
             .first()
@@ -879,6 +922,125 @@ mod tests {
         assert!(
             (outcome.gross_profit_usd - 100.0).abs() < 1.0,
             "expected gross_profit ≈ $100, got {} (BUG-2 unfixed would give ~$5.2M)",
+            outcome.gross_profit_usd,
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // Cascade integration: RedisCachedPriceOracle wins over ConfigPriceOracle
+    // ----------------------------------------------------------------
+
+    /// When the live cache snapshot has a price, the evaluator MUST use it
+    /// even if the config has a different value for the same symbol. This
+    /// is the whole point of cascading: live data displaces operator toil.
+    #[test]
+    fn cache_snapshot_overrides_config_base_token_price() {
+        let mut c = cfg(); // base WETH @ $2000 in config
+        c.capital_usd = 10_000.0; // big enough to avoid cap_ratio noise
+        c.allowed_token_symbols = vec!["WETH".into(), "USDC".into()];
+        // Live cache: WETH at $2500 (config says $2000 — cache wins)
+        let mut snapshot = HashMap::new();
+        snapshot.insert("WETH".to_string(), 2500.0);
+        // 1 WETH → 2550 USDC. Live USD math: 2550 - 2500 = $50 gross (2% spread)
+        // Config-only math would be: 2550 - 2000 = $550 gross (FALSE — bug)
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "test".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "USDC".into()],
+            dex_adapters: vec!["uniswap-v3".into()],
+            amount_in: 1.0,
+            expected_amount_out: 2550.0,
+            gross_profit: 0.0,
+        };
+        let out = ConfigAwareEvaluator::with_cache(&c, signals(), snapshot)
+            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        let outcome = match out {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome,
+            other => panic!("expected Evaluated, got {:?}", other),
+        };
+        // With cache @ $2500: gross ≈ $50 (real spread). With config @ $2000: $550.
+        // Assertion catches either side of the bug.
+        assert!(
+            outcome.gross_profit_usd > 30.0 && outcome.gross_profit_usd < 80.0,
+            "live cache must drive valuation — expected ≈$50 gross, got {}",
+            outcome.gross_profit_usd,
+        );
+    }
+
+    /// When the cache is EMPTY (boot, all sources down), behaviour must be
+    /// identical to ConfigPriceOracle alone — no regression for operators
+    /// who haven't deployed the worker yet.
+    #[test]
+    fn empty_cache_snapshot_falls_through_to_config_oracle() {
+        let c = cfg(); // WETH @ $2000, USDC stablecoin default
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "test".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "USDC".into()],
+            dex_adapters: vec!["uniswap-v3".into()],
+            amount_in: 0.5,
+            expected_amount_out: 1010.0, // ~1% spread
+            gross_profit: 0.0,
+        };
+        // Two evaluators with same config — one with empty cache, one without.
+        // Outcomes must match (cache empty = no contribution).
+        let out1 = ConfigAwareEvaluator::with_cache(&c, signals(), HashMap::new())
+            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        let out2 = ConfigAwareEvaluator::new(&c, signals())
+            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        let g1 = match out1 {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome.gross_profit_usd,
+            other => panic!("e1 unexpected: {:?}", other),
+        };
+        let g2 = match out2 {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome.gross_profit_usd,
+            other => panic!("e2 unexpected: {:?}", other),
+        };
+        assert!(
+            (g1 - g2).abs() < 1e-9,
+            "empty cache must produce identical result to no cache, got {} vs {}",
+            g1,
+            g2,
+        );
+    }
+
+    /// Cache miss for ONE token but cache hit for the OTHER: the missed
+    /// token falls through to ConfigPriceOracle (per-token cascade resolution).
+    /// Both sides must be priced for math to proceed; a partial cache is
+    /// still useful as long as config covers the gaps.
+    #[test]
+    fn partial_cache_combines_with_config_per_token() {
+        let mut c = cfg();
+        c.capital_usd = 10_000.0;
+        c.allowed_token_symbols = vec!["WETH".into(), "USDC".into()];
+        // Cache has WETH only. USDC must come from ConfigPriceOracle stablecoin
+        // default ($1.00). Both prices resolved → no UnknownTokenPrice rejection.
+        let mut snapshot = HashMap::new();
+        snapshot.insert("WETH".to_string(), 2500.0);
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "test".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "USDC".into()],
+            dex_adapters: vec!["uniswap-v3".into()],
+            amount_in: 1.0,           // 1 WETH (cache: $2500)
+            expected_amount_out: 2550.0, // 2550 USDC (config stable: $1)
+            gross_profit: 0.0,
+        };
+        let out = ConfigAwareEvaluator::with_cache(&c, signals(), snapshot)
+            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        let (outcome, rejection) = match out {
+            ConfigGateOutcome::Evaluated { outcome, rejection, .. } => (outcome, rejection),
+            other => panic!("expected Evaluated, got {:?}", other),
+        };
+        assert_ne!(
+            rejection,
+            Some(RejectReason::UnknownTokenPrice),
+            "partial cache + stablecoin coverage must NOT trigger UnknownTokenPrice"
+        );
+        // gross ≈ $2550 - $2500 = $50
+        assert!(
+            outcome.gross_profit_usd > 30.0 && outcome.gross_profit_usd < 80.0,
+            "expected ~$50 gross from partial cache + stable config, got {}",
             outcome.gross_profit_usd,
         );
     }

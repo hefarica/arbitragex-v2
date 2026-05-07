@@ -123,13 +123,53 @@ Razones posibles:
 curl -s http://195.201.235.70:8787/api/scanner/heartbeat?chain_id=1 | jq
 ```
 
-### Update token prices vía Redis (alternativa al UI)
+### Update token prices — automatic via cascade (default), manual as fallback
+
+**Sprint 2026-05-06+ doctrine**: prices ahora son **automáticos** vía cascada:
+
+```
+candidate token → CascadePriceOracle::price_usd(symbol)
+   ├─ tier 1: RedisCachedPriceOracle (live cache, refresca cada 30s)
+   │             ├─ Alchemy Token Prices API   (primary)
+   │             └─ Coingecko simple/price     (fallback)
+   ├─ tier 2: ConfigPriceOracle  (operator manual + stables + base)  ← lo de antes
+   └─ None    → RejectReason::UnknownTokenPrice  (R8 fail-honest)
+```
+
+El worker `price_worker` (en `searcher-rs`) puebla
+`arbx:token_prices:<chain_id>` (Redis hash, TTL 60s) cada
+`PRICE_WORKER_INTERVAL_SECS` (default 30s, env override). El operador YA NO
+necesita HSET manual en flujo normal. Verifica salud en heartbeat:
+
+```bash
+curl -s http://195.201.235.70:8787/api/scanner/heartbeat?chain_id=1 | \
+  jq '{alchemy:.price_alchemy_hits, coingecko:.price_coingecko_hits, misses:.price_cache_misses, errors:.price_worker_errors}'
+```
+
+- `alchemy_hits` alto + `coingecko_hits` cero → Alchemy healthy (estado normal).
+- `coingecko_hits` spike → Alchemy degraded (verificar key + RPC env).
+- `cache_misses` sostenido → token fuera de ambos providers (revisar allowlist).
+- `price_worker_errors` sostenido → upstream API change OR config rota.
+
+**Fallback manual** (sólo cuando ambos providers caídos por horas, OR token
+recién listado que ningún provider conoce todavía). Setea precio operator:
+
 ```bash
 ssh arbx 'docker exec arbitragex-v2-redis-1 redis-cli SET arbx:trading_config:1 \
   "$(docker exec arbitragex-v2-redis-1 redis-cli GET arbx:trading_config:1 | \
     python3 -c "import json,sys; c=json.load(sys.stdin); \
     c[\"token_prices_usd\"]={\"WBTC\":95000,\"BNB\":600,\"LINK\":14,\"UNI\":8,\"AAVE\":90,\"ARB\":0.4,\"OP\":1.3,\"MATIC\":0.5}; \
     print(json.dumps(c))")"'
+```
+
+Recuerda: el manual override SOLO gana si la cascada Tier 1 está vacía para
+ese símbolo. Si Alchemy/Coingecko devuelven precio para ese token, el cache
+gana y tu valor manual se ignora silenciosamente (intencional — datos vivos
+sobre operator-toil). Para forzar override, deshabilita el worker temporalmente:
+
+```bash
+ssh arbx 'docker compose --env-file .env -f docker/compose.dev.yml \
+  exec searcher-rs sh -c "PRICE_WORKER_INTERVAL_SECS=99999 supervisorctl restart searcher-rs"'
 ```
 
 ### Re-deploy un servicio (siempre con R3)

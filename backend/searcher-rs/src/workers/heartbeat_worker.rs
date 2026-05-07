@@ -52,6 +52,19 @@ pub struct HeartbeatSnapshot {
     pub passed_all_gates: u64,
     pub db_persisted: u64,
     pub db_errors: u64,
+    /// Price worker — tokens whose live USD price came from Alchemy this period.
+    /// Operator interpretation: high value = Alchemy healthy + key valid.
+    pub price_alchemy_hits: u64,
+    /// Price worker — tokens whose price came from Coingecko fallback.
+    /// Spike here vs alchemy_hits = Alchemy degraded; check key + RPC env.
+    pub price_coingecko_hits: u64,
+    /// Price worker — tokens not priced by EITHER source this period.
+    /// Sustained non-zero = upstream outage OR token outside both providers'
+    /// universe (operator should remove from allowlist or set explicit price).
+    pub price_cache_misses: u64,
+    /// Price worker — HTTP / Redis / parse errors per period. Steady non-zero
+    /// = config or upstream API regression.
+    pub price_worker_errors: u64,
 }
 
 pub fn heartbeat_redis_key(chain_id: u64) -> String {
@@ -126,6 +139,10 @@ impl HeartbeatWorker {
             let passed = c.passed_all_gates.swap(0, Ordering::Relaxed);
             let db_ok = c.db_persisted.swap(0, Ordering::Relaxed);
             let db_err = c.db_errors.swap(0, Ordering::Relaxed);
+            let price_alchemy = c.price_alchemy_hits.swap(0, Ordering::Relaxed);
+            let price_coingecko = c.price_coingecko_hits.swap(0, Ordering::Relaxed);
+            let price_misses = c.price_cache_misses.swap(0, Ordering::Relaxed);
+            let price_errors = c.price_worker_errors.swap(0, Ordering::Relaxed);
 
             info!(
                 event = "scanner.heartbeat",
@@ -148,6 +165,10 @@ impl HeartbeatWorker {
                 passed_all_gates = passed,
                 db_persisted = db_ok,
                 db_errors = db_err,
+                price_alchemy_hits = price_alchemy,
+                price_coingecko_hits = price_coingecko,
+                price_cache_misses = price_misses,
+                price_worker_errors = price_errors,
                 "scanner pipeline heartbeat"
             );
 
@@ -178,6 +199,10 @@ impl HeartbeatWorker {
                 passed_all_gates: passed,
                 db_persisted: db_ok,
                 db_errors: db_err,
+                price_alchemy_hits: price_alchemy,
+                price_coingecko_hits: price_coingecko,
+                price_cache_misses: price_misses,
+                price_worker_errors: price_errors,
             };
             if let Ok(json) = serde_json::to_string(&snapshot) {
                 let key = heartbeat_redis_key(self.chain_id);
