@@ -340,6 +340,12 @@ services:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
     networks: [arbx-net]
+    # F-7: resource limits prevent unbounded memory growth during enrichment bursts.
+    deploy:
+      resources:
+        limits:
+          memory: "512M"
+          cpus: "0.5"
     <<: *common-logging
 
   promtail:

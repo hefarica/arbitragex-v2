@@ -266,6 +266,32 @@ services:
     networks: [arbx-net]
     <<: *common-logging
 
+  token-enricher:
+    build:
+      context: ../backend
+      dockerfile: token-enricher/Dockerfile
+    env_file: ["../.env"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
+      REDIS_URL: redis://redis:6379
+      ENRICHER_RPC_URLS: ${ENRICHER_RPC_URLS:?ENRICHER_RPC_URLS required}
+      ENRICHER_METRICS_PORT: "9004"
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      RUST_LOG: ${RUST_LOG}
+    ports: ["127.0.0.1:9004:9004"]
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [arbx-net]
+    # F-3/F-7: resource limits prevent unbounded memory growth.
+    deploy:
+      resources:
+        limits:
+          memory: "512M"
+          cpus: "0.5"
+    <<: *common-logging
+
   promtail:
     image: grafana/promtail:2.9.7
     command: ["-config.file=/etc/promtail/config.yml"]

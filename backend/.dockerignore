@@ -1,0 +1,15 @@
+target/
+*.env
+.env
+.env.*
+*.log
+*.key
+*.pem
+*.p12
+inject_spine.py
+scaffold_spine.py
+.git/
+node_modules/
+*.bak
+*.swp
+*.tmp

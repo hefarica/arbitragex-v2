@@ -15,9 +15,11 @@
 
 use once_cell::sync::Lazy;
 use prometheus::{Encoder, IntCounterVec, IntGauge, IntGaugeVec, Registry, TextEncoder};
+use std::{sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
+    sync::Semaphore,
 };
 use tracing::{error, info, warn};
 
@@ -131,7 +133,8 @@ fn render_metrics() -> Vec<u8> {
 /// Spawn a lightweight TCP server that responds to any HTTP request on
 /// `0.0.0.0:<port>` with the Prometheus text format.
 ///
-/// - Accepts one connection at a time per `tokio::spawn` loop.
+/// - Accepts connections up to a cap of 16 concurrent (F-8 semaphore guard).
+/// - Applies a 5-second read timeout to prevent slow-read DoS (ISSUE-5).
 /// - Reads enough bytes to drain the request line (we don't parse it).
 /// - Writes a minimal HTTP/1.1 200 response with `Content-Type: text/plain`.
 /// - Logs and continues on individual connection errors — never panics.
@@ -151,13 +154,42 @@ pub async fn serve_metrics(port: u16) {
         }
     };
 
+    // F-8: cap concurrent connections at 16 to bound memory and fd usage.
+    let limit = Arc::new(Semaphore::new(16));
+
     loop {
         match listener.accept().await {
             Ok((mut stream, peer)) => {
+                // Try to acquire a permit non-blocking; drop the connection if saturated.
+                let permit = match limit.clone().try_acquire_owned() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        warn!(event = "enricher.metrics_saturated", peer = %peer);
+                        continue;
+                    }
+                };
                 tokio::spawn(async move {
-                    // Drain incoming bytes (ignore the actual request path).
+                    let _permit = permit; // released when task completes
+
+                    // ISSUE-5: 5-second read timeout prevents slow-read DoS from
+                    // holding a semaphore permit indefinitely.
                     let mut buf = [0u8; 256];
-                    let _ = stream.read(&mut buf).await;
+                    match tokio::time::timeout(
+                        Duration::from_secs(5),
+                        stream.read(&mut buf),
+                    )
+                    .await
+                    {
+                        Ok(Ok(_)) => {}
+                        Ok(Err(e)) => {
+                            warn!(event = "metrics.read_err", peer = %peer, err = %e);
+                            return;
+                        }
+                        Err(_elapsed) => {
+                            warn!(event = "metrics.read_timeout", peer = %peer);
+                            return;
+                        }
+                    }
 
                     let body = render_metrics();
                     let header = format!(

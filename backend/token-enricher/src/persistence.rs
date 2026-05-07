@@ -47,6 +47,8 @@ pub async fn upsert_token(
     // alloy 1.x: format!("{address:#x}") emits "0x" + 40 lowercase hex chars,
     // which matches the migration 034 CHECK constraint exactly.
     let addr_lc = format!("{address:#x}");
+    let chain_id_i32 = i32::try_from(chain_id)
+        .map_err(|_| anyhow::anyhow!("chain_id {chain_id} exceeds i32 range"))?;
     sqlx::query(
         r#"
         INSERT INTO tokens (chain_id, address, symbol, decimals, logo_url, resolved_via, resolved_at, last_seen_at)
@@ -68,7 +70,7 @@ pub async fn upsert_token(
             last_seen_at = NOW()
         "#,
     )
-    .bind(chain_id as i32)
+    .bind(chain_id_i32)
     .bind(&addr_lc)
     .bind(t.symbol.as_deref())
     .bind(t.decimals.map(|d| d as i16))
@@ -97,6 +99,8 @@ pub async fn needs_resolution(pool: &PgPool, chain_id: u64, address: Address) ->
     // Returns a boolean column: true iff the row is a failed token whose
     // resolved_at is more than 7 days in the past (server-side comparison).
     // fetch_optional returns None when the row does not exist.
+    let chain_id_i32 = i32::try_from(chain_id)
+        .map_err(|_| anyhow::anyhow!("chain_id {chain_id} exceeds i32 range"))?;
     let row: Option<(bool,)> = sqlx::query_as(
         r#"
         SELECT
@@ -105,7 +109,7 @@ pub async fn needs_resolution(pool: &PgPool, chain_id: u64, address: Address) ->
         WHERE chain_id = $1 AND address = $2
         "#,
     )
-    .bind(chain_id as i32)
+    .bind(chain_id_i32)
     .bind(&addr_lc)
     .fetch_optional(pool)
     .await

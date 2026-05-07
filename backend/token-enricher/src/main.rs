@@ -49,8 +49,8 @@ use tracing::{error, info, warn};
 use token_enricher::{
     consumer::EnricherConsumer,
     metrics::{
-        init_metrics, serve_metrics, BATCHES_TOTAL, PENDING_UNRESOLVED, RPC_CALLS_TOTAL,
-        TOKENS_RESOLVED_TOTAL,
+        init_metrics, serve_metrics, BATCHES_TOTAL, ENRICHER_UP, PENDING_UNRESOLVED,
+        RPC_CALLS_TOTAL, TOKENS_RESOLVED_TOTAL,
     },
     multicall::{build_calls_for, pair_results, IMulticall3, MULTICALL3_ADDRESS},
     persistence::{needs_resolution, upsert_token, ResolvedToken},
@@ -113,7 +113,7 @@ fn build_providers(rpc_urls: &HashMap<u64, String>) -> Result<HashMap<u64, DynPr
     for (&chain_id, url) in rpc_urls {
         let parsed: reqwest::Url = url
             .parse()
-            .with_context(|| format!("invalid RPC URL for chain {chain_id}: {url}"))?;
+            .with_context(|| format!("invalid RPC URL for chain {chain_id} (value redacted)"))?;
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
             .connect_http(parsed)
@@ -359,7 +359,7 @@ async fn main() -> Result<()> {
     let database_url = require_env("DATABASE_URL")?;
     let redis_url = require_env("REDIS_URL")?;
     let rpc_urls_raw = require_env("ENRICHER_RPC_URLS")?;
-    let github_token = std::env::var("GITHUB_TOKEN").ok();
+    let github_token = std::env::var("GITHUB_TOKEN").ok().filter(|s| !s.is_empty());
     let metrics_port: u16 = std::env::var("ENRICHER_METRICS_PORT")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -501,7 +501,14 @@ async fn main() -> Result<()> {
                             .collect();
 
                         // Update pending gauge per chain.
+                        // ISSUE-3 fix: reset all known-chain labels to 0 first so
+                        // stale gauges ("200 pending") don't persist after the backlog clears.
                         {
+                            for known_chain in [1u64, 10, 56, 137, 8453, 42161] {
+                                PENDING_UNRESOLVED
+                                    .with_label_values(&[&known_chain.to_string()])
+                                    .set(0);
+                            }
                             let mut per_chain_cnt: HashMap<u64, i64> = HashMap::new();
                             for &(chain, _) in &pairs {
                                 *per_chain_cnt.entry(chain).or_default() += 1;
@@ -523,21 +530,30 @@ async fn main() -> Result<()> {
             }
 
             // Consumer arm: one XREADGROUP read (BLOCK 2000ms).
+            // ACK-after-process: parse returns (triples, ids). We call
+            // process_batch first, then ack_batch regardless of outcome.
+            // This ensures entries survive a crash between read and process.
             batch_result = consumer.read_one_batch() => {
                 match batch_result {
                     Err(e) => {
                         // Log and continue — transient Redis errors should not crash the loop.
                         error!(event = "enricher.consumer_read_err", err = %e);
                     }
-                    Ok(triples) if triples.is_empty() => {
+                    Ok((triples, _ids)) if triples.is_empty() => {
                         // BLOCK timeout with no messages — normal idle path.
+                        // ids is also empty; nothing to ACK.
                     }
-                    Ok(triples) => {
+                    Ok((triples, ids)) => {
                         let pairs = triples_to_pairs(triples);
                         if let Err(e) =
                             process_batch(&pool, &providers, &tw, &pairs, "consumer").await
                         {
                             error!(event = "enricher.consumer_batch_err", err = %e);
+                        }
+                        // ACK after process (success or error) — at-most-once with
+                        // reconciliation tick as durability backstop.
+                        if let Err(e) = consumer.ack_batch(ids).await {
+                            error!(event = "enricher.consumer_ack_err", err = %e);
                         }
                     }
                 }
@@ -545,6 +561,8 @@ async fn main() -> Result<()> {
         }
     }
 
+    // ISSUE-4 fix: signal to Prometheus that the service is no longer running.
+    ENRICHER_UP.set(0);
     info!(event = "enricher.shutdown");
     Ok(())
 }

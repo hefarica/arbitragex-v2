@@ -19,6 +19,19 @@
 //! feature already in Cargo.toml; does NOT require the `connection-manager`
 //! feature).
 //!
+//! ## Delivery semantics
+//!
+//! `read_one_batch` returns a `(triples, entry_ids)` tuple. The caller MUST:
+//! 1. Process `triples` via `process_batch`.
+//! 2. Call `ack_batch(entry_ids)` AFTER `process_batch` completes (success or error).
+//!
+//! This is **at-most-once** delivery: if the process crashes between
+//! `read_one_batch` and `ack_batch`, the entries remain in the PEL and will be
+//! re-delivered on the next startup via `drain_pel`. The reconciliation tick
+//! (`find_unresolved_tokens`) acts as the eventual-durability backstop — any
+//! token that slips through the consumer path will be resolved on the next
+//! reconciliation cycle.
+//!
 //! ## PEL / crash-recovery
 //!
 //! On startup the consumer drains its PEL (pending entries from a
@@ -26,7 +39,10 @@
 //! `drain_pel` uses delivery-id `"0"` which returns entries already
 //! delivered-but-not-ACKed to this consumer.  It loops until the reply is
 //! empty (exhausted), then returns.  Each drained entry is processed with
-//! the same parse+ack logic as a fresh entry.
+//! the same parse logic as a fresh entry; ACK happens within the drain loop
+//! (after parse, before returning to caller) because the PEL entries are
+//! already in a "delivered" state and the reconciliation tick provides the
+//! durability backstop.
 //!
 //! ## Multi-replica safety (Defect #6 — DEFERRED)
 //!
@@ -52,7 +68,7 @@ const BLOCK_MS: usize = 2_000;
 const BATCH_SIZE: usize = 50;
 
 /// Async Redis Streams consumer that wraps a multiplexed connection and
-/// exposes a `run()` loop and a `drain_pel()` startup method.
+/// exposes a `read_one_batch()` loop-primitive and a `drain_pel()` startup method.
 pub struct EnricherConsumer {
     conn: redis::aio::MultiplexedConnection,
 }
@@ -101,19 +117,23 @@ impl EnricherConsumer {
     }
 
     // -----------------------------------------------------------------------
-    // Private: parse + ACK helper (used by both run() and drain_pel())
+    // Private: parse helper — no ACK
     // -----------------------------------------------------------------------
 
-    /// Parse a `StreamReadReply` into `(chain_id, token_in_lc, token_out_lc)` triples
-    /// and ACK all entries (including poison ones).
+    /// Parse a `StreamReadReply` into triples + entry IDs, WITHOUT ACKing.
     ///
-    /// Returns the parsed triples.  Poison entries (missing payload, bad JSON,
-    /// zero chain_id, empty addresses) are logged and ACKed but excluded from
-    /// the return value.
-    async fn parse_and_ack(
-        &mut self,
+    /// Returns `(triples, ids)`:
+    /// - `triples`: valid `(chain_id, token_in_lc, token_out_lc)` tuples.
+    /// - `ids`: ALL entry IDs in the reply (both valid and poison), to be
+    ///   passed to `ack_batch` by the caller AFTER processing.
+    ///
+    /// Poison entries (missing payload, bad JSON, zero chain_id, empty
+    /// addresses) are logged and included in `ids` so they get ACKed and
+    /// do not block the PEL forever.
+    fn parse(
+        &self,
         reply: StreamReadReply,
-    ) -> Vec<(u64, String, String)> {
+    ) -> (Vec<(u64, String, String)>, Vec<String>) {
         let mut out: Vec<(u64, String, String)> = Vec::new();
         let mut ids_to_ack: Vec<String> = Vec::new();
 
@@ -124,6 +144,7 @@ impl EnricherConsumer {
                 count = stream_key.ids.len()
             );
             for entry in &stream_key.ids {
+                // Collect ALL ids for caller-side ACK (including poison).
                 ids_to_ack.push(entry.id.clone());
 
                 // Extract the JSON payload from the `"payload"` field.
@@ -181,22 +202,33 @@ impl EnricherConsumer {
             }
         }
 
-        // ACK all entries (including poison ones) to drain the PEL.
-        if !ids_to_ack.is_empty() {
-            let ack_result: redis::RedisResult<i64> = self
-                .conn
-                .xack(STREAM, GROUP, &ids_to_ack)
-                .await;
-            if let Err(e) = ack_result {
-                warn!(event = "enricher.xack_error", err = %e);
-            }
-        }
-
-        out
+        (out, ids_to_ack)
     }
 
     // -----------------------------------------------------------------------
-    // Public: drain PEL on startup (I1 — preempting cs-validator)
+    // Public: XACK helper
+    // -----------------------------------------------------------------------
+
+    /// ACK a list of entry IDs in the consumer group.
+    ///
+    /// Called by main.rs AFTER `process_batch` completes (success or error)
+    /// to implement ACK-after-process semantics (see module-level doc).
+    pub async fn ack_batch(&mut self, ids: Vec<String>) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let ack_result: redis::RedisResult<i64> = self
+            .conn
+            .xack(STREAM, GROUP, &ids)
+            .await;
+        if let Err(e) = ack_result {
+            warn!(event = "enricher.xack_error", err = %e);
+        }
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Public: drain PEL on startup (I1 — crash recovery)
     // -----------------------------------------------------------------------
 
     /// Drain the consumer's PEL (Pending Entry List) from a previous crashed session.
@@ -205,21 +237,24 @@ impl EnricherConsumer {
     /// already delivered to this consumer but never ACKed.  Loops until the
     /// reply is empty.
     ///
-    /// MUST be called BEFORE `run()` — this is the application-level startup
+    /// MUST be called BEFORE the main loop — this is the application-level startup
     /// behaviour that makes crash recovery safe.  Without draining the PEL,
     /// unprocessed entries from the previous session are re-delivered only if
     /// the consumer explicitly requests them; they would otherwise sit in the
     /// PEL forever.
     ///
-    /// Returns the total count of drained entries (for logging).  Each drained
-    /// entry is processed with the same parse+ack semantics as a live entry.
+    /// ACK semantics in `drain_pel`: entries are ACKed within this method's own
+    /// loop, after parsing, because PEL entries are already in a "delivered" state
+    /// from the previous session. The caller (main.rs) calls `process_batch` on
+    /// the returned triples immediately after — if processing fails, the
+    /// reconciliation tick provides the durability backstop.
+    ///
+    /// Returns the parsed triples for the caller to pass to `process_batch`.
     pub async fn drain_pel(&mut self, batch_count: usize) -> Result<Vec<(u64, String, String)>> {
         let mut all: Vec<(u64, String, String)> = Vec::new();
 
         loop {
             // Delivery-id "0" = return pending (delivered-but-not-ACKed) entries.
-            // BLOCK 0 = wait indefinitely; but for PEL drain we don't want to block
-            // if PEL is empty — use a very short BLOCK or no block.
             // Note: BLOCK 0 on "0" delivery-id does NOT wait; Redis returns
             // immediately with an empty reply when PEL is exhausted.
             let opts = StreamReadOptions::default()
@@ -246,8 +281,17 @@ impl EnricherConsumer {
                 break;
             }
 
-            let batch = self.parse_and_ack(reply).await;
-            all.extend(batch);
+            let (triples, ids) = self.parse(reply);
+            // ACK within the drain loop — PEL entries are already "delivered";
+            // reconciliation tick is the durability backstop.
+            let ack_result: redis::RedisResult<i64> = self
+                .conn
+                .xack(STREAM, GROUP, &ids)
+                .await;
+            if let Err(e) = ack_result {
+                warn!(event = "enricher.xack_error", err = %e);
+            }
+            all.extend(triples);
         }
 
         info!(event = "enricher.pel_drained", count = all.len());
@@ -258,17 +302,20 @@ impl EnricherConsumer {
     // Public: single blocking read (used in main loop select!)
     // -----------------------------------------------------------------------
 
-    /// Issue one `XREADGROUP COUNT N BLOCK 2000` call and return parsed triples.
+    /// Issue one `XREADGROUP COUNT N BLOCK 2000` call and return parsed triples
+    /// plus the entry IDs to ACK.
     ///
-    /// This is the building-block for `tokio::select!` integration — the caller
-    /// loops and selects between this future, reconciliation ticks, and shutdown
-    /// signals.  The `BLOCK 2000ms` timeout means the select! arm resolves at
-    /// most every 2 seconds in the idle case (no new messages), which is
-    /// acceptable latency for shutdown responsiveness.
+    /// **Caller contract (ACK-after-process)**: the caller MUST:
+    /// 1. Call `process_batch` on the returned triples.
+    /// 2. Call `consumer.ack_batch(ids).await` AFTER `process_batch` returns
+    ///    (on both success and error paths).
     ///
-    /// Returns an empty `Vec` on timeout (normal idle path).
+    /// This ensures entries are not lost if the process crashes between read and
+    /// process.  See module-level doc for the full delivery-semantics rationale.
+    ///
+    /// Returns an empty `Vec` and empty `Vec` on timeout (normal idle path).
     /// Returns `Err` on unrecoverable connection failure.
-    pub async fn read_one_batch(&mut self) -> Result<Vec<(u64, String, String)>> {
+    pub async fn read_one_batch(&mut self) -> Result<(Vec<(u64, String, String)>, Vec<String>)> {
         let opts = StreamReadOptions::default()
             .group(GROUP, CONSUMER)
             .count(BATCH_SIZE)
@@ -289,68 +336,9 @@ impl EnricherConsumer {
         };
 
         if reply.keys.is_empty() {
-            return Ok(vec![]);
+            return Ok((vec![], vec![]));
         }
 
-        Ok(self.parse_and_ack(reply).await)
-    }
-
-    // -----------------------------------------------------------------------
-    // Public: live consumer loop
-    // -----------------------------------------------------------------------
-
-    /// Run the consumer loop, calling `on_batch` for each successfully parsed
-    /// batch of `(chain_id, token_in_lc, token_out_lc)` triples.
-    ///
-    /// The loop:
-    /// 1. Issues `XREADGROUP GROUP enricher enricher-1 COUNT 50 BLOCK 2000 STREAMS arbx:opps:detected >`.
-    /// 2. Parses each stream entry's `"payload"` field as JSON.
-    /// 3. Calls `on_batch` with the parsed triples.
-    /// 4. ACKs all messages in the batch (including poison messages — see
-    ///    doc above: we log and skip rather than re-delivering indefinitely).
-    ///
-    /// Returns `Err` only on unrecoverable connection failures.
-    pub async fn run<F, Fut>(&mut self, mut on_batch: F) -> Result<()>
-    where
-        F: FnMut(Vec<(u64, String, String)>) -> Fut,
-        Fut: std::future::Future<Output = Result<()>>,
-    {
-        let opts = StreamReadOptions::default()
-            .group(GROUP, CONSUMER)
-            .count(BATCH_SIZE)
-            .block(BLOCK_MS);
-
-        loop {
-            let reply: StreamReadReply = match self
-                .conn
-                .xread_options(&[STREAM], &[">"], &opts)
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    warn!(event = "enricher.xreadgroup_error", err = %e);
-                    // Brief back-off before retrying to avoid tight error loops.
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    continue;
-                }
-            };
-
-            // `reply.keys` is empty when BLOCK timeout fires with no messages.
-            // This is the normal idle path — loop again immediately.
-            if reply.keys.is_empty() {
-                continue;
-            }
-
-            let out = self.parse_and_ack(reply).await;
-
-            // Deliver parsed batch to the caller.  If on_batch returns Err we
-            // log and continue — the entries have already been ACKed so we MUST
-            // NOT attempt redelivery (that would spin indefinitely on a bug).
-            if !out.is_empty() {
-                if let Err(e) = on_batch(out).await {
-                    warn!(event = "enricher.on_batch_error", err = %e);
-                }
-            }
-        }
+        Ok(self.parse(reply))
     }
 }

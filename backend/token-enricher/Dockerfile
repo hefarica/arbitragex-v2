@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy the entire backend workspace so all members are available.
 COPY . ./
 
-RUN cargo build --release -p token-enricher
+RUN cargo build --release --locked --frozen -p token-enricher
 
 # ---------------------------------------------------------------------------
 # Runtime image
@@ -28,7 +28,7 @@ RUN cargo build --release -p token-enricher
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates tini \
+        ca-certificates tini wget \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r arbx && useradd -r -g arbx -u 65532 arbx
 
@@ -41,6 +41,11 @@ USER arbx
 
 # Default port for Prometheus scraping.
 EXPOSE 9004
+
+# F-6: health check polls /metrics for the arbx_enricher_up gauge.
+# The service sets this gauge to 1 after successful init (see metrics::init_metrics).
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:9004/metrics 2>/dev/null | grep -q 'arbx_enricher_up 1' || exit 1
 
 # tini as PID 1: handles SIGTERM/SIGCHLD correctly so our Rust process
 # receives SIGTERM cleanly and runs its graceful-shutdown path.
