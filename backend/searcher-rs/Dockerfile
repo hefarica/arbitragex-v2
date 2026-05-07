@@ -8,6 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config libssl-dev ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml ./Cargo.toml
+# Cargo.lock is REQUIRED when the build below uses --locked --frozen (offline
+# mode). Without it, cargo errors with "no matching package named X found" on
+# every transitive dep. Regression from commit 3277135 which added --frozen
+# without copying the lockfile.
+COPY Cargo.lock ./Cargo.lock
 COPY shared-rs ./shared-rs
 COPY searcher-rs ./searcher-rs
 # sim-ctl/relays-client/recon also live in the workspace; add stub members or copy them too.
