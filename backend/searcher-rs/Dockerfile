@@ -19,6 +19,11 @@ COPY prioritization-spine ./prioritization-spine
 # simulator-v2: workspace member added in Sprint 4. Optional dep of searcher-rs
 # (feature `v2-simulator`); metadata resolution requires the path to exist.
 COPY simulator-v2 ./simulator-v2
+# token-enricher: workspace member added later. Not a build target for
+# searcher-rs but cargo's workspace resolver requires every declared member
+# to have a readable manifest, otherwise `cargo build -p searcher-rs` errors
+# with "failed to load manifest for workspace member /build/token-enricher".
+COPY token-enricher ./token-enricher
 RUN cargo build --release -p searcher-rs
 
 FROM debian:bookworm-slim AS runtime
