@@ -1,4 +1,9 @@
 import { z } from "zod";
+import { StrategyKind, BigIntStr } from "./contracts/index.js";
+
+// Re-export StrategyKind as the canonical enum. No StrategyKindSchema alias is
+// emitted — grep confirmed zero external consumers of that name.
+export { StrategyKind };
 
 export const TokenInfoSchema = z.object({
   symbol: z.string().nullable(),
@@ -8,10 +13,6 @@ export const TokenInfoSchema = z.object({
 });
 export type TokenInfo = z.infer<typeof TokenInfoSchema>;
 
-export const StrategyKindSchema = z.enum([
-  "dex_arb", "triangular", "backrun", "liquidation", "flashloan_arb",
-]);
-
 export const StatusSchema = z.enum([
   "detected", "validated", "simulated", "scored", "executing",
   "executed", "reconciled", "rejected", "failed",
@@ -20,19 +21,19 @@ export const StatusSchema = z.enum([
 export const OpportunityListItemSchema = z.object({
   id: z.string().uuid(),
   chain_id: z.number().int().positive(),
-  strategy_kind: StrategyKindSchema,
-  dex_a: z.string(),
-  dex_b: z.string().nullable(),
-  pair_symbol: z.string(),
+  strategy_kind: StrategyKind,
+  dex_a: z.string().min(1),
+  dex_b: z.string().min(1).nullable(),
+  pair_symbol: z.string().min(1),
   token_in: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
   token_in_info: TokenInfoSchema.nullable(),
   token_out: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
   token_out_info: TokenInfoSchema.nullable(),
-  amount_in_wei: z.string(),
+  amount_in_wei: BigIntStr,
   expected_profit_usd: z.number().nullable(),
   roi_pct: z.number().nullable(),
   risk_score: z.number().nullable(),
-  block_number: z.number().int().nullable(),
+  block_number: z.number().int().nonnegative().nullable(),
   status: StatusSchema,
   detected_at: z.string().datetime({ offset: true }),
   trace_id: z.string().uuid(),

@@ -7,7 +7,7 @@ export type StrategyKind = z.infer<typeof StrategyKind>;
 
 const HexAddr = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const HexTx   = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
-const BigIntStr = z.string().regex(/^[0-9]+$/);
+export const BigIntStr = z.string().regex(/^[0-9]+$/);
 const Uuid = z.string().uuid();
 const IsoDate = z.string().datetime({ offset: true });
 
@@ -69,6 +69,9 @@ export const ExecutionResultSchema = z.object({
 }).strict();
 export type ExecutionResult = z.infer<typeof ExecutionResultSchema>;
 
+// ReconReportSchema: post-execution record. `expected_profit_usd` is the
+// pre-trade estimate recorded at scoring time — always known, never NULL.
+// (Contrast with OpportunitySchema where it is nullable until simulated.)
 export const ReconReportSchema = z.object({
   opportunity_id: Uuid,
   expected_profit_usd: z.number(),
