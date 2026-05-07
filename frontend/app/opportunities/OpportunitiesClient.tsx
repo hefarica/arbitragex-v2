@@ -116,7 +116,7 @@ export default function OpportunitiesClient({
         cache: "no-store",
       });
       if (!res.ok) {
-        if (feedStatus !== "LIVE") setFeedStatus("ERROR");
+        setFeedStatus(prev => prev !== "LIVE" ? "ERROR" : prev);
         setErrorMsg(`Edge returned ${res.status}`);
         return;
       }
@@ -130,10 +130,10 @@ export default function OpportunitiesClient({
       });
       setErrorMsg(null);
     } catch (e) {
-      if (feedStatus !== "LIVE") setFeedStatus("ERROR");
+      setFeedStatus(prev => prev !== "LIVE" ? "ERROR" : prev);
       setErrorMsg((e as Error).message);
     }
-  }, [EDGE_URL, feedStatus]);
+  }, [EDGE_URL]);
 
   // R1: All non-deterministic side effects are inside useEffect — never in render.
   useEffect(() => {
@@ -270,7 +270,7 @@ export default function OpportunitiesClient({
                     </td>
 
                     {/* ── ROUTE column — TokenChip + StrategyBadge + CrossChainSlot + DEX path ── */}
-                    <td className="p-4">
+                    <td className="p-4" data-status={opp.status}>
                       <div className="flex flex-col gap-1.5">
                         {/* Token pair with rich metadata */}
                         <div className="flex items-center gap-1.5">
@@ -310,7 +310,7 @@ export default function OpportunitiesClient({
                     </td>
 
                     {/* ── NET PROFIT column — R8 fail-honest via formatProfitUSD ── */}
-                    <td className="p-4 text-right">
+                    <td className="p-4 text-right" data-col="profit">
                       <div className="group relative inline-block cursor-help">
                         <span className={`font-mono font-bold text-base drop-shadow-md border-b border-dashed border-current/30 ${TONE_CLASS[profit.tone] ?? 'text-slate-400'}`}>
                           {profit.display}
@@ -344,14 +344,14 @@ export default function OpportunitiesClient({
                     </td>
 
                     {/* ── NET ROI column — R8 fail-honest via formatPctOrDash ── */}
-                    <td className="p-4 text-right font-mono text-slate-300">
+                    <td className="p-4 text-right font-mono text-slate-300" data-col="roi">
                       <span className="bg-slate-800/80 px-2 py-1 rounded border border-slate-700/50">
                         {formatPctOrDash(opp.roi_pct)}
                       </span>
                     </td>
 
                     {/* ── SCORE column — R8 fail-honest via formatRiskOrDash ── */}
-                    <td className="p-4 text-center">
+                    <td className="p-4 text-center" data-col="risk">
                       <span className={`px-3 py-1 rounded-full text-xs font-bold border ${scorePercent > 95 ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50 shadow-[0_0_15px_rgba(234,179,8,0.3)] animate-pulse' : scorePercent > 70 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-blue-500/10 text-blue-400 border-blue-500/30'}`}>
                         {formatRiskOrDash(opp.risk_score)}
                       </span>
