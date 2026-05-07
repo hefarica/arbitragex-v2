@@ -6,8 +6,13 @@
  * searcher scans; the selection is persisted via PUT /admin/trading-config/:chainId
  * with enabled_dex_ids: string[] | null (null = all enabled).
  *
+ * Chain selector (Phase 2 multichain): operator can browse DEXes for any of the
+ * 6 supported chains. Save still persists only for config.chain_id (the parent
+ * config row). TODO(Phase 3): support per-chain trading_config rows so Save can
+ * target the selected chain.
+ *
  * Save button is gated on hasAdminSession() (per Task 12 pattern).
- * R8 fail-honest: empty array = "No DEXes available from edge — check backend."
+ * R8 fail-honest: empty array shows "No DEXes seeded for chain N".
  * Errors are shown verbatim; never hidden.
  *
  * Local types mirror shared-ts — no cross-package import required.
@@ -19,6 +24,13 @@ import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { hasAdminSession } from "@/lib/admin-token";
 import { putTradingConfig } from "@/lib/api-client";
 import type { TradingConfigConfigured } from "@/lib/schemas";
@@ -44,6 +56,17 @@ interface DexesResponse {
   chain_id: number;
   items: DexInfo[];
 }
+
+// ── Chain catalog (doctrinal infrastructure constants — not productive data) ──
+
+const SUPPORTED_CHAINS = [
+  { chain_id: 1,     name: "Ethereum", short: "ETH"  },
+  { chain_id: 42161, name: "Arbitrum", short: "ARB"  },
+  { chain_id: 10,    name: "Optimism", short: "OP"   },
+  { chain_id: 8453,  name: "Base",     short: "BASE" },
+  { chain_id: 137,   name: "Polygon",  short: "MATIC"},
+  { chain_id: 56,    name: "BSC",      short: "BSC"  },
+] as const;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -95,7 +118,12 @@ interface Props {
 // ── Component ──────────────────────────────────────────────────────────────
 
 export function DexesTab({ config, onSaved, adminToken, actor }: Props) {
-  const chainId = config.chain_id;
+  // config.chain_id is the parent config chain (used for Save).
+  // selectedChainId drives the DEX browser — operator can switch freely.
+  const configChainId = config.chain_id;
+
+  // ── Chain selector state (R1: init = config.chain_id) ──
+  const [selectedChainId, setSelectedChainId] = useState<number>(configChainId);
 
   // ── Fetch state (R1: init=[]) ──
   const [dexes, setDexes] = useState<DexInfo[]>([]);
@@ -122,12 +150,16 @@ export function DexesTab({ config, onSaved, adminToken, actor }: Props) {
     return () => clearInterval(id);
   }, []);
 
-  // ── Fetch DEXes on mount / chainId change ──
+  // ── Fetch DEXes on mount / selectedChainId change ──
+  // When chain changes reset selection (different chain = different DEX set).
   useEffect(() => {
+    setSelected(new Set<string>());
+    setRestrictMode(false);
+
     const ctrl = new AbortController();
     setLoading(true);
     setFetchError(null);
-    fetch(`${EDGE_URL}/api/dexes?chain_id=${chainId}`, {
+    fetch(`${EDGE_URL}/api/dexes?chain_id=${selectedChainId}`, {
       signal: ctrl.signal,
       credentials: "include",
       headers: { accept: "application/json" },
@@ -146,7 +178,7 @@ export function DexesTab({ config, onSaved, adminToken, actor }: Props) {
         setLoading(false);
       });
     return () => ctrl.abort();
-  }, [chainId]);
+  }, [selectedChainId]);
 
   // ── Save state ──
   const [saving, setSaving] = useState(false);
@@ -193,7 +225,9 @@ export function DexesTab({ config, onSaved, adminToken, actor }: Props) {
     void _c; void _cid; void _ua; void _ub;
 
     const body = { ...rest, enabled_dex_ids };
-    const res = await putTradingConfig(chainId, body, adminToken, actor);
+    // TODO(Phase 3): support per-chain config rows; for now Save always targets
+    // configChainId (the parent config row, typically chain 1).
+    const res = await putTradingConfig(configChainId, body, adminToken, actor);
     setSaving(false);
 
     if (res.ok) {
@@ -218,10 +252,39 @@ export function DexesTab({ config, onSaved, adminToken, actor }: Props) {
 
   // ── Render ─────────────────────────────────────────────────────────────
 
+  const selectedChainName =
+    SUPPORTED_CHAINS.find((c) => c.chain_id === selectedChainId)?.name ?? String(selectedChainId);
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>DEX Selection · chain {chainId}</CardTitle>
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <CardTitle>
+            DEX Selection · {selectedChainName}
+            {selectedChainId !== configChainId && (
+              <span className="ml-2 text-xs font-normal text-amber-400 font-mono">
+                (browsing — Save targets chain {configChainId})
+              </span>
+            )}
+          </CardTitle>
+
+          {/* Chain selector */}
+          <Select
+            value={String(selectedChainId)}
+            onValueChange={(v) => setSelectedChainId(Number(v))}
+          >
+            <SelectTrigger size="sm" className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SUPPORTED_CHAINS.map((c) => (
+                <SelectItem key={c.chain_id} value={String(c.chain_id)}>
+                  {c.name} ({c.short})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
 
@@ -240,7 +303,7 @@ export function DexesTab({ config, onSaved, adminToken, actor }: Props) {
         {/* Empty state (R8 fail-honest) */}
         {!loading && !fetchError && dexes.length === 0 && (
           <p className="text-xs text-muted-foreground py-4 text-center">
-            No DEXes available from edge — check backend indexer for chain {chainId}.
+            No DEXes seeded for {selectedChainName} (chain {selectedChainId}) — migration 043 seeds top 6 DEXes per chain.
           </p>
         )}
 

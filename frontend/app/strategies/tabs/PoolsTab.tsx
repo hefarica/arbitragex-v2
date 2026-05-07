@@ -2,10 +2,14 @@
  * Phase 2 Route Finder — Pool browser tab (read-only MVP).
  *
  * Fetches /api/pools?chain_id=N&dex_id=X&limit=200 on mount and when
- * the DEX filter changes (R1: useEffect + useState).
+ * the DEX filter or chain selector changes (R1: useEffect + useState).
  * Loads DEX list from /api/dexes for the filter dropdown.
  *
+ * Chain selector (Phase 2 multichain): operator can browse pools for any of the
+ * 6 supported chains. Switching chain resets the DEX filter and pagination.
+ *
  * Filters (all client-side after initial load):
+ *   - Chain selector (re-fetches dexes + pools for selected chain)
  *   - DEX dropdown (triggers new server request — different DEX = different dataset)
  *   - Protocol type chips (multiselect, client-side)
  *   - Token search (symbol or address prefix, client-side)
@@ -82,6 +86,17 @@ interface PoolsResponse {
   items: PoolInfo[];
 }
 
+// ── Chain catalog (doctrinal infrastructure constants — not productive data) ──
+
+const SUPPORTED_CHAINS = [
+  { chain_id: 1,     name: "Ethereum", short: "ETH"  },
+  { chain_id: 42161, name: "Arbitrum", short: "ARB"  },
+  { chain_id: 10,    name: "Optimism", short: "OP"   },
+  { chain_id: 8453,  name: "Base",     short: "BASE" },
+  { chain_id: 137,   name: "Polygon",  short: "MATIC"},
+  { chain_id: 56,    name: "BSC",      short: "BSC"  },
+] as const;
+
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
@@ -133,6 +148,9 @@ interface Props {
 
 export function PoolsTab({ chainId }: Props) {
 
+  // ── Chain selector state (R1: init = chainId prop) ──
+  const [selectedChainId, setSelectedChainId] = useState<number>(chainId);
+
   // ── DEX list for filter dropdown ──
   const [dexes, setDexes] = useState<DexInfo[]>([]);
   const [dexesLoading, setDexesLoading] = useState(true);
@@ -140,7 +158,7 @@ export function PoolsTab({ chainId }: Props) {
   useEffect(() => {
     const ctrl = new AbortController();
     setDexesLoading(true);
-    fetch(`${EDGE_URL}/api/dexes?chain_id=${chainId}`, {
+    fetch(`${EDGE_URL}/api/dexes?chain_id=${selectedChainId}`, {
       signal: ctrl.signal,
       credentials: "include",
       headers: { accept: "application/json" },
@@ -157,7 +175,7 @@ export function PoolsTab({ chainId }: Props) {
         if (e.name !== "AbortError") setDexesLoading(false);
       });
     return () => ctrl.abort();
-  }, [chainId]);
+  }, [selectedChainId]);
 
   // ── Filter state ──
   const [selectedDexId, setSelectedDexId] = useState<string>("__all__");
@@ -171,14 +189,14 @@ export function PoolsTab({ chainId }: Props) {
   const [poolsLoading, setPoolsLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
-  // Fetch whenever dex filter or limit changes.
+  // Fetch whenever chain, dex filter, or limit changes.
   useEffect(() => {
     const ctrl = new AbortController();
     setPoolsLoading(true);
     setFetchError(null);
 
     const url = new URL(`${EDGE_URL}/api/pools`);
-    url.searchParams.set("chain_id", String(chainId));
+    url.searchParams.set("chain_id", String(selectedChainId));
     if (selectedDexId !== "__all__") url.searchParams.set("dex_id", selectedDexId);
     url.searchParams.set("limit", String(limit));
 
@@ -202,7 +220,7 @@ export function PoolsTab({ chainId }: Props) {
         setPoolsLoading(false);
       });
     return () => ctrl.abort();
-  }, [chainId, selectedDexId, limit]);
+  }, [selectedChainId, selectedDexId, limit]);
 
   // ── Client-side filtering (protocol chips + search) ──
   const filteredPools = useMemo(() => {
@@ -237,6 +255,14 @@ export function PoolsTab({ chainId }: Props) {
     });
   };
 
+  const onChainChange = (value: string) => {
+    setSelectedChainId(Number(value));
+    // Reset DEX filter and pagination — different chain has different DEXes.
+    setSelectedDexId("__all__");
+    setLimit(LOAD_PAGE);
+    setActiveProtocols(new Set());
+  };
+
   const onDexChange = (value: string) => {
     setSelectedDexId(value);
     setLimit(LOAD_PAGE); // reset pagination on DEX change
@@ -249,25 +275,47 @@ export function PoolsTab({ chainId }: Props) {
   // Whether there are more results on the server side.
   const hasMore = pools.length < totalCount && !poolsLoading;
 
+  const selectedChainName =
+    SUPPORTED_CHAINS.find((c) => c.chain_id === selectedChainId)?.name ?? String(selectedChainId);
+
   // ── Render ─────────────────────────────────────────────────────────────
 
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <CardTitle>Pools · chain {chainId}</CardTitle>
+            <CardTitle>Pools · {selectedChainName}</CardTitle>
             <p className="text-xs text-muted-foreground mt-1">
               Browse — selection / allowlist in next phase
             </p>
           </div>
-          {!poolsLoading && !fetchError && (
-            <span className="text-xs text-muted-foreground font-mono whitespace-nowrap">
-              {filteredPools.length} shown
-              {filteredPools.length !== pools.length && ` of ${pools.length} loaded`}
-              {` · ${totalCount} total`}
-            </span>
-          )}
+          <div className="flex items-center gap-3">
+            {/* Chain selector */}
+            <Select
+              value={String(selectedChainId)}
+              onValueChange={onChainChange}
+            >
+              <SelectTrigger size="sm" className="w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SUPPORTED_CHAINS.map((c) => (
+                  <SelectItem key={c.chain_id} value={String(c.chain_id)}>
+                    {c.name} ({c.short})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {!poolsLoading && !fetchError && (
+              <span className="text-xs text-muted-foreground font-mono whitespace-nowrap">
+                {filteredPools.length} shown
+                {filteredPools.length !== pools.length && ` of ${pools.length} loaded`}
+                {` · ${totalCount} total`}
+              </span>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -349,7 +397,7 @@ export function PoolsTab({ chainId }: Props) {
         {!poolsLoading && !fetchError && filteredPools.length === 0 && (
           <p className="text-xs text-muted-foreground py-6 text-center">
             {pools.length === 0
-              ? `No pools available for chain ${chainId}${selectedDexId !== "__all__" ? " + selected DEX" : ""} — check backend indexer.`
+              ? `No pools seeded for ${selectedChainName} (chain ${selectedChainId})${selectedDexId !== "__all__" ? " + selected DEX" : ""} — migration 043 seeds top 6 DEXes per chain.`
               : "No pools match the current filters."}
           </p>
         )}
