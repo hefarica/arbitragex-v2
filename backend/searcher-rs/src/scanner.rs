@@ -516,19 +516,21 @@ async fn process_pending(
                 // The evaluator's CascadePriceOracle is the authoritative source;
                 // this scanner-level path is a fast pre-filter only.
                 gross_profit_f64 = if let Some(cfg_ref) = cfg_opt.as_ref() {
-                    if m_out.symbol.eq_ignore_ascii_case(&cfg_ref.base_token_symbol) {
-                        Some(spread_token_out_f64 * cfg_ref.base_token_price_usd)
-                    } else if m_out.is_stablecoin {
-                        Some(spread_token_out_f64)
-                    } else {
+                    let result = compute_usd_profit_for_spread(
+                        spread_token_out_f64,
+                        m_out.symbol.eq_ignore_ascii_case(&cfg_ref.base_token_symbol),
+                        cfg_ref.base_token_price_usd,
+                        m_out.is_stablecoin,
+                    );
+                    if result.is_none() {
                         // Oracle gap: token_out is neither base nor stablecoin.
                         // Leave as None — the evaluator's CascadePriceOracle will
                         // attempt resolution; if it also misses → UnknownTokenPrice
                         // rejection (R8 fail-honest, expected_profit_usd = None).
                         debug!(event = "scanner.usd_conversion_pending_oracle",
                                token_out_symbol = %m_out.symbol);
-                        None
                     }
+                    result
                 } else {
                     // No config → no base token price → cannot compute USD profit.
                     None
