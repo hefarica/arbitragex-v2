@@ -319,6 +319,15 @@ export const TradingConfigPutResultSchema = z.object({
 
 // ─────── Strategy Catalog (Sprint 2 — universal MEV strategy library) ───
 
+export const LifecycleStatusSchema = z.enum([
+  "live",
+  "designed",
+  "scaffold",
+  "not_started",
+  "defensive_only",
+]);
+export type LifecycleStatus = z.infer<typeof LifecycleStatusSchema>;
+
 export const StrategyCatalogEntrySchema = z.object({
   kind: z.string(),
   display_name: z.string(),
@@ -326,6 +335,9 @@ export const StrategyCatalogEntrySchema = z.object({
   category: z.string(),
   is_implemented: z.boolean(),
   is_default: z.boolean(),
+  // Migration 035 — operative state for UI badge + toggle gating.
+  // Older catalog rows may still have null here; UI treats null as "unknown".
+  lifecycle_status: LifecycleStatusSchema.nullable().optional(),
   risk_level: z.enum(["low", "medium", "high", "very-high"]),
   capital_required: z.string().nullable(),
   expected_complexity: z.string().nullable(),

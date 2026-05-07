@@ -19,7 +19,38 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { putTradingConfig } from "@/lib/api-client";
-import type { StrategyCatalogEntry, TradingConfigConfigured } from "@/lib/schemas";
+import type {
+  LifecycleStatus,
+  StrategyCatalogEntry,
+  TradingConfigConfigured,
+} from "@/lib/schemas";
+
+// Truth labels for the lifecycle badge. Wording is chosen so the operator sees
+// at a glance whether toggling does anything.
+const LIFECYCLE_LABEL: Record<LifecycleStatus, string> = {
+  live: "LIVE",
+  designed: "DESIGNED",
+  scaffold: "SCAFFOLD",
+  not_started: "NOT STARTED",
+  defensive_only: "DEFENSIVE",
+};
+
+const LIFECYCLE_TOOLTIP: Record<LifecycleStatus, string> = {
+  live: "Searcher emits this kind in production. Toggle controls the gate.",
+  designed: "Design doc complete; no Rust emitter yet. Toggle is informational.",
+  scaffold: "Enum + persistence ready; no scanner emits yet. Toggle is informational.",
+  not_started: "Identifier reserved; no code, no design. Toggle is informational.",
+  defensive_only: "Detection-only protection for our own swaps. Forced-on by policy.",
+};
+
+// Tailwind classes per status — tuned so LIVE pops, others read as muted.
+const LIFECYCLE_CLASSES: Record<LifecycleStatus, string> = {
+  live: "bg-emerald-500/15 text-emerald-300 border-emerald-500/40",
+  designed: "bg-sky-500/15 text-sky-300 border-sky-500/40",
+  scaffold: "bg-amber-500/15 text-amber-300 border-amber-500/40",
+  not_started: "bg-slate-500/15 text-slate-300 border-slate-500/40",
+  defensive_only: "bg-red-500/15 text-red-300 border-red-500/40",
+};
 
 interface Props {
   config: TradingConfigConfigured;
@@ -77,6 +108,13 @@ export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor
         {catalog.map((s) => {
           const isOn = enabled.includes(s.kind);
           const isDefensive = s.ethical_constraint === "defensive_only";
+          const status: LifecycleStatus | null = s.lifecycle_status ?? null;
+          // Toggle is operative ONLY for live strategies. Defensive is forced-on
+          // by policy. Everything else (designed/scaffold/not_started/null) is
+          // informational — the toggle is rendered disabled with a tooltip so
+          // the operator never thinks "I marked it, it must be running".
+          const toggleEnabled = status === "live" && !isDefensive;
+          const switchChecked = isDefensive ? true : status === "live" ? isOn : false;
           return (
             <Card key={s.kind} className={isDefensive ? "border-red-500/40" : undefined}>
               <CardContent className="space-y-2 py-4">
@@ -86,16 +124,23 @@ export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor
                     <div className="text-xs text-muted-foreground font-mono">{s.kind}</div>
                   </div>
                   <Switch
-                    checked={isDefensive ? true : isOn}
-                    disabled={isDefensive}
+                    checked={switchChecked}
+                    disabled={!toggleEnabled}
                     onCheckedChange={(c) => toggle(s.kind, c)}
+                    title={status ? LIFECYCLE_TOOLTIP[status] : "Lifecycle status unknown"}
                   />
                 </div>
                 <p className="text-xs text-muted-foreground">{s.description}</p>
                 <div className="flex flex-wrap gap-1 pt-1">
-                  <Badge variant={s.is_implemented ? "success" : "outline"} className="text-[10px]">
-                    {s.is_implemented ? "Implemented" : "Schema-only"}
-                  </Badge>
+                  {status && (
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] font-bold ${LIFECYCLE_CLASSES[status]}`}
+                      title={LIFECYCLE_TOOLTIP[status]}
+                    >
+                      {LIFECYCLE_LABEL[status]}
+                    </Badge>
+                  )}
                   <Badge variant="outline" className="text-[10px]">{s.category}</Badge>
                   <Badge variant="outline" className="text-[10px]">risk: {s.risk_level}</Badge>
                   {s.competitive_advantage && (
@@ -103,9 +148,6 @@ export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor
                   )}
                   {s.requires_flashloan && (
                     <Badge variant="outline" className="text-[10px]">flashloan</Badge>
-                  )}
-                  {isDefensive && (
-                    <Badge variant="destructive" className="text-[10px]">DEFENSIVE ONLY</Badge>
                   )}
                 </div>
               </CardContent>

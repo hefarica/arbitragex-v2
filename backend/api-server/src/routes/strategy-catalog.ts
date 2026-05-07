@@ -25,6 +25,10 @@ interface CatalogRow {
   category: string;
   is_implemented: boolean;
   is_default: boolean;
+  // Migration 035 — replaces the binary is_implemented as the operative
+  // signal. UI uses this 5-state field exclusively for status badges + to
+  // disable toggles for non-LIVE strategies (RULE 00 honesty).
+  lifecycle_status: "live" | "designed" | "scaffold" | "not_started" | "defensive_only" | null;
   risk_level: string;
   capital_required: string | null;
   expected_complexity: string | null;
@@ -48,6 +52,7 @@ export function buildStrategyCatalogRouter(deps: Deps): Router {
     try {
       const q = await pool.query<CatalogRow>(
         `SELECT kind, display_name, description, category, is_implemented, is_default,
+                lifecycle_status,
                 risk_level, capital_required, expected_complexity, competitive_advantage,
                 ethical_constraint, skill_refs, requires_flashloan,
                 chains_supported::text[] AS chains_supported
