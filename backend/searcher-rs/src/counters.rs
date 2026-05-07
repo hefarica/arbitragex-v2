@@ -88,6 +88,26 @@ pub struct ScannerCounters {
     /// in the pool reserves cache. Operator action required: inspect the diagnostic dump
     /// in the `flashloan_arb_worker.sanity_reject` log line.
     pub flashloan_arb_sanity_reject: AtomicU64,
+    /// TriangularWorker: V3-bearing cycles scanned this period (the 4 long-tail
+    /// cycles X-WETH-USDC-X for X in {PEPE, SHIB, MKR, COMP}; both directions
+    /// per tick). Counted independently of the V2-only `triangular_cycles_scanned`
+    /// so the operator can attribute throughput per quote-source. Steady non-zero
+    /// proves V3 fan-out is alive even when V3 pools have insufficient liquidity
+    /// to emit (the failure case bumps `triangular_v3_quote_failures` instead).
+    pub triangular_v3_cycles_scanned: AtomicU64,
+    /// TriangularWorker: V3 quote calls (per-pool) that returned `success=false`
+    /// or `amount_out=0` from QuoterV2 this period. Steady non-zero with zero
+    /// emits = V3 pool index has stale entries OR the chosen fee tier has no
+    /// active liquidity for the candidate amount_in. R8 fail-honest: every
+    /// failure increments this counter, NEVER fabricates a synthetic amount_out.
+    pub triangular_v3_quote_failures: AtomicU64,
+    /// TriangularWorker: V3-bearing cycles rejected by the worker-level sanity
+    /// bound (expected_profit_usd > SANITY_PROFIT_MULT_OF_CAP × cap_usd). Same
+    /// guard the V2 path uses; mirrored here because V3 tick math is *more*
+    /// complex than V2 CPMM, so bugs are MORE likely. Non-zero means orientation
+    /// / pool-index / fee-tier / decimal bug — inspect `sanity_reject_v3` warn
+    /// log for the diagnostic dump.
+    pub triangular_v3_sanity_reject: AtomicU64,
 }
 
 /// Process-global counters. First call initialises; subsequent calls return

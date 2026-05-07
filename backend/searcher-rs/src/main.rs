@@ -248,11 +248,45 @@ async fn main() -> anyhow::Result<()> {
     let triangular_db = db_pool.clone();
     let triangular_tc = trading_config.clone();
     let triangular_chain = primary_chain;
+    // V3 provider plumbing — mainnet only (mirrors scanner.rs:103-118).
+    // When a primary HTTP RPC URL is configured for chain_id=1 we attach an
+    // ethers Provider so the worker can run QuoterV2 multicalls for the
+    // long-tail V3-bearing cycles (PEPE/SHIB/MKR/COMP). Other chains and
+    // boots without RPC stay on the V2-only path; the worker counts the
+    // would-be V3 cycles in `triangular_v3_quote_failures` so the heartbeat
+    // surfaces the missing-provider state instead of silent skip.
+    let triangular_v3_provider: Option<std::sync::Arc<ethers::providers::Provider<ethers::providers::Http>>> =
+        if triangular_chain == 1 {
+            primary_rpc_http.as_ref().and_then(|url| {
+                match ethers::providers::Provider::<ethers::providers::Http>::try_from(url.clone()) {
+                    Ok(p) => {
+                        info!(event = "triangular_worker.v3_provider_ready", chain_id = triangular_chain);
+                        Some(std::sync::Arc::new(p))
+                    }
+                    Err(e) => {
+                        warn!(event = "triangular_worker.v3_provider_init_failed", chain_id = triangular_chain, error = %e);
+                        None
+                    }
+                }
+            })
+        } else {
+            None
+        };
+    if triangular_v3_provider.is_none() {
+        info!(
+            event = "triangular_worker.v3_disabled",
+            chain_id = triangular_chain,
+            reason = if triangular_chain != 1 { "non-mainnet" } else { "no_rpc_http_url" },
+        );
+    }
     tokio::spawn(async move {
-        let tw = workers::triangular_worker::TriangularWorker::new(
+        let mut tw = workers::triangular_worker::TriangularWorker::new(
             triangular_period_secs,
             triangular_chain,
         );
+        if let Some(p) = triangular_v3_provider {
+            tw = tw.with_v3_provider(p);
+        }
         tw.run(triangular_redis, triangular_db, triangular_tc).await;
     });
 

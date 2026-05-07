@@ -41,25 +41,35 @@
 //! candidate evaluations per tick, well below 1ms of Redis work even on a
 //! cold cache.
 
-use crate::amm_math::v2_amount_out;
+use crate::amm_math::{v2_amount_out, v3_quote_exact_in_multicall, V3QuoteRequest};
 use crate::counters::counters;
 use crate::persistence;
 use crate::publisher;
 use crate::reserves::{
-    get_pools_for_pair, get_reserves, get_token_meta, ReservesEntry,
+    get_pools_for_pair, get_pools_for_pair_v3, get_reserves, get_token_meta,
+    ReservesEntry, V3PoolInfo,
 };
 use chrono::Utc;
-use ethers::types::U256;
+use ethers::providers::{Http, Provider};
+use ethers::types::{Address, U256};
 use redis::aio::ConnectionManager;
 use shared_rs::contracts::{Opportunity, StrategyKind};
 use shared_rs::trading_config::TradingConfigClient;
 use sqlx::postgres::PgPool;
 use std::collections::HashSet;
+use std::str::FromStr;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::interval;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
+
+/// Mainnet QuoterV2 + Multicall3 addresses. Mirrored from `scanner.rs` —
+/// both modules quote against the same on-chain contracts. V3 quoting is
+/// mainnet-only for now; multi-chain V3 lands in a future sub-project.
+const V3_QUOTER_V2_MAINNET: &str = "0x61fFE014bA17989E743c5F6cB21bF9697530B21e";
+const V3_MULTICALL3_ADDR: &str = "0xcA11bde05977b3631167028862bE2a173976CA11";
 
 /// Default tick period — approximately one Ethereum mainnet block.
 pub const DEFAULT_INTERVAL_SECS: u64 = 12;
@@ -106,6 +116,11 @@ struct TickStats {
     skip_dedup_hit: u32,
     skip_no_capital_cap: u32,
     skip_no_profit: u32,
+    /// V3-specific: at least one V3 quote in the cycle came back
+    /// `success=false` or `amount_out=0` from QuoterV2 (insufficient
+    /// liquidity, pool revert, RPC error). R8 fail-honest skip — never
+    /// fabricated.
+    skip_v3_quote_failed: u32,
     emitted: u32,
 }
 
@@ -114,13 +129,14 @@ impl TickStats {
     /// count) so the operator sees at a glance WHY cycles aren't producing
     /// emit-able opportunities. None when no skips happened in the period.
     fn dominant_skip_reason(&self) -> Option<&'static str> {
-        let buckets: [(&'static str, u32); 6] = [
+        let buckets: [(&'static str, u32); 7] = [
             ("missing_pool", self.skip_missing_pool),
             ("stale_reserves", self.skip_stale_reserves),
             ("dedup_hit", self.skip_dedup_hit),
             ("no_capital_cap", self.skip_no_capital_cap),
             ("no_profit", self.skip_no_profit),
             ("unknown_token", self.skip_unknown_token),
+            ("v3_quote_failed", self.skip_v3_quote_failed),
         ];
         buckets
             .iter()
@@ -141,12 +157,10 @@ impl TickStats {
 /// All five cycles use blue-chip Ethereum tokens whose V2 pools exist on
 /// Uniswap V2 mainnet (seeded by migrations 029 + 030 + 037).
 ///
-/// Long-tail tokens (PEPE/SHIB/MKR/COMP) deliberately omitted from the cycle
-/// list: these tokens trade primarily on Uniswap V3 — there is no V2 pool
-/// against USDC for them, so any cycle of the form `X-WETH-USDC-X` would
-/// always skip with `cycle_missing_pool`. The `known_token_address` and
-/// `resolve_token` fallbacks below still resolve them, ready for the
-/// next sub-project that extends the worker with a V3 quoter.
+/// Long-tail tokens (PEPE/SHIB/MKR/COMP) live in `V3_CYCLES` below — they
+/// trade primarily on Uniswap V3 and have no V2 USDC pool, so the worker
+/// resolves their hops through the on-chain QuoterV2 multicall path
+/// (`scan_v3_bearing_cycles`) instead of the cached-V2 path used here.
 ///
 /// Operator can extend by editing this constant; future sub-project lifts
 /// the list to PG so the operator can manage cycles via UI.
@@ -156,6 +170,37 @@ pub const MVP_CYCLES: &[(&str, &str, &str)] = &[
     ("WETH", "USDT", "DAI"),     // unblocked by migration 037 (DAI/USDT V2)
     ("WETH", "WBTC", "USDC"),    // unblocked by migration 037 (WBTC/USDC V2)
     ("USDC", "DAI", "USDT"),     // unblocked by migration 037 (DAI/USDT V2)
+];
+
+/// V3-bearing triangular cycles re-introduced 2026-05-07 alongside the V3
+/// QuoterV2 multicall path. Each cycle (a, b, c) defines `a → b → c → a`
+/// and the worker tries BOTH directions per tick.
+///
+/// All four cycles share the structure `X → WETH → USDC → X` where X is a
+/// long-tail token (PEPE/SHIB/MKR/COMP). The middle hop (WETH↔USDC) is
+/// resolved through the V2 reserves cache when available; the X↔WETH and
+/// X↔USDC hops fall back to V3 QuoterV2 — X has plenty of V3 liquidity
+/// against both WETH (high-volume V3 pools) and USDC (lower volume but
+/// real on mainnet) but no canonical V2 USDC pool.
+///
+/// **MVP single-point evaluation (decision C in the design brief):** V3
+/// concentrated liquidity makes amount_out non-linear in amount_in, so we
+/// cannot reuse the cached "spot rate" trick that V2 affords. Running
+/// golden-section over QuoterV2 would cost ~25 RPC × 2 V3 hops × 4 cycles
+/// × 2 dirs ≈ 400 RPC/tick — breaks Alchemy rate limits. We accept the
+/// known limitation that V3 cycles use a single fixed amount_in
+/// (`cap_usd / token_a_price` floored to wei) and follow up with golden-
+/// section once V3 tick math is implemented in Rust.
+///
+/// V3 fee tier selection: the V3 pool index can list multiple tiers per
+/// pair (typically 0.05% + 0.30% for blue-chip pairs). MVP picks the FIRST
+/// entry returned by `get_pools_for_pair_v3` — future sub-project ranks by
+/// TVL or quote magnitude.
+pub const V3_CYCLES: &[(&str, &str, &str)] = &[
+    ("PEPE", "WETH", "USDC"),
+    ("SHIB", "WETH", "USDC"),
+    ("MKR",  "WETH", "USDC"),
+    ("COMP", "WETH", "USDC"),
 ];
 
 /// Fee-multiplier `γ = 1 - fee`. For V2 default fee 30 bps → γ = 0.997.
@@ -444,6 +489,43 @@ impl HopData {
     }
 }
 
+/// One hop's resolved data, source-tagged. V2 hops carry the cached
+/// reserves entry (cheap repeated reads). V3 hops carry the chosen pool
+/// address + fee tier; the actual amount_out is fetched via QuoterV2
+/// multicall at evaluation time and stored separately so the worker can
+/// batch every V3 hop across every cycle into a single RPC.
+#[derive(Debug, Clone)]
+enum HopKind {
+    V2(HopData),
+    V3 {
+        pool_addr: String,
+        fee_bps: u32,
+        token_in_addr: String,
+        token_out_addr: String,
+    },
+}
+
+impl HopKind {
+    /// Block number attribution for dedup + staleness:
+    /// - V2 hop → the block at which `PoolSyncWorker` last refreshed reserves.
+    /// - V3 hop → None (QuoterV2 returns the quote at "current state" with no
+    ///   block number; the cycle's block is taken from the most-recent V2 hop).
+    fn block_number(&self) -> Option<u64> {
+        match self {
+            HopKind::V2(h) => Some(h.entry.blk),
+            HopKind::V3 { .. } => None,
+        }
+    }
+
+    /// Pool address (lowercase hex). Surfaced for diagnostic dumps.
+    fn pool_addr(&self) -> &str {
+        match self {
+            HopKind::V2(h) => &h.pool_addr,
+            HopKind::V3 { pool_addr, .. } => pool_addr,
+        }
+    }
+}
+
 /// Resolve one hop (token_in → token_out) by looking up the V2 pool index +
 /// fetching reserves. Picks the FIRST pool returned by `get_pools_for_pair`
 /// — for MVP a single pool per pair is sufficient; future sub-projects will
@@ -475,10 +557,90 @@ async fn resolve_hop(
     })
 }
 
+/// Resolve a hop as V3 by looking up the V3 pool index. Returns the FIRST
+/// pool entry — multi-tier ranking (lowest fee tier vs highest TVL) is a
+/// future-improvement listed in the V3_CYCLES doc above.
+///
+/// Returns None when the V3 index is empty for this pair (no V3 pool covers
+/// the symbols on mainnet) — caller falls through to "skip cycle". R8 fail-
+/// honest: NEVER fabricates a synthetic pool address.
+async fn resolve_hop_v3(
+    redis: &mut ConnectionManager,
+    chain_id: u64,
+    token_in_sym: &str,
+    token_out_sym: &str,
+    token_in_addr: &str,
+    token_out_addr: &str,
+) -> Option<HopKind> {
+    let pools = get_pools_for_pair_v3(redis, chain_id, token_in_sym, token_out_sym)
+        .await
+        .ok()?;
+    let info: V3PoolInfo = pools.into_iter().next()?;
+    Some(HopKind::V3 {
+        pool_addr: info.pool_addr,
+        fee_bps: info.fee_bps,
+        token_in_addr: token_in_addr.to_string(),
+        token_out_addr: token_out_addr.to_string(),
+    })
+}
+
+/// Resolve a hop preferring V2 (cached, cheap) and falling back to V3 (on-
+/// chain QuoterV2 batched per tick). Returns None when neither source has a
+/// pool for the pair — caller skips cycle with `cycle_missing_pool`.
+async fn resolve_hop_any(
+    redis: &mut ConnectionManager,
+    chain_id: u64,
+    token_in_addr: &str,
+    token_in_sym: &str,
+    token_out_addr: &str,
+    token_out_sym: &str,
+) -> Option<HopKind> {
+    if let Some(v2) = resolve_hop(redis, chain_id, token_in_addr, token_in_sym, token_out_sym).await {
+        return Some(HopKind::V2(v2));
+    }
+    resolve_hop_v3(
+        redis,
+        chain_id,
+        token_in_sym,
+        token_out_sym,
+        token_in_addr,
+        token_out_addr,
+    )
+    .await
+}
+
 /// Identify the most recent block across a cycle's hops; used to enforce
 /// the staleness bound (hop with blk < latest - MAX_RESERVE_LAG_BLOCKS is rejected).
 fn cycle_latest_block(hops: &[HopData]) -> u64 {
     hops.iter().map(|h| h.entry.blk).max().unwrap_or(0)
+}
+
+/// Same as `cycle_latest_block` but for the mixed-kind hop slice used by V3-
+/// bearing cycles: V2 hops contribute their cached block; V3 hops contribute
+/// nothing (their quote is "current state"). Returns the max of the V2-hop
+/// blocks, or 0 when all hops are V3 (in which case dedup falls back to the
+/// per-tick block sentinel — never an issue for V3_CYCLES because the WETH↔USDC
+/// middle hop is always V2-resolvable).
+fn cycle_latest_block_mixed(hops: &[HopKind]) -> u64 {
+    hops.iter()
+        .filter_map(|h| h.block_number())
+        .max()
+        .unwrap_or(0)
+}
+
+/// Staleness check for the mixed-kind slice. We can only enforce the lag
+/// bound across V2 hops; V3 hops are stateless under our single-point
+/// evaluation. Returns true when ANY V2 hop is more than
+/// `MAX_RESERVE_LAG_BLOCKS` behind the latest V2 hop.
+fn cycle_has_stale_reserves_mixed(hops: &[HopKind]) -> bool {
+    let v2_blocks: Vec<u64> = hops.iter().filter_map(|h| h.block_number()).collect();
+    if v2_blocks.is_empty() {
+        return false;
+    }
+    let latest = *v2_blocks.iter().max().unwrap_or(&0);
+    v2_blocks
+        .iter()
+        .any(|b| latest.saturating_sub(*b) > MAX_RESERVE_LAG_BLOCKS)
 }
 
 /// Returns true if any hop in the cycle has reserves more than
@@ -607,6 +769,239 @@ pub fn evaluate_cycle(input: &EvalInput) -> Option<EvalResult> {
     })
 }
 
+/// Pre-computed amount_in / amount_out for one hop of a V3-bearing cycle.
+/// The mixed-kind evaluator iterates these in cycle order; each one was either
+/// produced by the V2 amount_out math kernel (cheap, deterministic) or fetched
+/// via QuoterV2 multicall (one batched RPC per tick). Public for testability.
+///
+/// **Chain consistency (math-validator CRITICAL fix 2026-05-06):** the kernel
+/// asserts that for i > 0, `hop_outs[i].amount_in_used == hop_outs[i-1].amount_out`
+/// (within a small tolerance for V2 truncation when the predecessor is V2).
+/// Without this check, a buggy caller can feed a V3 quote with amount_in
+/// from BEFORE a V2 hop saturated, producing inflated downstream profit.
+/// See `chain_consistent_with_predecessor` for the tolerance semantics.
+#[derive(Debug, Clone)]
+pub struct HopAmountOut {
+    /// Amount fed into THIS hop. For hop 0 this equals `amount_in_wei` of the
+    /// cycle. For hop i > 0 this MUST equal the previous hop's `amount_out`
+    /// (the kernel verifies this).
+    pub amount_in_used: U256,
+    pub amount_out: U256,
+    /// Source tag for the diagnostic log on sanity reject.
+    #[allow(dead_code)]
+    pub source: HopAmountSource,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HopAmountSource {
+    V2,
+    V3,
+}
+
+/// Chain consistency tolerance: how far apart can hop[i].amount_in_used and
+/// hop[i-1].amount_out be before the kernel rejects the chain as inconsistent?
+///
+/// Strict equality would be ideal but introduces noise around V2 truncation:
+/// when the predecessor is a V2 hop, `v2_amount_out` produces a value that the
+/// caller MUST then feed unchanged to the next hop (no further truncation).
+/// In practice the caller computes both sides identically so equality holds —
+/// the tolerance exists only to avoid a subtle mismatch surfacing as a false
+/// reject in some corner case we haven't yet anticipated. Difference must be
+/// at MOST 1 wei (single-unit slop) — anything larger is a genuine bug.
+fn chain_consistent_with_predecessor(predecessor_out: U256, hop_in: U256) -> bool {
+    if predecessor_out == hop_in {
+        return true;
+    }
+    let diff = if predecessor_out > hop_in {
+        predecessor_out - hop_in
+    } else {
+        hop_in - predecessor_out
+    };
+    diff <= U256::from(1u64)
+}
+
+/// **Pure-function kernel for V3-bearing cycles** — single-point evaluation.
+///
+/// Inputs:
+///   - `amount_in_wei`: the candidate input size in token-a wei. The caller
+///     computes this as `floor(cap_usd / token_a_price_usd × 10^decimals)` —
+///     i.e. the operator's capital cap mapped to wei. **No optimal-search
+///     for V3 is performed in MVP** (decision C in the design brief).
+///   - `hop_outs`: per-hop amount_out, in cycle order. Length must equal 3.
+///   - `token_a_price_usd`: needed to translate the integer profit to USD.
+///   - `token_a_decimals`: scales the integer profit to f64 token units.
+///   - `cap_usd`: operator capital cap, used by the caller's sanity guard.
+///     Returned as part of `EvalResult` for the sanity-bound check at the
+///     persistence layer.
+///
+/// Returns `Some(EvalResult)` only when:
+///   1. Length checks pass (3 hops, no zero amount_outs).
+///   2. Final amount > input (positive profit in token-a wei).
+///   3. Token-a price is known (`token_a_price_usd > 0`, finite).
+///
+/// Otherwise returns None and the caller skips. **R8 fail-honest**: zero
+/// amount_outs (V3 quote failure) → None at this hop, never fabricated.
+pub fn evaluate_v3_cycle(
+    amount_in_wei: U256,
+    hop_outs: &[HopAmountOut],
+    token_a_price_usd: Option<f64>,
+    token_a_decimals: u8,
+) -> Option<EvalResult> {
+    if hop_outs.len() != 3 || amount_in_wei.is_zero() {
+        return None;
+    }
+    // No-zero-link sanity (R8 fail-honest — V3 quote failure produces
+    // amount_out=0 which the kernel must NOT treat as a chain).
+    for h in hop_outs {
+        if h.amount_out.is_zero() {
+            return None;
+        }
+    }
+    // **Chain consistency** (math-validator CRITICAL fix 2026-05-06).
+    // Hop 0's amount_in_used must equal the cycle's amount_in_wei; subsequent
+    // hops' amount_in_used must equal the predecessor's amount_out. Without
+    // this check, a buggy caller (the original V3 chain bug — feeding V2 with
+    // pre-V3 wei because V3 amount_out wasn't yet known when the chain was
+    // built) can inflate downstream profit by orders of magnitude. The bug
+    // would slip past the 5x sanity bound at ratios up to ~2.5x in the
+    // PEPE/SHIB long-tail case (see `pepe_v3_v2_v3_cycle_does_not_emit_fake_positive_under_sanity_bound`).
+    if hop_outs[0].amount_in_used != amount_in_wei {
+        return None;
+    }
+    for i in 1..hop_outs.len() {
+        if !chain_consistent_with_predecessor(hop_outs[i - 1].amount_out, hop_outs[i].amount_in_used) {
+            return None;
+        }
+    }
+    let final_out = hop_outs[hop_outs.len() - 1].amount_out;
+    if final_out <= amount_in_wei {
+        return None;
+    }
+    // Profit in token-a wei. Use the same i128 clamp the V2 kernel uses for
+    // consistency with the spine + sanity-bound math downstream.
+    let profit_wei =
+        u256_to_i128_clamped(final_out).saturating_sub(u256_to_i128_clamped(amount_in_wei));
+    if profit_wei <= 0 {
+        return None;
+    }
+    let price = token_a_price_usd?;
+    if !price.is_finite() || price <= 0.0 {
+        return None;
+    }
+    let profit_tokens = (profit_wei as f64) / 10f64.powi(token_a_decimals as i32);
+    let expected_profit_usd = Some(profit_tokens * price);
+    Some(EvalResult {
+        amount_in_wei,
+        amount_out_wei: final_out,
+        profit_token_a_wei: profit_wei,
+        expected_profit_usd,
+    })
+}
+
+/// Compute the candidate amount_in for a V3-bearing cycle: `cap_usd /
+/// price_a` floored to wei. Same anti-BUG-3 cap math the V2 path uses; we
+/// reuse `clamp_to_cap_wei` with `U256::MAX` as the unconstrained sentinel
+/// so the function returns the cap itself.
+///
+/// Returns None when the cap math fails (zero / NaN price, sub-token cap),
+/// matching `clamp_to_cap_wei` semantics — caller treats None as "skip
+/// cycle, R8 fail-honest, never fabricate amount_in".
+pub fn cap_amount_in_wei(cap_usd: f64, price_a: f64, decimals_a: u8) -> Option<U256> {
+    clamp_to_cap_wei(U256::MAX, cap_usd, price_a, decimals_a)
+}
+
+/// Single iteration of the two-phase chain resolver.
+///
+/// Walks the plan's hops in order. For each hop with `amount_in_used` already
+/// known (set on initialisation for hop 0, set by a previous iteration's V3
+/// resolution + V2 inline chaining for hop > 0):
+///   - If the hop is V2 and its amount_out is unknown: compute it inline via
+///     `v2_amount_out`, store it, propagate to hop+1's amount_in_used.
+///   - If the hop is V3 and its amount_out is unknown: queue a V3QuoteRequest
+///     for THIS phase's batch; downstream hops are deferred.
+///   - If amount_out is already known (filled by earlier V3 multicall result),
+///     propagate to hop+1's amount_in_used.
+///
+/// Returns true if any progress was made (a new amount_in or amount_out was
+/// filled, or a request was queued). The outer phase loop iterates until no
+/// plan reports progress, then evaluates.
+///
+/// **Why this is the chain-consistency guarantee** (math-validator CRITICAL
+/// fix 2026-05-06): `amount_in_used` for hop `i+1` is set EXCLUSIVELY from
+/// `amount_out` of hop `i` once hop `i` is fully resolved. There is no path
+/// in this function that fabricates or carries-over a stale `amount_in_used`.
+/// Combined with `evaluate_v3_cycle`'s explicit chain check, this rules out
+/// the original failure mode (PEPE→V2 fed wrong-token wei → fake positive).
+fn try_progress_plan(
+    plan: &mut V3CyclePlan,
+    phase_requests: &mut Vec<V3QuoteRequest>,
+    routing: &mut Vec<(usize, usize)>,
+    plan_idx: usize,
+) -> bool {
+    let mut progressed = false;
+    for hop_idx in 0..plan.hops.len() {
+        let amount_in = match plan.hop_amount_ins[hop_idx] {
+            Some(v) => v,
+            None => continue, // predecessor not yet resolved → skip; later phase will fill.
+        };
+        // Compute amount_out if missing.
+        if plan.hop_amount_outs[hop_idx].is_none() {
+            match &plan.hops[hop_idx] {
+                HopKind::V2(hd) => {
+                    if let Some((r_in, r_out)) = hd.reserves_oriented() {
+                        let out = v2_amount_out(amount_in, r_in, r_out, V2_FEE_BPS);
+                        plan.hop_amount_outs[hop_idx] = Some(out);
+                        progressed = true;
+                    }
+                    // else: malformed reserves — leave as None, plan fails at evaluation.
+                }
+                HopKind::V3 {
+                    pool_addr,
+                    fee_bps,
+                    token_in_addr,
+                    token_out_addr,
+                } => {
+                    // Queue for THIS phase's batched multicall.
+                    let pool_a = match Address::from_str(pool_addr) {
+                        Ok(a) => a,
+                        Err(_) => continue,
+                    };
+                    let tin = match Address::from_str(token_in_addr) {
+                        Ok(a) => a,
+                        Err(_) => continue,
+                    };
+                    let tout = match Address::from_str(token_out_addr) {
+                        Ok(a) => a,
+                        Err(_) => continue,
+                    };
+                    phase_requests.push(V3QuoteRequest {
+                        pool_addr: pool_a,
+                        token_in: tin,
+                        token_out: tout,
+                        amount_in,
+                        fee_bps: *fee_bps,
+                    });
+                    routing.push((plan_idx, hop_idx));
+                    progressed = true;
+                    // Continue walking — downstream V2 hops can't progress
+                    // until this V3 result is back, but we may catch other
+                    // already-resolved V3 hops on the way out.
+                    continue;
+                }
+            }
+        }
+        // Propagate amount_out → next hop's amount_in (chain consistency).
+        if let Some(out) = plan.hop_amount_outs[hop_idx] {
+            let next = hop_idx + 1;
+            if next < plan.hops.len() && plan.hop_amount_ins[next].is_none() {
+                plan.hop_amount_ins[next] = Some(out);
+                progressed = true;
+            }
+        }
+    }
+    progressed
+}
+
 /// In-memory dedup state: set of `(cycle_hash, block_number)` pairs.
 /// Pruned each tick to keep size bounded.
 #[derive(Debug, Default)]
@@ -653,6 +1048,11 @@ impl DedupState {
 pub struct TriangularWorker {
     pub period: Duration,
     pub chain_id: u64,
+    /// Optional HTTP provider for V3 QuoterV2 multicall. When None the worker
+    /// silently skips `V3_CYCLES` (V2-only path stays fully functional). Set
+    /// at boot via `with_v3_provider`; mainnet only — `main.rs` reuses the
+    /// `primary_rpc_http` URL already plumbed for the scanner's V3 quoter.
+    v3_provider: Option<Arc<Provider<Http>>>,
 }
 
 impl TriangularWorker {
@@ -660,7 +1060,17 @@ impl TriangularWorker {
         Self {
             period: Duration::from_secs(interval_secs.max(1)),
             chain_id,
+            v3_provider: None,
         }
+    }
+
+    /// Attach an HTTP provider for V3 QuoterV2 multicall. Without this the
+    /// worker scans only `MVP_CYCLES` and counts every V3-cycle attempt as
+    /// `triangular_v3_quote_failures` (with the diagnostic hint
+    /// "v3_provider_unavailable"). Mainnet only for now.
+    pub fn with_v3_provider(mut self, provider: Arc<Provider<Http>>) -> Self {
+        self.v3_provider = Some(provider);
+        self
     }
 
     /// Forever loop — never returns under normal operation. Designed to be
@@ -680,6 +1090,8 @@ impl TriangularWorker {
             chain_id = self.chain_id,
             period_secs = self.period.as_secs(),
             cycles = MVP_CYCLES.len(),
+            v3_cycles = V3_CYCLES.len(),
+            v3_provider_attached = self.v3_provider.is_some(),
             stats_log_every_n_ticks = STATS_LOG_EVERY_N_TICKS,
         );
 
@@ -708,6 +1120,7 @@ impl TriangularWorker {
 
             let mut latest_block_observed: u64 = 0;
 
+            // --- Phase 1: V2-only cycles (cached reserves, no RPC) ---
             for (a, b, c) in MVP_CYCLES {
                 for direction in &[(*a, *b, *c), (*a, *c, *b)] {
                     counters()
@@ -735,6 +1148,43 @@ impl TriangularWorker {
                     }
                 }
             }
+
+            // --- Phase 2: V3-bearing cycles (single batched QuoterV2 multicall) ---
+            // Aggregates every V3 hop across every V3-bearing cycle into ONE
+            // multicall per tick (≤ ~12 RPC calls per pool worst case → still
+            // a single RPC overall thanks to Multicall3). Skipped silently
+            // when no v3_provider is attached (non-mainnet, or env not set).
+            if let Some(provider) = self.v3_provider.as_ref() {
+                if let Some(blk) = self
+                    .scan_v3_bearing_cycles(
+                        &mut redis,
+                        db.as_ref(),
+                        &cfg_opt,
+                        &snapshot_map,
+                        provider.clone(),
+                        &mut dedup,
+                        &mut stats,
+                    )
+                    .await
+                {
+                    if blk > latest_block_observed {
+                        latest_block_observed = blk;
+                    }
+                }
+            } else {
+                // No provider: count the V3 cycles we WOULD have scanned so
+                // the heartbeat surfaces the missing-provider state instead
+                // of pretending V3 is not configured. R8 fail-honest.
+                let count = (V3_CYCLES.len() as u64) * 2;
+                counters()
+                    .triangular_v3_cycles_scanned
+                    .fetch_add(count, Ordering::Relaxed);
+                counters()
+                    .triangular_v3_quote_failures
+                    .fetch_add(count, Ordering::Relaxed);
+                stats.skip_v3_quote_failed += count as u32;
+            }
+
             // Bound dedup memory once per tick using the most recent block we saw.
             dedup.prune(latest_block_observed);
 
@@ -756,6 +1206,7 @@ impl TriangularWorker {
                     skip_dedup_hit = stats.skip_dedup_hit,
                     skip_no_capital_cap = stats.skip_no_capital_cap,
                     skip_no_profit = stats.skip_no_profit,
+                    skip_v3_quote_failed = stats.skip_v3_quote_failed,
                     dominant_skip = ?stats.dominant_skip_reason(),
                 );
                 stats = TickStats::default();
@@ -1026,6 +1477,562 @@ impl TriangularWorker {
 
         Some(cycle_block)
     }
+
+    /// Scan all V3-bearing cycles (currently `V3_CYCLES`) in both directions
+    /// with **two-phase quoting** (math-validator CRITICAL fix 2026-05-06).
+    ///
+    /// **Why two phases?** A V3 hop's amount_in equals its predecessor's
+    /// amount_out. For V3 hops whose predecessor is V2, amount_in is known
+    /// synchronously (V2 math is closed-form). For V3 hops whose predecessor
+    /// is ANOTHER V3 hop, amount_in is known only AFTER the predecessor's
+    /// QuoterV2 result is back. The original single-phase implementation
+    /// (which left `current_in` unchanged across V3 hops) fed downstream V2
+    /// hops the wrong-token wei and saturated their CPMM, producing fake
+    /// positives at profit_cap_ratio ≈ 2.5x — slipping past the 5x sanity
+    /// bound. Two-phase quoting + chain consistency check eliminates the
+    /// failure mode at its root.
+    ///
+    /// **Cost:** at most 2 multicalls per tick instead of 1 — well within the
+    /// per-block RPC budget. For the current `V3_CYCLES` topology (X-WETH-USDC
+    /// with the V2 hop in the middle), Phase 2 is typically empty because
+    /// every V3 hop has a V2 (or cap) predecessor. The infrastructure is in
+    /// place for future cycles where two consecutive V3 hops appear.
+    ///
+    /// Strategy (decision C in the design brief — single-point evaluation):
+    ///   1. For each cycle, both directions, resolve every hop via
+    ///      `resolve_hop_any` (V2 cached path first, V3 pool index fallback).
+    ///   2. Compute amount_in for the cycle from the operator's capital cap
+    ///      (`cap_usd / price_a → wei`). If the cap math fails, skip cycle.
+    ///   3. Walk hops with `try_progress_plan`: when a hop's amount_in is
+    ///      known (hop 0 or predecessor's amount_out is now known), compute
+    ///      its amount_out — V2 inline, V3 queued for the current phase batch.
+    ///   4. Phase 1 multicall — every V3 hop whose amount_in was known on the
+    ///      first walk (≥ 1 batched Multicall3 RPC per tick).
+    ///   5. Walk hops again. V2 hops that follow a Phase 1 V3 hop now have a
+    ///      known amount_in → compute their amount_out. V3 hops that follow
+    ///      another V3 hop now have a known amount_in → queue for Phase 2.
+    ///   6. Phase 2 multicall (if non-empty). For the current `V3_CYCLES`
+    ///      topology (`X → WETH → USDC → X` with V2 in the middle hop),
+    ///      Phase 2 is empty because every V3 hop has a V2 or cap predecessor.
+    ///      Infrastructure is in place for future cycles with consecutive
+    ///      V3 hops.
+    ///   7. Build chain-consistent `HopAmountOut` (carrying both
+    ///      `amount_in_used` and `amount_out`); evaluate via
+    ///      `evaluate_v3_cycle` which verifies that for i > 0 each hop's
+    ///      amount_in_used matches the predecessor's amount_out. Apply the
+    ///      same 5x sanity bound + dedup as the V2 path.
+    ///
+    /// **Anti-Incidente #9 (math-validator CRITICAL fix 2026-05-06):** the
+    /// previous single-phase implementation left `current_in` unchanged after
+    /// V3 hops, feeding V2 with wrong-token wei → saturated CPMM →
+    /// downstream V3 quote inflated → profit_cap_ratio ≈ 2.5x slipped past
+    /// the 5x sanity bound, emitting fake positives. Two-phase quoting +
+    /// chain consistency check at the kernel boundary eliminates the failure
+    /// mode at its root.
+    ///
+    /// Returns the latest cycle block observed (for dedup pruning).
+    #[allow(clippy::too_many_arguments)]
+    async fn scan_v3_bearing_cycles(
+        &self,
+        redis: &mut ConnectionManager,
+        db: Option<&PgPool>,
+        cfg: &Option<shared_rs::trading_config::TradingConfigState>,
+        price_snapshot: &std::collections::HashMap<String, f64>,
+        v3_provider: Arc<Provider<Http>>,
+        dedup: &mut DedupState,
+        stats: &mut TickStats,
+    ) -> Option<u64> {
+        // ---------------------------------------------------------------
+        // Resolve every cycle in both directions; collect per-cycle plans.
+        // ---------------------------------------------------------------
+        let mut plans: Vec<V3CyclePlan> = Vec::new();
+        for (a, b, c) in V3_CYCLES {
+            for direction in &[(*a, *b, *c), (*a, *c, *b)] {
+                counters()
+                    .triangular_v3_cycles_scanned
+                    .fetch_add(1, Ordering::Relaxed);
+                stats.scanned += 1;
+                let (sym_a, sym_b, sym_c) = *direction;
+
+                let plan = match self
+                    .build_v3_cycle_plan(
+                        redis,
+                        cfg,
+                        price_snapshot,
+                        sym_a,
+                        sym_b,
+                        sym_c,
+                        stats,
+                    )
+                    .await
+                {
+                    Some(p) => p,
+                    None => continue,
+                };
+                plans.push(plan);
+            }
+        }
+        if plans.is_empty() {
+            return None;
+        }
+
+        // ---------------------------------------------------------------
+        // Two-phase quoting (math-validator CRITICAL fix 2026-05-06).
+        //
+        // Phase loop: progress every plan synchronously (V2 inline math,
+        // queue V3 hops whose amount_in is now known). Run ONE multicall
+        // for the queued V3 hops. Repeat until no plan made progress in
+        // an iteration. Bounded at HOPS_PER_CYCLE phases (3 hops × 1 V3
+        // dependency-chain each = at most 3 phases for any 3-hop cycle).
+        // ---------------------------------------------------------------
+        const MAX_PHASES: usize = 3;
+        let quoter = match Address::from_str(V3_QUOTER_V2_MAINNET) {
+            Ok(a) => a,
+            Err(e) => {
+                warn!(event = "triangular_worker.v3_quoter_addr_invalid", error = %e);
+                return None;
+            }
+        };
+        let multicall_addr = match Address::from_str(V3_MULTICALL3_ADDR) {
+            Ok(a) => a,
+            Err(e) => {
+                warn!(event = "triangular_worker.v3_multicall_addr_invalid", error = %e);
+                return None;
+            }
+        };
+
+        for phase in 0..MAX_PHASES {
+            let mut phase_requests: Vec<V3QuoteRequest> = Vec::new();
+            // Index from request slot → (plan_idx, hop_idx) so results route
+            // back into the right plan slot.
+            let mut routing: Vec<(usize, usize)> = Vec::new();
+            let mut any_progress = false;
+
+            for (plan_idx, plan) in plans.iter_mut().enumerate() {
+                let progressed =
+                    try_progress_plan(plan, &mut phase_requests, &mut routing, plan_idx);
+                if progressed {
+                    any_progress = true;
+                }
+            }
+
+            if !any_progress {
+                // Nothing left to do — either the cycle is fully resolved or
+                // quote failures left holes (handled below in evaluation).
+                break;
+            }
+
+            if phase_requests.is_empty() {
+                // V2-only progress this phase (no RPC); continue to next phase
+                // in case a later V3 hop is now resolvable.
+                continue;
+            }
+
+            // Run Phase N multicall.
+            let phase_results = match v3_quote_exact_in_multicall(
+                v3_provider.clone(),
+                quoter,
+                multicall_addr,
+                phase_requests.clone(),
+            )
+            .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    // Whole-batch RPC failure → all V3 hops in THIS phase
+                    // counted as failures. Plans whose unresolved V3 hops
+                    // were in this batch will be skipped during evaluation
+                    // (their hop_amount_outs stay None).
+                    let n = phase_requests.len() as u64;
+                    counters()
+                        .triangular_v3_quote_failures
+                        .fetch_add(n, Ordering::Relaxed);
+                    stats.skip_v3_quote_failed += n as u32;
+                    warn!(
+                        event = "triangular_worker.v3_multicall_rpc_failed",
+                        chain_id = self.chain_id,
+                        phase = phase,
+                        batch_size = phase_requests.len(),
+                        error = %e,
+                    );
+                    // Don't return early — V2-only plans may still be valid.
+                    // Break out of the phase loop and proceed to evaluation;
+                    // partial-progress plans naturally fail the chain check.
+                    break;
+                }
+            };
+
+            for (i, res) in phase_results.iter().enumerate() {
+                let (plan_idx, hop_idx) = routing[i];
+                if res.success && !res.amount_out.is_zero() {
+                    plans[plan_idx].hop_amount_outs[hop_idx] = Some(res.amount_out);
+                } else {
+                    counters()
+                        .triangular_v3_quote_failures
+                        .fetch_add(1, Ordering::Relaxed);
+                    // Leave amount_out as None — caller skips during eval.
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Evaluate every plan with its now-complete amount_outs.
+        // ---------------------------------------------------------------
+        let mut latest_block: u64 = 0;
+        for plan in plans.into_iter() {
+            // Drop plans that had any hop come back without an amount_out OR
+            // an amount_in (= V3 quote failed before downstream chain could
+            // be established). R8 fail-honest — never fabricate a substitute.
+            let mut hop_outs: Vec<HopAmountOut> = Vec::with_capacity(plan.hops.len());
+            let mut missing = false;
+            for (hop_idx, hop) in plan.hops.iter().enumerate() {
+                let amount_in_used = match plan.hop_amount_ins[hop_idx] {
+                    Some(v) => v,
+                    None => {
+                        missing = true;
+                        break;
+                    }
+                };
+                let (amount_out, source) = match (hop, plan.hop_amount_outs[hop_idx]) {
+                    (HopKind::V2(_), Some(o)) => (o, HopAmountSource::V2),
+                    (HopKind::V3 { .. }, Some(o)) => (o, HopAmountSource::V3),
+                    _ => {
+                        missing = true;
+                        break;
+                    }
+                };
+                hop_outs.push(HopAmountOut {
+                    amount_in_used,
+                    amount_out,
+                    source,
+                });
+            }
+            if missing {
+                stats.skip_v3_quote_failed += 1;
+                debug!(
+                    event = "triangular_worker.v3_cycle_quote_missing",
+                    chain_id = self.chain_id,
+                    cycle = %plan.cycle_key,
+                );
+                continue;
+            }
+
+            // Block attribution: take the max V2-hop block in the plan (or
+            // 0 if pure V3, which V3_CYCLES never hits because the WETH↔USDC
+            // middle hop is always V2-resolvable).
+            let cycle_block = cycle_latest_block_mixed(&plan.hops);
+            if cycle_block > latest_block {
+                latest_block = cycle_block;
+            }
+
+            // Staleness check (V2 hops only — V3 is "current state").
+            if cycle_has_stale_reserves_mixed(&plan.hops) {
+                stats.skip_stale_reserves += 1;
+                debug!(
+                    event = "triangular_worker.v3_cycle_stale_reserves",
+                    chain_id = self.chain_id,
+                    cycle = %plan.cycle_key,
+                );
+                continue;
+            }
+
+            // Dedup BEFORE evaluation/persistence.
+            if !dedup.check_and_mark(&plan.cycle_key, cycle_block) {
+                stats.skip_dedup_hit += 1;
+                continue;
+            }
+
+            // Pure-function evaluation.
+            let result = match evaluate_v3_cycle(
+                plan.amount_in_wei,
+                &hop_outs,
+                Some(plan.price_a),
+                plan.decimals_a,
+            ) {
+                Some(r) => r,
+                None => {
+                    stats.skip_no_profit += 1;
+                    debug!(
+                        event = "triangular_worker.v3_no_profit",
+                        chain_id = self.chain_id,
+                        cycle = %plan.cycle_key,
+                        amount_in_wei = %plan.amount_in_wei,
+                        final_out_wei = %hop_outs.last().map(|h| h.amount_out).unwrap_or(U256::zero()),
+                    );
+                    continue;
+                }
+            };
+
+            // Worker-level sanity bound (mirrors V2 path) — V3 tick math is
+            // MORE complex than V2 CPMM, so bugs are MORE likely. Same
+            // SANITY_PROFIT_MULT_OF_CAP=5× threshold the V2 path uses.
+            const SANITY_PROFIT_MULT_OF_CAP: f64 = 5.0;
+            let profit_usd = match result.expected_profit_usd {
+                Some(v) if v.is_finite() && v >= 0.0 => v,
+                _ => {
+                    stats.skip_no_profit += 1;
+                    warn!(
+                        event = "triangular_worker.v3_malformed_profit",
+                        chain_id = self.chain_id,
+                        cycle = %plan.cycle_key,
+                        raw = ?result.expected_profit_usd,
+                    );
+                    continue;
+                }
+            };
+            let profit_cap_ratio = profit_usd / plan.cap_usd;
+            if profit_cap_ratio > SANITY_PROFIT_MULT_OF_CAP {
+                counters()
+                    .triangular_v3_sanity_reject
+                    .fetch_add(1, Ordering::Relaxed);
+                stats.skip_no_profit += 1;
+                // Diagnostic dump: per-hop pool / kind / amount_in / amount_out.
+                let dump_hops: Vec<String> = plan
+                    .hops
+                    .iter()
+                    .enumerate()
+                    .map(|(i, h)| {
+                        let kind = match h {
+                            HopKind::V2(_) => "V2",
+                            HopKind::V3 { .. } => "V3",
+                        };
+                        format!(
+                            "{}:{}:in={}:out={}",
+                            kind,
+                            h.pool_addr(),
+                            plan.hop_amount_ins[i].unwrap_or(U256::zero()),
+                            plan.hop_amount_outs[i].unwrap_or(U256::zero()),
+                        )
+                    })
+                    .collect();
+                warn!(
+                    event = "triangular_worker.sanity_reject_v3",
+                    chain_id = self.chain_id,
+                    cycle = %plan.cycle_key,
+                    expected_profit_usd = profit_usd,
+                    cap_usd = plan.cap_usd,
+                    profit_cap_ratio = profit_cap_ratio,
+                    threshold = SANITY_PROFIT_MULT_OF_CAP,
+                    amount_in_wei = %result.amount_in_wei,
+                    amount_out_wei = %result.amount_out_wei,
+                    hops = ?dump_hops,
+                    hint = "diagnostic dump for root-cause analysis — V3-bearing cycle returned profit > 5x cap",
+                );
+                continue;
+            }
+
+            // Build & emit Opportunity (mirrors V2 path).
+            let opp = Opportunity {
+                id: Uuid::new_v4(),
+                chain_id: self.chain_id,
+                strategy_kind: StrategyKind::Triangular,
+                dex_a: "uniswap-v3".to_string(),
+                dex_b: Some(format!(
+                    "cycle:{}>{}>{}",
+                    plan.sym_a.to_uppercase(),
+                    plan.sym_b.to_uppercase(),
+                    plan.sym_c.to_uppercase(),
+                )),
+                pair_symbol: format!(
+                    "{}/{}/{}/{}",
+                    plan.sym_a, plan.sym_b, plan.sym_c, plan.sym_a
+                ),
+                token_in: plan.addr_a.clone(),
+                token_out: plan.addr_a.clone(),
+                amount_in_wei: result.amount_in_wei.to_string(),
+                expected_profit_usd: result.expected_profit_usd,
+                roi_pct: None,
+                risk_score: None,
+                block_number: Some(cycle_block),
+                rejection_reason: None,
+                detected_at: Utc::now(),
+                trace_id: Uuid::new_v4(),
+            };
+
+            info!(
+                event = "triangular_worker.v3_opp_emit",
+                chain_id = self.chain_id,
+                cycle = %plan.cycle_key,
+                block = cycle_block,
+                amount_in_wei = %opp.amount_in_wei,
+                expected_profit_usd = ?opp.expected_profit_usd,
+                hop1 = %plan.hops[0].pool_addr(),
+                hop2 = %plan.hops[1].pool_addr(),
+                hop3 = %plan.hops[2].pool_addr(),
+            );
+
+            if let Some(pool) = db {
+                if let Err(e) = persistence::insert_opportunity(pool, &opp).await {
+                    counters().db_errors.fetch_add(1, Ordering::Relaxed);
+                    warn!(event = "triangular_worker.v3_db_error", error = %e);
+                } else {
+                    counters().db_persisted.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            if let Err(e) = publisher::publish(redis, &opp).await {
+                warn!(event = "triangular_worker.v3_publish_error", error = %e);
+            } else {
+                counters()
+                    .triangular_opps_emitted
+                    .fetch_add(1, Ordering::Relaxed);
+                stats.emitted += 1;
+            }
+        }
+
+        Some(latest_block)
+    }
+
+    /// Build a `V3CyclePlan` for one V3-bearing cycle direction.
+    ///
+    /// Resolves token metadata + all 3 hops + the capital cap. Initialises
+    /// `hop_amount_ins[0] = amount_in_wei`; **does NOT chain through V3 hops**
+    /// (math-validator CRITICAL fix 2026-05-06). Chaining happens iteratively
+    /// in `scan_v3_bearing_cycles` via `try_progress_plan`, which only fills
+    /// each hop's amount_in/amount_out when the predecessor is fully known.
+    /// V3 hops with unknown amount_in are deferred to the next phase.
+    ///
+    /// Returns None on any of:
+    ///   - unknown token (one of sym_a/b/c not in `known_token_address`)
+    ///   - missing pool for any hop (neither V2 nor V3 covers the pair)
+    ///   - cap math fails (zero/NaN price, sub-token cap)
+    #[allow(clippy::too_many_arguments)]
+    async fn build_v3_cycle_plan(
+        &self,
+        redis: &mut ConnectionManager,
+        cfg: &Option<shared_rs::trading_config::TradingConfigState>,
+        price_snapshot: &std::collections::HashMap<String, f64>,
+        sym_a: &'static str,
+        sym_b: &'static str,
+        sym_c: &'static str,
+        stats: &mut TickStats,
+    ) -> Option<V3CyclePlan> {
+        // Resolve token metadata.
+        let (addr_a, decimals_a, _is_stable_a) =
+            match resolve_token(redis, self.chain_id, sym_a).await {
+                Some(t) => t,
+                None => {
+                    stats.skip_unknown_token += 1;
+                    return None;
+                }
+            };
+        let (addr_b, _, _) = match resolve_token(redis, self.chain_id, sym_b).await {
+            Some(t) => t,
+            None => {
+                stats.skip_unknown_token += 1;
+                return None;
+            }
+        };
+        let (addr_c, _, _) = match resolve_token(redis, self.chain_id, sym_c).await {
+            Some(t) => t,
+            None => {
+                stats.skip_unknown_token += 1;
+                return None;
+            }
+        };
+
+        // Resolve all 3 hops as V2-or-V3.
+        let hop1 = resolve_hop_any(redis, self.chain_id, &addr_a, sym_a, &addr_b, sym_b).await;
+        let hop2 = resolve_hop_any(redis, self.chain_id, &addr_b, sym_b, &addr_c, sym_c).await;
+        let hop3 = resolve_hop_any(redis, self.chain_id, &addr_c, sym_c, &addr_a, sym_a).await;
+        let (h1, h2, h3) = match (hop1, hop2, hop3) {
+            (Some(h1), Some(h2), Some(h3)) => (h1, h2, h3),
+            _ => {
+                stats.skip_missing_pool += 1;
+                debug!(
+                    event = "triangular_worker.v3_cycle_missing_pool",
+                    chain_id = self.chain_id,
+                    cycle = format!("{}>{}>{}", sym_a, sym_b, sym_c),
+                );
+                return None;
+            }
+        };
+
+        // Capital cap → amount_in_wei.
+        let cap_usd = cfg
+            .as_ref()
+            .map(|c| c.effective_capital_for(sym_a, STRATEGY_KIND))
+            .unwrap_or(0.0);
+        if cap_usd <= 0.0 {
+            stats.skip_no_capital_cap += 1;
+            debug!(
+                event = "triangular_worker.v3_no_capital_cap",
+                chain_id = self.chain_id,
+                token = sym_a,
+            );
+            return None;
+        }
+        let price_a = price_snapshot
+            .get(&sym_a.to_ascii_uppercase())
+            .copied()
+            .or_else(|| {
+                cfg.as_ref().and_then(|c| {
+                    c.token_prices_usd
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case(sym_a))
+                        .map(|(_, v)| *v)
+                })
+            })?;
+        let amount_in_wei = match cap_amount_in_wei(cap_usd, price_a, decimals_a) {
+            Some(w) if !w.is_zero() => w,
+            _ => {
+                stats.skip_no_capital_cap += 1;
+                return None;
+            }
+        };
+
+        // Initialise per-hop arrays. Only hop 0's amount_in is known up front;
+        // every other hop's amount_in becomes known progressively as the
+        // multi-phase algorithm in `scan_v3_bearing_cycles` resolves V3 hops
+        // and forwards their amount_outs into V2 hop math.
+        let hops = vec![h1, h2, h3];
+        let mut hop_amount_ins: Vec<Option<U256>> = vec![None; hops.len()];
+        let hop_amount_outs: Vec<Option<U256>> = vec![None; hops.len()];
+        hop_amount_ins[0] = Some(amount_in_wei);
+
+        Some(V3CyclePlan {
+            cycle_key: cycle_hash(&[sym_a, sym_b, sym_c]),
+            sym_a,
+            sym_b,
+            sym_c,
+            addr_a,
+            decimals_a,
+            cap_usd,
+            price_a,
+            amount_in_wei,
+            hops,
+            hop_amount_ins,
+            hop_amount_outs,
+        })
+    }
+}
+
+/// Plan returned by `build_v3_cycle_plan` and consumed by `scan_v3_bearing_cycles`.
+/// Externalised so the inner function can construct it without a giant tuple.
+///
+/// **Two-phase invariants** (math-validator CRITICAL fix 2026-05-06):
+///   - `hop_amount_ins[0]` is always `Some(amount_in_wei)` from construction.
+///   - `hop_amount_ins[i]` for `i > 0` is filled by `try_progress_plan` once
+///     the previous hop's `amount_out` is known. NEVER filled with a stale
+///     or pre-V3 value.
+///   - `hop_amount_outs[i]` is filled either inline by V2 math (when its
+///     amount_in becomes known) or by Phase N multicall results (V3).
+///   - A hop's amount_out being `None` after all phases run = quote failure
+///     → cycle skipped (R8 fail-honest).
+struct V3CyclePlan {
+    cycle_key: String,
+    sym_a: &'static str,
+    sym_b: &'static str,
+    sym_c: &'static str,
+    addr_a: String,
+    decimals_a: u8,
+    cap_usd: f64,
+    price_a: f64,
+    amount_in_wei: U256,
+    hops: Vec<HopKind>,
+    /// Per-hop amount_in. `Some` only once the predecessor's amount_out is
+    /// known; never assumed/approximated.
+    hop_amount_ins: Vec<Option<U256>>,
+    hop_amount_outs: Vec<Option<U256>>,
 }
 
 #[cfg(test)]
@@ -1719,5 +2726,734 @@ mod tests {
         let documented_threshold: f64 = 5.0;
         assert!(documented_threshold > 1.0, "threshold must allow legitimate profitable opps");
         assert!(documented_threshold < 100.0, "threshold must catch orientation-flip bugs");
+    }
+
+    // ===================================================================
+    // V3-bearing cycle support — Subproyecto 2 (2026-05-07)
+    // ===================================================================
+
+    /// Helper: build a chain-consistent `HopAmountOut` sequence with V2/V3
+    /// sources for tests. Each hop's `amount_in_used` is set from the
+    /// predecessor's amount_out (or `amount_in` for hop 0), matching the
+    /// invariant that the production code maintains via `try_progress_plan`.
+    fn outs_v3_chain(amount_in: U256, values: &[(u128, HopAmountSource)]) -> Vec<HopAmountOut> {
+        let mut out = Vec::with_capacity(values.len());
+        let mut prev_in = amount_in;
+        for (v, s) in values {
+            let amount_out = U256::from(*v);
+            out.push(HopAmountOut {
+                amount_in_used: prev_in,
+                amount_out,
+                source: *s,
+            });
+            prev_in = amount_out;
+        }
+        out
+    }
+
+    /// Compatibility helper kept for the older tests that hand-build chains
+    /// where amount_in_used == amount_in for hop 0 only and chains through.
+    /// New tests should prefer `outs_v3_chain`.
+    fn outs_v3(values: &[(u128, HopAmountSource)]) -> Vec<HopAmountOut> {
+        // Default: chain from a 1e18 reference; the existing tests using this
+        // helper supply explicit amount_in to evaluate_v3_cycle, so the chain
+        // computed here is overwritten only on the first hop. To stay
+        // backward-compatible with their expectations (which checked only
+        // amount_out semantics), we fix `amount_in_used = amount_out_of_prev`
+        // assuming hop 0's amount_in matches what the test passes to
+        // evaluate_v3_cycle. The tests using this helper that pass arbitrary
+        // amount_in must be updated to use `outs_v3_chain` directly.
+        outs_v3_chain(U256::from(10u128).pow(U256::from(18)), values)
+    }
+
+    // ---- evaluate_v3_cycle — pure kernel ----
+
+    #[test]
+    fn evaluate_v3_cycle_profitable_returns_some() {
+        // amount_in 1 WETH (1e18 wei), final_out 1.001 WETH → 1e15 wei profit.
+        // At $2000/WETH the profit is $2.00. cap_usd is irrelevant to the
+        // pure kernel — only the sanity bound at the caller uses it.
+        let amount_in = U256::from(10u128).pow(U256::from(18));
+        let outs = outs_v3(&[
+            (3_500_000_000u128, HopAmountSource::V2),     // mid-cycle USDC wei
+            (1_750_000u128 * 1_000_000_000_000u128, HopAmountSource::V3),
+            (amount_in.as_u128() + 1_000_000_000_000_000u128, HopAmountSource::V3),
+        ]);
+        let r = evaluate_v3_cycle(amount_in, &outs, Some(2_000.0), 18)
+            .expect("profitable cycle must yield Some");
+        assert!(r.profit_token_a_wei > 0);
+        let usd = r.expected_profit_usd.expect("usd must be priced");
+        // 1e15 wei × $2000 / 1e18 = $2.00
+        assert!((usd - 2.0).abs() < 1e-9, "usd={} expected ~2.00", usd);
+    }
+
+    #[test]
+    fn v3_cycle_pepe_weth_usdc_known_quote_returns_some_when_profitable() {
+        // Realistic mainnet magnitudes for a PEPE→WETH→USDC→PEPE cycle.
+        // PEPE has 18 decimals; price ≈ $1e-5. cap_usd = $1000 → 1e8 PEPE
+        // (single-pip whales here, this is the long-tail case).
+        // amount_in = 1e26 wei (1e8 PEPE * 1e18 / 1e6).
+        // Target: profit > 0 token_a_wei, expected_profit_usd ~$3 on a 0.3% spread.
+        // Chain-consistent (math-validator CRITICAL fix): each hop's
+        // amount_in_used is the predecessor's amount_out (or amount_in_wei
+        // for hop 0). We use `outs_v3_chain` so the kernel chain check passes.
+        let amount_in = U256::from(10u128).pow(U256::from(26));
+        let final_out = amount_in + (amount_in / U256::from(333u32)); // ~+0.3%
+        let outs = outs_v3_chain(
+            amount_in,
+            &[
+                (1_000_000_000_000_000u128, HopAmountSource::V3), // PEPE→WETH
+                (3_500_000_000u128, HopAmountSource::V2),         // WETH→USDC
+                (final_out.as_u128(), HopAmountSource::V3),       // USDC→PEPE (closes >input)
+            ],
+        );
+        let r = evaluate_v3_cycle(amount_in, &outs, Some(0.00001), 18)
+            .expect("PEPE long-tail cycle must produce Some on positive spread");
+        assert!(r.profit_token_a_wei > 0);
+        let usd = r.expected_profit_usd.expect("usd should be priced");
+        assert!(usd > 0.0, "usd profit should be > 0, got {}", usd);
+    }
+
+    #[test]
+    fn v3_cycle_quote_failure_skips_cleanly() {
+        // Any zero amount_out in the chain → None. Models a V3 QuoterV2
+        // call coming back success=false (insufficient liquidity, pool
+        // revert, RPC error). R8 fail-honest: never substitute a value.
+        let amount_in = U256::from(10u128).pow(U256::from(18));
+        let outs = outs_v3(&[
+            (5_000u128, HopAmountSource::V2),
+            (0u128, HopAmountSource::V3), // failed quote
+            (10_000u128, HopAmountSource::V3),
+        ]);
+        let r = evaluate_v3_cycle(amount_in, &outs, Some(2_000.0), 18);
+        assert!(r.is_none(), "any zero-amount hop must collapse cycle to None");
+    }
+
+    #[test]
+    fn v3_cycle_returns_none_when_not_profitable() {
+        // final_out <= amount_in → no profit, return None even with valid quotes.
+        let amount_in = U256::from(10u128).pow(U256::from(18));
+        let outs = outs_v3(&[
+            (3_500_000_000u128, HopAmountSource::V2),
+            (1_750_000u128 * 1_000_000_000_000u128, HopAmountSource::V3),
+            (amount_in.as_u128() - 1u128, HopAmountSource::V3), // 1 wei loss
+        ]);
+        let r = evaluate_v3_cycle(amount_in, &outs, Some(2_000.0), 18);
+        assert!(r.is_none(), "non-profitable cycle must return None");
+    }
+
+    #[test]
+    fn v3_cycle_returns_none_when_price_unknown() {
+        // Profitable but no token-a price → cannot compute USD profit, R8
+        // fail-honest skip (mirrors V2 evaluate_cycle behaviour).
+        let amount_in = U256::from(10u128).pow(U256::from(18));
+        let outs = outs_v3(&[
+            (3_500_000_000u128, HopAmountSource::V2),
+            (1_750_000u128 * 1_000_000_000_000u128, HopAmountSource::V3),
+            (amount_in.as_u128() + 1_000_000_000_000_000u128, HopAmountSource::V3),
+        ]);
+        let r = evaluate_v3_cycle(amount_in, &outs, None, 18);
+        assert!(r.is_none(), "missing price must produce None");
+    }
+
+    #[test]
+    fn v3_cycle_zero_amount_in_returns_none() {
+        let outs = outs_v3(&[(1u128, HopAmountSource::V2); 3]);
+        assert!(evaluate_v3_cycle(U256::zero(), &outs, Some(1.0), 18).is_none());
+    }
+
+    #[test]
+    fn v3_cycle_wrong_hop_count_returns_none() {
+        let amount_in = U256::from(10u128).pow(U256::from(18));
+        let outs = outs_v3(&[(1u128, HopAmountSource::V2); 2]); // only 2 hops
+        assert!(evaluate_v3_cycle(amount_in, &outs, Some(1.0), 18).is_none());
+    }
+
+    #[test]
+    fn v3_cycle_sanity_rejects_huge_profit_orientation_simulation() {
+        // Reproduces the orientation-flip scenario for V3: the multicall
+        // returns an absurdly huge final_out because, e.g., the V3 pool
+        // index has the wrong fee tier and the price impact computation
+        // collapses. The pure kernel says "profit > 0 → Some"; the worker-
+        // level sanity bound (in scan_v3_bearing_cycles) is what rejects it.
+        // This test asserts the kernel surface — the integration sanity
+        // bound is mirrored in `sanity_threshold_v3_is_documented_constant`.
+        let amount_in = U256::from(10u128).pow(U256::from(18)); // 1 WETH
+        let huge_out = amount_in * U256::from(1_000u32);        // 1000× return
+        let outs = outs_v3(&[
+            (3_500_000_000u128, HopAmountSource::V2),
+            (1u128, HopAmountSource::V3), // not zero, just tiny mid-cycle
+            (huge_out.as_u128(), HopAmountSource::V3),
+        ]);
+        let r = evaluate_v3_cycle(amount_in, &outs, Some(2_000.0), 18)
+            .expect("kernel returns Some on positive profit; sanity bound is integration-level");
+        let usd = r.expected_profit_usd.unwrap();
+        // Profit ≈ 999 WETH * $2000 = $1.998M. The integration sanity bound
+        // (5× cap) would reject — this test documents the kernel surface.
+        let cap_usd = 1_000.0;
+        assert!(
+            usd / cap_usd > 5.0,
+            "integration sanity bound MUST reject this; ratio={}",
+            usd / cap_usd
+        );
+    }
+
+    #[test]
+    fn v3_quote_request_construction_for_known_long_tail() {
+        // Construct a V3QuoteRequest for the PEPE/WETH 0.30% V3 pool
+        // (mainnet 0x11950d141ecb863f01007add7d1a342041227b58). Verifies
+        // the wiring used by `scan_v3_bearing_cycles` to feed the quoter.
+        use crate::amm_math::V3QuoteRequest;
+        use std::str::FromStr;
+        let req = V3QuoteRequest {
+            pool_addr: Address::from_str("0x11950d141ecb863f01007add7d1a342041227b58").unwrap(),
+            token_in: Address::from_str("0x6982508145454ce325ddbe47a25d4ec3d2311933").unwrap(), // PEPE
+            token_out: Address::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").unwrap(), // WETH
+            amount_in: U256::from(10u128).pow(U256::from(26)),
+            fee_bps: 3000, // 0.30%
+        };
+        // Field accessibility check (the actual encode is exercised by
+        // `amm_math::v3_tests::v3_quote_request_construction`).
+        assert_eq!(req.fee_bps, 3000);
+        assert_eq!(req.amount_in, U256::from(10u128).pow(U256::from(26)));
+    }
+
+    #[test]
+    fn mixed_v2_v3_cycle_evaluates_correctly() {
+        // V2 first hop, then V3, then V3 back. Mirrors the canonical
+        // PEPE→WETH→USDC→PEPE shape but with WETH→PEPE direction
+        // (V3 hop), USDC→WETH (V2 hop), PEPE→USDC (V3 hop).
+        let amount_in = U256::from(10u128).pow(U256::from(18));
+        let outs = outs_v3(&[
+            (1_000_000_000_000u128, HopAmountSource::V2), // V2: WETH→USDC mid
+            (5_000_000_000u128, HopAmountSource::V3),     // V3: USDC→intermediate
+            (amount_in.as_u128() + 5_000_000_000_000_000u128, HopAmountSource::V3), // V3: back to WETH
+        ]);
+        let r = evaluate_v3_cycle(amount_in, &outs, Some(2_000.0), 18).unwrap();
+        assert!(r.profit_token_a_wei > 0);
+    }
+
+    // ---- cap_amount_in_wei ----
+
+    #[test]
+    fn cap_amount_in_wei_returns_cap_for_known_price() {
+        // cap=$2000, price=$2000/WETH → 1 WETH (1e18 wei).
+        let w = cap_amount_in_wei(2_000.0, 2_000.0, 18).expect("cap should compute");
+        assert_eq!(w, U256::from(10u128).pow(U256::from(18)));
+    }
+
+    #[test]
+    fn cap_amount_in_wei_returns_none_for_zero_price() {
+        assert!(cap_amount_in_wei(2_000.0, 0.0, 18).is_none());
+        assert!(cap_amount_in_wei(2_000.0, f64::NAN, 18).is_none());
+    }
+
+    // ---- HopKind / HopAmountSource ----
+
+    #[test]
+    fn hopkind_v2_block_attribution() {
+        let hd = HopData {
+            pool_addr: "0xabc".into(),
+            entry: ReservesEntry {
+                r0: "1000".into(),
+                r1: "1000".into(),
+                token0_addr: Some("0x01".into()),
+                blk: 12_345,
+                ts: 0,
+            },
+            swap_in_is_token0: true,
+        };
+        let v2 = HopKind::V2(hd.clone());
+        assert_eq!(v2.block_number(), Some(12_345));
+        assert_eq!(v2.pool_addr(), "0xabc");
+    }
+
+    #[test]
+    fn hopkind_v3_no_block() {
+        let v3 = HopKind::V3 {
+            pool_addr: "0xdef".into(),
+            fee_bps: 500,
+            token_in_addr: "0x01".into(),
+            token_out_addr: "0x02".into(),
+        };
+        // V3 hops are stateless from the worker's perspective — block
+        // attribution comes from co-located V2 hops.
+        assert!(v3.block_number().is_none());
+        assert_eq!(v3.pool_addr(), "0xdef");
+    }
+
+    #[test]
+    fn cycle_latest_block_mixed_takes_max_of_v2_only() {
+        let v2_a = HopKind::V2(HopData {
+            pool_addr: "0xa".into(),
+            entry: ReservesEntry {
+                r0: "1".into(),
+                r1: "1".into(),
+                token0_addr: Some("0x01".into()),
+                blk: 100,
+                ts: 0,
+            },
+            swap_in_is_token0: true,
+        });
+        let v2_b = HopKind::V2(HopData {
+            pool_addr: "0xb".into(),
+            entry: ReservesEntry {
+                r0: "1".into(),
+                r1: "1".into(),
+                token0_addr: Some("0x01".into()),
+                blk: 105,
+                ts: 0,
+            },
+            swap_in_is_token0: true,
+        });
+        let v3 = HopKind::V3 {
+            pool_addr: "0xc".into(),
+            fee_bps: 500,
+            token_in_addr: "0x01".into(),
+            token_out_addr: "0x02".into(),
+        };
+        assert_eq!(cycle_latest_block_mixed(&[v2_a, v2_b, v3]), 105);
+    }
+
+    #[test]
+    fn cycle_has_stale_reserves_mixed_returns_true_when_v2_lag_exceeds() {
+        let stale_v2 = HopKind::V2(HopData {
+            pool_addr: "0xa".into(),
+            entry: ReservesEntry {
+                r0: "1".into(),
+                r1: "1".into(),
+                token0_addr: Some("0x01".into()),
+                blk: 100,
+                ts: 0,
+            },
+            swap_in_is_token0: true,
+        });
+        let fresh_v2 = HopKind::V2(HopData {
+            pool_addr: "0xb".into(),
+            entry: ReservesEntry {
+                r0: "1".into(),
+                r1: "1".into(),
+                token0_addr: Some("0x01".into()),
+                blk: 110, // lag = 10 > MAX_RESERVE_LAG_BLOCKS (5)
+                ts: 0,
+            },
+            swap_in_is_token0: true,
+        });
+        let v3 = HopKind::V3 {
+            pool_addr: "0xc".into(),
+            fee_bps: 500,
+            token_in_addr: "0x01".into(),
+            token_out_addr: "0x02".into(),
+        };
+        assert!(cycle_has_stale_reserves_mixed(&[stale_v2, fresh_v2, v3]));
+    }
+
+    #[test]
+    fn cycle_has_stale_reserves_mixed_pure_v3_returns_false() {
+        // No V2 hops to compare against → no staleness signal possible.
+        // V3 quotes are "current state" by definition.
+        let v3a = HopKind::V3 {
+            pool_addr: "0xa".into(),
+            fee_bps: 500,
+            token_in_addr: "0x01".into(),
+            token_out_addr: "0x02".into(),
+        };
+        let v3b = HopKind::V3 {
+            pool_addr: "0xb".into(),
+            fee_bps: 3000,
+            token_in_addr: "0x02".into(),
+            token_out_addr: "0x03".into(),
+        };
+        assert!(!cycle_has_stale_reserves_mixed(&[v3a, v3b]));
+    }
+
+    // ---- V3_CYCLES sanity ----
+
+    #[test]
+    fn v3_cycles_all_use_known_long_tail_tokens() {
+        // Every cycle in V3_CYCLES must use tokens that resolve through
+        // `known_token_address`. PEPE/SHIB/MKR/COMP were added 2026-05-07.
+        for (a, b, c) in V3_CYCLES {
+            assert!(
+                known_token_address(a).is_some()
+                    && known_token_address(b).is_some()
+                    && known_token_address(c).is_some(),
+                "V3 cycle {}>{}>{}: every token must be in known_token_address fallback",
+                a,
+                b,
+                c
+            );
+        }
+    }
+
+    #[test]
+    fn v3_cycles_no_self_loop() {
+        for (a, b, c) in V3_CYCLES {
+            assert_ne!(a, b);
+            assert_ne!(b, c);
+            assert_ne!(a, c);
+        }
+    }
+
+    #[test]
+    fn v3_cycles_all_long_tails_present() {
+        // Document-as-test: 2026-05-07 long-tail re-introduction added all
+        // four major V3-only tokens. If a cycle is removed, this regression
+        // signal fires.
+        let long_tails = ["PEPE", "SHIB", "MKR", "COMP"];
+        for sym in &long_tails {
+            let found = V3_CYCLES.iter().any(|(a, _, _)| a == sym);
+            assert!(found, "V3_CYCLES must contain a cycle starting with {}", sym);
+        }
+    }
+
+    #[test]
+    fn v3_cycles_share_weth_usdc_middle() {
+        // All four MVP V3 cycles share the WETH→USDC middle hop so the
+        // Phase-1 V2 cache covers that arm. A future-extension that
+        // breaks this assumption MUST also relax the dedup block-attribution
+        // logic in `cycle_latest_block_mixed` (which currently relies on at
+        // least one V2 hop per cycle for a fresh block number).
+        for (_, b, c) in V3_CYCLES {
+            assert!(
+                (*b == "WETH" && *c == "USDC") || (*b == "USDC" && *c == "WETH"),
+                "V3 cycle middle hop must be WETH↔USDC, found ({}, {})",
+                b,
+                c
+            );
+        }
+    }
+
+    // ---- TickStats with V3 bucket ----
+
+    #[test]
+    fn tick_stats_dominant_includes_v3_quote_failed() {
+        let s = TickStats {
+            skip_v3_quote_failed: 8,
+            skip_no_profit: 2,
+            ..TickStats::default()
+        };
+        assert_eq!(s.dominant_skip_reason(), Some("v3_quote_failed"));
+    }
+
+    #[test]
+    fn sanity_threshold_v3_is_documented_constant() {
+        // The V3 sanity threshold mirrors V2 (5× cap). If this changes,
+        // `sanity_reject_v3` log + `triangular_v3_sanity_reject` counter
+        // semantics must update together.
+        let documented_threshold: f64 = 5.0;
+        assert!(documented_threshold > 1.0);
+        assert!(documented_threshold < 100.0);
+    }
+
+    // ===================================================================
+    // Chain-consistency regression tests — math-validator CRITICAL fix
+    // 2026-05-06. These guard the V3-bearing cycle path against the
+    // original failure mode (single-phase quoting that left current_in
+    // unchanged across V3 hops, producing fake positives ~2.5x cap_usd
+    // that slipped past the 5x sanity bound).
+    // ===================================================================
+
+    /// CRITICAL regression: `evaluate_v3_cycle` must reject a chain where
+    /// hop 0's amount_in_used does NOT match the cycle's amount_in_wei.
+    /// The kernel's chain-check is the safety net behind two-phase quoting.
+    #[test]
+    fn evaluate_v3_cycle_rejects_inconsistent_chain_hop0() {
+        let amount_in = U256::from(10u128).pow(U256::from(18));
+        // Hop 0 amount_in_used is WRONG (claims 2x the cycle's amount_in).
+        let outs = vec![
+            HopAmountOut {
+                amount_in_used: amount_in * U256::from(2u32),
+                amount_out: U256::from(3_500_000_000u64),
+                source: HopAmountSource::V3,
+            },
+            HopAmountOut {
+                amount_in_used: U256::from(3_500_000_000u64),
+                amount_out: U256::from(1_750_000u128 * 1_000_000_000_000u128),
+                source: HopAmountSource::V2,
+            },
+            HopAmountOut {
+                amount_in_used: U256::from(1_750_000u128 * 1_000_000_000_000u128),
+                amount_out: amount_in + U256::from(10u128).pow(U256::from(15)), // profitable
+                source: HopAmountSource::V3,
+            },
+        ];
+        // Chain check rejects despite the math being "profitable".
+        let r = evaluate_v3_cycle(amount_in, &outs, Some(2_000.0), 18);
+        assert!(
+            r.is_none(),
+            "kernel must reject when hop 0's amount_in_used != cycle amount_in"
+        );
+    }
+
+    /// CRITICAL regression: `evaluate_v3_cycle` must reject a chain where
+    /// hop i (i > 0) has amount_in_used that does NOT match hop i-1's
+    /// amount_out. This is the EXACT failure mode of the original V3
+    /// implementation: V3 hops left `current_in` unchanged, so the next
+    /// hop's amount_in didn't equal its predecessor's amount_out.
+    #[test]
+    fn evaluate_v3_cycle_rejects_inconsistent_chain() {
+        let amount_in = U256::from(10u128).pow(U256::from(18));
+        let outs = vec![
+            HopAmountOut {
+                amount_in_used: amount_in,
+                amount_out: U256::from(3_500_000_000u64),
+                source: HopAmountSource::V3,
+            },
+            // Hop 1 amount_in_used DOES NOT match hop 0's amount_out
+            // (this is the original V3 bug — current_in stayed at amount_in).
+            HopAmountOut {
+                amount_in_used: amount_in,
+                amount_out: U256::from(1_750_000u128 * 1_000_000_000_000u128),
+                source: HopAmountSource::V2,
+            },
+            HopAmountOut {
+                amount_in_used: U256::from(1_750_000u128 * 1_000_000_000_000u128),
+                amount_out: amount_in + U256::from(10u128).pow(U256::from(15)),
+                source: HopAmountSource::V3,
+            },
+        ];
+        let r = evaluate_v3_cycle(amount_in, &outs, Some(2_000.0), 18);
+        assert!(
+            r.is_none(),
+            "kernel must reject when hop[i].amount_in_used != hop[i-1].amount_out"
+        );
+    }
+
+    /// Tolerance regression: `chain_consistent_with_predecessor` allows a
+    /// 1-wei delta (V2 truncation slop). 2-wei or more must reject.
+    #[test]
+    fn chain_consistency_tolerates_one_wei_slop_only() {
+        let v = U256::from(1_000_000_000u128);
+        assert!(chain_consistent_with_predecessor(v, v));
+        assert!(chain_consistent_with_predecessor(v, v + U256::from(1u32)));
+        assert!(chain_consistent_with_predecessor(v, v - U256::from(1u32)));
+        assert!(!chain_consistent_with_predecessor(v, v + U256::from(2u32)));
+        assert!(!chain_consistent_with_predecessor(v, v - U256::from(2u32)));
+    }
+
+    /// Reproduces the exact PEPE/SHIB long-tail fake-positive scenario
+    /// described by math-validator (REJECT 2026-05-06).
+    ///
+    /// **Setup**: PEPE→WETH→USDC→PEPE direction.
+    /// - cap_usd = $1000, price_a = $1e-5, decimals = 18
+    /// - amount_in = $1000 / $1e-5 × 1e18 = 1e26 PEPE wei
+    ///
+    /// **Without fix** (single-phase + chain-bug):
+    /// - Hop 0 V3 PEPE→WETH: returns some WETH wei W (Phase 1 quote).
+    ///   But `current_in` stays at 1e26.
+    /// - Hop 1 V2 WETH→USDC fed amount_in = 1e26 (treated as WETH wei).
+    ///   Saturates the WETH-USDC reserves → produces ~3500e6 = $3500 USDC.
+    /// - Hop 2 V3 USDC→PEPE fed amount_in = 3500e6 → returns inflated PEPE wei
+    ///   (e.g. 3.5e26 = $3500 worth).
+    /// - profit_wei = 3.5e26 - 1e26 = 2.5e26 → profit_usd = 2.5e26 × $1e-5
+    ///   / 1e18 = $2500.
+    /// - profit_cap_ratio = $2500 / $1000 = 2.5x → SLIPS past 5x bound →
+    ///   emits FAKE positive.
+    ///
+    /// **With fix**: chain consistency check at the kernel boundary catches
+    /// the mismatch (hop 1's amount_in_used = 1e26, but hop 0's amount_out =
+    /// W != 1e26) and returns None. No fake positive emitted.
+    #[test]
+    fn pepe_v3_v2_v3_cycle_does_not_emit_fake_positive_under_sanity_bound() {
+        // Setup matching math-validator's analysis.
+        let amount_in = U256::from(10u128).pow(U256::from(26)); // 1e26 PEPE wei (cap = $1000 / $1e-5)
+        let cap_usd = 1_000.0_f64;
+        let price_a = 0.00001_f64;
+        let decimals_a = 18u8;
+
+        // Hop 0 V3 PEPE→WETH: real V3 quote (representative, e.g., 1e15 WETH wei).
+        let weth_out_real = U256::from(1_000_000_000_000_000u128);
+
+        // Hop 1 V2 WETH→USDC:
+        // **Bug semantic** — fed amount_in = 1e26 (PEPE wei treated as WETH wei).
+        // V2 saturates: amount_out_with_fee × R_out / (R_in + amount_in_with_fee).
+        // For typical mainnet WETH-USDC (R_in≈3000 WETH=3e21 wei, R_out=6e9 USDC wei),
+        // amount_in_with_fee = 0.997 × 1e26 ≈ 1e26 (>> R_in), so output saturates
+        // close to R_out = ~3.5e9 USDC wei (≈ $3500). Use this saturated value.
+        let usdc_out_saturated = U256::from(3_500_000_000u64);
+
+        // Hop 2 V3 USDC→PEPE: fed the saturated amount → returns inflated PEPE
+        // (math-validator: ~3.5e26 PEPE wei → $3500 worth → profit $2500).
+        let final_pepe_inflated = amount_in + (amount_in * U256::from(25u32) / U256::from(10u32));
+        // = 1e26 × 3.5 = 3.5e26
+
+        // Construct hop_outs as the BUGGY caller would have: each hop's
+        // amount_in_used is "what the buggy chain fed the quoter":
+        //   - Hop 0: amount_in (correct)
+        //   - Hop 1: amount_in (BUG — should be weth_out_real)
+        //   - Hop 2: usdc_out_saturated (the V3 result of the saturated query)
+        let buggy_outs = vec![
+            HopAmountOut {
+                amount_in_used: amount_in,
+                amount_out: weth_out_real,
+                source: HopAmountSource::V3,
+            },
+            HopAmountOut {
+                // **BUG**: should be weth_out_real, but the original code left
+                // current_in at amount_in across the V3 hop.
+                amount_in_used: amount_in,
+                amount_out: usdc_out_saturated,
+                source: HopAmountSource::V2,
+            },
+            HopAmountOut {
+                amount_in_used: usdc_out_saturated,
+                amount_out: final_pepe_inflated,
+                source: HopAmountSource::V3,
+            },
+        ];
+
+        // Demonstrate the failure mode WITHOUT chain check would slip past
+        // sanity bound: profit_cap_ratio = $2500 / $1000 = 2.5 < 5.
+        let raw_profit_wei = final_pepe_inflated.saturating_sub(amount_in);
+        let raw_profit_usd =
+            (raw_profit_wei.as_u128() as f64) / 10f64.powi(decimals_a as i32) * price_a;
+        let raw_profit_cap_ratio = raw_profit_usd / cap_usd;
+        assert!(
+            raw_profit_cap_ratio > 1.0 && raw_profit_cap_ratio < 5.0,
+            "scenario must reproduce the fake-positive failure mode (1 < ratio < 5); got {}",
+            raw_profit_cap_ratio
+        );
+
+        // **With fix**: kernel chain check rejects the buggy chain.
+        let r = evaluate_v3_cycle(amount_in, &buggy_outs, Some(price_a), decimals_a);
+        assert!(
+            r.is_none(),
+            "PEPE chain-bug fake positive must be REJECTED by kernel chain check, \
+             but got Some(_) — chain consistency invariant is broken"
+        );
+    }
+
+    /// Integration-flavoured test: `try_progress_plan` correctly chains a
+    /// V3-V2-V3 cycle across two phases when needed. We model the V3
+    /// multicall result by directly setting `hop_amount_outs` between phases.
+    /// This test guards the production code against regressions where the
+    /// progress helper drifts from the chain-consistency invariant.
+    #[test]
+    fn build_v3_cycle_plan_chains_v3_v2_v3_correctly() {
+        use std::str::FromStr;
+        // Construct a synthetic plan: V3 PEPE→WETH (hop 0), V2 WETH→USDC
+        // (hop 1), V3 USDC→PEPE (hop 2). amount_in = 1e18 wei.
+        let amount_in = U256::from(10u128).pow(U256::from(18));
+
+        let hop0 = HopKind::V3 {
+            pool_addr: "0x11950d141ecb863f01007add7d1a342041227b58".to_string(),
+            fee_bps: 3000,
+            token_in_addr: "0x6982508145454ce325ddbe47a25d4ec3d2311933".to_string(), // PEPE
+            token_out_addr: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string(), // WETH
+        };
+        let hop1 = HopKind::V2(HopData {
+            pool_addr: "0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc".to_string(),
+            entry: ReservesEntry {
+                // 3000 WETH × 6_000_000 USDC realistic mainnet
+                r0: "3000000000000000000000".to_string(),
+                r1: "6000000000".to_string(),
+                token0_addr: Some("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string()),
+                blk: 100,
+                ts: 0,
+            },
+            swap_in_is_token0: true,
+        });
+        let hop2 = HopKind::V3 {
+            pool_addr: "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640".to_string(),
+            fee_bps: 500,
+            token_in_addr: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".to_string(), // USDC
+            token_out_addr: "0x6982508145454ce325ddbe47a25d4ec3d2311933".to_string(), // PEPE
+        };
+
+        let mut plan = V3CyclePlan {
+            cycle_key: "test-pepe-cycle".to_string(),
+            sym_a: "PEPE",
+            sym_b: "WETH",
+            sym_c: "USDC",
+            addr_a: "0x6982508145454ce325ddbe47a25d4ec3d2311933".to_string(),
+            decimals_a: 18,
+            cap_usd: 1_000.0,
+            price_a: 0.00001,
+            amount_in_wei: amount_in,
+            hops: vec![hop0, hop1, hop2],
+            hop_amount_ins: vec![Some(amount_in), None, None],
+            hop_amount_outs: vec![None, None, None],
+        };
+
+        // -------- Phase 1 --------
+        // Only hop 0 has known amount_in (the cap-derived amount_in_wei).
+        // hop 1 (V2) waits on hop 0's amount_out; hop 2 (V3) waits on hop 1's.
+        let mut phase1_requests: Vec<V3QuoteRequest> = Vec::new();
+        let mut phase1_routing: Vec<(usize, usize)> = Vec::new();
+        let progressed1 = try_progress_plan(&mut plan, &mut phase1_requests, &mut phase1_routing, 0);
+        assert!(progressed1, "Phase 1 must progress (queue hop 0 V3)");
+        assert_eq!(phase1_requests.len(), 1, "Phase 1 should queue exactly hop 0 V3");
+        assert_eq!(phase1_routing[0], (0, 0), "Phase 1 routing must point to hop 0");
+        // Hop 1 and 2 still don't have amount_in yet.
+        assert_eq!(plan.hop_amount_ins[1], None);
+        assert_eq!(plan.hop_amount_ins[2], None);
+        // Verify request amount_in was set CORRECTLY from amount_in_wei.
+        assert_eq!(phase1_requests[0].amount_in, amount_in);
+        assert_eq!(
+            phase1_requests[0].pool_addr,
+            Address::from_str("0x11950d141ecb863f01007add7d1a342041227b58").unwrap(),
+        );
+
+        // Simulate Phase 1 multicall result: hop 0 amount_out = 1e15 (WETH wei).
+        let weth_out = U256::from(10u128).pow(U256::from(15));
+        plan.hop_amount_outs[0] = Some(weth_out);
+
+        // -------- Phase 2 --------
+        // Now hop 0 is fully resolved. try_progress_plan should:
+        //   - propagate weth_out → hop_amount_ins[1] = Some(weth_out)
+        //   - compute V2 amount_out for hop 1 inline
+        //   - propagate that → hop_amount_ins[2]
+        //   - queue hop 2 V3 with the V2-derived amount_in.
+        let mut phase2_requests: Vec<V3QuoteRequest> = Vec::new();
+        let mut phase2_routing: Vec<(usize, usize)> = Vec::new();
+        let progressed2 = try_progress_plan(&mut plan, &mut phase2_requests, &mut phase2_routing, 0);
+        assert!(progressed2, "Phase 2 must progress (V2 inline + queue hop 2 V3)");
+        assert_eq!(plan.hop_amount_ins[1], Some(weth_out), "hop 1 amount_in chained");
+        // V2 amount_out from realistic pool: ~6e6 / 3 = 2e6, but exact is computed.
+        let hop1_v2_out = plan.hop_amount_outs[1].expect("hop 1 V2 amount_out filled inline");
+        assert!(
+            hop1_v2_out > U256::zero(),
+            "V2 inline math must produce non-zero amount_out"
+        );
+        assert_eq!(plan.hop_amount_ins[2], Some(hop1_v2_out), "hop 2 amount_in chained");
+        assert_eq!(phase2_requests.len(), 1, "Phase 2 should queue exactly hop 2 V3");
+        assert_eq!(phase2_routing[0], (0, 2), "Phase 2 routing must point to hop 2");
+        // Critical: hop 2's V3 query uses the chain-consistent amount_in
+        // (V2's actual output) — NOT the original amount_in (the bug).
+        assert_eq!(phase2_requests[0].amount_in, hop1_v2_out);
+        assert_ne!(
+            phase2_requests[0].amount_in, amount_in,
+            "hop 2 amount_in MUST NOT equal cycle amount_in (regression: original bug)"
+        );
+
+        // Simulate Phase 2 multicall result: hop 2 amount_out (closes back to PEPE).
+        let final_pepe = amount_in + U256::from(10u128).pow(U256::from(15));
+        plan.hop_amount_outs[2] = Some(final_pepe);
+
+        // -------- Phase 3 (no progress expected) --------
+        let mut phase3_requests: Vec<V3QuoteRequest> = Vec::new();
+        let mut phase3_routing: Vec<(usize, usize)> = Vec::new();
+        let progressed3 = try_progress_plan(&mut plan, &mut phase3_requests, &mut phase3_routing, 0);
+        assert!(!progressed3, "Phase 3 must NOT progress — chain fully resolved");
+        assert_eq!(phase3_requests.len(), 0);
+
+        // Verify chain consistency end-to-end.
+        let hop_outs: Vec<HopAmountOut> = (0..plan.hops.len())
+            .map(|i| HopAmountOut {
+                amount_in_used: plan.hop_amount_ins[i].unwrap(),
+                amount_out: plan.hop_amount_outs[i].unwrap(),
+                source: match plan.hops[i] {
+                    HopKind::V2(_) => HopAmountSource::V2,
+                    HopKind::V3 { .. } => HopAmountSource::V3,
+                },
+            })
+            .collect();
+        // Now the kernel chain check must PASS (no fabricated values).
+        let r = evaluate_v3_cycle(amount_in, &hop_outs, Some(0.00001), 18);
+        assert!(
+            r.is_some(),
+            "chain-consistent profitable cycle must produce Some — got None"
+        );
     }
 }

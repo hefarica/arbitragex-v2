@@ -31,63 +31,114 @@ use tracing::{info, warn};
 /// TTL on the Redis key is 3× heartbeat period — if the searcher dies
 /// the snapshot expires automatically and the API returns 404, surfacing
 /// the outage instead of stale data (R8 fail-honest).
-#[derive(Debug, Clone, Serialize)]
+///
+/// **Forward-compat (cs-validator MAJOR fix 2026-05-06):** every field is
+/// `#[serde(default)]` so a typed Rust client deserialising during a rolling
+/// deploy (where api-server runs the new binary while searcher-rs still emits
+/// the old schema, or vice versa) sees missing fields as zero/empty rather
+/// than failing the whole snapshot. Zero behavioural cost on the writer side.
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct HeartbeatSnapshot {
+    #[serde(default)]
     pub period_secs: u64,
+    #[serde(default)]
     pub emitted_at_unix: u64,
+    #[serde(default)]
     pub redis_stream_total: i64,
+    #[serde(default)]
     pub redis_stream_delta: i64,
+    #[serde(default)]
     pub pg_period_inserted: i64,
+    #[serde(default)]
     pub pg_period_profit_pos: i64,
+    #[serde(default)]
     pub pending_received: u64,
+    #[serde(default)]
     pub decoded_ok: u64,
+    #[serde(default)]
     pub enriched_v2: u64,
+    #[serde(default)]
     pub enriched_v3: u64,
+    #[serde(default)]
     pub gate_token_not_allowed: u64,
+    #[serde(default)]
     pub gate_strategy_disabled: u64,
+    #[serde(default)]
     pub gate_no_config: u64,
+    #[serde(default)]
     pub gate_unknown_token_price: u64,
+    #[serde(default)]
     pub gate_anomalous_math: u64,
+    #[serde(default)]
     pub gate_other_rejected: u64,
+    #[serde(default)]
     pub passed_all_gates: u64,
+    #[serde(default)]
     pub db_persisted: u64,
+    #[serde(default)]
     pub db_errors: u64,
     /// Price worker — tokens whose live USD price came from Alchemy this period.
     /// Operator interpretation: high value = Alchemy healthy + key valid.
+    #[serde(default)]
     pub price_alchemy_hits: u64,
     /// Price worker — tokens whose price came from Coingecko fallback.
     /// Spike here vs alchemy_hits = Alchemy degraded; check key + RPC env.
+    #[serde(default)]
     pub price_coingecko_hits: u64,
     /// Price worker — tokens not priced by EITHER source this period.
     /// Sustained non-zero = upstream outage OR token outside both providers'
     /// universe (operator should remove from allowlist or set explicit price).
+    #[serde(default)]
     pub price_cache_misses: u64,
     /// Price worker — HTTP / Redis / parse errors per period. Steady non-zero
     /// = config or upstream API regression.
+    #[serde(default)]
     pub price_worker_errors: u64,
     /// TriangularWorker — cycles scanned this period. Steady non-zero proves
     /// the worker is alive and exercising MVP_CYCLES every tick. A zero value
     /// across consecutive heartbeats (with the worker enabled in main.rs) is
     /// a regression signal — likely Redis / pool index gap.
+    #[serde(default)]
     pub triangular_cycles_scanned: u64,
     /// TriangularWorker — opportunities emitted this period after spot-check,
     /// golden-section and dedup all pass; spine gates evaluated separately downstream.
     /// Compare against `passed_all_gates` to learn what fraction of triangular
     /// candidates survive the canonical risk policy.
+    #[serde(default)]
     pub triangular_opps_emitted: u64,
     /// FlashloanArbWorker — pairs scanned this period. Steady non-zero proves
     /// the worker is alive. A zero value across consecutive heartbeats (with
     /// the worker enabled) is a regression signal.
+    #[serde(default)]
     pub flashloan_arb_pairs_scanned: u64,
     /// FlashloanArbWorker — opportunities emitted this period after spot-diff,
     /// golden-section, dedup, min-profit, and worker-level sanity bound all
     /// pass. Spine evaluator runs downstream with the canonical risk gates.
+    #[serde(default)]
     pub flashloan_arb_opps_emitted: u64,
     /// FlashloanArbWorker — combos rejected because profit_usd > 10% of borrow_usd.
     /// Anti-Incidente #9 self-defense; non-zero means orientation/decimal bug
     /// somewhere in the pool reserves cache. Inspect the
     /// `flashloan_arb_worker.sanity_reject` warn log for the diagnostic dump.
+    #[serde(default)]
     pub flashloan_arb_sanity_reject: u64,
+    /// TriangularWorker — V3-bearing cycles scanned this period (long-tail cycles
+    /// X-WETH-USDC-X for X in {PEPE, SHIB, MKR, COMP}, both directions). Steady
+    /// non-zero proves the V3 fan-out path is alive. Compare against
+    /// `triangular_v3_quote_failures` to learn the V3-quote success rate.
+    #[serde(default)]
+    pub triangular_v3_cycles_scanned: u64,
+    /// TriangularWorker — V3 quote calls (per-pool) that came back unsuccessful
+    /// or zero this period. R8 fail-honest: every failure is counted, never
+    /// silently masked with a fabricated quote.
+    #[serde(default)]
+    pub triangular_v3_quote_failures: u64,
+    /// TriangularWorker — V3 cycles rejected by the worker-level sanity bound
+    /// (expected_profit_usd > 5× cap_usd). Mirrors the V2 sanity guard. Non-zero
+    /// = orientation / pool-index / fee-tier / decimal bug; inspect the
+    /// `triangular_worker.sanity_reject_v3` warn log for the diagnostic dump.
+    #[serde(default)]
+    pub triangular_v3_sanity_reject: u64,
 }
 
 pub fn heartbeat_redis_key(chain_id: u64) -> String {
@@ -171,6 +222,9 @@ impl HeartbeatWorker {
             let fl_scanned = c.flashloan_arb_pairs_scanned.swap(0, Ordering::Relaxed);
             let fl_emitted = c.flashloan_arb_opps_emitted.swap(0, Ordering::Relaxed);
             let fl_sanity = c.flashloan_arb_sanity_reject.swap(0, Ordering::Relaxed);
+            let tri_v3_scanned = c.triangular_v3_cycles_scanned.swap(0, Ordering::Relaxed);
+            let tri_v3_quote_fail = c.triangular_v3_quote_failures.swap(0, Ordering::Relaxed);
+            let tri_v3_sanity = c.triangular_v3_sanity_reject.swap(0, Ordering::Relaxed);
 
             info!(
                 event = "scanner.heartbeat",
@@ -202,6 +256,9 @@ impl HeartbeatWorker {
                 flashloan_arb_pairs_scanned = fl_scanned,
                 flashloan_arb_opps_emitted = fl_emitted,
                 flashloan_arb_sanity_reject = fl_sanity,
+                triangular_v3_cycles_scanned = tri_v3_scanned,
+                triangular_v3_quote_failures = tri_v3_quote_fail,
+                triangular_v3_sanity_reject = tri_v3_sanity,
                 "scanner pipeline heartbeat"
             );
 
@@ -241,6 +298,9 @@ impl HeartbeatWorker {
                 flashloan_arb_pairs_scanned: fl_scanned,
                 flashloan_arb_opps_emitted: fl_emitted,
                 flashloan_arb_sanity_reject: fl_sanity,
+                triangular_v3_cycles_scanned: tri_v3_scanned,
+                triangular_v3_quote_failures: tri_v3_quote_fail,
+                triangular_v3_sanity_reject: tri_v3_sanity,
             };
             if let Ok(json) = serde_json::to_string(&snapshot) {
                 let key = heartbeat_redis_key(self.chain_id);

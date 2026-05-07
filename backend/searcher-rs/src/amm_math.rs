@@ -15,6 +15,16 @@ use ethers::abi::{Function, Param, ParamType, StateMutability, Token};
 use ethers::providers::{Http, Provider};
 use ethers::types::{Address, Bytes, U256};
 use std::sync::Arc;
+use std::time::Duration;
+
+/// Hard upper bound on a single multicall RPC. A stalled RPC (e.g. provider
+/// hung on a TCP retransmit, dead VPN tunnel, blackhole) WITHOUT this guard
+/// would freeze the entire worker tick indefinitely (cs-validator MAJOR fix
+/// 2026-05-06). On timeout the multicall returns Err, caller treats it as a
+/// whole-batch RPC failure, increments the per-pool failure counter, and
+/// proceeds to the next tick. Five seconds is generous (Alchemy p99 ≈ 200ms
+/// even for 50-call multicalls) but avoids tripping on ordinary congestion.
+const V3_QUOTE_MULTICALL_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Convert a wei-denominated decimal string to f64 token units using the
 /// token's actual decimal precision.
@@ -201,7 +211,26 @@ pub async fn v3_quote_exact_in_multicall(
         .collect::<anyhow::Result<Vec<_>>>()?;
 
     let multicall = multicall3::IMulticall3::new(multicall_addr, provider.clone());
-    let results = multicall.aggregate_3(calls).call().await?;
+    // Hard timeout (cs-validator MAJOR fix 2026-05-06). On timeout the caller
+    // treats the whole batch as failed and counts each per-pool quote as a
+    // failure (existing whole-batch failure counter at triangular_worker.rs
+    // ~line 1493). Without this, a stalled provider would freeze the worker
+    // tick indefinitely.
+    let results = match tokio::time::timeout(
+        V3_QUOTE_MULTICALL_TIMEOUT,
+        multicall.aggregate_3(calls).call(),
+    )
+    .await
+    {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_elapsed) => {
+            return Err(anyhow::anyhow!(
+                "multicall timeout after {}s",
+                V3_QUOTE_MULTICALL_TIMEOUT.as_secs()
+            ));
+        }
+    };
 
     // Decode each result. amountOut is the first 32 bytes of return data
     // (uint256, big-endian, left-padded). We don't need the other return values.
@@ -414,5 +443,75 @@ mod v3_tests {
         });
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 0);
+    }
+
+    /// cs-validator MAJOR fix 2026-05-06 — `v3_quote_exact_in_multicall` must
+    /// NOT freeze indefinitely if the RPC stalls.
+    ///
+    /// We stand up a local TCP listener that accepts the connection but never
+    /// responds (simulates a stalled provider). The wrapper enforces a 5s
+    /// timeout via `tokio::time::timeout`, with `tokio::time::pause()` enabled
+    /// virtual time advances instantly so the test completes in milliseconds
+    /// rather than burning a real 5s of wall clock.
+    ///
+    /// Asserts: the call returns Err whose message contains "multicall timeout".
+    #[test]
+    fn v3_quote_multicall_times_out_after_5s() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .start_paused(true) // virtual clock — `tokio::time::timeout` advances instantly
+            .build()
+            .unwrap();
+        let result: anyhow::Result<Vec<V3QuoteResult>> = rt.block_on(async {
+            // Bind a TCP listener that accepts then ignores forever.
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                loop {
+                    // Accept and hold — never write a response.
+                    let (mut stream, _) = match listener.accept().await {
+                        Ok(p) => p,
+                        Err(_) => return,
+                    };
+                    tokio::spawn(async move {
+                        // Hold the socket open forever (but not blocking the test).
+                        let mut buf = [0u8; 1024];
+                        let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await;
+                        std::future::pending::<()>().await;
+                    });
+                }
+            });
+
+            let url = format!("http://{}", addr);
+            let provider = Arc::new(
+                ethers::providers::Provider::<ethers::providers::Http>::try_from(url).unwrap(),
+            );
+            let req = V3QuoteRequest {
+                pool_addr: Address::from_str("0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640")
+                    .unwrap(),
+                token_in: Address::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
+                    .unwrap(),
+                token_out: Address::from_str("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+                    .unwrap(),
+                amount_in: U256::from(10).pow(U256::from(18)),
+                fee_bps: 500,
+            };
+            v3_quote_exact_in_multicall(
+                provider,
+                Address::from_str("0x61fFE014bA17989E743c5F6cB21bF9697530B21e").unwrap(),
+                Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
+                vec![req],
+            )
+            .await
+        });
+
+        // Result must be Err — a stalled RPC must NOT freeze the worker.
+        let err = result.expect_err("stalled RPC must surface as Err, not hang");
+        let msg = format!("{}", err);
+        assert!(
+            msg.to_lowercase().contains("timeout"),
+            "expected timeout error, got: {}",
+            msg
+        );
     }
 }
