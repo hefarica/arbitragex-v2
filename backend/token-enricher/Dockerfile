@@ -10,7 +10,7 @@
 # Defect #11: using rust:1.82-bookworm (pinned, publicly available, covers
 # MSRV 1.75 declared in backend/Cargo.toml).
 
-FROM rust:1.82-bookworm AS builder
+FROM rust:1.86-bookworm AS builder
 WORKDIR /build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
