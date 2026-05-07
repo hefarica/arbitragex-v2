@@ -24,7 +24,7 @@ export const OpportunityListItemSchema = z.object({
   strategy_kind: StrategyKind,
   dex_a: z.string().min(1),
   dex_b: z.string().min(1).nullable(),
-  pair_symbol: z.string().min(1),
+  pair_symbol: z.string().min(1).nullable(),
   token_in: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
   token_in_info: TokenInfoSchema.nullable(),
   token_out: z.string().regex(/^0x[a-fA-F0-9]{40}$/),

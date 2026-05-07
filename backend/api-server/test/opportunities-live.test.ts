@@ -107,7 +107,7 @@ describe("GET /api/v1/opportunities/live — token enrichment", () => {
     `, [tokenIn, tokenOut]);
 
     const res = await request(buildApp())
-      .get("/api/v1/opportunities/live")
+      .get("/api/v1/opportunities/live?limit=200")
       .expect(200);
 
     expect(res.body.count).toBeGreaterThanOrEqual(1);
@@ -137,7 +137,7 @@ describe("GET /api/v1/opportunities/live — token enrichment", () => {
     `, [tokenIn, tokenOut]);
 
     const res = await request(buildApp())
-      .get("/api/v1/opportunities/live")
+      .get("/api/v1/opportunities/live?limit=200")
       .expect(200);
 
     const item = res.body.items.find((o: any) => o.token_in === tokenIn);
@@ -167,7 +167,7 @@ describe("GET /api/v1/opportunities/live — fail-honest nulls", () => {
     `, [tokenIn, tokenOut]);
 
     const res = await request(buildApp())
-      .get("/api/v1/opportunities/live")
+      .get("/api/v1/opportunities/live?limit=200")
       .expect(200);
 
     const item = res.body.items.find((o: any) => o.token_in === tokenIn);
@@ -193,7 +193,7 @@ describe("GET /api/v1/opportunities/live — cross-chain slots", () => {
     `, [tokenIn, tokenOut]);
 
     const res = await request(buildApp())
-      .get("/api/v1/opportunities/live")
+      .get("/api/v1/opportunities/live?limit=200")
       .expect(200);
 
     const item = res.body.items.find((o: any) => o.token_in === tokenIn);
@@ -233,7 +233,7 @@ describe("GET /api/v1/opportunities/live — viable_only filter", () => {
 
     // viable_only=true (default) must NOT return the rejected row.
     const resViable = await request(buildApp())
-      .get("/api/v1/opportunities/live?viable_only=true")
+      .get("/api/v1/opportunities/live?viable_only=true&limit=200")
       .expect(200);
     expect(resViable.body.viable_only).toBe(true);
     const notPresent = resViable.body.items.find(
@@ -243,7 +243,7 @@ describe("GET /api/v1/opportunities/live — viable_only filter", () => {
 
     // viable_only=false MUST return the rejected row.
     const resAll = await request(buildApp())
-      .get("/api/v1/opportunities/live?viable_only=false")
+      .get("/api/v1/opportunities/live?viable_only=false&limit=200")
       .expect(200);
     expect(resAll.body.viable_only).toBe(false);
     const present = resAll.body.items.find(
@@ -254,7 +254,7 @@ describe("GET /api/v1/opportunities/live — viable_only filter", () => {
 
     // Default (no param) behaves identically to viable_only=true.
     const resDefault = await request(buildApp())
-      .get("/api/v1/opportunities/live")
+      .get("/api/v1/opportunities/live?limit=200")
       .expect(200);
     expect(resDefault.body.viable_only).toBe(true);
     const notPresentDefault = resDefault.body.items.find(
