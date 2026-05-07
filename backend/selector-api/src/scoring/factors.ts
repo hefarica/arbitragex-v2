@@ -20,9 +20,9 @@ export type Factors = {
 const clamp = (x: number, lo: number, hi: number): number =>
   Number.isFinite(x) ? Math.max(lo, Math.min(hi, x)) : lo;
 
-/** Liquidity proxy: log-scaled from expected_profit_usd. */
+/** Liquidity proxy: log-scaled from expected_profit_usd. Null means unsimulated → treat as 0. */
 export function liquidityFactor(opp: Opportunity): number {
-  const ep = Math.max(1, opp.expected_profit_usd);
+  const ep = Math.max(1, opp.expected_profit_usd ?? 0);
   return clamp(Math.log10(ep * 20) * 20, 0, 100);
 }
 

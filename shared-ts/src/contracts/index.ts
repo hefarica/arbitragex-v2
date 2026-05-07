@@ -21,7 +21,7 @@ export const OpportunitySchema = z.object({
   token_in: HexAddr,
   token_out: HexAddr,
   amount_in_wei: BigIntStr,
-  expected_profit_usd: z.number(),
+  expected_profit_usd: z.number().nullable(),
   roi_pct: z.number().nullable(),
   risk_score: z.number().nullable(),
   block_number: z.number().int().nonnegative().nullable(),

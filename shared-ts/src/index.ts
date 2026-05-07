@@ -5,3 +5,4 @@ export * from "./metrics/index.js";
 export * from "./middleware/index.js";
 export * from "./contracts/index.js";
 export * from "./circuit_breaker/index.js";
+export * from "./api-contracts.js";
