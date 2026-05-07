@@ -34,6 +34,10 @@ pub struct ResolvedToken {
 /// value). The `resolved_via` column is upgraded only when the previous
 /// status was `'failed'` and the new status is something better — this
 /// implements the failure-state recovery semantics required by Task 6.
+///
+/// `resolved_at` is also advanced when a `'failed'` row is promoted to a
+/// non-failed status, so observability queries for "when was this token
+/// successfully resolved?" return the correct timestamp.
 pub async fn upsert_token(
     pool: &PgPool,
     chain_id: u64,
@@ -55,6 +59,11 @@ pub async fn upsert_token(
                 WHEN tokens.resolved_via = 'failed' AND EXCLUDED.resolved_via <> 'failed'
                   THEN EXCLUDED.resolved_via
                 ELSE tokens.resolved_via
+              END,
+            resolved_at  = CASE
+                WHEN tokens.resolved_via = 'failed' AND EXCLUDED.resolved_via <> 'failed'
+                  THEN NOW()
+                ELSE tokens.resolved_at
               END,
             last_seen_at = NOW()
         "#,
@@ -78,10 +87,23 @@ pub async fn upsert_token(
 /// - `resolved_via = 'failed'` and the row is older than 7 days → `true`
 ///   (TTL retry: give the resolver another chance after the cooldown).
 /// - Any other case → `false` (we already have something useful).
+///
+/// The TTL comparison is performed entirely server-side using PostgreSQL's
+/// `NOW()` and `INTERVAL '7 days'`. This avoids Rust↔PG clock-skew issues
+/// that can occur in containerised environments where the process clock and
+/// the database server clock drift independently.
 pub async fn needs_resolution(pool: &PgPool, chain_id: u64, address: Address) -> Result<bool> {
     let addr_lc = format!("{address:#x}");
-    let row: Option<(String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        r#"SELECT resolved_via, resolved_at FROM tokens WHERE chain_id=$1 AND address=$2"#,
+    // Returns a boolean column: true iff the row is a failed token whose
+    // resolved_at is more than 7 days in the past (server-side comparison).
+    // fetch_optional returns None when the row does not exist.
+    let row: Option<(bool,)> = sqlx::query_as(
+        r#"
+        SELECT
+          (resolved_via = 'failed' AND resolved_at < NOW() - INTERVAL '7 days') AS retry
+        FROM tokens
+        WHERE chain_id = $1 AND address = $2
+        "#,
     )
     .bind(chain_id as i32)
     .bind(&addr_lc)
@@ -90,13 +112,6 @@ pub async fn needs_resolution(pool: &PgPool, chain_id: u64, address: Address) ->
     .context("needs_resolution lookup")?;
     match row {
         None => Ok(true),
-        Some((resolved_via, resolved_at)) => {
-            if resolved_via == "failed" {
-                let age = chrono::Utc::now() - resolved_at;
-                Ok(age > chrono::Duration::days(7))
-            } else {
-                Ok(false)
-            }
-        }
+        Some((retry,)) => Ok(retry),
     }
 }
