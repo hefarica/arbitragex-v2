@@ -24,7 +24,8 @@ export function PaperModeToggle({ initialValue }: { initialValue: boolean }) {
   }, []);
 
   const handleToggle = async (val: boolean) => {
-    if (!hasSession) {
+    if (!hasAdminSession()) {
+      setHasSession(false);  // sync React state with reality
       toast.error("Admin session required — open /killswitch and unlock a session first.");
       return;
     }

@@ -54,7 +54,8 @@ export function CapitalRiskTab({ config, onSaved, adminToken, actor }: Props) {
   };
 
   const onSave = async () => {
-    if (!hasSession) {
+    if (!hasAdminSession()) {
+      setHasSession(false);  // sync React state with reality
       setMsg("Login required: open /killswitch and unlock an admin session first.");
       return;
     }

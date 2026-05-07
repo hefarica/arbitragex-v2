@@ -84,7 +84,8 @@ export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor
   };
 
   const onSave = async () => {
-    if (!hasSession) {
+    if (!hasAdminSession()) {
+      setHasSession(false);  // sync React state with reality
       setMsg("Login required: open /killswitch and unlock an admin session first.");
       return;
     }

@@ -54,7 +54,8 @@ export function TokenAllowlistTab({ config, onSaved, adminToken, actor }: Props)
   const remove = (sym: string) => setSymbols((prev) => prev.filter((s) => s !== sym));
 
   const onSave = async () => {
-    if (!hasSession) {
+    if (!hasAdminSession()) {
+      setHasSession(false);  // sync React state with reality
       setMsg("Login required: open /killswitch and unlock an admin session first.");
       return;
     }
