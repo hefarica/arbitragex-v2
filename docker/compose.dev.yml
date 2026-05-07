@@ -319,6 +319,29 @@ services:
     networks: [arbx-net]
     <<: *common-logging
 
+  token-enricher:
+    build:
+      context: ../backend
+      dockerfile: token-enricher/Dockerfile
+    env_file: ["../.env"]
+    environment:
+      DATABASE_URL: postgres://arbx_rw:${ARBX_RW_PASSWORD:-arbx_rw_dev_only}@postgres:5432/arbitragex
+      REDIS_URL: redis://redis:6379
+      # ENRICHER_RPC_URLS: comma-separated <chain_id>=<rpc_url> pairs.
+      # Set in .env for production.  Dev default is empty — enricher will
+      # fail-fast at startup if not provided, matching fail-honest doctrine.
+      ENRICHER_RPC_URLS: ${ENRICHER_RPC_URLS:-}
+      ENRICHER_METRICS_PORT: "9004"
+      # GITHUB_TOKEN is optional; improves Trust Wallet CDN rate limits.
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports: ["127.0.0.1:9004:9004"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [arbx-net]
+    <<: *common-logging
+
   promtail:
     image: grafana/promtail:2.9.7
     command: ["-config.file=/etc/promtail/config.yml"]
