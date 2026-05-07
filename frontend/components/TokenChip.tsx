@@ -34,8 +34,9 @@ export interface TokenChipProps {
 }
 
 export function TokenChip({ token_address, info }: TokenChipProps) {
-  // Case D: enricher pending — info not yet available.
-  if (info === null) {
+  // Case D: enricher pending OR missing field (old API shape) — info not available.
+  // Use loose equality (==) to catch BOTH null AND undefined defensively.
+  if (info == null) {
     return (
       <span className="inline-flex items-center gap-1.5">
         <DeterministicAvatar seed={token_address} className="size-5 rounded-full shrink-0" />
