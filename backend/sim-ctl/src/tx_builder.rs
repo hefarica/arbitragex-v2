@@ -148,8 +148,9 @@ mod tests {
             token_in: "0xC02aaa39b223FE8D0A0e5C4F27eAD9083C756Cc2".into(),
             token_out: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".into(),
             amount_in_wei: "1000000000000000000".into(),
-            expected_profit_usd: 10.0,
+            expected_profit_usd: Some(10.0),
             roi_pct: None, risk_score: None, block_number: None,
+            rejection_reason: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
         }

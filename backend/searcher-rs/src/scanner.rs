@@ -652,7 +652,7 @@ async fn process_pending(
                 hash = %hash,
                 token = %token_symbol_or_addr,
             );
-            opportunity.expected_profit_usd = 0.0;
+            opportunity.expected_profit_usd = None; // R8 fail-honest: no simulation ran
             opportunity.roi_pct = Some(0.0);
             opportunity.risk_score = Some(0.0);
             // GAP-2 fix: persist diagnostic reason — operator filters by
@@ -680,7 +680,7 @@ async fn process_pending(
                 hash = %hash,
                 strategy = %strategy_kind,
             );
-            opportunity.expected_profit_usd = 0.0;
+            opportunity.expected_profit_usd = None; // R8 fail-honest: no simulation ran
             opportunity.roi_pct = Some(0.0);
             opportunity.risk_score = Some(0.0);
             opportunity.rejection_reason = Some(format!("StrategyDisabled:{strategy_kind}"));
@@ -709,7 +709,7 @@ async fn process_pending(
     final_evidence.simulation_status = simulator.simulate_candidate(&candidate);
 
     // Connect math results to the persisted Opportunity row.
-    opportunity.expected_profit_usd = math_outcome.gross_profit_usd;
+    opportunity.expected_profit_usd = Some(math_outcome.gross_profit_usd);
     opportunity.roi_pct = Some(math_outcome.net_roi_pct);
 
     if let Some(reason) = config_rejection {

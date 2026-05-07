@@ -40,7 +40,7 @@ pub async fn compute(
         actual_amount_out_wei: actual_out,
         variance_native_units: variance_native,
         variance_pct,
-        expected_profit_usd: opp.expected_profit_usd,
+        expected_profit_usd: opp.expected_profit_usd.unwrap_or(0.0),
         actual_profit_usd: 0.0, // S6: no oracle, leave at 0 with pnl_source=native_only
         pnl_source: "native_only".to_string(),
         actual_gas_used_wei: gas_used,

@@ -26,7 +26,7 @@ pub struct Opportunity {
     pub token_out: String,
     /// big int as decimal string
     pub amount_in_wei: String,
-    pub expected_profit_usd: f64,
+    pub expected_profit_usd: Option<f64>,
     pub roi_pct: Option<f64>,
     pub risk_score: Option<f64>,
     pub block_number: Option<u64>,
