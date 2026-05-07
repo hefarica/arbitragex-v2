@@ -40,7 +40,7 @@ export function DeterministicAvatar({
   // Derive HSL components from different bit regions of the hash.
   const hue = hash % 360;
   const saturation = 55 + (hash % 30); // 55–84 — vibrant but not garish
-  const lightness = 42 + ((hash >> 8) % 20); // 42–61 — visible on both light/dark bg
+  const lightness = 42 + ((hash >>> 8) % 20); // 42–61 — visible on both light/dark bg
 
   // Highlight color: shift hue by 40° and increase lightness for radial pop.
   const hlHue = (hue + 40) % 360;
