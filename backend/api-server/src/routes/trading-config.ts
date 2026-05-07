@@ -59,6 +59,10 @@ const TradingConfigSchema = z
 
     enabled_strategies: z.array(z.string().min(1).max(64)).max(32).default([]),
 
+    // Phase 2 route-finder: per-chain DEX allowlist.
+    // NULL = "use all is_active dexes" (backwards-compatible default).
+    enabled_dex_ids: z.array(z.string().uuid()).max(256).nullable().optional(),
+
     enabled: z.boolean().default(true),
   })
   .superRefine((val, ctx) => {
@@ -117,6 +121,7 @@ interface DbRow {
   failure_risk_buffer_pct: string;
   flashloan_fee_pct: string;
   enabled_strategies: string[];
+  enabled_dex_ids: string[] | null;
   enabled: boolean;
   updated_at: Date;
   updated_by: string;
@@ -154,6 +159,7 @@ function rowToRedisState(row: DbRow): Record<string, unknown> {
     failure_risk_buffer_pct: Number(row.failure_risk_buffer_pct),
     flashloan_fee_pct: Number(row.flashloan_fee_pct),
     enabled_strategies: row.enabled_strategies,
+    enabled_dex_ids: row.enabled_dex_ids ?? null,
     enabled: row.enabled,
     updated_at: row.updated_at.toISOString(),
     updated_by: row.updated_by,
@@ -186,7 +192,8 @@ export function buildTradingConfigRouter(deps: Deps): Router {
                 min_landing_probability, min_liquidity_confidence, max_token_risk_score,
                 gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
                 max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
-                enabled_strategies, enabled, updated_at, updated_by, created_at
+                enabled_strategies, enabled_dex_ids, enabled,
+                updated_at, updated_by, created_at
            FROM trading_config
           WHERE chain_id = $1`,
         [chainId],
@@ -242,11 +249,11 @@ export function buildTradingConfigRouter(deps: Deps): Router {
               min_landing_probability, min_liquidity_confidence, max_token_risk_score,
               gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
               max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
-              enabled_strategies, enabled, updated_by
+              enabled_strategies, enabled_dex_ids, enabled, updated_by
             )
             VALUES (
               $1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb,$9::jsonb,$10,$11,
-              $12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
+              $12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24::uuid[],$25,$26
             )
             ON CONFLICT (chain_id) DO UPDATE SET
               capital_usd = EXCLUDED.capital_usd,
@@ -271,6 +278,7 @@ export function buildTradingConfigRouter(deps: Deps): Router {
               failure_risk_buffer_pct = EXCLUDED.failure_risk_buffer_pct,
               flashloan_fee_pct = EXCLUDED.flashloan_fee_pct,
               enabled_strategies = EXCLUDED.enabled_strategies,
+              enabled_dex_ids = EXCLUDED.enabled_dex_ids,
               enabled = EXCLUDED.enabled,
               updated_by = EXCLUDED.updated_by,
               updated_at = NOW()
@@ -283,7 +291,8 @@ export function buildTradingConfigRouter(deps: Deps): Router {
                       min_landing_probability, min_liquidity_confidence, max_token_risk_score,
                       gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
                       max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
-                      enabled_strategies, enabled, updated_at, updated_by, created_at`,
+                      enabled_strategies, enabled_dex_ids, enabled,
+                      updated_at, updated_by, created_at`,
           [
             chainId,
             body.capital_usd,
@@ -308,6 +317,7 @@ export function buildTradingConfigRouter(deps: Deps): Router {
             body.failure_risk_buffer_pct,
             body.flashloan_fee_pct,
             body.enabled_strategies,
+            body.enabled_dex_ids ?? null,
             body.enabled,
             actor,
           ],
@@ -361,7 +371,8 @@ export function buildTradingConfigRouter(deps: Deps): Router {
                   min_landing_probability, min_liquidity_confidence, max_token_risk_score,
                   gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
                   max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
-                  enabled_strategies, enabled, updated_at, updated_by, created_at
+                  enabled_strategies, enabled_dex_ids, enabled,
+                  updated_at, updated_by, created_at
              FROM trading_config
             ORDER BY chain_id`,
         );

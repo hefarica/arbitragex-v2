@@ -70,6 +70,8 @@ import { buildTradingConfigRouter } from "./routes/trading-config.js";
 import { buildOperationsRouter } from "./routes/operations.js";
 import { buildStrategyCatalogRouter } from "./routes/strategy-catalog.js";
 import { mountOpportunitiesLive } from "./routes/opportunities-live.js";
+import { mountDexes } from "./routes/dexes.js";
+import { mountPools } from "./routes/pools.js";
 import { setupWebSocketGateway, broadcastOpportunity } from "./websocket.js";
 import { createServer } from "http";
 
@@ -355,6 +357,8 @@ function requireDbPool(): pg.Pool | null {
 }
 
 mountOpportunitiesLive(app, pool, logger);
+mountDexes(app, { pool, logger });
+mountPools(app, { pool, logger });
 
 // Scanner heartbeat snapshot — read latest pipeline counters from Redis.
 // Persisted by searcher-rs::workers::heartbeat_worker every period (default

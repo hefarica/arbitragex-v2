@@ -21,6 +21,8 @@ import type { StrategyCatalogEntry, TradingConfigConfigured, TradingConfigRespon
 
 import { CapitalRiskTab } from "./tabs/CapitalRiskTab";
 import { StrategyCatalogTab } from "./tabs/StrategyCatalogTab";
+import { DexesTab } from "./tabs/DexesTab";
+import { PoolsTab } from "./tabs/PoolsTab";
 import { MevRelaysTab } from "./tabs/MevRelaysTab";
 import { TokenAllowlistTab } from "./tabs/TokenAllowlistTab";
 import { AuditTab } from "./tabs/AuditTab";
@@ -75,6 +77,8 @@ export function StrategiesClient({ initialConfig, initialCatalog, initialError }
       <TabsList>
         <TabsTrigger value="capital-risk">Capital &amp; Risk</TabsTrigger>
         <TabsTrigger value="catalog">Catálogo</TabsTrigger>
+        <TabsTrigger value="dexes">DEXes</TabsTrigger>
+        <TabsTrigger value="pools">Pools</TabsTrigger>
         <TabsTrigger value="relays">MEV Services</TabsTrigger>
         <TabsTrigger value="tokens">Tokens</TabsTrigger>
         <TabsTrigger value="simulation">Simulación</TabsTrigger>
@@ -93,6 +97,14 @@ export function StrategiesClient({ initialConfig, initialCatalog, initialError }
           adminToken={adminToken}
           actor={actor}
         />
+      </TabsContent>
+
+      <TabsContent value="dexes" className="mt-4">
+        <DexesTab config={config} onSaved={setConfig} adminToken={adminToken} actor={actor} />
+      </TabsContent>
+
+      <TabsContent value="pools" className="mt-4">
+        <PoolsTab chainId={config.chain_id} />
       </TabsContent>
 
       <TabsContent value="relays" className="mt-4">

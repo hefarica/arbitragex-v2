@@ -291,6 +291,9 @@ const TradingConfigBaseFields = {
   failure_risk_buffer_pct: z.number().min(0),
   flashloan_fee_pct: z.number().min(0),
   enabled_strategies: z.array(z.string()),
+  // Phase 2 route finder: which DEX IDs the searcher should scan.
+  // null = all DEXes enabled (default). Array of UUIDs restricts the scan.
+  enabled_dex_ids: z.array(z.string().uuid()).nullable().optional(),
   enabled: z.boolean(),
   updated_at: z.string(),
   updated_by: z.string().nullable(),

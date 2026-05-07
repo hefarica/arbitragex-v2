@@ -164,6 +164,20 @@ app.get("/api/chains",  (req, res) => proxy("/api/chains", req, res));
 app.get("/api/rpcs",    (req, res) => proxy("/api/rpcs", req, res));
 app.get("/api/pools",   (req, res) => proxy("/api/pools", req, res));
 app.get("/api/metrics/defi", (req, res) => proxy("/api/metrics", req, res));
+// Phase 2 route-finder: DEX catalog + pool catalog.
+app.get("/api/dexes", (req, res) => {
+  const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
+  proxy(`/api/v1/dexes?chain_id=${encodeURIComponent(chain)}`, req, res);
+});
+app.get("/api/v1/pools", (req, res) => {
+  // Forward all query parameters verbatim (chain_id, dex_id, protocol_type, limit).
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(req.query)) {
+    if (typeof v === "string") qs.set(k, v);
+  }
+  const qStr = qs.toString();
+  proxy(`/api/v1/pools${qStr ? "?" + qStr : ""}`, req, res);
+});
 
 // S7: admin POST proxies — forward caller's x-arbx-admin-token alongside the
 // edge token. Rejected by api-server if admin token is missing/wrong.
