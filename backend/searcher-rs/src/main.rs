@@ -256,6 +256,37 @@ async fn main() -> anyhow::Result<()> {
         tw.run(triangular_redis, triangular_db, triangular_tc).await;
     });
 
+    // Flashloan-arb worker — promotes the `flashloan_arb` strategy from `scaffold`
+    // to `live` by scanning V2 pool pairs every block (default 12s tick) for
+    // price discrepancies that beat (round-trip fees + flash premium + gas in bps
+    // terms). Reads V2 reserves from the cache populated by PoolSyncWorker; emits
+    // to `arbx:opps:detected` + persists via the standard helpers. Worker bypasses
+    // the spine on the persistence path, so it carries its own sanity bound
+    // (anti-Incidente #9): rejects any combo whose expected_profit_usd exceeds
+    // 10% of borrow_usd. Spine evaluator runs downstream with the canonical
+    // risk gates (allowlist, oracle, anomaly bound).
+    //
+    // Worker is unconditional (no env gate) — promoting the badge requires the
+    // emitter to actually run. Operator can still disable via
+    // `trading_config.enabled_strategies` (the spine evaluator drops candidates
+    // where `strategy_kind` is absent from that list, surfacing
+    // `gate_strategy_disabled` in the heartbeat).
+    let flashloan_period_secs: u64 = std::env::var("FLASHLOAN_ARB_WORKER_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(workers::flashloan_arb_worker::DEFAULT_INTERVAL_SECS);
+    let flashloan_redis = redis_conn.clone();
+    let flashloan_db = db_pool.clone();
+    let flashloan_tc = trading_config.clone();
+    let flashloan_chain = primary_chain;
+    tokio::spawn(async move {
+        let fw = workers::flashloan_arb_worker::FlashloanArbWorker::new(
+            flashloan_period_secs,
+            flashloan_chain,
+        );
+        fw.run(flashloan_redis, flashloan_db, flashloan_tc).await;
+    });
+
     // Spawn one scanner per chain. The primary chain (used by the orchestrator
     // for V2 pool sync) also gets the resolved HTTP RPC URL so the scanner can
     // build a Provider for V3 QuoterV2 batched calls. Other chains get None

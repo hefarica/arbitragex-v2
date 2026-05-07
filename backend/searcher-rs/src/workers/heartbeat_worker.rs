@@ -75,6 +75,19 @@ pub struct HeartbeatSnapshot {
     /// Compare against `passed_all_gates` to learn what fraction of triangular
     /// candidates survive the canonical risk policy.
     pub triangular_opps_emitted: u64,
+    /// FlashloanArbWorker — pairs scanned this period. Steady non-zero proves
+    /// the worker is alive. A zero value across consecutive heartbeats (with
+    /// the worker enabled) is a regression signal.
+    pub flashloan_arb_pairs_scanned: u64,
+    /// FlashloanArbWorker — opportunities emitted this period after spot-diff,
+    /// golden-section, dedup, min-profit, and worker-level sanity bound all
+    /// pass. Spine evaluator runs downstream with the canonical risk gates.
+    pub flashloan_arb_opps_emitted: u64,
+    /// FlashloanArbWorker — combos rejected because profit_usd > 10% of borrow_usd.
+    /// Anti-Incidente #9 self-defense; non-zero means orientation/decimal bug
+    /// somewhere in the pool reserves cache. Inspect the
+    /// `flashloan_arb_worker.sanity_reject` warn log for the diagnostic dump.
+    pub flashloan_arb_sanity_reject: u64,
 }
 
 pub fn heartbeat_redis_key(chain_id: u64) -> String {
@@ -155,6 +168,9 @@ impl HeartbeatWorker {
             let price_errors = c.price_worker_errors.swap(0, Ordering::Relaxed);
             let tri_scanned = c.triangular_cycles_scanned.swap(0, Ordering::Relaxed);
             let tri_emitted = c.triangular_opps_emitted.swap(0, Ordering::Relaxed);
+            let fl_scanned = c.flashloan_arb_pairs_scanned.swap(0, Ordering::Relaxed);
+            let fl_emitted = c.flashloan_arb_opps_emitted.swap(0, Ordering::Relaxed);
+            let fl_sanity = c.flashloan_arb_sanity_reject.swap(0, Ordering::Relaxed);
 
             info!(
                 event = "scanner.heartbeat",
@@ -183,6 +199,9 @@ impl HeartbeatWorker {
                 price_worker_errors = price_errors,
                 triangular_cycles_scanned = tri_scanned,
                 triangular_opps_emitted = tri_emitted,
+                flashloan_arb_pairs_scanned = fl_scanned,
+                flashloan_arb_opps_emitted = fl_emitted,
+                flashloan_arb_sanity_reject = fl_sanity,
                 "scanner pipeline heartbeat"
             );
 
@@ -219,6 +238,9 @@ impl HeartbeatWorker {
                 price_worker_errors: price_errors,
                 triangular_cycles_scanned: tri_scanned,
                 triangular_opps_emitted: tri_emitted,
+                flashloan_arb_pairs_scanned: fl_scanned,
+                flashloan_arb_opps_emitted: fl_emitted,
+                flashloan_arb_sanity_reject: fl_sanity,
             };
             if let Ok(json) = serde_json::to_string(&snapshot) {
                 let key = heartbeat_redis_key(self.chain_id);

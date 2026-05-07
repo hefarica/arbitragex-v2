@@ -1679,14 +1679,16 @@ mod tests {
         // overstatement of output for the USDC→WBTC hop.
         //
         // Compounded with two other realistic hops, output >> input.
-        let x = U256::from(2_000_000_000_000_000_000u64); // 2 WETH (2e18 wei)
+        // 5e19 doesn't fit u64 (max ~1.8e19) → use 10×U256::exp10(18) = 1e19
+        // and 50×U256::exp10(18) for the larger value.
+        let x = U256::from(2u64) * U256::exp10(18); // 2 WETH (2e18 wei)
         let reserves = vec![
-            // WETH→USDC realistic
-            (U256::from(10_000_000_000_000_000_000u64), U256::from(20_000_000_000u64)),
-            // USDC→WBTC FLIPPED (this is the bug)
+            // WETH→USDC realistic (10 WETH = 1e19 wei, 20K USDC = 2e10 wei)
+            (U256::from(10u64) * U256::exp10(18), U256::from(20_000_000_000u64)),
+            // USDC→WBTC FLIPPED (this is the bug — 61M USDC wei, 50B WBTC wei… inverted)
             (U256::from(61_564_199u64), U256::from(49_997_126_049u64)),
-            // WBTC→WETH realistic
-            (U256::from(1_000_000_000u64), U256::from(50_000_000_000_000_000_000u64)),
+            // WBTC→WETH realistic (1B WBTC wei = 10 WBTC, 50 WETH = 5e19 wei)
+            (U256::from(1_000_000_000u64), U256::from(50u64) * U256::exp10(18)),
         ];
         let (out, profit) = cycle_profit(x, &reserves, 30);
         // The math kernel can't know the orientation is wrong — it does

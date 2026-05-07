@@ -74,6 +74,20 @@ pub struct ScannerCounters {
     /// gates; high count here with zero `passed_all_gates` means math says profitable but
     /// oracle/risk rejects (operator action required).
     pub triangular_opps_emitted: AtomicU64,
+    /// FlashloanArbWorker: token-pairs scanned this period (one per MVP_PAIRS entry per tick).
+    /// Steady non-zero proves the worker is alive and exercising every configured pair,
+    /// regardless of whether any combo was profitable. A zero value across consecutive
+    /// heartbeats (with the worker enabled in main.rs) is a regression signal.
+    pub flashloan_arb_pairs_scanned: AtomicU64,
+    /// FlashloanArbWorker: opportunities emitted this period after spot-rate diff, golden-section,
+    /// dedup, min-profit and worker-level sanity bound all pass. Compare against
+    /// `passed_all_gates` to learn what fraction survives the canonical risk policy.
+    pub flashloan_arb_opps_emitted: AtomicU64,
+    /// FlashloanArbWorker: pool combos rejected because expected_profit_usd > 10% of borrow_usd.
+    /// Anti-Incidente #9 self-defense — non-zero means orientation/decimal/unit bug somewhere
+    /// in the pool reserves cache. Operator action required: inspect the diagnostic dump
+    /// in the `flashloan_arb_worker.sanity_reject` log line.
+    pub flashloan_arb_sanity_reject: AtomicU64,
 }
 
 /// Process-global counters. First call initialises; subsequent calls return

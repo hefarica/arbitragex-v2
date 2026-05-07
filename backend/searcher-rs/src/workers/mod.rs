@@ -4,6 +4,7 @@
 //! HftMempoolListener and ExecutionWorker stubs are kept but not spawned.
 
 pub mod execution_worker;
+pub mod flashloan_arb_worker;
 pub mod heartbeat_worker;
 pub mod hft_mempool_listener;
 pub mod pool_sync_worker;
