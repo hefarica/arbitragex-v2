@@ -36,7 +36,7 @@
 //! sqlx. A `limit` of 0 would return no rows — callers should use a
 //! reasonable positive value (e.g. 100–500).
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use sqlx::PgPool;
 
 /// Returns `(chain_id, address_lowercase)` tuples for tokens that need
@@ -67,7 +67,32 @@ use sqlx::PgPool;
 /// is NOT a TTL-expired failed row" — i.e. skip resolved tokens and
 /// recently-failed ones. Tokens that are absent altogether or whose failure
 /// TTL has expired pass through.
+///
+/// ### Return type and Task 8 caller contract
+///
+/// Returns `Vec<(i32, String)>` because PostgreSQL's `INTEGER` column type
+/// maps to `i32` via sqlx.  Callers (the Task 8 main loop) **must** cast the
+/// `chain_id` to `u64` for `persistence` functions, with an explicit
+/// positivity guard before the cast:
+///
+/// ```rust,ignore
+/// for (c, addr) in find_unresolved_tokens(&pool, limit).await? {
+///     if c <= 0 { continue; }   // guard: malformed row → skip, not u64::MAX
+///     let chain_id = c as u64;
+///     // ...
+/// }
+/// ```
+///
+/// This avoids the pitfall where a malformed `chain_id = 0` or negative value
+/// produces `u64::MAX` via wrapping cast.
 pub async fn find_unresolved_tokens(pool: &PgPool, limit: i64) -> Result<Vec<(i32, String)>> {
+    // Short-circuit: PostgreSQL rejects negative LIMIT at runtime and a
+    // LIMIT 0 query always returns empty.  Guard both at the boundary so
+    // callers never need to think about it.
+    if limit <= 0 {
+        return Ok(vec![]);
+    }
+
     // The UNION deduplicates: both DISTINCT and set semantics apply.
     // token_in uses the opportunity's own chain_id.
     // token_out uses chain_id_out when present (cross-chain), otherwise chain_id.
@@ -95,6 +120,7 @@ pub async fn find_unresolved_tokens(pool: &PgPool, limit: i64) -> Result<Vec<(i3
     )
     .bind(limit)
     .fetch_all(pool)
-    .await?;
+    .await
+    .context("find_unresolved_tokens")?;
     Ok(rows)
 }

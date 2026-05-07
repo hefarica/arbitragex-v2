@@ -23,6 +23,11 @@
 //! `c02aaa...` (WETH), `a`×40, `b`×40, `f`×40, `1`×40, `2`×40, `3`×40,
 //! `4`×40.  This file uses: `5`×40, `6`×40, `7`×40, `8`×40, `9`×40, and
 //! specific mixed-case test vectors — all distinct.
+//!
+//! NOTE: tests require PostgreSQL 13+ for the built-in `gen_random_uuid()`
+//! function used in opportunity inserts. Older PG versions need the pgcrypto
+//! extension; the inline TEST_MIGRATION_001_ROLES intentionally does not
+//! create that extension because PG 13+ provides gen_random_uuid() in core.
 
 use sqlx::PgPool;
 use token_enricher::reconciliation::find_unresolved_tokens;
@@ -228,6 +233,98 @@ async fn skips_recent_failed(pool: PgPool) -> sqlx::Result<()> {
     assert!(
         !unresolved.iter().any(|(_, a)| a == lc),
         "recently-failed token must NOT be returned (TTL cooling-off); got: {unresolved:?}"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Test 5 — LIMIT parameter caps the number of returned rows
+// ---------------------------------------------------------------------------
+
+/// Inserts 10 distinct unresolved tokens and asserts that `limit=5` returns
+/// exactly 5 rows.  Validates that the `LIMIT $1` binding is effective and
+/// that the `limit <= 0` early-return guard does not suppress positive limits.
+///
+/// Address pattern `0x{:040x}` of `0x100..=0x109` produces
+/// `0x0000000000000000000000000000000000000100` through `...0109` —
+/// 10 distinct lowercase hex addresses that do not collide with any address
+/// used in Tasks 6 or 7 (which use single-character-repeated patterns and
+/// c02aaa…).
+#[sqlx::test(migrations = false)]
+async fn limit_caps_returned_rows(pool: sqlx::PgPool) -> sqlx::Result<()> {
+    apply_reconciliation_migrations(&pool).await?;
+
+    // Insert 10 distinct unresolved tokens.
+    for i in 0..10u64 {
+        let addr = format!("0x{:040x}", 0x100u64 + i);
+        sqlx::query(
+            r#"INSERT INTO opportunities
+               (chain_id, strategy_kind, dex_a, token_in, token_out, amount_in_wei, trace_id)
+               VALUES (1, 'dex_arb', 'uniswap-v2', $1, $1, 100, gen_random_uuid())"#,
+        )
+        .bind(&addr)
+        .execute(&pool)
+        .await?;
+    }
+
+    let unresolved = find_unresolved_tokens(&pool, 5).await.unwrap();
+    assert_eq!(
+        unresolved.len(),
+        5,
+        "LIMIT 5 must cap result count to 5 even with 10 unresolved rows; got: {}",
+        unresolved.len()
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Test 6 — cross-chain token_out routes to destination chain via chain_id_out
+// ---------------------------------------------------------------------------
+
+/// Inserts a cross-chain opportunity with `chain_id=1` (Ethereum) and
+/// `chain_id_out=137` (Polygon) and asserts that:
+///   - `token_in` is returned with `chain_id = 1` (source chain).
+///   - `token_out` is returned with `chain_id = 137` (destination chain via
+///     `COALESCE(chain_id_out, chain_id)`).
+///
+/// This locks the non-NULL `chain_id_out` branch of `find_unresolved_tokens`
+/// so future cross-chain work (Sub-Projeto D) cannot regress it silently.
+///
+/// `chk_cross_chain_distinct` requires `chain_id_out IS NULL OR chain_id_out
+/// <> chain_id`; using 1 and 137 satisfies this constraint.
+///
+/// Addresses `0x1111…` and `0x2222…` (42 chars: prefix + 40 hex) are distinct
+/// from all addresses used in prior tests.
+#[sqlx::test(migrations = false)]
+async fn cross_chain_token_out_routes_to_destination_chain(pool: sqlx::PgPool) -> sqlx::Result<()> {
+    apply_reconciliation_migrations(&pool).await?;
+
+    let token_in_addr = "0x1111111111111111111111111111111111111111";
+    let token_out_addr = "0x2222222222222222222222222222222222222222";
+
+    // Cross-chain opportunity: source chain 1 (Ethereum), destination chain 137 (Polygon).
+    // `bridge` is TEXT NULL per migration 033 — omitting it lets it default NULL.
+    sqlx::query(
+        r#"INSERT INTO opportunities
+           (chain_id, chain_id_out, strategy_kind, dex_a, token_in, token_out, amount_in_wei, trace_id)
+           VALUES (1, 137, 'dex_arb', 'uniswap-v2', $1, $2, 100, gen_random_uuid())"#,
+    )
+    .bind(token_in_addr)
+    .bind(token_out_addr)
+    .execute(&pool)
+    .await?;
+
+    let unresolved = find_unresolved_tokens(&pool, 100).await.unwrap();
+
+    // token_in lives on source chain 1.
+    assert!(
+        unresolved.iter().any(|(c, a)| *c == 1 && a == token_in_addr),
+        "token_in must be returned with source chain_id=1; got: {unresolved:?}"
+    );
+    // token_out lives on destination chain 137 (via COALESCE(chain_id_out, chain_id)).
+    assert!(
+        unresolved.iter().any(|(c, a)| *c == 137 && a == token_out_addr),
+        "token_out must be returned with destination chain_id_out=137; got: {unresolved:?}"
     );
     Ok(())
 }
