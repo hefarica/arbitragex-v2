@@ -1,0 +1,265 @@
+/**
+ * Task 9 — Integration tests for GET /api/v1/opportunities/live
+ *
+ * Uses testcontainers (postgres:15) to run against a real PG instance.
+ * Migration loading order mirrors migrations.test.ts:
+ *   001_roles.sql       — roles + GRANT CONNECT (works because POSTGRES_DB=arbitragex)
+ *   003_opportunities   — core table + rejection_reason column
+ *   033_*               — fail-honest nullable + cross-chain slots
+ *   034_tokens_table    — tokens registry for LEFT JOIN enrichment
+ *
+ * Tests (6):
+ *   1. token_in_info is null when no tokens row exists
+ *   2. token_in_info is populated when tokens row exists
+ *   3. expected_profit_usd is null (R8 fail-honest — not coerced to 0)
+ *   4. cross-chain row: chain_id_out present, bridge/bridge_fee_usd null
+ *   5. HTTP 503 when pool is null (db_unavailable)
+ *   6. viable_only=false returns rejected rows; viable_only=true (default) excludes them
+ */
+
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { GenericContainer, type StartedTestContainer } from "testcontainers";
+import { Pool } from "pg";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import express from "express";
+import request from "supertest";
+import { mountOpportunitiesLive } from "../src/routes/opportunities-live.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MIGRATIONS_DIR = path.join(__dirname, "../../../database/migrations");
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function loadMigration(filename: string): string {
+  return readFileSync(path.join(MIGRATIONS_DIR, filename), "utf8");
+}
+
+function silentLogger() {
+  return { warn: (_obj: object, _msg?: string) => {} };
+}
+
+// ── Container + pool setup ───────────────────────────────────────────────────
+
+let container: StartedTestContainer;
+let pool: Pool;
+
+beforeAll(async () => {
+  // POSTGRES_DB=arbitragex is required so that 001_roles.sql's
+  //   GRANT CONNECT ON DATABASE arbitragex
+  // succeeds. This mirrors the pattern from migrations.test.ts.
+  container = await new GenericContainer("postgres:15")
+    .withEnvironment({
+      POSTGRES_PASSWORD: "test",
+      POSTGRES_DB:       "arbitragex",
+    })
+    .withExposedPorts(5432)
+    .start();
+
+  pool = new Pool({
+    host:     container.getHost(),
+    port:     container.getMappedPort(5432),
+    user:     "postgres",
+    password: "test",
+    database: "arbitragex",
+  });
+
+  // Apply migrations in dependency order.
+  for (const f of [
+    "001_roles.sql",
+    "003_opportunities.sql",
+    "033_opportunities_fail_honest_and_cross_chain_slots.sql",
+    "034_tokens_table.sql",
+  ]) {
+    await pool.query(loadMigration(f));
+  }
+}, 60_000);
+
+afterAll(async () => {
+  await pool.end();
+  await container.stop();
+}, 30_000);
+
+// ── Factories ────────────────────────────────────────────────────────────────
+
+/**
+ * Builds a minimal Express app that only mounts the route under test.
+ * Keeps each test group independent of global state.
+ */
+function buildApp(overridePool: Pool | null = pool) {
+  const app = express();
+  mountOpportunitiesLive(app, overridePool, silentLogger());
+  return app;
+}
+
+// ── Test: token_in_info null when no tokens row ──────────────────────────────
+
+describe("GET /api/v1/opportunities/live — token enrichment", () => {
+  it("token_in_info is null when no tokens row exists", async () => {
+    // Insert an opportunity whose token_in has no entry in the tokens table.
+    const tokenIn  = "0x" + "a".repeat(40);
+    const tokenOut = "0x" + "b".repeat(40);
+    await pool.query(`
+      INSERT INTO opportunities
+        (chain_id, strategy_kind, dex_a, token_in, token_out, amount_in_wei, trace_id)
+      VALUES (1, 'dex_arb', 'uniswap-v2', $1, $2, 1000000, gen_random_uuid())
+    `, [tokenIn, tokenOut]);
+
+    const res = await request(buildApp())
+      .get("/api/v1/opportunities/live")
+      .expect(200);
+
+    expect(res.body.count).toBeGreaterThanOrEqual(1);
+    // Find the row we just inserted (by token address).
+    const item = res.body.items.find((o: any) => o.token_in === tokenIn);
+    expect(item).toBeDefined();
+    // R8 fail-honest: no tokens row → null, not a fabricated object.
+    expect(item.token_in_info).toBeNull();
+    expect(item.token_out_info).toBeNull();
+  });
+
+  it("token_in_info is populated when tokens row exists", async () => {
+    const tokenIn  = "0x" + "c".repeat(40);
+    const tokenOut = "0x" + "d".repeat(40);
+
+    // Insert token enrichment data first.
+    await pool.query(`
+      INSERT INTO tokens (chain_id, address, symbol, decimals, logo_url, resolved_via)
+      VALUES (1, $1, 'WETH', 18, 'https://example.com/weth.png', 'onchain_full')
+    `, [tokenIn]);
+
+    // Insert opportunity referencing the token above.
+    await pool.query(`
+      INSERT INTO opportunities
+        (chain_id, strategy_kind, dex_a, token_in, token_out, amount_in_wei, trace_id)
+      VALUES (1, 'dex_arb', 'sushiswap', $1, $2, 2000000, gen_random_uuid())
+    `, [tokenIn, tokenOut]);
+
+    const res = await request(buildApp())
+      .get("/api/v1/opportunities/live")
+      .expect(200);
+
+    const item = res.body.items.find((o: any) => o.token_in === tokenIn);
+    expect(item).toBeDefined();
+    expect(item.token_in_info).not.toBeNull();
+    expect(item.token_in_info.symbol).toBe("WETH");
+    expect(item.token_in_info.decimals).toBe(18);
+    expect(item.token_in_info.logo_url).toBe("https://example.com/weth.png");
+    expect(item.token_in_info.resolved_via).toBe("onchain_full");
+    // token_out still has no row in tokens → null.
+    expect(item.token_out_info).toBeNull();
+  });
+});
+
+// ── Test: R8 fail-honest — null profit ───────────────────────────────────────
+
+describe("GET /api/v1/opportunities/live — fail-honest nulls", () => {
+  it("expected_profit_usd is null (not 0) when not set", async () => {
+    const tokenIn  = "0x" + "e".repeat(40);
+    const tokenOut = "0x" + "f".repeat(40);
+
+    // Insert with no expected_profit_usd (migration 033 makes it nullable).
+    await pool.query(`
+      INSERT INTO opportunities
+        (chain_id, strategy_kind, dex_a, token_in, token_out, amount_in_wei, trace_id)
+      VALUES (1, 'triangular', 'curve', $1, $2, 500000, gen_random_uuid())
+    `, [tokenIn, tokenOut]);
+
+    const res = await request(buildApp())
+      .get("/api/v1/opportunities/live")
+      .expect(200);
+
+    const item = res.body.items.find((o: any) => o.token_in === tokenIn);
+    expect(item).toBeDefined();
+    // Must be null, not 0. R8: NULL means "not computed yet".
+    expect(item.expected_profit_usd).toBeNull();
+    expect(item.roi_pct).toBeNull();
+    expect(item.risk_score).toBeNull();
+  });
+});
+
+// ── Test: cross-chain row ─────────────────────────────────────────────────────
+
+describe("GET /api/v1/opportunities/live — cross-chain slots", () => {
+  it("cross-chain row: chain_id_out present, bridge/bridge_fee_usd null", async () => {
+    const tokenIn  = "0x1" + "1".repeat(39);
+    const tokenOut = "0x2" + "2".repeat(39);
+
+    await pool.query(`
+      INSERT INTO opportunities
+        (chain_id, strategy_kind, dex_a, token_in, token_out, amount_in_wei, trace_id, chain_id_out)
+      VALUES (1, 'dex_arb', 'uniswap-v3', $1, $2, 999999, gen_random_uuid(), 42161)
+    `, [tokenIn, tokenOut]);
+
+    const res = await request(buildApp())
+      .get("/api/v1/opportunities/live")
+      .expect(200);
+
+    const item = res.body.items.find((o: any) => o.token_in === tokenIn);
+    expect(item).toBeDefined();
+    expect(item.chain_id_out).toBe(42161);
+    expect(item.bridge).toBeNull();
+    expect(item.bridge_fee_usd).toBeNull();
+  });
+});
+
+// ── Test: 503 when pool is null ───────────────────────────────────────────────
+
+describe("GET /api/v1/opportunities/live — db_unavailable", () => {
+  it("returns HTTP 503 with db_unavailable when pool is null", async () => {
+    const appNoDb = buildApp(null);
+    const res = await request(appNoDb)
+      .get("/api/v1/opportunities/live")
+      .expect(503);
+
+    expect(res.body.error).toBe("db_unavailable");
+  });
+});
+
+// ── Test: viable_only filter (regression for commit 97ffc52) ─────────────────
+
+describe("GET /api/v1/opportunities/live — viable_only filter", () => {
+  it("viable_only=false returns rejected rows; default=true excludes them", async () => {
+    const tokenIn  = "0x" + "e".repeat(39) + "1";
+    const tokenOut = "0x" + "f".repeat(39) + "1";
+
+    // Insert an opportunity that has been gate-rejected (rejection_reason set).
+    await pool.query(`
+      INSERT INTO opportunities
+        (chain_id, strategy_kind, dex_a, token_in, token_out, amount_in_wei, trace_id, rejection_reason)
+      VALUES (1, 'dex_arb', 'uniswap-v2', $1, $2, 100, gen_random_uuid(), 'TokenNotAllowed')
+    `, [tokenIn, tokenOut]);
+
+    // viable_only=true (default) must NOT return the rejected row.
+    const resViable = await request(buildApp())
+      .get("/api/v1/opportunities/live?viable_only=true")
+      .expect(200);
+    expect(resViable.body.viable_only).toBe(true);
+    const notPresent = resViable.body.items.find(
+      (o: any) => o.token_in === tokenIn && o.rejection_reason === "TokenNotAllowed",
+    );
+    expect(notPresent).toBeUndefined();
+
+    // viable_only=false MUST return the rejected row.
+    const resAll = await request(buildApp())
+      .get("/api/v1/opportunities/live?viable_only=false")
+      .expect(200);
+    expect(resAll.body.viable_only).toBe(false);
+    const present = resAll.body.items.find(
+      (o: any) => o.token_in === tokenIn && o.rejection_reason === "TokenNotAllowed",
+    );
+    expect(present).toBeDefined();
+    expect(present.rejection_reason).toBe("TokenNotAllowed");
+
+    // Default (no param) behaves identically to viable_only=true.
+    const resDefault = await request(buildApp())
+      .get("/api/v1/opportunities/live")
+      .expect(200);
+    expect(resDefault.body.viable_only).toBe(true);
+    const notPresentDefault = resDefault.body.items.find(
+      (o: any) => o.token_in === tokenIn && o.rejection_reason === "TokenNotAllowed",
+    );
+    expect(notPresentDefault).toBeUndefined();
+  });
+});

@@ -34,6 +34,7 @@ export const OpportunityListItemSchema = z.object({
   roi_pct: z.number().nullable(),
   risk_score: z.number().nullable(),
   block_number: z.number().int().nonnegative().nullable(),
+  rejection_reason: z.string().nullable(),
   status: StatusSchema,
   detected_at: z.string().datetime({ offset: true }),
   trace_id: z.string().uuid(),
