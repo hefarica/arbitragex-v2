@@ -10,12 +10,13 @@
  */
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { hasAdminSession } from "@/lib/admin-token";
 import { putTradingConfig } from "@/lib/api-client";
 import type { TradingConfigConfigured } from "@/lib/schemas";
 
@@ -72,8 +73,19 @@ export function SimulationTab({ config, onSaved, adminToken, actor }: Props) {
 
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  // R1: session check deferred to useEffect — never read document.cookie during SSR.
+  const [hasSession, setHasSession] = useState(false);
+  useEffect(() => {
+    setHasSession(hasAdminSession());
+    const id = setInterval(() => setHasSession(hasAdminSession()), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   const onSave = async () => {
+    if (!hasSession) {
+      setMsg("Login required: open /killswitch and unlock an admin session first.");
+      return;
+    }
     setSaving(true);
     setMsg(null);
 
@@ -180,10 +192,13 @@ export function SimulationTab({ config, onSaved, adminToken, actor }: Props) {
 
       {/* ── Save ────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-3 pt-2">
-        <Button onClick={onSave} disabled={saving}>
+        <Button onClick={onSave} disabled={saving || !hasSession} title={!hasSession ? "Admin session required — open /killswitch first" : undefined}>
           {saving ? "Saving…" : "Save changes"}
         </Button>
         {msg && <span className="text-xs text-muted-foreground font-mono">{msg}</span>}
+        {!hasSession && !msg && (
+          <span className="text-xs text-amber-400 font-mono">No admin session — <a href="/killswitch" className="underline">unlock at /killswitch</a></span>
+        )}
         <span className="ml-auto text-xs text-muted-foreground">
           updated_by: {config.updated_by ?? "—"} · {config.updated_at}
         </span>

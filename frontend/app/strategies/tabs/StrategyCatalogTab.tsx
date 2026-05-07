@@ -12,12 +12,13 @@
  */
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
+import { hasAdminSession } from "@/lib/admin-token";
 import { putTradingConfig } from "@/lib/api-client";
 import type {
   LifecycleStatus,
@@ -64,6 +65,13 @@ export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor
   const [enabled, setEnabled] = useState<string[]>(config.enabled_strategies);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  // R1: session check deferred to useEffect — never read document.cookie during SSR.
+  const [hasSession, setHasSession] = useState(false);
+  useEffect(() => {
+    setHasSession(hasAdminSession());
+    const id = setInterval(() => setHasSession(hasAdminSession()), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   const dirty = useMemo(() => {
     const a = [...enabled].sort().join(",");
@@ -76,6 +84,10 @@ export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor
   };
 
   const onSave = async () => {
+    if (!hasSession) {
+      setMsg("Login required: open /killswitch and unlock an admin session first.");
+      return;
+    }
     setSaving(true);
     setMsg(null);
     const { configured: _c, chain_id: _cid, updated_at: _ua, updated_by: _ub, ...rest } = config;
@@ -99,7 +111,10 @@ export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor
         </p>
         <div className="flex items-center gap-3">
           {msg && <span className="text-xs text-muted-foreground font-mono">{msg}</span>}
-          <Button onClick={onSave} disabled={!dirty || saving}>
+          {!hasSession && !msg && (
+            <span className="text-xs text-amber-400 font-mono">No admin session — <a href="/killswitch" className="underline">unlock at /killswitch</a></span>
+          )}
+          <Button onClick={onSave} disabled={!dirty || saving || !hasSession} title={!hasSession ? "Admin session required — open /killswitch first" : undefined}>
             {saving ? "Saving…" : "Save changes"}
           </Button>
         </div>

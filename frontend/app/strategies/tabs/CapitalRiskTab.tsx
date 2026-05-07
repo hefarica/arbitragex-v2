@@ -8,12 +8,13 @@
  */
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { hasAdminSession } from "@/lib/admin-token";
 import { putTradingConfig } from "@/lib/api-client";
 import type { TradingConfigConfigured } from "@/lib/schemas";
 
@@ -38,6 +39,13 @@ export function CapitalRiskTab({ config, onSaved, adminToken, actor }: Props) {
   const [draft, setDraft] = useState<TradingConfigConfigured>(config);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  // R1: session check deferred to useEffect — never read document.cookie during SSR.
+  const [hasSession, setHasSession] = useState(false);
+  useEffect(() => {
+    setHasSession(hasAdminSession());
+    const id = setInterval(() => setHasSession(hasAdminSession()), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   const setField = (k: DraftField, v: string) => {
     const n = Number(v);
@@ -46,6 +54,10 @@ export function CapitalRiskTab({ config, onSaved, adminToken, actor }: Props) {
   };
 
   const onSave = async () => {
+    if (!hasSession) {
+      setMsg("Login required: open /killswitch and unlock an admin session first.");
+      return;
+    }
     setSaving(true);
     setMsg(null);
     const { configured: _c, chain_id: _cid, updated_at: _ua, updated_by: _ub, ...body } = draft;
@@ -76,10 +88,13 @@ export function CapitalRiskTab({ config, onSaved, adminToken, actor }: Props) {
         <Field label="Max token risk score" value={draft.max_token_risk_score} step="0.01" min={0} max={1} onChange={(v) => setField("max_token_risk_score", v)} />
 
         <div className="col-span-2 flex items-center gap-3 pt-2 border-t mt-2">
-          <Button onClick={onSave} disabled={saving}>
+          <Button onClick={onSave} disabled={saving || !hasSession} title={!hasSession ? "Admin session required — open /killswitch first" : undefined}>
             {saving ? "Saving…" : "Save changes"}
           </Button>
           {msg && <span className="text-xs text-muted-foreground font-mono">{msg}</span>}
+          {!hasSession && !msg && (
+            <span className="text-xs text-amber-400 font-mono">No admin session — <a href="/killswitch" className="underline">unlock at /killswitch</a></span>
+          )}
           <span className="ml-auto text-xs text-muted-foreground">
             updated_by: {draft.updated_by ?? "—"} · {draft.updated_at}
           </span>
