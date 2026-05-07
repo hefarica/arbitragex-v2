@@ -15,3 +15,15 @@ secrets/
 *.bak
 *.swp
 *.tmp
+.aws/
+.gcp/
+.kube/
+*.pfx
+*.p8
+*.credentials
+.npmrc
+vault-token
+id_rsa
+id_ed25519
+id_ecdsa
+*.htpasswd

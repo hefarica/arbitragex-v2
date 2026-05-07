@@ -513,16 +513,30 @@ async fn main() -> Result<()> {
                         // Update pending gauge per chain.
                         // ISSUE-3 fix: reset all known-chain labels to 0 first so
                         // stale gauges ("200 pending") don't persist after the backlog clears.
+                        // M4 hardening: also reset any unsupported chain present in the
+                        // current batch (e.g. 59144 Linea, 324 zkSync) so their gauge
+                        // label doesn't remain non-zero forever after the backlog clears.
                         {
+                            let mut per_chain_cnt: HashMap<u64, i64> = HashMap::new();
+                            for &(chain, _) in &pairs {
+                                *per_chain_cnt.entry(chain).or_default() += 1;
+                            }
+                            // Belt-and-suspenders: reset the hardcoded supported-chain list
+                            // (handles chains that had entries in a previous iteration but
+                            // have none in the current batch).
                             for known_chain in [1u64, 10, 56, 137, 8453, 42161] {
                                 PENDING_UNRESOLVED
                                     .with_label_values(&[&known_chain.to_string()])
                                     .set(0);
                             }
-                            let mut per_chain_cnt: HashMap<u64, i64> = HashMap::new();
-                            for &(chain, _) in &pairs {
-                                *per_chain_cnt.entry(chain).or_default() += 1;
+                            // Reset every chain seen in THIS batch — covers unsupported
+                            // chains before we write their actual counts below.
+                            for chain in per_chain_cnt.keys() {
+                                PENDING_UNRESOLVED
+                                    .with_label_values(&[&chain.to_string()])
+                                    .set(0);
                             }
+                            // Write actual counts.
                             for (chain, cnt) in &per_chain_cnt {
                                 PENDING_UNRESOLVED
                                     .with_label_values(&[&chain.to_string()])

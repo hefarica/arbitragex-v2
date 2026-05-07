@@ -76,7 +76,7 @@ impl TrustWalletClient {
                 Ok(None)
             }
             other => {
-                warn!(event = "trustwallet.unexpected_status", status = other, %url);
+                warn!(event = "trustwallet.unexpected_status", status = other);
                 Ok(None)
             }
         }
