@@ -21,16 +21,17 @@
 //!
 //! ## Delivery semantics
 //!
-//! `read_one_batch` returns a `(triples, entry_ids)` tuple. The caller MUST:
+//! Both `read_one_batch` and `drain_pel` return a `(triples, entry_ids)` tuple.
+//! The caller MUST:
 //! 1. Process `triples` via `process_batch`.
 //! 2. Call `ack_batch(entry_ids)` AFTER `process_batch` completes (success or error).
 //!
-//! This is **at-most-once** delivery: if the process crashes between
-//! `read_one_batch` and `ack_batch`, the entries remain in the PEL and will be
-//! re-delivered on the next startup via `drain_pel`. The reconciliation tick
-//! (`find_unresolved_tokens`) acts as the eventual-durability backstop — any
-//! token that slips through the consumer path will be resolved on the next
-//! reconciliation cycle.
+//! This unified ACK-after-process contract applies to BOTH call sites.  If the
+//! process crashes between either return and `ack_batch`, the entries remain in
+//! the PEL and will be re-delivered on the next startup via `drain_pel`.  The
+//! reconciliation tick (`find_unresolved_tokens`) acts as the
+//! eventual-durability backstop — any token that slips through will be resolved
+//! on the next reconciliation cycle.
 //!
 //! ## PEL / crash-recovery
 //!
@@ -38,11 +39,15 @@
 //! previous crashed session) via `drain_pel` before switching to `">"`.
 //! `drain_pel` uses delivery-id `"0"` which returns entries already
 //! delivered-but-not-ACKed to this consumer.  It loops until the reply is
-//! empty (exhausted), then returns.  Each drained entry is processed with
-//! the same parse logic as a fresh entry; ACK happens within the drain loop
-//! (after parse, before returning to caller) because the PEL entries are
-//! already in a "delivered" state and the reconciliation tick provides the
-//! durability backstop.
+//! empty (exhausted), then returns.
+//!
+//! `drain_pel` returns `(triples, ids)` — the SAME contract as
+//! `read_one_batch`.  The caller MUST call `ack_batch(ids).await` AFTER
+//! `process_batch` completes (success or error).  If the process crashes
+//! between `drain_pel` return and `ack_batch`, the PEL entries remain
+//! unACKed; the next startup's `drain_pel` re-fetches and reprocesses them.
+//! Poison messages are included in `ids` so they are ACKed by the caller
+//! and never block the PEL forever.
 //!
 //! ## Multi-replica safety (Defect #6 — DEFERRED)
 //!
@@ -243,15 +248,22 @@ impl EnricherConsumer {
     /// the consumer explicitly requests them; they would otherwise sit in the
     /// PEL forever.
     ///
-    /// ACK semantics in `drain_pel`: entries are ACKed within this method's own
-    /// loop, after parsing, because PEL entries are already in a "delivered" state
-    /// from the previous session. The caller (main.rs) calls `process_batch` on
-    /// the returned triples immediately after — if processing fails, the
-    /// reconciliation tick provides the durability backstop.
+    /// ## ACK contract (unified with `read_one_batch`)
     ///
-    /// Returns the parsed triples for the caller to pass to `process_batch`.
-    pub async fn drain_pel(&mut self, batch_count: usize) -> Result<Vec<(u64, String, String)>> {
-        let mut all: Vec<(u64, String, String)> = Vec::new();
+    /// Returns `(triples, ids)`.  The caller MUST call `ack_batch(ids).await`
+    /// AFTER `process_batch` completes (success or error).  This gives the same
+    /// crash-recovery guarantee as the live consumer arm: if the process crashes
+    /// between `drain_pel` return and `ack_batch`, the PEL entries remain
+    /// unACKed and will be re-fetched on the next startup.
+    ///
+    /// Poison messages are included in `ids` so the caller ACKs them and they
+    /// never block the PEL indefinitely.
+    pub async fn drain_pel(
+        &mut self,
+        batch_count: usize,
+    ) -> Result<(Vec<(u64, String, String)>, Vec<String>)> {
+        let mut all_triples: Vec<(u64, String, String)> = Vec::new();
+        let mut all_ids: Vec<String> = Vec::new();
 
         loop {
             // Delivery-id "0" = return pending (delivered-but-not-ACKed) entries.
@@ -282,20 +294,18 @@ impl EnricherConsumer {
             }
 
             let (triples, ids) = self.parse(reply);
-            // ACK within the drain loop — PEL entries are already "delivered";
-            // reconciliation tick is the durability backstop.
-            let ack_result: redis::RedisResult<i64> = self
-                .conn
-                .xack(STREAM, GROUP, &ids)
-                .await;
-            if let Err(e) = ack_result {
-                warn!(event = "enricher.xack_error", err = %e);
-            }
-            all.extend(triples);
+            // Accumulate both — NO internal ACK here.
+            // ACK is deferred to caller (main.rs) via ack_batch, AFTER process_batch.
+            all_triples.extend(triples);
+            all_ids.extend(ids);
         }
 
-        info!(event = "enricher.pel_drained", count = all.len());
-        Ok(all)
+        info!(
+            event = "enricher.pel_accumulated",
+            triples = all_triples.len(),
+            ids = all_ids.len()
+        );
+        Ok((all_triples, all_ids))
     }
 
     // -----------------------------------------------------------------------

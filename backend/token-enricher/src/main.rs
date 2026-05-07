@@ -401,18 +401,28 @@ async fn main() -> Result<()> {
     tokio::spawn(serve_metrics(metrics_port));
 
     // --- 5. Drain PEL (I1 — crash recovery before main loop) ---
+    // ACK-after-process: drain_pel returns (triples, ids).  We call
+    // process_batch first, then ack_batch regardless of outcome — same
+    // contract as the live consumer arm.  If the process crashes between
+    // drain_pel return and ack_batch, the PEL entries remain unACKed and
+    // will be re-fetched on the next startup.
     match consumer.drain_pel(BATCH_SIZE).await {
         Err(e) => {
             warn!(event = "enricher.drain_pel_failed", err = %e);
         }
-        Ok(pending) if pending.is_empty() => {
+        Ok((triples, ids)) if triples.is_empty() && ids.is_empty() => {
             info!(event = "enricher.pel_empty");
         }
-        Ok(pending) => {
-            info!(event = "enricher.processing_pel", count = pending.len());
-            let pairs = triples_to_pairs(pending);
+        Ok((triples, ids)) => {
+            info!(event = "enricher.processing_pel", count = triples.len());
+            let pairs = triples_to_pairs(triples);
             if let Err(e) = process_batch(&pool, &providers, &tw, &pairs, "pel").await {
-                warn!(event = "enricher.pel_process_err", err = %e);
+                error!(event = "enricher.pel_batch_err", err = %e);
+            }
+            // ACK after process (success or error) — at-most-once with
+            // reconciliation tick as durability backstop.
+            if let Err(e) = consumer.ack_batch(ids).await {
+                error!(event = "enricher.pel_ack_err", err = %e);
             }
         }
     }

@@ -10,6 +10,8 @@ inject_spine.py
 scaffold_spine.py
 .git/
 node_modules/
+secrets/
+.ssh/
 *.bak
 *.swp
 *.tmp
