@@ -351,6 +351,8 @@ app.get("/api/operations/variance", async (c) => {
 
 // Phase 2 route-finder: DEX catalog + pool catalog (30s TTL — they change rarely).
 app.get("/api/dexes", (c) => proxy(c, "/api/v1/dexes", "arbx:cache:dexes", 30));
+// /api/pools (frontend convention) and /api/v1/pools (backend convention) both proxy to same upstream.
+app.get("/api/pools", (c) => proxy(c, "/api/v1/pools", "arbx:cache:pools", 30));
 app.get("/api/v1/pools", (c) => proxy(c, "/api/v1/pools", "arbx:cache:pools", 30));
 
 // Strategy catalog — Sprint 2 universal MEV strategy library (read-only).

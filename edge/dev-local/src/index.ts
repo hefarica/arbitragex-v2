@@ -162,7 +162,15 @@ app.get("/api/strategy-catalog/active", (req, res) => {
 // DeFi data routes (defiRouter is mounted at /api in api-server, no /v1/ prefix).
 app.get("/api/chains",  (req, res) => proxy("/api/chains", req, res));
 app.get("/api/rpcs",    (req, res) => proxy("/api/rpcs", req, res));
-app.get("/api/pools",   (req, res) => proxy("/api/pools", req, res));
+// Phase 2 fix: /api/pools now maps to NEW route-finder /api/v1/pools (was old broken defi_pools).
+app.get("/api/pools",   (req, res) => {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(req.query)) {
+    if (typeof v === "string") qs.set(k, v);
+  }
+  const qStr = qs.toString();
+  proxy(`/api/v1/pools${qStr ? "?" + qStr : ""}`, req, res);
+});
 app.get("/api/metrics/defi", (req, res) => proxy("/api/metrics", req, res));
 // Phase 2 route-finder: DEX catalog + pool catalog.
 app.get("/api/dexes", (req, res) => {
