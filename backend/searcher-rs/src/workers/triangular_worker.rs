@@ -929,6 +929,14 @@ impl TriangularWorker {
         let profit_cap_ratio = profit_usd / cap_usd;
         if profit_cap_ratio > SANITY_PROFIT_MULT_OF_CAP {
             stats.skip_no_profit += 1; // bucketed under no_profit for tick_stats
+            // Diagnostic dump: per-hop reserves + orientation actually used by
+            // the math kernel. Critical for diagnosing why the kernel produces
+            // implausible profits even with apparently-correct cached
+            // ReservesEntry.token0_addr. Each line shows pool / orientation /
+            // (r_in, r_out) so a human can reproduce the math by hand.
+            let r1 = hop1.reserves_oriented();
+            let r2 = hop2.reserves_oriented();
+            let r3 = hop3.reserves_oriented();
             warn!(
                 event = "triangular_worker.sanity_reject",
                 chain_id = self.chain_id,
@@ -937,7 +945,26 @@ impl TriangularWorker {
                 cap_usd = cap_usd,
                 profit_cap_ratio = profit_cap_ratio,
                 threshold = SANITY_PROFIT_MULT_OF_CAP,
-                hint = "math kernel returned profit > 5x cap — likely orientation flip, decimals mismatch, or unit bug",
+                amount_in_wei = %result.amount_in_wei,
+                hop1_pool = %hop1.pool_addr,
+                hop1_token0 = ?hop1.entry.token0_addr,
+                hop1_swap_in_is_token0 = hop1.swap_in_is_token0,
+                hop1_r0 = %hop1.entry.r0,
+                hop1_r1 = %hop1.entry.r1,
+                hop1_oriented = ?r1,
+                hop2_pool = %hop2.pool_addr,
+                hop2_token0 = ?hop2.entry.token0_addr,
+                hop2_swap_in_is_token0 = hop2.swap_in_is_token0,
+                hop2_r0 = %hop2.entry.r0,
+                hop2_r1 = %hop2.entry.r1,
+                hop2_oriented = ?r2,
+                hop3_pool = %hop3.pool_addr,
+                hop3_token0 = ?hop3.entry.token0_addr,
+                hop3_swap_in_is_token0 = hop3.swap_in_is_token0,
+                hop3_r0 = %hop3.entry.r0,
+                hop3_r1 = %hop3.entry.r1,
+                hop3_oriented = ?r3,
+                hint = "diagnostic dump for root-cause analysis — math kernel returned profit > 5x cap",
             );
             return Some(cycle_block);
         }
