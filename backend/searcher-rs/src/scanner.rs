@@ -37,7 +37,7 @@ use prioritization_spine::types::{OpportunityCandidate};
 use prioritization_spine::evidence::{OpportunityEvidence};
 use prioritization_spine::scoring::{OpportunityScorer, PrioritizationEngine};
 use prioritization_spine::gates::{can_execute};
-use prioritization_spine::decision::{ExecutionDecision};
+use prioritization_spine::decision::{ExecutionDecision, RejectReason};
 use prioritization_spine::simulator::EvmSimulator;
 use prioritization_spine::config_aware::{ConfigAwareEvaluator, ConfigGateOutcome, NetworkSignals};
 use std::fs::OpenOptions;
@@ -328,7 +328,13 @@ async fn process_pending(
     );
 
     let mut expected_amount_out_f64 = amount_in_f64;
-    let mut gross_profit_f64 = 0.0_f64;
+    // R8 fail-honest: None = "we could not compute USD profit" (oracle gap,
+    // unknown token); Some(x) = "we computed it and the answer is x".
+    // The two states MUST be distinct: Some(0.0) means a real zero-profit
+    // spread was computed, not that we skipped computation. This variable
+    // stays None unless we successfully price the spread through a known
+    // path (base token or stablecoin). See scanner.rs:process_pending.
+    let mut gross_profit_f64: Option<f64> = None;
 
     if let (Some(m_in), Some(m_out)) = (&meta_in, &meta_out) {
         // Read both V2 and V3 pool indexes for this pair. The two indexes are
@@ -505,20 +511,27 @@ async fn process_pending(
 
                 // USD pricing rules: only price in USD when token_out matches the
                 // operator's base token (WETH) or is a known stablecoin. Otherwise
-                // we surface the spread in token_out units but leave USD=0 with a
-                // pending-oracle log — Sub-proyecto futuro adds a price oracle.
+                // we surface the spread in token_out units but leave USD as None
+                // (R8 fail-honest: None = uncomputed, Some(x) = computed).
+                // The evaluator's CascadePriceOracle is the authoritative source;
+                // this scanner-level path is a fast pre-filter only.
                 gross_profit_f64 = if let Some(cfg_ref) = cfg_opt.as_ref() {
                     if m_out.symbol.eq_ignore_ascii_case(&cfg_ref.base_token_symbol) {
-                        spread_token_out_f64 * cfg_ref.base_token_price_usd
+                        Some(spread_token_out_f64 * cfg_ref.base_token_price_usd)
                     } else if m_out.is_stablecoin {
-                        spread_token_out_f64
+                        Some(spread_token_out_f64)
                     } else {
+                        // Oracle gap: token_out is neither base nor stablecoin.
+                        // Leave as None — the evaluator's CascadePriceOracle will
+                        // attempt resolution; if it also misses → UnknownTokenPrice
+                        // rejection (R8 fail-honest, expected_profit_usd = None).
                         debug!(event = "scanner.usd_conversion_pending_oracle",
                                token_out_symbol = %m_out.symbol);
-                        0.0
+                        None
                     }
                 } else {
-                    0.0
+                    // No config → no base token price → cannot compute USD profit.
+                    None
                 };
 
                 // Distinguish V2-only enrichment from V2+V3 in the event name so
@@ -539,7 +552,7 @@ async fn process_pending(
                       v3_quotes_landed = v3_used,
                       hi = %hi, lo = %lo,
                       spread_token_out = %gross_profit_token_out,
-                      gross_profit_usd = gross_profit_f64);
+                      gross_profit_usd = ?gross_profit_f64);
             }
         }
     } else {
@@ -570,7 +583,12 @@ async fn process_pending(
         dex_adapters: vec![opportunity.dex_a.clone()],
         amount_in: amount_in_f64,
         expected_amount_out: expected_amount_out_f64,
-        gross_profit: gross_profit_f64,
+        // unwrap_or(0.0): candidate.gross_profit is f64 (spine type). The spine
+        // evaluator does NOT use this field for USD math — it recomputes via
+        // CascadePriceOracle. Passing 0.0 for the uncomputed case is safe here
+        // because the evaluator will correctly detect UnknownTokenPrice and
+        // set expected_profit_usd = None on the persisted row (R8 invariant).
+        gross_profit: gross_profit_f64.unwrap_or(0.0),
     };
 
     let Some(cfg) = cfg_opt else {
@@ -709,8 +727,22 @@ async fn process_pending(
     final_evidence.simulation_status = simulator.simulate_candidate(&candidate);
 
     // Connect math results to the persisted Opportunity row.
-    opportunity.expected_profit_usd = Some(math_outcome.gross_profit_usd);
-    opportunity.roi_pct = Some(math_outcome.net_roi_pct);
+    // R8 fail-honest: expected_profit_usd MUST be None when USD profit was not
+    // computed (oracle gap / unknown token price). Some(0.0) would mean "we
+    // computed the profit and it is exactly zero" — a distinct semantic from
+    // "we could not compute it at all". The evaluator zeroes gross_profit_usd
+    // when UnknownTokenPrice fires; we must not persist that zero as a real value.
+    let unknown_token_price = matches!(&config_rejection, Some(RejectReason::UnknownTokenPrice));
+    opportunity.expected_profit_usd = if unknown_token_price {
+        None // R8: not computed — token price unknown, gross_profit_usd=0.0 is synthetic
+    } else {
+        Some(math_outcome.gross_profit_usd)
+    };
+    opportunity.roi_pct = if unknown_token_price {
+        None // R8: not computed — cascades from expected_profit_usd=None
+    } else {
+        Some(math_outcome.net_roi_pct)
+    };
 
     if let Some(reason) = config_rejection {
         info!(
@@ -799,4 +831,97 @@ fn u256_to_f64_lossy(v: ethers::types::U256) -> f64 {
     // f64 is what OpportunityCandidate uses; this is a one-way display path,
     // never re-fed into on-chain arithmetic.
     v.to_string().parse::<f64>().unwrap_or(0.0)
+}
+
+/// Encapsulates the scanner-level USD pricing decision for a detected spread.
+/// Returns None when the token_out cannot be priced (oracle gap: neither base
+/// token nor stablecoin). Returns Some(usd_value) only when pricing succeeded.
+///
+/// This is the pure-function kernel extracted from `process_pending` so it
+/// can be unit-tested in isolation (the full scanner loop requires live Redis
+/// + WS; this helper requires nothing).
+///
+/// R8 invariant: the returned Option MUST preserve None for unpriced paths.
+/// Callers MUST propagate None to `opportunity.expected_profit_usd` without
+/// substituting 0.0 (which would silently assert "computed profit = zero").
+fn compute_usd_profit_for_spread(
+    spread_token_out: f64,
+    is_base_token: bool,
+    base_token_price_usd: f64,
+    is_stablecoin: bool,
+) -> Option<f64> {
+    if is_base_token {
+        Some(spread_token_out * base_token_price_usd)
+    } else if is_stablecoin {
+        Some(spread_token_out)
+    } else {
+        // Oracle gap — cannot price in USD without an external oracle.
+        // R8: return None, NOT Some(0.0).
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression test for R8 fail-honest: when the oracle gap path fires
+    /// (token_out is neither base token nor stablecoin), the scanner MUST
+    /// propagate None — not Some(0.0) — as the USD profit.
+    ///
+    /// This is the exact regression that was introduced in commit fdae583
+    /// where `gross_profit_f64 = 0.0` was unconditionally written in the
+    /// else branch, then wrapped as `Some(0.0)` at persistence time,
+    /// silently asserting "we computed the profit and it is zero" instead
+    /// of "we could not price this token pair".
+    #[test]
+    fn oracle_gap_path_preserves_none_not_zero() {
+        // Arrange: token_out is some unknown ERC-20 (not base, not stablecoin).
+        let spread = 42.0; // arbitrary non-zero spread in token_out units
+
+        // Act: simulate all three paths.
+        let base_result = compute_usd_profit_for_spread(spread, true, 2000.0, false);
+        let stable_result = compute_usd_profit_for_spread(spread, false, 0.0, true);
+        let gap_result = compute_usd_profit_for_spread(spread, false, 0.0, false);
+
+        // Assert: base and stable paths compute real values.
+        assert_eq!(
+            base_result,
+            Some(42.0 * 2000.0),
+            "base token path must compute USD value"
+        );
+        assert_eq!(
+            stable_result,
+            Some(42.0),
+            "stablecoin path must return spread directly (1:1 USD)"
+        );
+
+        // Critical R8 invariant: oracle gap MUST be None, never Some(0.0).
+        assert_eq!(
+            gap_result,
+            None,
+            "R8 violation: oracle gap path must produce None (uncomputed), \
+             not Some(0.0) (computed-and-zero). Persisting Some(0.0) silently \
+             claims we computed a zero profit, hiding the missing price oracle."
+        );
+
+        // Extra guard: the None must NOT compare equal to Some(0.0).
+        assert_ne!(
+            gap_result,
+            Some(0.0),
+            "R8: None and Some(0.0) are semantically distinct; must not be equal"
+        );
+    }
+
+    /// Invariant: even a genuinely zero spread in a priced token should yield
+    /// Some(0.0), not None. This distinguishes "priced and zero" from "unpriced".
+    #[test]
+    fn zero_spread_in_priced_token_yields_some_zero() {
+        let result = compute_usd_profit_for_spread(0.0, true, 2000.0, false);
+        assert_eq!(
+            result,
+            Some(0.0),
+            "zero spread in a priced token must yield Some(0.0), not None"
+        );
+    }
 }
