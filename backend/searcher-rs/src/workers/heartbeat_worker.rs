@@ -139,6 +139,23 @@ pub struct HeartbeatSnapshot {
     /// `triangular_worker.sanity_reject_v3` warn log for the diagnostic dump.
     #[serde(default)]
     pub triangular_v3_sanity_reject: u64,
+    /// LiquidationWorker — Aave V3 positions scanned this period. Steady
+    /// non-zero proves the worker is alive and reading on-chain. Zero across
+    /// several heartbeats with the worker enabled is a regression signal
+    /// (watchlist empty / provider absent / multicall failing).
+    #[serde(default)]
+    pub liquidation_positions_scanned: u64,
+    /// LiquidationWorker — opportunities emitted this period after HF, dedup,
+    /// profit estimation, sanity bound and min-profit gates all pass. Spine
+    /// evaluator runs downstream with the canonical risk gates.
+    #[serde(default)]
+    pub liquidation_opps_emitted: u64,
+    /// LiquidationWorker — positions rejected because gross_profit_usd >
+    /// 20% of debt_to_repay_usd. Anti-Incidente #9 self-defense; non-zero
+    /// means bonus-source / decimal-scaling bug. Inspect the
+    /// `liquidation_worker.sanity_reject` warn log for the diagnostic dump.
+    #[serde(default)]
+    pub liquidation_sanity_reject: u64,
 }
 
 pub fn heartbeat_redis_key(chain_id: u64) -> String {
@@ -225,6 +242,9 @@ impl HeartbeatWorker {
             let tri_v3_scanned = c.triangular_v3_cycles_scanned.swap(0, Ordering::Relaxed);
             let tri_v3_quote_fail = c.triangular_v3_quote_failures.swap(0, Ordering::Relaxed);
             let tri_v3_sanity = c.triangular_v3_sanity_reject.swap(0, Ordering::Relaxed);
+            let liq_scanned = c.liquidation_positions_scanned.swap(0, Ordering::Relaxed);
+            let liq_emitted = c.liquidation_opps_emitted.swap(0, Ordering::Relaxed);
+            let liq_sanity = c.liquidation_sanity_reject.swap(0, Ordering::Relaxed);
 
             info!(
                 event = "scanner.heartbeat",
@@ -259,6 +279,9 @@ impl HeartbeatWorker {
                 triangular_v3_cycles_scanned = tri_v3_scanned,
                 triangular_v3_quote_failures = tri_v3_quote_fail,
                 triangular_v3_sanity_reject = tri_v3_sanity,
+                liquidation_positions_scanned = liq_scanned,
+                liquidation_opps_emitted = liq_emitted,
+                liquidation_sanity_reject = liq_sanity,
                 "scanner pipeline heartbeat"
             );
 
@@ -301,6 +324,9 @@ impl HeartbeatWorker {
                 triangular_v3_cycles_scanned: tri_v3_scanned,
                 triangular_v3_quote_failures: tri_v3_quote_fail,
                 triangular_v3_sanity_reject: tri_v3_sanity,
+                liquidation_positions_scanned: liq_scanned,
+                liquidation_opps_emitted: liq_emitted,
+                liquidation_sanity_reject: liq_sanity,
             };
             if let Ok(json) = serde_json::to_string(&snapshot) {
                 let key = heartbeat_redis_key(self.chain_id);

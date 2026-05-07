@@ -108,6 +108,22 @@ pub struct ScannerCounters {
     /// / pool-index / fee-tier / decimal bug — inspect `sanity_reject_v3` warn
     /// log for the diagnostic dump.
     pub triangular_v3_sanity_reject: AtomicU64,
+    /// LiquidationWorker: Aave V3 positions scanned this period (one per
+    /// watchlist member per tick when the multicall succeeds). Steady non-zero
+    /// proves the worker is alive and reading on-chain. Zero across several
+    /// heartbeats with the worker enabled = watchlist empty, no provider
+    /// attached, or RPC unhealthy — the dominant skip bucket pinpoints which.
+    pub liquidation_positions_scanned: AtomicU64,
+    /// LiquidationWorker: opportunities emitted this period after HF threshold,
+    /// dedup, profit estimation, sanity bound and min-profit gates all pass.
+    /// Compare against `passed_all_gates` for the spine-survival rate.
+    pub liquidation_opps_emitted: AtomicU64,
+    /// LiquidationWorker: positions rejected because gross_profit_usd > 20% of
+    /// debt_to_repay_usd. Anti-Incidente #9 self-defense — non-zero means a
+    /// bonus-source / decimal-scaling bug somewhere in the estimation kernel.
+    /// Operator action required: inspect the diagnostic dump in the
+    /// `liquidation_worker.sanity_reject` log line.
+    pub liquidation_sanity_reject: AtomicU64,
 }
 
 /// Process-global counters. First call initialises; subsequent calls return

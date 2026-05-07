@@ -81,8 +81,17 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // DB pool — optional: if DATABASE_URL absent, run without persistence.
+    // max_connections=8 accommodates 5+ concurrent writers (price_worker,
+    // heartbeat_worker, triangular_worker, flashloan_arb_worker,
+    // liquidation_worker, plus per-chain scanner). Was 4 historically; bumped
+    // 2026-05-07 per cs-validator MAJOR finding when liquidation_worker landed.
+    // Override via DATABASE_POOL_MAX env if needed.
+    let db_pool_max = std::env::var("DATABASE_POOL_MAX")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(8);
     let db_pool = match std::env::var("DATABASE_URL") {
-        Ok(url) if !url.is_empty() => match PgPoolOptions::new().max_connections(4).connect(&url).await {
+        Ok(url) if !url.is_empty() => match PgPoolOptions::new().max_connections(db_pool_max).connect(&url).await {
             Ok(p) => {
                 info!(event = "db.connected", "postgres pool up");
                 Some(p)
@@ -319,6 +328,67 @@ async fn main() -> anyhow::Result<()> {
             flashloan_chain,
         );
         fw.run(flashloan_redis, flashloan_db, flashloan_tc).await;
+    });
+
+    // Liquidation worker — promotes the `liquidation` strategy from `scaffold` to
+    // `live` by reading Aave V3 health factors every LIQUIDATION_WORKER_INTERVAL_SECS
+    // (default 30s) and emitting opportunities for positions whose HF dropped
+    // under 1.05. Reads from on-chain via Multicall3 against the Aave V3 Pool;
+    // emits to `arbx:opps:detected` + persists via the standard helpers.
+    //
+    // Self-defense (anti-Incidente #9): the worker carries its own sanity bound —
+    // rejects any combo whose gross_profit_usd exceeds 20% of debt_to_repay_usd
+    // (real Aave V3 bonuses cap at ~10%). Spine evaluator runs downstream with
+    // the canonical risk gates.
+    //
+    // Watchlist: operator-managed Redis SET `arbx:aave_v3_watchlist:<chain>`.
+    // Empty set = worker skips the cycle (R8 fail-honest, no fabricated targets).
+    //
+    // Provider: mainnet only — when a primary HTTP RPC URL is configured for
+    // chain_id=1 we attach an ethers Provider for the Multicall3 read. Other
+    // chains and boots without RPC stay no-op (skip_no_provider counter ticks
+    // each cycle so the heartbeat surfaces the missing provider state).
+    let liquidation_period_secs: u64 = std::env::var("LIQUIDATION_WORKER_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(workers::liquidation_worker::DEFAULT_INTERVAL_SECS);
+    let liquidation_redis = redis_conn.clone();
+    let liquidation_db = db_pool.clone();
+    let liquidation_tc = trading_config.clone();
+    let liquidation_chain = primary_chain;
+    let liquidation_provider: Option<std::sync::Arc<ethers::providers::Provider<ethers::providers::Http>>> =
+        if liquidation_chain == 1 {
+            primary_rpc_http.as_ref().and_then(|url| {
+                match ethers::providers::Provider::<ethers::providers::Http>::try_from(url.clone()) {
+                    Ok(p) => {
+                        info!(event = "liquidation_worker.provider_ready", chain_id = liquidation_chain);
+                        Some(std::sync::Arc::new(p))
+                    }
+                    Err(e) => {
+                        warn!(event = "liquidation_worker.provider_init_failed", chain_id = liquidation_chain, error = %e);
+                        None
+                    }
+                }
+            })
+        } else {
+            None
+        };
+    if liquidation_provider.is_none() {
+        info!(
+            event = "liquidation_worker.provider_disabled",
+            chain_id = liquidation_chain,
+            reason = if liquidation_chain != 1 { "non-mainnet" } else { "no_rpc_http_url" },
+        );
+    }
+    tokio::spawn(async move {
+        let mut lw = workers::liquidation_worker::LiquidationWorker::new(
+            liquidation_period_secs,
+            liquidation_chain,
+        );
+        if let Some(p) = liquidation_provider {
+            lw = lw.with_provider(p);
+        }
+        lw.run(liquidation_redis, liquidation_db, liquidation_tc).await;
     });
 
     // Spawn one scanner per chain. The primary chain (used by the orchestrator
