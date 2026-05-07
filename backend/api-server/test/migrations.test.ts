@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { GenericContainer, StartedTestContainer } from "testcontainers";
 import { Pool } from "pg";
 import { readFileSync } from "node:fs";
@@ -9,13 +9,16 @@ let pool: Pool;
 
 beforeAll(async () => {
   container = await new GenericContainer("postgres:15")
-    .withEnvironment({ POSTGRES_PASSWORD: "test" })
+    .withEnvironment({
+      POSTGRES_PASSWORD: "test",
+      POSTGRES_DB: "arbitragex",
+    })
     .withExposedPorts(5432)
     .start();
   pool = new Pool({
     host: container.getHost(),
     port: container.getMappedPort(5432),
-    user: "postgres", password: "test", database: "postgres",
+    user: "postgres", password: "test", database: "arbitragex",
   });
   // Apply prereqs (003_opportunities + role 001_roles).
   for (const f of ["001_roles.sql", "003_opportunities.sql"]) {
@@ -23,6 +26,11 @@ beforeAll(async () => {
     await pool.query(sql);
   }
 }, 60_000);
+
+afterAll(async () => {
+  await pool.end();
+  await container.stop();
+}, 30_000);
 
 describe("migration 033", () => {
   it("drops NOT NULL on expected_profit_usd, roi_pct, risk_score", async () => {
@@ -57,6 +65,7 @@ describe("migration 033", () => {
   });
 });
 
+// NOTE: requires migration 033 from previous describe to have run first
 describe("migration 034", () => {
   it("creates tokens table with correct schema", async () => {
     const sql = readFileSync(path.join(__dirname, "../../../database/migrations/034_tokens_table.sql"), "utf8");
