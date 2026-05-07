@@ -439,3 +439,84 @@ Disciplina rígida + bricks pequeños + verificación E2E entre cada uno + decis
 - `edge/dev-local/src/index.ts` — proxy aliases `/api/health` + `/api/scanner/heartbeat`
 - `frontend/app/operations/components/PipelineFunnelCard.tsx` — UI widget funnel
 - `docs/superpowers/plans/2026-05-05-revm-real-implementation.md` — REVM design doc 5 phases
+
+---
+
+## Incidente #9: BUG-3 regression vía orientation flip en triangular_worker (1183 fake-positive opps con $4M profit)
+
+**Fecha:** 2026-05-07
+**Severidad:** 🔴 CRÍTICO (capital decisions impacted hipotéticamente — paper-trade salvó)
+**Detección:** operador via `/opportunities` UI mostrando 8 filas idénticas con profit=$4,097,896 — clic visual antes de cualquier alerta automatizada
+
+**Contexto previo:**
+Sesión orquestada: deploy de UI honesty (lifecycle_status badges) → triangular MVP shipped LIVE → tick_stats periodic log → 4 long-tail cycles añadidos → migration 037 seeding 2 V2 pools faltantes (WBTC/USDC + DAI/USDT) → tick_stats reveló 4 emits inmediatos en cycle WETH>USDC>WBTC reverse.
+
+**Síntoma observable:**
+```sql
+SELECT detected_at, dex_b, expected_profit_usd, amount_in_wei
+FROM opportunities WHERE strategy_kind='triangular' ORDER BY detected_at DESC;
+-- 1183 rows, todas:
+-- cycle:WETH>USDC>WBTC | $4,097,896 | 2.16e18 wei (~2.16 WETH ≈ $5K input)
+-- ROI implícito ~80,000% — matemáticamente imposible en majors saturados
+```
+
+**Root cause (3 capas):**
+
+1. **Migration 037 declaró token0/token1 al revés**: WBTC/USDC pool con `token0_id=USDC, token1_id=WBTC`. Uniswap V2 invariante requiere `token0 = LOWER address`. WBTC=`0x2260...` < USDC=`0xa0b8...` → on-chain token0 es WBTC, NO USDC.
+
+2. **pool_sync_worker.rs:199** lee `token0_addr` desde PG `pools.token0_id` (no desde el chain via `token0()`). Trust al PG declaration → escribe `token0_addr` incorrecto al ReservesEntry en Redis.
+
+3. **triangular_worker** lee orientación desde `entry.token0_addr`, computa swap dirección al revés para hop USDC→WBTC, multiplica el rate ~833x, y produce $4M fake profit que cascade a través de los 3 hops.
+
+**Contributing factor (defense-in-depth gap):**
+El **spine evaluator's sanity bound** (anti-BUG-3 from Incidente #7) protege opps que fluyen por el spine. **Triangular worker llama `persistence::insert_opportunity` + `publisher::publish` DIRECTAMENTE**, bypasseando el spine. Cualquier worker que escriba a PG sin spine evaluation = BUG-3 puede recurrir.
+
+**Fix (3-layer defense-in-depth, RULE 00 / R8):**
+
+1. **Migration 038** (commit `4c53be9`):
+   - `UPDATE pools SET token0_id <-> token1_id` para el WBTC/USDC pool.
+   - **CREATE TRIGGER `pools_v2_token_order_trigger`** sobre `BEFORE INSERT/UPDATE`: enforces `LOWER(token0.address) < LOWER(token1.address)` para protocol_type='UNISWAP_V2'. RAISE EXCEPTION en violación. **Schema-level prevention**: futuro operator inserts no pueden repetir el bug.
+
+2. **Sanity bound at worker level** (commit `4c53be9`):
+   ```rust
+   const SANITY_PROFIT_MULT_OF_CAP: f64 = 5.0;
+   if profit_cap_ratio > SANITY_PROFIT_MULT_OF_CAP {
+       warn!(event="triangular_worker.sanity_reject", ...);
+       return Some(cycle_block); // skip, don't emit
+   }
+   ```
+   - Captura cualquier orientation/decimals/unit bug futuro que produzca profit > 5×cap.
+   - X10THINK refinement: además rechaza si `profit_usd is None|NaN|Inf|negative` (R8 explicit check, no `unwrap_or(0.0)` que silencie errores).
+
+3. **Regression test reproduce** (commit `4c53be9`):
+   `cycle_profit_extreme_imbalance_yields_huge_profit_caught_by_sanity_bound` — feeds math kernel un hop deliberadamente mis-orientado, asserts `profit_ratio > 5.0`. Documenta que el kernel POR DISEÑO no detecta orientation errors → la guard del worker es la protección load-bearing.
+
+**Cleanup data:**
+```sql
+UPDATE opportunities SET rejection_reason='AnomalousMath:ProfitExceedsCap5x_BUG3_regression_2026-05-07'
+WHERE strategy_kind='triangular' AND rejection_reason IS NULL
+  AND (expected_profit_usd > 1000 OR roi_pct > 100);
+-- 1183 rows marked
+```
+
+**Verificación E2E post-fix:**
+- 5+ min de tick_stats con `scanned=50, emitted=0, skip_no_profit=50` consistente
+- Cero `sanity_reject` events post-stabilización (transient solo durante propagación stale entre migration 038 y primer pool_sync tick)
+- Hand-derived cycle profit con reservas mainnet correctas = -$2,821 LOSS (matching kernel runtime output ahora)
+
+**Lecciones para futuras sesiones:**
+
+- **CUALQUIER worker que escriba directo a PG/Redis sin spine evaluator NECESITA su propia sanity bound.** El spine sanity bound NO protege bypass paths. Convertir esto en CHECK-LIST cada vez que se ship un nuevo worker emisor.
+- **V2 token order invariant es schema-level, no documentation-level.** El TRIGGER es defensa permanente. Repetir patrón para otras invariantes Uniswap (V3 fee tier valid, etc.).
+- **Defense-in-depth >> single-layer correctness.** Mig 038 fixó el root cause + sanity bound captura clase entera de bugs futuros + regression test documenta el contrato. 3 capas cuando 1 hubiera bastado teóricamente.
+- **Migration con datos reales requiere VERIFICAR token order ANTES de commit.** Para Uniswap V2: `LOWER(token0.address) < LOWER(token1.address)`. Si el operator declara al revés, el TRIGGER ahora falla loud antes de que pool_sync escriba data corrupta.
+- **Pool_sync_worker debería usar on-chain `token0()` como source of truth, no PG.** Issue #FUTURE: refactor para llamar `token0()` via Multicall y persistir, ignorando PG declaration. Hasta entonces el TRIGGER es load-bearing.
+
+**Archivos relacionados:**
+
+- `database/migrations/037_seed_v2_pools_for_triangular_cycles.sql` — los 2 pools que necesitaron seeding (DAI/USDT correcto, USDC/WBTC declaró swapped)
+- `database/migrations/038_fix_v2_pool_token_order_invariant.sql` — UPDATE swap + TRIGGER permanente
+- `backend/searcher-rs/src/workers/triangular_worker.rs` — sanity bound + diagnostic dump per-hop
+- `backend/searcher-rs/src/workers/pool_sync_worker.rs:199` — el lugar donde token0_addr se escribe a Redis desde PG (load-bearing)
+
+**Incidente cerrado:** 2026-05-07 ~08:46 UTC. 5+ min sin emits anómalos. Defense-in-depth verificada en producción.
