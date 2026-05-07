@@ -65,6 +65,16 @@ pub struct HeartbeatSnapshot {
     /// Price worker — HTTP / Redis / parse errors per period. Steady non-zero
     /// = config or upstream API regression.
     pub price_worker_errors: u64,
+    /// TriangularWorker — cycles scanned this period. Steady non-zero proves
+    /// the worker is alive and exercising MVP_CYCLES every tick. A zero value
+    /// across consecutive heartbeats (with the worker enabled in main.rs) is
+    /// a regression signal — likely Redis / pool index gap.
+    pub triangular_cycles_scanned: u64,
+    /// TriangularWorker — opportunities emitted this period after spot-check,
+    /// golden-section and dedup all pass; spine gates evaluated separately downstream.
+    /// Compare against `passed_all_gates` to learn what fraction of triangular
+    /// candidates survive the canonical risk policy.
+    pub triangular_opps_emitted: u64,
 }
 
 pub fn heartbeat_redis_key(chain_id: u64) -> String {
@@ -143,6 +153,8 @@ impl HeartbeatWorker {
             let price_coingecko = c.price_coingecko_hits.swap(0, Ordering::Relaxed);
             let price_misses = c.price_cache_misses.swap(0, Ordering::Relaxed);
             let price_errors = c.price_worker_errors.swap(0, Ordering::Relaxed);
+            let tri_scanned = c.triangular_cycles_scanned.swap(0, Ordering::Relaxed);
+            let tri_emitted = c.triangular_opps_emitted.swap(0, Ordering::Relaxed);
 
             info!(
                 event = "scanner.heartbeat",
@@ -169,6 +181,8 @@ impl HeartbeatWorker {
                 price_coingecko_hits = price_coingecko,
                 price_cache_misses = price_misses,
                 price_worker_errors = price_errors,
+                triangular_cycles_scanned = tri_scanned,
+                triangular_opps_emitted = tri_emitted,
                 "scanner pipeline heartbeat"
             );
 
@@ -203,6 +217,8 @@ impl HeartbeatWorker {
                 price_coingecko_hits: price_coingecko,
                 price_cache_misses: price_misses,
                 price_worker_errors: price_errors,
+                triangular_cycles_scanned: tri_scanned,
+                triangular_opps_emitted: tri_emitted,
             };
             if let Ok(json) = serde_json::to_string(&snapshot) {
                 let key = heartbeat_redis_key(self.chain_id);

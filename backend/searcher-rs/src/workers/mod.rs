@@ -9,6 +9,7 @@ pub mod hft_mempool_listener;
 pub mod pool_sync_worker;
 pub mod price_worker;
 pub mod rpc_health_worker;
+pub mod triangular_worker;
 
 use sqlx::PgPool;
 use tracing::{error, info};

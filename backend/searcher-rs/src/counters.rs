@@ -65,6 +65,15 @@ pub struct ScannerCounters {
     /// Price worker: HTTP / parse / Redis errors per period.
     /// Steady non-zero = config or upstream API regression.
     pub price_worker_errors: AtomicU64,
+    /// TriangularWorker: cycles scanned this period (every tick × MVP_CYCLES.len() × 2 directions).
+    /// Surfaced in heartbeat so operator sees the worker is alive and exercising
+    /// every configured cycle, regardless of whether any were profitable.
+    pub triangular_cycles_scanned: AtomicU64,
+    /// TriangularWorker: opportunities emitted this period after spot-check, golden-section
+    /// and dedup all pass. Spine evaluator runs downstream and applies the canonical risk
+    /// gates; high count here with zero `passed_all_gates` means math says profitable but
+    /// oracle/risk rejects (operator action required).
+    pub triangular_opps_emitted: AtomicU64,
 }
 
 /// Process-global counters. First call initialises; subsequent calls return

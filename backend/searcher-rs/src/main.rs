@@ -229,6 +229,33 @@ async fn main() -> anyhow::Result<()> {
         hb.run(heartbeat_redis, heartbeat_db).await;
     });
 
+    // Triangular worker — promotes the `triangular` strategy from `scaffold` to
+    // `live` by emitting opportunities for hardcoded MVP cycles every block
+    // (default 12s tick). Reads V2 reserves from the cache populated by
+    // PoolSyncWorker; emits to `arbx:opps:detected` + persists via the standard
+    // helpers. Spine evaluator runs downstream with the canonical risk gates.
+    //
+    // Worker is unconditional (no env gate) — promoting the badge requires the
+    // emitter to actually run. Operator can still disable via
+    // `trading_config.enabled_strategies` (the spine evaluator drops candidates
+    // where `strategy_kind` is absent from that list, surfacing
+    // `gate_strategy_disabled` in the heartbeat).
+    let triangular_period_secs: u64 = std::env::var("TRIANGULAR_WORKER_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(workers::triangular_worker::DEFAULT_INTERVAL_SECS);
+    let triangular_redis = redis_conn.clone();
+    let triangular_db = db_pool.clone();
+    let triangular_tc = trading_config.clone();
+    let triangular_chain = primary_chain;
+    tokio::spawn(async move {
+        let tw = workers::triangular_worker::TriangularWorker::new(
+            triangular_period_secs,
+            triangular_chain,
+        );
+        tw.run(triangular_redis, triangular_db, triangular_tc).await;
+    });
+
     // Spawn one scanner per chain. The primary chain (used by the orchestrator
     // for V2 pool sync) also gets the resolved HTTP RPC URL so the scanner can
     // build a Provider for V3 QuoterV2 batched calls. Other chains get None
