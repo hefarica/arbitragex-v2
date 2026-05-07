@@ -86,6 +86,50 @@ fn min_search_input() -> U256 {
     U256::from(1u64)
 }
 
+/// Stats period: emit one INFO `tick_stats` log every N ticks. At the default
+/// 12s tick interval, 5 ticks ≈ 60s — same cadence as the heartbeat snapshot
+/// so the operator can correlate. Local accumulator (not AtomicU64) so the
+/// heartbeat counters remain the canonical cumulative source of truth and
+/// these stats are pure observability for the operator dashboard log.
+const STATS_LOG_EVERY_N_TICKS: u32 = 5;
+
+/// Per-period accumulator of scan outcomes, for the periodic INFO log.
+/// Reset after each emit. Counts every (cycle, direction) attempt — a single
+/// tick contributes `MVP_CYCLES.len() * 2` increments split across the
+/// outcome buckets below.
+#[derive(Default, Debug, Clone)]
+struct TickStats {
+    scanned: u32,
+    skip_unknown_token: u32,
+    skip_missing_pool: u32,
+    skip_stale_reserves: u32,
+    skip_dedup_hit: u32,
+    skip_no_capital_cap: u32,
+    skip_no_profit: u32,
+    emitted: u32,
+}
+
+impl TickStats {
+    /// Returns the name of the dominant skip bucket (the one with the highest
+    /// count) so the operator sees at a glance WHY cycles aren't producing
+    /// emit-able opportunities. None when no skips happened in the period.
+    fn dominant_skip_reason(&self) -> Option<&'static str> {
+        let buckets: [(&'static str, u32); 6] = [
+            ("missing_pool", self.skip_missing_pool),
+            ("stale_reserves", self.skip_stale_reserves),
+            ("dedup_hit", self.skip_dedup_hit),
+            ("no_capital_cap", self.skip_no_capital_cap),
+            ("no_profit", self.skip_no_profit),
+            ("unknown_token", self.skip_unknown_token),
+        ];
+        buckets
+            .iter()
+            .filter(|(_, n)| *n > 0)
+            .max_by_key(|(_, n)| *n)
+            .map(|(name, _)| *name)
+    }
+}
+
 /// Hardcoded MVP triangular cycles (token symbols only — addresses resolved
 /// from Redis token cache so the worker stays decoupled from chain literals).
 ///
@@ -94,15 +138,26 @@ fn min_search_input() -> U256 {
 /// is direction-dependent in a CPMM (the spot product on one side may be > 1
 /// while < 1 on the other).
 ///
-/// All five cycles use blue-chip Ethereum tokens whose V2 pools are seeded by
-/// migration 029 + 030. Operator can extend by editing this constant; future
-/// sub-project lifts the list to PG so the operator can manage cycles via UI.
+/// First five cycles use blue-chip Ethereum tokens (V2 pools seeded by
+/// migrations 029 + 030). The next four are long-tail majors (PEPE, SHIB,
+/// MKR, COMP) added 2026-05-07 to widen the search universe — these pairs
+/// have less colocated competition than blue-chip majors and are more
+/// likely to surface emit-able opportunities. Cycles whose pools are
+/// missing from the V2 index simply skip with `cycle_missing_pool` log.
+/// Operator can extend by editing this constant; future sub-project lifts
+/// the list to PG so the operator can manage cycles via UI.
 pub const MVP_CYCLES: &[(&str, &str, &str)] = &[
+    // Blue-chip majors
     ("WETH", "USDC", "DAI"),
     ("WETH", "USDC", "USDT"),
     ("WETH", "USDT", "DAI"),
     ("WETH", "WBTC", "USDC"),
     ("USDC", "DAI", "USDT"),
+    // Long-tail majors (Tier 1 allowlist, less competed than blue chips)
+    ("PEPE", "WETH", "USDC"),
+    ("SHIB", "WETH", "USDC"),
+    ("MKR",  "WETH", "USDC"),
+    ("COMP", "WETH", "USDC"),
 ];
 
 /// Fee-multiplier `γ = 1 - fee`. For V2 default fee 30 bps → γ = 0.997.
@@ -321,11 +376,19 @@ pub fn cycle_hash(tokens: &[&str]) -> String {
 /// — if both lookups miss, the cycle is skipped (no fake address).
 fn known_token_address(symbol: &str) -> Option<&'static str> {
     match symbol.to_ascii_uppercase().as_str() {
+        // Blue chips
         "WETH" => Some("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
         "USDC" => Some("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
         "USDT" => Some("0xdac17f958d2ee523a2206206994597c13d831ec7"),
         "DAI"  => Some("0x6b175474e89094c44da98b954eedeac495271d0f"),
         "WBTC" => Some("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"),
+        // Long-tail majors (added 2026-05-07 alongside the long-tail cycles
+        // in MVP_CYCLES). All four are in the operator's Tier 1 allowlist
+        // applied via Redis HSET on 2026-05-07 with real Coingecko prices.
+        "PEPE" => Some("0x6982508145454ce325ddbe47a25d4ec3d2311933"),
+        "SHIB" => Some("0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"),
+        "MKR"  => Some("0x9f8f72aa9304c8b593d555f12ef6589cc3a579a2"),
+        "COMP" => Some("0xc00e94cb662c3520282e6f5717214004a7f26888"),
         _ => None,
     }
 }
@@ -350,6 +413,8 @@ async fn resolve_token(
         "USDC" | "USDT" => (6, true),
         "DAI"  => (18, true),
         "WBTC" => (8, false),
+        // Long-tail majors — all use 18 decimals per their on-chain contracts.
+        "PEPE" | "SHIB" | "MKR" | "COMP" => (18, false),
         _ => return None,
     };
     Some((addr.to_string(), decimals, is_stable))
@@ -610,15 +675,19 @@ impl TriangularWorker {
     ) {
         let mut ticker = interval(self.period);
         let mut dedup = DedupState::new();
+        let mut tick_count: u32 = 0;
+        let mut stats = TickStats::default();
         info!(
             event = "triangular_worker.boot",
             chain_id = self.chain_id,
             period_secs = self.period.as_secs(),
             cycles = MVP_CYCLES.len(),
+            stats_log_every_n_ticks = STATS_LOG_EVERY_N_TICKS,
         );
 
         loop {
             ticker.tick().await;
+            tick_count += 1;
             // Tick: scan every cycle in both directions. Worker keeps running
             // even if the trading_config / db is missing — emits to Redis
             // stream regardless (api-server reads from there for the live UI).
@@ -646,6 +715,7 @@ impl TriangularWorker {
                     counters()
                         .triangular_cycles_scanned
                         .fetch_add(1, Ordering::Relaxed);
+                    stats.scanned += 1;
                     let (sym_a, sym_b, sym_c) = *direction;
                     if let Some(blk) = self
                         .scan_one_direction(
@@ -657,6 +727,7 @@ impl TriangularWorker {
                             sym_b,
                             sym_c,
                             &mut dedup,
+                            &mut stats,
                         )
                         .await
                     {
@@ -668,6 +739,29 @@ impl TriangularWorker {
             }
             // Bound dedup memory once per tick using the most recent block we saw.
             dedup.prune(latest_block_observed);
+
+            // Emit periodic INFO stats so the operator sees WHY cycles aren't
+            // emitting (dominant skip reason) without enabling debug logs.
+            // Heartbeat counters provide cumulative truth; this log gives
+            // per-period dominant-cause attribution. R8 fail-honest: if zero
+            // skips happened in the period, dominant_skip is logged as null.
+            if tick_count % STATS_LOG_EVERY_N_TICKS == 0 {
+                info!(
+                    event = "triangular_worker.tick_stats",
+                    chain_id = self.chain_id,
+                    period_ticks = STATS_LOG_EVERY_N_TICKS,
+                    scanned = stats.scanned,
+                    emitted = stats.emitted,
+                    skip_unknown_token = stats.skip_unknown_token,
+                    skip_missing_pool = stats.skip_missing_pool,
+                    skip_stale_reserves = stats.skip_stale_reserves,
+                    skip_dedup_hit = stats.skip_dedup_hit,
+                    skip_no_capital_cap = stats.skip_no_capital_cap,
+                    skip_no_profit = stats.skip_no_profit,
+                    dominant_skip = ?stats.dominant_skip_reason(),
+                );
+                stats = TickStats::default();
+            }
         }
     }
 
@@ -675,6 +769,9 @@ impl TriangularWorker {
     /// dedup pruning) when the cycle was successfully evaluated up to the
     /// reserves stage; returns None on early-out (missing pool, malformed,
     /// stale, dedup hit, etc.).
+    ///
+    /// Each early-exit branch bumps the corresponding `stats` counter so
+    /// `run()` can emit a periodic INFO log of the dominant skip reason.
     #[allow(clippy::too_many_arguments)]
     async fn scan_one_direction(
         &self,
@@ -686,12 +783,22 @@ impl TriangularWorker {
         sym_b: &str,
         sym_c: &str,
         dedup: &mut DedupState,
+        stats: &mut TickStats,
     ) -> Option<u64> {
-        // Resolve token_a metadata (address, decimals).
-        let (addr_a, decimals_a, _is_stable_a) =
-            resolve_token(redis, self.chain_id, sym_a).await?;
-        let (addr_b, _, _) = resolve_token(redis, self.chain_id, sym_b).await?;
-        let (addr_c, _, _) = resolve_token(redis, self.chain_id, sym_c).await?;
+        // Resolve token_a metadata (address, decimals). Use explicit match so
+        // we can attribute the skip reason instead of `?` swallowing the cause.
+        let (addr_a, decimals_a, _is_stable_a) = match resolve_token(redis, self.chain_id, sym_a).await {
+            Some(t) => t,
+            None => { stats.skip_unknown_token += 1; return None; }
+        };
+        let (addr_b, _, _) = match resolve_token(redis, self.chain_id, sym_b).await {
+            Some(t) => t,
+            None => { stats.skip_unknown_token += 1; return None; }
+        };
+        let (addr_c, _, _) = match resolve_token(redis, self.chain_id, sym_c).await {
+            Some(t) => t,
+            None => { stats.skip_unknown_token += 1; return None; }
+        };
 
         // Resolve all 3 hops.
         let hop1 = resolve_hop(redis, self.chain_id, &addr_a, sym_a, sym_b).await;
@@ -700,6 +807,7 @@ impl TriangularWorker {
         let (hop1, hop2, hop3) = match (hop1, hop2, hop3) {
             (Some(h1), Some(h2), Some(h3)) => (h1, h2, h3),
             _ => {
+                stats.skip_missing_pool += 1;
                 debug!(
                     event = "triangular_worker.cycle_missing_pool",
                     chain_id = self.chain_id,
@@ -711,6 +819,7 @@ impl TriangularWorker {
 
         let hops = vec![hop1.clone(), hop2.clone(), hop3.clone()];
         if cycle_has_stale_reserves(&hops) {
+            stats.skip_stale_reserves += 1;
             debug!(
                 event = "triangular_worker.cycle_stale_reserves",
                 chain_id = self.chain_id,
@@ -724,6 +833,7 @@ impl TriangularWorker {
         let cycle_key = cycle_hash(&[sym_a, sym_b, sym_c]);
         let cycle_block = cycle_latest_block(&hops);
         if !dedup.check_and_mark(&cycle_key, cycle_block) {
+            stats.skip_dedup_hit += 1;
             return Some(cycle_block);
         }
 
@@ -739,6 +849,7 @@ impl TriangularWorker {
             .map(|c| c.effective_capital_for(sym_a, STRATEGY_KIND))
             .unwrap_or(0.0);
         if cap_usd <= 0.0 {
+            stats.skip_no_capital_cap += 1;
             debug!(
                 event = "triangular_worker.no_capital_cap",
                 chain_id = self.chain_id,
@@ -769,6 +880,7 @@ impl TriangularWorker {
         let result = match evaluate_cycle(&input) {
             Some(r) => r,
             None => {
+                stats.skip_no_profit += 1;
                 debug!(
                     event = "triangular_worker.no_profit",
                     chain_id = self.chain_id,
@@ -830,6 +942,7 @@ impl TriangularWorker {
             counters()
                 .triangular_opps_emitted
                 .fetch_add(1, Ordering::Relaxed);
+            stats.emitted += 1;
         }
 
         Some(cycle_block)
@@ -1350,6 +1463,18 @@ mod tests {
     }
 
     #[test]
+    fn known_token_address_long_tail_majors_resolve() {
+        // 2026-05-07: long-tail majors added alongside the corresponding
+        // MVP_CYCLES entries. All four must resolve to a real mainnet
+        // address and to 18 decimals (per their on-chain contracts).
+        for sym in ["PEPE", "SHIB", "MKR", "COMP"] {
+            let addr = known_token_address(sym)
+                .unwrap_or_else(|| panic!("missing address for {sym}"));
+            assert!(addr.starts_with("0x") && addr.len() == 42, "bad addr for {sym}: {addr}");
+        }
+    }
+
+    #[test]
     fn known_token_address_unknown_returns_none() {
         assert!(known_token_address("FAKE_TOKEN").is_none());
     }
@@ -1404,5 +1529,49 @@ mod tests {
         let v = U256::from(1_000_000u64);
         let f = u256_to_f64_lossy(v);
         assert!((f - 1_000_000.0).abs() < 1.0);
+    }
+
+    // ---------------------------------------------------------------
+    // TickStats — period log accumulator
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn tick_stats_default_is_all_zero_and_dominant_is_none() {
+        let s = TickStats::default();
+        assert_eq!(s.scanned, 0);
+        assert_eq!(s.emitted, 0);
+        assert!(s.dominant_skip_reason().is_none());
+    }
+
+    #[test]
+    fn tick_stats_dominant_picks_biggest_bucket() {
+        let mut s = TickStats::default();
+        s.skip_missing_pool = 5;
+        s.skip_no_profit = 12;
+        s.skip_stale_reserves = 3;
+        assert_eq!(s.dominant_skip_reason(), Some("no_profit"));
+    }
+
+    #[test]
+    fn tick_stats_dominant_excludes_zero_buckets() {
+        // Only skip_dedup_hit > 0, even though no_profit is "earlier" in the
+        // bucket list — must return dedup_hit, never the zero ones.
+        let mut s = TickStats::default();
+        s.skip_dedup_hit = 1;
+        assert_eq!(s.dominant_skip_reason(), Some("dedup_hit"));
+    }
+
+    #[test]
+    fn tick_stats_emits_only_counted_when_strictly_positive() {
+        let mut s = TickStats::default();
+        s.emitted = 0; // none emitted
+        assert!(s.dominant_skip_reason().is_none()); // and no skips either
+    }
+
+    #[test]
+    fn stats_log_period_is_positive() {
+        // Sanity: STATS_LOG_EVERY_N_TICKS must be > 0 to avoid div-by-zero
+        // in `tick_count % N` and to ensure logs actually fire.
+        assert!(STATS_LOG_EVERY_N_TICKS > 0);
     }
 }
