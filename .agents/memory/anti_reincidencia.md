@@ -374,3 +374,68 @@ Tests de regresión añadidos:
 - DESPUÉS deploy 3 — Sanity bound defensivo (post-deploy 07:22:15 UTC del 5 de Mayo, commit `bf4f0c7`): añadida `RejectReason::AnomalousMath` + clamp a cero cuando ROI > 999% o |gross| > $1M en math_engine. Tests: 8/8 spine pasan, deploy verificado, heartbeat OK. Defense-in-depth catches operator misconfig de `token_prices_usd` (ej. typo $10K en UNI).
 - DESPUÉS deploy 4 — BUG-2 fix (post-deploy 08:10:56 UTC del 5 de Mayo, commit `0855010`): nuevo `shared_rs::price_oracle` con `ConfigPriceOracle` 3-tier resolution. 25 nuevas opps insertadas en 5 min post-deploy, todas profit=0, todas filtradas por `config.token_not_allowed` antes del math evaluator (allowlist filter). 0 `scanner.db_error`, 6 heartbeats consecutivos a cadencia 60s exacta. **Cuatro capas de defensa ahora activas**: (1) BUG-1 decimals correctos, (2) BUG-3 cap asimétrico arreglado, (3) Sanity bound clamp ROI > 999%, (4) BUG-2 oracle fail-honest.
 - Caveat honesto persistente: la verificación empírica de los 4 fixes integrados requiere un tx que pase el allowlist gate y llegue al math evaluator (donde el oracle resuelve precios per-token). En las ventanas cortas post-deploy (≤10min cada uno) ningún `candidate_enriched` llegó al math path — eventos esperados con frecuencia ~1-2 cada 19min según historial. La verificación formal sigue siendo los **tests TDD** (18 tests específicos del trío de bugs: 2 BUG-3 cap, 7 BUG-1 decimals, 2 sanity bound, 7 BUG-2 oracle resolution + 3 BUG-2 integration). Operador debe poblar `token_prices_usd` para los 8 tokens no-stable de su allowlist; hasta entonces, opps con esos tokens rechazadas con `UnknownTokenPrice` (visible vía dashboard / logs / heartbeat counter futuro).
+
+---
+
+## Incidente #8: Sesión maratón 2026-05-05/06 — observabilidad granular + REVM scaffold + UI Simulación
+
+**Fecha del aprendizaje:** 5-6 de Mayo de 2026 (sesión de ~22 commits sin regresión)
+
+**Qué ocurrió:**
+Sesión continua post-cierre del trío BUG-1+2+3 (Incidente #7). Operador pidió iterativamente "sigue" después de cada brick — 22 commits de progreso continuo, 16+ deploys VPS verificados, todo con disciplina OMEGA (TDD red-green, --no-cache --env-file .env, evidence-over-claims, R8 fail-honest). Ningún brick rompió el anterior, ninguna regresión.
+
+**Brick por brick (orden cronológico):**
+
+| Commit | Brick | Verificación |
+|--------|-------|--------------|
+| `f31bf8b` | #2+#3: `/api/health` alias + heartbeat in-memory counters (AtomicU64) | Heartbeat live con funnel completo en logs |
+| `d414fb2` | Edge proxy `/api/health` → api-server | curl :8787/api/health 200 OK |
+| `289d5ee` | #5: V2 token0_id structural fix (cierra TODO scanner.rs:350) | token0_addr propagado a Redis verificable |
+| `8a7968c` | REVM Phase 1: swap_encoder V2 + ERC20 + design doc 5 phases | 7/7 tests, selectores Etherscan-verified |
+| `0231741` | REVM Phase 2: swap_encoder V3 (exactInputSingle + exactInput + path packed) | 13/13 tests acumulados |
+| `5935469` | REVM Phase 3: erc20_storage balance helpers (8 tokens hardcoded) | 9 tests + keccak regression vs `cast keccak` |
+| `5ae923d` | REVM Phase 4: round_trip_executor data + helpers + skeleton (NO fake PASS) | 9 tests, spine 46/46 |
+| `7c60c27` | REVM Phase 5a: erc20_storage allowance helpers (two-level keccak) | 15 tests erc20_storage, spine 52/52 |
+| `30cc7af` | Heartbeat snapshot a Redis + GET `/api/v1/scanner/heartbeat` + edge proxy | curl endpoint retorna JSON snapshot live |
+| `c333d05` | Pipeline Funnel Widget en /operations (cierre observability arc UI) | HTML render confirmado, "Scanner Pipeline Funnel" presente |
+
+**Causa raíz de la productividad sostenida:**
+Disciplina rígida + bricks pequeños + verificación E2E entre cada uno + decisiones de scope honestas. NO se intentó implementar Phase 5b REVM porque requiere mainnet RPC para validación — el operador puede invocarlo en sesión futura cuando tenga acceso. El skeleton de `execute_round_trip` retorna `failed("pending Phase 5 implementation")` en lugar de fake PASS — R8 fail-honest aplicado al código no validado.
+
+**Aprendizajes operacionales (para futuras sesiones):**
+
+- **El patrón "sigue" funciona cuando hay un backlog claro y bricks bien dimensionados.** Cada commit fue auto-contenido, deployable individualmente, sin dependencias forward. Si el operador hubiera pausado en cualquier punto, el sistema queda en estado consistente.
+- **Scope honesty preserva momentum.** Phase 5b REVM se NO atacó porque genuinamente necesita RPC. Mejor entregar 4.5/5 phases solidas + scaffold del 5to que 5/5 con código untestable. El backlog tiene la sub-tarea claramente marcada para sesión futura.
+- **Frontend deploys son ~2x más caros que backend** (Next.js standalone build). En sesiones de muchos commits, agrupar cambios frontend cuando sea posible para reducir ciclos de rebuild.
+- **El AppLocker de Windows bloquea binarios test fresh** — afecta solo tests, no production builds. Workaround: retry tras 10-20s OR confirmar via tests transitivos en otros crates que consumen el código.
+- **R8 Fail-Honest tiene MUCHAS facetas operativas en una sesión productiva**: aplica al código (skeleton retorna failed, no fake PASS), al data layer (rejection_reason poblado en DB en lugar de NULL silencioso), al transport layer (TTL 3× period en Redis snapshot → 404 cuando searcher cae en lugar de stale data servido).
+
+**Validación E2E acumulada al cierre de sesión:**
+
+- 5 capas defensivas activas (BUG-1+2+3 fix + sanity bound + observability)
+- REVM Sprint 4.5/5 (90%) — Phase 5b roadmap claro pendiente sesión con RPC
+- 75+ tests verde workspace (52 spine + 33 shared + 26 searcher + 12 amm_math)
+- 1 oportunidad legítima validated post-fix ($72.45 LowLiquidity-rejected) confirma pipeline funciona
+- UI Simulación tab con 4 niveles configurables + Pipeline Funnel widget en /operations
+- Heartbeat snapshot queryable vía REST (no solo log-grepable)
+- 0 regresiones, 0 rollbacks, 0 mocks introducidos
+
+**Acción correcta en futuras ocasiones:**
+
+- Cuando el operador diga "sigue" después de N commits exitosos, **mantener bricks pequeños** (≤2h cada uno) y **verificar E2E entre cada uno**. La tentación de hacer un commit grande "para terminar" rompe la disciplina y aumenta riesgo de regresión.
+- **Documentar lo que NO se hizo Y POR QUÉ es tan importante como documentar lo que sí**. Phase 5b skipping debe quedar visible para que la próxima sesión sepa por dónde continuar.
+- **Bricks de observabilidad pagan compound interest**: heartbeat counters → API endpoint → UI widget. Cada uno habilita el siguiente. La inversión de 30min en counters atómicos se convirtió en visualización completa al final del día.
+
+**Archivos relacionados (ubicaciones canónicas para referencia):**
+
+- `backend/searcher-rs/src/counters.rs` — AtomicU64 counters por gate path
+- `backend/searcher-rs/src/workers/heartbeat_worker.rs` — emit + persistencia Redis con TTL 3×
+- `backend/searcher-rs/src/persistence.rs` — INSERT con rejection_reason (GAP-2)
+- `backend/searcher-rs/src/scanner.rs` — V2 token0_id direct orientation + counters increments
+- `backend/prioritization-spine/src/swap_encoder.rs` — V2 + V3 + ERC20 calldata encoders
+- `backend/prioritization-spine/src/erc20_storage.rs` — balance + allowance slot tables + keccak
+- `backend/prioritization-spine/src/round_trip_executor.rs` — orchestration + helpers + skeleton
+- `backend/api-server/src/index.ts` — endpoints `/api/v1/scanner/heartbeat` + `/api/health`
+- `edge/dev-local/src/index.ts` — proxy aliases `/api/health` + `/api/scanner/heartbeat`
+- `frontend/app/operations/components/PipelineFunnelCard.tsx` — UI widget funnel
+- `docs/superpowers/plans/2026-05-05-revm-real-implementation.md` — REVM design doc 5 phases
