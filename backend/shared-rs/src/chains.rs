@@ -107,6 +107,24 @@ pub fn find_router(chain_id: u64, addr: &[u8; 20]) -> Option<&'static RouterEntr
     routers_for_chain(chain_id).iter().find(|r| &r.address == addr)
 }
 
+/// Returns the list of router addresses (lowercase 0x-prefixed hex) for use as
+/// upstream `toAddress` filter on Alchemy `alchemy_pendingTransactions`
+/// subscriptions. Subscribing with this list bounds CU consumption to txs
+/// targeting our decoders; everything else is dropped at the relay level.
+pub fn router_addresses_hex_for_chain(chain_id: u64) -> Vec<String> {
+    routers_for_chain(chain_id)
+        .iter()
+        .map(|r| {
+            let mut s = String::with_capacity(42);
+            s.push_str("0x");
+            for b in r.address.iter() {
+                s.push_str(&format!("{:02x}", b));
+            }
+            s
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -44,7 +44,10 @@ use std::fs::OpenOptions;
 use std::io::Write;
 
 
-use crate::chain_client::WsChainClient;
+use crate::chain_client::{
+    is_alchemy_endpoint, parse_extra_allowlist_from_env, MempoolMode, WsChainClient,
+};
+use ethers::types::Transaction;
 
 /// Mainnet QuoterV2 + Multicall3 addresses. V3 enrichment is mainnet-only for
 /// now; multi-chain V3 lands in a future sub-project (each chain needs its own
@@ -156,6 +159,33 @@ async fn detection_loop(
     trading_config: TradingConfigClient,
     v3_provider: Option<Arc<Provider<Http>>>,
 ) {
+    // Operator-selected mempool coverage. Read once at boot — re-deploy to
+    // change. `Auto` is resolved per-endpoint inside `run_subscription` since
+    // resolution depends on whether the active WS endpoint is Alchemy.
+    let mempool_mode = MempoolMode::from_env();
+    info!(
+        event = "scanner.mempool_mode_selected",
+        chain_id,
+        mode = mempool_mode.as_str(),
+        "mempool coverage mode resolved from ARBX_MEMPOOL_MODE"
+    );
+
+    // `Disabled` short-circuits the WS connect loop entirely — block-based
+    // workers (PoolSync / Triangular / Flashloan / Liquidation) carry detection.
+    if mempool_mode == MempoolMode::Disabled {
+        let mut ticker = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            ticker.tick().await;
+            let ks = killswitch.is_enabled().await;
+            info!(
+                event = "scanner.mempool_disabled_heartbeat",
+                chain_id,
+                kill_switch = ks,
+                "mempool disabled by ARBX_MEMPOOL_MODE; relying on block-based workers"
+            );
+        }
+    }
+
     let mut backoff_ms: u64 = 1000;
     let mut idx: usize = 0;
     loop {
@@ -197,7 +227,7 @@ async fn detection_loop(
             }
         };
 
-        if let Err(e) = run_subscription(&client, &killswitch, &mut redis, db.as_ref(), &dedup, &trading_config, v3_provider.as_ref()).await {
+        if let Err(e) = run_subscription(&client, &killswitch, &mut redis, db.as_ref(), &dedup, &trading_config, v3_provider.as_ref(), mempool_mode).await {
             error!(
                 event = "scanner.subscription_error",
                 chain_id,
@@ -227,13 +257,84 @@ async fn run_subscription(
     dedup: &Dedup,
     trading_config: &TradingConfigClient,
     v3_provider: Option<&Arc<Provider<Http>>>,
+    mempool_mode: MempoolMode,
 ) -> anyhow::Result<()> {
     let _ = killswitch; // reserved: kill-switch only blocks downstream execution
+
+    // Build the effective allowlist: static catalog (audited, in-code) + any
+    // operator-supplied additions from `ARBX_MEMPOOL_ALLOWLIST`. The env var
+    // is the no-hardcode escape hatch for adding aggregator routers (1inch,
+    // 0x, Paraswap, ...) without recompiling.
+    let mut allowlist = chains::router_addresses_hex_for_chain(client.chain_id);
+    let extras = parse_extra_allowlist_from_env();
+    let extras_count = extras.len();
+    for addr in extras {
+        if !allowlist.iter().any(|a| a == &addr) {
+            allowlist.push(addr);
+        }
+    }
+
+    // Resolve `Auto` based on this specific endpoint's vendor + final allowlist.
+    let alchemy_compat = is_alchemy_endpoint(&client.url);
+    let resolved = mempool_mode.resolve(alchemy_compat, allowlist.len());
+    info!(
+        event = "scanner.mempool_mode_resolved",
+        chain_id = client.chain_id,
+        configured = mempool_mode.as_str(),
+        resolved = resolved.as_str(),
+        endpoint_alchemy = alchemy_compat,
+        allowlist_static = chains::router_addresses_hex_for_chain(client.chain_id).len(),
+        allowlist_env_extras = extras_count,
+        allowlist_total = allowlist.len(),
+    );
+
+    match resolved {
+        MempoolMode::Disabled => {
+            // Defensive: detection_loop already short-circuits on Disabled,
+            // but if Auto resolution lands here defensively idle.
+            warn!(
+                event = "scanner.mempool_disabled_unexpected",
+                chain_id = client.chain_id,
+                "Disabled mode reached run_subscription; sleeping idle"
+            );
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            return Ok(());
+        }
+        MempoolMode::Filtered => {
+            match client.subscribe_pending_filtered_txs(&allowlist).await {
+                Ok(mut stream) => {
+                    info!(
+                        event = "scanner.subscribed_filtered",
+                        chain_id = client.chain_id,
+                        allowlist_size = allowlist.len()
+                    );
+                    while let Some(tx) = stream.next().await {
+                        if let Err(e) = process_pending_tx(client, tx, redis, db, dedup, trading_config, v3_provider).await {
+                            debug!(event = "scanner.process_err", error = %e);
+                        }
+                    }
+                    anyhow::bail!("filtered pending tx stream ended");
+                }
+                Err(e) => {
+                    warn!(
+                        event = "scanner.filtered_subscribe_failed",
+                        chain_id = client.chain_id,
+                        error = %e,
+                        "falling back to firehose subscription"
+                    );
+                    // Fall through to firehose path.
+                }
+            }
+        }
+        MempoolMode::Firehose | MempoolMode::Auto => {
+            // Auto cannot reach here after `resolve()`; listed for exhaustiveness.
+        }
+    }
+
     let mut stream = client.subscribe_pending().await?;
-    info!(event = "scanner.subscribed", chain_id = client.chain_id);
+    info!(event = "scanner.subscribed", chain_id = client.chain_id, mode = "firehose");
 
     while let Some(hash) = stream.next().await {
-        // We no longer pause the scanner on kill-switch. It must always scan and emit.
         if let Err(e) = process_pending(client, hash, redis, db, dedup, trading_config, v3_provider).await {
             debug!(event = "scanner.process_err", hash = %hash, error = %e);
         }
@@ -250,6 +351,8 @@ async fn process_pending(
     trading_config: &TradingConfigClient,
     v3_provider: Option<&Arc<Provider<Http>>>,
 ) -> anyhow::Result<()> {
+    // Firehose path: dedup BEFORE get_tx so we don't pay the 26-CU
+    // eth_getTransactionByHash for duplicates that the relay re-emits.
     if !dedup.check_and_mark(hash, redis).await {
         return Ok(());
     }
@@ -258,6 +361,37 @@ async fn process_pending(
         Some(t) => t,
         None => return Ok(()), // dropped from mempool before we got it
     };
+    decode_and_score_tx(client, tx, redis, db, trading_config, v3_provider).await
+}
+
+async fn process_pending_tx(
+    client: &WsChainClient,
+    tx: Transaction,
+    redis: &mut redis::aio::ConnectionManager,
+    db: Option<&PgPool>,
+    dedup: &Dedup,
+    trading_config: &TradingConfigClient,
+    v3_provider: Option<&Arc<Provider<Http>>>,
+) -> anyhow::Result<()> {
+    // Filtered path: tx body is already on hand from the WS event, so dedup
+    // here by tx.hash collapses reorg / duplicate notifications. No CU cost
+    // is saved by deduping earlier — the relay already pre-filtered upstream.
+    if !dedup.check_and_mark(tx.hash, redis).await {
+        return Ok(());
+    }
+    counters().pending_received.fetch_add(1, Ordering::Relaxed);
+    decode_and_score_tx(client, tx, redis, db, trading_config, v3_provider).await
+}
+
+async fn decode_and_score_tx(
+    client: &WsChainClient,
+    tx: Transaction,
+    redis: &mut redis::aio::ConnectionManager,
+    db: Option<&PgPool>,
+    trading_config: &TradingConfigClient,
+    v3_provider: Option<&Arc<Provider<Http>>>,
+) -> anyhow::Result<()> {
+    let hash = tx.hash;
     let to = match tx.to {
         Some(a) => a,
         None => return Ok(()), // contract creation, ignore
