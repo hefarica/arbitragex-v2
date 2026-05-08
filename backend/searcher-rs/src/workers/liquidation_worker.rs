@@ -41,7 +41,7 @@
 //!      reject when `gross_profit_usd / debt_to_repay_usd > 0.20` (20% of
 //!      debt). Real Aave V3 bonuses cap at ~10%; 20% catches calculation
 //!      bugs without false-positives. Diagnostic dump on every breach.
-//!   7. If `net_profit_usd < MIN_PROFIT_USD ($1)` → skip with `below_min_profit`.
+//!   7. If `net_profit_usd < min_profit_usd` (chain-aware floor from `trading_config`) → skip with `below_min_profit`.
 //!   8. **Per-block dedup**: `(user, block)` triple — same user at the same
 //!      block does not emit twice. Mirrors `flashloan_arb_worker::DedupState`.
 //!   9. Build `Opportunity { strategy_kind: Liquidation, ... }` and emit to
@@ -148,9 +148,21 @@ const GAS_COST_USD: f64 = 30.0;
 /// legitimate high-bonus assets. Anti-Incidente #9.
 const LIQUIDATION_PROFIT_SANITY_MULT_OF_DEBT: f64 = 0.20;
 
-/// Minimum USD profit required to emit. Below this the opp is unprofitable
-/// post-gas; emitting just adds spine load.
-const MIN_PROFIT_USD: f64 = 1.0;
+/// Chain-aware minimum USD profit floor used when no operator `trading_config`
+/// row is available in Redis. Mirrors `flashloan_arb_worker::min_profit_usd_fallback`.
+/// Migration 046 seeds the correct values into `trading_config` so this
+/// fallback only applies during cold-start or misconfigured chains.
+fn min_profit_usd_fallback(chain_id: u64) -> f64 {
+    match chain_id {
+        1     => 50.0,  // Ethereum mainnet
+        42161 => 10.0,  // Arbitrum One
+        56    => 5.0,   // BNB Smart Chain
+        10    => 5.0,   // Optimism
+        8453  => 5.0,   // Base
+        137   => 2.0,   // Polygon
+        _     => 10.0,  // Unknown chain: conservative default
+    }
+}
 
 /// Dedup window: keep entries for this many recent blocks. A `(user, block)`
 /// pair older than this is pruned each tick.
@@ -278,7 +290,7 @@ pub fn estimate_liquidation_profit(
 
 /// Result of `estimate_liquidation_profit`. Negative `net_profit_usd` is a
 /// legitimate outcome (gas exceeds bonus on small positions); the caller
-/// applies `MIN_PROFIT_USD` separately.
+/// applies the chain-aware `min_profit_usd` floor (from `trading_config`) separately.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LiquidationEstimate {
     pub debt_to_repay_usd: f64,
@@ -634,12 +646,13 @@ impl LiquidationWorker {
         self,
         mut redis: ConnectionManager,
         db: Option<PgPool>,
-        _trading_config: TradingConfigClient,
+        trading_config: TradingConfigClient,
     ) {
         let mut ticker = interval(self.period);
         let mut dedup = DedupState::new();
         let mut tick_count: u32 = 0;
         let mut stats = TickStats::default();
+        let fallback_min = min_profit_usd_fallback(self.chain_id);
         info!(
             event = "liquidation_worker.boot",
             chain_id = self.chain_id,
@@ -650,7 +663,7 @@ impl LiquidationWorker {
             operator_cap_usd = OPERATOR_CAP_USD,
             gas_cost_usd = GAS_COST_USD,
             sanity_mult_of_debt = LIQUIDATION_PROFIT_SANITY_MULT_OF_DEBT,
-            min_profit_usd = MIN_PROFIT_USD,
+            min_profit_usd_fallback = fallback_min,
             stats_log_every_n_ticks = STATS_LOG_EVERY_N_TICKS,
             provider_attached = self.provider.is_some(),
         );
@@ -658,6 +671,22 @@ impl LiquidationWorker {
         loop {
             ticker.tick().await;
             tick_count += 1;
+
+            // Load per-chain min_profit_usd from operator config (Redis-backed).
+            // Falls back to chain-aware conservative floor if Redis has no config.
+            let min_profit_usd = match trading_config.state(self.chain_id).await {
+                Ok(Some(cfg)) => cfg.min_profit_usd,
+                Ok(None) => fallback_min,
+                Err(e) => {
+                    debug!(
+                        event = "liquidation_worker.cfg_fetch_failed",
+                        chain_id = self.chain_id,
+                        error = %e,
+                        fallback = fallback_min,
+                    );
+                    fallback_min
+                }
+            };
 
             // Bail early when no provider is wired (e.g. RPC env missing).
             // Per-tick counter increment keeps the operator informed via heartbeat.
@@ -882,7 +911,7 @@ impl LiquidationWorker {
                     continue;
                 }
 
-                if estimate.net_profit_usd < MIN_PROFIT_USD {
+                if estimate.net_profit_usd < min_profit_usd {
                     stats.skip_below_min_profit += 1;
                     continue;
                 }
@@ -1380,7 +1409,7 @@ mod tests {
     ///   gross_profit  = $75k × 0.05 = $3.75k
     ///   net_profit    = $3.75k − $30 = $3.72k
     ///   ratio         = $3.75k / $75k = 0.05 → well below 0.20 threshold
-    /// System would emit (passes all gates).
+    /// System would emit (passes all gates, net_profit $3720 >> $50 Ethereum floor).
     #[test]
     fn math_walkthrough_realistic_position_emits() {
         let estimate = estimate_liquidation_profit(150_000.0, 500, 30.0, 250_000.0).unwrap();
@@ -1388,18 +1417,41 @@ mod tests {
         assert!((estimate.gross_profit_usd - 3_750.0).abs() < 1e-6);
         assert!((estimate.net_profit_usd - 3_720.0).abs() < 1e-6);
         assert!(!breaches_sanity_bound(&estimate));
-        assert!(estimate.net_profit_usd > MIN_PROFIT_USD);
+        // Use the Ethereum chain floor (50.0) — the old $1 hardcode would have
+        // passed here trivially; $50 still passes comfortably and is honest.
+        assert!(estimate.net_profit_usd > min_profit_usd_fallback(1));
         // Eligibility: HF = 1.02 → 1.02e18.
         let hf_raw = U256::from_dec_str("1020000000000000000").unwrap();
         assert!(is_liquidation_eligible(hf_raw));
     }
 
     /// Negative path: dust position. $50 debt, 5% bonus → $25 close, $1.25
-    /// gross, $1.25 − $30 = -$28.75 net → below MIN_PROFIT_USD, must NOT emit.
+    /// gross, $1.25 − $30 = -$28.75 net → below ANY chain's floor, must NOT emit.
     #[test]
     fn math_walkthrough_dust_position_skipped() {
         let estimate = estimate_liquidation_profit(50.0, 500, 30.0, 250_000.0).unwrap();
-        assert!(estimate.net_profit_usd < MIN_PROFIT_USD);
+        // net_profit is negative (-$28.75) — below every chain-aware floor.
+        assert!(estimate.net_profit_usd < min_profit_usd_fallback(137)); // Polygon = $2, lowest floor
         assert!(!breaches_sanity_bound(&estimate));
+    }
+
+    /// Verify the chain-aware fallback floors are all economically sound
+    /// (all > $1 old hardcode) and chain-specific.
+    #[test]
+    fn fallback_floors_are_economically_sound() {
+        assert_eq!(min_profit_usd_fallback(1), 50.0);
+        assert_eq!(min_profit_usd_fallback(42161), 10.0);
+        assert_eq!(min_profit_usd_fallback(56), 5.0);
+        assert_eq!(min_profit_usd_fallback(10), 5.0);
+        assert_eq!(min_profit_usd_fallback(8453), 5.0);
+        assert_eq!(min_profit_usd_fallback(137), 2.0);
+        for chain in &[1u64, 42161, 56, 10, 8453, 137] {
+            assert!(
+                min_profit_usd_fallback(*chain) > 1.0,
+                "chain {} fallback {} is not > $1 — economic defect E2 reintroduced",
+                chain,
+                min_profit_usd_fallback(*chain)
+            );
+        }
     }
 }

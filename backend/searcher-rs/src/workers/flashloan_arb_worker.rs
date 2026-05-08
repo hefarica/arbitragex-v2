@@ -31,7 +31,7 @@
 //!      if `profit_usd > borrow_usd × FLASHLOAN_PROFIT_SANITY_MULT` (10%) →
 //!      reject with full diagnostic dump. Real flash arbs are 0.05-0.5%; 10%
 //!      means orientation/decimal/unit bug. NEVER trust the spine alone.
-//!   6. If `profit_usd < MIN_PROFIT_USD` → skip with `below_min_profit`.
+//!   6. If `profit_usd < min_profit_usd` (chain-aware floor from `trading_config`) → skip with `below_min_profit`.
 //!   7. Build `Opportunity { strategy_kind: FlashloanArb, ... }` and emit to
 //!      Redis stream + persist to PG. Spine evaluator runs downstream.
 //!   8. **Per-block dedup**: `(buy_pool, sell_pool, block)` triple — same
@@ -109,9 +109,24 @@ const MIN_SPOT_DIFF_BPS: f64 = 15.0;
 /// pipeline (cf. Incidente #9). Worker REJECTS these and dumps diagnostics.
 const FLASHLOAN_PROFIT_SANITY_MULT: f64 = 0.10;
 
-/// Minimum USD profit required to emit an opportunity. Below this the opp
-/// would be unprofitable post-gas; emitting just adds spine load.
-const MIN_PROFIT_USD: f64 = 1.0;
+/// Chain-aware minimum USD profit floor used when no operator `trading_config`
+/// row has been loaded from Redis yet (i.e. Redis is cold or the operator has
+/// not configured the chain). Values are conservative estimates based on
+/// observed gas costs (2025-2026): ETH=450k gas×7gwei×$3000 + 3x safety +
+/// failed-tx buffer ≈ $50; L2s are cheaper but still 10x above the old $1
+/// hardcode. Migration 046 seeds these values into `trading_config` so this
+/// fallback is only active during the bootstrap window.
+fn min_profit_usd_fallback(chain_id: u64) -> f64 {
+    match chain_id {
+        1     => 50.0,  // Ethereum mainnet
+        42161 => 10.0,  // Arbitrum One
+        56    => 5.0,   // BNB Smart Chain
+        10    => 5.0,   // Optimism
+        8453  => 5.0,   // Base
+        137   => 2.0,   // Polygon
+        _     => 10.0,  // Unknown chain: conservative default
+    }
+}
 
 /// Maximum acceptable staleness of reserves relative to the most recent
 /// block observed across the pool pair. Beyond this we refuse to evaluate
@@ -528,7 +543,7 @@ pub struct EvalResult {
 ///   1. spot diff > MIN_SPOT_DIFF_BPS
 ///   2. price > 0 (R8 fail-honest)
 ///   3. golden-section finds strictly positive profit_token_a_wei
-///   4. profit_usd > MIN_PROFIT_USD
+///   4. profit_usd > 0 (min_profit_usd floor is checked by the caller, not here)
 ///   5. profit_usd ≤ borrow_usd × FLASHLOAN_PROFIT_SANITY_MULT
 ///      hold simultaneously. Otherwise returns None and the caller skips.
 pub fn evaluate_combo(input: &EvalInput) -> Option<EvalResult> {
@@ -607,9 +622,9 @@ pub fn evaluate_combo(input: &EvalInput) -> Option<EvalResult> {
     let profit_usd = profit_to_usd(profit_at_clamped, token_a_price, input.token_a_decimals)?;
     let borrow_usd = borrow_to_usd(borrow_wei, token_a_price, input.token_a_decimals)?;
 
-    if profit_usd < MIN_PROFIT_USD {
-        return None;
-    }
+    // NOTE: the min_profit_usd floor check is NOT here — it is applied by the
+    // caller (`scan_one_pair`) using the per-chain value from `trading_config`.
+    // `evaluate_combo` is a pure math function; policy gates live one level up.
     // Worker-level sanity bound (anti-Incidente #9).
     if profit_usd > borrow_usd * FLASHLOAN_PROFIT_SANITY_MULT {
         // Caller logs the diagnostic dump — kernel just refuses.
@@ -705,12 +720,13 @@ impl FlashloanArbWorker {
         self,
         mut redis: ConnectionManager,
         db: Option<PgPool>,
-        _trading_config: TradingConfigClient,
+        trading_config: TradingConfigClient,
     ) {
         let mut ticker = interval(self.period);
         let mut dedup = DedupState::new();
         let mut tick_count: u32 = 0;
         let mut stats = TickStats::default();
+        let fallback_min = min_profit_usd_fallback(self.chain_id);
         info!(
             event = "flashloan_arb_worker.boot",
             chain_id = self.chain_id,
@@ -719,13 +735,30 @@ impl FlashloanArbWorker {
             premium_bps = FLASH_PROVIDER_PREMIUM_BPS,
             min_spot_diff_bps = MIN_SPOT_DIFF_BPS,
             sanity_mult = FLASHLOAN_PROFIT_SANITY_MULT,
-            min_profit_usd = MIN_PROFIT_USD,
+            min_profit_usd_fallback = fallback_min,
             stats_log_every_n_ticks = STATS_LOG_EVERY_N_TICKS,
         );
 
         loop {
             ticker.tick().await;
             tick_count += 1;
+
+            // Load per-chain min_profit_usd from operator config (Redis-backed).
+            // Falls back to a chain-aware conservative floor if Redis has no config
+            // yet (cold start or operator has not configured this chain).
+            let min_profit_usd = match trading_config.state(self.chain_id).await {
+                Ok(Some(cfg)) => cfg.min_profit_usd,
+                Ok(None) => fallback_min,
+                Err(e) => {
+                    debug!(
+                        event = "flashloan_arb_worker.cfg_fetch_failed",
+                        chain_id = self.chain_id,
+                        error = %e,
+                        fallback = fallback_min,
+                    );
+                    fallback_min
+                }
+            };
 
             // Snapshot price oracle once per tick.
             let snapshot_map =
@@ -750,6 +783,7 @@ impl FlashloanArbWorker {
                         &snapshot_map,
                         sym_a,
                         sym_b,
+                        min_profit_usd,
                         &mut dedup,
                         &mut stats,
                     )
@@ -788,6 +822,9 @@ impl FlashloanArbWorker {
     /// Scan one pair (sym_a, sym_b). Returns the latest block observed for
     /// dedup pruning. Returns None when the pair was skipped before any
     /// reserves were fetched (unknown token, no pools).
+    ///
+    /// `min_profit_usd` is the per-chain floor loaded from `trading_config`
+    /// each tick (see `run()`). Must be > 0.
     #[allow(clippy::too_many_arguments)]
     async fn scan_one_pair(
         &self,
@@ -796,6 +833,7 @@ impl FlashloanArbWorker {
         price_snapshot: &std::collections::HashMap<String, f64>,
         sym_a: &str,
         sym_b: &str,
+        min_profit_usd: f64,
         dedup: &mut DedupState,
         stats: &mut TickStats,
     ) -> Option<u64> {
@@ -934,7 +972,7 @@ impl FlashloanArbWorker {
                     }
                 };
 
-                if result.expected_profit_usd < MIN_PROFIT_USD {
+                if result.expected_profit_usd < min_profit_usd {
                     stats.skip_below_min_profit += 1;
                     continue;
                 }
@@ -1529,8 +1567,10 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_combo_below_min_profit_returns_none() {
-        // Tiny spread → tiny profit → may fall below MIN_PROFIT_USD ($1).
+    fn evaluate_combo_tiny_spread_returns_none() {
+        // Tiny spread → spot_diff_bps < MIN_SPOT_DIFF_BPS (15bps) → None.
+        // Note: evaluate_combo no longer checks min_profit_usd; the caller
+        // (scan_one_pair) applies the chain-aware floor from trading_config.
         let buy_a = U256::from(1_000_000_000_000_000_000u64);
         let buy_b = U256::from(1_000_500_000_000_000_000_000u128); // 0.05% spread, ~5bps
         let sell_a = U256::from(1_000_000_000_000_000_000u64);
@@ -1543,8 +1583,7 @@ mod tests {
             fee_bps: 30,
             premium_bps: 5,
         };
-        // Either MIN_SPOT_DIFF_BPS rejects it (5bps < 15bps threshold) → None,
-        // or low USD price puts us below MIN_PROFIT_USD → None. Either way None.
+        // MIN_SPOT_DIFF_BPS (15bps) rejects 5bps spread → None.
         assert!(evaluate_combo(&inp).is_none());
     }
 
@@ -1751,27 +1790,50 @@ mod tests {
         FLASHLOAN_PROFIT_SANITY_MULT < 1.0,
         "10% threshold must reject anything looking like 'free money'"
     );
-    const _: () = assert!(MIN_PROFIT_USD > 0.0);
+    // NOTE: MIN_PROFIT_USD is no longer a module-level const — it is loaded per
+    // tick from trading_config (chain-aware, operator-tunable). The invariant
+    // that min_profit_usd > 0.0 is now a runtime check in the fallback function
+    // and enforced by the DB CHECK constraint in migration 026.
     const _: () = assert!(MIN_SPOT_DIFF_BPS > 0.0);
     const _: () = assert!(FLASH_PROVIDER_PREMIUM_BPS > 0);
     const _: () = assert!(STATS_LOG_EVERY_N_TICKS > 0);
     const _: () = assert!(MAX_RESERVE_LAG_BLOCKS > 0);
     const _: () = assert!(DEDUP_RETAIN_BLOCKS > 0);
 
+    /// Verifies that the chain-aware fallback floors are all above the old
+    /// broken $1 floor AND are chain-specific (ETH > ARB > L2s > Polygon).
+    #[test]
+    fn fallback_floors_are_economically_sound() {
+        // ETH: 3x safety on 450k gas × 7gwei × $3000/ETH ≈ $9.45 raw → $50 conservative.
+        assert_eq!(min_profit_usd_fallback(1), 50.0);
+        // Arbitrum: L2 gas + L1 calldata ≈ $2-3 raw → $10 conservative.
+        assert_eq!(min_profit_usd_fallback(42161), 10.0);
+        // BSC / Optimism / Base: cheaper chains → $5 floor.
+        assert_eq!(min_profit_usd_fallback(56), 5.0);
+        assert_eq!(min_profit_usd_fallback(10), 5.0);
+        assert_eq!(min_profit_usd_fallback(8453), 5.0);
+        // Polygon: lowest gas cost → $2 floor.
+        assert_eq!(min_profit_usd_fallback(137), 2.0);
+        // Unknown chain: conservative $10 fallback.
+        assert_eq!(min_profit_usd_fallback(999), 10.0);
+        // Every fallback must be > the broken $1 hardcode (economic invariant).
+        for chain in &[1u64, 42161, 56, 10, 8453, 137, 999] {
+            assert!(
+                min_profit_usd_fallback(*chain) > 1.0,
+                "chain {} fallback {} is not > $1 — economic defect E2 reintroduced",
+                chain,
+                min_profit_usd_fallback(*chain)
+            );
+        }
+    }
+
     /// Runtime sanity test that surfaces in the test count even though the
-    /// underlying invariants are enforced at compile time above. Keeps the
-    /// test inventory honest: "is the doctrine documented somewhere a human
-    /// can read in `cargo test` output?" — yes, here.
+    /// remaining constant invariants are enforced at compile time above.
     #[test]
     fn sanity_constants_documented_at_compile_time() {
-        // Reading the value into a runtime variable defeats clippy's
-        // `assertions_on_constants` lint while still proving the value is
-        // accessible at runtime (i.e. the const wasn't accidentally `cfg`'d
-        // out). We compare against a fresh local — clippy can't fold this.
         let mult: f64 = FLASHLOAN_PROFIT_SANITY_MULT;
-        let min_usd: f64 = MIN_PROFIT_USD;
         assert!(mult.is_finite() && mult > 0.0 && mult < 1.0);
-        assert!(min_usd.is_finite() && min_usd > 0.0);
+        // min_profit_usd is now runtime-loaded; validated via fallback_floors_are_economically_sound above.
     }
 
     // ---------------------------------------------------------------

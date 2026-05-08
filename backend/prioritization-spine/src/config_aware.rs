@@ -400,7 +400,7 @@ mod tests {
             simulation_per_strategy_caps_usd: HashMap::new(),
             simulation_target_profit_usd: None,
             simulation_target_roi_pct: None,
-            min_profit_usd: 1.0,
+            min_profit_usd: 50.0, // Ethereum mainnet floor (migration 046: chain_id=1 → $50)
             min_roi_pct: 0.1,
             min_landing_probability: 0.5,
             min_liquidity_confidence: 0.7,
