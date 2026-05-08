@@ -50,10 +50,10 @@ use crate::reserves::{
     ReservesEntry, V3PoolInfo,
 };
 use chrono::Utc;
-use ethers::providers::{Http, Provider};
 use ethers::types::{Address, U256};
 use redis::aio::ConnectionManager;
 use shared_rs::contracts::{Opportunity, StrategyKind};
+use shared_rs::rpc_failover::HttpRpcPool;
 use shared_rs::trading_config::TradingConfigClient;
 use sqlx::postgres::PgPool;
 use std::collections::HashSet;
@@ -1048,11 +1048,11 @@ impl DedupState {
 pub struct TriangularWorker {
     pub period: Duration,
     pub chain_id: u64,
-    /// Optional HTTP provider for V3 QuoterV2 multicall. When None the worker
+    /// Optional HTTP RPC pool for V3 QuoterV2 multicall. When None the worker
     /// silently skips `V3_CYCLES` (V2-only path stays fully functional). Set
     /// at boot via `with_v3_provider`; mainnet only — `main.rs` reuses the
-    /// `primary_rpc_http` URL already plumbed for the scanner's V3 quoter.
-    v3_provider: Option<Arc<Provider<Http>>>,
+    /// pool already constructed for the scanner's V3 quoter.
+    v3_provider: Option<Arc<HttpRpcPool>>,
 }
 
 impl TriangularWorker {
@@ -1064,12 +1064,12 @@ impl TriangularWorker {
         }
     }
 
-    /// Attach an HTTP provider for V3 QuoterV2 multicall. Without this the
+    /// Attach an HTTP RPC pool for V3 QuoterV2 multicall. Without this the
     /// worker scans only `MVP_CYCLES` and counts every V3-cycle attempt as
     /// `triangular_v3_quote_failures` (with the diagnostic hint
     /// "v3_provider_unavailable"). Mainnet only for now.
-    pub fn with_v3_provider(mut self, provider: Arc<Provider<Http>>) -> Self {
-        self.v3_provider = Some(provider);
+    pub fn with_v3_provider(mut self, pool: Arc<HttpRpcPool>) -> Self {
+        self.v3_provider = Some(pool);
         self
     }
 
@@ -1154,14 +1154,14 @@ impl TriangularWorker {
             // multicall per tick (≤ ~12 RPC calls per pool worst case → still
             // a single RPC overall thanks to Multicall3). Skipped silently
             // when no v3_provider is attached (non-mainnet, or env not set).
-            if let Some(provider) = self.v3_provider.as_ref() {
+            if let Some(rpc_pool) = self.v3_provider.as_ref() {
                 if let Some(blk) = self
                     .scan_v3_bearing_cycles(
                         &mut redis,
                         db.as_ref(),
                         &cfg_opt,
                         &snapshot_map,
-                        provider.clone(),
+                        rpc_pool.clone(),
                         &mut dedup,
                         &mut stats,
                     )
@@ -1538,7 +1538,7 @@ impl TriangularWorker {
         db: Option<&PgPool>,
         cfg: &Option<shared_rs::trading_config::TradingConfigState>,
         price_snapshot: &std::collections::HashMap<String, f64>,
-        v3_provider: Arc<Provider<Http>>,
+        rpc_pool: Arc<HttpRpcPool>,
         dedup: &mut DedupState,
         stats: &mut TickStats,
     ) -> Option<u64> {
@@ -1628,13 +1628,14 @@ impl TriangularWorker {
                 continue;
             }
 
-            // Run Phase N multicall.
-            let phase_results = match v3_quote_exact_in_multicall(
-                v3_provider.clone(),
-                quoter,
-                multicall_addr,
-                phase_requests.clone(),
-            )
+            // Run Phase N multicall — via with_retry so the circuit breaker
+            // and failover are engaged on RPC failure.
+            let phase_results = match rpc_pool.with_retry(|provider| {
+                let reqs = phase_requests.clone();
+                async move {
+                    v3_quote_exact_in_multicall(provider, quoter, multicall_addr, reqs).await
+                }
+            })
             .await
             {
                 Ok(r) => r,

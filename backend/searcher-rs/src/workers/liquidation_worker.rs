@@ -75,11 +75,12 @@ use crate::persistence;
 use crate::publisher;
 use chrono::Utc;
 use ethers::abi::{Function, Param, ParamType, StateMutability, Token};
-use ethers::providers::{Http, Middleware, Provider};
+use ethers::providers::Middleware;
 use ethers::types::{Address, Bytes, U256};
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
 use shared_rs::contracts::{Opportunity, StrategyKind};
+use shared_rs::rpc_failover::HttpRpcPool;
 use shared_rs::trading_config::TradingConfigClient;
 use sqlx::postgres::PgPool;
 use std::collections::HashSet;
@@ -446,7 +447,7 @@ pub struct UserDataResult {
 /// who never interacted with Aave reverts the call) yield `data = None` for
 /// that entry — caller skips them with the `multicall_user_failed` counter.
 async fn multicall_get_user_account_data(
-    provider: Arc<Provider<Http>>,
+    rpc_pool: Arc<HttpRpcPool>,
     pool_addr: Address,
     multicall_addr: Address,
     users: &[Address],
@@ -466,10 +467,19 @@ async fn multicall_get_user_account_data(
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
 
-    let multicall = multicall3::IMulticall3Aave::new(multicall_addr, provider.clone());
+    // with_retry — circuit breaker fires on repeated RPC failure.
     let results = match tokio::time::timeout(
         MULTICALL_TIMEOUT,
-        multicall.aggregate_3(calls).call(),
+        rpc_pool.with_retry(|provider| {
+            let calls = calls.clone();
+            async move {
+                multicall3::IMulticall3Aave::new(multicall_addr, provider)
+                    .aggregate_3(calls)
+                    .call()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+            }
+        }),
     )
     .await
     {
@@ -616,11 +626,11 @@ fn parse_user_address(s: &str) -> Option<Address> {
 // =============================================================================
 
 /// LiquidationWorker — owns its tick interval, dedup state, and (optional)
-/// HTTP provider for the Aave V3 multicall.
+/// HTTP RPC pool for the Aave V3 multicall.
 pub struct LiquidationWorker {
     pub period: Duration,
     pub chain_id: u64,
-    pub provider: Option<Arc<Provider<Http>>>,
+    pub rpc_pool: Option<Arc<HttpRpcPool>>,
 }
 
 impl LiquidationWorker {
@@ -628,16 +638,16 @@ impl LiquidationWorker {
         Self {
             period: Duration::from_secs(interval_secs.max(1)),
             chain_id,
-            provider: None,
+            rpc_pool: None,
         }
     }
 
-    /// Builder: attach an HTTP provider for the on-chain multicall. Without
+    /// Builder: attach an HTTP RPC pool for the on-chain multicall. Without
     /// this, the worker still ticks but every cycle increments
     /// `skip_no_provider` and emits nothing — surfaces the missing-provider
     /// state in the heartbeat without crashing.
-    pub fn with_provider(mut self, provider: Arc<Provider<Http>>) -> Self {
-        self.provider = Some(provider);
+    pub fn with_provider(mut self, pool: Arc<HttpRpcPool>) -> Self {
+        self.rpc_pool = Some(pool);
         self
     }
 
@@ -665,7 +675,7 @@ impl LiquidationWorker {
             sanity_mult_of_debt = LIQUIDATION_PROFIT_SANITY_MULT_OF_DEBT,
             min_profit_usd_fallback = fallback_min,
             stats_log_every_n_ticks = STATS_LOG_EVERY_N_TICKS,
-            provider_attached = self.provider.is_some(),
+            provider_attached = self.rpc_pool.is_some(),
         );
 
         loop {
@@ -688,9 +698,9 @@ impl LiquidationWorker {
                 }
             };
 
-            // Bail early when no provider is wired (e.g. RPC env missing).
+            // Bail early when no RPC pool is wired (e.g. RPC env missing).
             // Per-tick counter increment keeps the operator informed via heartbeat.
-            let provider = match self.provider.as_ref() {
+            let rpc_pool = match self.rpc_pool.as_ref() {
                 Some(p) => p.clone(),
                 None => {
                     stats.skip_no_provider += 1;
@@ -756,14 +766,16 @@ impl LiquidationWorker {
                 }
             };
 
-            // Block number context — used for dedup. We fetch via the same
-            // provider WITH a hard timeout so a stalled RPC cannot freeze
-            // the tick (security-auditor MAJOR fix). On failure or timeout
-            // we use 0 (dedup degrades to "single emit per session per
-            // user", which is conservative).
+            // Block number context — used for dedup. We fetch via with_retry
+            // so the circuit breaker fires on RPC outages. The MULTICALL_TIMEOUT
+            // guard prevents the tick from stalling on a stalled provider.
+            // On failure or timeout we use 0 (dedup degrades to "single emit
+            // per session per user", which is conservative).
             let current_block: u64 = match tokio::time::timeout(
                 MULTICALL_TIMEOUT,
-                provider.as_ref().get_block_number(),
+                rpc_pool.with_retry(|p| async move {
+                    p.get_block_number().await.map_err(|e| anyhow::anyhow!("{e}"))
+                }),
             )
             .await
             {
@@ -794,7 +806,7 @@ impl LiquidationWorker {
             .into_snapshot();
 
             let results = match multicall_get_user_account_data(
-                provider.clone(),
+                rpc_pool.clone(),
                 pool_addr,
                 multicall_addr,
                 &users,

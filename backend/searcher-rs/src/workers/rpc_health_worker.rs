@@ -27,6 +27,13 @@ const PING_TIMEOUT_MS: u64 = 2_000;
 /// `ewma_new = α·sample + (1-α)·ewma_old`.
 const LATENCY_EWMA_ALPHA: f64 = 0.3;
 
+// TODO(BE-02 follow-up): this worker duplicates HttpRpcPool::spawn_health_loop now that
+// the pool is retained as Arc<HttpRpcPool> in main.rs (BE-02 Step 2). The pool's own
+// health loop already runs EWMA + drift + circuit rotation on HEALTH_CHECK_INTERVAL (15s).
+// This worker runs an independent eth_blockNumber ping on its own interval (default 5s).
+// Consider removing this worker once Step 2 is validated in production to avoid
+// double-counting CU usage against the RPC provider.
+
 pub struct RpcHealthWorker {
     pub check_interval: Duration,
 }

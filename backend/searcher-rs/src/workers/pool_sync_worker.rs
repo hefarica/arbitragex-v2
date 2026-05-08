@@ -12,7 +12,7 @@
 //! latency, fail-loud on RPC error (do not pretend success).
 
 use ethers::contract::abigen;
-use ethers::providers::{Http, Middleware, Provider};
+use ethers::providers::Middleware;
 use ethers::types::{Address, Bytes, H160, U256};
 use sqlx::PgPool;
 use std::str::FromStr;
@@ -108,13 +108,12 @@ impl PoolSyncWorker {
     /// returns only on unrecoverable errors.
     pub async fn run(
         self,
-        rpc_http_url: String,
+        rpc_pool: Arc<shared_rs::rpc_failover::HttpRpcPool>,
         db: PgPool,
         mut redis: redis::aio::ConnectionManager,
     ) -> anyhow::Result<()> {
-        info!(event = "pool_sync.boot", chain_id = self.chain_id, rpc = %redacted(&rpc_http_url));
+        info!(event = "pool_sync.boot", chain_id = self.chain_id, providers = rpc_pool.entries.len());
 
-        let provider = Arc::new(Provider::<Http>::try_from(rpc_http_url)?);
         let multicall_addr = Address::from_str(MULTICALL3_ADDR)?;
 
         // Bootstrap: read pools + tokens from DB and populate Redis caches.
@@ -142,8 +141,6 @@ impl PoolSyncWorker {
             .unwrap();
         let get_reserves_calldata = Bytes::from(get_reserves_selector.to_vec());
 
-        let multicall = IMulticall3::new(multicall_addr, provider.clone());
-
         loop {
             let tick_start = Instant::now();
             let calls: Vec<_> = pools
@@ -155,7 +152,17 @@ impl PoolSyncWorker {
                 })
                 .collect();
 
-            let results = match multicall.aggregate_3(calls).call().await {
+            // Per-tick multicall via with_retry — circuit breaker + failover fire on RPC error.
+            let results = match rpc_pool.with_retry(|provider| {
+                let calls = calls.clone();
+                async move {
+                    IMulticall3::new(multicall_addr, provider)
+                        .aggregate_3(calls)
+                        .call()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{e}"))
+                }
+            }).await {
                 Ok(r) => r,
                 Err(e) => {
                     warn!(event = "pool_sync.multicall_failed", error = %e);
@@ -164,12 +171,13 @@ impl PoolSyncWorker {
                 }
             };
 
-            // Get current block once per tick.
-            let block_number = provider
-                .get_block_number()
-                .await
-                .map(|n| n.as_u64())
-                .unwrap_or(0);
+            // Get current block once per tick via with_retry.
+            let block_number = match rpc_pool.with_retry(|provider| async move {
+                provider.get_block_number().await.map_err(|e| anyhow::anyhow!("{e}"))
+            }).await {
+                Ok(n) => n.as_u64(),
+                Err(_) => 0,
+            };
             let now_ts = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -404,13 +412,3 @@ impl PoolSyncWorker {
     }
 }
 
-fn redacted(rpc_url: &str) -> String {
-    // Strip API key / path. Show only scheme://host.
-    if let Some(scheme_idx) = rpc_url.find("://") {
-        let after = &rpc_url[scheme_idx + 3..];
-        let host = after.split('/').next().unwrap_or(after);
-        format!("{}://{}/...", &rpc_url[..scheme_idx], host)
-    } else {
-        "<redacted>".to_string()
-    }
-}

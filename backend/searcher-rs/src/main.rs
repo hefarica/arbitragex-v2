@@ -131,37 +131,30 @@ async fn main() -> anyhow::Result<()> {
     // syncs pools for ONE chain; multi-chain pool sync is Sprint 2 work.
     let primary_chain: u64 = enabled_chains.first().copied().unwrap_or(1);
 
-    // Resolve the primary HTTP RPC URL using the same `HttpRpcPool::from_env`
-    // pattern used by `relays-client` and `recon`. The pool reads
-    // `RPC_HTTP_<chain_id>` (CSV `name=url,name=url`) and validates each
-    // provider's chain_id at boot. If absent or all entries unhealthy we skip
-    // PoolSyncWorker (no fake URL — RULE 00).
-    let primary_rpc_http: Option<String> = match HttpRpcPool::from_env(primary_chain).await {
-        Ok(Some(pool)) => match pool.pick() {
-            Ok(entry) => {
-                info!(
-                    event = "worker_orchestrator.rpc_selected",
-                    provider = %entry.name,
-                    chain_id = primary_chain,
-                    "primary HTTP RPC selected for pool sync"
-                );
-                Some(entry.url.clone())
-            }
-            Err(e) => {
-                warn!(
-                    event = "worker_orchestrator.rpc_no_healthy",
-                    chain_id = primary_chain,
-                    error = %e,
-                    "no healthy HTTP RPC providers; PoolSyncWorker will not start"
-                );
-                None
-            }
-        },
+    // Build the primary HTTP RPC pool from `RPC_HTTP_<chain_id>` and retain it
+    // as an Arc so every worker receives the same pool instance — circuit
+    // breaker, failover, and EWMA scoring are shared. Previously the pool was
+    // discarded after a single `.pick()` call which extracted one URL and
+    // dropped the failover machinery (BE-02 Step 2 fix).
+    let primary_rpc_pool: Option<Arc<HttpRpcPool>> = match HttpRpcPool::from_env(primary_chain).await {
+        Ok(Some(pool)) => {
+            info!(
+                event = "worker_orchestrator.rpc_pool_ready",
+                chain_id = primary_chain,
+                providers = pool.entries.len(),
+                "HTTP RPC pool retained for workers (circuit breaker + failover active)"
+            );
+            let arc = Arc::new(pool);
+            // Spawn the background health loop (EWMA + drift + circuit rotation).
+            // The handle is intentionally not awaited — it runs until process exit.
+            let _health_loop = arc.clone().spawn_health_loop();
+            Some(arc)
+        }
         Ok(None) => {
             warn!(
                 event = "worker_orchestrator.rpc_absent",
                 chain_id = primary_chain,
-                "RPC_HTTP_<chain_id> not set; PoolSyncWorker will not start"
+                "RPC_HTTP_<chain_id> not set; block-workers without RPC will not start"
             );
             None
         }
@@ -170,24 +163,20 @@ async fn main() -> anyhow::Result<()> {
                 event = "worker_orchestrator.rpc_invalid",
                 chain_id = primary_chain,
                 error = %e,
-                "RPC_HTTP_<chain_id> value did not parse; PoolSyncWorker will not start"
+                "RPC_HTTP_<chain_id> value did not parse; block-workers will not start"
             );
             None
         }
     };
 
-    // Spawn orchestrator asynchronously. When no HTTP RPC is available we
-    // still start the orchestrator (RpcHealthWorker runs) but PoolSyncWorker
-    // is gated by Some(db) AND Some(rpc) — done by passing None for db when
-    // rpc is missing, so the existing internal gate skips cleanly.
-    let db_for_orch = if primary_rpc_http.is_some() { db_pool.clone() } else { None };
+    // Spawn orchestrator asynchronously. PoolSyncWorker is gated inside
+    // start_all on both Some(db) AND Some(rpc_pool) being present.
+    let db_for_orch = db_pool.clone();
     let redis_for_orch = redis_conn.clone();
-    // Clone — the original `primary_rpc_http` is reused below to plumb the
-    // V3 Provider into the per-chain scanner.
-    let primary_rpc_for_orch = primary_rpc_http.clone().unwrap_or_default();
+    let pool_for_orch = primary_rpc_pool.clone();
     tokio::spawn(async move {
         orchestrator
-            .start_all(primary_chain, primary_rpc_for_orch, db_for_orch, redis_for_orch)
+            .start_all(primary_chain, pool_for_orch, db_for_orch, redis_for_orch)
             .await;
     });
 
@@ -257,44 +246,31 @@ async fn main() -> anyhow::Result<()> {
     let triangular_db = db_pool.clone();
     let triangular_tc = trading_config.clone();
     let triangular_chain = primary_chain;
-    // V3 provider plumbing — mainnet only (mirrors scanner.rs:103-118).
-    // When a primary HTTP RPC URL is configured for chain_id=1 we attach an
-    // ethers Provider so the worker can run QuoterV2 multicalls for the
-    // long-tail V3-bearing cycles (PEPE/SHIB/MKR/COMP). Other chains and
-    // boots without RPC stay on the V2-only path; the worker counts the
-    // would-be V3 cycles in `triangular_v3_quote_failures` so the heartbeat
-    // surfaces the missing-provider state instead of silent skip.
-    let triangular_v3_provider: Option<std::sync::Arc<ethers::providers::Provider<ethers::providers::Http>>> =
-        if triangular_chain == 1 {
-            primary_rpc_http.as_ref().and_then(|url| {
-                match ethers::providers::Provider::<ethers::providers::Http>::try_from(url.clone()) {
-                    Ok(p) => {
-                        info!(event = "triangular_worker.v3_provider_ready", chain_id = triangular_chain);
-                        Some(std::sync::Arc::new(p))
-                    }
-                    Err(e) => {
-                        warn!(event = "triangular_worker.v3_provider_init_failed", chain_id = triangular_chain, error = %e);
-                        None
-                    }
-                }
-            })
+    // V3 pool plumbing — mainnet only. When the primary RPC pool is configured
+    // for chain_id=1 we attach it so the worker can run QuoterV2 multicalls
+    // for the long-tail V3-bearing cycles (PEPE/SHIB/MKR/COMP) with full
+    // circuit-breaker + failover protection. Other chains and boots without
+    // RPC stay on the V2-only path; the worker counts the would-be V3 cycles
+    // in `triangular_v3_quote_failures` so the heartbeat surfaces the missing
+    // pool state instead of silent skip.
+    let triangular_v3_pool: Option<Arc<HttpRpcPool>> = if triangular_chain == 1 {
+        if primary_rpc_pool.is_some() {
+            info!(event = "triangular_worker.v3_pool_ready", chain_id = triangular_chain);
         } else {
-            None
-        };
-    if triangular_v3_provider.is_none() {
-        info!(
-            event = "triangular_worker.v3_disabled",
-            chain_id = triangular_chain,
-            reason = if triangular_chain != 1 { "non-mainnet" } else { "no_rpc_http_url" },
-        );
-    }
+            info!(event = "triangular_worker.v3_disabled", chain_id = triangular_chain, reason = "no_rpc_http_url");
+        }
+        primary_rpc_pool.clone()
+    } else {
+        info!(event = "triangular_worker.v3_disabled", chain_id = triangular_chain, reason = "non-mainnet");
+        None
+    };
     tokio::spawn(async move {
         let mut tw = workers::triangular_worker::TriangularWorker::new(
             triangular_period_secs,
             triangular_chain,
         );
-        if let Some(p) = triangular_v3_provider {
-            tw = tw.with_v3_provider(p);
+        if let Some(pool) = triangular_v3_pool {
+            tw = tw.with_v3_provider(pool);
         }
         tw.run(triangular_redis, triangular_db, triangular_tc).await;
     });
@@ -356,46 +332,38 @@ async fn main() -> anyhow::Result<()> {
     let liquidation_db = db_pool.clone();
     let liquidation_tc = trading_config.clone();
     let liquidation_chain = primary_chain;
-    let liquidation_provider: Option<std::sync::Arc<ethers::providers::Provider<ethers::providers::Http>>> =
-        if liquidation_chain == 1 {
-            primary_rpc_http.as_ref().and_then(|url| {
-                match ethers::providers::Provider::<ethers::providers::Http>::try_from(url.clone()) {
-                    Ok(p) => {
-                        info!(event = "liquidation_worker.provider_ready", chain_id = liquidation_chain);
-                        Some(std::sync::Arc::new(p))
-                    }
-                    Err(e) => {
-                        warn!(event = "liquidation_worker.provider_init_failed", chain_id = liquidation_chain, error = %e);
-                        None
-                    }
-                }
-            })
+    // Pool plumbing — mainnet only. When the primary RPC pool is configured
+    // for chain_id=1 we attach it so the worker can run Aave V3 Multicall3
+    // reads with full circuit-breaker + failover protection. Other chains and
+    // boots without RPC stay no-op (skip_no_provider counter ticks each cycle
+    // so the heartbeat surfaces the missing pool state).
+    let liquidation_pool: Option<Arc<HttpRpcPool>> = if liquidation_chain == 1 {
+        if primary_rpc_pool.is_some() {
+            info!(event = "liquidation_worker.pool_ready", chain_id = liquidation_chain);
         } else {
-            None
-        };
-    if liquidation_provider.is_none() {
-        info!(
-            event = "liquidation_worker.provider_disabled",
-            chain_id = liquidation_chain,
-            reason = if liquidation_chain != 1 { "non-mainnet" } else { "no_rpc_http_url" },
-        );
-    }
+            info!(event = "liquidation_worker.provider_disabled", chain_id = liquidation_chain, reason = "no_rpc_http_url");
+        }
+        primary_rpc_pool.clone()
+    } else {
+        info!(event = "liquidation_worker.provider_disabled", chain_id = liquidation_chain, reason = "non-mainnet");
+        None
+    };
     tokio::spawn(async move {
         let mut lw = workers::liquidation_worker::LiquidationWorker::new(
             liquidation_period_secs,
             liquidation_chain,
         );
-        if let Some(p) = liquidation_provider {
-            lw = lw.with_provider(p);
+        if let Some(pool) = liquidation_pool {
+            lw = lw.with_provider(pool);
         }
         lw.run(liquidation_redis, liquidation_db, liquidation_tc).await;
     });
 
     // Spawn one scanner per chain. The primary chain (used by the orchestrator
-    // for V2 pool sync) also gets the resolved HTTP RPC URL so the scanner can
-    // build a Provider for V3 QuoterV2 batched calls. Other chains get None
-    // and fall through to V2-only enrichment (Sub-proyecto 2 is mainnet-only;
-    // multi-chain V3 lands in a future sub-project).
+    // for V2 pool sync) also gets the retained Arc<HttpRpcPool> so the scanner
+    // can run V3 QuoterV2 batched calls through the circuit-breaker + failover
+    // machinery. Other chains get None and fall through to V2-only enrichment
+    // (Sub-proyecto 2 is mainnet-only; multi-chain V3 lands in a future sub-project).
     for chain_id in enabled_chains {
         let ks = killswitch.clone();
         let cfg_c = cfg.clone();
@@ -403,13 +371,13 @@ async fn main() -> anyhow::Result<()> {
         let db_c = db_pool.clone();
         let dedup_c = dedup.clone();
         let tc_c = trading_config.clone();
-        let rpc_http = if chain_id == primary_chain {
-            primary_rpc_http.clone()
+        let rpc_pool_c = if chain_id == primary_chain {
+            primary_rpc_pool.clone()
         } else {
             None
         };
         tokio::spawn(async move {
-            if let Err(e) = scanner::run_chain(chain_id, cfg_c, ks, redis_c, db_c, dedup_c, tc_c, rpc_http).await {
+            if let Err(e) = scanner::run_chain(chain_id, cfg_c, ks, redis_c, db_c, dedup_c, tc_c, rpc_pool_c).await {
                 error!(event = "scanner.spawn_failed", chain_id, error = %e);
             }
         });

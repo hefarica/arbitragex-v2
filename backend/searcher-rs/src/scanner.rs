@@ -17,7 +17,6 @@ use crate::amm_math;
 use crate::counters::counters;
 use crate::reserves;
 use std::sync::atomic::Ordering;
-use ethers::providers::{Http, Provider};
 use ethers::types::{Address, H256};
 use futures_util::StreamExt;
 use rand::Rng;
@@ -27,7 +26,7 @@ use shared_rs::{
     config::AppConfig,
     killswitch::KillSwitchClient,
     metrics::OPPORTUNITIES_TOTAL,
-    rpc_failover::{WsEndpoint, WsRpcPool},
+    rpc_failover::{HttpRpcPool, WsEndpoint, WsRpcPool},
     trading_config::TradingConfigClient,
 };
 use sqlx::postgres::PgPool;
@@ -69,7 +68,7 @@ pub async fn run_chain(
     db: Option<PgPool>,
     dedup: Arc<Dedup>,
     trading_config: TradingConfigClient,
-    rpc_http_url: Option<String>,
+    rpc_http_pool: Option<Arc<HttpRpcPool>>,
 ) -> anyhow::Result<ScannerHandle> {
     // RPC failover discipline (G-RPC-1): build a multi-vendor pool from env.
     // CSV format `name=url,name=url`; bare URLs accepted for back-compat.
@@ -101,35 +100,25 @@ pub async fn run_chain(
         }
     };
 
-    // Build the optional HTTP provider for V3 quoting (Multicall3 + QuoterV2).
+    // Retain the optional HTTP RPC pool for V3 quoting (Multicall3 + QuoterV2).
     // V3 is mainnet-only for now; other chains fall through to V2-only enrichment.
-    let v3_provider: Option<Arc<Provider<Http>>> = if chain_id == 1 {
-        rpc_http_url.as_ref().and_then(|url| {
-            match Provider::<Http>::try_from(url.clone()) {
-                Ok(p) => {
-                    info!(event = "scanner.v3_provider_ready", chain_id);
-                    Some(Arc::new(p))
-                }
-                Err(e) => {
-                    warn!(event = "scanner.v3_provider_init_failed", chain_id, error = %e);
-                    None
-                }
-            }
-        })
+    // The pool carries circuit-breaker + failover; per-call provider selection
+    // happens inside `decode_and_score_tx` via `pool.with_retry(|p| ...)`.
+    let v3_rpc_pool: Option<Arc<HttpRpcPool>> = if chain_id == 1 {
+        if rpc_http_pool.is_some() {
+            info!(event = "scanner.v3_pool_ready", chain_id);
+        } else {
+            info!(event = "scanner.v3_disabled", chain_id, reason = "no_rpc_http_pool");
+        }
+        rpc_http_pool
     } else {
+        info!(event = "scanner.v3_disabled", chain_id, reason = "non-mainnet");
         None
     };
-    if v3_provider.is_none() {
-        info!(
-            event = "scanner.v3_disabled",
-            chain_id,
-            reason = if chain_id != 1 { "non-mainnet" } else { "no_rpc_http_url" },
-        );
-    }
 
     // Spawn the detection loop with the full endpoint list.
     tokio::spawn(detection_loop(
-        chain_id, pool.endpoints, cfg, killswitch, redis, db, dedup, trading_config, v3_provider,
+        chain_id, pool.endpoints, cfg, killswitch, redis, db, dedup, trading_config, v3_rpc_pool,
     ));
     Ok(ScannerHandle { chain_id })
 }
@@ -157,7 +146,7 @@ async fn detection_loop(
     db: Option<PgPool>,
     dedup: Arc<Dedup>,
     trading_config: TradingConfigClient,
-    v3_provider: Option<Arc<Provider<Http>>>,
+    v3_rpc_pool: Option<Arc<HttpRpcPool>>,
 ) {
     // Operator-selected mempool coverage. Read once at boot — re-deploy to
     // change. `Auto` is resolved per-endpoint inside `run_subscription` since
@@ -227,7 +216,7 @@ async fn detection_loop(
             }
         };
 
-        if let Err(e) = run_subscription(&client, &killswitch, &mut redis, db.as_ref(), &dedup, &trading_config, v3_provider.as_ref(), mempool_mode).await {
+        if let Err(e) = run_subscription(&client, &killswitch, &mut redis, db.as_ref(), &dedup, &trading_config, v3_rpc_pool.as_ref(), mempool_mode).await {
             error!(
                 event = "scanner.subscription_error",
                 chain_id,
@@ -256,7 +245,7 @@ async fn run_subscription(
     db: Option<&PgPool>,
     dedup: &Dedup,
     trading_config: &TradingConfigClient,
-    v3_provider: Option<&Arc<Provider<Http>>>,
+    v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
     mempool_mode: MempoolMode,
 ) -> anyhow::Result<()> {
     let _ = killswitch; // reserved: kill-switch only blocks downstream execution
@@ -309,7 +298,7 @@ async fn run_subscription(
                         allowlist_size = allowlist.len()
                     );
                     while let Some(tx) = stream.next().await {
-                        if let Err(e) = process_pending_tx(client, tx, redis, db, dedup, trading_config, v3_provider).await {
+                        if let Err(e) = process_pending_tx(client, tx, redis, db, dedup, trading_config, v3_rpc_pool).await {
                             debug!(event = "scanner.process_err", error = %e);
                         }
                     }
@@ -335,7 +324,7 @@ async fn run_subscription(
     info!(event = "scanner.subscribed", chain_id = client.chain_id, mode = "firehose");
 
     while let Some(hash) = stream.next().await {
-        if let Err(e) = process_pending(client, hash, redis, db, dedup, trading_config, v3_provider).await {
+        if let Err(e) = process_pending(client, hash, redis, db, dedup, trading_config, v3_rpc_pool).await {
             debug!(event = "scanner.process_err", hash = %hash, error = %e);
         }
     }
@@ -349,7 +338,7 @@ async fn process_pending(
     db: Option<&PgPool>,
     dedup: &Dedup,
     trading_config: &TradingConfigClient,
-    v3_provider: Option<&Arc<Provider<Http>>>,
+    v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
 ) -> anyhow::Result<()> {
     // Firehose path: dedup BEFORE get_tx so we don't pay the 26-CU
     // eth_getTransactionByHash for duplicates that the relay re-emits.
@@ -361,7 +350,7 @@ async fn process_pending(
         Some(t) => t,
         None => return Ok(()), // dropped from mempool before we got it
     };
-    decode_and_score_tx(client, tx, redis, db, trading_config, v3_provider).await
+    decode_and_score_tx(client, tx, redis, db, trading_config, v3_rpc_pool).await
 }
 
 async fn process_pending_tx(
@@ -371,7 +360,7 @@ async fn process_pending_tx(
     db: Option<&PgPool>,
     dedup: &Dedup,
     trading_config: &TradingConfigClient,
-    v3_provider: Option<&Arc<Provider<Http>>>,
+    v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
 ) -> anyhow::Result<()> {
     // Filtered path: tx body is already on hand from the WS event, so dedup
     // here by tx.hash collapses reorg / duplicate notifications. No CU cost
@@ -380,7 +369,7 @@ async fn process_pending_tx(
         return Ok(());
     }
     counters().pending_received.fetch_add(1, Ordering::Relaxed);
-    decode_and_score_tx(client, tx, redis, db, trading_config, v3_provider).await
+    decode_and_score_tx(client, tx, redis, db, trading_config, v3_rpc_pool).await
 }
 
 async fn decode_and_score_tx(
@@ -389,7 +378,7 @@ async fn decode_and_score_tx(
     redis: &mut redis::aio::ConnectionManager,
     db: Option<&PgPool>,
     trading_config: &TradingConfigClient,
-    v3_provider: Option<&Arc<Provider<Http>>>,
+    v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
 ) -> anyhow::Result<()> {
     let hash = tx.hash;
     let to = match tx.to {
@@ -595,14 +584,22 @@ async fn decode_and_score_tx(
                     }
                 }
 
-                // Batch the misses through Multicall3 if a provider is available.
+                // Batch the misses through Multicall3 if an RPC pool is available.
+                // with_retry picks the best healthy provider per call — circuit
+                // breaker and EWMA failover are engaged transparently.
                 if !to_quote.is_empty() {
-                    if let Some(provider) = v3_provider {
+                    if let Some(rpc_pool) = v3_rpc_pool {
                         let quoter = Address::from_str(V3_QUOTER_V2_MAINNET).unwrap();
                         let multicall = Address::from_str(V3_MULTICALL3_ADDR).unwrap();
-                        match amm_math::v3_quote_exact_in_multicall(
-                            provider.clone(), quoter, multicall, to_quote.clone(),
-                        ).await {
+                        let quotes_to_send = to_quote.clone();
+                        match rpc_pool.with_retry(|provider| {
+                            let reqs = quotes_to_send.clone();
+                            async move {
+                                amm_math::v3_quote_exact_in_multicall(
+                                    provider, quoter, multicall, reqs,
+                                ).await
+                            }
+                        }).await {
                             Ok(results) => {
                                 for r in &results {
                                     if r.success && !r.amount_out.is_zero() {
@@ -626,7 +623,7 @@ async fn decode_and_score_tx(
                             }
                         }
                     } else {
-                        debug!(event = "scanner.v3_provider_unavailable",
+                        debug!(event = "scanner.v3_pool_unavailable",
                                pair = format!("{}-{}", m_in.symbol, m_out.symbol),
                                pending_quotes = to_quote.len());
                     }

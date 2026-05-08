@@ -13,7 +13,9 @@ pub mod price_worker;
 pub mod rpc_health_worker;
 pub mod triangular_worker;
 
+use shared_rs::rpc_failover::HttpRpcPool;
 use sqlx::PgPool;
+use std::sync::Arc;
 use tracing::{error, info};
 
 /// Default PoolSyncWorker tick — aligned to Ethereum block time (12s) so we
@@ -61,7 +63,7 @@ impl WorkerOrchestrator {
     pub async fn start_all(
         &self,
         chain_id: u64,
-        rpc_http_url: String,
+        rpc_pool: Option<Arc<HttpRpcPool>>,
         db: Option<PgPool>,
         redis: redis::aio::ConnectionManager,
     ) {
@@ -73,7 +75,7 @@ impl WorkerOrchestrator {
             rpc_worker.start().await;
         });
 
-        if let Some(db_pool) = db {
+        if let (Some(db_pool), Some(pool)) = (db, rpc_pool) {
             let pool_sync_ms = read_interval_ms_env("POOL_SYNC_INTERVAL_MS", DEFAULT_POOL_SYNC_INTERVAL_MS);
             info!(
                 event = "worker_orchestrator.pool_sync_interval",
@@ -84,13 +86,13 @@ impl WorkerOrchestrator {
             let pool_worker = pool_sync_worker::PoolSyncWorker::new(pool_sync_ms, chain_id);
             let redis_clone = redis.clone();
             tokio::spawn(async move {
-                if let Err(e) = pool_worker.run(rpc_http_url, db_pool, redis_clone).await {
+                if let Err(e) = pool_worker.run(pool, db_pool, redis_clone).await {
                     error!(event = "pool_sync.terminated", chain_id, error = %e);
                 }
             });
             info!(event = "worker_orchestrator.pool_sync_started", chain_id);
         } else {
-            info!(event = "worker_orchestrator.pool_sync_skipped", reason = "no_db_pool");
+            info!(event = "worker_orchestrator.pool_sync_skipped", reason = "no_db_pool_or_rpc");
         }
     }
 }
