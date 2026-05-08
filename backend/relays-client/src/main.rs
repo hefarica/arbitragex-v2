@@ -243,6 +243,13 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // Redis connection manager for the pre-execute checklist.
+    // ConnectionManager is Arc-backed; each clone is a logical alias.
+    let redis_mgr_for_engine: redis::aio::ConnectionManager = {
+        let client = redis::Client::open(redis_url.clone())?;
+        client.get_connection_manager().await?
+    };
+
     let engine = Arc::new(SubmitEngine {
         signer: signer.clone(),
         provider: provider.clone(),
@@ -251,6 +258,8 @@ async fn main() -> anyhow::Result<()> {
         kill_switch: killswitch.clone(),
         paper_mode: paper_mode.clone(),
         cfg: cfg.clone(),
+        pg: db_pool_opt.clone(),
+        redis: redis_mgr_for_engine.clone(),
     });
 
     let state = Arc::new(AppState {
@@ -284,7 +293,7 @@ async fn main() -> anyhow::Result<()> {
         let redis_conn = redis_client.get_connection_manager().await?;
         let consumer = consumer::Consumer {
             redis: redis_conn,
-            pool,
+            pool: pool.clone(),
             engine: SubmitEngine {
                 signer: signer.clone(),
                 provider: provider.clone(),
@@ -293,6 +302,8 @@ async fn main() -> anyhow::Result<()> {
                 kill_switch: killswitch.clone(),
                 paper_mode: paper_mode.clone(),
                 cfg: cfg.clone(),
+                pg: Some(pool),
+                redis: redis_mgr_for_engine,
             },
             consumer_name: std::env::var("HOSTNAME").unwrap_or_else(|_| "relay-1".into()),
         };

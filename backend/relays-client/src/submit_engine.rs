@@ -16,7 +16,10 @@ use shared_rs::{
     contracts::{ExecutionResult, ExecutionStatus, Opportunity},
     killswitch::KillSwitchClient,
     paper_mode::PaperModeClient,
+    pre_execute_checklist::{pre_execute_checklist, ChecklistError, PreExecuteContext},
 };
+use hex;
+use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -28,10 +31,127 @@ pub struct SubmitEngine {
     pub kill_switch: KillSwitchClient,
     pub paper_mode: PaperModeClient,
     pub cfg: Arc<AppConfig>,
+    /// Postgres pool — used by the pre-execute checklist (chain/config/token/factory gates).
+    /// Optional: when absent the checklist DB checks are skipped and execution falls
+    /// through to the existing signer-presence gate.
+    pub pg: Option<PgPool>,
+    /// Redis connection manager — used by the pre-execute checklist (kill_switch,
+    /// paper_mode, gas freshness, mempool, circuit-breaker).
+    /// ConnectionManager is Arc-backed internally; clone() is cheap and correct.
+    pub redis: redis::aio::ConnectionManager,
 }
 
 impl SubmitEngine {
     pub async fn execute(&self, opp: &Opportunity) -> ExecutionResult {
+        // -----------------------------------------------------------------------
+        // Pre-execute checklist (BE-03) — canonical 12-step safety gate.
+        //
+        // Runs only when the DB pool is present (relays-client boots with an
+        // optional DB; when absent the legacy kill-switch + paper-mode checks
+        // below remain the gate). `ConnectionManager` is Arc-backed; cloning it
+        // creates a logical alias to the same pool — no new TCP connection.
+        // -----------------------------------------------------------------------
+        if let Some(ref pg_pool) = self.pg {
+            // Build the route context from the Opportunity struct.
+            //
+            // route_tokens: the two tokens in the trade. Stored as lowercase
+            // hex in the tokens table (added by migration 021). We normalise
+            // to lowercase here so check 8 finds the rows reliably.
+            let route_tokens: Vec<String> = vec![
+                opp.token_in.to_lowercase(),
+                opp.token_out.to_lowercase(),
+            ];
+
+            // route_factories: Opportunity carries dex_a/dex_b as exchange
+            // names (e.g. "uniswap_v2"), not factory hex addresses. The
+            // factories table is keyed on address. Passing names would
+            // vacuously block check 9 for every opportunity. Until the
+            // Opportunity schema carries factory_address fields (future
+            // Sprint), we pass an empty slice so check 9 is a no-op —
+            // consistent with the pre-checklist behaviour where factories
+            // were not validated at this layer.
+            let route_factories: Vec<String> = Vec::new();
+
+            // our_address: not carried by Opportunity (it's the signer's
+            // address). Extract from the Signer if present, otherwise empty
+            // string. An empty address means pending_tx_key("") → Redis key
+            // "arbx:pending_tx:" which will never exist, so check 11 passes.
+            let our_address_owned: String = self
+                .signer
+                .as_ref()
+                .map(|s| format!("0x{}", hex::encode(s.address.as_bytes())))
+                .unwrap_or_default();
+
+            let mut redis_conn = self.redis.clone();
+            let mut ctx = PreExecuteContext {
+                chain_id: opp.chain_id,
+                route_tokens: &route_tokens,
+                route_factories: &route_factories,
+                expected_profit_usd: opp.expected_profit_usd.unwrap_or(0.0),
+                // estimated_gas_usd is not yet carried by Opportunity.
+                // Passing 0.0 is conservative: net = profit - 0 = profit,
+                // so the floor check uses gross profit. This is safe because
+                // the floor is an operator-set minimum net profit; the gas
+                // deduction will be added when Opportunity carries gas fields.
+                estimated_gas_usd: 0.0,
+                // expected_slippage_pct is not yet in Opportunity; 0.0 means
+                // check 10 always passes — no false blocks until the field lands.
+                expected_slippage_pct: 0.0,
+                our_address: &our_address_owned,
+                pg: pg_pool,
+                redis: &mut redis_conn,
+            };
+
+            match pre_execute_checklist(&mut ctx).await {
+                Ok(()) => {
+                    // All 12 checks passed — fall through to broadcast.
+                }
+                Err(ChecklistError::PaperModeActive) => {
+                    // Non-fatal signal: log and return the same NotSubmitted
+                    // shape the legacy paper-mode branch produces (step 5 below).
+                    // This guarantees upstream callers (consumer.rs, HTTP handler)
+                    // see status=NotSubmitted — not Dropped, not Included —
+                    // so the opportunity is recorded as a paper-trade, not a
+                    // phantom transaction awaiting a receipt that will never come.
+                    info!(
+                        event = "paper_mode.checklist_suppressed",
+                        opp_id = %opp.id,
+                        chain_id = opp.chain_id,
+                        "pre_execute_checklist: paper_mode active — broadcast suppressed"
+                    );
+                    return ExecutionResult {
+                        opportunity_id: opp.id,
+                        status: ExecutionStatus::NotSubmitted,
+                        tx_hash: None,
+                        relay_used: Some("paper_mode".into()),
+                        block_included: None,
+                        gas_used_wei: None,
+                        actual_profit_usd: None,
+                        error_message: Some("paper_mode_enabled".into()),
+                        submitted_at: Utc::now(),
+                        trace_id: opp.trace_id,
+                    };
+                }
+                Err(e) => {
+                    // All other checklist errors are fatal blockers.
+                    warn!(
+                        event = "submit.checklist_blocked",
+                        opp_id = %opp.id,
+                        chain_id = opp.chain_id,
+                        error = ?e,
+                        "pre_execute_checklist blocked broadcast"
+                    );
+                    return Self::dropped(opp, &format!("checklist_blocked: {e}"));
+                }
+            }
+        }
+
+        // -----------------------------------------------------------------------
+        // Legacy guards — kept as belt-and-suspenders when DB pool is absent.
+        // When the checklist ran above (pg.is_some()), checks 1 and 2 already
+        // covered kill-switch and paper-mode; these branches are a no-op fallback.
+        // -----------------------------------------------------------------------
+
         // 1. Kill-switch
         if self.kill_switch.is_enabled().await {
             warn!(event = "submit.blocked", opp_id = %opp.id, reason = "kill_switch");

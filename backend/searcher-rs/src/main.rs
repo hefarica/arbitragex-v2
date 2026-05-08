@@ -14,7 +14,6 @@ mod counters;
 mod dedup;
 mod patterns;
 mod persistence;
-mod pre_execute_checklist;
 mod publisher;
 mod scanner;
 mod workers;

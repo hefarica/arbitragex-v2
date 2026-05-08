@@ -24,6 +24,7 @@ prometheus.workspace = true
 once_cell.workspace = true
 redis.workspace = true
 reqwest.workspace = true
+sqlx.workspace = true
 jsonschema.workspace = true
 ethers.workspace = true
 
