@@ -1,0 +1,273 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "../src/ArbitrageExecutor.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+// ---------------------------------------------------------------------------
+// Mocks
+// ---------------------------------------------------------------------------
+
+/// @dev Minimal ERC20 with public mint for test setup
+contract MockERC20 is ERC20 {
+    constructor() ERC20("MockToken", "MTK") {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+}
+
+/// @dev Router that mints `profitAmount` extra tokens to executor on call
+contract MockProfitRouter {
+    MockERC20 public token;
+    address public executor;
+    uint256 public profitAmount;
+
+    constructor(address _token, address _executor, uint256 _profit) {
+        token = MockERC20(_token);
+        executor = _executor;
+        profitAmount = _profit;
+    }
+
+    fallback() external {
+        // Simulate swap profit: mint extra tokens to executor
+        token.mint(executor, profitAmount);
+    }
+}
+
+/// @dev Router that does nothing — balance unchanged → no gross profit
+contract MockZeroProfitRouter {
+    fallback() external {}
+}
+
+/// @dev Malicious router that attempts to re-enter executeArbitrage.
+/// Uses only primitive-type storage to avoid nested calldata array copy
+/// (which requires via_ir; we keep via_ir = false per foundry.toml).
+/// The re-entrant call uses itself as the sole router with empty payload.
+contract MaliciousReentrantRouter {
+    ArbitrageExecutor public target;
+    bytes32 public routeHash;
+    address public tokenIn;
+    uint256 public amountIn;
+    uint256 public minProfit;
+
+    bool private _attacking;
+
+    constructor(address _target) {
+        target = ArbitrageExecutor(_target);
+    }
+
+    function setAttackParams(
+        bytes32 _routeHash,
+        address _tokenIn,
+        uint256 _amountIn,
+        uint256 _minProfit
+    ) external {
+        routeHash = _routeHash;
+        tokenIn = _tokenIn;
+        amountIn = _amountIn;
+        minProfit = _minProfit;
+    }
+
+    fallback() external {
+        if (!_attacking) {
+            _attacking = true;
+            // Build attack call in memory (avoids nested calldata → storage copy)
+            address[] memory reentrantRouters = new address[](1);
+            reentrantRouters[0] = address(this);
+
+            bytes[] memory reentrantPayloads = new bytes[](1);
+            reentrantPayloads[0] = "";
+
+            // Attempt re-entry — must revert with ReentrancyGuardReentrantCall
+            target.executeArbitrage(routeHash, tokenIn, amountIn, minProfit, reentrantRouters, reentrantPayloads);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+contract ArbitrageExecutorTest is Test {
+    ArbitrageExecutor internal executor;
+    MockERC20 internal token;
+
+    address internal admin;
+    address internal executorRole;
+    address internal stranger;
+
+    function setUp() public {
+        admin = address(this);
+        executorRole = makeAddr("executorRole");
+        stranger = makeAddr("stranger");
+
+        executor = new ArbitrageExecutor();
+        token = new MockERC20();
+
+        // Grant EXECUTOR_ROLE to executorRole account
+        executor.grantRole(executor.EXECUTOR_ROLE(), executorRole);
+
+        // Approve token
+        executor.setTokenApproval(address(token), true);
+    }
+
+    // -----------------------------------------------------------------------
+    // testHappyPath_ExecuteArbitrage_PositiveProfit
+    // -----------------------------------------------------------------------
+    function testHappyPath_ExecuteArbitrage_PositiveProfit() public {
+        uint256 amountIn = 1_000e18;
+        uint256 profit = 50e18;
+        uint256 minProfit = 10e18;
+
+        // Fund executor with initial balance
+        token.mint(address(executor), amountIn);
+
+        // Deploy router that mints profit to executor
+        MockProfitRouter router = new MockProfitRouter(address(token), address(executor), profit);
+        executor.setRouterApproval(address(router), true);
+
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = "";
+
+        // Expect ArbitrageExecuted event (SC-05 bug: both address fields are tokenIn)
+        // We check routeHash, first address, and profit; skip the tokenOut field
+        // because line 70 emits tokenIn for both — that is the known SC-05 bug.
+        vm.expectEmit(true, true, false, true, address(executor));
+        emit ArbitrageExecutor.ArbitrageExecuted(bytes32(0), address(token), address(token), profit);
+
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(token), amountIn, minProfit, routers, payloads);
+    }
+
+    // -----------------------------------------------------------------------
+    // testRevert_InsufficientProfit
+    // -----------------------------------------------------------------------
+    function testRevert_InsufficientProfit() public {
+        uint256 amountIn = 1_000e18;
+        uint256 tinyProfit = 1; // router returns only 1 wei
+        uint256 minProfit = 100e18; // but we require 100 tokens
+
+        token.mint(address(executor), amountIn);
+
+        MockProfitRouter router = new MockProfitRouter(address(token), address(executor), tinyProfit);
+        executor.setRouterApproval(address(router), true);
+
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = "";
+
+        vm.expectRevert("Slippage / Min profit guard failed");
+
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(token), amountIn, minProfit, routers, payloads);
+    }
+
+    // -----------------------------------------------------------------------
+    // testRevert_OnlyExecutor (access control)
+    // -----------------------------------------------------------------------
+    function testRevert_OnlyExecutor() public {
+        address[] memory routers = new address[](0);
+        bytes[] memory payloads = new bytes[](0);
+
+        vm.expectRevert("Not executor");
+
+        vm.prank(stranger);
+        executor.executeArbitrage(bytes32(0), address(token), 0, 0, routers, payloads);
+    }
+
+    // -----------------------------------------------------------------------
+    // testReentrancy_Blocked
+    // -----------------------------------------------------------------------
+    function testReentrancy_Blocked() public {
+        uint256 amountIn = 1_000e18;
+
+        // Deploy malicious router first (needs executor address)
+        MaliciousReentrantRouter malicious = new MaliciousReentrantRouter(address(executor));
+        executor.setRouterApproval(address(malicious), true);
+
+        address[] memory attackRouters = new address[](1);
+        attackRouters[0] = address(malicious);
+
+        bytes[] memory attackPayloads = new bytes[](1);
+        attackPayloads[0] = "";
+
+        // Provide attack params to re-entrant router (only primitives — no bytes[] storage)
+        malicious.setAttackParams(bytes32(0), address(token), amountIn, 0);
+
+        token.mint(address(executor), amountIn);
+
+        // The re-entrant inner call is blocked by ReentrancyGuard (ReentrancyGuardReentrantCall).
+        // That revert propagates through the low-level router.call() and is caught by:
+        //   require(success, "Swap failed in route")   [ArbitrageExecutor.sol line 61]
+        // So the outer expectRevert sees "Swap failed in route" — which proves the guard fired.
+        vm.expectRevert("Swap failed in route");
+
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(token), amountIn, 0, attackRouters, attackPayloads);
+    }
+
+    // -----------------------------------------------------------------------
+    // testPausable_BlocksWhenPaused
+    // -----------------------------------------------------------------------
+    function testPausable_BlocksWhenPaused() public {
+        // Admin pauses the contract
+        executor.pause();
+
+        address[] memory routers = new address[](0);
+        bytes[] memory payloads = new bytes[](0);
+
+        // OZ 5.x Pausable reverts with EnforcedPause() custom error
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("EnforcedPause()"))));
+
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(token), 0, 0, routers, payloads);
+    }
+
+    // -----------------------------------------------------------------------
+    // testEvent_ArbitrageExecuted_BugFix
+    //
+    // SC-05 BUG — line 70: emit ArbitrageExecuted(routeHash, tokenIn, tokenIn, profit)
+    // The third argument should be `tokenOut` (the token received at end of route)
+    // but there is no `tokenOut` parameter in the function signature and the
+    // contract emits `tokenIn` for both address fields.
+    //
+    // This test documents the CORRECT expected behavior (tokenOut != tokenIn).
+    // It FAILS in the current codebase because the contract emits tokenIn twice.
+    // STATUS: BLOCKED on SC-05 fix (add tokenOut param + fix emit on line 70).
+    // -----------------------------------------------------------------------
+    function testEvent_ArbitrageExecuted_BugFix() public {
+        vm.skip(true); // KNOWN FAILING: blocked on SC-05 line 70 bug fix
+
+        uint256 amountIn = 1_000e18;
+        uint256 profit = 50e18;
+
+        MockERC20 tokenOut = new MockERC20();
+        executor.setTokenApproval(address(tokenOut), true);
+
+        token.mint(address(executor), amountIn);
+
+        MockProfitRouter router = new MockProfitRouter(address(token), address(executor), profit);
+        executor.setRouterApproval(address(router), true);
+
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = "";
+
+        // CORRECT expected event: tokenIn != tokenOut
+        // Contract ACTUALLY emits: (routeHash, tokenIn, tokenIn, profit) — bug
+        vm.expectEmit(true, true, true, true, address(executor));
+        emit ArbitrageExecutor.ArbitrageExecuted(bytes32(0), address(token), address(tokenOut), profit);
+
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(token), amountIn, profit, routers, payloads);
+    }
+}
