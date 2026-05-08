@@ -65,7 +65,7 @@ const app = express();
 // ==========================================
 // IMPORT DEFI ROUTER & WEBSOCKET
 // ==========================================
-import { defiRouter } from "./routes/defi.js";
+import { mountDefi } from "./routes/defi.js";
 import { buildTradingConfigRouter } from "./routes/trading-config.js";
 import { buildOperationsRouter } from "./routes/operations.js";
 import { buildStrategyCatalogRouter } from "./routes/strategy-catalog.js";
@@ -75,7 +75,7 @@ import { mountPools } from "./routes/pools.js";
 import { setupWebSocketGateway, broadcastOpportunity } from "./websocket.js";
 import { createServer } from "http";
 
-app.use("/api", defiRouter);
+// defi routes mounted later (after `pool` and `logger` are constructed). See mountDefi() below.
 
 app.disable("x-powered-by");
 app.use(express.json({ limit: "256kb" }));
@@ -359,6 +359,7 @@ function requireDbPool(): pg.Pool | null {
 mountOpportunitiesLive(app, pool, logger);
 mountDexes(app, { pool, logger });
 mountPools(app, { pool, logger });
+mountDefi(app, { pool, logger });
 
 // Scanner heartbeat snapshot — read latest pipeline counters from Redis.
 // Persisted by searcher-rs::workers::heartbeat_worker every period (default
