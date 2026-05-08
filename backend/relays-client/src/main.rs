@@ -25,7 +25,6 @@ use axum::{
     routing::post,
     Json, Router,
 };
-use ethers::prelude::*;
 use shared_rs::{
     config::{AppConfig, require_env},
     contracts::{NotImplementedPayload, Opportunity},
@@ -107,29 +106,36 @@ async fn main() -> anyhow::Result<()> {
     // each provider's chain_id at boot, exposes Prometheus metrics, drift
     // detection and per-provider circuit breakers via the spawned health loop.
     //
-    // For backwards compat with single-vendor onboarding the pool accepts a
-    // bare URL (named "primary"). The selected primary feeds the engine; a
-    // later pass (Sprint 5, G-PEC-5) will upgrade per-call read sites to
-    // `pool.with_retry(...)` for sub-second failover on individual ops.
-    let provider: Option<Arc<Provider<Http>>> = match HttpRpcPool::from_env(chain_id).await {
+    // BE-02 Step 1: the pool is stored as Arc<HttpRpcPool> and passed directly
+    // into SubmitEngine + NonceManager. All RPC call sites (nonce fetch via
+    // NonceManager::fetch, provider selection for build_and_sign and
+    // wait_for_inclusion) now route through the pool so the circuit breaker
+    // and EWMA-ranked failover fire on production traffic.
+    //
+    // spawn_health_loop is called exactly ONCE here. The JoinHandle is held
+    // for the lifetime of main so it is not dropped prematurely.
+    let rpc_pool: Option<Arc<HttpRpcPool>> = match HttpRpcPool::from_env(chain_id).await {
         Ok(Some(pool)) => {
             let pool = Arc::new(pool);
+            // Health loop must start before the first pick(); kept alive via
+            // the binding in `main` scope.
             let _health_task = pool.spawn_health_loop();
+            // Log the initial best-pick at boot so the operator can confirm
+            // the pool is healthy before the first real submission.
             match pool.pick() {
                 Ok(entry) => {
                     info!(
                         event = "rpc_pool.primary_selected",
                         provider = %entry.name,
                         chain_id,
-                        "relays-client primary RPC selected"
+                        "relays-client primary RPC selected via pool"
                     );
-                    Some(entry.provider.clone())
                 }
                 Err(e) => {
                     warn!(event = "rpc_pool.no_healthy", error = %e);
-                    None
                 }
             }
+            Some(pool)
         }
         Ok(None) => {
             warn!(
@@ -150,7 +156,7 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    let nonce = provider.clone().map(|p| Arc::new(NonceManager::new(p)));
+    let nonce = rpc_pool.clone().map(|p| Arc::new(NonceManager::new(p)));
 
     // DB pool — required for reading the operator-owned relay catalog (migration
     // 013). If DB is down at boot we still start the service and expose /health
@@ -252,7 +258,7 @@ async fn main() -> anyhow::Result<()> {
 
     let engine = Arc::new(SubmitEngine {
         signer: signer.clone(),
-        provider: provider.clone(),
+        rpc_pool: rpc_pool.clone(),
         nonce: nonce.clone(),
         flashbots: flashbots.clone(),
         kill_switch: killswitch.clone(),
@@ -264,7 +270,7 @@ async fn main() -> anyhow::Result<()> {
 
     let state = Arc::new(AppState {
         engine: engine.clone(),
-        has_signer: signer.is_some() && provider.is_some(),
+        has_signer: signer.is_some() && rpc_pool.is_some(),
         env: cfg.system.env.clone(),
     });
 
@@ -284,25 +290,25 @@ async fn main() -> anyhow::Result<()> {
         "relays-client listening"
     );
 
-    // Consumer spawns only when signer + provider + DB pool are all present.
+    // Consumer spawns only when signer + rpc_pool + DB pool are all present.
     // We reuse the pool opened above for the relay catalog lookup, so we don't
     // double up connections.
-    if signer.is_some() && provider.is_some() && db_pool_opt.is_some() {
-        let pool = db_pool_opt.clone().unwrap();
+    if signer.is_some() && rpc_pool.is_some() && db_pool_opt.is_some() {
+        let pg_pool = db_pool_opt.clone().unwrap();
         let redis_client = redis::Client::open(redis_url.clone())?;
         let redis_conn = redis_client.get_connection_manager().await?;
         let consumer = consumer::Consumer {
             redis: redis_conn,
-            pool: pool.clone(),
+            pool: pg_pool.clone(),
             engine: SubmitEngine {
                 signer: signer.clone(),
-                provider: provider.clone(),
+                rpc_pool: rpc_pool.clone(),
                 nonce,
                 flashbots,
                 kill_switch: killswitch.clone(),
                 paper_mode: paper_mode.clone(),
                 cfg: cfg.clone(),
-                pg: Some(pool),
+                pg: Some(pg_pool),
                 redis: redis_mgr_for_engine,
             },
             consumer_name: std::env::var("HOSTNAME").unwrap_or_else(|_| "relay-1".into()),
@@ -317,7 +323,7 @@ async fn main() -> anyhow::Result<()> {
         info!(
             event = "relays_consumer.skipped",
             has_signer = signer.is_some(),
-            has_provider = provider.is_some(),
+            has_rpc_pool = rpc_pool.is_some(),
             has_db = db_pool_opt.is_some(),
             "consumer not spawned — prerequisites missing (service stays up, /execute 501)"
         );

@@ -1,22 +1,33 @@
 //! Nonce manager.
 //! In-memory `(chain_id, address) → next_nonce` with a Semaphore per-address
-//! to serialize increments. On first use refreshes from RPC; on each submit,
-//! increments locally. On nonce mismatch, caller triggers refresh.
+//! to serialize increments. On first use refreshes from RPC via the pool's
+//! `with_retry` — so circuit breaker + EWMA failover fire on RPC errors.
+//! On each submit, increments locally. On nonce mismatch, caller triggers
+//! refresh.
+//!
+//! NOTE: `with_retry` retries on a *different* provider on the first failure.
+//! For `eth_getTransactionCount` this is safe: the returned value is the
+//! on-chain pending nonce, identical regardless of which healthy provider
+//! responds. The local cache then takes over for all subsequent increments
+//! within the same epoch, so no second RPC call fires until a refresh.
 
 use anyhow::{Context, Result};
 use ethers::prelude::*;
+use shared_rs::rpc_failover::HttpRpcPool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 pub struct NonceManager {
-    provider: Arc<Provider<Http>>,
+    /// Shared pool — routes `eth_getTransactionCount` through `with_retry` so
+    /// the circuit breaker and EWMA-ranked failover activate on RPC errors.
+    pool: Arc<HttpRpcPool>,
     state: Arc<Mutex<HashMap<(u64, Address), u64>>>,
 }
 
 impl NonceManager {
-    pub fn new(provider: Arc<Provider<Http>>) -> Self {
-        Self { provider, state: Arc::new(Mutex::new(HashMap::new())) }
+    pub fn new(pool: Arc<HttpRpcPool>) -> Self {
+        Self { pool, state: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     /// Returns the next nonce for this (chain, address) and increments the local counter.
@@ -43,9 +54,21 @@ impl NonceManager {
         Ok(n)
     }
 
+    /// Fetch the on-chain pending nonce via `pool.with_retry`.
+    ///
+    /// Retry semantics: on the first provider failure the pool tries the next
+    /// best EWMA-ranked provider. If both fail it returns `PoolError::AllUnhealthy`
+    /// which propagates as an `anyhow::Error` to the caller.
     async fn fetch(&self, addr: Address) -> Result<u64> {
-        let count = self.provider.get_transaction_count(addr, None)
-            .await.context("eth_getTransactionCount")?;
+        let count = self.pool
+            .with_retry(|provider| async move {
+                provider
+                    .get_transaction_count(addr, None)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("eth_getTransactionCount: {e}"))
+            })
+            .await
+            .context("nonce_manager.fetch via rpc_pool")?;
         Ok(count.as_u64())
     }
 }

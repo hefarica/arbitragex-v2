@@ -17,6 +17,7 @@ use shared_rs::{
     killswitch::KillSwitchClient,
     paper_mode::PaperModeClient,
     pre_execute_checklist::{pre_execute_checklist, ChecklistError, PreExecuteContext},
+    rpc_failover::HttpRpcPool,
 };
 use hex;
 use sqlx::PgPool;
@@ -25,7 +26,15 @@ use tracing::{info, warn};
 
 pub struct SubmitEngine {
     pub signer: Option<Arc<Signer>>,
-    pub provider: Option<Arc<Provider<Http>>>,
+    /// RPC pool — routes `build_and_sign` and `wait_for_inclusion` provider
+    /// references through EWMA-ranked selection. `with_retry` is used for
+    /// nonce fetches (in NonceManager); `pick()` is used for the single-call
+    /// sites in bundle_builder and tracker where retry is handled at a higher
+    /// level (the bundle is rebuilt on a fresh call if submission fails).
+    ///
+    /// `None` when no `RPC_HTTP_<chain_id>` is configured — engine stays in
+    /// 501 / NotSubmitted mode.
+    pub rpc_pool: Option<Arc<HttpRpcPool>>,
     pub nonce: Option<Arc<NonceManager>>,
     pub flashbots: Option<Arc<FlashbotsClient>>,
     pub kill_switch: KillSwitchClient,
@@ -162,8 +171,25 @@ impl SubmitEngine {
         let Some(signer) = self.signer.clone() else {
             return Self::not_submitted(opp, "signer_not_configured");
         };
-        let Some(provider) = self.provider.clone() else {
+        // Pick the best available provider from the pool for this execution.
+        // `pick()` returns the lowest-EWMA-latency Healthy (or Degraded) entry.
+        // If all providers are Open (circuit-broken), we return NotSubmitted
+        // gracefully — the health loop will rotate the circuit back to half-open
+        // after CB_OPEN_DURATION. NEVER panic on AllUnhealthy.
+        let Some(rpc_pool) = self.rpc_pool.as_ref() else {
             return Self::not_submitted(opp, "rpc_not_configured");
+        };
+        let provider: Arc<Provider<Http>> = match rpc_pool.pick() {
+            Ok(entry) => entry.provider.clone(),
+            Err(e) => {
+                warn!(
+                    event = "submit.rpc_pool_exhausted",
+                    opp_id = %opp.id,
+                    error = %e,
+                    "all RPC providers unhealthy — cannot submit"
+                );
+                return Self::not_submitted(opp, &format!("rpc_pool_all_unhealthy: {e}"));
+            }
         };
         let Some(nonce) = self.nonce.clone() else {
             return Self::not_submitted(opp, "nonce_manager_not_initialized");
