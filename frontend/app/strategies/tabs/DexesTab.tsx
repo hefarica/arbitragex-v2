@@ -88,6 +88,18 @@ function fmtCount(n: number | null | undefined): string {
   return String(n);
 }
 
+/**
+ * R8 fail-honest: pool_sync_worker (Phase 3) has not run yet.
+ * SQL COUNT(*) returns 0 — a true integer — but the semantic meaning is
+ * "not yet indexed", NOT "verified zero pools". Render em-dash until >0.
+ * TODO(Phase 3): remove this guard once pool_sync_worker ships and
+ * pool_count can be a genuine measurement.
+ */
+function fmtPoolCount(n: number | null | undefined): { value: string; muted: boolean } {
+  if (n == null || n === 0) return { value: DASH, muted: true };
+  return { value: String(n), muted: false };
+}
+
 // Protocol badge colours — tuned for dark dashboards.
 const PROTOCOL_CLASSES: Record<string, string> = {
   UNISWAP_V3: "bg-violet-500/15 text-violet-300 border-violet-500/40",
@@ -372,8 +384,8 @@ export function DexesTab({ config, onSaved, adminToken, actor }: Props) {
                         <td className="px-3 py-2.5">
                           <ProtocolBadge type={dex.protocol_type} />
                         </td>
-                        <td className="px-3 py-2.5 text-right tabular-nums">
-                          {fmtCount(dex.pool_count)}
+                        <td className={`px-3 py-2.5 text-right tabular-nums${fmtPoolCount(dex.pool_count).muted ? " text-slate-400" : ""}`}>
+                          {fmtPoolCount(dex.pool_count).value}
                         </td>
                         <td className="px-3 py-2.5 text-right tabular-nums">
                           {fmtCount(dex.factory_count)}
