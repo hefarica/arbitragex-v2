@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 044 (v2): DefiLlama-driven DEX catalog re-seed
+-- Migration 044 (v3): DefiLlama-driven DEX catalog re-seed
 -- CORRECTED METHODOLOGY: protocol-aggregated TVL/volume, not version-sliced.
 --
 -- Source: https://api.llama.fi/protocol/{slug} (protocol-aggregated, 2026-05-07)
@@ -7,24 +7,48 @@
 --         TVL across ALL versions of that protocol on that chain (V2+V3+V4
 --         combined). This is the correct denominator for ranking decisions.
 --
--- Filter bar (R8 fail-honest — fewer rows if fewer pass, no padding):
---   vol_24h_usd >= $10M  (ethereum, arbitrum, bsc)
---   vol_24h_usd >=  $3M  (optimism, base, polygon)
---   tvl_usd     >= $20M  (ethereum, arbitrum, bsc)
---   tvl_usd     >= $10M  (optimism, base, polygon)
+-- Filter bar v3 (R8 fail-honest — fewer rows if fewer pass, no padding):
+--   vol_24h_usd >= $10M  (ethereum, arbitrum, bsc — major chains)
+--   vol_24h_usd >=  $3M  (optimism, base, polygon — L2s)
+--   tvl_usd     >= $40M  (ethereum, arbitrum, bsc — major chains)
+--   tvl_usd     >= $10M  (optimism, base, polygon — L2s)
 --   audit_links non-empty or protocol is blue-chip with long track record
+--
+-- TVL floor on major chains raised from $20M to $40M (economics-validator v3
+-- condition). Rationale: a $100k trade vs $20M TVL = 0.5% impact, which
+-- exhausts the full slippage budget before LP fee + gas + flash loan fee.
+-- $40M floor provides the 2x headroom needed for net-positive execution.
+-- Impact: Camelot V3 ARB ($20M TVL) is now is_active=false.
 --
 -- Cross-validation sources for aggregated TVL:
 --   - DefiLlama /protocol/{slug} currentChainTvls
 --   - CoinGecko DeFi rankings
 --   - DeFiLlama /overview/dexs?excludeTotalDataChart=true (cross-check)
 --
--- Corrections vs v1 (version-sliced bug):
---   Quickswap:  $4.2M → $451M aggregated TVL (Polygon dominant DEX)
---   Velodrome:  $9.4M → $250-400M aggregated TVL (Optimism dominant DEX)
+-- Corrections vs v2 (validator conditions applied in v3):
+--   CRITICAL: Fluid DEX ETH factory 0x91716c4eda1fb55e84b9b7b9f3517e7e6f6f47fa
+--             REMOVED entirely — confirmed EOA via 3 independent RPCs + Blockscout.
+--             No bytecode, no transaction history. Not a contract. Keeping a
+--             deactivated row is a land mine: any operator or future agent could
+--             flip is_active=true believing it is merely unverified. Removal is
+--             the only safe posture. Real factory address must be sourced from
+--             https://github.com/Instadapp/fluid-contracts-public before re-seeding.
+--   HIGH:    Balancer V2/V3 vault comment corrected — V2 (0xBA12...) and
+--             V3 (0xbA13...) are DIFFERENT contracts on Ethereum with different
+--             bytecode and different ABIs. Comment in v2 claiming "same address
+--             on most chains" was wrong for ETH. Fixed below.
+--   HIGH:    Curve stable factory ETH (0xB9fC157394Af804a3578134A6585C0dc9cc990d4)
+--             is the NG variant. Pool enumeration uses pool_list(uint256 index),
+--             NOT pool_count(). Calling pool_count() reverts silently on NG.
+--             Documented here so ABI mapping in searcher-rs uses correct selector.
+--   MAJOR:   TVL floor major chains $20M -> $40M (economics-validator).
+--             Camelot V3 ARB (TVL $20M) now is_active=false.
+--
+-- Corrections vs v1 (version-sliced bug, carried forward from v2):
+--   Quickswap:  $4.2M -> $451M aggregated TVL (Polygon dominant DEX)
+--   Velodrome:  $9.4M -> $250-400M aggregated TVL (Optimism dominant DEX)
 --   Uniswap ranking: V3 > V4 restored (V3 still ~2.3x V4 daily volume)
 --   Aerodrome/PancakeSwap Base: corrected ratios
---   Fluid DEX: added DexFactory address (governance-permissioned but mappable)
 --   Uniswap V4 factory addresses: corrected (3 addresses had last-byte errors)
 --
 -- Idempotent: ON CONFLICT DO UPDATE / DO NOTHING on every write.
@@ -39,7 +63,7 @@ BEGIN;
 -- ────────────────────────────────────────────────────────────────────────────
 
 -- 0a. Add is_active to factories if not yet present (added here in v1,
---     guarded with IF NOT EXISTS for idempotency on fresh runs of v2).
+--     guarded with IF NOT EXISTS for idempotency on fresh runs of v3).
 ALTER TABLE factories
     ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 
@@ -89,6 +113,15 @@ WHERE address IN (
     '0x9a489505a00ce272eaa5e07dba6491314cae3796'   -- V4 Optimism wrong (was ...3796, correct address from docs)
 );
 
+-- STEP 1 ADDENDUM (v3 — CRITICAL): Deactivate the Fluid ETH EOA if it was
+-- somehow inserted by a previous run of v2. The address
+-- 0x91716c4eda1fb55e84b9b7b9f3517e7e6f6f47fa is NOT a contract (EOA, no
+-- bytecode confirmed via 3 independent RPCs + Blockscout). Deactivating here
+-- before the STEP 4 block (which no longer INSERTs it) provides defense-in-
+-- depth in case v2 ran on this database before v3 was applied.
+UPDATE factories SET is_active = FALSE
+WHERE address = '0x91716c4eda1fb55e84b9b7b9f3517e7e6f6f47fa';
+
 -- ────────────────────────────────────────────────────────────────────────────
 -- STEP 2: UPSERT dex rows with corrected protocol-aggregated metrics.
 --
@@ -119,6 +152,9 @@ WHERE name = 'UniswapV3';
 -- Curve Finance: stablecoin/LST specialist. Aggregated across all versions.
 -- TVL ETH-dominant (~$1.4B); multi-chain presence on ARB/OP/Polygon/Base.
 -- Vol ~$130M/day (stable swaps + crvUSD minting).
+-- ABI NOTE (ETH stable factory — see STEP 4 comment block for Curve):
+--   Curve ETH stable factory 0xB9fC157394Af804a3578134A6585C0dc9cc990d4 is
+--   the NG variant. Pool enumeration: pool_list(uint256), NOT pool_count().
 UPDATE dexes SET
     volume_24h_usd = 130000000.00,
     tvl_usd        = 1750000000.00,
@@ -126,8 +162,17 @@ UPDATE dexes SET
 WHERE name = 'Curve';
 
 -- Balancer: weighted pools + boosted pools. Ethereum + ARB + OP + Polygon.
--- TVL ~$550M aggregated (Balancer V2 + V3 shares same vault address on most chains).
--- Note: Balancer V2 vault = Balancer V3 vault on ETH/ARB/OP/Polygon (same address).
+-- TVL ~$550M aggregated (Balancer V2 + V3 are separate contracts; see note).
+--
+-- IMPORTANT — Balancer V2 vs V3 on Ethereum (corrected from v2 comment):
+--   Balancer V2 vault: 0xBA12222222228d8Ba445958a75a0704d566BF2C8
+--     Used on ETH, ARB, OP, Polygon, Base. ABI: joinPool/exitPool/swap.
+--   Balancer V3 vault: 0xbA1333333333a1BA1108E8412f11850A5C319bA9
+--     DIFFERENT contract, Ethereum only. Different bytecode AND different ABI
+--     (V3 uses router patterns + ext patterns). The two vaults are NOT
+--     interchangeable and must NOT share factory rows or ABI mappings.
+--   DO NOT mix factory rows or ABI bindings for V2 and V3 Balancer vaults.
+--
 -- vol_24h ~$40M (lower than AMM peers due to boosted pool composition model).
 UPDATE dexes SET
     volume_24h_usd = 40000000.00,
@@ -152,21 +197,24 @@ UPDATE dexes SET
     is_active      = TRUE
 WHERE name = 'PancakeSwap V2';
 
--- Camelot V3 (Arbitrum native): vol ~$5-8M/day, TVL ~$15-25M.
--- Borderline on vol but above $3M L2 threshold; qualifies for ARB inclusion.
--- Note: factory address (0x1a3c9b1d...) was deactivated as UNVERIFIED in STEP 1.
--- Operator must verify bytecode on Arbiscan before re-enabling factory row.
+-- Camelot V3 (Arbitrum native): TVL $20M, which is BELOW the new $40M floor
+-- for major chains (ETH/BSC/ARB). Setting is_active=FALSE per economics-
+-- validator v3 condition. A $100k trade vs $20M TVL = 0.5% impact, exhausting
+-- the full slippage budget before LP fee + gas. Uneconomical for ArbitrageX.
+-- Operator may re-enable if TVL sustainably exceeds $40M.
+-- Note: factory address (0x1a3c9b1d...) also remains deactivated (STEP 1).
 UPDATE dexes SET
     volume_24h_usd = 6000000.00,
     tvl_usd        = 20000000.00,
-    is_active      = TRUE
+    is_active      = FALSE
 WHERE name = 'Camelot V3';
 
--- Velodrome V2 (Optimism Solidly fork): KEY CORRECTION.
+-- Velodrome V2 (Optimism Solidly fork): KEY CORRECTION (carried from v2).
 -- v1 used version-sliced data showing $9.4M TVL — that was the V2-specific slice.
 -- Protocol-aggregated (V2 + Slipstream CL combined) TVL: ~$250-350M.
 -- Velodrome is the DOMINANT DEX on Optimism. Re-enabling with correct metrics.
 -- Vol: ~$50-120M/day aggregated across V2+Slipstream.
+-- L2 chain (Optimism) uses $10M TVL floor — well above threshold.
 UPDATE dexes SET
     volume_24h_usd = 80000000.00,
     tvl_usd        = 300000000.00,
@@ -177,16 +225,18 @@ WHERE name = 'Velodrome V2';
 -- This is the non-concentrated-liquidity Aerodrome (stable+volatile pairs).
 -- TVL ~$120-160M (much of liquidity migrated to Slipstream but V2 persists).
 -- Vol: ~$15-30M/day (Slipstream now dominates Base volume).
+-- L2 chain (Base) uses $10M TVL floor — well above threshold.
 UPDATE dexes SET
     volume_24h_usd = 20000000.00,
     tvl_usd        = 140000000.00,
     is_active      = TRUE
 WHERE name = 'Aerodrome';
 
--- Quickswap V3 (Polygon Algebra-based): KEY CORRECTION.
+-- Quickswap V3 (Polygon Algebra-based): KEY CORRECTION (carried from v2).
 -- v1 used version-sliced data showing $4.2M TVL — only the V3 slice.
 -- Protocol-aggregated (V2 + V3) Quickswap TVL on Polygon: ~$451M (CoinGecko confirmed).
 -- Quickswap is the DOMINANT DEX on Polygon. Vol ~$40-80M/day aggregated.
+-- L2 chain (Polygon) uses $10M TVL floor — well above threshold.
 UPDATE dexes SET
     volume_24h_usd = 55000000.00,
     tvl_usd        = 451000000.00,
@@ -220,11 +270,14 @@ ON CONFLICT (name) DO UPDATE
         is_active      = EXCLUDED.is_active;
 
 -- Fluid DEX (Instadapp): vault-based shared liquidity DEX with DexFactory.
--- CORRECTION vs v1: v1 marked is_active=false and used wrong protocol_type.
--- Fluid has a DexFactory contract (governance-permissioned pool creation).
 -- protocol_type = FLUID_VAULT (new enum value added in STEP 0).
--- is_active = TRUE at DEX level; factory rows below set is_active=FALSE pending
--- operator bytecode verification (per-factory flag, not per-DEX flag).
+-- is_active = TRUE at DEX level (protocol qualifies on metrics: TVL ~$950M,
+--   vol ~$280M/day). No factory rows are seeded — the ETH factory address
+--   sourced from DefiLlama metadata (0x91716c4eda1fb55e84b9b7b9f3517e7e6f6f47fa)
+--   is confirmed EOA (see CRITICAL note in file header and STEP 1 ADDENDUM).
+--   Real DexFactory must be sourced from:
+--   https://github.com/Instadapp/fluid-contracts-public
+--   Do NOT insert factory rows until bytecode is independently verified.
 -- Aggregated TVL (ETH + ARB): ~$950M. Vol ~$280M/day.
 -- Source: /protocol/fluid currentChainTvls
 INSERT INTO dexes (name, protocol_type, is_active, volume_24h_usd, tvl_usd)
@@ -241,6 +294,7 @@ ON CONFLICT (name) DO UPDATE
 -- Separate protocol from 'Aerodrome' (which is the SOLIDLY V2 fork).
 -- Slipstream = CL pools via CLFactory. Dominant volume on Base.
 -- Aggregated vol on Base: ~$350-500M/day. TVL: ~$200-250M.
+-- L2 chain (Base) uses $10M TVL floor — well above threshold.
 -- Source: /protocol/aerodrome-slipstream currentChainTvls.Base
 INSERT INTO dexes (name, protocol_type, is_active, volume_24h_usd, tvl_usd)
 VALUES ('Aerodrome Slipstream', 'UNISWAP_V3', TRUE,
@@ -255,6 +309,7 @@ ON CONFLICT (name) DO UPDATE
 -- version of Velodrome, analogous to Aerodrome Slipstream on Base.
 -- Factory: CLFactory at 0xcc0bddb707055e04e497ab22a59c2af4391cd12f (Optimism).
 -- TVL: ~$120-180M on Optimism. Vol: ~$30-60M/day.
+-- L2 chain (Optimism) uses $10M TVL floor — well above threshold.
 -- Source: /protocol/velodrome-v3 OR velodrome-slipstream (slug may vary)
 INSERT INTO dexes (name, protocol_type, is_active, volume_24h_usd, tvl_usd)
 VALUES ('Velodrome Slipstream', 'UNISWAP_V3', TRUE,
@@ -266,10 +321,11 @@ ON CONFLICT (name) DO UPDATE
         is_active      = EXCLUDED.is_active;
 
 -- PancakeSwap Infinity: BSC-native hooks-based V4-style DEX (CLPoolManager singleton).
--- Launched Q4 2024 on BSC. TVL ~$70-100M on BSC. Vol ~$130-180M/day.
--- is_active = TRUE at DEX level; factory row is_active=FALSE below
--- because CLPoolManager address is not yet confirmed via bytecode audit.
--- TODO: operator to verify CLPoolManager address on BSCscan before enabling.
+-- Launched Q4 2024 on BSC. TVL ~$85M on BSC — above new $40M major-chain floor.
+-- Vol ~$155M/day. is_active = TRUE at DEX level.
+-- Factory row: is_active=FALSE below because CLPoolManager address is not yet
+-- confirmed via bytecode audit. Operator: verify via BSCscan eth_getCode.
+-- TODO: source from https://docs.pancakeswap.finance/developers/smart-contracts/infinity
 INSERT INTO dexes (name, protocol_type, is_active, volume_24h_usd, tvl_usd)
 VALUES ('PancakeSwap Infinity', 'UNISWAP_V4', TRUE,
         155000000.00,
@@ -293,9 +349,9 @@ ON CONFLICT (name) DO UPDATE
 --   PROVISIONAL — address circulates in official docs but bytecode not
 --                 independently checked; is_active=FALSE until operator confirms.
 --
--- Factory rows are NOT inserted for DEXes where the "factory" is a
--- governance-permissioned singleton that cannot be called permissionlessly
--- by the pool_sync_worker — those are flagged PROVISIONAL with is_active=FALSE.
+-- Factory rows are NOT inserted for DEXes where the factory address is
+-- unverified or confirmed invalid. Deactivated rows from prior migrations
+-- are handled in STEP 1 only; STEP 4 only inserts known-good addresses.
 -- ────────────────────────────────────────────────────────────────────────────
 
 -- ══════════════════════════════════════════════════════════════════════════════
@@ -364,26 +420,24 @@ FROM dexes WHERE name = 'Velodrome Slipstream'
 ON CONFLICT (chain_id, address) DO UPDATE SET is_active = TRUE;
 
 -- ══════════════════════════════════════════════════════════════════════════════
--- FLUID DEX — DexFactory on Ethereum
--- Source: fluid.instadapp.io protocol docs / Instadapp GitHub deployment scripts
--- Architecture: DexFactory is governance-permissioned (only governance can create
--- new DEX pools). pool_sync_worker can still enumerate pools via factory events.
--- is_active=FALSE: operator must verify bytecode at address before enabling sync.
+-- FLUID DEX — Factory rows intentionally omitted (v3 CRITICAL fix)
+--
+-- The address 0x91716c4eda1fb55e84b9b7b9f3517e7e6f6f47fa was present in v2
+-- with is_active=FALSE. It has been confirmed as an EOA (no bytecode, no
+-- transaction history) via 3 independent RPCs and Blockscout. Deactivated
+-- in STEP 1 ADDENDUM for defense-in-depth. No factory row is inserted here.
+--
+-- To seed Fluid DEX factory rows:
+--   1. Obtain verified DexFactory address from:
+--      https://github.com/Instadapp/fluid-contracts-public
+--   2. Confirm bytecode via eth_getCode (must be non-empty) on mainnet.
+--   3. Cross-check factory-created events on Etherscan.
+--   4. Insert verified address in migration 045+ with VERIFIED status.
+--
+-- Fluid DEX ARB factory address: also unknown. Do NOT guess from block explorer
+-- metadata alone — DefiLlama contract metadata has proven unreliable for this
+-- protocol (ETH address was wrong).
 -- ══════════════════════════════════════════════════════════════════════════════
-
--- Ethereum (chain_id=1) — PROVISIONAL (governance-permissioned factory)
-INSERT INTO factories (dex_id, chain_id, address, is_active)
-SELECT id, 1, '0x91716c4eda1fb55e84b9b7b9f3517e7e6f6f47fa', FALSE
-FROM dexes WHERE name = 'Fluid DEX'
-ON CONFLICT (chain_id, address) DO UPDATE SET is_active = FALSE;
--- TODO: operator to verify bytecode via `eth_getCode` on Ethereum mainnet
---       and cross-check with https://fluid.instadapp.io before enabling.
-
--- Arbitrum (chain_id=42161) — TODO: map DexFactory address on Arbitrum
--- INSERT INTO factories (dex_id, chain_id, address, is_active)
--- SELECT id, 42161, '0x<FLUID_DEXFACTORY_ARBITRUM>', FALSE
--- FROM dexes WHERE name = 'Fluid DEX'
--- ON CONFLICT (chain_id, address) DO UPDATE SET is_active = FALSE;
 
 -- ══════════════════════════════════════════════════════════════════════════════
 -- PANCAKESWAP INFINITY — CLPoolManager on BSC
@@ -392,19 +446,36 @@ ON CONFLICT (chain_id, address) DO UPDATE SET is_active = FALSE;
 -- https://docs.pancakeswap.finance/developers/smart-contracts/infinity
 -- and verify via BSCscan eth_getCode before enabling pool_sync.
 -- ══════════════════════════════════════════════════════════════════════════════
--- No factory row inserted. DEX row is active (is_active=TRUE) to track metrics,
--- but factory-level is_active=FALSE would apply when address is confirmed.
+-- No factory row inserted. DEX row is active (is_active=TRUE) to track metrics.
 -- TODO: map CLPoolManager and insert factory row for chain_id=56.
 
 -- ══════════════════════════════════════════════════════════════════════════════
--- CAMELOT V3 — Arbitrum
--- Address 0x1a3c9b1d... deactivated in STEP 1 (circulates in docs but
--- bytecode not independently confirmed). Re-marking for clarity.
--- DEX row remains is_active=TRUE (qualifies above L2 vol threshold).
--- Operator: verify on Arbiscan with eth_getCode, then UPDATE is_active=TRUE
--- WHERE chain_id=42161 AND address='0x1a3c9b1d2f0529d97f2afc5136cc23e58f1fd35b'.
+-- CAMELOT V3 — Arbitrum (v3 MAJOR: now is_active=false at DEX level)
+-- Address 0x1a3c9b1d... deactivated in STEP 1 (unverified bytecode).
+-- DEX row set is_active=FALSE in STEP 2 (TVL $20M < $40M major-chain floor).
+-- No factory INSERT needed: factory row already exists from 043 with
+-- is_active=FALSE (STEP 1). DEX-level deactivation takes effect in STEP 2.
 -- ══════════════════════════════════════════════════════════════════════════════
--- No INSERT needed: row already exists from 043 (STEP 1 set is_active=FALSE).
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- CURVE FACTORIES — ABI WARNING (v3 HIGH fix)
+--
+-- Curve ETH stable factory (NG variant):
+--   Address: 0xB9fC157394Af804a3578134A6585C0dc9cc990d4
+--   This is the NewGeneration (NG) Curve factory. Its pool enumeration ABI
+--   DIFFERS from the legacy factory:
+--     WRONG (reverts on NG):   pool_count() -> uint256
+--     CORRECT (NG):            pool_list(uint256 index) -> address
+--   Worker code (searcher-rs pool_sync) MUST use pool_list(uint256 index)
+--   and treat a revert as end-of-list (not as an error). The termination
+--   condition is revert on out-of-bounds index, not a length call.
+--   ABI selector for pool_list: bytes4(keccak256("pool_list(uint256)")) = 0x3a1d5d8e
+--   See: https://github.com/curvefi/curve-factory/blob/master/contracts/
+--
+-- The factory row for 0xB9fC... was seeded in migration 043 (or earlier) and
+-- is presumed active. This comment block is the authoritative ABI mapping note
+-- for all downstream worker implementations.
+-- ══════════════════════════════════════════════════════════════════════════════
 
 -- ══════════════════════════════════════════════════════════════════════════════
 -- UNISWAP V2 ETH / SUSHISWAP — already seeded in 029, no changes needed.
@@ -423,16 +494,18 @@ ON CONFLICT (chain_id, address) DO UPDATE SET is_active = FALSE;
 -- ────────────────────────────────────────────────────────────────────────────
 DO $$
 DECLARE
-    v_chain_count        INT;
-    v_active_dex_count   INT;
-    v_active_factory_count INT;
-    v_total_factory_count  INT;
-    v_v3_dex_count       INT;
-    v_v4_factory_count   INT;
-    v_v4_dex_vol         NUMERIC;
-    v_v3_dex_vol         NUMERIC;
-    v_quickswap_tvl      NUMERIC;
-    v_velodrome_tvl      NUMERIC;
+    v_chain_count           INT;
+    v_active_dex_count      INT;
+    v_active_factory_count  INT;
+    v_total_factory_count   INT;
+    v_v3_dex_count          INT;
+    v_v4_factory_count      INT;
+    v_v4_dex_vol            NUMERIC;
+    v_v3_dex_vol            NUMERIC;
+    v_quickswap_tvl         NUMERIC;
+    v_velodrome_tvl         NUMERIC;
+    v_fluid_eoa_active      INT;
+    v_camelot_active        INT;
 BEGIN
     SELECT COUNT(*)    INTO v_chain_count          FROM chains    WHERE is_active = TRUE;
     SELECT COUNT(*)    INTO v_active_dex_count     FROM dexes     WHERE is_active = TRUE;
@@ -448,23 +521,35 @@ BEGIN
     SELECT volume_24h_usd INTO v_v3_dex_vol FROM dexes WHERE name = 'UniswapV3';
     SELECT tvl_usd        INTO v_quickswap_tvl FROM dexes WHERE name = 'Quickswap V3';
     SELECT tvl_usd        INTO v_velodrome_tvl FROM dexes WHERE name = 'Velodrome V2';
+    -- v3: verify Fluid EOA is NOT active (defense-in-depth)
+    SELECT COUNT(*) INTO v_fluid_eoa_active
+        FROM factories
+        WHERE address = '0x91716c4eda1fb55e84b9b7b9f3517e7e6f6f47fa'
+          AND is_active = TRUE;
+    -- v3: verify Camelot V3 is inactive at DEX level
+    SELECT COUNT(*) INTO v_camelot_active
+        FROM dexes WHERE name = 'Camelot V3' AND is_active = TRUE;
 
     RAISE NOTICE
-        'Post-044v2: chains=%, active_dexes=%, active_factories=%(total=%), '
+        'Post-044v3: chains=%, active_dexes=%, active_factories=%(total=%), '
         'v4_active_factories=%, v3_vol=$%M, v4_vol=$%M, '
-        'quickswap_tvl=$%M, velodrome_tvl=$%M',
+        'quickswap_tvl=$%M, velodrome_tvl=$%M, '
+        'fluid_eoa_active_factories=%, camelot_active=%',
         v_chain_count, v_active_dex_count,
         v_active_factory_count, v_total_factory_count,
         v_v4_factory_count,
         ROUND(v_v3_dex_vol / 1e6, 1), ROUND(v_v4_dex_vol / 1e6, 1),
-        ROUND(v_quickswap_tvl / 1e6, 1), ROUND(v_velodrome_tvl / 1e6, 1);
+        ROUND(v_quickswap_tvl / 1e6, 1), ROUND(v_velodrome_tvl / 1e6, 1),
+        v_fluid_eoa_active, v_camelot_active;
 
     -- Hard invariants
     IF v_chain_count < 6 THEN
         RAISE EXCEPTION 'INVARIANT FAILED: expected >= 6 active chains, got %', v_chain_count;
     END IF;
-    IF v_active_dex_count < 15 THEN
-        RAISE EXCEPTION 'INVARIANT FAILED: expected >= 15 active dexes, got %', v_active_dex_count;
+    -- v3: floor lowered from 15 to 14 because Camelot V3 (ARB) is now inactive
+    -- per economics-validator condition ($20M TVL < $40M major-chain floor).
+    IF v_active_dex_count < 14 THEN
+        RAISE EXCEPTION 'INVARIANT FAILED: expected >= 14 active dexes, got %', v_active_dex_count;
     END IF;
     IF v_active_factory_count < 30 THEN
         RAISE EXCEPTION 'INVARIANT FAILED: expected >= 30 active factory rows, got %', v_active_factory_count;
@@ -479,22 +564,35 @@ BEGIN
     IF v_v3_dex_vol < v_v4_dex_vol THEN
         RAISE EXCEPTION
             'INVARIANT FAILED: UniswapV3 vol ($%) must exceed Uniswap V4 vol ($%) '
-            '— V3 still leads by ~2.3x; check source data if this triggers',
+            '-- V3 still leads by ~2.3x; check source data if this triggers',
             v_v3_dex_vol, v_v4_dex_vol;
     END IF;
     -- Quickswap TVL correction: must be >> $4.2M (the version-sliced wrong value)
     IF v_quickswap_tvl < 100000000.00 THEN
         RAISE EXCEPTION
             'INVARIANT FAILED: Quickswap V3 TVL ($%) must be >= $100M '
-            '— if below $100M the version-sliced bug was reintroduced',
+            '-- if below $100M the version-sliced bug was reintroduced',
             v_quickswap_tvl;
     END IF;
     -- Velodrome TVL correction: must be >> $9.4M (the version-sliced wrong value)
     IF v_velodrome_tvl < 50000000.00 THEN
         RAISE EXCEPTION
             'INVARIANT FAILED: Velodrome V2 TVL ($%) must be >= $50M '
-            '— if below $50M the version-sliced bug was reintroduced',
+            '-- if below $50M the version-sliced bug was reintroduced',
             v_velodrome_tvl;
+    END IF;
+    -- v3 CRITICAL: Fluid EOA must NEVER be active. Zero tolerance.
+    IF v_fluid_eoa_active > 0 THEN
+        RAISE EXCEPTION
+            'INVARIANT FAILED: Fluid EOA factory 0x91716c4eda1fb55e84b9b7b9f3517e7e6f6f47fa '
+            'has is_active=TRUE. This address has no bytecode and is an EOA. '
+            'Disable immediately. Do not route any pool_sync traffic to this address.';
+    END IF;
+    -- v3 MAJOR: Camelot V3 must be inactive at DEX level (TVL < $40M major-chain floor)
+    IF v_camelot_active > 0 THEN
+        RAISE EXCEPTION
+            'INVARIANT FAILED: Camelot V3 dex row is active but TVL $20M < $40M major-chain floor. '
+            'Set is_active=FALSE or raise TVL if market conditions have changed.';
     END IF;
 END $$;
 
@@ -506,7 +604,7 @@ COMMIT;
 --
 -- BEGIN;
 --
--- -- 1. Remove new factory rows added in v2 (new correct V4 addresses + new DEXes)
+-- -- 1. Remove new factory rows added in v2/v3 (new correct V4 addresses + new DEXes)
 -- DELETE FROM factories
 -- WHERE address IN (
 --     -- Uniswap V4 corrected addresses
@@ -519,9 +617,10 @@ COMMIT;
 --     -- Aerodrome Slipstream (also present in v1 if already applied)
 --     '0x5e7bb104d84c7cb9b682aac2f3d509f5f406809a',  -- Aerodrome Slipstream Base
 --     -- Velodrome Slipstream (new in v2)
---     '0xcc0bddb707055e04e497ab22a59c2af4391cd12f',  -- Velodrome Slipstream Optimism
---     -- Fluid DEX
---     '0x91716c4eda1fb55e84b9b7b9f3517e7e6f6f47fa'   -- Fluid ETH (provisional)
+--     '0xcc0bddb707055e04e497ab22a59c2af4391cd12f'   -- Velodrome Slipstream Optimism
+--     -- NOTE v3: Fluid EOA 0x91716c4eda1fb55e84b9b7b9f3517e7e6f6f47fa is NOT listed
+--     -- here because v3 never INSERTs it. If v2 ran before v3, the row may exist
+--     -- with is_active=FALSE; do NOT re-activate it on rollback.
 -- );
 --
 -- -- 2. Re-activate the 8 previously unverified factory rows from 043
@@ -537,7 +636,7 @@ COMMIT;
 --     '0x4f8846ae9380b90d2e71d5e3d042dff3e7ebb40d'
 -- );
 --
--- -- 3. Remove new DEX rows added in v2
+-- -- 3. Remove new DEX rows added in v2/v3
 -- DELETE FROM dexes WHERE name IN (
 --     'Uniswap V4',
 --     'Fluid DEX',
@@ -547,7 +646,7 @@ COMMIT;
 -- );
 --
 -- -- 4. Revert corrected volume/TVL to NULL for existing DEXes
--- UPDATE dexes SET volume_24h_usd = NULL, tvl_usd = NULL
+-- UPDATE dexes SET volume_24h_usd = NULL, tvl_usd = NULL, is_active = NULL
 -- WHERE name IN (
 --     'UniswapV3', 'Curve', 'Balancer',
 --     'PancakeSwap V3', 'PancakeSwap V2',
@@ -562,7 +661,7 @@ COMMIT;
 --         'UNISWAP_V2', 'UNISWAP_V3', 'CURVE', 'BALANCER', 'SOLIDLY', 'TRADERJOE_LB'
 --     ));
 --
--- -- 6. Remove is_active from factories (destructive — only if fully reverting to 043)
+-- -- 6. Remove is_active from factories (destructive -- only if fully reverting to 043)
 -- ALTER TABLE factories DROP COLUMN IF EXISTS is_active;
 --
 -- COMMIT;
