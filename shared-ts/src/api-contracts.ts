@@ -19,6 +19,11 @@ export const DexInfoSchema = z.object({
   pool_count:     z.number().int().nonnegative(),
   volume_24h_usd: z.number().nullable(),
   tvl_usd:        z.number().nullable(),
+  // Per-chain provenance from dex_chain_metrics (migration 045). Optional for
+  // backward-compat with consumers built before the COALESCE landed; null when
+  // the per-chain row is missing and the response falls back to global aggregates.
+  metrics_source: z.enum(["defillama", "subgraph", "manual", "estimated"]).nullable().optional(),
+  metrics_updated_at: z.string().datetime({ offset: true }).nullable().optional(),
   // computed: dex.id is in trading_config.enabled_dex_ids OR enabled_dex_ids IS NULL
   enabled:        z.boolean(),
 });

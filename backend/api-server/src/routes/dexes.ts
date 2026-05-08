@@ -34,6 +34,10 @@ export function mountDexes(app: import("express").Express, deps: Deps): void {
     }
 
     try {
+      // Per-chain query: COALESCE on dex_chain_metrics (migration 045) so each
+      // chain reports its own TVL / volume; falls back to global aggregates on
+      // dexes.* if the per-chain row is missing. R8 fail-honest: NULL flows
+      // through if BOTH per-chain and global are missing — never substitute 0.
       const q = await deps.pool.query(
         `WITH dex_chain AS (
            SELECT DISTINCT
@@ -41,8 +45,10 @@ export function mountDexes(app: import("express").Express, deps: Deps): void {
                   d.name,
                   d.protocol_type,
                   d.is_active,
-                  d.volume_24h_usd::float          AS volume_24h_usd,
-                  d.tvl_usd::float                 AS tvl_usd,
+                  COALESCE(m.volume_24h_usd, d.volume_24h_usd)::float AS volume_24h_usd,
+                  COALESCE(m.tvl_usd,        d.tvl_usd)::float        AS tvl_usd,
+                  m.source              AS metrics_source,
+                  m.last_updated_at     AS metrics_updated_at,
                   f.chain_id,
                   (SELECT COUNT(*)::int
                      FROM factories f2
@@ -58,6 +64,9 @@ export function mountDexes(app: import("express").Express, deps: Deps): void {
                       AND p.is_active = TRUE)        AS pool_count
              FROM dexes d
              JOIN factories f ON f.dex_id = d.id
+             LEFT JOIN dex_chain_metrics m
+                    ON m.dex_id = d.id
+                   AND m.chain_id = f.chain_id
             WHERE f.chain_id = $1
          ),
          cfg AS (
@@ -85,16 +94,20 @@ export function mountDexes(app: import("express").Express, deps: Deps): void {
         count: q.rows.length,
         chain_id: chainId,
         items: q.rows.map((r) => ({
-          id:             r.id,
-          name:           r.name,
-          protocol_type:  r.protocol_type,
-          is_active:      r.is_active,
-          chain_id:       r.chain_id,
-          factory_count:  r.factory_count,
-          pool_count:     r.pool_count,
-          volume_24h_usd: r.volume_24h_usd,
-          tvl_usd:        r.tvl_usd,
-          enabled:        r.enabled,
+          id:                 r.id,
+          name:               r.name,
+          protocol_type:      r.protocol_type,
+          is_active:          r.is_active,
+          chain_id:           r.chain_id,
+          factory_count:      r.factory_count,
+          pool_count:         r.pool_count,
+          volume_24h_usd:     r.volume_24h_usd,
+          tvl_usd:            r.tvl_usd,
+          metrics_source:     r.metrics_source ?? null,
+          metrics_updated_at: r.metrics_updated_at
+            ? new Date(r.metrics_updated_at).toISOString()
+            : null,
+          enabled:            r.enabled,
         })),
       });
     } catch (e) {
