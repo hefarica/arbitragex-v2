@@ -10,6 +10,9 @@ COPY sim-ctl ./sim-ctl
 COPY relays-client ./relays-client
 COPY recon ./recon
 COPY math-engine ./math-engine
+COPY prioritization-spine ./prioritization-spine
+COPY simulator-v2 ./simulator-v2
+COPY token-enricher ./token-enricher
 RUN cargo build --release -p sim-ctl
 
 FROM debian:bookworm-slim AS runtime
