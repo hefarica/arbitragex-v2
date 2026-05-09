@@ -11,6 +11,7 @@ pub mod config_aware;
 pub mod swap_encoder;
 pub mod erc20_storage;
 pub mod round_trip_executor;
+pub mod strategy_scores_db;
 
 pub use types::*;
 pub use evidence::*;
@@ -19,3 +20,4 @@ pub use gates::*;
 pub use decision::*;
 pub use errors::*;
 pub use config_aware::{ConfigAwareEvaluator, ConfigGateOutcome, NetworkSignals};
+pub use strategy_scores_db::{StrategyFailRate, StrategyScoresCache};

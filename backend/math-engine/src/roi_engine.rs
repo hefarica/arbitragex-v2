@@ -30,6 +30,15 @@ use crate::DefiArbitrageOutcome;
 /// - `ops_overhead_usd`: Amortised infra/server cost per attempt.
 ///   Operator-configured; default `$0.01`. Passes through unchanged from config.
 ///
+/// ### Sprint B additions (component 4 — statistical failure probability)
+/// - `p_fail`: Statistical failure probability from `strategy_scores` table.
+///   `Some(p)` → failure buffer = `p × expected_gas_cost_usd` (expected loss
+///   from reverts — a reverted tx still burns gas).
+///   `None` → fall back to legacy proxy: `amount_in_usd × failure_risk_buffer_pct`.
+///   Source: `recon` learning loop writes `revert_rate` per (strategy_kind,
+///   chain_id, window); spine pre-fetches the latest row with `sample_count ≥ 10`.
+///   `None` also applies at cold-start or when no row exists yet (R8 fail-honest).
+///
 /// ### Follow-up items (NOT in Sprint A)
 /// - V3 real price impact (tick-math): `price_impact_pct` will be populated with
 ///   actual V3 impact when the tick-traversal helper lands in Sprint B.
@@ -43,6 +52,9 @@ pub struct RoiCalculationParams {
     pub expected_gas_cost_usd: f64,
     pub flashloan_fee_pct: f64,
     pub max_slippage_pct: f64,
+    /// Legacy flat proxy for failure buffer (Sprint A).
+    /// Used when `p_fail` is `None`. Formula: `amount_in_usd × failure_risk_buffer_pct`.
+    /// Set by the caller from `config.failure_risk_buffer_pct × amount_in_usd`.
     pub failure_risk_buffer_usd: f64,
 
     // --- Component 2: Explicit LP fees across route hops ---
@@ -66,6 +78,17 @@ pub struct RoiCalculationParams {
     // --- Component 7: Amortised ops/infra overhead ---
     /// Per-attempt infra cost ($0.01 default from `trading_config`).
     pub ops_overhead_usd: f64,
+
+    // --- Component 4 (Sprint B): Statistical failure probability ---
+    /// Pre-fetched revert probability from `strategy_scores` (0.0–1.0).
+    /// `Some(p)` → `failure_risk_buffer_usd` is IGNORED; buffer computed as
+    ///              `p × expected_gas_cost_usd` (expected gas burned on reverts).
+    /// `None`    → falls back to `failure_risk_buffer_usd` proxy (Sprint A).
+    ///
+    /// Sourced per `(strategy_kind, chain_id)` from the learning loop; caller
+    /// (spine entry point) pre-fetches once per tick and passes here.
+    /// R8: `None` when `sample_count < 10` or no row exists — never invent.
+    pub p_fail: Option<f64>,
 }
 
 /// Calcula el ROI bruto y neto de una oportunidad DeFi (Estrategia General).
@@ -105,6 +128,23 @@ pub fn calc_net_profit_and_roi(params: &RoiCalculationParams) -> DefiArbitrageOu
         params.max_slippage_pct
     };
 
+    // Component 4 (Sprint B): statistical vs proxy failure buffer.
+    //
+    // Statistical path (p_fail = Some(p)):
+    //   Expected loss from reverts = p × gas_cost.
+    //   A reverted tx burns gas but yields no output; the expected cost is
+    //   the probability-weighted gas expenditure.  The proxy
+    //   (amount_in × buffer_pct) is a cruder capital-fraction approximation.
+    //
+    // Proxy path (p_fail = None):
+    //   Use the pre-computed `failure_risk_buffer_usd` passed by the caller,
+    //   which equals `amount_in_usd × config.failure_risk_buffer_pct`.
+    //   Preserves exact Sprint A behavior for cold-start / new strategies.
+    let failure_cost_usd = match params.p_fail {
+        Some(p) => p * params.expected_gas_cost_usd,
+        None => params.failure_risk_buffer_usd,
+    };
+
     // Full deterministic net profit deducting all 7 cost components.
     let net_profit_usd = params.expected_amount_out_usd
         - params.amount_in_usd
@@ -112,7 +152,7 @@ pub fn calc_net_profit_and_roi(params: &RoiCalculationParams) -> DefiArbitrageOu
         - flashloan_fee_usd                // component from flashloan_fee_pct
         - params.lp_fees_usd              // component 2 (NEW)
         - effective_slippage_usd           // component 3 (NEW — replaces old slippage_cost_usd)
-        - params.failure_risk_buffer_usd   // component 4 proxy (existing)
+        - failure_cost_usd                 // component 4 (Sprint B: statistical or proxy)
         - params.capital_cost_usd          // component 6 (NEW)
         - params.ops_overhead_usd;         // component 7 (NEW)
 
@@ -167,6 +207,8 @@ mod tests {
             price_impact_pct: 0.0,
             capital_cost_usd: 0.0,
             ops_overhead_usd: 0.0,
+            // Sprint B — None → proxy fallback preserved
+            p_fail: None,
         }
     }
 
@@ -324,6 +366,7 @@ mod tests {
             price_impact_pct: 0.1, // 0.1% → $1100 × 0.001 = $1.10
             capital_cost_usd: 0.50,
             ops_overhead_usd: 0.01,
+            p_fail: None,
         };
         let result = calc_net_profit_and_roi(&params);
 
@@ -357,6 +400,7 @@ mod tests {
             price_impact_pct: 0.0,
             capital_cost_usd: 0.0,
             ops_overhead_usd: 0.0,
+            p_fail: None,
         };
 
         let result = calc_net_profit_and_roi(&params);
@@ -367,6 +411,99 @@ mod tests {
         assert!(result.is_viable);
         assert!((result.net_profit_usd - 24.95).abs() < 0.001);
         assert!((result.net_roi_pct - 0.2495).abs() < 0.001);
+    }
+
+    // ----------------------------------------------------------------
+    // Sprint B: p_fail statistical integration tests (Component 4)
+    // ----------------------------------------------------------------
+
+    /// p_fail = None → proxy fallback used; result identical to baseline
+    /// (Sprint A behavior preserved).
+    #[test]
+    fn p_fail_none_uses_proxy_fallback() {
+        // baseline() already has p_fail: None and failure_risk_buffer_usd: 1.0
+        let params = baseline();
+        let result = calc_net_profit_and_roi(&params);
+        // net = 10_050 - 10_000 - 5 - 9 - 10.05 - 1.0 = $24.95
+        assert!(
+            (result.net_profit_usd - 24.95).abs() < 0.001,
+            "p_fail=None must use proxy; expected net=$24.95, got {}",
+            result.net_profit_usd,
+        );
+    }
+
+    /// p_fail = Some(0.0) → zero failure cost; no buffer subtracted.
+    /// net must be exactly `failure_risk_buffer_usd` ($1.0) MORE than baseline.
+    #[test]
+    fn p_fail_zero_adds_no_failure_cost() {
+        let base_net = calc_net_profit_and_roi(&baseline()).net_profit_usd; // $24.95
+        let mut params = baseline();
+        params.p_fail = Some(0.0);
+        let result = calc_net_profit_and_roi(&params);
+        // Statistical buffer = 0.0 × $5 gas = $0; proxy was $1.0; diff = +$1.0
+        assert!(
+            (result.net_profit_usd - (base_net + 1.0)).abs() < 1e-9,
+            "p_fail=0.0 should add $0 failure cost; expected {} got {}",
+            base_net + 1.0,
+            result.net_profit_usd,
+        );
+    }
+
+    /// p_fail = Some(0.1) → buffer = 0.1 × gas_cost_usd = 0.1 × $5 = $0.50.
+    /// Net must be exactly baseline + proxy_buffer($1.0) - statistical_buffer($0.50).
+    #[test]
+    fn p_fail_ten_pct_costs_fraction_of_gas() {
+        let base_net = calc_net_profit_and_roi(&baseline()).net_profit_usd; // $24.95
+        let mut params = baseline();
+        params.p_fail = Some(0.1);
+        let result = calc_net_profit_and_roi(&params);
+        // statistical buffer = 0.1 × $5 = $0.50; proxy was $1.0 → net gains $0.50
+        let expected_net = base_net + 1.0 - 0.50; // = $25.45
+        assert!(
+            (result.net_profit_usd - expected_net).abs() < 1e-9,
+            "p_fail=0.1 → buffer=$0.50; expected net={} got {}",
+            expected_net,
+            result.net_profit_usd,
+        );
+    }
+
+    /// p_fail = Some(1.0) → buffer = 1.0 × gas = $5.  Every tx reverts.
+    /// Also tests that with very thin spread the opportunity becomes non-viable.
+    #[test]
+    fn p_fail_one_costs_full_gas_and_may_kill_opportunity() {
+        // Build params where p_fail=1.0 makes net clearly negative.
+        // amount_in=$100, out=$101 (gross=$1), gas=$5, p_fail=1.0 → buffer=$5
+        // net = 1 - 5 - 5 = -$9 (negative → not viable)
+        let params = RoiCalculationParams {
+            amount_in_usd: 100.0,
+            expected_amount_out_usd: 101.0,
+            expected_gas_cost_usd: 5.0,
+            flashloan_fee_pct: 0.0,
+            max_slippage_pct: 0.0,
+            failure_risk_buffer_usd: 0.0, // proxy is 0; only statistical matters
+            lp_fees_usd: 0.0,
+            price_impact_pct: 0.0,
+            capital_cost_usd: 0.0,
+            ops_overhead_usd: 0.0,
+            p_fail: Some(1.0),
+        };
+        let result = calc_net_profit_and_roi(&params);
+        // statistical buffer = 1.0 × $5 = $5; net = 101 - 100 - 5 - 5 = -$9
+        assert!(
+            !result.is_viable,
+            "p_fail=1.0 should make this opportunity non-viable, got is_viable=true"
+        );
+        assert!(
+            result.net_profit_usd < 0.0,
+            "p_fail=1.0 should produce negative net profit, got {}",
+            result.net_profit_usd,
+        );
+        // Exact: net = 1 - 5 - 5 = -9
+        assert!(
+            (result.net_profit_usd - (-9.0)).abs() < 1e-9,
+            "p_fail=1.0 exact net expected -$9, got {}",
+            result.net_profit_usd,
+        );
     }
 
     #[test]
@@ -382,6 +519,7 @@ mod tests {
             price_impact_pct: 0.0,
             capital_cost_usd: 0.0,
             ops_overhead_usd: 0.0,
+            p_fail: None,
         };
 
         let result = calc_net_profit_and_roi(&params);

@@ -22,7 +22,8 @@
 //!     `PrioritizationEngine::score` keeps its signature; this evaluator builds
 //!     the inputs that engine expects, with honest values instead of stubs.
 
-use crate::evidence::{CostBreakdown, OpportunityEvidence};
+use crate::evidence::{CostBreakdown, OpportunityEvidence, PFailSource};
+use crate::strategy_scores_db::StrategyFailRate;
 use crate::types::OpportunityCandidate;
 use crate::decision::{ExecutionDecision, RejectReason};
 use math_engine::amm_math::calc_univ2_price_impact;
@@ -135,6 +136,17 @@ pub struct ConfigAwareEvaluator<'a> {
     /// Snapshot is fetched ONCE per evaluation tick by the caller (async) and
     /// passed in here, keeping `evaluate()` sync on the hot path.
     pub price_cache_snapshot: HashMap<String, f64>,
+
+    /// Pre-fetched statistical failure rate from `strategy_scores` (Sprint B).
+    ///
+    /// `Some(rate)` → `evaluate()` uses `rate.p_fail × gas_cost_usd` as the
+    /// component-4 buffer instead of the flat proxy.
+    /// `None` (cold-start, new strategy, `sample_count < 10`) → proxy fallback
+    /// (`amount_in_usd × config.failure_risk_buffer_pct`).
+    ///
+    /// Callers fetch this via `StrategyScoresCache::get(pool, strategy_kind, chain_id).await`
+    /// before constructing the evaluator, keeping `evaluate()` entirely sync.
+    pub p_fail_rate: Option<StrategyFailRate>,
 }
 
 impl<'a> ConfigAwareEvaluator<'a> {
@@ -146,6 +158,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             config,
             signals,
             price_cache_snapshot: HashMap::new(),
+            p_fail_rate: None,
         }
     }
 
@@ -163,6 +176,26 @@ impl<'a> ConfigAwareEvaluator<'a> {
             config,
             signals,
             price_cache_snapshot,
+            p_fail_rate: None,
+        }
+    }
+
+    /// Full-featured constructor with both price cache and statistical failure rate.
+    /// Production path once `StrategyScoresCache` is wired in the caller loop.
+    ///
+    /// `p_fail_rate` is `None` for cold-start / new strategies (R8 fail-honest:
+    /// the evaluator falls back to the flat proxy rather than inventing a rate).
+    pub fn with_p_fail(
+        config: &'a TradingConfigState,
+        signals: NetworkSignals,
+        price_cache_snapshot: HashMap<String, f64>,
+        p_fail_rate: Option<StrategyFailRate>,
+    ) -> Self {
+        Self {
+            config,
+            signals,
+            price_cache_snapshot,
+            p_fail_rate,
         }
     }
 
@@ -318,6 +351,26 @@ impl<'a> ConfigAwareEvaluator<'a> {
         let failure_risk_buffer_usd = amount_in_usd * self.config.failure_risk_buffer_pct;
         let flashloan_fee_usd_computed = amount_in_usd * self.config.flashloan_fee_pct;
 
+        // --- Component 4 (Sprint B): resolve p_fail for the failure buffer ---
+        // `p_fail_rate` was pre-fetched by the caller via `StrategyScoresCache`.
+        // Map it into `Option<f64>` for `RoiCalculationParams`, and prepare the
+        // `PFailSource` enum for `CostBreakdown` (dashboard surfacing).
+        let (p_fail_opt, p_fail_source) = match &self.p_fail_rate {
+            Some(rate) => (
+                Some(rate.p_fail),
+                PFailSource::Statistical {
+                    p: rate.p_fail,
+                    sample_count: rate.sample_count,
+                },
+            ),
+            None => (
+                None,
+                PFailSource::Proxy {
+                    buffer_usd: failure_risk_buffer_usd,
+                },
+            ),
+        };
+
         let roi_params = RoiCalculationParams {
             amount_in_usd,
             expected_amount_out_usd,
@@ -329,6 +382,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             price_impact_pct,
             capital_cost_usd,
             ops_overhead_usd,
+            p_fail: p_fail_opt,
         };
         let outcome_raw = calc_net_profit_and_roi(&roi_params);
 
@@ -406,14 +460,24 @@ impl<'a> ConfigAwareEvaluator<'a> {
             expected_amount_out_usd * (self.config.max_slippage_pct / 100.0)
         };
 
+        // The actual failure buffer that went into net_profit may differ from
+        // `failure_risk_buffer_usd` when statistical p_fail was used.
+        // Re-derive the actual value so CostBreakdown.failure_buffer_usd is
+        // consistent with what calc_net_profit_and_roi deducted.
+        let actual_failure_buffer_usd = match p_fail_opt {
+            Some(p) => p * gas_cost_usd,
+            None => failure_risk_buffer_usd,
+        };
+
         let cost_breakdown = CostBreakdown::new(
             gas_cost_usd,
             lp_fees_usd,
             flashloan_fee_usd_computed,
             effective_slippage_usd_for_breakdown,
-            failure_risk_buffer_usd,
+            actual_failure_buffer_usd,
             capital_cost_usd,
             ops_overhead_usd,
+            p_fail_source,
         );
 
         let evidence = OpportunityEvidence {

@@ -1,6 +1,27 @@
 use serde::{Deserialize, Serialize};
 use crate::decision::{ExecutionDecision, RejectReason};
 
+/// Identifies how the component-4 failure-risk buffer was computed.
+///
+/// Surfaced in `CostBreakdown.p_fail_source` so the dashboard can show:
+///   - "p_fail = 12% (statistical, 387 samples)" — operator knows this is data-driven.
+///   - "p_fail ≈ 0.1% (proxy, no history)" — operator knows to wait for more data.
+///
+/// Serializes transparently as a tagged JSON object so the frontend can
+/// branch on `{ type: "Statistical", p: 0.12, sample_count: 387 }` vs
+/// `{ type: "Proxy", buffer_usd: 1.23 }`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum PFailSource {
+    /// Revert probability sourced from `strategy_scores.revert_rate`.
+    /// `p` is in [0.0, 1.0].  `sample_count` is the window's `sample_count`
+    /// column value at query time — allows the dashboard to display confidence.
+    Statistical { p: f64, sample_count: i64 },
+    /// Legacy proxy: `amount_in_usd × config.failure_risk_buffer_pct`.
+    /// Used at cold-start or when `sample_count < 10`.
+    Proxy { buffer_usd: f64 },
+}
+
 /// Itemised cost breakdown for a single evaluated opportunity.
 ///
 /// Populated by `ConfigAwareEvaluator::evaluate()` and stored inside
@@ -42,6 +63,10 @@ pub struct CostBreakdown {
     pub ops_overhead_usd: f64,
     /// Sum of all cost components above (`Σ components 1–7`).
     pub total_cost_usd: f64,
+    /// How the component-4 failure buffer was computed (Sprint B).
+    /// `Statistical` → live data from `strategy_scores`; `Proxy` → flat config %.
+    /// Dashboard uses this to distinguish data-driven from heuristic cost.
+    pub p_fail_source: PFailSource,
 }
 
 impl CostBreakdown {
@@ -55,6 +80,7 @@ impl CostBreakdown {
         failure_buffer_usd: f64,
         capital_cost_usd: f64,
         ops_overhead_usd: f64,
+        p_fail_source: PFailSource,
     ) -> Self {
         let total_cost_usd = gas_usd
             + lp_fees_usd
@@ -72,6 +98,7 @@ impl CostBreakdown {
             capital_cost_usd,
             ops_overhead_usd,
             total_cost_usd,
+            p_fail_source,
         }
     }
 }

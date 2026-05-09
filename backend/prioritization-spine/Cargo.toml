@@ -16,6 +16,8 @@ chrono = { workspace = true }
 revm = { workspace = true }
 ethers = { workspace = true }
 tokio = { workspace = true }
+sqlx = { workspace = true }
+lru = { workspace = true }
 
 [dev-dependencies]
 hex = "0.4"
