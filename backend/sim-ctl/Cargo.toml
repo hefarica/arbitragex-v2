@@ -26,3 +26,5 @@ futures-util.workspace = true
 hex.workspace = true
 sqlx.workspace = true
 bigdecimal.workspace = true
+async-trait.workspace = true
+simulator-v2 = { path = "../simulator-v2" }

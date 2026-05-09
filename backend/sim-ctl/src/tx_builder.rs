@@ -149,6 +149,7 @@ mod tests {
             token_out: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".into(),
             amount_in_wei: "1000000000000000000".into(),
             expected_profit_usd: Some(10.0),
+            net_expected_profit_usd: None,
             roi_pct: None, risk_score: None, block_number: None,
             rejection_reason: None,
             detected_at: Utc::now(),

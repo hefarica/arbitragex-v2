@@ -5,10 +5,13 @@
 //! When ANVIL_URL unset or anvil unreachable, /simulate keeps responding 501
 //! and the consumer logs idle; never fabricates results.
 
+mod anvil_backend;
 mod consumer;
 mod fork_manager;
 mod persistence;
+mod revm_backend;
 mod sim_engine;
+mod simulator_backend;
 mod tx_builder;
 
 use axum::{
@@ -31,9 +34,12 @@ use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
 use tracing::{info, warn};
 
+use crate::anvil_backend::AnvilBackend;
 use crate::consumer::Consumer;
 use crate::fork_manager::ForkManager;
+use crate::revm_backend::RevmBackend;
 use crate::sim_engine::SimEngine;
+use crate::simulator_backend::SimulatorBackend;
 
 const SERVICE: &str = "sim-ctl";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -43,6 +49,11 @@ const DEV_SENTINEL_SIGNER: &str = "0x000000000000000000000000000000000000dEaD";
 
 #[derive(Clone)]
 struct AppState {
+    /// HTTP /simulate handler uses the backend trait so either Anvil or REVM
+    /// can serve the endpoint without changing the handler code.
+    backend: Arc<dyn SimulatorBackend>,
+    /// Consumer still uses SimEngine directly (Anvil-only path) until a
+    /// consumer-level backend abstraction lands in a follow-up sprint.
     engine: Arc<SimEngine>,
     env: String,
 }
@@ -51,8 +62,10 @@ async fn simulate_handler(
     State(st): State<Arc<AppState>>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    // If fork is absent, keep 501 by design.
-    if st.engine.fork.is_none() {
+    // Anvil backend: if fork is absent, keep 501 by design (existing behaviour).
+    // REVM backend: no fork dependency — always serves the request (result may be
+    // `passed=false, fail_reason="revm_not_implemented_sprint4"` until 4.2/4.3 land).
+    if st.engine.fork.is_none() && st.backend.name() == "anvil" {
         let payload = NotImplementedPayload::new(
             vec!["ANVIL_URL", "ANVIL_FORK_URL"],
             "S4",
@@ -67,7 +80,16 @@ async fn simulate_handler(
                     Json(serde_json::json!({"error":"invalid_body","detail":e.to_string()})));
         }
     };
-    let sim = st.engine.simulate(&opp).await;
+    let sim = match st.backend.simulate(&opp).await {
+        Ok(r) => r,
+        Err(e) => {
+            warn!(event = "sim.backend_infra_error", backend = st.backend.name(), error = %e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error":"backend_infra_error","detail":e.to_string()})),
+            );
+        }
+    };
     (StatusCode::OK, Json(serde_json::to_value(sim).unwrap()))
 }
 
@@ -129,7 +151,35 @@ async fn main() -> anyhow::Result<()> {
         max_slippage_for_pass_pct: max_slippage,
     });
 
-    let state = Arc::new(AppState { engine: engine.clone(), env: cfg.system.env.clone() });
+    // Backend selection: SIM_BACKEND env var chooses Anvil (default) or REVM.
+    // Anvil path is unchanged for existing deploys; REVM is strictly opt-in.
+    let backend: Arc<dyn SimulatorBackend> = match std::env::var("SIM_BACKEND")
+        .as_deref()
+        .unwrap_or("anvil")
+    {
+        "revm" => {
+            let b = RevmBackend::from_env()
+                .map_err(|e| anyhow::anyhow!("RevmBackend::from_env: {e}"))?;
+            info!(event = "sim.backend_selected", backend = "revm-v2");
+            Arc::new(b)
+        }
+        "anvil" | "" => {
+            info!(event = "sim.backend_selected", backend = "anvil");
+            Arc::new(AnvilBackend::new(engine.clone()))
+        }
+        other => {
+            anyhow::bail!(
+                "Unknown SIM_BACKEND value '{}'. Valid values: 'anvil' (default), 'revm'.",
+                other
+            );
+        }
+    };
+
+    let state = Arc::new(AppState {
+        backend,
+        engine: engine.clone(),
+        env: cfg.system.env.clone(),
+    });
 
     // HTTP server
     let port: u16 = std::env::var("SIM_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(3003);

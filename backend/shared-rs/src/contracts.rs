@@ -59,6 +59,8 @@ pub enum SimulatorKind {
     Anvil,
     Tenderly,
     Hardhat,
+    /// In-memory REVM simulator (simulator-v2 crate). Opt-in via SIM_BACKEND=revm.
+    Revm,
     NotImplemented,
 }
 

@@ -69,6 +69,7 @@ fn simulator_str(k: &SimulatorKind) -> &'static str {
         SimulatorKind::Anvil => "anvil",
         SimulatorKind::Tenderly => "tenderly",
         SimulatorKind::Hardhat => "hardhat",
+        SimulatorKind::Revm => "revm",
         SimulatorKind::NotImplemented => "not_implemented",
     }
 }
