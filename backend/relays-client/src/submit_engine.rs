@@ -11,6 +11,7 @@ use crate::relay_flashbots::FlashbotsClient;
 use crate::signer::Signer;
 use crate::tracker::{wait_for_inclusion, InclusionOutcome};
 use chrono::Utc;
+use redis::AsyncCommands as _;
 use shared_rs::rpc_failover::AlloyHttpProvider;
 use shared_rs::{
     config::AppConfig,
@@ -65,6 +66,17 @@ pub struct SubmitEngine {
 
 impl SubmitEngine {
     pub async fn execute(&self, opp: &Opportunity) -> ExecutionResult {
+        // Hoisted here so it is in scope for both the pre-execute checklist
+        // (PreExecuteContext.our_address) and the post-broadcast pending-tx
+        // tracker (CODE-4: SET/DEL arbx:pending_tx:<addr>).
+        // An empty address (no signer) maps to key "arbx:pending_tx:" which
+        // will never exist, so Check 11 passes — same semantics as before.
+        let our_address: String = self
+            .signer
+            .as_ref()
+            .map(|s| format!("0x{}", hex::encode(s.address.as_bytes())))
+            .unwrap_or_default();
+
         // -----------------------------------------------------------------------
         // Pre-execute checklist (BE-03) — canonical 12-step safety gate.
         //
@@ -94,16 +106,6 @@ impl SubmitEngine {
             // were not validated at this layer.
             let route_factories: Vec<String> = Vec::new();
 
-            // our_address: not carried by Opportunity (it's the signer's
-            // address). Extract from the Signer if present, otherwise empty
-            // string. An empty address means pending_tx_key("") → Redis key
-            // "arbx:pending_tx:" which will never exist, so check 11 passes.
-            let our_address_owned: String = self
-                .signer
-                .as_ref()
-                .map(|s| format!("0x{}", hex::encode(s.address.as_bytes())))
-                .unwrap_or_default();
-
             let mut redis_conn = self.redis.clone();
             let mut ctx = PreExecuteContext {
                 chain_id: opp.chain_id,
@@ -126,7 +128,7 @@ impl SubmitEngine {
                 // expected_slippage_pct is not yet in Opportunity; 0.0 means
                 // check 10 always passes — no false blocks until the field lands.
                 expected_slippage_pct: 0.0,
-                our_address: &our_address_owned,
+                our_address: &our_address,
                 pg: pg_pool,
                 redis: &mut redis_conn,
             };
@@ -407,6 +409,24 @@ impl SubmitEngine {
             bundle_hash = ?bundle_hash,
         );
 
+        // CODE-4: Check 11 backing — mark our address as having a pending tx.
+        // SET with TTL 180 s (3 min) covers the maximum Flashbots inclusion
+        // window. If the SET fails (Redis hiccup) we silently ignore — the key
+        // simply won't exist, Check 11 passes as before (fail-honest / R8).
+        // TTL is the hard backstop: even if DEL (below) is never reached, the
+        // key expires and future broadcasts are unblocked.
+        {
+            let pending_tx_key = format!("arbx:pending_tx:{}", our_address);
+            let mut redis_conn = self.redis.clone();
+            let _: Result<(), redis::RedisError> = redis_conn
+                .set_ex(
+                    &pending_tx_key,
+                    bundle_hash.as_deref().unwrap_or("submitted"),
+                    180u64,
+                )
+                .await;
+        }
+
         // 7. Wait for inclusion — chain is the canonical source of truth.
         let outcome = wait_for_inclusion(
             provider.as_ref(),
@@ -415,6 +435,15 @@ impl SubmitEngine {
             self.cfg.execution.max_inclusion_wait_blocks,
             1000,
         ).await;
+
+        // CODE-4: Check 11 cleanup — tx resolved (included, reverted, or
+        // dropped). Delete the pending tracker so the next broadcast is not
+        // blocked. If DEL fails, the 180 s TTL acts as the backstop (R8).
+        {
+            let pending_tx_key = format!("arbx:pending_tx:{}", our_address);
+            let mut redis_conn = self.redis.clone();
+            let _: Result<(), redis::RedisError> = redis_conn.del(&pending_tx_key).await;
+        }
 
         match outcome {
             InclusionOutcome::Included { block, gas_used } => ExecutionResult {
