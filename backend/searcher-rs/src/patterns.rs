@@ -50,6 +50,7 @@ pub fn build_dex_arb_candidate(ctx: &TxContext, swap: &DecodedSwap) -> Opportuni
         token_out: format!("0x{}", hex::encode(swap.token_out.as_bytes())),
         amount_in_wei: amount_in.to_string(),
         expected_profit_usd: None, // R8 fail-honest: NULL until selector+sim computes
+        net_expected_profit_usd: None, // Populated by spine evaluator after calc_net_profit_and_roi
         roi_pct: None,
         risk_score: None,
         block_number: ctx.block_number,

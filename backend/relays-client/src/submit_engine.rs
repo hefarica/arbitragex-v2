@@ -95,14 +95,19 @@ impl SubmitEngine {
                 chain_id: opp.chain_id,
                 route_tokens: &route_tokens,
                 route_factories: &route_factories,
-                expected_profit_usd: opp.expected_profit_usd.unwrap_or(0.0),
-                // TODO(H2 review 2026-05-08): MAINNET LANDMINE — must fix before paper_mode=false.
-                // estimated_gas_usd: 0.0 makes Check 7 compute net = profit - 0 = profit, so the
-                // floor gate uses GROSS profit, not net. This is permissive (not "conservative"
-                // as previous comment claimed). Safe today because Check 2 (paper_mode) intercepts
-                // first. Before mainnet flip: either populate estimated_gas_usd from Opportunity's
-                // gas fields, or guarantee that opp.expected_profit_usd already carries net-after-
-                // gas (verified via OpportunityEvidence.net_expected_profit propagation).
+                // H2 fix (2026-05-08): use spine-computed net profit when available.
+                // net_expected_profit_usd is populated by scanner.rs after
+                // calc_net_profit_and_roi runs through the spine evaluator path.
+                // Fallback to gross (expected_profit_usd) for pre-spine rows only —
+                // those are blocked by paper_mode (Check 2) before reaching Check 7
+                // in practice. The fallback preserves prior behaviour for cold-start
+                // rows; new opportunities always have the net field set. R8 fail-honest:
+                // 0.0 as last resort means the floor check will likely block the opp,
+                // which is the safe direction (under-execute, not over-execute).
+                expected_profit_usd: Self::resolve_profit_for_checklist(opp),
+                // estimated_gas_usd is 0.0 because expected_profit_usd now carries NET
+                // profit (gas already deducted by spine). Setting it to non-zero would
+                // double-deduct gas and incorrectly block valid opportunities.
                 estimated_gas_usd: 0.0,
                 // expected_slippage_pct is not yet in Opportunity; 0.0 means
                 // check 10 always passes — no false blocks until the field lands.
@@ -338,6 +343,15 @@ impl SubmitEngine {
         }
     }
 
+    /// Pure helper: resolve which profit figure Check 7 should use.
+    /// Extracted to make the H2 contract testable without I/O.
+    #[inline]
+    pub(crate) fn resolve_profit_for_checklist(opp: &Opportunity) -> f64 {
+        opp.net_expected_profit_usd
+            .or(opp.expected_profit_usd)
+            .unwrap_or(0.0)
+    }
+
     fn not_submitted(opp: &Opportunity, reason: &str) -> ExecutionResult {
         ExecutionResult {
             opportunity_id: opp.id,
@@ -360,5 +374,80 @@ impl SubmitEngine {
             submitted_at: Utc::now(),
             trace_id: opp.trace_id,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use shared_rs::contracts::{Opportunity, StrategyKind};
+    use uuid::Uuid;
+
+    fn make_opp(gross: Option<f64>, net: Option<f64>) -> Opportunity {
+        Opportunity {
+            id: Uuid::new_v4(),
+            chain_id: 1,
+            strategy_kind: StrategyKind::DexArb,
+            dex_a: "uniswap_v2".into(),
+            dex_b: None,
+            pair_symbol: "WETH/USDC".into(),
+            token_in: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".into(),
+            token_out: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".into(),
+            amount_in_wei: "1000000000000000000".into(),
+            expected_profit_usd: gross,
+            net_expected_profit_usd: net,
+            roi_pct: None,
+            risk_score: None,
+            block_number: Some(12_000_000),
+            rejection_reason: None,
+            detected_at: Utc::now(),
+            trace_id: Uuid::new_v4(),
+        }
+    }
+
+    /// H2 regression: net field takes precedence over gross.
+    /// $52 gross / $7 net — Check 7 must see $7, not $52.
+    #[test]
+    fn h2_net_field_takes_precedence_over_gross() {
+        let opp = make_opp(Some(52.0), Some(7.0));
+        let profit = SubmitEngine::resolve_profit_for_checklist(&opp);
+        assert!(
+            (profit - 7.0).abs() < f64::EPSILON,
+            "expected 7.0 (net), got {profit}"
+        );
+    }
+
+    /// When net field is absent (pre-spine row), gross is used as fallback.
+    #[test]
+    fn h2_fallback_to_gross_when_net_absent() {
+        let opp = make_opp(Some(52.0), None);
+        let profit = SubmitEngine::resolve_profit_for_checklist(&opp);
+        assert!(
+            (profit - 52.0).abs() < f64::EPSILON,
+            "expected 52.0 (gross fallback), got {profit}"
+        );
+    }
+
+    /// When both fields are absent, returns 0.0 (safe — will fail the floor check).
+    #[test]
+    fn h2_both_absent_returns_zero() {
+        let opp = make_opp(None, None);
+        let profit = SubmitEngine::resolve_profit_for_checklist(&opp);
+        assert!(
+            profit == 0.0,
+            "expected 0.0 (fail-safe), got {profit}"
+        );
+    }
+
+    /// Net profit below zero is propagated correctly (negative net must fail floor).
+    #[test]
+    fn h2_negative_net_propagated_correctly() {
+        let opp = make_opp(Some(52.0), Some(-3.0));
+        let profit = SubmitEngine::resolve_profit_for_checklist(&opp);
+        assert!(
+            (profit - (-3.0)).abs() < f64::EPSILON,
+            "expected -3.0 (negative net), got {profit}"
+        );
     }
 }

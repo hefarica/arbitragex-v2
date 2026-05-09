@@ -31,13 +31,13 @@ pub async fn insert_opportunity(pool: &PgPool, o: &Opportunity) -> anyhow::Resul
         INSERT INTO opportunities (
             id, chain_id, strategy_kind, dex_a, dex_b, pair_symbol,
             token_in, token_out, amount_in_wei,
-            expected_profit_usd, roi_pct, risk_score,
+            expected_profit_usd, net_expected_profit_usd, roi_pct, risk_score,
             block_number, status, rejection_reason, trace_id, detected_at
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9,
-            $10, $11, $12,
-            $13, 'detected', $14, $15, $16
+            $10, $11, $12, $13,
+            $14, 'detected', $15, $16, $17
         )
         ON CONFLICT (id) DO NOTHING
         "#,
@@ -52,6 +52,7 @@ pub async fn insert_opportunity(pool: &PgPool, o: &Opportunity) -> anyhow::Resul
     .bind(&o.token_out)
     .bind(amount_in_wei)
     .bind(o.expected_profit_usd)
+    .bind(o.net_expected_profit_usd)
     .bind(o.roi_pct)
     .bind(o.risk_score)
     .bind(o.block_number.map(|n| n as i64))

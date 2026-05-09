@@ -1437,6 +1437,7 @@ impl TriangularWorker {
             token_out: addr_a.clone(),
             amount_in_wei: result.amount_in_wei.to_string(),
             expected_profit_usd: result.expected_profit_usd,
+            net_expected_profit_usd: None, // Populated by spine evaluator
             roi_pct: None,
             risk_score: None,
             block_number: Some(cycle_block),
@@ -1842,6 +1843,7 @@ impl TriangularWorker {
                 token_out: plan.addr_a.clone(),
                 amount_in_wei: result.amount_in_wei.to_string(),
                 expected_profit_usd: result.expected_profit_usd,
+                net_expected_profit_usd: None, // Populated by spine evaluator
                 roi_pct: None,
                 risk_score: None,
                 block_number: Some(cycle_block),

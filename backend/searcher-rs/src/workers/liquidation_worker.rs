@@ -975,6 +975,7 @@ impl LiquidationWorker {
                     token_out: token_out_synth,
                     amount_in_wei: amount_in_str,
                     expected_profit_usd: Some(estimate.net_profit_usd),
+                    net_expected_profit_usd: None, // Populated by spine evaluator
                     roi_pct: None,
                     risk_score: None,
                     block_number: if current_block > 0 { Some(current_block) } else { None },

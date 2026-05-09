@@ -26,7 +26,18 @@ pub struct Opportunity {
     pub token_out: String,
     /// big int as decimal string
     pub amount_in_wei: String,
+    /// Gross profit in USD as emitted by the worker (before gas, fees, slippage).
+    /// Set by scanner.rs from `math_outcome.gross_profit_usd`.
+    /// None when the oracle could not price the tokens (R8 fail-honest).
     pub expected_profit_usd: Option<f64>,
+    /// Net profit in USD after ALL cost components (gas + LP fees + slippage +
+    /// flash-loan fee + failure buffer + capital cost + ops overhead).
+    /// Populated by the spine evaluator (`calc_net_profit_and_roi`).
+    /// None for opportunities that bypassed the spine path (cold-start, pre-spine rows).
+    /// submit_engine Check 7 uses this field; falls back to `expected_profit_usd`
+    /// when None (R8 fail-honest — same behaviour as before spine path ran).
+    #[serde(default)]
+    pub net_expected_profit_usd: Option<f64>,
     pub roi_pct: Option<f64>,
     pub risk_score: Option<f64>,
     pub block_number: Option<u64>,

@@ -915,6 +915,11 @@ async fn decode_and_score_tx(
                 final_evidence.final_score = score.final_score;
                 final_evidence.decision = can_execute(&final_evidence, true);
                 opportunity.risk_score = Some(score.final_score);
+                // H2 fix: propagate spine-computed net profit to the Opportunity
+                // row so submit_engine Check 7 gates on net, not gross.
+                // Only set when net > 0 OR explicitly 0; negative net still
+                // propagates (it will be blocked by Check 7 as intended).
+                opportunity.net_expected_profit_usd = Some(score.net_expected_profit);
 
                 if let Ok(json) = serde_json::to_string(&final_evidence) {
                     let _ = std::fs::create_dir_all("logs/mev");

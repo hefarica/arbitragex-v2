@@ -989,6 +989,7 @@ impl FlashloanArbWorker {
                     token_out: addr_a.clone(),
                     amount_in_wei: result.borrow_wei.to_string(),
                     expected_profit_usd: Some(result.expected_profit_usd),
+                    net_expected_profit_usd: None, // Populated by spine evaluator
                     roi_pct: None,
                     risk_score: None,
                     block_number: Some(block),
