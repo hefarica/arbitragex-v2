@@ -27,10 +27,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          # Pinned to workspace rust-version (backend/Cargo.toml).
-          # Update here when workspace rust-version is bumped.
-          # 1.85 is the minimum for edition2024 (required by alloy-chains 0.2.34+).
-          toolchain: "1.85"
+          # `stable` follows the current Rust release. Alloy ecosystem moves
+          # fast: deps in lockfile require up to rustc 1.90 (ruint@1.18). Pinning
+          # to a specific minor would require rebumping every few months.
+          # If determinism is needed later, pin to a specific rustc and run
+          # `cargo update --precise` to downgrade deps that outgrow it.
+          toolchain: stable
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
