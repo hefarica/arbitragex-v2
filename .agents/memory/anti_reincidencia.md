@@ -520,3 +520,48 @@ WHERE strategy_kind='triangular' AND rejection_reason IS NULL
 - `backend/searcher-rs/src/workers/pool_sync_worker.rs:199` — el lugar donde token0_addr se escribe a Redis desde PG (load-bearing)
 
 **Incidente cerrado:** 2026-05-07 ~08:46 UTC. 5+ min sin emits anómalos. Defense-in-depth verificada en producción.
+
+---
+
+## Incidente #N+1: CI Baseline Roto desde Día 1 (Broken-Baseline Pattern)
+
+**Fecha del aprendizaje:** 2026-05-09 (Sesión de observación CI tras despliegue de workflows en commit `3d9410a`)
+
+**Qué ocurrió:**
+Los 7 GitHub Actions workflows añadidos en `3d9410a` corrieron por primera vez con el push y **4 de 5 fallaron consistentemente** desde el primer run (e2e fue el único verde). Nadie revisó el resultado durante 4+ días. El operador descubrió el rojo al pedir "observa los primeros runs de CI" en una sesión de seguimiento.
+
+**Qué salió mal:**
+1. **Rust CI**: toolchain pinned a `1.75` pero el lockfile tiene `alloy-chains 0.2.34` que requiere `edition2024` (Rust 1.85+). Falló en `cargo check`.
+2. **unit-tests Rust**: cascade del mismo issue — toolchain default sin pin.
+3. **unit-tests TypeScript**: `tsc --noEmit` reportó `Cannot find module '@arbx/shared'` porque el workspace `shared-ts` no se construye antes del typecheck. Sin `dist/` no hay tipos resolvibles para `selector-api`, `api-server`, `edge/*`.
+4. **Security Scans**: cargo-audit install falló (cascade toolchain).
+5. **no-hardcode**: 180 violaciones reales — la mayoría hardcodes de token addresses en `triangular_worker.rs` y URLs en test fixtures que el regex allow-list no cubría semánticamente.
+
+**Causa raíz:**
+Workflows fueron mergeados sin haberse validado en un PR aislado contra el repo. El "primer run" ocurrió directamente en main, sin nadie observando, así que el rojo se acumuló silenciosamente. Esto se llama **broken-baseline**: arrancar con CI rojo desnormaliza el rojo y todos los fallos futuros pierden señal.
+
+**Regla nueva para prevenirlo (R-CI-1 Broken-Baseline Avoidance):**
+- **Antes de mergear un workflow de CI nuevo a main**, debe correr al menos 1 vez exitosamente en un PR de prueba.
+- Si el primer run falla, **bloquear merge** del workflow hasta que pase, O documentar explícitamente el `continue-on-error: true` con TODO y issue de seguimiento.
+- **Toolchain pins** en CI deben coincidir con la versión mínima requerida por el lockfile, no con el `rust-version` del manifesto (que es informativo).
+- **TypeScript workspaces con paquetes locales** (`@arbx/shared`) requieren paso de `npm run -w @arbx/shared build` ANTES del typecheck.
+
+**Validación obligatoria:**
+Tras añadir o modificar un workflow CI: `gh run list --workflow=<name> --limit 1` y confirmar `conclusion=success` antes de declarar el cambio "listo".
+
+**Archivos relacionados (fix aplicado en sesión 2026-05-09):**
+- `.github/workflows/rust.yml` — toolchain 1.75 → 1.85
+- `.github/workflows/security.yml` — toolchain 1.75 → 1.85
+- `.github/workflows/unit-tests.yml` — toolchain 1.85 + step `npm run -w @arbx/shared build` + DATABASE_URL stub para sqlx offline + `--lib` flag
+- `automation/tools/lint-no-hardcode.sh` — JSX `placeholder=` skip + `tests?/` dir allow + canonical adapter files allow-list
+- `docker/compose.dev.yml` — `GF_SERVER_ROOT_URL` hardcoded → env var
+- `backend/Cargo.toml` — rust-version → 1.85; `transports-http` → `transport-http` typo fix
+
+**Deuda técnica queued (NO arreglada en este fix, pendiente de Sprint refactor):**
+no-hardcode todavía reporta ~152 violaciones reales que NO son falsos positivos:
+- `backend/searcher-rs/src/workers/triangular_worker.rs:72,423-434` — mapping hardcoded de 9 token addresses (WETH/USDC/USDT/DAI/WBTC/PEPE/SHIB/MKR/COMP). Debe migrar a `backend/shared-rs/src/tokens.rs` (catálogo canónico).
+- `backend/token-enricher/src/multicall.rs:5` — `MULTICALL3_ADDRESS` constante. Debe ir a `chains.rs` o `tokens.rs`.
+- `backend/relays-client/src/relay_bloxroute.rs:27` — `BLOXROUTE_MEV_URL` constante. Debe ir a catálogo o env var.
+- Múltiples test fixtures con direcciones inline en `revm_backend.rs`, `price_oracle.rs` que requieren refactor a `tests/fixtures/`.
+
+**Incidente abierto:** En espera del refactor de catálogo canónico. CI workflows toolchain + TS workspace fixes ya en main; no-hardcode permanece rojo y documentado hasta cleanup.

@@ -291,7 +291,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_SERVER_ROOT_URL: https://grafana.ape-tv.net
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
       GF_SERVER_SERVE_FROM_SUB_PATH: "false"
     volumes:
       - ../monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro

@@ -17,11 +17,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          # 1.85 is the minimum for edition2024 (required by alloy-chains 0.2.34+).
+          toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: backend
-      - name: Run cargo test
-        run: cargo test --workspace --locked 2>&1
+      - name: Run cargo test --lib
+        # --lib only — integration tests need PG/Redis live (not in CI).
+        # sqlx offline mode satisfied by stub DATABASE_URL.
+        run: cargo test --workspace --locked --lib
+        env:
+          DATABASE_URL: postgres://test:test@localhost/arbitragex_test
+          REDIS_URL: redis://localhost:6379
+          SIM_SIGNER_ADDRESS: "0x000000000000000000000000000000000000dead"
 
   typescript:
     name: TypeScript tests + typecheck
@@ -35,6 +44,11 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Build @arbx/shared
+        # Dependent workspaces (selector-api, api-server, edge/*) resolve
+        # @arbx/shared from `shared-ts/dist/`. Typecheck fails with
+        # "Cannot find module '@arbx/shared'" if dist/ doesn't exist.
+        run: npm run -w @arbx/shared build
       - name: Typecheck all workspaces
         run: npm run typecheck --workspaces --if-present
       - name: Run tests

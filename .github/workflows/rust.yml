@@ -29,7 +29,8 @@ jobs:
         with:
           # Pinned to workspace rust-version (backend/Cargo.toml).
           # Update here when workspace rust-version is bumped.
-          toolchain: "1.75"
+          # 1.85 is the minimum for edition2024 (required by alloy-chains 0.2.34+).
+          toolchain: "1.85"
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2

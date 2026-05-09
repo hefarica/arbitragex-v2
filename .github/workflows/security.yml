@@ -20,7 +20,8 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.75"
+          # 1.85 is the minimum for edition2024 (required by alloy-chains 0.2.34+).
+          toolchain: "1.85"
 
       - uses: Swatinem/rust-cache@v2
         with:
