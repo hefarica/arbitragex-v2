@@ -1421,6 +1421,18 @@ impl TriangularWorker {
         }
 
         // Build & emit Opportunity.
+        // H2 landmine fix: compute net_expected_profit_usd inline so submit_engine
+        // Check 7 gates on NET (gross minus gas), not gross.  The spine evaluator
+        // does not run on the worker persistence path, so we must populate the field
+        // here.  Formula mirrors prioritization_spine::config_aware::estimate_gas_cost_usd.
+        // When cfg is absent (cold-start / Redis miss) we fall back to None, which
+        // causes resolve_profit_for_checklist to use gross — same conservative
+        // direction as the pre-fix behaviour, not a regression.
+        let net_expected_profit_usd_v2: Option<f64> = cfg.as_ref().and_then(|c| {
+            let gross = result.expected_profit_usd?;
+            Some(gross - c.gas_cost_usd())
+        });
+
         let opp = Opportunity {
             id: Uuid::new_v4(),
             chain_id: self.chain_id,
@@ -1437,7 +1449,7 @@ impl TriangularWorker {
             token_out: addr_a.clone(),
             amount_in_wei: result.amount_in_wei.to_string(),
             expected_profit_usd: result.expected_profit_usd,
-            net_expected_profit_usd: None, // Populated by spine evaluator
+            net_expected_profit_usd: net_expected_profit_usd_v2,
             roi_pct: None,
             risk_score: None,
             block_number: Some(cycle_block),
@@ -1824,6 +1836,12 @@ impl TriangularWorker {
             }
 
             // Build & emit Opportunity (mirrors V2 path).
+            // H2 landmine fix: populate net_expected_profit_usd inline.
+            // See V2 emit site for full rationale.
+            let net_expected_profit_usd_v3: Option<f64> = cfg.as_ref().and_then(|c| {
+                let gross = result.expected_profit_usd?;
+                Some(gross - c.gas_cost_usd())
+            });
             let opp = Opportunity {
                 id: Uuid::new_v4(),
                 chain_id: self.chain_id,
@@ -1843,7 +1861,7 @@ impl TriangularWorker {
                 token_out: plan.addr_a.clone(),
                 amount_in_wei: result.amount_in_wei.to_string(),
                 expected_profit_usd: result.expected_profit_usd,
-                net_expected_profit_usd: None, // Populated by spine evaluator
+                net_expected_profit_usd: net_expected_profit_usd_v3,
                 roi_pct: None,
                 risk_score: None,
                 block_number: Some(cycle_block),

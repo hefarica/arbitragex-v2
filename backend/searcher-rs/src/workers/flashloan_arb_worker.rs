@@ -743,12 +743,14 @@ impl FlashloanArbWorker {
             ticker.tick().await;
             tick_count += 1;
 
-            // Load per-chain min_profit_usd from operator config (Redis-backed).
+            // Load per-chain config from operator config (Redis-backed).
             // Falls back to a chain-aware conservative floor if Redis has no config
             // yet (cold start or operator has not configured this chain).
-            let min_profit_usd = match trading_config.state(self.chain_id).await {
-                Ok(Some(cfg)) => cfg.min_profit_usd,
-                Ok(None) => fallback_min,
+            // H2 landmine fix: also extract gas_cost_usd so scan_one_pair can
+            // populate net_expected_profit_usd at the emit site.
+            let (min_profit_usd, gas_cost_usd_tick) = match trading_config.state(self.chain_id).await {
+                Ok(Some(ref cfg)) => (cfg.min_profit_usd, Some(cfg.gas_cost_usd())),
+                Ok(None) => (fallback_min, None),
                 Err(e) => {
                     debug!(
                         event = "flashloan_arb_worker.cfg_fetch_failed",
@@ -756,7 +758,7 @@ impl FlashloanArbWorker {
                         error = %e,
                         fallback = fallback_min,
                     );
-                    fallback_min
+                    (fallback_min, None)
                 }
             };
 
@@ -784,6 +786,7 @@ impl FlashloanArbWorker {
                         sym_a,
                         sym_b,
                         min_profit_usd,
+                        gas_cost_usd_tick,
                         &mut dedup,
                         &mut stats,
                     )
@@ -825,6 +828,9 @@ impl FlashloanArbWorker {
     ///
     /// `min_profit_usd` is the per-chain floor loaded from `trading_config`
     /// each tick (see `run()`). Must be > 0.
+    /// `gas_cost_usd` is the estimated gas cost in USD from `TradingConfigState::gas_cost_usd()`;
+    /// `None` when the config was unavailable (cold-start / Redis miss) — in that case
+    /// `net_expected_profit_usd` is not populated (falls back to gross in submit_engine).
     #[allow(clippy::too_many_arguments)]
     async fn scan_one_pair(
         &self,
@@ -834,6 +840,7 @@ impl FlashloanArbWorker {
         sym_a: &str,
         sym_b: &str,
         min_profit_usd: f64,
+        gas_cost_usd: Option<f64>,
         dedup: &mut DedupState,
         stats: &mut TickStats,
     ) -> Option<u64> {
@@ -978,6 +985,12 @@ impl FlashloanArbWorker {
                 }
 
                 // Build & emit Opportunity.
+                // H2 landmine fix: compute net_expected_profit_usd inline so
+                // submit_engine Check 7 gates on NET (gross minus gas).
+                // `gas_cost_usd` is None on cold-start; fallback to gross is safe.
+                let net_expected_profit_usd_fl: Option<f64> =
+                    gas_cost_usd.map(|g| result.expected_profit_usd - g);
+
                 let opp = Opportunity {
                     id: Uuid::new_v4(),
                     chain_id: self.chain_id,
@@ -989,7 +1002,7 @@ impl FlashloanArbWorker {
                     token_out: addr_a.clone(),
                     amount_in_wei: result.borrow_wei.to_string(),
                     expected_profit_usd: Some(result.expected_profit_usd),
-                    net_expected_profit_usd: None, // Populated by spine evaluator
+                    net_expected_profit_usd: net_expected_profit_usd_fl,
                     roi_pct: None,
                     risk_score: None,
                     block_number: Some(block),

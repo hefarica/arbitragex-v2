@@ -235,6 +235,25 @@ impl TradingConfigState {
         }
     }
 
+    /// Estimate gas cost in USD using the operator's configured gas strategy.
+    ///
+    /// Workers that do not have live network signals (basefee / p75 tip) pass
+    /// 0.0 for both, which causes `resolve_gas_price_gwei` to fall back to
+    /// `fixed_gas_price_gwei` — the operator's configured static gas price.
+    /// This matches the spine's `estimate_gas_cost_usd` logic for the same
+    /// no-signal case.
+    ///
+    /// Formula (identical to `prioritization_spine::config_aware::estimate_gas_cost_usd`):
+    ///   gas_units × gas_price_gwei × 1e9 / 1e18 × base_token_price_usd
+    ///
+    /// Returns 0.0 when gas_price_gwei resolves to 0 (no fixed config, no live
+    /// signals) — conservative: net = gross, will not over-block.
+    pub fn gas_cost_usd(&self) -> f64 {
+        let gas_price_gwei = self.resolve_gas_price_gwei(0.0, 0.0);
+        let gas_units = self.gas_estimate_units as f64;
+        (gas_units * gas_price_gwei * 1e9) / 1e18 * self.base_token_price_usd
+    }
+
     /// Returns the effective capital used for math sizing + risk policy bounds
     /// when neither token nor strategy context is available. Honours the global
     /// `simulation_capital_usd` knob when set, otherwise falls back to the
