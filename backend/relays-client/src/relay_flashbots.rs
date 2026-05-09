@@ -1,12 +1,17 @@
 //! Flashbots relay client.
 //!
 //! Submits `eth_sendBundle` to the Flashbots Relay with X-Flashbots-Signature
-//! auth header. Other MEV-Boost-compatible relays share a similar API; they
-//! live behind `relay_mev.rs` stubs until S5.1.
+//! auth header.
+//!
+//! `FlashbotsClient` also implements `RelayBackend` (BE-06) so it can be
+//! composed into a `MultiRelayClient` alongside BloXRoute and Titan backends.
 
 use crate::bundle_builder::SignedBundle;
+use crate::multi_relay::{RelayBackend, RelayError, RelayResponse};
 use crate::signer::Signer;
 use anyhow::{Context, Result};
+use async_trait::async_trait;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::debug;
@@ -18,6 +23,18 @@ pub struct FlashbotsClient {
 }
 
 impl FlashbotsClient {
+    /// Construct from env vars `FLASHBOTS_RELAY_URL` + optional timeout.
+    /// Returns `None` when the URL is absent — backend excluded from pool.
+    ///
+    /// NOTE: main.rs resolves the URL from the DB relay catalog first and calls
+    /// `FlashbotsClient::new()` directly. `from_env` exists for completeness and
+    /// test convenience; it is not called from the production boot path.
+    #[allow(dead_code)]
+    pub fn from_env(timeout: Duration) -> Option<Self> {
+        let url = std::env::var("FLASHBOTS_RELAY_URL").ok().filter(|v| !v.is_empty())?;
+        Some(Self::new(url, timeout))
+    }
+
     pub fn new(url: String, timeout: Duration) -> Self {
         let http = reqwest::Client::builder()
             .timeout(timeout)
@@ -100,4 +117,39 @@ pub struct BundleResult {
 pub struct RpcError {
     pub code: i64,
     pub message: String,
+}
+
+// ─── RelayBackend impl ───────────────────────────────────────────────────────
+
+/// Wraps the existing `send_bundle` method to satisfy the `RelayBackend` trait.
+/// This is purely an adapter — the underlying HTTP logic is unchanged.
+#[async_trait]
+impl RelayBackend for FlashbotsClient {
+    async fn send_bundle(
+        &self,
+        bundle: &SignedBundle,
+        signer: &Signer,
+    ) -> Result<RelayResponse, RelayError> {
+        let resp = FlashbotsClient::send_bundle(self, signer, bundle)
+            .await
+            .map_err(|e| RelayError::Internal(e.to_string()))?;
+
+        if let Some(err) = resp.error {
+            return Err(RelayError::Rejected(format!(
+                "rpc_error code={} msg={}",
+                err.code, err.message
+            )));
+        }
+
+        let bundle_hash = resp.result.and_then(|r| r.bundle_hash);
+        Ok(RelayResponse {
+            bundle_hash,
+            relay_name: self.name().to_string(),
+            submitted_at: Utc::now(),
+        })
+    }
+
+    fn name(&self) -> &str {
+        "flashbots"
+    }
 }

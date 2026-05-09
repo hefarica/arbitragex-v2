@@ -10,10 +10,13 @@
 
 mod bundle_builder;
 mod consumer;
+mod multi_relay;
 mod nonce_manager;
 mod persistence;
+mod relay_bloxroute;
 mod relay_catalog;
 mod relay_flashbots;
+mod relay_titan;
 mod signer;
 mod submit_engine;
 mod tracker;
@@ -39,8 +42,11 @@ use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tracing::{info, warn};
 
+use crate::multi_relay::MultiRelayClient;
 use crate::nonce_manager::NonceManager;
+use crate::relay_bloxroute::BloXRouteClient;
 use crate::relay_flashbots::FlashbotsClient;
+use crate::relay_titan::TitanClient;
 use crate::signer::Signer;
 use crate::submit_engine::SubmitEngine;
 
@@ -189,64 +195,106 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // Resolve flashbots endpoint under the no-hardcode doctrine. Order:
+    // ── Build multi-relay backend pool (BE-06) ─────────────────────────────
+    //
+    // Backends are added only when their credentials are present in the
+    // environment or DB. No relay = `multi_relay` is None → engine stays in
+    // NotSubmitted mode (same behaviour as when `flashbots` was None before).
+    //
+    // Flashbots URL resolution order (no-hardcode doctrine):
     //   1. DB `relays` table (operator-owned catalog, migration 013).
     //   2. FLASHBOTS_RELAY_URL env override (break-glass during onboarding).
-    //   3. Nothing → flashbots disabled + warn.
+    //   3. Nothing → flashbots backend excluded.
     //
-    // cfg.relays (configs/app.toml) is NOT consulted anymore — the TOML block
-    // was reduced to a seed-only document in commit 0210d27 and the DB is
-    // authoritative from this point on.
-    let flashbots = {
-        let mut endpoint: Option<String> = None;
-        let mut source: &'static str = "unset";
+    // BloXRoute: BLOXROUTE_AUTH_HEADER env var.
+    // Titan:     TITAN_BUILDER_URL + TITAN_AUTH_HEADER env vars.
+    let relay_timeout = Duration::from_millis(cfg.execution.flashbots_submit_timeout_ms);
+    let multi_relay: Option<Arc<MultiRelayClient>> = {
+        let mut backends: Vec<std::sync::Arc<dyn multi_relay::RelayBackend>> = Vec::new();
 
-        if let Some(pool) = db_pool_opt.as_ref() {
-            match relay_catalog::load_enabled(pool, chain_id as i32).await {
-                Ok(catalog) => {
-                    if let Some(fb) = relay_catalog::find_flashbots(&catalog, chain_id as i32) {
-                        endpoint = Some(fb.endpoint.clone());
-                        source = "db";
+        // ── Flashbots ────────────────────────────────────────────────────────
+        {
+            let mut fb_endpoint: Option<String> = None;
+            let mut fb_source: &'static str = "unset";
+
+            if let Some(pool) = db_pool_opt.as_ref() {
+                match relay_catalog::load_enabled(pool, chain_id as i32).await {
+                    Ok(catalog) => {
+                        if let Some(fb) = relay_catalog::find_flashbots(&catalog, chain_id as i32) {
+                            fb_endpoint = Some(fb.endpoint.clone());
+                            fb_source = "db";
+                        }
+                        relay_catalog::warn_if_empty(&catalog, chain_id as i32);
                     }
-                    relay_catalog::warn_if_empty(&catalog, chain_id as i32);
+                    Err(e) => {
+                        warn!(
+                            event = "relay_catalog.query_failed",
+                            error = %e,
+                            "could not load relay catalog from DB — will check env override only"
+                        );
+                    }
                 }
-                Err(e) => {
+            }
+
+            if fb_endpoint.is_none() {
+                if let Ok(url) = std::env::var("FLASHBOTS_RELAY_URL") {
+                    if !url.is_empty() {
+                        fb_endpoint = Some(url);
+                        fb_source = "env";
+                    }
+                }
+            }
+
+            match fb_endpoint {
+                Some(url) => {
+                    info!(event = "flashbots.configured", url = %url, source = fb_source, "flashbots backend added");
+                    backends.push(Arc::new(FlashbotsClient::new(url, relay_timeout)));
+                }
+                None => {
                     warn!(
-                        event = "relay_catalog.query_failed",
-                        error = %e,
-                        "could not load relay catalog from DB — will check env override only"
+                        event = "flashbots.disabled",
+                        reason = "no_endpoint",
+                        "flashbots backend absent: no row in relays table for chain {chain_id} \
+                         and no FLASHBOTS_RELAY_URL. Populate via POST /admin/relays (onboarding step 4).",
                     );
                 }
             }
         }
 
-        if endpoint.is_none() {
-            if let Ok(url) = std::env::var("FLASHBOTS_RELAY_URL") {
-                if !url.is_empty() {
-                    endpoint = Some(url);
-                    source = "env";
-                }
-            }
+        // ── BloXRoute ────────────────────────────────────────────────────────
+        if let Some(blx) = BloXRouteClient::from_env() {
+            info!(event = "bloxroute.configured", "bloxroute backend added");
+            backends.push(Arc::new(blx));
+        } else {
+            info!(event = "bloxroute.skipped", reason = "BLOXROUTE_AUTH_HEADER not set");
         }
 
-        match endpoint {
-            Some(url) => {
-                info!(event = "flashbots.configured", url = %url, source, "flashbots relay enabled");
-                Some(Arc::new(FlashbotsClient::new(
-                    url,
-                    Duration::from_millis(cfg.execution.flashbots_submit_timeout_ms),
-                )))
-            }
-            None => {
-                warn!(
-                    event = "flashbots.disabled",
-                    reason = "no_endpoint",
-                    "flashbots relay disabled: no row in relays table for chain {chain_id} and \
-                     no FLASHBOTS_RELAY_URL env override. Populate via POST /admin/relays \
-                     (onboarding step 4).",
-                );
-                None
-            }
+        // ── Titan ────────────────────────────────────────────────────────────
+        if let Some(titan) = TitanClient::from_env() {
+            info!(event = "titan.configured", "titan backend added");
+            backends.push(Arc::new(titan));
+        } else {
+            info!(event = "titan.skipped", reason = "TITAN_BUILDER_URL or TITAN_AUTH_HEADER not set");
+        }
+
+        if backends.is_empty() {
+            warn!(
+                event = "multi_relay.no_backends",
+                "no relay backends configured — relays-client stays in NotSubmitted mode"
+            );
+            None
+        } else {
+            let names: Vec<&str> = backends.iter().map(|b| b.name()).collect();
+            info!(
+                event = "multi_relay.ready",
+                backends = ?names,
+                timeout_ms = cfg.execution.flashbots_submit_timeout_ms,
+                "multi-relay broadcast pool ready"
+            );
+            Some(Arc::new(MultiRelayClient {
+                backends,
+                timeout_ms: cfg.execution.flashbots_submit_timeout_ms,
+            }))
         }
     };
 
@@ -261,7 +309,7 @@ async fn main() -> anyhow::Result<()> {
         signer: signer.clone(),
         rpc_pool: rpc_pool.clone(),
         nonce: nonce.clone(),
-        flashbots: flashbots.clone(),
+        multi_relay: multi_relay.clone(),
         kill_switch: killswitch.clone(),
         paper_mode: paper_mode.clone(),
         cfg: cfg.clone(),
@@ -286,6 +334,8 @@ async fn main() -> anyhow::Result<()> {
         event = "service.boot",
         service = SERVICE, env = %cfg.system.env, port,
         has_signer = signer.is_some(),
+        has_multi_relay = multi_relay.is_some(),
+        relay_backends = multi_relay.as_ref().map(|mr| mr.backend_names()).unwrap_or_else(|| "none".to_string()),
         paper_mode = cfg.execution.paper_mode,
         max_value_eth = cfg.execution.max_value_eth,
         "relays-client listening"
@@ -305,7 +355,7 @@ async fn main() -> anyhow::Result<()> {
                 signer: signer.clone(),
                 rpc_pool: rpc_pool.clone(),
                 nonce,
-                flashbots,
+                multi_relay,
                 kill_switch: killswitch.clone(),
                 paper_mode: paper_mode.clone(),
                 cfg: cfg.clone(),

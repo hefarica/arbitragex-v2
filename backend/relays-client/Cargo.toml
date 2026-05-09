@@ -23,6 +23,7 @@ chrono.workspace = true
 redis.workspace = true
 ethers.workspace = true
 futures-util.workspace = true
+async-trait.workspace = true
 hex.workspace = true
 reqwest.workspace = true
 sqlx.workspace = true

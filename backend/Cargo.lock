@@ -5176,6 +5176,7 @@ name = "relays-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "bigdecimal 0.4.10",
  "chrono",
@@ -6168,6 +6169,7 @@ name = "sim-ctl"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "bigdecimal 0.4.10",
  "chrono",
@@ -6178,6 +6180,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shared-rs",
+ "simulator-v2",
  "sqlx",
  "thiserror 1.0.69",
  "tokio",

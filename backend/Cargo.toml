@@ -49,5 +49,6 @@ prioritization-spine = { path = "prioritization-spine" }
 math-engine   = { path = "math-engine" }
 ethers        = { version = "2", default-features = false, features = ["ws","rustls"] }
 futures-util  = "0.3"
+async-trait   = "0.1"
 lru           = "0.12"
 hex           = "0.4"

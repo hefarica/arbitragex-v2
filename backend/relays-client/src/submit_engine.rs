@@ -5,8 +5,8 @@
 //! or not-submitted (never fabricates tx_hash).
 
 use crate::bundle_builder::{build_and_sign, BuildError};
+use crate::multi_relay::MultiRelayClient;
 use crate::nonce_manager::NonceManager;
-use crate::relay_flashbots::FlashbotsClient;
 use crate::signer::Signer;
 use crate::tracker::{wait_for_inclusion, InclusionOutcome};
 use chrono::Utc;
@@ -35,7 +35,12 @@ pub struct SubmitEngine {
     /// 501 / NotSubmitted mode.
     pub rpc_pool: Option<Arc<HttpRpcPool>>,
     pub nonce: Option<Arc<NonceManager>>,
-    pub flashbots: Option<Arc<FlashbotsClient>>,
+    /// Multi-relay broadcast client (BE-06). Holds all configured backends
+    /// (Flashbots, BloXRoute, Titan, …). `None` when no relay is configured.
+    /// Broadcasting to N relays increases inclusion probability without risk of
+    /// double-inclusion — the signed tx is identical to all relays; the chain
+    /// will include it at most once.
+    pub multi_relay: Option<Arc<MultiRelayClient>>,
     pub kill_switch: KillSwitchClient,
     pub paper_mode: PaperModeClient,
     pub cfg: Arc<AppConfig>,
@@ -245,9 +250,14 @@ impl SubmitEngine {
 
         // 5. Paper mode short-circuit.
         if paper {
+            let relay_names = self
+                .multi_relay
+                .as_ref()
+                .map(|mr| mr.backend_names())
+                .unwrap_or_else(|| "none".to_string());
             info!(event = "paper_mode.skip_submit", opp_id = %opp.id,
                   tx_hash_would_be = %format!("0x{:x}", bundle.tx_hash),
-                  would_submit_to = "flashbots");
+                  would_submit_to = %relay_names);
             return ExecutionResult {
                 opportunity_id: opp.id,
                 status: ExecutionStatus::NotSubmitted,
@@ -262,84 +272,106 @@ impl SubmitEngine {
             };
         }
 
-        // 6. Submit to Flashbots.
-        let Some(fb) = self.flashbots.clone() else {
-            return Self::not_submitted(opp, "flashbots_client_not_initialized");
+        // 6. Multi-relay broadcast (BE-06).
+        //
+        // Send the bundle to ALL configured relays in parallel. Any single
+        // acceptance is sufficient — the on-chain inclusion poll (step 7)
+        // is the canonical gate. Multiple relays accepting the same bundle
+        // is safe: the tx is signed once; it can be included on-chain at most
+        // once regardless of how many builders receive it.
+        let Some(multi_relay) = self.multi_relay.clone() else {
+            return Self::not_submitted(opp, "multi_relay_not_configured");
         };
-        let send_res = fb.send_bundle(signer.as_ref(), &bundle).await;
-        let relay_used = "flashbots".to_string();
+        let broadcast_result = multi_relay.broadcast(&bundle, signer.as_ref()).await;
         let submitted_at = Utc::now();
 
-        match send_res {
-            Ok(r) => {
-                if let Some(e) = r.error {
-                    warn!(event = "submit.relay_err", opp_id = %opp.id, code = e.code, msg = %e.message);
-                    return ExecutionResult {
-                        opportunity_id: opp.id,
-                        status: ExecutionStatus::Dropped,
-                        tx_hash: None, relay_used: Some(relay_used),
-                        block_included: None, gas_used_wei: None, actual_profit_usd: None,
-                        error_message: Some(format!("relay_rejected: {}", e.message)),
-                        submitted_at, trace_id: opp.trace_id,
-                    };
-                }
-                let bundle_hash = r.result.and_then(|x| x.bundle_hash);
-                info!(event = "submit.ok", opp_id = %opp.id, bundle_hash = ?bundle_hash);
-
-                // 7. Wait for inclusion.
-                let outcome = wait_for_inclusion(
-                    provider.as_ref(),
-                    bundle.tx_hash,
-                    bundle.target_block,
-                    self.cfg.execution.max_inclusion_wait_blocks,
-                    1000,
-                ).await;
-
-                match outcome {
-                    InclusionOutcome::Included { block, gas_used } => ExecutionResult {
-                        opportunity_id: opp.id,
-                        status: ExecutionStatus::Included,
-                        tx_hash: Some(format!("0x{:x}", bundle.tx_hash)),
-                        relay_used: Some(relay_used),
-                        block_included: Some(block),
-                        gas_used_wei: Some(gas_used.to_string()),
-                        actual_profit_usd: None, // S6 computes this from traces
-                        error_message: None,
-                        submitted_at, trace_id: opp.trace_id,
-                    },
-                    InclusionOutcome::Reverted { block } => ExecutionResult {
-                        opportunity_id: opp.id,
-                        status: ExecutionStatus::Reverted,
-                        tx_hash: Some(format!("0x{:x}", bundle.tx_hash)),
-                        relay_used: Some(relay_used),
-                        block_included: Some(block),
-                        gas_used_wei: None, actual_profit_usd: None,
-                        error_message: Some("on_chain_revert".into()),
-                        submitted_at, trace_id: opp.trace_id,
-                    },
-                    InclusionOutcome::Dropped => ExecutionResult {
-                        opportunity_id: opp.id,
-                        status: ExecutionStatus::Dropped,
-                        tx_hash: Some(format!("0x{:x}", bundle.tx_hash)),
-                        relay_used: Some(relay_used),
-                        block_included: None,
-                        gas_used_wei: None, actual_profit_usd: None,
-                        error_message: Some("inclusion_timeout".into()),
-                        submitted_at, trace_id: opp.trace_id,
-                    },
-                }
+        if !broadcast_result.any_success() {
+            // All relays rejected or timed out — log each failure and drop.
+            for (name, reason) in &broadcast_result.failures {
+                warn!(
+                    event = "submit.all_relays_failed",
+                    opp_id = %opp.id,
+                    relay = %name,
+                    reason = %reason,
+                );
             }
-            Err(e) => {
-                warn!(event = "submit.http_err", opp_id = %opp.id, error = %e);
-                ExecutionResult {
-                    opportunity_id: opp.id,
-                    status: ExecutionStatus::Dropped,
-                    tx_hash: None, relay_used: Some(relay_used),
-                    block_included: None, gas_used_wei: None, actual_profit_usd: None,
-                    error_message: Some(format!("relay_http_error: {e}")),
-                    submitted_at, trace_id: opp.trace_id,
-                }
-            }
+            return ExecutionResult {
+                opportunity_id: opp.id,
+                status: ExecutionStatus::Dropped,
+                tx_hash: None,
+                relay_used: None,
+                block_included: None,
+                gas_used_wei: None,
+                actual_profit_usd: None,
+                error_message: Some(format!(
+                    "all_relays_failed: {}",
+                    broadcast_result
+                        .failures
+                        .iter()
+                        .map(|(n, r)| format!("{n}={r}"))
+                        .collect::<Vec<_>>()
+                        .join(";")
+                )),
+                submitted_at,
+                trace_id: opp.trace_id,
+            };
+        }
+
+        let relay_used = broadcast_result.relay_used_str();
+        let bundle_hash = broadcast_result.first_bundle_hash().map(|s| s.to_string());
+        info!(
+            event = "submit.ok",
+            opp_id = %opp.id,
+            relays_accepted = %relay_used,
+            bundle_hash = ?bundle_hash,
+        );
+
+        // 7. Wait for inclusion — chain is the canonical source of truth.
+        let outcome = wait_for_inclusion(
+            provider.as_ref(),
+            bundle.tx_hash,
+            bundle.target_block,
+            self.cfg.execution.max_inclusion_wait_blocks,
+            1000,
+        ).await;
+
+        match outcome {
+            InclusionOutcome::Included { block, gas_used } => ExecutionResult {
+                opportunity_id: opp.id,
+                status: ExecutionStatus::Included,
+                tx_hash: Some(format!("0x{:x}", bundle.tx_hash)),
+                relay_used: Some(relay_used),
+                block_included: Some(block),
+                gas_used_wei: Some(gas_used.to_string()),
+                actual_profit_usd: None, // S6 computes this from traces
+                error_message: None,
+                submitted_at,
+                trace_id: opp.trace_id,
+            },
+            InclusionOutcome::Reverted { block } => ExecutionResult {
+                opportunity_id: opp.id,
+                status: ExecutionStatus::Reverted,
+                tx_hash: Some(format!("0x{:x}", bundle.tx_hash)),
+                relay_used: Some(relay_used),
+                block_included: Some(block),
+                gas_used_wei: None,
+                actual_profit_usd: None,
+                error_message: Some("on_chain_revert".into()),
+                submitted_at,
+                trace_id: opp.trace_id,
+            },
+            InclusionOutcome::Dropped => ExecutionResult {
+                opportunity_id: opp.id,
+                status: ExecutionStatus::Dropped,
+                tx_hash: Some(format!("0x{:x}", bundle.tx_hash)),
+                relay_used: Some(relay_used),
+                block_included: None,
+                gas_used_wei: None,
+                actual_profit_usd: None,
+                error_message: Some("inclusion_timeout".into()),
+                submitted_at,
+                trace_id: opp.trace_id,
+            },
         }
     }
 
