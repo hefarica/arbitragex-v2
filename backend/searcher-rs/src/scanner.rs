@@ -696,6 +696,17 @@ async fn decode_and_score_tx(
                token_in = %token_in_lower, token_out = %token_out_lower);
     }
 
+    // CODE-2 fix: propagate gross_profit_f64 onto the Opportunity row immediately
+    // after it is computed, so ALL downstream paths (including TokenNotAllowed,
+    // StrategyDisabled, and no_trading_config early returns) carry the correct
+    // gross profit value instead of the build_dex_arb_candidate None default.
+    //
+    // R8 invariant preserved: gross_profit_f64 is already None when the oracle gap
+    // prevents USD pricing (neither base token nor stablecoin), and None when there
+    // is no cfg (no base_token_price_usd available). Assigning None here is still
+    // R8-correct — it means "uncomputed", not "zero".
+    opportunity.expected_profit_usd = gross_profit_f64;
+
     // The downstream gate (`ConfigAwareEvaluator`) checks
     // `cfg.allowed_token_symbols` against entries in `candidate.token_addresses`.
     // It compares STRINGS — so if we pass hex addresses while the operator's
@@ -806,7 +817,12 @@ async fn decode_and_score_tx(
                 hash = %hash,
                 token = %token_symbol_or_addr,
             );
-            opportunity.expected_profit_usd = None; // R8 fail-honest: no simulation ran
+            // CODE-2 fix: do NOT reset expected_profit_usd to None here.
+            // opportunity.expected_profit_usd was assigned from gross_profit_f64
+            // above the gate match. Overriding with None would discard a valid
+            // gross profit that was computed before the allowlist check ran.
+            // net_expected_profit_usd stays None for rejected rows — Net Profit
+            // Gate requires gross first; spine does not re-score rejected tokens.
             opportunity.roi_pct = Some(0.0);
             opportunity.risk_score = Some(0.0);
             // GAP-2 fix: persist diagnostic reason — operator filters by
@@ -834,7 +850,8 @@ async fn decode_and_score_tx(
                 hash = %hash,
                 strategy = %strategy_kind,
             );
-            opportunity.expected_profit_usd = None; // R8 fail-honest: no simulation ran
+            // CODE-2 fix: same rationale as TokenNotAllowed arm above — preserve
+            // the gross_profit_f64 already assigned to opportunity.expected_profit_usd.
             opportunity.roi_pct = Some(0.0);
             opportunity.risk_score = Some(0.0);
             opportunity.rejection_reason = Some(format!("StrategyDisabled:{strategy_kind}"));
@@ -905,6 +922,13 @@ async fn decode_and_score_tx(
         } else {
             counters().gate_other_rejected.fetch_add(1, Ordering::Relaxed);
         }
+        // CODE-2 fix: populate net_expected_profit_usd for gate-rejected rows.
+        // H2 fix populated it only in the passed_all_gates branch, leaving all
+        // rejected rows with net=NULL even when gross was computed.
+        // Pattern mirrors H2 (commit 69fb24c): gross - gas_cost. When gross is
+        // None (oracle gap), net propagates as None — R8 fail-honest.
+        opportunity.net_expected_profit_usd = opportunity.expected_profit_usd
+            .map(|gross| gross - cfg.gas_cost_usd());
     } else {
         counters().passed_all_gates.fetch_add(1, Ordering::Relaxed);
         // Spine scoring on REAL evidence (no more hardcoded 0.95 / 0.9 / 1.0).
