@@ -219,6 +219,29 @@ pub struct ConfigAwareEvaluator<'a> {
     /// TTL: 30s. Staleness up to 30s is acceptable — price impact is a
     /// rough guard against large trades; ±30s reserve lag is within noise.
     pub v2_reserve_snapshot: Option<(f64, f64)>,
+
+    /// Pre-fetched V3 slot0 data for the primary leg of the route (Sprint H2).
+    ///
+    /// When populated (V3 route, `v2_reserve_snapshot = None`), `evaluate()`
+    /// calls `calc_univ3_price_impact_pct` for a first-order tick-math estimate
+    /// that replaces the `max_slippage_pct` proxy.
+    ///
+    /// Tuple: `(sqrt_price_x96, liquidity, token0_to_token1)` where:
+    ///   - `sqrt_price_x96`: raw Q96 value from `slot0()` — √P × 2^96.
+    ///   - `liquidity`: active liquidity at current tick from `slot0()` (uint128).
+    ///   - `token0_to_token1`: swap direction resolved by the caller from token
+    ///     ordering in the pool (`true` = selling token0, buying token1).
+    ///
+    /// `Some(...)` → first-order tick-math impact used for component 3.
+    /// `None` (cold cache, non-V3 route, or pool_sync_worker not yet emitting
+    ///   V3 slot0 data) → falls back to `max_slippage_pct` proxy (R8 fail-honest).
+    ///
+    /// Redis key: `arbx:v3_slot0:<chain_id>:<pool_addr_lower>`.
+    /// Intended to be populated by `searcher-rs::workers::pool_sync_worker` when
+    /// the pool is identified as a V3 pool (via factory address check or fee_tier
+    /// field in `V3PoolInfo`). As of H2 dispatch the key may not yet be emitted
+    /// — callers should treat `None` gracefully and log a WARN for traceability.
+    pub v3_slot0_snapshot: Option<(u128, u128, bool)>,
 }
 
 impl<'a> ConfigAwareEvaluator<'a> {
@@ -233,6 +256,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             p_fail_rate: None,
             pool_volume_24h_usd: None,
             v2_reserve_snapshot: None,
+            v3_slot0_snapshot: None,
         }
     }
 
@@ -253,6 +277,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             p_fail_rate: None,
             pool_volume_24h_usd: None,
             v2_reserve_snapshot: None,
+            v3_slot0_snapshot: None,
         }
     }
 
@@ -274,6 +299,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             p_fail_rate,
             pool_volume_24h_usd: None,
             v2_reserve_snapshot: None,
+            v3_slot0_snapshot: None,
         }
     }
 
@@ -297,6 +323,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             p_fail_rate,
             pool_volume_24h_usd,
             v2_reserve_snapshot: None,
+            v3_slot0_snapshot: None,
         }
     }
 
@@ -323,6 +350,40 @@ impl<'a> ConfigAwareEvaluator<'a> {
             p_fail_rate,
             pool_volume_24h_usd,
             v2_reserve_snapshot,
+            v3_slot0_snapshot: None,
+        }
+    }
+
+    /// Full-featured constructor with all inputs including pre-fetched V3 slot0
+    /// data (Sprint H2). Used for V3 routes where `v2_reserve_snapshot = None`.
+    ///
+    /// `v3_slot0_snapshot`: `Some((sqrt_price_x96, liquidity, token0_to_token1))`
+    /// from Redis key `arbx:v3_slot0:<chain_id>:<pool_addr_lower>`.
+    /// The direction flag must be resolved by the caller from token order in the
+    /// pool (`true` = candidate's token_in is pool's token0).
+    /// Pass `None` when the key is absent or the pool is not V3 (R8 fail-honest).
+    ///
+    /// When both `v2_reserve_snapshot` and `v3_slot0_snapshot` are `Some`, the
+    /// V2 snapshot takes precedence (V2 constant-product formula is exact; V3 is
+    /// an approximation). In practice callers should only populate the one that
+    /// matches the route's DEX type.
+    pub fn with_v3_slot0(
+        config: &'a TradingConfigState,
+        signals: NetworkSignals,
+        price_cache_snapshot: HashMap<String, f64>,
+        p_fail_rate: Option<StrategyFailRate>,
+        pool_volume_24h_usd: Option<f64>,
+        v2_reserve_snapshot: Option<(f64, f64)>,
+        v3_slot0_snapshot: Option<(u128, u128, bool)>,
+    ) -> Self {
+        Self {
+            config,
+            signals,
+            price_cache_snapshot,
+            p_fail_rate,
+            pool_volume_24h_usd,
+            v2_reserve_snapshot,
+            v3_slot0_snapshot,
         }
     }
 
@@ -514,35 +575,64 @@ impl<'a> ConfigAwareEvaluator<'a> {
             0.0
         };
 
-        // --- Component 3: Real V2 price impact (Sprint H1 tweak 3) ---
-        // When the caller pre-fetched V2 reserves from Redis
-        // (`arbx:pool_reserves:<chain>:<pool_addr_lower>`), use
-        // `calc_univ2_price_impact` for an accurate slippage estimate.
-        // The fee fraction passed to the AMM function matches the adapter's
-        // known fee tier so the impact formula accounts for fee deduction.
+        // --- Component 3: Real price impact (Sprint H1 V2 + Sprint H2 V3) ---
         //
-        // When no reserves are available (cold cache, pool_addresses empty,
-        // V3 route, or TTL expired), fall back to `max_slippage_pct` proxy
-        // — same behaviour as Sprint A (R8 fail-honest).
+        // Priority order (first match wins):
+        //   1. V2 reserves present → `calc_univ2_price_impact` (exact CPMM formula).
+        //   2. V3 slot0 present   → `calc_univ3_price_impact_pct` (first-order tick
+        //                           approximation; conservative-high for cross-tick swaps).
+        //   3. Neither            → 0.0 → `max_slippage_pct` proxy (R8 fail-honest).
         //
-        // V3 routes: price-impact from tick-math is deferred to H2 dispatch.
-        // Pass `v2_reserve_snapshot = None` for V3 candidates; the proxy fires.
+        // V3 slot0 Redis key: `arbx:v3_slot0:<chain_id>:<pool_addr_lower>`.
+        // Populated by `searcher-rs::workers::pool_sync_worker` for V3 pools.
+        // As of H2 dispatch this key may not yet be emitted — callers must treat
+        // `None` gracefully and log a WARN so the gap is traceable (R7).
+        //
+        // Both functions return a fraction (0.0–1.0); multiply by 100.0 to reach
+        // the pct scale that `RoiCalculationParams.price_impact_pct` expects.
         let price_impact_pct: f64 = if let Some((reserve_in, _reserve_out)) = self.v2_reserve_snapshot {
             if reserve_in > 0.0 && amount_in_usd > 0.0 {
                 // Derive fee fraction from the primary dex adapter.
-                // Falls back to 0.003 (30bps) when adapter unknown — conservative.
+                // Falls back to 30bps when adapter unknown — conservative.
                 let fee_bps = candidate
                     .dex_adapters
                     .first()
                     .map(|a| default_fee_bps_for_adapter(a))
                     .unwrap_or(30);
                 let fee_fraction = fee_bps as f64 / 10_000.0;
-                // `calc_univ2_price_impact` returns a fraction (0.0–1.0);
-                // multiply by 100.0 to get the pct scale that RoiCalculationParams expects.
                 let impact_fraction = calc_univ2_price_impact(amount_in_usd, reserve_in, fee_fraction);
                 impact_fraction * 100.0
             } else {
-                0.0 // zero reserves → proxy fallback
+                0.0 // zero reserves → fall through to proxy
+            }
+        } else if let Some((sqrt_price_x96, liquidity, token0_to_token1)) = self.v3_slot0_snapshot {
+            // V3 first-order tick approximation.
+            // `amount_in_usd` is in USD; the tick formula needs token-unit wei.
+            // Since `candidate.amount_in` is the raw token-unit amount observed
+            // by the searcher (pre-price conversion), we use it directly after
+            // converting to wei-scale integer. The searcher stores amounts in
+            // floating-point token units; multiply by 1e18 to approximate wei.
+            //
+            // Limitation: this approximation is only valid when the swap is
+            // denominated in the same token unit as the pool's token0/token1.
+            // Token-decimal differences (e.g. USDC has 6 decimals, WETH has 18)
+            // introduce a systematic scale error. Acceptable for the gate: the
+            // function's conservative bias means the error direction is safe
+            // (impact is over-reported, not under-reported, at high price ratio).
+            //
+            // Future sprint: propagate raw wei amounts through `OpportunityCandidate`
+            // instead of float token units.
+            let amount_in_wei_approx: u128 = (candidate.amount_in * 1e18) as u128;
+            if amount_in_wei_approx > 0 {
+                let impact_fraction = calc_univ3_price_impact_pct(
+                    amount_in_wei_approx,
+                    sqrt_price_x96,
+                    liquidity,
+                    token0_to_token1,
+                );
+                impact_fraction * 100.0
+            } else {
+                0.0 // zero amount → proxy fallback
             }
         } else {
             0.0 // no snapshot → proxy fallback (R8 fail-honest)
