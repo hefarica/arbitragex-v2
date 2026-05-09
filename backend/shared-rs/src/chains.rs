@@ -107,6 +107,40 @@ pub fn find_router(chain_id: u64, addr: &[u8; 20]) -> Option<&'static RouterEntr
     routers_for_chain(chain_id).iter().find(|r| &r.address == addr)
 }
 
+/// Returns the average block time in seconds for a given chain.
+///
+/// Used for capital opportunity-cost computation:
+///   `capital_cost_usd = amount_in_usd × (rate_annual / 100) × (block_time_s / 31_536_000)`.
+///
+/// Values are conservative best-estimates (round up, not down) so
+/// capital cost is never under-counted:
+///
+/// | Chain     | chain_id | Typical block time | Source                   |
+/// |-----------|----------|-------------------|--------------------------|
+/// | Ethereum  | 1        | 12.0 s            | PoS slot time (12s)      |
+/// | BSC       | 56       | 3.0 s             | BNB Chain consensus      |
+/// | Polygon   | 137      | 2.0 s             | Bor PoS                  |
+/// | Base      | 8453     | 2.0 s             | OP-Stack (2s slots)      |
+/// | Arbitrum  | 42161    | 0.25 s            | Nitro: sub-second real;  |
+/// |           |          |                   | conservative 250ms used  |
+/// | Optimism  | 10       | 2.0 s             | OP-Stack (2s slots)      |
+/// | unknown   | _        | 12.0 s            | ETH-equivalent fallback  |
+///
+/// Sprint H1 follow-up: replaces the hardcoded `ETH_BLOCK_TIME_S = 12.0`
+/// constant in `prioritization-spine/config_aware.rs`. ARB (42161) was
+/// previously 6× over-costed at 12s vs real 0.25s; this corrects it.
+pub fn block_time_s_for_chain(chain_id: u64) -> f64 {
+    match chain_id {
+        1     => 12.0,  // Ethereum mainnet (PoS 12s slots)
+        56    => 3.0,   // BNB Smart Chain
+        137   => 2.0,   // Polygon PoS
+        8453  => 2.0,   // Base (OP-Stack)
+        42161 => 0.25,  // Arbitrum Nitro (sub-second; 250ms conservative)
+        10    => 2.0,   // Optimism (OP-Stack)
+        _     => 12.0,  // unknown → ETH-equivalent (conservative)
+    }
+}
+
 /// Returns the list of router addresses (lowercase 0x-prefixed hex) for use as
 /// upstream `toAddress` filter on Alchemy `alchemy_pendingTransactions`
 /// subscriptions. Subscribing with this list bounds CU consumption to txs
@@ -152,5 +186,53 @@ mod tests {
         assert_eq!(RouterKind::UniswapV2.as_str(), "uniswap-v2");
         assert_eq!(RouterKind::UniswapV3.as_str(), "uniswap-v3");
         assert_eq!(RouterKind::Unknown.as_str(), "unknown");
+    }
+
+    // ---- block_time_s_for_chain fixture matrix --------------------------------
+
+    /// Matrix test: each known chain_id maps to the documented value.
+    /// Chain additions must update BOTH the function body and this test.
+    #[test]
+    fn block_time_known_chains() {
+        let cases: &[(u64, f64)] = &[
+            (1,     12.0),  // Ethereum
+            (56,    3.0),   // BSC
+            (137,   2.0),   // Polygon
+            (8453,  2.0),   // Base
+            (42161, 0.25),  // Arbitrum
+            (10,    2.0),   // Optimism
+        ];
+        for &(chain_id, expected) in cases {
+            let got = block_time_s_for_chain(chain_id);
+            assert!(
+                (got - expected).abs() < 1e-9,
+                "chain_id={chain_id}: expected block_time={expected}s, got {got}s",
+            );
+        }
+    }
+
+    /// Unknown chain IDs fall back to ETH-equivalent (12s), not 0.0.
+    /// A zero block time would divide by zero in capital_cost_usd arithmetic.
+    #[test]
+    fn block_time_unknown_chain_falls_back_to_eth() {
+        let unknown_ids: &[u64] = &[999, 0, u64::MAX, 31337];
+        for &chain_id in unknown_ids {
+            let got = block_time_s_for_chain(chain_id);
+            assert!(
+                (got - 12.0).abs() < 1e-9,
+                "unknown chain_id={chain_id} should fall back to 12.0s, got {got}s",
+            );
+        }
+    }
+
+    /// Arbitrum block time is ≤1s — ensures the 6× over-cost regression
+    /// (ETH 12s vs ARB 0.25s) cannot be re-introduced silently.
+    #[test]
+    fn arbitrum_block_time_is_sub_second() {
+        let arb_time = block_time_s_for_chain(42161);
+        assert!(
+            arb_time < 1.0,
+            "Arbitrum block time must be <1s (was 12s before fix): got {arb_time}s",
+        );
     }
 }

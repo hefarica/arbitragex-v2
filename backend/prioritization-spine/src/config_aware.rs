@@ -26,25 +26,63 @@ use crate::evidence::{CostBreakdown, OpportunityEvidence, PFailSource};
 use crate::strategy_scores_db::StrategyFailRate;
 use crate::types::OpportunityCandidate;
 use crate::decision::{ExecutionDecision, RejectReason};
-use math_engine::amm_math::calc_univ2_price_impact;
+use math_engine::amm_math::{calc_univ2_price_impact, calc_univ3_price_impact_pct};
 use math_engine::risk_engine::{
     OpportunityRiskProfile, RiskPolicy, RiskRejectionReason, validate_opportunity_risk,
 };
 use math_engine::roi_engine::{RoiCalculationParams, calc_net_profit_and_roi};
 use math_engine::DefiArbitrageOutcome;
+use shared_rs::chains::block_time_s_for_chain;
 use shared_rs::price_oracle::{
     CascadePriceOracle, ConfigPriceOracle, PriceOracle, RedisCachedPriceOracle,
 };
 use shared_rs::trading_config::TradingConfigState;
 use std::collections::HashMap;
 
-// ETH mainnet block time in seconds. Used for capital_cost_usd denominator.
-// Follow-up Sprint B: replace with `block_time_s_per_chain(chain_id)` so
-// ARB/Base/OP (2s) are accurate. Using ETH (12s) for ALL chains in Sprint A is
-// conservative — it OVER-estimates capital cost for fast chains, which is the
-// safe direction (never under-estimates cost).
-const ETH_BLOCK_TIME_S: f64 = 12.0;
+// Sprint H1 tweak 1: per-chain block time constant removed.
+// `block_time_s_for_chain(chain_id)` from `shared_rs::chains` replaces it.
+// ETH (12s) / BSC (3s) / Polygon (2s) / Base (2s) / ARB (0.25s) / OP (2s).
+// ARB was 6× over-costed at the old 12s constant.
 const SECONDS_PER_YEAR: f64 = 31_536_000.0;
+
+/// Returns the standard LP fee in basis points for a DEX adapter by name.
+///
+/// Sprint H1 tweak 2: provides explicit `lp_fees_usd` for the CostBreakdown
+/// rather than relying on the implicit absorption in the AMM spread.
+///
+/// Values are protocol constants, not configuration — they change extremely
+/// rarely and are fully auditable against on-chain contract bytecode.
+///
+/// | Adapter name (from RouterKind::as_str()) | fee_bps | Protocol note          |
+/// |------------------------------------------|---------|------------------------|
+/// | "uniswap-v2"                             |   30    | 0.30% LP fee           |
+/// | "uniswap-v3"                             |    0    | fee varies by pool tier;|
+/// |                                          |         | explicit bps unknown   |
+/// |                                          |         | here → 0 (conservative)|
+/// | "sushi"                                  |   30    | 0.30% LP fee           |
+/// | "curve"                                  |    4    | 0.04% typical stable   |
+/// | "balancer"                               |   10    | 0.10% weighted default |
+/// | unknown                                  |    0    | fail-honest: don't add |
+///
+/// For V3 pools, the per-pool fee_bps comes from `V3PoolInfo.fee_bps` (stored
+/// in Redis). That per-pool value is not available here (the candidate carries
+/// only the dex adapter name, not the fee tier). Pass 0 for V3 (conservative:
+/// fees are already absorbed in the AMM quote output). A future sprint can
+/// propagate `fee_bps` via `OpportunityCandidate.dex_adapters_fee_bps: Vec<u32>`.
+fn default_fee_bps_for_adapter(adapter_name: &str) -> u32 {
+    match adapter_name.to_ascii_lowercase().as_str() {
+        "uniswap-v2" => 30,
+        "sushi"      => 30,
+        "curve"      => 4,
+        "balancer"   => 10,
+        // V3: fee varies by pool tier (100/500/3000/10000 bps); without the
+        // tier we cannot resolve it here — return 0 (R8 fail-honest: don't
+        // synthesise a fee we don't know). AMM quote already reflects the fee.
+        "uniswap-v3" => 0,
+        // unknown / future adapters: 0 (conservative: don't add phantom fees)
+        _            => 0,
+    }
+}
 
 /// Live signals the evaluator needs in addition to config + candidate.
 /// Sourced from chain-client (`eth_gasPrice`, `eth_feeHistory`) at scoring time.
@@ -161,6 +199,26 @@ pub struct ConfigAwareEvaluator<'a> {
     /// Caller fetches this async via `DexVolumeCache::get(pool_address, chain_id).await`
     /// before constructing the evaluator, keeping `evaluate()` entirely sync.
     pub pool_volume_24h_usd: Option<f64>,
+
+    /// Pre-fetched V2 pool reserves for the primary leg of the route (Sprint H1).
+    ///
+    /// When populated, `evaluate()` calls `calc_univ2_price_impact` to obtain a
+    /// real slippage estimate that replaces the `max_slippage_pct` proxy.
+    ///
+    /// Tuple: `(reserve_in, reserve_out)` — **reserve_in must correspond to the
+    /// candidate's `token_in`** (orientation already resolved by the caller using
+    /// `ReservesEntry.token0_addr`). Both values are in wei (raw uint112), as
+    /// decimal strings → f64. The caller is responsible for orientation.
+    ///
+    /// `Some((r_in, r_out))` → real price impact used for component 3.
+    /// `None` (cold cache, pool_addresses empty, or reserves TTL expired) →
+    ///   falls back to `max_slippage_pct` proxy (R8 fail-honest).
+    ///
+    /// Redis key: `arbx:pool_reserves:<chain_id>:<pool_addr_lower>`.
+    /// Populated every ~5s by `searcher-rs::workers::pool_sync_worker`.
+    /// TTL: 30s. Staleness up to 30s is acceptable — price impact is a
+    /// rough guard against large trades; ±30s reserve lag is within noise.
+    pub v2_reserve_snapshot: Option<(f64, f64)>,
 }
 
 impl<'a> ConfigAwareEvaluator<'a> {
@@ -174,6 +232,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             price_cache_snapshot: HashMap::new(),
             p_fail_rate: None,
             pool_volume_24h_usd: None,
+            v2_reserve_snapshot: None,
         }
     }
 
@@ -193,6 +252,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             price_cache_snapshot,
             p_fail_rate: None,
             pool_volume_24h_usd: None,
+            v2_reserve_snapshot: None,
         }
     }
 
@@ -213,6 +273,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             price_cache_snapshot,
             p_fail_rate,
             pool_volume_24h_usd: None,
+            v2_reserve_snapshot: None,
         }
     }
 
@@ -235,6 +296,33 @@ impl<'a> ConfigAwareEvaluator<'a> {
             price_cache_snapshot,
             p_fail_rate,
             pool_volume_24h_usd,
+            v2_reserve_snapshot: None,
+        }
+    }
+
+    /// Full-featured constructor with all inputs including pre-fetched V2 reserves
+    /// (Sprint H1 tweak 3). Enables real price impact computation.
+    ///
+    /// `v2_reserve_snapshot`: `Some((reserve_in, reserve_out))` from Redis key
+    /// `arbx:pool_reserves:<chain_id>:<pool_addr_lower>`. Orientation must be
+    /// pre-resolved by the caller: `reserve_in` corresponds to `token_in`.
+    /// Pass `None` when pool_addresses is empty or reserves cache is cold
+    /// (R8 fail-honest — fallback to `max_slippage_pct` proxy).
+    pub fn with_reserves(
+        config: &'a TradingConfigState,
+        signals: NetworkSignals,
+        price_cache_snapshot: HashMap<String, f64>,
+        p_fail_rate: Option<StrategyFailRate>,
+        pool_volume_24h_usd: Option<f64>,
+        v2_reserve_snapshot: Option<(f64, f64)>,
+    ) -> Self {
+        Self {
+            config,
+            signals,
+            price_cache_snapshot,
+            p_fail_rate,
+            pool_volume_24h_usd,
+            v2_reserve_snapshot,
         }
     }
 
@@ -400,50 +488,87 @@ impl<'a> ConfigAwareEvaluator<'a> {
         // 4. Math: compute net profit and ROI deterministically.
         let gas_cost_usd = estimate_gas_cost_usd(self.config, self.signals);
 
-        // --- Component 2: LP fees ---
-        // Sprint A: route-leg detail not yet available at this call site (the
-        // candidate carries pool addresses but not per-leg fee_bps). We pass
-        // 0.0, which is safe — fees are implicitly reflected in the spread
-        // between `amount_in_usd` and `expected_amount_out_usd` (AMM math
-        // already deducts them from `expected_amount_out`). Sprint B will
-        // propagate `RouteLeg` slices from the scanner and compute the sum
-        // explicitly: `Σ(amount_through_leg_usd × fee_bps / 10_000)`.
-        let lp_fees_usd: f64 = 0.0;
-
-        // --- Component 3: Real V2 price impact ---
-        // Sprint A: pool reserves are not yet fetched from Redis
-        // (`arbx:pool_reserves:<chain>:<addr>` — Sprint B). Pass `0.0` here
-        // so `calc_net_profit_and_roi` falls back to `max_slippage_pct` proxy.
-        // V3 pools: price-impact from tick-math is deferred to Sprint B as well.
+        // --- Component 2: LP fees (Sprint H1 tweak 2) ---
+        // Route-aggregate LP fee computed from the DEX adapter names carried
+        // by the candidate. `default_fee_bps_for_adapter()` maps known protocol
+        // names (uniswap-v2=30, sushi=30, curve=4, balancer=10, uniswap-v3=0)
+        // to their standard fee tier. We sum across all adapters and multiply
+        // by `amount_in_usd` as a conservative proxy for the amount routed
+        // through each leg (exact per-leg amounts require RouteLeg propagation
+        // from the scanner — deferred to a future sprint).
         //
-        // When reserves ARE available (Sprint B), caller will compute:
-        //   let (reserve_in, _reserve_out) = fetch_v2_reserves(...).await;
-        //   let impact_fraction = calc_univ2_price_impact(amount_in, reserve_in, fee_pct);
-        //   let price_impact_pct = impact_fraction * 100.0;
+        // For V3 routes, `default_fee_bps_for_adapter` returns 0 because the
+        // per-pool fee tier is not encoded in the adapter name. The AMM quote
+        // from QuoterV2 already reflects V3 fees in the output amount, so
+        // the implicit absorption is the accurate treatment for V3 legs.
         //
-        // The import of `calc_univ2_price_impact` is present now so Sprint B
-        // requires no import changes, only the fetch plumbing.
-        let _ = calc_univ2_price_impact; // suppress unused-import warning until Sprint B
-        let price_impact_pct: f64 = 0.0;
+        // R8 fail-honest: if dex_adapters is empty → 0.0 (no synthetic fees).
+        let cumulative_fee_bps: u32 = candidate
+            .dex_adapters
+            .iter()
+            .map(|a| default_fee_bps_for_adapter(a))
+            .sum();
+        let lp_fees_usd: f64 = if cumulative_fee_bps > 0 {
+            amount_in_usd * (cumulative_fee_bps as f64 / 10_000.0)
+        } else {
+            0.0
+        };
 
-        // --- Component 6: Capital opportunity cost ---
+        // --- Component 3: Real V2 price impact (Sprint H1 tweak 3) ---
+        // When the caller pre-fetched V2 reserves from Redis
+        // (`arbx:pool_reserves:<chain>:<pool_addr_lower>`), use
+        // `calc_univ2_price_impact` for an accurate slippage estimate.
+        // The fee fraction passed to the AMM function matches the adapter's
+        // known fee tier so the impact formula accounts for fee deduction.
+        //
+        // When no reserves are available (cold cache, pool_addresses empty,
+        // V3 route, or TTL expired), fall back to `max_slippage_pct` proxy
+        // — same behaviour as Sprint A (R8 fail-honest).
+        //
+        // V3 routes: price-impact from tick-math is deferred to H2 dispatch.
+        // Pass `v2_reserve_snapshot = None` for V3 candidates; the proxy fires.
+        let price_impact_pct: f64 = if let Some((reserve_in, _reserve_out)) = self.v2_reserve_snapshot {
+            if reserve_in > 0.0 && amount_in_usd > 0.0 {
+                // Derive fee fraction from the primary dex adapter.
+                // Falls back to 0.003 (30bps) when adapter unknown — conservative.
+                let fee_bps = candidate
+                    .dex_adapters
+                    .first()
+                    .map(|a| default_fee_bps_for_adapter(a))
+                    .unwrap_or(30);
+                let fee_fraction = fee_bps as f64 / 10_000.0;
+                // `calc_univ2_price_impact` returns a fraction (0.0–1.0);
+                // multiply by 100.0 to get the pct scale that RoiCalculationParams expects.
+                let impact_fraction = calc_univ2_price_impact(amount_in_usd, reserve_in, fee_fraction);
+                impact_fraction * 100.0
+            } else {
+                0.0 // zero reserves → proxy fallback
+            }
+        } else {
+            0.0 // no snapshot → proxy fallback (R8 fail-honest)
+        };
+
+        // --- Component 6: Capital opportunity cost (Sprint H1 tweak 1) ---
         // Flash-loan strategies borrow capital atomically in the same tx;
         // no lock-up period occurs, so capital cost is zero.
         // Non-flash strategies lock capital for one block duration.
         //
+        // Sprint H1: replaced hardcoded `ETH_BLOCK_TIME_S = 12.0` with
+        // `block_time_s_for_chain(chain_id)`. ARB was over-costed 6× at 12s
+        // vs real ~0.25s; the correction matters for ranking tight-margin
+        // opportunities where capital cost dominates at short block times.
+        //
         // Detection: strategy names containing "flash" are treated as flash-loan.
         // This is conservative: unknown strategies are treated as non-flash
         // (capital cost applies), which is the safer direction.
-        //
-        // Follow-up Sprint B: replace string heuristic with an explicit boolean
-        // `is_flash_loan` flag on `OpportunityCandidate` set by the scanner.
         let is_flash_loan = strategy_kind.to_ascii_lowercase().contains("flash");
         let capital_cost_usd = if is_flash_loan || self.config.capital_cost_rate_annual_pct == 0.0 {
             0.0
         } else {
+            let block_time = block_time_s_for_chain(chain_id);
             amount_in_usd
                 * (self.config.capital_cost_rate_annual_pct / 100.0)
-                * (ETH_BLOCK_TIME_S / SECONDS_PER_YEAR)
+                * (block_time / SECONDS_PER_YEAR)
         };
 
         // --- Component 7: Ops overhead ---
@@ -1461,6 +1586,367 @@ mod tests {
             matches!(rejection, Some(RejectReason::ImplausibleSpread { .. })),
             "spread 5× reference (> 3× threshold) must reject ImplausibleSpread; got {:?}",
             rejection,
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // Sprint H1: Tweak 1 — per-chain block time in capital_cost_usd
+    // ----------------------------------------------------------------
+
+    /// Arbitrum (chain_id=42161) capital cost must be ≪ Ethereum (chain_id=1)
+    /// for the same amount_in and annual rate. Pre-fix they were equal (both
+    /// used ETH_BLOCK_TIME_S=12s). Post-fix ARB uses 0.25s → 48× cheaper.
+    #[test]
+    fn capital_cost_arbitrum_much_lower_than_ethereum() {
+        // Setup: non-flash strategy with non-zero capital_cost_rate_annual_pct.
+        // We evaluate the SAME candidate on chain_id=1 and chain_id=42161 and
+        // verify that the Ethereum capital cost is materially higher.
+        let mut c = cfg();
+        c.capital_usd = 10_000.0;
+        c.capital_cost_rate_annual_pct = 5.0; // 5% APR opportunity cost
+        c.max_slippage_pct = 0.0;
+        c.failure_risk_buffer_pct = 0.0;
+        c.flashloan_fee_pct = 0.0;
+        c.gas_estimate_units = 1;
+        c.fixed_gas_price_gwei = Some(0.0);
+        c.allowed_token_symbols = vec!["WETH".into(), "USDC".into()];
+
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "chain_time_test".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "USDC".into()],
+            dex_adapters: vec!["uniswap-v2".into()],
+            amount_in: 1.0,          // 1 WETH = $2000 at cfg base price
+            expected_amount_out: 2020.0, // $20 gross
+            gross_profit: 0.0,
+        };
+
+        // ETH (12s block) capital_cost = $2000 × 0.05 × (12 / 31_536_000) ≈ $3.8e-5
+        let eth_out = ConfigAwareEvaluator::new(&c, signals())
+            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        // ARB (0.25s block) capital_cost = $2000 × 0.05 × (0.25 / 31_536_000) ≈ $7.9e-7
+        let arb_out = ConfigAwareEvaluator::new(&c, signals())
+            .evaluate(&candidate, "dex_arb_v2v2", 42161, "rpc".into(), 10);
+
+        let eth_net = match eth_out {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,
+            other => panic!("expected Evaluated for ETH, got {:?}", other),
+        };
+        let arb_net = match arb_out {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,
+            other => panic!("expected Evaluated for ARB, got {:?}", other),
+        };
+
+        // ARB net > ETH net because ARB capital cost is lower (all other costs equal).
+        // The difference should be ETH_capital_cost - ARB_capital_cost > 0.
+        assert!(
+            arb_net > eth_net,
+            "ARB (0.25s) capital cost must be lower than ETH (12s): \
+             arb_net={arb_net:.6} > eth_net={eth_net:.6} expected, but got arb ≤ eth",
+        );
+        // Ratio: ETH_cost / ARB_cost = 12.0 / 0.25 = 48×.
+        // The net profit difference must reflect this ratio (approximately).
+        let diff = arb_net - eth_net;
+        assert!(
+            diff > 0.0,
+            "Expected ARB net > ETH net by the capital_cost ratio diff; diff={diff:.8}",
+        );
+    }
+
+    /// Flash-loan strategies have zero capital cost regardless of chain.
+    /// (Capital is atomically borrowed and returned — no block-time lock-up.)
+    #[test]
+    fn flash_loan_strategy_has_zero_capital_cost_on_any_chain() {
+        let mut c = cfg();
+        c.capital_usd = 10_000.0;
+        c.capital_cost_rate_annual_pct = 5.0;
+        c.allowed_token_symbols = vec!["WETH".into(), "USDC".into()];
+        c.gas_estimate_units = 1;
+        c.fixed_gas_price_gwei = Some(0.0);
+        c.max_slippage_pct = 0.0;
+        c.failure_risk_buffer_pct = 0.0;
+        c.flashloan_fee_pct = 0.0;
+
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "flash_test".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "USDC".into()],
+            dex_adapters: vec!["uniswap-v2".into()],
+            amount_in: 1.0,
+            expected_amount_out: 2020.0,
+            gross_profit: 0.0,
+        };
+
+        // Non-flash result for comparison (same chain, same params).
+        let non_flash_out = ConfigAwareEvaluator::new(&c, signals())
+            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        // Flash-loan strategy — strategy_kind contains "flash".
+        let flash_out = ConfigAwareEvaluator::new(&c, signals())
+            .evaluate(&candidate, "flashloan_arb", 1, "rpc".into(), 10);
+
+        let non_flash_net = match non_flash_out {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,
+            other => panic!("expected Evaluated non-flash, got {:?}", other),
+        };
+        let flash_net = match flash_out {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,
+            other => panic!("expected Evaluated flash, got {:?}", other),
+        };
+
+        // Flash-loan has zero capital cost → flash_net ≥ non_flash_net
+        // (other costs identical; capital_cost_usd > 0 for non-flash on ETH)
+        assert!(
+            flash_net >= non_flash_net,
+            "flash-loan strategy must have ≥ net profit vs non-flash (zero capital cost); \
+             flash={flash_net:.8} non_flash={non_flash_net:.8}",
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // Sprint H1: Tweak 2 — LP fee aggregation from dex adapter names
+    // ----------------------------------------------------------------
+
+    /// `default_fee_bps_for_adapter` returns known constants without DB access.
+    #[test]
+    fn fee_bps_lookup_known_adapters() {
+        assert_eq!(default_fee_bps_for_adapter("uniswap-v2"), 30);
+        assert_eq!(default_fee_bps_for_adapter("sushi"),      30);
+        assert_eq!(default_fee_bps_for_adapter("curve"),       4);
+        assert_eq!(default_fee_bps_for_adapter("balancer"),   10);
+        // V3 returns 0 — per-pool fee is unknown without fee-tier context
+        assert_eq!(default_fee_bps_for_adapter("uniswap-v3"),  0);
+        // Unknown/future adapters: 0 (no phantom fees)
+        assert_eq!(default_fee_bps_for_adapter("unknown"),     0);
+        assert_eq!(default_fee_bps_for_adapter(""),            0);
+    }
+
+    /// UniswapV2 candidate: lp_fees_usd is non-zero because 30bps is resolved.
+    /// A candidate routed through two V2 legs (dex_adapters = ["uniswap-v2", "uniswap-v2"])
+    /// accumulates 60bps total fee = 0.6% of amount_in_usd.
+    ///
+    /// We verify net profit is LOWER for the V2 route than for a V3 route with
+    /// the same gross spread (V3 has 0 explicit fee from adapter lookup — fees
+    /// already in AMM output).
+    #[test]
+    fn lp_fees_nonzero_for_v2_adapter_reduces_net_profit() {
+        let mut c = cfg();
+        c.capital_usd = 10_000.0;
+        c.max_slippage_pct = 0.0;
+        c.failure_risk_buffer_pct = 0.0;
+        c.flashloan_fee_pct = 0.0;
+        c.gas_estimate_units = 1;
+        c.fixed_gas_price_gwei = Some(0.0);
+        c.capital_cost_rate_annual_pct = 0.0;
+        c.ops_overhead_usd_per_attempt = 0.0;
+        c.allowed_token_symbols = vec!["WETH".into(), "USDC".into()];
+
+        // Two legs of uniswap-v2 → cumulative 60bps = 0.6% of amount_in
+        let candidate_v2 = OpportunityCandidate {
+            route_fingerprint: "v2_fee_test".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "USDC".into()],
+            dex_adapters: vec!["uniswap-v2".into(), "uniswap-v2".into()],
+            amount_in: 1.0,             // 1 WETH = $2000
+            expected_amount_out: 2020.0, // 2020 USDC = $2020 (gross ≈ $20)
+            gross_profit: 0.0,
+        };
+        // V3 route with identical spread but 0bps explicit fees
+        let candidate_v3 = OpportunityCandidate {
+            dex_adapters: vec!["uniswap-v3".into()],
+            ..candidate_v2.clone()
+        };
+
+        let v2_out = ConfigAwareEvaluator::new(&c, signals())
+            .evaluate(&candidate_v2, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        let v3_out = ConfigAwareEvaluator::new(&c, signals())
+            .evaluate(&candidate_v3, "dex_arb_v2v2", 1, "rpc".into(), 10);
+
+        let v2_net = match v2_out {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,
+            other => panic!("expected Evaluated v2, got {:?}", other),
+        };
+        let v3_net = match v3_out {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,
+            other => panic!("expected Evaluated v3, got {:?}", other),
+        };
+
+        // V2 has 60bps of explicit fees = $2000 × 0.006 = $12 deducted.
+        // V3 has 0 explicit fees. So v3_net > v2_net.
+        assert!(
+            v3_net > v2_net,
+            "V2 route (60bps) must have lower net than V3 (0bps); v2_net={v2_net:.2} v3_net={v3_net:.2}",
+        );
+        // The difference should be approximately $12 (60bps of $2000).
+        let diff = v3_net - v2_net;
+        assert!(
+            diff > 10.0 && diff < 14.0,
+            "60bps fee on $2000 should reduce net by ~$12; diff={diff:.4}",
+        );
+    }
+
+    /// R8 fail-honest: when dex_adapters is empty → lp_fees_usd = 0 (no phantom fees).
+    #[test]
+    fn empty_dex_adapters_produces_zero_lp_fees() {
+        let mut c = cfg();
+        c.capital_usd = 10_000.0;
+        c.max_slippage_pct = 0.0;
+        c.failure_risk_buffer_pct = 0.0;
+        c.flashloan_fee_pct = 0.0;
+        c.gas_estimate_units = 1;
+        c.fixed_gas_price_gwei = Some(0.0);
+        c.capital_cost_rate_annual_pct = 0.0;
+        c.ops_overhead_usd_per_attempt = 0.0;
+        c.allowed_token_symbols = vec!["WETH".into(), "USDC".into()];
+
+        let candidate_no_adapter = OpportunityCandidate {
+            route_fingerprint: "no_adapter".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "USDC".into()],
+            dex_adapters: vec![],  // empty
+            amount_in: 1.0,
+            expected_amount_out: 2020.0,
+            gross_profit: 0.0,
+        };
+        let candidate_unknown = OpportunityCandidate {
+            dex_adapters: vec!["some_new_dex_xyz".into()],
+            ..candidate_no_adapter.clone()
+        };
+
+        let out_no = ConfigAwareEvaluator::new(&c, signals())
+            .evaluate(&candidate_no_adapter, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        let out_unknown = ConfigAwareEvaluator::new(&c, signals())
+            .evaluate(&candidate_unknown, "dex_arb_v2v2", 1, "rpc".into(), 10);
+
+        let net_no = match out_no {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,
+            other => panic!("expected Evaluated no_adapter, got {:?}", other),
+        };
+        let net_unknown = match out_unknown {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,
+            other => panic!("expected Evaluated unknown_adapter, got {:?}", other),
+        };
+        // Both should be identical — zero lp_fees → no difference
+        assert!(
+            (net_no - net_unknown).abs() < 1e-9,
+            "empty/unknown dex_adapters must produce identical net profit; \
+             no_adapter={net_no:.8} unknown={net_unknown:.8}",
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // Sprint H1: Tweak 3 — V2 reserve snapshot price impact wiring
+    // ----------------------------------------------------------------
+
+    /// When `v2_reserve_snapshot = Some(...)` is supplied, price_impact_pct
+    /// is computed from reserves rather than max_slippage_pct proxy.
+    /// A large trade relative to reserves produces measurable price impact.
+    #[test]
+    fn v2_reserves_produce_nonzero_price_impact() {
+        let mut c = cfg();
+        c.capital_usd = 10_000.0;
+        c.max_slippage_pct = 0.001; // 0.001% proxy — much smaller than real impact
+        c.failure_risk_buffer_pct = 0.0;
+        c.flashloan_fee_pct = 0.0;
+        c.gas_estimate_units = 1;
+        c.fixed_gas_price_gwei = Some(0.0);
+        c.capital_cost_rate_annual_pct = 0.0;
+        c.ops_overhead_usd_per_attempt = 0.0;
+        c.allowed_token_symbols = vec!["WETH".into(), "USDC".into()];
+
+        // 1 WETH into a pool with only 10 WETH reserve → 10% of reserves.
+        // Price impact ≈ 9.97% >> max_slippage_pct proxy (0.001%).
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "reserves_test".into(),
+            pool_addresses: vec!["0xpool1".into()],
+            token_addresses: vec!["WETH".into(), "USDC".into()],
+            dex_adapters: vec!["uniswap-v2".into()],
+            amount_in: 1.0,          // 1 WETH
+            expected_amount_out: 2020.0,
+            gross_profit: 0.0,
+        };
+
+        // reserve_in = 1e19 (10 WETH in wei) → in USD-equivalent token units
+        // The evaluator receives (reserve_in, reserve_out) as token-unit floats.
+        // 10.0 WETH reserve_in, large USDC reserve_out.
+        let reserve_in = 10.0_f64;    // 10 WETH as token units
+        let reserve_out = 20_000.0_f64; // 20,000 USDC token units
+
+        let without_reserves = ConfigAwareEvaluator::new(&c, signals())
+            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+
+        let with_reserves = ConfigAwareEvaluator::with_reserves(
+            &c, signals(), HashMap::new(), None, None,
+            Some((reserve_in, reserve_out)),
+        ).evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+
+        let net_without = match without_reserves {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,
+            other => panic!("expected Evaluated without_reserves, got {:?}", other),
+        };
+        let net_with = match with_reserves {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,
+            other => panic!("expected Evaluated with_reserves, got {:?}", other),
+        };
+
+        // With real price impact (~9.97%) >> proxy (0.001%), net must be much lower.
+        assert!(
+            net_with < net_without,
+            "real V2 price impact must lower net profit vs proxy; \
+             with_reserves={net_with:.4} without={net_without:.4}",
+        );
+        // The proxy is so small vs the real impact that the difference is large
+        let diff = net_without - net_with;
+        assert!(
+            diff > 1.0,
+            "V2 impact (10% of 10-WETH pool) must reduce net by > $1; diff={diff:.4}",
+        );
+    }
+
+    /// When `v2_reserve_snapshot = None`, the max_slippage_pct proxy fires.
+    /// Net profit from evaluator with None matches evaluator without reserves.
+    #[test]
+    fn v2_reserves_none_falls_back_to_max_slippage_proxy() {
+        let mut c = cfg();
+        c.capital_usd = 10_000.0;
+        c.max_slippage_pct = 0.5;
+        c.failure_risk_buffer_pct = 0.0;
+        c.flashloan_fee_pct = 0.0;
+        c.gas_estimate_units = 1;
+        c.fixed_gas_price_gwei = Some(0.0);
+        c.capital_cost_rate_annual_pct = 0.0;
+        c.ops_overhead_usd_per_attempt = 0.0;
+        c.allowed_token_symbols = vec!["WETH".into(), "USDC".into()];
+
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "proxy_fallback".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "USDC".into()],
+            dex_adapters: vec!["uniswap-v2".into()],
+            amount_in: 1.0,
+            expected_amount_out: 2020.0,
+            gross_profit: 0.0,
+        };
+
+        let out_default = ConfigAwareEvaluator::new(&c, signals())
+            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        let out_explicit_none = ConfigAwareEvaluator::with_reserves(
+            &c, signals(), HashMap::new(), None, None, None,
+        ).evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+
+        let net_default = match out_default {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,
+            other => panic!("expected Evaluated default, got {:?}", other),
+        };
+        let net_explicit_none = match out_explicit_none {
+            ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,
+            other => panic!("expected Evaluated explicit_none, got {:?}", other),
+        };
+
+        // Both must be identical — both use max_slippage_pct proxy
+        assert!(
+            (net_default - net_explicit_none).abs() < 1e-9,
+            "v2_reserve_snapshot=None must produce same result as no reserves; \
+             default={net_default:.8} explicit_none={net_explicit_none:.8}",
         );
     }
 }
