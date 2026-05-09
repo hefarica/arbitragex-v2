@@ -209,6 +209,14 @@ async fn main() -> anyhow::Result<()> {
     // BloXRoute: BLOXROUTE_AUTH_HEADER env var.
     // Titan:     TITAN_BUILDER_URL + TITAN_AUTH_HEADER env vars.
     let relay_timeout = Duration::from_millis(cfg.execution.flashbots_submit_timeout_ms);
+
+    // BE-05: hold a direct Arc<FlashbotsClient> for eth_callBundle re-simulation.
+    // We cannot extract it from multi_relay.backends because those are stored as
+    // Arc<dyn RelayBackend> (type-erased). We construct the Arc first, clone it
+    // for flashbots_for_callbundle, then coerce to Arc<dyn RelayBackend> for the
+    // backends vec.
+    let mut flashbots_for_callbundle: Option<Arc<FlashbotsClient>> = None;
+
     let multi_relay: Option<Arc<MultiRelayClient>> = {
         let mut backends: Vec<std::sync::Arc<dyn multi_relay::RelayBackend>> = Vec::new();
 
@@ -248,7 +256,11 @@ async fn main() -> anyhow::Result<()> {
             match fb_endpoint {
                 Some(url) => {
                     info!(event = "flashbots.configured", url = %url, source = fb_source, "flashbots backend added");
-                    backends.push(Arc::new(FlashbotsClient::new(url, relay_timeout)));
+                    // Construct as typed Arc first so we can hold a clone for
+                    // eth_callBundle (BE-05) before type-erasing for the relay pool.
+                    let fb = Arc::new(FlashbotsClient::new(url, relay_timeout));
+                    flashbots_for_callbundle = Some(fb.clone());
+                    backends.push(fb as Arc<dyn multi_relay::RelayBackend>);
                 }
                 None => {
                     warn!(
@@ -310,6 +322,7 @@ async fn main() -> anyhow::Result<()> {
         rpc_pool: rpc_pool.clone(),
         nonce: nonce.clone(),
         multi_relay: multi_relay.clone(),
+        flashbots_for_callbundle: flashbots_for_callbundle.clone(),
         kill_switch: killswitch.clone(),
         paper_mode: paper_mode.clone(),
         cfg: cfg.clone(),
@@ -356,6 +369,7 @@ async fn main() -> anyhow::Result<()> {
                 rpc_pool: rpc_pool.clone(),
                 nonce,
                 multi_relay,
+                flashbots_for_callbundle,
                 kill_switch: killswitch.clone(),
                 paper_mode: paper_mode.clone(),
                 cfg: cfg.clone(),

@@ -7,6 +7,7 @@
 use crate::bundle_builder::{build_and_sign, BuildError};
 use crate::multi_relay::MultiRelayClient;
 use crate::nonce_manager::NonceManager;
+use crate::relay_flashbots::FlashbotsClient;
 use crate::signer::Signer;
 use crate::tracker::{wait_for_inclusion, InclusionOutcome};
 use chrono::Utc;
@@ -41,6 +42,14 @@ pub struct SubmitEngine {
     /// double-inclusion — the signed tx is identical to all relays; the chain
     /// will include it at most once.
     pub multi_relay: Option<Arc<MultiRelayClient>>,
+    /// BE-05: direct reference to the Flashbots client used exclusively for
+    /// `eth_callBundle` re-simulation. Separate from `multi_relay` because the
+    /// multi-relay abstraction erases per-backend type identity via
+    /// `Arc<dyn RelayBackend>` — we cannot downcast it without unsafe.
+    ///
+    /// `None` when Flashbots is not configured. When absent, the re-sim step
+    /// is skipped and the bundle proceeds directly to broadcast.
+    pub flashbots_for_callbundle: Option<Arc<FlashbotsClient>>,
     pub kill_switch: KillSwitchClient,
     pub paper_mode: PaperModeClient,
     pub cfg: Arc<AppConfig>,
@@ -270,6 +279,78 @@ impl SubmitEngine {
                 submitted_at: Utc::now(),
                 trace_id: opp.trace_id,
             };
+        }
+
+        // 5.5. BE-05: eth_callBundle re-simulation against latest chain state.
+        //
+        // Call `eth_callBundle` on the signed transaction RIGHT BEFORE broadcast.
+        // Between sim-ctl simulation and now, pool reserves may have shifted,
+        // gas may have spiked, or a competing arb may have consumed the spread.
+        // This step catches the obvious failures (route reverts, slippage exceeded)
+        // which are the majority of preventable wasted-gas losses.
+        //
+        // IMPORTANT: this is a CHECK, not a guarantee. eth_callBundle simulates
+        // against `stateBlockNumber: latest`, but by the time the signed tx
+        // reaches the builder for inclusion, "latest" has advanced. A passing
+        // simulation is necessary but not sufficient for on-chain success.
+        //
+        // On endpoint failure: log + proceed. We must not drop valid bundles
+        // because the Flashbots simulation endpoint is temporarily unavailable.
+        // The existing on-chain inclusion check (step 7) remains the true gate.
+        if let Some(ref flashbots) = self.flashbots_for_callbundle {
+            let target_block = bundle.target_block;
+            match flashbots.call_bundle(signer.as_ref(), &bundle.tx_raw_hex, target_block).await {
+                Ok(sim) if sim.any_failed() => {
+                    let reasons: Vec<String> = sim
+                        .tx_results
+                        .iter()
+                        .filter_map(|t| t.error.clone().or_else(|| t.revert.clone()))
+                        .collect();
+                    warn!(
+                        event = "be05.callbundle_reverted",
+                        opp_id = %opp.id,
+                        reasons = ?reasons,
+                        "eth_callBundle shows revert — aborting broadcast to save gas"
+                    );
+                    return ExecutionResult {
+                        opportunity_id: opp.id,
+                        status: ExecutionStatus::Dropped,
+                        tx_hash: None,
+                        relay_used: None,
+                        block_included: None,
+                        gas_used_wei: None,
+                        actual_profit_usd: None,
+                        error_message: Some(format!(
+                            "eth_callBundle_revert: {}",
+                            reasons.join("; ")
+                        )),
+                        submitted_at: Utc::now(),
+                        trace_id: opp.trace_id,
+                    };
+                }
+                Ok(sim) => {
+                    info!(
+                        event = "be05.callbundle_passed",
+                        opp_id = %opp.id,
+                        total_gas_used = sim.total_gas_used,
+                        coinbase_diff_wei = sim.coinbase_diff_wei,
+                        "eth_callBundle simulation passed — proceeding to broadcast"
+                    );
+                }
+                Err(e) => {
+                    // R8 fail-honest: if the safety check endpoint itself fails
+                    // (Flashbots outage, transient HTTP error), log and proceed.
+                    // Dropping ALL bundles during a Flashbots API hiccup is worse
+                    // than sending a bundle that might revert — the existing
+                    // wait_for_inclusion step surfaces on-chain reverts regardless.
+                    warn!(
+                        event = "be05.callbundle_endpoint_error",
+                        opp_id = %opp.id,
+                        error = %e,
+                        "eth_callBundle endpoint error — proceeding without re-sim"
+                    );
+                }
+            }
         }
 
         // 6. Multi-relay broadcast (BE-06).
