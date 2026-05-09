@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import "../src/FlashLoanExecutor.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -50,6 +51,13 @@ contract MockArbitrageExecutor {
     }
 }
 
+/// @dev Minimal V2 implementation for upgrade state-preservation test.
+contract FlashLoanExecutorV2 is FlashLoanExecutor {
+    function version() external pure returns (string memory) {
+        return "v2";
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -73,7 +81,17 @@ contract FlashLoanExecutorTest is Test {
         token = new MockERC20FL();
         arbExec = new MockArbitrageExecutor();
 
-        flashExec = new FlashLoanExecutor(address(pool), address(arbExec));
+        // SC-08: deploy via ERC1967Proxy with initialize() call
+        // FlashLoanExecutor.initialize takes (admin, aavePool, arbitrageExecutor)
+        FlashLoanExecutor impl = new FlashLoanExecutor();
+        bytes memory initData = abi.encodeWithSelector(
+            FlashLoanExecutor.initialize.selector,
+            admin,
+            address(pool),
+            address(arbExec)
+        );
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
+        flashExec = FlashLoanExecutor(address(proxy));
 
         // Grant EXECUTOR_ROLE so requestFlashLoan can be called
         flashExec.grantRole(flashExec.EXECUTOR_ROLE(), executorRole);
@@ -172,5 +190,42 @@ contract FlashLoanExecutorTest is Test {
         );
 
         assertTrue(result, "executeOperation must return true");
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-08: testUpgrade_OnlyUpgrader_CanUpgrade
+    // A non-UPGRADER_ROLE address must not be able to upgrade the proxy.
+    // -----------------------------------------------------------------------
+    function testUpgrade_OnlyUpgrader_CanUpgrade() public {
+        FlashLoanExecutorV2 newImpl = new FlashLoanExecutorV2();
+
+        // attacker has no UPGRADER_ROLE — upgradeToAndCall must revert
+        vm.expectRevert();
+        vm.prank(attacker);
+        flashExec.upgradeToAndCall(address(newImpl), "");
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-08: testUpgrade_PreservesState
+    // Deploy proxy, upgrade to V2 impl, verify aavePool + arbitrageExecutor preserved.
+    // -----------------------------------------------------------------------
+    function testUpgrade_PreservesState() public {
+        // Confirm state set in initialize() is present
+        assertEq(address(flashExec.aavePool()), address(pool), "aavePool must match before upgrade");
+        assertEq(flashExec.arbitrageExecutor(), address(arbExec), "arbitrageExecutor must match before upgrade");
+
+        // Deploy V2 implementation
+        FlashLoanExecutorV2 newImpl = new FlashLoanExecutorV2();
+
+        // Admin (address(this)) has UPGRADER_ROLE — upgrade must succeed
+        flashExec.upgradeToAndCall(address(newImpl), "");
+
+        // Cast proxy to V2 to verify new function accessible
+        FlashLoanExecutorV2 flashExecV2 = FlashLoanExecutorV2(address(flashExec));
+        assertEq(flashExecV2.version(), "v2", "V2 marker function must be accessible after upgrade");
+
+        // Storage slots 0 and 1 must be intact
+        assertEq(address(flashExecV2.aavePool()), address(pool), "aavePool must survive upgrade");
+        assertEq(flashExecV2.arbitrageExecutor(), address(arbExec), "arbitrageExecutor must survive upgrade");
     }
 }

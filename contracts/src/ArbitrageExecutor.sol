@@ -1,22 +1,59 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
-import "@openzeppelin/contracts/utils/Pausable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+// =============================================================================
+// STORAGE LAYOUT — APPEND-ONLY RULE (SC-08, 2026-05-08)
+// =============================================================================
+// UUPS preserves storage across upgrades by delegatecall into a new
+// implementation that reads the proxy's storage slots.  The parent contracts
+// (Initializable, AccessControlUpgradeable, PausableUpgradeable,
+// ReentrancyGuardUpgradeable, UUPSUpgradeable) all use ERC-7201 namespaced
+// storage slots — they do NOT occupy the linear slot space [0..N].
+//
+// This contract's OWN variables start at linear slot 0:
+//   slot 0: approvedRouters  (mapping(address => bool))
+//   slot 1: approvedTokens   (mapping(address => bool))
+//
+// CRITICAL: When adding new state variables in V2, V3, etc., you MUST append
+// them AFTER slot 1.  NEVER insert variables between existing ones — that
+// would corrupt the storage layout and brick all proxies pointing at this impl.
+// =============================================================================
+
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-/// @title ArbitrageExecutor - Modulo 100% DeFi
-/// @dev Ejecutor on-chain que revierte si no se cumple el Minimum Profit
-contract ArbitrageExecutor is AccessControl, Pausable, ReentrancyGuard {
+/// @title ArbitrageExecutor — UUPS-upgradeable on-chain arbitrage executor
+/// @dev Refactored to UUPS proxy pattern (SC-08).  All constructor logic
+///      moved to initialize().  Use ERC1967Proxy in deployment scripts.
+///
+///      Atomic invariant: flash loan -> sequential swaps -> repay -> profit.
+///      executeArbitrage() reverts entirely if profit < minProfit (RULE §19).
+contract ArbitrageExecutor is
+    Initializable,
+    AccessControlUpgradeable,
+    PausableUpgradeable,
+    ReentrancyGuardUpgradeable,
+    UUPSUpgradeable
+{
     using SafeERC20 for IERC20;
 
     bytes32 public constant EXECUTOR_ROLE = keccak256("EXECUTOR_ROLE");
     bytes32 public constant ADMIN_ROLE = DEFAULT_ADMIN_ROLE;
+    /// @dev Separate UPGRADER_ROLE allows key rotation independent of admin.
+    ///      In production: admin key can be rotated without losing upgrade rights,
+    ///      and vice-versa.  Both roles default to the deployer's admin address.
+    bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
 
+    // slot 0
     mapping(address => bool) public approvedRouters;
+    // slot 1
     mapping(address => bool) public approvedTokens;
+    // APPEND new variables below this line in future upgrades. Never above.
 
     event ArbitrageExecuted(bytes32 indexed routeHash, address tokenIn, address tokenOut, uint256 profit);
     event RouterApproved(address router, bool status);
@@ -24,8 +61,20 @@ contract ArbitrageExecutor is AccessControl, Pausable, ReentrancyGuard {
     event EmergencyWithdrawn(address token, uint256 amount);
     event ETHWithdrawn(address indexed to, uint256 amount);
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
-        _grantRole(ADMIN_ROLE, msg.sender);
+        _disableInitializers();
+    }
+
+    /// @dev Replaces constructor.  Must be called exactly once via ERC1967Proxy.
+    /// @param admin Address granted DEFAULT_ADMIN_ROLE and UPGRADER_ROLE.
+    function initialize(address admin) public initializer {
+        __AccessControl_init();
+        __Pausable_init();
+        __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
+        _grantRole(ADMIN_ROLE, admin);
+        _grantRole(UPGRADER_ROLE, admin);
     }
 
     modifier onlyExecutor() {
@@ -67,7 +116,7 @@ contract ArbitrageExecutor is AccessControl, Pausable, ReentrancyGuard {
         for (uint256 i = 0; i < routers.length; i++) {
             address router = routers[i];
             require(approvedRouters[router], "Router not approved");
-            
+
             // Execute the swap (call)
             (bool success, ) = router.call(payload[i]);
             require(success, "Swap failed in route");
@@ -75,7 +124,7 @@ contract ArbitrageExecutor is AccessControl, Pausable, ReentrancyGuard {
 
         uint256 balanceAfter = IERC20(tokenIn).balanceOf(address(this));
         require(balanceAfter > balanceBefore, "Arbitrage did not generate gross profit");
-        
+
         uint256 profit = balanceAfter - balanceBefore;
         require(profit >= minProfit, "Slippage / Min profit guard failed");
 
@@ -127,4 +176,12 @@ contract ArbitrageExecutor is AccessControl, Pausable, ReentrancyGuard {
         require(ok, "ETH transfer failed");
         emit ETHWithdrawn(to, bal);
     }
+
+    // -------------------------------------------------------------------------
+    // SC-08: UUPS upgrade authorization
+    // -------------------------------------------------------------------------
+
+    /// @dev Only UPGRADER_ROLE can authorize a new implementation.
+    ///      Called internally by upgradeToAndCall() before applying the upgrade.
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(UPGRADER_ROLE) {}
 }

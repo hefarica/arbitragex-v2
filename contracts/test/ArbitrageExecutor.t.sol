@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import "../src/ArbitrageExecutor.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -87,6 +88,14 @@ contract MaliciousReentrantRouter {
     }
 }
 
+/// @dev Minimal V2 implementation for upgrade state-preservation test.
+///      Adds a marker function; no new state variables.
+contract ArbitrageExecutorV2 is ArbitrageExecutor {
+    function version() external pure returns (string memory) {
+        return "v2";
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -104,7 +113,15 @@ contract ArbitrageExecutorTest is Test {
         executorRole = makeAddr("executorRole");
         stranger = makeAddr("stranger");
 
-        executor = new ArbitrageExecutor();
+        // SC-08: deploy via ERC1967Proxy with initialize() call
+        ArbitrageExecutor impl = new ArbitrageExecutor();
+        bytes memory initData = abi.encodeWithSelector(
+            ArbitrageExecutor.initialize.selector,
+            admin
+        );
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
+        executor = ArbitrageExecutor(payable(address(proxy)));
+
         token = new MockERC20();
 
         // Grant EXECUTOR_ROLE to executorRole account
@@ -206,7 +223,7 @@ contract ArbitrageExecutorTest is Test {
 
         // The re-entrant inner call is blocked by ReentrancyGuard (ReentrancyGuardReentrantCall).
         // That revert propagates through the low-level router.call() and is caught by:
-        //   require(success, "Swap failed in route")   [ArbitrageExecutor.sol line 61]
+        //   require(success, "Swap failed in route")   [ArbitrageExecutor.sol]
         // So the outer expectRevert sees "Swap failed in route" — which proves the guard fired.
         vm.expectRevert("Swap failed in route");
 
@@ -234,18 +251,10 @@ contract ArbitrageExecutorTest is Test {
     // -----------------------------------------------------------------------
     // testEvent_ArbitrageExecuted_BugFix
     //
-    // SC-05 BUG — line 70: emit ArbitrageExecuted(routeHash, tokenIn, tokenIn, profit)
-    // The third argument should be `tokenOut` (the token received at end of route)
-    // but there is no `tokenOut` parameter in the function signature and the
-    // contract emits `tokenIn` for both address fields.
-    //
-    // This test documents the CORRECT expected behavior (tokenOut != tokenIn).
-    // It FAILS in the current codebase because the contract emits tokenIn twice.
-    // STATUS: BLOCKED on SC-05 fix (add tokenOut param + fix emit on line 70).
-    // -----------------------------------------------------------------------
     // SC-05 fixed: tokenOut is now an explicit parameter. This test verifies the
     // event correctly reflects a distinct intermediate token (tokenIn != tokenOut),
     // which is the normal multi-hop case (e.g. USDC → ETH → USDC route).
+    // -----------------------------------------------------------------------
     function testEvent_ArbitrageExecuted_BugFix() public {
         uint256 amountIn = 1_000e18;
         uint256 profit = 50e18;
@@ -318,5 +327,46 @@ contract ArbitrageExecutorTest is Test {
         vm.expectRevert();
         vm.prank(stranger);
         executor.withdrawETH(recipient);
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-08: testUpgrade_OnlyUpgrader_CanUpgrade
+    // A non-UPGRADER_ROLE address must not be able to upgrade the proxy.
+    // -----------------------------------------------------------------------
+    function testUpgrade_OnlyUpgrader_CanUpgrade() public {
+        ArbitrageExecutorV2 newImpl = new ArbitrageExecutorV2();
+
+        // stranger has no UPGRADER_ROLE — upgradeToAndCall must revert
+        vm.expectRevert();
+        vm.prank(stranger);
+        executor.upgradeToAndCall(address(newImpl), "");
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-08: testUpgrade_PreservesState
+    // Deploy proxy, set approvedTokens, upgrade to V2 impl, verify state preserved.
+    // -----------------------------------------------------------------------
+    function testUpgrade_PreservesState() public {
+        // Confirm token approval set in setUp is present
+        assertTrue(executor.approvedTokens(address(token)), "token must be approved before upgrade");
+
+        // Add an additional token to make state check unambiguous
+        MockERC20 extraToken = new MockERC20();
+        executor.setTokenApproval(address(extraToken), true);
+        assertTrue(executor.approvedTokens(address(extraToken)), "extraToken must be approved before upgrade");
+
+        // Deploy V2 implementation
+        ArbitrageExecutorV2 newImpl = new ArbitrageExecutorV2();
+
+        // Admin (address(this)) has UPGRADER_ROLE — upgrade must succeed
+        executor.upgradeToAndCall(address(newImpl), "");
+
+        // Cast proxy to V2 interface to verify new function is accessible
+        ArbitrageExecutorV2 executorV2 = ArbitrageExecutorV2(payable(address(executor)));
+        assertEq(executorV2.version(), "v2", "V2 marker function must be accessible after upgrade");
+
+        // Storage must be intact — both token approvals survive the upgrade
+        assertTrue(executorV2.approvedTokens(address(token)), "token approval must survive upgrade");
+        assertTrue(executorV2.approvedTokens(address(extraToken)), "extraToken approval must survive upgrade");
     }
 }
