@@ -35,6 +35,14 @@ ALLOWED_ORIGINS = "http://localhost:3000"
 binding = "ARBX_CACHE"
 id = "REPLACE_ME_KV_ID"
 
+# SEC-1: KV namespace for cross-isolate rate limit state (general RL,
+# admin session brute-force, 401 lockout). Without this, per-isolate Maps
+# allow trivial bypass (Cloudflare distributes requests across isolates).
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "REPLACE_ME_RATE_LIMIT_KV_ID"
+preview_id = "REPLACE_ME_RATE_LIMIT_PREVIEW_KV_ID"
+
 # D1 for lightweight telemetry (S8 usage).
 [[d1_databases]]
 binding = "ARBX_TELEMETRY"

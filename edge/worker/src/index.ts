@@ -23,67 +23,90 @@ type Env = {
   ARBX_EDGE_TOKEN: string;
   JWT_SECRET: string;
   ARBX_CACHE: KVNamespace;
+  // SEC-1: KV namespace for cross-isolate rate-limit / brute-force / lockout state.
+  RATE_LIMIT: KVNamespace;
   ARBX_TELEMETRY?: D1Database;
 };
 
 const app = new Hono<{ Bindings: Env }>();
 
-// Per-isolate rate limit state (resets on new isolate). Documented temporary.
-const RL_WINDOW_MS = 60_000;
-const RL_MAX = 120;
-const rlState = new Map<string, { count: number; windowStart: number }>();
-function rateLimit(key: string, now: number): { ok: boolean; remaining: number } {
-  const cur = rlState.get(key);
-  if (!cur || now - cur.windowStart > RL_WINDOW_MS) {
-    rlState.set(key, { count: 1, windowStart: now });
-    return { ok: true, remaining: RL_MAX - 1 };
-  }
-  cur.count++;
-  if (cur.count > RL_MAX) return { ok: false, remaining: 0 };
-  return { ok: true, remaining: RL_MAX - cur.count };
+// =============================================================================
+// SEC-1: Cross-isolate rate-limit + brute-force + lockout state (KV-backed).
+// =============================================================================
+// The previous per-isolate Map approach was bypassable: Cloudflare distributes
+// requests across isolates, so an attacker hitting different isolates accumulated
+// zero shared state. KV operations add ~5-15ms per check; acceptable for
+// security gates.
+//
+// Note: KV read-modify-write is NOT atomic. For RL counters the worst-case race
+// produces a small extra count under burst, which is acceptable for a rate limit.
+// For the lockout we accept the same race because the threshold is low (10) and
+// the lockout window is long (15 min) — a race adding 1 extra fail does not
+// meaningfully change the security posture.
+
+const RL_GENERAL_MAX = 120;       // 120 req/min/IP, public read endpoints
+const RL_GENERAL_WINDOW_S = 60;
+const RL_ADMIN_MAX = 5;           // 5 admin-session attempts/min/IP
+const RL_ADMIN_WINDOW_S = 60;
+
+const LOCKOUT_THRESHOLD = 10;     // 10 consecutive 401s → lockout
+const LOCKOUT_WINDOW_S = 15 * 60; // 15 min
+
+/**
+ * Bucketed rate-limit check via KV.
+ * Returns { ok, remaining }. `prefix` namespaces the keyspace (rl / admin_rl).
+ * The bucket key is `${prefix}:${ip}:${floor(now/window)}` so each window has its
+ * own counter; we set TTL = 2× window so old buckets self-evict.
+ */
+async function checkRl(
+  env: Env,
+  ip: string,
+  max: number,
+  windowS: number,
+  prefix: string,
+): Promise<{ ok: boolean; remaining: number }> {
+  const bucket = Math.floor(Date.now() / (windowS * 1000));
+  const key = `${prefix}:${ip}:${bucket}`;
+  const current = await env.RATE_LIMIT.get(key);
+  const count = parseInt(current || "0", 10) + 1;
+  await env.RATE_LIMIT.put(key, count.toString(), { expirationTtl: windowS * 2 });
+  if (count > max) return { ok: false, remaining: 0 };
+  return { ok: true, remaining: max - count };
 }
 
-// Stricter per-path limit for /admin/session (anti brute-force).
-// 5 attempts / 60s / IP. In-memory per-isolate (S7 will move to KV).
-const ADMIN_SESSION_WINDOW_MS = 60_000;
-const ADMIN_SESSION_MAX = 5;
-const adminRlState = new Map<string, { count: number; windowStart: number }>();
-function rateLimitAdminSession(key: string, now: number): { ok: boolean; remaining: number } {
-  const cur = adminRlState.get(key);
-  if (!cur || now - cur.windowStart > ADMIN_SESSION_WINDOW_MS) {
-    adminRlState.set(key, { count: 1, windowStart: now });
-    return { ok: true, remaining: ADMIN_SESSION_MAX - 1 };
-  }
-  cur.count++;
-  if (cur.count > ADMIN_SESSION_MAX) return { ok: false, remaining: 0 };
-  return { ok: true, remaining: ADMIN_SESSION_MAX - cur.count };
+/**
+ * 401 lockout state lives in a single JSON value per IP.
+ *   { fails: number, blockedUntil: number (ms epoch) }
+ * TTL = LOCKOUT_WINDOW_S so a stale entry self-evicts after one full window.
+ */
+type LockoutData = { fails: number; blockedUntil: number };
+
+async function isLockedOut(env: Env, ip: string, now: number): Promise<boolean> {
+  const data = (await env.RATE_LIMIT.get(`lockout:${ip}`, "json")) as LockoutData | null;
+  return !!data && data.blockedUntil > now;
 }
 
-// 401 lockout: 10 consecutive auth failures from same IP → block 15 min.
-const LOCKOUT_THRESHOLD = 10;
-const LOCKOUT_MS = 15 * 60_000;
-const lockoutState = new Map<string, { fails: number; blockedUntil: number }>();
-function isLockedOut(key: string, now: number): boolean {
-  const s = lockoutState.get(key);
-  return !!s && s.blockedUntil > now;
-}
-function recordAuthFailure(key: string, now: number): void {
-  const s = lockoutState.get(key);
-  if (!s) {
-    lockoutState.set(key, { fails: 1, blockedUntil: 0 });
-    return;
+async function recordAuthFailure(env: Env, ip: string, now: number): Promise<void> {
+  const key = `lockout:${ip}`;
+  const data = (await env.RATE_LIMIT.get(key, "json")) as LockoutData | null;
+  let next: LockoutData;
+  if (!data) {
+    next = { fails: 1, blockedUntil: 0 };
+  } else if (data.blockedUntil > 0 && data.blockedUntil < now) {
+    // Previous lockout elapsed — start fresh.
+    next = { fails: 1, blockedUntil: 0 };
+  } else {
+    next = {
+      fails: data.fails + 1,
+      blockedUntil:
+        data.fails + 1 >= LOCKOUT_THRESHOLD ? now + LOCKOUT_WINDOW_S * 1000 : data.blockedUntil,
+    };
   }
-  // If a previous lockout has now elapsed, start fresh.
-  // (blockedUntil === 0 means "never locked yet" — keep counting.)
-  if (s.blockedUntil > 0 && s.blockedUntil < now) {
-    lockoutState.set(key, { fails: 1, blockedUntil: 0 });
-    return;
-  }
-  s.fails++;
-  if (s.fails >= LOCKOUT_THRESHOLD) s.blockedUntil = now + LOCKOUT_MS;
+  await env.RATE_LIMIT.put(key, JSON.stringify(next), { expirationTtl: LOCKOUT_WINDOW_S });
 }
-function recordAuthSuccess(key: string): void {
-  lockoutState.delete(key);
+
+async function recordAuthSuccess(env: Env, ip: string): Promise<void> {
+  await env.RATE_LIMIT.delete(`lockout:${ip}`);
 }
 
 const SESSION_COOKIE = "arbx_admin_session";
@@ -104,8 +127,8 @@ app.use("*", async (c, next) => {
   (c as unknown as { traceId: string }).traceId = traceId;
 
   const key = c.req.header("cf-connecting-ip") ?? "anon";
-  const now = Date.now();
-  const rl = rateLimit(key, now);
+  // SEC-1: KV-backed cross-isolate rate limit.
+  const rl = await checkRl(c.env, key, RL_GENERAL_MAX, RL_GENERAL_WINDOW_S, "rl");
   c.header("x-ratelimit-remaining", String(rl.remaining));
   if (!rl.ok) return c.json({ error: "rate_limited" }, 429);
 
@@ -163,10 +186,12 @@ app.post("/admin/session", async (c) => {
   const ip = c.req.header("cf-connecting-ip") ?? "anon";
   const now = Date.now();
 
-  if (isLockedOut(ip, now)) {
-    return c.json({ error: "locked_out", retry_after_s: LOCKOUT_MS / 1000 }, 429);
+  // SEC-1: KV-backed lockout check (cross-isolate consistent).
+  if (await isLockedOut(c.env, ip, now)) {
+    return c.json({ error: "locked_out", retry_after_s: LOCKOUT_WINDOW_S }, 429);
   }
-  const rate = rateLimitAdminSession(ip, now);
+  // SEC-1: KV-backed admin-session brute-force gate.
+  const rate = await checkRl(c.env, ip, RL_ADMIN_MAX, RL_ADMIN_WINDOW_S, "admin_rl");
   c.header("x-ratelimit-admin-session-remaining", String(rate.remaining));
   if (!rate.ok) return c.json({ error: "rate_limited" }, 429);
 
@@ -187,11 +212,11 @@ app.post("/admin/session", async (c) => {
     body: JSON.stringify({ enabled: null, reason: "__session_probe__" }),
   });
   if (probe.status === 401 || probe.status === 403) {
-    recordAuthFailure(ip, now);
+    await recordAuthFailure(c.env, ip, now);
     return c.json({ error: "invalid_admin_token" }, 401);
   }
 
-  recordAuthSuccess(ip);
+  await recordAuthSuccess(c.env, ip);
   const expiresAtMs = now + SESSION_TTL_S * 1000;
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,

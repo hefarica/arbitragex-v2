@@ -20,21 +20,30 @@ if (process.env.NODE_ENV === "production") {
 //
 // 'unsafe-inline'/'unsafe-eval' on script-src are required by Next 14 RSC
 // hydration. Will be replaced with a per-request nonce via middleware.ts.
-const csp = (edgeUrl, wsUrl) => [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
-  "font-src 'self' data:",
-  // Parameterized connect-src: only declared endpoints, no hardcoded localhost.
-  `connect-src 'self' ${edgeUrl} ${wsUrl}`,
-  "frame-ancestors 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "object-src 'none'",
-  // NOTE: Do NOT add 'upgrade-insecure-requests' here until the VPS has HTTPS.
-  // It forces the browser to convert http:// to https://, breaking HTTP-only deployments.
-].join("; ");
+//
+// SEC-3: build connect-src by filtering undefined env vars. The previous
+// template literal `connect-src 'self' ${edgeUrl} ${wsUrl}` produced
+// "connect-src 'self'  " (trailing spaces) when either var was undefined,
+// which some CSP parsers reject as malformed.
+const csp = (edgeUrl, wsUrl) => {
+  const connectSrcParts = ["'self'", edgeUrl, wsUrl].filter(Boolean);
+  const connectSrc = connectSrcParts.join(" ");
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    // Parameterized connect-src: only declared endpoints, no hardcoded localhost.
+    `connect-src ${connectSrc}`,
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+    // NOTE: Do NOT add 'upgrade-insecure-requests' here until the VPS has HTTPS.
+    // It forces the browser to convert http:// to https://, breaking HTTP-only deployments.
+  ].join("; ");
+};
 
 const nextConfig = {
   reactStrictMode: true,
@@ -53,13 +62,14 @@ const nextConfig = {
       { key: "permissions-policy", value: "camera=(), microphone=(), geolocation=()" },
       { key: "content-security-policy-report-only", value: csp(resolvedEdge, resolvedWs) },
     ];
-    // HSTS requires a valid TLS certificate. Enable only when HTTPS is configured.
-    // if (process.env.NODE_ENV === "production" && process.env.ARBX_TLS_ENABLED === "true") {
-    //   headers.push({
-    //     key: "strict-transport-security",
-    //     value: "max-age=63072000; includeSubDomains; preload",
-    //   });
-    // }
+    // SEC-3: HSTS enabled when TLS is configured. 1y, includeSubDomains, NO preload
+    // (audit recommendation — preload is irrevocable for ≥1y, defer until TLS is stable).
+    if (process.env.NODE_ENV === "production" && process.env.ARBX_TLS_ENABLED === "true") {
+      headers.push({
+        key: "strict-transport-security",
+        value: "max-age=31536000; includeSubDomains",
+      });
+    }
     return [{ source: "/:path*", headers }];
   },
 };

@@ -34,6 +34,13 @@ contract AllowanceManager is
     /// @dev Separate UPGRADER_ROLE allows key rotation independent of admin.
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
 
+    /// @dev SEC-2: cap on `grantAllowance` to bound blast radius if a router or
+    /// the AllowanceManager itself is ever compromised. 1e30 (1 trillion units of
+    /// an 18-decimal token) covers every realistic operational need while
+    /// preventing the historical "infinite approval = total drainable balance"
+    /// failure mode. Override only via upgrade if a future strategy requires it.
+    uint256 public constant MAX_SAFE_ALLOWANCE = 1_000_000_000_000 * 1e18;
+
     event AllowanceGranted(address indexed token, address indexed spender, uint256 amount);
     event AllowanceRevoked(address indexed token, address indexed spender);
 
@@ -51,10 +58,21 @@ contract AllowanceManager is
         _grantRole(UPGRADER_ROLE, admin);
     }
 
-    /// @dev Otorga aprobación máxima a un router
-    function grantAllowance(address token, address spender) external onlyRole(ADMIN_ROLE) {
-        IERC20(token).forceApprove(spender, type(uint256).max);
-        emit AllowanceGranted(token, spender, type(uint256).max);
+    /// @dev Otorga aprobación bounded a un router (SEC-2).
+    ///      ABI BREAKING vs prior version: now requires explicit `maxAmount`
+    ///      bounded by MAX_SAFE_ALLOWANCE. Infinite approvals are no longer
+    ///      possible from this contract.
+    function grantAllowance(
+        address token,
+        address spender,
+        uint256 maxAmount
+    ) external onlyRole(ADMIN_ROLE) {
+        require(token != address(0), "Zero token");
+        require(spender != address(0), "Zero spender");
+        require(maxAmount > 0, "Zero amount");
+        require(maxAmount <= MAX_SAFE_ALLOWANCE, "Above safe cap");
+        IERC20(token).forceApprove(spender, maxAmount);
+        emit AllowanceGranted(token, spender, maxAmount);
     }
 
     /// @dev Revoca aprobación a 0 por seguridad

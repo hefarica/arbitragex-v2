@@ -67,18 +67,38 @@ contract AllowanceManagerTest is Test {
         vm.expectRevert(abi.encodeWithSelector(selector, stranger, manager.ADMIN_ROLE()));
 
         vm.prank(stranger);
-        manager.grantAllowance(address(token), spender);
+        manager.grantAllowance(address(token), spender, 1_000e18);
     }
 
     // -----------------------------------------------------------------------
-    // testGrantAllowance_SetsMaxAllowance
-    // grantAllowance(token, spender) -> token.allowance(manager, spender) == type(uint256).max
+    // testGrantAllowance_SetsBoundedAllowance (SEC-2)
+    // grantAllowance(token, spender, maxAmount) -> token.allowance(manager, spender) == maxAmount
     // -----------------------------------------------------------------------
     function testGrantAllowance_SetsMaxAllowance() public {
-        manager.grantAllowance(address(token), spender);
+        uint256 maxAmount = 1_000e18;
+        manager.grantAllowance(address(token), spender, maxAmount);
 
         uint256 allowance = token.allowance(address(manager), spender);
-        assertEq(allowance, type(uint256).max, "Allowance must be uint256.max after grant");
+        assertEq(allowance, maxAmount, "Allowance must equal passed maxAmount after grant");
+    }
+
+    // -----------------------------------------------------------------------
+    // SEC-2: testGrantAllowance_RejectsAboveSafeCap
+    // grantAllowance must revert with "Above safe cap" if maxAmount > MAX_SAFE_ALLOWANCE.
+    // -----------------------------------------------------------------------
+    function testGrantAllowance_RejectsAboveSafeCap() public {
+        uint256 aboveCap = manager.MAX_SAFE_ALLOWANCE() + 1;
+        vm.expectRevert("Above safe cap");
+        manager.grantAllowance(address(token), spender, aboveCap);
+    }
+
+    // -----------------------------------------------------------------------
+    // SEC-2: testGrantAllowance_RejectsZeroAmount
+    // grantAllowance must revert with "Zero amount" if maxAmount == 0.
+    // -----------------------------------------------------------------------
+    function testGrantAllowance_RejectsZeroAmount() public {
+        vm.expectRevert("Zero amount");
+        manager.grantAllowance(address(token), spender, 0);
     }
 
     // -----------------------------------------------------------------------
@@ -86,9 +106,10 @@ contract AllowanceManagerTest is Test {
     // revokeAllowance(token, spender) -> token.allowance(manager, spender) == 0
     // -----------------------------------------------------------------------
     function testRevokeAllowance_ZerosAllowance() public {
+        uint256 maxAmount = 1_000e18;
         // First grant
-        manager.grantAllowance(address(token), spender);
-        assertEq(token.allowance(address(manager), spender), type(uint256).max);
+        manager.grantAllowance(address(token), spender, maxAmount);
+        assertEq(token.allowance(address(manager), spender), maxAmount);
 
         // Then revoke
         manager.revokeAllowance(address(token), spender);
@@ -113,12 +134,13 @@ contract AllowanceManagerTest is Test {
     // Deploy proxy, grant allowance, upgrade to V2, verify allowance preserved.
     // -----------------------------------------------------------------------
     function testUpgrade_PreservesState() public {
-        // Grant an allowance before upgrade
-        manager.grantAllowance(address(token), spender);
+        // Grant an allowance before upgrade (SEC-2: bounded amount)
+        uint256 maxAmount = 1_000e18;
+        manager.grantAllowance(address(token), spender, maxAmount);
         assertEq(
             token.allowance(address(manager), spender),
-            type(uint256).max,
-            "allowance must be max before upgrade"
+            maxAmount,
+            "allowance must equal granted amount before upgrade"
         );
 
         // Deploy V2 implementation
