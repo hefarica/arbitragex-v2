@@ -53,6 +53,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    restart: unless-stopped
     networks: [arbx-net]
     <<: *common-logging
 
@@ -66,6 +67,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    restart: unless-stopped
     networks: [arbx-net]
     <<: *common-logging
 
@@ -90,7 +92,16 @@ services:
     depends_on:
       redis: { condition: service_healthy }
       postgres: { condition: service_healthy }
+    restart: unless-stopped
     networks: [arbx-net]
+    # INF-1: searcher-rs is the heaviest Rust service (REVM + WS fan-out).
+    deploy:
+      resources:
+        limits:
+          memory: "4G"
+          cpus: "2.0"
+        reservations:
+          memory: "512M"
     <<: *common-logging
 
   sim-ctl:
@@ -110,7 +121,16 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+    restart: unless-stopped
     networks: [arbx-net]
+    # INF-1: sim-ctl runs REVM simulations; 2G prevents OOM during burst.
+    deploy:
+      resources:
+        limits:
+          memory: "2G"
+          cpus: "1.5"
+        reservations:
+          memory: "256M"
     <<: *common-logging
 
   relays-client:
@@ -130,7 +150,16 @@ services:
     ports: ["127.0.0.1:3005:3005"]
     depends_on:
       redis: { condition: service_healthy }
+    restart: unless-stopped
     networks: [arbx-net]
+    # INF-1: relays-client manages Flashbots/BloxRoute HTTP connections.
+    deploy:
+      resources:
+        limits:
+          memory: "1G"
+          cpus: "1.0"
+        reservations:
+          memory: "128M"
     <<: *common-logging
 
   recon:
@@ -147,7 +176,16 @@ services:
     ports: ["127.0.0.1:3004:3004"]
     depends_on:
       postgres: { condition: service_healthy }
+    restart: unless-stopped
     networks: [arbx-net]
+    # INF-1: recon does reconciliation queries; 1G is sufficient.
+    deploy:
+      resources:
+        limits:
+          memory: "1G"
+          cpus: "1.0"
+        reservations:
+          memory: "128M"
     <<: *common-logging
 
   selector-api:
@@ -164,7 +202,16 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+    restart: unless-stopped
     networks: [arbx-net]
+    # INF-1: selector-api is a lightweight TS service; 512M is generous.
+    deploy:
+      resources:
+        limits:
+          memory: "512M"
+          cpus: "0.5"
+        reservations:
+          memory: "64M"
     <<: *common-logging
 
   api-server:
@@ -186,7 +233,16 @@ services:
     ports: ["127.0.0.1:8080:8080"]
     depends_on:
       redis: { condition: service_healthy }
+    restart: unless-stopped
     networks: [arbx-net]
+    # INF-1: api-server handles REST + WS fan-out to all backend services.
+    deploy:
+      resources:
+        limits:
+          memory: "1G"
+          cpus: "1.0"
+        reservations:
+          memory: "128M"
     <<: *common-logging
 
   # ───────── Edge ─────────
@@ -205,6 +261,7 @@ services:
       EDGE_PORT: "8787"
     ports: ["127.0.0.1:8787:8787"]
     depends_on: [api-server]
+    restart: unless-stopped
     networks: [arbx-net]
     <<: *common-logging
 
@@ -218,26 +275,45 @@ services:
       NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:?NEXT_PUBLIC_EDGE_URL required (public edge URL)}
     ports: ["127.0.0.1:5173:5173"]
     depends_on: [edge]
+    restart: unless-stopped
     networks: [arbx-net]
+    # INF-1: frontend serves static Next.js output; 1G covers SSR memory overhead.
+    deploy:
+      resources:
+        limits:
+          memory: "1G"
+          cpus: "1.0"
+        reservations:
+          memory: "128M"
     <<: *common-logging
 
   # ───────── Observability ─────────
 
   prometheus:
-    image: prom/prometheus:v2.52.0
+    # INF-7: bumped from v2.52.0 to v2.55.1 (latest stable as of 2026-05-07).
+    image: prom/prometheus:v2.55.1
     ports: ["127.0.0.1:9090:9090"]
     volumes:
       - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ../monitoring/alerts.rules.yml:/etc/prometheus/alerts.rules.yml:ro
+    # INF-3: healthcheck via /-/healthy endpoint.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:9090/-/healthy 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
     networks: [arbx-net]
     <<: *common-logging
 
   grafana:
-    image: grafana/grafana:10.4.2
+    # INF-7: bumped from 10.4.2 to 11.4.0 (latest stable as of 2026-05-07).
+    image: grafana/grafana:11.4.0
     ports: ["127.0.0.1:3000:3000"]
     environment:
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
       GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
     secrets:
       - grafana_admin_password
     volumes:
@@ -245,6 +321,13 @@ services:
       - ../monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
       - grafana_data:/var/lib/grafana
     depends_on: [prometheus]
+    # INF-3: healthcheck via /api/health endpoint.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3000/api/health 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
     networks: [arbx-net]
     <<: *common-logging
 
@@ -253,6 +336,13 @@ services:
     ports: ["127.0.0.1:9093:9093"]
     volumes:
       - ../monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    # INF-3: healthcheck via /-/healthy endpoint.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:9093/-/healthy 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
     networks: [arbx-net]
     <<: *common-logging
 
@@ -263,6 +353,13 @@ services:
     volumes:
       - ../monitoring/loki/loki-config.yml:/etc/loki/config.yml:ro
       - loki_data:/loki
+    # INF-3: healthcheck via /ready endpoint.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3100/ready 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
     networks: [arbx-net]
     <<: *common-logging
 
@@ -299,6 +396,13 @@ services:
       - ../monitoring/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on: [loki]
+    # INF-3: promtail exposes /ready on port 9080.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:9080/ready 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
     networks: [arbx-net]
     <<: *common-logging
 

@@ -7,8 +7,8 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO"
 
 echo "Stopping application services (data + monitoring remain up)..."
-docker compose -f docker/docker-compose.prod-like.yml stop \
+docker compose --env-file .env -f docker/compose.prod.yml stop \
   searcher-rs selector-api sim-ctl relays-client recon api-server edge frontend
 
-echo "Done. To fully tear down (including data): docker compose -f docker/docker-compose.prod-like.yml down -v"
+echo "Done. To fully tear down (including data): docker compose --env-file .env -f docker/compose.prod.yml down -v"
 echo "To restore DB from backup: see docs/SOP_ENTERPRISE.md §Backup/Restore."
