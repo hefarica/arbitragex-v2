@@ -67,6 +67,17 @@ pub struct CostBreakdown {
     /// `Statistical` → live data from `strategy_scores`; `Proxy` → flat config %.
     /// Dashboard uses this to distinguish data-driven from heuristic cost.
     pub p_fail_source: PFailSource,
+
+    // --- Component 5 (Sprint C): copy-trade / front-run probability buffer ---
+    /// Heuristic copy-trade buffer in USD (component 5).
+    /// Formula: `p_copied × gross_profit_usd_proxy`.
+    /// Zero when `p_copied_used` is `None` (no `dex_chain_metrics` row) or
+    /// when `p_copied` evaluates to `0.0` (pool volume below threshold).
+    pub copied_buffer_usd: f64,
+    /// The `p_copied` value that was applied, for dashboard surfacing.
+    /// `None`  → no `dex_chain_metrics` row for the weakest pool; cost not added (R8).
+    /// `Some(p)` → heuristic was applied; `copied_buffer_usd = p × gross_proxy`.
+    pub p_copied_used: Option<f64>,
 }
 
 impl CostBreakdown {
@@ -81,6 +92,8 @@ impl CostBreakdown {
         capital_cost_usd: f64,
         ops_overhead_usd: f64,
         p_fail_source: PFailSource,
+        copied_buffer_usd: f64,
+        p_copied_used: Option<f64>,
     ) -> Self {
         let total_cost_usd = gas_usd
             + lp_fees_usd
@@ -88,7 +101,8 @@ impl CostBreakdown {
             + slippage_buffer_usd
             + failure_buffer_usd
             + capital_cost_usd
-            + ops_overhead_usd;
+            + ops_overhead_usd
+            + copied_buffer_usd;
         Self {
             gas_usd,
             lp_fees_usd,
@@ -99,6 +113,8 @@ impl CostBreakdown {
             ops_overhead_usd,
             total_cost_usd,
             p_fail_source,
+            copied_buffer_usd,
+            p_copied_used,
         }
     }
 }

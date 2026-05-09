@@ -163,6 +163,41 @@ pub struct TradingConfigState {
     #[serde(default = "default_ops_overhead")]
     pub ops_overhead_usd_per_attempt: f64,
 
+    // --- Sprint C: Component 9 (spread sanity) + Component 5 (p_copied) ---
+
+    /// Multiplier for the AMM-vs-oracle spread sanity check (Component 9).
+    ///
+    /// The evaluator computes `spread_ratio = observed_rate / reference_rate`.
+    /// If `spread_ratio < 1/mult` OR `spread_ratio > mult`, the opportunity
+    /// is rejected with `RejectReason::ImplausibleSpread`.
+    ///
+    /// Default `3.0` (observed must be within 3× of oracle reference).
+    /// Backed by migration 048 column `trading_config.spread_sanity_mult`
+    /// (CHECK: 1.0 ≤ value ≤ 100.0).
+    /// `serde(default)` keeps backward compatibility with pre-Sprint-C configs.
+    #[serde(default = "default_spread_sanity_mult")]
+    pub spread_sanity_mult: f64,
+
+    /// Baseline 24h volume (USD) for the p_copied heuristic (Component 5).
+    ///
+    /// Formula: `p_copied = min(p_copied_max, log10(vol / threshold) × 0.1).max(0.0)`.
+    /// At `vol == threshold` → p_copied = 0 (no copy-trade cost).
+    /// At `vol == 10× threshold` → p_copied = 10%.
+    ///
+    /// Default `$1_000_000` ($1M/24h). Backed by migration 048 column
+    /// `trading_config.p_copied_volume_threshold_usd`.
+    #[serde(default = "default_p_copied_volume_threshold_usd")]
+    pub p_copied_volume_threshold_usd: f64,
+
+    /// Cap on the p_copied heuristic probability (Component 5).
+    ///
+    /// `p_copied` is clamped to `[0.0, p_copied_max]` before computing the
+    /// buffer. Default `0.5` (50% maximum copy-trade probability).
+    /// Backed by migration 048 column `trading_config.p_copied_max`
+    /// (CHECK: 0.0 ≤ value ≤ 1.0).
+    #[serde(default = "default_p_copied_max")]
+    pub p_copied_max: f64,
+
     pub enabled: bool,
     pub updated_at: DateTime<Utc>,
     pub updated_by: Option<String>,
@@ -171,6 +206,21 @@ pub struct TradingConfigState {
 /// Provides the serde default for `ops_overhead_usd_per_attempt` ($0.01).
 fn default_ops_overhead() -> f64 {
     0.01
+}
+
+/// Provides the serde default for `spread_sanity_mult` (3.0×).
+fn default_spread_sanity_mult() -> f64 {
+    3.0
+}
+
+/// Provides the serde default for `p_copied_volume_threshold_usd` ($1M/24h).
+fn default_p_copied_volume_threshold_usd() -> f64 {
+    1_000_000.0
+}
+
+/// Provides the serde default for `p_copied_max` (50%).
+fn default_p_copied_max() -> f64 {
+    0.5
 }
 
 impl TradingConfigState {
@@ -389,6 +439,9 @@ mod tests {
             enabled_strategies: vec!["dex_arb_v2v2".into()],
             capital_cost_rate_annual_pct: 0.0,
             ops_overhead_usd_per_attempt: 0.01,
+            spread_sanity_mult: 3.0,
+            p_copied_volume_threshold_usd: 1_000_000.0,
+            p_copied_max: 0.5,
             enabled: true,
             updated_at: Utc::now(),
             updated_by: Some("ops".into()),

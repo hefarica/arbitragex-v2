@@ -36,6 +36,18 @@ pub enum RejectReason {
     /// list. The spine refuses to invent a price (R8 Fail-Honest); operator
     /// closes the gap by populating `token_prices_usd` for that symbol.
     UnknownTokenPrice,
+    /// Component 9 (Sprint C): AMM-quoted rate deviates from oracle reference
+    /// rate by more than `spread_sanity_mult` (default 3×). Likely indicates
+    /// stale AMM state or a math bug in the quoter — not a real opportunity.
+    ///
+    /// Surfaced with observed/reference rates for dashboard diagnostics.
+    /// R8 fail-honest: ONLY fired when BOTH oracle prices are present.
+    /// Missing oracle prices → check skipped, not rejected as ImplausibleSpread.
+    ImplausibleSpread {
+        observed_rate: f64,
+        reference_rate: f64,
+        threshold_mult: f64,
+    },
 }
 
 pub trait ExecutionDecisionEngine {

@@ -147,6 +147,20 @@ pub struct ConfigAwareEvaluator<'a> {
     /// Callers fetch this via `StrategyScoresCache::get(pool, strategy_kind, chain_id).await`
     /// before constructing the evaluator, keeping `evaluate()` entirely sync.
     pub p_fail_rate: Option<StrategyFailRate>,
+
+    /// Pre-fetched 24h volume (USD) of the weakest-link pool in the route (Sprint C).
+    ///
+    /// Sourced from `dex_chain_metrics.volume_24h_usd` for the pool with the
+    /// lowest volume — the "competition floor" for copy-trade probability.
+    ///
+    /// `Some(vol)` → `evaluate()` computes `p_copied = min(config.p_copied_max,
+    ///               log10(vol / config.p_copied_volume_threshold_usd) × 0.1).max(0.0)`.
+    /// `None` (no `dex_chain_metrics` row, cold-start) → `p_copied = None` → no
+    ///   copy-trade cost added (R8 fail-honest — never synthesise volume data).
+    ///
+    /// Caller fetches this async via `DexVolumeCache::get(pool_address, chain_id).await`
+    /// before constructing the evaluator, keeping `evaluate()` entirely sync.
+    pub pool_volume_24h_usd: Option<f64>,
 }
 
 impl<'a> ConfigAwareEvaluator<'a> {
@@ -159,6 +173,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             signals,
             price_cache_snapshot: HashMap::new(),
             p_fail_rate: None,
+            pool_volume_24h_usd: None,
         }
     }
 
@@ -177,6 +192,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             signals,
             price_cache_snapshot,
             p_fail_rate: None,
+            pool_volume_24h_usd: None,
         }
     }
 
@@ -196,6 +212,29 @@ impl<'a> ConfigAwareEvaluator<'a> {
             signals,
             price_cache_snapshot,
             p_fail_rate,
+            pool_volume_24h_usd: None,
+        }
+    }
+
+    /// Full-featured constructor with price cache, statistical failure rate,
+    /// and weakest-pool 24h volume for the p_copied heuristic (Sprint C).
+    ///
+    /// `pool_volume_24h_usd` is the minimum 24h volume (USD) across all pools
+    /// in the candidate route — the weakest-link determines the competition floor.
+    /// Pass `None` when no `dex_chain_metrics` row exists (R8 fail-honest).
+    pub fn with_volume(
+        config: &'a TradingConfigState,
+        signals: NetworkSignals,
+        price_cache_snapshot: HashMap<String, f64>,
+        p_fail_rate: Option<StrategyFailRate>,
+        pool_volume_24h_usd: Option<f64>,
+    ) -> Self {
+        Self {
+            config,
+            signals,
+            price_cache_snapshot,
+            p_fail_rate,
+            pool_volume_24h_usd,
         }
     }
 
@@ -296,6 +335,68 @@ impl<'a> ConfigAwareEvaluator<'a> {
         };
         let expected_amount_out_usd = candidate.expected_amount_out * out_price * cap_ratio;
 
+        // 3b. Component 9 (Sprint C): spread sanity gate.
+        //
+        // Compares the AMM-quoted exchange rate with the oracle reference rate.
+        // A large deviation (> spread_sanity_mult×) indicates stale AMM state,
+        // a quoter bug, or a pool in an extreme state — NOT a real opportunity.
+        //
+        // R8 fail-honest: ONLY fires when BOTH oracle prices are present.
+        // Missing prices → unknown_price=true path below handles the rejection;
+        // we do NOT additionally reject as ImplausibleSpread on missing data.
+        //
+        // Spread ratio definition:
+        //   observed_rate  = expected_amount_out / amount_in   (token units, not USD)
+        //   reference_rate = price(token_in_usd) / price(token_out_usd)
+        //     (how many token_out units one token_in buys at oracle fair value)
+        //
+        // Reject when spread_ratio < 1/mult OR spread_ratio > mult.
+        let spread_sanity_rejection: Option<RejectReason> = if !unknown_price
+            && candidate.amount_in > 0.0
+            && out_price > 0.0
+        {
+            let observed_rate = candidate.expected_amount_out / candidate.amount_in;
+            // reference_rate: how many token_out units = 1 token_in at oracle prices
+            let reference_rate = in_price / out_price;
+            if reference_rate > 0.0 {
+                let spread_ratio = observed_rate / reference_rate;
+                let mult = self.config.spread_sanity_mult;
+                if spread_ratio < (1.0 / mult) || spread_ratio > mult {
+                    Some(RejectReason::ImplausibleSpread {
+                        observed_rate,
+                        reference_rate,
+                        threshold_mult: mult,
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None // reference_rate=0 → oracle malfunction; skip check (R8)
+            }
+        } else {
+            None // unknown prices → handled below; don't double-reject
+        };
+
+        // 3c. Component 5 (Sprint C): p_copied heuristic from dex_chain_metrics.
+        //
+        // Uses the 24h volume of the weakest-link pool (pre-fetched by the caller).
+        // Formula: p = min(config.p_copied_max, log10(vol / threshold) × 0.1).max(0.0).
+        // log10 of a ratio ≤ 1 is ≤ 0 → .max(0.0) floors it at zero.
+        // R8: pool_volume_24h_usd = None → p_copied = None → no cost added.
+        let p_copied: Option<f64> = match self.pool_volume_24h_usd {
+            Some(vol) if vol > 0.0 => {
+                let threshold = self.config.p_copied_volume_threshold_usd;
+                let raw = if threshold > 0.0 {
+                    (vol / threshold).log10() * 0.1
+                } else {
+                    0.0
+                };
+                let p = raw.max(0.0).min(self.config.p_copied_max);
+                Some(p)
+            }
+            _ => None, // None or 0-volume → R8 fail-honest: no cost
+        };
+
         // 4. Math: compute net profit and ROI deterministically.
         let gas_cost_usd = estimate_gas_cost_usd(self.config, self.signals);
 
@@ -383,6 +484,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             capital_cost_usd,
             ops_overhead_usd,
             p_fail: p_fail_opt,
+            p_copied,
         };
         let outcome_raw = calc_net_profit_and_roi(&roi_params);
 
@@ -434,12 +536,15 @@ impl<'a> ConfigAwareEvaluator<'a> {
             contracts_verified: true,
         };
         // Rejection precedence (most-diagnostic first):
-        //   1. UnknownTokenPrice — input itself is invalid; no math is meaningful
-        //   2. AnomalousMath     — math layer producing absurd values (BUG-2 net)
-        //   3. RiskPolicy reasons — operational gates (gas, slippage, liquidity)
+        //   1. UnknownTokenPrice   — input itself is invalid; no math is meaningful
+        //   2. ImplausibleSpread   — AMM rate vs oracle deviates by > mult× (stale/buggy)
+        //   3. AnomalousMath       — math layer producing absurd values (BUG-2 net)
+        //   4. RiskPolicy reasons  — operational gates (gas, slippage, liquidity)
         // Higher tiers signal "fix upstream" before tweaking risk knobs.
         let rejection: Option<RejectReason> = if unknown_price {
             Some(RejectReason::UnknownTokenPrice)
+        } else if spread_sanity_rejection.is_some() {
+            spread_sanity_rejection.clone()
         } else if anomalous {
             Some(RejectReason::AnomalousMath)
         } else {
@@ -469,6 +574,16 @@ impl<'a> ConfigAwareEvaluator<'a> {
             None => failure_risk_buffer_usd,
         };
 
+        // Component 5 (Sprint C): copied_buffer mirrors the engine's computation.
+        // gross_profit_usd is available from outcome_raw (before anomaly clamp)
+        // but we use the pre-cost gross (expected_out - amount_in) as the base,
+        // consistent with RoiCalculationParams: copied_buffer = p × gross_profit.
+        let gross_profit_for_copied = expected_amount_out_usd - amount_in_usd;
+        let copied_buffer_usd = match p_copied {
+            Some(p) => p * gross_profit_for_copied,
+            None => 0.0,
+        };
+
         let cost_breakdown = CostBreakdown::new(
             gas_cost_usd,
             lp_fees_usd,
@@ -478,6 +593,8 @@ impl<'a> ConfigAwareEvaluator<'a> {
             capital_cost_usd,
             ops_overhead_usd,
             p_fail_source,
+            copied_buffer_usd,
+            p_copied,
         );
 
         let evidence = OpportunityEvidence {
@@ -573,6 +690,9 @@ mod tests {
             enabled_strategies: vec!["dex_arb_v2v2".into()],
             capital_cost_rate_annual_pct: 0.0,
             ops_overhead_usd_per_attempt: 0.01,
+            spread_sanity_mult: 3.0,
+            p_copied_volume_threshold_usd: 1_000_000.0,
+            p_copied_max: 0.5,
             enabled: true,
             updated_at: Utc::now(),
             updated_by: None,
@@ -763,11 +883,18 @@ mod tests {
         );
     }
 
-    /// Defense-in-depth sanity bound. Post-BUG-2 the natural trigger for
-    /// AnomalousMath is operator misconfiguration of `token_prices_usd` —
-    /// e.g. typo'ing UNI as $10,000 instead of $10. The bound clamps the
-    /// resulting absurd outcome and tags it `AnomalousMath` so the operator
-    /// sees the diagnostic reason and audits their config.
+    /// Defense-in-depth sanity gate. Post-BUG-2 the natural trigger for
+    /// operator misconfiguration is a typo in `token_prices_usd` —
+    /// e.g. UNI set to $10,000 instead of ~$8.
+    ///
+    /// With Sprint C deployed, the first check to fire is `ImplausibleSpread`
+    /// (at default 3× threshold the 2792× deviation is caught immediately).
+    /// `AnomalousMath` remains as defense-in-depth for pathological cases
+    /// where spread_sanity_mult is raised but the USD math goes wild.
+    ///
+    /// This test asserts: the opportunity is REJECTED (either reason) AND
+    /// the outcome is zeroed by the AnomalousMath clamp. This validates the
+    /// full layered defense while accepting the new rejection precedence.
     #[test]
     fn anomalous_roi_triggers_sanity_bound() {
         let mut c = cfg();
@@ -775,8 +902,6 @@ mod tests {
         c.base_token_price_usd = 2500.0;
         c.allowed_token_symbols = vec!["WETH".into(), "UNI".into()];
         // Operator typo: UNI mis-priced as $10,000 instead of ~$8.
-        // This is the kind of mistake the sanity bound exists to catch
-        // even after BUG-2 fix (oracle has a price; price is just wrong).
         c.token_prices_usd.insert("UNI".into(), 10_000.0);
 
         let candidate = OpportunityCandidate {
@@ -796,6 +921,20 @@ mod tests {
             other => panic!("expected Evaluated outcome, got {:?}", other),
         };
 
+        // Sprint C: ImplausibleSpread now fires before AnomalousMath (higher
+        // precedence) when the spread deviation is extreme. Both checks protect
+        // the operator from the same root cause (mis-priced oracle config).
+        // This test validates that at least one rejection fires and the outcome
+        // is correctly zeroed/non-viable.
+        let is_sanity_rejected = matches!(
+            rejection,
+            Some(RejectReason::AnomalousMath) | Some(RejectReason::ImplausibleSpread { .. })
+        );
+        assert!(
+            is_sanity_rejected,
+            "mis-priced oracle must trigger AnomalousMath or ImplausibleSpread, got {:?}",
+            rejection,
+        );
         assert_eq!(
             outcome.gross_profit_usd, 0.0,
             "anomalous gross_profit_usd should be clamped to 0, got {}",
@@ -809,12 +948,6 @@ mod tests {
         assert!(
             !outcome.is_viable,
             "anomalous outcome must not be marked viable",
-        );
-        assert_eq!(
-            rejection,
-            Some(RejectReason::AnomalousMath),
-            "expected AnomalousMath rejection reason, got {:?}",
-            rejection,
         );
     }
 
@@ -1255,6 +1388,79 @@ mod tests {
             outcome.net_roi_pct > 0.0 && outcome.net_roi_pct < 999.0,
             "net_roi_pct should be in (0, 999), got {}",
             outcome.net_roi_pct,
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // Sprint C: Component 9 — spread sanity gate unit tests
+    // ----------------------------------------------------------------
+
+    /// Spread within the sanity multiplier bounds → opportunity passes the
+    /// spread gate and proceeds to ROI math. WETH→USDC at a realistic
+    /// rate: oracle says 1 WETH = 2000 USDC, AMM quotes 2010 USDC
+    /// → observed_rate/reference_rate ≈ 1.005, well within 3×.
+    #[test]
+    fn spread_within_bounds_passes_gate() {
+        let mut c = cfg();
+        c.capital_usd = 10_000.0;
+        c.spread_sanity_mult = 3.0;
+        // cfg() base WETH price = $2000 (→ price_in = 2000)
+        // USDC stablecoin price = $1 (→ price_out = 1)
+        // reference_rate = 2000 / 1 = 2000 USDC/WETH
+        // observed_rate  = 2010 / 1.0 = 2010 USDC/WETH → ratio 2010/2000 = 1.005 (< 3)
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "spread_ok".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "USDC".into()],
+            dex_adapters: vec!["uniswap-v3".into()],
+            amount_in: 1.0,
+            expected_amount_out: 2010.0,
+            gross_profit: 0.0,
+        };
+        let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+        );
+        let (_, rejection) = match out {
+            ConfigGateOutcome::Evaluated { outcome, rejection, .. } => (outcome, rejection),
+            other => panic!("expected Evaluated, got {:?}", other),
+        };
+        assert!(
+            !matches!(rejection, Some(RejectReason::ImplausibleSpread { .. })),
+            "spread ≈1.005× reference should pass gate; got rejection={:?}",
+            rejection,
+        );
+    }
+
+    /// Spread exceeds the sanity multiplier → ImplausibleSpread rejection.
+    /// Oracle says 1 WETH = 2000 USDC, but AMM quotes 10000 USDC/WETH
+    /// → observed_rate/reference_rate = 5.0, exceeds default 3×.
+    #[test]
+    fn spread_exceeds_threshold_triggers_implausible_spread_rejection() {
+        let mut c = cfg();
+        c.capital_usd = 10_000.0;
+        c.spread_sanity_mult = 3.0;
+        // reference_rate = 2000 / 1 = 2000 USDC/WETH
+        // observed_rate  = 10000 / 1.0 = 10000 USDC/WETH → ratio 5× (> 3×)
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "spread_bad".into(),
+            pool_addresses: vec![],
+            token_addresses: vec!["WETH".into(), "USDC".into()],
+            dex_adapters: vec!["uniswap-v3".into()],
+            amount_in: 1.0,
+            expected_amount_out: 10_000.0, // 5× the oracle reference rate
+            gross_profit: 0.0,
+        };
+        let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+        );
+        let rejection = match out {
+            ConfigGateOutcome::Evaluated { rejection, .. } => rejection,
+            other => panic!("expected Evaluated, got {:?}", other),
+        };
+        assert!(
+            matches!(rejection, Some(RejectReason::ImplausibleSpread { .. })),
+            "spread 5× reference (> 3× threshold) must reject ImplausibleSpread; got {:?}",
+            rejection,
         );
     }
 }

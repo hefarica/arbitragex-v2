@@ -39,6 +39,16 @@ use crate::DefiArbitrageOutcome;
 ///   chain_id, window); spine pre-fetches the latest row with `sample_count ≥ 10`.
 ///   `None` also applies at cold-start or when no row exists yet (R8 fail-honest).
 ///
+/// ### Sprint C additions (component 5 — copy-trade / front-run probability)
+/// - `p_copied`: Heuristic probability that this opportunity will be copied or
+///   front-run by competing searchers, sourced from `dex_chain_metrics.volume_24h_usd`
+///   for the weakest-volume pool in the route (the "weakest-link" competition floor).
+///   Formula: `p = min(p_copied_max, log10(vol / threshold) × 0.1).max(0.0)`.
+///   `Some(p)` → cost = `p × gross_profit_usd_proxy` (deducted from net profit).
+///   `None` → no `dex_chain_metrics` row for the pool; cost NOT added (R8 fail-honest).
+///   The cap (`p_copied_max`, default 0.5) is applied by the CALLER before passing
+///   `p_copied` here — the math engine applies the value as-is without re-clamping.
+///
 /// ### Follow-up items (NOT in Sprint A)
 /// - V3 real price impact (tick-math): `price_impact_pct` will be populated with
 ///   actual V3 impact when the tick-traversal helper lands in Sprint B.
@@ -89,22 +99,34 @@ pub struct RoiCalculationParams {
     /// (spine entry point) pre-fetches once per tick and passes here.
     /// R8: `None` when `sample_count < 10` or no row exists — never invent.
     pub p_fail: Option<f64>,
+
+    // --- Component 5 (Sprint C): copy-trade / front-run probability ---
+    /// Pre-computed copy-trade probability from the weakest pool's 24h volume.
+    /// Caller applies the `p_copied_max` cap before passing; the math engine
+    /// treats the value as final (no re-clamping here).
+    ///
+    /// `Some(p)` → `copied_buffer_usd = p × gross_profit_usd_proxy`
+    ///             where `gross_profit_usd_proxy = expected_amount_out_usd - amount_in_usd`
+    ///             (pre-cost gross). Deducted from net profit.
+    /// `None`    → no `dex_chain_metrics` row for the pool; no cost added (R8).
+    pub p_copied: Option<f64>,
 }
 
 /// Calcula el ROI bruto y neto de una oportunidad DeFi (Estrategia General).
 ///
-/// ### Net profit formula (Sprint A)
+/// ### Net profit formula (Sprint A + B + C)
 /// ```text
 /// net_profit =
 ///     expected_amount_out_usd
 ///   - amount_in_usd
 ///   - expected_gas_cost_usd        // component 1 (existing)
 ///   - flashloan_fee_usd            // existing: flashloan_fee_pct × amount_in
-///   - lp_fees_usd                  // component 2 (NEW)
-///   - effective_slippage_usd       // component 3 (NEW: price_impact or max_slippage)
-///   - failure_risk_buffer_usd      // existing component 4 proxy
-///   - capital_cost_usd             // component 6 (NEW)
-///   - ops_overhead_usd             // component 7 (NEW)
+///   - lp_fees_usd                  // component 2 (Sprint A)
+///   - effective_slippage_usd       // component 3 (Sprint A: price_impact or max_slippage)
+///   - failure_cost_usd             // component 4 (Sprint B: statistical or proxy)
+///   - capital_cost_usd             // component 6 (Sprint A)
+///   - ops_overhead_usd             // component 7 (Sprint A)
+///   - copied_buffer_usd            // component 5 (Sprint C: p_copied × gross_proxy)
 /// ```
 pub fn calc_net_profit_and_roi(params: &RoiCalculationParams) -> DefiArbitrageOutcome {
     let gross_profit_usd = params.expected_amount_out_usd - params.amount_in_usd;
@@ -145,16 +167,29 @@ pub fn calc_net_profit_and_roi(params: &RoiCalculationParams) -> DefiArbitrageOu
         None => params.failure_risk_buffer_usd,
     };
 
-    // Full deterministic net profit deducting all 7 cost components.
+    // Component 5 (Sprint C): copy-trade / front-run probability buffer.
+    //
+    // `gross_profit_usd` is the pre-cost gross spread; the heuristic assumes
+    // that in the worst case the competing searcher captures the full gross
+    // profit if they copy-trade. Expected loss = p × gross.
+    //
+    // `None` → R8 fail-honest: no dex_chain_metrics row; zero cost added.
+    let copied_buffer_usd = match params.p_copied {
+        Some(p) => p * gross_profit_usd,
+        None => 0.0,
+    };
+
+    // Full deterministic net profit deducting all components (Sprints A + B + C).
     let net_profit_usd = params.expected_amount_out_usd
         - params.amount_in_usd
         - params.expected_gas_cost_usd     // component 1
         - flashloan_fee_usd                // component from flashloan_fee_pct
-        - params.lp_fees_usd              // component 2 (NEW)
-        - effective_slippage_usd           // component 3 (NEW — replaces old slippage_cost_usd)
+        - params.lp_fees_usd              // component 2 (Sprint A)
+        - effective_slippage_usd           // component 3 (Sprint A)
         - failure_cost_usd                 // component 4 (Sprint B: statistical or proxy)
-        - params.capital_cost_usd          // component 6 (NEW)
-        - params.ops_overhead_usd;         // component 7 (NEW)
+        - params.capital_cost_usd          // component 6 (Sprint A)
+        - params.ops_overhead_usd          // component 7 (Sprint A)
+        - copied_buffer_usd;               // component 5 (Sprint C)
 
     let capital_required = params.amount_in_usd;
     let net_roi_pct = if capital_required > 0.0 {
@@ -209,6 +244,8 @@ mod tests {
             ops_overhead_usd: 0.0,
             // Sprint B — None → proxy fallback preserved
             p_fail: None,
+            // Sprint C — None → no copy-trade cost
+            p_copied: None,
         }
     }
 
@@ -367,6 +404,7 @@ mod tests {
             capital_cost_usd: 0.50,
             ops_overhead_usd: 0.01,
             p_fail: None,
+            p_copied: None, // Sprint C: no copy-trade cost in this combined test
         };
         let result = calc_net_profit_and_roi(&params);
 
@@ -401,6 +439,7 @@ mod tests {
             capital_cost_usd: 0.0,
             ops_overhead_usd: 0.0,
             p_fail: None,
+            p_copied: None,
         };
 
         let result = calc_net_profit_and_roi(&params);
@@ -486,6 +525,7 @@ mod tests {
             capital_cost_usd: 0.0,
             ops_overhead_usd: 0.0,
             p_fail: Some(1.0),
+            p_copied: None,
         };
         let result = calc_net_profit_and_roi(&params);
         // statistical buffer = 1.0 × $5 = $5; net = 101 - 100 - 5 - 5 = -$9
@@ -520,10 +560,166 @@ mod tests {
             capital_cost_usd: 0.0,
             ops_overhead_usd: 0.0,
             p_fail: None,
+            p_copied: None,
         };
 
         let result = calc_net_profit_and_roi(&params);
         assert!(!result.is_viable);
         assert!(result.net_profit_usd < 0.0);
+    }
+
+    // ----------------------------------------------------------------
+    // Sprint C: p_copied heuristic tests (Component 5)
+    // ----------------------------------------------------------------
+
+    /// p_copied = None → no copy-trade buffer added; net identical to baseline.
+    #[test]
+    fn p_copied_none_no_cost_added() {
+        let params = baseline(); // p_copied: None
+        let result = calc_net_profit_and_roi(&params);
+        // net = 10_050 - 10_000 - 5 - 9 - 10.05 - 1.0 = $24.95 (same as legacy)
+        assert!(
+            (result.net_profit_usd - 24.95).abs() < 0.001,
+            "p_copied=None should add zero cost; expected net=$24.95, got {}",
+            result.net_profit_usd,
+        );
+    }
+
+    /// p_copied = Some(0.0) → zero copy-trade buffer; net identical to None path.
+    #[test]
+    fn p_copied_zero_no_cost_added() {
+        let base_net = calc_net_profit_and_roi(&baseline()).net_profit_usd;
+        let mut params = baseline();
+        params.p_copied = Some(0.0);
+        let result = calc_net_profit_and_roi(&params);
+        // copied_buffer = 0.0 × gross → $0; no change from None baseline
+        assert!(
+            (result.net_profit_usd - base_net).abs() < 1e-9,
+            "p_copied=0.0 should add $0 cost; expected net={} got {}",
+            base_net,
+            result.net_profit_usd,
+        );
+    }
+
+    /// p_copied = Some(0.1) with $100 gross → copied_buffer = $10; net reduced by $10.
+    #[test]
+    fn p_copied_ten_pct_reduces_net_by_fraction_of_gross() {
+        // Clean setup: $1000 in, $1100 out ($100 gross), no other costs.
+        let params = RoiCalculationParams {
+            amount_in_usd: 1_000.0,
+            expected_amount_out_usd: 1_100.0,
+            expected_gas_cost_usd: 0.0,
+            flashloan_fee_pct: 0.0,
+            max_slippage_pct: 0.0,
+            failure_risk_buffer_usd: 0.0,
+            lp_fees_usd: 0.0,
+            price_impact_pct: 0.0,
+            capital_cost_usd: 0.0,
+            ops_overhead_usd: 0.0,
+            p_fail: None,
+            p_copied: Some(0.1),
+        };
+        let result = calc_net_profit_and_roi(&params);
+        // gross = $100; copied_buffer = 0.1 × $100 = $10; net = $100 - $10 = $90
+        assert!(
+            (result.net_profit_usd - 90.0).abs() < 1e-9,
+            "p_copied=0.1, gross=$100 → buffer=$10, net expected $90, got {}",
+            result.net_profit_usd,
+        );
+    }
+
+    /// When the caller passes p_copied > p_copied_max, the CALLER must cap it.
+    /// This test verifies that the math engine applies the value as-is —
+    /// here we pass Some(0.7) and expect 70% of gross to be deducted (no re-clamping
+    /// inside the engine). The caller (config_aware.rs) is responsible for clamping.
+    #[test]
+    fn p_copied_capped_at_max_by_caller() {
+        // $1000 in, $1100 out ($100 gross), no other costs.
+        // Caller should clamp to config p_copied_max=0.5; here we pass 0.7 to
+        // verify the engine uses it verbatim (no silent re-clamping inside engine).
+        let params = RoiCalculationParams {
+            amount_in_usd: 1_000.0,
+            expected_amount_out_usd: 1_100.0,
+            expected_gas_cost_usd: 0.0,
+            flashloan_fee_pct: 0.0,
+            max_slippage_pct: 0.0,
+            failure_risk_buffer_usd: 0.0,
+            lp_fees_usd: 0.0,
+            price_impact_pct: 0.0,
+            capital_cost_usd: 0.0,
+            ops_overhead_usd: 0.0,
+            p_fail: None,
+            p_copied: Some(0.7), // engine applies 70% as-is
+        };
+        let result = calc_net_profit_and_roi(&params);
+        // copied_buffer = 0.7 × $100 = $70; net = $100 - $70 = $30
+        assert!(
+            (result.net_profit_usd - 30.0).abs() < 1e-9,
+            "engine passes p_copied=0.7 verbatim: buffer=$70, net expected $30, got {}",
+            result.net_profit_usd,
+        );
+    }
+
+    /// Combined Sprint A + B + C: all components active with exact arithmetic.
+    ///
+    /// Setup:
+    ///   amount_in   = $1000, expected_out = $1100 → gross = $100
+    ///   gas         = $2.00
+    ///   flashloan   = 0%    → $0
+    ///   lp_fees     = $1.00  (component 2)
+    ///   price_impact = 0.1% → $1100 × 0.001 = $1.10  (component 3)
+    ///   p_fail      = Some(0.1) → 0.1 × $2 gas = $0.20  (component 4)
+    ///   capital_cost = $0.50  (component 6)
+    ///   ops_overhead = $0.01  (component 7)
+    ///   p_copied    = Some(0.1) → 0.1 × $100 gross = $10.00  (component 5)
+    ///
+    ///   net = $100 - $2 - $0 - $1 - $1.10 - $0.20 - $0.50 - $0.01 - $10.00 = $85.19
+    #[test]
+    fn combined_sprint_abc_all_components_exact_arithmetic() {
+        let params = RoiCalculationParams {
+            amount_in_usd: 1_000.0,
+            expected_amount_out_usd: 1_100.0,
+            expected_gas_cost_usd: 2.0,
+            flashloan_fee_pct: 0.0,
+            max_slippage_pct: 0.005, // unused — price_impact takes over
+            failure_risk_buffer_usd: 0.0, // unused — p_fail takes over
+            lp_fees_usd: 1.0,
+            price_impact_pct: 0.1,   // 0.1% → $1100 × 0.001 = $1.10
+            capital_cost_usd: 0.50,
+            ops_overhead_usd: 0.01,
+            p_fail: Some(0.1),       // 0.1 × $2 gas = $0.20
+            p_copied: Some(0.1),     // 0.1 × $100 gross = $10.00
+        };
+        let result = calc_net_profit_and_roi(&params);
+
+        assert!((result.gross_profit_usd - 100.0).abs() < 1e-9, "gross={}", result.gross_profit_usd);
+
+        // Exact formula:
+        // 1100 - 1000            = $100 gross
+        // - $2.00 gas            → component 1
+        // - $0.00 flashloan      → component (flashloan_fee_pct=0)
+        // - $1.00 lp_fees        → component 2
+        // - $1.10 slippage       → component 3 (1100 × 0.001)
+        // - $0.20 failure        → component 4 (0.1 × $2 gas)
+        // - $0.50 capital_cost   → component 6
+        // - $0.01 ops_overhead   → component 7
+        // - $10.00 copied_buffer → component 5 (0.1 × $100 gross)
+        //                        = $85.19
+        let expected_net = 1_100.0 - 1_000.0
+            - 2.0       // gas
+            - 0.0       // flashloan
+            - 1.0       // lp_fees
+            - 1.10      // slippage (1100 × 0.001)
+            - 0.20      // failure (0.1 × 2.0)
+            - 0.50      // capital_cost
+            - 0.01      // ops_overhead
+            - 10.00;    // copied_buffer (0.1 × 100.0 gross)
+        assert!(
+            (result.net_profit_usd - expected_net).abs() < 1e-6,
+            "Sprint A+B+C combined: expected net={:.6} got {:.6}",
+            expected_net,
+            result.net_profit_usd,
+        );
+        assert!(result.is_viable, "net=${} must be viable", result.net_profit_usd);
     }
 }
