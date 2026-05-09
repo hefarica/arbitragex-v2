@@ -221,6 +221,29 @@ export const OnboardingPhase1ResultSchema = z.object({
   phase_1_vault_sealed_healthy: z.boolean(),
 });
 
+export const OnboardingPhase2ResultSchema = z.object({
+  phase_2_completed_at: z.string(),
+  phase_2_completed_by: z.string(),
+  phase_2_rpc_probe_ok: z.boolean(),
+});
+
+export const OnboardingPhase3ResultSchema = z.object({
+  phase_3_completed_at: z.string(),
+  phase_3_completed_by: z.string(),
+});
+
+export const OnboardingPhase4ResultSchema = z.object({
+  phase_4_completed_at: z.string(),
+  phase_4_completed_by: z.string(),
+  phase_4_signer_zero_balance_verified: z.boolean(),
+});
+
+export const OnboardingPhase5ResultSchema = z.object({
+  phase_5_completed_at: z.string(),
+  phase_5_completed_by: z.string(),
+  phase_5_paper_mode_off_at: z.string().nullable(),
+});
+
 // Live readiness checklist (PR Live-Readiness, option C dynamic verifiers)
 export const ReadinessStatusSchema = z.enum(["green", "yellow", "red", "pending"]);
 export const ReadinessGroupSchema = z.enum([
@@ -393,6 +416,10 @@ export type RelayRow = z.infer<typeof RelayRowSchema>;
 export type RelaysResponse = z.infer<typeof RelaysResponseSchema>;
 export type OnboardingStatus = z.infer<typeof OnboardingStatusSchema>;
 export type OnboardingPhase1Result = z.infer<typeof OnboardingPhase1ResultSchema>;
+export type OnboardingPhase2Result = z.infer<typeof OnboardingPhase2ResultSchema>;
+export type OnboardingPhase3Result = z.infer<typeof OnboardingPhase3ResultSchema>;
+export type OnboardingPhase4Result = z.infer<typeof OnboardingPhase4ResultSchema>;
+export type OnboardingPhase5Result = z.infer<typeof OnboardingPhase5ResultSchema>;
 export type ReadinessStatus = z.infer<typeof ReadinessStatusSchema>;
 export type GasPriceStrategy = z.infer<typeof GasPriceStrategySchema>;
 export type TradingConfigConfigured = z.infer<typeof TradingConfigConfiguredSchema>;

@@ -221,6 +221,10 @@ export type {
   RelayRow,
   RelaysResponse,
   OnboardingStatus,
+  OnboardingPhase2Result,
+  OnboardingPhase3Result,
+  OnboardingPhase4Result,
+  OnboardingPhase5Result,
   AuditLogRow,
   AuditLogsResponse,
 } from "@/lib/schemas";
@@ -356,6 +360,83 @@ export function completeOnboardingPhase1(
     { confirmed_by: confirmedBy, vault_sealed_healthy: vaultSealedHealthy, notes },
     { "x-arbx-admin-token": adminToken, "x-arbx-actor": confirmedBy },
     S.OnboardingPhase1ResultSchema,
+  );
+}
+
+export function completeOnboardingPhase2(
+  confirmedBy: string,
+  rpcs: Array<{ chain_id: number; http: string; ws: string }>,
+  slackWebhook: string | null,
+  rpcProbeOk: boolean,
+) {
+  return postValidated(
+    "/admin/onboarding/2/complete",
+    { confirmed_by: confirmedBy, rpcs, slack_webhook: slackWebhook, rpc_probe_ok: rpcProbeOk },
+    { "x-arbx-actor": confirmedBy },
+    S.OnboardingPhase2ResultSchema,
+  );
+}
+
+export function completeOnboardingPhase3(
+  confirmedBy: string,
+  simProvider: string,
+  simEndpoint: string,
+  tokenSafety: { provider: string; base_url: string; api_key_ref: string },
+  scoringWeightsSignedOff: boolean,
+) {
+  return postValidated(
+    "/admin/onboarding/3/complete",
+    {
+      confirmed_by: confirmedBy,
+      sim_provider: simProvider,
+      sim_endpoint: simEndpoint,
+      token_safety: tokenSafety,
+      scoring_weights_signed_off: scoringWeightsSignedOff,
+    },
+    { "x-arbx-actor": confirmedBy },
+    S.OnboardingPhase3ResultSchema,
+  );
+}
+
+export function completeOnboardingPhase4(
+  confirmedBy: string,
+  relayCount: number,
+  signerZeroBalanceVerified: boolean,
+  cfTunnelDeployed: boolean,
+) {
+  return postValidated(
+    "/admin/onboarding/4/complete",
+    {
+      confirmed_by: confirmedBy,
+      relay_count: relayCount,
+      signer_zero_balance_verified: signerZeroBalanceVerified,
+      cf_tunnel_deployed: cfTunnelDeployed,
+    },
+    { "x-arbx-actor": confirmedBy },
+    S.OnboardingPhase4ResultSchema,
+  );
+}
+
+export function completeOnboardingPhase5(
+  confirmedBy: string,
+  pagerdutIntegrationKeyRef: string,
+  backupDestination: string,
+  capitalCapUsd: number,
+  incidentContactsCount: number,
+  paperModeOff: boolean,
+) {
+  return postValidated(
+    "/admin/onboarding/5/complete",
+    {
+      confirmed_by: confirmedBy,
+      pagerduty_integration_key_ref: pagerdutIntegrationKeyRef,
+      backup_destination: backupDestination,
+      capital_cap_usd: capitalCapUsd,
+      incident_contacts_count: incidentContactsCount,
+      paper_mode_off: paperModeOff,
+    },
+    { "x-arbx-actor": confirmedBy },
+    S.OnboardingPhase5ResultSchema,
   );
 }
 
