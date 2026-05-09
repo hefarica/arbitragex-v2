@@ -81,3 +81,61 @@ groups:
         annotations:
           summary: "RPC provider {{ $labels.provider }} drifted behind tip"
           description: "Provider was demoted to Degraded for falling >2 blocks behind the tip for >60s. Investigate vendor health."
+
+  # MON-3: Disk space alerts for postgres and grafana volumes
+  - name: storage
+    rules:
+      - alert: PostgresDiskSpaceLow
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint=~"/var/lib/postgresql.*"}
+            / node_filesystem_size_bytes{mountpoint=~"/var/lib/postgresql.*"}
+          ) < 0.15
+        for: 5m
+        labels: { severity: warning, platform: arbitragex }
+        annotations:
+          summary: "Postgres volume has < 15% disk free"
+          description: "Mountpoint {{ $labels.mountpoint }} on {{ $labels.instance }} is below 15% free. Prune old data or expand volume."
+
+      - alert: GrafanaDiskSpaceLow
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint=~".*grafana.*"}
+            / node_filesystem_size_bytes{mountpoint=~".*grafana.*"}
+          ) < 0.15
+        for: 5m
+        labels: { severity: warning, platform: arbitragex }
+        annotations:
+          summary: "Grafana volume has < 15% disk free"
+          description: "Mountpoint {{ $labels.mountpoint }} on {{ $labels.instance }} is below 15% free."
+
+  # MON-4: Container restart / crash-loop alerts
+  - name: containers
+    rules:
+      - alert: ContainerRestartLoop
+        expr: |
+          increase(kube_pod_container_status_restarts_total{namespace="arbitragex"}[15m]) > 3
+        for: 3m
+        labels: { severity: critical, platform: arbitragex }
+        annotations:
+          summary: "Container {{ $labels.container }} is in a restart loop"
+          description: "Container {{ $labels.container }} in pod {{ $labels.pod }} restarted > 3 times in 15m. Check logs immediately."
+
+      - alert: ContainerExcessiveRestarts
+        expr: |
+          increase(kube_pod_container_status_restarts_total{namespace="arbitragex"}[1h]) > 5
+        for: 5m
+        labels: { severity: warning, platform: arbitragex }
+        annotations:
+          summary: "Container {{ $labels.container }} restarted > 5 times in 1h"
+          description: "Container {{ $labels.container }} in pod {{ $labels.pod }} had > 5 restarts in the past hour. Investigate root cause."
+
+      # Fallback for Docker Compose (no kube metrics) — uses cAdvisor container_last_seen
+      - alert: DockerContainerRestartLoop
+        expr: |
+          increase(container_start_time_seconds{name=~"arbitragex.*|searcher.*|api-server.*|postgres.*|redis.*"}[15m]) > 2
+        for: 3m
+        labels: { severity: critical, platform: arbitragex }
+        annotations:
+          summary: "Docker container {{ $labels.name }} restarting rapidly"
+          description: "Container {{ $labels.name }} has restarted > 2 times in 15m. Run: docker logs {{ $labels.name }} --tail 50"

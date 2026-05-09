@@ -1,0 +1,152 @@
+{
+  "uid": "arbx-database-metrics",
+  "title": "ArbitrageX — Database Metrics",
+  "tags": ["arbitragex", "database", "postgres"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Active Connections",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [
+        { "expr": "pg_stat_database_numbackends{datname=\"arbitragex\"}", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 80 },
+              { "color": "red", "value": 150 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Transactions per Second (TPS)",
+      "gridPos": { "x": 6, "y": 0, "w": 9, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [
+        { "expr": "rate(pg_stat_database_xact_commit{datname=\"arbitragex\"}[1m]) + rate(pg_stat_database_xact_rollback{datname=\"arbitragex\"}[1m])", "legendFormat": "TPS", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "options": { "tooltip": { "mode": "single" } }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Rollback Rate",
+      "gridPos": { "x": 15, "y": 0, "w": 9, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_database_xact_rollback{datname=\"arbitragex\"}[5m]) / (rate(pg_stat_database_xact_commit{datname=\"arbitragex\"}[5m]) + rate(pg_stat_database_xact_rollback{datname=\"arbitragex\"}[5m]) + 0.001)",
+          "legendFormat": "Rollback %",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.05 },
+              { "color": "red", "value": 0.10 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Lock Waits",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [
+        { "expr": "pg_locks_count{datname=\"arbitragex\"}", "legendFormat": "{{ mode }}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "options": { "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Cache Hit Ratio",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [
+        {
+          "expr": "pg_stat_database_blks_hit{datname=\"arbitragex\"} / (pg_stat_database_blks_hit{datname=\"arbitragex\"} + pg_stat_database_blks_read{datname=\"arbitragex\"} + 0.001)",
+          "legendFormat": "Cache Hit %",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.90 },
+              { "color": "green", "value": 0.99 }
+            ]
+          }
+        }
+      },
+      "options": { "tooltip": { "mode": "single" } }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Disk Free (Postgres Volume)",
+      "gridPos": { "x": 0, "y": 10, "w": 24, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [
+        {
+          "expr": "node_filesystem_avail_bytes{mountpoint=~\"/var/lib/postgresql.*\"} / node_filesystem_size_bytes{mountpoint=~\"/var/lib/postgresql.*\"}",
+          "legendFormat": "Free %",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.15 },
+              { "color": "green", "value": 0.30 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "options": { "tooltip": { "mode": "single" } }
+    }
+  ]
+}

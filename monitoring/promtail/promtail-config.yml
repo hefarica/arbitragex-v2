@@ -7,6 +7,9 @@ positions:
 
 clients:
   - url: http://loki:3100/loki/api/v1/push
+    # MON-6: tenant_id causes promtail to send X-Scope-OrgID: arbx header,
+    # required now that loki auth_enabled=true.
+    tenant_id: arbx
 
 scrape_configs:
   - job_name: docker-containers
