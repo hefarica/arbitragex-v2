@@ -1064,24 +1064,34 @@ fn recheck_sanity_for_log(input: &EvalInput) -> Option<(f64, f64)> {
     if buy_a.is_zero() || buy_b.is_zero() || sell_a.is_zero() || sell_b.is_zero() {
         return None;
     }
-    let buy_rate = spot_rate(buy_a, buy_b, input.fee_bps);
-    let sell_rate = spot_rate(sell_a, sell_b, input.fee_bps);
-    if buy_rate <= 0.0 || sell_rate <= sell_rate.min(buy_rate) {
-        // sell_rate <= buy_rate → not even a candidate
-        if sell_rate <= buy_rate {
-            return None;
-        }
+    // buy pool: A→B trade → rate expressed as B-per-A = spot_rate(A_reserve, B_reserve)
+    // sell pool: B→A trade → rate expressed as A-per-B = spot_rate(B_reserve, A_reserve)
+    // A profitable cycle requires sell_rate_a_per_b > 1/buy_rate_b_per_a, i.e. the round-trip
+    // spot rate exceeds 1.0 before fees. We pre-screen by checking that the sell pool
+    // offers a better A-per-B rate than 1/buy_rate (a necessary but not sufficient condition).
+    let buy_rate = spot_rate(buy_a, buy_b, input.fee_bps);   // B per A (buy leg)
+    let sell_rate = spot_rate(sell_b, sell_a, input.fee_bps); // A per B (sell leg)
+    if buy_rate <= 0.0 || sell_rate <= 0.0 {
+        return None;
+    }
+    // Round-trip spot return = buy_rate * sell_rate (B/A × A/B = dimensionless).
+    // Must exceed 1.0 to even be a candidate (before premium).
+    if buy_rate * sell_rate <= 1.0 {
+        return None;
     }
     let token_a_price = input.token_a_price_usd?;
     if !token_a_price.is_finite() || token_a_price <= 0.0 {
         return None;
     }
+    // cap_by_pools = min pool depth on the A-side (limits meaningful borrow size).
+    // When cap_by_pools == 1 wei (e.g. orientation-flipped fixture from Incidente #9),
+    // we still evaluate flash_arb_profit at 1 wei so the sanity bound can fire —
+    // that is precisely the scenario this function is designed to catch.
     let cap_by_pools = if buy_a < sell_a { buy_a } else { sell_a };
-    if cap_by_pools <= U256::from(1u64) {
-        return None;
-    }
+    let x_lo = U256::from(1u64);
+    let x_hi = if cap_by_pools < x_lo { x_lo } else { cap_by_pools };
     let (x_star, profit_wei) = golden_section_search_2hop(
-        U256::from(1u64), cap_by_pools,
+        x_lo, x_hi,
         buy_a, buy_b,
         sell_b, sell_a,
         input.fee_bps, input.premium_bps,
@@ -1090,7 +1100,7 @@ fn recheck_sanity_for_log(input: &EvalInput) -> Option<(f64, f64)> {
     if profit_wei <= 0 {
         return None;
     }
-    let borrow_wei = if x_star > cap_by_pools { cap_by_pools } else { x_star };
+    let borrow_wei = if x_star > x_hi { x_hi } else { x_star };
     let profit_usd = profit_to_usd(profit_wei, token_a_price, input.token_a_decimals)?;
     let borrow_usd = borrow_to_usd(borrow_wei, token_a_price, input.token_a_decimals)?;
     if profit_usd > borrow_usd * FLASHLOAN_PROFIT_SANITY_MULT {
@@ -1169,27 +1179,29 @@ mod tests {
 
     #[test]
     fn flash_arb_profit_known_imbalance_positive() {
-        // Buy pool: 1000 A, 1_010_000 B  → cheap A (r_B/r_A ≈ 1010, get many B)
-        // Sell pool: 1_000_000 B, 1010 A → expensive A (B/A ≈ 990, but more A back per B)
-        // Because the sell pool has a lower B/A ratio (you give B and get A), the
-        // round trip can extract A at a profit when the spread > fees + premium.
+        // Buy pool:  buy_a A, buy_b B   → ratio B/A = 1010 (1 A buys many B)
+        // Sell pool: sell_b B, sell_a A → ratio A/B = 1/990 (selling B returns A)
         //
-        // Choose more extreme imbalance: buy is 1000 A vs 1_010_000 B; sell is
-        // 1_010_000 B vs 1000 A. Identical reserves swapped — so this is also
-        // balanced (no profit). Let's create a real spread:
-        //   buy:  1_000_000 A, 1_010_000_000 B  (1A → ~1010 B)
-        //   sell: 990_000_000 B, 1_000_000 A   (1B → ~0.001010 A; 1010 B → ~1.020 A)
-        // Net: send 1 A → get 1010 B → get back ~1.02 A. Profit ~ 0.02 A.
-        let buy_a = U256::from(1_000_000_000_000_000_000u64);          // 1 ETH
-        let buy_b = U256::from(1_010u64) * U256::from(1_000_000_000_000_000_000u64); // 1010 ETH
-        let sell_b = U256::from(990u64) * U256::from(1_000_000_000_000_000_000u64);  // 990 ETH
-        let sell_a = U256::from(1_000_000_000_000_000_000u64);          // 1 ETH
-        let p = flash_arb_profit(
-            U256::from(10_000_000_000_000_000u64), // 0.01 ETH borrow (small relative to 1ETH pool)
-            buy_a, buy_b,
-            sell_b, sell_a,
-            30, 5,
-        );
+        // Round-trip spot rate (no fees): (1010/990) ≈ 1.0202
+        // After two 30bps fees: 1.0202 × 0.997² ≈ 1.0141  (+1.41% net of fees)
+        // After 5bps premium:   1.0141 − 0.0005 ≈ 1.0136  (+1.36% net profit)
+        //
+        // Pool depth: 1_000_000 ETH per side. Borrow = 0.01 ETH (1e16 wei).
+        // Price impact fraction ≈ 0.01/1_000_000 = 1e-8 — negligible.
+        // Therefore profit is dominated by the spread, not price impact.
+        //
+        // Previously this test used pools of only 1 ETH of A, so the sell-pool
+        // (990 B / 1 A) was completely overwhelmed by the ~10 ETH of B produced
+        // in hop 1, causing a large negative AMM price impact that wiped the
+        // spread. Fixed by scaling to deep (1M ETH) pools.
+        let one_eth = U256::from(1_000_000_000_000_000_000u64); // 1e18 wei
+        let million_eth = one_eth * U256::from(1_000_000u64);   // 1e24 wei
+        let buy_a  = million_eth;                                          // 1M ETH A
+        let buy_b  = million_eth * U256::from(1_010u64);                   // 1.01B ETH B (ratio 1010)
+        let sell_b = million_eth * U256::from(990u64);                     // 990M ETH B
+        let sell_a = million_eth;                                           // 1M ETH A  (ratio 990)
+        let borrow = U256::from(10_000_000_000_000_000u64);               // 0.01 ETH
+        let p = flash_arb_profit(borrow, buy_a, buy_b, sell_b, sell_a, 30, 5);
         assert!(p > 0, "imbalanced cycle must produce profit; got {}", p);
     }
 
