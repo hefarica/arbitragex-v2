@@ -9,7 +9,6 @@
 
 use super::{DecodeFailReason, DecodedSwap};
 use ethers::abi::{decode as abi_decode, ParamType};
-use ethers::types::U256;
 
 pub fn decode(selector: [u8; 4], body: &[u8]) -> Result<DecodedSwap, DecodeFailReason> {
     match selector {

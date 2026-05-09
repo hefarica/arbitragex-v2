@@ -47,6 +47,7 @@ impl NonceManager {
     }
 
     /// Force-refresh from RPC. Call on nonce-mismatch error.
+    #[allow(dead_code)]
     pub async fn refresh(&self, chain_id: u64, addr: Address) -> Result<u64> {
         let n = self.fetch(addr).await?;
         let mut g = self.state.lock().await;

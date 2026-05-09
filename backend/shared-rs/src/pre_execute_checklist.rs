@@ -232,11 +232,11 @@ async fn check_paper_mode(redis: &mut ConnectionManager) -> Result<(), Checklist
 
     // Also check the env override (takes precedence over Redis for fast opt-in).
     let env_override = std::env::var("ARBX_PAPER_MODE")
-        .map(|v| v.to_ascii_lowercase() == "true")
+        .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     // Legacy env variable used by relays-client:
     let env_legacy = std::env::var("ARBX_PAPER_TRADE")
-        .map(|v| v.to_ascii_lowercase() == "true")
+        .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
 
     if paper_enabled || env_override || env_legacy {

@@ -141,9 +141,36 @@ pub struct TradingConfigState {
     // Strategy mix
     pub enabled_strategies: Vec<String>,
 
+    // --- Sprint A: Component 6 & 7 config scalars ---
+
+    /// Annual opportunity-cost rate for capital locked during execution.
+    ///
+    /// Formula applied by `config_aware.rs`:
+    ///   `capital_cost_usd = amount_in_usd × (rate / 100.0) × (block_time_s / 31_536_000.0)`
+    ///
+    /// Flash-loan strategies bypass this entirely (capital not locked).
+    /// Default `0.0` (free capital assumption); operator sets to e.g. `5.0` for
+    /// a 5% APR cost model. Backed by migration 047 column
+    /// `trading_config.capital_cost_rate_annual_pct` (CHECK: 0–50).
+    #[serde(default)]
+    pub capital_cost_rate_annual_pct: f64,
+
+    /// Amortised per-attempt infra/server cost in USD.
+    ///
+    /// Covers hosting, RPC credits, monitoring pro-rated over expected daily
+    /// attempt volume. Default `$0.01`. Backed by migration 047 column
+    /// `trading_config.ops_overhead_usd_per_attempt` (CHECK: 0–100).
+    #[serde(default = "default_ops_overhead")]
+    pub ops_overhead_usd_per_attempt: f64,
+
     pub enabled: bool,
     pub updated_at: DateTime<Utc>,
     pub updated_by: Option<String>,
+}
+
+/// Provides the serde default for `ops_overhead_usd_per_attempt` ($0.01).
+fn default_ops_overhead() -> f64 {
+    0.01
 }
 
 impl TradingConfigState {
@@ -360,6 +387,8 @@ mod tests {
             failure_risk_buffer_pct: 0.001,
             flashloan_fee_pct: 0.0009,
             enabled_strategies: vec!["dex_arb_v2v2".into()],
+            capital_cost_rate_annual_pct: 0.0,
+            ops_overhead_usd_per_attempt: 0.01,
             enabled: true,
             updated_at: Utc::now(),
             updated_by: Some("ops".into()),

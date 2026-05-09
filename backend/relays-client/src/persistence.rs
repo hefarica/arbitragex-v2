@@ -92,7 +92,7 @@ pub async fn persist_execution(pool: &PgPool, r: &ExecutionResult, chain_id: i64
             )
             .bind(relay_name).bind(chain_id)
             .bind(window_start).bind(window_end)
-            .bind(submitted as i32).bind(included as i32).bind(reverted as i32).bind(dropped as i32)
+            .bind(submitted).bind(included).bind(reverted).bind(dropped)
             .execute(&mut *tx)
             .await
             .context("upsert relay_scores")?;

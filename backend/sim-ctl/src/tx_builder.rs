@@ -6,7 +6,7 @@
 
 use ethers::abi::{encode, Token};
 use ethers::types::{Address, Bytes, U256};
-use shared_rs::chains::{find_router, RouterKind};
+use shared_rs::chains::RouterKind;
 use shared_rs::contracts::{Opportunity, StrategyKind};
 use std::time::{SystemTime, UNIX_EPOCH};
 

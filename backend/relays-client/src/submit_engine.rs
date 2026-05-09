@@ -19,7 +19,6 @@ use shared_rs::{
     pre_execute_checklist::{pre_execute_checklist, ChecklistError, PreExecuteContext},
     rpc_failover::HttpRpcPool,
 };
-use hex;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -197,7 +196,7 @@ impl SubmitEngine {
 
         // 3. Paper mode — dynamic from Redis + env override.
         let paper_env = std::env::var("ARBX_PAPER_MODE").ok()
-            .map(|v| v.to_ascii_lowercase() == "true").unwrap_or(false);
+            .map(|v| v.eq_ignore_ascii_case("true")).unwrap_or(false);
         let paper_dynamic = self.paper_mode.is_enabled().await;
         let paper = paper_dynamic || paper_env;
 

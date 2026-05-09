@@ -9,7 +9,7 @@
 
 use crate::nonce_manager::NonceManager;
 use crate::signer::Signer;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use ethers::abi::{encode, Token};
 use ethers::prelude::*;
 use ethers::core::types::transaction::eip2718::TypedTransaction;
@@ -38,12 +38,14 @@ pub enum BuildError {
 }
 
 pub struct SignedBundle {
+    #[allow(dead_code)]
     pub opportunity_id: uuid::Uuid,
     pub target_block: u64,
     pub tx_raw_hex: String,
     pub tx_hash: H256,
     pub from: Address,
     pub nonce: u64,
+    #[allow(dead_code)]
     pub value_wei: U256,
 }
 

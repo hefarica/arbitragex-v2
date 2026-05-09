@@ -19,6 +19,7 @@ pub struct ForkManager {
     /// Serialize snapshot/revert operations so ids don't collide.
     pool: Arc<Semaphore>,
     /// Guarded so reset doesn't race with active sims.
+    #[allow(dead_code)]
     active: Arc<Mutex<()>>,
 }
 
@@ -55,6 +56,7 @@ impl ForkManager {
         Ok(SnapshotHandle { id: id_hex, _permit: permit, provider: self.provider.clone() })
     }
 
+    #[allow(dead_code)]
     pub async fn anvil_reset(&self, fork_url: &str) -> Result<()> {
         let _guard = self.active.lock().await;
         let forking = serde_json::json!({ "forking": { "jsonRpcUrl": fork_url }});

@@ -39,8 +39,10 @@ pub struct RelayCatalogEntry {
 /// Returns an empty Vec if DB is reachable but no rows match. Returns an
 /// Err only on DB errors — callers decide whether that's fatal (relays
 /// disabled) or degraded (fall back to env var).
+type RelayCatalogRow = (String, i32, Option<String>, String, Option<String>, i32);
+
 pub async fn load_enabled(pool: &PgPool, chain_id: i32) -> Result<Vec<RelayCatalogEntry>> {
-    let rows: Vec<(String, i32, Option<String>, String, Option<String>, i32)> = sqlx::query_as(
+    let rows: Vec<RelayCatalogRow> = sqlx::query_as(
         r#"
         SELECT name, chain_id, endpoint, auth_scheme, auth_secret_ref, priority
           FROM relays

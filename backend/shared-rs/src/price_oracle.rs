@@ -333,6 +333,8 @@ mod tests {
             failure_risk_buffer_pct: 0.001,
             flashloan_fee_pct: 0.0009,
             enabled_strategies: vec!["dex_arb_v2v2".into()],
+            capital_cost_rate_annual_pct: 0.0,
+            ops_overhead_usd_per_attempt: 0.01,
             enabled: true,
             updated_at: Utc::now(),
             updated_by: None,

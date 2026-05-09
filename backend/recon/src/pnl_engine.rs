@@ -5,7 +5,6 @@
 //! - No decodable logs → actual_amount_out_wei=None; variance stays null.
 //! - pnl_source="native_only" always in S6 (no oracle).
 
-use anyhow::Result;
 use chrono::Utc;
 use ethers::prelude::*;
 use ethers::utils::keccak256;
@@ -103,7 +102,7 @@ pub async fn compute(
     let (variance_pct, variance_native) = match (&actual_out, opp.amount_in_wei.parse::<u128>()) {
         (Some(out_str), Ok(in_u)) if in_u > 0 => {
             if let Ok(out_u) = out_str.parse::<u128>() {
-                let diff = if out_u >= in_u { out_u - in_u } else { in_u - out_u };
+                let diff = out_u.abs_diff(in_u);
                 let pct = (diff as f64 / in_u as f64) * 100.0;
                 let sign = if out_u >= in_u { diff as i128 } else { -(diff as i128) };
                 (Some(pct), Some(sign.to_string()))

@@ -22,9 +22,10 @@
 //!     `PrioritizationEngine::score` keeps its signature; this evaluator builds
 //!     the inputs that engine expects, with honest values instead of stubs.
 
-use crate::evidence::OpportunityEvidence;
+use crate::evidence::{CostBreakdown, OpportunityEvidence};
 use crate::types::OpportunityCandidate;
 use crate::decision::{ExecutionDecision, RejectReason};
+use math_engine::amm_math::calc_univ2_price_impact;
 use math_engine::risk_engine::{
     OpportunityRiskProfile, RiskPolicy, RiskRejectionReason, validate_opportunity_risk,
 };
@@ -35,6 +36,14 @@ use shared_rs::price_oracle::{
 };
 use shared_rs::trading_config::TradingConfigState;
 use std::collections::HashMap;
+
+// ETH mainnet block time in seconds. Used for capital_cost_usd denominator.
+// Follow-up Sprint B: replace with `block_time_s_per_chain(chain_id)` so
+// ARB/Base/OP (2s) are accurate. Using ETH (12s) for ALL chains in Sprint A is
+// conservative — it OVER-estimates capital cost for fast chains, which is the
+// safe direction (never under-estimates cost).
+const ETH_BLOCK_TIME_S: f64 = 12.0;
+const SECONDS_PER_YEAR: f64 = 31_536_000.0;
 
 /// Live signals the evaluator needs in addition to config + candidate.
 /// Sourced from chain-client (`eth_gasPrice`, `eth_feeHistory`) at scoring time.
@@ -62,9 +71,13 @@ pub enum ConfigGateOutcome {
     /// Strategy class disabled by operator.
     StrategyDisabled { strategy_kind: String },
     /// Ran the math; here is the result (may still be unprofitable).
+    /// `outcome` and `evidence` are boxed to avoid the `large_enum_variant`
+    /// lint: `OpportunityEvidence` (~480 bytes) dwarfs the other variants
+    /// (~24 bytes). Boxing heap-allocates the large payload; callers
+    /// dereference with `*` or pattern-match normally.
     Evaluated {
-        outcome: DefiArbitrageOutcome,
-        evidence: OpportunityEvidence,
+        outcome: Box<DefiArbitrageOutcome>,
+        evidence: Box<OpportunityEvidence>,
         rejection: Option<RejectReason>,
     },
 }
@@ -252,13 +265,70 @@ impl<'a> ConfigAwareEvaluator<'a> {
 
         // 4. Math: compute net profit and ROI deterministically.
         let gas_cost_usd = estimate_gas_cost_usd(self.config, self.signals);
+
+        // --- Component 2: LP fees ---
+        // Sprint A: route-leg detail not yet available at this call site (the
+        // candidate carries pool addresses but not per-leg fee_bps). We pass
+        // 0.0, which is safe — fees are implicitly reflected in the spread
+        // between `amount_in_usd` and `expected_amount_out_usd` (AMM math
+        // already deducts them from `expected_amount_out`). Sprint B will
+        // propagate `RouteLeg` slices from the scanner and compute the sum
+        // explicitly: `Σ(amount_through_leg_usd × fee_bps / 10_000)`.
+        let lp_fees_usd: f64 = 0.0;
+
+        // --- Component 3: Real V2 price impact ---
+        // Sprint A: pool reserves are not yet fetched from Redis
+        // (`arbx:pool_reserves:<chain>:<addr>` — Sprint B). Pass `0.0` here
+        // so `calc_net_profit_and_roi` falls back to `max_slippage_pct` proxy.
+        // V3 pools: price-impact from tick-math is deferred to Sprint B as well.
+        //
+        // When reserves ARE available (Sprint B), caller will compute:
+        //   let (reserve_in, _reserve_out) = fetch_v2_reserves(...).await;
+        //   let impact_fraction = calc_univ2_price_impact(amount_in, reserve_in, fee_pct);
+        //   let price_impact_pct = impact_fraction * 100.0;
+        //
+        // The import of `calc_univ2_price_impact` is present now so Sprint B
+        // requires no import changes, only the fetch plumbing.
+        let _ = calc_univ2_price_impact; // suppress unused-import warning until Sprint B
+        let price_impact_pct: f64 = 0.0;
+
+        // --- Component 6: Capital opportunity cost ---
+        // Flash-loan strategies borrow capital atomically in the same tx;
+        // no lock-up period occurs, so capital cost is zero.
+        // Non-flash strategies lock capital for one block duration.
+        //
+        // Detection: strategy names containing "flash" are treated as flash-loan.
+        // This is conservative: unknown strategies are treated as non-flash
+        // (capital cost applies), which is the safer direction.
+        //
+        // Follow-up Sprint B: replace string heuristic with an explicit boolean
+        // `is_flash_loan` flag on `OpportunityCandidate` set by the scanner.
+        let is_flash_loan = strategy_kind.to_ascii_lowercase().contains("flash");
+        let capital_cost_usd = if is_flash_loan || self.config.capital_cost_rate_annual_pct == 0.0 {
+            0.0
+        } else {
+            amount_in_usd
+                * (self.config.capital_cost_rate_annual_pct / 100.0)
+                * (ETH_BLOCK_TIME_S / SECONDS_PER_YEAR)
+        };
+
+        // --- Component 7: Ops overhead ---
+        let ops_overhead_usd = self.config.ops_overhead_usd_per_attempt;
+
+        let failure_risk_buffer_usd = amount_in_usd * self.config.failure_risk_buffer_pct;
+        let flashloan_fee_usd_computed = amount_in_usd * self.config.flashloan_fee_pct;
+
         let roi_params = RoiCalculationParams {
             amount_in_usd,
             expected_amount_out_usd,
             expected_gas_cost_usd: gas_cost_usd,
             flashloan_fee_pct: self.config.flashloan_fee_pct,
             max_slippage_pct: self.config.max_slippage_pct / 100.0, // pct → fraction
-            failure_risk_buffer_usd: amount_in_usd * self.config.failure_risk_buffer_pct,
+            failure_risk_buffer_usd,
+            lp_fees_usd,
+            price_impact_pct,
+            capital_cost_usd,
+            ops_overhead_usd,
         };
         let outcome_raw = calc_net_profit_and_roi(&roi_params);
 
@@ -326,6 +396,26 @@ impl<'a> ConfigAwareEvaluator<'a> {
         };
 
         // 6. Build evidence with REAL numbers (no more hardcoded 0.95 / 0.9 / 1.0).
+
+        // Reconstruct the effective slippage cost for CostBreakdown — mirrors
+        // the logic in `calc_net_profit_and_roi` so the breakdown is consistent
+        // with the net_profit value the caller sees.
+        let effective_slippage_usd_for_breakdown = if price_impact_pct > 0.0 {
+            expected_amount_out_usd * (price_impact_pct / 100.0)
+        } else {
+            expected_amount_out_usd * (self.config.max_slippage_pct / 100.0)
+        };
+
+        let cost_breakdown = CostBreakdown::new(
+            gas_cost_usd,
+            lp_fees_usd,
+            flashloan_fee_usd_computed,
+            effective_slippage_usd_for_breakdown,
+            failure_risk_buffer_usd,
+            capital_cost_usd,
+            ops_overhead_usd,
+        );
+
         let evidence = OpportunityEvidence {
             chain_id,
             block_number: self.signals.block_number,
@@ -358,9 +448,14 @@ impl<'a> ConfigAwareEvaluator<'a> {
             final_score: 0.0, // populated downstream by PrioritizationEngine::score
             decision: ExecutionDecision::Hold,
             reject_reason: rejection.clone(),
+            cost_breakdown,
         };
 
-        ConfigGateOutcome::Evaluated { outcome, evidence, rejection }
+        ConfigGateOutcome::Evaluated {
+            outcome: Box::new(outcome),
+            evidence: Box::new(evidence),
+            rejection,
+        }
     }
 }
 
@@ -412,6 +507,8 @@ mod tests {
             failure_risk_buffer_pct: 0.001,
             flashloan_fee_pct: 0.0009,
             enabled_strategies: vec!["dex_arb_v2v2".into()],
+            capital_cost_rate_annual_pct: 0.0,
+            ops_overhead_usd_per_attempt: 0.01,
             enabled: true,
             updated_at: Utc::now(),
             updated_by: None,

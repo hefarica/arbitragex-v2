@@ -1,5 +1,5 @@
 use ethers::providers::{Middleware, Provider, Ws};
-use ethers::types::{BlockId, BlockNumber, H160, H256, U256 as EthersU256};
+use ethers::types::{H160, H256, U256 as EthersU256};
 use revm::{
     primitives::{AccountInfo, Address, Bytecode, B256, U256},
     Database,
@@ -123,7 +123,7 @@ impl Database for LazyRpcDatabase {
 
         self.storage
             .entry(address)
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(index, alloy_val);
 
         debug!(event = "lazy_db.fetch_storage", address = %address, index = %index, "Fetched storage slot from RPC");
@@ -131,7 +131,7 @@ impl Database for LazyRpcDatabase {
         Ok(alloy_val)
     }
 
-    fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
+    fn block_hash(&mut self, _number: U256) -> Result<B256, Self::Error> {
         // Just return a dummy or mocked block hash to avoid extra RPC calls unless strictly necessary
         Ok(B256::ZERO)
     }

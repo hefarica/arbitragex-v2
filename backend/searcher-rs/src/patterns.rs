@@ -21,6 +21,7 @@ use uuid::Uuid;
 pub struct TxContext {
     pub chain_id: u64,
     pub block_number: Option<u64>,
+    #[allow(dead_code)]
     pub tx_from: [u8; 20],
     pub tx_value: ethers::types::U256,
 }

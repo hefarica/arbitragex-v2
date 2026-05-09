@@ -33,7 +33,6 @@ use sqlx::postgres::PgPool;
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info, warn};
 use prioritization_spine::types::{OpportunityCandidate};
-use prioritization_spine::evidence::{OpportunityEvidence};
 use prioritization_spine::scoring::{OpportunityScorer, PrioritizationEngine};
 use prioritization_spine::gates::{can_execute};
 use prioritization_spine::decision::{ExecutionDecision, RejectReason};
@@ -57,9 +56,11 @@ const V3_MULTICALL3_ADDR: &str = "0xcA11bde05977b3631167028862bE2a173976CA11";
 const V3_QUOTE_CACHE_TTL_SECS: u64 = 5;
 
 pub struct ScannerHandle {
+    #[allow(dead_code)]
     pub chain_id: u64,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_chain(
     chain_id: u64,
     cfg: Arc<AppConfig>,
@@ -137,6 +138,7 @@ async fn idle_chain_loop(chain_id: u64, killswitch: KillSwitchClient) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn detection_loop(
     chain_id: u64,
     endpoints: Vec<WsEndpoint>,
@@ -238,6 +240,7 @@ async fn sleep_with_backoff(backoff_ms: &mut u64) {
     *backoff_ms = (*backoff_ms * 2).min(30_000);
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_subscription(
     client: &WsChainClient,
     killswitch: &KillSwitchClient,

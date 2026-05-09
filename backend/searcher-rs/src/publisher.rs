@@ -1,7 +1,6 @@
 //! Real publisher: XADD to Redis Stream `arbx:opps:detected` with MAXLEN trim.
 
 use anyhow::Context;
-use redis::AsyncCommands;
 use shared_rs::contracts::Opportunity;
 
 pub const STREAM_KEY: &str = "arbx:opps:detected";

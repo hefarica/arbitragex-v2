@@ -1,6 +1,5 @@
 //! Motor de Riesgo y Scoring para DeFi
 
-use crate::DefiArbitrageOutcome;
 
 /// Parámetros de la política de riesgo en vivo
 #[derive(Debug, Clone)]

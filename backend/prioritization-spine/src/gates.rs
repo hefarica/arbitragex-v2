@@ -1,4 +1,3 @@
-use crate::types::OpportunityCandidate;
 use crate::evidence::OpportunityEvidence;
 use crate::decision::{ExecutionDecision, RejectReason};
 
@@ -23,7 +22,7 @@ impl EvidenceGate {
 }
 
 pub fn can_execute(evidence: &OpportunityEvidence, shadow_mode: bool) -> ExecutionDecision {
-    if let Some(reason) = EvidenceGate::validate(evidence) {
+    if EvidenceGate::validate(evidence).is_some() {
         return ExecutionDecision::Reject;
     }
     

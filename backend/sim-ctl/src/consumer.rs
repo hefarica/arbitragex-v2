@@ -9,7 +9,6 @@
 use crate::sim_engine::SimEngine;
 use crate::persistence::insert_simulation;
 use anyhow::{Context, Result};
-use futures_util::StreamExt;
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
 use shared_rs::contracts::Opportunity;

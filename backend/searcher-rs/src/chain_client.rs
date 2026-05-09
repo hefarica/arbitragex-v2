@@ -114,18 +114,18 @@ pub fn is_alchemy_endpoint(url: &str) -> bool {
 /// Mempool coverage mode — selected by operator via `ARBX_MEMPOOL_MODE`.
 ///
 /// Cost vs visibility tradeoff:
-///   - `Disabled`  : no WS subscription. Detection runs purely off block-based
-///                   workers (PoolSync / Triangular / Flashloan / Liquidation).
-///                   Cost on Alchemy: ~5% of firehose. Loses JIT / sandwich /
-///                   pre-confirmation visibility.
-///   - `Filtered`  : `alchemy_pendingTransactions` with upstream `toAddress`
-///                   allowlist. Pays only for txs whose `to` is in the
-///                   allowlist. ~25% of firehose cost.
-///   - `Firehose`  : `newPendingTransactions`. Full mempool visibility.
-///                   Highest cost — Alchemy bills per delivered hash plus a
-///                   follow-up `eth_getTransactionByHash` per match.
-///   - `Auto`      : Pick `Filtered` when the upstream is Alchemy AND the
-///                   allowlist is non-empty; else fall back to `Firehose`.
+/// - `Disabled`: no WS subscription. Detection runs purely off block-based
+///   workers (PoolSync / Triangular / Flashloan / Liquidation).
+///   Cost on Alchemy: ~5% of firehose. Loses JIT / sandwich /
+///   pre-confirmation visibility.
+/// - `Filtered`: `alchemy_pendingTransactions` with upstream `toAddress`
+///   allowlist. Pays only for txs whose `to` is in the
+///   allowlist. ~25% of firehose cost.
+/// - `Firehose`: `newPendingTransactions`. Full mempool visibility.
+///   Highest cost — Alchemy bills per delivered hash plus a
+///   follow-up `eth_getTransactionByHash` per match.
+/// - `Auto`: pick `Filtered` when the upstream is Alchemy AND the
+///   allowlist is non-empty; else fall back to `Firehose`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MempoolMode {
     Disabled,
