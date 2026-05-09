@@ -6,6 +6,7 @@
 //!   arbx:pool_index_v3:<chain_id>:<sym0>:<sym1>          → JSON Vec<V3PoolInfo>        (V3 — addr+fee_bps)
 //!   arbx:tokens:<chain_id>:<addr_lower>                  → JSON TokenMeta
 //!   arbx:v3_quote:<chain_id>:<pool_lower>:<amount_in>    → string amount_out (TTL 5s)  (scanner cache)
+//!   arbx:v3_slot0:<chain_id>:<pool_addr_lower>           → JSON V3Slot0Entry           (V3 — slot0+liquidity)
 //!                                                          sym0 < sym1 lexicographically in pool_index*
 //!
 //! TTLs:
@@ -14,6 +15,7 @@
 //!   pool_index_v3 : no expiry (operator-managed via SQL); refreshed at PoolSyncWorker boot
 //!   tokens        : no expiry (rarely changes; refreshed at PoolSyncWorker boot)
 //!   v3_quote      : 5s (aligned with PoolSyncWorker tick — same staleness window as V2 reserves)
+//!   v3_slot0      : 30s (re-set every tick by PoolSyncWorker; matches V2 reserves TTL)
 //!
 //! Doctrine: every Redis read returns Option (cache miss is normal at boot, scanner
 //! tolerates None by leaving gross_profit=0 and emitting `event=scanner.no_reserves_yet`).
@@ -81,6 +83,62 @@ pub fn key_token(chain_id: u64, addr_lower: &str) -> String {
 
 pub fn key_v3_quote(chain_id: u64, pool_addr_lower: &str, amount_in_dec: &str) -> String {
     format!("arbx:v3_quote:{}:{}:{}", chain_id, pool_addr_lower, amount_in_dec)
+}
+
+pub fn key_v3_slot0(chain_id: u64, pool_addr_lower: &str) -> String {
+    format!("arbx:v3_slot0:{}:{}", chain_id, pool_addr_lower)
+}
+
+/// V3 slot0 snapshot written by `pool_sync_worker` on every tick.
+///
+/// Fields match what `prioritization-spine::config_aware::ConfigAwareEvaluator`
+/// expects: `sqrt_price_x96` and `liquidity` as decimal strings (uint160 and
+/// uint128 respectively exceed u64 max, so string is the only lossless encoding
+/// in JSON). The `ts` field is unix epoch seconds for staleness checks.
+///
+/// The `token0_to_token1` direction flag is NOT stored here — it depends on the
+/// caller's token ordering context and is resolved by the scanner when it calls
+/// `ConfigAwareEvaluator::with_v3_slot0`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct V3Slot0Entry {
+    /// sqrtPriceX96 from slot0() as decimal string. uint160 → fits in u128 for
+    /// practical ETH prices (overflow would require price ratio > 2^32, i.e.
+    /// ~4 billion x), so u128 parse is safe for all live pools.
+    pub sqrt_price_x96: String,
+    /// Active liquidity at current tick from liquidity(). uint128 decimal string.
+    pub liquidity: String,
+    /// Unix epoch seconds when this snapshot was observed.
+    pub ts: u64,
+}
+
+pub async fn set_v3_slot0(
+    redis: &mut ConnectionManager,
+    chain_id: u64,
+    pool_addr_lower: &str,
+    entry: &V3Slot0Entry,
+    ttl_secs: u64,
+) -> redis::RedisResult<()> {
+    let json = serde_json::to_string(entry).map_err(|e| {
+        redis::RedisError::from((redis::ErrorKind::TypeError, "serde", e.to_string()))
+    })?;
+    let _: () = redis
+        .set_ex(key_v3_slot0(chain_id, pool_addr_lower), json, ttl_secs)
+        .await?;
+    Ok(())
+}
+
+/// Read V3 slot0 snapshot from Redis. Staged here for the scanner to wire in
+/// a follow-up sprint (CODE-5 consumer side). The writer (`set_v3_slot0`) is
+/// the primary deliverable of CODE-5; this reader ships with it so the API is
+/// symmetric and reviewable now.
+#[allow(dead_code)]
+pub async fn get_v3_slot0(
+    redis: &mut ConnectionManager,
+    chain_id: u64,
+    pool_addr_lower: &str,
+) -> redis::RedisResult<Option<V3Slot0Entry>> {
+    let raw: Option<String> = redis.get(key_v3_slot0(chain_id, pool_addr_lower)).await?;
+    Ok(raw.and_then(|s| serde_json::from_str(&s).ok()))
 }
 
 pub async fn set_reserves(
@@ -301,5 +359,36 @@ mod tests {
     fn v3_quote_key_layout() {
         let key = key_v3_quote(1, "0xpool", "1000000000000000000");
         assert_eq!(key, "arbx:v3_quote:1:0xpool:1000000000000000000");
+    }
+
+    #[test]
+    fn v3_slot0_key_layout() {
+        let key = key_v3_slot0(1, "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640");
+        assert_eq!(key, "arbx:v3_slot0:1:0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640");
+    }
+
+    #[test]
+    fn v3_slot0_entry_serde_roundtrip() {
+        // sqrtPriceX96 for USDC/WETH ~1800 USD:
+        //   √(1800 × 10^12) × 2^96 ≈ 1.682e33  (fits in u128, < 2^112)
+        let entry = V3Slot0Entry {
+            sqrt_price_x96: "1682363847015700853685856186817536".to_string(),
+            liquidity: "12345678901234567890".to_string(),
+            ts: 1_714_857_600,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: V3Slot0Entry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.sqrt_price_x96, entry.sqrt_price_x96);
+        assert_eq!(back.liquidity, entry.liquidity);
+        assert_eq!(back.ts, entry.ts);
+    }
+
+    #[test]
+    fn v3_slot0_key_disjoint_from_pool_reserves() {
+        // v3_slot0 and pool_reserves must NOT share a key — spine reads both
+        // independently for different DEX types.
+        let slot0_key = key_v3_slot0(1, "0xpool");
+        let reserves_key = key_pool_reserves(1, "0xpool");
+        assert_ne!(slot0_key, reserves_key);
     }
 }

@@ -1,15 +1,22 @@
 //! PoolSyncWorker — fetches V2 pool reserves via Multicall3, persists to
 //! Postgres `pool_reserves` and Redis `arbx:pool_reserves:<chain>:<addr>`.
+//! Also fetches V3 pool slot0 + liquidity via a separate Multicall3 batch and
+//! writes `arbx:v3_slot0:<chain>:<addr>` so `prioritization-spine`'s
+//! `ConfigAwareEvaluator::with_v3_slot0` can compute real V3 price impact
+//! instead of falling back to the `max_slippage_pct` proxy (Sprint A H2).
 //!
 //! Boot sequence:
-//!   1. Read pools+tokens+factories from Postgres (one query each, cached in struct).
-//!   2. Populate Redis `arbx:tokens:*` and `arbx:pool_index:*` from DB rows.
-//!   3. Start polling loop: every `poll_interval`, do 1 Multicall3 aggregate3 with
-//!      N `getReserves()` calls, decode results, batch INSERT into pool_reserves,
-//!      individual SET into Redis with 30s TTL.
+//!   1. Read V2+V3 pools+tokens+factories from Postgres (one query each).
+//!   2. Populate Redis `arbx:tokens:*`, `arbx:pool_index:*`, `arbx:pool_index_v3:*`.
+//!   3. Start polling loop: every `poll_interval`:
+//!      a. 1 Multicall3 aggregate3 with N `getReserves()` calls for V2 pools.
+//!      b. 1 Multicall3 aggregate3 with 2N calls for V3 pools (slot0 + liquidity).
+//!      Both multicalls are separate RPC calls to avoid oversized calldata.
 //!
 //! Doctrine: log structured tracing JSON (no fake metrics), report measured
-//! latency, fail-loud on RPC error (do not pretend success).
+//! latency, fail-loud on RPC error (do not pretend success). Per R8 fail-honest:
+//! if a V3 pool's slot0 call reverts, skip that pool and warn — do not write
+//! a fake/zero value.
 
 use alloy::primitives::Address as AlloyAddress;
 use alloy::providers::Provider as AlloyProvider;
@@ -24,8 +31,8 @@ use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
 use crate::reserves::{
-    set_pool_index, set_pool_index_v3, set_reserves, set_token_meta, ReservesEntry, TokenMeta,
-    V3PoolInfo,
+    set_pool_index, set_pool_index_v3, set_reserves, set_token_meta, set_v3_slot0, ReservesEntry,
+    TokenMeta, V3PoolInfo, V3Slot0Entry,
 };
 
 /// Alloy 1.0 migration: replaced ethers `abigen!` for Multicall3 with `sol!`.
@@ -54,12 +61,21 @@ mod multicall_abi {
     pub use IMulticall3::{aggregate3Call, Call3};
 }
 
-// The getReserves keccak selector is computed at runtime (ethers utils) — no
-// `abigen!(IUniswapV2Pair, ...)` needed. This avoids pulling the macro for a
-// single 4-byte constant and keeps the ethers abigen surface minimal.
+// The getReserves / slot0 / liquidity keccak selectors are computed at runtime
+// via ethers utils — no `abigen!` needed for single 4-byte constants.
 
 const MULTICALL3_ADDR: &str = "0xcA11bde05977b3631167028862bE2a173976CA11";
 const RESERVES_TTL_SECS: u64 = 30;
+/// TTL for `arbx:v3_slot0` keys. Matches V2 reserves TTL (30s). PoolSyncWorker
+/// ticks every ~5s so slots are refreshed 6x per TTL window.
+const V3_SLOT0_TTL_SECS: u64 = 30;
+
+/// Minimum returnData length for a valid slot0() response.
+/// slot0 returns 7 ABI-words (uint160,int24,uint16,uint16,uint16,uint8,bool)
+/// each padded to 32 bytes = 224 bytes.
+const SLOT0_RETURN_LEN: usize = 7 * 32;
+/// Minimum returnData length for a valid liquidity() response: 1 x uint128 = 32 bytes.
+const LIQUIDITY_RETURN_LEN: usize = 32;
 
 struct PoolRow {
     address: H160,
@@ -71,6 +87,13 @@ struct PoolRow {
     /// `in` vs `out`) without computing both directions and applying the
     /// dual-orientation magnitude heuristic. Closes the TODO at scanner.rs:350.
     token0_address_lower: String,
+}
+
+/// Minimal V3 pool descriptor for the slot0 polling loop. Only the pool address
+/// is needed -- symbol and fee_tier are already in `arbx:pool_index_v3`.
+struct V3PoolRow {
+    address: H160,
+    address_lower: String,
 }
 
 pub struct PoolSyncWorker {
@@ -94,18 +117,26 @@ impl PoolSyncWorker {
         db: PgPool,
         mut redis: redis::aio::ConnectionManager,
     ) -> anyhow::Result<()> {
-        info!(event = "pool_sync.boot", chain_id = self.chain_id, providers = rpc_pool.entries.len());
+        info!(
+            event = "pool_sync.boot",
+            chain_id = self.chain_id,
+            providers = rpc_pool.entries.len()
+        );
 
         let multicall_addr = Address::from_str(MULTICALL3_ADDR)?;
 
         // Bootstrap: read pools + tokens from DB and populate Redis caches.
-        // V2 pools enter the polling loop (getReserves every tick).
-        // V3 pools are bootstrapped into a separate index but NOT polled —
-        // V3 quoting goes through QuoterV2 at scan time (handled by scanner.rs),
-        // since V3's slot0/liquidity state alone doesn't determine swap output
-        // (tick crossing requires the on-chain math which Quoter encapsulates).
+        // V2 pools enter the reserves polling loop (getReserves every tick).
+        // V3 pools enter the slot0 polling loop (slot0+liquidity every tick)
+        // to populate `arbx:v3_slot0` keys for the spine price-impact path.
         let pools = self.load_pools(&db).await?;
-        info!(event = "pool_sync.pools_loaded", chain_id = self.chain_id, count = pools.len());
+        info!(
+            event = "pool_sync.pools_loaded",
+            chain_id = self.chain_id,
+            count = pools.len()
+        );
+
+        let v3_pools = self.load_v3_pools(&db).await?;
 
         self.bootstrap_token_cache(&db, &mut redis).await?;
         self.bootstrap_pool_index_cache(&pools, &mut redis).await?;
@@ -117,19 +148,29 @@ impl PoolSyncWorker {
             v3_pools = v3_count,
         );
 
-        // Build static call data once per pool — getReserves() has no args, just the selector.
+        // Build static call data once per pool -- getReserves() has no args.
         let get_reserves_selector: [u8; 4] = ethers::utils::keccak256("getReserves()")[..4]
             .try_into()
             .unwrap();
         let get_reserves_calldata_bytes: Vec<u8> = get_reserves_selector.to_vec();
 
-        // alloy address of the multicall contract — computed once.
+        // V3 selectors -- computed once at boot.
+        let slot0_selector: [u8; 4] = ethers::utils::keccak256("slot0()")[..4]
+            .try_into()
+            .unwrap();
+        let liquidity_selector: [u8; 4] = ethers::utils::keccak256("liquidity()")[..4]
+            .try_into()
+            .unwrap();
+        let slot0_calldata: Vec<u8> = slot0_selector.to_vec();
+        let liquidity_calldata: Vec<u8> = liquidity_selector.to_vec();
+
+        // alloy address of the multicall contract -- computed once.
         let multicall_alloy = AlloyAddress::from_slice(multicall_addr.as_bytes());
 
         loop {
             let tick_start = Instant::now();
-            // Build the aggregate3 calldata for ALL pools in one batch.
-            // alloy sol! Call3 uses AlloyAddress and alloy Bytes (alloy_primitives::Bytes).
+
+            // -- V2 reserves multicall -------------------------------------------
             let calls: Vec<multicall_abi::Call3> = pools
                 .iter()
                 .map(|p| multicall_abi::Call3 {
@@ -140,16 +181,17 @@ impl PoolSyncWorker {
                 .collect();
             let calldata = multicall_abi::aggregate3Call { calls }.abi_encode();
 
-            // Per-tick multicall via with_retry — circuit breaker + failover fire on RPC error.
-            // Alloy 1.0: provider.call(TransactionRequest) → Bytes (raw return data).
-            let raw_bytes = match rpc_pool.with_retry(|provider| {
-                let tx = TransactionRequest::default()
-                    .to(multicall_alloy)
-                    .input(TransactionInput::new(calldata.clone().into()));
-                async move {
-                    provider.call(tx).await.map_err(|e| anyhow::anyhow!("{e}"))
-                }
-            }).await {
+            // Per-tick multicall via with_retry -- circuit breaker + failover fire on RPC error.
+            // Alloy 1.0: provider.call(TransactionRequest) -> Bytes (raw return data).
+            let raw_bytes = match rpc_pool
+                .with_retry(|provider| {
+                    let tx = TransactionRequest::default()
+                        .to(multicall_alloy)
+                        .input(TransactionInput::new(calldata.clone().into()));
+                    async move { provider.call(tx).await.map_err(|e| anyhow::anyhow!("{e}")) }
+                })
+                .await
+            {
                 Ok(b) => b,
                 Err(e) => {
                     warn!(event = "pool_sync.multicall_failed", error = %e);
@@ -159,7 +201,7 @@ impl PoolSyncWorker {
             };
 
             // Decode the aggregate3 return bytes.
-            // alloy-sol-types 1.0: single return value → Vec<Result> returned directly.
+            // alloy-sol-types 1.0: single return value -> Vec<Result> returned directly.
             let results = match multicall_abi::aggregate3Call::abi_decode_returns(&raw_bytes) {
                 Ok(r) => r,
                 Err(e) => {
@@ -171,9 +213,15 @@ impl PoolSyncWorker {
 
             // Get current block once per tick via with_retry.
             // alloy 1.0: get_block_number() returns u64 directly (no .as_u64()).
-            let block_number: u64 = rpc_pool.with_retry(|provider| async move {
-                provider.get_block_number().await.map_err(|e| anyhow::anyhow!("{e}"))
-            }).await.unwrap_or(0);
+            let block_number: u64 = rpc_pool
+                .with_retry(|provider| async move {
+                    provider
+                        .get_block_number()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{e}"))
+                })
+                .await
+                .unwrap_or(0);
             let now_ts = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -187,7 +235,10 @@ impl PoolSyncWorker {
                 // alloy sol! Result fields: `.success` (bool), `.returnData` (alloy Bytes).
                 if !result.success || result.returnData.len() < 64 {
                     fail_count += 1;
-                    debug!(event = "pool_sync.pool_failed", pool = %pool.address_lower);
+                    debug!(
+                        event = "pool_sync.pool_failed",
+                        pool = %pool.address_lower
+                    );
                     continue;
                 }
                 // ABI-decode (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)
@@ -216,7 +267,11 @@ impl PoolSyncWorker {
                 )
                 .await
                 {
-                    warn!(event = "pool_sync.redis_set_failed", pool = %pool.address_lower, error = %e);
+                    warn!(
+                        event = "pool_sync.redis_set_failed",
+                        pool = %pool.address_lower,
+                        error = %e
+                    );
                 }
 
                 // Postgres INSERT (best-effort; failures don't kill the loop).
@@ -233,13 +288,17 @@ impl PoolSyncWorker {
                 .execute(&db)
                 .await
                 {
-                    warn!(event = "pool_sync.db_insert_failed", pool = %pool.address_lower, error = %e);
+                    warn!(
+                        event = "pool_sync.db_insert_failed",
+                        pool = %pool.address_lower,
+                        error = %e
+                    );
                 }
 
                 ok_count += 1;
             }
 
-            let elapsed_ms = tick_start.elapsed().as_millis();
+            let elapsed_v2_ms = tick_start.elapsed().as_millis();
             info!(
                 event = "pool_sync.tick",
                 chain_id = self.chain_id,
@@ -247,8 +306,200 @@ impl PoolSyncWorker {
                 ok = ok_count,
                 failed = fail_count,
                 block = block_number,
-                latency_ms = elapsed_ms as u64,
+                latency_ms = elapsed_v2_ms as u64,
             );
+
+            // -- V3 slot0 + liquidity multicall ----------------------------------
+            // One aggregate3 call with 2 x N sub-calls: slot0() and liquidity()
+            // interleaved per pool. Each pool occupies indices [2i, 2i+1].
+            // If v3_pools is empty, skip entirely (no RPC call, no alloc).
+            if !v3_pools.is_empty() {
+                let v3_tick_start = Instant::now();
+                let v3_calls: Vec<multicall_abi::Call3> = v3_pools
+                    .iter()
+                    .flat_map(|p| {
+                        let target = AlloyAddress::from_slice(p.address.as_bytes());
+                        [
+                            multicall_abi::Call3 {
+                                target,
+                                allowFailure: true,
+                                callData: slot0_calldata.clone().into(),
+                            },
+                            multicall_abi::Call3 {
+                                target,
+                                allowFailure: true,
+                                callData: liquidity_calldata.clone().into(),
+                            },
+                        ]
+                    })
+                    .collect();
+
+                let v3_calldata = multicall_abi::aggregate3Call { calls: v3_calls }.abi_encode();
+
+                let v3_raw = match rpc_pool
+                    .with_retry(|provider| {
+                        let tx = TransactionRequest::default()
+                            .to(multicall_alloy)
+                            .input(TransactionInput::new(v3_calldata.clone().into()));
+                        async move {
+                            provider.call(tx).await.map_err(|e| anyhow::anyhow!("{e}"))
+                        }
+                    })
+                    .await
+                {
+                    Ok(b) => b,
+                    Err(e) => {
+                        // R8 fail-honest: log and skip this tick's V3 update.
+                        // Existing keys expire naturally (TTL=30s).
+                        warn!(event = "pool_sync.v3_multicall_failed", error = %e);
+                        sleep(self.poll_interval).await;
+                        continue;
+                    }
+                };
+
+                let v3_results =
+                    match multicall_abi::aggregate3Call::abi_decode_returns(&v3_raw) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            warn!(
+                                event = "pool_sync.v3_multicall_decode_failed",
+                                error = %e
+                            );
+                            sleep(self.poll_interval).await;
+                            continue;
+                        }
+                    };
+
+                let mut v3_ok = 0usize;
+                let mut v3_fail = 0usize;
+
+                // Results are interleaved: index 2i = slot0, index 2i+1 = liquidity.
+                for (i, pool) in v3_pools.iter().enumerate() {
+                    let slot0_idx = 2 * i;
+                    let liq_idx = 2 * i + 1;
+
+                    // Bounds guard: aggregate3 may return fewer results on partial revert.
+                    if liq_idx >= v3_results.len() {
+                        warn!(
+                            event = "pool_sync.v3_short_result",
+                            pool = %pool.address_lower,
+                            expected_idx = liq_idx,
+                            got = v3_results.len(),
+                        );
+                        v3_fail += 1;
+                        continue;
+                    }
+
+                    let slot0_res = &v3_results[slot0_idx];
+                    let liq_res = &v3_results[liq_idx];
+
+                    // R8 fail-honest: if either call failed or returned too few bytes,
+                    // skip this pool. Log at warn so the gap is traceable (R7).
+                    if !slot0_res.success || slot0_res.returnData.len() < SLOT0_RETURN_LEN {
+                        warn!(
+                            event = "pool_sync.v3_slot0_call_failed",
+                            pool = %pool.address_lower,
+                            success = slot0_res.success,
+                            data_len = slot0_res.returnData.len(),
+                        );
+                        v3_fail += 1;
+                        continue;
+                    }
+                    if !liq_res.success || liq_res.returnData.len() < LIQUIDITY_RETURN_LEN {
+                        warn!(
+                            event = "pool_sync.v3_liquidity_call_failed",
+                            pool = %pool.address_lower,
+                            success = liq_res.success,
+                            data_len = liq_res.returnData.len(),
+                        );
+                        v3_fail += 1;
+                        continue;
+                    }
+
+                    // Decode sqrtPriceX96 from slot0 returnData.
+                    // ABI layout: uint160 is right-aligned in a 32-byte word.
+                    // bytes [0..32] = sqrtPriceX96 (big-endian, 32-byte ABI word).
+                    // uint160 fits in u128 for all realistic ETH prices:
+                    //   max u128 ~ 3.4e38; sqrtPriceX96 at 1e12 price ~ 7.9e34 < 2^116.
+                    let sqrt_raw = &slot0_res.returnData[0..32];
+                    let sqrt_u256 = U256::from_big_endian(sqrt_raw);
+                    // u128 saturation: if price ratio > 2^64 (impossible for live pools),
+                    // skip rather than panic (defensive guard).
+                    let sqrt_price_x96: u128 = if sqrt_u256 > U256::from(u128::MAX) {
+                        warn!(
+                            event = "pool_sync.v3_sqrt_overflow",
+                            pool = %pool.address_lower,
+                            value = %sqrt_u256,
+                        );
+                        v3_fail += 1;
+                        continue;
+                    } else {
+                        sqrt_u256.low_u128()
+                    };
+
+                    // Decode liquidity from liquidity() returnData.
+                    // uint128 is right-aligned in a 32-byte word.
+                    let liq_raw = &liq_res.returnData[0..32];
+                    let liq_u256 = U256::from_big_endian(liq_raw);
+                    let liquidity: u128 = if liq_u256 > U256::from(u128::MAX) {
+                        warn!(
+                            event = "pool_sync.v3_liq_overflow",
+                            pool = %pool.address_lower,
+                            value = %liq_u256,
+                        );
+                        v3_fail += 1;
+                        continue;
+                    } else {
+                        liq_u256.low_u128()
+                    };
+
+                    // Guard: uninitialized pool has sqrtPriceX96 = 0. Skip it --
+                    // writing zero would give a 0-impact result in the spine.
+                    if sqrt_price_x96 == 0 {
+                        warn!(
+                            event = "pool_sync.v3_uninitialized_pool",
+                            pool = %pool.address_lower,
+                        );
+                        v3_fail += 1;
+                        continue;
+                    }
+
+                    let slot0_entry = V3Slot0Entry {
+                        sqrt_price_x96: sqrt_price_x96.to_string(),
+                        liquidity: liquidity.to_string(),
+                        ts: now_ts,
+                    };
+
+                    if let Err(e) = set_v3_slot0(
+                        &mut redis,
+                        self.chain_id,
+                        &pool.address_lower,
+                        &slot0_entry,
+                        V3_SLOT0_TTL_SECS,
+                    )
+                    .await
+                    {
+                        warn!(
+                            event = "pool_sync.v3_redis_set_failed",
+                            pool = %pool.address_lower,
+                            error = %e
+                        );
+                        // Redis errors are transient; don't count as v3_fail.
+                    } else {
+                        v3_ok += 1;
+                    }
+                }
+
+                let v3_elapsed_ms = v3_tick_start.elapsed().as_millis();
+                info!(
+                    event = "pool_sync.v3_tick",
+                    chain_id = self.chain_id,
+                    pools = v3_pools.len(),
+                    ok = v3_ok,
+                    failed = v3_fail,
+                    latency_ms = v3_elapsed_ms as u64,
+                );
+            }
 
             sleep(self.poll_interval).await;
         }
@@ -257,7 +508,7 @@ impl PoolSyncWorker {
     async fn load_pools(&self, db: &PgPool) -> anyhow::Result<Vec<PoolRow>> {
         // V2-only filter: V3 pools don't have getReserves(), so polling them
         // would cost an RPC call per pool per tick and always fail. V3 lives
-        // in `bootstrap_v3_pool_index_cache` (one-shot index, no per-tick poll).
+        // in `load_v3_pools` + the slot0 polling path.
         // Selects t0.address so the scanner can resolve swap orientation
         // without computing both V2 directions (closes scanner.rs:350 TODO).
         let rows = sqlx::query_as::<_, (String, String, String, String)>(
@@ -279,15 +530,40 @@ impl PoolSyncWorker {
             .into_iter()
             .filter_map(|(addr, sym0, sym1, token0_addr)| {
                 let lower = addr.to_lowercase();
+                Address::from_str(&lower).ok().map(|h| PoolRow {
+                    address: h,
+                    address_lower: lower,
+                    sym0,
+                    sym1,
+                    token0_address_lower: token0_addr.to_lowercase(),
+                })
+            })
+            .collect())
+    }
+
+    /// Load V3 pool addresses for the per-tick slot0 polling loop.
+    /// Only the address is needed -- symbol/fee_tier are in the pool_index_v3.
+    async fn load_v3_pools(&self, db: &PgPool) -> anyhow::Result<Vec<V3PoolRow>> {
+        let rows = sqlx::query_as::<_, (String,)>(
+            r#"SELECT p.address
+               FROM pools p
+               JOIN factories f ON p.factory_id = f.id
+               JOIN dexes d ON f.dex_id = d.id
+               WHERE p.chain_id = $1
+                 AND p.is_active = TRUE
+                 AND d.protocol_type = 'UNISWAP_V3'"#,
+        )
+        .bind(self.chain_id as i64)
+        .fetch_all(db)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .filter_map(|(addr,)| {
+                let lower = addr.to_lowercase();
                 Address::from_str(&lower)
                     .ok()
-                    .map(|h| PoolRow {
-                        address: h,
-                        address_lower: lower,
-                        sym0,
-                        sym1,
-                        token0_address_lower: token0_addr.to_lowercase(),
-                    })
+                    .map(|h| V3PoolRow { address: h, address_lower: lower })
             })
             .collect())
     }
@@ -345,12 +621,12 @@ impl PoolSyncWorker {
     }
 
     /// One-shot bootstrap of the V3 pool index. Reads V3 pools from PG (joined
-    /// to factories→dexes for protocol_type filter), groups by sorted-symbol
+    /// to factories->dexes for protocol_type filter), groups by sorted-symbol
     /// pair, and writes Vec<V3PoolInfo> per pair to Redis.
     ///
-    /// V3 pools are NOT polled — QuoterV2 at scan time produces fresh quotes
-    /// directly. This index just lets the scanner discover which V3 pools cover
-    /// a given pair so it can build a Multicall3-batched Quoter request.
+    /// V3 slot0 is populated per-tick in the main polling loop (not here).
+    /// This index just lets the scanner discover which V3 pools cover a given
+    /// pair so it can build a Multicall3-batched Quoter request.
     ///
     /// Returns the number of V3 pools indexed.
     async fn bootstrap_v3_pool_index_cache(
@@ -408,4 +684,3 @@ impl PoolSyncWorker {
         Ok(total)
     }
 }
-
