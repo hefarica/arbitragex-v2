@@ -55,7 +55,7 @@ contract MaliciousReentrantRouter {
     bool private _attacking;
 
     constructor(address _target) {
-        target = ArbitrageExecutor(_target);
+        target = ArbitrageExecutor(payable(_target));
     }
 
     function setAttackParams(
@@ -81,7 +81,8 @@ contract MaliciousReentrantRouter {
             reentrantPayloads[0] = "";
 
             // Attempt re-entry — must revert with ReentrancyGuardReentrantCall
-            target.executeArbitrage(routeHash, tokenIn, amountIn, minProfit, reentrantRouters, reentrantPayloads);
+            // tokenOut == tokenIn is valid for circular arb; used here as observability metadata
+            target.executeArbitrage(routeHash, tokenIn, tokenIn, amountIn, minProfit, reentrantRouters, reentrantPayloads);
         }
     }
 }
@@ -134,14 +135,14 @@ contract ArbitrageExecutorTest is Test {
         bytes[] memory payloads = new bytes[](1);
         payloads[0] = "";
 
-        // Expect ArbitrageExecuted event (SC-05 bug: both address fields are tokenIn)
-        // We check routeHash, first address, and profit; skip the tokenOut field
-        // because line 70 emits tokenIn for both — that is the known SC-05 bug.
-        vm.expectEmit(true, true, false, true, address(executor));
+        // SC-05 fixed: tokenOut is now a distinct parameter. In this simple happy-path
+        // we pass tokenOut == tokenIn (valid for circular arb routes). The important
+        // invariant is that the event now reflects what the caller provided.
+        vm.expectEmit(true, true, true, true, address(executor));
         emit ArbitrageExecutor.ArbitrageExecuted(bytes32(0), address(token), address(token), profit);
 
         vm.prank(executorRole);
-        executor.executeArbitrage(bytes32(0), address(token), amountIn, minProfit, routers, payloads);
+        executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, minProfit, routers, payloads);
     }
 
     // -----------------------------------------------------------------------
@@ -166,7 +167,7 @@ contract ArbitrageExecutorTest is Test {
         vm.expectRevert("Slippage / Min profit guard failed");
 
         vm.prank(executorRole);
-        executor.executeArbitrage(bytes32(0), address(token), amountIn, minProfit, routers, payloads);
+        executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, minProfit, routers, payloads);
     }
 
     // -----------------------------------------------------------------------
@@ -179,7 +180,7 @@ contract ArbitrageExecutorTest is Test {
         vm.expectRevert("Not executor");
 
         vm.prank(stranger);
-        executor.executeArbitrage(bytes32(0), address(token), 0, 0, routers, payloads);
+        executor.executeArbitrage(bytes32(0), address(token), address(token), 0, 0, routers, payloads);
     }
 
     // -----------------------------------------------------------------------
@@ -210,7 +211,7 @@ contract ArbitrageExecutorTest is Test {
         vm.expectRevert("Swap failed in route");
 
         vm.prank(executorRole);
-        executor.executeArbitrage(bytes32(0), address(token), amountIn, 0, attackRouters, attackPayloads);
+        executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, 0, attackRouters, attackPayloads);
     }
 
     // -----------------------------------------------------------------------
@@ -227,7 +228,7 @@ contract ArbitrageExecutorTest is Test {
         vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("EnforcedPause()"))));
 
         vm.prank(executorRole);
-        executor.executeArbitrage(bytes32(0), address(token), 0, 0, routers, payloads);
+        executor.executeArbitrage(bytes32(0), address(token), address(token), 0, 0, routers, payloads);
     }
 
     // -----------------------------------------------------------------------
@@ -242,14 +243,16 @@ contract ArbitrageExecutorTest is Test {
     // It FAILS in the current codebase because the contract emits tokenIn twice.
     // STATUS: BLOCKED on SC-05 fix (add tokenOut param + fix emit on line 70).
     // -----------------------------------------------------------------------
+    // SC-05 fixed: tokenOut is now an explicit parameter. This test verifies the
+    // event correctly reflects a distinct intermediate token (tokenIn != tokenOut),
+    // which is the normal multi-hop case (e.g. USDC → ETH → USDC route).
     function testEvent_ArbitrageExecuted_BugFix() public {
-        vm.skip(true); // KNOWN FAILING: blocked on SC-05 line 70 bug fix
-
         uint256 amountIn = 1_000e18;
         uint256 profit = 50e18;
 
+        // tokenOut represents the intermediate token (e.g. ETH in USDC→ETH→USDC)
         MockERC20 tokenOut = new MockERC20();
-        executor.setTokenApproval(address(tokenOut), true);
+        // tokenOut approval not needed — it's only passed for observability metadata
 
         token.mint(address(executor), amountIn);
 
@@ -262,12 +265,58 @@ contract ArbitrageExecutorTest is Test {
         bytes[] memory payloads = new bytes[](1);
         payloads[0] = "";
 
-        // CORRECT expected event: tokenIn != tokenOut
-        // Contract ACTUALLY emits: (routeHash, tokenIn, tokenIn, profit) — bug
+        // Verify event carries tokenIn != tokenOut — the SC-05 bug emitted tokenIn twice
         vm.expectEmit(true, true, true, true, address(executor));
         emit ArbitrageExecutor.ArbitrageExecuted(bytes32(0), address(token), address(tokenOut), profit);
 
         vm.prank(executorRole);
-        executor.executeArbitrage(bytes32(0), address(token), amountIn, profit, routers, payloads);
+        executor.executeArbitrage(bytes32(0), address(token), address(tokenOut), amountIn, profit, routers, payloads);
+    }
+
+    // -----------------------------------------------------------------------
+    // testReceiveETH_AcceptsTransfer
+    // SC-07: receive() allows ETH to land in the contract without reverting.
+    // -----------------------------------------------------------------------
+    function testReceiveETH_AcceptsTransfer() public {
+        uint256 sendAmount = 1 ether;
+        vm.deal(address(this), sendAmount);
+
+        uint256 balBefore = address(executor).balance;
+
+        // Low-level call with value — must succeed (receive() present)
+        (bool ok, ) = address(executor).call{value: sendAmount}("");
+        assertTrue(ok, "ETH transfer to executor must succeed");
+
+        assertEq(address(executor).balance, balBefore + sendAmount, "Executor ETH balance mismatch");
+    }
+
+    // -----------------------------------------------------------------------
+    // testWithdrawETH_OnlyAdmin_RescuesStuckETH
+    // SC-07: admin can rescue ETH; event is emitted; stranger is blocked.
+    // -----------------------------------------------------------------------
+    function testWithdrawETH_OnlyAdmin_RescuesStuckETH() public {
+        uint256 stuckAmount = 2 ether;
+
+        // Force ETH into the executor (simulates selfdestruct / forced send)
+        vm.deal(address(executor), stuckAmount);
+        assertEq(address(executor).balance, stuckAmount, "Setup: ETH not credited");
+
+        address payable recipient = payable(makeAddr("recipient"));
+        uint256 recipientBefore = recipient.balance;
+
+        // Expect the ETHWithdrawn event
+        vm.expectEmit(true, false, false, true, address(executor));
+        emit ArbitrageExecutor.ETHWithdrawn(recipient, stuckAmount);
+
+        // Admin (address(this)) has DEFAULT_ADMIN_ROLE — call succeeds
+        executor.withdrawETH(recipient);
+
+        assertEq(address(executor).balance, 0, "Executor must be drained");
+        assertEq(recipient.balance, recipientBefore + stuckAmount, "Recipient did not receive ETH");
+
+        // Non-admin is blocked
+        vm.expectRevert();
+        vm.prank(stranger);
+        executor.withdrawETH(recipient);
     }
 }

@@ -125,4 +125,52 @@ contract FlashLoanExecutorTest is Test {
             params
         );
     }
+
+    // -----------------------------------------------------------------------
+    // testEvent_FlashLoanRequested_Emitted
+    // SC-06: requestFlashLoan emits FlashLoanRequested with correct args.
+    // The MockAavePool records but does NOT call executeOperation, so only
+    // this event fires.
+    // -----------------------------------------------------------------------
+    function testEvent_FlashLoanRequested_Emitted() public {
+        uint256 loanAmount = 500e18;
+        bytes memory params = abi.encode(uint256(42)); // arbitrary payload
+
+        bytes32 expectedHash = keccak256(params);
+
+        vm.expectEmit(true, false, false, true, address(flashExec));
+        emit FlashLoanExecutor.FlashLoanRequested(address(token), loanAmount, expectedHash);
+
+        vm.prank(executorRole);
+        flashExec.requestFlashLoan(address(token), loanAmount, params);
+
+        // Also verify the pool received the correct forwarded arguments
+        assertEq(pool.lastAsset(), address(token), "Pool: wrong asset");
+        assertEq(pool.lastAmount(), loanAmount, "Pool: wrong amount");
+    }
+
+    // -----------------------------------------------------------------------
+    // testEvent_FlashLoanExecuted_Emitted
+    // SC-06: executeOperation (authorized + arbitrage succeeds) emits
+    // FlashLoanExecuted with success=true before returning.
+    // -----------------------------------------------------------------------
+    function testEvent_FlashLoanExecuted_Emitted() public {
+        uint256 loanAmount = 1_000e18;
+        uint256 premium = 9e17; // ~0.09%
+        bytes memory params = abi.encodeWithSignature("noop()");
+
+        vm.expectEmit(true, false, false, true, address(flashExec));
+        emit FlashLoanExecutor.FlashLoanExecuted(address(token), loanAmount, premium, true);
+
+        vm.prank(address(pool));
+        bool result = flashExec.executeOperation(
+            address(token),
+            loanAmount,
+            premium,
+            address(flashExec),
+            params
+        );
+
+        assertTrue(result, "executeOperation must return true");
+    }
 }

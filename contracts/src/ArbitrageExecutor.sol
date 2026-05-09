@@ -22,6 +22,7 @@ contract ArbitrageExecutor is AccessControl, Pausable, ReentrancyGuard {
     event RouterApproved(address router, bool status);
     event TokenApproved(address token, bool status);
     event EmergencyWithdrawn(address token, uint256 amount);
+    event ETHWithdrawn(address indexed to, uint256 amount);
 
     constructor() {
         _grantRole(ADMIN_ROLE, msg.sender);
@@ -32,15 +33,26 @@ contract ArbitrageExecutor is AccessControl, Pausable, ReentrancyGuard {
         _;
     }
 
-    /// @dev Ejecución atómica de un multi-hop.
+    /// @dev Ejecución atómica de un multi-hop (circular arbitrage).
     /// @param routeHash Hash único de la ruta.
-    /// @param tokenIn Token de entrada.
-    /// @param minProfit Mínima ganancia esperada (Net ROI) en el tokenBase.
-    /// @param routers Arreglo de direcciones de los routers DeFi a usar.
-    /// @param payload Datos de llamada (calldata) encodificados para cada paso.
+    /// @param tokenIn  Token base (start and end of the circular route).
+    /// @param tokenOut Intermediate token traversed in the route — used ONLY for
+    ///                 observability (event indexing by external dashboards / recon).
+    ///                 Profit validation is always measured on `tokenIn` balance delta.
+    ///
+    ///     BREAKING CHANGE NOTE (SC-05, 2026-05-08):
+    ///     tokenOut was added to this signature. Any external caller (e.g. relays-client)
+    ///     must pass the intermediate token explicitly. Current paper-trade deploy has no
+    ///     external callers — safe to change now. Wire this up in relays-client Sprint 4+.
+    ///
+    /// @param amountIn  Amount of tokenIn funded at start of route.
+    /// @param minProfit Minimum net profit required in tokenIn units.
+    /// @param routers   DeFi router addresses for each hop.
+    /// @param payload   Encoded calldata for each hop.
     function executeArbitrage(
         bytes32 routeHash,
         address tokenIn,
+        address tokenOut,
         uint256 amountIn,
         uint256 minProfit,
         address[] calldata routers,
@@ -67,7 +79,8 @@ contract ArbitrageExecutor is AccessControl, Pausable, ReentrancyGuard {
         uint256 profit = balanceAfter - balanceBefore;
         require(profit >= minProfit, "Slippage / Min profit guard failed");
 
-        emit ArbitrageExecuted(routeHash, tokenIn, tokenIn, profit);
+        // SC-05 fix: emit tokenOut (intermediate token) so indexers can identify the route.
+        emit ArbitrageExecuted(routeHash, tokenIn, tokenOut, profit);
     }
 
     function setRouterApproval(address router, bool status) external onlyRole(ADMIN_ROLE) {
@@ -92,5 +105,26 @@ contract ArbitrageExecutor is AccessControl, Pausable, ReentrancyGuard {
 
     function unpause() external onlyRole(ADMIN_ROLE) {
         _unpause();
+    }
+
+    // -------------------------------------------------------------------------
+    // SC-07: ETH rescue
+    // -------------------------------------------------------------------------
+
+    /// @dev Accept ETH transfers (e.g. from selfdestruct, forced send, or future
+    ///      WETH-unwrap flows). Without this the contract silently rejects ETH and
+    ///      funds become permanently inaccessible.
+    receive() external payable {}
+
+    /// @dev Rescue any ETH that ended up in the contract.
+    ///      Only callable by ADMIN_ROLE. Transfers entire balance to `to`.
+    /// @param to Recipient address (must be non-zero).
+    function withdrawETH(address payable to) external onlyRole(ADMIN_ROLE) {
+        require(to != address(0), "Zero address");
+        uint256 bal = address(this).balance;
+        require(bal > 0, "No ETH to withdraw");
+        (bool ok, ) = to.call{value: bal}("");
+        require(ok, "ETH transfer failed");
+        emit ETHWithdrawn(to, bal);
     }
 }

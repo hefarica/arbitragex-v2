@@ -24,6 +24,12 @@ contract FlashLoanExecutor is AccessControl {
     IAaveV3Pool public aavePool;
     address public arbitrageExecutor;
 
+    // SC-06: observability events for off-chain monitoring (recon, dashboard)
+    /// @dev Emitted when a flash loan is requested to the Aave pool.
+    event FlashLoanRequested(address indexed asset, uint256 amount, bytes32 paramsHash);
+    /// @dev Emitted when the Aave callback completes and the loan is fully repaid.
+    event FlashLoanExecuted(address indexed asset, uint256 amount, uint256 premium, bool success);
+
     constructor(address _aavePool, address _arbitrageExecutor) {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         aavePool = IAaveV3Pool(_aavePool);
@@ -33,6 +39,9 @@ contract FlashLoanExecutor is AccessControl {
     /// @dev Solicita el flashloan y delega la ejecución al ArbitrageExecutor
     function requestFlashLoan(address asset, uint256 amount, bytes calldata params) external onlyRole(EXECUTOR_ROLE) {
         aavePool.flashLoanSimple(address(this), asset, amount, params, 0);
+        // SC-06: emit after the call so the event is only logged when the pool
+        // accepted the request without reverting.
+        emit FlashLoanRequested(asset, amount, keccak256(params));
     }
 
     /// @dev Callback requerido por Aave V3 tras recibir los fondos
@@ -57,6 +66,8 @@ contract FlashLoanExecutor is AccessControl {
         uint256 amountToOwe = amount + premium;
         IERC20(asset).forceApprove(address(aavePool), amountToOwe);
 
+        // SC-06: signal successful completion to off-chain monitors before returning
+        emit FlashLoanExecuted(asset, amount, premium, true);
         return true;
     }
 }
