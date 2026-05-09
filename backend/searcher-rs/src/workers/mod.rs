@@ -5,6 +5,7 @@
 
 pub mod execution_worker;
 pub mod flashloan_arb_worker;
+pub mod gas_oracle_worker;
 pub mod heartbeat_worker;
 pub mod hft_mempool_listener;
 pub mod liquidation_worker;
@@ -74,6 +75,33 @@ impl WorkerOrchestrator {
         tokio::spawn(async move {
             rpc_worker.start().await;
         });
+
+        // Gas oracle worker — CODE-3: stamps arbx:gas_price_ts:<chain_id> so the
+        // Pre-Execute Checklist Check 6 (gas_price_fresh) unblocks broadcast when
+        // paper_mode=false. The key is a LIVENESS signal: absent / stale key means
+        // the gas oracle died and the checklist correctly blocks execution (fail-closed).
+        let gas_oracle_ms = read_interval_ms_env(
+            "GAS_ORACLE_INTERVAL_MS",
+            gas_oracle_worker::DEFAULT_INTERVAL_MS,
+        );
+        if let Some(ref gas_rpc_pool) = rpc_pool {
+            let gas_pool = Arc::clone(gas_rpc_pool);
+            let gas_redis = redis.clone();
+            let gas_chain = chain_id;
+            tokio::spawn(async move {
+                gas_oracle_worker::GasOracleWorker::new(gas_oracle_ms, gas_chain)
+                    .run(gas_pool, gas_redis)
+                    .await;
+            });
+            info!(event = "worker_orchestrator.gas_oracle_started", chain_id, interval_ms = gas_oracle_ms);
+        } else {
+            info!(
+                event = "worker_orchestrator.gas_oracle_skipped",
+                chain_id,
+                reason = "no_rpc_pool",
+                "gas oracle not started — Check 6 will block until RPC pool is configured"
+            );
+        }
 
         if let (Some(db_pool), Some(pool)) = (db, rpc_pool) {
             let pool_sync_ms = read_interval_ms_env("POOL_SYNC_INTERVAL_MS", DEFAULT_POOL_SYNC_INTERVAL_MS);
