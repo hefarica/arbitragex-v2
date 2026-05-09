@@ -74,6 +74,7 @@ import { mountDexes } from "./routes/dexes.js";
 import { mountPools } from "./routes/pools.js";
 import { setupWebSocketGateway, broadcastOpportunity } from "./websocket.js";
 import { createServer } from "http";
+import rateLimit from "express-rate-limit";
 
 // defi routes mounted later (after `pool` and `logger` are constructed). See mountDefi() below.
 
@@ -82,6 +83,23 @@ app.use(express.json({ limit: "256kb" }));
 app.use(traceIdMiddleware());
 app.use(createHttpLogger(SERVICE, cfg.observability.log_level ?? "info"));
 app.use(metricsMiddleware(SERVICE));
+
+// API-3: defense-in-depth rate limit on /admin/*. The edge worker rate-limits at the
+// network boundary, but if someone reaches the api-server directly (intra-VPS, debug
+// tunnels, future multi-instance), admin endpoints would be unprotected. 30 req/min/IP
+// is generous for one-operator dashboard use; tune via ADMIN_RATE_LIMIT_PER_MIN.
+const ADMIN_RATE_LIMIT_PER_MIN = Math.max(
+  1,
+  parseInt(process.env["ADMIN_RATE_LIMIT_PER_MIN"] ?? "30", 10),
+);
+const adminLimiter = rateLimit({
+  windowMs: 60_000,
+  max: ADMIN_RATE_LIMIT_PER_MIN,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "rate_limited", retry_after_seconds: 60 },
+});
+app.use("/admin/", adminLimiter);
 
 app.get("/health", healthHandler(SERVICE, VERSION, startedAt));
 // REST convention alias — load balancers / external monitors expect /api/health.
@@ -189,8 +207,17 @@ app.post("/internal/audit/auth", requireEdgeToken(ARBX_EDGE_TOKEN), async (req, 
 // ─────── Sprint 3: admin endpoints for blacklist + circuit breakers ───────
 
 const DATABASE_URL = process.env["DATABASE_URL"] ?? "";
+// API-1: pool size now env-configurable (default 20). max=3 was a bottleneck under
+// concurrent admin + readiness + recon-timeseries load. Connection timeout added so
+// stuck pool acquisition fails fast instead of hanging the request.
+const PG_POOL_MAX = Math.max(1, parseInt(process.env["PG_POOL_MAX"] ?? "20", 10));
 const pool = DATABASE_URL
-  ? new pg.Pool({ connectionString: DATABASE_URL, max: 3, idleTimeoutMillis: 30_000 })
+  ? new pg.Pool({
+      connectionString: DATABASE_URL,
+      max: PG_POOL_MAX,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 5_000,
+    })
   : null;
 const redis = new Redis(REDIS_URL, { lazyConnect: false, maxRetriesPerRequest: 3 });
 
@@ -817,12 +844,18 @@ app.get("/api/v1/config/current", async (_req, res) => {
 });
 
 // Live readiness checklist — 17 items verified dynamically (option C from spec).
-// 30s in-memory cache to avoid hammering verifiers on UI poll.
-const READINESS_CACHE_MS = 30_000;
+// API-4: TTL reduced from 30s to 5s default (env-configurable). 30s could mask
+// degradations for half a minute. ?force=true bypasses the cache entirely for
+// operator-driven re-verification immediately after a deploy or fix.
+const READINESS_CACHE_MS = Math.max(
+  0,
+  parseInt(process.env["READINESS_CACHE_TTL_MS"] ?? "5000", 10),
+);
 let readinessCache: { report: ReadinessReport; expires: number } | null = null;
-app.get("/api/v1/readiness", async (_req, res) => {
+app.get("/api/v1/readiness", async (req, res) => {
   const now = Date.now();
-  if (readinessCache && now < readinessCache.expires) {
+  const force = req.query["force"] === "true" || req.query["force"] === "1";
+  if (!force && readinessCache && now < readinessCache.expires) {
     res.setHeader("x-arbx-cache", "HIT");
     res.status(200).json(readinessCache.report);
     return;
@@ -830,7 +863,7 @@ app.get("/api/v1/readiness", async (_req, res) => {
   try {
     const report = await verifyAll({ pool });
     readinessCache = { report, expires: now + READINESS_CACHE_MS };
-    res.setHeader("x-arbx-cache", "MISS");
+    res.setHeader("x-arbx-cache", force ? "BYPASS" : "MISS");
     res.status(200).json(report);
   } catch (e) {
     logger.error({ err: (e as Error).message }, "readiness verifyAll failed");

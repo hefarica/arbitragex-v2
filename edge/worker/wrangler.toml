@@ -11,22 +11,48 @@ workers_dev = true
 # Non-secret operational vars.
 ARBX_ENV = "production-like"
 API_SERVER_URL = "http://api-server:8080" # override per environment
-ALLOWED_ORIGINS = "*"
+# API-6: explicit allowlist (never "*" in production). Each environment overrides
+# this in [env.production] / [env.staging]. Comma-separated, no spaces.
+ALLOWED_ORIGINS = "http://localhost:3000"
 
 # Secrets NEVER in this file. Set via:
 #   wrangler secret put ARBX_EDGE_TOKEN
 #   wrangler secret put JWT_SECRET
 #
+# API-5: KV/D1 IDs are environment-specific. The placeholder values below are
+# intentional sentinels — `wrangler deploy` will fail loudly if they reach
+# production unrewritten. CI must replace via `sed` / template-substitution
+# step OR use `wrangler.toml` env-specific blocks ([env.production] etc.) with
+# real IDs sourced from CI secrets.
+#
+# Recommended workflow (CI):
+#   - `RATE_LIMIT_KV_ID=$(op read ...)` (or env var)
+#   - `sed -i "s/REPLACE_ME_KV_ID/$RATE_LIMIT_KV_ID/" edge/worker/wrangler.toml`
+#   - `wrangler deploy --env production`
+#
 # KV namespace for read cache.
 [[kv_namespaces]]
 binding = "ARBX_CACHE"
-id = "replace_with_real_kv_id_in_CI"
+id = "REPLACE_ME_KV_ID"
 
 # D1 for lightweight telemetry (S8 usage).
 [[d1_databases]]
 binding = "ARBX_TELEMETRY"
 database_name = "arbx-telemetry"
-database_id = "replace_with_real_d1_id_in_CI"
+database_id = "REPLACE_ME_D1_ID"
 
 [build]
 command = "npm run build"
+
+# Production environment — operator MUST set real IDs/origins via CI before deploy.
+# Uncomment and substitute in CI; never commit real IDs.
+# [env.production]
+# [env.production.vars]
+# ALLOWED_ORIGINS = "https://arbx.ape-tv.net,https://www.arbx.ape-tv.net"
+# [[env.production.kv_namespaces]]
+# binding = "ARBX_CACHE"
+# id = "REAL_PROD_KV_ID"
+# [[env.production.d1_databases]]
+# binding = "ARBX_TELEMETRY"
+# database_name = "arbx-telemetry"
+# database_id = "REAL_PROD_D1_ID"
