@@ -11,9 +11,11 @@
 //! Doctrine: log structured tracing JSON (no fake metrics), report measured
 //! latency, fail-loud on RPC error (do not pretend success).
 
-use ethers::contract::abigen;
-use ethers::providers::Middleware;
-use ethers::types::{Address, Bytes, H160, U256};
+use alloy::primitives::Address as AlloyAddress;
+use alloy::providers::Provider as AlloyProvider;
+use alloy::rpc::types::{TransactionInput, TransactionRequest};
+use alloy::sol_types::SolCall;
+use ethers::types::{Address, H160, U256};
 use sqlx::PgPool;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -26,55 +28,35 @@ use crate::reserves::{
     V3PoolInfo,
 };
 
-abigen!(
-    IUniswapV2Pair,
-    r#"[
-        function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)
-    ]"#,
-);
+/// Alloy 1.0 migration: replaced ethers `abigen!` for Multicall3 with `sol!`.
+/// The `aggregate3` calldata is encoded via `SolCall::abi_encode()` and the
+/// return bytes decoded via `SolCall::abi_decode_returns()`. The RPC call goes
+/// through `AlloyProvider::call` (alloy `eth_call`). No live contract binding
+/// object is created — we only need the ABI codec.
+mod multicall_abi {
+    use alloy::sol_types::sol;
 
-abigen!(
-    IMulticall3,
-    r#"[
-        {
-            "inputs": [
-                {
-                    "components": [
-                        { "internalType": "address", "name": "target", "type": "address" },
-                        { "internalType": "bool", "name": "allowFailure", "type": "bool" },
-                        { "internalType": "bytes", "name": "callData", "type": "bytes" }
-                    ],
-                    "internalType": "struct Multicall3.Call3[]",
-                    "name": "calls",
-                    "type": "tuple[]"
-                }
-            ],
-            "name": "aggregate3",
-            "outputs": [
-                {
-                    "components": [
-                        { "internalType": "bool", "name": "success", "type": "bool" },
-                        { "internalType": "bytes", "name": "returnData", "type": "bytes" }
-                    ],
-                    "internalType": "struct Multicall3.Result[]",
-                    "name": "returnData",
-                    "type": "tuple[]"
-                }
-            ],
-            "stateMutability": "payable",
-            "type": "function"
-        },
-        {
-            "inputs": [],
-            "name": "getBlockNumber",
-            "outputs": [
-                { "internalType": "uint256", "name": "blockNumber", "type": "uint256" }
-            ],
-            "stateMutability": "view",
-            "type": "function"
+    sol! {
+        interface IMulticall3 {
+            struct Call3 {
+                address target;
+                bool allowFailure;
+                bytes callData;
+            }
+            struct Result {
+                bool success;
+                bytes returnData;
+            }
+            function aggregate3(Call3[] calldata calls) external payable returns (Result[] memory returnData);
         }
-    ]"#,
-);
+    }
+
+    pub use IMulticall3::{aggregate3Call, Call3};
+}
+
+// The getReserves keccak selector is computed at runtime (ethers utils) — no
+// `abigen!(IUniswapV2Pair, ...)` needed. This avoids pulling the macro for a
+// single 4-byte constant and keeps the ethers abigen surface minimal.
 
 const MULTICALL3_ADDR: &str = "0xcA11bde05977b3631167028862bE2a173976CA11";
 const RESERVES_TTL_SECS: u64 = 30;
@@ -139,31 +121,36 @@ impl PoolSyncWorker {
         let get_reserves_selector: [u8; 4] = ethers::utils::keccak256("getReserves()")[..4]
             .try_into()
             .unwrap();
-        let get_reserves_calldata = Bytes::from(get_reserves_selector.to_vec());
+        let get_reserves_calldata_bytes: Vec<u8> = get_reserves_selector.to_vec();
+
+        // alloy address of the multicall contract — computed once.
+        let multicall_alloy = AlloyAddress::from_slice(multicall_addr.as_bytes());
 
         loop {
             let tick_start = Instant::now();
-            let calls: Vec<_> = pools
+            // Build the aggregate3 calldata for ALL pools in one batch.
+            // alloy sol! Call3 uses AlloyAddress and alloy Bytes (alloy_primitives::Bytes).
+            let calls: Vec<multicall_abi::Call3> = pools
                 .iter()
-                .map(|p| Call3 {
-                    target: p.address,
-                    allow_failure: true,
-                    call_data: get_reserves_calldata.clone(),
+                .map(|p| multicall_abi::Call3 {
+                    target: AlloyAddress::from_slice(p.address.as_bytes()),
+                    allowFailure: true,
+                    callData: get_reserves_calldata_bytes.clone().into(),
                 })
                 .collect();
+            let calldata = multicall_abi::aggregate3Call { calls }.abi_encode();
 
             // Per-tick multicall via with_retry — circuit breaker + failover fire on RPC error.
-            let results = match rpc_pool.with_retry(|provider| {
-                let calls = calls.clone();
+            // Alloy 1.0: provider.call(TransactionRequest) → Bytes (raw return data).
+            let raw_bytes = match rpc_pool.with_retry(|provider| {
+                let tx = TransactionRequest::default()
+                    .to(multicall_alloy)
+                    .input(TransactionInput::new(calldata.clone().into()));
                 async move {
-                    IMulticall3::new(multicall_addr, provider)
-                        .aggregate_3(calls)
-                        .call()
-                        .await
-                        .map_err(|e| anyhow::anyhow!("{e}"))
+                    provider.call(tx).await.map_err(|e| anyhow::anyhow!("{e}"))
                 }
             }).await {
-                Ok(r) => r,
+                Ok(b) => b,
                 Err(e) => {
                     warn!(event = "pool_sync.multicall_failed", error = %e);
                     sleep(self.poll_interval).await;
@@ -171,13 +158,22 @@ impl PoolSyncWorker {
                 }
             };
 
-            // Get current block once per tick via with_retry.
-            let block_number = match rpc_pool.with_retry(|provider| async move {
-                provider.get_block_number().await.map_err(|e| anyhow::anyhow!("{e}"))
-            }).await {
-                Ok(n) => n.as_u64(),
-                Err(_) => 0,
+            // Decode the aggregate3 return bytes.
+            // alloy-sol-types 1.0: single return value → Vec<Result> returned directly.
+            let results = match multicall_abi::aggregate3Call::abi_decode_returns(&raw_bytes) {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(event = "pool_sync.multicall_decode_failed", error = %e);
+                    sleep(self.poll_interval).await;
+                    continue;
+                }
             };
+
+            // Get current block once per tick via with_retry.
+            // alloy 1.0: get_block_number() returns u64 directly (no .as_u64()).
+            let block_number: u64 = rpc_pool.with_retry(|provider| async move {
+                provider.get_block_number().await.map_err(|e| anyhow::anyhow!("{e}"))
+            }).await.unwrap_or(0);
             let now_ts = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -188,14 +184,15 @@ impl PoolSyncWorker {
 
             // Persist each result.
             for (pool, result) in pools.iter().zip(results.iter()) {
-                if !result.success || result.return_data.len() < 64 {
+                // alloy sol! Result fields: `.success` (bool), `.returnData` (alloy Bytes).
+                if !result.success || result.returnData.len() < 64 {
                     fail_count += 1;
                     debug!(event = "pool_sync.pool_failed", pool = %pool.address_lower);
                     continue;
                 }
                 // ABI-decode (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)
                 // Each value is left-padded to 32 bytes in returndata.
-                let bytes = &result.return_data;
+                let bytes = &result.returnData;
                 let r0 = U256::from_big_endian(&bytes[0..32]);
                 let r1 = U256::from_big_endian(&bytes[32..64]);
 

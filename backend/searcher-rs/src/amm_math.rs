@@ -11,9 +11,13 @@
 //! Doctrine: math is parametrised by `fee_bps` (basis points of 10_000). Default 30 = 0.30%
 //! used by both UniswapV2 and SushiSwap; V3 fee tiers are 100/500/3000/10000 (uint24).
 
+use alloy::primitives::Address as AlloyAddress;
+use alloy::providers::Provider as AlloyProvider;
+use alloy::rpc::types::{TransactionInput, TransactionRequest};
+use alloy::sol_types::SolCall;
 use ethers::abi::{Function, Param, ParamType, StateMutability, Token};
-use ethers::providers::{Http, Provider};
 use ethers::types::{Address, Bytes, U256};
+use shared_rs::rpc_failover::AlloyHttpProvider;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -72,45 +76,32 @@ pub fn v2_amount_out(amount_in: U256, reserve_in: U256, reserve_out: U256, fee_b
 // Uniswap V3 batch quoting via Multicall3
 // ============================================================================
 
-/// Multicall3 abigen kept in a private sub-module to avoid `Call3` type-name
-/// collision with `workers::pool_sync_worker::Call3` (same ABI, different
-/// instantiations of the macro produce two distinct generated types).
+/// Multicall3 ABI definitions via alloy `sol!`. Kept in a private sub-module
+/// to avoid `Call3` / `aggregate3Call` name collisions with
+/// `workers::pool_sync_worker` (which defines its own identical types).
+///
+/// Alloy 1.0 migration: replaced ethers `abigen!` with `sol!` so the
+/// `aggregate3` calldata is encoded/decoded via `alloy_sol_types::SolCall`,
+/// and the RPC call goes through the alloy `Provider` trait (`provider.call`).
 mod multicall3 {
-    use ethers::contract::abigen;
+    use alloy::sol_types::sol;
 
-    abigen!(
-        IMulticall3,
-        r#"[
-            {
-                "inputs": [
-                    {
-                        "components": [
-                            { "internalType": "address", "name": "target", "type": "address" },
-                            { "internalType": "bool", "name": "allowFailure", "type": "bool" },
-                            { "internalType": "bytes", "name": "callData", "type": "bytes" }
-                        ],
-                        "internalType": "struct Multicall3.Call3[]",
-                        "name": "calls",
-                        "type": "tuple[]"
-                    }
-                ],
-                "name": "aggregate3",
-                "outputs": [
-                    {
-                        "components": [
-                            { "internalType": "bool", "name": "success", "type": "bool" },
-                            { "internalType": "bytes", "name": "returnData", "type": "bytes" }
-                        ],
-                        "internalType": "struct Multicall3.Result[]",
-                        "name": "returnData",
-                        "type": "tuple[]"
-                    }
-                ],
-                "stateMutability": "payable",
-                "type": "function"
+    sol! {
+        interface IMulticall3 {
+            struct Call3 {
+                address target;
+                bool allowFailure;
+                bytes callData;
             }
-        ]"#,
-    );
+            struct Result {
+                bool success;
+                bytes returnData;
+            }
+            function aggregate3(Call3[] calldata calls) external payable returns (Result[] memory returnData);
+        }
+    }
+
+    pub use IMulticall3::{aggregate3Call, Call3};
 }
 
 /// One V3 quote request (tied to a specific pool / fee tier / direction).
@@ -187,8 +178,13 @@ fn encode_quote_calldata(req: &V3QuoteRequest) -> anyhow::Result<Bytes> {
 /// Empty input short-circuits and returns `Ok(vec![])` without an RPC call.
 ///
 /// The returned vector has the same length and order as `quotes`.
+///
+/// Alloy 1.0 migration: provider type changed from ethers `Arc<Provider<Http>>`
+/// to `Arc<AlloyHttpProvider>`. The ABI encoding of `quoteExactInputSingle`
+/// calldata (per-pool, ethers `abi::encode`) is unchanged — only the outer
+/// `aggregate3` envelope and the `eth_call` go through alloy.
 pub async fn v3_quote_exact_in_multicall(
-    provider: Arc<Provider<Http>>,
+    provider: Arc<AlloyHttpProvider>,
     quoter_addr: Address,
     multicall_addr: Address,
     quotes: Vec<V3QuoteRequest>,
@@ -197,32 +193,44 @@ pub async fn v3_quote_exact_in_multicall(
         return Ok(vec![]);
     }
 
-    // Build per-pool calls targeting the QuoterV2.
+    // Build per-pool calls targeting the QuoterV2 (NOT the individual pool address).
+    // Each call encodes the pool's quoteExactInputSingle params; the target is
+    // always the quoter contract (quoter_addr). The multicall target contract
+    // (multicall_addr) then batches all these calls into a single eth_call.
+    let alloy_quoter = AlloyAddress::from_slice(quoter_addr.as_bytes());
     let calls: Vec<multicall3::Call3> = quotes
         .iter()
         .map(|q| {
             let calldata = encode_quote_calldata(q)?;
             Ok::<_, anyhow::Error>(multicall3::Call3 {
-                target: quoter_addr,
-                allow_failure: true,
-                call_data: calldata,
+                target: alloy_quoter,
+                allowFailure: true,
+                callData: calldata.to_vec().into(),
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
 
-    let multicall = multicall3::IMulticall3::new(multicall_addr, provider.clone());
+    // Encode the aggregate3(Call3[]) calldata via alloy sol! ABI encoder.
+    let calldata = multicall3::aggregate3Call { calls }.abi_encode();
+
+    // Build alloy TransactionRequest for eth_call.
+    let multicall_alloy = AlloyAddress::from_slice(multicall_addr.as_bytes());
+    let tx = TransactionRequest::default()
+        .to(multicall_alloy)
+        .input(TransactionInput::new(calldata.into()));
+
     // Hard timeout (cs-validator MAJOR fix 2026-05-06). On timeout the caller
     // treats the whole batch as failed and counts each per-pool quote as a
     // failure (existing whole-batch failure counter at triangular_worker.rs
     // ~line 1493). Without this, a stalled provider would freeze the worker
     // tick indefinitely.
-    let results = match tokio::time::timeout(
+    let raw_bytes = match tokio::time::timeout(
         V3_QUOTE_MULTICALL_TIMEOUT,
-        multicall.aggregate_3(calls).call(),
+        provider.call(tx),
     )
     .await
     {
-        Ok(Ok(r)) => r,
+        Ok(Ok(b)) => b,
         Ok(Err(e)) => return Err(e.into()),
         Err(_elapsed) => {
             return Err(anyhow::anyhow!(
@@ -232,12 +240,18 @@ pub async fn v3_quote_exact_in_multicall(
         }
     };
 
-    // Decode each result. amountOut is the first 32 bytes of return data
+    // Decode the aggregate3 return: Result[] (struct { bool success; bytes returnData; }[]).
+    // alloy-sol-types 1.0: for a single return value, `abi_decode_returns` returns
+    // the inner type directly — `Vec<Result>` in this case.
+    let results = multicall3::aggregate3Call::abi_decode_returns(&raw_bytes)
+        .map_err(|e| anyhow::anyhow!("aggregate3 decode failed: {e}"))?;
+
+    // Decode each result. amountOut is the first 32 bytes of QuoterV2 return data
     // (uint256, big-endian, left-padded). We don't need the other return values.
     let mut out = Vec::with_capacity(quotes.len());
     for (req, res) in quotes.iter().zip(results.iter()) {
-        if res.success && res.return_data.len() >= 32 {
-            let amount_out = U256::from_big_endian(&res.return_data[0..32]);
+        if res.success && res.returnData.len() >= 32 {
+            let amount_out = U256::from_big_endian(&res.returnData[0..32]);
             out.push(V3QuoteResult {
                 pool_addr: req.pool_addr,
                 amount_out,
@@ -387,6 +401,7 @@ mod tests {
 #[cfg(test)]
 mod v3_tests {
     use super::*;
+    use alloy::providers::ProviderBuilder;
     use ethers::types::{Address, U256};
     use std::str::FromStr;
 
@@ -429,11 +444,13 @@ mod v3_tests {
     fn empty_quotes_returns_empty_vec() {
         // Calling v3_quote_exact_in_multicall with empty input must short-circuit
         // and return Ok(vec![]) — no RPC call made.
-        let provider = std::sync::Arc::new(
-            ethers::providers::Provider::<ethers::providers::Http>::try_from("http://invalid:0").unwrap()
-        );
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         let result = rt.block_on(async {
+            let provider = std::sync::Arc::new(
+                ProviderBuilder::new()
+                    .disable_recommended_fillers()
+                    .connect_http("http://invalid:0".parse().unwrap())
+            );
             v3_quote_exact_in_multicall(
                 provider,
                 Address::from_str("0x61fFE014bA17989E743c5F6cB21bF9697530B21e").unwrap(),
@@ -484,7 +501,9 @@ mod v3_tests {
 
             let url = format!("http://{}", addr);
             let provider = Arc::new(
-                ethers::providers::Provider::<ethers::providers::Http>::try_from(url).unwrap(),
+                ProviderBuilder::new()
+                    .disable_recommended_fillers()
+                    .connect_http(url.parse().unwrap()),
             );
             let req = V3QuoteRequest {
                 pool_addr: Address::from_str("0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640")

@@ -11,8 +11,10 @@
 //! responds. The local cache then takes over for all subsequent increments
 //! within the same epoch, so no second RPC call fires until a refresh.
 
+use alloy::primitives::Address as AlloyAddress;
+use alloy::providers::Provider as AlloyProvider;
 use anyhow::{Context, Result};
-use ethers::prelude::*;
+use ethers::types::Address;
 use shared_rs::rpc_failover::HttpRpcPool;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -60,16 +62,22 @@ impl NonceManager {
     /// Retry semantics: on the first provider failure the pool tries the next
     /// best EWMA-ranked provider. If both fail it returns `PoolError::AllUnhealthy`
     /// which propagates as an `anyhow::Error` to the caller.
+    ///
+    /// Alloy 1.0: `get_transaction_count(address)` returns `u64` directly (no
+    /// `.as_u64()` needed). The ethers `H160` address is converted to alloy
+    /// `Address` via `from_slice` on the raw bytes — both types are `[u8; 20]`.
     async fn fetch(&self, addr: Address) -> Result<u64> {
+        let alloy_addr = AlloyAddress::from_slice(addr.as_bytes());
         let count = self.pool
             .with_retry(|provider| async move {
                 provider
-                    .get_transaction_count(addr, None)
+                    .get_transaction_count(alloy_addr)
                     .await
                     .map_err(|e| anyhow::anyhow!("eth_getTransactionCount: {e}"))
             })
             .await
             .context("nonce_manager.fetch via rpc_pool")?;
-        Ok(count.as_u64())
+        // alloy 1.0 get_transaction_count returns u64 directly.
+        Ok(count)
     }
 }

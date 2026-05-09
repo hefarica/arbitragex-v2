@@ -4,11 +4,20 @@
 //! - No receipt → fail_reason="receipt_unavailable", don't persist fake numbers.
 //! - No decodable logs → actual_amount_out_wei=None; variance stays null.
 //! - pnl_source="native_only" always in S6 (no oracle).
+//!
+//! Alloy 1.0 migration (BE-02 Step 3 cascade): provider type changed from
+//! `ethers::providers::Provider<Http>` to `AlloyHttpProvider`.
+//! Receipt field access uses alloy's `TransactionReceipt` API.
+//! Internal log parsing kept in ethers terms (keccak256, H256, U256, Address)
+//! since ethers remains a workspace dep and the log bytes are decoded manually.
 
+use alloy::primitives::B256;
+use alloy::providers::Provider as AlloyProvider;
 use chrono::Utc;
-use ethers::prelude::*;
 use ethers::utils::keccak256;
+use ethers::types::{Address, H256, U256};
 use shared_rs::contracts::{ExecutionResult, Opportunity, ReconReport};
+use shared_rs::rpc_failover::AlloyHttpProvider;
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing::{debug, warn};
@@ -23,7 +32,7 @@ fn transfer_topic() -> H256 {
 pub async fn compute(
     opp: &Opportunity,
     exec: &ExecutionResult,
-    provider: &Provider<Http>,
+    provider: &AlloyHttpProvider,
     receipt_timeout_ms: u64,
 ) -> ReconReport {
     let trace_id = opp.trace_id;
@@ -53,14 +62,16 @@ pub async fn compute(
     let Some(hash) = exec.tx_hash.as_deref() else {
         return common(None, None, None, None, None, Some("no_tx_hash".into()));
     };
-    let tx_hash = match hash.parse::<H256>() {
+    // Parse as ethers H256 for internal use, then convert to alloy B256 for RPC.
+    let tx_hash_ethers = match hash.parse::<H256>() {
         Ok(h) => h,
         Err(_) => return common(None, None, None, None, None, Some("invalid_tx_hash".into())),
     };
+    let tx_hash_alloy = B256::from_slice(tx_hash_ethers.as_bytes());
 
     let receipt_res = timeout(
         Duration::from_millis(receipt_timeout_ms),
-        provider.get_transaction_receipt(tx_hash),
+        provider.get_transaction_receipt(tx_hash_alloy),
     ).await;
 
     let receipt = match receipt_res {
@@ -73,8 +84,9 @@ pub async fn compute(
         Err(_) => return common(None, None, None, None, None, Some("receipt_timeout".into())),
     };
 
-    let gas_used = receipt.gas_used.map(|g| g.to_string());
-    let gas_price = receipt.effective_gas_price.map(|g| g.to_string());
+    // Alloy receipt fields: gas_used: u64, effective_gas_price: u128 (not Option).
+    let gas_used = Some(receipt.gas_used.to_string());
+    let gas_price = Some(receipt.effective_gas_price.to_string());
 
     // Decode ERC20 Transfer logs targeting the tx origin (from addr) to find amount_out.
     let from_addr = match opp.token_out.parse::<Address>() {
@@ -83,13 +95,22 @@ pub async fn compute(
     };
     let topic = transfer_topic();
     let mut candidate_out: Option<U256> = None;
-    for log in &receipt.logs {
-        if log.topics.first() != Some(&topic) { continue; }
-        // log.address is the token contract; we want token_out's transfers to the signer.
-        if log.address != from_addr { continue; }
-        // data is the `value`
-        if log.data.len() >= 32 {
-            let value = U256::from_big_endian(&log.data[0..32]);
+
+    // Alloy receipt: receipt.logs() returns &[alloy_rpc_types::Log].
+    // Each log: .address() → alloy Address, .topics() → &[B256], .data() → &LogData.
+    // We compare addresses and topics by bytes.
+    for log in receipt.logs() {
+        // Compare topic0 as raw bytes.
+        let Some(topic0) = log.topics().first() else { continue };
+        if topic0.as_slice() != topic.as_bytes() { continue; }
+
+        // Compare log.address bytes to from_addr (ethers Address) bytes.
+        if log.address().as_slice() != from_addr.as_bytes() { continue; }
+
+        // data contains the `value` (first 32 bytes = uint256).
+        let raw = log.data().data.as_ref();
+        if raw.len() >= 32 {
+            let value = U256::from_big_endian(&raw[0..32]);
             candidate_out = Some(value);
             // Keep the last matching transfer of token_out (heuristic: final in path).
         }

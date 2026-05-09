@@ -24,7 +24,6 @@ use axum::{
     Json, Router,
 };
 use chrono::{DateTime, Utc};
-use ethers::providers::{Http, Provider};
 use serde::{Deserialize, Serialize};
 use shared_rs::{
     config::{require_env, AppConfig},
@@ -32,7 +31,7 @@ use shared_rs::{
     killswitch::KillSwitchClient,
     logging::init_tracing,
     metrics::init_metrics,
-    rpc_failover::HttpRpcPool,
+    rpc_failover::{AlloyHttpProvider, HttpRpcPool},
 };
 use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, sync::Arc};
@@ -192,7 +191,7 @@ async fn main() -> anyhow::Result<()> {
             // pool from env. recon's consumer fetches receipts on chain — we
             // pick the primary at boot and let the pool's health loop publish
             // metrics + drift detection + per-provider circuit state.
-            let provider_arc: Option<Arc<Provider<Http>>> = match HttpRpcPool::from_env(chain_id).await {
+            let provider_arc: Option<Arc<AlloyHttpProvider>> = match HttpRpcPool::from_env(chain_id).await {
                 Ok(Some(pool)) => {
                     let pool = Arc::new(pool);
                     let _health_task = pool.spawn_health_loop();

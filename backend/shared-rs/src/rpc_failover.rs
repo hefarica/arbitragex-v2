@@ -18,12 +18,22 @@
 //!   RPC_HTTP_1 = "https://eth-mainnet.g.alchemy.com/v2/KEY"
 //!     → parsed as one entry named "primary" with `single_vendor=true` warning.
 
-use ethers::providers::{Http, Middleware, Provider};
+use alloy::network::Ethereum;
+use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
+
+/// Alloy 1.0 HTTP provider type used throughout this module.
+///
+/// In alloy 1.0, `RootProvider<N>` is parameterized by the NETWORK (not the
+/// transport). `ProviderBuilder::new().connect_http(url)` returns
+/// `RootProvider<Ethereum>`. `disable_recommended_fillers()` removes the gas/
+/// nonce fillers — this provider is used exclusively for read-only view calls
+/// (eth_blockNumber, eth_chainId, eth_call) in the MEV searcher.
+pub type AlloyHttpProvider = RootProvider<Ethereum>;
 
 // ---------- tunables (constants — not productive data, doctrine OK) ----------
 
@@ -98,7 +108,7 @@ pub struct CircuitState {
 pub struct HttpEntry {
     pub name: String,
     pub url: String,
-    pub provider: Arc<Provider<Http>>,
+    pub provider: Arc<AlloyHttpProvider>,
     pub state: AtomicU8,
     pub last_block: AtomicU64,
     pub latency_ms_ewma: AtomicU64,
@@ -159,8 +169,8 @@ impl HttpRpcPool {
 
         let mut alive: Vec<Arc<HttpEntry>> = Vec::with_capacity(raw_entries.len());
         for (name, url) in raw_entries {
-            let provider = match Provider::<Http>::try_from(url.as_str()) {
-                Ok(p) => Arc::new(p),
+            let parsed_url = match url.parse::<reqwest::Url>() {
+                Ok(u) => u,
                 Err(e) => {
                     warn!(
                         event = "rpc_pool.invalid_url",
@@ -170,11 +180,15 @@ impl HttpRpcPool {
                     continue;
                 }
             };
+            let provider = Arc::new(
+                ProviderBuilder::new()
+                    .disable_recommended_fillers()
+                    .connect_http(parsed_url),
+            );
             // Validate chain id once; on mismatch we drop the entry rather than
             // poisoning the pool (operator catches it via the warn log).
-            match provider.get_chainid().await {
+            match provider.get_chain_id().await {
                 Ok(observed) => {
-                    let observed = observed.as_u64();
                     if observed != chain_id {
                         warn!(
                             event = "rpc_pool.chain_mismatch",
@@ -282,11 +296,11 @@ impl HttpRpcPool {
 
     /// Execute `op` against the best provider, with one retry on a different
     /// provider if the first fails. Reports outcomes back to the pool so the
-    /// circuit breaker stays in sync. The closure receives `Arc<Provider<Http>>`
-    /// to keep ergonomics close to the previous direct-provider call sites.
+    /// circuit breaker stays in sync. The closure receives `Arc<AlloyHttpProvider>`
+    /// (alloy 1.0 `RootProvider<Http<reqwest::Client>>`).
     pub async fn with_retry<F, Fut, R>(&self, op: F) -> Result<R, PoolError>
     where
-        F: Fn(Arc<Provider<Http>>) -> Fut,
+        F: Fn(Arc<AlloyHttpProvider>) -> Fut,
         Fut: std::future::Future<Output = anyhow::Result<R>>,
     {
         // Try 1: best provider.
@@ -427,7 +441,7 @@ impl HttpRpcPool {
                     .await
                     {
                         Ok(Ok(bn)) => {
-                            let bn = bn.as_u64();
+                            let bn: u64 = bn;
                             e.last_block.store(bn, Ordering::Relaxed);
                             crate::metrics::RPC_PROVIDER_BLOCK_HEIGHT
                                 .with_label_values(&[&e.name, "http"])
@@ -795,8 +809,14 @@ mod tests {
 
     fn dummy_entry(name: &str) -> Arc<HttpEntry> {
         // Provider that won't actually be used in these tests — we only inspect
-        // the metadata. We pass a syntactically-valid URL so try_from succeeds.
-        let provider = Arc::new(Provider::<Http>::try_from("http://127.0.0.1:1").unwrap());
+        // the metadata. We pass a syntactically-valid URL; alloy ProviderBuilder
+        // accepts it without a live connection (no boot check here in tests).
+        let url: reqwest::Url = "http://127.0.0.1:1".parse().unwrap();
+        let provider = Arc::new(
+            alloy::providers::ProviderBuilder::new()
+                .disable_recommended_fillers()
+                .connect_http(url),
+        );
         Arc::new(HttpEntry {
             name: name.to_string(),
             url: "http://127.0.0.1:1".into(),

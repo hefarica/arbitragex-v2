@@ -11,7 +11,7 @@ use crate::relay_flashbots::FlashbotsClient;
 use crate::signer::Signer;
 use crate::tracker::{wait_for_inclusion, InclusionOutcome};
 use chrono::Utc;
-use ethers::prelude::*;
+use shared_rs::rpc_failover::AlloyHttpProvider;
 use shared_rs::{
     config::AppConfig,
     contracts::{ExecutionResult, ExecutionStatus, Opportunity},
@@ -199,7 +199,7 @@ impl SubmitEngine {
         let Some(rpc_pool) = self.rpc_pool.as_ref() else {
             return Self::not_submitted(opp, "rpc_not_configured");
         };
-        let provider: Arc<Provider<Http>> = match rpc_pool.pick() {
+        let provider: Arc<AlloyHttpProvider> = match rpc_pool.pick() {
             Ok(entry) => entry.provider.clone(),
             Err(e) => {
                 warn!(
@@ -423,6 +423,7 @@ impl SubmitEngine {
                 tx_hash: Some(format!("0x{:x}", bundle.tx_hash)),
                 relay_used: Some(relay_used),
                 block_included: Some(block),
+                // gas_used is u64 (alloy 1.0 receipt.gas_used type).
                 gas_used_wei: Some(gas_used.to_string()),
                 actual_profit_usd: None, // S6 computes this from traces
                 error_message: None,

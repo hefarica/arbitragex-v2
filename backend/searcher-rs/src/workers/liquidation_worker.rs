@@ -73,9 +73,12 @@
 use crate::counters::counters;
 use crate::persistence;
 use crate::publisher;
+use alloy::primitives::Address as AlloyAddress;
+use alloy::providers::Provider as AlloyProvider;
+use alloy::rpc::types::{TransactionInput, TransactionRequest};
+use alloy::sol_types::SolCall;
 use chrono::Utc;
 use ethers::abi::{Function, Param, ParamType, StateMutability, Token};
-use ethers::providers::Middleware;
 use ethers::types::{Address, Bytes, U256};
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
@@ -396,42 +399,30 @@ pub struct UserAccountData {
 // MULTICALL3 — abigen for Aave reads (private to keep `Call3` symbol unique)
 // =============================================================================
 
+/// Alloy 1.0 migration: replaced ethers `abigen!(IMulticall3Aave, ...)` with
+/// alloy `sol!`. The `aggregate3` calldata is encoded via `SolCall::abi_encode()`
+/// and the return bytes decoded via `SolCall::abi_decode_returns()`. The RPC
+/// call goes through `AlloyProvider::call` (alloy `eth_call`). Module name kept
+/// as `multicall3` to minimise downstream diffs.
 mod multicall3 {
-    use ethers::contract::abigen;
+    use alloy::sol_types::sol;
 
-    abigen!(
-        IMulticall3Aave,
-        r#"[
-            {
-                "inputs": [
-                    {
-                        "components": [
-                            { "internalType": "address", "name": "target", "type": "address" },
-                            { "internalType": "bool", "name": "allowFailure", "type": "bool" },
-                            { "internalType": "bytes", "name": "callData", "type": "bytes" }
-                        ],
-                        "internalType": "struct Multicall3.Call3[]",
-                        "name": "calls",
-                        "type": "tuple[]"
-                    }
-                ],
-                "name": "aggregate3",
-                "outputs": [
-                    {
-                        "components": [
-                            { "internalType": "bool", "name": "success", "type": "bool" },
-                            { "internalType": "bytes", "name": "returnData", "type": "bytes" }
-                        ],
-                        "internalType": "struct Multicall3.Result[]",
-                        "name": "returnData",
-                        "type": "tuple[]"
-                    }
-                ],
-                "stateMutability": "payable",
-                "type": "function"
+    sol! {
+        interface IMulticall3Aave {
+            struct Call3 {
+                address target;
+                bool allowFailure;
+                bytes callData;
             }
-        ]"#,
-    );
+            struct Result {
+                bool success;
+                bytes returnData;
+            }
+            function aggregate3(Call3[] calldata calls) external payable returns (Result[] memory returnData);
+        }
+    }
+
+    pub use IMulticall3Aave::{aggregate3Call, Call3};
 }
 
 /// One per-user batched read result.
@@ -455,35 +446,40 @@ async fn multicall_get_user_account_data(
     if users.is_empty() {
         return Ok(vec![]);
     }
+    // Build aggregate3 calldata. alloy sol! Call3 uses AlloyAddress / alloy Bytes.
+    let pool_alloy = AlloyAddress::from_slice(pool_addr.as_bytes());
+    let multicall_alloy = AlloyAddress::from_slice(multicall_addr.as_bytes());
+
     let calls: Vec<multicall3::Call3> = users
         .iter()
         .map(|u| {
             let calldata = encode_get_user_account_data_calldata(*u)?;
             Ok::<_, anyhow::Error>(multicall3::Call3 {
-                target: pool_addr,
-                allow_failure: true,
-                call_data: calldata,
+                target: pool_alloy,
+                allowFailure: true,
+                callData: calldata.to_vec().into(),
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
 
+    let calldata = multicall3::aggregate3Call { calls }.abi_encode();
+
     // with_retry — circuit breaker fires on repeated RPC failure.
-    let results = match tokio::time::timeout(
+    // Alloy 1.0: provider.call(TransactionRequest) → Bytes.
+    let raw_bytes = match tokio::time::timeout(
         MULTICALL_TIMEOUT,
         rpc_pool.with_retry(|provider| {
-            let calls = calls.clone();
+            let tx = TransactionRequest::default()
+                .to(multicall_alloy)
+                .input(TransactionInput::new(calldata.clone().into()));
             async move {
-                multicall3::IMulticall3Aave::new(multicall_addr, provider)
-                    .aggregate_3(calls)
-                    .call()
-                    .await
-                    .map_err(|e| anyhow::anyhow!("{e}"))
+                provider.call(tx).await.map_err(|e| anyhow::anyhow!("{e}"))
             }
         }),
     )
     .await
     {
-        Ok(Ok(r)) => r,
+        Ok(Ok(b)) => b,
         Ok(Err(e)) => return Err(e.into()),
         Err(_elapsed) => {
             return Err(anyhow::anyhow!(
@@ -493,10 +489,16 @@ async fn multicall_get_user_account_data(
         }
     };
 
+    // Decode the aggregate3 return bytes.
+    // alloy-sol-types 1.0: single return value → Vec<Result> returned directly.
+    let results = multicall3::aggregate3Call::abi_decode_returns(&raw_bytes)
+        .map_err(|e| anyhow::anyhow!("aave multicall decode failed: {e}"))?;
+
     let mut out = Vec::with_capacity(users.len());
     for (user, res) in users.iter().zip(results.iter()) {
+        // alloy sol! Result fields: `.success` (bool), `.returnData` (alloy Bytes).
         if res.success {
-            let data = decode_user_account_data(&res.return_data);
+            let data = decode_user_account_data(&res.returnData);
             out.push(UserDataResult { user: *user, data });
         } else {
             out.push(UserDataResult { user: *user, data: None });
@@ -779,7 +781,8 @@ impl LiquidationWorker {
             )
             .await
             {
-                Ok(Ok(n)) => n.as_u64(),
+                // alloy 1.0: get_block_number() returns u64 directly.
+                Ok(Ok(n)) => n,
                 Ok(Err(e)) => {
                     debug!(event = "liquidation_worker.block_number_failed", error = %e);
                     0

@@ -14,7 +14,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.85"
 license = "Proprietary"
 
 [workspace.dependencies]
@@ -48,6 +48,9 @@ shared-rs     = { path = "shared-rs" }
 prioritization-spine = { path = "prioritization-spine" }
 math-engine   = { path = "math-engine" }
 ethers        = { version = "2", default-features = false, features = ["ws","rustls"] }
+# alloy 1.0 — workspace canonical (token-enricher pins this already, lock is stable)
+alloy         = { version = "1", features = ["providers", "transport-http", "rpc-types-eth", "network", "sol-types", "rlp"] }
+alloy-sol-types = { version = "1" }
 futures-util  = "0.3"
 async-trait   = "0.1"
 lru           = "0.12"

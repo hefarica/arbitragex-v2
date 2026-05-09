@@ -4,11 +4,11 @@ use crate::pnl_engine;
 use crate::persistence::{insert_risk_event, persist_recon_report};
 use crate::variance;
 use anyhow::{Context, Result};
-use ethers::providers::{Http, Provider};
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
 use shared_rs::config::ReconCfg;
 use shared_rs::contracts::{ExecutionResult, Opportunity};
+use shared_rs::rpc_failover::AlloyHttpProvider;
 use sqlx::postgres::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,7 +20,7 @@ const GROUP: &str = "recon-g0";
 pub struct Consumer {
     pub redis: ConnectionManager,
     pub pool: PgPool,
-    pub provider: Arc<Provider<Http>>,
+    pub provider: Arc<AlloyHttpProvider>,
     pub cfg: ReconCfg,
     pub consumer_name: String,
 }

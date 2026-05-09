@@ -9,9 +9,9 @@
 //! `mock_rpcs` constant — that violation was deleted as part of the same
 //! sweep that removed the `expected_profit_usd` random injection.
 
+use alloy::providers::Provider as AlloyProvider;
 use shared_rs::{HttpRpcPool, ProviderState};
 use std::time::{Duration, Instant};
-use ethers::providers::Middleware;
 use tokio::time::{sleep, timeout};
 use tracing::{info, warn};
 
@@ -99,7 +99,8 @@ impl RpcHealthWorker {
 
                 match res {
                     Ok(Ok(block)) => {
-                        let block = block.as_u64();
+                        // alloy 1.0: get_block_number() returns u64 directly.
+                        let block: u64 = block;
                         let latency_ms = started.elapsed().as_millis() as u64;
                         // EWMA update — read current, blend, store.
                         let prev_ewma = entry.snapshot_latency_ms();

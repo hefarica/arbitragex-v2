@@ -22,6 +22,7 @@ uuid.workspace = true
 chrono.workspace = true
 redis.workspace = true
 ethers.workspace = true
+alloy.workspace = true
 futures-util.workspace = true
 async-trait.workspace = true
 hex.workspace = true

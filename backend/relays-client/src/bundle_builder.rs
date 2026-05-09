@@ -9,14 +9,17 @@
 
 use crate::nonce_manager::NonceManager;
 use crate::signer::Signer;
+use alloy::eips::BlockId;
+use alloy::providers::Provider as AlloyProvider;
+use alloy::rpc::types::BlockNumberOrTag;
 use anyhow::Result;
 use ethers::abi::{encode, Token};
-use ethers::prelude::*;
 use ethers::core::types::transaction::eip2718::TypedTransaction;
+use ethers::prelude::*;
 use ethers::signers::Signer as EthersSigner;
 use shared_rs::chains::{routers_for_chain, RouterKind};
 use shared_rs::contracts::{Opportunity, StrategyKind};
-use std::sync::Arc;
+use shared_rs::rpc_failover::AlloyHttpProvider;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, thiserror::Error)]
@@ -50,10 +53,13 @@ pub struct SignedBundle {
 }
 
 /// Builds + signs a single-tx bundle.
+///
+/// `provider` is the alloy 1.0 HTTP provider (used only for `get_block` to
+/// read the current base fee). The signing path remains ethers (signer.wallet).
 pub async fn build_and_sign(
     opp: &Opportunity,
     signer: &Signer,
-    provider: &Provider<Http>,
+    provider: &AlloyHttpProvider,
     nonce_mgr: &NonceManager,
     max_value_eth: f64,
     target_block_offset: u64,
@@ -95,16 +101,24 @@ pub async fn build_and_sign(
         .map_err(|e| BuildError::Provider(e.to_string()))?;
 
     // Fee estimation. For S5 we use simple "latest base fee + 2 gwei priority".
-    let latest_block = provider.get_block(BlockNumber::Latest).await
+    //
+    // Alloy 1.0: `get_block(BlockId)` requires a `BlockId` wrapper around
+    // `BlockNumberOrTag`. `Block.header.base_fee_per_gas` is `Option<u64>` in
+    // alloy 1.0 (it was `Option<U256>` in ethers; u64 is safe — max ~18.4 gwei
+    // ceiling that fits in u64 trivially). `Block.header.number` is `u64`.
+    let latest_block = provider
+        .get_block(BlockId::Number(BlockNumberOrTag::Latest))
+        .await
         .map_err(|e| BuildError::Provider(e.to_string()))?
         .ok_or_else(|| BuildError::Provider("no_latest_block".into()))?;
-    let base_fee = latest_block.base_fee_per_gas.unwrap_or(U256::from(30_000_000_000u64));
+    // base_fee_per_gas is u64 in alloy 1.0 → convert to ethers U256 for signing.
+    let base_fee_u64: u64 = latest_block.header.base_fee_per_gas
+        .unwrap_or(30_000_000_000u64); // 30 gwei fallback
+    let base_fee = U256::from(base_fee_u64);
     let priority_fee = U256::from(2_000_000_000u64); // 2 gwei default
     let max_fee = base_fee * 2 + priority_fee;
 
-    let target_block = latest_block.number
-        .map(|n| n.as_u64() + target_block_offset)
-        .unwrap_or(0);
+    let target_block = latest_block.header.number + target_block_offset;
 
     let tx = Eip1559TransactionRequest::new()
         .to(Address::from(router_entry.address))
@@ -190,9 +204,6 @@ fn encode_v3(token_in: Address, token_out: Address, amount_in: U256, to: Address
     Bytes::from(buf)
 }
 
-// Silence unused-warning for Arc until submit_engine consumes it.
-#[allow(dead_code)]
-fn _use_arc(_: Arc<Provider<Http>>) {}
 
 #[cfg(test)]
 mod tests {

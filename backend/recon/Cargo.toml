@@ -24,5 +24,6 @@ sqlx.workspace = true
 bigdecimal.workspace = true
 redis.workspace = true
 ethers.workspace = true
+alloy.workspace = true
 futures-util.workspace = true
 hex.workspace = true
