@@ -16,14 +16,31 @@
 //!
 //! ## Environment variables
 //!
-//! | Variable                | Required | Default  | Description                         |
-//! |-------------------------|----------|----------|-------------------------------------|
-//! | `DATABASE_URL`          | YES      | —        | PostgreSQL DSN                      |
-//! | `REDIS_URL`             | YES      | —        | Redis DSN (redis://<host>:<port>)   |
-//! | `ENRICHER_RPC_URLS`     | YES      | —        | Comma-separated `<chain_id>=<url>`  |
-//! | `ENRICHER_METRICS_PORT` | NO       | 9004     | Prometheus /metrics port            |
-//! | `RUST_LOG`              | NO       | info     | tracing-subscriber filter           |
-//! | `GITHUB_TOKEN`          | NO       | —        | Bearer token for TrustWallet CDN    |
+//! | Variable                | Required | Default  | Description                                          |
+//! |-------------------------|----------|----------|------------------------------------------------------|
+//! | `DATABASE_URL`          | YES      | —        | PostgreSQL DSN                                       |
+//! | `REDIS_URL`             | YES      | —        | Redis DSN (redis://<host>:<port>)                    |
+//! | `ENRICHER_CHAINS`       | YES      | —        | Comma-separated chain IDs to enrich (e.g. 1,137,42161) |
+//! | `RPC_HTTP_<chain_id>`   | YES*     | —        | HTTP RPC URL(s) for each enabled chain.              |
+//! |                         |          |          | Format: `name=url,name=url` (multi-vendor) or bare   |
+//! |                         |          |          | URL. One env var per chain. Required if that chain   |
+//! |                         |          |          | appears in ENRICHER_CHAINS; missing = warn + skip.   |
+//! | `ENRICHER_METRICS_PORT` | NO       | 9004     | Prometheus /metrics port                             |
+//! | `RUST_LOG`              | NO       | info     | tracing-subscriber filter                            |
+//! | `GITHUB_TOKEN`          | NO       | —        | Bearer token for TrustWallet CDN                     |
+//!
+//! ## Migration note (BREAKING — BE-02 Step 4)
+//!
+//! The `ENRICHER_RPC_URLS` env var has been REMOVED. The canonical per-chain
+//! env pattern is now used exclusively:
+//!
+//!   Old: `ENRICHER_RPC_URLS=1=https://eth.g.alchemy.com/v2/KEY,137=https://poly.g.alchemy.com/v2/KEY`
+//!   New: `RPC_HTTP_1=https://eth.g.alchemy.com/v2/KEY`
+//!        `RPC_HTTP_137=https://poly.g.alchemy.com/v2/KEY`
+//!        `ENRICHER_CHAINS=1,137`
+//!
+//! Operator action: update VPS .env to split ENRICHER_RPC_URLS into per-chain
+//! `RPC_HTTP_<id>` variables and add `ENRICHER_CHAINS`.
 //!
 //! ## Invariants (I2 — dedup gate)
 //!
@@ -36,14 +53,15 @@
 //! Every resolution failure is recorded as `resolved_via = 'failed'` with NULL
 //! symbol/decimals/logo.  The enricher NEVER synthesises or guesses values.
 
-use alloy::providers::{DynProvider, Provider, ProviderBuilder};
+use alloy::providers::Provider;
 use alloy::rpc::types::{TransactionInput, TransactionRequest};
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
 use anyhow::{Context, Result};
 use futures_util::future::join_all;
+use shared_rs::rpc_failover::HttpRpcPool;
 use sqlx::postgres::PgPoolOptions;
-use std::{collections::HashMap, collections::HashSet, str::FromStr, time::Duration};
+use std::{collections::HashMap, collections::HashSet, str::FromStr, sync::Arc, time::Duration};
 use tracing::{error, info, warn};
 
 use token_enricher::{
@@ -73,54 +91,88 @@ fn require_env(key: &str) -> Result<String> {
     std::env::var(key).with_context(|| format!("required env var {key} is not set"))
 }
 
-/// Parse `ENRICHER_RPC_URLS` — format: `1=https://...,137=https://...`
-fn parse_rpc_urls(raw: &str) -> Result<HashMap<u64, String>> {
-    let mut map = HashMap::new();
+/// Parse `ENRICHER_CHAINS` — format: `1,137,42161`
+///
+/// R8 fail-honest: if the var is absent or empty we return Err so the service
+/// exits cleanly with a clear log rather than silently enriching nothing.
+fn parse_enricher_chains(raw: &str) -> Result<Vec<u64>> {
+    let mut chains = Vec::new();
     for segment in raw.split(',') {
         let segment = segment.trim();
         if segment.is_empty() {
             continue;
         }
-        let mut parts = segment.splitn(2, '=');
-        let chain_str = parts
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("ENRICHER_RPC_URLS segment missing '=': {segment}"))?;
-        let url = parts
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("ENRICHER_RPC_URLS segment missing url: {segment}"))?;
-        let chain: u64 = chain_str
+        let chain: u64 = segment
             .parse()
-            .with_context(|| format!("ENRICHER_RPC_URLS chain_id not a number: {chain_str}"))?;
-        map.insert(chain, url.to_string());
+            .with_context(|| format!("ENRICHER_CHAINS value is not a valid u64: {segment:?}"))?;
+        chains.push(chain);
     }
-    if map.is_empty() {
-        anyhow::bail!("ENRICHER_RPC_URLS is set but contains no valid entries");
+    if chains.is_empty() {
+        anyhow::bail!(
+            "ENRICHER_CHAINS is set but contains no valid chain IDs. \
+             Example: ENRICHER_CHAINS=1,137,42161"
+        );
     }
-    Ok(map)
+    Ok(chains)
 }
 
 // ---------------------------------------------------------------------------
-// Provider construction
+// Pool construction (replaces parse_rpc_urls + build_providers)
 // ---------------------------------------------------------------------------
 
-/// Build one `DynProvider<Ethereum>` per chain from the URL map.
+/// Build one `HttpRpcPool` per chain from `RPC_HTTP_<chain_id>` env vars.
 ///
-/// `DynProvider` erases the concrete transport generic so all chain providers
-/// can live in a single `HashMap<u64, DynProvider>`.  (Defect #4 resolved:
-/// using `.erased()` instead of the unerasable `F::Provider` inference.)
-fn build_providers(rpc_urls: &HashMap<u64, String>) -> Result<HashMap<u64, DynProvider>> {
-    let mut providers = HashMap::new();
-    for (&chain_id, url) in rpc_urls {
-        let parsed: reqwest::Url = url
-            .parse()
-            .with_context(|| format!("invalid RPC URL for chain {chain_id} (value redacted)"))?;
-        let provider = ProviderBuilder::new()
-            .disable_recommended_fillers()
-            .connect_http(parsed)
-            .erased();
-        providers.insert(chain_id, provider);
+/// Chains listed in `enabled_chains` that have no `RPC_HTTP_<chain_id>` set
+/// are logged as warnings and skipped (not fatal — the operator may want to
+/// enable a chain incrementally). If NO chain produces a valid pool, we return
+/// an error so the service fails on boot rather than silently doing nothing.
+///
+/// Each pool spawns a background health-loop task (detached via `spawn_health_loop`).
+/// The loop fires every 15s and drives EWMA latency, drift detection, and the
+/// per-provider circuit breaker (5 errors / 60s → Open for 30s).
+async fn build_pools(enabled_chains: &[u64]) -> Result<HashMap<u64, Arc<HttpRpcPool>>> {
+    let mut pools = HashMap::new();
+    for &chain_id in enabled_chains {
+        match HttpRpcPool::from_env(chain_id).await {
+            Ok(Some(pool)) => {
+                let pool = Arc::new(pool);
+                // Detach the health-loop task. The JoinHandle is intentionally
+                // dropped — the task runs for the process lifetime and we rely
+                // on process exit to stop it.  Aborting on drop is fine here
+                // because the health loop holds no persistent resources.
+                let _health = pool.spawn_health_loop();
+                pools.insert(chain_id, pool);
+            }
+            Ok(None) => {
+                warn!(
+                    event = "token_enricher.rpc_pool_absent",
+                    chain_id,
+                    env_key = format!("RPC_HTTP_{chain_id}"),
+                    "env var not set for this chain — skipping; add RPC_HTTP_{chain_id} to .env to enable enrichment",
+                );
+            }
+            Err(e) => {
+                error!(
+                    event = "token_enricher.rpc_pool_invalid",
+                    chain_id,
+                    error = %e,
+                    "RPC_HTTP_{chain_id} is set but all providers failed validation — skipping chain",
+                );
+            }
+        }
     }
-    Ok(providers)
+    if pools.is_empty() {
+        anyhow::bail!(
+            "No valid RPC pools could be built for any chain in ENRICHER_CHAINS. \
+             Set RPC_HTTP_<chain_id> for at least one chain."
+        );
+    }
+    info!(
+        event = "token_enricher.pools_built",
+        chain_count = pools.len(),
+        chains = ?pools.keys().collect::<Vec<_>>(),
+    );
+    Ok(pools)
 }
 
 // ---------------------------------------------------------------------------
@@ -136,12 +188,13 @@ fn build_providers(rpc_urls: &HashMap<u64, String>) -> Result<HashMap<u64, DynPr
 /// Steps:
 /// 1. `needs_resolution` filter → group per chain.
 /// 2. Build multicall calldata per chain.
-/// 3. `eth_call` → decode `aggregate3Return` (alloy 1.x 1-arg form — Defect #1).
+/// 3. `eth_call` via `HttpRpcPool::with_retry` — EWMA-ranked failover + circuit
+///    breaker activated (replaces single-provider `DynProvider::call`).
 /// 4. `tw.verify` in parallel per address via `join_all` (Defect #2).
 /// 5. Classify `resolved_via` and `upsert_token` sequentially.
 async fn process_batch(
     pool: &sqlx::PgPool,
-    providers: &HashMap<u64, DynProvider>,
+    rpc_pools: &HashMap<u64, Arc<HttpRpcPool>>,
     tw: &TrustWalletClient,
     pairs: &[(u64, Address)],
     source: &str, // "consumer" | "reconciliation" | "pel"
@@ -180,7 +233,8 @@ async fn process_batch(
         Address::from_str(MULTICALL3_ADDRESS).context("parse MULTICALL3_ADDRESS")?;
 
     for (chain_id, addrs) in &per_chain {
-        let provider = match providers.get(chain_id) {
+        // Look up the HttpRpcPool for this chain (replaces providers.get).
+        let rpc_pool = match rpc_pools.get(chain_id) {
             Some(p) => p,
             None => {
                 warn!(event = "enricher.no_provider", chain = chain_id);
@@ -205,12 +259,30 @@ async fn process_batch(
         // --- Step 2: build multicall calldata ---
         let calls = build_calls_for(addrs);
         let calldata = IMulticall3::aggregate3Call { calls }.abi_encode();
+        // Build once; the closure below may call the provider twice (retry path),
+        // so `tx` must be cloneable. `TransactionRequest` derives Clone in alloy 1.x.
         let tx = TransactionRequest::default()
             .to(multicall3_addr)
             .input(TransactionInput::new(calldata.into()));
 
-        // --- Step 3: eth_call ---
-        let raw_bytes = match provider.call(tx).await {
+        // --- Step 3: eth_call via HttpRpcPool::with_retry ---
+        // with_retry selects the best provider (lowest EWMA latency among Healthy),
+        // retries on a different provider on first failure, reports outcomes to the
+        // circuit breaker. The closure must return anyhow::Result so the error
+        // bridges into the pool's failure-counting path.
+        let raw_bytes = match rpc_pool
+            .with_retry(|provider| {
+                let tx = tx.clone();
+                async move {
+                    let result: anyhow::Result<Bytes> = provider
+                        .call(tx)
+                        .await
+                        .map_err(anyhow::Error::from);
+                    result
+                }
+            })
+            .await
+        {
             Ok(b) => {
                 RPC_CALLS_TOTAL
                     .with_label_values(&[&chain_id.to_string(), "ok"])
@@ -358,7 +430,7 @@ async fn main() -> Result<()> {
     // --- 1. Config ---
     let database_url = require_env("DATABASE_URL")?;
     let redis_url = require_env("REDIS_URL")?;
-    let rpc_urls_raw = require_env("ENRICHER_RPC_URLS")?;
+    let enricher_chains_raw = require_env("ENRICHER_CHAINS")?;
     let github_token = std::env::var("GITHUB_TOKEN").ok().filter(|s| !s.is_empty());
     let metrics_port: u16 = std::env::var("ENRICHER_METRICS_PORT")
         .ok()
@@ -386,10 +458,12 @@ async fn main() -> Result<()> {
         .context("PgPoolOptions::connect")?;
     info!(event = "enricher.db_connected");
 
-    // --- 4b. Parse RPC URLs + build providers ---
-    let rpc_urls = parse_rpc_urls(&rpc_urls_raw)?;
-    let providers = build_providers(&rpc_urls)?;
-    info!(event = "enricher.providers_built", chain_count = providers.len());
+    // --- 4b. Parse enabled chains + build HttpRpcPool per chain ---
+    // Replaces the former parse_rpc_urls + build_providers pair.
+    // Each pool uses canonical env var RPC_HTTP_<chain_id>, supports
+    // multi-vendor CSV format, and runs a background health-check loop.
+    let enabled_chains = parse_enricher_chains(&enricher_chains_raw)?;
+    let rpc_pools = build_pools(&enabled_chains).await?;
 
     // --- 4c. TrustWallet client ---
     let tw = TrustWalletClient::new(github_token).context("TrustWalletClient::new")?;
@@ -416,7 +490,7 @@ async fn main() -> Result<()> {
         Ok((triples, ids)) => {
             info!(event = "enricher.processing_pel", count = triples.len());
             let pairs = triples_to_pairs(triples);
-            if let Err(e) = process_batch(&pool, &providers, &tw, &pairs, "pel").await {
+            if let Err(e) = process_batch(&pool, &rpc_pools, &tw, &pairs, "pel").await {
                 error!(event = "enricher.pel_batch_err", err = %e);
             }
             // ACK after process (success or error) — at-most-once with
@@ -545,7 +619,7 @@ async fn main() -> Result<()> {
                         }
 
                         if let Err(e) =
-                            process_batch(&pool, &providers, &tw, &pairs, "reconciliation").await
+                            process_batch(&pool, &rpc_pools, &tw, &pairs, "reconciliation").await
                         {
                             error!(event = "enricher.recon_batch_err", err = %e);
                         }
@@ -570,7 +644,7 @@ async fn main() -> Result<()> {
                     Ok((triples, ids)) => {
                         let pairs = triples_to_pairs(triples);
                         if let Err(e) =
-                            process_batch(&pool, &providers, &tw, &pairs, "consumer").await
+                            process_batch(&pool, &rpc_pools, &tw, &pairs, "consumer").await
                         {
                             error!(event = "enricher.consumer_batch_err", err = %e);
                         }
@@ -599,31 +673,44 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
 
+    // --- parse_enricher_chains ---
+
     #[test]
-    fn parse_rpc_urls_valid() {
-        let raw = "1=https://eth.example.com,137=https://poly.example.com";
-        let map = parse_rpc_urls(raw).unwrap();
-        assert_eq!(map.get(&1).unwrap(), "https://eth.example.com");
-        assert_eq!(map.get(&137).unwrap(), "https://poly.example.com");
+    fn parse_enricher_chains_valid() {
+        let chains = parse_enricher_chains("1,137,42161").unwrap();
+        assert_eq!(chains, vec![1u64, 137, 42161]);
     }
 
     #[test]
-    fn parse_rpc_urls_single() {
-        let raw = "1=https://eth.example.com";
-        let map = parse_rpc_urls(raw).unwrap();
-        assert_eq!(map.len(), 1);
+    fn parse_enricher_chains_single() {
+        let chains = parse_enricher_chains("1").unwrap();
+        assert_eq!(chains, vec![1u64]);
     }
 
     #[test]
-    fn parse_rpc_urls_empty_fails() {
-        assert!(parse_rpc_urls("").is_err());
-        assert!(parse_rpc_urls("   ").is_err());
+    fn parse_enricher_chains_with_spaces() {
+        let chains = parse_enricher_chains(" 1 , 137 ").unwrap();
+        assert_eq!(chains, vec![1u64, 137]);
     }
 
     #[test]
-    fn parse_rpc_urls_bad_chain_id_fails() {
-        assert!(parse_rpc_urls("notanumber=https://x.com").is_err());
+    fn parse_enricher_chains_empty_fails() {
+        assert!(parse_enricher_chains("").is_err());
+        assert!(parse_enricher_chains("   ").is_err());
     }
+
+    #[test]
+    fn parse_enricher_chains_bad_value_fails() {
+        assert!(parse_enricher_chains("1,notanumber").is_err());
+    }
+
+    #[test]
+    fn parse_enricher_chains_negative_fails() {
+        // u64 parse rejects negative strings
+        assert!(parse_enricher_chains("-1").is_err());
+    }
+
+    // --- triples_to_pairs ---
 
     #[test]
     fn triples_to_pairs_deduplicates() {
