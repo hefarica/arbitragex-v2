@@ -13,7 +13,7 @@ alloy = { version = "1.0", features = ["full"] }
 alloy-primitives = "1.0"
 alloy-sol-types = "1.0"
 alloy-provider = { version = "1.0", features = ["ws"] }
-alloy-rpc-types = "1.0"
+alloy-rpc-types = "2.0"
 tokio = { version = "1", features = ["full"] }
 sqlx = { version = "0.7", features = ["postgres","runtime-tokio-rustls","chrono","macros","migrate"] }
 redis = { version = "0.24", features = ["tokio-comp","streams"] }
