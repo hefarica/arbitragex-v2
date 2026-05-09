@@ -15,7 +15,7 @@ interface Props {
 }
 
 export function KPICard({ title, value, hint, positive }: Props) {
-  const tone = positive ? "text-emerald-500" : "text-amber-500";
+  const tone = positive ? "text-success" : "text-warning";
   return (
     <Card>
       <CardHeader className="pb-2">

@@ -215,7 +215,7 @@ export function TradingConfigForm({
           <CardTitle className="flex items-center gap-2">
             Capital & token universe
             {initial.configured && initial.enabled && (
-              <Badge className="bg-emerald-100 text-emerald-900">live</Badge>
+              <Badge className="bg-success/20 text-success border-success/40">live</Badge>
             )}
             {initial.configured && !initial.enabled && (
               <Badge variant="destructive">disabled</Badge>

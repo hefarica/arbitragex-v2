@@ -40,40 +40,40 @@ interface StatusMeta {
 const STATUS_MAP: Record<OpportunityStatus, StatusMeta> = {
   detected: {
     label: "DETECTED",
-    className: "bg-slate-500/15 text-slate-300 border border-slate-500/30",
+    className: "bg-muted/60 text-muted-foreground border border-border",
   },
   validated: {
     label: "VALIDATED",
-    className: "bg-blue-500/15 text-blue-300 border border-blue-500/30",
+    className: "bg-info/10 text-info border border-info/30",
   },
   simulated: {
     label: "SIMULATED",
-    className: "bg-indigo-500/15 text-indigo-300 border border-indigo-500/30",
+    className: "bg-primary/10 text-primary border border-primary/30",
   },
   scored: {
     label: "SCORED",
-    className: "bg-violet-500/15 text-violet-300 border border-violet-500/30",
+    className: "bg-accent text-accent-foreground border border-border",
   },
   executing: {
     label: "EXECUTING",
     className:
-      "bg-amber-500/20 text-amber-300 border border-amber-500/50 animate-pulse",
+      "bg-warning/15 text-warning border border-warning/40 animate-pulse",
   },
   executed: {
     label: "EXECUTED",
-    className: "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30",
+    className: "bg-success/15 text-success border border-success/40",
   },
   reconciled: {
     label: "RECONCILED",
-    className: "bg-green-500/15 text-green-300 border border-green-500/30",
+    className: "bg-success/10 text-success border border-success/30",
   },
   rejected: {
     label: "REJECTED",
-    className: "bg-rose-500/15 text-rose-300 border border-rose-500/30",
+    className: "bg-destructive/10 text-destructive border border-destructive/30",
   },
   failed: {
     label: "FAILED",
-    className: "bg-red-500/20 text-red-300 border border-red-600/50",
+    className: "bg-destructive/20 text-destructive border border-destructive/50",
   },
 };
 
@@ -92,7 +92,7 @@ export function StatusPill({ status, rejection_reason }: StatusPillProps) {
   // Defensive fallback: unknown status string slipped past TypeScript at runtime.
   if (!meta) {
     return (
-      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold tracking-wide bg-slate-500/15 text-slate-300 border border-slate-500/30">
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold tracking-wide bg-muted/60 text-muted-foreground border border-border">
         {String(status).toUpperCase()}
       </span>
     );

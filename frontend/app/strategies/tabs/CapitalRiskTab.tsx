@@ -163,7 +163,7 @@ export function CapitalRiskTab({ config, onSaved, adminToken, actor }: Props) {
           </Button>
           {msg && <span className="text-xs text-muted-foreground font-mono">{msg}</span>}
           {!hasSession && !msg && (
-            <span className="text-xs text-amber-400 font-mono">No admin session — <a href="/killswitch" className="underline">unlock at /killswitch</a></span>
+            <span className="text-xs text-warning font-mono">No admin session — <a href="/killswitch" className="underline">unlock at /killswitch</a></span>
           )}
           <span className="ml-auto text-xs text-muted-foreground">
             updated_by: {draft.updated_by ?? "—"} · {draft.updated_at}

@@ -120,14 +120,14 @@ function tokenPairLabel(pool: PoolInfo): string {
   return `${t0}/${t1}`;
 }
 
-// Protocol badge colours — reuse same palette as DexesTab.
+// Protocol badge colours — reuse same palette as DexesTab (chart vars, theme-aware).
 const PROTOCOL_CLASSES: Record<string, string> = {
-  UNISWAP_V3: "bg-violet-500/15 text-violet-300 border-violet-500/40",
-  UNISWAP_V2: "bg-pink-500/15 text-pink-300 border-pink-500/40",
-  CURVE: "bg-amber-500/15 text-amber-300 border-amber-500/40",
-  BALANCER: "bg-sky-500/15 text-sky-300 border-sky-500/40",
+  UNISWAP_V3: "bg-chart-1/15 text-chart-1 border-chart-1/40",
+  UNISWAP_V2: "bg-chart-2/15 text-chart-2 border-chart-2/40",
+  CURVE: "bg-chart-4/15 text-chart-4 border-chart-4/40",
+  BALANCER: "bg-chart-3/15 text-chart-3 border-chart-3/40",
 };
-const PROTOCOL_FALLBACK = "bg-slate-500/15 text-slate-300 border-slate-500/40";
+const PROTOCOL_FALLBACK = "bg-muted text-muted-foreground border-border";
 
 function ProtocolBadge({ type }: { type: string }) {
   const cls = PROTOCOL_CLASSES[type] ?? PROTOCOL_FALLBACK;
@@ -433,7 +433,7 @@ export function PoolsTab({ chainId }: Props) {
                   </TableCell>
                   <TableCell className="text-center">
                     {pool.is_active ? (
-                      <span className="text-[10px] text-emerald-400 font-mono">active</span>
+                      <span className="text-[10px] text-success font-mono">active</span>
                     ) : (
                       <span className="text-[10px] text-muted-foreground font-mono">inactive</span>
                     )}

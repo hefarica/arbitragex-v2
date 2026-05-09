@@ -110,7 +110,7 @@ export function TokenAllowlistTab({ config, onSaved, adminToken, actor }: Props)
         </div>
         {msg && <p className="text-xs text-muted-foreground font-mono">{msg}</p>}
         {!hasSession && !msg && (
-          <p className="text-xs text-amber-400 font-mono">No admin session — <a href="/killswitch" className="underline">unlock at /killswitch</a></p>
+          <p className="text-xs text-warning font-mono">No admin session — <a href="/killswitch" className="underline">unlock at /killswitch</a></p>
         )}
       </CardContent>
     </Card>

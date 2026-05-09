@@ -44,13 +44,13 @@ const LIFECYCLE_TOOLTIP: Record<LifecycleStatus, string> = {
   defensive_only: "Detection-only protection for our own swaps. Forced-on by policy.",
 };
 
-// Tailwind classes per status — tuned so LIVE pops, others read as muted.
+// Tailwind classes per status — token-based, theme-aware.
 const LIFECYCLE_CLASSES: Record<LifecycleStatus, string> = {
-  live: "bg-emerald-500/15 text-emerald-300 border-emerald-500/40",
-  designed: "bg-sky-500/15 text-sky-300 border-sky-500/40",
-  scaffold: "bg-amber-500/15 text-amber-300 border-amber-500/40",
-  not_started: "bg-slate-500/15 text-slate-300 border-slate-500/40",
-  defensive_only: "bg-red-500/15 text-red-300 border-red-500/40",
+  live: "bg-success/15 text-success border-success/40",
+  designed: "bg-info/15 text-info border-info/40",
+  scaffold: "bg-warning/15 text-warning border-warning/40",
+  not_started: "bg-muted text-muted-foreground border-border",
+  defensive_only: "bg-destructive/15 text-destructive border-destructive/40",
 };
 
 interface Props {
@@ -113,7 +113,7 @@ export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor
         <div className="flex items-center gap-3">
           {msg && <span className="text-xs text-muted-foreground font-mono">{msg}</span>}
           {!hasSession && !msg && (
-            <span className="text-xs text-amber-400 font-mono">No admin session — <a href="/killswitch" className="underline">unlock at /killswitch</a></span>
+            <span className="text-xs text-warning font-mono">No admin session — <a href="/killswitch" className="underline">unlock at /killswitch</a></span>
           )}
           <Button onClick={onSave} disabled={!dirty || saving || !hasSession} title={!hasSession ? "Admin session required — open /killswitch first" : undefined}>
             {saving ? "Saving…" : "Save changes"}
@@ -132,7 +132,7 @@ export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor
           const toggleEnabled = status === "live" && !isDefensive;
           const switchChecked = isDefensive ? true : status === "live" ? isOn : false;
           return (
-            <Card key={s.kind} className={isDefensive ? "border-red-500/40" : undefined}>
+            <Card key={s.kind} className={isDefensive ? "border-destructive/40" : undefined}>
               <CardContent className="space-y-2 py-4">
                 <div className="flex items-start justify-between gap-2">
                   <div>

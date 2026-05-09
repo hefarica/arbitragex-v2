@@ -84,9 +84,9 @@ function buildFunnelStages(s: ScannerHeartbeatSnapshot): FunnelStage[] {
 }
 
 const TONE_CLASSES: Record<FunnelStage["tone"], { text: string; bar: string }> = {
-  emerald: { text: "text-emerald-500", bar: "bg-emerald-500/40" },
-  amber: { text: "text-amber-500", bar: "bg-amber-500/40" },
-  rose: { text: "text-rose-500", bar: "bg-rose-500/40" },
+  emerald: { text: "text-success", bar: "bg-success/40" },
+  amber: { text: "text-warning", bar: "bg-warning/40" },
+  rose: { text: "text-destructive", bar: "bg-destructive/40" },
   muted: { text: "text-muted-foreground", bar: "bg-muted-foreground/40" },
 };
 
@@ -99,7 +99,7 @@ export function PipelineFunnelCard({ snapshot, error, fetchedAt }: Props) {
             <ActivityIcon className="size-4" /> Scanner Pipeline Funnel
           </CardTitle>
           <CardDescription>
-            <span className="flex items-center gap-1.5 text-amber-600">
+            <span className="flex items-center gap-1.5 text-warning">
               <AlertCircleIcon className="size-3.5" />
               <span className="font-mono text-xs">{error}</span>
             </span>
@@ -138,7 +138,7 @@ export function PipelineFunnelCard({ snapshot, error, fetchedAt }: Props) {
       <CardHeader>
         <CardTitle className="flex items-center justify-between text-base">
           <span className="flex items-center gap-2">
-            <ActivityIcon className="size-4 text-emerald-500" />
+            <ActivityIcon className="size-4 text-success" />
             Scanner Pipeline Funnel · last {snapshot.period_secs}s
           </span>
           <span className="font-mono text-xs text-muted-foreground">{fmtAge(fetchedAt)}</span>
@@ -196,7 +196,7 @@ function Stat({
   positive?: boolean;
 }) {
   const display = signed ? (value >= 0 ? `+${value}` : `${value}`) : value.toString();
-  const tone = positive && value > 0 ? "text-emerald-500" : "text-muted-foreground";
+  const tone = positive && value > 0 ? "text-success" : "text-muted-foreground";
   return (
     <div>
       <div className="text-muted-foreground text-[10px] uppercase tracking-wider">{label}</div>

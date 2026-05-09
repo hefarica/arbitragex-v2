@@ -40,7 +40,7 @@ export function TokenChip({ token_address, info }: TokenChipProps) {
     return (
       <span className="inline-flex items-center gap-1.5">
         <DeterministicAvatar seed={token_address} className="size-5 rounded-full shrink-0" />
-        <span className="font-mono text-xs text-slate-400">{shortAddr(token_address)}</span>
+        <span className="font-mono text-xs text-muted-foreground">{shortAddr(token_address)}</span>
       </span>
     );
   }
@@ -64,7 +64,7 @@ export function TokenChip({ token_address, info }: TokenChipProps) {
             (e.currentTarget as HTMLImageElement).style.display = "none";
           }}
         />
-        <span className="font-mono text-xs text-slate-200">{label}</span>
+        <span className="font-mono text-xs text-foreground">{label}</span>
       </span>
     );
   }
@@ -74,7 +74,7 @@ export function TokenChip({ token_address, info }: TokenChipProps) {
     return (
       <span className="inline-flex items-center gap-1.5">
         <DeterministicAvatar seed={token_address} className="size-5 rounded-full shrink-0" />
-        <span className="font-mono text-xs text-slate-400">{shortAddr(token_address)}</span>
+        <span className="font-mono text-xs text-muted-foreground">{shortAddr(token_address)}</span>
       </span>
     );
   }
@@ -84,7 +84,7 @@ export function TokenChip({ token_address, info }: TokenChipProps) {
     return (
       <span className="inline-flex items-center gap-1.5">
         <DeterministicAvatar seed={token_address} className="size-5 rounded-full shrink-0" />
-        <span className="font-mono text-xs text-slate-200">{info.symbol!}</span>
+        <span className="font-mono text-xs text-foreground">{info.symbol!}</span>
       </span>
     );
   }
@@ -93,7 +93,7 @@ export function TokenChip({ token_address, info }: TokenChipProps) {
   return (
     <span className="inline-flex items-center gap-1.5">
       <DeterministicAvatar seed={token_address} className="size-5 rounded-full shrink-0" />
-      <span className="font-mono text-xs text-slate-400">{shortAddr(token_address)}</span>
+      <span className="font-mono text-xs text-muted-foreground">{shortAddr(token_address)}</span>
     </span>
   );
 }

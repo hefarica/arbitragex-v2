@@ -37,27 +37,27 @@ const STRATEGY_MAP: Record<StrategyKind, StrategyMeta> = {
   dex_arb: {
     label: "DEX ARB",
     className:
-      "bg-indigo-500/15 text-indigo-300 border border-indigo-500/30",
+      "bg-primary/10 text-primary border border-primary/30",
   },
   triangular: {
     label: "TRIANGULAR",
     className:
-      "bg-violet-500/15 text-violet-300 border border-violet-500/30",
+      "bg-accent text-accent-foreground border border-border",
   },
   backrun: {
     label: "BACKRUN",
     className:
-      "bg-amber-500/15 text-amber-300 border border-amber-500/30",
+      "bg-warning/10 text-warning border border-warning/30",
   },
   liquidation: {
     label: "LIQUIDATION",
     className:
-      "bg-rose-500/15 text-rose-300 border border-rose-500/30",
+      "bg-destructive/10 text-destructive border border-destructive/30",
   },
   flashloan_arb: {
     label: "FLASHLOAN",
     className:
-      "bg-cyan-500/15 text-cyan-300 border border-cyan-500/30",
+      "bg-info/10 text-info border border-info/30",
   },
 };
 
@@ -72,7 +72,7 @@ export function StrategyBadge({ strategy_kind }: StrategyBadgeProps) {
   // Defensive fallback per R8 fail-honest: surface the raw value, never hide it.
   if (!meta) {
     return (
-      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wide bg-slate-500/15 text-slate-300 border border-slate-500/30">
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wide bg-muted/60 text-muted-foreground border border-border">
         {String(strategy_kind)}
       </span>
     );

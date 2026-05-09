@@ -76,13 +76,13 @@ import {
   formatRiskOrDash,
 } from "@/lib/format";
 
-// ─── Tone → Tailwind colour map (used for PROFIT cell) ───────────────────────
+// ─── Tone → token-based class map (used for PROFIT cell) ─────────────────────
 const TONE_CLASS: Record<string, string> = {
-  positive: "text-emerald-400",
-  negative: "text-rose-400",
-  zero:     "text-slate-400",
-  neutral:  "text-slate-400",
-  pending:  "text-slate-600 italic",
+  positive: "text-success",
+  negative: "text-destructive",
+  zero:     "text-muted-foreground",
+  neutral:  "text-muted-foreground",
+  pending:  "text-muted-foreground/60 italic",
 };
 
 type FeedStatus = "POLLING" | "LIVE" | "ERROR";
@@ -180,29 +180,29 @@ export default function OpportunitiesClient({
   const rejectedCount = opportunities.filter((o) => o.status === "rejected").length;
 
   return (
-    <div className={`p-8 min-h-screen transition-colors duration-500 ${feedStatus === 'ERROR' ? 'bg-rose-950/20' : 'bg-[#020617]'} text-slate-200`}>
-      <div className="flex justify-between items-center border-b border-slate-800 pb-4 mb-8">
+    <div className={`p-8 min-h-screen transition-colors duration-500 text-foreground ${feedStatus === 'ERROR' ? 'bg-destructive/5' : ''}`}>
+      <div className="flex justify-between items-center border-b border-border pb-4 mb-8">
         <div>
-          <h1 className={`text-4xl font-extrabold tracking-tight bg-clip-text text-transparent ${feedStatus === 'ERROR' ? 'bg-gradient-to-r from-rose-500 to-red-600' : 'bg-gradient-to-r from-emerald-400 to-teal-400'}`}>
+          <h1 className={`text-4xl font-extrabold tracking-tight bg-clip-text text-transparent ${feedStatus === 'ERROR' ? 'bg-gradient-to-r from-destructive to-destructive/70' : 'bg-gradient-to-r from-primary to-success'}`}>
             Live MEV Feed
           </h1>
-          <p className="text-slate-500 mt-2 text-sm" suppressHydrationWarning>
+          <p className="text-muted-foreground mt-2 text-sm" suppressHydrationWarning>
             Polling edge every {POLL_INTERVAL_MS / 1000}s · {isMounted && lastRefresh ? `Last: ${lastRefresh.toLocaleTimeString()}` : "Loading..."}
           </p>
           {/* Counter: shown only after mount to avoid SSR mismatch */}
           {isMounted && (
-            <p className="text-xs mt-1 text-slate-500">
+            <p className="text-xs mt-1 text-muted-foreground">
               {viableOnly ? (
                 <span>
-                  <span className="text-emerald-400 font-semibold">{opportunities.length}</span> viable
+                  <span className="text-success font-semibold">{opportunities.length}</span> viable
                 </span>
               ) : (
                 <span>
-                  <span className="text-emerald-400 font-semibold">{viableCount}</span> viable
+                  <span className="text-success font-semibold">{viableCount}</span> viable
                   {" / "}
-                  <span className="text-slate-300 font-semibold">{opportunities.length}</span> total
+                  <span className="text-foreground font-semibold">{opportunities.length}</span> total
                   {rejectedCount > 0 && (
-                    <span className="text-rose-400"> ({rejectedCount} rejected)</span>
+                    <span className="text-destructive"> ({rejectedCount} rejected)</span>
                   )}
                 </span>
               )}
@@ -217,8 +217,8 @@ export default function OpportunitiesClient({
             onClick={() => onToggleViableOnly(!viableOnly)}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
               viableOnly
-                ? "bg-emerald-900/30 border-emerald-500/50 text-emerald-400 hover:bg-emerald-900/50"
-                : "bg-rose-900/20 border-rose-500/40 text-rose-400 hover:bg-rose-900/30"
+                ? "bg-success/10 border-success/40 text-success hover:bg-success/20"
+                : "bg-destructive/10 border-destructive/40 text-destructive hover:bg-destructive/20"
             }`}
             title={viableOnly ? "Showing viable only — click to show all including rejected" : "Showing all including rejected — click to show viable only"}
             aria-pressed={viableOnly ? "false" : "true"}
@@ -229,15 +229,15 @@ export default function OpportunitiesClient({
           <button
             type="button"
             onClick={fetchOpportunities}
-            className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors border border-slate-700"
+            className="p-2 rounded-lg bg-muted hover:bg-accent transition-colors border border-border"
             title="Force refresh"
           >
-            <RefreshCw size={16} className="text-slate-400" />
+            <RefreshCw size={16} className="text-muted-foreground" />
           </button>
           <div className={`flex items-center gap-2 px-4 py-2 rounded-full border shadow-lg ${
-            feedStatus === 'POLLING' ? 'bg-emerald-900/30 border-emerald-500/50 text-emerald-400' :
-            feedStatus === 'ERROR' ? 'bg-rose-900/50 border-rose-500/80 text-rose-400 shadow-rose-900/50 animate-pulse' :
-            'bg-cyan-900/30 border-cyan-500/50 text-cyan-400'
+            feedStatus === 'POLLING' ? 'bg-success/10 border-success/40 text-success' :
+            feedStatus === 'ERROR' ? 'bg-destructive/15 border-destructive/50 text-destructive animate-pulse' :
+            'bg-info/10 border-info/40 text-info'
           }`}>
             {feedStatus === 'POLLING' ? <Radio size={18} className="animate-pulse" /> : feedStatus === 'ERROR' ? <ShieldAlert size={18} /> : <Zap size={18} />}
             <span className="text-sm font-bold tracking-widest">{feedStatus}</span>
@@ -246,7 +246,7 @@ export default function OpportunitiesClient({
       </div>
 
       {feedStatus === 'ERROR' && (
-        <div className="mb-8 p-4 bg-rose-950/50 border border-rose-800 rounded-xl flex items-center gap-4 text-rose-300">
+        <div className="mb-8 p-4 bg-destructive/10 border border-destructive/30 rounded-xl flex items-center gap-4 text-destructive">
           <ShieldAlert size={24} />
           <div>
             <h3 className="font-bold">EDGE CONNECTION ERROR</h3>
@@ -256,13 +256,13 @@ export default function OpportunitiesClient({
       )}
 
       {feedStatus === 'POLLING' && opportunities.length === 0 && (
-        <div className="mb-8 p-4 bg-slate-800/50 border border-slate-700 rounded-xl flex items-center gap-4 text-slate-400 shadow-inner">
+        <div className="mb-8 p-4 bg-muted/50 border border-border rounded-xl flex items-center gap-4 text-muted-foreground shadow-inner">
           <div className="relative flex h-3 w-3">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-3 w-3 bg-success"></span>
           </div>
           <div>
-            <h3 className="font-bold text-emerald-400 tracking-wide">SCANNING MEMPOOL IN REAL-TIME</h3>
+            <h3 className="font-bold text-success tracking-wide">SCANNING MEMPOOL IN REAL-TIME</h3>
             <p className="text-sm mt-1">
               {viableOnly
                 ? "No viable opportunities yet. Toggle \"Show all\" to inspect rejected detections."
@@ -272,17 +272,17 @@ export default function OpportunitiesClient({
         </div>
       )}
 
-      <div className="bg-[#0f172a]/80 backdrop-blur-md border border-slate-800 rounded-2xl shadow-2xl overflow-hidden">
+      <div data-slot="card" className="bg-card text-card-foreground border border-border rounded-2xl shadow-2xl overflow-hidden">
         <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="bg-slate-900 text-slate-400 text-sm uppercase tracking-wider">
-              <th className="p-4 border-b border-slate-800">Age / Time</th>
-              <th className="p-4 border-b border-slate-800">Route</th>
-              <th className="p-4 border-b border-slate-800">Status</th>
-              <th className="p-4 border-b border-slate-800 text-right">Net Profit (USD)</th>
-              <th className="p-4 border-b border-slate-800 text-right">Net ROI</th>
-              <th className="p-4 border-b border-slate-800 text-center">Score</th>
-              <th className="p-4 border-b border-slate-800 text-center">Action</th>
+            <tr className="bg-muted text-muted-foreground text-sm uppercase tracking-wider">
+              <th className="p-4 border-b border-border">Age / Time</th>
+              <th className="p-4 border-b border-border">Route</th>
+              <th className="p-4 border-b border-border">Status</th>
+              <th className="p-4 border-b border-border text-right">Net Profit (USD)</th>
+              <th className="p-4 border-b border-border text-right">Net ROI</th>
+              <th className="p-4 border-b border-border text-center">Score</th>
+              <th className="p-4 border-b border-border text-center">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -302,23 +302,23 @@ export default function OpportunitiesClient({
                 return (
                   <motion.tr
                     key={opp.id}
-                    initial={{ opacity: 0, x: -20, backgroundColor: "rgba(16,185,129,0.2)" }}
-                    animate={{ opacity: 1, x: 0, backgroundColor: isCriticalTriage ? "rgba(234,179,8,0.05)" : "transparent" }}
+                    initial={{ opacity: 0, x: -20, backgroundColor: "oklch(0.78 0.13 215 / 0.2)" }}
+                    animate={{ opacity: 1, x: 0, backgroundColor: isCriticalTriage ? "oklch(0.82 0.14 75 / 0.05)" : "transparent" }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.5 }}
-                    className={`border-b hover:bg-slate-800/30 transition-all ${isCriticalTriage ? 'border-yellow-500/30 shadow-[inset_0_0_15px_rgba(234,179,8,0.05)] relative' : 'border-slate-800/50'}`}
+                    className={`border-b hover:bg-muted/40 transition-all ${isCriticalTriage ? 'border-warning/30 relative' : 'border-border/50'}`}
                   >
-                    {/* ── AGE / TIME column — UNCHANGED ── */}
+                    {/* ── AGE / TIME column ── */}
                     <td className="p-4 font-mono text-xs">
                       {isCriticalTriage && (
-                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-yellow-400 to-emerald-400 animate-pulse"></div>
+                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-warning to-success animate-pulse"></div>
                       )}
                       <div className="flex flex-col gap-1">
-                        <div className={`flex items-center gap-1.5 font-bold ${isStale ? 'text-rose-400' : 'text-emerald-400'}`}>
+                        <div className={`flex items-center gap-1.5 font-bold ${isStale ? 'text-destructive' : 'text-success'}`}>
                           {isStale ? <AlertTriangle size={12} className="animate-pulse" /> : <Clock size={12} />}
                           <span suppressHydrationWarning>{isMounted ? `${ageSecs}s ago` : '--'}</span>
                         </div>
-                        <div className="text-slate-500" suppressHydrationWarning>
+                        <div className="text-muted-foreground" suppressHydrationWarning>
                           {isMounted ? new Date(opp.detected_at).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--:--'}
                         </div>
                       </div>
@@ -334,7 +334,7 @@ export default function OpportunitiesClient({
                             info={opp.token_in_info}
                             chain_id={opp.chain_id}
                           />
-                          <span className="text-slate-600 text-xs" aria-hidden="true">→</span>
+                          <span className="text-muted-foreground/60 text-xs" aria-hidden="true">→</span>
                           <TokenChip
                             token_address={opp.token_out}
                             info={opp.token_out_info}
@@ -344,10 +344,10 @@ export default function OpportunitiesClient({
                         {/* Strategy badge + DEX path */}
                         <div className="flex items-center gap-2 flex-wrap">
                           <StrategyBadge strategy_kind={opp.strategy_kind} />
-                          <span className="text-xs font-mono text-indigo-400">
+                          <span className="text-xs font-mono text-primary">
                             {opp.dex_a}
                             {opp.dex_b != null && (
-                              <><span className="text-slate-500"> → </span>{opp.dex_b}</>
+                              <><span className="text-muted-foreground"> → </span>{opp.dex_b}</>
                             )}
                           </span>
                         </div>
@@ -364,8 +364,8 @@ export default function OpportunitiesClient({
                       />
                       {/* R8 fail-honest: show rejection reason as visible badge in show-all mode */}
                       {!viableOnly && opp.rejection_reason && (
-                        <span className="mt-1 flex items-center gap-1 text-xs text-rose-400 font-mono">
-                          <span className="inline-block w-1 h-1 rounded-full bg-rose-400 flex-shrink-0" aria-hidden="true" />
+                        <span className="mt-1 flex items-center gap-1 text-xs text-destructive font-mono">
+                          <span className="inline-block w-1 h-1 rounded-full bg-destructive flex-shrink-0" aria-hidden="true" />
                           {opp.rejection_reason}
                         </span>
                       )}
@@ -374,28 +374,28 @@ export default function OpportunitiesClient({
                     {/* ── NET PROFIT column — R8 fail-honest via formatProfitUSD ── */}
                     <td className="p-4 text-right" data-col="profit">
                       <div className="group relative inline-block cursor-help">
-                        <span className={`font-mono font-bold text-base drop-shadow-md border-b border-dashed border-current/30 ${TONE_CLASS[profit.tone] ?? 'text-slate-400'}`}>
+                        <span className={`font-mono font-bold text-base drop-shadow-md border-b border-dashed border-current/30 ${TONE_CLASS[profit.tone] ?? 'text-muted-foreground'}`}>
                           {profit.display}
                         </span>
                         {/* Tooltip: only rendered when profit data is present */}
                         {opp.expected_profit_usd != null && (
-                          <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-slate-900 border border-slate-700 rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 text-left">
-                            <div className="text-xs text-slate-300 font-sans">
-                              <div className="flex justify-between border-b border-slate-700 pb-1 mb-1">
+                          <div data-slot="popover-content" className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-popover text-popover-foreground border border-border rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 text-left">
+                            <div className="text-xs font-sans">
+                              <div className="flex justify-between border-b border-border pb-1 mb-1">
                                 <span>Ganancia Neta (Est):</span>
-                                <span className={`font-mono ${TONE_CLASS[profit.tone] ?? 'text-slate-400'}`}>{profit.display}</span>
+                                <span className={`font-mono ${TONE_CLASS[profit.tone] ?? 'text-muted-foreground'}`}>{profit.display}</span>
                               </div>
                               {opp.bridge_fee_usd != null && (
-                                <div className="flex justify-between text-slate-400">
+                                <div className="flex justify-between text-muted-foreground">
                                   <span>Bridge Fee:</span>
                                   <span className="font-mono">${opp.bridge_fee_usd.toFixed(4)}</span>
                                 </div>
                               )}
-                              <div className="flex justify-between text-slate-500">
+                              <div className="flex justify-between text-muted-foreground/70">
                                 <span>Desglose de Gas:</span>
                                 <span className="italic">Pendiente Sim.</span>
                               </div>
-                              <div className="flex justify-between text-slate-500">
+                              <div className="flex justify-between text-muted-foreground/70">
                                 <span>Bribe (MEV):</span>
                                 <span className="italic">Pendiente Sim.</span>
                               </div>
@@ -406,24 +406,24 @@ export default function OpportunitiesClient({
                     </td>
 
                     {/* ── NET ROI column — R8 fail-honest via formatPctOrDash ── */}
-                    <td className="p-4 text-right font-mono text-slate-300" data-col="roi">
-                      <span className="bg-slate-800/80 px-2 py-1 rounded border border-slate-700/50">
+                    <td className="p-4 text-right font-mono text-foreground" data-col="roi">
+                      <span className="bg-muted/50 px-2 py-1 rounded border border-border">
                         {formatPctOrDash(opp.roi_pct)}
                       </span>
                     </td>
 
                     {/* ── SCORE column — R8 fail-honest via formatRiskOrDash ── */}
                     <td className="p-4 text-center" data-col="risk">
-                      <span className={`px-3 py-1 rounded-full text-xs font-bold border ${scorePercent > 95 ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50 shadow-[0_0_15px_rgba(234,179,8,0.3)] animate-pulse' : scorePercent > 70 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-blue-500/10 text-blue-400 border-blue-500/30'}`}>
+                      <span className={`px-3 py-1 rounded-full text-xs font-bold border ${scorePercent > 95 ? 'bg-warning/20 text-warning border-warning/50 animate-pulse' : scorePercent > 70 ? 'bg-success/10 text-success border-success/30' : 'bg-info/10 text-info border-info/30'}`}>
                         {formatRiskOrDash(opp.risk_score)}
                       </span>
                     </td>
 
-                    {/* ── ACTION column — UNCHANGED ── */}
+                    {/* ── ACTION column ── */}
                     <td className="p-4 text-center">
                       <button
                         type="button"
-                        className={`px-4 py-1.5 rounded text-white text-xs font-bold transition-colors shadow-lg ${isCriticalTriage ? 'bg-gradient-to-r from-yellow-600 to-amber-500 hover:from-yellow-500 hover:to-amber-400 shadow-yellow-900/40' : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-900/20'}`}
+                        className={`px-4 py-1.5 rounded text-xs font-bold transition-colors shadow-lg ${isCriticalTriage ? 'bg-warning text-warning-foreground hover:bg-warning/90' : 'bg-primary text-primary-foreground hover:bg-primary/90'}`}
                       >
                         SIMULATE
                       </button>
@@ -434,7 +434,7 @@ export default function OpportunitiesClient({
             </AnimatePresence>
             {opportunities.length === 0 && (
               <tr>
-                <td colSpan={7} className="p-8 text-center text-slate-500 italic">No opportunities detected. Searcher scanning mempool...</td>
+                <td colSpan={7} className="p-8 text-center text-muted-foreground italic">No opportunities detected. Searcher scanning mempool...</td>
               </tr>
             )}
           </tbody>

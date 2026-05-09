@@ -54,62 +54,67 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* Light theme — Anthropic cream base */
+/* Light theme — Aurora Glass mirror (pure white + cyan + mint + aquamarine) */
 :root {
   --radius: 0.625rem;
 
-  --background: oklch(0.99 0.005 85);
-  --foreground: oklch(0.145 0.01 65);
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.18 0.04 260);
 
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0.01 65);
+  --card: oklch(0.99 0.01 220 / 75%);
+  --card-foreground: oklch(0.18 0.04 260);
 
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0.01 65);
+  --popover: oklch(1 0 0 / 85%);
+  --popover-foreground: oklch(0.18 0.04 260);
 
-  /* Anthropic orange as primary */
-  --primary: oklch(0.66 0.17 39);
-  --primary-foreground: oklch(0.985 0.002 80);
+  --primary: oklch(0.55 0.16 215);
+  --primary-foreground: oklch(1 0 0);
 
-  --secondary: oklch(0.96 0.006 75);
-  --secondary-foreground: oklch(0.205 0.01 60);
+  --secondary: oklch(0.96 0.015 220);
+  --secondary-foreground: oklch(0.18 0.04 260);
 
-  --muted: oklch(0.96 0.006 75);
-  --muted-foreground: oklch(0.53 0.02 55);
+  --muted: oklch(0.96 0.015 220);
+  --muted-foreground: oklch(0.45 0.025 220);
 
-  --accent: oklch(0.94 0.02 55);
-  --accent-foreground: oklch(0.205 0.01 60);
+  --accent: oklch(0.92 0.04 215);
+  --accent-foreground: oklch(0.18 0.04 260);
 
-  --destructive: oklch(0.577 0.22 25);
-  --destructive-foreground: oklch(0.99 0.005 85);
+  --destructive: oklch(0.55 0.13 180);
+  --destructive-foreground: oklch(1 0 0);
 
-  --success: oklch(0.58 0.11 145);
-  --success-foreground: oklch(0.99 0.005 85);
+  --success: oklch(0.55 0.16 160);
+  --success-foreground: oklch(1 0 0);
 
-  --warning: oklch(0.74 0.15 75);
-  --warning-foreground: oklch(0.145 0.01 65);
+  --warning: oklch(0.65 0.16 75);
+  --warning-foreground: oklch(0.18 0.04 260);
 
-  --info: oklch(0.66 0.10 240);
-  --info-foreground: oklch(0.99 0.005 85);
+  --info: oklch(0.55 0.16 215);
+  --info-foreground: oklch(1 0 0);
 
-  --border: oklch(0.92 0.008 70);
-  --input: oklch(0.92 0.008 70);
-  --ring: oklch(0.66 0.17 39);
+  --border: oklch(0.90 0.015 220);
+  --input: oklch(0.94 0.015 220);
+  --ring: oklch(0.55 0.16 215);
 
-  --chart-1: oklch(0.66 0.17 39);
-  --chart-2: oklch(0.66 0.10 240);
-  --chart-3: oklch(0.58 0.11 145);
-  --chart-4: oklch(0.74 0.15 75);
-  --chart-5: oklch(0.577 0.22 25);
+  --chart-1: oklch(0.55 0.16 215); /* cyan */
+  --chart-2: oklch(0.55 0.16 160); /* mint */
+  --chart-3: oklch(0.45 0.18 260); /* royal */
+  --chart-4: oklch(0.65 0.16 75);  /* amber */
+  --chart-5: oklch(0.55 0.20 330); /* magenta */
 
-  --sidebar: oklch(0.97 0.006 75);
-  --sidebar-foreground: oklch(0.145 0.01 65);
-  --sidebar-primary: oklch(0.66 0.17 39);
-  --sidebar-primary-foreground: oklch(0.985 0.002 80);
-  --sidebar-accent: oklch(0.94 0.02 55);
-  --sidebar-accent-foreground: oklch(0.205 0.01 60);
-  --sidebar-border: oklch(0.92 0.008 70);
-  --sidebar-ring: oklch(0.66 0.17 39);
+  --sidebar: oklch(0.98 0.01 220 / 80%);
+  --sidebar-foreground: oklch(0.18 0.04 260);
+  --sidebar-primary: oklch(0.55 0.16 215);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.94 0.025 220 / 80%);
+  --sidebar-accent-foreground: oklch(0.18 0.04 260);
+  --sidebar-border: oklch(0.90 0.015 220);
+  --sidebar-ring: oklch(0.55 0.16 215);
+
+  /* Aurora — pale, low opacity for pure-white domination */
+  --aurora-1: oklch(0.85 0.06 215);
+  --aurora-2: oklch(0.85 0.07 160);
+  --aurora-3: oklch(0.82 0.06 260);
+  --aurora-opacity: 0.25;
 }
 
 /* Dark theme — Aurora Glass (navy → cyan → mint) */
@@ -165,6 +170,12 @@
   --sidebar-accent-foreground: oklch(0.97 0.012 220);
   --sidebar-border: oklch(1 0 0 / 12%);
   --sidebar-ring: oklch(0.78 0.13 215);
+
+  /* Aurora — saturated, higher opacity for navy backdrop */
+  --aurora-1: oklch(0.78 0.13 215);
+  --aurora-2: oklch(0.78 0.16 160);
+  --aurora-3: oklch(0.55 0.18 260);
+  --aurora-opacity: 0.55;
 }
 
 @layer base {
@@ -201,22 +212,22 @@
   position: absolute;
   border-radius: 9999px;
   filter: blur(80px);
-  opacity: 0.55;
+  opacity: var(--aurora-opacity);
   will-change: transform;
 }
 .aurora-blob-1 {
   width: 60vw; height: 60vw; top: -20vw; left: -10vw;
-  background: radial-gradient(circle, oklch(0.78 0.13 215) 0%, transparent 70%);
+  background: radial-gradient(circle, var(--aurora-1) 0%, transparent 70%);
   animation: aurora-pan-1 22s ease-in-out infinite;
 }
 .aurora-blob-2 {
   width: 50vw; height: 50vw; bottom: -15vw; right: -5vw;
-  background: radial-gradient(circle, oklch(0.78 0.16 160) 0%, transparent 70%);
+  background: radial-gradient(circle, var(--aurora-2) 0%, transparent 70%);
   animation: aurora-pan-2 26s ease-in-out infinite;
 }
 .aurora-blob-3 {
   width: 45vw; height: 45vw; top: 30vh; left: 30vw;
-  background: radial-gradient(circle, oklch(0.55 0.18 260) 0%, transparent 70%);
+  background: radial-gradient(circle, var(--aurora-3) 0%, transparent 70%);
   animation: aurora-pan-3 18s ease-in-out infinite;
 }
 @keyframes aurora-pan-1 {
@@ -244,13 +255,13 @@
    This rule only adds backdrop-filter blur for the frosted-glass effect.
    ============================================================ */
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
-  .dark [data-slot="card"],
-  .dark [data-slot="select-content"],
-  .dark [data-slot="sheet-content"] {
+  [data-slot="card"],
+  [data-slot="select-content"],
+  [data-slot="sheet-content"] {
     -webkit-backdrop-filter: blur(20px) saturate(180%);
     backdrop-filter: blur(20px) saturate(180%);
   }
-  .dark .lg\:bg-sidebar {
+  .lg\:bg-sidebar {
     -webkit-backdrop-filter: blur(24px) saturate(180%);
     backdrop-filter: blur(24px) saturate(180%);
   }

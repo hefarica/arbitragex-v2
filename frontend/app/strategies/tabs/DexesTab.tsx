@@ -100,14 +100,14 @@ function fmtPoolCount(n: number | null | undefined): { value: string; muted: boo
   return { value: String(n), muted: false };
 }
 
-// Protocol badge colours — tuned for dark dashboards.
+// Protocol badge colours — chart palette for visual diversity, theme-aware.
 const PROTOCOL_CLASSES: Record<string, string> = {
-  UNISWAP_V3: "bg-violet-500/15 text-violet-300 border-violet-500/40",
-  UNISWAP_V2: "bg-pink-500/15 text-pink-300 border-pink-500/40",
-  CURVE: "bg-amber-500/15 text-amber-300 border-amber-500/40",
-  BALANCER: "bg-sky-500/15 text-sky-300 border-sky-500/40",
+  UNISWAP_V3: "bg-chart-1/15 text-chart-1 border-chart-1/40",
+  UNISWAP_V2: "bg-chart-2/15 text-chart-2 border-chart-2/40",
+  CURVE: "bg-chart-4/15 text-chart-4 border-chart-4/40",
+  BALANCER: "bg-chart-3/15 text-chart-3 border-chart-3/40",
 };
-const PROTOCOL_FALLBACK = "bg-slate-500/15 text-slate-300 border-slate-500/40";
+const PROTOCOL_FALLBACK = "bg-muted text-muted-foreground border-border";
 
 function ProtocolBadge({ type }: { type: string }) {
   const cls = PROTOCOL_CLASSES[type] ?? PROTOCOL_FALLBACK;
@@ -274,7 +274,7 @@ export function DexesTab({ config, onSaved, adminToken, actor }: Props) {
           <CardTitle>
             DEX Selection · {selectedChainName}
             {selectedChainId !== configChainId && (
-              <span className="ml-2 text-xs font-normal text-amber-400 font-mono">
+              <span className="ml-2 text-xs font-normal text-warning font-mono">
                 (browsing — Save targets chain {configChainId})
               </span>
             )}
@@ -384,7 +384,7 @@ export function DexesTab({ config, onSaved, adminToken, actor }: Props) {
                         <td className="px-3 py-2.5">
                           <ProtocolBadge type={dex.protocol_type} />
                         </td>
-                        <td className={`px-3 py-2.5 text-right tabular-nums${fmtPoolCount(dex.pool_count).muted ? " text-slate-400" : ""}`}>
+                        <td className={`px-3 py-2.5 text-right tabular-nums${fmtPoolCount(dex.pool_count).muted ? " text-muted-foreground" : ""}`}>
                           {fmtPoolCount(dex.pool_count).value}
                         </td>
                         <td className="px-3 py-2.5 text-right tabular-nums">
@@ -398,7 +398,7 @@ export function DexesTab({ config, onSaved, adminToken, actor }: Props) {
                         </td>
                         <td className="px-3 py-2.5 text-center">
                           {dex.is_active ? (
-                            <span className="text-[10px] text-emerald-400 font-mono">active</span>
+                            <span className="text-[10px] text-success font-mono">active</span>
                           ) : (
                             <span className="text-[10px] text-muted-foreground font-mono">inactive</span>
                           )}
@@ -423,7 +423,7 @@ export function DexesTab({ config, onSaved, adminToken, actor }: Props) {
           </Button>
           {msg && <span className="text-xs font-mono text-muted-foreground">{msg}</span>}
           {!hasSession && !msg && (
-            <span className="text-xs text-amber-400 font-mono">
+            <span className="text-xs text-warning font-mono">
               No admin session —{" "}
               <a href="/killswitch" className="underline">unlock at /killswitch</a>
             </span>

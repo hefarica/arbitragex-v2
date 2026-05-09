@@ -51,10 +51,10 @@ export function CrossChainSlot({ opp }: CrossChainSlotProps) {
 
   return (
     <span className="inline-flex items-center gap-1 text-xs font-mono">
-      <span className="text-slate-400">{chainIn}</span>
-      <span className="text-slate-600" aria-hidden="true">→</span>
-      <span className="text-slate-400">{chainOut}</span>
-      <span className="ml-1 px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 text-xs font-bold uppercase">
+      <span className="text-muted-foreground">{chainIn}</span>
+      <span className="text-muted-foreground/60" aria-hidden="true">→</span>
+      <span className="text-muted-foreground">{chainOut}</span>
+      <span className="ml-1 px-1.5 py-0.5 rounded bg-info/15 text-info border border-info/30 text-xs font-bold uppercase">
         {bridge}
       </span>
     </span>
