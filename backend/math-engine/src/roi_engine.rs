@@ -378,8 +378,8 @@ mod tests {
 
     // ----------------------------------------------------------------
     // 7. Combined: exact arithmetic check.
-    //    gross=$100, gas=$2, flashloan=$0, lp=$1, slippage(impact)=$1,
-    //    failure=$0, capital=$0.50, ops=$0.01  →  net=$95.49
+    //    gross=$100, gas=$2, flashloan=$0, lp=$1, slippage(impact)=$1.10,
+    //    failure=$0, capital=$0.50, ops=$0.01  →  net=$95.39
     // ----------------------------------------------------------------
     #[test]
     fn combined_all_components_exact_arithmetic() {

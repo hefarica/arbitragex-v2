@@ -39,8 +39,10 @@ ALTER TABLE trading_config
 -- ────────────────────────────────────────────────────────────────────────────
 
 ALTER TABLE trading_config
+    DROP CONSTRAINT IF EXISTS trading_config_spread_sanity_mult_check,
     ADD CONSTRAINT trading_config_spread_sanity_mult_check
         CHECK (spread_sanity_mult >= 1.0 AND spread_sanity_mult <= 100.0),
+    DROP CONSTRAINT IF EXISTS trading_config_p_copied_max_check,
     ADD CONSTRAINT trading_config_p_copied_max_check
         CHECK (p_copied_max >= 0.0 AND p_copied_max <= 1.0);
 

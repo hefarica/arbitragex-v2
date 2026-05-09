@@ -96,11 +96,13 @@ impl SubmitEngine {
                 route_tokens: &route_tokens,
                 route_factories: &route_factories,
                 expected_profit_usd: opp.expected_profit_usd.unwrap_or(0.0),
-                // estimated_gas_usd is not yet carried by Opportunity.
-                // Passing 0.0 is conservative: net = profit - 0 = profit,
-                // so the floor check uses gross profit. This is safe because
-                // the floor is an operator-set minimum net profit; the gas
-                // deduction will be added when Opportunity carries gas fields.
+                // TODO(H2 review 2026-05-08): MAINNET LANDMINE — must fix before paper_mode=false.
+                // estimated_gas_usd: 0.0 makes Check 7 compute net = profit - 0 = profit, so the
+                // floor gate uses GROSS profit, not net. This is permissive (not "conservative"
+                // as previous comment claimed). Safe today because Check 2 (paper_mode) intercepts
+                // first. Before mainnet flip: either populate estimated_gas_usd from Opportunity's
+                // gas fields, or guarantee that opp.expected_profit_usd already carries net-after-
+                // gas (verified via OpportunityEvidence.net_expected_profit propagation).
                 estimated_gas_usd: 0.0,
                 // expected_slippage_pct is not yet in Opportunity; 0.0 means
                 // check 10 always passes — no false blocks until the field lands.

@@ -112,13 +112,14 @@ async fn main() -> anyhow::Result<()> {
     // wait_for_inclusion) now route through the pool so the circuit breaker
     // and EWMA-ranked failover fire on production traffic.
     //
-    // spawn_health_loop is called exactly ONCE here. The JoinHandle is held
-    // for the lifetime of main so it is not dropped prematurely.
+    // spawn_health_loop spawns a detached tokio task; dropping the JoinHandle
+    // does not cancel it (tokio 1.x semantics — the task continues until process
+    // exit). The match-arm-scoped `_health_task` binding therefore documents
+    // intent only; the loop's lifetime is the process, not the binding.
     let rpc_pool: Option<Arc<HttpRpcPool>> = match HttpRpcPool::from_env(chain_id).await {
         Ok(Some(pool)) => {
             let pool = Arc::new(pool);
-            // Health loop must start before the first pick(); kept alive via
-            // the binding in `main` scope.
+            // Health loop runs until process exit (tokio detaches on drop).
             let _health_task = pool.spawn_health_loop();
             // Log the initial best-pick at boot so the operator can confirm
             // the pool is healthy before the first real submission.
