@@ -295,6 +295,26 @@ const TradingConfigBaseFields = {
   // null = all DEXes enabled (default). Array of UUIDs restricts the scan.
   enabled_dex_ids: z.array(z.string().uuid()).nullable().optional(),
   enabled: z.boolean(),
+  // ── Net Profit Gate — Sprint A+B+C (migrations 047+048) ──────────────
+  // Capital cost fields (Sprint A).
+  // capital_cost_rate_annual_pct: hurdle rate for capital deployed.
+  //   0 = ignore (appropriate for flash-loan arb where capital isn't locked).
+  //   Set > 0 to require profit > (capital × rate/8760) per opportunity.
+  capital_cost_rate_annual_pct: z.number().min(0).max(50).optional(),
+  // ops_overhead_usd_per_attempt: amortised infra/RPC cost per scored attempt.
+  //   Deducted from gross profit before the net_profit gate comparison.
+  ops_overhead_usd_per_attempt: z.number().min(0).max(100).optional(),
+  // Spread sanity gate (Sprint B).
+  // spread_sanity_mult: reject if AMM-reported spread > oracle reference × mult.
+  //   Default 3.0 = flag anything that looks 3× wider than oracle says it should be.
+  spread_sanity_mult: z.number().min(1).max(100).optional(),
+  // p_copied probability model (Sprint C).
+  // p_copied_volume_threshold_usd: 24h pool volume at which copy probability = 0.5.
+  //   Lower value → model assumes more copy-trading at low volumes.
+  p_copied_volume_threshold_usd: z.number().positive().optional(),
+  // p_copied_max: hard ceiling on P(opportunity is a copy-trade front-run).
+  //   0.5 = reject any opportunity where model assigns ≥50% copy probability.
+  p_copied_max: z.number().min(0).max(1).optional(),
   updated_at: z.string(),
   updated_by: z.string().nullable(),
 };
