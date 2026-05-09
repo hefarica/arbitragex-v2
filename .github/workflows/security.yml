@@ -1,0 +1,55 @@
+name: Security Scans
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly scan Monday 06:00 UTC — catches new advisories between pushes
+    - cron: '0 6 * * 1'
+
+jobs:
+  cargo-audit:
+    name: cargo audit (Rust advisories)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.75"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo audit
+        working-directory: backend
+        run: cargo audit
+        # TODO: audit findings exist on day-1 (ethers v2 is archived, revm 3.5 advisory).
+        # Non-blocking until advisory list is reviewed and RUSTSEC exceptions are declared.
+        # See: https://rustsec.org — track in follow-up issue.
+        continue-on-error: true
+
+  gitleaks:
+    name: gitleaks (secrets scan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history required: gitleaks scans all commits, not just the tip.
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # gitleaks is blocking — secrets in history is a hard failure.
+        # GITHUB_TOKEN is sufficient for public/private repo scan.

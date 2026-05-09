@@ -1,0 +1,58 @@
+name: TypeScript CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'shared-ts/**'
+      - 'backend/api-server/**'
+      - 'backend/selector-api/**'
+      - 'frontend/**'
+      - 'edge/worker/**'
+      - 'edge/dev-local/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/typescript.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'shared-ts/**'
+      - 'backend/api-server/**'
+      - 'backend/selector-api/**'
+      - 'frontend/**'
+      - 'edge/worker/**'
+      - 'edge/dev-local/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/typescript.yml'
+
+jobs:
+  typecheck:
+    name: tsc --noEmit (all workspaces)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          # Root package-lock.json (lockfileVersion 3) covers all npm workspaces.
+          cache: npm
+
+      - name: Install all workspace dependencies
+        # Single npm ci at root resolves all workspaces:
+        #   shared-ts, backend/api-server, backend/selector-api,
+        #   edge/worker, edge/dev-local, frontend
+        run: npm ci
+
+      - name: Typecheck all workspaces
+        # npm --workspaces --if-present skips packages without a typecheck script.
+        run: npm run typecheck --workspaces --if-present
+
+      - name: Unit tests (workspaces)
+        # Vitest + Jest tests for shared-ts, api-server, etc.
+        run: npm test --workspaces --if-present
+        # TODO: track which workspace test suites are stable; tighten once CI is green 5x
+        continue-on-error: true

@@ -1,0 +1,62 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/rust.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/rust.yml'
+
+jobs:
+  check:
+    name: cargo check + clippy + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # Pinned to workspace rust-version (backend/Cargo.toml).
+          # Update here when workspace rust-version is bumped.
+          toolchain: "1.75"
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: cargo check (workspace)
+        run: cargo check --workspace --locked
+
+      - name: cargo fmt (check only)
+        run: cargo fmt --all -- --check
+        # TODO: pre-existing formatting drift; tighten to required once cleaned up
+        continue-on-error: true
+
+      - name: cargo clippy (workspace)
+        run: cargo clippy --workspace --locked -- -D warnings
+        # TODO: unknown baseline of clippy warnings on day-1; tighten once resolved
+        continue-on-error: true
+
+      - name: cargo test --lib (workspace)
+        # --lib runs only unit tests in lib targets, skipping integration tests
+        # that require a live PostgreSQL or Redis (not available in CI here).
+        # sqlx compile-time checked queries are excluded by DATABASE_URL stub.
+        run: cargo test --workspace --locked --lib
+        env:
+          # Satisfies sqlx offline-mode guard at compile time; no real DB needed.
+          DATABASE_URL: postgres://test:test@localhost/arbitragex_test
+          REDIS_URL: redis://localhost:6379
+          # Required by searcher-rs boot guard (RULE 02)
+          SIM_SIGNER_ADDRESS: "0x000000000000000000000000000000000000dead"

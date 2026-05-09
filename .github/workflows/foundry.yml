@@ -1,0 +1,54 @@
+name: Foundry CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'contracts/**'
+      - '.github/workflows/foundry.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'contracts/**'
+      - '.github/workflows/foundry.yml'
+
+jobs:
+  test:
+    name: forge build + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: contracts
+
+    steps:
+      - uses: actions/checkout@v4
+        # No submodules: contracts/lib/ is gitignored and managed via forge install.
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: forge install dependencies
+        # contracts/lib/ is gitignored (contracts/.gitignore: lib/).
+        # Three libs required by remappings.txt:
+        #   @openzeppelin/contracts/  => lib/openzeppelin-contracts/contracts/
+        #   @openzeppelin/contracts-upgradeable/ => lib/openzeppelin-contracts-upgradeable/contracts/
+        #   forge-std/                => lib/forge-std/src/
+        # --no-git avoids nested .git repos; --no-commit avoids dirty worktree.
+        run: |
+          forge install OpenZeppelin/openzeppelin-contracts --no-git --no-commit
+          forge install OpenZeppelin/openzeppelin-contracts-upgradeable --no-git --no-commit
+          forge install foundry-rs/forge-std --no-git --no-commit
+
+      - name: forge build (with sizes)
+        run: forge build --sizes
+
+      - name: forge test (verbose)
+        run: forge test -vv
+        env:
+          # forge test skips fork tests without RPC; mainnet/sepolia fork tests
+          # are skipped automatically when these are absent.
+          MAINNET_RPC_URL: ""
+          SEPOLIA_RPC_URL: ""
