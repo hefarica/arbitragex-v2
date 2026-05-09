@@ -63,6 +63,18 @@ const TradingConfigSchema = z
     // NULL = "use all is_active dexes" (backwards-compatible default).
     enabled_dex_ids: z.array(z.string().uuid()).max(256).nullable().optional(),
 
+    // Migration 047 (BE-01 Sprint A): cost-component scalars.
+    // Bounds match DB CHECK constraints exactly.
+    capital_cost_rate_annual_pct: z.number().min(0.0).max(50.0).default(0.0),
+    ops_overhead_usd_per_attempt: z.number().min(0.0).max(100.0).default(0.01),
+
+    // Migration 048 (BE-01 Sprint C): spread sanity gate (Comp. 9) + p_copied heuristic (Comp. 5).
+    // Bounds match DB CHECK constraints exactly. p_copied_volume_threshold_usd has no DB CHECK
+    // but the heuristic requires > 0 (log10 undefined at 0); enforced via Zod .positive().
+    spread_sanity_mult: z.number().min(1.0).max(100.0).default(3.0),
+    p_copied_volume_threshold_usd: z.number().positive().default(1_000_000.0),
+    p_copied_max: z.number().min(0.0).max(1.0).default(0.5),
+
     enabled: z.boolean().default(true),
   })
   .superRefine((val, ctx) => {
@@ -122,6 +134,12 @@ interface DbRow {
   flashloan_fee_pct: string;
   enabled_strategies: string[];
   enabled_dex_ids: string[] | null;
+  // Migration 047 + 048: pg returns NUMERIC as string; cast in rowToRedisState.
+  capital_cost_rate_annual_pct: string;
+  ops_overhead_usd_per_attempt: string;
+  spread_sanity_mult: string;
+  p_copied_volume_threshold_usd: string;
+  p_copied_max: string;
   enabled: boolean;
   updated_at: Date;
   updated_by: string;
@@ -160,6 +178,12 @@ function rowToRedisState(row: DbRow): Record<string, unknown> {
     flashloan_fee_pct: Number(row.flashloan_fee_pct),
     enabled_strategies: row.enabled_strategies,
     enabled_dex_ids: row.enabled_dex_ids ?? null,
+    // Migration 047 + 048: cast NUMERIC strings to numbers for Redis JSON / Rust deserialise.
+    capital_cost_rate_annual_pct: Number(row.capital_cost_rate_annual_pct),
+    ops_overhead_usd_per_attempt: Number(row.ops_overhead_usd_per_attempt),
+    spread_sanity_mult: Number(row.spread_sanity_mult),
+    p_copied_volume_threshold_usd: Number(row.p_copied_volume_threshold_usd),
+    p_copied_max: Number(row.p_copied_max),
     enabled: row.enabled,
     updated_at: row.updated_at.toISOString(),
     updated_by: row.updated_by,
@@ -192,7 +216,10 @@ export function buildTradingConfigRouter(deps: Deps): Router {
                 min_landing_probability, min_liquidity_confidence, max_token_risk_score,
                 gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
                 max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
-                enabled_strategies, enabled_dex_ids, enabled,
+                enabled_strategies, enabled_dex_ids,
+                capital_cost_rate_annual_pct, ops_overhead_usd_per_attempt,
+                spread_sanity_mult, p_copied_volume_threshold_usd, p_copied_max,
+                enabled,
                 updated_at, updated_by, created_at
            FROM trading_config
           WHERE chain_id = $1`,
@@ -249,11 +276,14 @@ export function buildTradingConfigRouter(deps: Deps): Router {
               min_landing_probability, min_liquidity_confidence, max_token_risk_score,
               gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
               max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
-              enabled_strategies, enabled_dex_ids, enabled, updated_by
+              enabled_strategies, enabled_dex_ids, enabled, updated_by,
+              capital_cost_rate_annual_pct, ops_overhead_usd_per_attempt,
+              spread_sanity_mult, p_copied_volume_threshold_usd, p_copied_max
             )
             VALUES (
               $1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb,$9::jsonb,$10,$11,
-              $12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24::uuid[],$25,$26
+              $12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24::uuid[],$25,$26,
+              $27,$28,$29,$30,$31
             )
             ON CONFLICT (chain_id) DO UPDATE SET
               capital_usd = EXCLUDED.capital_usd,
@@ -280,6 +310,11 @@ export function buildTradingConfigRouter(deps: Deps): Router {
               enabled_strategies = EXCLUDED.enabled_strategies,
               enabled_dex_ids = EXCLUDED.enabled_dex_ids,
               enabled = EXCLUDED.enabled,
+              capital_cost_rate_annual_pct = EXCLUDED.capital_cost_rate_annual_pct,
+              ops_overhead_usd_per_attempt = EXCLUDED.ops_overhead_usd_per_attempt,
+              spread_sanity_mult = EXCLUDED.spread_sanity_mult,
+              p_copied_volume_threshold_usd = EXCLUDED.p_copied_volume_threshold_usd,
+              p_copied_max = EXCLUDED.p_copied_max,
               updated_by = EXCLUDED.updated_by,
               updated_at = NOW()
             RETURNING chain_id, capital_usd, base_token_symbol, base_token_price_usd,
@@ -291,7 +326,10 @@ export function buildTradingConfigRouter(deps: Deps): Router {
                       min_landing_probability, min_liquidity_confidence, max_token_risk_score,
                       gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
                       max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
-                      enabled_strategies, enabled_dex_ids, enabled,
+                      enabled_strategies, enabled_dex_ids,
+                      capital_cost_rate_annual_pct, ops_overhead_usd_per_attempt,
+                      spread_sanity_mult, p_copied_volume_threshold_usd, p_copied_max,
+                      enabled,
                       updated_at, updated_by, created_at`,
           [
             chainId,
@@ -320,6 +358,11 @@ export function buildTradingConfigRouter(deps: Deps): Router {
             body.enabled_dex_ids ?? null,
             body.enabled,
             actor,
+            body.capital_cost_rate_annual_pct,
+            body.ops_overhead_usd_per_attempt,
+            body.spread_sanity_mult,
+            body.p_copied_volume_threshold_usd,
+            body.p_copied_max,
           ],
         );
         const row = upsertQ.rows[0]!;
@@ -371,7 +414,10 @@ export function buildTradingConfigRouter(deps: Deps): Router {
                   min_landing_probability, min_liquidity_confidence, max_token_risk_score,
                   gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
                   max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
-                  enabled_strategies, enabled_dex_ids, enabled,
+                  enabled_strategies, enabled_dex_ids,
+                  capital_cost_rate_annual_pct, ops_overhead_usd_per_attempt,
+                  spread_sanity_mult, p_copied_volume_threshold_usd, p_copied_max,
+                  enabled,
                   updated_at, updated_by, created_at
              FROM trading_config
             ORDER BY chain_id`,
