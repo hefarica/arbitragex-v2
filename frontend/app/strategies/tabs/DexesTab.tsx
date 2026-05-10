@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/select";
 import { hasAdminSession } from "@/lib/admin-token";
 import { putTradingConfig } from "@/lib/api-client";
+import { useChains } from "@/lib/chains";
 import type { TradingConfigConfigured } from "@/lib/schemas";
 
 // ── Local type mirrors (no cross-package import) ───────────────────────────
@@ -57,20 +58,39 @@ interface DexesResponse {
   items: DexInfo[];
 }
 
-// ── Chain catalog (doctrinal infrastructure constants — not productive data) ──
-
-const SUPPORTED_CHAINS = [
-  { chain_id: 1,     name: "Ethereum", short: "ETH"  },
-  { chain_id: 42161, name: "Arbitrum", short: "ARB"  },
-  { chain_id: 10,    name: "Optimism", short: "OP"   },
-  { chain_id: 8453,  name: "Base",     short: "BASE" },
-  { chain_id: 137,   name: "Polygon",  short: "MATIC"},
-  { chain_id: 56,    name: "BSC",      short: "BSC"  },
-] as const;
+// Audit 2026-05-10 fix: chain catalog moved to `lib/chains.ts` and consumed
+// via `useChains()` for live `/api/chains` fetch with doctrinal fallback.
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
+
+/**
+ * C2 fix (audit 2026-05-10): the DEX selector lets the operator browse
+ * multiple chains, but Save used to always PUT to `config.chain_id`. This
+ * helper fetches the trading_config row for the selected chain (if any)
+ * so we can either:
+ *   (a) merge the new `enabled_dex_ids` into the existing chain row, or
+ *   (b) refuse to save (and tell the operator) when the destination chain
+ *       has no trading_config row yet — saving with default scaffolding
+ *       would silently override capital / token allowlists.
+ *
+ * Returns the configured row when present, `null` when missing, or throws
+ * on transport error.
+ */
+async function fetchTradingConfigForChain(
+  chainId: number,
+): Promise<TradingConfigConfigured | null> {
+  const r = await fetch(`${EDGE_URL}/api/trading-config?chain_id=${chainId}`, {
+    credentials: "include",
+    headers: { accept: "application/json" },
+  });
+  if (!r.ok) {
+    throw new Error(`fetch trading-config chain=${chainId}: HTTP ${r.status}`);
+  }
+  const j = (await r.json()) as { configured?: boolean } & TradingConfigConfigured;
+  return j.configured === true ? (j as TradingConfigConfigured) : null;
+}
 
 const DASH = "—";
 
@@ -133,6 +153,11 @@ export function DexesTab({ config, onSaved, adminToken, actor }: Props) {
   // config.chain_id is the parent config chain (used for Save).
   // selectedChainId drives the DEX browser — operator can switch freely.
   const configChainId = config.chain_id;
+
+  // Audit 2026-05-10 fix: live chain catalog from `/api/chains` (doctrinal
+  // fallback while the fetch resolves). Replaces the previously-hardcoded
+  // SUPPORTED_CHAINS array — single source for DexesTab + PoolsTab.
+  const { chains: SUPPORTED_CHAINS } = useChains();
 
   // ── Chain selector state (R1: init = config.chain_id) ──
   const [selectedChainId, setSelectedChainId] = useState<number>(configChainId);
@@ -233,26 +258,62 @@ export function DexesTab({ config, onSaved, adminToken, actor }: Props) {
       ? Array.from(selected)
       : null;
 
-    const { configured: _c, chain_id: _cid, updated_at: _ua, updated_by: _ub, ...rest } = config;
+    // C2 fix (audit 2026-05-10): persist to the SELECTED chain, not always
+    // the parent config chain. Two cases:
+    //   (a) selectedChainId === configChainId
+    //       → merge into the in-memory `config` snapshot we already have.
+    //   (b) selectedChainId !== configChainId
+    //       → fetch the destination chain's trading_config row first so we
+    //         only mutate `enabled_dex_ids` and preserve every other field
+    //         (capital, tokens, gas, strategy_configs). If the destination
+    //         chain has no row, refuse to save — seeding a brand-new row from
+    //         this tab would silently invent capital/risk parameters that
+    //         /config/trading is supposed to govern.
+    let baseConfig: TradingConfigConfigured = config;
+    if (selectedChainId !== configChainId) {
+      try {
+        const remote = await fetchTradingConfigForChain(selectedChainId);
+        if (remote === null) {
+          setSaving(false);
+          setMsg(
+            `Chain ${selectedChainId} has no trading_config row yet. ` +
+              `Seed it via /config/trading first, then return here to set DEXes.`,
+          );
+          return;
+        }
+        baseConfig = remote;
+      } catch (e) {
+        setSaving(false);
+        setMsg(`Failed to load chain ${selectedChainId} config: ${(e as Error).message}`);
+        return;
+      }
+    }
+
+    const { configured: _c, chain_id: _cid, updated_at: _ua, updated_by: _ub, ...rest } = baseConfig;
     void _c; void _cid; void _ua; void _ub;
 
     const body = { ...rest, enabled_dex_ids };
-    // TODO(Phase 3): support per-chain config rows; for now Save always targets
-    // configChainId (the parent config row, typically chain 1).
-    const res = await putTradingConfig(configChainId, body, adminToken, actor);
+    const res = await putTradingConfig(selectedChainId, body, adminToken, actor);
     setSaving(false);
 
     if (res.ok) {
-      onSaved({
-        ...config,
-        enabled_dex_ids,
-        updated_at: res.data.updated_at,
-        updated_by: res.data.updated_by,
-      });
+      // Only update the in-memory `config` (parent state) if the save
+      // targeted the SAME chain. Cross-chain saves don't change the
+      // parent config view — the operator will reopen the tab to see them.
+      if (selectedChainId === configChainId) {
+        onSaved({
+          ...config,
+          enabled_dex_ids,
+          updated_at: res.data.updated_at,
+          updated_by: res.data.updated_by,
+        });
+      }
       const summary = enabled_dex_ids === null
         ? "all DEXes enabled (null)"
         : `${enabled_dex_ids.length} DEX(es) restricted`;
-      setMsg(`Saved · ${summary} · searcher reloads in ≤1s`);
+      setMsg(
+        `Saved chain ${selectedChainId} · ${summary} · searcher reloads in ≤1s`,
+      );
     } else {
       setMsg(res.error);
     }
@@ -274,8 +335,8 @@ export function DexesTab({ config, onSaved, adminToken, actor }: Props) {
           <CardTitle>
             DEX Selection · {selectedChainName}
             {selectedChainId !== configChainId && (
-              <span className="ml-2 text-xs font-normal text-warning font-mono">
-                (browsing — Save targets chain {configChainId})
+              <span className="ml-2 text-xs font-normal text-info font-mono">
+                (Save will PUT chain {selectedChainId})
               </span>
             )}
           </CardTitle>

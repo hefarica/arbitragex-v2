@@ -43,6 +43,11 @@ interface OpportunityLiveRow extends QueryResultRow {
   token_out: string;
   amount_in_wei: string;
   expected_profit_usd: number | null;
+  // C5 fix (audit 2026-05-10): the dashboard had been displaying
+  // expected_profit_usd as "Net Profit" — that's GROSS, before gas/slippage/
+  // relay fees. Migration 049 added net_expected_profit_usd; route now
+  // surfaces it so the UI can label honestly.
+  net_expected_profit_usd: number | null;
   roi_pct: number | null;
   risk_score: number | null;
   rejection_reason: string | null;
@@ -85,10 +90,11 @@ SELECT
     to_.decimals    AS token_out_decimals,
     to_.logo_url    AS token_out_logo_url,
     to_.resolved_via AS token_out_resolved_via,
-  o.amount_in_wei::text         AS amount_in_wei,
-  o.expected_profit_usd::float  AS expected_profit_usd,
-  o.roi_pct::float              AS roi_pct,
-  o.risk_score::float           AS risk_score,
+  o.amount_in_wei::text                 AS amount_in_wei,
+  o.expected_profit_usd::float          AS expected_profit_usd,
+  o.net_expected_profit_usd::float      AS net_expected_profit_usd,
+  o.roi_pct::float                      AS roi_pct,
+  o.risk_score::float                   AS risk_score,
   o.rejection_reason,
   o.block_number,
   o.status,
@@ -96,7 +102,7 @@ SELECT
   o.trace_id,
   o.chain_id_out,
   o.bridge,
-  o.bridge_fee_usd::float       AS bridge_fee_usd
+  o.bridge_fee_usd::float               AS bridge_fee_usd
 FROM opportunities o
 LEFT JOIN tokens ti
   ON  ti.chain_id = o.chain_id
@@ -141,32 +147,79 @@ function tokenInfoFromRow(
  * JSON.stringify auto-converts Date → ISO string, but explicit conversion
  * is clearer and avoids surprises if serialization path changes.
  */
+/**
+ * Derives the paper-mode visibility status from rejection state. Paper mode
+ * is the default operational mode (`ARBX_PAPER_TRADE=true`), so every
+ * opportunity is either viable for the paper P&L or rejected by some gate.
+ *
+ *   rejection_reason IS NULL  →  paper_viable
+ *   rejection_reason !== NULL →  paper_rejected
+ *
+ * The status field exists so the dashboard can filter / count without
+ * re-doing the rejection_reason null-check inline. R8 fail-honest: derivation
+ * is exact, not synthesised.
+ */
+function paperStatusFromRow(row: OpportunityLiveRow): "paper_viable" | "paper_rejected" {
+  return row.rejection_reason == null ? "paper_viable" : "paper_rejected";
+}
+
+/**
+ * Derives the unique set of chain ids this opportunity touches (typically
+ * one for atomic same-chain arb; two when chain_id_out is set for
+ * cross-chain bridge legs). Lowercase-stable, sorted ascending.
+ */
+function chainsUsedFromRow(row: OpportunityLiveRow): number[] {
+  const set = new Set<number>([row.chain_id]);
+  if (row.chain_id_out != null && row.chain_id_out !== row.chain_id) {
+    set.add(row.chain_id_out);
+  }
+  return Array.from(set).sort((a, b) => a - b);
+}
+
+/**
+ * Derives the unique set of DEX adapter names from `dex_a` + `dex_b`. Empty
+ * when both are blank. Lowercase-stable for case-insensitive joins.
+ */
+function dexesUsedFromRow(row: OpportunityLiveRow): string[] {
+  const set = new Set<string>();
+  if (row.dex_a) set.add(row.dex_a.toLowerCase());
+  if (row.dex_b) set.add(row.dex_b.toLowerCase());
+  return Array.from(set).sort();
+}
+
 function rowToOpportunity(row: OpportunityLiveRow) {
   return {
-    id:                   row.id,
-    chain_id:             row.chain_id,
-    strategy_kind:        row.strategy_kind,
-    dex_a:                row.dex_a,
-    dex_b:                row.dex_b,
-    pair_symbol:          row.pair_symbol,
-    token_in:             row.token_in,
-    token_in_info:        tokenInfoFromRow(row, "token_in"),
-    token_out:            row.token_out,
-    token_out_info:       tokenInfoFromRow(row, "token_out"),
-    amount_in_wei:        row.amount_in_wei,
-    expected_profit_usd:  row.expected_profit_usd,
-    roi_pct:              row.roi_pct,
-    risk_score:           row.risk_score,
-    rejection_reason:     row.rejection_reason,
-    block_number:         row.block_number,
-    status:               row.status,
-    detected_at:          row.detected_at instanceof Date
-                            ? row.detected_at.toISOString()
-                            : row.detected_at,
-    trace_id:             row.trace_id,
-    chain_id_out:         row.chain_id_out,
-    bridge:               row.bridge,
-    bridge_fee_usd:       row.bridge_fee_usd,
+    id:                       row.id,
+    chain_id:                 row.chain_id,
+    strategy_kind:            row.strategy_kind,
+    dex_a:                    row.dex_a,
+    dex_b:                    row.dex_b,
+    pair_symbol:              row.pair_symbol,
+    token_in:                 row.token_in,
+    token_in_info:            tokenInfoFromRow(row, "token_in"),
+    token_out:                row.token_out,
+    token_out_info:           tokenInfoFromRow(row, "token_out"),
+    amount_in_wei:            row.amount_in_wei,
+    // C5 fix (audit 2026-05-10): both gross and net surfaced separately so
+    // the UI labels honestly. R8: both can be null (data not yet computed).
+    expected_profit_usd:      row.expected_profit_usd,        // GROSS (pre-cost)
+    net_expected_profit_usd:  row.net_expected_profit_usd,    // NET (gross - costs)
+    roi_pct:                  row.roi_pct,
+    risk_score:               row.risk_score,
+    rejection_reason:         row.rejection_reason,
+    // Derivations: zero added storage, single source of truth in DB.
+    paper_status:             paperStatusFromRow(row),
+    chains_used:              chainsUsedFromRow(row),
+    dexes_used:               dexesUsedFromRow(row),
+    block_number:             row.block_number,
+    status:                   row.status,
+    detected_at:              row.detected_at instanceof Date
+                                ? row.detected_at.toISOString()
+                                : row.detected_at,
+    trace_id:                 row.trace_id,
+    chain_id_out:             row.chain_id_out,
+    bridge:                   row.bridge,
+    bridge_fee_usd:           row.bridge_fee_usd,
   };
 }
 

@@ -123,6 +123,45 @@ impl StrategyConfigGate {
             (None, _) => {}
         }
 
+        // 3b. Audit 2026-05-10 follow-up: per-strategy `enabled_pool_ids`
+        //     allowlist. Strict per-leg pool_id check, case-insensitive.
+        //     `None` = no per-pool restriction. `Some(vec![])` = block all.
+        //     R8: when route_plan is absent we cannot enforce — fall through
+        //     to PartialPass (handled by the existing `partial_missing` flag).
+        if let Some(strat_cfg) = cfg.strategy_config(strategy_kind) {
+            if let Some(ref allow_pools) = strat_cfg.enabled_pool_ids {
+                if let Some(plan) = route_plan {
+                    let allow: Vec<String> = allow_pools
+                        .iter()
+                        .map(|s| s.to_ascii_lowercase())
+                        .collect();
+                    for leg in &plan.legs {
+                        let leg_pool_id = leg
+                            .pool_id
+                            .as_deref()
+                            .map(|s| s.to_ascii_lowercase())
+                            .unwrap_or_default();
+                        if leg_pool_id.is_empty() {
+                            // No pool_id on the leg — cannot enforce.
+                            // Mark partial so operator sees the gap.
+                            if partial_missing.is_none() {
+                                partial_missing = Some("route_plan");
+                            }
+                            continue;
+                        }
+                        if !allow.iter().any(|a| a == &leg_pool_id) {
+                            return GateOutcome::Reject(RejectReason::StrategyConfigPoolBlocked {
+                                strategy_kind: strategy_kind.to_string(),
+                                pool_id: leg.pool_id.clone().unwrap_or_default(),
+                            });
+                        }
+                    }
+                } else if partial_missing.is_none() {
+                    partial_missing = Some("route_plan");
+                }
+            }
+        }
+
         // 4. Per-strategy `enabled_protocol_types` (only with RoutePlan).
         if let Some(strat_cfg) = cfg.strategy_config(strategy_kind) {
             if !strat_cfg.enabled_protocol_types.is_empty() {

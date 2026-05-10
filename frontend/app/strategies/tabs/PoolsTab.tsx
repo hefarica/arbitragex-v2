@@ -45,6 +45,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useChains } from "@/lib/chains";
 import { shortAddr } from "@/lib/format";
 
 // ── Local type mirrors (no cross-package import) ───────────────────────────
@@ -86,16 +87,9 @@ interface PoolsResponse {
   items: PoolInfo[];
 }
 
-// ── Chain catalog (doctrinal infrastructure constants — not productive data) ──
-
-const SUPPORTED_CHAINS = [
-  { chain_id: 1,     name: "Ethereum", short: "ETH"  },
-  { chain_id: 42161, name: "Arbitrum", short: "ARB"  },
-  { chain_id: 10,    name: "Optimism", short: "OP"   },
-  { chain_id: 8453,  name: "Base",     short: "BASE" },
-  { chain_id: 137,   name: "Polygon",  short: "MATIC"},
-  { chain_id: 56,    name: "BSC",      short: "BSC"  },
-] as const;
+// Audit 2026-05-10 fix: chain catalog now sourced from `lib/chains.ts`
+// (live `/api/chains` fetch with doctrinal fallback). Single source for
+// DexesTab + PoolsTab.
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -147,6 +141,8 @@ interface Props {
 // ── Component ──────────────────────────────────────────────────────────────
 
 export function PoolsTab({ chainId }: Props) {
+  // Audit 2026-05-10 fix: live chain catalog from `/api/chains`.
+  const { chains: SUPPORTED_CHAINS } = useChains();
 
   // ── Chain selector state (R1: init = chainId prop) ──
   const [selectedChainId, setSelectedChainId] = useState<number>(chainId);
@@ -286,8 +282,21 @@ export function PoolsTab({ chainId }: Props) {
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <CardTitle>Pools · {selectedChainName}</CardTitle>
+            {/*
+              Audit 2026-05-10 honesty fix (C3): the dashboard previously
+              implied per-pool control was coming "next phase". The contract
+              for that exists at the Rust struct level — `StrategyRuntimeConfig
+              .enabled_pool_ids` is reserved in `route_constraints` — but the
+              writeback UI is not wired yet. Until then this tab is a strict
+              READ-ONLY browser. Coarse control of which pools the searcher
+              evaluates is achieved indirectly via `Strategies → DEXes`
+              (whitelist DEXes) and `Strategies → Tokens` (whitelist tokens).
+            */}
             <p className="text-xs text-muted-foreground mt-1">
-              Browse — selection / allowlist in next phase
+              Read-only browser. Operator controls pools indirectly today via
+              <strong className="font-mono mx-1">DEXes</strong> +
+              <strong className="font-mono mx-1">Tokens</strong> tabs. Per-pool
+              allowlist UI lands in a future sprint.
             </p>
           </div>
           <div className="flex items-center gap-3">

@@ -13,9 +13,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { adminTokenExpiresInMs, fmtRemaining, getAdminToken, setAdminToken } from "@/lib/admin-token";
-import { putTradingConfig } from "@/lib/api-client";
+import { getStrategyCatalog, putTradingConfig } from "@/lib/api-client";
 import type {
   GasPriceStrategy,
+  StrategyCatalogEntry,
   TradingConfigConfigured,
   TradingConfigResponse,
 } from "@/lib/schemas";
@@ -26,14 +27,13 @@ const GAS_STRATEGIES: { value: GasPriceStrategy; label: string; help: string }[]
   { value: "fixed", label: "Fixed gwei", help: "Operator pins a hard ceiling. Use when arbitrage edge depends on predictable bidding." },
 ];
 
-const STRATEGY_OPTIONS = [
-  "dex_arb_v2v2",
-  "dex_arb_v2v3",
-  "triangular",
-  "cross_dex",
-  "flashloan_arb",
-  "cex_dex",
-];
+// Audit 2026-05-10 fix: replaced hardcoded STRATEGY_OPTIONS with a dynamic
+// fetch from /api/strategy-catalog (the canonical source seeded by migration
+// 035+036+039+040). Drift between the form, the Rust StrategyKind enum, and
+// the catalog table caused operator confusion (toggling a strategy that did
+// not exist downstream). Now both the catalog tab and this form share a
+// single dynamic source. R8 fail-honest: catalog fetch error → empty array
+// (no fabricated entries) and the form shows an inline warning.
 
 const DEFAULT_TOKENS = ["WETH", "USDC", "USDT", "DAI", "WBTC"];
 
@@ -118,6 +118,11 @@ export function TradingConfigForm({
   const [adminTokenInput, setAdminTokenInput] = useState("");
   const [sessionTtlMs, setSessionTtlMs] = useState(0);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  // Audit 2026-05-10 fix: dynamic strategy catalog (replaces hardcoded
+  // STRATEGY_OPTIONS). Empty initial state + R8: catalog load failure
+  // surfaces an inline warning rather than fabricating strategy entries.
+  const [strategyCatalog, setStrategyCatalog] = useState<StrategyCatalogEntry[]>([]);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -126,6 +131,23 @@ export function TradingConfigForm({
     // Refresh TTL display every 30s so the operator sees the session winding down.
     const id = setInterval(() => setSessionTtlMs(adminTokenExpiresInMs()), 30_000);
     return () => clearInterval(id);
+  }, []);
+
+  // Audit 2026-05-10 fix: fetch strategy catalog on mount.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const r = await getStrategyCatalog();
+      if (cancelled) return;
+      if (r.ok) {
+        setStrategyCatalog(r.data.entries);
+        setCatalogError(null);
+      } else {
+        setStrategyCatalog([]);
+        setCatalogError(r.error);
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   const validate = useMemo(() => {
@@ -452,26 +474,52 @@ export function TradingConfigForm({
           <CardTitle>Strategy mix</CardTitle>
           <CardDescription>
             Polymorphic dispatcher — searcher routes candidates to the strategy class flagged here.
-            Empty = permissive (everything observed is evaluated).
+            Empty = permissive (everything observed is evaluated). The list is sourced
+            dynamically from <code className="font-mono text-xs">/api/strategy-catalog</code> so
+            new strategies appear automatically once they ship.
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {catalogError && (
+            <p className="text-xs font-mono text-destructive bg-destructive/10 px-3 py-2 rounded mb-3">
+              Failed to load strategy catalog: {catalogError}
+            </p>
+          )}
+          {!catalogError && strategyCatalog.length === 0 && (
+            <p className="text-xs text-muted-foreground py-2">
+              Loading strategy catalog…
+            </p>
+          )}
           <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-            {STRATEGY_OPTIONS.map((s) => {
-              const checked = form.enabled_strategies.has(s);
+            {strategyCatalog.map((s) => {
+              const checked = form.enabled_strategies.has(s.kind);
+              const isDefensive = s.ethical_constraint === "defensive_only";
+              const isLive = s.lifecycle_status === "live";
+              const disabled = isDefensive || !isLive;
               return (
-                <label key={s} className="flex items-center gap-2 cursor-pointer">
+                <label
+                  key={s.kind}
+                  className={`flex items-center gap-2 ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
+                  title={
+                    isDefensive
+                      ? "Defensive-only — forced ON by policy"
+                      : !isLive
+                      ? `lifecycle=${s.lifecycle_status ?? "unknown"} — toggle is informational, no Rust emitter yet`
+                      : s.description
+                  }
+                >
                   <input
                     type="checkbox"
-                    checked={checked}
+                    checked={isDefensive ? true : checked}
+                    disabled={disabled}
                     onChange={(e) => {
                       const next = new Set(form.enabled_strategies);
-                      if (e.target.checked) next.add(s);
-                      else next.delete(s);
+                      if (e.target.checked) next.add(s.kind);
+                      else next.delete(s.kind);
                       setForm({ ...form, enabled_strategies: next });
                     }}
                   />
-                  <span className="text-sm font-mono">{s}</span>
+                  <span className="text-sm font-mono">{s.kind}</span>
                 </label>
               );
             })}

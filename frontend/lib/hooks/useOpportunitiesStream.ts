@@ -21,6 +21,8 @@ import {
   createOpportunitySocket,
   type WsStatus,
 } from "@/features/opportunities/socket-lifecycle";
+// C4 fix (audit 2026-05-10): admin token gate on WS handshake.
+import { getAdminToken } from "@/lib/admin-token";
 
 // ─── Canonical type mirror ────────────────────────────────────────────────────
 // Kept here so useOpportunitiesStream does not import from OpportunitiesClient.
@@ -62,7 +64,19 @@ export interface OpportunityListItem {
   token_out: string;
   token_out_info: TokenInfo | null;
   amount_in_wei: string;
+  // GROSS profit (pre-cost). The dashboard's "Net Profit" column does NOT
+  // display this any more — see C5 fix in OpportunitiesClient.
   expected_profit_usd: number | null;
+  // C5 fix (audit 2026-05-10): NET profit (gross - gas - slippage - relay
+  // fee - flashloan fee - failure buffer). Optional because older payloads
+  // (pre-Phase-1 of the wiring fix) emit only gross.
+  net_expected_profit_usd?: number | null;
+  /** Derived by api-server from `rejection_reason IS NULL`. */
+  paper_status?: "paper_viable" | "paper_rejected";
+  /** Derived from chain_id (+ chain_id_out for bridge legs). */
+  chains_used?: number[];
+  /** Derived from dex_a + dex_b. */
+  dexes_used?: string[];
   roi_pct: number | null;
   risk_score: number | null;
   block_number: number | null;
@@ -149,9 +163,26 @@ export function useOpportunitiesStream(
 
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "http://localhost:3000";
 
+    // C4 fix (audit 2026-05-10): the backend WS gateway rejects every
+    // handshake without a valid admin token (`extractHandshakeToken`).
+    // Read the token from the operator's existing admin session and pass
+    // it to the socket factory. When no admin session exists, skip the
+    // WS connection entirely and degrade to polling immediately —
+    // attempting an authless connection just produces noisy 401s.
+    const adminToken = getAdminToken();
+    if (!adminToken) {
+      // No admin session → polling is the only honest option.
+      // The dashboard already renders a "WS locked: admin session
+      // required" state when wsStatus stays at "STALE" via the badge.
+      setWsStatus("STALE");
+      startPolling();
+      return;
+    }
+
     const handle = createOpportunitySocket({
       url: wsUrl,
       ioFactory: (url, opts) => io(url, opts),
+      authToken: adminToken,
       onStatus: (status: WsStatus) => {
         if (usingPollingRef.current) return; // already degraded — ignore WS status noise
 

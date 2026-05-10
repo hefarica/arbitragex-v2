@@ -56,6 +56,15 @@ interface OpportunityListItem {
   token_out_info: TokenInfo | null;
   amount_in_wei: string;
   expected_profit_usd: number | null;
+  // C5 fix (audit 2026-05-10): NET profit (gross minus gas, slippage, relay
+  // fee, flashloan fee, failure buffer). The "Net Profit" column displays
+  // this when present; falls back to expected_profit_usd labeled "Gross"
+  // when the spine has not yet computed net (cold-start, gate-rejected
+  // before math). R8 fail-honest: null means "not yet computed", never zero.
+  net_expected_profit_usd?: number | null;
+  paper_status?: "paper_viable" | "paper_rejected";
+  chains_used?: number[];
+  dexes_used?: string[];
   roi_pct: number | null;
   risk_score: number | null;
   block_number: number | null;
@@ -384,7 +393,10 @@ export default function OpportunitiesClient({
               <th className="p-4 border-b border-border">Age / Time</th>
               <th className="p-4 border-b border-border">Route</th>
               <th className="p-4 border-b border-border">Status</th>
-              <th className="p-4 border-b border-border text-right">Net Profit (USD)</th>
+              {/* C5 (audit 2026-05-10): split Gross vs Net columns. Net is the
+                  honest after-cost number; Gross is the AMM-quoted swap delta. */}
+              <th className="p-4 border-b border-border text-right" title="Gross profit before gas/slippage/relay fees (AMM quote)">Gross (USD)</th>
+              <th className="p-4 border-b border-border text-right" title="Net profit after gas, slippage, relay fee, flashloan fee, failure buffer">Net Profit (USD)</th>
               <th className="p-4 border-b border-border text-right">Net ROI</th>
               <th className="p-4 border-b border-border text-center">Score</th>
               <th className="p-4 border-b border-border text-center">Action</th>
@@ -401,8 +413,14 @@ export default function OpportunitiesClient({
                 const scorePercent = Number(opp.risk_score ?? 0) * 100;
                 const isCriticalTriage = scorePercent > 95;
 
-                // Format profit with R8-compliant helper (null → "—").
-                const profit = formatProfitUSD(opp.expected_profit_usd);
+                // C5 fix (audit 2026-05-10): split GROSS vs NET cells. Gross
+                // is the AMM-quoted swap delta (expected_profit_usd); Net is
+                // post-cost (net_expected_profit_usd). R8: both can be null.
+                const gross = formatProfitUSD(opp.expected_profit_usd);
+                const net   = formatProfitUSD(opp.net_expected_profit_usd ?? null);
+                // The colour-tone of the row is now driven by NET, not gross —
+                // a positive gross with negative net should still alarm (red).
+                const profit = net.tone === "neutral" ? gross : net;
 
                 return (
                   <motion.tr
@@ -477,19 +495,36 @@ export default function OpportunitiesClient({
                       )}
                     </td>
 
-                    {/* ── NET PROFIT column — R8 fail-honest via formatProfitUSD ── */}
+                    {/* ── GROSS column (audit 2026-05-10 C5 fix) — pre-cost AMM quote */}
+                    <td className="p-4 text-right" data-col="gross">
+                      <span
+                        className="font-mono text-sm text-muted-foreground"
+                        title="Gross profit = expected_amount_out − amount_in (USD). Pre-gas, pre-slippage, pre-relay-fee. R8: '—' when not yet computed."
+                      >
+                        {gross.display}
+                      </span>
+                    </td>
+
+                    {/* ── NET PROFIT column — R8 fail-honest, post-cost truth */}
                     <td className="p-4 text-right" data-col="profit">
                       <div className="group relative inline-block cursor-help">
-                        <span className={`font-mono font-bold text-base drop-shadow-md border-b border-dashed border-current/30 ${TONE_CLASS[profit.tone] ?? 'text-muted-foreground'}`}>
-                          {profit.display}
+                        <span
+                          className={`font-mono font-bold text-base drop-shadow-md border-b border-dashed border-current/30 ${TONE_CLASS[net.tone] ?? 'text-muted-foreground'}`}
+                          title="Net profit = gross − gas − slippage − relay fee − flashloan fee − failure buffer. The number that matters for paper P&L. R8: '—' when not yet computed."
+                        >
+                          {net.display}
                         </span>
-                        {/* Tooltip: only rendered when profit data is present */}
-                        {opp.expected_profit_usd != null && (
-                          <div data-slot="popover-content" className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-popover text-popover-foreground border border-border rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 text-left">
-                            <div className="text-xs font-sans">
-                              <div className="flex justify-between border-b border-border pb-1 mb-1">
-                                <span>Ganancia Neta (Est):</span>
-                                <span className={`font-mono ${TONE_CLASS[profit.tone] ?? 'text-muted-foreground'}`}>{profit.display}</span>
+                        {/* Tooltip: render when EITHER gross or net is present */}
+                        {(opp.expected_profit_usd != null || opp.net_expected_profit_usd != null) && (
+                          <div data-slot="popover-content" className="absolute bottom-full right-0 mb-2 w-72 p-3 bg-popover text-popover-foreground border border-border rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 text-left">
+                            <div className="text-xs font-sans space-y-1">
+                              <div className="flex justify-between">
+                                <span>Gross (AMM quote):</span>
+                                <span className={`font-mono ${TONE_CLASS[gross.tone] ?? 'text-muted-foreground'}`}>{gross.display}</span>
+                              </div>
+                              <div className="flex justify-between border-b border-border pb-1 mb-1 font-bold">
+                                <span>Net (post-cost):</span>
+                                <span className={`font-mono ${TONE_CLASS[net.tone] ?? 'text-muted-foreground'}`}>{net.display}</span>
                               </div>
                               {opp.bridge_fee_usd != null && (
                                 <div className="flex justify-between text-muted-foreground">
@@ -498,13 +533,15 @@ export default function OpportunitiesClient({
                                 </div>
                               )}
                               <div className="flex justify-between text-muted-foreground/70">
-                                <span>Desglose de Gas:</span>
-                                <span className="italic">Pendiente Sim.</span>
+                                <span>Gas / Bribe / Slippage breakdown:</span>
+                                <span className="italic">Pendiente revm sim</span>
                               </div>
-                              <div className="flex justify-between text-muted-foreground/70">
-                                <span>Bribe (MEV):</span>
-                                <span className="italic">Pendiente Sim.</span>
-                              </div>
+                              {opp.paper_status && (
+                                <div className="flex justify-between text-muted-foreground/70 pt-1 border-t border-border/50">
+                                  <span>Paper status:</span>
+                                  <span className="font-mono">{opp.paper_status}</span>
+                                </div>
+                              )}
                             </div>
                           </div>
                         )}
@@ -526,15 +563,25 @@ export default function OpportunitiesClient({
                     </td>
 
                     {/* ── ACTION column ── */}
+                    {/*
+                      C6 fix (audit 2026-05-10): the SIMULATE button calls
+                      POST /api/opportunities/:id/simulate, an endpoint the
+                      backend doesn't expose yet. Until the spine wires the
+                      revm shadow-sim to a public route, the button is
+                      visibly disabled with a "backend pending" tooltip and
+                      reduced styling — never promising live action it
+                      cannot deliver. Click is allowed only as a no-op
+                      diagnostic that surfaces the 404 toast. */}
                     <td className="p-4 text-center">
                       <button
                         type="button"
-                        disabled={simLoading === opp.id}
+                        disabled
+                        aria-disabled="true"
                         onClick={(e) => { e.stopPropagation(); handleSimulate(opp.id); }}
-                        className={`px-4 py-1.5 rounded text-xs font-bold transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed ${isCriticalTriage ? 'bg-warning text-warning-foreground hover:bg-warning/90' : 'bg-primary text-primary-foreground hover:bg-primary/90'}`}
-                        title="POST /api/opportunities/:id/simulate — backend not yet implemented"
+                        className="px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wide border border-dashed border-muted-foreground/40 bg-muted/30 text-muted-foreground cursor-not-allowed"
+                        title="Backend pending — POST /api/opportunities/:id/simulate is not yet implemented (spine revm shadow-sim ticket open)"
                       >
-                        {simLoading === opp.id ? "SIMULATING…" : "SIMULATE"}
+                        {simLoading === opp.id ? "…" : "SIM (pending)"}
                       </button>
                     </td>
                   </motion.tr>

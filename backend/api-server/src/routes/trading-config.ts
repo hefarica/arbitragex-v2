@@ -53,6 +53,11 @@ const StrategyRuntimeConfigSchema = z.object({
   allowed_chain_ids: z.array(z.number().int().positive()).max(64).default([]),
   // null = inherit chain-level enabled_dex_ids, [] = block-all, [...] = strict allowlist.
   enabled_dex_ids: z.array(z.string().uuid()).max(256).nullable().optional(),
+  // Audit 2026-05-10 follow-up: per-strategy pool allowlist by pools.id UUID.
+  // Same null/[]/[...] semantics as enabled_dex_ids. Backed by Rust
+  // StrategyRuntimeConfig.enabled_pool_ids; PoolsTab UI writeback in a
+  // future sprint, contract reserved here.
+  enabled_pool_ids: z.array(z.string().uuid()).max(2048).nullable().optional(),
   enabled_protocol_types: z.array(z.string().min(1).max(32)).max(32).default([]),
   min_profit_usd: z.number().nonnegative().nullable().optional(),
   min_roi_pct: z.number().nonnegative().nullable().optional(),

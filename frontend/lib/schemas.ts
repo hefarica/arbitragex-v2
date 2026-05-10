@@ -23,6 +23,11 @@ export const StatusResponseSchema = z.object({
   ts: z.string(),
 });
 
+// C5 fix (audit 2026-05-10): paper_status surfaces whether a candidate is
+// viable for the paper P&L (rejection_reason IS NULL) or was rejected.
+export const PaperStatusSchema = z.enum(["paper_viable", "paper_rejected"]);
+export type PaperStatus = z.infer<typeof PaperStatusSchema>;
+
 export const OpportunityRowSchema = z.object({
   id: z.string(),
   chain_id: z.number(),
@@ -33,9 +38,20 @@ export const OpportunityRowSchema = z.object({
   token_in: z.string(),
   token_out: z.string(),
   amount_in_wei: z.string(),
+  // GROSS profit (pre-cost). The dashboard MUST NOT label this as "Net".
   expected_profit_usd: z.number().nullable(),
+  // C5 fix (audit 2026-05-10): NET profit (gross - gas - slippage - relay
+  // fee - flashloan fee - failure buffer). This is the column the
+  // /opportunities table now displays under "Net Profit".
+  // R8 fail-honest: null when data was not yet computed.
+  // .optional() so older payloads without this field still parse.
+  net_expected_profit_usd: z.number().nullable().optional(),
   roi_pct: z.number().nullable(),
   risk_score: z.number().nullable(),
+  rejection_reason: z.string().nullable().optional(),
+  paper_status: PaperStatusSchema.optional(),
+  chains_used: z.array(z.number()).optional(),
+  dexes_used: z.array(z.string()).optional(),
   block_number: z.number().nullable(),
   status: z.string(),
   detected_at: z.string(),
@@ -309,6 +325,9 @@ export const StrategyRuntimeConfigSchema = z.object({
   enabled: z.boolean(),
   allowed_chain_ids: z.array(z.number().int().positive()),
   enabled_dex_ids: z.array(z.string().uuid()).nullable(),
+  // Audit 2026-05-10 follow-up: per-strategy pool allowlist (UUIDs from
+  // pools.id). Reserved for the next sprint's PoolsTab writeback UI.
+  enabled_pool_ids: z.array(z.string().uuid()).nullable(),
   enabled_protocol_types: z.array(z.string()),
   min_profit_usd: z.number().nonnegative().nullable(),
   min_roi_pct: z.number().nonnegative().nullable(),
@@ -333,6 +352,7 @@ export const DEFAULT_STRATEGY_RUNTIME_CONFIG: StrategyRuntimeConfig = {
   enabled: true,
   allowed_chain_ids: [],
   enabled_dex_ids: null,
+  enabled_pool_ids: null,
   enabled_protocol_types: [],
   min_profit_usd: null,
   min_roi_pct: null,

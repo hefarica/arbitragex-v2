@@ -63,6 +63,9 @@ pub enum RejectReason {
     /// or chain-level `enabled_dex_ids`). `dex_id` carries the offending UUID
     /// so the dashboard links straight to the DEX row.
     StrategyConfigDexBlocked { strategy_kind: String, dex_id: String },
+    /// Audit 2026-05-10 follow-up: per-strategy `enabled_pool_ids` is set
+    /// and a leg's `pool_id` is not in it. UUID surfaced for dashboard links.
+    StrategyConfigPoolBlocked { strategy_kind: String, pool_id: String },
     /// A leg's `protocol_type` is not in the per-strategy
     /// `enabled_protocol_types` allowlist (when non-empty).
     StrategyConfigProtocolBlocked {
@@ -125,6 +128,7 @@ impl RejectReason {
             RejectReason::StrategyConfigDisabled { .. } => "strategy_config_disabled",
             RejectReason::StrategyConfigChainBlocked { .. } => "strategy_config_chain_blocked",
             RejectReason::StrategyConfigDexBlocked { .. } => "strategy_config_dex_blocked",
+            RejectReason::StrategyConfigPoolBlocked { .. } => "strategy_config_pool_blocked",
             RejectReason::StrategyConfigProtocolBlocked { .. } => {
                 "strategy_config_protocol_blocked"
             }

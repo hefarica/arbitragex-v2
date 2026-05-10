@@ -132,6 +132,16 @@ pub struct StrategyRuntimeConfig {
     /// Empty vec  = block all DEXes (operator wants this strategy idle).
     #[serde(default)]
     pub enabled_dex_ids: Option<Vec<String>>,
+    /// Audit 2026-05-10 follow-up: per-strategy pool allowlist by `pools.id`
+    /// UUID. `Some(vec)` = strict — every leg's `pool_id` must be in the
+    /// list. `None` = no per-pool restriction (DEX/protocol allowlist still
+    /// applies). `Some(vec![])` = block all pools (strategy idle by design).
+    /// Lookup is case-insensitive via `to_ascii_lowercase`.
+    ///
+    /// PoolsTab UI (writeback) lands in a future sprint; the field is
+    /// reserved here so the contract stays stable across the migration.
+    #[serde(default)]
+    pub enabled_pool_ids: Option<Vec<String>>,
     /// Allowed protocol types (e.g. "uniswap-v2", "uniswap-v3", "curve",
     /// "balancer"). Empty = all allowed.
     #[serde(default)]

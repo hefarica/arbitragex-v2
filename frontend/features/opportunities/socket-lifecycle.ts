@@ -22,6 +22,21 @@ export interface OpportunitySocketOptions {
   ioFactory: (url: string, opts?: Record<string, unknown>) => SocketLike;
   onStatus: (status: WsStatus) => void;
   onOpportunity: (opp: Opportunity) => void;
+  /**
+   * C4 fix (audit 2026-05-10): backend `setupWebSocketGateway` rejects every
+   * handshake without an admin token. Frontend MUST pass the operator's
+   * admin token in the auth payload. Three protocol-supported channels are
+   * accepted by the backend:
+   *
+   *   1. `auth: { token }` — preferred for socket.io v3+
+   *   2. `query: { token }` — browser fallback when auth is unavailable
+   *   3. `extraHeaders: { 'x-arbx-admin-token': token }` — tooling/curl
+   *
+   * Pass an empty string to skip auth (the backend will reject and the
+   * caller should degrade to polling). The constructor never crashes on
+   * missing tokens — connection failure surfaces via `onStatus("STALE")`.
+   */
+  authToken?: string;
 }
 
 export interface OpportunitySocketHandle {
@@ -34,9 +49,20 @@ const CONNECT_OPTS = { reconnectionAttempts: 5, timeout: 2000 } as const;
 export function createOpportunitySocket(
   opts: OpportunitySocketOptions,
 ): OpportunitySocketHandle {
-  const { url, ioFactory, onStatus, onOpportunity } = opts;
+  const { url, ioFactory, onStatus, onOpportunity, authToken } = opts;
 
-  const socket = ioFactory(url, CONNECT_OPTS);
+  // C4: assemble the auth payload the backend `extractHandshakeToken` expects.
+  // Use ALL three transport channels for compatibility (auth + query + header).
+  // Empty token → omit entirely so the backend can return its standard
+  // "unauthorized" error rather than seeing an empty-string masquerade.
+  const connectOpts: Record<string, unknown> = { ...CONNECT_OPTS };
+  if (authToken && authToken.length > 0) {
+    connectOpts["auth"] = { token: authToken };
+    connectOpts["query"] = { token: authToken };
+    connectOpts["extraHeaders"] = { "x-arbx-admin-token": authToken };
+  }
+
+  const socket = ioFactory(url, connectOpts);
 
   socket.on("connect", () => {
     onStatus("LIVE");
