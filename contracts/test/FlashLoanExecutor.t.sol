@@ -403,4 +403,93 @@ contract FlashLoanExecutorTest is Test {
         vm.prank(attacker);
         flashExec.setBalancerVault(address(0));
     }
+
+    // =========================================================================
+    // A9: Flash-loan callback authorization regression tests (audit 2026-05-10)
+    // =========================================================================
+    //
+    // Tag prefix: testA9_* — grep-able by future audit re-runs.
+    //
+    // A4 tests cover the same logical invariants. A9 tests add:
+    //   1. Explicit A9 tag for traceability in future audit matrices.
+    //   2. A distinct angle: Layer 3 guard (flashLoanProvider unset while vault
+    //      IS set) — not covered by any existing test.  An attacker who can set
+    //      balancerVault but cannot set flashLoanProvider is still blocked.
+
+    // -----------------------------------------------------------------------
+    // testA9_ReceiveFlashLoan_RejectsWhenBalancerVaultUnset
+    //
+    // A9 regression (Layer 1 guard): if balancerVault == address(0) then
+    // receiveFlashLoan reverts with FL_BalancerVaultNotSet regardless of the
+    // caller, preventing any callback before the operator has configured a
+    // trusted Vault.  This mirrors testReceiveFlashLoan_RevertsWhenVaultNotSet
+    // (A4) with an explicit A9 tag so audit matrices can cross-reference both.
+    // -----------------------------------------------------------------------
+    function testA9_ReceiveFlashLoan_RejectsWhenBalancerVaultUnset() external {
+        // Clear the vault that was set in setUp.
+        flashExec.setBalancerVault(address(0));
+
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(token));
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1_000e18;
+        uint256[] memory feeAmounts = new uint256[](1);
+        feeAmounts[0] = 0;
+
+        vm.expectRevert(FL_BalancerVaultNotSet.selector);
+        // Caller identity is irrelevant — Layer 1 fires before the sender check.
+        vm.prank(attacker);
+        flashExec.receiveFlashLoan(tokens, amounts, feeAmounts, "");
+    }
+
+    // -----------------------------------------------------------------------
+    // testA9_ReceiveFlashLoan_RejectsWhenSenderIsNotBalancerVault
+    //
+    // A9 regression (Layer 2 guard): even with balancerVault properly set,
+    // a call from any address other than the configured vault reverts with
+    // FL_UnauthorizedCaller.  Mirrors testReceiveFlashLoan_RevertsOnUnauthorized-
+    // Sender (A4) with explicit A9 tag.  Verifies EOA attacker cannot spoof the
+    // Balancer callback regardless of token/amount values passed.
+    // -----------------------------------------------------------------------
+    function testA9_ReceiveFlashLoan_RejectsWhenSenderIsNotBalancerVault() external {
+        // balancerVault is already set to address(mockVault) in setUp.
+        // Use a distinct attacker address to make the wrong-sender intent explicit.
+        address wrongSender = makeAddr("A9_wrongSender");
+
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(token));
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 5_000e18;
+        uint256[] memory feeAmounts = new uint256[](1);
+        feeAmounts[0] = 0;
+
+        vm.expectRevert(FL_UnauthorizedCaller.selector);
+        vm.prank(wrongSender);
+        flashExec.receiveFlashLoan(tokens, amounts, feeAmounts, "");
+    }
+
+    // -----------------------------------------------------------------------
+    // testA9_ReceiveFlashLoan_RejectsWhenFlashLoanProviderUnset
+    //
+    // A9 — UNIQUE ANGLE not covered by A4 tests (Layer 3 guard):
+    // receiveFlashLoan has a three-layer auth check.  Layer 3 verifies that
+    // flashLoanProvider != address(0), confirming the Balancer path was
+    // intentionally activated.  This guards against a state where the vault IS
+    // configured but the provider adapter was never set (e.g. a deploy that only
+    // called setBalancerVault but not setFlashLoanProvider).
+    //
+    // The mock vault itself calls receiveFlashLoan so msg.sender == balancerVault
+    // (Layer 2 passes).  The provider check is Layer 3 and must fire.
+    // -----------------------------------------------------------------------
+    function testA9_ReceiveFlashLoan_RejectsWhenFlashLoanProviderUnset() external {
+        // Precondition: vault is set (setUp), but provider is NOT set
+        // (flashLoanProvider defaults to address(0) after initialize).
+        assertEq(flashExec.flashLoanProvider(), address(0), "flashLoanProvider must be unset for this test");
+        assertNotEq(flashExec.balancerVault(), address(0), "balancerVault must be set for Layer 2 to pass");
+
+        // The MockBalancerVault sends the callback as itself — passes Layer 2.
+        // Layer 3 (flashLoanProvider == address(0)) must fire FL_NoProviderConfigured.
+        vm.expectRevert(FL_NoProviderConfigured.selector);
+        mockVault.triggerFlashLoan(address(flashExec), IERC20(address(token)), 1_000e18, "");
+    }
 }

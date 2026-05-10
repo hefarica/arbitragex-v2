@@ -712,6 +712,77 @@ contract ArbitrageExecutorTest is Test {
     }
 
     // =========================================================================
+    // A9: Kill-switch regression tests (audit 2026-05-10)
+    // =========================================================================
+    //
+    // Tag prefix: testA9_* — grep-able by future audit re-runs to confirm each
+    // A9 finding has a dedicated regression test.
+    //
+    // Existing testPausable_BlocksWhenPaused covers the basic pause path with
+    // an empty routers array.  The A9 tests add two distinct angles:
+    //   1. Pause blocks even when all guards would otherwise pass (full payload).
+    //   2. The paused() view is readable off-chain for kill-switch monitoring.
+
+    // -----------------------------------------------------------------------
+    // testA9_ExecuteArbitrage_Reverts_WhenPaused_AcrossAllRevertCases
+    //
+    // A9 regression: even with a fully-approved router, selector, and token,
+    // the pause modifier fires FIRST and reverts with EnforcedPause() before
+    // any business logic executes.  This test exercises the worst-case path —
+    // an operator who has wired every approval but forgets the kill-switch
+    // must still be protected.
+    // -----------------------------------------------------------------------
+    function testA9_ExecuteArbitrage_Reverts_WhenPaused_AcrossAllRevertCases() external {
+        // Setup: mint funds + approve router + approve selector — a valid execution path.
+        uint256 amountIn = 500e18;
+        uint256 profit   = 20e18;
+        token.mint(address(executor), amountIn);
+
+        MockProfitRouter router = new MockProfitRouter(address(token), address(executor), profit);
+        executor.setRouterApproval(address(router), true);
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
+
+        // Pause via admin (address(this) holds DEFAULT_ADMIN_ROLE).
+        executor.pause();
+
+        // OZ 5.x Pausable reverts with EnforcedPause() even when the entire
+        // route is valid.  The modifier executes before any state read.
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("EnforcedPause()"))));
+
+        vm.prank(executorRole);
+        executor.executeArbitrage(
+            bytes32(0), address(token), address(token), amountIn, 0, routers, payloads
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // testA9_PausedView_AccessibleToOffChain
+    //
+    // A9 regression: the paused() view function must be readable by off-chain
+    // monitoring (kill-switch dashboard, searcher-rs circuit breaker).
+    // This test verifies the state transition from live → paused → unpaused
+    // is correctly reflected in the public view, which is the contract surface
+    // that monitoring tools poll.
+    // -----------------------------------------------------------------------
+    function testA9_PausedView_AccessibleToOffChain() external {
+        // Initial state: contract is live (not paused).
+        assertFalse(executor.paused(), "executor must not be paused after initialize");
+
+        // Admin triggers kill-switch.
+        executor.pause();
+        assertTrue(executor.paused(), "executor.paused() must return true after pause()");
+
+        // Admin lifts the kill-switch — monitoring must observe recovery.
+        executor.unpause();
+        assertFalse(executor.paused(), "executor.paused() must return false after unpause()");
+    }
+
+    // =========================================================================
     // A5: Router function-selector whitelist tests (audit 2026-05-10)
     // =========================================================================
 

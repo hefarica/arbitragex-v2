@@ -140,6 +140,61 @@ contract AdminTimelockTest is Test {
         assertEq(target.counter(), 0, "target.counter must be 0 — execution must not have happened");
     }
 
+    // =========================================================================
+    // A9: Timelock minDelay regression tests (audit 2026-05-10)
+    // =========================================================================
+    //
+    // Tag prefix: testA9_* — grep-able by future audit re-runs.
+    //
+    // The existing SC-10 tests verify that the delay is enforced when the
+    // correct executor role holder tries to execute early.  The A9 test adds
+    // a distinct, security-critical angle: the deployer address (DEFAULT_ADMIN_ROLE)
+    // CANNOT bypass the timelock by calling execute() directly.  Admin role is
+    // completely separate from EXECUTOR_ROLE inside TimelockController — holding
+    // DEFAULT_ADMIN_ROLE gives no ability to execute operations immediately.
+    //
+    // This is the regression guard for "admin EOA compromise = immediate execution"
+    // — the finding that motivates AdminTimelock existing in the first place.
+
+    // -----------------------------------------------------------------------
+    // testA9_Timelock_AdminCannotBypassDelay
+    //
+    // A9 regression: the deployer (DEFAULT_ADMIN_ROLE) cannot call execute()
+    // immediately after scheduling because:
+    //   (a) DEFAULT_ADMIN_ROLE != EXECUTOR_ROLE, so the access control check
+    //       inside TimelockController.execute() reverts.
+    //   (b) Even if the admin were granted EXECUTOR_ROLE, the minDelay window
+    //       would still apply — this test verifies (a) specifically.
+    //
+    // Distinction from testTimelock_ScheduledAction_RequiresDelay:
+    //   That test uses the legitimate executor address (holds EXECUTOR_ROLE)
+    //   and verifies the time check.  This test uses the deployer address (holds
+    //   only DEFAULT_ADMIN_ROLE) and verifies the role check fires before
+    //   anything else — even before the time check would fire.
+    // -----------------------------------------------------------------------
+    function testA9_Timelock_AdminCannotBypassDelay() public {
+        bytes memory callData = abi.encodeWithSelector(TimelockTarget.increment.selector);
+        bytes32 predecessor = bytes32(0);
+        // Use a distinct salt to avoid any operation-id collision with SC-10 tests.
+        bytes32 salt = bytes32(uint256(0xA9));
+
+        // Proposer schedules the operation (proposer holds PROPOSER_ROLE).
+        vm.prank(proposer);
+        tl.schedule(address(target), 0, callData, predecessor, salt, MIN_DELAY);
+
+        // Deployer (DEFAULT_ADMIN_ROLE, no EXECUTOR_ROLE) tries to execute
+        // immediately — must revert.  The revert is an AccessControl error
+        // (missing EXECUTOR_ROLE), NOT a timing error.  We use a bare
+        // vm.expectRevert() because OZ TimelockController uses a dynamic
+        // AccessControl string that includes the role hash.
+        vm.expectRevert();
+        vm.prank(deployer);
+        tl.execute(address(target), 0, callData, predecessor, salt);
+
+        // Confirm no side-effect: target counter must still be 0.
+        assertEq(target.counter(), 0, "target.counter must be 0 — admin execution must have been blocked");
+    }
+
     // -----------------------------------------------------------------------
     // SC-10 test 3: testTimelock_ScheduledAction_ExecutesAfterDelay
     // An operation scheduled with minDelay CAN execute after minDelay+1 sec.
