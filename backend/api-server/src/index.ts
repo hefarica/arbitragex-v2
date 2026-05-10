@@ -237,9 +237,14 @@ function normAddr(a: string): string {
 async function writeAudit(action: string, actor: string, targetKind: string | null, targetId: string | null, before: unknown, after: unknown, ip: string | null, traceId: string | null): Promise<void> {
   if (!pool) return;
   try {
+    // Audit N2 fix (2026-05-10): wrap PII columns with helpers from migration 053.
+    // arbx_anonymize_ip() returns CIDR text (a.b.c.0/24); audit_log.ip_address is
+    // CIDR after migration 055. user_agent is not plumbed through writeAudit() yet
+    // (AuditAuthBody accepts it but doesn't pass it here); leaving column NULL until
+    // a future change extends writeAudit's signature.
     await pool.query(
       `INSERT INTO audit_log (actor, action, target_kind, target_id, before_state, after_state, ip_address, trace_id)
-       VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::inet,$8)`,
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,arbx_anonymize_ip($7)::cidr,$8)`,
       [actor, action, targetKind, targetId, JSON.stringify(before), JSON.stringify(after), ip, traceId],
     );
     // auditEventsTotal.labels({ action }).inc();
