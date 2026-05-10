@@ -1,8 +1,8 @@
 //! Inclusion tracker — polls for tx receipt up to N blocks.
 //!
-//! Alloy 1.0 migration (BE-02 Step 3):
+//! Alloy 1.0 (fully migrated):
 //!   - `Provider<Http>` → `AlloyHttpProvider` (alloy `RootProvider<Http<reqwest::Client>>`).
-//!   - `get_transaction_receipt(H256)` → `get_transaction_receipt(B256)`.
+//!   - `get_transaction_receipt(B256)` — caller converts from any [u8;32] source.
 //!   - Receipt `block_number` is `Option<u64>` in alloy (no `.as_u64()`).
 //!   - Receipt `gas_used` is `u128` in alloy (was `Option<U256>` in ethers).
 //!   - Receipt status: `receipt.status()` returns `bool` (true = success).
@@ -10,7 +10,6 @@
 
 use alloy::primitives::B256;
 use alloy::providers::Provider as AlloyProvider;
-use ethers::types::H256;
 use shared_rs::rpc_failover::AlloyHttpProvider;
 use std::time::Duration;
 use tracing::debug;
@@ -24,17 +23,15 @@ pub enum InclusionOutcome {
 
 pub async fn wait_for_inclusion(
     provider: &AlloyHttpProvider,
-    tx_hash: H256,
+    tx_hash: B256,
     start_block: u64,
     max_blocks: u32,
     poll_interval_ms: u64,
 ) -> InclusionOutcome {
-    // Convert ethers H256 → alloy B256 (both are [u8; 32]).
-    let alloy_hash = B256::from_slice(tx_hash.as_bytes());
     let end_block = start_block + max_blocks as u64;
 
     loop {
-        match provider.get_transaction_receipt(alloy_hash).await {
+        match provider.get_transaction_receipt(tx_hash).await {
             Ok(Some(r)) => {
                 // alloy 1.0: block_number is Option<u64>, gas_used is u128.
                 let block = r.block_number.unwrap_or(0);

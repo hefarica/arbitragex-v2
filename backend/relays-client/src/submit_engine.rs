@@ -453,9 +453,12 @@ impl SubmitEngine {
         }
 
         // 7. Wait for inclusion — chain is the canonical source of truth.
+        // Convert ethers H256 → alloy B256 (both are [u8; 32]); this bridge
+        // will be removed once bundle_builder.rs is fully migrated to alloy.
+        let tx_hash_b256 = alloy::primitives::B256::from_slice(bundle.tx_hash.as_bytes());
         let outcome = wait_for_inclusion(
             provider.as_ref(),
-            bundle.tx_hash,
+            tx_hash_b256,
             bundle.target_block,
             self.cfg.execution.max_inclusion_wait_blocks,
             1000,
