@@ -1,3 +1,6 @@
+// M11 (audit 2026-05-10): surface panics in hot-path crate.
+#![warn(clippy::unwrap_used, clippy::expect_used)]
+
 //! sim-ctl main. Spawns:
 //!   - Axum HTTP (/health, /metrics, /simulate)
 //!   - Redis Streams consumer (if ANVIL_URL + DB reachable)

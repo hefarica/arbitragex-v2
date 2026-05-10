@@ -1,3 +1,6 @@
+// M11 (audit 2026-05-10): surface panics in hot-path crate.
+#![warn(clippy::unwrap_used, clippy::expect_used)]
+
 //! relays-client main.
 //!
 //! Boots:

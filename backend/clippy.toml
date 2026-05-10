@@ -1,0 +1,8 @@
+# M11 (audit 2026-05-10): conservative clippy config for ArbitrageX backend.
+# Tighten over time as individual modules are cleaned up.
+# Promotion path: warn here -> per-module #[deny] -> workspace deny in CI.
+
+msrv = "1.85"
+
+# Reserved for future use.
+disallowed-methods = []

@@ -1,3 +1,8 @@
+// M11 (audit 2026-05-10): surface panics in hot-path crate.
+// Workspace lints propagate this, but explicit inner attrs make it
+// impossible to accidentally suppress at the workspace level.
+#![warn(clippy::unwrap_used, clippy::expect_used)]
+
 //! searcher-rs — Sprint 2 entry point.
 //!
 //! Boot flow:

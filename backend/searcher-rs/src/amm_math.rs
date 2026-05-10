@@ -45,7 +45,23 @@ const V3_QUOTE_MULTICALL_TIMEOUT: Duration = Duration::from_secs(5);
 /// this collapsed amount_in to ~0, making BUG-3's capital cap a no-op and producing
 /// downstream ROI in the billions of percent. Always pass the token's true decimals.
 pub fn wei_str_to_token_units(wei_str: &str, decimals: u8) -> f64 {
-    let raw: f64 = wei_str.parse::<f64>().unwrap_or(0.0);
+    // M11 fix (audit 2026-05-10): explicit warn on parse failure instead of
+    // silent 0.0.  R8 fail-honest: a bad wei string is a data quality event
+    // that must be visible in logs so the upstream calldata decoder can be
+    // corrected.  Value is still clamped to 0.0 because callers are in the
+    // display/scoring path and cannot propagate a Result.
+    let raw: f64 = match wei_str.parse::<f64>() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                wei_str,
+                decimals,
+                error = %e,
+                "amm_math::wei_str_to_token_units: parse failed — returning 0.0 (M11)"
+            );
+            0.0
+        }
+    };
     raw / 10f64.powi(decimals as i32)
 }
 

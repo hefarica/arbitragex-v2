@@ -55,3 +55,13 @@ futures-util  = "0.3"
 async-trait   = "0.1"
 lru           = "0.12"
 hex           = "0.4"
+
+# ---------------------------------------------------------------------------
+# M11 (audit 2026-05-10): surface hot-path panics early.
+# unwrap_used + expect_used are WARNINGS (not denied) — too many to fix in
+# one pass.  Promotion path: per-file #[deny] -> workspace deny in CI once
+# all callers are cleaned up.  Individual modules may #[allow] temporarily.
+# ---------------------------------------------------------------------------
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
