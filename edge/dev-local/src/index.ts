@@ -93,7 +93,22 @@ app.get("/metrics", metricsHandler);
 
 async function proxy(path: string, req: express.Request, res: express.Response) {
   try {
-    const upstream = await fetch(`${API_SERVER_URL}${path}`, {
+    // 2026-05-10 fix: propagate query string from the client request to the
+    // upstream api-server. Without this, requests like
+    //   GET /api/opportunities/live?viable_only=false&limit=50
+    // hit upstream as
+    //   GET /api/v1/opportunities/live
+    // (no query) — and the api-server applies its default viable_only=true,
+    // silently overriding the client's filter. If the proxy's `path` already
+    // contains a `?` (some callers pre-build the upstream path with their own
+    // params, e.g. /api/trading-config?chain_id=N), append the rest with `&`
+    // so both sets are preserved.
+    const reqQuery = req.url.includes("?") ? req.url.slice(req.url.indexOf("?") + 1) : "";
+    let upstreamPath = path;
+    if (reqQuery) {
+      upstreamPath += (path.includes("?") ? "&" : "?") + reqQuery;
+    }
+    const upstream = await fetch(`${API_SERVER_URL}${upstreamPath}`, {
       headers: {
         "x-arbx-edge-token": ARBX_EDGE_TOKEN,
         "x-arbx-trace-id": (req as express.Request & { traceId?: string }).traceId ?? "",
@@ -386,6 +401,16 @@ app.post("/admin/onboarding/1/complete",      (req, res) => adminProxy("/admin/o
 app.put("/api/v1/dexes/:id/active", (req, res) => {
   const id = String(req.params.id ?? "");
   adminProxy(`/api/v1/dexes/${encodeURIComponent(id)}/active`, req, res, "PUT");
+});
+
+// DEX registry CRUD — Add new DEX (with factories per chain) + hard delete.
+// Both behind adminProxy so httpOnly session translates to upstream token.
+app.post("/api/v1/dexes", (req, res) => {
+  adminProxy("/api/v1/dexes", req, res, "POST");
+});
+app.delete("/api/v1/dexes/:id", (req, res) => {
+  const id = String(req.params.id ?? "");
+  adminProxy(`/api/v1/dexes/${encodeURIComponent(id)}`, req, res, "DELETE");
 });
 app.put("/admin/trading-config/:chain_id",    (req, res) => {
   const cid = req.params["chain_id"];
