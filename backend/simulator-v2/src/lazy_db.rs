@@ -14,20 +14,23 @@
 //! `DashMap` gives per-shard locking — better than a single `RwLock<HashMap>`
 //! for concurrent searcher access.  Two threads racing on the same cold key
 //! may both issue one RPC fetch; the cache converges after the second write
-//! (same block → same deterministic value), so this is accepted.  A
-//! `OnceCell`-per-slot approach eliminates the race but adds a per-entry `Arc`
-//! allocation on every cold-path access, which is worse in the dominant
-//! warm-cache case.
+//! (same block → same deterministic value), so this is accepted.
 //!
-//! ### Sync↔async bridge
-//! `revm::Database` is synchronous.  The searcher calls it from inside a Tokio
-//! runtime.  We use `tokio::task::block_in_place` so Tokio can keep the thread
-//! pool alive while we drive the future on the existing `Handle`.  When called
-//! from a non-Tokio thread (unit tests, standalone benchmarks) we fall back to
-//! a freshly created `tokio::runtime::Runtime` owned by the `LazyDb` instance.
+//! ### Sync-async bridge (CRITICAL #1 fix)
+//! `revm::Database` is synchronous.  We use `block_in_place` ONLY when the
+//! runtime flavor is `MultiThread`.  Under `CurrentThread` (e.g., `#[tokio::test]`
+//! default) `block_in_place` panics — we fall back to an owned `Runtime`
+//! instead.  This logic lives in ONE place: `bridge::block_on_with_timeout()`.
+//!
+//! ### Provider timeout (MAJOR #4 fix)
+//! The HTTP client is built with a 5-second timeout so a hanging RPC node
+//! cannot permanently park a tokio worker thread.  `LazyDb::with_timeout()`
+//! allows operators/tests to override the default.  Every `block_on` call also
+//! wraps the future in `tokio::time::timeout` as defense-in-depth.
 
-use std::convert::TryFrom;
+use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use dashmap::DashMap;
 use ethers::providers::{Http, Middleware, Provider};
@@ -35,8 +38,9 @@ use ethers::types::{BlockId, BlockNumber, H160 as EH160, H256, U64 as EU64};
 use revm::primitives::{AccountInfo, Address, Bytecode, B256, KECCAK_EMPTY, U256};
 use revm::Database;
 use thiserror::Error;
-use tokio::runtime::{Handle, Runtime};
+use tokio::runtime::{Handle, Runtime, RuntimeFlavor};
 use tracing::{debug, warn};
+use url::Url;
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -54,14 +58,67 @@ pub enum LazyDbError {
     /// The requested resource does not exist at the pinned block.
     #[error("resource not found: {0}")]
     NotFound(String),
+    /// The RPC call exceeded the configured timeout (MAJOR #4 fix).
+    #[error("rpc timeout: {0}")]
+    Timeout(String),
 }
+
+/// Default RPC timeout applied to every provider call (MAJOR #4 fix).
+const DEFAULT_RPC_TIMEOUT_SECS: u64 = 5;
 
 // ---------------------------------------------------------------------------
 // Cache key types
 // ---------------------------------------------------------------------------
 
-/// Storage-cache key: (contract address, slot index as U256).
 type StorageKey = (Address, U256);
+
+// ---------------------------------------------------------------------------
+// Sync-async bridge — ONE canonical location for the runtime-flavor guard
+// (CRITICAL #1 fix + MAJOR #4 fix)
+// ---------------------------------------------------------------------------
+
+/// All sync-async bridging goes through this module so the runtime-flavor
+/// guard and the timeout are applied consistently in every RPC call path.
+mod bridge {
+    use super::*;
+
+    /// Drive `fut` synchronously, wrapping it with a `timeout_secs` deadline.
+    ///
+    /// ## Runtime flavor guard (CRITICAL #1 fix)
+    ///
+    /// `tokio::task::block_in_place` requires the `MultiThread` scheduler
+    /// and **panics** when called inside a `CurrentThread` runtime (the default
+    /// for `#[tokio::test]`).
+    ///
+    /// Decision tree — ONE place, no duplication:
+    /// - `MultiThread` handle found  → `block_in_place` + `handle.block_on`
+    /// - `CurrentThread` or no handle → `owned_rt.block_on`
+    ///
+    /// The outer `tokio::time::timeout` is defense-in-depth: even if the HTTP
+    /// client does not honour its deadline, this stops the worker parking.
+    pub(super) fn block_on_with_timeout<F, T>(
+        owned_rt: &Arc<Runtime>,
+        timeout_secs: u64,
+        fut: F,
+        context: &str,
+    ) -> Result<T, LazyDbError>
+    where
+        F: Future<Output = T>,
+    {
+        let timed = tokio::time::timeout(Duration::from_secs(timeout_secs), fut);
+        let res = match Handle::try_current() {
+            Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
+                // Safe: multi-thread scheduler keeps other workers alive.
+                tokio::task::block_in_place(|| handle.block_on(timed))
+            }
+            // CurrentThread flavor or no ambient runtime: use owned fallback.
+            _ => owned_rt.block_on(timed),
+        };
+        res.map_err(|_| {
+            LazyDbError::Timeout(format!("rpc timeout ({timeout_secs}s): {context}"))
+        })
+    }
+}
 
 // ---------------------------------------------------------------------------
 // LazyDb
@@ -77,93 +134,120 @@ pub struct LazyDb {
     client: Arc<Provider<Http>>,
     /// Block at which every RPC fetch is anchored.
     pinned_block: BlockId,
+    /// Resolved block number (always set after construction).
+    pinned_block_number: u64,
     /// Account (balance + nonce + code) cache.
     account_cache: DashMap<Address, AccountInfo>,
     /// Storage-slot cache: (address, slot) → value.
     storage_cache: DashMap<StorageKey, U256>,
     /// Block-hash cache: block_number_u64 → B256.
     block_hash_cache: DashMap<u64, B256>,
-    /// Owned Tokio runtime used only when `LazyDb` is invoked from outside any
-    /// Tokio context.  `None` in production (we always have a runtime handle).
-    fallback_rt: Option<Arc<Runtime>>,
+    /// Owned Tokio runtime — always present.  Serves as the fallback for both
+    /// `CurrentThread` runtimes and "no runtime" contexts (unit tests).
+    fallback_rt: Arc<Runtime>,
+    /// Per-call RPC timeout in seconds.
+    timeout_secs: u64,
 }
 
 impl LazyDb {
     /// Build a `LazyDb` pinned to the given block number (or the current
     /// latest block if `None` is supplied).
     ///
+    /// Uses the default 5-second RPC timeout. See `new_with_timeout` for
+    /// custom timeout configuration.
+    ///
     /// # Errors
     /// Returns `LazyDbError::Provider` if the URL is invalid or if the RPC
     /// call to determine the latest block number fails.
+    /// Returns `LazyDbError::Timeout` if the "latest" resolution exceeds 5 s.
     pub fn new(rpc_url: &str, block_number: Option<u64>) -> Result<Self, LazyDbError> {
-        let provider = Provider::<Http>::try_from(rpc_url)
-            .map_err(|e| LazyDbError::Decode(format!("invalid RPC URL '{rpc_url}': {e}")))?;
-        let client = Arc::new(provider);
+        Self::new_with_timeout(rpc_url, block_number, DEFAULT_RPC_TIMEOUT_SECS)
+    }
 
-        // Determine whether we are already inside a Tokio runtime.
-        let (fallback_rt, pinned_block) = match Handle::try_current() {
-            Ok(handle) => {
-                // Inside a Tokio runtime: block_in_place for synchronous waits.
-                let block = match block_number {
-                    Some(n) => BlockId::Number(BlockNumber::Number(EU64::from(n))),
-                    None => {
-                        let bn = tokio::task::block_in_place(|| {
-                            handle.block_on(client.get_block_number())
-                        })
-                        .map_err(|e| LazyDbError::Provider(format!("get_block_number: {e}")))?;
-                        BlockId::Number(BlockNumber::Number(EU64::from(bn.as_u64())))
-                    }
-                };
-                (None, block)
-            }
-            Err(_) => {
-                // No runtime: create a fallback single-threaded runtime.
-                let rt = Runtime::new()
-                    .map_err(|e| LazyDbError::Provider(format!("rt create: {e}")))?;
-                let block = match block_number {
-                    Some(n) => BlockId::Number(BlockNumber::Number(EU64::from(n))),
-                    None => {
-                        let bn = rt
-                            .block_on(client.get_block_number())
-                            .map_err(|e| LazyDbError::Provider(format!("get_block_number: {e}")))?;
-                        BlockId::Number(BlockNumber::Number(EU64::from(bn.as_u64())))
-                    }
-                };
-                (Some(Arc::new(rt)), block)
+    /// Same as `new()` but with an explicit RPC timeout (MAJOR #4 fix).
+    ///
+    /// Exposed for operators who need longer timeouts on slow endpoints and for
+    /// tests that want to fail fast against unreachable servers.
+    pub fn new_with_timeout(
+        rpc_url: &str,
+        block_number: Option<u64>,
+        timeout_secs: u64,
+    ) -> Result<Self, LazyDbError> {
+        // Build an HTTP client with the caller-specified timeout (MAJOR #4).
+        // reqwest 0.11 is used because that is the version ethers-providers 2.x
+        // depends on internally — Http::new_with_client takes reqwest 0.11 Client.
+        let http_client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(timeout_secs))
+            .build()
+            .map_err(|e| LazyDbError::Provider(format!("reqwest client build: {e}")))?;
+
+        let url = Url::parse(rpc_url)
+            .map_err(|e| LazyDbError::Decode(format!("invalid RPC URL '{rpc_url}': {e}")))?;
+
+        let http = Http::new_with_client(url, http_client);
+        let client = Arc::new(Provider::new(http));
+
+        // Always create an owned fallback runtime.
+        // It handles both CurrentThread contexts and no-runtime contexts.
+        let fallback_rt = Arc::new(
+            Runtime::new()
+                .map_err(|e| LazyDbError::Provider(format!("tokio rt create: {e}")))?,
+        );
+
+        let (pinned_block_number, pinned_block) = match block_number {
+            Some(n) => (n, BlockId::Number(BlockNumber::Number(EU64::from(n)))),
+            None => {
+                // Resolve latest with runtime-flavor guard + timeout (CRITICAL #1).
+                let bn_result = bridge::block_on_with_timeout(
+                    &fallback_rt,
+                    timeout_secs,
+                    client.get_block_number(),
+                    "get_block_number",
+                )?;
+                let n = bn_result
+                    .map_err(|e| LazyDbError::Provider(format!("get_block_number: {e}")))?
+                    .as_u64();
+                (n, BlockId::Number(BlockNumber::Number(EU64::from(n))))
             }
         };
 
         Ok(Self {
             client,
             pinned_block,
+            pinned_block_number,
             account_cache: DashMap::new(),
             storage_cache: DashMap::new(),
             block_hash_cache: DashMap::new(),
             fallback_rt,
+            timeout_secs,
         })
     }
 
+    /// Override the RPC timeout after construction (builder pattern).
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout_secs = timeout.as_secs().max(1);
+        self
+    }
+
+    /// Return the block number this `LazyDb` is pinned to.
+    ///
+    /// Used by `SimulatorV2` to memoize the resolved "latest" block across
+    /// multiple `simulate()` calls (MAJOR #3 + #6 fix).
+    pub fn pinned_block_number(&self) -> u64 {
+        self.pinned_block_number
+    }
+
     // -----------------------------------------------------------------------
-    // Async bridge helpers
+    // Private RPC helper
     // -----------------------------------------------------------------------
 
-    /// Drive `future` on the right executor depending on whether we have a
-    /// live Tokio runtime or are using the owned fallback.
-    fn block_on<F, T>(&self, future: F) -> T
+    /// Execute a single provider future with the timeout + flavor guard.
+    fn rpc<F, T>(&self, context: &str, fut: F) -> Result<T, LazyDbError>
     where
-        F: std::future::Future<Output = T>,
+        F: Future<Output = Result<T, ethers::providers::ProviderError>>,
     {
-        match &self.fallback_rt {
-            None => {
-                // Production path: we are inside a Tokio runtime.
-                let handle = Handle::current();
-                tokio::task::block_in_place(|| handle.block_on(future))
-            }
-            Some(rt) => {
-                // Test / bench path: use the owned runtime.
-                rt.block_on(future)
-            }
-        }
+        bridge::block_on_with_timeout(&self.fallback_rt, self.timeout_secs, fut, context)?
+            .map_err(|e| LazyDbError::Provider(format!("{context}: {e}")))
     }
 
     // -----------------------------------------------------------------------
@@ -172,7 +256,6 @@ impl LazyDb {
 
     #[inline]
     fn addr_to_ethers(addr: Address) -> EH160 {
-        // Address inner type: FixedBytes<20>.  H160 is also [u8; 20].
         EH160::from(addr.0 .0)
     }
 
@@ -221,14 +304,21 @@ impl Database for LazyDb {
 
         let eth_addr = Self::addr_to_ethers(address);
         let block = Some(self.pinned_block);
+        let client = self.client.clone();
 
         // Three parallel fetches: balance, nonce, code.
-        let (balance_res, nonce_res, code_res) = self.block_on(async {
-            let b_fut = self.client.get_balance(eth_addr, block);
-            let n_fut = self.client.get_transaction_count(eth_addr, block);
-            let c_fut = self.client.get_code(eth_addr, block);
-            tokio::join!(b_fut, n_fut, c_fut)
-        });
+        // Uses bridge::block_on_with_timeout for runtime-flavor guard + timeout.
+        let (balance_res, nonce_res, code_res) = bridge::block_on_with_timeout(
+            &self.fallback_rt,
+            self.timeout_secs,
+            async move {
+                let b_fut = client.get_balance(eth_addr, block);
+                let n_fut = client.get_transaction_count(eth_addr, block);
+                let c_fut = client.get_code(eth_addr, block);
+                tokio::join!(b_fut, n_fut, c_fut)
+            },
+            &format!("basic({address})"),
+        )?;
 
         let eth_balance = balance_res
             .map_err(|e| LazyDbError::Provider(format!("get_balance({address}): {e}")))?;
@@ -301,14 +391,10 @@ impl Database for LazyDb {
         let eth_addr = Self::addr_to_ethers(address);
         let slot_h256 = H256::from(index.to_be_bytes());
 
-        let raw = self
-            .block_on(
-                self.client
-                    .get_storage_at(eth_addr, slot_h256, Some(self.pinned_block)),
-            )
-            .map_err(|e| {
-                LazyDbError::Provider(format!("get_storage_at({address}, {index}): {e}"))
-            })?;
+        let raw = self.rpc(
+            &format!("get_storage_at({address}, {index})"),
+            self.client.get_storage_at(eth_addr, slot_h256, Some(self.pinned_block)),
+        )?;
 
         let value = Self::h256_to_u256(raw);
         self.storage_cache.insert(key, value);
@@ -350,9 +436,10 @@ impl Database for LazyDb {
         );
 
         let block_id = BlockId::Number(BlockNumber::Number(EU64::from(n)));
-        let maybe_block = self
-            .block_on(self.client.get_block(block_id))
-            .map_err(|e| LazyDbError::Provider(format!("get_block({n}): {e}")))?;
+        let maybe_block = self.rpc(
+            &format!("get_block({n})"),
+            self.client.get_block(block_id),
+        )?;
 
         let hash = match maybe_block.and_then(|b| b.hash) {
             Some(h) => Self::h256_to_b256(h),

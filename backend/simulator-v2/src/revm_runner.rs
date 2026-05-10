@@ -44,10 +44,14 @@ use crate::{CandidateInput, SimError, SimResult};
 /// `db` must be pinned to the correct block before calling this function.
 /// Typically the caller constructs a `LazyDb` and calls `run()` with it.
 ///
+/// `effective_block` must equal the block number `db` is pinned to (MAJOR #6
+/// fix): it is written into `BlockEnv.number` so revm sees the same block
+/// number that the database serves state for.
+///
 /// # Errors
 /// - `SimError::Reverted(reason)` — EVM executed but reverted.
 /// - `SimError::Provider(msg)` — database fetch or revm environmental error.
-pub fn run<DB>(candidate: &CandidateInput, mut db: DB) -> Result<SimResult, SimError>
+pub fn run<DB>(candidate: &CandidateInput, mut db: DB, effective_block: u64) -> Result<SimResult, SimError>
 where
     DB: Database,
     DB::Error: std::fmt::Display,
@@ -65,7 +69,7 @@ where
         .unwrap_or(U256::ZERO);
 
     let to = Address::from(candidate.to);
-    let env = build_env(candidate, caller, to);
+    let env = build_env(candidate, caller, to, effective_block);
 
     let mut evm = EVM::with_env(env);
     evm.database(db);
@@ -124,32 +128,35 @@ where
 // ---------------------------------------------------------------------------
 
 /// Build the revm `Env` from the candidate and resolved addresses.
-fn build_env(candidate: &CandidateInput, caller: Address, to: Address) -> Env {
+///
+/// `effective_block` is the block number agreed between the DB and this env
+/// (MAJOR #6 fix). It must equal the block `LazyDb` is pinned to so that
+/// `BlockEnv.number` and the DB state snapshot are consistent.
+///
+/// `candidate.gas_price_wei` is forwarded to `TxEnv.gas_price` so revm
+/// deducts actual gas cost from the caller's balance (CRITICAL #2 fix).
+/// `SimResult.net_profit_wei` is therefore true net-of-gas P&L (G-NET-1).
+fn build_env(candidate: &CandidateInput, caller: Address, to: Address, effective_block: u64) -> Env {
     let mut cfg = CfgEnv::default();
     cfg.chain_id = candidate.chain_id;
-    // Use SpecId::LATEST so all mainnet opcodes (incl. PUSH0, transient
-    // storage) are available.  For non-mainnet chains the spec could be
-    // parameterised in a future iteration.
     cfg.spec_id = SpecId::LATEST;
 
     let block = BlockEnv {
-        number: U256::from(candidate.block_number),
-        // Timestamp defaults to 0 — safe for profitability simulation where
-        // block.timestamp is rarely decisive for DEX arb logic.
-        // basefee defaults to 0 — we exclude gas costs from profit here;
-        // the caller (SimulatorV2) subtracts gas cost separately.
+        // Use effective_block, not candidate.block_number, so DB and BlockEnv
+        // always agree even when candidate.block_number == 0 (MAJOR #6 fix).
+        number: U256::from(effective_block),
         ..BlockEnv::default()
     };
 
     let tx = TxEnv {
         caller,
         gas_limit: 30_000_000,
-        // Zero gas price: we are measuring token profit, not ETH net-of-gas.
-        gas_price: U256::ZERO,
+        // Forward gas price so revm deducts gas from the caller's balance.
+        // net_profit_wei = balance_delta = profit_tokens - gas_cost (CRITICAL #2).
+        gas_price: U256::from(candidate.gas_price_wei),
         transact_to: TransactTo::Call(to),
         value: U256::from(candidate.value_wei),
         data: Bytes::copy_from_slice(&candidate.calldata),
-        // Disable nonce and chain-id checks: simulation, not broadcast.
         nonce: None,
         chain_id: None,
         ..TxEnv::default()

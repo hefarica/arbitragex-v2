@@ -6272,6 +6272,7 @@ dependencies = [
  "hex",
  "petgraph",
  "rayon",
+ "reqwest 0.11.27",
  "revm",
  "serde",
  "serde_json",
@@ -6279,6 +6280,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
