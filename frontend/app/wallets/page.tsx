@@ -1,14 +1,32 @@
-import React from "react";
+import WalletsClient, { type WalletsSnapshot } from "./WalletsClient";
+import { getApiBaseUrl } from "@/lib/api-client";
 
 export const metadata = { title: "Wallets & Allowances | ArbitrageX" };
+export const dynamic = "force-dynamic";
 
-export default function WalletsPage() {
-  return (
-    <div className="p-8 space-y-6">
-      <h1 className="text-3xl font-bold tracking-tight text-foreground">Operational Wallets</h1>
-      <div data-slot="card" className="bg-card text-card-foreground border border-border rounded-xl p-6 shadow-2xl">
-        <p className="text-muted-foreground">Manage encrypted wallets and smart contract allowances securely.</p>
-      </div>
-    </div>
-  );
+async function getInitialWallets(): Promise<WalletsSnapshot> {
+  const EDGE_URL =
+    process.env.INTERNAL_EDGE_URL || getApiBaseUrl();
+  try {
+    const res = await fetch(`${EDGE_URL}/api/v1/wallets`, {
+      cache: "no-store",
+      headers: { accept: "application/json" },
+    });
+    if (res.status === 404) {
+      return { wallets: [], source: "endpoint-not-implemented" };
+    }
+    if (!res.ok) {
+      return { wallets: [], source: `server-fetch-failed:${res.status}` };
+    }
+    const data = await res.json();
+    const wallets = Array.isArray(data?.wallets) ? data.wallets : [];
+    return { wallets, source: "server-snapshot" };
+  } catch {
+    return { wallets: [], source: "server-fetch-failed" };
+  }
+}
+
+export default async function WalletsPage() {
+  const initialSnapshot = await getInitialWallets();
+  return <WalletsClient initialSnapshot={initialSnapshot} />;
 }

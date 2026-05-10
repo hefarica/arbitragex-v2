@@ -20,3 +20,18 @@ datasources:
         - name: traceID
           matcherRegex: "trace_id\":\"(\\w+)"
           url: "$${__value.raw}"
+
+  # MON-7: Thanos Query datasource for long-term metrics (>2h retention window).
+  # Existing Prometheus datasource continues to serve live data (<2h).
+  # Use this datasource when building dashboards that span days/weeks.
+  - name: Thanos
+    uid: arbx-thanos
+    type: prometheus
+    access: proxy
+    url: http://thanos-query:10904
+    isDefault: false
+    editable: true
+    jsonData:
+      timeInterval: "1m"
+      queryTimeout: "120s"
+      httpMethod: POST

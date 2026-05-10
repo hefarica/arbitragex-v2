@@ -1,0 +1,23 @@
+# Thanos object storage configuration — Minio (S3-compatible).
+#
+# IMPORTANT: This file is read by Thanos at runtime. It does NOT expand shell
+# variables (${VAR} syntax is not supported here). The values below are the
+# dev defaults matching compose.dev.yml MINIO_ROOT_USER/PASSWORD fallbacks.
+#
+# Production: Before running docker compose up, replace the access_key and
+# secret_key values with the credentials set in your .env file, OR use a
+# secrets management tool to render this file from a template. See
+# docs/operations/THANOS_SETUP.md for the recommended procedure.
+#
+# bucket `arbx-metrics` must be created in Minio before Thanos sidecar starts.
+# See docs/operations/THANOS_SETUP.md step 1.
+
+type: S3
+config:
+  bucket: arbx-metrics
+  endpoint: minio:9000
+  access_key: arbx_dev
+  secret_key: changeme_dev_only_123
+  insecure: true
+  # Thanos stores blocks as multipart objects; these are safe defaults.
+  part_size: 134217728  # 128 MiB

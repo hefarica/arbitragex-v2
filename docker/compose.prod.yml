@@ -25,6 +25,11 @@ volumes:
   redis_data:
   grafana_data:
   loki_data:
+  prometheus_data:
+  vault_data:
+  vault_logs:
+  minio_data:
+  thanos_store_data:
 
 x-common-logging: &common-logging
   logging:
@@ -292,10 +297,19 @@ services:
   prometheus:
     # INF-7: bumped from v2.52.0 to v2.55.1 (latest stable as of 2026-05-07).
     image: prom/prometheus:v2.55.1
+    # MON-7: 2h block rotation so Thanos sidecar can pick up completed blocks
+    # promptly. --web.enable-lifecycle allows /-/reload for config hot-reload.
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.min-block-duration=2h
+      - --storage.tsdb.max-block-duration=2h
+      - --web.enable-lifecycle
     ports: ["127.0.0.1:9090:9090"]
     volumes:
       - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ../monitoring/alerts.rules.yml:/etc/prometheus/alerts.rules.yml:ro
+      - prometheus_data:/prometheus
     # INF-3: healthcheck via /-/healthy endpoint.
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://localhost:9090/-/healthy 2>/dev/null || exit 1"]
@@ -404,6 +418,159 @@ services:
       retries: 3
     restart: unless-stopped
     networks: [arbx-net]
+    <<: *common-logging
+
+  # ───────── INF-9: HashiCorp Vault — secret rotation ─────────
+  #
+  # SECURITY: Vault starts SEALED. Operator MUST run `vault operator init` and
+  # `vault operator unseal` (3× threshold) after first boot. This is deliberate
+  # — auto-unseal is not configured here. Unsealing requires physical/SSH access
+  # to the VPS and the operator-held unseal key shards.
+  #
+  # Healthcheck returns unhealthy until unsealed. This is CORRECT — do not
+  # change the healthcheck to accept 5xx codes.
+  #
+  # prod: MINIO_ROOT_USER and MINIO_ROOT_PASSWORD MUST be set in .env.
+  # vault serves on loopback only. Access via SSH tunnel from operator workstation.
+  vault:
+    image: hashicorp/vault:1.18.1
+    container_name: arbitragex-v2-vault-1
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_LOCAL_CONFIG: |
+        {
+          "storage": {"file": {"path": "/vault/data"}},
+          "listener": {"tcp": {"address": "0.0.0.0:8200", "tls_disable": 1}},
+          "ui": true,
+          "default_lease_ttl": "168h",
+          "max_lease_ttl": "720h"
+        }
+      VAULT_ADDR: http://0.0.0.0:8200
+    command: server
+    volumes:
+      - vault_data:/vault/data
+      - vault_logs:/vault/logs
+    ports:
+      - "127.0.0.1:8200:8200"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8200/v1/sys/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks: [arbx-net]
+    deploy:
+      resources:
+        limits:
+          memory: "512M"
+          cpus: "0.5"
+    <<: *common-logging
+
+  # ───────── MON-7: Minio — object storage for Thanos blocks ─────────
+  minio:
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    container_name: arbitragex-v2-minio-1
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER required for prod}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD required for prod}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks: [arbx-net]
+    deploy:
+      resources:
+        limits:
+          memory: "512M"
+          cpus: "0.5"
+    <<: *common-logging
+
+  # ───────── MON-7: Thanos sidecar ─────────
+  thanos-sidecar:
+    image: quay.io/thanos/thanos:v0.36.1
+    container_name: arbitragex-v2-thanos-sidecar-1
+    command:
+      - sidecar
+      - --tsdb.path=/prometheus
+      - --prometheus.url=http://prometheus:9090
+      - --objstore.config-file=/etc/thanos/objstore.yml
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+    volumes:
+      - prometheus_data:/prometheus:ro
+      - ../monitoring/thanos/objstore.yml:/etc/thanos/objstore.yml:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [arbx-net]
+    deploy:
+      resources:
+        limits:
+          memory: "256M"
+          cpus: "0.5"
+    <<: *common-logging
+
+  # ───────── MON-7: Thanos Store ─────────
+  thanos-store:
+    image: quay.io/thanos/thanos:v0.36.1
+    container_name: arbitragex-v2-thanos-store-1
+    command:
+      - store
+      - --data-dir=/data
+      - --objstore.config-file=/etc/thanos/objstore.yml
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+    volumes:
+      - thanos_store_data:/data
+      - ../monitoring/thanos/objstore.yml:/etc/thanos/objstore.yml:ro
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [arbx-net]
+    deploy:
+      resources:
+        limits:
+          memory: "512M"
+          cpus: "0.5"
+    <<: *common-logging
+
+  # ───────── MON-7: Thanos Query ─────────
+  thanos-query:
+    image: quay.io/thanos/thanos:v0.36.1
+    container_name: arbitragex-v2-thanos-query-1
+    command:
+      - query
+      - --http-address=0.0.0.0:10904
+      - --grpc-address=0.0.0.0:10905
+      - --store=thanos-sidecar:10901
+      - --store=thanos-store:10901
+    ports:
+      - "127.0.0.1:10904:10904"
+    depends_on:
+      - thanos-sidecar
+      - thanos-store
+    restart: unless-stopped
+    networks: [arbx-net]
+    deploy:
+      resources:
+        limits:
+          memory: "256M"
+          cpus: "0.5"
     <<: *common-logging
 
 # ─────────── Secrets (rendered by vault-agent into host-side files) ───────────

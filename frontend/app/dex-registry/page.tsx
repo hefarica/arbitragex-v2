@@ -1,14 +1,32 @@
-import React from "react";
+import DexRegistryClient, { type DexRegistrySnapshot } from "./DexRegistryClient";
+import { getApiBaseUrl } from "@/lib/api-client";
 
 export const metadata = { title: "DEX Registry | ArbitrageX" };
+export const dynamic = "force-dynamic";
 
-export default function DexRegistryPage() {
-  return (
-    <div className="p-8 space-y-6">
-      <h1 className="text-3xl font-bold tracking-tight text-foreground">DEX & Token Allowlist</h1>
-      <div data-slot="card" className="bg-card text-card-foreground border border-border rounded-xl p-6 shadow-2xl">
-        <p className="text-muted-foreground">Loading authorized DEXes (UniV2, UniV3, Curve)...</p>
-      </div>
-    </div>
-  );
+async function getInitialDexes(): Promise<DexRegistrySnapshot> {
+  const EDGE_URL =
+    process.env.INTERNAL_EDGE_URL || getApiBaseUrl();
+  try {
+    const res = await fetch(`${EDGE_URL}/api/v1/dexes`, {
+      cache: "no-store",
+      headers: { accept: "application/json" },
+    });
+    if (res.status === 404) {
+      return { dexes: [], source: "endpoint-not-implemented" };
+    }
+    if (!res.ok) {
+      return { dexes: [], source: `server-fetch-failed:${res.status}` };
+    }
+    const data = await res.json();
+    const dexes = Array.isArray(data?.dexes) ? data.dexes : [];
+    return { dexes, source: "server-snapshot" };
+  } catch {
+    return { dexes: [], source: "server-fetch-failed" };
+  }
+}
+
+export default async function DexRegistryPage() {
+  const initialSnapshot = await getInitialDexes();
+  return <DexRegistryClient initialSnapshot={initialSnapshot} />;
 }
