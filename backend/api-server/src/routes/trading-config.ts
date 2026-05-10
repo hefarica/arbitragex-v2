@@ -216,6 +216,69 @@ interface DbRow {
   created_at: Date;
 }
 
+/**
+ * Hotfix (2026-05-10): normalise each `strategy_configs` entry so every
+ * canonical field is present in the wire payload with proper null defaults.
+ *
+ * Why this matters: when a new field is added to `StrategyRuntimeConfig`
+ * (e.g. `enabled_pool_ids`), existing JSONB entries persisted before the
+ * migration do NOT have that field. The Rust struct uses `#[serde(default)]`
+ * so it deserialises tolerantly, but the frontend Zod schema (strict by
+ * default to avoid TS2719 record-value inference issues) had treated the
+ * missing field as a parse error, leaving the /strategies page rendering
+ * a red "endpoint error" banner.
+ *
+ * This helper guarantees the GET response shape is stable regardless of
+ * when the entry was first persisted. Adding a new field in the future
+ * means adding one more line here — the frontend keeps working.
+ *
+ * R8 fail-honest: never invents a value. All defaults are `null` (or `[]`
+ * for collections) — the universal "not configured" sentinel.
+ */
+function normalizeStrategyConfigEntry(entry: unknown): Record<string, unknown> {
+  const e = (entry ?? {}) as Record<string, unknown>;
+  return {
+    enabled: e["enabled"] ?? true,
+    allowed_chain_ids: e["allowed_chain_ids"] ?? [],
+    enabled_dex_ids: e["enabled_dex_ids"] ?? null,
+    enabled_pool_ids: e["enabled_pool_ids"] ?? null,
+    enabled_protocol_types: e["enabled_protocol_types"] ?? [],
+    min_profit_usd: e["min_profit_usd"] ?? null,
+    min_roi_pct: e["min_roi_pct"] ?? null,
+    max_slippage_pct: e["max_slippage_pct"] ?? null,
+    max_price_impact_pct: e["max_price_impact_pct"] ?? null,
+    max_gas_usd: e["max_gas_usd"] ?? null,
+    simulation_capital_usd: e["simulation_capital_usd"] ?? null,
+    per_token_caps_usd: e["per_token_caps_usd"] ?? {},
+    route_constraints: normalizeRouteConstraints(e["route_constraints"]),
+  };
+}
+
+function normalizeRouteConstraints(rc: unknown): Record<string, unknown> {
+  const r = (rc ?? {}) as Record<string, unknown>;
+  return {
+    min_legs: r["min_legs"] ?? 1,
+    max_legs: r["max_legs"] ?? 8,
+    require_atomic: r["require_atomic"] ?? false,
+    allow_cross_chain: r["allow_cross_chain"] ?? false,
+    allowed_base_tokens: r["allowed_base_tokens"] ?? [],
+    allowed_quote_tokens: r["allowed_quote_tokens"] ?? [],
+    min_pool_tvl_usd: r["min_pool_tvl_usd"] ?? null,
+    min_pool_volume_24h_usd: r["min_pool_volume_24h_usd"] ?? null,
+  };
+}
+
+function normalizeStrategyConfigs(
+  configs: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  if (!configs) return {};
+  const out: Record<string, unknown> = {};
+  for (const [kind, entry] of Object.entries(configs)) {
+    out[kind] = normalizeStrategyConfigEntry(entry);
+  }
+  return out;
+}
+
 function rowToRedisState(row: DbRow): Record<string, unknown> {
   // Numerics stringified by pg → cast to number for Redis JSON consumed by Rust.
   // JSONB columns come back as already-parsed objects; pass through verbatim.
@@ -248,9 +311,10 @@ function rowToRedisState(row: DbRow): Record<string, unknown> {
     flashloan_fee_pct: Number(row.flashloan_fee_pct),
     enabled_strategies: row.enabled_strategies,
     enabled_dex_ids: row.enabled_dex_ids ?? null,
-    // Migration 056 — empty object default keeps Rust deserialise happy when
-    // legacy rows have no JSONB cell (DEFAULT '{}'::jsonb covers new rows).
-    strategy_configs: row.strategy_configs ?? {},
+    // Migration 056 + 2026-05-10 hotfix — normalise every entry so legacy
+    // rows missing newer fields (e.g. enabled_pool_ids) round-trip as null
+    // and the strict frontend Zod parses cleanly.
+    strategy_configs: normalizeStrategyConfigs(row.strategy_configs),
     // Migration 047 + 048: cast NUMERIC strings to numbers for Redis JSON / Rust deserialise.
     capital_cost_rate_annual_pct: Number(row.capital_cost_rate_annual_pct),
     ops_overhead_usd_per_attempt: Number(row.ops_overhead_usd_per_attempt),

@@ -327,7 +327,15 @@ export const StrategyRuntimeConfigSchema = z.object({
   enabled_dex_ids: z.array(z.string().uuid()).nullable(),
   // Audit 2026-05-10 follow-up: per-strategy pool allowlist (UUIDs from
   // pools.id). Reserved for the next sprint's PoolsTab writeback UI.
-  enabled_pool_ids: z.array(z.string().uuid()).nullable(),
+  //
+  // 2026-05-10 hotfix: marked `.nullable().optional()` to tolerate legacy
+  // strategy_configs entries persisted BEFORE this field existed. Without
+  // .optional(), Zod treated `undefined` as a parse error, the SSR
+  // `getTradingConfig` call failed, and the /strategies page rendered a
+  // red "endpoint error" banner instead of the editor. R8 fail-honest:
+  // the API never invents this field, so accepting `undefined` here is
+  // equivalent to "no per-pool restriction" — the same as `null`.
+  enabled_pool_ids: z.array(z.string().uuid()).nullable().optional(),
   enabled_protocol_types: z.array(z.string()),
   min_profit_usd: z.number().nonnegative().nullable(),
   min_roi_pct: z.number().nonnegative().nullable(),
