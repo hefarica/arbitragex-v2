@@ -9,6 +9,7 @@ pub mod flashloan_arb_worker;
 pub mod gas_oracle_worker;
 pub mod heartbeat_worker;
 pub mod hft_mempool_listener;
+pub mod jit_v3_worker;
 pub mod liquidation_worker;
 pub mod pool_sync_worker;
 pub mod price_worker;
