@@ -25,18 +25,20 @@ contract MockAavePool {
     address public lastAsset;
     uint256 public lastAmount;
     bytes public lastParams;
+    uint16 public lastReferralCode;
 
     function flashLoanSimple(
         address receiverAddress,
         address asset,
         uint256 amount,
         bytes calldata params,
-        uint16 /*referralCode*/
+        uint16 _referralCode
     ) external {
         lastReceiver = receiverAddress;
         lastAsset = asset;
         lastAmount = amount;
         lastParams = params;
+        lastReferralCode = _referralCode;
         // In a real Aave, the pool would call executeOperation.
         // We do NOT simulate the callback here — tested separately.
     }
@@ -125,14 +127,15 @@ contract FlashLoanExecutorTest is Test {
 
     // -----------------------------------------------------------------------
     // testReceiveFlashLoan_RejectsUnauthorized
-    // Callback from an address that is NOT the registered Aave pool must revert.
+    // SC-3: expect FL_UnauthorizedCaller custom error instead of string
     // -----------------------------------------------------------------------
     function testReceiveFlashLoan_RejectsUnauthorized() public {
         uint256 loanAmount = 1_000e18;
         uint256 premium = 1e18;
         bytes memory params = "";
 
-        vm.expectRevert("Caller must be AavePool");
+        // SC-3: custom error replaces string "Caller must be AavePool"
+        vm.expectRevert(FL_UnauthorizedCaller.selector);
 
         vm.prank(attacker);
         flashExec.executeOperation(
@@ -140,6 +143,27 @@ contract FlashLoanExecutorTest is Test {
             loanAmount,
             premium,
             address(flashExec), // even with correct initiator — caller is wrong
+            params
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // testReceiveFlashLoan_RejectsInvalidInitiator
+    // SC-3: expect FL_InvalidInitiator custom error (new coverage)
+    // -----------------------------------------------------------------------
+    function testReceiveFlashLoan_RejectsInvalidInitiator() public {
+        uint256 loanAmount = 1_000e18;
+        uint256 premium = 1e18;
+        bytes memory params = "";
+
+        vm.expectRevert(FL_InvalidInitiator.selector);
+
+        vm.prank(address(pool));
+        flashExec.executeOperation(
+            address(token),
+            loanAmount,
+            premium,
+            attacker,  // wrong initiator
             params
         );
     }
@@ -193,6 +217,47 @@ contract FlashLoanExecutorTest is Test {
     }
 
     // -----------------------------------------------------------------------
+    // SC-8: testSetReferralCode_UpdatesStorage
+    // Admin can change referralCode; event is emitted; pool receives new code.
+    // -----------------------------------------------------------------------
+    function testSetReferralCode_UpdatesStorage() public {
+        // Default is 0 after initialize
+        assertEq(flashExec.referralCode(), 0, "initial referralCode must be 0");
+
+        // Update to a non-zero code
+        uint16 newCode = 42;
+
+        vm.expectEmit(false, false, false, true, address(flashExec));
+        emit FlashLoanExecutor.ReferralCodeUpdated(newCode);
+
+        flashExec.setReferralCode(newCode);
+        assertEq(flashExec.referralCode(), newCode, "referralCode must be updated");
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-8: testSetReferralCode_OnlyAdmin
+    // Non-admin cannot change referralCode.
+    // -----------------------------------------------------------------------
+    function testSetReferralCode_OnlyAdmin() public {
+        vm.expectRevert();
+        vm.prank(attacker);
+        flashExec.setReferralCode(99);
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-8: testRequestFlashLoan_UsesConfiguredReferralCode
+    // After setReferralCode(55), pool.lastReferralCode must equal 55.
+    // -----------------------------------------------------------------------
+    function testRequestFlashLoan_UsesConfiguredReferralCode() public {
+        flashExec.setReferralCode(55);
+
+        vm.prank(executorRole);
+        flashExec.requestFlashLoan(address(token), 100e18, "");
+
+        assertEq(pool.lastReferralCode(), 55, "pool must receive the configured referral code");
+    }
+
+    // -----------------------------------------------------------------------
     // SC-08: testUpgrade_OnlyUpgrader_CanUpgrade
     // A non-UPGRADER_ROLE address must not be able to upgrade the proxy.
     // -----------------------------------------------------------------------
@@ -213,6 +278,10 @@ contract FlashLoanExecutorTest is Test {
         // Confirm state set in initialize() is present
         assertEq(address(flashExec.aavePool()), address(pool), "aavePool must match before upgrade");
         assertEq(flashExec.arbitrageExecutor(), address(arbExec), "arbitrageExecutor must match before upgrade");
+        assertEq(flashExec.referralCode(), 0, "referralCode must be 0 before upgrade");
+
+        // Set a non-default referral code to verify slot 2 survives
+        flashExec.setReferralCode(77);
 
         // Deploy V2 implementation
         FlashLoanExecutorV2 newImpl = new FlashLoanExecutorV2();
@@ -224,8 +293,9 @@ contract FlashLoanExecutorTest is Test {
         FlashLoanExecutorV2 flashExecV2 = FlashLoanExecutorV2(address(flashExec));
         assertEq(flashExecV2.version(), "v2", "V2 marker function must be accessible after upgrade");
 
-        // Storage slots 0 and 1 must be intact
+        // Storage slots 0, 1, and 2 must be intact
         assertEq(address(flashExecV2.aavePool()), address(pool), "aavePool must survive upgrade");
         assertEq(flashExecV2.arbitrageExecutor(), address(arbExec), "arbitrageExecutor must survive upgrade");
+        assertEq(flashExecV2.referralCode(), 77, "referralCode must survive upgrade");
     }
 }

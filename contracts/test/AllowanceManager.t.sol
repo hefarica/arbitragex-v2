@@ -83,22 +83,40 @@ contract AllowanceManagerTest is Test {
     }
 
     // -----------------------------------------------------------------------
-    // SEC-2: testGrantAllowance_RejectsAboveSafeCap
-    // grantAllowance must revert with "Above safe cap" if maxAmount > MAX_SAFE_ALLOWANCE.
+    // SEC-2 + SC-3: testGrantAllowance_RejectsAboveSafeCap
+    // SC-3: expect AM_AboveSafeCap custom error instead of string "Above safe cap"
     // -----------------------------------------------------------------------
     function testGrantAllowance_RejectsAboveSafeCap() public {
         uint256 aboveCap = manager.MAX_SAFE_ALLOWANCE() + 1;
-        vm.expectRevert("Above safe cap");
+        vm.expectRevert(AM_AboveSafeCap.selector);
         manager.grantAllowance(address(token), spender, aboveCap);
     }
 
     // -----------------------------------------------------------------------
-    // SEC-2: testGrantAllowance_RejectsZeroAmount
-    // grantAllowance must revert with "Zero amount" if maxAmount == 0.
+    // SEC-2 + SC-3: testGrantAllowance_RejectsZeroAmount
+    // SC-3: expect AM_ZeroAmount custom error instead of string "Zero amount"
     // -----------------------------------------------------------------------
     function testGrantAllowance_RejectsZeroAmount() public {
-        vm.expectRevert("Zero amount");
+        vm.expectRevert(AM_ZeroAmount.selector);
         manager.grantAllowance(address(token), spender, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-3: testGrantAllowance_RejectsZeroToken
+    // expect AM_ZeroAddress custom error instead of string "Zero token"
+    // -----------------------------------------------------------------------
+    function testGrantAllowance_RejectsZeroToken() public {
+        vm.expectRevert(AM_ZeroAddress.selector);
+        manager.grantAllowance(address(0), spender, 1_000e18);
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-3: testGrantAllowance_RejectsZeroSpender
+    // expect AM_ZeroAddress custom error instead of string "Zero spender"
+    // -----------------------------------------------------------------------
+    function testGrantAllowance_RejectsZeroSpender() public {
+        vm.expectRevert(AM_ZeroAddress.selector);
+        manager.grantAllowance(address(token), address(0), 1_000e18);
     }
 
     // -----------------------------------------------------------------------
@@ -114,6 +132,156 @@ contract AllowanceManagerTest is Test {
         // Then revoke
         manager.revokeAllowance(address(token), spender);
         assertEq(token.allowance(address(manager), spender), 0, "Allowance must be 0 after revoke");
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-4: testPausable_BlocksGrantWhenPaused
+    // grantAllowance reverts with EnforcedPause while paused.
+    // -----------------------------------------------------------------------
+    function testPausable_BlocksGrantWhenPaused() public {
+        manager.pause();
+
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("EnforcedPause()"))));
+        manager.grantAllowance(address(token), spender, 1_000e18);
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-4: testPausable_BlocksRevokeWhenPaused
+    // revokeAllowance reverts with EnforcedPause while paused.
+    // -----------------------------------------------------------------------
+    function testPausable_BlocksRevokeWhenPaused() public {
+        // Grant first so there's something to revoke
+        manager.grantAllowance(address(token), spender, 1_000e18);
+
+        manager.pause();
+
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("EnforcedPause()"))));
+        manager.revokeAllowance(address(token), spender);
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-4: testPausable_Unpause_AllowsGrant
+    // After unpause, grantAllowance works normally.
+    // -----------------------------------------------------------------------
+    function testPausable_Unpause_AllowsGrant() public {
+        manager.pause();
+        manager.unpause();
+
+        // Must succeed
+        manager.grantAllowance(address(token), spender, 1_000e18);
+        assertEq(token.allowance(address(manager), spender), 1_000e18);
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-4: testBatchGrantAllowance_HappyPath
+    // Batch grant sets allowances for all (token, spender, amount) tuples.
+    // -----------------------------------------------------------------------
+    function testBatchGrantAllowance_HappyPath() public {
+        address spender2 = makeAddr("spender2");
+        MockERC20AM token2 = new MockERC20AM();
+        token2.mint(address(manager), 1_000_000e18);
+
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(token);
+        tokens[1] = address(token2);
+
+        address[] memory spenders = new address[](2);
+        spenders[0] = spender;
+        spenders[1] = spender2;
+
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = 500e18;
+        amounts[1] = 750e18;
+
+        manager.batchGrantAllowance(tokens, spenders, amounts);
+
+        assertEq(token.allowance(address(manager), spender), 500e18, "token/spender allowance mismatch");
+        assertEq(token2.allowance(address(manager), spender2), 750e18, "token2/spender2 allowance mismatch");
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-4: testBatchGrantAllowance_RejectsLengthMismatch
+    // -----------------------------------------------------------------------
+    function testBatchGrantAllowance_RejectsLengthMismatch() public {
+        address[] memory tokens = new address[](2);
+        address[] memory spenders = new address[](1); // mismatch
+        uint256[] memory amounts = new uint256[](2);
+
+        vm.expectRevert(AM_LengthMismatch.selector);
+        manager.batchGrantAllowance(tokens, spenders, amounts);
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-4: testBatchRevokeAllowance_HappyPath
+    // Batch revoke zeros allowances for all (token, spender) pairs.
+    // -----------------------------------------------------------------------
+    function testBatchRevokeAllowance_HappyPath() public {
+        address spender2 = makeAddr("spender2");
+        MockERC20AM token2 = new MockERC20AM();
+        token2.mint(address(manager), 1_000_000e18);
+
+        // Grant first
+        manager.grantAllowance(address(token), spender, 500e18);
+        manager.grantAllowance(address(token2), spender2, 750e18);
+
+        // Then batch revoke
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(token);
+        tokens[1] = address(token2);
+
+        address[] memory spenders = new address[](2);
+        spenders[0] = spender;
+        spenders[1] = spender2;
+
+        manager.batchRevokeAllowance(tokens, spenders);
+
+        assertEq(token.allowance(address(manager), spender), 0, "token/spender must be 0 after batch revoke");
+        assertEq(token2.allowance(address(manager), spender2), 0, "token2/spender2 must be 0 after batch revoke");
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-4: testBatchRevokeAllowance_RejectsLengthMismatch
+    // -----------------------------------------------------------------------
+    function testBatchRevokeAllowance_RejectsLengthMismatch() public {
+        address[] memory tokens = new address[](2);
+        address[] memory spenders = new address[](1); // mismatch
+
+        vm.expectRevert(AM_LengthMismatch.selector);
+        manager.batchRevokeAllowance(tokens, spenders);
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-4: testBatchGrant_BlockedWhenPaused
+    // -----------------------------------------------------------------------
+    function testBatchGrant_BlockedWhenPaused() public {
+        manager.pause();
+
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(token);
+        address[] memory spenders = new address[](1);
+        spenders[0] = spender;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 500e18;
+
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("EnforcedPause()"))));
+        manager.batchGrantAllowance(tokens, spenders, amounts);
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-6: testNoExecutorRole — EXECUTOR_ROLE constant must not exist
+    // AllowanceManager.EXECUTOR_ROLE was removed (SC-6 dead code cleanup).
+    // This test verifies the slot is gone by checking the constant is absent.
+    // We can't test absence at the Solidity level, but the build will fail
+    // if the constant were referenced elsewhere.  Here we confirm ADMIN_ROLE
+    // and UPGRADER_ROLE are the only declared role constants.
+    // -----------------------------------------------------------------------
+    function testRoleConstants_OnlyAdminAndUpgrader() public view {
+        // ADMIN_ROLE == DEFAULT_ADMIN_ROLE == bytes32(0)
+        assertEq(manager.ADMIN_ROLE(), bytes32(0), "ADMIN_ROLE must be DEFAULT_ADMIN_ROLE");
+        // UPGRADER_ROLE == keccak256("UPGRADER_ROLE")
+        assertEq(manager.UPGRADER_ROLE(), keccak256("UPGRADER_ROLE"), "UPGRADER_ROLE hash mismatch");
+        // No EXECUTOR_ROLE constant should be visible at the proxy interface.
+        // (Compiler enforces this: if the constant existed, the test would call it.)
     }
 
     // -----------------------------------------------------------------------

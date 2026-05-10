@@ -164,6 +164,7 @@ contract ArbitrageExecutorTest is Test {
 
     // -----------------------------------------------------------------------
     // testRevert_InsufficientProfit
+    // SC-3: expect InsufficientProfit custom error selector instead of string
     // -----------------------------------------------------------------------
     function testRevert_InsufficientProfit() public {
         uint256 amountIn = 1_000e18;
@@ -181,7 +182,8 @@ contract ArbitrageExecutorTest is Test {
         bytes[] memory payloads = new bytes[](1);
         payloads[0] = "";
 
-        vm.expectRevert("Slippage / Min profit guard failed");
+        // SC-3: custom error replaces string "Slippage / Min profit guard failed"
+        vm.expectRevert(InsufficientProfit.selector);
 
         vm.prank(executorRole);
         executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, minProfit, routers, payloads);
@@ -189,19 +191,75 @@ contract ArbitrageExecutorTest is Test {
 
     // -----------------------------------------------------------------------
     // testRevert_OnlyExecutor (access control)
+    // SC-3: expect NotExecutor custom error selector instead of string
     // -----------------------------------------------------------------------
     function testRevert_OnlyExecutor() public {
         address[] memory routers = new address[](0);
         bytes[] memory payloads = new bytes[](0);
 
-        vm.expectRevert("Not executor");
+        // SC-3: custom error replaces string "Not executor"
+        vm.expectRevert(NotExecutor.selector);
 
         vm.prank(stranger);
         executor.executeArbitrage(bytes32(0), address(token), address(token), 0, 0, routers, payloads);
     }
 
     // -----------------------------------------------------------------------
+    // testRevert_TokenNotApproved
+    // SC-3: expect TokenNotApproved custom error
+    // -----------------------------------------------------------------------
+    function testRevert_TokenNotApproved() public {
+        MockERC20 unapproved = new MockERC20();
+        unapproved.mint(address(executor), 1_000e18);
+
+        address[] memory routers = new address[](0);
+        bytes[] memory payloads = new bytes[](0);
+
+        vm.expectRevert(abi.encodeWithSelector(TokenNotApproved.selector, address(unapproved)));
+
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(unapproved), address(unapproved), 100e18, 0, routers, payloads);
+    }
+
+    // -----------------------------------------------------------------------
+    // testRevert_RouterNotApproved
+    // SC-3: expect RouterNotApproved custom error
+    // -----------------------------------------------------------------------
+    function testRevert_RouterNotApproved() public {
+        uint256 amountIn = 100e18;
+        token.mint(address(executor), amountIn);
+
+        address unapprovedRouter = makeAddr("unapprovedRouter");
+        address[] memory routers = new address[](1);
+        routers[0] = unapprovedRouter;
+
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = "";
+
+        vm.expectRevert(abi.encodeWithSelector(RouterNotApproved.selector, unapprovedRouter));
+
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
+    }
+
+    // -----------------------------------------------------------------------
+    // testRevert_LengthMismatch
+    // SC-3: expect LengthMismatch custom error
+    // -----------------------------------------------------------------------
+    function testRevert_LengthMismatch() public {
+        address[] memory routers = new address[](2);
+        bytes[] memory payloads = new bytes[](1); // length mismatch
+
+        vm.expectRevert(LengthMismatch.selector);
+
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(token), address(token), 0, 0, routers, payloads);
+    }
+
+    // -----------------------------------------------------------------------
     // testReentrancy_Blocked
+    // The inner re-entrant call hits ReentrancyGuard, which causes SwapFailed
+    // to propagate from the outer call (the swap call itself fails).
     // -----------------------------------------------------------------------
     function testReentrancy_Blocked() public {
         uint256 amountIn = 1_000e18;
@@ -222,10 +280,9 @@ contract ArbitrageExecutorTest is Test {
         token.mint(address(executor), amountIn);
 
         // The re-entrant inner call is blocked by ReentrancyGuard (ReentrancyGuardReentrantCall).
-        // That revert propagates through the low-level router.call() and is caught by:
-        //   require(success, "Swap failed in route")   [ArbitrageExecutor.sol]
-        // So the outer expectRevert sees "Swap failed in route" — which proves the guard fired.
-        vm.expectRevert("Swap failed in route");
+        // That revert propagates through the low-level router.call() and is caught by SwapFailed.
+        // SC-3: SwapFailed custom error replaces string "Swap failed in route"
+        vm.expectRevert(SwapFailed.selector);
 
         vm.prank(executorRole);
         executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, 0, attackRouters, attackPayloads);
