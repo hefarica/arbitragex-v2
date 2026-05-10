@@ -32,11 +32,19 @@ jobs:
 
       - name: Run cargo audit
         working-directory: backend
-        run: cargo audit
-        # TODO: audit findings exist on day-1 (ethers v2 is archived, revm 3.5 advisory).
-        # Non-blocking until advisory list is reviewed and RUSTSEC exceptions are declared.
-        # See: https://rustsec.org — track in follow-up issue.
-        continue-on-error: true
+        # Blocking — audit A6 (2026-05-10). No silent failures.
+        # To accept a known advisory: add --ignore RUSTSEC-XXXX-NNNN to RUSTSEC_IGNORES
+        # in the repo/env with operator approval and a comment explaining the risk decision.
+        # NEVER use continue-on-error here — that defeats the gate.
+        run: |
+          cargo audit --deny warnings \
+            ${RUSTSEC_IGNORES:-}
+        env:
+          # Operator-managed allowlist. Format: --ignore RUSTSEC-2024-0001 --ignore RUSTSEC-2024-0002
+          # Each entry requires explicit operator approval and a dated comment above it.
+          # Day-1 known advisories (ethers v2 archived, revm 3.5): triage required before
+          # clearing RUSTSEC_IGNORES — do not prepopulate without explicit RUSTSEC IDs.
+          RUSTSEC_IGNORES: ""
 
   gitleaks:
     name: gitleaks (secrets scan)
