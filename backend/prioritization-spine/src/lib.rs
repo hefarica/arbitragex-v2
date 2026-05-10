@@ -12,6 +12,8 @@ pub mod swap_encoder;
 pub mod erc20_storage;
 pub mod round_trip_executor;
 pub mod strategy_scores_db;
+pub mod route_plan;
+pub mod strategy_config_gate;
 
 pub use types::*;
 pub use evidence::*;
@@ -22,3 +24,5 @@ pub use errors::*;
 pub use config_aware::{ConfigAwareEvaluator, ConfigGateOutcome, NetworkSignals};
 pub use strategy_scores_db::{StrategyFailRate, StrategyScoresCache};
 pub use feedback::{AdaptiveSignal, FeedbackChannel, SIGNAL_TTL};
+pub use route_plan::{RouteLeg, RoutePlan};
+pub use strategy_config_gate::{GateOutcome, StrategyConfigGate};

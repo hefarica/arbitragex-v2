@@ -24,6 +24,8 @@
 
 use crate::evidence::{CostBreakdown, OpportunityEvidence, PFailSource};
 use crate::feedback::FeedbackChannel;
+use crate::route_plan::RoutePlan;
+use crate::strategy_config_gate::{GateOutcome, StrategyConfigGate};
 use crate::strategy_scores_db::StrategyFailRate;
 use crate::types::OpportunityCandidate;
 use crate::decision::{ExecutionDecision, RejectReason};
@@ -110,6 +112,11 @@ pub enum ConfigGateOutcome {
     TokenNotAllowed { token_symbol_or_addr: String },
     /// Strategy class disabled by operator.
     StrategyDisabled { strategy_kind: String },
+    /// Migration 056 — `StrategyConfigGate` blocked the candidate based on
+    /// per-strategy config (chain allowlist, DEX allowlist, protocol type,
+    /// route shape, pool floor). Carries the precise reject reason so the
+    /// dashboard surfaces actionable detail (which DEX / which leg / why).
+    StrategyConfigGateBlocked { reason: RejectReason },
     /// Ran the math; here is the result (may still be unprofitable).
     /// `outcome` and `evidence` are boxed to avoid the `large_enum_variant`
     /// lint: `OpportunityEvidence` (~480 bytes) dwarfs the other variants
@@ -119,6 +126,12 @@ pub enum ConfigGateOutcome {
         outcome: Box<DefiArbitrageOutcome>,
         evidence: Box<OpportunityEvidence>,
         rejection: Option<RejectReason>,
+        /// `true` when the pre-math gate could not enforce a per-leg check
+        /// because the candidate did not carry a `RoutePlan`. The dashboard
+        /// surfaces this as `data_quality=partial` so the operator knows
+        /// their toggles are best-effort for the producing worker until
+        /// it migrates to `evaluate_with_route_plan`.
+        partial_data_quality: bool,
     },
 }
 
@@ -487,9 +500,44 @@ impl<'a> ConfigAwareEvaluator<'a> {
     /// `config.enabled_strategies` (e.g. "dex_arb_v2v2"). When the operator's
     /// `enabled_strategies` is empty, the evaluator treats it as "all enabled"
     /// to avoid silent paralysis on a freshly-seeded config.
+    ///
+    /// **Migration 056 backwards-compat**: this method calls
+    /// `evaluate_with_route_plan` with `route_plan = None`. Workers migrated
+    /// to emit `RoutePlan` should call `evaluate_with_route_plan` directly so
+    /// the `StrategyConfigGate` enforces per-leg DEX/protocol/pool checks.
     pub fn evaluate(
         &self,
         candidate: &OpportunityCandidate,
+        strategy_kind: &str,
+        chain_id: u64,
+        rpc_url_hash: String,
+        rpc_latency_ms: u64,
+    ) -> ConfigGateOutcome {
+        self.evaluate_with_route_plan(
+            candidate,
+            None,
+            strategy_kind,
+            chain_id,
+            rpc_url_hash,
+            rpc_latency_ms,
+        )
+    }
+
+    /// Migration 056 — `RoutePlan`-aware variant. Workers that have been
+    /// migrated (Phase 3+) call this directly with the full route metadata,
+    /// enabling the `StrategyConfigGate` to enforce per-leg DEX allowlist,
+    /// protocol type allowlist, pool TVL/volume floors, and route shape
+    /// constraints (min/max legs, atomicity).
+    ///
+    /// Workers NOT yet migrated keep calling `evaluate(...)` (which forwards
+    /// here with `route_plan = None`); the gate then degrades gracefully:
+    /// the cheap chain/strategy/disabled checks still apply, but per-leg
+    /// checks are skipped and the result is flagged
+    /// `partial_data_quality = true` so the dashboard surfaces the gap.
+    pub fn evaluate_with_route_plan(
+        &self,
+        candidate: &OpportunityCandidate,
+        route_plan: Option<&RoutePlan>,
         strategy_kind: &str,
         chain_id: u64,
         rpc_url_hash: String,
@@ -511,6 +559,28 @@ impl<'a> ConfigAwareEvaluator<'a> {
             return ConfigGateOutcome::StrategyDisabled {
                 strategy_kind: strategy_kind.to_string(),
             };
+        }
+
+        // 2b. Migration 056 — per-strategy fine-grained config gate (PASS A).
+        // Cheap checks before the math: chain allowlist, per-leg DEX/protocol
+        // (only when RoutePlan is available), pool active, route shape.
+        // PartialPass is propagated to the result via `partial_data_quality`.
+        let pre_math_outcome = StrategyConfigGate::check_pre_math(
+            self.config,
+            candidate,
+            route_plan,
+            strategy_kind,
+            chain_id,
+        );
+        let mut partial_data_quality = false;
+        match pre_math_outcome {
+            GateOutcome::Pass => {}
+            GateOutcome::PartialPass { .. } => {
+                partial_data_quality = true;
+            }
+            GateOutcome::Reject(reason) => {
+                return ConfigGateOutcome::StrategyConfigGateBlocked { reason };
+            }
         }
 
         // 3. Per-token USD valuation via cascade PriceOracle.
@@ -989,10 +1059,30 @@ impl<'a> ConfigAwareEvaluator<'a> {
             cost_breakdown,
         };
 
+        // Migration 056 — `StrategyConfigGate` PASS B: post-math overrides
+        // (per-strategy min_profit_usd / min_roi_pct) and pool TVL/volume
+        // floors. If the pre-math chain-level rejection is already populated
+        // (e.g. NegativeNetProfit), the post-math gate respects that — we
+        // only OVERRIDE the rejection when post-math finds a stricter cause.
+        let mut final_rejection = rejection;
+        if final_rejection.is_none() {
+            let post_outcome = StrategyConfigGate::check_post_math(
+                self.config,
+                route_plan,
+                strategy_kind,
+                outcome.net_profit_usd,
+                outcome.net_roi_pct,
+            );
+            if let GateOutcome::Reject(reason) = post_outcome {
+                final_rejection = Some(reason);
+            }
+        }
+
         ConfigGateOutcome::Evaluated {
             outcome: Box::new(outcome),
             evidence: Box::new(evidence),
-            rejection,
+            rejection: final_rejection,
+            partial_data_quality,
         }
     }
 }
@@ -1900,6 +1990,9 @@ mod tests {
         c.max_slippage_pct = 0.0;
         c.failure_risk_buffer_pct = 0.0;
         c.flashloan_fee_pct = 0.0;
+        // Allow both strategy kinds tested below — cfg() defaults to dex_arb only,
+        // which would otherwise gate-reject the flashloan_arb evaluation.
+        c.enabled_strategies = vec!["dex_arb_v2v2".into(), "flashloan_arb".into()];
 
         let candidate = OpportunityCandidate {
             route_fingerprint: "flash_test".into(),

@@ -17,13 +17,18 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { hasAdminSession } from "@/lib/admin-token";
 import { putTradingConfig } from "@/lib/api-client";
-import type {
-  LifecycleStatus,
-  StrategyCatalogEntry,
-  TradingConfigConfigured,
+import {
+  DEFAULT_STRATEGY_RUNTIME_CONFIG,
+  type LifecycleStatus,
+  type StrategyCatalogEntry,
+  type StrategyConfigs,
+  type StrategyRuntimeConfig,
+  type TradingConfigConfigured,
 } from "@/lib/schemas";
 
 // Truth labels for the lifecycle badge. Wording is chosen so the operator sees
@@ -63,6 +68,12 @@ interface Props {
 
 export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor }: Props) {
   const [enabled, setEnabled] = useState<string[]>(config.enabled_strategies);
+  // Migration 056 — per-strategy fine-grained config editor.
+  // Default to existing strategy_configs from server snapshot; mutations
+  // happen in the card thresholds below and round-trip with the same PUT.
+  const [strategyConfigs, setStrategyConfigs] = useState<StrategyConfigs>(
+    config.strategy_configs ?? {},
+  );
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   // R1: session check deferred to useEffect — never read document.cookie during SSR.
@@ -74,13 +85,33 @@ export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor
   }, []);
 
   const dirty = useMemo(() => {
-    const a = [...enabled].sort().join(",");
-    const b = [...config.enabled_strategies].sort().join(",");
-    return a !== b;
-  }, [enabled, config.enabled_strategies]);
+    const enabledA = [...enabled].sort().join(",");
+    const enabledB = [...config.enabled_strategies].sort().join(",");
+    if (enabledA !== enabledB) return true;
+    // Per-strategy config diff: cheap stable JSON compare.
+    const cfgA = JSON.stringify(strategyConfigs);
+    const cfgB = JSON.stringify(config.strategy_configs ?? {});
+    return cfgA !== cfgB;
+  }, [enabled, strategyConfigs, config.enabled_strategies, config.strategy_configs]);
 
   const toggle = (kind: string, checked: boolean) => {
     setEnabled((prev) => (checked ? Array.from(new Set([...prev, kind])) : prev.filter((k) => k !== kind)));
+  };
+
+  /**
+   * Update a per-strategy config field. Lazily creates the entry from the
+   * canonical default when the operator first edits the card. Empty
+   * strings clear the field back to null (R8 fail-honest — operator's
+   * "no override" intent reads as null, not 0).
+   */
+  const updateStrategy = (
+    kind: string,
+    patch: Partial<StrategyRuntimeConfig>,
+  ) => {
+    setStrategyConfigs((prev) => {
+      const existing = prev[kind] ?? { ...DEFAULT_STRATEGY_RUNTIME_CONFIG };
+      return { ...prev, [kind]: { ...existing, ...patch } };
+    });
   };
 
   const onSave = async () => {
@@ -93,11 +124,21 @@ export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor
     setMsg(null);
     const { configured: _c, chain_id: _cid, updated_at: _ua, updated_by: _ub, ...rest } = config;
     void _c; void _cid; void _ua; void _ub;
-    const body = { ...rest, enabled_strategies: enabled };
+    const body = {
+      ...rest,
+      enabled_strategies: enabled,
+      strategy_configs: strategyConfigs,
+    };
     const res = await putTradingConfig(config.chain_id, body, adminToken, actor);
     setSaving(false);
     if (res.ok) {
-      onSaved({ ...config, enabled_strategies: enabled, updated_at: res.data.updated_at, updated_by: res.data.updated_by });
+      onSaved({
+        ...config,
+        enabled_strategies: enabled,
+        strategy_configs: strategyConfigs,
+        updated_at: res.data.updated_at,
+        updated_by: res.data.updated_by,
+      });
       setMsg("Saved · searcher reloads in ≤1s");
     } else {
       setMsg(res.error);
@@ -131,6 +172,11 @@ export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor
           // the operator never thinks "I marked it, it must be running".
           const toggleEnabled = status === "live" && !isDefensive;
           const switchChecked = isDefensive ? true : status === "live" ? isOn : false;
+          // Migration 056 — per-strategy config edit panel only for LIVE strategies
+          // (where toggling actually affects detection). Defensive / informational
+          // cards keep the old read-only layout to avoid implying control.
+          const stratCfg = strategyConfigs[s.kind];
+          const showThresholds = toggleEnabled;
           return (
             <Card key={s.kind} className={isDefensive ? "border-destructive/40" : undefined}>
               <CardContent className="space-y-2 py-4">
@@ -165,7 +211,107 @@ export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor
                   {s.requires_flashloan && (
                     <Badge variant="outline" className="text-[10px]">flashloan</Badge>
                   )}
+                  {stratCfg && (
+                    <Badge variant="outline" className="text-[10px] bg-info/10 text-info">
+                      override
+                    </Badge>
+                  )}
                 </div>
+                {showThresholds && (
+                  <div className="grid grid-cols-2 gap-2 border-t border-border pt-3 mt-2">
+                    <div className="space-y-1">
+                      <Label htmlFor={`${s.kind}-min-profit`} className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        min profit USD
+                      </Label>
+                      <Input
+                        id={`${s.kind}-min-profit`}
+                        type="number"
+                        inputMode="decimal"
+                        step="0.01"
+                        min="0"
+                        placeholder="(chain default)"
+                        className="h-8 text-xs font-mono"
+                        value={stratCfg?.min_profit_usd ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value.trim();
+                          updateStrategy(s.kind, {
+                            min_profit_usd: v === "" ? null : Number(v),
+                          });
+                        }}
+                        title="Per-strategy minimum net profit in USD. Empty inherits the chain-level threshold."
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor={`${s.kind}-min-roi`} className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        min ROI %
+                      </Label>
+                      <Input
+                        id={`${s.kind}-min-roi`}
+                        type="number"
+                        inputMode="decimal"
+                        step="0.01"
+                        min="0"
+                        placeholder="(chain default)"
+                        className="h-8 text-xs font-mono"
+                        value={stratCfg?.min_roi_pct ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value.trim();
+                          updateStrategy(s.kind, {
+                            min_roi_pct: v === "" ? null : Number(v),
+                          });
+                        }}
+                        title="Per-strategy minimum net ROI percent. Empty inherits the chain-level threshold."
+                      />
+                    </div>
+                    <div className="space-y-1 col-span-2">
+                      <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        route legs (min / max)
+                      </Label>
+                      <div className="flex gap-2">
+                        <Input
+                          type="number"
+                          inputMode="numeric"
+                          step="1"
+                          min="1"
+                          max="8"
+                          className="h-8 text-xs font-mono"
+                          placeholder="min"
+                          value={stratCfg?.route_constraints.min_legs ?? 1}
+                          onChange={(e) => {
+                            const n = Math.max(1, Math.min(8, Number(e.target.value) || 1));
+                            updateStrategy(s.kind, {
+                              route_constraints: {
+                                ...(stratCfg?.route_constraints ??
+                                  DEFAULT_STRATEGY_RUNTIME_CONFIG.route_constraints),
+                                min_legs: n,
+                              },
+                            });
+                          }}
+                        />
+                        <Input
+                          type="number"
+                          inputMode="numeric"
+                          step="1"
+                          min="1"
+                          max="8"
+                          className="h-8 text-xs font-mono"
+                          placeholder="max"
+                          value={stratCfg?.route_constraints.max_legs ?? 8}
+                          onChange={(e) => {
+                            const n = Math.max(1, Math.min(8, Number(e.target.value) || 8));
+                            updateStrategy(s.kind, {
+                              route_constraints: {
+                                ...(stratCfg?.route_constraints ??
+                                  DEFAULT_STRATEGY_RUNTIME_CONFIG.route_constraints),
+                                max_legs: n,
+                              },
+                            });
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           );

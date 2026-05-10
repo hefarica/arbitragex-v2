@@ -252,11 +252,11 @@ pub static BUNDLE_INCLUDED_NO_PROFIT_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
 pub fn record_inclusion(chain_id: u64, relay: &str, profitable: bool) {
     let chain = chain_id.to_string();
     BUNDLE_INCLUDED_TOTAL
-        .with_label_values(&[&chain, relay])
+        .with_label_values(&[chain.as_str(), relay])
         .inc();
     if !profitable {
         BUNDLE_INCLUDED_NO_PROFIT_TOTAL
-            .with_label_values(&[&chain, relay])
+            .with_label_values(&[chain.as_str(), relay])
             .inc();
     }
 }

@@ -285,6 +285,74 @@ export const ReadinessReportSchema = z.object({
 
 export const GasPriceStrategySchema = z.enum(["fixed", "dynamic_basefee_plus_tip", "percentile_75"]);
 
+// Migration 056 — per-strategy fine-grained config (mirrors backend Zod 1:1).
+//
+// Design note: NO `.default()` on inner fields. Zod's `.default()` produces an
+// asymmetric type (input optional, output required) which propagates through
+// `z.record(...)` value types and triggers TS2719 "Two different types with
+// this name exist, but they are unrelated" at consumer sites that infer the
+// schema type. The backend is responsible for returning fully-populated rows
+// (its own Zod has `.default()` on input parsing); the frontend treats every
+// field as required-on-output. Forms construct concrete defaults explicitly.
+export const RouteConstraintsSchema = z.object({
+  min_legs: z.number().int().min(1).max(8),
+  max_legs: z.number().int().min(1).max(8),
+  require_atomic: z.boolean(),
+  allow_cross_chain: z.boolean(),
+  allowed_base_tokens: z.array(z.string()),
+  allowed_quote_tokens: z.array(z.string()),
+  min_pool_tvl_usd: z.number().nonnegative().nullable(),
+  min_pool_volume_24h_usd: z.number().nonnegative().nullable(),
+});
+
+export const StrategyRuntimeConfigSchema = z.object({
+  enabled: z.boolean(),
+  allowed_chain_ids: z.array(z.number().int().positive()),
+  enabled_dex_ids: z.array(z.string().uuid()).nullable(),
+  enabled_protocol_types: z.array(z.string()),
+  min_profit_usd: z.number().nonnegative().nullable(),
+  min_roi_pct: z.number().nonnegative().nullable(),
+  max_slippage_pct: z.number().min(0).max(50).nullable(),
+  max_price_impact_pct: z.number().min(0).max(50).nullable(),
+  max_gas_usd: z.number().nonnegative().nullable(),
+  simulation_capital_usd: z.number().positive().nullable(),
+  per_token_caps_usd: z.record(z.string(), z.number().positive()),
+  route_constraints: RouteConstraintsSchema,
+});
+
+export const StrategyConfigsSchema = z.record(z.string(), StrategyRuntimeConfigSchema);
+
+export type RouteConstraints = z.infer<typeof RouteConstraintsSchema>;
+export type StrategyRuntimeConfig = z.infer<typeof StrategyRuntimeConfigSchema>;
+export type StrategyConfigs = z.infer<typeof StrategyConfigsSchema>;
+
+/// Concrete default used when constructing a fresh strategy entry in the UI.
+/// Mirrors the Rust `StrategyRuntimeConfig::Default` semantics. Operator
+/// then mutates fields via the editor before saving.
+export const DEFAULT_STRATEGY_RUNTIME_CONFIG: StrategyRuntimeConfig = {
+  enabled: true,
+  allowed_chain_ids: [],
+  enabled_dex_ids: null,
+  enabled_protocol_types: [],
+  min_profit_usd: null,
+  min_roi_pct: null,
+  max_slippage_pct: null,
+  max_price_impact_pct: null,
+  max_gas_usd: null,
+  simulation_capital_usd: null,
+  per_token_caps_usd: {},
+  route_constraints: {
+    min_legs: 1,
+    max_legs: 8,
+    require_atomic: false,
+    allow_cross_chain: false,
+    allowed_base_tokens: [],
+    allowed_quote_tokens: [],
+    min_pool_tvl_usd: null,
+    min_pool_volume_24h_usd: null,
+  },
+};
+
 const TradingConfigBaseFields = {
   chain_id: z.number().int().positive(),
   capital_usd: z.number().nonnegative(),
@@ -317,6 +385,12 @@ const TradingConfigBaseFields = {
   // Phase 2 route finder: which DEX IDs the searcher should scan.
   // null = all DEXes enabled (default). Array of UUIDs restricts the scan.
   enabled_dex_ids: z.array(z.string().uuid()).nullable().optional(),
+  // Migration 056 — per-strategy fine-grained config keyed by strategy_kind.
+  // Empty object {} = no per-strategy overrides; chain-level enabled_strategies
+  // / enabled_dex_ids govern instead. Default is `{}` (input optional, output
+  // always present) to keep the inferred type strict — `.optional()` here would
+  // bleed `| undefined` through every Record<string, T> consumer.
+  strategy_configs: StrategyConfigsSchema,
   enabled: z.boolean(),
   // ── Net Profit Gate — Sprint A+B+C (migrations 047+048) ──────────────
   // Capital cost fields (Sprint A).

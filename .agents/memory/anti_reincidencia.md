@@ -565,3 +565,196 @@ no-hardcode todavía reporta ~152 violaciones reales que NO son falsos positivos
 - Múltiples test fixtures con direcciones inline en `revm_backend.rs`, `price_oracle.rs` que requieren refactor a `tests/fixtures/`.
 
 **Incidente abierto:** En espera del refactor de catálogo canónico. CI workflows toolchain + TS workspace fixes ya en main; no-hardcode permanece rojo y documentado hasta cleanup.
+
+---
+
+## Incidente #N+1: Commit mixto por archivos pre-staged de sesión paralela
+
+**Fecha del aprendizaje:** 8 de Mayo de 2026 (sesión visual stack)
+
+**Qué ocurrió:**
+Tras editar 4 archivos frontend del aurora-glass dark theme, ejecuté `git add` solo de mis 4 archivos y luego `git commit -m "..." -- <pathspec>`. El commit resultante (`b912da0`) contenía MIS 4 frontend + 3 archivos backend Rust de un commit BE-01 Sprint A que una sesión Claude Sonnet 4.6 paralela había dejado pre-staged en el index. El mensaje de commit terminó siendo el de BE-01 (no el mío).
+
+**Qué salió mal:**
+1. No verifiqué `git diff --cached` antes de stage adicional → no detecté que el index ya tenía los 3 archivos rust.
+2. No verifiqué `git show HEAD --stat` después del commit → no detecté que el mensaje ni el conjunto de archivos eran los esperados.
+3. Pathspec en `git commit` no siempre restringe — git puede seguir consumiendo `.git/COMMIT_EDITMSG` y archivos staged previamente.
+
+**Causa raíz:**
+Index de git compartido entre sesiones Claude paralelas. Cada agente puede dejar el index en estado inconsistente. Asumí "limpio" en lugar de verificar.
+
+**Regla nueva para prevenirlo:**
+- **Pre-commit hygiene OBLIGATORIO**: Antes de cada `git commit`, ejecutar `git diff --cached --stat` y confirmar que SOLO los archivos esperados están staged.
+- **Post-commit hygiene OBLIGATORIO**: Después del commit, ejecutar `git show HEAD --stat | head -3 && tail -28` y validar primer línea (mensaje) + lista de archivos.
+- **Recovery seguro si el commit es mixto**: `git reset --soft HEAD~1` (preserva todo en el index) → 2 commits separados con pathspec explícito → push.
+- **Nunca pushear sin estos dos checks** — una vez en remoto, el único fix es force-push (destructivo) o revert commit (sucio).
+
+**Validación obligatoria:**
+Persistido en `~/.claude/projects/c--Users-HFRC-Desktop-arbitragex-v2-productivo-full/memory/feedback_git_commit_hygiene.md` con prompt-level enforcement.
+
+**Archivos relacionados:**
+Cualquier flujo `git add → git commit` en este repo. La memoria de subagent scope discipline cubre el caso subagente; este cubre el caso parent-level.
+
+---
+
+## Incidente #N+2: `next build` corrompe `.next/` mientras `next dev` está activo
+
+**Fecha del aprendizaje:** 9 de Mayo de 2026 (sesión visual stack)
+
+**Qué ocurrió:**
+Tras refactorizar `OpportunitiesClient.tsx` de hardcoded slate-* a tokens, ejecuté `npm run build` para verificar mientras `npm run dev` seguía corriendo en background. El build pasó (exit 0). Cuando el usuario refrescó el navegador, vio la página completamente sin estilos — solo HTML crudo con default browser styles.
+
+**Qué salió mal:**
+- `next build` reescribe `.next/server/` y `.next/static/` con bundles de PRODUCCIÓN.
+- `next dev` mantiene en memoria los manifests de DESARROLLO que apuntaban a chunks ahora movidos/renombrados.
+- Resultado: dev sirve 404 en `layout.css`, `layout.js`, `main-app.js`, `app-pages-internals.js` → navegador no recibe CSS → página sin estilo.
+
+**Causa raíz:**
+Concurrencia entre dos procesos Next.js sobre el mismo `.next/` directory.
+
+**Regla nueva para prevenirlo:**
+- **NUNCA correr `npm run build` con `npm run dev` activo simultáneamente** sobre el mismo proyecto.
+- Si ambos son necesarios, usar `--distDir` distinto en uno (ej. `next build -- --distDir=.next-prod`).
+- En esta sesión la convención es: para build de validación, primero `TaskStop` el dev server, luego build, luego restart dev si se necesita.
+
+**Recovery cuando ocurre:**
+1. Stop dev server (TaskStop o taskkill PID del puerto 5173)
+2. `rm -rf frontend/.next`
+3. `cd frontend && npm run dev` (reconstruye cache desde cero, ~2s)
+
+**Síntoma reconocible:**
+404s en `_next/static/css/...css`, `_next/static/chunks/main-app.js` en logs del dev server. Página HTML servida pero sin estilos.
+
+**Archivos relacionados:**
+`frontend/.next/` (cache directory).
+
+---
+
+## Incidente #N+3: Browser auto-translation rompe React reconciliation (`removeChild on Node`)
+
+**Fecha del aprendizaje:** 9 de Mayo de 2026 (sesión visual stack, reportado vía screenshot WhatsApp del operador desde mobile Chrome Android)
+
+**Qué ocurrió:**
+Operador accedió a `http://195.201.235.70:5173/strategies` desde Chrome móvil Android. Vio el error boundary de la app (`error.tsx`) con mensaje "Algo se rompió" y diagnóstico técnico:
+```
+Failed to execute 'removeChild' on 'Node':
+The node to be removed is not a child of this node.
+```
+
+El error name "NotFoundError" venía traducido a "Error de no encontrado" — pista de que Chrome había auto-traducido la página.
+
+**Qué salió mal:**
+1. `<html lang="en">` declaraba inglés.
+2. Contenido de la app mezcla inglés/español según componente.
+3. Chrome móvil sobre IP cruda HTTP (sin reputación) aplica políticas de translate más agresivas.
+4. Auto-translate reemplaza text nodes en el DOM.
+5. React intenta `removeChild` sobre un node que el navegador ya movió/reemplazó → throw.
+6. Error boundary captura. Pero CUALQUIER state change posterior reactiva el bug.
+
+**Causa raíz:**
+Incompatibilidad fundamental entre Virtual DOM de React y modificación externa del DOM por features del navegador. Issue `facebook/react#11538` abierto desde 2017, sin fix planeado upstream.
+
+**Regla nueva para prevenirlo:**
+**Defensa de 3 capas obligatoria** en `frontend/app/layout.tsx`:
+1. `<meta name="google" content="notranslate">` en `<head>` — Google Translate primary signal.
+2. `translate="no"` attribute en `<html>` y `<body>` — HTML5 standard.
+3. `class="notranslate"` en `<html>` y `<body>` — Google Translate widget legacy signal.
+
+Cada navegador honra una combinación distinta. Belt-and-suspenders es necesario.
+
+**Validación obligatoria:**
+Tras cualquier cambio a `layout.tsx`, verificar en HTML servido:
+```bash
+curl -s "$URL" | grep -E '(name="google" content="notranslate"|translate="no"|class="[^"]*notranslate)'
+```
+Debe haber matches en las 3 capas.
+
+**Archivos relacionados:**
+`frontend/app/layout.tsx` (metadata.other.google + html attrs + body attrs)
+`frontend/app/error.tsx` (recibió Sergio de la traducción al ser síntoma visible)
+
+**Fix aplicado:** commit `7403cbe` (2026-05-09 23:25 UTC) — desplegado a VPS, verificado E2E.
+
+---
+
+## Incidente #N+4: Smart App Control bloquea Foundry forge.exe (irreversible al apagar)
+
+**Fecha del aprendizaje:** 10 de Mayo de 2026 (sesión visual stack)
+
+**Qué ocurrió:**
+Operador vio toast de "Seguridad de Windows" reportando que `bash.exe` intentó cargar `forge.exe` y la acción fue bloqueada por publisher no verificado.
+
+**Qué se descubrió:**
+- Smart App Control (SAC) en Windows 11 = ON.
+- forge.exe del operador está NotSigned (Foundry no firma releases).
+- SAC NO acepta exclusiones por archivo, NO tiene allowlist, NO se integra con `Add-MpPreference -ExclusionPath`.
+- Apagar SAC requiere reboot y es **irreversible sin reinstalar Windows desde cero** (diseñado así por Microsoft para evitar disable por malware).
+
+**Inventario:** 18 binarios unsigned en el dev environment del operador — 4 Foundry + 14 Rust toolchain (cargo, rustc, rustfmt, clippy, rust-analyzer, etc.). SAC los permite por reputación cloud, no por firma — frágil.
+
+**Regla nueva para prevenirlo:**
+- **No depender de binarios unsigned localmente** en Windows con SAC=ON. Toda compilación productiva debe correr en GitHub Actions (Linux runners) o Docker (Linux containers).
+- **Para tools de dev en Windows**: preferir wrappers SSH→VPS (sin SAC) o WSL2 (Linux dentro de Windows, sin SAC).
+- **NUNCA** proponer apagar SAC al operador — la pérdida de seguridad permanente no justifica el dev convenience.
+
+**Validación si nuevo tool unsigned llega**:
+```powershell
+Get-AuthenticodeSignature "$env:USERPROFILE\.foo\bin\foo.exe" | Select Status
+```
+Si `NotSigned` y `Get-MpComputerStatus` muestra `SmartAppControlState=On`, el tool puede ser bloqueado en cualquier momento.
+
+**Archivos relacionados:**
+- `~/.foundry/bin/` (forge, cast, anvil, chisel — 4 NotSigned)
+- `~/.cargo/bin/` (14 NotSigned)
+
+---
+
+## Incidente: Schema-Drift `enabled_dex_ids` y silent-paralysis del operador
+
+**Fecha del aprendizaje:** 10 de Mayo de 2026 (Sesión post-audit)
+
+**Qué ocurrió:**
+La página `/strategies` permitía al operador habilitar/deshabilitar DEXes por chain. La selección viajaba de la UI → API (Zod schema) → PostgreSQL `trading_config.enabled_dex_ids` → Redis. Pero el motor (`searcher-rs` vía `prioritization-spine`) ignoraba el campo silenciosamente: cualquier toggle de DEX en `/strategies` era **decorativo**.
+
+**Qué salió mal:**
+
+1. La migración 042 añadió la columna `trading_config.enabled_dex_ids UUID[]` y el endpoint `/admin/trading-config/:chain_id` la persistía + la espejaba a Redis.
+2. El struct Rust `shared_rs::trading_config::TradingConfigState` **NO tenía el campo `enabled_dex_ids`**. Como serde acepta campos extra por defecto (`#[serde(deny_unknown_fields)]` no estaba), la deserialización no fallaba — el campo simplemente desaparecía.
+3. Se sumaba: tampoco existía un struct fino por estrategia. El operador podía activar "dex_arb_v2v2" y "triangular" en la lista plana `enabled_strategies`, pero NO podía configurar `min_profit_usd`, `min_roi_pct`, `enabled_dex_ids`, `route_constraints` por estrategia.
+
+**Causa raíz:**
+**Schema drift silencioso entre serialización y consumo**. Más peligroso que un error de compilación: API+UI lucen funcionales, los datos viajan, la DB los guarda, pero el motor que decide los descarta. La superficie de control parecía operar pero el comportamiento del runtime no cambiaba.
+
+**Regla nueva para prevenirlo:**
+
+- **Symmetry Audit obligatorio**: cuando una migración añade una columna a `trading_config` (o cualquier estructura que se hidrata vía `serde_json::from_str` en Rust), revisar **simultáneamente**:
+  1. Schema Zod del API (`backend/api-server/src/routes/*.ts`)
+  2. Cast a Redis (`rowToRedisState` o equivalente)
+  3. Struct Rust correspondiente con `#[serde(default)]` para retrocompatibilidad
+  4. Tests unitarios que deserializan un JSON legacy SIN el campo + un JSON nuevo CON el campo
+  5. Tipos del frontend (`frontend/lib/schemas.ts`) si la UI lee/edita el campo
+- **Cobertura de tests**: cada nuevo campo necesita un test `deserialise_legacy_config_without_new_fields` que cargue el JSON anterior a la migración y verifique que el campo cae a su default sin panic.
+
+**Validación obligatoria:**
+Después de cada migración SQL que toque `trading_config`, confirmar:
+
+```bash
+# Rust struct compila con un blob Redis legacy
+cargo test -p shared-rs --lib trading_config::tests::deserialise_legacy_config_without_new_fields
+# Schema TS y Rust están alineados (campo obligatorio en uno = obligatorio en el otro)
+grep "<campo>" backend/api-server/src/routes/trading-config.ts backend/shared-rs/src/trading_config.rs frontend/lib/schemas.ts
+```
+
+**Archivos o rutas relacionadas:**
+
+- `database/migrations/042_trading_config_enabled_dex_ids.sql` (origen — el campo en DB)
+- `database/migrations/056_strategy_configs.sql` (cierre — añade `strategy_configs JSONB`)
+- `backend/shared-rs/src/trading_config.rs` (struct extendido + helpers `strategy_enabled`, `effective_dex_allowlist`, `effective_min_profit_usd`)
+- `backend/prioritization-spine/src/strategy_config_gate.rs` (nuevo gate de doble pasada)
+- `backend/prioritization-spine/src/route_plan.rs` (contrato `RoutePlan` + `RouteLeg`)
+- `backend/searcher-rs/src/scanner.rs` (emite RoutePlan minimal por candidato)
+
+**Acción correcta en futuras ocasiones:**
+Cuando una columna SQL se añade para que el operador la edite vía UI, el cierre del bug requiere **5 capas tocadas en el mismo PR**: SQL + API + Redis cast + Rust struct + UI form. Si alguna falta, el fix no cierra — produce schema drift silencioso. Verificación obligatoria con un `cargo test` que deserializa el blob legacy.
+
+**Fix aplicado:** ninguno todavía. 3 opciones propuestas al operador (SSH wrapper / WSL2 / disable SAC). Pendiente de elección.

@@ -48,6 +48,117 @@ pub enum GasPriceStrategy {
     Percentile75,
 }
 
+/// Route shape constraints for a specific strategy.
+///
+/// Operator-tunable bounds applied per-strategy by `StrategyConfigGate`:
+///   - `min_legs` / `max_legs`: route-length window (e.g. triangular requires 3).
+///   - `require_atomic`: reject any route flagged non-atomic by the worker.
+///   - `allow_cross_chain`: explicit gate for cross-chain bridge routes.
+///   - `allowed_base_tokens` / `allowed_quote_tokens`: per-strategy override of
+///     the global `allowed_token_symbols` allowlist when non-empty. Empty means
+///     "fall back to global allowlist". Lookup is case-insensitive at the gate.
+///   - `min_pool_tvl_usd` / `min_pool_volume_24h_usd`: liquidity-floor checks
+///     applied to every leg; `None` skips the check (R8 fail-honest — no
+///     synthetic comparison value).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteConstraints {
+    #[serde(default = "default_min_legs")]
+    pub min_legs: u32,
+    #[serde(default = "default_max_legs")]
+    pub max_legs: u32,
+    #[serde(default)]
+    pub require_atomic: bool,
+    #[serde(default)]
+    pub allow_cross_chain: bool,
+    #[serde(default)]
+    pub allowed_base_tokens: Vec<String>,
+    #[serde(default)]
+    pub allowed_quote_tokens: Vec<String>,
+    #[serde(default)]
+    pub min_pool_tvl_usd: Option<f64>,
+    #[serde(default)]
+    pub min_pool_volume_24h_usd: Option<f64>,
+}
+
+fn default_min_legs() -> u32 { 1 }
+fn default_max_legs() -> u32 { 8 }
+
+impl Default for RouteConstraints {
+    /// Manual `Default` (NOT derived) so `min_legs` / `max_legs` start at
+    /// permissive values 1 / 8 instead of `u32::default() = 0`. The derived
+    /// Default would have meant "block every route by default" — exactly
+    /// the silent-paralysis trap the no-hardcode doctrine warns against.
+    fn default() -> Self {
+        Self {
+            min_legs: default_min_legs(),
+            max_legs: default_max_legs(),
+            require_atomic: false,
+            allow_cross_chain: false,
+            allowed_base_tokens: Vec::new(),
+            allowed_quote_tokens: Vec::new(),
+            min_pool_tvl_usd: None,
+            min_pool_volume_24h_usd: None,
+        }
+    }
+}
+
+/// Per-strategy runtime config. One entry per `strategy_kind` string.
+///
+/// All fields default to permissive values so a freshly-seeded config (empty
+/// `strategy_configs` map) does not silently paralyse detection — the global
+/// `enabled_strategies` toggle remains the legacy compatibility lever. When
+/// the operator wants fine control they populate this map; the
+/// `StrategyConfigGate` then enforces every field.
+///
+/// Lifecycle invariants enforced by the gate (see prioritization-spine):
+///   - `enabled = false` → `RejectReason::StrategyConfigDisabled`
+///   - `chain_id ∉ allowed_chain_ids` (when non-empty) → `RejectReason::StrategyConfigChainBlocked`
+///   - any leg `dex_id ∉ enabled_dex_ids` (when Some) → `RejectReason::StrategyConfigDexBlocked`
+///   - any leg `protocol_type ∉ enabled_protocol_types` (when non-empty)
+///     → `RejectReason::StrategyConfigProtocolBlocked`
+///   - route fails `route_constraints` → `RejectReason::StrategyConfigRouteBlocked`
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StrategyRuntimeConfig {
+    #[serde(default = "default_strategy_enabled")]
+    pub enabled: bool,
+    /// When empty, the gate falls back to the chain-level `enabled_strategies`
+    /// list (legacy compatibility). When non-empty, the strategy is gated
+    /// strictly to these chains.
+    #[serde(default)]
+    pub allowed_chain_ids: Vec<u64>,
+    /// `Some(vec)` = strategy may only use these DEX UUIDs (case-insensitive).
+    /// `None`     = inherits the chain-level `enabled_dex_ids` (which itself
+    ///              may be `None` meaning "all active DEXes").
+    /// Empty vec  = block all DEXes (operator wants this strategy idle).
+    #[serde(default)]
+    pub enabled_dex_ids: Option<Vec<String>>,
+    /// Allowed protocol types (e.g. "uniswap-v2", "uniswap-v3", "curve",
+    /// "balancer"). Empty = all allowed.
+    #[serde(default)]
+    pub enabled_protocol_types: Vec<String>,
+    /// Strategy-specific overrides of the chain-level economic gates. `None`
+    /// inherits the chain-level value (R8 fail-honest — never invented).
+    #[serde(default)]
+    pub min_profit_usd: Option<f64>,
+    #[serde(default)]
+    pub min_roi_pct: Option<f64>,
+    #[serde(default)]
+    pub max_slippage_pct: Option<f64>,
+    #[serde(default)]
+    pub max_price_impact_pct: Option<f64>,
+    #[serde(default)]
+    pub max_gas_usd: Option<f64>,
+    #[serde(default)]
+    pub simulation_capital_usd: Option<f64>,
+    /// Per-token caps for this strategy (USD), keyed by symbol (case-insensitive).
+    #[serde(default)]
+    pub per_token_caps_usd: HashMap<String, f64>,
+    #[serde(default)]
+    pub route_constraints: RouteConstraints,
+}
+
+fn default_strategy_enabled() -> bool { true }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradingConfigState {
     pub chain_id: u64,
@@ -140,6 +251,34 @@ pub struct TradingConfigState {
 
     // Strategy mix
     pub enabled_strategies: Vec<String>,
+
+    // ── Per-chain DEX allowlist (migration 042) ─────────────────────────
+    /// `Some(uuid_strings)` = strict allowlist applied to every route leg.
+    /// `None`               = "no explicit selection — use all is_active dexes".
+    /// `Some(vec![])`       = block ALL dexes (operator wants chain idle).
+    ///
+    /// **Schema-drift fix (migration 056 + this field)**: prior to 2026-05-10
+    /// this column existed in DB + API + Redis but was *missing* from the
+    /// Rust struct, so serde silently dropped it during deserialisation —
+    /// the toggle in /strategies was decorative at the engine. See
+    /// anti_reincidencia.md "Incidente schema-drift enabled_dex_ids".
+    /// Lookup is case-insensitive against canonical UUID v4 strings.
+    #[serde(default)]
+    pub enabled_dex_ids: Option<Vec<String>>,
+
+    // ── Per-strategy fine-grained config (migration 056) ────────────────
+    /// Operator-tunable per-strategy runtime config keyed by `strategy_kind`
+    /// (e.g. "dex_arb_v2v2", "triangular", "flashloan_arb", "liquidation",
+    /// "cex_dex"). Empty map = no per-strategy overrides; chain-level
+    /// `enabled_strategies` remains the legacy compatibility toggle.
+    ///
+    /// Enforced by `prioritization_spine::StrategyConfigGate` *in addition
+    /// to* the existing chain-level gates. The gate runs the cheap checks
+    /// (enabled flag, chain allowlist, DEX allowlist) before math, and the
+    /// expensive checks (route shape, pool TVL/volume) after the route is
+    /// resolved. See decision A+B+C in 2026-05-10 design notes.
+    #[serde(default)]
+    pub strategy_configs: HashMap<String, StrategyRuntimeConfig>,
 
     // --- Sprint A: Component 6 & 7 config scalars ---
 
@@ -332,6 +471,91 @@ impl TradingConfigState {
             .any(|s| s.to_ascii_uppercase() == needle)
     }
 
+    /// Case-insensitive lookup of the per-strategy config map.
+    pub fn strategy_config(&self, strategy_kind: &str) -> Option<&StrategyRuntimeConfig> {
+        if strategy_kind.is_empty() {
+            return None;
+        }
+        let needle = strategy_kind.to_ascii_lowercase();
+        self.strategy_configs
+            .iter()
+            .find(|(k, _)| k.to_ascii_lowercase() == needle)
+            .map(|(_, v)| v)
+    }
+
+    /// True when the strategy is enabled at the chain-level (legacy
+    /// `enabled_strategies` allowlist) AND, if a per-strategy config exists,
+    /// its `enabled` flag is true. Empty `enabled_strategies` is treated as
+    /// permissive default (legacy semantics — never silently paralyse).
+    pub fn strategy_enabled(&self, strategy_kind: &str) -> bool {
+        let chain_level_ok = self.enabled_strategies.is_empty()
+            || self
+                .enabled_strategies
+                .iter()
+                .any(|s| s.eq_ignore_ascii_case(strategy_kind));
+        if !chain_level_ok {
+            return false;
+        }
+        match self.strategy_config(strategy_kind) {
+            Some(cfg) => cfg.enabled,
+            None => true, // No fine-grained override → chain-level governs.
+        }
+    }
+
+    /// Resolves the effective DEX allowlist for `strategy_kind`. Resolution
+    /// order (most-specific wins):
+    ///   1. `strategy_configs[kind].enabled_dex_ids` if `Some(_)` (strict).
+    ///   2. chain-level `enabled_dex_ids` if `Some(_)` (strict).
+    ///   3. `None` → "all active DEXes" (legacy permissive default).
+    ///
+    /// Returned `Vec<String>` is normalised to lowercase for case-insensitive
+    /// matching. The caller compares each leg's `dex_id` against this list.
+    pub fn effective_dex_allowlist(&self, strategy_kind: &str) -> Option<Vec<String>> {
+        if let Some(cfg) = self.strategy_config(strategy_kind) {
+            if let Some(ref ids) = cfg.enabled_dex_ids {
+                return Some(ids.iter().map(|s| s.to_ascii_lowercase()).collect());
+            }
+        }
+        self.enabled_dex_ids
+            .as_ref()
+            .map(|ids| ids.iter().map(|s| s.to_ascii_lowercase()).collect())
+    }
+
+    /// True if `chain_id` is allowed for `strategy_kind` per its strategy
+    /// config. Empty `allowed_chain_ids` (default) = permissive.
+    pub fn strategy_allowed_on_chain(&self, strategy_kind: &str, chain_id: u64) -> bool {
+        match self.strategy_config(strategy_kind) {
+            Some(cfg) => {
+                cfg.allowed_chain_ids.is_empty() || cfg.allowed_chain_ids.contains(&chain_id)
+            }
+            None => true,
+        }
+    }
+
+    /// Effective `min_profit_usd` for a strategy: per-strategy override if
+    /// set, else chain-level. R8 fail-honest — never invents a value.
+    pub fn effective_min_profit_usd(&self, strategy_kind: &str) -> f64 {
+        self.strategy_config(strategy_kind)
+            .and_then(|c| c.min_profit_usd)
+            .unwrap_or(self.min_profit_usd)
+    }
+
+    /// Effective `min_roi_pct` for a strategy: per-strategy override if set,
+    /// else chain-level.
+    pub fn effective_min_roi_pct(&self, strategy_kind: &str) -> f64 {
+        self.strategy_config(strategy_kind)
+            .and_then(|c| c.min_roi_pct)
+            .unwrap_or(self.min_roi_pct)
+    }
+
+    /// Effective `max_slippage_pct` for a strategy: per-strategy override if
+    /// set, else chain-level.
+    pub fn effective_max_slippage_pct(&self, strategy_kind: &str) -> f64 {
+        self.strategy_config(strategy_kind)
+            .and_then(|c| c.max_slippage_pct)
+            .unwrap_or(self.max_slippage_pct)
+    }
+
     /// **DEPRECATED (BUG-2, 2026-05-05)**: this method assumes every token is
     /// the base token, producing nonsense USD valuations for any non-base
     /// non-stablecoin token. Use `shared_rs::price_oracle::ConfigPriceOracle`
@@ -456,6 +680,8 @@ mod tests {
             failure_risk_buffer_pct: 0.001,
             flashloan_fee_pct: 0.0009,
             enabled_strategies: vec!["dex_arb_v2v2".into()],
+            enabled_dex_ids: None,
+            strategy_configs: HashMap::new(),
             capital_cost_rate_annual_pct: 0.0,
             ops_overhead_usd_per_attempt: 0.01,
             spread_sanity_mult: 3.0,
@@ -605,5 +831,190 @@ mod tests {
         assert_eq!(s.effective_capital_for("WETH", "dex_arb_v2v2"), 250.0);
         // Non-matching token: no sim cap → operational capital $1000
         assert_eq!(s.effective_capital_for("USDC", "dex_arb_v2v2"), 1000.0);
+    }
+
+    // ----------------------------------------------------------------
+    // Migration 056: strategy_configs + enabled_dex_ids semantics
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn strategy_enabled_defaults_to_chain_level_when_no_override() {
+        let s = sample_state(); // enabled_strategies = ["dex_arb_v2v2"]
+        assert!(s.strategy_enabled("dex_arb_v2v2"));
+        assert!(!s.strategy_enabled("triangular")); // not in chain-level allowlist
+    }
+
+    #[test]
+    fn strategy_enabled_falls_back_when_chain_list_empty() {
+        // Empty chain-level enabled_strategies = legacy permissive default.
+        // Without per-strategy config, every strategy is enabled.
+        let mut s = sample_state();
+        s.enabled_strategies.clear();
+        assert!(s.strategy_enabled("triangular"));
+        assert!(s.strategy_enabled("flashloan_arb"));
+    }
+
+    #[test]
+    fn strategy_enabled_respects_per_strategy_override_off() {
+        let mut s = sample_state();
+        // Chain-level allows it; per-strategy disables it.
+        s.strategy_configs.insert(
+            "dex_arb_v2v2".into(),
+            StrategyRuntimeConfig {
+                enabled: false,
+                ..Default::default()
+            },
+        );
+        assert!(!s.strategy_enabled("dex_arb_v2v2"));
+    }
+
+    #[test]
+    fn strategy_enabled_blocks_when_chain_level_does() {
+        // Chain-level blocks → per-strategy enabled cannot override.
+        let mut s = sample_state();
+        s.enabled_strategies = vec!["triangular".into()]; // dex_arb not in list
+        s.strategy_configs.insert(
+            "dex_arb_v2v2".into(),
+            StrategyRuntimeConfig {
+                enabled: true,
+                ..Default::default()
+            },
+        );
+        assert!(!s.strategy_enabled("dex_arb_v2v2"));
+    }
+
+    #[test]
+    fn strategy_lookup_is_case_insensitive() {
+        let mut s = sample_state();
+        s.strategy_configs.insert(
+            "Dex_Arb_V2V2".into(),
+            StrategyRuntimeConfig {
+                enabled: false,
+                ..Default::default()
+            },
+        );
+        assert!(!s.strategy_enabled("dex_arb_v2v2"));
+        assert!(!s.strategy_enabled("DEX_ARB_V2V2"));
+    }
+
+    #[test]
+    fn effective_dex_allowlist_inherits_chain_level_when_strategy_unset() {
+        let mut s = sample_state();
+        s.enabled_dex_ids = Some(vec!["AAA".into(), "bbb".into()]);
+        let allow = s.effective_dex_allowlist("dex_arb_v2v2").unwrap();
+        // Normalised to lowercase for case-insensitive comparison at the gate.
+        assert_eq!(allow, vec!["aaa".to_string(), "bbb".to_string()]);
+    }
+
+    #[test]
+    fn effective_dex_allowlist_strategy_overrides_chain_level() {
+        let mut s = sample_state();
+        s.enabled_dex_ids = Some(vec!["chain-only".into()]);
+        s.strategy_configs.insert(
+            "triangular".into(),
+            StrategyRuntimeConfig {
+                enabled: true,
+                enabled_dex_ids: Some(vec!["STRAT-ONLY".into()]),
+                ..Default::default()
+            },
+        );
+        let allow = s.effective_dex_allowlist("triangular").unwrap();
+        assert_eq!(allow, vec!["strat-only".to_string()]);
+    }
+
+    #[test]
+    fn effective_dex_allowlist_none_means_all_dexes() {
+        let s = sample_state(); // both fields default None
+        assert!(s.effective_dex_allowlist("dex_arb_v2v2").is_none());
+    }
+
+    #[test]
+    fn effective_dex_allowlist_empty_vec_blocks_everything() {
+        // Operator explicitly sets enabled_dex_ids = [] → strict block-all
+        // (different from None which means "all DEXes allowed").
+        let mut s = sample_state();
+        s.enabled_dex_ids = Some(vec![]);
+        let allow = s.effective_dex_allowlist("dex_arb_v2v2").unwrap();
+        assert!(allow.is_empty());
+    }
+
+    #[test]
+    fn strategy_allowed_on_chain_empty_list_is_permissive() {
+        let s = sample_state();
+        assert!(s.strategy_allowed_on_chain("dex_arb_v2v2", 1));
+        assert!(s.strategy_allowed_on_chain("dex_arb_v2v2", 137));
+    }
+
+    #[test]
+    fn strategy_allowed_on_chain_strict_when_list_set() {
+        let mut s = sample_state();
+        s.strategy_configs.insert(
+            "dex_arb_v2v2".into(),
+            StrategyRuntimeConfig {
+                enabled: true,
+                allowed_chain_ids: vec![1, 42161],
+                ..Default::default()
+            },
+        );
+        assert!(s.strategy_allowed_on_chain("dex_arb_v2v2", 1));
+        assert!(s.strategy_allowed_on_chain("dex_arb_v2v2", 42161));
+        assert!(!s.strategy_allowed_on_chain("dex_arb_v2v2", 137));
+    }
+
+    #[test]
+    fn effective_min_profit_falls_back_to_chain_when_strategy_unset() {
+        let s = sample_state(); // chain min_profit_usd = 2.0
+        assert_eq!(s.effective_min_profit_usd("dex_arb_v2v2"), 2.0);
+    }
+
+    #[test]
+    fn effective_min_profit_respects_strategy_override() {
+        let mut s = sample_state();
+        s.strategy_configs.insert(
+            "dex_arb_v2v2".into(),
+            StrategyRuntimeConfig {
+                enabled: true,
+                min_profit_usd: Some(15.0),
+                ..Default::default()
+            },
+        );
+        assert_eq!(s.effective_min_profit_usd("dex_arb_v2v2"), 15.0);
+        // unrelated strategy still gets chain default
+        assert_eq!(s.effective_min_profit_usd("triangular"), 2.0);
+    }
+
+    #[test]
+    fn deserialise_legacy_config_without_new_fields() {
+        // Critical: pre-migration-056 Redis blobs must still deserialise so a
+        // hot-reload during deploy doesn't crash the searcher. serde(default)
+        // on enabled_dex_ids + strategy_configs guarantees this.
+        let legacy = r#"{
+            "chain_id": 1,
+            "capital_usd": 1000.0,
+            "base_token_symbol": "WETH",
+            "base_token_price_usd": 2000.0,
+            "allowed_token_symbols": ["WETH","USDC"],
+            "min_profit_usd": 2.0,
+            "min_roi_pct": 0.3,
+            "min_landing_probability": 0.5,
+            "min_liquidity_confidence": 0.7,
+            "max_token_risk_score": 1.0,
+            "gas_price_strategy": "dynamic_basefee_plus_tip",
+            "fixed_gas_price_gwei": null,
+            "gas_estimate_units": 250000,
+            "max_slippage_pct": 0.5,
+            "failure_risk_buffer_pct": 0.001,
+            "flashloan_fee_pct": 0.0009,
+            "enabled_strategies": ["dex_arb_v2v2"],
+            "enabled": true,
+            "updated_at": "2026-05-10T00:00:00Z",
+            "updated_by": "ops"
+        }"#;
+        let s: TradingConfigState = serde_json::from_str(legacy).expect("legacy must deserialise");
+        assert!(s.enabled_dex_ids.is_none());
+        assert!(s.strategy_configs.is_empty());
+        // strategy_enabled still works on the chain-level allowlist alone.
+        assert!(s.strategy_enabled("dex_arb_v2v2"));
+        assert!(!s.strategy_enabled("triangular"));
     }
 }

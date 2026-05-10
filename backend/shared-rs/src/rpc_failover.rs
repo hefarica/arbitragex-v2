@@ -131,7 +131,7 @@ impl HttpEntry {
     pub fn set_state(&self, s: ProviderState) {
         self.state.store(s as u8, Ordering::Relaxed);
         crate::metrics::RPC_PROVIDER_STATE
-            .with_label_values(&[&self.name, "http"])
+            .with_label_values(&[self.name.as_str(), "http"])
             .set(s as u8 as i64);
     }
 }
@@ -244,10 +244,10 @@ impl HttpRpcPool {
         // Initialize gauges so dashboards show all entries from the first scrape.
         for e in &alive {
             crate::metrics::RPC_PROVIDER_STATE
-                .with_label_values(&[&e.name, "http"])
+                .with_label_values(&[e.name.as_str(), "http"])
                 .set(ProviderState::Healthy as u8 as i64);
             crate::metrics::RPC_PROVIDER_BLOCK_HEIGHT
-                .with_label_values(&[&e.name, "http"])
+                .with_label_values(&[e.name.as_str(), "http"])
                 .set(0);
         }
 
@@ -353,7 +353,7 @@ impl HttpRpcPool {
         };
         entry.latency_ms_ewma.store(next, Ordering::Relaxed);
         crate::metrics::RPC_PROVIDER_LATENCY_MS
-            .with_label_values(&[&entry.name, "http"])
+            .with_label_values(&[entry.name.as_str(), "http"])
             .observe(lat_ms as f64);
 
         let mut cb = entry.circuit.write().await;
@@ -373,7 +373,7 @@ impl HttpRpcPool {
     /// Mark a failed call: append failure to window, possibly trip the breaker.
     pub async fn report_failure(&self, entry: &Arc<HttpEntry>, cause: &str) {
         crate::metrics::RPC_PROVIDER_ERRORS_TOTAL
-            .with_label_values(&[&entry.name, "http", classify_cause(cause)])
+            .with_label_values(&[entry.name.as_str(), "http", classify_cause(cause)])
             .inc();
 
         let mut cb = entry.circuit.write().await;
@@ -444,7 +444,7 @@ impl HttpRpcPool {
                             let bn: u64 = bn;
                             e.last_block.store(bn, Ordering::Relaxed);
                             crate::metrics::RPC_PROVIDER_BLOCK_HEIGHT
-                                .with_label_values(&[&e.name, "http"])
+                                .with_label_values(&[e.name.as_str(), "http"])
                                 .set(bn as i64);
                             // For success, run through pool's report_success-like
                             // path inline (we don't have &self here; emulate).
@@ -461,7 +461,7 @@ impl HttpRpcPool {
                             };
                             e.latency_ms_ewma.store(next, Ordering::Relaxed);
                             crate::metrics::RPC_PROVIDER_LATENCY_MS
-                                .with_label_values(&[&e.name, "http"])
+                                .with_label_values(&[e.name.as_str(), "http"])
                                 .observe(lat_ms as f64);
 
                             // Half-open success → close circuit.
@@ -486,7 +486,7 @@ impl HttpRpcPool {
                         }
                         Ok(Err(err)) => {
                             crate::metrics::RPC_PROVIDER_ERRORS_TOTAL
-                                .with_label_values(&[&e.name, "http", classify_cause(&format!("{err}"))])
+                                .with_label_values(&[e.name.as_str(), "http", classify_cause(&format!("{err}"))])
                                 .inc();
                             let mut cb = e.circuit.write().await;
                             let now = Instant::now();
@@ -510,7 +510,7 @@ impl HttpRpcPool {
                         }
                         Err(_) => {
                             crate::metrics::RPC_PROVIDER_ERRORS_TOTAL
-                                .with_label_values(&[&e.name, "http", "timeout"])
+                                .with_label_values(&[e.name.as_str(), "http", "timeout"])
                                 .inc();
                         }
                     }
@@ -627,7 +627,7 @@ impl WsRpcPool {
         }
         for e in &endpoints {
             crate::metrics::RPC_PROVIDER_STATE
-                .with_label_values(&[&e.name, "ws"])
+                .with_label_values(&[e.name.as_str(), "ws"])
                 .set(ProviderState::Healthy as u8 as i64);
         }
         Ok(Some(Self {

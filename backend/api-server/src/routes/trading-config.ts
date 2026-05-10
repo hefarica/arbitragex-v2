@@ -23,6 +23,62 @@ export const tradingConfigKey = (chainId: number): string =>
 
 const GasStrategy = z.enum(["fixed", "dynamic_basefee_plus_tip", "percentile_75"]);
 
+// Migration 056 — per-strategy fine-grained config schema.
+// Mirrors `shared_rs::trading_config::StrategyRuntimeConfig` 1:1.
+// All fields default to permissive values so a missing `strategy_configs`
+// entry behaves identically to the legacy chain-level toggle (no surprises).
+const RouteConstraintsSchema = z
+  .object({
+    min_legs: z.number().int().min(1).max(8).default(1),
+    max_legs: z.number().int().min(1).max(8).default(8),
+    require_atomic: z.boolean().default(false),
+    allow_cross_chain: z.boolean().default(false),
+    allowed_base_tokens: z.array(z.string().min(1).max(16)).default([]),
+    allowed_quote_tokens: z.array(z.string().min(1).max(16)).default([]),
+    min_pool_tvl_usd: z.number().nonnegative().nullable().optional(),
+    min_pool_volume_24h_usd: z.number().nonnegative().nullable().optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (val.min_legs > val.max_legs) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["max_legs"],
+        message: "max_legs must be >= min_legs",
+      });
+    }
+  });
+
+const StrategyRuntimeConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  allowed_chain_ids: z.array(z.number().int().positive()).max(64).default([]),
+  // null = inherit chain-level enabled_dex_ids, [] = block-all, [...] = strict allowlist.
+  enabled_dex_ids: z.array(z.string().uuid()).max(256).nullable().optional(),
+  enabled_protocol_types: z.array(z.string().min(1).max(32)).max(32).default([]),
+  min_profit_usd: z.number().nonnegative().nullable().optional(),
+  min_roi_pct: z.number().nonnegative().nullable().optional(),
+  max_slippage_pct: z.number().min(0).max(50).nullable().optional(),
+  max_price_impact_pct: z.number().min(0).max(50).nullable().optional(),
+  max_gas_usd: z.number().nonnegative().nullable().optional(),
+  simulation_capital_usd: z.number().positive().nullable().optional(),
+  per_token_caps_usd: z.record(z.string().min(1).max(16), z.number().positive()).default({}),
+  route_constraints: RouteConstraintsSchema.default({
+    min_legs: 1,
+    max_legs: 8,
+    require_atomic: false,
+    allow_cross_chain: false,
+    allowed_base_tokens: [],
+    allowed_quote_tokens: [],
+    min_pool_tvl_usd: null,
+    min_pool_volume_24h_usd: null,
+  }),
+});
+
+export const StrategyConfigsSchema = z
+  .record(z.string().min(1).max(64), StrategyRuntimeConfigSchema)
+  .default({});
+
+export type StrategyRuntimeConfig = z.infer<typeof StrategyRuntimeConfigSchema>;
+
 const TradingConfigSchema = z
   .object({
     capital_usd: z.number().nonnegative(),
@@ -62,6 +118,12 @@ const TradingConfigSchema = z
     // Phase 2 route-finder: per-chain DEX allowlist.
     // NULL = "use all is_active dexes" (backwards-compatible default).
     enabled_dex_ids: z.array(z.string().uuid()).max(256).nullable().optional(),
+
+    // Migration 056 — per-strategy fine-grained config (Decision A: JSONB).
+    // Keyed by strategy_kind. Default {} = no per-strategy overrides; the
+    // chain-level enabled_strategies / enabled_dex_ids govern instead.
+    // See StrategyConfigsSchema above for field-level shape.
+    strategy_configs: StrategyConfigsSchema,
 
     // Migration 047 (BE-01 Sprint A): cost-component scalars.
     // Bounds match DB CHECK constraints exactly.
@@ -135,6 +197,8 @@ interface DbRow {
   flashloan_fee_pct: string;
   enabled_strategies: string[];
   enabled_dex_ids: string[] | null;
+  // Migration 056 — JSONB returned as already-parsed object by node-postgres.
+  strategy_configs: Record<string, unknown>;
   // Migration 047 + 048: pg returns NUMERIC as string; cast in rowToRedisState.
   capital_cost_rate_annual_pct: string;
   ops_overhead_usd_per_attempt: string;
@@ -179,6 +243,9 @@ function rowToRedisState(row: DbRow): Record<string, unknown> {
     flashloan_fee_pct: Number(row.flashloan_fee_pct),
     enabled_strategies: row.enabled_strategies,
     enabled_dex_ids: row.enabled_dex_ids ?? null,
+    // Migration 056 — empty object default keeps Rust deserialise happy when
+    // legacy rows have no JSONB cell (DEFAULT '{}'::jsonb covers new rows).
+    strategy_configs: row.strategy_configs ?? {},
     // Migration 047 + 048: cast NUMERIC strings to numbers for Redis JSON / Rust deserialise.
     capital_cost_rate_annual_pct: Number(row.capital_cost_rate_annual_pct),
     ops_overhead_usd_per_attempt: Number(row.ops_overhead_usd_per_attempt),
@@ -217,7 +284,7 @@ export function buildTradingConfigRouter(deps: Deps): Router {
                 min_landing_probability, min_liquidity_confidence, max_token_risk_score,
                 gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
                 max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
-                enabled_strategies, enabled_dex_ids,
+                enabled_strategies, enabled_dex_ids, strategy_configs,
                 capital_cost_rate_annual_pct, ops_overhead_usd_per_attempt,
                 spread_sanity_mult, p_copied_volume_threshold_usd, p_copied_max,
                 enabled,
@@ -277,14 +344,14 @@ export function buildTradingConfigRouter(deps: Deps): Router {
               min_landing_probability, min_liquidity_confidence, max_token_risk_score,
               gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
               max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
-              enabled_strategies, enabled_dex_ids, enabled, updated_by,
+              enabled_strategies, enabled_dex_ids, strategy_configs, enabled, updated_by,
               capital_cost_rate_annual_pct, ops_overhead_usd_per_attempt,
               spread_sanity_mult, p_copied_volume_threshold_usd, p_copied_max
             )
             VALUES (
               $1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb,$9::jsonb,$10,$11,
-              $12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24::uuid[],$25,$26,
-              $27,$28,$29,$30,$31
+              $12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24::uuid[],$25::jsonb,$26,$27,
+              $28,$29,$30,$31,$32
             )
             ON CONFLICT (chain_id) DO UPDATE SET
               capital_usd = EXCLUDED.capital_usd,
@@ -310,6 +377,7 @@ export function buildTradingConfigRouter(deps: Deps): Router {
               flashloan_fee_pct = EXCLUDED.flashloan_fee_pct,
               enabled_strategies = EXCLUDED.enabled_strategies,
               enabled_dex_ids = EXCLUDED.enabled_dex_ids,
+              strategy_configs = EXCLUDED.strategy_configs,
               enabled = EXCLUDED.enabled,
               capital_cost_rate_annual_pct = EXCLUDED.capital_cost_rate_annual_pct,
               ops_overhead_usd_per_attempt = EXCLUDED.ops_overhead_usd_per_attempt,
@@ -327,7 +395,7 @@ export function buildTradingConfigRouter(deps: Deps): Router {
                       min_landing_probability, min_liquidity_confidence, max_token_risk_score,
                       gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
                       max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
-                      enabled_strategies, enabled_dex_ids,
+                      enabled_strategies, enabled_dex_ids, strategy_configs,
                       capital_cost_rate_annual_pct, ops_overhead_usd_per_attempt,
                       spread_sanity_mult, p_copied_volume_threshold_usd, p_copied_max,
                       enabled,
@@ -357,6 +425,8 @@ export function buildTradingConfigRouter(deps: Deps): Router {
             body.flashloan_fee_pct,
             body.enabled_strategies,
             body.enabled_dex_ids ?? null,
+            // Migration 056 — JSONB stringified for $25::jsonb cast.
+            JSON.stringify(body.strategy_configs ?? {}),
             body.enabled,
             actor,
             body.capital_cost_rate_annual_pct,
@@ -417,7 +487,7 @@ export function buildTradingConfigRouter(deps: Deps): Router {
                   min_landing_probability, min_liquidity_confidence, max_token_risk_score,
                   gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
                   max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
-                  enabled_strategies, enabled_dex_ids,
+                  enabled_strategies, enabled_dex_ids, strategy_configs,
                   capital_cost_rate_annual_pct, ops_overhead_usd_per_attempt,
                   spread_sanity_mult, p_copied_volume_threshold_usd, p_copied_max,
                   enabled,

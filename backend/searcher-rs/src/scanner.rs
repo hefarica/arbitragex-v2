@@ -45,6 +45,7 @@ use prioritization_spine::gates::{can_execute};
 use prioritization_spine::decision::{ExecutionDecision, RejectReason};
 use prioritization_spine::simulator::EvmSimulator;
 use prioritization_spine::config_aware::{ConfigAwareEvaluator, ConfigGateOutcome, NetworkSignals};
+use prioritization_spine::route_plan::{RouteLeg, RoutePlan};
 use std::fs::OpenOptions;
 use std::io::Write;
 
@@ -810,8 +811,55 @@ async fn decode_and_score_tx(
     // this becomes router-driven. For now every observed swap is dex_arb_v2v2.
     let strategy_kind = "dex_arb_v2v2";
 
-    let gate_outcome = evaluator.evaluate(
+    // Migration 056 — minimal RoutePlan from scanner data.
+    //
+    // Phase 3 starting point: populates one leg per observed pending tx with
+    // the data the calldata decoder already extracts. Per-leg enrichment
+    // (dex_id UUID, pool_address, tvl_usd, volume_24h_usd) is a follow-up
+    // when the dex registry name→UUID resolver lands. Until then the
+    // `StrategyConfigGate`:
+    //   - enforces strategy/chain/protocol/route-shape/min_profit/min_roi
+    //     (which works without UUIDs)
+    //   - skips the per-leg DEX UUID allowlist with PartialPass
+    //     (data_quality=partial surfaced to the operator)
+    //
+    // R8 fail-honest: tvl_usd / volume_24h_usd left as None — never synthesised.
+    // The operator's per-strategy min_pool_tvl_usd / min_pool_volume_24h_usd
+    // floors silently skip until a follow-up wires real pool metrics.
+    let route_leg = RouteLeg {
+        // Use dex_name as the dex_id when UUID is not available. The gate
+        // matches lowercase against `enabled_dex_ids`; if the operator has set
+        // a UUID-based allowlist this leg falls into the PartialPass path.
+        dex_id: opportunity.dex_a.to_ascii_lowercase(),
+        dex_name: opportunity.dex_a.clone(),
+        // Heuristic: every observed adapter today is a V2-style router. When
+        // the calldata decoder differentiates V3, this becomes router-kind-aware.
+        protocol_type: opportunity.dex_a.clone(),
+        factory_address: String::new(), // unknown at scan time, follow-up
+        pool_id: None,
+        pool_address: None,
+        token_in: opportunity.token_in.to_ascii_lowercase(),
+        token_out: opportunity.token_out.to_ascii_lowercase(),
+        fee_bps: None,
+        amount_in: Some(amount_in_f64),
+        amount_out: Some(expected_amount_out_f64),
+        tvl_usd: None,
+        volume_24h_usd: None,
+        pool_is_active: true,
+    };
+    let route_plan = RoutePlan {
+        route_id: Some(format!("{}-{}", opportunity.dex_a, hash)),
+        strategy_kind: strategy_kind.to_string(),
+        chain_id: client.chain_id,
+        legs: vec![route_leg],
+        atomic: true, // single-leg observed swaps are atomic by definition
+        estimated_slippage_pct: None,
+        price_impact_pct: None,
+    };
+
+    let gate_outcome = evaluator.evaluate_with_route_plan(
         &candidate,
+        Some(&route_plan),
         strategy_kind,
         client.chain_id,
         "rpc-pool".to_string(),
@@ -885,7 +933,39 @@ async fn decode_and_score_tx(
                 .inc();
             return Ok(());
         }
-        ConfigGateOutcome::Evaluated { outcome, evidence, rejection } => (evidence, outcome, rejection),
+        // Migration 056 — StrategyConfigGate (per-strategy fine-grained config).
+        // Persists with `rejection_reason` populated so the operator sees the
+        // exact gate that fired (e.g. StrategyConfigDexBlocked, StrategyConfigDisabled).
+        // Same fail-honest persistence pattern as TokenNotAllowed/StrategyDisabled
+        // above — silent rejects would hide the operator's own toggles' impact.
+        ConfigGateOutcome::StrategyConfigGateBlocked { reason } => {
+            let tag = reason.tag();
+            info!(
+                event = "config.strategy_config_gate_blocked",
+                chain_id = client.chain_id,
+                hash = %hash,
+                reject_tag = tag,
+                reason = ?reason,
+            );
+            opportunity.roi_pct = Some(0.0);
+            opportunity.risk_score = Some(0.0);
+            opportunity.rejection_reason = Some(format!("{tag}:{reason:?}"));
+            counters().gate_strategy_disabled.fetch_add(1, Ordering::Relaxed);
+            if let Some(pool) = db {
+                if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
+                    counters().db_errors.fetch_add(1, Ordering::Relaxed);
+                    error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
+                } else {
+                    counters().db_persisted.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            publisher::publish(redis, &opportunity).await?;
+            OPPORTUNITIES_TOTAL
+                .with_label_values(&[&opportunity.chain_id.to_string(), "dex_arb", "rejected_strategy_config_gate"])
+                .inc();
+            return Ok(());
+        }
+        ConfigGateOutcome::Evaluated { outcome, evidence, rejection, partial_data_quality: _ } => (evidence, outcome, rejection),
     };
 
     // REVM atomic sim gate (still a structural placeholder until lazy state
