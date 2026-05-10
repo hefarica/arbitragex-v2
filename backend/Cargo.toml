@@ -39,7 +39,9 @@ redis         = { version = "0.25", features = ["tokio-comp","connection-manager
 sqlx          = { version = "0.7",  default-features = false, features = ["runtime-tokio","tls-rustls","postgres","uuid","chrono","json","macros","bigdecimal"] }
 bigdecimal    = "0.4"
 rand          = "0.8"
-prometheus    = "0.14"
+prometheus    = "0.13"  # Pinned at 0.13 audit re-run #2 2026-05-10: 0.14 changed
+                        # with_label_values signature breaking 12 call sites in
+                        # shared-rs. Bump to 0.14 deferred to a dedicated migration sprint.
 once_cell     = "1"
 jsonschema    = { version = "0.17", default-features = false }
 config        = { version = "0.14", default-features = false, features = ["toml"] }

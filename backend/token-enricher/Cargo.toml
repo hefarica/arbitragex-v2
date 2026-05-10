@@ -24,7 +24,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter","json"] }
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
-prometheus = "0.14"
+prometheus = "0.13"  # Pinned to match workspace: 0.14 broke shared-rs (audit re-run #2)
 hex = "0.4"
 # Added for Task 8: parallel TrustWallet HEAD requests (Defect #2 fix).
 futures-util = "0.3"
