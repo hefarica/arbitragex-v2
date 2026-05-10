@@ -74,7 +74,7 @@ attempt was not blind.
 - **Why fifth:** simulation can hit a different RPC than execution, so
   this gate runs after sim and before signing.
 
-## Gate 6 — Risk limits
+## Gate 6 — Risk limits (`risk_limits`)
 
 - **Source of truth:** `cfg.risk` (per-chain) + Redis KPIs. Includes:
   - `max_position_size_usd` per attempt.

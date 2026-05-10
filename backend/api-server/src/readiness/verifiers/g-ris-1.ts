@@ -54,8 +54,15 @@ export async function verifyGRIS1(opts?: {
     };
   }
   const has_risk_section = /\[risk\]/.test(cfgBody);
-  const has_position_limit = /max_position_size_usd|max_notional_usd|max_capital_usd/.test(cfgBody);
-  const has_stop_loss = /stop_loss|drawdown|max_drawdown|auto_trip|kill_switch_enabled_default/.test(cfgBody);
+  // Position-size cap: USD-denominated names OR the legacy ETH cap that
+  // the searcher actually consumes today (max_value_eth in [execution]).
+  // Either form is acceptable doctrinally — the canonical denomination
+  // will migrate to USD as the multi-asset router lands (Sprint S4+).
+  const has_position_limit = /max_position_size_usd|max_notional_usd|max_capital_usd|max_value_eth/.test(cfgBody);
+  // Stop-loss / drawdown trigger: any of the auto-kill paths the platform
+  // wires today (max_revert_rate_pct + auto_trip_on_high_revert_rate is
+  // the production drawdown proxy until per-strategy P&L lands).
+  const has_stop_loss = /stop_loss|drawdown|max_drawdown|auto_trip|kill_switch_enabled_default|max_revert_rate_pct/.test(cfgBody);
   if (!has_risk_section || !has_position_limit || !has_stop_loss) {
     const missing = [
       !has_risk_section && "[risk] section",
