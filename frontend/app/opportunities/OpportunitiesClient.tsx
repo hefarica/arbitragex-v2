@@ -79,6 +79,7 @@ interface OpportunityListItem {
 
 // ─── Component imports (Tasks 10 / 11) ───────────────────────────────────────
 import { TokenChip } from "@/components/TokenChip";
+import { ChainBadge } from "@/components/ChainBadge";
 import { StrategyBadge } from "@/components/StrategyBadge";
 import { StatusPill } from "@/components/StatusPill";
 import { CrossChainSlot } from "@/components/CrossChainSlot";
@@ -464,25 +465,50 @@ export default function OpportunitiesClient({
                       </div>
                     </td>
 
-                    {/* ── ROUTE column — TokenChip + StrategyBadge + CrossChainSlot + DEX path ── */}
-                    <td className="p-4" data-status={opp.status}>
-                      <div className="flex flex-col gap-1.5">
-                        {/* Token pair with rich metadata */}
+                    {/* ── ROUTE column ──
+                          New layout (2026-05-10 operator request):
+                            Row 1: ChainBadge(s) — single chain or in→out badges for cross-chain
+                            Row 2: TokenChip in  → TokenChip out  (symbol stacked on truncated addr)
+                            Row 3: StrategyBadge + DEX path
+                            Row 4: CrossChainSlot (extra metadata for bridges — null for single chain)
+                       */}
+                    <td className="p-4 align-top" data-status={opp.status}>
+                      <div className="flex flex-col gap-2">
+                        {/* Chain identity row */}
                         <div className="flex items-center gap-1.5">
-                          <TokenChip
-                            token_address={opp.token_in}
-                            info={opp.token_in_info}
-                            chain_id={opp.chain_id}
-                          />
-                          <span className="text-muted-foreground/60 text-xs" aria-hidden="true">→</span>
-                          <TokenChip
-                            token_address={opp.token_out}
-                            info={opp.token_out_info}
-                            chain_id={opp.chain_id_out ?? opp.chain_id}
-                          />
+                          <ChainBadge chain_id={opp.chain_id} withId />
+                          {opp.chain_id_out != null && opp.chain_id_out !== opp.chain_id && (
+                            <>
+                              <span className="text-muted-foreground/50 text-xs" aria-hidden="true">→</span>
+                              <ChainBadge chain_id={opp.chain_id_out} withId />
+                            </>
+                          )}
                         </div>
-                        {/* Strategy badge + DEX path */}
-                        <div className="flex items-center gap-2 flex-wrap">
+                        {/* Token pair: symbol (bold) + truncated address (mono, muted) per side */}
+                        <div className="flex items-start gap-2 min-w-0">
+                          <div className="min-w-0 flex-1">
+                            <TokenChip
+                              token_address={opp.token_in}
+                              info={opp.token_in_info}
+                              chain_id={opp.chain_id}
+                            />
+                          </div>
+                          <span
+                            className="text-muted-foreground/60 text-base leading-6 shrink-0 px-1"
+                            aria-hidden="true"
+                          >
+                            →
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <TokenChip
+                              token_address={opp.token_out}
+                              info={opp.token_out_info}
+                              chain_id={opp.chain_id_out ?? opp.chain_id}
+                            />
+                          </div>
+                        </div>
+                        {/* Strategy + DEX route */}
+                        <div className="flex items-center gap-2 flex-wrap pt-0.5">
                           <StrategyBadge strategy_kind={opp.strategy_kind} />
                           <span className="text-xs font-mono text-primary">
                             {opp.dex_a}

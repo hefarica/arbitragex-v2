@@ -33,6 +33,62 @@ export interface ChainInfo {
   /** Backend-supplied explorer URL when available. */
   explorer_url?: string;
   is_active?: boolean;
+  /** Tailwind text color for the chain badge (set by getChainStyle). */
+  color?: string;
+  /** Tailwind background tint for the chain badge. */
+  bg?: string;
+  /** Tailwind border tint for the chain badge. */
+  border?: string;
+}
+
+/**
+ * Brand-aligned color palette for chain badges. Static, doctrinal (RULE 00
+ * exception: chain identifiers are protocol-level constants, not productive
+ * data). Picked to be visually distinct AND legible on the dark theme used
+ * by the operator console.
+ */
+const CHAIN_STYLES: Record<number, { color: string; bg: string; border: string }> = {
+  1:     { color: "text-blue-300",   bg: "bg-blue-500/15",   border: "border-blue-500/40"   },  // Ethereum
+  42161: { color: "text-sky-300",    bg: "bg-sky-500/15",    border: "border-sky-500/40"    },  // Arbitrum
+  10:    { color: "text-red-300",    bg: "bg-red-500/15",    border: "border-red-500/40"    },  // Optimism
+  8453:  { color: "text-blue-200",   bg: "bg-blue-600/15",   border: "border-blue-600/40"   },  // Base
+  137:   { color: "text-purple-300", bg: "bg-purple-500/15", border: "border-purple-500/40" },  // Polygon
+  56:    { color: "text-yellow-300", bg: "bg-yellow-500/15", border: "border-yellow-500/40" },  // BSC
+};
+
+const DEFAULT_CHAIN_STYLE = {
+  color: "text-slate-300",
+  bg: "bg-slate-500/15",
+  border: "border-slate-500/40",
+} as const;
+
+/**
+ * Returns the typed styling for a chain badge. Falls back to slate when the
+ * chain_id has no doctrinal style — never throws, never null.
+ */
+export function getChainStyle(chain_id: number): { color: string; bg: string; border: string } {
+  return CHAIN_STYLES[chain_id] ?? DEFAULT_CHAIN_STYLE;
+}
+
+/**
+ * Synchronous resolver: chain_id → ChainInfo. First checks the doctrinal
+ * static list (covers the 6 EVM mainnets), then returns a minimal placeholder
+ * for unknown chains so the UI never blanks. Use this in pure render
+ * contexts where the async useChains() hook is overkill.
+ */
+export function chainInfoSync(chain_id: number): ChainInfo {
+  const known = DOCTRINAL_CHAINS.find((c) => c.chain_id === chain_id);
+  const style = getChainStyle(chain_id);
+  if (known) {
+    return { ...known, ...style };
+  }
+  return {
+    chain_id,
+    name: `Chain ${chain_id}`,
+    short: `#${chain_id}`,
+    is_active: true,
+    ...style,
+  };
 }
 
 /**
