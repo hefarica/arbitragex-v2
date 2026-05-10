@@ -226,16 +226,21 @@ export default function OpportunitiesClient({
   }, [EDGE_URL, viableOnly]);
 
   // R1: localStorage read happens here — never during render (SSR has no localStorage).
-  // 2026-05-10: default is now `false`. Only restore from localStorage if the
-  // operator explicitly set it to `true` in a previous session.
+  // 2026-05-10: bumped the storage key from "arbx-opps-viable-only" to "-v2" so
+  // operators whose pre-fix sessions had the old key set to "true" (under the
+  // legacy default-true behavior) get a fresh default-false on first load
+  // with the new build. The old key is also actively cleared to keep
+  // localStorage tidy across re-bumps. Operator's explicit choice in this
+  // build is still persisted under the new key.
   useEffect(() => {
-    const stored = localStorage.getItem("arbx-opps-viable-only");
+    try { localStorage.removeItem("arbx-opps-viable-only"); } catch { /* private mode */ }
+    const stored = localStorage.getItem("arbx-opps-viable-only-v2");
     if (stored === "true") setViableOnly(true);
   }, []);
 
   const onToggleViableOnly = useCallback((newValue: boolean) => {
     setViableOnly(newValue);
-    localStorage.setItem("arbx-opps-viable-only", String(newValue));
+    try { localStorage.setItem("arbx-opps-viable-only-v2", String(newValue)); } catch { /* private mode */ }
   }, []);
 
   // FE-6: Fire a toast for every new opportunity that clears the threshold.
@@ -330,7 +335,7 @@ export default function OpportunitiesClient({
                 : "bg-destructive/10 border-destructive/40 text-destructive hover:bg-destructive/20"
             }`}
             title={viableOnly ? "Showing viable only — click to show all including rejected" : "Showing all including rejected — click to show viable only"}
-            aria-pressed={viableOnly}
+            aria-pressed={viableOnly ? "true" : "false"}
           >
             {viableOnly ? <Eye size={14} /> : <EyeOff size={14} />}
             <span>{viableOnly ? "Viable only" : "Show all"}</span>
