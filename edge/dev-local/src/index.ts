@@ -93,20 +93,25 @@ app.get("/metrics", metricsHandler);
 
 async function proxy(path: string, req: express.Request, res: express.Response) {
   try {
-    // 2026-05-10 fix: propagate query string from the client request to the
-    // upstream api-server. Without this, requests like
-    //   GET /api/opportunities/live?viable_only=false&limit=50
-    // hit upstream as
-    //   GET /api/v1/opportunities/live
-    // (no query) — and the api-server applies its default viable_only=true,
-    // silently overriding the client's filter. If the proxy's `path` already
-    // contains a `?` (some callers pre-build the upstream path with their own
-    // params, e.g. /api/trading-config?chain_id=N), append the rest with `&`
-    // so both sets are preserved.
-    const reqQuery = req.url.includes("?") ? req.url.slice(req.url.indexOf("?") + 1) : "";
+    // 2026-05-10 fix (revised): propagate query string from the client request
+    // to the upstream api-server, but ONLY when the caller-supplied `path` does
+    // NOT already contain a query. The earlier revision appended the request
+    // query to paths that pre-built their own (e.g. /api/v1/trading-config
+    // ?chain_id=1), producing duplicate keys (?chain_id=1&chain_id=1) which
+    // Express parses as an array → Number(arr) → NaN → 400 invalid_chain_id.
+    //
+    // Two-mode contract:
+    //   1. path has NO query     → forward the client's query verbatim.
+    //   2. path ALREADY has query → caller took responsibility; do not append.
+    //
+    // Callers that need both behaviours should pre-build the full upstream
+    // path (mode 2) — they already have to extract+encode what they want.
     let upstreamPath = path;
-    if (reqQuery) {
-      upstreamPath += (path.includes("?") ? "&" : "?") + reqQuery;
+    if (!path.includes("?")) {
+      const reqQuery = req.url.includes("?") ? req.url.slice(req.url.indexOf("?") + 1) : "";
+      if (reqQuery) {
+        upstreamPath += "?" + reqQuery;
+      }
     }
     const upstream = await fetch(`${API_SERVER_URL}${upstreamPath}`, {
       headers: {
