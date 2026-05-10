@@ -80,6 +80,7 @@ interface OpportunityListItem {
 // ─── Component imports (Tasks 10 / 11) ───────────────────────────────────────
 import { TokenChip } from "@/components/TokenChip";
 import { ChainBadge } from "@/components/ChainBadge";
+import { DexPath } from "@/components/DexPath";
 import { StrategyBadge } from "@/components/StrategyBadge";
 import { StatusPill } from "@/components/StatusPill";
 import { CrossChainSlot } from "@/components/CrossChainSlot";
@@ -507,15 +508,14 @@ export default function OpportunitiesClient({
                             />
                           </div>
                         </div>
-                        {/* Strategy + DEX route */}
+                        {/* Strategy + DEX route with BUY/SELL/VIA/TARGET semantics */}
                         <div className="flex items-center gap-2 flex-wrap pt-0.5">
                           <StrategyBadge strategy_kind={opp.strategy_kind} />
-                          <span className="text-xs font-mono text-primary">
-                            {opp.dex_a}
-                            {opp.dex_b != null && (
-                              <><span className="text-muted-foreground"> → </span>{opp.dex_b}</>
-                            )}
-                          </span>
+                          <DexPath
+                            strategy_kind={opp.strategy_kind}
+                            dex_a={opp.dex_a}
+                            dex_b={opp.dex_b}
+                          />
                         </div>
                         {/* Cross-chain slot — renders null for single-chain opps */}
                         <CrossChainSlot opp={opp} />
