@@ -53,7 +53,7 @@ alloy         = { version = "1", features = ["providers", "transport-http", "rpc
 alloy-sol-types = { version = "1" }
 futures-util  = "0.3"
 async-trait   = "0.1"
-lru           = "0.12"
+lru           = "0.16"
 hex           = "0.4"
 
 # ---------------------------------------------------------------------------
