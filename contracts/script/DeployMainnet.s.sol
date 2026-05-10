@@ -41,6 +41,7 @@ import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "../src/ArbitrageExecutor.sol";
 import "../src/AllowanceManager.sol";
 import "../src/FlashLoanExecutor.sol";
+import "../src/AdminTimelock.sol";
 
 contract DeployMainnet is Script {
     // Aave V3 Pool — Ethereum mainnet (verified 2026-05-08).
@@ -119,6 +120,30 @@ contract DeployMainnet is Script {
             )
         );
 
+        // ----------------------------------------------------------------
+        // 4. AdminTimelock — SC-10
+        //    24h minDelay on mainnet.
+        //    IMPORTANT: Replace deployer with your multisig address in the
+        //    proposers/executors arrays before broadcasting on mainnet.
+        //    The deployer is used here only as a bootstrap entry point.
+        // ----------------------------------------------------------------
+        address[] memory proposers = new address[](1);
+        proposers[0] = deployer; // replace with multisig before broadcast
+        address[] memory executors = new address[](1);
+        executors[0] = deployer; // replace with multisig before broadcast
+
+        AdminTimelock implTL = new AdminTimelock();
+        ERC1967Proxy proxyTL = new ERC1967Proxy(
+            address(implTL),
+            abi.encodeWithSelector(
+                AdminTimelock.initialize.selector,
+                uint256(86_400), // 24h — mainnet standard
+                proposers,
+                executors,
+                deployer
+            )
+        );
+
         vm.stopBroadcast();
 
         // ----------------------------------------------------------------
@@ -129,11 +154,13 @@ contract DeployMainnet is Script {
         console2.log("ArbitrageExecutor proxy :", address(proxyAE));
         console2.log("AllowanceManager proxy  :", address(proxyAM));
         console2.log("FlashLoanExecutor proxy :", address(proxyFL));
+        console2.log("AdminTimelock proxy     :", address(proxyTL));
         console2.log("");
         console2.log("=== Implementation Addresses (for --verify --watch) ===");
         console2.log("ArbitrageExecutor impl  :", address(implAE));
         console2.log("AllowanceManager impl   :", address(implAM));
         console2.log("FlashLoanExecutor impl  :", address(implFL));
+        console2.log("AdminTimelock impl      :", address(implTL));
         console2.log("");
         console2.log("=== MANDATORY Post-Deploy Checklist ===");
         console2.log("[ ] 1. Wire AllowanceManager:");
@@ -154,6 +181,7 @@ contract DeployMainnet is Script {
         console2.log("       ArbitrageExecutor.grantRole(DEFAULT_ADMIN_ROLE, <multisig>)");
         console2.log("       ArbitrageExecutor.revokeRole(DEFAULT_ADMIN_ROLE, <deployer>)");
         console2.log("       (repeat for AllowanceManager and FlashLoanExecutor)");
+        console2.log("[ ] 9. (SC-10) Transfer ADMIN_ROLE to AdminTimelock — see DEPLOY.md §9");
         console2.log("");
         console2.log("See contracts/DEPLOY.md for the full operations runbook.");
     }

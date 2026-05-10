@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 // =============================================================================
 // SC-13: Testnet deploy script — Sepolia / Holesky
 //
-// Deploys all three contracts as UUPS proxies (ERC1967Proxy) with the deployer
+// Deploys all four contracts as UUPS proxies (ERC1967Proxy) with the deployer
 // as the initial admin. Reads configuration from environment variables.
 //
 // Usage (Sepolia):
@@ -30,6 +30,7 @@ pragma solidity ^0.8.20;
 //   ArbitrageExecutor proxy address
 //   AllowanceManager proxy address
 //   FlashLoanExecutor proxy address
+//   AdminTimelock proxy address
 //
 // Post-deploy checklist:
 //   1. Grant EXECUTOR_ROLE on ArbitrageExecutor to your off-chain signer.
@@ -37,6 +38,8 @@ pragma solidity ^0.8.20;
 //   3. Approve tokens via ArbitrageExecutor.setTokenApproval().
 //   4. Approve routers via ArbitrageExecutor.setRouterApproval().
 //   5. Grant allowances via AllowanceManager.grantAllowance() or batchGrantAllowance().
+//   6. (SC-10) Transfer ADMIN_ROLE on all three contracts to AdminTimelock proxy.
+//      See contracts/DEPLOY.md §9 for the role-transfer procedure.
 // =============================================================================
 
 import "forge-std/Script.sol";
@@ -44,6 +47,7 @@ import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "../src/ArbitrageExecutor.sol";
 import "../src/AllowanceManager.sol";
 import "../src/FlashLoanExecutor.sol";
+import "../src/AdminTimelock.sol";
 
 contract DeployTestnet is Script {
     function run() external {
@@ -94,6 +98,33 @@ contract DeployTestnet is Script {
         );
         address flashLoanExecutorProxy = address(proxyFL);
 
+        // ----------------------------------------------------------------
+        // 4. AdminTimelock — SC-10
+        //    Testnet: 60s minDelay so the team can iterate quickly.
+        //    Mainnet: use DeployMainnet.s.sol which sets 86400 (24h).
+        //
+        //    proposers  = [deployer]  (replace with multisig post-config)
+        //    executors  = [deployer]  (replace with multisig post-config)
+        //    admin      = deployer    (renounce after transferring roles)
+        // ----------------------------------------------------------------
+        address[] memory proposers = new address[](1);
+        proposers[0] = deployer;
+        address[] memory executors = new address[](1);
+        executors[0] = deployer;
+
+        AdminTimelock implTL = new AdminTimelock();
+        ERC1967Proxy proxyTL = new ERC1967Proxy(
+            address(implTL),
+            abi.encodeWithSelector(
+                AdminTimelock.initialize.selector,
+                uint256(60),  // 60s — testnet iteration speed
+                proposers,
+                executors,
+                deployer
+            )
+        );
+        address adminTimelockProxy = address(proxyTL);
+
         vm.stopBroadcast();
 
         // ----------------------------------------------------------------
@@ -104,11 +135,13 @@ contract DeployTestnet is Script {
         console2.log("ArbitrageExecutor proxy :", arbitrageExecutorProxy);
         console2.log("AllowanceManager proxy  :", allowanceManagerProxy);
         console2.log("FlashLoanExecutor proxy :", flashLoanExecutorProxy);
+        console2.log("AdminTimelock proxy     :", adminTimelockProxy);
         console2.log("");
         console2.log("=== Implementation Addresses (for verify --watch) ===");
         console2.log("ArbitrageExecutor impl  :", address(implAE));
         console2.log("AllowanceManager impl   :", address(implAM));
         console2.log("FlashLoanExecutor impl  :", address(implFL));
+        console2.log("AdminTimelock impl      :", address(implTL));
         console2.log("");
         console2.log("=== Post-Deploy Checklist ===");
         console2.log("[ ] grantRole(EXECUTOR_ROLE, <signer>) on ArbitrageExecutor");
@@ -116,5 +149,6 @@ contract DeployTestnet is Script {
         console2.log("[ ] setTokenApproval(<tokenIn>, true) on ArbitrageExecutor");
         console2.log("[ ] setRouterApproval(<router>, true) on ArbitrageExecutor");
         console2.log("[ ] batchGrantAllowance(...) on AllowanceManager if needed");
+        console2.log("[ ] (SC-10) Transfer ADMIN_ROLE to AdminTimelock — see DEPLOY.md §9");
     }
 }

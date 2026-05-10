@@ -167,6 +167,78 @@ cast send <ArbitrageExecutor_proxy> \
   --rpc-url $MAINNET_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
 ```
 
+### 9. (SC-10) Transfer ADMIN_ROLE to AdminTimelock
+
+After steps 1-8, transfer DEFAULT_ADMIN_ROLE on all three contracts from the
+deployer EOA to the AdminTimelock proxy.  From this point forward, every admin
+operation must be scheduled through the timelock and waits 24h before it can
+execute.
+
+```bash
+ADMIN_ROLE=0x0000000000000000000000000000000000000000000000000000000000000000
+TIMELOCK=<AdminTimelock_proxy>   # printed by deploy script
+
+# ArbitrageExecutor
+cast send <ArbitrageExecutor_proxy> \
+  "grantRole(bytes32,address)" $ADMIN_ROLE $TIMELOCK \
+  --rpc-url $MAINNET_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+cast send <ArbitrageExecutor_proxy> \
+  "revokeRole(bytes32,address)" $ADMIN_ROLE <deployer_eoa> \
+  --rpc-url $MAINNET_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+
+# AllowanceManager (same two calls)
+cast send <AllowanceManager_proxy> \
+  "grantRole(bytes32,address)" $ADMIN_ROLE $TIMELOCK \
+  --rpc-url $MAINNET_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+cast send <AllowanceManager_proxy> \
+  "revokeRole(bytes32,address)" $ADMIN_ROLE <deployer_eoa> \
+  --rpc-url $MAINNET_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+
+# FlashLoanExecutor (same two calls)
+cast send <FlashLoanExecutor_proxy> \
+  "grantRole(bytes32,address)" $ADMIN_ROLE $TIMELOCK \
+  --rpc-url $MAINNET_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+cast send <FlashLoanExecutor_proxy> \
+  "revokeRole(bytes32,address)" $ADMIN_ROLE <deployer_eoa> \
+  --rpc-url $MAINNET_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+```
+
+After this step, the deployer EOA can no longer call any admin function
+directly.  To make any future admin change:
+
+1. Schedule the operation via the timelock:
+
+   ```bash
+   # Example: re-approve a new router
+   cast send $TIMELOCK \
+     "schedule(address,uint256,bytes,bytes32,bytes32,uint256)" \
+     <ArbitrageExecutor_proxy> 0 \
+     $(cast calldata "setRouterApproval(address,bool)" <new_router> true) \
+     0x0 0x0 86400 \
+     --rpc-url $MAINNET_RPC_URL --private-key $PROPOSER_PRIVATE_KEY
+   ```
+
+2. Wait 24h (or the configured minDelay).
+
+3. Execute after the delay has elapsed:
+
+   ```bash
+   cast send $TIMELOCK \
+     "execute(address,uint256,bytes,bytes32,bytes32)" \
+     <ArbitrageExecutor_proxy> 0 \
+     $(cast calldata "setRouterApproval(address,bool)" <new_router> true) \
+     0x0 0x0 \
+     --rpc-url $MAINNET_RPC_URL --private-key $EXECUTOR_PRIVATE_KEY
+   ```
+
+To cancel a scheduled operation before it executes (e.g. if the key is compromised):
+
+```bash
+cast send $TIMELOCK \
+  "cancel(bytes32)" <operation_id> \
+  --rpc-url $MAINNET_RPC_URL --private-key $PROPOSER_PRIVATE_KEY
+```
+
 ## Contract addresses reference
 
 Fill in after deployment:
@@ -176,4 +248,5 @@ Fill in after deployment:
 | ArbitrageExecutor | TBD | TBD |
 | AllowanceManager | TBD | TBD |
 | FlashLoanExecutor | TBD | TBD |
+| AdminTimelock | TBD | TBD |
 | Aave V3 Pool | `0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2` | — |
