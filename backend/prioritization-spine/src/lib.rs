@@ -21,3 +21,4 @@ pub use decision::*;
 pub use errors::*;
 pub use config_aware::{ConfigAwareEvaluator, ConfigGateOutcome, NetworkSignals};
 pub use strategy_scores_db::{StrategyFailRate, StrategyScoresCache};
+pub use feedback::{AdaptiveSignal, FeedbackChannel, SIGNAL_TTL};

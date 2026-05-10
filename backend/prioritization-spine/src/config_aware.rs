@@ -23,6 +23,7 @@
 //!     the inputs that engine expects, with honest values instead of stubs.
 
 use crate::evidence::{CostBreakdown, OpportunityEvidence, PFailSource};
+use crate::feedback::FeedbackChannel;
 use crate::strategy_scores_db::StrategyFailRate;
 use crate::types::OpportunityCandidate;
 use crate::decision::{ExecutionDecision, RejectReason};
@@ -242,6 +243,22 @@ pub struct ConfigAwareEvaluator<'a> {
     /// field in `V3PoolInfo`). As of H2 dispatch the key may not yet be emitted
     /// — callers should treat `None` gracefully and log a WARN for traceability.
     pub v3_slot0_snapshot: Option<(u128, u128, bool)>,
+
+    /// Live adaptive feedback from the recon aggregator (Sprint BE-3.5).
+    ///
+    /// When `Some`, `evaluate()` queries the channel for a fresh signal
+    /// (`< 300 s` old) for `(strategy_kind, chain_id)` **before** reading
+    /// `p_fail_rate`.  If the channel returns a fresh signal, its
+    /// `revert_rate` overrides `p_fail_rate.p_fail`.
+    ///
+    /// Priority order for `p_fail`:
+    ///   1. `feedback_channel` (real-time pub/sub, freshest signal)
+    ///   2. `p_fail_rate`       (SQL cache from `StrategyScoresCache`, ≤ 60 s old)
+    ///   3. Proxy fallback      (`amount_in_usd × failure_risk_buffer_pct`)
+    ///
+    /// Pass `None` when the subscriber has not been spawned (e.g. sim-ctl,
+    /// unit tests that do not need real-time feedback).
+    pub feedback_channel: Option<FeedbackChannel>,
 }
 
 impl<'a> ConfigAwareEvaluator<'a> {
@@ -257,6 +274,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             pool_volume_24h_usd: None,
             v2_reserve_snapshot: None,
             v3_slot0_snapshot: None,
+            feedback_channel: None,
         }
     }
 
@@ -278,6 +296,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             pool_volume_24h_usd: None,
             v2_reserve_snapshot: None,
             v3_slot0_snapshot: None,
+            feedback_channel: None,
         }
     }
 
@@ -300,6 +319,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             pool_volume_24h_usd: None,
             v2_reserve_snapshot: None,
             v3_slot0_snapshot: None,
+            feedback_channel: None,
         }
     }
 
@@ -324,6 +344,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             pool_volume_24h_usd,
             v2_reserve_snapshot: None,
             v3_slot0_snapshot: None,
+            feedback_channel: None,
         }
     }
 
@@ -351,6 +372,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             pool_volume_24h_usd,
             v2_reserve_snapshot,
             v3_slot0_snapshot: None,
+            feedback_channel: None,
         }
     }
 
@@ -384,7 +406,22 @@ impl<'a> ConfigAwareEvaluator<'a> {
             pool_volume_24h_usd,
             v2_reserve_snapshot,
             v3_slot0_snapshot,
+            feedback_channel: None,
         }
+    }
+
+    /// Builder-style setter for the real-time feedback channel (Sprint BE-3.5).
+    ///
+    /// Call after any constructor to wire the pub/sub adaptive signal source:
+    /// ```ignore
+    /// let evaluator = ConfigAwareEvaluator::with_v3_slot0(...)
+    ///     .with_feedback(feedback_channel.clone());
+    /// ```
+    /// When `channel` is `None`, the evaluator falls back to `p_fail_rate`
+    /// (SQL path) or the proxy (R8 fail-honest).
+    pub fn with_feedback(mut self, channel: Option<FeedbackChannel>) -> Self {
+        self.feedback_channel = channel;
+        self
     }
 
     /// Single-shot evaluation. Returns the gate outcome (allowlist, strategy,
@@ -667,24 +704,55 @@ impl<'a> ConfigAwareEvaluator<'a> {
         let failure_risk_buffer_usd = amount_in_usd * self.config.failure_risk_buffer_pct;
         let flashloan_fee_usd_computed = amount_in_usd * self.config.flashloan_fee_pct;
 
-        // --- Component 4 (Sprint B): resolve p_fail for the failure buffer ---
+        // --- Component 4 (Sprint B + BE-3.5): resolve p_fail for the failure buffer ---
+        //
+        // Priority order (most-fresh source wins):
+        //   1. FeedbackChannel (Sprint BE-3.5) — real-time pub/sub signal, < 300 s old.
+        //      Uses `revert_rate` from the latest recon aggregation cycle.
+        //   2. p_fail_rate (Sprint B)          — SQL cache from StrategyScoresCache, ≤ 60 s old.
+        //   3. Proxy fallback                  — amount_in_usd × failure_risk_buffer_pct.
+        //
         // `p_fail_rate` was pre-fetched by the caller via `StrategyScoresCache`.
         // Map it into `Option<f64>` for `RoiCalculationParams`, and prepare the
         // `PFailSource` enum for `CostBreakdown` (dashboard surfacing).
-        let (p_fail_opt, p_fail_source) = match &self.p_fail_rate {
-            Some(rate) => (
-                Some(rate.p_fail),
-                PFailSource::Statistical {
-                    p: rate.p_fail,
-                    sample_count: rate.sample_count,
-                },
-            ),
-            None => (
-                None,
-                PFailSource::Proxy {
-                    buffer_usd: failure_risk_buffer_usd,
-                },
-            ),
+        //
+        // The feedback channel get() is synchronous (std::sync::RwLock reader) so
+        // this block keeps evaluate() entirely non-async on the hot path.
+        let (p_fail_opt, p_fail_source) = {
+            // Tier 1: real-time feedback signal (BE-3.5).
+            let feedback_signal = self
+                .feedback_channel
+                .as_ref()
+                .and_then(|ch| ch.get(strategy_kind, chain_id));
+
+            if let Some(ref sig) = feedback_signal {
+                // Fresh pub/sub signal takes precedence over the SQL cache.
+                (
+                    Some(sig.revert_rate),
+                    PFailSource::Statistical {
+                        p: sig.revert_rate,
+                        sample_count: sig.sample_count,
+                    },
+                )
+            } else {
+                // Tier 2: SQL StrategyScoresCache (Sprint B).
+                match &self.p_fail_rate {
+                    Some(rate) => (
+                        Some(rate.p_fail),
+                        PFailSource::Statistical {
+                            p: rate.p_fail,
+                            sample_count: rate.sample_count,
+                        },
+                    ),
+                    // Tier 3: flat proxy fallback (R8 fail-honest).
+                    None => (
+                        None,
+                        PFailSource::Proxy {
+                            buffer_usd: failure_risk_buffer_usd,
+                        },
+                    ),
+                }
+            }
         };
 
         let roi_params = RoiCalculationParams {

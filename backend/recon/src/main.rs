@@ -246,9 +246,30 @@ async fn main() -> anyhow::Result<()> {
                 });
                 info!(event = "recon_consumer.spawned");
 
+                // Open a second connection manager for the aggregator's pub/sub
+                // publishing.  The consumer already owns redis_conn; we cannot
+                // share a connection manager between pub/sub and regular commands
+                // on the same handle (the pub/sub mode takes over the socket).
+                let redis_agg: Option<redis::aio::ConnectionManager> =
+                    match redis::Client::open(redis_url.clone()) {
+                        Ok(c) => match c.get_connection_manager().await {
+                            Ok(m) => Some(m),
+                            Err(e) => {
+                                warn!(event = "aggregator.redis_conn_failed", error = %e,
+                                      "aggregator pub/sub disabled — SQL fallback only");
+                                None
+                            }
+                        },
+                        Err(e) => {
+                            warn!(event = "aggregator.redis_client_failed", error = %e,
+                                  "aggregator pub/sub disabled — SQL fallback only");
+                            None
+                        }
+                    };
+
                 let cfg_agg = recon_cfg.clone();
                 tokio::spawn(async move {
-                    aggregator::run_periodic(db_for_aggregator, cfg_agg, killswitch).await;
+                    aggregator::run_periodic(db_for_aggregator, cfg_agg, killswitch, redis_agg).await;
                 });
                 info!(event = "aggregator.spawned");
             } else {

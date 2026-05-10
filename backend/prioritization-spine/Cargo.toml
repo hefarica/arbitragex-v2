@@ -18,6 +18,8 @@ ethers = { workspace = true }
 tokio = { workspace = true }
 sqlx = { workspace = true }
 lru = { workspace = true }
+redis = { workspace = true }
+futures-util = { workspace = true }
 
 [dev-dependencies]
 hex = "0.4"
