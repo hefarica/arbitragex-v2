@@ -110,12 +110,20 @@ LEFT JOIN tokens ti
 LEFT JOIN tokens to_
   ON  to_.chain_id = COALESCE(o.chain_id_out, o.chain_id)
   AND to_.address  = LOWER(o.token_out)
+-- 2026-05-10 hotfix: bound the "live" window so the SSR snapshot does not
+-- surface opportunities from days ago when no fresh viable rows exist.
+-- Without this, the page rendered May-6 rows on May-10 because the query
+-- only ordered by detected_at DESC LIMIT N — historical rows could fill the
+-- frame. The window is operator-tunable via ?max_age_seconds=N (default
+-- 300s = 5 minutes); the empty result is rendered as "No live opportunities
+-- right now" by the dashboard, which is fail-honest.
+--
 -- viable_only=true: only show non-rejected opps in a viable lifecycle state.
 -- viable_only=false: show ALL recent opps including rejected ones so the
 --                    operator sees real-time pipeline activity, not just
---                    historical viable rows. R8 fail-honest: rejections
---                    carry rejection_reason so the UI displays the why.
-WHERE ($2::bool = false
+--                    historical viable rows.
+WHERE o.detected_at >= NOW() - ($3::int * INTERVAL '1 second')
+  AND ($2::bool = false
        OR (o.status IN ('detected', 'validated', 'simulated', 'scored')
            AND o.rejection_reason IS NULL))
 ORDER BY o.detected_at DESC
@@ -259,15 +267,33 @@ export function mountOpportunitiesLive(
     const viableOnly =
       String(req.query["viable_only"] ?? "true").toLowerCase() !== "false";
 
+    // 2026-05-10 hotfix: bound the live window so the SSR snapshot can never
+    // surface opportunities from days ago when no fresh viable rows exist.
+    // User-observed regression: viable_only=true + no recent viables → ORDER BY
+    // detected_at DESC LIMIT N returned the most recent VIABLE which was 4
+    // days old. With the window, the response is honestly empty when nothing
+    // qualifies, and the dashboard renders the empty state instead of stale
+    // historical rows. Default 300s (5 min); operator can override via query
+    // param. Clamped to [10s, 24h] to refuse silly values.
+    const maxAgeSeconds = Math.max(
+      10,
+      Math.min(86_400, Number(req.query["max_age_seconds"] ?? 300)),
+    );
+
     try {
-      const q = await pool.query<OpportunityLiveRow>(LIVE_QUERY, [limit, viableOnly]);
+      const q = await pool.query<OpportunityLiveRow>(LIVE_QUERY, [
+        limit,
+        viableOnly,
+        maxAgeSeconds,
+      ]);
 
       res.status(200).json({
-        count:       q.rows.length,
-        window:      "latest",
-        viable_only: viableOnly,
-        items:       q.rows.map(rowToOpportunity),
-        ts:          new Date().toISOString(),
+        count:           q.rows.length,
+        window:          "latest",
+        viable_only:     viableOnly,
+        max_age_seconds: maxAgeSeconds,
+        items:           q.rows.map(rowToOpportunity),
+        ts:              new Date().toISOString(),
       });
     } catch (e) {
       log.warn(
