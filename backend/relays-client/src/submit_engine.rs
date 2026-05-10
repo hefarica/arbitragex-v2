@@ -474,19 +474,38 @@ impl SubmitEngine {
         }
 
         match outcome {
-            InclusionOutcome::Included { block, gas_used } => ExecutionResult {
-                opportunity_id: opp.id,
-                status: ExecutionStatus::Included,
-                tx_hash: Some(format!("0x{:x}", bundle.tx_hash)),
-                relay_used: Some(relay_used),
-                block_included: Some(block),
-                // gas_used is u64 (alloy 1.0 receipt.gas_used type).
-                gas_used_wei: Some(gas_used.to_string()),
-                actual_profit_usd: None, // S6 computes this from traces
-                error_message: None,
-                submitted_at,
-                trace_id: opp.trace_id,
-            },
+            InclusionOutcome::Included { block, gas_used } => {
+                // N7 (audit 2026-05-10): emit arbx_bundle_included_* counters so
+                // the BundleSnipedRateHigh alert in alerts.rules.yml can fire.
+                //
+                // Profitable proxy: net_expected_profit_usd > 0, falling back to
+                // expected_profit_usd > 0. Both fields originate from the spine
+                // evaluator. Until Sprint 6 recon writes realized profit back via
+                // trace reconciliation, this is the best available signal.
+                // False negatives (expected positive but actually sniped) are
+                // acceptable — the alert catches the aggregate ratio, not
+                // individual bundles.
+                let profitable = opp
+                    .net_expected_profit_usd
+                    .or(opp.expected_profit_usd)
+                    .map(|p| p > 0.0)
+                    .unwrap_or(false);
+                shared_rs::metrics::record_inclusion(opp.chain_id, &relay_used, profitable);
+
+                ExecutionResult {
+                    opportunity_id: opp.id,
+                    status: ExecutionStatus::Included,
+                    tx_hash: Some(format!("0x{:x}", bundle.tx_hash)),
+                    relay_used: Some(relay_used),
+                    block_included: Some(block),
+                    // gas_used is u64 (alloy 1.0 receipt.gas_used type).
+                    gas_used_wei: Some(gas_used.to_string()),
+                    actual_profit_usd: None, // S6 computes this from traces
+                    error_message: None,
+                    submitted_at,
+                    trace_id: opp.trace_id,
+                }
+            }
             InclusionOutcome::Reverted { block } => ExecutionResult {
                 opportunity_id: opp.id,
                 status: ExecutionStatus::Reverted,

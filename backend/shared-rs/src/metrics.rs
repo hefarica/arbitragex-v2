@@ -203,6 +203,64 @@ pub static RPC_POOL_DRIFT_DETECTED_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     c
 });
 
+// ---- Bundle inclusion counters (N7 — audit 2026-05-10) ----
+//
+// These counters back the BundleSnipedRateHigh alert in
+// monitoring/alerts.rules.yml. Both are scoped by chain_id + relay so
+// operators can identify which relay / chain is the sniping surface.
+//
+// arbx_bundle_included_total        — every on-chain inclusion (profitable or not)
+// arbx_bundle_included_no_profit_total — inclusions where expected profit <= 0
+//   (proxy for "sniped / front-run / spread already gone by the time we landed")
+//   until recon writes realized profit back, expected_profit_usd is the best
+//   available signal.
+
+pub static BUNDLE_INCLUDED_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_bundle_included_total",
+            "Total bundles included on chain (regardless of profit outcome)"
+        ),
+        &["chain_id", "relay"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
+pub static BUNDLE_INCLUDED_NO_PROFIT_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_bundle_included_no_profit_total",
+            "Bundles included on chain that netted zero or negative expected profit (sniped / front-run)"
+        ),
+        &["chain_id", "relay"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
+/// Record a bundle inclusion event.
+///
+/// `profitable` is `true` when the opportunity carried a positive
+/// `net_expected_profit_usd` (or `expected_profit_usd` as fallback).
+/// Until recon writes realized profit back to the opportunity record,
+/// this is the best proxy available — false negatives (we thought it
+/// was profitable but got sniped) will be resolved in Sprint 6 when
+/// actual_profit_usd lands via trace reconciliation.
+pub fn record_inclusion(chain_id: u64, relay: &str, profitable: bool) {
+    let chain = chain_id.to_string();
+    BUNDLE_INCLUDED_TOTAL
+        .with_label_values(&[&chain, relay])
+        .inc();
+    if !profitable {
+        BUNDLE_INCLUDED_NO_PROFIT_TOTAL
+            .with_label_values(&[&chain, relay])
+            .inc();
+    }
+}
+
 pub fn init_metrics() {
     // Force Lazy init so all collectors are registered.
     let _ = &*HTTP_REQUESTS_TOTAL;
@@ -224,6 +282,8 @@ pub fn init_metrics() {
     let _ = &*RPC_PROVIDER_BLOCK_HEIGHT;
     let _ = &*RPC_POOL_FAILOVERS_TOTAL;
     let _ = &*RPC_POOL_DRIFT_DETECTED_TOTAL;
+    let _ = &*BUNDLE_INCLUDED_TOTAL;
+    let _ = &*BUNDLE_INCLUDED_NO_PROFIT_TOTAL;
     SERVICE_UP.set(1);
 }
 
