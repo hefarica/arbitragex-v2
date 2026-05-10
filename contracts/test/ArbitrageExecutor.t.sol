@@ -3,6 +3,8 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "../src/ArbitrageExecutor.sol";
+import "../src/AllowanceManager.sol";
+import "../src/interfaces/IAllowanceManager.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
@@ -425,5 +427,192 @@ contract ArbitrageExecutorTest is Test {
         // Storage must be intact — both token approvals survive the upgrade
         assertTrue(executorV2.approvedTokens(address(token)), "token approval must survive upgrade");
         assertTrue(executorV2.approvedTokens(address(extraToken)), "extraToken approval must survive upgrade");
+    }
+
+    // =========================================================================
+    // SC-5: AllowanceManager integration tests
+    // =========================================================================
+
+    /// @dev Helper: deploy AllowanceManager proxy with `address(this)` as admin.
+    function _deployAllowanceManager() internal returns (AllowanceManager am) {
+        AllowanceManager impl = new AllowanceManager();
+        bytes memory initData = abi.encodeWithSelector(
+            AllowanceManager.initialize.selector,
+            address(this)
+        );
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
+        am = AllowanceManager(address(proxy));
+    }
+
+    // -----------------------------------------------------------------------
+    // testSC5_SetAllowanceManager_UpdatesStorage
+    // setAllowanceManager() must update the allowanceManager slot and emit event.
+    // -----------------------------------------------------------------------
+    function testSC5_SetAllowanceManager_UpdatesStorage() public {
+        AllowanceManager am = _deployAllowanceManager();
+
+        // Default must be zero address
+        assertEq(address(executor.allowanceManager()), address(0), "default allowanceManager must be address(0)");
+
+        // Expect AllowanceManagerUpdated event
+        vm.expectEmit(true, false, false, false, address(executor));
+        emit ArbitrageExecutor.AllowanceManagerUpdated(address(am));
+
+        executor.setAllowanceManager(address(am));
+
+        assertEq(address(executor.allowanceManager()), address(am), "allowanceManager must be updated");
+    }
+
+    // -----------------------------------------------------------------------
+    // testSC5_SetAllowanceManager_OnlyAdmin
+    // Non-admin must be blocked from setAllowanceManager.
+    // -----------------------------------------------------------------------
+    function testSC5_SetAllowanceManager_OnlyAdmin() public {
+        AllowanceManager am = _deployAllowanceManager();
+
+        vm.expectRevert();
+        vm.prank(stranger);
+        executor.setAllowanceManager(address(am));
+    }
+
+    // -----------------------------------------------------------------------
+    // testSC5_ClearAllowanceManager_PassZeroAddress
+    // Passing address(0) to setAllowanceManager disables the check.
+    // -----------------------------------------------------------------------
+    function testSC5_ClearAllowanceManager_PassZeroAddress() public {
+        AllowanceManager am = _deployAllowanceManager();
+        executor.setAllowanceManager(address(am));
+        assertEq(address(executor.allowanceManager()), address(am));
+
+        executor.setAllowanceManager(address(0));
+        assertEq(address(executor.allowanceManager()), address(0), "allowanceManager must be cleared");
+    }
+
+    // -----------------------------------------------------------------------
+    // testSC5_ExecuteArbitrage_WithAllowanceManager_HappyPath
+    //
+    // When AllowanceManager is set AND the router has a live allowance for
+    // tokenIn on the AllowanceManager, executeArbitrage must succeed normally.
+    // -----------------------------------------------------------------------
+    function testSC5_ExecuteArbitrage_WithAllowanceManager_HappyPath() public {
+        uint256 amountIn = 1_000e18;
+        uint256 profit   = 50e18;
+        uint256 minProfit = 10e18;
+
+        AllowanceManager am = _deployAllowanceManager();
+        executor.setAllowanceManager(address(am));
+
+        // Deploy router and approve it in ArbitrageExecutor
+        MockProfitRouter router = new MockProfitRouter(address(token), address(executor), profit);
+        executor.setRouterApproval(address(router), true);
+
+        // Grant allowance from AllowanceManager to router for tokenIn.
+        // AllowanceManager.grantAllowance() calls IERC20(token).forceApprove(router, amount),
+        // which sets allowance FROM the AllowanceManager contract TO the router.
+        // IAllowanceManager.isApproved(token, router) then reads that allowance.
+        am.grantAllowance(address(token), address(router), 1_000_000e18);
+
+        // Verify isApproved works
+        assertTrue(am.isApproved(address(token), address(router)), "router must be approved in AM");
+
+        token.mint(address(executor), amountIn);
+
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = "";
+
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, minProfit, routers, payloads);
+
+        // Verify profit landed (executor still holds it, not transferred — per current design)
+        uint256 finalBalance = token.balanceOf(address(executor));
+        assertGe(finalBalance, amountIn + minProfit, "executor must have amountIn + at least minProfit");
+    }
+
+    // -----------------------------------------------------------------------
+    // testSC5_ExecuteArbitrage_RevertsWhenRouterNotInAllowanceManager
+    //
+    // When AllowanceManager is set but router has NO allowance for tokenIn,
+    // executeArbitrage must revert with RouterAllowanceNotGranted.
+    // -----------------------------------------------------------------------
+    function testSC5_ExecuteArbitrage_RevertsWhenRouterNotInAllowanceManager() public {
+        uint256 amountIn = 1_000e18;
+
+        AllowanceManager am = _deployAllowanceManager();
+        executor.setAllowanceManager(address(am));
+
+        // Deploy router — approved in ArbitrageExecutor but NOT in AllowanceManager
+        MockProfitRouter router = new MockProfitRouter(address(token), address(executor), 50e18);
+        executor.setRouterApproval(address(router), true);
+        // Deliberately: do NOT call am.grantAllowance(...)
+
+        token.mint(address(executor), amountIn);
+
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = "";
+
+        vm.expectRevert(
+            abi.encodeWithSelector(RouterAllowanceNotGranted.selector, address(router), address(token))
+        );
+
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
+    }
+
+    // -----------------------------------------------------------------------
+    // testSC5_ExecuteArbitrage_SkipsCheckWhenNoAllowanceManager
+    //
+    // When allowanceManager == address(0) (default), the allowance check is
+    // entirely skipped. The existing happy-path behavior is unchanged.
+    // Backward-compatibility regression guard.
+    // -----------------------------------------------------------------------
+    function testSC5_ExecuteArbitrage_SkipsCheckWhenNoAllowanceManager() public {
+        uint256 amountIn = 1_000e18;
+        uint256 profit   = 50e18;
+
+        // No setAllowanceManager() call — default is address(0)
+        assertEq(address(executor.allowanceManager()), address(0));
+
+        MockProfitRouter router = new MockProfitRouter(address(token), address(executor), profit);
+        executor.setRouterApproval(address(router), true);
+        token.mint(address(executor), amountIn);
+
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = "";
+
+        // Must succeed: AllowanceManager check is not active
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
+    }
+
+    // -----------------------------------------------------------------------
+    // testSC5_AllowanceManager_IsApproved_ReturnsFalseAfterRevoke
+    //
+    // Verifies the IAllowanceManager view functions reflect real token state:
+    //   isApproved → false after revokeAllowance.
+    //   getAllowance → 0 after revokeAllowance.
+    // -----------------------------------------------------------------------
+    function testSC5_AllowanceManager_IsApproved_ReturnsFalseAfterRevoke() public {
+        AllowanceManager am = _deployAllowanceManager();
+        address spender = makeAddr("spender");
+
+        // Initially no allowance
+        assertFalse(am.isApproved(address(token), spender), "no allowance initially");
+        assertEq(am.getAllowance(address(token), spender), 0, "allowance must be 0 initially");
+
+        // Grant allowance
+        am.grantAllowance(address(token), spender, 500e18);
+        assertTrue(am.isApproved(address(token), spender), "must be approved after grant");
+        assertEq(am.getAllowance(address(token), spender), 500e18, "allowance must match grant amount");
+
+        // Revoke
+        am.revokeAllowance(address(token), spender);
+        assertFalse(am.isApproved(address(token), spender), "must not be approved after revoke");
+        assertEq(am.getAllowance(address(token), spender), 0, "allowance must be 0 after revoke");
     }
 }

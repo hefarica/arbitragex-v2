@@ -13,9 +13,10 @@ pragma solidity ^0.8.20;
 // This contract's OWN variables start at linear slot 0:
 //   slot 0: approvedRouters  (mapping(address => bool))
 //   slot 1: approvedTokens   (mapping(address => bool))
+//   slot 2: allowanceManager (IAllowanceManager — address, 20 bytes)  ← SC-5
 //
 // CRITICAL: When adding new state variables in V2, V3, etc., you MUST append
-// them AFTER slot 1.  NEVER insert variables between existing ones — that
+// them AFTER slot 2.  NEVER insert variables between existing ones — that
 // would corrupt the storage layout and brick all proxies pointing at this impl.
 // =============================================================================
 
@@ -26,6 +27,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "./interfaces/IAllowanceManager.sol";
 
 // =============================================================================
 // SC-3: Custom errors (~200 gas saved per revert vs string require)
@@ -51,6 +53,9 @@ error ZeroGrossProfit();
 error InsufficientProfit();
 /// @dev Thrown when the ETH balance is zero on withdrawETH.
 error ZeroBalance();
+/// @dev Thrown when AllowanceManager is set and the router has no live allowance for tokenIn.
+///      Only raised when allowanceManager != address(0) (i.e. integration is active).
+error RouterAllowanceNotGranted(address router, address token);
 
 /// @title ArbitrageExecutor — UUPS-upgradeable on-chain arbitrage executor
 /// @notice Executes atomic multi-hop circular arbitrage routes.
@@ -84,6 +89,12 @@ contract ArbitrageExecutor is
     // slot 1
     /// @notice Set of ERC-20 tokens approved as tokenIn for arbitrage routes.
     mapping(address => bool) public approvedTokens;
+    // slot 2 — SC-5: optional AllowanceManager integration.
+    /// @notice Optional AllowanceManager reference. When non-zero, executeArbitrage
+    ///         additionally verifies that each router has a live allowance in the
+    ///         AllowanceManager for tokenIn before calling it.
+    ///         Backward-compatible: address(0) = check disabled (default post-deploy).
+    IAllowanceManager public allowanceManager;
     // APPEND new variables below this line in future upgrades. Never above.
 
     /// @notice Emitted when an arbitrage route completes successfully.
@@ -106,6 +117,10 @@ contract ArbitrageExecutor is
     /// @param to     Recipient of the rescued ETH.
     /// @param amount Amount of ETH transferred.
     event ETHWithdrawn(address indexed to, uint256 amount);
+
+    /// @notice Emitted when the AllowanceManager integration address is updated.
+    /// @param allowanceManager  New AllowanceManager address (address(0) = disabled).
+    event AllowanceManagerUpdated(address indexed allowanceManager);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -166,9 +181,21 @@ contract ArbitrageExecutor is
         uint256 balanceBefore = IERC20(tokenIn).balanceOf(address(this));
         if (balanceBefore < amountIn) revert InsufficientBalance();
 
+        // SC-5: cache allowanceManager to avoid repeated SLOAD inside the loop.
+        IAllowanceManager _am = allowanceManager;
+        bool checkAllowance = address(_am) != address(0);
+
         for (uint256 i = 0; i < routers.length;) {
             address router = routers[i];
             if (!approvedRouters[router]) revert RouterNotApproved(router);
+
+            // SC-5: if AllowanceManager is wired, verify the router holds a live
+            // allowance for tokenIn before we dispatch the call.  This is a
+            // defense-in-depth gate — tokens are NOT pulled from AllowanceManager;
+            // they must already be in this contract.  Skipped when _am == address(0).
+            if (checkAllowance && !_am.isApproved(tokenIn, router)) {
+                revert RouterAllowanceNotGranted(router, tokenIn);
+            }
 
             (bool success, ) = router.call(payload[i]);
             if (!success) revert SwapFailed();
@@ -200,6 +227,26 @@ contract ArbitrageExecutor is
     function setTokenApproval(address token, bool status) external onlyRole(ADMIN_ROLE) {
         approvedTokens[token] = status;
         emit TokenApproved(token, status);
+    }
+
+    // -------------------------------------------------------------------------
+    // SC-5: AllowanceManager integration
+    // -------------------------------------------------------------------------
+
+    /// @notice Wire this executor to an AllowanceManager instance.
+    ///         When set (non-zero), executeArbitrage will verify that each router
+    ///         has a live allowance in the AllowanceManager for tokenIn before
+    ///         calling it. Pass address(0) to disable the check.
+    /// @dev    Backward-compatible: existing deployments default to address(0).
+    ///         The AllowanceManager is NOT called for fund transfers — tokens must
+    ///         still be deposited in ArbitrageExecutor before execution. The check
+    ///         is a safety gate only: it ensures the router is in the AllowanceManager's
+    ///         approved set before we let it touch our funds.
+    /// @param _am  AllowanceManager proxy address (IAllowanceManager). Pass
+    ///             address(0) to clear the integration.
+    function setAllowanceManager(address _am) external onlyRole(ADMIN_ROLE) {
+        allowanceManager = IAllowanceManager(_am);
+        emit AllowanceManagerUpdated(_am);
     }
 
     /// @notice Emergency-withdraw the entire balance of an ERC-20 token to the caller.

@@ -52,3 +52,42 @@ jobs:
           # are skipped automatically when these are absent.
           MAINNET_RPC_URL: ""
           SEPOLIA_RPC_URL: ""
+
+  test-fork:
+    name: forge fork test (mainnet)
+    runs-on: ubuntu-latest
+    # Only run on PRs targeting main — not on every push.
+    # Fork tests cost RPC credits and can be flaky under rate limits.
+    if: github.event_name == 'pull_request'
+    # Require non-fork tests to pass first — no point forking if unit tests fail.
+    needs: test
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: contracts
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: forge install dependencies
+        run: |
+          forge install OpenZeppelin/openzeppelin-contracts --no-git --no-commit
+          forge install OpenZeppelin/openzeppelin-contracts-upgradeable --no-git --no-commit
+          forge install foundry-rs/forge-std --no-git --no-commit
+
+      - name: forge build
+        run: forge build --sizes
+
+      - name: forge fork test (testFork_*)
+        # continue-on-error: RPC hiccups (rate-limit, latency spike) must not
+        # block merge.  The job is informational; a hard block is reserved for
+        # the unit-test job above.
+        continue-on-error: true
+        run: forge test --fork-url $MAINNET_RPC_URL --match-test "testFork_" -vvv
+        env:
+          MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}

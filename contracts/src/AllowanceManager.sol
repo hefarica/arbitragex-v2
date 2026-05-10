@@ -19,6 +19,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "./interfaces/IAllowanceManager.sol";
 
 // =============================================================================
 // SC-3: Custom errors (~200 gas saved per revert vs string require)
@@ -45,7 +46,8 @@ contract AllowanceManager is
     Initializable,
     AccessControlUpgradeable,
     PausableUpgradeable,
-    UUPSUpgradeable
+    UUPSUpgradeable,
+    IAllowanceManager
 {
     using SafeERC20 for IERC20;
 
@@ -177,6 +179,22 @@ contract AllowanceManager is
             emit AllowanceRevoked(tokens[i], spenders[i]);
             unchecked { ++i; }
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // SC-5: IAllowanceManager view functions
+    // -------------------------------------------------------------------------
+
+    /// @inheritdoc IAllowanceManager
+    /// @dev Reads IERC20(token).allowance(address(this), spender) — no extra storage.
+    function isApproved(address token, address spender) external view override returns (bool) {
+        return IERC20(token).allowance(address(this), spender) > 0;
+    }
+
+    /// @inheritdoc IAllowanceManager
+    /// @dev Reads IERC20(token).allowance(address(this), spender) — no extra storage.
+    function getAllowance(address token, address spender) external view override returns (uint256) {
+        return IERC20(token).allowance(address(this), spender);
     }
 
     // -------------------------------------------------------------------------

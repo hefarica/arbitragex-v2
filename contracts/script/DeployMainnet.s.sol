@@ -1,0 +1,160 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+// =============================================================================
+// SC-12: Mainnet deploy script — Ethereum L1
+//
+// Deploys all three contracts as UUPS proxies (ERC1967Proxy) with the deployer
+// as the initial admin.  Includes multiple safety guards to prevent accidental
+// mainnet deploys during testing.
+//
+// PRE-DEPLOY CHECKLIST (run before broadcasting):
+//   [ ] Confirm `block.chainid == 1` (Ethereum mainnet).
+//   [ ] Verify deployer balance >= 0.5 ETH for gas.
+//   [ ] Set CONFIRM_MAINNET_DEPLOY=true in environment (explicit opt-in).
+//   [ ] Set DEPLOYER_PRIVATE_KEY to the operator hot key (NOT the multisig).
+//   [ ] Verify AAVE_V3_MAINNET_POOL via Aave docs (hardcoded below as fallback).
+//
+// Usage:
+//   export DEPLOYER_PRIVATE_KEY=0x...
+//   export CONFIRM_MAINNET_DEPLOY=true
+//   export ETHERSCAN_API_KEY=...
+//   export MAINNET_RPC_URL=https://...
+//
+//   forge script script/DeployMainnet.s.sol \
+//     --rpc-url $MAINNET_RPC_URL \
+//     --broadcast \
+//     --verify \
+//     -vvvv
+//
+// Outputs (logged via console2):
+//   ArbitrageExecutor proxy address
+//   AllowanceManager proxy address
+//   FlashLoanExecutor proxy address
+//   Next-steps checklist
+//
+// Post-deploy: see contracts/DEPLOY.md for the full operations runbook.
+// =============================================================================
+
+import "forge-std/Script.sol";
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import "../src/ArbitrageExecutor.sol";
+import "../src/AllowanceManager.sol";
+import "../src/FlashLoanExecutor.sol";
+
+contract DeployMainnet is Script {
+    // Aave V3 Pool — Ethereum mainnet (verified 2026-05-08).
+    // Source: https://docs.aave.com/developers/deployed-contracts/v3-mainnet/ethereum
+    address constant AAVE_V3_POOL_MAINNET = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
+
+    function run() external {
+        // ----------------------------------------------------------------
+        // Safety gate 1: explicit opt-in environment variable.
+        // Prevents accidental execution in CI, local fork runs, or staging.
+        // ----------------------------------------------------------------
+        require(
+            vm.envBool("CONFIRM_MAINNET_DEPLOY"),
+            "DeployMainnet: set CONFIRM_MAINNET_DEPLOY=true to proceed"
+        );
+
+        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        address deployer    = vm.addr(deployerKey);
+
+        // ----------------------------------------------------------------
+        // Safety gate 2: chain ID must be Ethereum mainnet (1).
+        // Rejects Sepolia (11155111), Holesky (17000), Anvil (31337), etc.
+        // ----------------------------------------------------------------
+        require(block.chainid == 1, "DeployMainnet: not on Ethereum mainnet (chainid != 1)");
+
+        // ----------------------------------------------------------------
+        // Safety gate 3: deployer must have at least 0.5 ETH.
+        // Deploying 3 proxies + 3 implementations ≈ 0.05-0.15 ETH at 50 gwei.
+        // 0.5 ETH gives 3-10x headroom.
+        // ----------------------------------------------------------------
+        require(
+            deployer.balance >= 0.5 ether,
+            "DeployMainnet: deployer balance < 0.5 ETH — top up before deploying"
+        );
+
+        console2.log("=== ArbitrageX v2 Mainnet Deploy ===");
+        console2.log("Deployer        :", deployer);
+        console2.log("Deployer balance:", deployer.balance);
+        console2.log("Aave V3 Pool    :", AAVE_V3_POOL_MAINNET);
+        console2.log("Chain ID        :", block.chainid);
+
+        vm.startBroadcast(deployerKey);
+
+        // ----------------------------------------------------------------
+        // 1. ArbitrageExecutor — UUPS proxy
+        //    Admin = deployer. Grant EXECUTOR_ROLE post-deploy to signer.
+        // ----------------------------------------------------------------
+        ArbitrageExecutor implAE = new ArbitrageExecutor();
+        ERC1967Proxy proxyAE = new ERC1967Proxy(
+            address(implAE),
+            abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, deployer)
+        );
+
+        // ----------------------------------------------------------------
+        // 2. AllowanceManager — UUPS proxy
+        //    Admin = deployer. Wire to ArbitrageExecutor post-deploy.
+        // ----------------------------------------------------------------
+        AllowanceManager implAM = new AllowanceManager();
+        ERC1967Proxy proxyAM = new ERC1967Proxy(
+            address(implAM),
+            abi.encodeWithSelector(AllowanceManager.initialize.selector, deployer)
+        );
+
+        // ----------------------------------------------------------------
+        // 3. FlashLoanExecutor — UUPS proxy
+        //    Points to: Aave V3 mainnet pool + ArbitrageExecutor proxy.
+        // ----------------------------------------------------------------
+        FlashLoanExecutor implFL = new FlashLoanExecutor();
+        ERC1967Proxy proxyFL = new ERC1967Proxy(
+            address(implFL),
+            abi.encodeWithSelector(
+                FlashLoanExecutor.initialize.selector,
+                deployer,
+                AAVE_V3_POOL_MAINNET,
+                address(proxyAE)
+            )
+        );
+
+        vm.stopBroadcast();
+
+        // ----------------------------------------------------------------
+        // Output — copy these to your .env / ops runbook immediately.
+        // ----------------------------------------------------------------
+        console2.log("");
+        console2.log("=== Deployed Proxies ===");
+        console2.log("ArbitrageExecutor proxy :", address(proxyAE));
+        console2.log("AllowanceManager proxy  :", address(proxyAM));
+        console2.log("FlashLoanExecutor proxy :", address(proxyFL));
+        console2.log("");
+        console2.log("=== Implementation Addresses (for --verify --watch) ===");
+        console2.log("ArbitrageExecutor impl  :", address(implAE));
+        console2.log("AllowanceManager impl   :", address(implAM));
+        console2.log("FlashLoanExecutor impl  :", address(implFL));
+        console2.log("");
+        console2.log("=== MANDATORY Post-Deploy Checklist ===");
+        console2.log("[ ] 1. Wire AllowanceManager:");
+        console2.log("       ArbitrageExecutor.setAllowanceManager(", address(proxyAM), ")");
+        console2.log("[ ] 2. Grant EXECUTOR_ROLE on ArbitrageExecutor to off-chain signer:");
+        console2.log("       ArbitrageExecutor.grantRole(EXECUTOR_ROLE, <signer>)");
+        console2.log("[ ] 3. Grant EXECUTOR_ROLE on FlashLoanExecutor to off-chain signer:");
+        console2.log("       FlashLoanExecutor.grantRole(EXECUTOR_ROLE, <signer>)");
+        console2.log("[ ] 4. Approve tokenIn tokens:");
+        console2.log("       ArbitrageExecutor.setTokenApproval(<WETH|USDC|...>, true)");
+        console2.log("[ ] 5. Approve routers:");
+        console2.log("       ArbitrageExecutor.setRouterApproval(<UniV3Router|...>, true)");
+        console2.log("[ ] 6. Batch-grant allowances in AllowanceManager:");
+        console2.log("       AllowanceManager.batchGrantAllowance([tokens], [routers], [amounts])");
+        console2.log("[ ] 7. (Optional) Set Aave referral code if enrolled:");
+        console2.log("       FlashLoanExecutor.setReferralCode(<code>)");
+        console2.log("[ ] 8. Transfer admin to multisig after configuration is complete:");
+        console2.log("       ArbitrageExecutor.grantRole(DEFAULT_ADMIN_ROLE, <multisig>)");
+        console2.log("       ArbitrageExecutor.revokeRole(DEFAULT_ADMIN_ROLE, <deployer>)");
+        console2.log("       (repeat for AllowanceManager and FlashLoanExecutor)");
+        console2.log("");
+        console2.log("See contracts/DEPLOY.md for the full operations runbook.");
+    }
+}
