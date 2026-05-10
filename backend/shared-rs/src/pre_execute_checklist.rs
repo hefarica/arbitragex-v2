@@ -148,9 +148,9 @@ pub enum ChecklistError {
     /// `net_expected_profit_usd` is None and the engine is in live mode.
     ///
     /// In live mode, falling back to the gross `expected_profit_usd` is
-    /// forbidden because gross overstates net profit by 20-40% (relay bribe
-    /// + LP fees + slippage not yet deducted). The opportunity must be
-    /// re-evaluated by the spine before proceeding to broadcast.
+    ///   forbidden because gross overstates net profit by 20-40% (relay bribe
+    ///   + LP fees + slippage not yet deducted). The opportunity must be
+    ///   re-evaluated by the spine before proceeding to broadcast.
     ///
     /// In paper mode this error is NOT raised — the gross fallback is allowed
     /// and a `tracing::warn!(event="checklist.gross_fallback")` is emitted
