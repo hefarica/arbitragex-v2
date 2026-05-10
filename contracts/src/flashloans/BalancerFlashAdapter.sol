@@ -39,6 +39,11 @@ interface IBalancerVault {
 ///      on the receiver, NOT `executeOperation`. FlashLoanExecutor must implement
 ///      this callback to repay Balancer loans. This is handled in FlashLoanExecutor
 ///      via a dedicated receiveFlashLoan function (see FlashLoanExecutor.sol, slot 3+).
+///
+/// TODO(M12, audit 2026-05-10): wire this adapter into ArbitrageExecutor in a follow-up sprint.
+/// Currently ArbitrageExecutor uses router.call(payload) directly with a per-router selector
+/// whitelist (A5). This adapter provides the IFlashLoanProvider abstraction but is NOT
+/// yet invoked from the hot path. Migration to typed adapters is planned for Sprint 4+.
 contract BalancerFlashAdapter is IFlashLoanProvider {
     /// @notice Balancer V2 Vault address.
     IBalancerVault public immutable vault;

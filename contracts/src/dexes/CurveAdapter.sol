@@ -45,6 +45,11 @@ interface ICurvePool {
 /// @title CurveAdapter — IDEXAdapter for Curve plain pool exchange()
 /// @notice Full implementation. Pulls tokenIn from caller, swaps via Curve, returns tokenOut.
 /// @dev SC-2 (2026-05-08). Pool address and coin indices encoded in extraData.
+///
+/// TODO(M12, audit 2026-05-10): wire this adapter into ArbitrageExecutor in a follow-up sprint.
+/// Currently ArbitrageExecutor uses router.call(payload) directly with a per-router selector
+/// whitelist (A5). This adapter provides stronger per-DEX typing and validation but is NOT
+/// yet invoked from the hot path. Migration to typed adapters is planned for Sprint 4+.
 contract CurveAdapter is IDEXAdapter {
     using SafeERC20 for IERC20;
 

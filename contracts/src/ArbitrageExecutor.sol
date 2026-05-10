@@ -40,7 +40,7 @@ error ZeroAddress();
 error NotExecutor();
 /// @dev Thrown when routers and payload arrays differ in length.
 error LengthMismatch();
-/// @dev Thrown when tokenIn is not in the approved token set.
+/// @dev Thrown when tokenIn (or tokenOut, when tokenOut != tokenIn) is not in the approved token set.
 error TokenNotApproved(address token);
 /// @dev Thrown when a router in the route is not in the approved router set.
 error RouterNotApproved(address router);
@@ -120,7 +120,9 @@ contract ArbitrageExecutor is
     /// @notice Emitted when an arbitrage route completes successfully.
     /// @param routeHash  Unique identifier of the executed route (for indexers).
     /// @param tokenIn    Input/output token of the circular route.
-    /// @param tokenOut   Intermediate observability token (used only for event indexing).
+    /// @param tokenOut   Intermediate token of the route. Equal to tokenIn for simple
+    ///                   circular arb; distinct (and pre-validated via approvedTokens)
+    ///                   for multi-hop routes (M8, audit 2026-05-10).
     /// @param profit     Net profit in tokenIn units.
     event ArbitrageExecuted(bytes32 indexed routeHash, address tokenIn, address tokenOut, uint256 profit);
 
@@ -187,7 +189,9 @@ contract ArbitrageExecutor is
     ///
     /// @param routeHash  Unique hash of the route for event indexing.
     /// @param tokenIn    Input token (also the output since this is a circular route).
-    /// @param tokenOut   Intermediate observability token (not validated; used only for event emission).
+    /// @param tokenOut   Intermediate token in the route.
+    ///                   When tokenOut == tokenIn (simple circular arb) no extra approval is needed.
+    ///                   When tokenOut != tokenIn the token must be in approvedTokens (M8, audit 2026-05-10).
     /// @param amountIn   Amount of tokenIn the contract must hold at the start of execution.
     /// @param minProfit  Minimum acceptable net profit in tokenIn units (slippage guard).
     /// @param routers    Approved router addresses, one per swap step.
@@ -203,6 +207,12 @@ contract ArbitrageExecutor is
     ) external onlyExecutor whenNotPaused nonReentrant {
         if (routers.length != payload.length) revert LengthMismatch();
         if (!approvedTokens[tokenIn]) revert TokenNotApproved(tokenIn);
+
+        // M8 (audit 2026-05-10): validate intermediate token when it differs from tokenIn.
+        // Circular arb (tokenOut == tokenIn) is approved by definition — no extra SLOAD needed.
+        // Non-circular routes (tokenOut != tokenIn) must pass through the same approval registry.
+        // Fail-closed: unapproved intermediate tokens revert before any state change.
+        if (tokenOut != tokenIn && !approvedTokens[tokenOut]) revert TokenNotApproved(tokenOut);
 
         uint256 balanceBefore = IERC20(tokenIn).balanceOf(address(this));
         if (balanceBefore < amountIn) revert InsufficientBalance();

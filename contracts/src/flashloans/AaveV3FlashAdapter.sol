@@ -26,6 +26,11 @@ interface IAaveV3PoolAdapter {
 /// @title AaveV3FlashAdapter — IFlashLoanProvider adapter for Aave V3 flashLoanSimple
 /// @notice Full implementation. Fee = 0.09% (9 bps). Referral code fixed to 0.
 /// @dev SC-1 (2026-05-08). Part of multi-provider flash loan architecture.
+///
+/// TODO(M12, audit 2026-05-10): wire this adapter into ArbitrageExecutor in a follow-up sprint.
+/// Currently ArbitrageExecutor uses router.call(payload) directly with a per-router selector
+/// whitelist (A5). This adapter provides the IFlashLoanProvider abstraction but is NOT
+/// yet invoked from the hot path. Migration to typed adapters is planned for Sprint 4+.
 contract AaveV3FlashAdapter is IFlashLoanProvider {
     /// @notice Aave V3 lending pool address.
     IAaveV3PoolAdapter public immutable aavePool;

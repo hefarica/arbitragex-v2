@@ -367,6 +367,70 @@ contract ArbitrageExecutorTest is Test {
     }
 
     // -----------------------------------------------------------------------
+    // testM8_ExecuteArbitrage_RevertsWhenTokenOutNotApproved
+    //
+    // M8 (audit 2026-05-10): when tokenOut != tokenIn, the intermediate token
+    // must be in the approvedTokens set. An unapproved tokenOut must revert with
+    // TokenNotApproved(tokenOut) before any router call is dispatched.
+    // -----------------------------------------------------------------------
+    function testM8_ExecuteArbitrage_RevertsWhenTokenOutNotApproved() public {
+        MockERC20 unapprovedIntermediate = new MockERC20();
+        // Deliberately: do NOT call executor.setTokenApproval(address(unapprovedIntermediate), true)
+
+        uint256 amountIn = 1_000e18;
+        token.mint(address(executor), amountIn);
+
+        address[] memory routers = new address[](0);
+        bytes[] memory payloads = new bytes[](0);
+
+        // tokenIn (token) is approved; tokenOut (unapprovedIntermediate) is NOT.
+        // Expect revert with the unapproved intermediate address.
+        vm.expectRevert(abi.encodeWithSelector(TokenNotApproved.selector, address(unapprovedIntermediate)));
+
+        vm.prank(executorRole);
+        executor.executeArbitrage(
+            bytes32(0),
+            address(token),
+            address(unapprovedIntermediate),
+            amountIn,
+            0,
+            routers,
+            payloads
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // testM8_ExecuteArbitrage_CircularArbTokenOutEqualsTokenIn_NoExtraApproval
+    //
+    // M8 (audit 2026-05-10): when tokenOut == tokenIn (circular arb default),
+    // no extra approval lookup is required. The existing happy-path with a
+    // single approved token must succeed without registering tokenOut separately.
+    // Regression guard: this path existed before M8 and must remain unchanged.
+    // -----------------------------------------------------------------------
+    function testM8_ExecuteArbitrage_CircularArbTokenOutEqualsTokenIn_NoExtraApproval() public {
+        uint256 amountIn = 500e18;
+        uint256 profit   = 10e18;
+
+        token.mint(address(executor), amountIn);
+
+        MockProfitRouter router = new MockProfitRouter(address(token), address(executor), profit);
+        executor.setRouterApproval(address(router), true);
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
+
+        // tokenOut == tokenIn — no second approval entry needed (M8 short-circuit).
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
+
+        // Verify profit landed
+        assertGt(token.balanceOf(address(executor)), amountIn, "balance must exceed amountIn after profit");
+    }
+
+    // -----------------------------------------------------------------------
     // testReceiveETH_AcceptsTransfer
     // SC-07: receive() allows ETH to land in the contract without reverting.
     // -----------------------------------------------------------------------
