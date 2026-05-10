@@ -156,7 +156,7 @@ app.post("/admin/killswitch", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, r
   await writeAudit(
     action, actorHeader, "killswitch", "global",
     beforeState, { enabled: parsed.data.enabled, reason: parsed.data.reason ?? null },
-    ip, traceId,
+    ip, traceId, reqUA(req),
   );
   logger.warn({ event: "admin.killswitch", actor: actorHeader, state: out }, "kill-switch toggled");
   res.status(200).json(out);
@@ -207,6 +207,9 @@ app.post("/internal/audit/auth", requireEdgeToken(ARBX_EDGE_TOKEN), async (req, 
     parsed.data.after_state ?? null,
     parsed.data.ip_address,
     parsed.data.trace_id ?? null,
+    // R3: user_agent comes from the edge handshake body (AuditAuthBody).
+    // Falls back to the request's own UA header when the body omits it.
+    parsed.data.user_agent ?? reqUA(req),
   );
   res.status(204).end();
 });
@@ -234,23 +237,42 @@ function normAddr(a: string): string {
   return s;
 }
 
-async function writeAudit(action: string, actor: string, targetKind: string | null, targetId: string | null, before: unknown, after: unknown, ip: string | null, traceId: string | null): Promise<void> {
+async function writeAudit(
+  action: string,
+  actor: string,
+  targetKind: string | null,
+  targetId: string | null,
+  before: unknown,
+  after: unknown,
+  ip: string | null,
+  traceId: string | null,
+  userAgent: string | null = null,
+): Promise<void> {
   if (!pool) return;
   try {
-    // Audit N2 fix (2026-05-10): wrap PII columns with helpers from migration 053.
-    // arbx_anonymize_ip() returns CIDR text (a.b.c.0/24); audit_log.ip_address is
-    // CIDR after migration 055. user_agent is not plumbed through writeAudit() yet
-    // (AuditAuthBody accepts it but doesn't pass it here); leaving column NULL until
-    // a future change extends writeAudit's signature.
+    // R3 (audit re-run #2, 2026-05-10): user_agent now plumbed end-to-end.
+    // Both PII columns wrap with the helpers from migration 053 so raw values
+    // never reach the row:
+    //   - arbx_anonymize_ip($7)::cidr   → /24 IPv4 or /48 IPv6 network only.
+    //   - arbx_hash_user_agent($9)      → 'sha256:<hex>' fingerprint, never raw UA.
+    // userAgent defaults to null so non-HTTP callers (boot scripts, tests)
+    // don't have to pass it; HTTP callsites pass req.header("user-agent") || null.
     await pool.query(
-      `INSERT INTO audit_log (actor, action, target_kind, target_id, before_state, after_state, ip_address, trace_id)
-       VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,arbx_anonymize_ip($7)::cidr,$8)`,
-      [actor, action, targetKind, targetId, JSON.stringify(before), JSON.stringify(after), ip, traceId],
+      `INSERT INTO audit_log (actor, action, target_kind, target_id, before_state, after_state, ip_address, trace_id, user_agent)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,arbx_anonymize_ip($7)::cidr,$8,arbx_hash_user_agent($9))`,
+      [actor, action, targetKind, targetId, JSON.stringify(before), JSON.stringify(after), ip, traceId, userAgent],
     );
     // auditEventsTotal.labels({ action }).inc();
   } catch (e) {
     logger.warn({ event: "audit.write_failed", err: (e as Error).message });
   }
+}
+
+// R3: shorthand to extract UA in HTTP handlers. Returns null when header
+// is absent (boot scripts, tests, edge proxy with stripped headers).
+function reqUA(req: express.Request): string | null {
+  const ua = req.header("user-agent");
+  return ua && ua.length > 0 ? ua : null;
 }
 
 const BlacklistAdd = z.object({
@@ -269,7 +291,7 @@ app.post("/admin/blacklist/tokens", requireAdminToken(ARBX_ADMIN_TOKEN), async (
   const actor = req.header("x-arbx-actor") ?? "admin";
   const ip = req.ip ?? null;
   const traceId = (req as express.Request & { traceId?: string }).traceId ?? null;
-  await writeAudit("blacklist.add", actor, "token", `${parsed.data.chain_id}:${addr}`, null, parsed.data, ip, traceId);
+  await writeAudit("blacklist.add", actor, "token", `${parsed.data.chain_id}:${addr}`, null, parsed.data, ip, traceId, reqUA(req));
   logger.warn({ event: "admin.blacklist.add", addr, chain_id: parsed.data.chain_id, actor });
   res.status(201).json({ ok: true, chain_id: parsed.data.chain_id, token_address: addr });
 });
@@ -281,7 +303,7 @@ app.delete("/admin/blacklist/tokens/:chain/:addr", requireAdminToken(ARBX_ADMIN_
   if (!Number.isFinite(chain) || chain < 1) { res.status(400).json({ error: "invalid_chain" }); return; }
   const removed = await redis.srem(`arbx:blacklist:tokens:${chain}`, addr);
   const actor = req.header("x-arbx-actor") ?? "admin";
-  await writeAudit("blacklist.remove", actor, "token", `${chain}:${addr}`, { chain_id: chain, token_address: addr }, { removed }, req.ip ?? null, (req as any).traceId ?? null);
+  await writeAudit("blacklist.remove", actor, "token", `${chain}:${addr}`, { chain_id: chain, token_address: addr }, { removed }, req.ip ?? null, (req as any).traceId ?? null, reqUA(req));
   res.status(200).json({ ok: true, removed });
 });
 
@@ -310,14 +332,14 @@ app.post("/admin/circuit_breakers/:name/trip", requireAdminToken(ARBX_ADMIN_TOKE
   if (!parsed.success) { res.status(400).json({ error: "invalid_request" }); return; }
   const msg = JSON.stringify({ action: "trip", name: req.params.name, reason: parsed.data.reason });
   const delivered = await redis.publish(CB_CHANNEL, msg);
-  await writeAudit("cb.trip", req.header("x-arbx-actor") ?? "admin", "circuit_breaker", req.params.name ?? "", null, parsed.data, req.ip ?? null, (req as any).traceId ?? null);
+  await writeAudit("cb.trip", req.header("x-arbx-actor") ?? "admin", "circuit_breaker", req.params.name ?? "", null, parsed.data, req.ip ?? null, (req as any).traceId ?? null, reqUA(req));
   res.status(202).json({ ok: true, published_to_channel: CB_CHANNEL, subscribers_notified: delivered });
 });
 
 app.post("/admin/circuit_breakers/:name/reset", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
   const msg = JSON.stringify({ action: "reset", name: req.params.name });
   const delivered = await redis.publish(CB_CHANNEL, msg);
-  await writeAudit("cb.reset", req.header("x-arbx-actor") ?? "admin", "circuit_breaker", req.params.name ?? "", null, null, req.ip ?? null, (req as any).traceId ?? null);
+  await writeAudit("cb.reset", req.header("x-arbx-actor") ?? "admin", "circuit_breaker", req.params.name ?? "", null, null, req.ip ?? null, (req as any).traceId ?? null, reqUA(req));
   res.status(202).json({ ok: true, published_to_channel: CB_CHANNEL, subscribers_notified: delivered });
 });
 
@@ -652,7 +674,7 @@ app.post("/admin/relays", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) 
        b.enabled, b.priority, b.notes ?? null, actor],
     );
     await writeAudit("relay.create", actor, "relay", q.rows[0].id, null, b,
-                     req.ip ?? null, (req as any).traceId ?? null);
+                     req.ip ?? null, (req as any).traceId ?? null, reqUA(req));
     res.status(201).json(q.rows[0]);
   } catch (e) {
     const msg = (e as Error).message;
@@ -695,7 +717,7 @@ app.put("/admin/relays/:id", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, re
      parsed.data.notes ?? null],
   );
   await writeAudit("relay.update", actor, "relay", req.params.id ?? "",
-                   existing, parsed.data, req.ip ?? null, (req as any).traceId ?? null);
+                   existing, parsed.data, req.ip ?? null, (req as any).traceId ?? null, reqUA(req));
 });
 
 app.post("/admin/config/paper-mode", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
@@ -721,7 +743,7 @@ app.post("/admin/config/paper-mode", requireAdminToken(ARBX_ADMIN_TOKEN), async 
     await rc.publish("arbx:papermode:changes", json);
     
     await writeAudit("config.papermode.update", actor, "config", "papermode",
-                     null, state, req.ip ?? null, (req as any).traceId ?? null);
+                     null, state, req.ip ?? null, (req as any).traceId ?? null, reqUA(req));
     res.status(200).json(state);
   } catch (e) {
     logger.error({ err: (e as Error).message }, "papermode update failed");
@@ -737,7 +759,7 @@ app.delete("/admin/relays/:id", requireAdminToken(ARBX_ADMIN_TOKEN), async (req,
   await p.query(`DELETE FROM relays WHERE id = $1`, [req.params.id]);
   const actor = req.header("x-arbx-actor") ?? "admin";
   await writeAudit("relay.delete", actor, "relay", req.params.id ?? "",
-                   before.rows[0], null, req.ip ?? null, (req as any).traceId ?? null);
+                   before.rows[0], null, req.ip ?? null, (req as any).traceId ?? null, reqUA(req));
   res.status(204).end();
 });
 
@@ -800,7 +822,7 @@ app.post("/admin/onboarding/1/complete", requireAdminToken(ARBX_ADMIN_TOKEN), as
   );
   const actor = req.header("x-arbx-actor") ?? parsed.data.confirmed_by;
   await writeAudit("onboarding.phase1.complete", actor, "onboarding", "default",
-                   null, parsed.data, req.ip ?? null, (req as any).traceId ?? null);
+                   null, parsed.data, req.ip ?? null, (req as any).traceId ?? null, reqUA(req));
   res.status(200).json(q.rows[0]);
 });
 

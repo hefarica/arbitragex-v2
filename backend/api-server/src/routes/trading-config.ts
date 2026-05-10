@@ -103,6 +103,7 @@ interface Deps {
     after: unknown,
     ip: string | null,
     traceId: string | null,
+    userAgent?: string | null,
   ) => Promise<void>;
   logger: { warn: (obj: object, msg?: string) => void; info: (obj: object, msg?: string) => void };
 }
@@ -380,6 +381,8 @@ export function buildTradingConfigRouter(deps: Deps): Router {
           body,
           req.ip ?? null,
           (req as Request & { traceId?: string }).traceId ?? null,
+          // R3: pass UA so audit_log.user_agent is hashed via arbx_hash_user_agent.
+          req.header("user-agent") ?? null,
         );
 
         deps.logger.info(
