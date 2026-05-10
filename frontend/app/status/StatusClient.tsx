@@ -12,6 +12,7 @@ import { AlertCircleIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { SystemKpiGrid } from "@/features/status/SystemKpiGrid";
 import { ServicesTable } from "@/features/status/ServicesTable";
+import { ServiceControlPanel } from "@/components/ServiceControlPanel";
 import { getStatus } from "@/lib/api-client";
 import type { StatusResponse } from "@/lib/api-client";
 
@@ -68,6 +69,9 @@ export function StatusClient({ initialStatus }: Props) {
 
       <h2>Services</h2>
       <ServicesTable services={status.services} />
+
+      {/* FE-5: per-service start/stop controls — R8 honest if api-server endpoints absent */}
+      <ServiceControlPanel liveStatus={status.services} />
     </div>
   );
 }

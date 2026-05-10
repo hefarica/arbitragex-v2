@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState, useCallback, startTransition } from "react";
+import React, { useEffect, useState, useCallback, startTransition, useRef } from "react";
 import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, Clock, AlertTriangle, EyeOff, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { OpportunityDetailDialog, type OpportunityDetail } from "@/components/OpportunityDetailDialog";
@@ -77,6 +77,7 @@ import {
   formatPctOrDash,
   formatRiskOrDash,
 } from "@/lib/format";
+import { useUserPrefs } from "@/lib/user-prefs";
 
 // ─── Tone → token-based class map (used for PROFIT cell) ─────────────────────
 const TONE_CLASS: Record<string, string> = {
@@ -112,6 +113,13 @@ export default function OpportunitiesClient({
   const [viableOnly, setViableOnly] = useState(true);
   const [simLoading, setSimLoading] = useState<string | null>(null);
   const [selectedOpp, setSelectedOpp] = useState<OpportunityDetail | null>(null);
+
+  // FE-6: Track IDs already notified to avoid duplicate toasts across polls.
+  // R1: useRef is SSR-safe — no access to window or localStorage.
+  const seenNotifiedIds = useRef<Set<string>>(new Set());
+
+  // FE-13: Read notification threshold from user prefs (localStorage, R1 compliant).
+  const { prefs } = useUserPrefs();
 
   const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
 
@@ -193,6 +201,26 @@ export default function OpportunitiesClient({
     setViableOnly(newValue);
     localStorage.setItem("arbx-opps-viable-only", String(newValue));
   }, []);
+
+  // FE-6: Fire a toast for every new opportunity that clears the threshold.
+  // R1: snapshot.opportunities is populated only after mount (client fetch),
+  // so this effect only runs with real client-side data. seenNotifiedIds
+  // persists across re-renders via useRef so polling doesn't re-toast the
+  // same opportunity.
+  useEffect(() => {
+    if (!isMounted) return;
+    for (const opp of snapshot.opportunities) {
+      if (seenNotifiedIds.current.has(opp.id)) continue;
+      seenNotifiedIds.current.add(opp.id);
+      const profit = opp.expected_profit_usd ?? 0;
+      if (profit >= prefs.notification_threshold_usd) {
+        toast.success(`High-value opportunity — ${opp.strategy_kind}`, {
+          description: `Net profit $${profit.toFixed(2)} · chain ${opp.chain_id} · ${opp.dex_a}${opp.dex_b ? ` → ${opp.dex_b}` : ""}`,
+          duration: 8_000,
+        });
+      }
+    }
+  }, [snapshot.opportunities, isMounted, prefs.notification_threshold_usd]);
 
   // R1: All non-deterministic side effects are inside useEffect — never in render.
   useEffect(() => {

@@ -51,8 +51,8 @@ export function SCurveChart({ data }: Props) {
             <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
             <Tooltip formatter={(v: number) => `$${v.toFixed(2)}`} />
             <Legend />
-            <Line type="monotone" dataKey="actual" stroke="#10b981" name="actual PnL" dot={false} strokeWidth={2} />
-            <Line type="monotone" dataKey="target" stroke="#6b7280" name="target" strokeDasharray="4 4" dot={false} />
+            <Line type="monotone" dataKey="actual" stroke="var(--color-success)" name="actual PnL" dot={false} strokeWidth={2} />
+            <Line type="monotone" dataKey="target" stroke="var(--color-muted-foreground)" name="target" strokeDasharray="4 4" dot={false} />
           </LineChart>
         </ResponsiveContainer>
       </CardContent>

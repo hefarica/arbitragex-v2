@@ -36,4 +36,5 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/audit-logs",    label: "Audit Logs",       icon: ShieldCheckIcon,   group: "control" },
   { href: "/live-readiness",label: "Live readiness",   icon: ListChecksIcon,    group: "control" },
   { href: "/onboarding",    label: "Onboarding",       icon: ListChecksIcon,    group: "setup" },
+  { href: "/settings",      label: "Settings",         icon: SettingsIcon,      group: "setup" },
 ];
