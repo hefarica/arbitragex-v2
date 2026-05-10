@@ -400,7 +400,11 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
       REDIS_URL: redis://redis:6379
-      ENRICHER_RPC_URLS: ${ENRICHER_RPC_URLS:?ENRICHER_RPC_URLS required}
+      # Required (fail-fast): comma-separated chain IDs to enrich. Each chain
+      # listed here must also have RPC_HTTP_<chain_id> set in .env (passed via
+      # env_file). Format: "1,137,42161". The enricher loops over this list and
+      # builds one HttpRpcPool per chain.
+      ENRICHER_CHAINS: ${ENRICHER_CHAINS:?ENRICHER_CHAINS required (e.g. 1,137,42161)}
       ENRICHER_METRICS_PORT: "9004"
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       RUST_LOG: ${RUST_LOG}

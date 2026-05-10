@@ -415,10 +415,12 @@ services:
     environment:
       DATABASE_URL: postgres://arbx_rw:${ARBX_RW_PASSWORD:-arbx_rw_dev_only}@postgres:5432/arbitragex
       REDIS_URL: redis://redis:6379
-      # ENRICHER_RPC_URLS: comma-separated <chain_id>=<rpc_url> pairs.
-      # Set in .env for production.  Dev default is empty — enricher will
-      # fail-fast at startup if not provided, matching fail-honest doctrine.
-      ENRICHER_RPC_URLS: ${ENRICHER_RPC_URLS:-}
+      # ENRICHER_CHAINS (required, fail-fast if absent): comma-separated chain IDs
+      # to enrich. Format: "1,137,42161". Each listed chain MUST also have a
+      # RPC_HTTP_<chain_id> set; chains lacking one are warn-skipped.
+      # Default 1 (Ethereum mainnet) matches the .env example; operator overrides
+      # to add Polygon/Arbitrum once the corresponding RPC_HTTP_<id> is provisioned.
+      ENRICHER_CHAINS: ${ENRICHER_CHAINS:-1}
       ENRICHER_METRICS_PORT: "9004"
       # GITHUB_TOKEN is optional; improves Trust Wallet CDN rate limits.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
