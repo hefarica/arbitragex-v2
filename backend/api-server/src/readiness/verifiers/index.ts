@@ -1,6 +1,5 @@
 import type pg from "pg";
-import type { ReadinessItem, ReadinessReport } from "../types.js";
-import { pending } from "./pending.js";
+import type { ReadinessReport } from "../types.js";
 import { verifyVDB1 } from "./v-db-1.js";
 import { verifyVAT1 } from "./v-at-1.js";
 import { verifyVNH1 } from "./v-nh-1.js";
@@ -8,14 +7,28 @@ import { verifyPR1CSP } from "./pr-1-csp.js";
 import { verifyPR2Audit } from "./pr-2-audit.js";
 import { verifyMonitoring } from "./monitoring.js";
 import { verifyRunbook } from "./runbook.js";
+import { verifyGRPC1 } from "./g-rpc-1.js";
+import { verifyGNET1 } from "./g-net-1.js";
+import { verifyGSIM1 } from "./g-sim-1.js";
+import { verifyGPEC1 } from "./g-pec-1.js";
+import { verifyGRIS1 } from "./g-ris-1.js";
+import { verifyGTOK1 } from "./g-tok-1.js";
+import { verifyGPAP1 } from "./g-pap-1.js";
+import { verifyGFL1 } from "./g-fl-1.js";
+import { verifyGMEV1 } from "./g-mev-1.js";
+import { verifyAlerts } from "./alerts.js";
 
 /**
- * Run all 16 verifiers in parallel. Real verifiers do live work; sentinel
- * "pending" items return immediately. The summary reflects reality with
- * no false greens.
+ * Run all 17 verifiers in parallel. Each does live work — there are no
+ * sentinel "pending" items left after the audit re-run #2 (2026-05-10).
  *
- * When a doctrine PR ships (e.g., PR-3 RPC failover), REPLACE its pending()
- * call with `await verifyGRPC1(...)` and add the verifier file.
+ * Honesty contract: a verifier returns:
+ *   - green  → the doctrine is fully satisfied; evidence attached.
+ *   - yellow → partially satisfied; specific reason in the response.
+ *   - red    → fully unsatisfied; specific reason in the response.
+ *
+ * Time-based gates (G-PAP-1) return yellow with countdown until the
+ * threshold is met; they are NEVER green-faked.
  */
 export async function verifyAll(deps: {
   pool: pg.Pool | null;
@@ -23,7 +36,7 @@ export async function verifyAll(deps: {
 }): Promise<ReadinessReport> {
   const now = deps.now ?? (() => new Date());
 
-  const [vNH1, vDB1, vAT1, pr1, pr2, monitoring, runbook] = await Promise.all([
+  const items = await Promise.all([
     verifyVNH1({ now }),
     verifyVDB1({ now }),
     verifyVAT1({ now }),
@@ -31,24 +44,17 @@ export async function verifyAll(deps: {
     verifyPR2Audit({ pool: deps.pool, now }),
     verifyMonitoring({ now }),
     verifyRunbook({ now }),
+    verifyGRPC1({ now }),
+    verifyGNET1({ now }),
+    verifyGSIM1({ now }),
+    verifyGPEC1({ now }),
+    verifyGRIS1({ pool: deps.pool, now }),
+    verifyGTOK1({ pool: deps.pool, now }),
+    verifyGPAP1({ pool: deps.pool, now }),
+    verifyGFL1({ now }),
+    verifyGMEV1({ now }),
+    verifyAlerts({ now }),
   ]);
-
-  // Sentinels for unimplemented features. Each replaces with a real verifier
-  // when its underlying PR ships.
-  const sentinels: ReadinessItem[] = [
-    pending({ id: "G-RPC-1", group: "risk_doctrines", label: "RPC failover ≥3 providers + health scoring", doctrine: "arbx-rpc-failover-discipline", reason: "PR-3 not started", now }),
-    pending({ id: "G-NET-1", group: "risk_doctrines", label: "Net-profit gate (gross−gas−slippage−relay−p_fail)", doctrine: "arbx-net-profit-gate", reason: "PR-4 not started", now }),
-    pending({ id: "G-SIM-1", group: "risk_doctrines", label: "Simulation mandatory (revm or eth_call+stateOverride)", doctrine: "arbx-simulation-mandatory", reason: "PR-5 not started", now }),
-    pending({ id: "G-PEC-1", group: "risk_doctrines", label: "Pre-execute checklist (7 gates in series)", doctrine: "arbx-pre-execute-checklist", reason: "PR-6 not started", now }),
-    pending({ id: "G-RIS-1", group: "risk_doctrines", label: "Risk limits + auto-kill on drawdown", doctrine: "arbx-risk-limits-enforcement", reason: "feature not implemented", now }),
-    pending({ id: "G-TOK-1", group: "tokens_strategies", label: "Token safety screen (honeypot, tax, blacklist)", doctrine: "arbx-token-safety-screen", reason: "feature not implemented", now }),
-    pending({ id: "G-PAP-1", group: "tokens_strategies", label: "Paper trading ≥7 days continuous + report", doctrine: "arbx-paper-trade-first", reason: "shadow execution pipeline not running", now }),
-    pending({ id: "G-FL-1", group: "contracts", label: "Flash loan callbacks: 7 discipline rules + foundry forktest", doctrine: "arbx-flash-loan-discipline", reason: "no contracts/ directory yet", now }),
-    pending({ id: "G-MEV-1", group: "operations", label: "MEV ethics evidence: no-sandwich/no-frontrun documented", doctrine: "arbx-mev-ethics-gate", reason: "policy doc not written", now }),
-    pending({ id: "ALERTS", group: "operations", label: "Alert rules wired to PagerDuty/Telegram", reason: "rules exist but no real alerts have fired through", now }),
-  ];
-
-  const items = [vNH1, vDB1, vAT1, pr1, pr2, monitoring, runbook, ...sentinels];
 
   const summary = items.reduce(
     (acc, it) => {

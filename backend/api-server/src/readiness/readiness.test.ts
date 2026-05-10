@@ -207,13 +207,18 @@ describe("verifyRunbook()", () => {
 
 describe("verifyAll() integration", () => {
   it("returns 17 items + summary; flip_blocked=true when any non-green", async () => {
+    // Audit re-run #2 (2026-05-10): all 17 verifiers now do real work; no
+    // pending sentinels remain. With fetch stubbed and pool=null the
+    // network/DB layers fail soft to yellow, so we only assert shape +
+    // flip-blocked, not the precise mix of statuses.
     const origFetch = globalThis.fetch;
     globalThis.fetch = vi.fn(async () => { throw new Error("ECONNREFUSED"); }) as any;
     try {
       const report = await verifyAll({ pool: null, now: NOW });
       expect(report.items.length).toBe(17);
       expect(report.summary.total).toBe(17);
-      expect(report.summary.pending).toBeGreaterThanOrEqual(10);
+      // No pending sentinels left — every gate is verified live.
+      expect(report.summary.pending).toBe(0);
       expect(report.flip_blocked).toBe(true);
     } finally {
       globalThis.fetch = origFetch;
