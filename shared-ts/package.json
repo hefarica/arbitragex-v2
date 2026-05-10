@@ -23,7 +23,7 @@
     "lint": "echo 'lint placeholder for shared-ts'"
   },
   "dependencies": {
-    "ajv": "^8.12.0",
+    "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "ioredis": "^5.3.2",
     "pino": "^9.0.0",
