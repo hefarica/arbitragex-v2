@@ -12,15 +12,28 @@ import { Toaster } from "sonner";
 export const metadata = {
   title: "ArbitrageX v2 — Operator Console",
   description: "MEV-grade arbitrage platform operator dashboard",
+  // Block automatic translation by Chrome/Edge/Firefox/Safari on mobile.
+  // Auto-translation replaces text nodes in the DOM, which breaks React
+  // reconciliation with `removeChild on Node` errors when state updates.
+  // See https://github.com/facebook/react/issues/11538
+  other: {
+    google: "notranslate",
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`} suppressHydrationWarning>
+    <html
+      lang="en"
+      translate="no"
+      className={`${GeistSans.variable} ${GeistMono.variable} notranslate`}
+      suppressHydrationWarning
+    >
       <head>
         <ThemeScript />
+        <meta name="google" content="notranslate" />
       </head>
-      <body className="min-h-dvh bg-background font-sans antialiased">
+      <body className="min-h-dvh bg-background font-sans antialiased notranslate" translate="no">
         <AnimatedBg />
         <a
           href="#main"
