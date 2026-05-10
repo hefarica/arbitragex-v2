@@ -4,6 +4,24 @@
 **Severity:** warning (but often preceded by a critical)
 **Alert:** `KillSwitchActivated` (monitoring/alerts.rules.yml)
 
+## State precedence (audit B10, 2026-05-10)
+
+The kill-switch state is read in this priority order:
+
+1. **Redis key `arbx:killswitch:enabled`** (canonical, runtime-mutable). Set via
+   `POST /admin/killswitch` or `redis-cli SET arbx:killswitch:enabled 1`.
+2. **File `killswitch.json` at repo root** (legacy boot-time fallback). Read once
+   at service boot if Redis is unreachable. NOT polled at runtime — Redis is the
+   live source of truth.
+3. **Default when both are absent**: `cfg.system.kill_switch_enabled_default` from
+   `configs/app.toml` (defaults to `false` in dev, `true` in prod profile).
+
+The file `killswitch.json` is a doctrine artifact: it documents that the project
+ships with kill-switch state explicitly declared even when offline. Editing it
+DOES NOT toggle a running service — Redis must be updated. Operators should
+treat the file as read-only after first boot and use `POST /admin/killswitch` for
+all state changes.
+
 ## Symptoms
 
 - Slack `#arbx-alerts` receives: *"Kill switch is ON — The global kill switch
