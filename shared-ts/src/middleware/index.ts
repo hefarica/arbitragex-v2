@@ -5,8 +5,12 @@ import { httpRequestsTotal, httpRequestDuration, metricsText } from "../metrics/
 /**
  * Constant-time string comparison (resists timing side-channels).
  * Returns false fast if lengths differ to avoid leaking length itself.
+ *
+ * Exported (audit A1, 2026-05-10) so the WebSocket handshake middleware in
+ * `backend/api-server/src/websocket.ts` can reuse it for admin-token gating
+ * instead of duplicating the constant-time compare.
  */
-function safeTokenEqual(got: string, expected: string): boolean {
+export function safeTokenEqual(got: string, expected: string): boolean {
   if (got.length !== expected.length) return false;
   const a = Buffer.from(got, "utf8");
   const b = Buffer.from(expected, "utf8");
