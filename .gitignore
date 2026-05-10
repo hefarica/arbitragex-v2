@@ -17,11 +17,11 @@ signer.txt
 target/
 **/*.rs.bk
 Cargo.lock
-!/backend/*/Cargo.lock
-!/backend/shared-rs/Cargo.lock
 # Workspace root lockfile — REQUIRED to be tracked because the searcher-rs
 # Dockerfile builds with `--locked --frozen` (offline mode). Untracking it
-# regresses the build — see commit 621776a context.
+# regresses the build — see commit 621776a context. Per audit 2026-05-10
+# M5, this is the ONLY Cargo.lock exception — non-workspace crates do not
+# have standalone tracked locks.
 !/backend/Cargo.lock
 
 # Node / TS
