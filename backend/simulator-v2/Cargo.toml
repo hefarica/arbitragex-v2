@@ -21,7 +21,7 @@ futures-util.workspace = true
 hex.workspace = true
 
 # Crate-specific deps (not in workspace).
-petgraph = "0.6"
+petgraph = "0.8"
 rayon    = "1.10"
 dashmap  = "5.5"
 sha2     = "0.10"
