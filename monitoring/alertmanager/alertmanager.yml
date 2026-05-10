@@ -1,3 +1,22 @@
+# Dev configuration — Slack/PagerDuty receivers use env-var placeholders.
+# (Audit M12, 2026-05-10)
+#
+# In production:
+#   - Set SLACK_WEBHOOK_URL via Vault:
+#       vault kv put arbx/prod/t1/slack_webhook_url value=https://hooks.slack.com/...
+#   - Set PAGERDUTY_INTEGRATION_KEY via Vault:
+#       vault kv put arbx/prod/t1/pagerduty_integration_key value=<key>
+#   - vault-agent renders these into /run/secrets/arbx.env before alertmanager starts.
+#   - alertmanager startup script sources /run/secrets/arbx.env, then envsubst
+#     renders this config template into the final alertmanager.yml before launch.
+#
+# The ${SLACK_WEBHOOK_URL} and ${PAGERDUTY_INTEGRATION_KEY} placeholders below
+# are NOT expanded by alertmanager itself — they require the envsubst render step
+# documented in docs/operations/PRODUCTION_DEPLOY.md.
+#
+# DO NOT deploy this file to production without the render step.
+# Secrets classification: docs/operations/SECRETS_POLICY.md (T1 tier).
+
 global:
   resolve_timeout: 5m
 

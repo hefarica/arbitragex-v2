@@ -9,6 +9,21 @@
 # defaults in prod: they exist here for local iteration only.
 #
 # If you edit this file, add the same service changes to `compose.prod.yml`.
+#
+# DEV ENVIRONMENT — NOT FOR PRODUCTION (Audit M12, 2026-05-10)
+#
+# This compose file uses .env for secrets (T0-T2 inline via ${VAR:-placeholder}).
+# For production:
+#   1. Migrate all T0 secrets to Vault (see docs/operations/VAULT_SETUP.md).
+#   2. Use docker/compose.prod.yml which enforces ${VAR:?message} and reads from
+#      /run/secrets/arbx.env rendered by vault-agent at boot.
+#   3. Verify secrets classification: docs/operations/SECRETS_POLICY.md.
+#
+# T0 secrets present here as dev placeholders (NEVER use real values in this file):
+#   ARBX_ADMIN_TOKEN, ARBX_EDGE_TOKEN, POSTGRES_PASSWORD, ARBX_RW_PASSWORD,
+#   ARBX_RO_PASSWORD, ARBX_MIGRATOR_PASSWORD, MINIO_ROOT_PASSWORD.
+# T1 secrets: SLACK_WEBHOOK_URL, PAGERDUTY_INTEGRATION_KEY, RPC_WS_1, RPC_HTTP_1.
+# T2 config: DEXES_ENABLED, LOG_LEVEL, feature flags — .env acceptable everywhere.
 
 name: arbitragex-v2
 

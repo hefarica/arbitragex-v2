@@ -13,6 +13,21 @@
 #   - Only the Cloudflare Tunnel reaches this stack. No port is bound to 0.0.0.0.
 #   - Postgres, Redis, Grafana, Prometheus, Loki bound to 127.0.0.1 only.
 #   - edge service is the public entry point (behind CF Worker + Tunnel).
+#
+# Production compose — key differences from compose.dev.yml (Audit M12, 2026-05-10):
+#   - All secrets use ${VAR:?message} (hard fail on missing) — no ${VAR:-default} fallbacks.
+#   - T0 secrets (FLASHBOTS_SIGNER_KEY, ARBX_ADMIN_TOKEN, ARBX_EDGE_TOKEN, JWT_SECRET,
+#     POSTGRES_PASSWORD, ARBX_RW_PASSWORD, ARBX_MINIO_ROOT_PASSWORD, etc.) come exclusively
+#     from Vault via vault-agent → /run/secrets/arbx.env.
+#   - Grafana reads GF_SECURITY_ADMIN_PASSWORD__FILE from /run/secrets/ (Docker secret mount).
+#   - Alertmanager and Thanos require SLACK_WEBHOOK_URL, PAGERDUTY_INTEGRATION_KEY, and
+#     MINIO credentials to be Vault-sourced before container start.
+#   - Resource limits enforced on every service (memory/cpu caps).
+#   - restart: unless-stopped on all services.
+#   - No default credentials anywhere.
+#
+# Bootstrap procedure: docs/operations/PRODUCTION_DEPLOY.md
+# Secrets classification: docs/operations/SECRETS_POLICY.md
 
 name: arbitragex-v2
 
