@@ -12,11 +12,21 @@ updates:
     labels:
       - dependencies
       - rust
+    # Group patch + minor updates into a single weekly PR to reduce review noise.
+    # Major bumps still get their own PR for dedicated audit.
+    groups:
+      rust-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "patch"
+          - "minor"
     # Ignore major bumps for foundational crates that need dedicated migration sprints.
     # Closed PRs (2026-05-08): #5 alloy-rpc-types 2.0, #6 rand 0.10, #9 axum 0.8,
     # #11 jsonschema 0.46, #12 sqlx 0.8 — all major-version breaking changes against
     # the workspace's pinned versions. Dependabot will continue to surface patch +
     # minor updates automatically; major bumps require dedicated audit + integration tests.
+    # Added 2026-05-10 (audit re-run review): lru, dashmap, tower-http — these touch
+    # hot-path concurrency / HTTP middleware and require dedicated benchmark sprints.
     ignore:
       - dependency-name: "alloy*"
         update-types: ["version-update:semver-major"]
@@ -32,6 +42,12 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "revm*"
         update-types: ["version-update:semver-major"]
+      - dependency-name: "lru"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "dashmap"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "tower-http"
+        update-types: ["version-update:semver-major"]
 
   # npm root workspace (package.json + all workspaces)
   - package-ecosystem: npm
@@ -44,8 +60,17 @@ updates:
     labels:
       - dependencies
       - typescript
+    # Group patch + minor updates into a single weekly PR.
+    groups:
+      npm-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "patch"
+          - "minor"
     # Ignore major bumps for testing + animation libs (closed PRs 2026-05-08:
     # #13 vitest 4, #7 framer-motion 12). Operator audits these in dedicated sprints.
+    # Added 2026-05-10: wrangler, pino, express-rate-limit, @cloudflare/workers-types
+    # majors — they touch edge runtime / logging / rate limiting.
     ignore:
       - dependency-name: "vitest"
         update-types: ["version-update:semver-major"]
@@ -56,6 +81,14 @@ updates:
       - dependency-name: "react"
         update-types: ["version-update:semver-major"]
       - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "wrangler"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "pino"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "express-rate-limit"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@cloudflare/workers-types"
         update-types: ["version-update:semver-major"]
 
   # GitHub Actions workflows
@@ -69,3 +102,9 @@ updates:
     labels:
       - dependencies
       - ci
+    groups:
+      gha-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "patch"
+          - "minor"
