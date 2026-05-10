@@ -32,11 +32,18 @@ export const OpportunitySchema = z.object({
   roi_pct: z.number().nullable(),
   risk_score: z.number().nullable(),
   block_number: z.number().int().nonnegative().nullable(),
+  // Lifecycle status field: 'detected' (searcher), 'validated' (selector OK),
+  // 'rejected' (selector dropped), 'simulated' (sim-ctl OK), 'submitted' (relays),
+  // 'included' (on-chain). Populated by searcher; mutated downstream.
+  status: z.string().nullable().optional(),
+  rejection_reason: z.string().nullable().optional(),
   // Cross-chain bridging fields (added in BE-01 Sprint A migration 047).
   // Null for single-chain opportunities; populated for cex_dex / cross_chain.
   chain_id_out: z.number().int().positive().nullable().optional(),
   bridge: z.string().nullable().optional(),
   bridge_fee_usd: z.number().nullable().optional(),
+  // updated_at follows detected_at in the DB row; included in published JSON.
+  updated_at: IsoDate.nullable().optional(),
   detected_at: IsoDate,
   trace_id: Uuid,
 }).strict();
