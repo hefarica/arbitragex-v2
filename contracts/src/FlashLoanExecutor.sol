@@ -12,9 +12,10 @@ pragma solidity ^0.8.20;
 //   slot 1: arbitrageExecutor   (address, 20 bytes)
 //   slot 2: referralCode        (uint16, 2 bytes)
 //   slot 3: flashLoanProvider   (address, 20 bytes) ← SC-1: multi-provider support
+//   slot 4: balancerVault       (address, 20 bytes) ← A4 audit 2026-05-10
 //
 // CRITICAL: When adding new state variables in V2, V3, etc., you MUST append
-// them AFTER slot 3.  NEVER insert variables between existing ones — that
+// them AFTER slot 4.  NEVER insert variables between existing ones — that
 // would corrupt the storage layout and brick all proxies pointing at this impl.
 // =============================================================================
 
@@ -39,6 +40,9 @@ error FL_ArbitrageExecutionFailed();
 error FL_ZeroProvider();
 /// @dev Thrown when requestFlashLoan is called but no provider is configured.
 error FL_NoProviderConfigured();
+/// @dev Thrown when receiveFlashLoan is called but balancerVault has not been set.
+/// SECURITY (audit A4, 2026-05-10): prevents calls before the vault is configured.
+error FL_BalancerVaultNotSet();
 
 interface IAaveV3Pool {
     function flashLoanSimple(
@@ -89,6 +93,15 @@ contract FlashLoanExecutor is
     ///         to configure Balancer (0% fee), dYdX (0% fee), or any custom adapter.
     ///         When zero, falls back to aavePool directly (legacy behavior).
     address public flashLoanProvider;
+    // slot 4 — A4 (audit 2026-05-10): Balancer V2 Vault address used to authenticate
+    // receiveFlashLoan callbacks. Must equal the actual Balancer Vault that sends the
+    // callback. address(0) disables the Balancer flash path entirely.
+    /// @notice Balancer V2 Vault address. Must be the actual Vault that calls
+    ///         receiveFlashLoan. address(0) disables the Balancer flash path.
+    /// SECURITY (audit A4, 2026-05-10): without this check, any address can spoof
+    ///         the Balancer callback and trigger arbitrary calldata execution against
+    ///         arbitrageExecutor. Set via setBalancerVault() before using Balancer loans.
+    address public balancerVault;
     // APPEND new variables below this line in future upgrades. Never above.
 
     // SC-06: observability events for off-chain monitoring (recon, dashboard)
@@ -113,6 +126,11 @@ contract FlashLoanExecutor is
     /// @notice Emitted when the active flash loan provider adapter is updated.
     /// @param provider  New IFlashLoanProvider address (address(0) = use legacy aavePool).
     event FlashLoanProviderUpdated(address indexed provider);
+
+    /// @notice Emitted when the Balancer Vault address is updated by an admin.
+    /// @param previousVault  Previous Balancer Vault address (address(0) if unset).
+    /// @param newVault       New Balancer Vault address (address(0) disables Balancer path).
+    event BalancerVaultUpdated(address indexed previousVault, address indexed newVault);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -164,6 +182,25 @@ contract FlashLoanExecutor is
     function setFlashLoanProvider(address _provider) external onlyRole(DEFAULT_ADMIN_ROLE) {
         flashLoanProvider = _provider;
         emit FlashLoanProviderUpdated(_provider);
+    }
+
+    // -------------------------------------------------------------------------
+    // A4 (audit 2026-05-10): Balancer Vault address management
+    // -------------------------------------------------------------------------
+
+    /// @notice Set the Balancer V2 Vault address that is authorised to call receiveFlashLoan.
+    /// @dev Only callable by DEFAULT_ADMIN_ROLE. Emits BalancerVaultUpdated.
+    ///      Pass address(0) to disable the Balancer flash loan callback entirely.
+    ///      MUST be called before any Balancer flash loans are requested; without
+    ///      this, receiveFlashLoan will revert with FL_BalancerVaultNotSet.
+    /// SECURITY (audit A4, 2026-05-10): this is the sole trust anchor for Balancer
+    ///      callbacks. Set it to the canonical Balancer V2 Vault on each chain:
+    ///        Ethereum mainnet: 0xBA12222222228d8Ba445958a75a0704d566BF2C8
+    /// @param _balancerVault  Address of the Balancer V2 Vault.
+    function setBalancerVault(address _balancerVault) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        address prev = balancerVault;
+        balancerVault = _balancerVault;
+        emit BalancerVaultUpdated(prev, _balancerVault);
     }
 
     /// @notice Compare flash loan fees across two providers for a given asset and amount.
@@ -266,32 +303,40 @@ contract FlashLoanExecutor is
     // -------------------------------------------------------------------------
 
     /// @notice Balancer V2 callback. Called by the Balancer Vault after disbursing funds.
-    /// @dev The Balancer Vault calls this on `recipient` after transferring tokens.
-    ///      Security: msg.sender must be a known/trusted IFlashLoanProvider adapter
-    ///      that wraps the Balancer Vault — we verify against flashLoanProvider.
+    /// @dev SECURITY (audit A4, 2026-05-10): msg.sender must equal the stored balancerVault.
+    ///      Without this check, any address could call receiveFlashLoan and trigger
+    ///      arbitrary calldata execution against arbitrageExecutor with loan-size token
+    ///      approvals in place.
     ///      feeAmounts[0] is always 0 for Balancer V2 flash loans.
-    /// @param tokens      Array of borrowed token addresses (length = 1 in single-asset use).
+    /// @param tokens      Array of borrowed IERC20 tokens (length = 1 in single-asset use).
     /// @param amounts     Array of borrowed amounts (parallel with tokens).
     /// @param feeAmounts  Array of fees (always 0 for Balancer — kept for interface compat).
     /// @param userData    Encoded calldata forwarded to ArbitrageExecutor.
     function receiveFlashLoan(
-        address[] calldata tokens,
+        IERC20[] calldata tokens,
         uint256[] calldata amounts,
         uint256[] calldata feeAmounts,
         bytes calldata userData
     ) external {
-        // Security: only accept Balancer callbacks from the configured provider adapter
-        // OR directly from the Balancer Vault if it is the configured provider.
-        // If flashLoanProvider == address(0), this path should never be triggered —
-        // revert to prevent unauthorized fund movement.
-        if (flashLoanProvider == address(0)) revert FL_UnauthorizedCaller();
+        // SECURITY (audit A4, 2026-05-10): three-layer authentication guard.
+        //
+        // Layer 1: balancerVault must be configured. Prevents callbacks before
+        //          the operator has set a trusted Vault address.
+        if (balancerVault == address(0)) revert FL_BalancerVaultNotSet();
+        // Layer 2: msg.sender must be the canonical Balancer V2 Vault.
+        //          Without this, ANY address could call receiveFlashLoan and
+        //          trigger arbitrary calldata execution against arbitrageExecutor.
+        if (msg.sender != balancerVault) revert FL_UnauthorizedCaller();
+        // Layer 3: flashLoanProvider must be set, confirming the Balancer path
+        //          was intentionally activated by the operator.
+        if (flashLoanProvider == address(0)) revert FL_NoProviderConfigured();
 
-        address asset = tokens[0];
+        IERC20 asset = tokens[0];
         uint256 amount = amounts[0];
         uint256 premium = feeAmounts[0]; // 0 for Balancer V2
 
         // 1. Approve funds to ArbitrageExecutor
-        IERC20(asset).forceApprove(arbitrageExecutor, amount);
+        asset.forceApprove(arbitrageExecutor, amount);
 
         // 2. Call ArbitrageExecutor with the encoded payload
         (bool success, ) = arbitrageExecutor.call(userData);
@@ -299,10 +344,10 @@ contract FlashLoanExecutor is
 
         // 3. Repay Balancer Vault (amount + fee = amount + 0 = amount)
         uint256 amountOwed = amount + premium;
-        IERC20(asset).forceApprove(msg.sender, amountOwed);
-        IERC20(asset).safeTransfer(msg.sender, amountOwed);
+        asset.forceApprove(msg.sender, amountOwed);
+        asset.safeTransfer(msg.sender, amountOwed);
 
-        emit FlashLoanExecuted(asset, amount, premium, true);
+        emit FlashLoanExecuted(address(asset), amount, premium, true);
     }
 
     // -------------------------------------------------------------------------

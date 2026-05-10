@@ -19,6 +19,29 @@ contract MockERC20FL is ERC20 {
     }
 }
 
+/// @dev Mock Balancer Vault: simulates the minimal Balancer V2 flash loan
+///      callback sequence (transfer tokens → call receiveFlashLoan → collect repay).
+///      Used in A4 tests to verify the vault-sender check works end-to-end.
+contract MockBalancerVault {
+    /// @notice Calls receiveFlashLoan on `receiver` with the given params,
+    ///         mimicking the real Balancer V2 Vault callback.
+    function triggerFlashLoan(
+        address receiver,
+        IERC20 token,
+        uint256 amount,
+        bytes calldata userData
+    ) external {
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = token;
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = amount;
+        uint256[] memory feeAmounts = new uint256[](1);
+        feeAmounts[0] = 0;
+
+        FlashLoanExecutor(receiver).receiveFlashLoan(tokens, amounts, feeAmounts, userData);
+    }
+}
+
 /// @dev Mock Aave V3 Pool: records calls, does not move funds
 contract MockAavePool {
     address public lastReceiver;
@@ -69,6 +92,7 @@ contract FlashLoanExecutorTest is Test {
     MockAavePool internal pool;
     MockERC20FL internal token;
     MockArbitrageExecutor internal arbExec;
+    MockBalancerVault internal mockVault; // A4 (audit 2026-05-10)
 
     address internal admin;
     address internal executorRole;
@@ -82,6 +106,7 @@ contract FlashLoanExecutorTest is Test {
         pool = new MockAavePool();
         token = new MockERC20FL();
         arbExec = new MockArbitrageExecutor();
+        mockVault = new MockBalancerVault(); // A4: canonical mock Balancer Vault
 
         // SC-08: deploy via ERC1967Proxy with initialize() call
         // FlashLoanExecutor.initialize takes (admin, aavePool, arbitrageExecutor)
@@ -97,6 +122,10 @@ contract FlashLoanExecutorTest is Test {
 
         // Grant EXECUTOR_ROLE so requestFlashLoan can be called
         flashExec.grantRole(flashExec.EXECUTOR_ROLE(), executorRole);
+
+        // A4 (audit 2026-05-10): configure the authorised Balancer Vault address.
+        // Tests that call receiveFlashLoan must set this before attempting the callback.
+        flashExec.setBalancerVault(address(mockVault));
 
         // Mint tokens to flash loan executor to cover repayment in the callback test
         token.mint(address(flashExec), 10_000e18);
@@ -273,12 +302,15 @@ contract FlashLoanExecutorTest is Test {
     // -----------------------------------------------------------------------
     // SC-08: testUpgrade_PreservesState
     // Deploy proxy, upgrade to V2 impl, verify aavePool + arbitrageExecutor preserved.
+    // Also verifies slot 4 (balancerVault) survives the upgrade (A4, 2026-05-10).
     // -----------------------------------------------------------------------
     function testUpgrade_PreservesState() public {
         // Confirm state set in initialize() is present
         assertEq(address(flashExec.aavePool()), address(pool), "aavePool must match before upgrade");
         assertEq(flashExec.arbitrageExecutor(), address(arbExec), "arbitrageExecutor must match before upgrade");
         assertEq(flashExec.referralCode(), 0, "referralCode must be 0 before upgrade");
+        // A4: balancerVault was set in setUp
+        assertEq(flashExec.balancerVault(), address(mockVault), "balancerVault must match before upgrade");
 
         // Set a non-default referral code to verify slot 2 survives
         flashExec.setReferralCode(77);
@@ -293,9 +325,82 @@ contract FlashLoanExecutorTest is Test {
         FlashLoanExecutorV2 flashExecV2 = FlashLoanExecutorV2(address(flashExec));
         assertEq(flashExecV2.version(), "v2", "V2 marker function must be accessible after upgrade");
 
-        // Storage slots 0, 1, and 2 must be intact
+        // Storage slots 0, 1, 2, and 4 must be intact
         assertEq(address(flashExecV2.aavePool()), address(pool), "aavePool must survive upgrade");
         assertEq(flashExecV2.arbitrageExecutor(), address(arbExec), "arbitrageExecutor must survive upgrade");
         assertEq(flashExecV2.referralCode(), 77, "referralCode must survive upgrade");
+        assertEq(flashExecV2.balancerVault(), address(mockVault), "balancerVault must survive upgrade (slot 4)");
+    }
+
+    // -----------------------------------------------------------------------
+    // A4 (audit 2026-05-10): testReceiveFlashLoan_RevertsWhenVaultNotSet
+    // receiveFlashLoan must revert with FL_BalancerVaultNotSet when
+    // balancerVault == address(0), preventing spoofed callbacks before
+    // the operator has configured a trusted vault.
+    // -----------------------------------------------------------------------
+    function testReceiveFlashLoan_RevertsWhenVaultNotSet() public {
+        // Clear the vault set in setUp — simulate unconfigured state
+        flashExec.setBalancerVault(address(0));
+
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(token));
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1_000e18;
+        uint256[] memory feeAmounts = new uint256[](1);
+        feeAmounts[0] = 0;
+
+        vm.expectRevert(FL_BalancerVaultNotSet.selector);
+        // Call from attacker — irrelevant, vault-not-set is checked first
+        vm.prank(attacker);
+        flashExec.receiveFlashLoan(tokens, amounts, feeAmounts, "");
+    }
+
+    // -----------------------------------------------------------------------
+    // A4 (audit 2026-05-10): testReceiveFlashLoan_RevertsOnUnauthorizedSender
+    // receiveFlashLoan must revert with FL_UnauthorizedCaller when called
+    // from any address that is NOT the configured balancerVault, even if
+    // balancerVault is set.  An attacker calling directly cannot spoof the
+    // callback and trigger ArbitrageExecutor with loan-scale token approvals.
+    // -----------------------------------------------------------------------
+    function testReceiveFlashLoan_RevertsOnUnauthorizedSender() public {
+        // balancerVault is already set to address(mockVault) in setUp.
+        // Call from attacker — must be rejected regardless of token/amount.
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(token));
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 1_000e18;
+        uint256[] memory feeAmounts = new uint256[](1);
+        feeAmounts[0] = 0;
+
+        vm.expectRevert(FL_UnauthorizedCaller.selector);
+        vm.prank(attacker);
+        flashExec.receiveFlashLoan(tokens, amounts, feeAmounts, "");
+    }
+
+    // -----------------------------------------------------------------------
+    // A4 (audit 2026-05-10): testSetBalancerVault_EmitsEvent
+    // setBalancerVault must emit BalancerVaultUpdated with previous and new
+    // vault addresses. Admin-only enforcement is verified implicitly via
+    // the DEFAULT_ADMIN_ROLE path (admin = address(this) in setUp).
+    // -----------------------------------------------------------------------
+    function testSetBalancerVault_EmitsEvent() public {
+        address newVault = makeAddr("newVault");
+        address prevVault = address(mockVault); // set in setUp
+
+        vm.expectEmit(true, true, false, false, address(flashExec));
+        emit FlashLoanExecutor.BalancerVaultUpdated(prevVault, newVault);
+
+        flashExec.setBalancerVault(newVault);
+        assertEq(flashExec.balancerVault(), newVault, "balancerVault must equal newVault after update");
+    }
+
+    // -----------------------------------------------------------------------
+    // A4 (audit 2026-05-10): testSetBalancerVault_OnlyAdmin
+    // Non-admin must not be able to change balancerVault.
+    // -----------------------------------------------------------------------
+    function testSetBalancerVault_OnlyAdmin() public {
+        vm.expectRevert();
+        vm.prank(attacker);
+        flashExec.setBalancerVault(address(0));
     }
 }
