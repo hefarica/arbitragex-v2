@@ -79,6 +79,7 @@ import { mountOpportunitiesLive } from "./routes/opportunities-live.js";
 import { mountDexes } from "./routes/dexes.js";
 import { mountPools } from "./routes/pools.js";
 import { mountStubs } from "./routes/stubs.js";
+import { mountWallets } from "./routes/wallets.js";
 import { setupWebSocketGateway, broadcastOpportunity } from "./websocket.js";
 import { createServer } from "http";
 import rateLimit from "express-rate-limit";
@@ -420,6 +421,7 @@ function requireDbPool(): pg.Pool | null {
 mountOpportunitiesLive(app, pool, logger);
 mountDexes(app, { pool, logger });
 mountPools(app, { pool, logger });
+mountWallets(app, { pool, logger });
 mountDefi(app, { pool, logger });
 
 // Scanner heartbeat snapshot — read latest pipeline counters from Redis.

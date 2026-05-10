@@ -188,6 +188,36 @@ app.get("/api/v1/pools", (req, res) => {
   proxy(`/api/v1/pools${qStr ? "?" + qStr : ""}`, req, res);
 });
 
+// 2026-05-10 audit follow-up: DEX Registry page calls /api/v1/dexes WITHOUT
+// chain_id to get the cross-chain aggregate. Forward verbatim (any query) so
+// the backend's dual-shape route can branch on chain_id presence.
+app.get("/api/v1/dexes", (req, res) => {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(req.query)) {
+    if (typeof v === "string") qs.set(k, v);
+  }
+  const qStr = qs.toString();
+  proxy(`/api/v1/dexes${qStr ? "?" + qStr : ""}`, req, res);
+});
+
+// PUT /api/v1/dexes/:id/active — admin toggle from /dex-registry.
+// Uses adminProxy convention so the operator's httpOnly session cookie is
+// translated to the real x-arbx-admin-token header on the way upstream.
+// Declared AFTER adminProxy is defined; see below near other admin PUTs.
+
+// Operational Wallets endpoints — list + balances + allowances.
+app.get("/api/v1/wallets", (req, res) => {
+  proxy("/api/v1/wallets", req, res);
+});
+app.get("/api/v1/wallets/:address/balances", (req, res) => {
+  const addr = String(req.params.address ?? "");
+  proxy(`/api/v1/wallets/${encodeURIComponent(addr)}/balances`, req, res);
+});
+app.get("/api/v1/wallets/:address/allowances", (req, res) => {
+  const addr = String(req.params.address ?? "");
+  proxy(`/api/v1/wallets/${encodeURIComponent(addr)}/allowances`, req, res);
+});
+
 // S7: admin POST proxies — forward caller's x-arbx-admin-token alongside the
 // edge token. Rejected by api-server if admin token is missing/wrong.
 app.use(express.json({ limit: "64kb" }));
@@ -351,6 +381,12 @@ async function adminProxy(path: string, req: express.Request, res: express.Respo
 app.post("/admin/killswitch",                 (req, res) => adminProxy("/admin/killswitch", req, res, "POST"));
 app.post("/admin/config/paper-mode",          (req, res) => adminProxy("/admin/config/paper-mode", req, res, "POST"));
 app.post("/admin/onboarding/1/complete",      (req, res) => adminProxy("/admin/onboarding/1/complete", req, res, "POST"));
+// 2026-05-10 audit follow-up: DEX active toggle from /dex-registry. Mounted
+// alongside the admin PUTs so the httpOnly cookie session is honoured.
+app.put("/api/v1/dexes/:id/active", (req, res) => {
+  const id = String(req.params.id ?? "");
+  adminProxy(`/api/v1/dexes/${encodeURIComponent(id)}/active`, req, res, "PUT");
+});
 app.put("/admin/trading-config/:chain_id",    (req, res) => {
   const cid = req.params["chain_id"];
   if (!cid || !/^[0-9]+$/.test(cid)) { res.status(400).json({ error: "invalid_chain_id" }); return; }

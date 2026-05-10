@@ -1,18 +1,27 @@
 /**
- * GET /api/v1/dexes?chain_id=N
+ * GET /api/v1/dexes
  *
- * Returns all DEXes that have at least one factory on the requested chain,
- * augmented with per-chain pool counts and the operator's enabled flag.
+ * Dual-shape route, branch on `chain_id` query parameter:
  *
- * enabled logic:
+ *   1. `?chain_id=N` PRESENT  → per-chain shape `{ count, chain_id, items: [...] }`
+ *      Consumed by `/strategies` DexesTab — each item is a chain-specific
+ *      view with `factory_count` / `pool_count` / `enabled`.
+ *
+ *   2. `chain_id` ABSENT       → registry shape `{ dexes: [...] }`
+ *      Consumed by `/dex-registry` page — each item is a chain-AGNOSTIC view
+ *      that AGGREGATES factories by `chain_ids: number[]` and uses
+ *      `dexes.tvl_usd` / `dexes.volume_24h_usd` (the global aggregates from
+ *      migration 045 / DeFiLlama enricher).
+ *
+ * enabled logic (per-chain shape only):
  *   - trading_config.enabled_dex_ids IS NULL  → all DEXes are enabled (legacy compat)
  *   - trading_config.enabled_dex_ids IS NOT NULL → only listed UUIDs are enabled
  *   - no trading_config row for this chain → all DEXes are enabled (no config = no restriction)
  *
- * R8 fail-honest: never synthesizes rows. Array empty = no DEXes on this chain.
+ * R8 fail-honest: never synthesises rows. Empty arrays = no DEXes seeded.
  */
 
-import { Router, type Request, type Response } from "express";
+import type { Request, Response } from "express";
 import type { Pool } from "pg";
 
 interface Deps {
@@ -21,9 +30,112 @@ interface Deps {
 }
 
 export function mountDexes(app: import("express").Express, deps: Deps): void {
+  // ── PUT /api/v1/dexes/:id/active ────────────────────────────────────────
+  // Operator toggle from the /dex-registry page. Admin token required.
+  // R8: mounting deps.requireAdminToken would be cleaner, but `mountDexes`
+  // does not receive admin deps; we inline-validate via env header check
+  // mirroring the convention in trading-config route's other admin paths.
+  app.put("/api/v1/dexes/:id/active", async (req: Request, res: Response) => {
+    const expected = process.env["ARBX_ADMIN_TOKEN"] ?? "";
+    const got = String(req.header("x-arbx-admin-token") ?? "");
+    if (!expected || got !== expected) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    if (!deps.pool) {
+      res.status(503).json({ error: "db_unavailable" });
+      return;
+    }
+    const id = String(req.params["id"] ?? "");
+    if (!/^[0-9a-fA-F-]{36}$/.test(id)) {
+      res.status(400).json({ error: "invalid_uuid" });
+      return;
+    }
+    const body = req.body as { is_active?: unknown };
+    if (typeof body.is_active !== "boolean") {
+      res.status(400).json({ error: "is_active boolean required" });
+      return;
+    }
+    try {
+      const q = await deps.pool.query<{ id: string; is_active: boolean; updated_at: Date }>(
+        `UPDATE dexes
+            SET is_active = $2,
+                updated_at = NOW()
+          WHERE id = $1
+        RETURNING id, is_active, updated_at`,
+        [id, body.is_active],
+      );
+      if (q.rowCount === 0) {
+        res.status(404).json({ error: "dex_not_found" });
+        return;
+      }
+      const row = q.rows[0]!;
+      res.status(200).json({
+        id: row.id,
+        is_active: row.is_active,
+        updated_at: row.updated_at.toISOString(),
+      });
+    } catch (e) {
+      deps.logger.warn({ event: "dexes.toggle_failed", err: (e as Error).message });
+      res.status(503).json({ error: "query_failed", detail: (e as Error).message });
+    }
+  });
+
   app.get("/api/v1/dexes", async (req: Request, res: Response) => {
     if (!deps.pool) {
       res.status(503).json({ error: "db_unavailable", detail: "DATABASE_URL not configured" });
+      return;
+    }
+
+    // Registry shape branch — when no chain_id is supplied, return the
+    // cross-chain aggregate consumed by /dex-registry.
+    if (req.query["chain_id"] === undefined) {
+      try {
+        const q = await deps.pool.query(
+          `SELECT d.id,
+                  d.name,
+                  d.protocol_type,
+                  d.is_active,
+                  d.tvl_usd::float        AS tvl_usd,
+                  d.volume_24h_usd::float AS volume_24h_usd,
+                  d.created_at,
+                  COALESCE(
+                    (SELECT array_agg(DISTINCT f.chain_id ORDER BY f.chain_id)
+                       FROM factories f
+                      WHERE f.dex_id = d.id),
+                    ARRAY[]::int[]
+                  ) AS chain_ids,
+                  (SELECT f.address
+                     FROM factories f
+                    WHERE f.dex_id = d.id
+                    ORDER BY f.chain_id ASC
+                    LIMIT 1) AS factory_address
+             FROM dexes d
+            ORDER BY d.tvl_usd DESC NULLS LAST, d.name ASC`,
+        );
+        res.status(200).json({
+          dexes: q.rows.map((r: Record<string, unknown>) => ({
+            id:               r["id"]               as string,
+            name:             r["name"]             as string,
+            protocol_type:    r["protocol_type"]    as string,
+            chain_ids:        (r["chain_ids"]      ?? []) as number[],
+            volume_24h_usd:   (r["volume_24h_usd"]   as number | null) ?? null,
+            tvl_usd:          (r["tvl_usd"]          as number | null) ?? null,
+            is_active:        Boolean(r["is_active"]),
+            // R8: router/fee not yet a column on `dexes` — surface null
+            // instead of inventing values. Future migration adds them.
+            router_address:   null,
+            factory_address:  (r["factory_address"] as string | null) ?? null,
+            fee_bps:          null,
+            created_at:       r["created_at"]
+                                ? new Date(r["created_at"] as string | Date).toISOString()
+                                : null,
+          })),
+        });
+      } catch (e) {
+        deps.logger.warn({ event: "dexes.registry_query_failed", err: (e as Error).message });
+        res.status(503).json({ error: "query_failed", detail: (e as Error).message });
+      }
       return;
     }
 
