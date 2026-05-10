@@ -102,6 +102,46 @@ cast send <ArbitrageExecutor_proxy> \
   --rpc-url $MAINNET_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
 ```
 
+### 5-A5. Whitelist function selectors per router (MANDATORY — audit A5, 2026-05-10)
+
+> **BREAKING CHANGE**: After deploying this version, ALL `executeArbitrage` calls will revert
+> with `AE_RouterSelectorNotApproved` until you run this step. The `approvedSelectors` mapping
+> starts empty (fail-closed). The bot CANNOT execute any route until operator explicitly
+> approves each (router, selector) pair.
+
+For each router approved in step 5, call `batchSetRouterSelectorApproval` with the selectors
+your off-chain bot will use in calldata. Example for Uniswap V3 SwapRouter:
+
+```bash
+# Selector for ISwapRouter.exactInputSingle(ExactInputSingleParams)
+# bytes4(keccak256("exactInputSingle((address,address,uint24,address,uint256,uint256,uint256,uint160))"))
+EXACT_INPUT_SINGLE=0x414bf389
+
+# Selector for ISwapRouter.exactInput(ExactInputParams)
+# bytes4(keccak256("exactInput((bytes,address,uint256,uint256,uint256))"))
+EXACT_INPUT=0xc04b8d59
+
+cast send <ArbitrageExecutor_proxy> \
+  "batchSetRouterSelectorApproval(address,bytes4[],bool)" \
+  0xE592427A0AEce92De3Edee1F18E0157C05861564 \
+  "[$EXACT_INPUT_SINGLE,$EXACT_INPUT]" \
+  true \
+  --rpc-url $MAINNET_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
+```
+
+For each additional router (Curve, Balancer, etc.) run a separate `batchSetRouterSelectorApproval`
+call with that router's address and the selectors your bot will call.
+
+To verify a selector is approved before going live:
+
+```bash
+cast call <ArbitrageExecutor_proxy> \
+  "approvedSelectors(address,bytes4)(bool)" \
+  <router_address> <selector_bytes4> \
+  --rpc-url $MAINNET_RPC_URL
+# Must return: true
+```
+
 ### 6. Batch-grant allowances in AllowanceManager
 
 ```bash

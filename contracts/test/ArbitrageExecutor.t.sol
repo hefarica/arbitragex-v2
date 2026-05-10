@@ -110,6 +110,11 @@ contract ArbitrageExecutorTest is Test {
     address internal executorRole;
     address internal stranger;
 
+    /// @dev Shared mock selector used across tests.
+    ///      MockProfitRouter / MockZeroProfitRouter expose fallback(), which accepts
+    ///      any calldata — so any 4-byte-prefixed payload is valid there.
+    bytes4 internal constant MOCK_SELECTOR = bytes4(keccak256("swap()"));
+
     function setUp() public {
         admin = address(this);
         executorRole = makeAddr("executorRole");
@@ -147,12 +152,15 @@ contract ArbitrageExecutorTest is Test {
         // Deploy router that mints profit to executor
         MockProfitRouter router = new MockProfitRouter(address(token), address(executor), profit);
         executor.setRouterApproval(address(router), true);
+        // A5: approve the selector the payload will carry.
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
 
         address[] memory routers = new address[](1);
         routers[0] = address(router);
 
         bytes[] memory payloads = new bytes[](1);
-        payloads[0] = "";
+        // A5: payload must start with the whitelisted selector (fallback() accepts any calldata).
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
 
         // SC-05 fixed: tokenOut is now a distinct parameter. In this simple happy-path
         // we pass tokenOut == tokenIn (valid for circular arb routes). The important
@@ -177,12 +185,15 @@ contract ArbitrageExecutorTest is Test {
 
         MockProfitRouter router = new MockProfitRouter(address(token), address(executor), tinyProfit);
         executor.setRouterApproval(address(router), true);
+        // A5: selector must be approved so the call reaches the profit check.
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
 
         address[] memory routers = new address[](1);
         routers[0] = address(router);
 
         bytes[] memory payloads = new bytes[](1);
-        payloads[0] = "";
+        // A5: payload must carry the whitelisted selector.
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
 
         // SC-3: custom error replaces string "Slippage / Min profit guard failed"
         vm.expectRevert(InsufficientProfit.selector);
@@ -262,6 +273,13 @@ contract ArbitrageExecutorTest is Test {
     // testReentrancy_Blocked
     // The inner re-entrant call hits ReentrancyGuard, which causes SwapFailed
     // to propagate from the outer call (the swap call itself fails).
+    //
+    // A5 note: the outer payload carries MOCK_SELECTOR (4 bytes) so it passes
+    // the selector check. The inner re-entrant payload (built inside
+    // MaliciousReentrantRouter.fallback()) is "" (0 bytes), but the
+    // ReentrancyGuard modifier fires BEFORE the function body on the inner call,
+    // so it reverts with ReentrancyGuardReentrantCall before the selector check
+    // is ever reached. SwapFailed is still the correct expected error.
     // -----------------------------------------------------------------------
     function testReentrancy_Blocked() public {
         uint256 amountIn = 1_000e18;
@@ -269,12 +287,16 @@ contract ArbitrageExecutorTest is Test {
         // Deploy malicious router first (needs executor address)
         MaliciousReentrantRouter malicious = new MaliciousReentrantRouter(address(executor));
         executor.setRouterApproval(address(malicious), true);
+        // A5: approve the selector so the outer call passes the whitelist gate
+        //     and reaches router.call(), which triggers the re-entry attempt.
+        executor.setRouterSelectorApproval(address(malicious), MOCK_SELECTOR, true);
 
         address[] memory attackRouters = new address[](1);
         attackRouters[0] = address(malicious);
 
         bytes[] memory attackPayloads = new bytes[](1);
-        attackPayloads[0] = "";
+        // A5: outer payload carries whitelisted selector (fallback accepts any calldata).
+        attackPayloads[0] = abi.encodePacked(MOCK_SELECTOR);
 
         // Provide attack params to re-entrant router (only primitives — no bytes[] storage)
         malicious.setAttackParams(bytes32(0), address(token), amountIn, 0);
@@ -326,12 +348,15 @@ contract ArbitrageExecutorTest is Test {
 
         MockProfitRouter router = new MockProfitRouter(address(token), address(executor), profit);
         executor.setRouterApproval(address(router), true);
+        // A5: approve the selector so the call passes the whitelist gate.
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
 
         address[] memory routers = new address[](1);
         routers[0] = address(router);
 
         bytes[] memory payloads = new bytes[](1);
-        payloads[0] = "";
+        // A5: payload must carry the whitelisted selector.
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
 
         // Verify event carries tokenIn != tokenOut — the SC-05 bug emitted tokenIn twice
         vm.expectEmit(true, true, true, true, address(executor));
@@ -505,6 +530,8 @@ contract ArbitrageExecutorTest is Test {
         // Deploy router and approve it in ArbitrageExecutor
         MockProfitRouter router = new MockProfitRouter(address(token), address(executor), profit);
         executor.setRouterApproval(address(router), true);
+        // A5: approve the selector so the call passes the whitelist gate.
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
 
         // Grant allowance from AllowanceManager to router for tokenIn.
         // AllowanceManager.grantAllowance() calls IERC20(token).forceApprove(router, amount),
@@ -520,7 +547,8 @@ contract ArbitrageExecutorTest is Test {
         address[] memory routers = new address[](1);
         routers[0] = address(router);
         bytes[] memory payloads = new bytes[](1);
-        payloads[0] = "";
+        // A5: payload must carry the whitelisted selector.
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
 
         vm.prank(executorRole);
         executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, minProfit, routers, payloads);
@@ -578,12 +606,15 @@ contract ArbitrageExecutorTest is Test {
 
         MockProfitRouter router = new MockProfitRouter(address(token), address(executor), profit);
         executor.setRouterApproval(address(router), true);
+        // A5: still need selector approval even when AllowanceManager is disabled.
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
         token.mint(address(executor), amountIn);
 
         address[] memory routers = new address[](1);
         routers[0] = address(router);
         bytes[] memory payloads = new bytes[](1);
-        payloads[0] = "";
+        // A5: payload must carry the whitelisted selector.
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
 
         // Must succeed: AllowanceManager check is not active
         vm.prank(executorRole);
@@ -614,5 +645,141 @@ contract ArbitrageExecutorTest is Test {
         am.revokeAllowance(address(token), spender);
         assertFalse(am.isApproved(address(token), spender), "must not be approved after revoke");
         assertEq(am.getAllowance(address(token), spender), 0, "allowance must be 0 after revoke");
+    }
+
+    // =========================================================================
+    // A5: Router function-selector whitelist tests (audit 2026-05-10)
+    // =========================================================================
+
+    // -----------------------------------------------------------------------
+    // testA5_SetRouterSelectorApproval_OnlyAdmin
+    //
+    // Only DEFAULT_ADMIN_ROLE can call setRouterSelectorApproval.
+    // Non-admin must be blocked. The approved mapping must update correctly
+    // and emit RouterSelectorApproved.
+    // -----------------------------------------------------------------------
+    function testA5_SetRouterSelectorApproval_OnlyAdmin() public {
+        address router = makeAddr("anyRouter");
+        bytes4 sel = bytes4(keccak256("transfer(address,uint256)"));
+
+        // Default: not approved
+        assertFalse(executor.approvedSelectors(router, sel), "must default to false");
+
+        // Stranger (no ADMIN_ROLE) must be blocked
+        vm.expectRevert();
+        vm.prank(stranger);
+        executor.setRouterSelectorApproval(router, sel, true);
+
+        // executorRole (EXECUTOR_ROLE only, not ADMIN) must also be blocked
+        vm.expectRevert();
+        vm.prank(executorRole);
+        executor.setRouterSelectorApproval(router, sel, true);
+
+        // Admin (address(this) — holds DEFAULT_ADMIN_ROLE in setUp) succeeds
+        vm.expectEmit(true, true, false, true, address(executor));
+        emit ArbitrageExecutor.RouterSelectorApproved(router, sel, true);
+        executor.setRouterSelectorApproval(router, sel, true);
+        assertTrue(executor.approvedSelectors(router, sel), "must be approved after admin call");
+
+        // Admin can also revoke
+        vm.expectEmit(true, true, false, true, address(executor));
+        emit ArbitrageExecutor.RouterSelectorApproved(router, sel, false);
+        executor.setRouterSelectorApproval(router, sel, false);
+        assertFalse(executor.approvedSelectors(router, sel), "must be revoked after admin call");
+    }
+
+    // -----------------------------------------------------------------------
+    // testA5_ExecuteArbitrage_RevertsWhenSelectorNotApproved
+    //
+    // When a router is address-approved but its selector is NOT in the whitelist,
+    // executeArbitrage must revert with AE_RouterSelectorNotApproved.
+    // This is the primary A5 invariant: address approval alone is insufficient.
+    // -----------------------------------------------------------------------
+    function testA5_ExecuteArbitrage_RevertsWhenSelectorNotApproved() public {
+        uint256 amountIn = 1_000e18;
+        token.mint(address(executor), amountIn);
+
+        MockProfitRouter router = new MockProfitRouter(address(token), address(executor), 50e18);
+        executor.setRouterApproval(address(router), true);
+        // Deliberately: do NOT call setRouterSelectorApproval — selector remains false.
+
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(AE_RouterSelectorNotApproved.selector, address(router), MOCK_SELECTOR)
+        );
+
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
+    }
+
+    // -----------------------------------------------------------------------
+    // testA5_ExecuteArbitrage_RevertsWhenPayloadTooShort
+    //
+    // A payload shorter than 4 bytes cannot carry a valid ABI selector.
+    // executeArbitrage must revert with AE_PayloadTooShort before attempting
+    // any selector whitelist lookup or router call.
+    // -----------------------------------------------------------------------
+    function testA5_ExecuteArbitrage_RevertsWhenPayloadTooShort() public {
+        uint256 amountIn = 1_000e18;
+        token.mint(address(executor), amountIn);
+
+        MockProfitRouter router = new MockProfitRouter(address(token), address(executor), 50e18);
+        executor.setRouterApproval(address(router), true);
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        // 3-byte payload — shorter than 4, no valid selector extractable.
+        payloads[0] = hex"aabbcc";
+
+        vm.expectRevert(
+            abi.encodeWithSelector(AE_PayloadTooShort.selector, address(router))
+        );
+
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
+    }
+
+    // -----------------------------------------------------------------------
+    // testA5_BatchSetRouterSelectorApproval
+    //
+    // batchSetRouterSelectorApproval approves multiple selectors for a router
+    // in a single tx. Verifies: all selectors set, events emitted, only admin.
+    // -----------------------------------------------------------------------
+    function testA5_BatchSetRouterSelectorApproval() public {
+        address router = makeAddr("batchRouter");
+
+        bytes4 sel1 = bytes4(keccak256("exactInput(bytes,uint256,uint256)"));
+        bytes4 sel2 = bytes4(keccak256("exactInputSingle(address,address,uint24,address,uint256,uint256,uint256,uint160)"));
+        bytes4 sel3 = bytes4(keccak256("swapExactTokensForTokens(uint256,uint256,address[],address,uint256)"));
+
+        bytes4[] memory sels = new bytes4[](3);
+        sels[0] = sel1;
+        sels[1] = sel2;
+        sels[2] = sel3;
+
+        // Stranger blocked on batch variant too
+        vm.expectRevert();
+        vm.prank(stranger);
+        executor.batchSetRouterSelectorApproval(router, sels, true);
+
+        // Admin approves all three in one tx
+        executor.batchSetRouterSelectorApproval(router, sels, true);
+
+        assertTrue(executor.approvedSelectors(router, sel1), "sel1 must be approved");
+        assertTrue(executor.approvedSelectors(router, sel2), "sel2 must be approved");
+        assertTrue(executor.approvedSelectors(router, sel3), "sel3 must be approved");
+
+        // Batch-revoke
+        executor.batchSetRouterSelectorApproval(router, sels, false);
+
+        assertFalse(executor.approvedSelectors(router, sel1), "sel1 must be revoked");
+        assertFalse(executor.approvedSelectors(router, sel2), "sel2 must be revoked");
+        assertFalse(executor.approvedSelectors(router, sel3), "sel3 must be revoked");
     }
 }

@@ -11,12 +11,13 @@ pragma solidity ^0.8.20;
 // storage slots — they do NOT occupy the linear slot space [0..N].
 //
 // This contract's OWN variables start at linear slot 0:
-//   slot 0: approvedRouters  (mapping(address => bool))
-//   slot 1: approvedTokens   (mapping(address => bool))
-//   slot 2: allowanceManager (IAllowanceManager — address, 20 bytes)  ← SC-5
+//   slot 0: approvedRouters    (mapping(address => bool))
+//   slot 1: approvedTokens     (mapping(address => bool))
+//   slot 2: allowanceManager   (IAllowanceManager — address, 20 bytes)  ← SC-5
+//   slot 3: approvedSelectors  (mapping(address => mapping(bytes4 => bool)))  ← A5
 //
 // CRITICAL: When adding new state variables in V2, V3, etc., you MUST append
-// them AFTER slot 2.  NEVER insert variables between existing ones — that
+// them AFTER slot 3.  NEVER insert variables between existing ones — that
 // would corrupt the storage layout and brick all proxies pointing at this impl.
 // =============================================================================
 
@@ -56,6 +57,13 @@ error ZeroBalance();
 /// @dev Thrown when AllowanceManager is set and the router has no live allowance for tokenIn.
 ///      Only raised when allowanceManager != address(0) (i.e. integration is active).
 error RouterAllowanceNotGranted(address router, address token);
+/// @dev Thrown when a router's calldata payload is shorter than 4 bytes (no selector).
+///      SECURITY (A5): any call with fewer than 4 bytes cannot carry a valid selector and
+///      is rejected before the whitelist check fires.
+error AE_PayloadTooShort(address router);
+/// @dev Thrown when the selector extracted from a payload is not in the per-router whitelist.
+///      SECURITY (A5): closes the arbitrary-function-call surface on approved routers.
+error AE_RouterSelectorNotApproved(address router, bytes4 selector);
 
 /// @title ArbitrageExecutor — UUPS-upgradeable on-chain arbitrage executor
 /// @notice Executes atomic multi-hop circular arbitrage routes.
@@ -95,6 +103,18 @@ contract ArbitrageExecutor is
     ///         AllowanceManager for tokenIn before calling it.
     ///         Backward-compatible: address(0) = check disabled (default post-deploy).
     IAllowanceManager public allowanceManager;
+    // slot 3 — A5: per-router function-selector whitelist.
+    /// @notice Per-router whitelist of allowed 4-byte function selectors.
+    /// SECURITY (audit A5, 2026-05-10): without selector gating, an EXECUTOR_ROLE
+    /// compromise could invoke arbitrary functions on approved routers
+    /// (e.g. transferFrom, withdraw, setOwner). Whitelisting bytes4 selectors
+    /// closes that attack surface.
+    /// Fail-closed by design: a router with no selector entries will cause every
+    /// executeArbitrage call to revert with AE_RouterSelectorNotApproved until the
+    /// operator explicitly approves (router, selector) pairs.
+    /// approvedSelectors[router][selector] = true iff the router may be called
+    /// with that 4-byte function selector.
+    mapping(address => mapping(bytes4 => bool)) public approvedSelectors;
     // APPEND new variables below this line in future upgrades. Never above.
 
     /// @notice Emitted when an arbitrage route completes successfully.
@@ -121,6 +141,12 @@ contract ArbitrageExecutor is
     /// @notice Emitted when the AllowanceManager integration address is updated.
     /// @param allowanceManager  New AllowanceManager address (address(0) = disabled).
     event AllowanceManagerUpdated(address indexed allowanceManager);
+
+    /// @notice Emitted when a per-router selector approval is changed.
+    /// @param router    Router address whose selector whitelist is being modified.
+    /// @param selector  4-byte function selector being approved or revoked.
+    /// @param status    True = approved, false = revoked.
+    event RouterSelectorApproved(address indexed router, bytes4 indexed selector, bool status);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -197,7 +223,24 @@ contract ArbitrageExecutor is
                 revert RouterAllowanceNotGranted(router, tokenIn);
             }
 
-            (bool success, ) = router.call(payload[i]);
+            // A5: selector whitelist gate.
+            // Require payload to carry at least 4 bytes (a valid ABI selector).
+            // Then verify the extracted selector is approved for this specific router.
+            // Defense-in-depth above EXECUTOR_ROLE compromise: even a compromised key
+            // cannot invoke transferFrom/withdraw/setOwner on an approved router unless
+            // the operator has explicitly whitelisted that selector.
+            bytes calldata pld = payload[i];
+            if (pld.length < 4) revert AE_PayloadTooShort(router);
+            bytes4 selector;
+            // Extract the leading 4 bytes without a memory allocation (gas-optimal).
+            assembly {
+                selector := calldataload(pld.offset)
+            }
+            if (!approvedSelectors[router][selector]) {
+                revert AE_RouterSelectorNotApproved(router, selector);
+            }
+
+            (bool success, ) = router.call(pld);
             if (!success) revert SwapFailed();
 
             unchecked { ++i; }
@@ -247,6 +290,49 @@ contract ArbitrageExecutor is
     function setAllowanceManager(address _am) external onlyRole(ADMIN_ROLE) {
         allowanceManager = IAllowanceManager(_am);
         emit AllowanceManagerUpdated(_am);
+    }
+
+    // -------------------------------------------------------------------------
+    // A5: Per-router function-selector whitelist administration
+    // -------------------------------------------------------------------------
+
+    /// @notice Approve or revoke a single function selector for a specific router.
+    /// @dev    Only DEFAULT_ADMIN_ROLE (via timelock in production). Emits RouterSelectorApproved.
+    ///         BREAKING POST-DEPLOY: any existing ArbitrageExecutor deployment will have an
+    ///         empty approvedSelectors mapping, causing ALL executeArbitrage calls to revert
+    ///         with AE_RouterSelectorNotApproved until the operator calls this function (or
+    ///         batchSetRouterSelectorApproval) for each (router, selector) pair in active use.
+    ///         See DEPLOY.md §A5 for the required post-deploy step.
+    /// @param router    Router address whose selector whitelist is being modified.
+    /// @param selector  4-byte function selector to approve or revoke.
+    /// @param status    True to approve, false to revoke.
+    function setRouterSelectorApproval(
+        address router,
+        bytes4 selector,
+        bool status
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        approvedSelectors[router][selector] = status;
+        emit RouterSelectorApproved(router, selector, status);
+    }
+
+    /// @notice Batch-approve or batch-revoke multiple selectors for a single router in one tx.
+    /// @dev    Typical use: approve swapExactTokensForTokens / exactInput / exactInputSingle
+    ///         for UniV2/V3 in a single transaction instead of N separate admin calls.
+    ///         Only DEFAULT_ADMIN_ROLE. Emits RouterSelectorApproved for each selector.
+    /// @param router     Router address whose selector whitelist is being modified.
+    /// @param selectors  Array of 4-byte function selectors to approve or revoke.
+    /// @param status     True to approve all, false to revoke all.
+    function batchSetRouterSelectorApproval(
+        address router,
+        bytes4[] calldata selectors,
+        bool status
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        uint256 len = selectors.length;
+        for (uint256 i = 0; i < len;) {
+            approvedSelectors[router][selectors[i]] = status;
+            emit RouterSelectorApproved(router, selectors[i], status);
+            unchecked { ++i; }
+        }
     }
 
     /// @notice Emergency-withdraw the entire balance of an ERC-20 token to the caller.
