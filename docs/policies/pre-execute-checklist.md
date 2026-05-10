@@ -41,14 +41,36 @@ attempt was not blind.
 
 ## Gate 3 — Net-profit floor
 
-- **Source of truth:** the opportunity's payload carries the result of
-  `compute_usd_profit_for_spread(...)` — which subtracts gas, slippage,
-  relay fees, and `(1 − p_inclusion)` revert cost from the gross
-  spread (see `arbx-net-profit-gate` doctrine).
-- **Behavior:** `net_profit_usd >= cfg.execution.min_net_profit_usd`. If
+- **Source of truth:** `Opportunity.net_expected_profit_usd` — populated by
+  the prioritization-spine evaluator (`calc_net_profit_and_roi`) after deducting
+  all **8 cost components**:
+  1. Gas cost (`expected_gas_cost_usd`) — EIP-1559 basefee + tip, converted to USD.
+  2. LP fees (`lp_fees_usd`) — protocol fees across all route hops.
+  3. Slippage / price-impact (`effective_slippage_usd`) — real V2/V3 impact or proxy.
+  4. Statistical failure buffer (`failure_cost_usd`) — `p_fail × gas_cost` or flat proxy.
+  5. Copy-trade / front-run buffer (`copied_buffer_usd`) — `p_copied × gross_proxy`.
+  6. Capital opportunity cost (`capital_cost_usd`) — APR × capital × block_time / year.
+  7. Ops overhead (`ops_overhead_usd`) — amortised infra cost per attempt.
+  8. **Relay bribe (`relay_fee_usd`)** — Flashbots `coinbaseDiff` EWMA per
+     `(chain_id, strategy_kind)`, stored at `arbx:relay_fee_ewma:{chain_id}:{strategy}`.
+     Cold-start doctrine floor: `max(gross × 5%, $0.50)`.
+     On Ethereum mainnet this is typically 10–50% of gross profit.
+     L2 chains (Arbitrum, Base, Optimism, Polygon): always 0.0.
+
+  Component 8 was absent before the C2 fix (audit re-run #2, 2026-05-10),
+  causing a systematic 20-40% overstatement of net profit on Ethereum mainnet.
+
+- **Behavior:** `net_expected_profit_usd >= cfg.execution.min_net_profit_usd`. If
   not, abort with `status="below_min_profit"`.
-- **Why third:** computed earlier in the pipeline (scanner) — at this
-  gate it's a single comparison.
+
+- **Live mode gate (C1 fix):** if `net_expected_profit_usd` is `None` (spine
+  has not evaluated the row), the checklist returns `NetProfitUnknown` and the
+  opportunity is dropped. Falling back to the gross `expected_profit_usd` is
+  **forbidden in live mode** — gross overstates net profit by the relay bribe
+  component alone. In paper mode the gross fallback is allowed with a warn log.
+
+- **Why third:** computed earlier in the pipeline — at this gate it's a single
+  comparison. Cheaper kill-switch and blacklist gates run first.
 
 ## Gate 4 — Simulation
 

@@ -665,7 +665,7 @@ async fn decode_and_score_tx(
                 // The evaluator's CascadePriceOracle is the authoritative source;
                 // this scanner-level path is a fast pre-filter only.
                 gross_profit_f64 = if let Some(cfg_ref) = cfg_opt.as_ref() {
-                    let result = compute_usd_profit_for_spread(
+                    let result = compute_gross_usd_for_spread(
                         spread_token_out_f64,
                         m_out.symbol.eq_ignore_ascii_case(&cfg_ref.base_token_symbol),
                         cfg_ref.base_token_price_usd,
@@ -1039,6 +1039,16 @@ fn u256_to_f64_lossy(v: ethers::types::U256) -> f64 {
 /// Returns None when the token_out cannot be priced (oracle gap: neither base
 /// token nor stablecoin). Returns Some(usd_value) only when pricing succeeded.
 ///
+/// **GROSS value only.** This function returns the raw token-unit spread
+/// converted to USD using the operator's base token price or a 1:1 stablecoin
+/// assumption. It does NOT subtract gas, slippage, relay fees, or any other
+/// cost component. The result is stored in `Opportunity.expected_profit_usd`
+/// (the GROSS column). The canonical net figure after all cost deductions is
+/// `Opportunity.net_expected_profit_usd`, populated by the spine evaluator
+/// (`calc_net_profit_and_roi`). Check 7 in the pre-execute checklist uses the
+/// net field; callers that use `expected_profit_usd` directly are comparing
+/// against GROSS and will over-estimate profitability by 20-40%.
+///
 /// This is the pure-function kernel extracted from `process_pending` so it
 /// can be unit-tested in isolation (the full scanner loop requires live Redis
 /// + WS; this helper requires nothing).
@@ -1046,7 +1056,7 @@ fn u256_to_f64_lossy(v: ethers::types::U256) -> f64 {
 /// R8 invariant: the returned Option MUST preserve None for unpriced paths.
 /// Callers MUST propagate None to `opportunity.expected_profit_usd` without
 /// substituting 0.0 (which would silently assert "computed profit = zero").
-fn compute_usd_profit_for_spread(
+fn compute_gross_usd_for_spread(
     spread_token_out: f64,
     is_base_token: bool,
     base_token_price_usd: f64,
@@ -1082,9 +1092,9 @@ mod tests {
         let spread = 42.0; // arbitrary non-zero spread in token_out units
 
         // Act: simulate all three paths.
-        let base_result = compute_usd_profit_for_spread(spread, true, 2000.0, false);
-        let stable_result = compute_usd_profit_for_spread(spread, false, 0.0, true);
-        let gap_result = compute_usd_profit_for_spread(spread, false, 0.0, false);
+        let base_result = compute_gross_usd_for_spread(spread, true, 2000.0, false);
+        let stable_result = compute_gross_usd_for_spread(spread, false, 0.0, true);
+        let gap_result = compute_gross_usd_for_spread(spread, false, 0.0, false);
 
         // Assert: base and stable paths compute real values.
         assert_eq!(
@@ -1119,7 +1129,7 @@ mod tests {
     /// Some(0.0), not None. This distinguishes "priced and zero" from "unpriced".
     #[test]
     fn zero_spread_in_priced_token_yields_some_zero() {
-        let result = compute_usd_profit_for_spread(0.0, true, 2000.0, false);
+        let result = compute_gross_usd_for_spread(0.0, true, 2000.0, false);
         assert_eq!(
             result,
             Some(0.0),

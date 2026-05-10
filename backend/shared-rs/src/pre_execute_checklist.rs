@@ -47,6 +47,38 @@ pub fn gas_price_wei_key(chain_id: u64) -> String {
 /// Maximum age of a gas-price update before we treat it as stale (seconds).
 pub const GAS_PRICE_MAX_AGE_SECS: u64 = 30;
 
+/// Redis key for the EWMA relay-bribe estimate per (chain_id, strategy_kind).
+///
+/// Written by `relays-client::submit_engine` after each successful
+/// `eth_callBundle` simulation. Value is a stringified `f64` representing the
+/// **EWMA of `coinbase_diff_wei` in raw wei** (NOT pre-converted to USD).
+/// The conversion to USD is deferred to the read site to avoid coupling
+/// relays-client to the ETH/USD price oracle.
+///
+/// Read by `prioritization-spine::config_aware` which converts using
+/// `TradingConfigState.base_token_price_usd`:
+///   `relay_fee_usd = ewma_wei / 1e18 * base_token_price_usd`
+///
+/// TTL: 1 hour. Cold-start (key absent) → callers apply the doctrine floor:
+/// `max(gross_profit * RELAY_FEE_FLOOR_PCT, RELAY_FEE_FLOOR_ABS_USD)`.
+///
+/// EWMA update formula (alpha = 0.2):
+/// `new_ewma = alpha * observed + (1 - alpha) * previous`
+pub fn relay_fee_ewma_key(chain_id: u64, strategy_kind: &str) -> String {
+    format!("arbx:relay_fee_ewma:{chain_id}:{strategy_kind}")
+}
+
+/// EWMA smoothing factor for the relay fee estimate.
+/// α = 0.2 means each new observation gets 20% weight; recent history retains 80%.
+/// At 5 bundles/min, this corresponds to a ~25-minute memory horizon.
+pub const RELAY_FEE_EWMA_ALPHA: f64 = 0.2;
+/// TTL for the relay fee EWMA key in seconds (1 hour).
+pub const RELAY_FEE_EWMA_TTL_SECS: u64 = 3600;
+/// Doctrine floor for cold-start relay fee: 5% of gross profit.
+pub const RELAY_FEE_FLOOR_PCT: f64 = 0.05;
+/// Doctrine floor for cold-start relay fee: absolute minimum $0.50.
+pub const RELAY_FEE_FLOOR_ABS_USD: f64 = 0.50;
+
 // ---------------------------------------------------------------------------
 // Error type
 // ---------------------------------------------------------------------------
@@ -112,6 +144,20 @@ pub enum ChecklistError {
     /// Treated as blocking (fail-closed).
     #[error("redis error: {0}")]
     RedisError(#[from] redis::RedisError),
+
+    /// `net_expected_profit_usd` is None and the engine is in live mode.
+    ///
+    /// In live mode, falling back to the gross `expected_profit_usd` is
+    /// forbidden because gross overstates net profit by 20-40% (relay bribe
+    /// + LP fees + slippage not yet deducted). The opportunity must be
+    /// re-evaluated by the spine before proceeding to broadcast.
+    ///
+    /// In paper mode this error is NOT raised — the gross fallback is allowed
+    /// and a `tracing::warn!(event="checklist.gross_fallback")` is emitted
+    /// instead so operators see the gap in observability without blocking
+    /// paper-trade data collection.
+    #[error("net_expected_profit_usd is None in live mode — gross fallback forbidden")]
+    NetProfitUnknown,
 }
 
 // ---------------------------------------------------------------------------

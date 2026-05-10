@@ -19,7 +19,10 @@ use shared_rs::{
     contracts::{ExecutionResult, ExecutionStatus, Opportunity},
     killswitch::KillSwitchClient,
     paper_mode::PaperModeClient,
-    pre_execute_checklist::{pre_execute_checklist, ChecklistError, PreExecuteContext},
+    pre_execute_checklist::{
+        pre_execute_checklist, relay_fee_ewma_key, ChecklistError, PreExecuteContext,
+        RELAY_FEE_EWMA_ALPHA, RELAY_FEE_EWMA_TTL_SECS,
+    },
     rpc_failover::HttpRpcPool,
 };
 use sqlx::PgPool;
@@ -79,6 +82,23 @@ impl SubmitEngine {
             .unwrap_or_default();
 
         // -----------------------------------------------------------------------
+        // Paper mode — computed here (before the checklist) so it can be
+        // threaded into `resolve_profit_for_checklist` which must refuse gross
+        // fallback in live mode (C1 fix, audit re-run #2 2026-05-10).
+        //
+        // C1 design: in LIVE mode (paper=false), if net_expected_profit_usd
+        // is None the checklist returns Err(NetProfitUnknown) — gross fallback
+        // is forbidden because it overstates net profit by 20-40%.
+        // In PAPER mode the gross fallback is allowed but emits a warn so
+        // operators see the gap.  Paper-mode data collection must not stall
+        // just because spine hasn't processed a cold-start row yet.
+        // -----------------------------------------------------------------------
+        let paper_env = std::env::var("ARBX_PAPER_MODE").ok()
+            .map(|v| v.eq_ignore_ascii_case("true")).unwrap_or(false);
+        let paper_dynamic = self.paper_mode.is_enabled().await;
+        let paper = paper_dynamic || paper_env;
+
+        // -----------------------------------------------------------------------
         // Pre-execute checklist (BE-03) — canonical 12-step safety gate.
         //
         // Runs only when the DB pool is present (relays-client boots with an
@@ -107,21 +127,32 @@ impl SubmitEngine {
             // were not validated at this layer.
             let route_factories: Vec<String> = Vec::new();
 
+            // C1 fix: `resolve_profit_for_checklist` now takes `paper` to
+            // enforce net-only in live mode.  If it returns Err we propagate
+            // directly — no fallback to gross in live mode.
+            let profit_for_checklist = match Self::resolve_profit_for_checklist(opp, paper) {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!(
+                        event = "submit.net_profit_unknown",
+                        opp_id = %opp.id,
+                        chain_id = opp.chain_id,
+                        error = %e,
+                        "net_expected_profit_usd is None in live mode — rejecting (gross fallback forbidden)"
+                    );
+                    return Self::dropped(opp, &format!("checklist_blocked: {e}"));
+                }
+            };
+
             let mut redis_conn = self.redis.clone();
             let mut ctx = PreExecuteContext {
                 chain_id: opp.chain_id,
                 route_tokens: &route_tokens,
                 route_factories: &route_factories,
-                // H2 fix (2026-05-08): use spine-computed net profit when available.
-                // net_expected_profit_usd is populated by scanner.rs after
-                // calc_net_profit_and_roi runs through the spine evaluator path.
-                // Fallback to gross (expected_profit_usd) for pre-spine rows only —
-                // those are blocked by paper_mode (Check 2) before reaching Check 7
-                // in practice. The fallback preserves prior behaviour for cold-start
-                // rows; new opportunities always have the net field set. R8 fail-honest:
-                // 0.0 as last resort means the floor check will likely block the opp,
-                // which is the safe direction (under-execute, not over-execute).
-                expected_profit_usd: Self::resolve_profit_for_checklist(opp),
+                // C1 fix (2026-05-10): use resolve_profit_for_checklist which
+                // in live mode rejects gross-only rows (NetProfitUnknown).
+                // In paper mode the gross fallback is permitted with a warn log.
+                expected_profit_usd: profit_for_checklist,
                 // estimated_gas_usd is 0.0 because expected_profit_usd now carries NET
                 // profit (gas already deducted by spine). Setting it to non-zero would
                 // double-deduct gas and incorrectly block valid opportunities.
@@ -230,11 +261,7 @@ impl SubmitEngine {
             return Self::not_submitted(opp, "nonce_manager_not_initialized");
         };
 
-        // 3. Paper mode — dynamic from Redis + env override.
-        let paper_env = std::env::var("ARBX_PAPER_MODE").ok()
-            .map(|v| v.eq_ignore_ascii_case("true")).unwrap_or(false);
-        let paper_dynamic = self.paper_mode.is_enabled().await;
-        let paper = paper_dynamic || paper_env;
+        // 3. Paper mode — already computed above (C1 fix: moved before checklist).
 
         // 4. Build + sign.
         let bundle = match build_and_sign(
@@ -363,6 +390,67 @@ impl SubmitEngine {
                         coinbase_diff_wei = sim.coinbase_diff_wei,
                         "eth_callBundle simulation passed — proceeding to broadcast"
                     );
+
+                    // C2 fix (audit re-run #2 2026-05-10): write coinbase_diff_wei
+                    // EWMA to Redis so the spine's cost model can incorporate the
+                    // observed bribe on subsequent evaluations of similar opps.
+                    //
+                    // Key: `arbx:relay_fee_ewma:{chain_id}:{strategy_kind}`
+                    // Value: EWMA of coinbase_diff_wei in raw wei (f64 stringified).
+                    // Conversion to USD happens at the read site (spine) using
+                    // TradingConfigState.base_token_price_usd — relays-client is
+                    // intentionally decoupled from the ETH/USD price oracle.
+                    //
+                    // Non-fatal: if the EWMA write fails (Redis hiccup), the spine
+                    // falls back to the cold-start doctrine floor on the next eval.
+                    // R8 fail-honest: we only update when coinbase_diff_wei > 0.
+                    if sim.coinbase_diff_wei > 0 {
+                        let strategy_kind_str = format!("{:?}", opp.strategy_kind)
+                            .to_ascii_lowercase();
+                        let ewma_key = relay_fee_ewma_key(opp.chain_id, &strategy_kind_str);
+                        let observed_wei = sim.coinbase_diff_wei as f64;
+                        let mut redis_conn = self.redis.clone();
+
+                        // Read previous EWMA.
+                        let prev_ewma: f64 = redis_conn
+                            .get::<_, Option<String>>(&ewma_key)
+                            .await
+                            .unwrap_or(None)
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(observed_wei); // cold-start: seed with first obs
+
+                        // Apply EWMA: new = alpha * observed + (1 - alpha) * prev.
+                        let new_ewma = RELAY_FEE_EWMA_ALPHA * observed_wei
+                            + (1.0 - RELAY_FEE_EWMA_ALPHA) * prev_ewma;
+
+                        let set_result: Result<(), redis::RedisError> = redis_conn
+                            .set_ex(&ewma_key, new_ewma.to_string(), RELAY_FEE_EWMA_TTL_SECS)
+                            .await;
+
+                        match set_result {
+                            Ok(()) => {
+                                info!(
+                                    event = "c2.relay_fee_ewma_updated",
+                                    opp_id = %opp.id,
+                                    chain_id = opp.chain_id,
+                                    strategy = %strategy_kind_str,
+                                    observed_wei,
+                                    prev_ewma,
+                                    new_ewma,
+                                    "relay fee EWMA updated from eth_callBundle observation"
+                                );
+                            }
+                            Err(e) => {
+                                // Non-fatal: log and continue. Spine uses doctrine floor.
+                                warn!(
+                                    event = "c2.relay_fee_ewma_write_failed",
+                                    opp_id = %opp.id,
+                                    error = %e,
+                                    "failed to write relay fee EWMA to Redis — non-fatal"
+                                );
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     // R8 fail-honest: if the safety check endpoint itself fails
@@ -534,12 +622,47 @@ impl SubmitEngine {
     }
 
     /// Pure helper: resolve which profit figure Check 7 should use.
-    /// Extracted to make the H2 contract testable without I/O.
-    #[inline]
-    pub(crate) fn resolve_profit_for_checklist(opp: &Opportunity) -> f64 {
-        opp.net_expected_profit_usd
-            .or(opp.expected_profit_usd)
-            .unwrap_or(0.0)
+    ///
+    /// C1 fix (audit re-run #2, 2026-05-10):
+    ///
+    /// - **Live mode** (`paper_mode = false`): if `net_expected_profit_usd` is
+    ///   `None` the function returns `Err(ChecklistError::NetProfitUnknown)`.
+    ///   Falling back to the gross `expected_profit_usd` is forbidden in live mode
+    ///   because gross overstates net profit by 20-40% (relay bribe, LP fees, and
+    ///   slippage are not yet deducted), causing cold-start opportunities with
+    ///   negative net to pass the floor gate unchallenged.
+    ///
+    /// - **Paper mode** (`paper_mode = true`): the gross fallback is allowed.
+    ///   A `tracing::warn!(event="checklist.gross_fallback")` is emitted so the
+    ///   operator can see the gap in observability without blocking paper-trade
+    ///   data collection.
+    ///
+    /// When `net_expected_profit_usd` is present it is always preferred over
+    /// gross regardless of `paper_mode` — this is unchanged from H2.
+    pub(crate) fn resolve_profit_for_checklist(
+        opp: &Opportunity,
+        paper_mode: bool,
+    ) -> Result<f64, ChecklistError> {
+        if let Some(net) = opp.net_expected_profit_usd {
+            // Net field present — canonical path, no ambiguity.
+            return Ok(net);
+        }
+        // net_expected_profit_usd is None — spine has not evaluated this row.
+        if paper_mode {
+            // Gross fallback permitted in paper mode; warn so the gap is visible.
+            warn!(
+                event = "checklist.gross_fallback",
+                opp_id = %opp.id,
+                gross_usd = ?opp.expected_profit_usd,
+                "net_expected_profit_usd is None — using gross as fallback \
+                 (paper mode: safe for observation, not for live capital)"
+            );
+            Ok(opp.expected_profit_usd.unwrap_or(0.0))
+        } else {
+            // Live mode: refuse gross fallback — the opportunity must be
+            // re-scored by the spine before live capital is committed.
+            Err(ChecklistError::NetProfitUnknown)
+        }
     }
 
     fn not_submitted(opp: &Opportunity, reason: &str) -> ExecutionResult {
@@ -596,48 +719,97 @@ mod tests {
         }
     }
 
-    /// H2 regression: net field takes precedence over gross.
+    /// H2 regression: net field takes precedence over gross (both modes).
     /// $52 gross / $7 net — Check 7 must see $7, not $52.
     #[test]
     fn h2_net_field_takes_precedence_over_gross() {
         let opp = make_opp(Some(52.0), Some(7.0));
-        let profit = SubmitEngine::resolve_profit_for_checklist(&opp);
+        // Net present — paper_mode flag is irrelevant.
+        let profit_live = SubmitEngine::resolve_profit_for_checklist(&opp, false)
+            .expect("net present → no error in live mode");
+        let profit_paper = SubmitEngine::resolve_profit_for_checklist(&opp, true)
+            .expect("net present → no error in paper mode");
         assert!(
-            (profit - 7.0).abs() < f64::EPSILON,
-            "expected 7.0 (net), got {profit}"
+            (profit_live - 7.0).abs() < f64::EPSILON,
+            "live mode: expected 7.0 (net), got {profit_live}"
+        );
+        assert!(
+            (profit_paper - 7.0).abs() < f64::EPSILON,
+            "paper mode: expected 7.0 (net), got {profit_paper}"
         );
     }
 
-    /// When net field is absent (pre-spine row), gross is used as fallback.
+    /// C1 regression (audit re-run #2): in live mode (paper_mode=false) with
+    /// net_expected_profit_usd=None, the checklist MUST return NetProfitUnknown.
+    /// Falling back to gross in live mode overstates profit by 20-40% and can
+    /// pass cold-start opportunities with negative net through the floor gate.
     #[test]
-    fn h2_fallback_to_gross_when_net_absent() {
+    fn c1_live_mode_net_absent_returns_net_profit_unknown() {
         let opp = make_opp(Some(52.0), None);
-        let profit = SubmitEngine::resolve_profit_for_checklist(&opp);
+        let result = SubmitEngine::resolve_profit_for_checklist(&opp, false /* live */);
+        assert!(
+            matches!(result, Err(ChecklistError::NetProfitUnknown)),
+            "C1: live mode with net=None must return Err(NetProfitUnknown), got: {:?}",
+            result
+        );
+    }
+
+    /// C1 regression: in paper mode (paper_mode=true) with net=None, the gross
+    /// fallback IS allowed (returns Ok with gross value) so paper-trade data
+    /// collection is not blocked by cold-start rows.
+    #[test]
+    fn c1_paper_mode_net_absent_falls_back_to_gross() {
+        let opp = make_opp(Some(52.0), None);
+        let result = SubmitEngine::resolve_profit_for_checklist(&opp, true /* paper */);
+        let profit = result.expect("paper mode with net=None must return Ok (gross fallback allowed)");
         assert!(
             (profit - 52.0).abs() < f64::EPSILON,
-            "expected 52.0 (gross fallback), got {profit}"
+            "C1 paper mode: expected 52.0 (gross fallback), got {profit}"
         );
     }
 
-    /// When both fields are absent, returns 0.0 (safe — will fail the floor check).
+    /// C1 regression: in paper mode with BOTH fields absent, fallback to 0.0.
+    /// The 0.0 value will fail the profit floor gate — safe direction.
     #[test]
-    fn h2_both_absent_returns_zero() {
+    fn c1_paper_mode_both_absent_falls_back_to_zero() {
         let opp = make_opp(None, None);
-        let profit = SubmitEngine::resolve_profit_for_checklist(&opp);
+        let profit = SubmitEngine::resolve_profit_for_checklist(&opp, true /* paper */)
+            .expect("paper mode both-None must return Ok(0.0)");
         assert!(
             profit == 0.0,
-            "expected 0.0 (fail-safe), got {profit}"
+            "paper mode both-absent: expected 0.0 (floor-fail-safe), got {profit}"
+        );
+    }
+
+    /// C1 regression: in live mode with BOTH fields absent, must also return
+    /// NetProfitUnknown (no net means no live execution permitted).
+    #[test]
+    fn c1_live_mode_both_absent_returns_net_profit_unknown() {
+        let opp = make_opp(None, None);
+        let result = SubmitEngine::resolve_profit_for_checklist(&opp, false /* live */);
+        assert!(
+            matches!(result, Err(ChecklistError::NetProfitUnknown)),
+            "C1: live mode both-None must return Err(NetProfitUnknown), got: {:?}",
+            result
         );
     }
 
     /// Net profit below zero is propagated correctly (negative net must fail floor).
+    /// Both modes: net present → always returned regardless of paper_mode.
     #[test]
     fn h2_negative_net_propagated_correctly() {
         let opp = make_opp(Some(52.0), Some(-3.0));
-        let profit = SubmitEngine::resolve_profit_for_checklist(&opp);
+        let profit_live = SubmitEngine::resolve_profit_for_checklist(&opp, false)
+            .expect("net present → no error in live mode");
+        let profit_paper = SubmitEngine::resolve_profit_for_checklist(&opp, true)
+            .expect("net present → no error in paper mode");
         assert!(
-            (profit - (-3.0)).abs() < f64::EPSILON,
-            "expected -3.0 (negative net), got {profit}"
+            (profit_live - (-3.0)).abs() < f64::EPSILON,
+            "live: expected -3.0 (negative net), got {profit_live}"
+        );
+        assert!(
+            (profit_paper - (-3.0)).abs() < f64::EPSILON,
+            "paper: expected -3.0 (negative net), got {profit_paper}"
         );
     }
 }

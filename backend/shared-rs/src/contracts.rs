@@ -26,9 +26,17 @@ pub struct Opportunity {
     pub token_out: String,
     /// big int as decimal string
     pub amount_in_wei: String,
-    /// Gross profit in USD as emitted by the worker (before gas, fees, slippage).
-    /// Set by scanner.rs from `math_outcome.gross_profit_usd`.
+    /// **GROSS** profit in USD as emitted by scanner.rs — before gas, relay fees,
+    /// LP fees, slippage, failure buffer, or any other cost component.
+    /// Set by `compute_gross_usd_for_spread()` (renamed from `compute_usd_profit_for_spread`).
     /// None when the oracle could not price the tokens (R8 fail-honest).
+    ///
+    /// **Do NOT use this field as the net profit figure.** It overstates realised
+    /// profit by 20-40% on Ethereum mainnet (relay bribe alone is 10-50% of gross).
+    /// The canonical net figure after all 8 cost components is
+    /// `net_expected_profit_usd` (populated by the spine evaluator). The
+    /// pre-execute checklist Check 7 uses `net_expected_profit_usd`; this field
+    /// is the DB-persistent gross column and must not be removed or renamed.
     pub expected_profit_usd: Option<f64>,
     /// Net profit in USD after ALL cost components (gas + LP fees + slippage +
     /// flash-loan fee + failure buffer + capital cost + ops overhead).
