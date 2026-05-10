@@ -40,9 +40,13 @@ function legsFor(strategy_kind: string, dex_a: string, dex_b: string | null): Le
     case "dex_arb":
     case "flashloan_arb":
       // Two-leg atomic arb: buy low on dex_a, sell high on dex_b.
+      // When dex_b is null the searcher detected an intra-DEX cycle (two
+      // pools of the same DEX family on different fee tiers, e.g.
+      // Uniswap V3 0.05% ↔ 0.30%). Render as BUY → SELL inside the same
+      // venue so the operator still sees the action semantics.
       return dex_b
         ? [{ action: "BUY", venue: dex_a }, { action: "SELL", venue: dex_b }]
-        : [{ action: "DEX", venue: dex_a }];
+        : [{ action: "BUY", venue: dex_a }, { action: "SELL", venue: dex_a }];
     case "triangular":
       // Three-swap cycle inside one DEX family — the venue is the cycle's host.
       return [{ action: "VIA", venue: dex_a }];

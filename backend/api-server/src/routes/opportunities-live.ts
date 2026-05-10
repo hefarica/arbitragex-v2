@@ -134,24 +134,43 @@ LIMIT $1
 
 /**
  * Assembles a TokenInfoResult from prefixed columns in a query row.
- * Returns null when ALL token-side columns are null (no tokens row matched).
- * resolved_via will always be non-null when a row exists (NOT NULL column),
- * so its presence is used as the sentinel.
+ *
+ * 2026-05-10 fix: the prior sentinel was `resolved_via` — assuming it was
+ * a NOT NULL column. Reality: rows seeded via migrations (e.g. USDT, WETH,
+ * core stables) carry symbol/decimals but `resolved_via` is NULL because
+ * they never went through the enricher pipeline. The old gate dropped
+ * those rows to `token_info: null` and the UI rendered "—" for the most
+ * recognisable tokens on the chain.
+ *
+ * New sentinel: ANY of symbol/decimals/logo_url/resolved_via being
+ * non-null → emit a TokenInfoResult with whatever fields we have. Only
+ * when ALL FOUR are null do we return null (LEFT JOIN miss). When
+ * resolved_via is null but symbol exists, surface "onchain_partial" as
+ * the fallback so the frontend's "failed" branch doesn't mis-trigger.
  */
 function tokenInfoFromRow(
   row: OpportunityLiveRow,
   prefix: "token_in" | "token_out",
 ): TokenInfoResult | null {
   const resolvedVia = row[`${prefix}_resolved_via`];
-  if (resolvedVia === null || resolvedVia === undefined) {
+  const symbol      = row[`${prefix}_symbol`];
+  const decimals    = row[`${prefix}_decimals`];
+  const logoUrl     = row[`${prefix}_logo_url`];
+
+  const allNull = resolvedVia == null && symbol == null && decimals == null && logoUrl == null;
+  if (allNull) {
     // No tokens row joined — surface null per R8 fail-honest.
     return null;
   }
+
   return {
-    symbol:       row[`${prefix}_symbol`]      ?? null,
-    decimals:     row[`${prefix}_decimals`]    ?? null,
-    logo_url:     row[`${prefix}_logo_url`]    ?? null,
-    resolved_via: resolvedVia,
+    symbol:       symbol      ?? null,
+    decimals:     decimals    ?? null,
+    logo_url:     logoUrl     ?? null,
+    // When the legacy NULL pattern hits (seeded row, no enricher run yet),
+    // default to "onchain_partial" so the frontend treats the row as
+    // partially-resolved (Case B) rather than "failed" (Case C).
+    resolved_via: resolvedVia ?? "onchain_partial",
   };
 }
 
