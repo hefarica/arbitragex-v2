@@ -1,13 +1,42 @@
-//! Ethers-rs WebSocket client wrapper with reconnection/backoff.
+//! WebSocket chain client — mempool subscriptions and new-head events only.
+//!
+//! ARCHITECTURAL NOTE (audit A2, re-run 2026-05-10):
+//! This module handles WebSocket subscriptions exclusively:
+//!   - `subscribe_pending()` → firehose of pending-tx hashes via `newPendingTransactions`
+//!   - `subscribe_pending_filtered_txs()` → Alchemy `alchemy_pendingTransactions` allowlist
+//!   - `get_tx()` → single `eth_getTransactionByHash` on the same WS connection
+//!
+//! It deliberately does NOT reference `HttpRpcPool`.  HttpRpcPool is the HTTP-RPC
+//! failover pool (eth_call, eth_estimateGas, eth_getLogs, …) — a different transport
+//! layer with a different fault-tolerance model.  The two pools are orthogonal:
+//!
+//!   WebSocket path (this file):
+//!     - Long-lived subscription stream, reconnects on socket drop.
+//!     - WS endpoints cycled via WsRpcPool::from_env (shared-rs::rpc_failover).
+//!     - Appropriate for push-based mempool and block-head data.
+//!
+//!   HTTP RPC path (NOT this file):
+//!     - Short-lived request/response, retried with jitter on failure.
+//!     - Wired via shared-rs::rpc_failover::HttpRpcPool::with_retry at:
+//!         • searcher-rs::scanner (V3 quoter calls)        — scanner.rs:606
+//!         • searcher-rs::workers::triangular_worker       — quoter fan-out
+//!         • searcher-rs::workers::liquidation_worker      — health-factor reads
+//!         • searcher-rs::workers::pool_sync_worker        — eth_getLogs range pulls
+//!     - Arc<HttpRpcPool> is constructed and health-looped in main.rs:139-177.
+//!
+//! Future auditors: the absence of HttpRpcPool here is intentional architecture,
+//! not an oversight.  Grep for `HttpRpcPool` in scanner.rs and main.rs for the
+//! HTTP-path wiring.
 //!
 //! Responsibilities:
-//!   - Open `Provider<Ws>` against a configured RPC.
-//!   - Expose `subscribe_pending()` returning a stream of pending tx hashes.
+//!   - Open `Provider<Ws>` against a configured RPC endpoint.
+//!   - Expose `subscribe_pending()` returning a stream of pending-tx hashes.
+//!   - Expose `subscribe_pending_filtered_txs()` for Alchemy upstream filtering.
 //!   - Let the caller fetch the full transaction body via `get_tx()`.
-//!   - Emit reconnection metrics.
+//!   - Emit structured tracing events for connection / subscription lifecycle.
 //!
-//! Honest behavior: if `connect()` fails, we bubble the error up so the scanner
-//! loop can decide (log + backoff + retry). We never fabricate a connection.
+//! Honest behavior: if `connect()` fails, the error is bubbled up so the scanner
+//! loop can apply its own backoff + retry policy.  We never fabricate a connection.
 
 use anyhow::Context;
 use ethers::providers::{Middleware, Provider, StreamExt, SubscriptionStream, Ws};
