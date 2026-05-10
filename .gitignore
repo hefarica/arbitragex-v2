@@ -74,3 +74,6 @@ tests/e2e/.playwright-cache/
 
 # Docker
 docker-compose.override.yml
+
+# Vault TLS certs (N4 audit 2026-05-10) — generated at boot, never committed.
+monitoring/vault/tls/

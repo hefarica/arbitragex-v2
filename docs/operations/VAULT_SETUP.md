@@ -10,18 +10,59 @@ stays sealed until an operator with key shards intervenes.
 
 ---
 
+## PREREQUISITE — Generate TLS certificates (N4, audit 2026-05-10)
+
+`compose.prod.yml` requires TLS. The cert files are never committed to git
+(gitignored under `monitoring/vault/tls/`). Run this **once on the VPS**
+before the first `docker compose up`:
+
+```bash
+# From the repo root on the VPS:
+bash monitoring/vault/generate-tls.sh
+```
+
+This generates a self-signed CA plus a 365-day server cert valid for the
+`vault` Docker DNS name, `localhost`, and `127.0.0.1`. The CA private key is
+deleted after signing — only the CA cert, server cert, and server key remain.
+
+**Certificate rotation** (before expiry or on compromise):
+
+```bash
+rm monitoring/vault/tls/vault-{cert,key,ca}.pem
+bash monitoring/vault/generate-tls.sh
+docker compose -f docker/compose.prod.yml restart vault
+# Re-run the unseal flow (Vault re-seals on every restart).
+```
+
+CLI access from the VPS or from within other containers must use `VAULT_CACERT`
+pointing at the CA cert, or pass `-tls-skip-verify` for operator one-off
+commands (acceptable inside SSH sessions; never in automated service code):
+
+```bash
+export VAULT_ADDR=https://127.0.0.1:8200
+export VAULT_CACERT=/opt/arbitragex-v2/monitoring/vault/tls/vault-ca.pem
+docker exec -e VAULT_ADDR -e VAULT_CACERT arbitragex-v2-vault-1 vault status
+```
+
+---
+
 ## First-time initialization
 
 ```bash
-# 1. Start Vault only (other services do not depend on it yet).
+# 1. Generate TLS certs first (prod only — see PREREQUISITE section above).
+bash monitoring/vault/generate-tls.sh
+
+# 2. Start Vault only (other services do not depend on it yet).
 docker compose -f docker/compose.dev.yml up -d vault
-# or for production:
+# or for production (requires TLS certs from step 1):
 docker compose -f docker/compose.prod.yml up -d vault
 
-# 2. Initialize. This is a ONE-TIME operation.
+# 3. Initialize. This is a ONE-TIME operation.
 #    Vault will print 5 unseal key shards and a root token.
 #    Save ALL of them immediately — they are shown ONCE and cannot be recovered.
-docker exec -it arbitragex-v2-vault-1 vault operator init
+#    In prod, pass VAULT_CACERT so the CLI can verify the server cert.
+VAULT_CACERT=monitoring/vault/tls/vault-ca.pem \
+  docker exec -e VAULT_CACERT -it arbitragex-v2-vault-1 vault operator init
 
 # Output example (DO NOT commit these values anywhere):
 #   Unseal Key 1: <shard-1>
@@ -43,16 +84,22 @@ any 3 shards are sufficient to unseal.
 Vault is sealed on every restart. Provide 3 different key shards:
 
 ```bash
-docker exec -it arbitragex-v2-vault-1 vault operator unseal <shard-1>
-docker exec -it arbitragex-v2-vault-1 vault operator unseal <shard-2>
-docker exec -it arbitragex-v2-vault-1 vault operator unseal <shard-3>
+# prod: Vault now serves HTTPS. Pass VAULT_CACERT to avoid TLS errors.
+export VAULT_ADDR=https://127.0.0.1:8200
+export VAULT_CACERT=/opt/arbitragex-v2/monitoring/vault/tls/vault-ca.pem
+
+docker exec -e VAULT_ADDR -e VAULT_CACERT -it arbitragex-v2-vault-1 vault operator unseal <shard-1>
+docker exec -e VAULT_ADDR -e VAULT_CACERT -it arbitragex-v2-vault-1 vault operator unseal <shard-2>
+docker exec -e VAULT_ADDR -e VAULT_CACERT -it arbitragex-v2-vault-1 vault operator unseal <shard-3>
 # Container healthcheck now returns 200.
 ```
 
 Verify sealed status at any time:
 
 ```bash
-docker exec arbitragex-v2-vault-1 vault status
+docker exec -e VAULT_ADDR=https://127.0.0.1:8200 \
+            -e VAULT_CACERT=/vault/tls/vault-ca.pem \
+            arbitragex-v2-vault-1 vault status
 ```
 
 ---
@@ -61,7 +108,9 @@ docker exec arbitragex-v2-vault-1 vault status
 
 ```bash
 # Login with root token (only for initial setup; rotate to AppRole tokens after).
-docker exec -it arbitragex-v2-vault-1 vault login <root-token>
+docker exec -e VAULT_ADDR=https://127.0.0.1:8200 \
+            -e VAULT_CACERT=/vault/tls/vault-ca.pem \
+            -it arbitragex-v2-vault-1 vault login <root-token>
 
 # Enable KV v2 secrets engine at path `arbx/`.
 docker exec -it arbitragex-v2-vault-1 vault secrets enable -path=arbx kv-v2
@@ -86,12 +135,14 @@ docker exec -it arbitragex-v2-vault-1 vault kv put arbx/rpc \
 
 ## UI access
 
-Vault UI is available at `http://127.0.0.1:8200` on the VPS. Access via SSH
-tunnel from your workstation:
+Vault UI is available at `https://127.0.0.1:8200` on the VPS (TLS since N4).
+Access via SSH tunnel from your workstation:
 
 ```bash
 ssh -L 8200:127.0.0.1:8200 arbx
-# Then open http://localhost:8200 in your browser.
+# Then open https://localhost:8200 in your browser.
+# Your browser will warn about the self-signed cert — accept the exception,
+# or import monitoring/vault/tls/vault-ca.pem into your browser's trust store.
 ```
 
 ---
@@ -113,9 +164,12 @@ Steps for the wiring sprint:
 
 ## Security notes
 
-- TLS is disabled in the current config (`tls_disable: 1`). This is acceptable
-  while Vault is bound to loopback only and accessed via SSH tunnel. Enable TLS
-  before any network exposure beyond localhost.
+- TLS is enabled in `compose.prod.yml` (N4 audit 2026-05-10). `tls_disable`
+  has been removed. Self-signed cert is generated by `generate-tls.sh` and
+  mounted read-only into the container. The cert directory is gitignored.
+- Vault is bound to `127.0.0.1:8200` only. Operator access is via SSH tunnel.
 - Rotate the root token after initial setup: create an admin AppRole, log in
   with it, then `vault token revoke <root-token>`.
 - Never commit unseal keys, root tokens, or role secret-ids to git.
+- Cert validity is 365 days. Set a calendar reminder to rotate before expiry.
+  See "Certificate rotation" in the PREREQUISITE section above.
