@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useState, useCallback, startTransition, useRef } from "react";
 import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, Clock, AlertTriangle, EyeOff, Eye } from "lucide-react";
+import { useOpportunitiesStream } from "@/lib/hooks/useOpportunitiesStream";
 import { toast } from "sonner";
 import { OpportunityDetailDialog, type OpportunityDetail } from "@/components/OpportunityDetailDialog";
 import { motion, AnimatePresence } from "framer-motion";
@@ -88,7 +89,10 @@ const TONE_CLASS: Record<string, string> = {
   pending:  "text-muted-foreground/60 italic",
 };
 
-type FeedStatus = "POLLING" | "LIVE" | "ERROR";
+// FE-1: WS statuses. "LIVE" = WS connected. "STALE" = WS disconnected.
+// "POLLING" = WS failed 3×, degraded to HTTP polling. "CONNECTING" = initial.
+// HTTP fetch errors (manual refresh) surface via errorMsg, not feedStatus.
+type FeedStatus = "POLLING" | "LIVE" | "STALE" | "CONNECTING";
 
 const POLL_INTERVAL_MS = 4_000;
 
@@ -105,7 +109,6 @@ export default function OpportunitiesClient({
 }) {
   const [snapshot, setSnapshot] = useState<OpportunitiesSnapshot>(initialSnapshot);
   const [isMounted, setIsMounted] = useState(false);
-  const [feedStatus, setFeedStatus] = useState<FeedStatus>("POLLING");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [now, setNow] = useState<number>(0);
   // R1: viableOnly initialises to true (deterministic SSR-safe value).
@@ -122,6 +125,17 @@ export default function OpportunitiesClient({
   const { prefs } = useUserPrefs();
 
   const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
+
+  // FE-1: WebSocket stream. R1 compliant — hook runs WS inside useEffect only.
+  // When WS fails 3×, hook auto-degrades to HTTP polling at 4s.
+  const { opportunities: streamOpportunities, wsStatus } = useOpportunitiesStream(
+    initialSnapshot.opportunities,
+    EDGE_URL,
+  );
+
+  // Derive feedStatus from wsStatus for display. "POLLING" is the degraded
+  // HTTP-fallback state emitted by the hook after 3 WS failures.
+  const feedStatus: FeedStatus = wsStatus;
 
   // FE-4: SIMULATE handler.
   // NOTE: The api-server does not yet expose POST /api/opportunities/:id/simulate.
@@ -163,6 +177,10 @@ export default function OpportunitiesClient({
     }
   }, [EDGE_URL]);
 
+  // FE-1: fetchOpportunities is now ONLY used by the manual "Force refresh" button.
+  // Automatic data flow comes from the WS stream (useOpportunitiesStream).
+  // On fetch error, we set errorMsg for the error banner — feedStatus is derived
+  // from wsStatus, not from this fetch path.
   const fetchOpportunities = useCallback(async () => {
     try {
       const url = `${EDGE_URL}/api/opportunities/live?viable_only=${viableOnly}&limit=50`;
@@ -172,21 +190,19 @@ export default function OpportunitiesClient({
         cache: "no-store",
       });
       if (!res.ok) {
-        setFeedStatus(prev => prev !== "LIVE" ? "ERROR" : prev);
         setErrorMsg(`Edge returned ${res.status}`);
         return;
       }
       const data = await res.json();
       startTransition(() => {
-        setSnapshot(prev => ({
+        setSnapshot({
           opportunities: Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [],
           serverTime: new Date().toISOString(),
-          source: "client-rest-fallback",
-        }));
+          source: "client-rest-manual",
+        });
       });
       setErrorMsg(null);
     } catch (e) {
-      setFeedStatus(prev => prev !== "LIVE" ? "ERROR" : prev);
       setErrorMsg((e as Error).message);
     }
   }, [EDGE_URL, viableOnly]);
@@ -203,13 +219,12 @@ export default function OpportunitiesClient({
   }, []);
 
   // FE-6: Fire a toast for every new opportunity that clears the threshold.
-  // R1: snapshot.opportunities is populated only after mount (client fetch),
-  // so this effect only runs with real client-side data. seenNotifiedIds
-  // persists across re-renders via useRef so polling doesn't re-toast the
-  // same opportunity.
+  // R1: streamOpportunities is populated only after mount (WS or polling).
+  // seenNotifiedIds persists across re-renders via useRef so we never
+  // re-toast the same opportunity across WS reconnects or poll cycles.
   useEffect(() => {
     if (!isMounted) return;
-    for (const opp of snapshot.opportunities) {
+    for (const opp of streamOpportunities) {
       if (seenNotifiedIds.current.has(opp.id)) continue;
       seenNotifiedIds.current.add(opp.id);
       const profit = opp.expected_profit_usd ?? 0;
@@ -220,46 +235,48 @@ export default function OpportunitiesClient({
         });
       }
     }
-  }, [snapshot.opportunities, isMounted, prefs.notification_threshold_usd]);
+  }, [streamOpportunities, isMounted, prefs.notification_threshold_usd]);
 
-  // R1: All non-deterministic side effects are inside useEffect — never in render.
+  // R1: setIsMounted + setNow are the only non-WS side effects needed here.
+  // Polling interval is now managed inside useOpportunitiesStream.
   useEffect(() => {
     setIsMounted(true);
     setNow(Date.now());
-
-    // HTTP polling only — Socket.IO removed: edge worker has no /socket.io
-    // upgrade handler, which produced an endless reconnect storm in production.
-    let alive = true;
-    fetchOpportunities();
-    const timer = setInterval(() => {
-      if (alive) fetchOpportunities();
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [fetchOpportunities]);
+  }, []);
 
   useEffect(() => {
     const ticker = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(ticker);
   }, []);
 
-  const opportunities = snapshot.opportunities;
+  // FE-1: Opportunities come from the WS stream (streamOpportunities).
+  // snapshot is kept only for the manual Force Refresh button fallback path.
+  const opportunities = streamOpportunities;
   const lastRefresh = snapshot.serverTime ? new Date(snapshot.serverTime) : null;
   const viableCount = opportunities.filter((o) => o.status !== "rejected" && o.status !== "failed").length;
   const rejectedCount = opportunities.filter((o) => o.status === "rejected").length;
 
+  const isError = feedStatus === 'STALE';
+
   return (
-    <div className={`p-8 min-h-screen transition-colors duration-500 text-foreground ${feedStatus === 'ERROR' ? 'bg-destructive/5' : ''}`}>
+    <div className={`p-8 min-h-screen transition-colors duration-500 text-foreground ${isError ? 'bg-destructive/5' : ''}`}>
       <div className="flex justify-between items-center border-b border-border pb-4 mb-8">
         <div>
-          <h1 className={`text-4xl font-extrabold tracking-tight bg-clip-text text-transparent ${feedStatus === 'ERROR' ? 'bg-gradient-to-r from-destructive to-destructive/70' : 'bg-gradient-to-r from-primary to-success'}`}>
+          <h1 className={`text-4xl font-extrabold tracking-tight bg-clip-text text-transparent ${isError ? 'bg-gradient-to-r from-destructive to-destructive/70' : 'bg-gradient-to-r from-primary to-success'}`}>
             Live MEV Feed
           </h1>
           <p className="text-muted-foreground mt-2 text-sm" suppressHydrationWarning>
-            Polling edge every {POLL_INTERVAL_MS / 1000}s · {isMounted && lastRefresh ? `Last: ${lastRefresh.toLocaleTimeString()}` : "Loading..."}
+            {feedStatus === "LIVE"
+              ? "Live stream via WebSocket"
+              : feedStatus === "POLLING"
+              ? `Fallback: polling edge every ${POLL_INTERVAL_MS / 1000}s`
+              : feedStatus === "STALE"
+              ? "Stream disconnected — reconnecting…"
+              : feedStatus === "CONNECTING"
+              ? "Connecting to stream…"
+              : "Edge connection error"}
+            {" · "}
+            {isMounted && lastRefresh ? `Last refresh: ${lastRefresh.toLocaleTimeString()}` : "Loading..."}
           </p>
           {/* Counter: shown only after mount to avoid SSR mismatch */}
           {isMounted && (
@@ -293,7 +310,7 @@ export default function OpportunitiesClient({
                 : "bg-destructive/10 border-destructive/40 text-destructive hover:bg-destructive/20"
             }`}
             title={viableOnly ? "Showing viable only — click to show all including rejected" : "Showing all including rejected — click to show viable only"}
-            aria-pressed={viableOnly ? "false" : "true"}
+            aria-pressed={viableOnly}
           >
             {viableOnly ? <Eye size={14} /> : <EyeOff size={14} />}
             <span>{viableOnly ? "Viable only" : "Show all"}</span>
@@ -307,27 +324,43 @@ export default function OpportunitiesClient({
             <RefreshCw size={16} className="text-muted-foreground" />
           </button>
           <div className={`flex items-center gap-2 px-4 py-2 rounded-full border shadow-lg ${
-            feedStatus === 'POLLING' ? 'bg-success/10 border-success/40 text-success' :
-            feedStatus === 'ERROR' ? 'bg-destructive/15 border-destructive/50 text-destructive animate-pulse' :
-            'bg-info/10 border-info/40 text-info'
+            feedStatus === 'LIVE'       ? 'bg-success/10 border-success/40 text-success' :
+            feedStatus === 'POLLING'    ? 'bg-info/10 border-info/40 text-info' :
+            feedStatus === 'CONNECTING' ? 'bg-muted border-border text-muted-foreground' :
+            /* STALE */                   'bg-warning/10 border-warning/40 text-warning animate-pulse'
           }`}>
-            {feedStatus === 'POLLING' ? <Radio size={18} className="animate-pulse" /> : feedStatus === 'ERROR' ? <ShieldAlert size={18} /> : <Zap size={18} />}
+            {feedStatus === 'LIVE'       ? <Zap size={18} /> :
+             feedStatus === 'POLLING'    ? <Radio size={18} className="animate-pulse" /> :
+             feedStatus === 'CONNECTING' ? <Radio size={18} className="animate-pulse" /> :
+             /* STALE */                   <WifiOff size={18} />}
             <span className="text-sm font-bold tracking-widest">{feedStatus}</span>
           </div>
         </div>
       </div>
 
-      {feedStatus === 'ERROR' && (
-        <div className="mb-8 p-4 bg-destructive/10 border border-destructive/30 rounded-xl flex items-center gap-4 text-destructive">
-          <ShieldAlert size={24} />
+      {/* R8 fail-honest: surface WS disconnection and HTTP errors clearly. */}
+      {feedStatus === 'STALE' && (
+        <div className="mb-8 p-4 bg-warning/10 border border-warning/30 rounded-xl flex items-center gap-4 text-warning">
+          <WifiOff size={24} />
           <div>
-            <h3 className="font-bold">EDGE CONNECTION ERROR</h3>
-            <p className="text-sm">Cannot reach edge API: {errorMsg}. Retrying every {POLL_INTERVAL_MS / 1000}s.</p>
+            <h3 className="font-bold">STREAM DISCONNECTED</h3>
+            <p className="text-sm">WebSocket connection lost — reconnecting. Displayed data may be stale.</p>
           </div>
         </div>
       )}
 
-      {feedStatus === 'POLLING' && opportunities.length === 0 && (
+      {/* Manual refresh error — shown when Force Refresh fetch fails (R8 fail-honest). */}
+      {errorMsg !== null && (
+        <div className="mb-8 p-4 bg-destructive/10 border border-destructive/30 rounded-xl flex items-center gap-4 text-destructive">
+          <ShieldAlert size={24} />
+          <div>
+            <h3 className="font-bold">EDGE REFRESH ERROR</h3>
+            <p className="text-sm">Manual refresh failed: {errorMsg}</p>
+          </div>
+        </div>
+      )}
+
+      {(feedStatus === 'LIVE' || feedStatus === 'POLLING' || feedStatus === 'CONNECTING') && opportunities.length === 0 && (
         <div className="mb-8 p-4 bg-muted/50 border border-border rounded-xl flex items-center gap-4 text-muted-foreground shadow-inner">
           <div className="relative flex h-3 w-3">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
