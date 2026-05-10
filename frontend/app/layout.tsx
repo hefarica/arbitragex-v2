@@ -46,7 +46,15 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <div className="flex flex-1">
             <AppSidebar />
             <main id="main" tabIndex={-1} className="min-w-0 flex-1 outline-none">
-              <div className="mx-auto w-full max-w-7xl px-4 py-8 lg:px-10 lg:py-10">
+              {/*
+                2026-05-10: max-w-7xl (1280px) wasted ~340px on each side of a
+                1920px monitor when rendering data-dense tables (/opportunities,
+                /dex-registry, /executions). Bumped to 1800px so wide monitors
+                use their real estate while ultrawide 4K screens still get a
+                centred reading line. Horizontal padding kept at lg:px-10 for
+                breathing room around the sidebar.
+              */}
+              <div className="mx-auto w-full max-w-[1800px] px-4 py-8 lg:px-10 lg:py-10">
                 {children}
               </div>
             </main>
