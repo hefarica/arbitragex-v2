@@ -42,14 +42,28 @@ jobs:
       - name: cargo check (workspace)
         run: cargo check --workspace --locked
 
-      - name: cargo fmt (check only)
+      # ─── R1 hard-gate (audit re-run #2, 2026-05-10) ────────────────────────
+      # Critical hot-path binaries (searcher-rs, relays-client) carry
+      # #![deny(clippy::unwrap_used, clippy::expect_used)] at crate root. The
+      # gating step below makes that promise enforceable at merge time. Any new
+      # unwrap/expect in production code under these crates fails the merge.
+      # Other crates use the workspace-wide advisory step further down.
+      - name: cargo clippy (gating — searcher-rs + relays-client)
+        run: cargo clippy -p searcher-rs -p relays-client --locked --all-targets -- -D warnings
+
+      - name: cargo fmt (check only — workspace advisory)
         run: cargo fmt --all -- --check
-        # TODO: pre-existing formatting drift; tighten to required once cleaned up
+        # Advisory until the pre-existing fmt drift is rebased clean. Hard-gate
+        # version is already enforced for searcher-rs + relays-client below.
         continue-on-error: true
 
-      - name: cargo clippy (workspace)
+      - name: cargo fmt (gating — searcher-rs + relays-client)
+        run: cargo fmt -p searcher-rs -p relays-client -- --check
+
+      - name: cargo clippy (workspace advisory)
         run: cargo clippy --workspace --locked -- -D warnings
-        # TODO: unknown baseline of clippy warnings on day-1; tighten once resolved
+        # Advisory baseline. Workspace-wide deny is the goal; remove
+        # continue-on-error once the rest of the workspace is clean.
         continue-on-error: true
 
       - name: cargo test --lib (workspace)
