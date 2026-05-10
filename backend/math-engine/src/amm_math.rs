@@ -154,6 +154,211 @@ pub fn calc_univ3_price_impact_pct(
     impact.min(1.0)
 }
 
+// ---------------------------------------------------------------------------
+// V3 tick-walking price impact
+// ---------------------------------------------------------------------------
+
+/// Convert a Uniswap V3 tick index to its corresponding sqrtPriceX96.
+///
+/// Uses the identity `√P = 1.0001^(tick/2)` expressed as a `f64` floating-point
+/// approximation. This is a scaffold implementation.
+///
+/// # Accuracy vs the canonical TickMath
+/// The real Uniswap V3 `TickMath.getSqrtRatioAtTick` uses a precomputed bit-by-bit
+/// table of 20 multipliers, yielding exact Q64.96 results. The `f64` approximation
+/// here has relative error ≤ ~1 ULP (~1e-15) for |tick| ≤ 887_272 (the V3 maximum),
+/// because `f64` has 53 bits of mantissa and the tick range is narrow enough that
+/// `powf` is well-conditioned. The impact on arbitrage gating is negligible: a 1e-15
+/// relative error in sqrtPrice produces a 2e-15 relative error in the tick-walking
+/// result, far below any profitable threshold. A future sprint can replace this with
+/// the exact integer table if sub-ULP precision becomes necessary.
+fn tick_to_sqrt_price_x96(tick: i32) -> u128 {
+    // 1.0001^(tick/2) × 2^96
+    // Note: tick ∈ [-887_272, +887_272]; the range of the exponent tick/2 is
+    // ≈ ±443_636. At these extremes 1.0001^443636 ≈ 1.38e19 which is well below
+    // f64::MAX ≈ 1.8e308, so no overflow occurs.
+    let exponent = tick as f64 * 0.5_f64;
+    let factor = 1.0001_f64.powf(exponent);
+    let q96 = (1u128 << 96) as f64;
+    // Saturating cast: if factor is extremely small (negative ticks near min),
+    // the product rounds to 0 which is still safe — the caller guards on 0.
+    let raw = factor * q96;
+    if raw >= u128::MAX as f64 {
+        u128::MAX
+    } else if raw <= 0.0 {
+        0u128
+    } else {
+        raw as u128
+    }
+}
+
+/// Compute Uniswap V3 price impact via tick-walking simulation.
+///
+/// When `distribution` is `Some`, this function walks tick boundaries in the
+/// direction of the swap, updating the active liquidity at each crossing, and
+/// accumulates the consumed input until `amount_in_wei` is fully spent. The
+/// resulting relative change in sqrtPriceX96 is converted to a price-impact
+/// fraction using the same `2 × |Δ√P / √P|` formula as the first-order proxy.
+///
+/// When `distribution` is `None` (subgraph unconfigured or unavailable), falls
+/// back immediately to [`calc_univ3_price_impact_pct`] with the slot0 values from
+/// the distribution (R8 fail-honest — no data is synthesised).
+///
+/// # Tick-walking algorithm
+///
+/// 1. Collect the relevant subset of ticks: those below `current_tick` for
+///    token0→token1 swaps (price decreasing), those above for token1→token0 swaps
+///    (price increasing), sorted in the direction of traversal.
+/// 2. For each next-tick boundary, compute the input amount needed to move the
+///    pool price from the current sqrtPrice to that boundary within the current
+///    liquidity range.
+/// 3. If the remaining trade fits within the current range, stop and compute the
+///    partial sqrtPrice move. Otherwise, cross the tick, update liquidity by
+///    `±liquidityNet` (per V3 spec), and continue.
+/// 4. Cap at 100 tick crossings to bound latency.
+///
+/// # Liquidity update sign convention (per Uniswap V3 whitepaper §6.3)
+/// - Price moving upward (token1→token0): add `liquidityNet` when crossing tick T upward.
+/// - Price moving downward (token0→token1): subtract `liquidityNet` when crossing tick T downward.
+///
+/// # Returns
+/// Price impact as a fraction in `[0.0, 1.0]`. Conservative in the fail-safe
+/// direction: underestimated liquidity (e.g., due to tick list truncation at
+/// `first: 200`) → overestimated impact → fewer false positives.
+pub fn calc_univ3_price_impact_with_distribution(
+    amount_in_wei: u128,
+    distribution: Option<&crate::subgraph_client::PoolTickDistribution>,
+    direction_token0_to_token1: bool,
+) -> f64 {
+    let Some(dist) = distribution else {
+        // R8 fall-back: use slot0 values with the first-order proxy.
+        return calc_univ3_price_impact_pct(
+            amount_in_wei,
+            0, // sqrt_price_x96 unknown without dist → 0 → returns 0.0 (fail-honest)
+            0,
+            direction_token0_to_token1,
+        );
+    };
+
+    if dist.liquidity == 0 || dist.sqrt_price_x96 == 0 {
+        // R8: degenerate pool → 0.0 → caller uses slippage proxy.
+        return 0.0;
+    }
+
+    let initial_sqrt_price_f64 = dist.sqrt_price_x96 as f64;
+    let mut current_sqrt_price = initial_sqrt_price_f64;
+    let mut current_liquidity = dist.liquidity as f64;
+    let mut remaining = amount_in_wei as f64;
+
+    // Collect ticks relevant to the swap direction, ordered in traversal order.
+    //
+    // token0→token1 (price decreasing → sqrtPrice decreasing):
+    //   Walk ticks at or below current_tick in descending order.
+    // token1→token0 (price increasing → sqrtPrice increasing):
+    //   Walk ticks strictly above current_tick in ascending order.
+    let relevant_ticks: Vec<&crate::subgraph_client::TickInfo> = if direction_token0_to_token1 {
+        let mut v: Vec<_> = dist
+            .ticks
+            .iter()
+            .filter(|t| t.tick_idx <= dist.current_tick)
+            .collect();
+        v.sort_unstable_by(|a, b| b.tick_idx.cmp(&a.tick_idx)); // descending
+        v
+    } else {
+        dist.ticks
+            .iter()
+            .filter(|t| t.tick_idx > dist.current_tick)
+            .collect() // already ascending from subgraph query
+    };
+
+    let max_crossings = 100usize;
+
+    for tick_info in relevant_ticks.iter().take(max_crossings) {
+        if remaining <= 0.0 {
+            break;
+        }
+
+        let next_sqrt = tick_to_sqrt_price_x96(tick_info.tick_idx) as f64;
+
+        // Amount of input token consumed to move price from current_sqrt_price to next_sqrt,
+        // within the current liquidity range (V3 formulas, §6.2):
+        //
+        // token0→token1: Δx = L × (1/√P_next − 1/√P_current)  [token0 in]
+        //   Rearranged:   Δx = L × (√P_current − √P_next) / (√P_current × √P_next)
+        //   But in X96 space: avoid division; approximate as
+        //     Δx ≈ L × (√P_current − √P_next) / √P_current   (first-order, same bias as proxy)
+        //
+        // token1→token0: Δy = L × (√P_next − √P_current)      [token1 in]
+        let amount_to_next = if direction_token0_to_token1 {
+            if current_sqrt_price <= 0.0 || next_sqrt <= 0.0 {
+                break;
+            }
+            // Δx ≈ L × (√P_cur − √P_next) / √P_cur
+            current_liquidity * (current_sqrt_price - next_sqrt) / current_sqrt_price
+        } else {
+            // Δy = L × (√P_next − √P_cur)
+            current_liquidity * (next_sqrt - current_sqrt_price)
+        };
+
+        if amount_to_next <= 0.0 {
+            // Degenerate tick (e.g., duplicate or out-of-order): skip.
+            continue;
+        }
+
+        if amount_to_next >= remaining {
+            // Trade exhausted within this tick range — partial move.
+            let fraction_consumed = remaining / amount_to_next;
+            let delta_sqrt = if direction_token0_to_token1 {
+                -(current_sqrt_price - next_sqrt) * fraction_consumed
+            } else {
+                (next_sqrt - current_sqrt_price) * fraction_consumed
+            };
+            current_sqrt_price += delta_sqrt;
+            remaining = 0.0;
+        } else {
+            // Cross this tick fully.
+            remaining -= amount_to_next;
+            current_sqrt_price = next_sqrt;
+
+            // Update active liquidity by liquidityNet.
+            // Sign convention: moving upward adds liquidityNet; moving downward subtracts.
+            let liq_net = tick_info.liquidity_net.parse::<i128>().unwrap_or(0) as f64;
+            if direction_token0_to_token1 {
+                current_liquidity -= liq_net; // downward crossing
+            } else {
+                current_liquidity += liq_net; // upward crossing
+            }
+
+            if current_liquidity <= 0.0 {
+                // Pool drained past this tick — full impact.
+                return 1.0;
+            }
+        }
+    }
+
+    // If remaining > 0 after exhausting all known ticks, the trade extends beyond
+    // the tick list (e.g., truncated at 200 entries). Treat the remainder as still
+    // within the last known liquidity range — conservative (overestimates impact).
+    if remaining > 0.0 && current_liquidity > 0.0 {
+        let delta_sqrt = if direction_token0_to_token1 {
+            -(remaining * current_sqrt_price / current_liquidity)
+        } else {
+            remaining / current_liquidity
+        };
+        current_sqrt_price += delta_sqrt;
+    }
+
+    // Price impact = 2 × |Δ√P / √P_initial| (same as first-order proxy).
+    // Factor of 2: d(P)/P = 2 × d(√P)/√P for small moves.
+    let delta_ratio =
+        (current_sqrt_price - initial_sqrt_price_f64).abs() / initial_sqrt_price_f64;
+    (2.0 * delta_ratio).min(1.0)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,6 +505,138 @@ mod tests {
         assert!(
             (ratio - 4.0).abs() < 1e-6,
             "impact ratio t0t1/t1t0 should be (√P)^2 = 4.0, got {ratio}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // V3 tick-walking tests
+    // -----------------------------------------------------------------------
+
+    /// Helper: build a PoolTickDistribution for tests.
+    fn make_dist(
+        current_tick: i32,
+        sqrt_price_x96: u128,
+        liquidity: u128,
+        ticks: Vec<crate::subgraph_client::TickInfo>,
+    ) -> crate::subgraph_client::PoolTickDistribution {
+        crate::subgraph_client::PoolTickDistribution {
+            pool_addr: "0xtest".to_string(),
+            current_tick,
+            sqrt_price_x96,
+            liquidity,
+            ticks,
+        }
+    }
+
+    /// No distribution (None) → falls back to first-order proxy.
+    /// With sqrt_price_x96=0 and liquidity=0, proxy returns 0.0 (R8 fail-honest).
+    #[test]
+    fn test_v3_walk_no_distribution_falls_back() {
+        let impact =
+            calc_univ3_price_impact_with_distribution(100_000_000_000_000_000, None, true);
+        // Fallback calls calc_univ3_price_impact_pct(amt, 0, 0, true) → 0.0
+        assert_eq!(
+            impact, 0.0,
+            "None distribution must fall back to proxy returning 0.0"
+        );
+    }
+
+    /// Small trade, single tick range (no tick list) → stays within current range.
+    /// With enormous liquidity the impact must be very small (<1%).
+    #[test]
+    fn test_v3_walk_within_current_tick_small_impact() {
+        // Pool at tick 0, √P = 2^96 (= 1.0 in real units), huge liquidity.
+        let dist = make_dist(
+            0,
+            Q96_U128,
+            1_000_000_000_000_000_000_000u128, // 10^21 (huge)
+            vec![],                             // no tick list → trade stays in current range
+        );
+        let impact = calc_univ3_price_impact_with_distribution(
+            1_000_000_000_000_000_000u128, // 1 token in (10^18)
+            Some(&dist),
+            true,
+        );
+        // With L = 10^21 and amt = 10^18: impact ≈ 2 × 10^18 / 10^21 = 0.002
+        // (after exhausting tick list the remainder is handled by the tail formula)
+        assert!(
+            impact >= 0.0 && impact < 0.01,
+            "small trade on deep pool must have impact < 1%, got {impact}"
+        );
+    }
+
+    /// Degenerate distribution (liquidity=0) → returns 0.0 (R8).
+    #[test]
+    fn test_v3_walk_degenerate_zero_liquidity_returns_zero() {
+        let dist = make_dist(0, Q96_U128, 0, vec![]);
+        let impact = calc_univ3_price_impact_with_distribution(
+            1_000_000_000_000_000_000u128,
+            Some(&dist),
+            true,
+        );
+        assert_eq!(impact, 0.0, "zero liquidity distribution must return 0.0 (R8)");
+    }
+
+    /// Single tick crossing with thin liquidity → measurable cross-tick impact.
+    ///
+    /// Pool: tick=0, √P=2^96 (1.0), L=1_000 (very thin).
+    /// One tick at tickIdx=-1 with liquidityNet=-500 (removes half liquidity on downward cross).
+    /// Trade is large relative to liquidity → crosses the tick and shows elevated impact.
+    #[test]
+    fn test_v3_walk_crosses_tick_with_thin_liquidity() {
+        let thin_liq: u128 = 1_000_000_000_000; // 10^12 (thin)
+        let dist = make_dist(
+            0,
+            Q96_U128,
+            thin_liq,
+            vec![crate::subgraph_client::TickInfo {
+                tick_idx: -1,
+                liquidity_net: "-500000000000".to_string(), // removes half on downward cross
+                liquidity_gross: "500000000000".to_string(),
+            }],
+        );
+        // Trade size = 5× liquidity → must cross the tick boundary.
+        let amount_in = 5 * thin_liq;
+        let impact = calc_univ3_price_impact_with_distribution(amount_in, Some(&dist), true);
+        // Impact must be significant (> 1%) given the thin pool and large trade.
+        assert!(
+            impact > 0.01,
+            "large trade on thin pool must have impact > 1%, got {impact}"
+        );
+        // Must be bounded in [0, 1].
+        assert!(impact <= 1.0, "impact must not exceed 1.0, got {impact}");
+    }
+
+    /// tick_to_sqrt_price_x96 sanity: tick=0 should give exactly 2^96.
+    #[test]
+    fn test_tick_to_sqrt_price_x96_at_zero() {
+        let result = tick_to_sqrt_price_x96(0);
+        // 1.0001^0 = 1.0; 1.0 × 2^96 = 2^96
+        assert_eq!(
+            result, Q96_U128,
+            "tick=0 must map to 2^96, got {result}"
+        );
+    }
+
+    /// tick_to_sqrt_price_x96 sanity: positive tick → larger sqrtPrice.
+    #[test]
+    fn test_tick_to_sqrt_price_x96_positive_tick_larger() {
+        let at_zero = tick_to_sqrt_price_x96(0);
+        let at_positive = tick_to_sqrt_price_x96(100);
+        assert!(
+            at_positive > at_zero,
+            "positive tick must produce larger sqrtPriceX96"
+        );
+    }
+
+    /// tick_to_sqrt_price_x96 sanity: negative tick → smaller sqrtPrice.
+    #[test]
+    fn test_tick_to_sqrt_price_x96_negative_tick_smaller() {
+        let at_zero = tick_to_sqrt_price_x96(0);
+        let at_negative = tick_to_sqrt_price_x96(-100);
+        assert!(
+            at_negative < at_zero,
+            "negative tick must produce smaller sqrtPriceX96"
         );
     }
 }

@@ -4078,6 +4078,13 @@ checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
 [[package]]
 name = "math-engine"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "md-5"
@@ -4718,9 +4725,11 @@ dependencies = [
  "chrono",
  "config",
  "ethers",
+ "futures-util",
  "hex",
  "lru 0.12.5",
  "math-engine",
+ "redis 0.25.4",
  "revm",
  "serde",
  "serde_json",

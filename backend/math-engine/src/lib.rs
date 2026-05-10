@@ -7,6 +7,7 @@ pub mod amm_math;
 pub mod roi_engine;
 pub mod route_math;
 pub mod risk_engine;
+pub mod subgraph_client;
 
 /// Represents a DeFi arbitrage financial outcome.
 #[derive(Debug, Clone, PartialEq)]
