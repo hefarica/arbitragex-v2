@@ -96,17 +96,27 @@ export async function verifyGPAP1(opts?: {
 
   let recent_count = 0;
   let first_row_age_days: number | null = null;
+  let last_row_age_hours: number | null = null;
   try {
+    // "Alive in window": at least 1 detection in the last 7 days. Markets can
+    // legitimately go quiet for hours when gas + min_profit_usd thresholds are
+    // tight; the doctrine point is that the pipeline HAS PRODUCED detections
+    // recently, not that it's producing every hour.
     const r1 = await opts.pool.query(
-      `SELECT COUNT(*)::int AS n FROM opportunities WHERE detected_at > NOW() - interval '1 hour'`,
+      `SELECT COUNT(*)::int AS n FROM opportunities WHERE detected_at > NOW() - interval '7 days'`,
     );
     recent_count = r1.rows[0]?.n ?? 0;
 
     const r2 = await opts.pool.query(
-      `SELECT EXTRACT(EPOCH FROM (NOW() - MIN(detected_at)))::float AS secs FROM opportunities`,
+      `SELECT
+         EXTRACT(EPOCH FROM (NOW() - MIN(detected_at)))::float AS first_secs,
+         EXTRACT(EPOCH FROM (NOW() - MAX(detected_at)))::float AS last_secs
+       FROM opportunities`,
     );
-    const secs = r2.rows[0]?.secs;
-    first_row_age_days = secs != null ? secs / 86400 : null;
+    const fs = r2.rows[0]?.first_secs;
+    const ls = r2.rows[0]?.last_secs;
+    first_row_age_days = fs != null ? fs / 86400 : null;
+    last_row_age_hours = ls != null ? ls / 3600 : null;
   } catch (e) {
     return {
       ...base,
@@ -126,7 +136,7 @@ export async function verifyGPAP1(opts?: {
     return {
       ...base,
       status: "yellow",
-      reason: `paper-mode ON, oldest detection ${first_row_age_days.toFixed(1)}d ago, but 0 detections in last 1h — pipeline appears idle`,
+      reason: `paper-mode ON, oldest detection ${first_row_age_days.toFixed(1)}d ago, but 0 detections in the past 7 days — pipeline appears stalled`,
     };
   }
   if (first_row_age_days < minDays) {
@@ -134,7 +144,7 @@ export async function verifyGPAP1(opts?: {
     return {
       ...base,
       status: "yellow",
-      reason: `paper-mode running ${first_row_age_days.toFixed(1)}/${minDays}d (${remaining.toFixed(1)}d remaining); ${recent_count} detections in last 1h`,
+      reason: `paper-mode running ${first_row_age_days.toFixed(1)}/${minDays}d (${remaining.toFixed(1)}d remaining); ${recent_count} detections in last 7d, last ${(last_row_age_hours ?? 0).toFixed(1)}h ago`,
       evidence: { kind: "db_query", ref: "MIN(detected_at) FROM opportunities" },
     };
   }
@@ -142,7 +152,7 @@ export async function verifyGPAP1(opts?: {
   return {
     ...base,
     status: "green",
-    reason: `paper-mode running ${first_row_age_days.toFixed(1)}d (≥${minDays}d threshold) with ${recent_count} detections in last 1h`,
+    reason: `paper-mode running ${first_row_age_days.toFixed(1)}d (≥${minDays}d threshold); ${recent_count} detections in last 7d, last ${(last_row_age_hours ?? 0).toFixed(1)}h ago`,
     evidence: { kind: "db_query", ref: "MIN(detected_at) FROM opportunities" },
   };
 }

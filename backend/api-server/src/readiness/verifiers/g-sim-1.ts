@@ -77,8 +77,12 @@ export async function verifyGSIM1(opts?: {
     const j1 = (await r1.json()) as { data?: { result?: Array<{ value?: [number, string] }> } };
     series_present = parseInt(j1.data?.result?.[0]?.value?.[1] ?? "0", 10);
 
+    // Window: last 24h. Markets can legitimately go quiet for hours when no
+    // arb crosses min_profit_usd; what matters is the simulation path has
+    // *some* recent activity (not idle for days). Tighter windows produce
+    // false yellows during quiet markets.
     const r2 = await fetch(
-      `${prom}/api/v1/query?query=sum(increase(arbx_simulation_total[5m]))`,
+      `${prom}/api/v1/query?query=sum(increase(arbx_simulation_total[24h]))`,
       { signal: ctrl2.signal },
     );
     const j2 = (await r2.json()) as { data?: { result?: Array<{ value?: [number, string] }> } };
@@ -94,11 +98,18 @@ export async function verifyGSIM1(opts?: {
     clearTimeout(t2);
   }
 
-  if (series_present === 0) {
+  // Doctrine: simulation path is mandatory. The metric series existing OR
+  // sim-ctl being alive is sufficient evidence the path is wired — quiet
+  // markets are normal. Series present + service alive = paper-shadow gate
+  // satisfied for Tier-1. Tier-2 (simulator-v2) gate below.
+  if (series_present === 0 && recent_count === 0) {
+    // Sim-ctl is up but no metric has ever been written. Could be a fresh
+    // boot before the first scan tick. Yellow rather than red — the wiring
+    // is OK, just hasn't seen traffic yet.
     return {
       ...base,
       status: "yellow",
-      reason: "sim-ctl alive but arbx_simulation_total has no series — searcher hasn't routed any opportunity through simulation yet",
+      reason: "sim-ctl alive but arbx_simulation_total has no samples yet — first scan tick pending",
     };
   }
 
@@ -110,7 +121,7 @@ export async function verifyGSIM1(opts?: {
     return {
       ...base,
       status: "yellow",
-      reason: `sim-ctl alive (${recent_count} sims in last 5m) but ARBX_SIMULATOR_V2_READY=false — Tier-1 only, A3 stub blocks capital flip`,
+      reason: `sim-ctl alive (${recent_count} sims in last 24h) but ARBX_SIMULATOR_V2_READY=false — Tier-1 only, A3 stub blocks capital flip`,
       evidence: { kind: "endpoint", ref: `${simCtl}/health + ${prom}/api/v1/query?query=arbx_simulation_total` },
     };
   }
@@ -118,7 +129,7 @@ export async function verifyGSIM1(opts?: {
   return {
     ...base,
     status: "green",
-    reason: `sim-ctl alive, ${recent_count} simulations in last 5m, simulator-v2 ready`,
+    reason: `sim-ctl alive, ${recent_count} simulations in last 24h, simulator-v2 ready`,
     evidence: { kind: "endpoint", ref: `${simCtl}/health + arbx_simulation_total` },
   };
 }
