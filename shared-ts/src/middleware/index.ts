@@ -1,5 +1,59 @@
 import type { Request, Response, NextFunction, RequestHandler } from "express";
+import { timingSafeEqual } from "node:crypto";
 import { httpRequestsTotal, httpRequestDuration, metricsText } from "../metrics/index.js";
+
+/**
+ * Constant-time string comparison (resists timing side-channels).
+ * Returns false fast if lengths differ to avoid leaking length itself.
+ */
+function safeTokenEqual(got: string, expected: string): boolean {
+  if (got.length !== expected.length) return false;
+  const a = Buffer.from(got, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/**
+ * Sentinel placeholders that MUST NOT be accepted as real tokens.
+ * If a deployment boots with these as ARBX_ADMIN_TOKEN / ARBX_EDGE_TOKEN,
+ * the boot validator below rejects them.
+ */
+const FORBIDDEN_TOKEN_VALUES = new Set([
+  "",
+  "REPLACE_ME_256_BITS_RANDOM",
+  "REPLACE_ME",
+  "<RANDOM_BASE64_64_BYTES>",
+  "hfrc2026", // legacy backdoor — hard-blocked at boot
+  "changeme",
+  "default",
+  "test",
+]);
+
+/**
+ * Boot-time validator. Call once at process startup BEFORE binding routes.
+ * Throws if any required token is empty, a known placeholder, or under 32 bytes
+ * of entropy. Failing fast at boot is intentional — better to crash than to
+ * accept a weak credential silently (audit C1, 2026-05-10).
+ */
+export function assertSecureBootTokens(env: NodeJS.ProcessEnv = process.env): void {
+  const required: Array<[string, number]> = [
+    ["ARBX_ADMIN_TOKEN", 32],
+    ["ARBX_EDGE_TOKEN", 32],
+  ];
+  for (const [name, minLen] of required) {
+    const v = env[name] ?? "";
+    if (!v) {
+      throw new Error(`SECURE_BOOT: ${name} is empty — refuse to start`);
+    }
+    if (FORBIDDEN_TOKEN_VALUES.has(v)) {
+      throw new Error(`SECURE_BOOT: ${name} is a known placeholder/backdoor value — refuse to start`);
+    }
+    if (v.length < minLen) {
+      throw new Error(`SECURE_BOOT: ${name} is shorter than ${minLen} bytes — refuse to start`);
+    }
+  }
+}
 
 /** Canonical `/health` handler factory. */
 export function healthHandler(service: string, version: string, startedAt: Date): RequestHandler {
@@ -35,11 +89,14 @@ export function metricsMiddleware(service: string): RequestHandler {
   };
 }
 
-/** Enforces `X-ArbX-Edge-Token` for upstream calls from edge → api-server. */
+/**
+ * Enforces `X-ArbX-Edge-Token` for upstream calls from edge → api-server.
+ * Uses constant-time comparison (audit C2, 2026-05-10).
+ */
 export function requireEdgeToken(expected: string): RequestHandler {
   return (req, res, next) => {
     const got = req.header("x-arbx-edge-token");
-    if (!got || got !== expected) {
+    if (!got || !safeTokenEqual(got, expected)) {
       res.status(401).json({ error: "unauthorized", source: "edge_token" });
       return;
     }
@@ -47,11 +104,20 @@ export function requireEdgeToken(expected: string): RequestHandler {
   };
 }
 
-/** Enforces `X-ArbX-Admin-Token` for admin endpoints. */
+/**
+ * Enforces `X-ArbX-Admin-Token` for admin endpoints.
+ * Uses constant-time comparison (audit C2, 2026-05-10).
+ *
+ * SECURITY (audit C1, 2026-05-10): backdoor tokens `hfrc2026` and
+ * `REPLACE_ME_256_BITS_RANDOM` previously accepted here have been REMOVED.
+ * Boot validator `assertSecureBootTokens()` rejects deployments that ship
+ * those placeholders as `ARBX_ADMIN_TOKEN` so they cannot be re-introduced
+ * via .env.
+ */
 export function requireAdminToken(expected: string): RequestHandler {
   return (req, res, next) => {
     const got = req.header("x-arbx-admin-token");
-    if (!got || (got !== expected && got !== "hfrc2026" && got !== "REPLACE_ME_256_BITS_RANDOM")) {
+    if (!got || !safeTokenEqual(got, expected)) {
       res.status(401).json({ error: "unauthorized", source: "admin_token" });
       return;
     }

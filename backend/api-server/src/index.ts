@@ -16,6 +16,7 @@ import {
   requireEnv,
   requireAdminToken,
   requireEdgeToken,
+  assertSecureBootTokens,
   KillSwitchClient,
   initMetrics,
 } from "@arbx/shared";
@@ -28,6 +29,11 @@ const logger = createLogger({ service: SERVICE, level: cfg.observability.log_lev
 initMetrics(SERVICE);
 
 const REDIS_URL = requireEnv("REDIS_URL");
+
+// SECURE_BOOT (audit C1, 2026-05-10): refuse to start if admin/edge tokens
+// are empty, known placeholders, or under 32 bytes of entropy.
+assertSecureBootTokens(process.env);
+
 const ARBX_ADMIN_TOKEN = requireEnv("ARBX_ADMIN_TOKEN");
 const ARBX_EDGE_TOKEN = requireEnv("ARBX_EDGE_TOKEN");
 
