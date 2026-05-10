@@ -3,14 +3,7 @@ import { AlertCircleIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { FocusOnMount } from "@/components/focus-on-mount";
 import { PageHeader } from "@/components/page-header";
-import { ReconKpiGrid } from "@/features/recon/ReconKpiGrid";
-import { TopStrategiesTable } from "@/features/recon/TopStrategiesTable";
-import { CriticalAnomalies } from "@/features/recon/CriticalAnomalies";
-import { AttemptsBreakdown } from "@/features/charts/AttemptsBreakdown";
-import { RevertRateGauge } from "@/features/charts/RevertRateGauge";
-import { StrategyScoreBarChart } from "@/features/charts/StrategyScoreBarChart";
-import { ReconPnLChart } from "@/features/charts/ReconPnLChart";
-import { MotionItem, MotionStagger } from "@/components/motion";
+import { ReconClient } from "@/app/recon/ReconClient";
 import { getReconSummary, getReconTimeseries } from "@/lib/api-client";
 import { fmtTime } from "@/lib/formatters";
 
@@ -52,34 +45,11 @@ export default async function ReconPage() {
         meta={[`window: last ${s.window_hours}h`, `snapshot ${fmtTime(s.ts)}`]}
         showRefresh
       />
-
-      <ReconKpiGrid summary={s} />
-
-      {tsRes.ok ? (
-        <div className="mb-8">
-          <ReconPnLChart response={tsRes.data} />
-        </div>
-      ) : (
-        <Alert variant="destructive" className="mb-8">
-          <AlertCircleIcon />
-          <AlertTitle>timeseries unavailable</AlertTitle>
-          <AlertDescription>
-            <code className="font-mono text-xs">{tsRes.error}</code>
-          </AlertDescription>
-        </Alert>
-      )}
-
-      <MotionStagger className="mb-8 grid gap-4 lg:grid-cols-3">
-        <MotionItem><AttemptsBreakdown totals={s.totals} /></MotionItem>
-        <MotionItem><RevertRateGauge rate={s.revert_rate} /></MotionItem>
-        <MotionItem><StrategyScoreBarChart rows={s.top_strategies} /></MotionItem>
-      </MotionStagger>
-
-      <h2>Top strategies</h2>
-      <TopStrategiesTable rows={s.top_strategies} />
-
-      <h2>Critical anomalies (last 24h)</h2>
-      <CriticalAnomalies rows={s.critical_anomalies_24h} />
+      {/* FE-9: ReconClient owns the date-range selector and re-fetches on change. */}
+      <ReconClient
+        initialSummary={s}
+        initialTimeseries={tsRes.ok ? tsRes.data : null}
+      />
     </>
   );
 }

@@ -3,8 +3,7 @@ import { AlertCircleIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { FocusOnMount } from "@/components/focus-on-mount";
 import { PageHeader } from "@/components/page-header";
-import { SystemKpiGrid } from "@/features/status/SystemKpiGrid";
-import { ServicesTable } from "@/features/status/ServicesTable";
+import { StatusClient } from "@/app/status/StatusClient";
 import { getStatus } from "@/lib/api-client";
 import { fmtTime } from "@/lib/formatters";
 
@@ -45,15 +44,12 @@ export default async function StatusPage() {
     <>
       <PageHeader
         title="System status"
-        lede="Live operator view of every hot-path service + kill-switch state."
+        lede="Live operator view of every hot-path service + kill-switch state. Auto-refreshes every 5s."
         meta={[`env: ${s.env}`, `api-server v${s.version}`, `as of ${fmtTime(s.ts)}`]}
         showRefresh
       />
-
-      <SystemKpiGrid status={s} />
-
-      <h2>Services</h2>
-      <ServicesTable services={s.services} />
+      {/* FE-11: StatusClient polls getStatus every 5s; uses R1 Mounted Snapshot Pattern. */}
+      <StatusClient initialStatus={s} />
     </>
   );
 }

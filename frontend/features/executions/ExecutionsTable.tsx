@@ -4,9 +4,11 @@ import { useMemo } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { DataTable } from "@/features/table/DataTable";
 import type { ExecutionRow } from "@/lib/api-client";
 import { fmtMoney, fmtTime } from "@/lib/formatters";
+import { exportToCSV, exportToJSON } from "@/lib/csv-export";
 
 type StatusVariant = "success" | "destructive" | "warning" | "info" | "outline";
 
@@ -80,11 +82,29 @@ export function ExecutionsTable({ items }: { items: ExecutionRow[] }) {
   );
 
   return (
-    <DataTable
-      columns={columns}
-      data={items}
-      searchPlaceholder="Filter executions (chain, strategy, relay, status, error)…"
-      initialSort={[{ id: "submitted_at", desc: true }]}
-    />
+    <div className="space-y-3">
+      <div className="flex justify-end gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => exportToCSV(items as unknown as Record<string, unknown>[], `executions_${Date.now()}.csv`)}
+        >
+          Export CSV
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => exportToJSON(items, `executions_${Date.now()}.json`)}
+        >
+          Export JSON
+        </Button>
+      </div>
+      <DataTable
+        columns={columns}
+        data={items}
+        searchPlaceholder="Filter executions (chain, strategy, relay, status, error)…"
+        initialSort={[{ id: "submitted_at", desc: true }]}
+      />
+    </div>
   );
 }

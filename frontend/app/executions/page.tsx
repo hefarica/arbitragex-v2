@@ -3,8 +3,7 @@ import { AlertCircleIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { FocusOnMount } from "@/components/focus-on-mount";
 import { PageHeader } from "@/components/page-header";
-import { ExecutionsTable } from "@/features/executions/ExecutionsTable";
-import { ExecutionsEmpty } from "@/features/executions/ExecutionsEmpty";
+import { ExecutionsClient } from "@/features/executions/ExecutionsClient";
 import { getExecutionsRecent } from "@/lib/api-client";
 import { fmtTime } from "@/lib/formatters";
 
@@ -12,7 +11,8 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function ExecutionsPage() {
-  const res = await getExecutionsRecent(100);
+  // FE-8: initial snapshot with first 50 rows; client handles Load More.
+  const res = await getExecutionsRecent(50);
 
   return (
     <>
@@ -20,7 +20,7 @@ export default async function ExecutionsPage() {
         title="Recent executions"
         lede="Bundle submissions and their outcomes. Paper-mode is ON until S9; real relays only record submitted / not_implemented until the safety rail is flipped."
         meta={res.ok ? [
-          `${res.data.count} rows`,
+          `${res.data.count} rows (initial 50)`,
           `snapshot ${fmtTime(res.data.ts)}`,
         ] : undefined}
         showRefresh
@@ -34,10 +34,11 @@ export default async function ExecutionsPage() {
             <AlertDescription><code className="font-mono text-xs">{res.error}</code></AlertDescription>
           </Alert>
         </FocusOnMount>
-      ) : res.data.count === 0 ? (
-        <ExecutionsEmpty />
       ) : (
-        <ExecutionsTable items={res.data.items} />
+        <ExecutionsClient
+          initialItems={res.data.items}
+          initialTotal={50}
+        />
       )}
     </>
   );

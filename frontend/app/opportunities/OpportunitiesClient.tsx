@@ -1,6 +1,8 @@
 "use client";
 import React, { useEffect, useState, useCallback, startTransition } from "react";
 import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, Clock, AlertTriangle, EyeOff, Eye } from "lucide-react";
+import { toast } from "sonner";
+import { OpportunityDetailDialog, type OpportunityDetail } from "@/components/OpportunityDetailDialog";
 import { motion, AnimatePresence } from "framer-motion";
 
 // ─── Local type mirrors ───────────────────────────────────────────────────────
@@ -108,8 +110,50 @@ export default function OpportunitiesClient({
   // R1: viableOnly initialises to true (deterministic SSR-safe value).
   // localStorage read happens in useEffect — never in render.
   const [viableOnly, setViableOnly] = useState(true);
+  const [simLoading, setSimLoading] = useState<string | null>(null);
+  const [selectedOpp, setSelectedOpp] = useState<OpportunityDetail | null>(null);
 
   const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
+
+  // FE-4: SIMULATE handler.
+  // NOTE: The api-server does not yet expose POST /api/opportunities/:id/simulate.
+  // R8 fail-honest: surfacing the gap via toast rather than silencing it.
+  // Backend ticket required: POST /api/opportunities/:id/simulate → { profit_usd, gas_cost_usd, net_profit_usd }
+  const handleSimulate = useCallback(async (opportunityId: string) => {
+    setSimLoading(opportunityId);
+    try {
+      const res = await fetch(`${EDGE_URL}/api/opportunities/${opportunityId}/simulate`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.status === 404) {
+        toast.error("Simulate endpoint not yet implemented (backend Sprint TBD)", {
+          description: `POST /api/opportunities/${opportunityId}/simulate → 404`,
+        });
+        return;
+      }
+      if (!res.ok) {
+        toast.error(`Simulation failed: HTTP ${res.status}`);
+        return;
+      }
+      const result = await res.json() as { profit_usd?: number; net_profit_usd?: number };
+      const profit = result.net_profit_usd ?? result.profit_usd;
+      toast.success("Simulation complete", {
+        description: profit != null ? `Net profit: $${profit.toFixed(4)}` : "No profit data returned",
+      });
+    } catch (e) {
+      const err = e as Error;
+      if (err.name === "AbortError") {
+        toast.error("Simulation timed out after 8s");
+      } else {
+        toast.error("Simulation error", { description: err.message });
+      }
+    } finally {
+      setSimLoading(null);
+    }
+  }, [EDGE_URL]);
 
   const fetchOpportunities = useCallback(async () => {
     try {
@@ -306,7 +350,8 @@ export default function OpportunitiesClient({
                     animate={{ opacity: 1, x: 0, backgroundColor: isCriticalTriage ? "oklch(0.82 0.14 75 / 0.05)" : "transparent" }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.5 }}
-                    className={`border-b hover:bg-muted/40 transition-all ${isCriticalTriage ? 'border-warning/30 relative' : 'border-border/50'}`}
+                    onClick={() => setSelectedOpp(opp)}
+                    className={`border-b hover:bg-muted/40 transition-all cursor-pointer ${isCriticalTriage ? 'border-warning/30 relative' : 'border-border/50'}`}
                   >
                     {/* ── AGE / TIME column ── */}
                     <td className="p-4 font-mono text-xs">
@@ -423,9 +468,12 @@ export default function OpportunitiesClient({
                     <td className="p-4 text-center">
                       <button
                         type="button"
-                        className={`px-4 py-1.5 rounded text-xs font-bold transition-colors shadow-lg ${isCriticalTriage ? 'bg-warning text-warning-foreground hover:bg-warning/90' : 'bg-primary text-primary-foreground hover:bg-primary/90'}`}
+                        disabled={simLoading === opp.id}
+                        onClick={(e) => { e.stopPropagation(); handleSimulate(opp.id); }}
+                        className={`px-4 py-1.5 rounded text-xs font-bold transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed ${isCriticalTriage ? 'bg-warning text-warning-foreground hover:bg-warning/90' : 'bg-primary text-primary-foreground hover:bg-primary/90'}`}
+                        title="POST /api/opportunities/:id/simulate — backend not yet implemented"
                       >
-                        SIMULATE
+                        {simLoading === opp.id ? "SIMULATING…" : "SIMULATE"}
                       </button>
                     </td>
                   </motion.tr>
@@ -440,6 +488,12 @@ export default function OpportunitiesClient({
           </tbody>
         </table>
       </div>
+
+      {/* FE-10: Opportunity detail sheet — click any row to open */}
+      <OpportunityDetailDialog
+        opportunity={selectedOpp}
+        onClose={() => setSelectedOpp(null)}
+      />
     </div>
   );
 }

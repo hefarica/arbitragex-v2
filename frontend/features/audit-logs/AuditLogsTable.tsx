@@ -9,6 +9,7 @@ import { DataTable } from "@/features/table/DataTable";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import type { AuditLogRow } from "@/lib/api-client";
 import { fmtTime } from "@/lib/formatters";
+import { exportToCSV, exportToJSON } from "@/lib/csv-export";
 
 export function AuditLogsTable({ items }: { items: AuditLogRow[] }) {
   const [selectedRow, setSelectedRow] = useState<AuditLogRow | null>(null);
@@ -66,8 +67,35 @@ export function AuditLogsTable({ items }: { items: AuditLogRow[] }) {
     [],
   );
 
+  // Flatten before_state / after_state for CSV export (they are objects).
+  const exportRows = useMemo(
+    () =>
+      items.map((r) => ({
+        ...r,
+        before_state: r.before_state != null ? JSON.stringify(r.before_state) : null,
+        after_state: r.after_state != null ? JSON.stringify(r.after_state) : null,
+      })),
+    [items],
+  );
+
   return (
     <>
+      <div className="flex justify-end gap-2 mb-3">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => exportToCSV(exportRows as unknown as Record<string, unknown>[], `audit_logs_${Date.now()}.csv`)}
+        >
+          Export CSV
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => exportToJSON(items, `audit_logs_${Date.now()}.json`)}
+        >
+          Export JSON
+        </Button>
+      </div>
       <DataTable
         columns={columns}
         data={items}
