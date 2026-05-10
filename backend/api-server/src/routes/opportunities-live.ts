@@ -22,6 +22,7 @@
 
 import type { Application, Request, Response } from "express";
 import type { Pool, QueryResultRow } from "pg";
+import { resolveTokensOnDemand, tokenCacheKey } from "./tokenResolver.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -305,6 +306,51 @@ export function mountOpportunitiesLive(
         viableOnly,
         maxAgeSeconds,
       ]);
+
+      // 2026-05-10 operator request: every token row must surface a symbol
+      // and contract — no "—" placeholders. When the LEFT JOIN missed
+      // (token row absent from `tokens` because the enricher hasn't picked
+      // up this brand-new altcoin yet), fall back to an on-demand eth_call
+      // resolver that fetches symbol() + decimals() from the chain in
+      // parallel for every missing token in this batch, persists the result
+      // back to `tokens` (so the next request hits the JOIN cache), and
+      // injects the metadata into the response. Hard timeout 1.5s per RPC,
+      // all-or-nothing per token — never blocks the route past a few
+      // hundred ms total.
+      const missing: Array<{ chain_id: number; address: string }> = [];
+      for (const r of q.rows) {
+        if (r.token_in_symbol == null) {
+          missing.push({ chain_id: r.chain_id, address: r.token_in });
+        }
+        if (r.token_out_symbol == null) {
+          missing.push({
+            chain_id: r.chain_id_out ?? r.chain_id,
+            address: r.token_out,
+          });
+        }
+      }
+      const resolved = await resolveTokensOnDemand(pool, missing);
+
+      // Apply resolved metadata into the row before serialising.
+      for (const r of q.rows) {
+        if (r.token_in_symbol == null) {
+          const m = resolved.get(tokenCacheKey(r.chain_id, r.token_in));
+          if (m) {
+            r.token_in_symbol = m.symbol;
+            r.token_in_decimals = m.decimals;
+            r.token_in_resolved_via = "onchain_partial";
+          }
+        }
+        if (r.token_out_symbol == null) {
+          const chainOut = r.chain_id_out ?? r.chain_id;
+          const m = resolved.get(tokenCacheKey(chainOut, r.token_out));
+          if (m) {
+            r.token_out_symbol = m.symbol;
+            r.token_out_decimals = m.decimals;
+            r.token_out_resolved_via = "onchain_partial";
+          }
+        }
+      }
 
       res.status(200).json({
         count:           q.rows.length,
