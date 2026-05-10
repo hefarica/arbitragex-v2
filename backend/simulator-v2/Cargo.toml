@@ -23,4 +23,4 @@ hex.workspace = true
 # Crate-specific deps (not in workspace).
 petgraph = "0.6"
 rayon    = "1.10"
-dashmap  = "5.5"
+dashmap  = "6.1"
