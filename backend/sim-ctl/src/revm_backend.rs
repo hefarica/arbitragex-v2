@@ -22,9 +22,13 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
+use redis::aio::ConnectionManager;
+use redis::AsyncCommands;
 use shared_rs::contracts::{Opportunity, SimulationResult, SimulatorKind};
+use shared_rs::pre_execute_checklist::gas_price_wei_key;
 use simulator_v2::{CandidateInput, SimError, Simulator, SimulatorV2};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::warn;
 
 use crate::simulator_backend::{SimulationError, SimulatorBackend};
@@ -34,24 +38,32 @@ use crate::simulator_backend::{SimulationError, SimulatorBackend};
 /// The sync `Simulator::simulate` call is dispatched via `spawn_blocking` so
 /// it never blocks the tokio executor — important for an HFT pipeline where
 /// the async runtime must stay responsive.
+///
+/// Holds a Redis connection to read the live gas price (written by
+/// gas_oracle_worker every 10s). The price is passed as `gas_price_wei` to
+/// CandidateInput so revm charges gas internally and `SimResult.net_profit_wei`
+/// is true net-of-gas P&L (CRITICAL #2 fix, audit re-run #2 2026-05-10).
 pub struct RevmBackend {
     core: Arc<SimulatorV2>,
+    redis: Arc<Mutex<ConnectionManager>>,
 }
 
 impl RevmBackend {
-    /// Construct from the `REVM_RPC_URL` env var. Fails if the var is unset in
-    /// non-development environments (no-hardcode doctrine).
-    pub fn from_env() -> anyhow::Result<Self> {
+    /// Construct from `REVM_RPC_URL` + the shared Redis ConnectionManager.
+    /// Fails if `REVM_RPC_URL` is unset in non-development environments
+    /// (no-hardcode doctrine).
+    pub fn from_env(redis: ConnectionManager) -> anyhow::Result<Self> {
         let rpc_url = std::env::var("REVM_RPC_URL").unwrap_or_default();
         if rpc_url.is_empty() {
             warn!(
                 event = "revm_backend.no_rpc_url",
                 "REVM_RPC_URL not set — RevmBackend constructed but RPC calls will fail \
-                 until Tasks 4.2/4.3 land (SimulatorV2 is currently a stub)"
+                 at simulate() time (fail-honest)"
             );
         }
         Ok(Self {
             core: Arc::new(SimulatorV2::new(rpc_url)),
+            redis: Arc::new(Mutex::new(redis)),
         })
     }
 }
@@ -68,13 +80,56 @@ impl SimulatorBackend for RevmBackend {
         let to = parse_addr_bytes(&opp.token_out).unwrap_or([0u8; 20]);
         let value_wei: u128 = opp.amount_in_wei.parse().unwrap_or(0);
 
+        // Read live gas price from Redis (sister key to gas_price_ts, written
+        // every ~10s by gas_oracle_worker). If absent or stale, return a
+        // fail-honest provider error rather than fabricating gas_price_wei = 0
+        // (which would re-introduce the original CRITICAL #2 bug — gross profit
+        // reported as net).
+        let gas_price_wei: u128 = {
+            let mut conn = self.redis.lock().await;
+            let key = gas_price_wei_key(opp.chain_id);
+            match conn.get::<_, Option<String>>(&key).await {
+                Ok(Some(s)) => match s.parse::<u128>() {
+                    Ok(v) if v > 0 => v,
+                    _ => {
+                        return Ok(translate_result(
+                            id,
+                            trace_id,
+                            Err(SimError::Provider(format!(
+                                "gas_price_wei in Redis is unparsable or zero: {s:?}"
+                            ))),
+                        ));
+                    }
+                },
+                Ok(None) => {
+                    return Ok(translate_result(
+                        id,
+                        trace_id,
+                        Err(SimError::Provider(format!(
+                            "gas_price_wei key {key} not in Redis — gas_oracle_worker not running or chain_id unknown"
+                        ))),
+                    ));
+                }
+                Err(e) => {
+                    return Ok(translate_result(
+                        id,
+                        trace_id,
+                        Err(SimError::Provider(format!("Redis GET failed: {e}"))),
+                    ));
+                }
+            }
+        };
+
         let candidate = CandidateInput {
             chain_id: opp.chain_id,
             block_number: opp.block_number.unwrap_or(0),
             from,
             to,
-            calldata: Vec::new(), // Tasks 4.2/4.3 will populate from route encoding
+            calldata: Vec::new(), // Route encoding lands as a follow-up task
             value_wei,
+            // CRITICAL #2 fix: revm charges this gas internally; SimResult.net_profit_wei
+            // is true net-of-gas P&L (G-NET-1 compliance).
+            gas_price_wei,
         };
 
         // Dispatch sync REVM call off the tokio executor.

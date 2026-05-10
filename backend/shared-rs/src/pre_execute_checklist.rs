@@ -37,6 +37,13 @@ pub fn pending_tx_key(address: &str) -> String {
 pub fn gas_price_ts_key(chain_id: u64) -> String {
     format!("arbx:gas_price_ts:{chain_id}")
 }
+/// Redis key written by the gas-price worker (the actual gas price in wei,
+/// stringified u128). Consumers (sim-ctl revm_backend, relays-client submit_engine)
+/// read this to charge gas inside the simulation so `SimResult.net_profit_wei`
+/// is true net-of-gas P&L (CRITICAL #2 fix, audit re-run #2 2026-05-10).
+pub fn gas_price_wei_key(chain_id: u64) -> String {
+    format!("arbx:gas_price_wei:{chain_id}")
+}
 /// Maximum age of a gas-price update before we treat it as stale (seconds).
 pub const GAS_PRICE_MAX_AGE_SECS: u64 = 30;
 

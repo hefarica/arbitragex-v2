@@ -21,10 +21,22 @@ export const OpportunitySchema = z.object({
   token_in: HexAddr,
   token_out: HexAddr,
   amount_in_wei: BigIntStr,
+  // expected_profit_usd is GROSS spread × price (no gas/slippage subtracted).
+  // The canonical NET-profit gate is `net_expected_profit_usd`, populated by
+  // the prioritization-spine evaluator after subtracting all 7 cost components
+  // (gas, slippage, relay_fee, p_fail × revert_cost, etc.). Always prefer
+  // net_expected_profit_usd; fall back to expected_profit_usd only when the
+  // spine path was not run (cold-start or oracle gap).
   expected_profit_usd: z.number().nullable(),
+  net_expected_profit_usd: z.number().nullable().optional(),
   roi_pct: z.number().nullable(),
   risk_score: z.number().nullable(),
   block_number: z.number().int().nonnegative().nullable(),
+  // Cross-chain bridging fields (added in BE-01 Sprint A migration 047).
+  // Null for single-chain opportunities; populated for cex_dex / cross_chain.
+  chain_id_out: z.number().int().positive().nullable().optional(),
+  bridge: z.string().nullable().optional(),
+  bridge_fee_usd: z.number().nullable().optional(),
   detected_at: IsoDate,
   trace_id: Uuid,
 }).strict();
@@ -38,7 +50,10 @@ export const SimulationResultSchema = z.object({
   slippage_pct: z.number().nullable(),
   revert_risk_pct: z.number().nullable(),
   simulated_profit_usd: z.number().nullable(),
-  simulator: z.enum(["anvil","tenderly","hardhat","not_implemented"]),
+  // "revm" added 2026-05-10 audit re-run #2: simulator-v2 backend ships SimResult
+  // with this label. Without this enum entry, every revm SimulationResult fails
+  // Zod parse at the selector-api boundary (cs-validator MAJOR #3).
+  simulator: z.enum(["anvil","tenderly","hardhat","revm","not_implemented"]),
   fail_reason: z.string().nullable(),
   simulated_at: IsoDate,
   trace_id: Uuid,

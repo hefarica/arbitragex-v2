@@ -39,7 +39,7 @@
 use alloy::providers::Provider as AlloyProvider;
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
-use shared_rs::pre_execute_checklist::gas_price_ts_key;
+use shared_rs::pre_execute_checklist::{gas_price_ts_key, gas_price_wei_key};
 use shared_rs::rpc_failover::HttpRpcPool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -130,12 +130,20 @@ impl GasOracleWorker {
             .as_secs();
 
         let ts_key = gas_price_ts_key(self.chain_id);
+        let wei_key = gas_price_wei_key(self.chain_id);
 
-        // Write the freshness timestamp. TTL 60s — covers ~6× the default fetch
-        // interval so a single missed tick never causes an unexpected Check 6 block.
-        let write_result: redis::RedisResult<()> = redis
-            .set_ex(&ts_key, now_ts.to_string(), GAS_TS_TTL_SECS)
-            .await;
+        // Write BOTH the freshness timestamp AND the price itself. TTL 60s on
+        // both — covers ~6× the default fetch interval so a single missed tick
+        // never causes an unexpected Check 6 block. The wei value is consumed
+        // by sim-ctl's RevmBackend (CRITICAL #2 fix audit re-run #2): revm
+        // charges this gas price internally so SimResult.net_profit_wei is
+        // truly net-of-gas, not gross.
+        let write_result: redis::RedisResult<()> = async {
+            let _: () = redis.set_ex(&ts_key, now_ts.to_string(), GAS_TS_TTL_SECS).await?;
+            let _: () = redis.set_ex(&wei_key, gas_price_wei.to_string(), GAS_TS_TTL_SECS).await?;
+            Ok(())
+        }
+        .await;
 
         match write_result {
             Ok(()) => {

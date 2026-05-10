@@ -167,7 +167,18 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or("anvil")
     {
         "revm" => {
-            let b = RevmBackend::from_env()
+            // RevmBackend reads live gas_price_wei from Redis (sister key to
+            // gas_price_ts) so it can charge gas inside revm. Required for
+            // CRITICAL #2 fix (G-NET-1: net-of-gas P&L). REDIS_URL is
+            // mandatory when SIM_BACKEND=revm — no silent fall-through.
+            let redis_url = std::env::var("REDIS_URL").map_err(|_| {
+                anyhow::anyhow!(
+                    "SIM_BACKEND=revm requires REDIS_URL — RevmBackend reads live gas_price_wei from Redis"
+                )
+            })?;
+            let redis_client = redis::Client::open(redis_url)?;
+            let redis_conn = redis::aio::ConnectionManager::new(redis_client).await?;
+            let b = RevmBackend::from_env(redis_conn)
                 .map_err(|e| anyhow::anyhow!("RevmBackend::from_env: {e}"))?;
             info!(event = "sim.backend_selected", backend = "revm-v2");
             Arc::new(b)
