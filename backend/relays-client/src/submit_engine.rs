@@ -691,6 +691,7 @@ impl SubmitEngine {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)] // test module — panics are acceptable
 mod tests {
     use super::*;
     use chrono::Utc;
