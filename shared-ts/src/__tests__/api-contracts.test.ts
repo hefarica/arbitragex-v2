@@ -32,7 +32,7 @@ describe("OpportunityListItemSchema", () => {
     token_out: "0x" + "b".repeat(40), token_out_info: null,
     amount_in_wei: "1000",
     expected_profit_usd: null, roi_pct: null, risk_score: null,
-    block_number: null, status: "detected" as const,
+    block_number: null, rejection_reason: null, status: "detected" as const,
     detected_at: "2026-05-06T00:00:00Z", trace_id: "22222222-2222-2222-2222-222222222222",
     chain_id_out: null, bridge: null, bridge_fee_usd: null,
   };
