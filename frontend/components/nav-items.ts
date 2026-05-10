@@ -3,6 +3,7 @@ import {
   AlertTriangleIcon,
   GaugeIcon,
   HouseIcon,
+  KeyRoundIcon,
   ListChecksIcon,
   PowerIcon,
   SettingsIcon,
@@ -40,5 +41,6 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/wallets",        label: "Wallets",           icon: WalletIcon,        group: "setup" },
   { href: "/dex-registry",  label: "DEX Registry",      icon: DatabaseIcon,      group: "setup" },
   { href: "/onboarding",    label: "Onboarding",       icon: ListChecksIcon,    group: "setup" },
+  { href: "/settings/credentials", label: "Credentials", icon: KeyRoundIcon,    group: "setup" },
   { href: "/settings",      label: "Settings",         icon: SettingsIcon,      group: "setup" },
 ];

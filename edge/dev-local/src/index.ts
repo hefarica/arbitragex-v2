@@ -423,6 +423,23 @@ app.put("/admin/trading-config/:chain_id",    (req, res) => {
   adminProxy(`/admin/trading-config/${cid}`, req, res, "PUT");
 });
 
+// Operator credentials — migration 057. List behind adminProxy so the
+// httpOnly session reaches the upstream admin gate. Mutations (PUT/POST/DELETE)
+// all go through adminProxy too.
+app.get("/api/credentials", (req, res) => adminProxy("/api/v1/credentials", req, res, "GET"));
+app.post("/admin/credentials/test", (req, res) => adminProxy("/admin/credentials/test", req, res, "POST"));
+app.put("/admin/credentials", (req, res) => adminProxy("/admin/credentials", req, res, "PUT"));
+app.delete("/admin/credentials/:provider/:scope", (req, res) => {
+  const provider = String(req.params.provider ?? "");
+  const scope = String(req.params.scope ?? "");
+  adminProxy(
+    `/admin/credentials/${encodeURIComponent(provider)}/${encodeURIComponent(scope)}`,
+    req,
+    res,
+    "DELETE",
+  );
+});
+
 // PR-2.b Audit Log endpoint
 app.get("/admin/audit", (req, res) => {
   // forward query parameters safely

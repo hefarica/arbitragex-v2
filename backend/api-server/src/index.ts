@@ -75,6 +75,7 @@ import { mountDefi } from "./routes/defi.js";
 import { buildTradingConfigRouter } from "./routes/trading-config.js";
 import { buildOperationsRouter } from "./routes/operations.js";
 import { buildStrategyCatalogRouter } from "./routes/strategy-catalog.js";
+import { buildCredentialsRouter } from "./routes/credentials.js";
 import { mountOpportunitiesLive } from "./routes/opportunities-live.js";
 import { mountDexes } from "./routes/dexes.js";
 import { mountPools } from "./routes/pools.js";
@@ -849,6 +850,16 @@ app.use(buildOperationsRouter({
 
 // ── Strategy catalog (Sprint 2 — read-only universal MEV strategy library) ─
 app.use(buildStrategyCatalogRouter({ pool, logger }));
+
+// ── Operator credentials (migration 057 — RPC, CEX, Flashbots, etc.) ────
+// Each credential has its own live validator; status only flips to "valid"
+// after the api-server actually executes the provider-specific test.
+app.use(buildCredentialsRouter({
+  pool,
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
+  logger,
+}));
 
 app.get("/api/v1/config/current", async (_req, res) => {
   // Merge dynamic paper_mode from Redis if available
