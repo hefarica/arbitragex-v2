@@ -97,6 +97,41 @@ async fn main() -> anyhow::Result<()> {
     let paper_mode = PaperModeClient::connect(&redis_url, cfg.execution.paper_mode).await
         .map_err(|e| anyhow::anyhow!("papermode: {e}"))?;
 
+    // SECURE_BOOT (audit A2, 2026-05-10): refuse to start if paper_mode=false
+    // AND ARBX_SIMULATOR_V2_READY != "true".
+    //
+    // Rationale: simulator-v2 currently returns SimError::NotImplemented.
+    // The v1 fallback in prioritization-spine emits a cosmetic PASS without
+    // validating against real on-chain state. If paper_mode is disabled without
+    // a real simulator, every bundle that reaches relays-client is effectively
+    // unsimulated — a pre-mainnet landmine that can drain funds.
+    //
+    // The operator gate is ARBX_SIMULATOR_V2_READY=true. Set it ONLY after
+    // completing the checklist in docs/operations/SIMULATOR_V2_READINESS.md.
+    // Any other value (missing, "false", typo) keeps this guard armed.
+    {
+        let live_mode = !paper_mode.is_enabled().await;
+        if live_mode {
+            let sim_ready = std::env::var("ARBX_SIMULATOR_V2_READY")
+                .map(|v| v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+            if !sim_ready {
+                anyhow::bail!(
+                    "SECURE_BOOT (audit A2): paper_mode=false but ARBX_SIMULATOR_V2_READY != \
+                     'true'. simulator-v2 returns NotImplemented; the v1 fallback emits a \
+                     cosmetic PASS without validating against real chain state — broadcasting \
+                     unsimulated bundles is a pre-mainnet landmine. Set \
+                     ARBX_SIMULATOR_V2_READY=true only after completing every item in \
+                     docs/operations/SIMULATOR_V2_READINESS.md."
+                );
+            }
+            tracing::warn!(
+                event = "secure_boot.sim_v2_gate_passed",
+                "paper_mode=false AND ARBX_SIMULATOR_V2_READY=true — live submission enabled"
+            );
+        }
+    }
+
     // Try to load signer.
     let chain_id = cfg.chains.iter().find(|c| c.enabled).map(|c| c.chain_id).unwrap_or(1);
     let signer = match Signer::from_env(chain_id)? {
