@@ -33,16 +33,16 @@ python3 automation/tools/validate-config.py configs/app.toml configs/schemas/app
 
 # 4. Build images
 log "building docker images (this can take a while on first run)"
-docker compose -f docker/docker-compose.prod-like.yml build
+docker compose --env-file .env -f docker/compose.prod.yml build --no-cache
 
 # 5. Start data plane only
 log "starting data plane: postgres + redis + observability"
-docker compose -f docker/docker-compose.prod-like.yml up -d postgres redis prometheus grafana alertmanager loki promtail
+docker compose --env-file .env -f docker/compose.prod.yml up -d postgres redis prometheus grafana alertmanager loki promtail
 
 # 6. Wait for postgres
 log "waiting for postgres..."
 for i in $(seq 1 30); do
-  if docker compose -f docker/docker-compose.prod-like.yml exec -T postgres pg_isready -U postgres -d arbitragex >/dev/null 2>&1; then
+  if docker compose --env-file .env -f docker/compose.prod.yml exec -T postgres pg_isready -U postgres -d arbitragex >/dev/null 2>&1; then
     log "postgres ready"; break
   fi
   sleep 2
@@ -55,7 +55,7 @@ log "applying DB migrations"
 
 # 8. Start application services
 log "starting application services"
-docker compose -f docker/docker-compose.prod-like.yml up -d searcher-rs sim-ctl relays-client recon selector-api api-server edge frontend
+docker compose --env-file .env -f docker/compose.prod.yml up -d searcher-rs sim-ctl relays-client recon selector-api api-server edge frontend
 
 # 9. Health check
 sleep 5
