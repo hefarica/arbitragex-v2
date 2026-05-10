@@ -30,7 +30,7 @@ use shared_rs::{
     trading_config::TradingConfigClient,
 };
 use sqlx::postgres::PgPoolOptions;
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tracing::{error, info, warn};
 
 const SERVICE_NAME: &str = "searcher-rs";
@@ -123,66 +123,67 @@ async fn main() -> anyhow::Result<()> {
           enabled_chains = ?enabled_chains,
           "searcher-rs initializing S2 scanners");
 
-    // Init and start Worker Orchestrator. Sub-proyecto-1 wires the real
-    // PoolSyncWorker against the primary chain's HTTP RPC + DB pool + Redis.
-    // Stub workers (RouteDiscovery / Simulation) were removed.
+    // BE-3.1 — Build a per-chain HTTP RPC pool for every enabled chain.
+    // Each pool is an Arc so the orchestrator and scanner share the same
+    // circuit-breaker + failover + EWMA state per chain. The background
+    // health loop is spawned once per pool; pool ownership stays in the HashMap
+    // for the lifetime of the process.
     let god_protocol_active = true;
     let kernel_bypass_enabled = true;
     let orchestrator = workers::WorkerOrchestrator::new(god_protocol_active, kernel_bypass_enabled);
 
-    // Pick the first enabled chain (defaults to 1 = Ethereum mainnet if config
-    // is empty — same fallback used elsewhere). The orchestrator currently
-    // syncs pools for ONE chain; multi-chain pool sync is Sprint 2 work.
+    let mut rpc_pools: HashMap<u64, Arc<HttpRpcPool>> = HashMap::new();
+    for &cid in &enabled_chains {
+        match HttpRpcPool::from_env(cid).await {
+            Ok(Some(pool)) => {
+                info!(
+                    event = "worker_orchestrator.rpc_pool_ready",
+                    chain_id = cid,
+                    providers = pool.entries.len(),
+                    "HTTP RPC pool retained for workers (circuit breaker + failover active)"
+                );
+                let arc = Arc::new(pool);
+                // Spawn health loop per pool; handle intentionally dropped —
+                // runs until process exit.
+                let _health_loop = arc.clone().spawn_health_loop();
+                rpc_pools.insert(cid, arc);
+            }
+            Ok(None) => {
+                warn!(
+                    event = "worker_orchestrator.rpc_absent",
+                    chain_id = cid,
+                    "RPC_HTTP_{cid} not set; workers for this chain will not start (R8 fail-honest)"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    event = "worker_orchestrator.rpc_invalid",
+                    chain_id = cid,
+                    error = %e,
+                    "RPC_HTTP_{cid} value did not parse; workers for this chain will not start"
+                );
+            }
+        }
+    }
+
+    // primary_chain: first enabled chain, used by the single-chain workers
+    // (price, heartbeat, triangular, flashloan, liquidation) that are scoped
+    // to one chain in this sprint. Multi-chain variants land in BE-3.2+.
     let primary_chain: u64 = enabled_chains.first().copied().unwrap_or(1);
+    let primary_rpc_pool: Option<Arc<HttpRpcPool>> = rpc_pools.get(&primary_chain).cloned();
 
-    // Build the primary HTTP RPC pool from `RPC_HTTP_<chain_id>` and retain it
-    // as an Arc so every worker receives the same pool instance — circuit
-    // breaker, failover, and EWMA scoring are shared. Previously the pool was
-    // discarded after a single `.pick()` call which extracted one URL and
-    // dropped the failover machinery (BE-02 Step 2 fix).
-    let primary_rpc_pool: Option<Arc<HttpRpcPool>> = match HttpRpcPool::from_env(primary_chain).await {
-        Ok(Some(pool)) => {
-            info!(
-                event = "worker_orchestrator.rpc_pool_ready",
-                chain_id = primary_chain,
-                providers = pool.entries.len(),
-                "HTTP RPC pool retained for workers (circuit breaker + failover active)"
-            );
-            let arc = Arc::new(pool);
-            // Spawn the background health loop (EWMA + drift + circuit rotation).
-            // The handle is intentionally not awaited — it runs until process exit.
-            let _health_loop = arc.clone().spawn_health_loop();
-            Some(arc)
-        }
-        Ok(None) => {
-            warn!(
-                event = "worker_orchestrator.rpc_absent",
-                chain_id = primary_chain,
-                "RPC_HTTP_<chain_id> not set; block-workers without RPC will not start"
-            );
-            None
-        }
-        Err(e) => {
-            warn!(
-                event = "worker_orchestrator.rpc_invalid",
-                chain_id = primary_chain,
-                error = %e,
-                "RPC_HTTP_<chain_id> value did not parse; block-workers will not start"
-            );
-            None
-        }
-    };
-
-    // Spawn orchestrator asynchronously. PoolSyncWorker is gated inside
-    // start_all on both Some(db) AND Some(rpc_pool) being present.
-    let db_for_orch = db_pool.clone();
-    let redis_for_orch = redis_conn.clone();
-    let pool_for_orch = primary_rpc_pool.clone();
-    tokio::spawn(async move {
-        orchestrator
-            .start_all(primary_chain, pool_for_orch, db_for_orch, redis_for_orch)
+    // BE-3.1 multichain orchestrator — spawns RpcHealth + GasOracle + PoolSync
+    // workers for every enabled chain that has a configured RPC pool.
+    // Chains without a pool are skipped with a warn log (R8 fail-honest).
+    {
+        let db_for_orch = db_pool.clone();
+        let redis_for_orch = redis_conn.clone();
+        let chains_for_orch = enabled_chains.clone();
+        let _orch_handles = orchestrator
+            .start_all_multichain(chains_for_orch, &rpc_pools, db_for_orch, redis_for_orch)
             .await;
-    });
+        // Handles intentionally dropped — tasks run until process exit.
+    }
 
     // Price worker — fetches live USD token prices from Alchemy (primary) +
     // Coingecko (fallback) every PRICE_WORKER_INTERVAL_SECS (default 30s) and
@@ -363,11 +364,31 @@ async fn main() -> anyhow::Result<()> {
         lw.run(liquidation_redis, liquidation_db, liquidation_tc).await;
     });
 
-    // Spawn one scanner per chain. The primary chain (used by the orchestrator
-    // for V2 pool sync) also gets the retained Arc<HttpRpcPool> so the scanner
-    // can run V3 QuoterV2 batched calls through the circuit-breaker + failover
-    // machinery. Other chains get None and fall through to V2-only enrichment
-    // (Sub-proyecto 2 is mainnet-only; multi-chain V3 lands in a future sub-project).
+    // CEX-DEX worker (BE-3.2 Phase 1 scaffold) — detects spread between Binance
+    // REST prices and on-chain DEX quotes. In Phase 1 `fetch_dex_price` returns
+    // Err every tick; `cex_dex_fetch_errors` increments steadily and is expected
+    // (documented in counters.rs). Phase 2 wires the V3 QuoterV2 path.
+    // Operator can tune tick via `CEX_DEX_WORKER_INTERVAL_MS`.
+    let cex_dex_tick_ms: u64 = std::env::var("CEX_DEX_WORKER_INTERVAL_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(workers::cex_dex_worker::DEFAULT_TICK_MS);
+    let cex_dex_chain = primary_chain;
+    let cex_dex_rpc = primary_rpc_pool.clone();
+    tokio::spawn(async move {
+        let cfg = workers::cex_dex_worker::CexDexWorkerConfig::new(cex_dex_chain, cex_dex_tick_ms);
+        match workers::cex_dex_worker::CexDexWorker::new(cfg, cex_dex_rpc) {
+            Ok(worker) => worker.run().await,
+            Err(e) => warn!(event = "cex_dex_worker.boot_failed", chain_id = cex_dex_chain, error = %e),
+        }
+    });
+
+    // Spawn one scanner per chain. Each scanner receives the HttpRpcPool for
+    // its own chain_id (if configured), enabling V3 QuoterV2 batched calls
+    // with circuit-breaker + failover machinery per chain.
+    // BE-3.1: rpc_pool_c now comes from the per-chain HashMap instead of a
+    // primary_chain equality check — scanners for every enabled chain get their
+    // own pool, not only the first one.
     for chain_id in enabled_chains {
         let ks = killswitch.clone();
         let cfg_c = cfg.clone();
@@ -376,11 +397,7 @@ async fn main() -> anyhow::Result<()> {
         let dedup_c = dedup.clone();
         let opp_dedup_c = opp_dedup.clone();
         let tc_c = trading_config.clone();
-        let rpc_pool_c = if chain_id == primary_chain {
-            primary_rpc_pool.clone()
-        } else {
-            None
-        };
+        let rpc_pool_c = rpc_pools.get(&chain_id).cloned();
         tokio::spawn(async move {
             if let Err(e) = scanner::run_chain(chain_id, cfg_c, ks, redis_c, db_c, dedup_c, opp_dedup_c, tc_c, rpc_pool_c).await {
                 error!(event = "scanner.spawn_failed", chain_id, error = %e);

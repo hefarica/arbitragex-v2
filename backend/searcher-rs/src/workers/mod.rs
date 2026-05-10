@@ -3,6 +3,7 @@
 //! were deleted because they emitted fake telemetry without doing work.
 //! HftMempoolListener and ExecutionWorker stubs are kept but not spawned.
 
+pub mod cex_dex_worker;
 pub mod execution_worker;
 pub mod flashloan_arb_worker;
 pub mod gas_oracle_worker;
@@ -16,8 +17,10 @@ pub mod triangular_worker;
 
 use shared_rs::rpc_failover::HttpRpcPool;
 use sqlx::PgPool;
+use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{error, info};
+use tokio::task::JoinHandle;
+use tracing::{error, info, warn};
 
 /// Default PoolSyncWorker tick — aligned to Ethereum block time (12s) so we
 /// don't poll faster than chain state can change. Pre-2026-05-07 this was
@@ -59,6 +62,51 @@ impl WorkerOrchestrator {
             god_protocol_active,
             kernel_bypass_enabled,
         }
+    }
+
+    /// Spawn per-chain worker sets for every chain_id in `chain_ids`.
+    ///
+    /// Each chain gets an independent set of orchestrated workers (RpcHealth,
+    /// GasOracle, PoolSync) backed by its own `HttpRpcPool` entry from
+    /// `rpc_pools`. Chains without a pool entry are skipped with a warn log
+    /// (R8 fail-honest: no RPC configured → workers don't start, heartbeat
+    /// surfaces the gap rather than hiding it with fake telemetry).
+    ///
+    /// Returns the `JoinHandle`s of the per-chain spawned tasks so the caller
+    /// can optionally join/cancel them. Callers that don't need lifecycle control
+    /// may discard the return value.
+    pub async fn start_all_multichain(
+        &self,
+        chain_ids: Vec<u64>,
+        rpc_pools: &HashMap<u64, Arc<HttpRpcPool>>,
+        db: Option<PgPool>,
+        redis: redis::aio::ConnectionManager,
+    ) -> Vec<JoinHandle<()>> {
+        let mut handles = Vec::with_capacity(chain_ids.len());
+        for chain_id in chain_ids {
+            let pool = rpc_pools.get(&chain_id).cloned();
+            if pool.is_none() {
+                warn!(
+                    event = "worker_orchestrator.chain_skipped",
+                    chain_id,
+                    reason = "no_rpc_pool",
+                    "RPC_HTTP_{chain_id} not configured — workers for this chain will not start (R8 fail-honest)"
+                );
+            }
+            // WorkerOrchestrator carries only two bool flags — safe to clone
+            // the config values for each spawned task.
+            let god = self.god_protocol_active;
+            let kernel = self.kernel_bypass_enabled;
+            let db_c = db.clone();
+            let redis_c = redis.clone();
+            let handle = tokio::spawn(async move {
+                WorkerOrchestrator::new(god, kernel)
+                    .start_all(chain_id, pool, db_c, redis_c)
+                    .await;
+            });
+            handles.push(handle);
+        }
+        handles
     }
 
     pub async fn start_all(

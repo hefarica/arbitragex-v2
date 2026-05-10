@@ -124,6 +124,13 @@ pub struct ScannerCounters {
     /// Operator action required: inspect the diagnostic dump in the
     /// `liquidation_worker.sanity_reject` log line.
     pub liquidation_sanity_reject: AtomicU64,
+    /// CexDexWorker (BE-3.2): HTTP/parse/RPC errors per period. In Phase 1 this
+    /// counter increments every tick per pair because `fetch_dex_price` returns
+    /// `Err` intentionally (DEX quoter not yet wired). A steady value equal to
+    /// `pairs × ticks` is EXPECTED in Phase 1 and is NOT a regression signal.
+    /// After Phase 2 wiring the counter should drop to near-zero between
+    /// genuine network failures.
+    pub cex_dex_fetch_errors: AtomicU64,
 }
 
 /// Process-global counters. First call initialises; subsequent calls return
