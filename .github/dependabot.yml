@@ -12,6 +12,26 @@ updates:
     labels:
       - dependencies
       - rust
+    # Ignore major bumps for foundational crates that need dedicated migration sprints.
+    # Closed PRs (2026-05-08): #5 alloy-rpc-types 2.0, #6 rand 0.10, #9 axum 0.8,
+    # #11 jsonschema 0.46, #12 sqlx 0.8 — all major-version breaking changes against
+    # the workspace's pinned versions. Dependabot will continue to surface patch +
+    # minor updates automatically; major bumps require dedicated audit + integration tests.
+    ignore:
+      - dependency-name: "alloy*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "axum"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "sqlx"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "jsonschema"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "rand"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "ethers"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "revm*"
+        update-types: ["version-update:semver-major"]
 
   # npm root workspace (package.json + all workspaces)
   - package-ecosystem: npm
@@ -24,6 +44,19 @@ updates:
     labels:
       - dependencies
       - typescript
+    # Ignore major bumps for testing + animation libs (closed PRs 2026-05-08:
+    # #13 vitest 4, #7 framer-motion 12). Operator audits these in dedicated sprints.
+    ignore:
+      - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "framer-motion"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "next"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions workflows
   - package-ecosystem: github-actions
