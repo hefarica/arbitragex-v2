@@ -114,6 +114,10 @@ async fn main() -> anyhow::Result<()> {
         Duration::from_secs(60),
     ));
 
+    // BE-3.6: opportunity-level dedup — collapses same route+time+profit re-emits.
+    // 4096 slots covers ~400 distinct routes × 10 profit buckets with headroom.
+    let opp_dedup = Arc::new(dedup::OppDedup::new(4_096));
+
     let enabled_chains = cfg.enabled_chains();
     info!(event = "service.boot", service = SERVICE_NAME, version = SERVICE_VERSION,
           enabled_chains = ?enabled_chains,
@@ -370,6 +374,7 @@ async fn main() -> anyhow::Result<()> {
         let redis_c = redis_conn.clone();
         let db_c = db_pool.clone();
         let dedup_c = dedup.clone();
+        let opp_dedup_c = opp_dedup.clone();
         let tc_c = trading_config.clone();
         let rpc_pool_c = if chain_id == primary_chain {
             primary_rpc_pool.clone()
@@ -377,7 +382,7 @@ async fn main() -> anyhow::Result<()> {
             None
         };
         tokio::spawn(async move {
-            if let Err(e) = scanner::run_chain(chain_id, cfg_c, ks, redis_c, db_c, dedup_c, tc_c, rpc_pool_c).await {
+            if let Err(e) = scanner::run_chain(chain_id, cfg_c, ks, redis_c, db_c, dedup_c, opp_dedup_c, tc_c, rpc_pool_c).await {
                 error!(event = "scanner.spawn_failed", chain_id, error = %e);
             }
         });

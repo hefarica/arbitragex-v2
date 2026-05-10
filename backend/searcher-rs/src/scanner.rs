@@ -11,7 +11,7 @@
 //! corresponds to a real pending tx observed on the wire.
 
 use crate::{
-    calldata, dedup::Dedup, patterns, persistence, publisher,
+    calldata, dedup::{Dedup, OppDedup}, patterns, persistence, publisher,
 };
 use crate::amm_math;
 use crate::counters::counters;
@@ -68,6 +68,7 @@ pub async fn run_chain(
     redis: redis::aio::ConnectionManager,
     db: Option<PgPool>,
     dedup: Arc<Dedup>,
+    opp_dedup: Arc<OppDedup>,
     trading_config: TradingConfigClient,
     rpc_http_pool: Option<Arc<HttpRpcPool>>,
 ) -> anyhow::Result<ScannerHandle> {
@@ -119,7 +120,7 @@ pub async fn run_chain(
 
     // Spawn the detection loop with the full endpoint list.
     tokio::spawn(detection_loop(
-        chain_id, pool.endpoints, cfg, killswitch, redis, db, dedup, trading_config, v3_rpc_pool,
+        chain_id, pool.endpoints, cfg, killswitch, redis, db, dedup, opp_dedup, trading_config, v3_rpc_pool,
     ));
     Ok(ScannerHandle { chain_id })
 }
@@ -147,6 +148,7 @@ async fn detection_loop(
     mut redis: redis::aio::ConnectionManager,
     db: Option<PgPool>,
     dedup: Arc<Dedup>,
+    opp_dedup: Arc<OppDedup>,
     trading_config: TradingConfigClient,
     v3_rpc_pool: Option<Arc<HttpRpcPool>>,
 ) {
@@ -218,7 +220,7 @@ async fn detection_loop(
             }
         };
 
-        if let Err(e) = run_subscription(&client, &killswitch, &mut redis, db.as_ref(), &dedup, &trading_config, v3_rpc_pool.as_ref(), mempool_mode).await {
+        if let Err(e) = run_subscription(&client, &killswitch, &mut redis, db.as_ref(), &dedup, &opp_dedup, &trading_config, v3_rpc_pool.as_ref(), mempool_mode).await {
             error!(
                 event = "scanner.subscription_error",
                 chain_id,
@@ -247,6 +249,7 @@ async fn run_subscription(
     redis: &mut redis::aio::ConnectionManager,
     db: Option<&PgPool>,
     dedup: &Dedup,
+    opp_dedup: &OppDedup,
     trading_config: &TradingConfigClient,
     v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
     mempool_mode: MempoolMode,
@@ -301,7 +304,7 @@ async fn run_subscription(
                         allowlist_size = allowlist.len()
                     );
                     while let Some(tx) = stream.next().await {
-                        if let Err(e) = process_pending_tx(client, tx, redis, db, dedup, trading_config, v3_rpc_pool).await {
+                        if let Err(e) = process_pending_tx(client, tx, redis, db, dedup, opp_dedup, trading_config, v3_rpc_pool).await {
                             debug!(event = "scanner.process_err", error = %e);
                         }
                     }
@@ -327,19 +330,21 @@ async fn run_subscription(
     info!(event = "scanner.subscribed", chain_id = client.chain_id, mode = "firehose");
 
     while let Some(hash) = stream.next().await {
-        if let Err(e) = process_pending(client, hash, redis, db, dedup, trading_config, v3_rpc_pool).await {
+        if let Err(e) = process_pending(client, hash, redis, db, dedup, opp_dedup, trading_config, v3_rpc_pool).await {
             debug!(event = "scanner.process_err", hash = %hash, error = %e);
         }
     }
     anyhow::bail!("pending tx stream ended")
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn process_pending(
     client: &WsChainClient,
     hash: H256,
     redis: &mut redis::aio::ConnectionManager,
     db: Option<&PgPool>,
     dedup: &Dedup,
+    opp_dedup: &OppDedup,
     trading_config: &TradingConfigClient,
     v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
 ) -> anyhow::Result<()> {
@@ -353,15 +358,17 @@ async fn process_pending(
         Some(t) => t,
         None => return Ok(()), // dropped from mempool before we got it
     };
-    decode_and_score_tx(client, tx, redis, db, trading_config, v3_rpc_pool).await
+    decode_and_score_tx(client, tx, redis, db, opp_dedup, trading_config, v3_rpc_pool).await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn process_pending_tx(
     client: &WsChainClient,
     tx: Transaction,
     redis: &mut redis::aio::ConnectionManager,
     db: Option<&PgPool>,
     dedup: &Dedup,
+    opp_dedup: &OppDedup,
     trading_config: &TradingConfigClient,
     v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
 ) -> anyhow::Result<()> {
@@ -372,7 +379,7 @@ async fn process_pending_tx(
         return Ok(());
     }
     counters().pending_received.fetch_add(1, Ordering::Relaxed);
-    decode_and_score_tx(client, tx, redis, db, trading_config, v3_rpc_pool).await
+    decode_and_score_tx(client, tx, redis, db, opp_dedup, trading_config, v3_rpc_pool).await
 }
 
 async fn decode_and_score_tx(
@@ -380,6 +387,7 @@ async fn decode_and_score_tx(
     tx: Transaction,
     redis: &mut redis::aio::ConnectionManager,
     db: Option<&PgPool>,
+    opp_dedup: &OppDedup,
     trading_config: &TradingConfigClient,
     v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
 ) -> anyhow::Result<()> {
@@ -968,6 +976,28 @@ async fn decode_and_score_tx(
     }
     // --- END CONFIG-AWARE SPINE INTERCEPTOR ---
 
+
+    // BE-3.6: opportunity-level dedup gate.
+    // Check compound key (route + 5min time bucket + $0.10 profit bucket) before
+    // persisting or publishing. This prevents the same route+spread from flooding
+    // DB and Redis on every pending tx that hits the same pool pair within a window.
+    // The dedup fires AFTER spine scoring so the stored row always carries the
+    // fully-scored profit/risk values — we dedupe at the emit boundary, not earlier.
+    // Rejected rows (TokenNotAllowed, StrategyDisabled, gate-rejected) each have
+    // their own return paths above and skip this check, so dedup only affects
+    // opportunities that passed all gates.
+    let route_fp = &candidate.route_fingerprint;
+    if !opp_dedup.check_and_mark(route_fp, opportunity.expected_profit_usd) {
+        debug!(
+            event = "scanner.opp_dedup_suppressed",
+            hash = %hash,
+            route = %route_fp,
+            profit_usd = ?opportunity.expected_profit_usd,
+            "opportunity suppressed by route+time+profit dedup (BE-3.6)"
+        );
+        counters().gate_other_rejected.fetch_add(1, Ordering::Relaxed);
+        return Ok(());
+    }
 
     // Persist + publish. Both are best-effort with their own error paths.
     if let Some(pool) = db {

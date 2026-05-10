@@ -7,6 +7,7 @@
 use crate::bundle_builder::{build_and_sign, BuildError};
 use crate::multi_relay::MultiRelayClient;
 use crate::nonce_manager::NonceManager;
+use crate::persistence::insert_paper_trade_run;
 use crate::relay_flashbots::FlashbotsClient;
 use crate::signer::Signer;
 use crate::tracker::{wait_for_inclusion, InclusionOutcome};
@@ -150,6 +151,18 @@ impl SubmitEngine {
                         chain_id = opp.chain_id,
                         "pre_execute_checklist: paper_mode active — broadcast suppressed"
                     );
+                    // BE-3.4: record paper-trade run for drift tracking.
+                    // Non-fatal: log warning on error, never block execution path.
+                    if let Some(ref pg_pool) = self.pg {
+                        if let Err(e) = insert_paper_trade_run(pg_pool, opp).await {
+                            warn!(
+                                event = "paper_trade.insert_failed",
+                                opp_id = %opp.id,
+                                error = %e,
+                                "failed to insert paper_trade_run (BE-3.4) — non-fatal"
+                            );
+                        }
+                    }
                     return ExecutionResult {
                         opportunity_id: opp.id,
                         status: ExecutionStatus::NotSubmitted,
@@ -269,6 +282,18 @@ impl SubmitEngine {
             info!(event = "paper_mode.skip_submit", opp_id = %opp.id,
                   tx_hash_would_be = %format!("0x{:x}", bundle.tx_hash),
                   would_submit_to = %relay_names);
+            // BE-3.4: record paper-trade run for drift tracking.
+            // Non-fatal: log warning on error, never block execution path.
+            if let Some(ref pg_pool) = self.pg {
+                if let Err(e) = insert_paper_trade_run(pg_pool, opp).await {
+                    warn!(
+                        event = "paper_trade.insert_failed",
+                        opp_id = %opp.id,
+                        error = %e,
+                        "failed to insert paper_trade_run (BE-3.4) — non-fatal"
+                    );
+                }
+            }
             return ExecutionResult {
                 opportunity_id: opp.id,
                 status: ExecutionStatus::NotSubmitted,

@@ -115,29 +115,76 @@ pub fn find_router(chain_id: u64, addr: &[u8; 20]) -> Option<&'static RouterEntr
 /// Values are conservative best-estimates (round up, not down) so
 /// capital cost is never under-counted:
 ///
-/// | Chain     | chain_id | Typical block time | Source                   |
-/// |-----------|----------|-------------------|--------------------------|
-/// | Ethereum  | 1        | 12.0 s            | PoS slot time (12s)      |
-/// | BSC       | 56       | 3.0 s             | BNB Chain consensus      |
-/// | Polygon   | 137      | 2.0 s             | Bor PoS                  |
-/// | Base      | 8453     | 2.0 s             | OP-Stack (2s slots)      |
-/// | Arbitrum  | 42161    | 0.25 s            | Nitro: sub-second real;  |
-/// |           |          |                   | conservative 250ms used  |
-/// | Optimism  | 10       | 2.0 s             | OP-Stack (2s slots)      |
-/// | unknown   | _        | 12.0 s            | ETH-equivalent fallback  |
+/// | Chain     | chain_id | Typical block time | Source                             |
+/// |-----------|----------|--------------------|------------------------------------|
+/// | Ethereum  | 1        | 12.0 s             | PoS slot time (12s)                |
+/// | BSC       | 56       | 3.0 s              | BNB Chain PoSA ~3s                 |
+/// | Polygon   | 137      | 2.0 s              | Bor PoS ~2s                        |
+/// | Base      | 8453     | 2.0 s              | OP-Stack (2s slots)                |
+/// | Arbitrum  | 42161    | 0.5 s              | Nitro sub-second; 0.5s safety buf  |
+/// | Optimism  | 10       | 2.0 s              | OP-Stack (2s slots)                |
+/// | unknown   | _        | 12.0 s             | ETH-equivalent fallback            |
 ///
-/// Sprint H1 follow-up: replaces the hardcoded `ETH_BLOCK_TIME_S = 12.0`
-/// constant in `prioritization-spine/config_aware.rs`. ARB (42161) was
-/// previously 6× over-costed at 12s vs real 0.25s; this corrects it.
+/// BE-3.7 refinement (2026-05-08):
+///   Arbitrum adjusted from 0.25s to 0.5s. Real Nitro block times are
+///   ~0.25s under normal load but can spike to ~1s under congestion.
+///   0.5s is the pragmatic safety margin: still 24× cheaper than the
+///   pre-fix ETH 12s fallback, but won't under-count capital cost on
+///   congested epochs. Capital cost formula is linear in block_time_s;
+///   over-counting by 2× is a ~$0.001 penalty on $10k notional, negligible.
+///
+/// Sprint H1 follow-up: replaced the hardcoded `ETH_BLOCK_TIME_S = 12.0`
+/// constant in `prioritization-spine/config_aware.rs`.
 pub fn block_time_s_for_chain(chain_id: u64) -> f64 {
     match chain_id {
         1     => 12.0,  // Ethereum mainnet (PoS 12s slots)
-        56    => 3.0,   // BNB Smart Chain
-        137   => 2.0,   // Polygon PoS
-        8453  => 2.0,   // Base (OP-Stack)
-        42161 => 0.25,  // Arbitrum Nitro (sub-second; 250ms conservative)
-        10    => 2.0,   // Optimism (OP-Stack)
+        56    => 3.0,   // BNB Smart Chain (PoSA ~3s)
+        137   => 2.0,   // Polygon PoS (~2s)
+        8453  => 2.0,   // Base (OP-Stack 2s slots)
+        42161 => 0.5,   // Arbitrum Nitro: ~0.25s real; 0.5s safety buffer (BE-3.7)
+        10    => 2.0,   // Optimism (OP-Stack 2s slots)
         _     => 12.0,  // unknown → ETH-equivalent (conservative)
+    }
+}
+
+/// Returns the number of blocks to treat as a reorg safety buffer when
+/// computing capital risk windows for a given chain.
+///
+/// This is NOT the standard confirmation depth for exchange deposits — it is
+/// the MEV-specific window during which a reorg could invalidate an already
+/// included opportunity, affecting PnL accounting. Used to size the hold
+/// time in future drift-tracker and risk-management work.
+///
+/// L2 chains (Arbitrum, Optimism, Base) have zero L2-level reorg risk after
+/// the sequencer orders the tx: they inherit finality from L1 checkpointing,
+/// but individual blocks are not reorganised at the L2 layer. We therefore
+/// return 0 for OP-Stack and Arbitrum chains — their risk window is the L1
+/// finality delay, which is out of scope for this helper.
+///
+/// Values:
+///
+/// | Chain     | chain_id | Reorg buffer | Rationale                            |
+/// |-----------|----------|--------------|--------------------------------------|
+/// | Ethereum  | 1        | 12           | ~2-3 min; 12 blocks is industry std  |
+/// | BSC       | 56       | 15           | Known deep reorg history (PoSA)      |
+/// | Polygon   | 137      | 256          | Documented reorg incidents >100 blk  |
+/// | Base      | 8453     | 0            | OP-Stack: no L2 reorgs               |
+/// | Arbitrum  | 42161    | 0            | Nitro sequencer: no L2 reorgs        |
+/// | Optimism  | 10       | 0            | OP-Stack: no L2 reorgs               |
+/// | unknown   | _        | 12           | ETH-equivalent (conservative)        |
+///
+/// NOTE: This helper is not yet wired into capital-cost or risk-management
+/// scoring. It is provided here for future use (drift-tracker, position
+/// sizing) and is covered by unit tests to prevent silent regression.
+pub fn reorg_buffer_blocks_for_chain(chain_id: u64) -> u32 {
+    match chain_id {
+        1     => 12,   // Ethereum: ~2.4 min finality window
+        56    => 15,   // BSC: PoSA; documented reorg incidents
+        137   => 256,  // Polygon: repeated deep-reorg history
+        8453  => 0,    // Base: OP-Stack sequencer, no L2 reorgs
+        42161 => 0,    // Arbitrum Nitro: sequencer, no L2 reorgs
+        10    => 0,    // Optimism: OP-Stack sequencer, no L2 reorgs
+        _     => 12,   // unknown → ETH-equivalent (conservative)
     }
 }
 
@@ -192,6 +239,8 @@ mod tests {
 
     /// Matrix test: each known chain_id maps to the documented value.
     /// Chain additions must update BOTH the function body and this test.
+    ///
+    /// BE-3.7: Arbitrum updated from 0.25s to 0.5s (congestion safety buffer).
     #[test]
     fn block_time_known_chains() {
         let cases: &[(u64, f64)] = &[
@@ -199,7 +248,7 @@ mod tests {
             (56,    3.0),   // BSC
             (137,   2.0),   // Polygon
             (8453,  2.0),   // Base
-            (42161, 0.25),  // Arbitrum
+            (42161, 0.5),   // Arbitrum (BE-3.7: 0.5s safety buffer; was 0.25s)
             (10,    2.0),   // Optimism
         ];
         for &(chain_id, expected) in cases {
@@ -226,7 +275,8 @@ mod tests {
     }
 
     /// Arbitrum block time is ≤1s — ensures the 6× over-cost regression
-    /// (ETH 12s vs ARB 0.25s) cannot be re-introduced silently.
+    /// (ETH 12s vs ARB 0.25s-0.5s range) cannot be re-introduced silently.
+    /// BE-3.7: value is 0.5s (safety buffer), still well under 1s.
     #[test]
     fn arbitrum_block_time_is_sub_second() {
         let arb_time = block_time_s_for_chain(42161);
@@ -234,5 +284,54 @@ mod tests {
             arb_time < 1.0,
             "Arbitrum block time must be <1s (was 12s before fix): got {arb_time}s",
         );
+    }
+
+    // ---- reorg_buffer_blocks_for_chain tests ----------------------------------
+
+    /// L2 chains (Arbitrum, Optimism, Base) must have zero reorg buffer —
+    /// their sequencers do not reorganise at the L2 layer.
+    #[test]
+    fn l2_chains_have_zero_reorg_buffer() {
+        let l2_chains: &[u64] = &[42161, 10, 8453]; // Arbitrum, Optimism, Base
+        for &chain_id in l2_chains {
+            let buf = reorg_buffer_blocks_for_chain(chain_id);
+            assert_eq!(
+                buf, 0,
+                "L2 chain_id={chain_id} must have reorg_buffer=0 (sequencer guarantees), got {buf}",
+            );
+        }
+    }
+
+    /// Ethereum must have a non-zero reorg buffer (12 blocks = ~2.4 min).
+    #[test]
+    fn ethereum_reorg_buffer_is_twelve() {
+        assert_eq!(reorg_buffer_blocks_for_chain(1), 12);
+    }
+
+    /// Polygon must have the highest reorg buffer (256) due to documented
+    /// deep-reorg incidents.
+    #[test]
+    fn polygon_reorg_buffer_is_highest() {
+        let polygon = reorg_buffer_blocks_for_chain(137);
+        let eth = reorg_buffer_blocks_for_chain(1);
+        assert!(
+            polygon > eth,
+            "Polygon reorg buffer ({polygon}) must exceed Ethereum ({eth})",
+        );
+        assert_eq!(polygon, 256);
+    }
+
+    /// Unknown chain IDs fall back to ETH-equivalent (12), not 0.
+    /// A zero reorg buffer for an unknown chain would silently under-count risk.
+    #[test]
+    fn reorg_buffer_unknown_chain_falls_back_to_eth() {
+        let unknown_ids: &[u64] = &[999, 0, u64::MAX, 31337];
+        for &chain_id in unknown_ids {
+            let buf = reorg_buffer_blocks_for_chain(chain_id);
+            assert_eq!(
+                buf, 12,
+                "unknown chain_id={chain_id} should fall back to reorg_buffer=12, got {buf}",
+            );
+        }
     }
 }
