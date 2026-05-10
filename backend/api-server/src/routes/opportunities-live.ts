@@ -110,8 +110,14 @@ LEFT JOIN tokens ti
 LEFT JOIN tokens to_
   ON  to_.chain_id = COALESCE(o.chain_id_out, o.chain_id)
   AND to_.address  = LOWER(o.token_out)
-WHERE o.status IN ('detected', 'validated', 'simulated', 'scored')
-  AND ($2::bool = false OR o.rejection_reason IS NULL)
+-- viable_only=true: only show non-rejected opps in a viable lifecycle state.
+-- viable_only=false: show ALL recent opps including rejected ones so the
+--                    operator sees real-time pipeline activity, not just
+--                    historical viable rows. R8 fail-honest: rejections
+--                    carry rejection_reason so the UI displays the why.
+WHERE ($2::bool = false
+       OR (o.status IN ('detected', 'validated', 'simulated', 'scored')
+           AND o.rejection_reason IS NULL))
 ORDER BY o.detected_at DESC
 LIMIT $1
 `.trim();

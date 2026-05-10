@@ -103,6 +103,7 @@ export interface UseOpportunitiesStreamResult {
 export function useOpportunitiesStream(
   initial: OpportunityListItem[],
   edgeUrl: string,
+  viableOnly: boolean = false,
 ): UseOpportunitiesStreamResult {
   const [opportunities, setOpportunities] = useState<OpportunityListItem[]>(initial);
   const [wsStatus, setWsStatus] = useState<WsStatus | "POLLING">("CONNECTING");
@@ -111,6 +112,10 @@ export function useOpportunitiesStream(
   const errorCountRef = useRef(0);
   const usingPollingRef = useRef(false);
   const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const viableOnlyRef = useRef(viableOnly);
+  // Keep the ref in sync without restarting the poll loop (the interval
+  // closure reads the ref so the next tick honors the latest toggle).
+  useEffect(() => { viableOnlyRef.current = viableOnly; }, [viableOnly]);
 
   // ─── HTTP polling fallback ────────────────────────────────────────────────
   const startPolling = useCallback(() => {
@@ -120,8 +125,13 @@ export function useOpportunitiesStream(
 
     const poll = async () => {
       try {
+        // Respect the operator's "Viable only" toggle from the UI. When false,
+        // the polling endpoint returns rejected opps too so the operator sees
+        // pipeline activity in real time (with rejection_reason visible),
+        // not just historical viables.
+        const viable = viableOnlyRef.current;
         const res = await fetch(
-          `${edgeUrl}/api/opportunities/live?viable_only=true&limit=50`,
+          `${edgeUrl}/api/opportunities/live?viable_only=${viable}&limit=50`,
           {
             headers: { accept: "application/json" },
             signal: AbortSignal.timeout(POLL_INTERVAL_MS),

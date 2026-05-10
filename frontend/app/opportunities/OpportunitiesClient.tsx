@@ -120,9 +120,14 @@ export default function OpportunitiesClient({
   const [isMounted, setIsMounted] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [now, setNow] = useState<number>(0);
-  // R1: viableOnly initialises to true (deterministic SSR-safe value).
-  // localStorage read happens in useEffect — never in render.
-  const [viableOnly, setViableOnly] = useState(true);
+  // R1: viableOnly initialises to false (deterministic SSR-safe value) so the
+  // operator sees ALL recent pipeline activity by default — including
+  // rejections with rejection_reason visible — rather than only historical
+  // viable opps. Operator can toggle to "Viable only" to filter the noise
+  // when reviewing actionable detections.
+  // 2026-05-10 fix: was `true` which hid all current pipeline traffic when
+  // the safety screen rejects every mempool detection (typical state).
+  const [viableOnly, setViableOnly] = useState(false);
   const [simLoading, setSimLoading] = useState<string | null>(null);
   const [selectedOpp, setSelectedOpp] = useState<OpportunityDetail | null>(null);
 
@@ -137,9 +142,13 @@ export default function OpportunitiesClient({
 
   // FE-1: WebSocket stream. R1 compliant — hook runs WS inside useEffect only.
   // When WS fails 3×, hook auto-degrades to HTTP polling at 4s.
+  // 2026-05-10 realtime fix: pass viableOnly so the polling fallback respects
+  // the operator's UI toggle. When false (default), the API returns rejected
+  // opps too so the live feed surfaces actual pipeline activity.
   const { opportunities: streamOpportunities, wsStatus } = useOpportunitiesStream(
     initialSnapshot.opportunities,
     EDGE_URL,
+    viableOnly,
   );
 
   // Derive feedStatus from wsStatus for display. "POLLING" is the degraded
@@ -217,9 +226,11 @@ export default function OpportunitiesClient({
   }, [EDGE_URL, viableOnly]);
 
   // R1: localStorage read happens here — never during render (SSR has no localStorage).
+  // 2026-05-10: default is now `false`. Only restore from localStorage if the
+  // operator explicitly set it to `true` in a previous session.
   useEffect(() => {
     const stored = localStorage.getItem("arbx-opps-viable-only");
-    if (stored === "false") setViableOnly(false);
+    if (stored === "true") setViableOnly(true);
   }, []);
 
   const onToggleViableOnly = useCallback((newValue: boolean) => {
