@@ -78,6 +78,7 @@ import { buildStrategyCatalogRouter } from "./routes/strategy-catalog.js";
 import { mountOpportunitiesLive } from "./routes/opportunities-live.js";
 import { mountDexes } from "./routes/dexes.js";
 import { mountPools } from "./routes/pools.js";
+import { mountStubs } from "./routes/stubs.js";
 import { setupWebSocketGateway, broadcastOpportunity } from "./websocket.js";
 import { createServer } from "http";
 import rateLimit from "express-rate-limit";
@@ -848,6 +849,13 @@ app.get("/api/v1/config/current", async (_req, res) => {
     circuit_breakers: cfg.circuit_breakers,
   });
 });
+
+// ── A8 stubs — endpoints scaffolded for the frontend that aren't wired yet ─
+// MUST be mounted LAST, after all real routes. Express dispatches the first
+// matching route, so promoting any of these stubs to a real implementation
+// is done by registering the canonical handler earlier (e.g. in a routes/
+// module) — Express will pick the real handler and the stub becomes inert.
+mountStubs(app, { requireAdminToken, adminToken: ARBX_ADMIN_TOKEN });
 
 // Live readiness checklist — 17 items verified dynamically (option C from spec).
 // API-4: TTL reduced from 30s to 5s default (env-configurable). 30s could mask
