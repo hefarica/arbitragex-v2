@@ -62,3 +62,38 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # gitleaks is blocking — secrets in history is a hard failure.
         # GITHUB_TOKEN is sufficient for public/private repo scan.
+
+  npm-audit:
+    # R2 (audit re-run #2, 2026-05-10): gate production-deps advisories.
+    # Prod deps only — dev/test deps (vitest, wrangler, testcontainers, miniflare)
+    # accumulate transitive advisories that don't ship to the runtime; they're
+    # tracked but not blocking. High and critical advisories on prod deps fail
+    # the merge.
+    name: npm audit (prod deps, high+)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install all workspace dependencies
+        # npm ci so package-lock.json is the source of truth.
+        run: npm ci
+
+      - name: npm audit (prod deps, high+)
+        # --omit=dev excludes devDependencies, --audit-level=high fails on
+        # high/critical advisories. Moderate prod advisories surface as warnings
+        # in the run log but do not fail the merge.
+        # NEVER add continue-on-error here — that defeats the gate.
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: npm audit (informational — dev deps, all levels)
+        # Dev/test deps. Non-blocking; surfaces what's known so an operator
+        # decides when to schedule a major-bump sprint (wrangler, testcontainers,
+        # vitest are listed semver-major-ignored in dependabot.yml).
+        run: npm audit --include=dev || true
