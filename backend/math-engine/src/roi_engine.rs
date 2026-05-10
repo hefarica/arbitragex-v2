@@ -110,11 +110,28 @@ pub struct RoiCalculationParams {
     ///             (pre-cost gross). Deducted from net profit.
     /// `None`    → no `dex_chain_metrics` row for the pool; no cost added (R8).
     pub p_copied: Option<f64>,
+
+    // --- Component 8 (C2 fix, audit re-run #2 2026-05-10): relay bribe ---
+    /// Estimated relay/builder bribe in USD (the `coinbaseDiff` the searcher
+    /// must pay to win bundle inclusion on Ethereum mainnet).
+    ///
+    /// Sourced from the EWMA of observed `coinbase_diff_wei` values stored in
+    /// Redis key `arbx:relay_fee_ewma:{chain_id}:{strategy_kind}` and converted
+    /// to USD using the current ETH price. Cold-start (absent key): caller
+    /// applies the doctrine floor `max(gross × 0.05, $0.50)` before passing
+    /// here. The math engine deducts this value as-is.
+    ///
+    /// Ethereum mainnet only: L2 sequencer inclusion is deterministic; passing
+    /// `0.0` for L2 chains is correct. Callers determine the chain.
+    ///
+    /// This is component 8 in the cost model. Previously absent, it caused a
+    /// systematic 10-50% overstatement of net profit on mainnet.
+    pub estimated_relay_fee_usd: f64,
 }
 
 /// Calcula el ROI bruto y neto de una oportunidad DeFi (Estrategia General).
 ///
-/// ### Net profit formula (Sprint A + B + C)
+/// ### Net profit formula (Sprint A + B + C + C2)
 /// ```text
 /// net_profit =
 ///     expected_amount_out_usd
@@ -127,6 +144,7 @@ pub struct RoiCalculationParams {
 ///   - capital_cost_usd             // component 6 (Sprint A)
 ///   - ops_overhead_usd             // component 7 (Sprint A)
 ///   - copied_buffer_usd            // component 5 (Sprint C: p_copied × gross_proxy)
+///   - estimated_relay_fee_usd      // component 8 (C2 fix: Flashbots coinbaseDiff EWMA)
 /// ```
 pub fn calc_net_profit_and_roi(params: &RoiCalculationParams) -> DefiArbitrageOutcome {
     let gross_profit_usd = params.expected_amount_out_usd - params.amount_in_usd;
@@ -179,17 +197,18 @@ pub fn calc_net_profit_and_roi(params: &RoiCalculationParams) -> DefiArbitrageOu
         None => 0.0,
     };
 
-    // Full deterministic net profit deducting all components (Sprints A + B + C).
+    // Full deterministic net profit deducting all components (Sprints A + B + C + C2).
     let net_profit_usd = params.expected_amount_out_usd
         - params.amount_in_usd
-        - params.expected_gas_cost_usd     // component 1
-        - flashloan_fee_usd                // component from flashloan_fee_pct
-        - params.lp_fees_usd              // component 2 (Sprint A)
-        - effective_slippage_usd           // component 3 (Sprint A)
-        - failure_cost_usd                 // component 4 (Sprint B: statistical or proxy)
-        - params.capital_cost_usd          // component 6 (Sprint A)
-        - params.ops_overhead_usd          // component 7 (Sprint A)
-        - copied_buffer_usd;               // component 5 (Sprint C)
+        - params.expected_gas_cost_usd          // component 1
+        - flashloan_fee_usd                     // component from flashloan_fee_pct
+        - params.lp_fees_usd                    // component 2 (Sprint A)
+        - effective_slippage_usd                // component 3 (Sprint A)
+        - failure_cost_usd                      // component 4 (Sprint B: statistical or proxy)
+        - params.capital_cost_usd               // component 6 (Sprint A)
+        - params.ops_overhead_usd               // component 7 (Sprint A)
+        - copied_buffer_usd                     // component 5 (Sprint C)
+        - params.estimated_relay_fee_usd;       // component 8 (C2 fix: relay bribe EWMA)
 
     let capital_required = params.amount_in_usd;
     let net_roi_pct = if capital_required > 0.0 {
@@ -246,6 +265,8 @@ mod tests {
             p_fail: None,
             // Sprint C — None → no copy-trade cost
             p_copied: None,
+            // C2 — zero by default (relay fee not yet wired at baseline)
+            estimated_relay_fee_usd: 0.0,
         }
     }
 
@@ -405,6 +426,7 @@ mod tests {
             ops_overhead_usd: 0.01,
             p_fail: None,
             p_copied: None, // Sprint C: no copy-trade cost in this combined test
+            estimated_relay_fee_usd: 0.0, // C2: zero so legacy arithmetic is preserved
         };
         let result = calc_net_profit_and_roi(&params);
 
@@ -440,6 +462,7 @@ mod tests {
             ops_overhead_usd: 0.0,
             p_fail: None,
             p_copied: None,
+            estimated_relay_fee_usd: 0.0,
         };
 
         let result = calc_net_profit_and_roi(&params);
@@ -526,6 +549,7 @@ mod tests {
             ops_overhead_usd: 0.0,
             p_fail: Some(1.0),
             p_copied: None,
+            estimated_relay_fee_usd: 0.0,
         };
         let result = calc_net_profit_and_roi(&params);
         // statistical buffer = 1.0 × $5 = $5; net = 101 - 100 - 5 - 5 = -$9
@@ -561,6 +585,7 @@ mod tests {
             ops_overhead_usd: 0.0,
             p_fail: None,
             p_copied: None,
+            estimated_relay_fee_usd: 0.0,
         };
 
         let result = calc_net_profit_and_roi(&params);
@@ -618,6 +643,7 @@ mod tests {
             ops_overhead_usd: 0.0,
             p_fail: None,
             p_copied: Some(0.1),
+            estimated_relay_fee_usd: 0.0,
         };
         let result = calc_net_profit_and_roi(&params);
         // gross = $100; copied_buffer = 0.1 × $100 = $10; net = $100 - $10 = $90
@@ -650,6 +676,7 @@ mod tests {
             ops_overhead_usd: 0.0,
             p_fail: None,
             p_copied: Some(0.7), // engine applies 70% as-is
+            estimated_relay_fee_usd: 0.0,
         };
         let result = calc_net_profit_and_roi(&params);
         // copied_buffer = 0.7 × $100 = $70; net = $100 - $70 = $30
@@ -689,6 +716,7 @@ mod tests {
             ops_overhead_usd: 0.01,
             p_fail: Some(0.1),       // 0.1 × $2 gas = $0.20
             p_copied: Some(0.1),     // 0.1 × $100 gross = $10.00
+            estimated_relay_fee_usd: 0.0, // C2: zero to preserve legacy arithmetic
         };
         let result = calc_net_profit_and_roi(&params);
 
@@ -721,5 +749,106 @@ mod tests {
             result.net_profit_usd,
         );
         assert!(result.is_viable, "net=${} must be viable", result.net_profit_usd);
+    }
+
+    // ----------------------------------------------------------------
+    // C2 fix (audit re-run #2 2026-05-10): relay_fee_usd integration tests
+    // (Component 8 — Flashbots coinbaseDiff EWMA)
+    // ----------------------------------------------------------------
+
+    /// C2: non-zero relay_fee_usd reduces net profit by exactly that amount vs
+    /// the same params with relay_fee=0.0.
+    ///
+    /// This is the canonical regression guard: a $5 relay bribe on a $100 gross
+    /// opportunity reduces net profit by exactly $5 — no more, no less.
+    #[test]
+    fn c2_relay_fee_reduces_net_by_exact_amount() {
+        // Baseline: $1000 in, $1100 out ($100 gross), no other costs.
+        let base_params = RoiCalculationParams {
+            amount_in_usd: 1_000.0,
+            expected_amount_out_usd: 1_100.0,
+            expected_gas_cost_usd: 0.0,
+            flashloan_fee_pct: 0.0,
+            max_slippage_pct: 0.0,
+            failure_risk_buffer_usd: 0.0,
+            lp_fees_usd: 0.0,
+            price_impact_pct: 0.0,
+            capital_cost_usd: 0.0,
+            ops_overhead_usd: 0.0,
+            p_fail: None,
+            p_copied: None,
+            estimated_relay_fee_usd: 0.0, // baseline: no relay fee
+        };
+        let base_result = calc_net_profit_and_roi(&base_params);
+
+        // With relay fee of $5:
+        let relay_fee_usd = 5.0_f64;
+        let mut fee_params = base_params.clone();
+        fee_params.estimated_relay_fee_usd = relay_fee_usd;
+        let fee_result = calc_net_profit_and_roi(&fee_params);
+
+        // Gross must be identical (relay fee is a cost, not a gross-reduction).
+        assert!(
+            (fee_result.gross_profit_usd - base_result.gross_profit_usd).abs() < 1e-9,
+            "gross must be identical regardless of relay_fee; \
+             base={} fee={}",
+            base_result.gross_profit_usd,
+            fee_result.gross_profit_usd,
+        );
+
+        // Net must be reduced by exactly relay_fee_usd.
+        let net_delta = base_result.net_profit_usd - fee_result.net_profit_usd;
+        assert!(
+            (net_delta - relay_fee_usd).abs() < 1e-9,
+            "C2: net profit must decrease by exactly relay_fee_usd=${:.2}; \
+             delta was {:.9}",
+            relay_fee_usd,
+            net_delta,
+        );
+    }
+
+    /// C2: with a relay fee that consumes all profit, opportunity becomes non-viable.
+    ///
+    /// $100 gross, $99 relay fee → net = $1 (barely viable).
+    /// $100 gross, $101 relay fee → net = -$1 (not viable).
+    #[test]
+    fn c2_relay_fee_can_kill_opportunity() {
+        let make = |relay_fee: f64| RoiCalculationParams {
+            amount_in_usd: 1_000.0,
+            expected_amount_out_usd: 1_100.0,
+            expected_gas_cost_usd: 0.0,
+            flashloan_fee_pct: 0.0,
+            max_slippage_pct: 0.0,
+            failure_risk_buffer_usd: 0.0,
+            lp_fees_usd: 0.0,
+            price_impact_pct: 0.0,
+            capital_cost_usd: 0.0,
+            ops_overhead_usd: 0.0,
+            p_fail: None,
+            p_copied: None,
+            estimated_relay_fee_usd: relay_fee,
+        };
+
+        let barely_viable = calc_net_profit_and_roi(&make(99.0));
+        assert!(
+            barely_viable.is_viable,
+            "relay_fee=$99 on $100 gross → net=$1 → should be viable"
+        );
+        assert!(
+            (barely_viable.net_profit_usd - 1.0).abs() < 1e-9,
+            "net expected $1, got {}",
+            barely_viable.net_profit_usd,
+        );
+
+        let non_viable = calc_net_profit_and_roi(&make(101.0));
+        assert!(
+            !non_viable.is_viable,
+            "relay_fee=$101 on $100 gross → net=-$1 → must NOT be viable"
+        );
+        assert!(
+            (non_viable.net_profit_usd - (-1.0)).abs() < 1e-9,
+            "net expected -$1, got {}",
+            non_viable.net_profit_usd,
+        );
     }
 }

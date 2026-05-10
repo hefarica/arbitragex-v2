@@ -259,6 +259,27 @@ pub struct ConfigAwareEvaluator<'a> {
     /// Pass `None` when the subscriber has not been spawned (e.g. sim-ctl,
     /// unit tests that do not need real-time feedback).
     pub feedback_channel: Option<FeedbackChannel>,
+
+    /// Pre-fetched EWMA relay-bribe estimate in USD (C2 fix, audit re-run #2).
+    ///
+    /// Sourced from Redis key `arbx:relay_fee_ewma:{chain_id}:{strategy_kind}`
+    /// (written by `relays-client::submit_engine` after each `eth_callBundle`
+    /// simulation using α=0.2 and TTL=1h). Converted to USD externally by the
+    /// caller (coinbase_diff_wei × eth_price_usd / 1e18).
+    ///
+    /// When the key is absent (cold-start, L2 chains, or first-ever bundle):
+    /// the caller MUST apply the doctrine floor:
+    ///   `max(gross_profit_usd × RELAY_FEE_FLOOR_PCT, RELAY_FEE_FLOOR_ABS_USD)`
+    /// (5% of gross OR $0.50, whichever is greater).
+    /// Constants live in `shared_rs::pre_execute_checklist`.
+    ///
+    /// For L2 chains (Arbitrum, Base, Optimism, Polygon): pass `0.0` — sequencer
+    /// inclusion is deterministic and requires no searcher bribe.
+    ///
+    /// `evaluate()` passes this value directly into `RoiCalculationParams.estimated_relay_fee_usd`
+    /// and `CostBreakdown.relay_fee_usd`. Callers pre-fetch async to keep
+    /// `evaluate()` entirely sync on the hot path.
+    pub estimated_relay_fee_usd: f64,
 }
 
 impl<'a> ConfigAwareEvaluator<'a> {
@@ -275,6 +296,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             v2_reserve_snapshot: None,
             v3_slot0_snapshot: None,
             feedback_channel: None,
+            estimated_relay_fee_usd: 0.0,
         }
     }
 
@@ -297,6 +319,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             v2_reserve_snapshot: None,
             v3_slot0_snapshot: None,
             feedback_channel: None,
+            estimated_relay_fee_usd: 0.0,
         }
     }
 
@@ -320,6 +343,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             v2_reserve_snapshot: None,
             v3_slot0_snapshot: None,
             feedback_channel: None,
+            estimated_relay_fee_usd: 0.0,
         }
     }
 
@@ -345,6 +369,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             v2_reserve_snapshot: None,
             v3_slot0_snapshot: None,
             feedback_channel: None,
+            estimated_relay_fee_usd: 0.0,
         }
     }
 
@@ -373,6 +398,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             v2_reserve_snapshot,
             v3_slot0_snapshot: None,
             feedback_channel: None,
+            estimated_relay_fee_usd: 0.0,
         }
     }
 
@@ -407,7 +433,37 @@ impl<'a> ConfigAwareEvaluator<'a> {
             v2_reserve_snapshot,
             v3_slot0_snapshot,
             feedback_channel: None,
+            estimated_relay_fee_usd: 0.0,
         }
+    }
+
+    /// Builder-style setter for the estimated relay fee (C2 fix, audit re-run #2).
+    ///
+    /// The caller fetches the EWMA value from Redis key
+    /// `arbx:relay_fee_ewma:{chain_id}:{strategy_kind}` (raw wei as f64 string),
+    /// converts to USD with `ewma_wei / 1e18 * config.base_token_price_usd`,
+    /// and passes the result here.
+    ///
+    /// Cold-start (key absent): apply the doctrine floor before calling this:
+    /// ```ignore
+    /// use shared_rs::pre_execute_checklist::{relay_fee_ewma_key,
+    ///     RELAY_FEE_FLOOR_PCT, RELAY_FEE_FLOOR_ABS_USD};
+    ///
+    /// let ewma_wei: Option<f64> = redis.get(&relay_fee_ewma_key(chain_id, strategy_kind)).await.ok();
+    /// let relay_fee_usd = ewma_wei
+    ///     .map(|wei| (wei / 1e18) * config.base_token_price_usd)
+    ///     .unwrap_or_else(|| {
+    ///         // cold-start floor
+    ///         let floor_pct = gross_profit_usd * RELAY_FEE_FLOOR_PCT;
+    ///         floor_pct.max(RELAY_FEE_FLOOR_ABS_USD)
+    ///     });
+    /// let evaluator = ConfigAwareEvaluator::with_v3_slot0(...)
+    ///     .with_relay_fee(relay_fee_usd);
+    /// ```
+    /// For L2 chains (Arbitrum, Base, Optimism, Polygon): pass `0.0`.
+    pub fn with_relay_fee(mut self, estimated_relay_fee_usd: f64) -> Self {
+        self.estimated_relay_fee_usd = estimated_relay_fee_usd;
+        self
     }
 
     /// Builder-style setter for the real-time feedback channel (Sprint BE-3.5).
@@ -755,6 +811,22 @@ impl<'a> ConfigAwareEvaluator<'a> {
             }
         };
 
+        // --- Component 8 (C2 fix): relay fee EWMA ---
+        //
+        // `self.estimated_relay_fee_usd` is pre-fetched by the caller from Redis
+        // key `arbx:relay_fee_ewma:{chain_id}:{strategy_kind}`. The cold-start
+        // floor is applied by the caller BEFORE constructing the evaluator:
+        //
+        //   floor = max(gross_profit_usd × RELAY_FEE_FLOOR_PCT, RELAY_FEE_FLOOR_ABS_USD)
+        //         = max(gross × 0.05, $0.50)
+        //
+        // This ensures cold-start bundles on mainnet are NOT modelled as zero-bribe
+        // even before the EWMA accumulates real observations.
+        //
+        // For L2 chains (Arbitrum, Base, Optimism, Polygon) the caller passes 0.0 —
+        // sequencer inclusion is deterministic; the bribe model does not apply.
+        let estimated_relay_fee_usd = self.estimated_relay_fee_usd;
+
         let roi_params = RoiCalculationParams {
             amount_in_usd,
             expected_amount_out_usd,
@@ -768,6 +840,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             ops_overhead_usd,
             p_fail: p_fail_opt,
             p_copied,
+            estimated_relay_fee_usd, // component 8 (C2 fix)
         };
         let outcome_raw = calc_net_profit_and_roi(&roi_params);
 
@@ -878,6 +951,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             p_fail_source,
             copied_buffer_usd,
             p_copied,
+            estimated_relay_fee_usd, // component 8 (C2 fix)
         );
 
         let evidence = OpportunityEvidence {
@@ -971,6 +1045,8 @@ mod tests {
             failure_risk_buffer_pct: 0.001,
             flashloan_fee_pct: 0.0009,
             enabled_strategies: vec!["dex_arb_v2v2".into()],
+            enabled_dex_ids: None,
+            strategy_configs: HashMap::new(),
             capital_cost_rate_annual_pct: 0.0,
             ops_overhead_usd_per_attempt: 0.01,
             spread_sanity_mult: 3.0,

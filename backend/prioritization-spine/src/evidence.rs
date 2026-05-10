@@ -78,10 +78,24 @@ pub struct CostBreakdown {
     /// `None`  → no `dex_chain_metrics` row for the weakest pool; cost not added (R8).
     /// `Some(p)` → heuristic was applied; `copied_buffer_usd = p × gross_proxy`.
     pub p_copied_used: Option<f64>,
+
+    // --- Component 8 (C2 fix, audit re-run #2 2026-05-10): relay bribe ---
+    /// Estimated relay/builder bribe in USD (component 8).
+    ///
+    /// Sourced from the EWMA of observed `coinbase_diff_wei` values per
+    /// `(chain_id, strategy_kind)`. Cold-start floor: `max(gross × 0.05, $0.50)`.
+    ///
+    /// Zero for L2 chains (sequencer inclusion is deterministic; no bribe needed).
+    /// For Ethereum mainnet, this is typically 10-50% of gross profit.
+    pub relay_fee_usd: f64,
 }
 
 impl CostBreakdown {
     /// Construct and compute `total_cost_usd` from component scalars.
+    ///
+    /// C2 fix (audit re-run #2 2026-05-10): `relay_fee_usd` added as
+    /// component 8 — relay/builder bribe EWMA from `coinbase_diff_wei`.
+    /// `total_cost_usd` now sums all 8 components.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         gas_usd: f64,
@@ -94,6 +108,7 @@ impl CostBreakdown {
         p_fail_source: PFailSource,
         copied_buffer_usd: f64,
         p_copied_used: Option<f64>,
+        relay_fee_usd: f64,
     ) -> Self {
         let total_cost_usd = gas_usd
             + lp_fees_usd
@@ -102,7 +117,8 @@ impl CostBreakdown {
             + failure_buffer_usd
             + capital_cost_usd
             + ops_overhead_usd
-            + copied_buffer_usd;
+            + copied_buffer_usd
+            + relay_fee_usd; // component 8
         Self {
             gas_usd,
             lp_fees_usd,
@@ -115,6 +131,7 @@ impl CostBreakdown {
             p_fail_source,
             copied_buffer_usd,
             p_copied_used,
+            relay_fee_usd,
         }
     }
 }
