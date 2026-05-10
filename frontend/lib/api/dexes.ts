@@ -86,34 +86,100 @@ export async function toggleDexActive(
   isActive: boolean,
   adminToken: string,
 ): Promise<Result<DexToggleResult>> {
-  const url = `${edgeUrl}/api/v1/dexes/${id}/active`;
+  return mutateJson<DexToggleResult>(
+    `${edgeUrl}/api/v1/dexes/${id}/active`,
+    "PUT",
+    { is_active: isActive },
+    adminToken,
+  );
+}
+
+// 2026-05-10 audit follow-up: registry CRUD for the /dex-registry page.
+
+export interface CreateDexFactory {
+  chain_id: number;
+  address: string;
+}
+
+export interface CreateDexBody {
+  name: string;
+  protocol_type: string;
+  factories: CreateDexFactory[];
+}
+
+/** POST /api/v1/dexes — creates a DEX row with per-chain factories. */
+export function createDex(
+  edgeUrl: string,
+  body: CreateDexBody,
+  adminToken: string,
+): Promise<Result<DexRow>> {
+  return mutateJson<DexRow>(
+    `${edgeUrl}/api/v1/dexes`,
+    "POST",
+    body,
+    adminToken,
+  );
+}
+
+/** DELETE /api/v1/dexes/:id — hard delete (refuses if pools reference it). */
+export function deleteDex(
+  edgeUrl: string,
+  id: string,
+  adminToken: string,
+): Promise<Result<{ id: string; deleted: boolean }>> {
+  return mutateJson<{ id: string; deleted: boolean }>(
+    `${edgeUrl}/api/v1/dexes/${id}`,
+    "DELETE",
+    null,
+    adminToken,
+  );
+}
+
+/**
+ * Helper for JSON-body mutations. Centralises:
+ *   - 5s timeout
+ *   - admin token header
+ *   - 404 → "endpoint not yet implemented" surfacing
+ *   - server-side error messages preserved when present in the response body
+ *     (PG 23505 conflict, dex_has_pools, etc.) so the UI can display the
+ *     actionable reason from the API rather than a bare "HTTP 409".
+ */
+async function mutateJson<T>(
+  url: string,
+  method: "POST" | "PUT" | "DELETE",
+  body: unknown,
+  adminToken: string,
+): Promise<Result<T>> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 5000);
   try {
     const res = await fetch(url, {
-      method: "PUT",
+      method,
       headers: {
         "content-type": "application/json",
         accept: "application/json",
         "x-arbx-admin-token": adminToken,
       },
       credentials: "include",
-      body: JSON.stringify({ is_active: isActive }),
+      body: body == null ? undefined : JSON.stringify(body),
       signal: ctrl.signal,
     });
     if (res.status === 404) {
       return { ok: false, error: NOT_IMPLEMENTED };
     }
-    if (!res.ok) {
-      return { ok: false, error: `HTTP ${res.status}` };
-    }
     let parsed: unknown;
     try {
       parsed = await res.json();
     } catch {
-      return { ok: false, error: "Response is not valid JSON" };
+      return { ok: false, error: res.ok ? "Response is not valid JSON" : `HTTP ${res.status}` };
     }
-    return { ok: true, data: parsed as DexToggleResult };
+    if (!res.ok) {
+      const obj = parsed as { error?: unknown; detail?: unknown };
+      const errMsg = typeof obj.error === "string" ? obj.error : `HTTP ${res.status}`;
+      const detail = typeof obj.detail === "string" ? `: ${obj.detail}` : "";
+      return { ok: false, error: `${errMsg}${detail}` };
+    }
+    return { ok: true, data: parsed as T };
   } catch (e) {
     const err = e as Error;
     return {

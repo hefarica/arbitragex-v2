@@ -30,18 +30,179 @@ interface Deps {
 }
 
 export function mountDexes(app: import("express").Express, deps: Deps): void {
+  // Reusable admin gate (mirrors the inline check used by PUT below).
+  function requireAdmin(req: Request, res: Response): boolean {
+    const expected = process.env["ARBX_ADMIN_TOKEN"] ?? "";
+    const got = String(req.header("x-arbx-admin-token") ?? "");
+    if (!expected || got !== expected) {
+      res.status(401).json({ error: "unauthorized" });
+      return false;
+    }
+    return true;
+  }
+
+  // ── POST /api/v1/dexes ──────────────────────────────────────────────────
+  // Operator-driven DEX registration from the /dex-registry "Add" dialog.
+  //
+  // Body shape:
+  //   {
+  //     name: string,
+  //     protocol_type: "UNISWAP_V2" | "UNISWAP_V3" | "CURVE" | "BALANCER" | string,
+  //     factories: [{ chain_id: number, address: string }, ...]   // 1..N entries
+  //   }
+  //
+  // Transactional: INSERT INTO dexes, then INSERT each factory. If ANY
+  // factory insert fails (FK violation, duplicate (chain_id, address)) the
+  // whole transaction rolls back — no orphan DEX row left behind.
+  app.post("/api/v1/dexes", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    if (!deps.pool) { res.status(503).json({ error: "db_unavailable" }); return; }
+
+    const body = req.body as {
+      name?: unknown;
+      protocol_type?: unknown;
+      factories?: unknown;
+    };
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const protocolType = typeof body.protocol_type === "string" ? body.protocol_type.trim() : "";
+    const factories = Array.isArray(body.factories) ? body.factories : null;
+    if (!name || name.length > 100) {
+      res.status(400).json({ error: "name required (max 100 chars)" }); return;
+    }
+    if (!protocolType || protocolType.length > 32) {
+      res.status(400).json({ error: "protocol_type required (max 32 chars)" }); return;
+    }
+    if (!factories || factories.length === 0) {
+      res.status(400).json({ error: "factories array must contain at least one entry" }); return;
+    }
+    // Validate every factory entry.
+    const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
+    type FactoryIn = { chain_id: number; address: string };
+    const validated: FactoryIn[] = [];
+    for (const raw of factories) {
+      const f = raw as { chain_id?: unknown; address?: unknown };
+      const cid = Number(f.chain_id);
+      const addr = typeof f.address === "string" ? f.address.trim() : "";
+      if (!Number.isInteger(cid) || cid < 1) {
+        res.status(400).json({ error: `invalid chain_id: ${String(f.chain_id)}` }); return;
+      }
+      if (!ADDR_RE.test(addr)) {
+        res.status(400).json({ error: `invalid factory address: ${addr}` }); return;
+      }
+      validated.push({ chain_id: cid, address: addr.toLowerCase() });
+    }
+
+    const client = await deps.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const dexQ = await client.query<{ id: string; created_at: Date }>(
+        `INSERT INTO dexes (name, protocol_type, is_active)
+         VALUES ($1, $2, TRUE)
+         RETURNING id, created_at`,
+        [name, protocolType],
+      );
+      const dexId = dexQ.rows[0]!.id;
+
+      for (const f of validated) {
+        await client.query(
+          `INSERT INTO factories (dex_id, chain_id, address)
+           VALUES ($1, $2, $3)`,
+          [dexId, f.chain_id, f.address],
+        );
+      }
+
+      await client.query("COMMIT");
+
+      res.status(201).json({
+        id:             dexId,
+        name,
+        protocol_type:  protocolType,
+        is_active:      true,
+        chain_ids:      Array.from(new Set(validated.map((f) => f.chain_id))).sort((a, b) => a - b),
+        tvl_usd:        null,
+        volume_24h_usd: null,
+        router_address: null,
+        factory_address: validated[0]!.address,
+        fee_bps:        null,
+        created_at:     dexQ.rows[0]!.created_at.toISOString(),
+      });
+    } catch (e) {
+      try { await client.query("ROLLBACK"); } catch { /* swallow */ }
+      const msg = (e as Error).message;
+      // Common PG error: 23505 unique violation (chain_id, address) collision.
+      const conflict = msg.includes("duplicate key") || msg.includes("23505");
+      deps.logger.warn({ event: "dexes.create_failed", err: msg });
+      res
+        .status(conflict ? 409 : 503)
+        .json({ error: conflict ? "factory_conflict" : "query_failed", detail: msg });
+    } finally {
+      client.release();
+    }
+  });
+
+  // ── DELETE /api/v1/dexes/:id ───────────────────────────────────────────
+  // Hard delete only when SAFE: refuses if any pool references one of the
+  // DEX's factories. Operator should use the active toggle for soft-disable.
+  app.delete("/api/v1/dexes/:id", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    if (!deps.pool) { res.status(503).json({ error: "db_unavailable" }); return; }
+
+    const id = String(req.params["id"] ?? "");
+    if (!/^[0-9a-fA-F-]{36}$/.test(id)) {
+      res.status(400).json({ error: "invalid_uuid" }); return;
+    }
+
+    const client = await deps.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Safety check: any pool references this DEX's factories?
+      const poolCountQ = await client.query<{ pool_count: string }>(
+        `SELECT COUNT(*)::text AS pool_count
+           FROM pools p
+           JOIN factories f ON f.id = p.factory_id
+          WHERE f.dex_id = $1`,
+        [id],
+      );
+      const poolCount = Number(poolCountQ.rows[0]?.pool_count ?? "0");
+      if (poolCount > 0) {
+        await client.query("ROLLBACK");
+        res.status(409).json({
+          error: "dex_has_pools",
+          detail: `${poolCount} pool(s) reference this DEX — use the active toggle to disable instead of delete`,
+          pool_count: poolCount,
+        });
+        return;
+      }
+
+      // Safe to delete. Remove factories first (no CASCADE on dex_id FK).
+      await client.query(`DELETE FROM factories WHERE dex_id = $1`, [id]);
+      const dexDel = await client.query(`DELETE FROM dexes WHERE id = $1 RETURNING id`, [id]);
+      if (dexDel.rowCount === 0) {
+        await client.query("ROLLBACK");
+        res.status(404).json({ error: "dex_not_found" });
+        return;
+      }
+
+      await client.query("COMMIT");
+      res.status(200).json({ id, deleted: true });
+    } catch (e) {
+      try { await client.query("ROLLBACK"); } catch { /* swallow */ }
+      deps.logger.warn({ event: "dexes.delete_failed", err: (e as Error).message });
+      res.status(503).json({ error: "query_failed", detail: (e as Error).message });
+    } finally {
+      client.release();
+    }
+  });
+
   // ── PUT /api/v1/dexes/:id/active ────────────────────────────────────────
   // Operator toggle from the /dex-registry page. Admin token required.
   // R8: mounting deps.requireAdminToken would be cleaner, but `mountDexes`
   // does not receive admin deps; we inline-validate via env header check
   // mirroring the convention in trading-config route's other admin paths.
   app.put("/api/v1/dexes/:id/active", async (req: Request, res: Response) => {
-    const expected = process.env["ARBX_ADMIN_TOKEN"] ?? "";
-    const got = String(req.header("x-arbx-admin-token") ?? "");
-    if (!expected || got !== expected) {
-      res.status(401).json({ error: "unauthorized" });
-      return;
-    }
+    if (!requireAdmin(req, res)) return;
     if (!deps.pool) {
       res.status(503).json({ error: "db_unavailable" });
       return;
