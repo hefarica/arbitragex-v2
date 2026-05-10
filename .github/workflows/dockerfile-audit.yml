@@ -28,7 +28,7 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Make audit script executable
         run: chmod +x automation/scripts/audit-dockerfiles.sh
