@@ -1116,6 +1116,7 @@ fn recheck_sanity_for_log(input: &EvalInput) -> Option<(f64, f64)> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)] // M11: test module
     use super::*;
 
     // ---------------------------------------------------------------

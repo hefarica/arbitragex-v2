@@ -652,6 +652,7 @@ pub fn alchemy_key_from_env(chain_id: u64) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)] // M11: test module
     use super::*;
 
     // --------------- API key extraction ---------------

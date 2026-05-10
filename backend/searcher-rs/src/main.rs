@@ -1,7 +1,8 @@
-// M11 (audit 2026-05-10): surface panics in hot-path crate.
-// Workspace lints propagate this, but explicit inner attrs make it
-// impossible to accidentally suppress at the workspace level.
-#![warn(clippy::unwrap_used, clippy::expect_used)]
+// M11 (audit 2026-05-10): gate PRs that introduce panicking paths in entry point.
+// Promoted from warn→deny so CI fails on new unwrap/expect in this binary.
+// Per-file #[allow(...)] is used below in files where the pattern is
+// demonstrably safe (mutex poison, infallible slice casts, test modules).
+#![deny(clippy::unwrap_used, clippy::expect_used)]
 
 //! searcher-rs — Sprint 2 entry point.
 //!

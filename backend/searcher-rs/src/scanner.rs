@@ -1,3 +1,10 @@
+// M11 allow: two `Address::from_str(CONSTANT).unwrap()` calls that parse
+// well-known mainnet contract addresses (QuoterV2 + Multicall3). Both strings
+// are valid Ethereum addresses embedded as `const &str`; the `unwrap()` is
+// unreachable in any production or test environment. Follow-up: convert to
+// `Address::from(hex_literal::hex!(...))` consts to eliminate the runtime
+// parse entirely (M11-TODO-scanner-addr-const).
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Scanner loop — real mempool detection.
 //!
 //! Responsibilities:

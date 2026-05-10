@@ -286,6 +286,7 @@ pub async fn v3_quote_exact_in_multicall(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)] // M11: test module — panics are acceptable
     use super::*;
 
     /// UniswapV2Library reference: amount_in=1e18 (1 WETH), reserves=(3000e18 WETH, 6_000_000e6 USDC).
@@ -416,6 +417,7 @@ mod tests {
 
 #[cfg(test)]
 mod v3_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)] // M11: test module — panics are acceptable
     use super::*;
     use alloy::providers::ProviderBuilder;
     use ethers::types::{Address, U256};

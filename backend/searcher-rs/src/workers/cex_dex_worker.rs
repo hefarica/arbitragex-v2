@@ -441,6 +441,7 @@ pub fn to_okx_inst_id(binance_symbol: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)] // M11: test module
     use super::*;
     use reqwest::Client;
     use serde::Deserialize;

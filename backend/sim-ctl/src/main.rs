@@ -74,7 +74,11 @@ async fn simulate_handler(
             "S4",
             format!("sim-ctl up but anvil not configured (env={})", st.env),
         );
-        return (StatusCode::NOT_IMPLEMENTED, Json(serde_json::to_value(payload).unwrap()));
+        // serde_json::to_value only fails on non-string map keys or NaN floats.
+        // NotImplementedPayload has no such fields; use unwrap_or to avoid panic.
+        let body = serde_json::to_value(payload)
+            .unwrap_or_else(|e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}));
+        return (StatusCode::NOT_IMPLEMENTED, Json(body));
     }
     let opp: Opportunity = match serde_json::from_value(body) {
         Ok(o) => o,
@@ -93,7 +97,9 @@ async fn simulate_handler(
             );
         }
     };
-    (StatusCode::OK, Json(serde_json::to_value(sim).unwrap()))
+    let body = serde_json::to_value(sim)
+        .unwrap_or_else(|e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}));
+    (StatusCode::OK, Json(body))
 }
 
 #[tokio::main]

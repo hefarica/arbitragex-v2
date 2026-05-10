@@ -1,3 +1,8 @@
+// M11 allow: the three `.try_into().unwrap()` calls convert
+// `keccak256("fn()")[..4]` — a 4-byte slice — into `[u8; 4]`.
+// This is unconditionally infallible (the slice is always 4 bytes).
+// Follow-up: replace with selector consts (M11-TODO-selector-const).
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! PoolSyncWorker — fetches V2 pool reserves via Multicall3, persists to
 //! Postgres `pool_reserves` and Redis `arbx:pool_reserves:<chain>:<addr>`.
 //! Also fetches V3 pool slot0 + liquidity via a separate Multicall3 batch and

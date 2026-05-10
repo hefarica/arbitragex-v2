@@ -1,3 +1,11 @@
+// M11 allow: two infallible patterns in production code.
+//   1. `NonZeroUsize::new(1).unwrap()` — 1 is never zero; the call cannot fail.
+//   2. `Mutex::lock().expect(...)` — standard poison-recovery; any other
+//      strategy (returning an error from new()) would propagate through every
+//      caller with no benefit, since a poisoned mutex means the process is
+//      already in an inconsistent state.
+// Test modules also contain `.unwrap()` for readability.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Dedup for pending tx hashes and opportunity routes.
 //!
 //! # Tx-level dedup (`Dedup`)

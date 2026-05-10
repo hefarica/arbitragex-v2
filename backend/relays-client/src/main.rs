@@ -1,5 +1,6 @@
-// M11 (audit 2026-05-10): surface panics in hot-path crate.
-#![warn(clippy::unwrap_used, clippy::expect_used)]
+// M11 (audit 2026-05-10): gate PRs that introduce panicking paths in entry point.
+// Promoted from warn→deny so CI fails on new unwrap/expect in this binary.
+#![deny(clippy::unwrap_used, clippy::expect_used)]
 
 //! relays-client main.
 //!
@@ -73,7 +74,13 @@ async fn execute_handler(
             "S5",
             format!("relays-client up but signer not configured (env={})", st.env),
         );
-        return (StatusCode::NOT_IMPLEMENTED, Json(serde_json::to_value(payload).unwrap()));
+        // serde_json::to_value only fails if the type contains a non-string map key
+        // or an f32/f64 NaN. NotImplementedPayload is a flat struct with String fields;
+        // serialisation is infallible in practice. Use unwrap_or to convert the
+        // impossible error path to a generic 500 body instead of a panic.
+        let body = serde_json::to_value(payload)
+            .unwrap_or_else(|e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}));
+        return (StatusCode::NOT_IMPLEMENTED, Json(body));
     }
     let opp: Opportunity = match serde_json::from_value(body) {
         Ok(o) => o,
@@ -81,7 +88,9 @@ async fn execute_handler(
                           Json(serde_json::json!({"error":"invalid_body","detail":e.to_string()}))),
     };
     let result = st.engine.execute(&opp).await;
-    (StatusCode::OK, Json(serde_json::to_value(result).unwrap()))
+    let body = serde_json::to_value(result)
+        .unwrap_or_else(|e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}));
+    (StatusCode::OK, Json(body))
 }
 
 #[tokio::main]
@@ -395,8 +404,7 @@ async fn main() -> anyhow::Result<()> {
     // Consumer spawns only when signer + rpc_pool + DB pool are all present.
     // We reuse the pool opened above for the relay catalog lookup, so we don't
     // double up connections.
-    if signer.is_some() && rpc_pool.is_some() && db_pool_opt.is_some() {
-        let pg_pool = db_pool_opt.clone().unwrap();
+    if let (Some(pg_pool), true, true) = (db_pool_opt.clone(), signer.is_some(), rpc_pool.is_some()) {
         let redis_client = redis::Client::open(redis_url.clone())?;
         let redis_conn = redis_client.get_connection_manager().await?;
         let consumer = consumer::Consumer {

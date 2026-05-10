@@ -1,3 +1,6 @@
+// M11 allow: reqwest client builder — see relay_flashbots.rs for full rationale.
+// Test-module unwraps are also covered.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! BloXRoute relay backend — BE-06 stub.
 //!
 //! Submits `eth_sendBundle` to BloXRoute's MEV relay endpoint using a static

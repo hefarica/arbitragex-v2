@@ -273,6 +273,7 @@ pub async fn get_token_meta(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)] // M11: test module — panics are acceptable
     use super::*;
 
     #[test]

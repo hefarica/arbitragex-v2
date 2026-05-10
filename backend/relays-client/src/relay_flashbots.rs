@@ -1,3 +1,12 @@
+// M11 allow: `reqwest::Client::builder().build().expect(...)` is infallible on
+// all supported platforms (Linux/macOS/Windows) unless TLS initialisation
+// fails (which would also break every outbound HTTPS call in the process).
+// There is no meaningful recovery path — if TLS cannot initialise, the relay
+// client cannot function regardless. `expect` with a descriptive message is
+// the correct pattern here; upgrading to returning `anyhow::Result` from `new`
+// would force every call site to handle an error that cannot be acted on.
+// Test-module unwraps are similarly justified.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Flashbots relay client.
 //!
 //! Submits `eth_sendBundle` to the Flashbots Relay with X-Flashbots-Signature

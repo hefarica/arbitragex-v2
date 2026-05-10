@@ -1,3 +1,5 @@
+// M11 allow: reqwest client builder — see relay_flashbots.rs for full rationale.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Titan Builder relay backend — BE-06 stub.
 //!
 //! Submits `eth_sendBundle` to Titan's builder endpoint. Titan is MEV-Boost
