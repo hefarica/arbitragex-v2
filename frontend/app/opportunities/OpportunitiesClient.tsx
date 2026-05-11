@@ -580,6 +580,11 @@ export default function OpportunitiesClient({
                             chain_base_token_symbol is null when no
                             trading_config snapshot is available — we hide the
                             badge in that case (no fabricated default). */}
+                        {/* 2026-05-11 operator request: StrategyBadge moves
+                            to the chain-identity line so the strategy name
+                            sits next to the chain + base-token badges,
+                            mirroring how the operator reads the row top-down
+                            (what chain + what base token + what strategy). */}
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <ChainBadge chain_id={opp.chain_id} withId />
                           {opp.chain_base_token_symbol && (
@@ -596,6 +601,7 @@ export default function OpportunitiesClient({
                               <ChainBadge chain_id={opp.chain_id_out} withId />
                             </>
                           )}
+                          <StrategyBadge strategy_kind={opp.strategy_kind} />
                         </div>
                         {/* Token pair: symbol (bold) + truncated address (mono, muted) per side */}
                         <div className="flex items-start gap-2 min-w-0">
@@ -620,9 +626,11 @@ export default function OpportunitiesClient({
                             />
                           </div>
                         </div>
-                        {/* Strategy + DEX route with BUY/SELL/VIA/TARGET semantics */}
+                        {/* DEX route with BUY/SELL/VIA/TARGET semantics.
+                            StrategyBadge moved up to the chain-identity line
+                            on 2026-05-11; this row now carries only the
+                            BUY/SELL/VIA path. */}
                         <div className="flex items-center gap-2 flex-wrap pt-0.5">
-                          <StrategyBadge strategy_kind={opp.strategy_kind} />
                           <DexPath
                             strategy_kind={opp.strategy_kind}
                             dex_a={opp.dex_a}
