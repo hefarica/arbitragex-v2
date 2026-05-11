@@ -24,7 +24,7 @@ hex.workspace = true
 petgraph = "0.6"
 rayon    = "1.10"
 dashmap  = "5.5"
-sha2     = "0.10"
+sha2     = "0.11"
 # reqwest 0.11 matches the version ethers-providers 2.x uses internally;
 # needed to build Http::new_with_client with a timeout-configured client.
 reqwest  = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
