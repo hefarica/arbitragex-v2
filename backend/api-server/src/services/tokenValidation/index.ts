@@ -236,8 +236,40 @@ async function runValidators(
   chain_id: number,
   address: string,
 ): Promise<TokenValidationRow> {
+  // 2026-05-11 hotfix: OnChainTruthValidator was making 5 RPC calls per
+  // token (eth_getCode + name + symbol + decimals + totalSupply). With
+  // dashboard polling at 2-4s and ~200 unique tokens per feed cycle,
+  // this saturated the searcher-rs's shared free-tier RPC provider
+  // (Alchemy/publicnode), causing 429 rate-limits on eth_getTransactionByHash
+  // which the searcher needs to decode pending mempool txs. End effect:
+  // opps stopped appearing in PG ~10min after this engine deployed.
+  //
+  // Mitigation: skip OnChainTruth in the hot path unless explicitly
+  // re-enabled via TOKEN_VALIDATION_ONCHAIN_ENABLED=true. The default
+  // is OFF so we never re-poison the RPC bucket. The LiquidityReality
+  // validator (DEX Screener API) still runs — it's the high-value
+  // signal that detects ILLIQUID scam tokens, and it doesn't touch the
+  // RPC provider.
+  //
+  // To restore OnChainTruth, move it to a dedicated background worker
+  // with a SEPARATE RPC provider (Sprint 2 work).
+  const onchainEnabled = process.env["TOKEN_VALIDATION_ONCHAIN_ENABLED"] === "true";
   const [onChain, liquidity] = await Promise.all([
-    validateOnChainTruth(chain_id, address),
+    onchainEnabled
+      ? validateOnChainTruth(chain_id, address)
+      : Promise.resolve<OnChainTruthResult>({
+          ran: false,
+          error: false,
+          error_message: "skipped (TOKEN_VALIDATION_ONCHAIN_ENABLED=false to protect shared RPC bucket)",
+          exists_onchain: false,
+          is_contract: false,
+          bytecode_size: null,
+          standard: "unknown",
+          onchain_name: null,
+          onchain_symbol: null,
+          onchain_decimals: null,
+          total_supply_str: null,
+        }),
     validateLiquidityReality(chain_id, address),
   ]);
   // Registry is local (no I/O); we still treat it as a validator for
