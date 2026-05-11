@@ -33,6 +33,17 @@ export interface TokenInfo {
   decimals: number | null;
   logo_url: string | null;
   resolved_via: "onchain_full" | "onchain_partial" | "trustwallet_only" | "failed";
+  /**
+   * Curated-registry verification flag set by the api-server. Optional for
+   * backward compatibility with payloads emitted before 2026-05-11.
+   *   true  → in Uniswap default token list AND on-chain symbol matches.
+   *   false → either unknown address OR symbol-mismatch (impersonation).
+   *   undefined → field not present on older payloads (treat as unknown).
+   */
+  verified?: boolean;
+  registry_symbol?: string | null;
+  registry_name?: string | null;
+  verified_notes?: string[] | null;
 }
 
 export interface TokenChipProps {
@@ -49,21 +60,75 @@ function SymbolPlusAddress({
   avatar,
   symbol,
   token_address,
+  info,
 }: {
   avatar: React.ReactNode;
   symbol: string | null;
   token_address: string;
+  /** Optional — when present, drives the verification badge. */
+  info?: TokenInfo | null;
 }) {
   const displaySymbol = symbol ?? "—";
+  // Verification flag is explicit boolean from the api-server. `undefined`
+  // means the field wasn't set (older payload) — treat as unknown, not
+  // verified. R8 fail-honest: only `verified === true` is safe.
+  const verifiedStatus: "verified" | "unverified" | "unknown" =
+    info?.verified === true
+      ? "verified"
+      : info?.verified === false
+      ? "unverified"
+      : "unknown";
   const symbolCls = symbol
-    ? "text-foreground font-semibold"
+    ? verifiedStatus === "verified"
+      ? "text-foreground font-semibold"
+      : verifiedStatus === "unverified"
+      // Unverified: still bold so it's legible, but italic + muted so the
+      // operator never confuses it with a verified asset visually.
+      ? "text-muted-foreground/90 font-semibold italic"
+      : "text-foreground font-semibold"
     : "text-muted-foreground/70 italic";
+  // Tooltip text for the verification status — surfaces the registry's
+  // canonical name when known, the mismatch warning when applicable.
+  const verificationTitle = (() => {
+    if (verifiedStatus === "verified") {
+      return info?.registry_name
+        ? `Verified — ${info.registry_name} (${info.registry_symbol ?? symbol})`
+        : "Verified by Uniswap Labs Default Token List";
+    }
+    if (verifiedStatus === "unverified") {
+      if (info?.verified_notes?.includes("symbol-mismatch")) {
+        return `⚠ IMPERSONATION RISK — contract claims symbol "${symbol}" but the registry's canonical token at this address is "${info?.registry_symbol ?? "unknown"}". Do NOT trade without manual verification.`;
+      }
+      return "⚠ UNVERIFIED — address not in Uniswap Labs Default Token List. May be a memecoin, scam token, or honeypot. Verify manually before trading.";
+    }
+    return symbol ?? "metadata pending";
+  })();
   return (
     <span className="inline-flex items-center gap-2 min-w-0">
       {avatar}
       <span className="flex flex-col min-w-0 leading-tight">
-        <span className={`text-xs ${symbolCls} truncate`} title={symbol ?? "metadata pending"}>
-          {displaySymbol}
+        <span className="flex items-center gap-1 min-w-0">
+          <span className={`text-xs ${symbolCls} truncate`} title={verificationTitle}>
+            {displaySymbol}
+          </span>
+          {verifiedStatus === "unverified" && (
+            <span
+              className="text-[8px] font-bold px-1 py-px rounded bg-destructive/15 text-destructive border border-destructive/40 uppercase tracking-wider shrink-0"
+              title={verificationTitle}
+              aria-label="Unverified token"
+            >
+              ⚠ unverified
+            </span>
+          )}
+          {verifiedStatus === "verified" && (
+            <span
+              className="text-[8px] font-bold px-1 py-px rounded bg-success/15 text-success border border-success/40 uppercase tracking-wider shrink-0"
+              title={verificationTitle}
+              aria-label="Verified token"
+            >
+              ✓
+            </span>
+          )}
         </span>
         <span
           className="font-mono text-[10px] text-muted-foreground/80 truncate"
@@ -89,6 +154,7 @@ export function TokenChip({ token_address, info }: TokenChipProps) {
         }
         symbol={null}
         token_address={token_address}
+        info={null}
       />
     );
   }
@@ -115,6 +181,7 @@ export function TokenChip({ token_address, info }: TokenChipProps) {
         }
         symbol={hasSymbol ? info.symbol : null}
         token_address={token_address}
+        info={info}
       />
     );
   }
@@ -132,6 +199,7 @@ export function TokenChip({ token_address, info }: TokenChipProps) {
       }
       symbol={hasSymbol ? info.symbol : null}
       token_address={token_address}
+      info={info}
     />
   );
 }

@@ -24,6 +24,7 @@ import type { Application, Request, Response } from "express";
 import type { Pool, QueryResultRow } from "pg";
 import type { Redis } from "ioredis";
 import { resolveTokensOnDemand, tokenCacheKey } from "./tokenResolver.js";
+import { verifyToken } from "../services/tokenRegistry.js";
 import {
   getTradingConfigForChain,
   type TradingConfigSnapshot,
@@ -45,6 +46,18 @@ interface TokenInfoResult {
   decimals: number | null;
   logo_url: string | null;
   resolved_via: string | null;
+  /**
+   * Curated-registry verification (Uniswap Labs Default Token List).
+   * True only when address is in the curated list AND on-chain symbol
+   * matches the registry's. The frontend renders "UNVERIFIED" badge for
+   * any token where verified=false, defending the operator against
+   * memecoins (`69420`), emoji-named impersonators (`🦈EMS`), and
+   * contracts that lie about their symbol.
+   */
+  verified: boolean;
+  registry_symbol: string | null;
+  registry_name: string | null;
+  verified_notes: string[];
 }
 
 interface OpportunityLiveRow extends QueryResultRow {
@@ -174,9 +187,41 @@ function tokenInfoFromRow(
 
   const allNull = resolvedVia == null && symbol == null && decimals == null && logoUrl == null;
   if (allNull) {
-    // No tokens row joined — surface null per R8 fail-honest.
-    return null;
+    // No tokens row joined AND resolver fallback didn't fill it either.
+    // Run verification on the bare address anyway so a known curated token
+    // (e.g. WETH detected via JOIN miss + resolver miss but registry-known)
+    // still surfaces as verified rather than dropping to null.
+    const chainId = prefix === "token_in"
+      ? row.chain_id
+      : (row.chain_id_out ?? row.chain_id);
+    const address = prefix === "token_in" ? row.token_in : row.token_out;
+    const reg = verifyToken(chainId, address ?? "", null);
+    if (!reg.registry_symbol) {
+      return null;
+    }
+    return {
+      symbol: null,
+      decimals: null,
+      logo_url: null,
+      resolved_via: null,
+      verified: reg.verified,
+      registry_symbol: reg.registry_symbol,
+      registry_name: reg.registry_name,
+      verified_notes: reg.notes,
+    };
   }
+
+  // ── Curated-registry verification ──
+  // Cross-check the on-chain (chain_id, address, symbol) triple against the
+  // Uniswap Labs Default Token List snapshot. The result is honest: known
+  // tokens with matching symbols → verified=true; everything else
+  // (memecoins, scam tokens, impersonators) → verified=false. Frontend
+  // renders "UNVERIFIED" badge on every false case.
+  const chainId = prefix === "token_in"
+    ? row.chain_id
+    : (row.chain_id_out ?? row.chain_id);
+  const address = prefix === "token_in" ? row.token_in : row.token_out;
+  const reg = verifyToken(chainId, address ?? "", symbol ?? null);
 
   return {
     symbol:       symbol      ?? null,
@@ -186,6 +231,10 @@ function tokenInfoFromRow(
     // default to "onchain_partial" so the frontend treats the row as
     // partially-resolved (Case B) rather than "failed" (Case C).
     resolved_via: resolvedVia ?? "onchain_partial",
+    verified: reg.verified,
+    registry_symbol: reg.registry_symbol,
+    registry_name: reg.registry_name,
+    verified_notes: reg.notes,
   };
 }
 

@@ -6,7 +6,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').mkdirSync('dist/services',{recursive:true});require('node:fs').copyFileSync('src/services/uniswap-tokenlist.json','dist/services/uniswap-tokenlist.json')\"",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",

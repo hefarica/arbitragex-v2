@@ -72,6 +72,32 @@ export const TokenInfoSchema = z.object({
   decimals: z.number().int().min(0).max(255).nullable(),
   logo_url: z.string().url().nullable(),
   resolved_via: z.enum(["onchain_full", "onchain_partial", "trustwallet_only", "failed"]),
+  /**
+   * Curated-registry verification (Uniswap Labs Default Token List). True
+   * when the (chain_id, address) pair is in the curated list AND the on-chain
+   * symbol matches the registry's symbol case-insensitively. False otherwise
+   * — including the impersonation case (random contract claiming
+   * `symbol() = "USDC"`). The frontend renders an "UNVERIFIED" badge for
+   * everything where verified=false. Optional for backward compatibility:
+   * payloads emitted before 2026-05-11 don't carry this field; the
+   * frontend treats `verified === undefined` as "unknown" rather than
+   * "unverified".
+   */
+  verified: z.boolean().optional(),
+  /**
+   * Registry's canonical symbol when the address is in the curated list, even
+   * if the on-chain symbol differs (in which case `verified=false` +
+   * `notes` carries `symbol-mismatch`). Lets the frontend show both views.
+   */
+  registry_symbol: z.string().nullable().optional(),
+  /** Registry's full name (e.g. "Wrapped Ether" for WETH). */
+  registry_name: z.string().nullable().optional(),
+  /**
+   * Verification provenance notes — one or more of: "in-registry",
+   * "symbol-mismatch", "address-not-in-registry". R8 fail-honest: surfaces
+   * exactly why a token is or isn't verified.
+   */
+  verified_notes: z.array(z.string()).nullable().optional(),
 });
 export type TokenInfo = z.infer<typeof TokenInfoSchema>;
 
