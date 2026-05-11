@@ -419,7 +419,7 @@ function requireDbPool(): pg.Pool | null {
   return pool;
 }
 
-mountOpportunitiesLive(app, pool, logger);
+mountOpportunitiesLive(app, pool, redis, logger);
 mountDexes(app, { pool, logger });
 mountPools(app, { pool, logger });
 mountWallets(app, { pool, logger });

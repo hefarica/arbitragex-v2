@@ -89,7 +89,13 @@ afterAll(async () => {
  */
 function buildApp(overridePool: Pool | null = pool) {
   const app = express();
-  mountOpportunitiesLive(app, overridePool, silentLogger());
+  // 2026-05-10: target-driven simulation wiring added a `redis` parameter so
+  // the route can load `arbx:trading_config:<chain>` snapshots per-row. These
+  // integration tests don't exercise the simulation path (no Redis instance
+  // in the testcontainers setup), so pass null — the route correctly skips
+  // simulation when redis is null (R8 fail-honest, simulated_* fields stay
+  // null in the wire shape).
+  mountOpportunitiesLive(app, overridePool, null, silentLogger());
   return app;
 }
 

@@ -52,9 +52,40 @@ export type OpportunityStatus =
   | "rejected"
   | "failed";
 
+export interface SimulatedCostBreakdown {
+  gas_usd: number;
+  lp_fees_usd: number;
+  slippage_usd: number;
+  failure_buffer_usd: number;
+  copied_buffer_usd: number;
+  capital_cost_usd: number;
+  ops_overhead_usd: number;
+  flashloan_fee_usd: number;
+  relay_fee_usd: number;
+}
+
+export interface SimulatedTarget {
+  target_net_usd: number;
+  target_source: "strategy_config" | "simulation_tab";
+  required_amount_in_usd: number;
+  cap_amount_in_usd: number;
+  suggested_amount_in_usd: number;
+  suggested_net_usd: number;
+  suggested_roi_pct: number;
+  meets_target_at_cap: boolean;
+  notes: string[];
+}
+
 export interface OpportunityListItem {
   id: string;
   chain_id: number;
+  /**
+   * Operator-managed base token symbol for the row's chain (WETH on Ethereum,
+   * USDC on Base, etc.). Loaded by api-server from `arbx:trading_config:<chain>`.
+   * Dashboard renders this discreetly next to the chain badge so the operator
+   * never infers the starting/ending token from the chain id alone.
+   */
+  chain_base_token_symbol?: string | null;
   strategy_kind: StrategyKind;
   dex_a: string;
   dex_b: string | null;
@@ -87,6 +118,20 @@ export interface OpportunityListItem {
   chain_id_out: number | null;
   bridge: string | null;
   bridge_fee_usd: number | null;
+  /**
+   * Target-driven simulation block. Populated only when the canonical Rust
+   * spine net is null AND the api-server could load a `trading_config`
+   * snapshot for the row's chain AND the row's token can be priced. R8: any
+   * field can be null when inputs are insufficient — the dashboard renders
+   * "—" in that case rather than fabricating a number.
+   */
+  simulated_net_profit_usd?: number | null;
+  simulated_amount_in_usd?: number | null;
+  simulated_roi_pct?: number | null;
+  simulated_cost_breakdown?: SimulatedCostBreakdown | null;
+  simulated_target?: SimulatedTarget | null;
+  simulated_at?: string | null;
+  simulated_notes?: string[] | null;
 }
 
 // ─── Configuration constants ──────────────────────────────────────────────────

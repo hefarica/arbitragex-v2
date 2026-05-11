@@ -80,9 +80,55 @@ export const StatusSchema = z.enum([
   "executed", "reconciled", "rejected", "failed",
 ]);
 
+/**
+ * Cost-breakdown block emitted by the api-server's target-driven simulation
+ * pipeline (`backend/api-server/src/simulation/computeSimulatedNet.ts`).
+ * Mirrors the 8 cost components from `roi_engine.rs:182-212` (TS port).
+ * Every field is a USD value ≥ 0. When the row's canonical Rust spine net is
+ * available, this block is null (no simulation needed).
+ */
+export const SimulatedCostBreakdownSchema = z.object({
+  gas_usd: z.number().nonnegative(),
+  lp_fees_usd: z.number().nonnegative(),
+  slippage_usd: z.number().nonnegative(),
+  failure_buffer_usd: z.number().nonnegative(),
+  copied_buffer_usd: z.number().nonnegative(),
+  capital_cost_usd: z.number().nonnegative(),
+  ops_overhead_usd: z.number().nonnegative(),
+  flashloan_fee_usd: z.number().nonnegative(),
+  relay_fee_usd: z.number().nonnegative(),
+});
+
+/**
+ * Target-driven inverse sizing result. Computed when the operator has set a
+ * net-profit target on this strategy (priority: `/strategies` card override →
+ * Simulación-tab target). The dashboard renders the suggested amount_in next
+ * to the forward-simulated net.
+ *
+ * `target_source` says where the target came from so the tooltip can attribute
+ * it honestly. `meets_target_at_cap` is true when the operator's effective
+ * capital cap admits the target; false when the cap binds and we surface the
+ * max achievable net at the cap.
+ */
+export const SimulatedTargetSchema = z.object({
+  target_net_usd: z.number(),
+  target_source: z.enum(["strategy_config", "simulation_tab"]),
+  required_amount_in_usd: z.number(),
+  cap_amount_in_usd: z.number().nonnegative(),
+  suggested_amount_in_usd: z.number().nonnegative(),
+  suggested_net_usd: z.number(),
+  suggested_roi_pct: z.number(),
+  meets_target_at_cap: z.boolean(),
+  notes: z.array(z.string()),
+});
+
 export const OpportunityListItemSchema = z.object({
   id: z.string().uuid(),
   chain_id: z.number().int().positive(),
+  // Operator-managed base token for the row's chain (WETH on Ethereum, USDC
+  // on Base, etc.). Discreet badge in the dashboard so the operator never
+  // infers it from the chain id. Loaded from `arbx:trading_config:<chain>`.
+  chain_base_token_symbol: z.string().nullable().optional(),
   strategy_kind: StrategyKind,
   dex_a: z.string().min(1),
   dex_b: z.string().min(1).nullable(),
@@ -103,5 +149,20 @@ export const OpportunityListItemSchema = z.object({
   chain_id_out: z.number().int().positive().nullable(),
   bridge: z.string().nullable(),
   bridge_fee_usd: z.number().nullable(),
+  // Target-driven simulation block — R8 fail-honest: every field nullable so
+  // the wire shape stays backward compatible and rows with insufficient
+  // inputs render "—" in the dashboard rather than a fabricated number.
+  // Populated only when the canonical Rust spine net is null AND the row's
+  // chain has a `trading_config` snapshot in Redis AND the row's token can
+  // be priced.
+  simulated_net_profit_usd: z.number().nullable().optional(),
+  simulated_amount_in_usd: z.number().nullable().optional(),
+  simulated_roi_pct: z.number().nullable().optional(),
+  simulated_cost_breakdown: SimulatedCostBreakdownSchema.nullable().optional(),
+  simulated_target: SimulatedTargetSchema.nullable().optional(),
+  simulated_at: z.string().datetime({ offset: true }).nullable().optional(),
+  simulated_notes: z.array(z.string()).nullable().optional(),
 });
 export type OpportunityListItem = z.infer<typeof OpportunityListItemSchema>;
+export type SimulatedCostBreakdown = z.infer<typeof SimulatedCostBreakdownSchema>;
+export type SimulatedTarget = z.infer<typeof SimulatedTargetSchema>;

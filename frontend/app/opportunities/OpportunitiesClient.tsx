@@ -39,6 +39,32 @@ type OpportunityStatus =
   | "rejected"
   | "failed";
 
+/** Mirrors SimulatedCostBreakdownSchema from shared-ts/src/api-contracts.ts. */
+interface SimulatedCostBreakdown {
+  gas_usd: number;
+  lp_fees_usd: number;
+  slippage_usd: number;
+  failure_buffer_usd: number;
+  copied_buffer_usd: number;
+  capital_cost_usd: number;
+  ops_overhead_usd: number;
+  flashloan_fee_usd: number;
+  relay_fee_usd: number;
+}
+
+/** Mirrors SimulatedTargetSchema from shared-ts/src/api-contracts.ts. */
+interface SimulatedTarget {
+  target_net_usd: number;
+  target_source: "strategy_config" | "simulation_tab";
+  required_amount_in_usd: number;
+  cap_amount_in_usd: number;
+  suggested_amount_in_usd: number;
+  suggested_net_usd: number;
+  suggested_roi_pct: number;
+  meets_target_at_cap: boolean;
+  notes: string[];
+}
+
 /**
  * Mirrors OpportunityListItemSchema from shared-ts/src/api-contracts.ts.
  * All nullable fields per R8 fail-honest semantics.
@@ -46,6 +72,8 @@ type OpportunityStatus =
 interface OpportunityListItem {
   id: string;
   chain_id: number;
+  /** Operator-managed base token for the row's chain (WETH, USDC, ...). */
+  chain_base_token_symbol?: string | null;
   strategy_kind: StrategyKind;
   dex_a: string;
   dex_b: string | null;
@@ -75,6 +103,16 @@ interface OpportunityListItem {
   chain_id_out: number | null;
   bridge: string | null;
   bridge_fee_usd: number | null;
+  // Target-driven simulation. Set when canonical Rust spine net is null AND
+  // the row's chain has an `arbx:trading_config:<chain>` snapshot in Redis
+  // AND the token can be priced. R8: every field can be null.
+  simulated_net_profit_usd?: number | null;
+  simulated_amount_in_usd?: number | null;
+  simulated_roi_pct?: number | null;
+  simulated_cost_breakdown?: SimulatedCostBreakdown | null;
+  simulated_target?: SimulatedTarget | null;
+  simulated_at?: string | null;
+  simulated_notes?: string[] | null;
 }
 
 // ─── Component imports (Tasks 10 / 11) ───────────────────────────────────────
@@ -99,6 +137,20 @@ const TONE_CLASS: Record<string, string> = {
   neutral:  "text-muted-foreground",
   pending:  "text-muted-foreground/60 italic",
 };
+
+/**
+ * Compact USD formatter for the inverse-sizing hint (e.g. `$12.5k`, `$1.8M`).
+ * Used only for the suggested-amount subline; primary profit numbers keep the
+ * full `formatProfitUSD` precision.
+ */
+function formatUsdShort(value: number): string {
+  if (!Number.isFinite(value)) return "—";
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
+  if (abs >= 1_000)     return `$${(value / 1_000).toFixed(1)}k`;
+  if (abs >= 1)         return `$${value.toFixed(2)}`;
+  return `$${value.toFixed(4)}`;
+}
 
 // FE-1: WS statuses. "LIVE" = WS connected. "STALE" = WS disconnected.
 // "POLLING" = WS failed 3×, degraded to HTTP polling. "CONNECTING" = initial.
@@ -434,11 +486,26 @@ export default function OpportunitiesClient({
                 // C5 fix (audit 2026-05-10): split GROSS vs NET cells. Gross
                 // is the AMM-quoted swap delta (expected_profit_usd); Net is
                 // post-cost (net_expected_profit_usd). R8: both can be null.
+                //
+                // 2026-05-10 target-driven simulation extension: when the
+                // canonical Rust spine has not yet written net (cold-start,
+                // gate-rejected before math), the api-server's TS forward
+                // simulator may have emitted `simulated_net_profit_usd`.
+                // Display priority for the Net column:
+                //   1. canonical net (spine output, plain rendering)
+                //   2. simulated net (with [SIM] info pill + tilde prefix)
+                //   3. "—" (truly unknown)
+                // The simulated number is honestly labelled — never confused
+                // with the canonical truth.
                 const gross = formatProfitUSD(opp.expected_profit_usd);
-                const net   = formatProfitUSD(opp.net_expected_profit_usd ?? null);
-                // The colour-tone of the row is now driven by NET, not gross —
-                // a positive gross with negative net should still alarm (red).
-                const profit = net.tone === "neutral" ? gross : net;
+                const canonicalNet = opp.net_expected_profit_usd ?? null;
+                const simulatedNet = opp.simulated_net_profit_usd ?? null;
+                const netSource: "canonical" | "simulated" | "none" =
+                  canonicalNet != null ? "canonical"
+                    : simulatedNet != null ? "simulated"
+                    : "none";
+                const netValue = canonicalNet ?? simulatedNet;
+                const net = formatProfitUSD(netValue);
 
                 return (
                   <motion.tr
@@ -475,9 +542,24 @@ export default function OpportunitiesClient({
                        */}
                     <td className="p-4 align-top" data-status={opp.status}>
                       <div className="flex flex-col gap-2">
-                        {/* Chain identity row */}
-                        <div className="flex items-center gap-1.5">
+                        {/* Chain identity row.
+                            2026-05-10 operator request: discreet base-token
+                            badge ("WETH", "USDC", "MATIC", ...) sits next to
+                            the chain pill so the operator can see at a glance
+                            which token funds the leg on this chain.
+                            chain_base_token_symbol is null when no
+                            trading_config snapshot is available — we hide the
+                            badge in that case (no fabricated default). */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <ChainBadge chain_id={opp.chain_id} withId />
+                          {opp.chain_base_token_symbol && (
+                            <span
+                              className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground/90 border border-border/60 font-mono uppercase tracking-wide"
+                              title={`Base token for chain ${opp.chain_id} — starts/ends in ${opp.chain_base_token_symbol} (operator-configured)`}
+                            >
+                              base: {opp.chain_base_token_symbol}
+                            </span>
+                          )}
                           {opp.chain_id_out != null && opp.chain_id_out !== opp.chain_id && (
                             <>
                               <span className="text-muted-foreground/50 text-xs" aria-hidden="true">→</span>
@@ -547,26 +629,84 @@ export default function OpportunitiesClient({
                       </span>
                     </td>
 
-                    {/* ── NET PROFIT column — R8 fail-honest, post-cost truth */}
+                    {/* ── NET PROFIT column — R8 fail-honest, post-cost truth.
+                          Priority: canonical spine net → TS simulated net (with
+                          [SIM] info pill) → "—". Sub-line: target-driven
+                          inverse sizing hint when the operator has configured
+                          a target via /strategies card or the Simulación tab. */}
                     <td className="p-4 text-right" data-col="profit">
                       <div className="group relative inline-block cursor-help">
-                        <span
-                          className={`font-mono font-bold text-base drop-shadow-md border-b border-dashed border-current/30 ${TONE_CLASS[net.tone] ?? 'text-muted-foreground'}`}
-                          title="Net profit = gross − gas − slippage − relay fee − flashloan fee − failure buffer. The number that matters for paper P&L. R8: '—' when not yet computed."
-                        >
-                          {net.display}
-                        </span>
-                        {/* Tooltip: render when EITHER gross or net is present */}
-                        {(opp.expected_profit_usd != null || opp.net_expected_profit_usd != null) && (
-                          <div data-slot="popover-content" className="absolute bottom-full right-0 mb-2 w-72 p-3 bg-popover text-popover-foreground border border-border rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 text-left">
+                        <div className="flex flex-col items-end gap-0.5">
+                          <div className="flex items-center gap-1.5 justify-end">
+                            <span
+                              className={`font-mono font-bold text-base drop-shadow-md border-b border-dashed border-current/30 ${TONE_CLASS[net.tone] ?? 'text-muted-foreground'}`}
+                              title={
+                                netSource === "canonical"
+                                  ? "Net profit (canonical spine output) = gross − gas − slippage − relay fee − flashloan fee − failure buffer."
+                                  : netSource === "simulated"
+                                  ? "Net profit (TS forward simulation) — operator's trading_config applied at the row's recorded amount_in. Canonical spine value not yet available."
+                                  : "Net profit not yet computed — neither spine output nor simulator could produce a number. R8 fail-honest: '—'."
+                              }
+                            >
+                              {netSource === "simulated" ? `~${net.display}` : net.display}
+                            </span>
+                            {netSource === "simulated" && (
+                              <span
+                                className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-info/15 text-info border border-info/40 uppercase tracking-wider"
+                                title="Forward simulation — canonical spine net pending"
+                              >
+                                SIM
+                              </span>
+                            )}
+                          </div>
+                          {/* Target-driven sizing hint — operator-configured
+                              target via /strategies card (priority) or
+                              Simulación tab (fallback). Only present when the
+                              forward simulator ran AND a target was found. */}
+                          {opp.simulated_target && (
+                            <div
+                              className={`text-[10px] font-mono flex items-center gap-1 ${
+                                opp.simulated_target.meets_target_at_cap
+                                  ? "text-success/90"
+                                  : "text-warning"
+                              }`}
+                              title={
+                                `Target $${opp.simulated_target.target_net_usd.toFixed(2)} from ${opp.simulated_target.target_source === "strategy_config" ? "/strategies card" : "Simulación tab"}`
+                              }
+                            >
+                              <span aria-hidden="true">
+                                {opp.simulated_target.meets_target_at_cap ? "→" : "⚠"}
+                              </span>
+                              {opp.simulated_target.meets_target_at_cap ? (
+                                <span>
+                                  ${opp.simulated_target.target_net_usd.toFixed(0)} @ borrow {formatUsdShort(opp.simulated_target.required_amount_in_usd)}
+                                </span>
+                              ) : (
+                                <span>
+                                  cap {formatUsdShort(opp.simulated_target.cap_amount_in_usd)} → max ${opp.simulated_target.suggested_net_usd.toFixed(2)}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        {/* Tooltip popover: extended cost breakdown when
+                            simulated values are present + target attribution. */}
+                        {(opp.expected_profit_usd != null
+                          || opp.net_expected_profit_usd != null
+                          || opp.simulated_net_profit_usd != null) && (
+                          <div data-slot="popover-content" className="absolute bottom-full right-0 mb-2 w-80 p-3 bg-popover text-popover-foreground border border-border rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 text-left">
                             <div className="text-xs font-sans space-y-1">
                               <div className="flex justify-between">
                                 <span>Gross (AMM quote):</span>
                                 <span className={`font-mono ${TONE_CLASS[gross.tone] ?? 'text-muted-foreground'}`}>{gross.display}</span>
                               </div>
                               <div className="flex justify-between border-b border-border pb-1 mb-1 font-bold">
-                                <span>Net (post-cost):</span>
-                                <span className={`font-mono ${TONE_CLASS[net.tone] ?? 'text-muted-foreground'}`}>{net.display}</span>
+                                <span>
+                                  Net ({netSource === "simulated" ? "simulated" : netSource === "canonical" ? "spine" : "—"}):
+                                </span>
+                                <span className={`font-mono ${TONE_CLASS[net.tone] ?? 'text-muted-foreground'}`}>
+                                  {netSource === "simulated" ? `~${net.display}` : net.display}
+                                </span>
                               </div>
                               {opp.bridge_fee_usd != null && (
                                 <div className="flex justify-between text-muted-foreground">
@@ -574,10 +714,87 @@ export default function OpportunitiesClient({
                                   <span className="font-mono">${opp.bridge_fee_usd.toFixed(4)}</span>
                                 </div>
                               )}
-                              <div className="flex justify-between text-muted-foreground/70">
-                                <span>Gas / Bribe / Slippage breakdown:</span>
-                                <span className="italic">Pendiente revm sim</span>
-                              </div>
+                              {/* 8-component simulated cost breakdown */}
+                              {opp.simulated_cost_breakdown && (
+                                <div className="pt-1 border-t border-border/50 space-y-0.5">
+                                  <div className="text-muted-foreground uppercase tracking-wider text-[9px] mb-1">
+                                    SIM cost breakdown (USD)
+                                  </div>
+                                  {[
+                                    ["Gas", opp.simulated_cost_breakdown.gas_usd],
+                                    ["Flashloan fee", opp.simulated_cost_breakdown.flashloan_fee_usd],
+                                    ["LP fees", opp.simulated_cost_breakdown.lp_fees_usd],
+                                    ["Slippage", opp.simulated_cost_breakdown.slippage_usd],
+                                    ["Failure buffer", opp.simulated_cost_breakdown.failure_buffer_usd],
+                                    ["Copied buffer", opp.simulated_cost_breakdown.copied_buffer_usd],
+                                    ["Capital cost", opp.simulated_cost_breakdown.capital_cost_usd],
+                                    ["Ops overhead", opp.simulated_cost_breakdown.ops_overhead_usd],
+                                    ["Relay fee", opp.simulated_cost_breakdown.relay_fee_usd],
+                                  ].map(([label, value]) => (
+                                    <div key={String(label)} className="flex justify-between text-muted-foreground/80">
+                                      <span>{label}:</span>
+                                      <span className="font-mono">${(value as number).toFixed(4)}</span>
+                                    </div>
+                                  ))}
+                                  {opp.simulated_amount_in_usd != null && (
+                                    <div className="flex justify-between text-muted-foreground/80 pt-1 border-t border-border/30">
+                                      <span>Amount_in (USD):</span>
+                                      <span className="font-mono">{formatUsdShort(opp.simulated_amount_in_usd)}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              {/* Target sizing attribution */}
+                              {opp.simulated_target && (
+                                <div className="pt-1 border-t border-border/50 space-y-0.5">
+                                  <div className="text-muted-foreground uppercase tracking-wider text-[9px] mb-1">
+                                    Target sizing
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>Source:</span>
+                                    <span className="font-mono">
+                                      {opp.simulated_target.target_source === "strategy_config"
+                                        ? "/strategies card"
+                                        : "Simulación tab"}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>Target net:</span>
+                                    <span className="font-mono">${opp.simulated_target.target_net_usd.toFixed(2)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>Required amount_in:</span>
+                                    <span className="font-mono">{formatUsdShort(opp.simulated_target.required_amount_in_usd)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>Effective cap:</span>
+                                    <span className="font-mono">{formatUsdShort(opp.simulated_target.cap_amount_in_usd)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>Suggested:</span>
+                                    <span className={`font-mono ${opp.simulated_target.meets_target_at_cap ? 'text-success' : 'text-warning'}`}>
+                                      {formatUsdShort(opp.simulated_target.suggested_amount_in_usd)}
+                                      {!opp.simulated_target.meets_target_at_cap && " (cap-bound)"}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>Suggested net:</span>
+                                    <span className="font-mono">${opp.simulated_target.suggested_net_usd.toFixed(2)}</span>
+                                  </div>
+                                </div>
+                              )}
+                              {/* Notes (linear-extrap, cap-bound, etc.) */}
+                              {opp.simulated_notes && opp.simulated_notes.length > 0 && (
+                                <div className="pt-1 border-t border-border/50 text-muted-foreground/70 italic">
+                                  Notes: {opp.simulated_notes.join(", ")}
+                                </div>
+                              )}
+                              {!opp.simulated_cost_breakdown && netSource !== "simulated" && (
+                                <div className="flex justify-between text-muted-foreground/70">
+                                  <span>Gas / Bribe / Slippage breakdown:</span>
+                                  <span className="italic">Pendiente revm sim</span>
+                                </div>
+                              )}
                               {opp.paper_status && (
                                 <div className="flex justify-between text-muted-foreground/70 pt-1 border-t border-border/50">
                                   <span>Paper status:</span>

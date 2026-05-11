@@ -22,7 +22,21 @@
 
 import type { Application, Request, Response } from "express";
 import type { Pool, QueryResultRow } from "pg";
+import type { Redis } from "ioredis";
 import { resolveTokensOnDemand, tokenCacheKey } from "./tokenResolver.js";
+import {
+  getTradingConfigForChain,
+  type TradingConfigSnapshot,
+} from "../simulation/tradingConfigSnapshot.js";
+import {
+  forwardSimulate,
+  inverseSize,
+  resolveTarget,
+  type InverseSizingResult,
+  type SimulatedCostBreakdown,
+  type SimulationResult,
+  type SimulatorRow,
+} from "../simulation/computeSimulatedNet.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -221,10 +235,49 @@ function dexesUsedFromRow(row: OpportunityLiveRow): string[] {
   return Array.from(set).sort();
 }
 
-function rowToOpportunity(row: OpportunityLiveRow) {
+/**
+ * Per-row simulation context computed once per request.
+ *
+ * `forward` is the forward-simulated net at the worker's recorded amount_in;
+ * `inverse` is the target-driven sizing suggestion when the operator has
+ * configured a target via /strategies card or the Simulación tab. Both are
+ * null when inputs are insufficient (R8: never invent).
+ */
+interface SimContext {
+  forward: SimulationResult | null;
+  inverse: InverseSizingResult | null;
+  simulated_at: string;
+}
+
+function rowToOpportunity(
+  row: OpportunityLiveRow,
+  sim: SimContext | undefined,
+  chainBaseTokenSymbol: string | null,
+) {
+  const simulated_net_profit_usd =
+    sim?.forward != null ? sim.forward.net_usd : null;
+  const simulated_amount_in_usd =
+    sim?.forward != null ? sim.forward.amount_in_usd : null;
+  const simulated_roi_pct =
+    sim?.forward != null ? sim.forward.roi_pct : null;
+  const simulated_cost_breakdown: SimulatedCostBreakdown | null =
+    sim?.forward != null ? sim.forward.cost_breakdown : null;
+  const simulated_target: InverseSizingResult | null =
+    sim?.inverse != null ? sim.inverse : null;
+  const simulated_at: string | null = sim?.forward != null ? sim.simulated_at : null;
+  const simulated_notes: string[] = [
+    ...(sim?.forward?.notes ?? []),
+    ...(sim?.inverse?.notes ?? []),
+  ];
+
   return {
     id:                       row.id,
     chain_id:                 row.chain_id,
+    // 2026-05-10 operator request: every row carries the chain's base token
+    // symbol (WETH on Ethereum, USDC on Base, etc.) so the dashboard can
+    // discreetly badge each opportunity with "starts/ends in WETH" without
+    // the operator inferring it from the chain id.
+    chain_base_token_symbol:  chainBaseTokenSymbol,
     strategy_kind:            row.strategy_kind,
     dex_a:                    row.dex_a,
     dex_b:                    row.dex_b,
@@ -254,6 +307,16 @@ function rowToOpportunity(row: OpportunityLiveRow) {
     chain_id_out:             row.chain_id_out,
     bridge:                   row.bridge,
     bridge_fee_usd:           row.bridge_fee_usd,
+    // Target-driven simulation (R8 fail-honest: all nullable, source-labeled).
+    // Computed only when net_expected_profit_usd is null (the canonical Rust
+    // spine output wins when present).
+    simulated_net_profit_usd,
+    simulated_amount_in_usd,
+    simulated_roi_pct,
+    simulated_cost_breakdown,
+    simulated_target,
+    simulated_at,
+    simulated_notes:           simulated_notes.length ? simulated_notes : null,
   };
 }
 
@@ -262,13 +325,20 @@ function rowToOpportunity(row: OpportunityLiveRow) {
 /**
  * Mounts GET /api/v1/opportunities/live on the given Express app.
  *
- * @param app  - Express Application instance (passed by index.ts)
- * @param pool - pg.Pool | null (null when DATABASE_URL not configured)
- * @param log  - Structured logger (pino-compatible { warn(obj, msg?) })
+ * @param app   - Express Application instance (passed by index.ts)
+ * @param pool  - pg.Pool | null (null when DATABASE_URL not configured)
+ * @param redis - ioredis client | null. When non-null, the route loads each
+ *                row's chain `trading_config` snapshot from
+ *                `arbx:trading_config:<chain_id>` and computes a forward
+ *                net-profit simulation + (optional) target-driven inverse
+ *                sizing suggestion. When null, simulation is skipped and the
+ *                wire shape's simulated_* fields stay null (R8 fail-honest).
+ * @param log   - Structured logger (pino-compatible { warn(obj, msg?) })
  */
 export function mountOpportunitiesLive(
   app: Application,
   pool: Pool | null,
+  redis: Redis | null,
   log: { warn: (obj: object, msg?: string) => void },
 ): void {
   app.get("/api/v1/opportunities/live", async (req: Request, res: Response) => {
@@ -352,12 +422,71 @@ export function mountOpportunitiesLive(
         }
       }
 
+      // ── Target-driven simulation (per chain, per row) ──────────────────────
+      //
+      // For every row whose canonical Rust spine net (`net_expected_profit_usd`)
+      // is null, run the TS forward simulator against the operator's per-chain
+      // `trading_config` snapshot. When the row's strategy has a target
+      // configured (priority: strategy_configs.min_profit_usd → simulation_tab),
+      // also run the linear inverse sizer so the dashboard can render
+      // "→ borrow $X to hit $Y" alongside the forward number.
+      //
+      // R8 fail-honest:
+      //   - Redis miss / malformed JSON → snapshot null → simulation skipped.
+      //   - row.expected_profit_usd null OR token can't be priced → forward null.
+      //   - No target configured → inverse null but forward still rendered.
+      //
+      // Snapshot loading is parallel per distinct chain_id; the snapshot loader
+      // has a 5s in-process cache so the typical 50-row burst on a single chain
+      // hits Redis exactly once.
+      const distinctChains = Array.from(
+        new Set<number>(q.rows.map((r) => r.chain_id)),
+      );
+      const snapshotEntries = await Promise.all(
+        distinctChains.map(
+          async (chain_id) =>
+            [chain_id, await getTradingConfigForChain(redis, chain_id)] as const,
+        ),
+      );
+      const snapshots = new Map<number, TradingConfigSnapshot | null>(
+        snapshotEntries,
+      );
+
+      const simByRowId = new Map<string, SimContext>();
+      const simulatedAt = new Date().toISOString();
+      for (const r of q.rows) {
+        // Spine output always wins — never overwrite canonical net.
+        if (r.net_expected_profit_usd != null) continue;
+        const snapshot = snapshots.get(r.chain_id);
+        if (!snapshot) continue;
+        const simRow: SimulatorRow = {
+          chain_id: r.chain_id,
+          strategy_kind: r.strategy_kind,
+          amount_in_wei: r.amount_in_wei,
+          expected_profit_usd: r.expected_profit_usd,
+          token_in: r.token_in,
+          token_in_symbol: r.token_in_symbol,
+          token_in_decimals: r.token_in_decimals,
+        };
+        const forward = forwardSimulate(simRow, snapshot);
+        if (!forward) continue;
+        const target = resolveTarget(snapshot, r.strategy_kind);
+        const inverse = target ? inverseSize(simRow, snapshot, target, forward) : null;
+        simByRowId.set(r.id, { forward, inverse, simulated_at: simulatedAt });
+      }
+
       res.status(200).json({
         count:           q.rows.length,
         window:          "latest",
         viable_only:     viableOnly,
         max_age_seconds: maxAgeSeconds,
-        items:           q.rows.map(rowToOpportunity),
+        items:           q.rows.map((r) =>
+                            rowToOpportunity(
+                              r,
+                              simByRowId.get(r.id),
+                              snapshots.get(r.chain_id)?.base_token_symbol ?? null,
+                            ),
+                          ),
         ts:              new Date().toISOString(),
       });
     } catch (e) {

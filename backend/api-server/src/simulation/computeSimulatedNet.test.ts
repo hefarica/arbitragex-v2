@@ -1,0 +1,251 @@
+/**
+ * Unit tests for the target-driven simulation pipeline.
+ *
+ * The TS formula mirrors `backend/math-engine/src/roi_engine.rs:149-212`.
+ * The first "canonical-scenario" test pins the TS output to a hand-
+ * calculated reference so drift between Rust and TS is detectable in CI.
+ */
+
+import { describe, expect, it } from "vitest";
+import {
+  forwardSimulate,
+  inverseSize,
+  resolveTarget,
+  type SimulatorRow,
+} from "./computeSimulatedNet.js";
+import type { TradingConfigSnapshot } from "./tradingConfigSnapshot.js";
+
+// ── Fixtures ────────────────────────────────────────────────────────────────
+
+function baseCfg(): TradingConfigSnapshot {
+  return {
+    capital_usd: 100_000,
+    base_token_symbol: "WETH",
+    base_token_price_usd: 2350,
+    token_prices_usd: { WETH: 2350, USDC: 1, USDT: 1, WBTC: 81324 },
+
+    gas_estimate_units: 250_000,
+    gas_price_strategy: "fixed",
+    fixed_gas_price_gwei: 0.3,
+    max_slippage_pct: 0.005,         // 0.5%
+    failure_risk_buffer_pct: 0.001,  // 0.1%
+    flashloan_fee_pct: 0.0009,       // 9bps Aave V3-ish
+
+    capital_cost_rate_annual_pct: 0,
+    ops_overhead_usd_per_attempt: 0.01,
+    p_copied_max: 0,                 // disable copied-buffer for clean math
+    p_copied_volume_threshold_usd: 1_000_000,
+    spread_sanity_mult: 3.0,
+
+    enabled_strategies: ["dex_arb"],
+    strategy_configs: {},
+
+    simulation_capital_usd: null,
+    simulation_per_token_amounts_usd: {},
+    simulation_per_strategy_caps_usd: {},
+    simulation_target_profit_usd: null,
+    simulation_target_roi_pct: null,
+  };
+}
+
+function baseRow(over: Partial<SimulatorRow> = {}): SimulatorRow {
+  return {
+    chain_id: 1,
+    strategy_kind: "dex_arb",
+    // 1 WETH at 1e18 wei
+    amount_in_wei: "1000000000000000000",
+    expected_profit_usd: 100,
+    token_in: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+    token_in_symbol: "WETH",
+    token_in_decimals: 18,
+    ...over,
+  };
+}
+
+// ── forwardSimulate ─────────────────────────────────────────────────────────
+
+describe("forwardSimulate", () => {
+  it("computes net within $1 of hand-calculated value for canonical scenario", () => {
+    const cfg = baseCfg();
+    const row = baseRow();
+    const r = forwardSimulate(row, cfg);
+    expect(r).not.toBeNull();
+    expect(r!.amount_in_usd).toBeCloseTo(2350, 5);
+    expect(r!.gross_usd).toBe(100);
+
+    // Hand calculation, gross $100, amount_in $2350:
+    //   gas:           250_000 × 0.3 × 1e9 / 1e18 × 2350 = $0.17625
+    //   flashloan:     2350 × 0.0009 = $2.115
+    //   lp_fees:       2350 × 0.003 = $7.05
+    //   slippage:      2350 × 0.005 = $11.75
+    //   failure_buf:   2350 × 0.001 = $2.35
+    //   copied:        100 × 0 = 0
+    //   capital_cost:  0 (rate=0)
+    //   ops:           $0.01
+    //   relay:         max(100 × 0.05, 0.5) = $5.0  (mainnet)
+    //   net = 100 - 0.17625 - 2.115 - 7.05 - 11.75 - 2.35 - 0 - 0 - 0.01 - 5.0 = 71.55375
+    expect(r!.cost_breakdown.gas_usd).toBeCloseTo(0.17625, 5);
+    expect(r!.cost_breakdown.flashloan_fee_usd).toBeCloseTo(2.115, 5);
+    expect(r!.cost_breakdown.lp_fees_usd).toBeCloseTo(7.05, 5);
+    expect(r!.cost_breakdown.slippage_usd).toBeCloseTo(11.75, 5);
+    expect(r!.cost_breakdown.failure_buffer_usd).toBeCloseTo(2.35, 5);
+    expect(r!.cost_breakdown.copied_buffer_usd).toBeCloseTo(0, 5);
+    expect(r!.cost_breakdown.capital_cost_usd).toBeCloseTo(0, 5);
+    expect(r!.cost_breakdown.ops_overhead_usd).toBe(0.01);
+    expect(r!.cost_breakdown.relay_fee_usd).toBeCloseTo(5.0, 5);
+    expect(r!.net_usd).toBeCloseTo(71.55375, 2);
+    expect(r!.source).toBe("simulation");
+  });
+
+  it("relay floor of $0.50 binds on tiny gross", () => {
+    const cfg = baseCfg();
+    const row = baseRow({ expected_profit_usd: 1 });
+    const r = forwardSimulate(row, cfg)!;
+    // gross × 5% = $0.05, floor of $0.50 binds.
+    expect(r.cost_breakdown.relay_fee_usd).toBeCloseTo(0.5, 5);
+  });
+
+  it("returns null when expected_profit_usd is null", () => {
+    const cfg = baseCfg();
+    const row = baseRow({ expected_profit_usd: null });
+    expect(forwardSimulate(row, cfg)).toBeNull();
+  });
+
+  it("returns null when token symbol cannot be priced", () => {
+    const cfg = baseCfg();
+    const row = baseRow({ token_in_symbol: "UNKNOWNTKN" });
+    expect(forwardSimulate(row, cfg)).toBeNull();
+  });
+
+  it("returns null when token_in_decimals is missing", () => {
+    const cfg = baseCfg();
+    const row = baseRow({ token_in_decimals: null });
+    expect(forwardSimulate(row, cfg)).toBeNull();
+  });
+
+  it("relay_fee is 0 on L2 chains (non-mainnet)", () => {
+    const cfg = baseCfg();
+    const row = baseRow({ chain_id: 42161 }); // Arbitrum
+    const r = forwardSimulate(row, cfg)!;
+    expect(r.cost_breakdown.relay_fee_usd).toBe(0);
+  });
+
+  it("scales gas with fixed_gas_price_gwei", () => {
+    const cfg = baseCfg();
+    cfg.fixed_gas_price_gwei = 3.0;  // 10x more expensive
+    const row = baseRow();
+    const r = forwardSimulate(row, cfg)!;
+    expect(r.cost_breakdown.gas_usd).toBeCloseTo(0.17625 * 10, 4);
+  });
+
+  it("p_copied_max scales copied_buffer with gross", () => {
+    const cfg = baseCfg();
+    cfg.p_copied_max = 0.1;  // 10%
+    const row = baseRow();
+    const r = forwardSimulate(row, cfg)!;
+    expect(r.cost_breakdown.copied_buffer_usd).toBeCloseTo(100 * 0.1, 5);
+    // Notes should mention it.
+    expect(r.notes.some((n) => n.includes("p-copied-max"))).toBe(true);
+  });
+});
+
+// ── resolveTarget ───────────────────────────────────────────────────────────
+
+describe("resolveTarget", () => {
+  it("priority 1: strategy_configs.min_profit_usd wins when set > 0", () => {
+    const cfg = baseCfg();
+    cfg.strategy_configs = {
+      dex_arb: { enabled: true, min_profit_usd: 50, min_roi_pct: null },
+    };
+    cfg.simulation_target_profit_usd = 200;  // would lose
+    const t = resolveTarget(cfg, "dex_arb");
+    expect(t).toEqual({ net_usd: 50, source: "strategy_config" });
+  });
+
+  it("priority 2: simulation_target_profit_usd when strategy override is null/zero", () => {
+    const cfg = baseCfg();
+    cfg.strategy_configs = {
+      dex_arb: { enabled: true, min_profit_usd: 0, min_roi_pct: null },
+    };
+    cfg.simulation_target_profit_usd = 200;
+    const t = resolveTarget(cfg, "dex_arb");
+    expect(t).toEqual({ net_usd: 200, source: "simulation_tab" });
+  });
+
+  it("returns null when neither is set", () => {
+    const cfg = baseCfg();
+    expect(resolveTarget(cfg, "dex_arb")).toBeNull();
+  });
+
+  it("matches strategy_kind case-insensitively", () => {
+    const cfg = baseCfg();
+    cfg.strategy_configs = {
+      DEX_ARB: { enabled: true, min_profit_usd: 99, min_roi_pct: null },
+    };
+    const t = resolveTarget(cfg, "dex_arb");
+    expect(t).toEqual({ net_usd: 99, source: "strategy_config" });
+  });
+});
+
+// ── inverseSize ─────────────────────────────────────────────────────────────
+
+describe("inverseSize", () => {
+  it("solves target $50 net within cap, suggests scaled amount", () => {
+    const cfg = baseCfg();
+    cfg.capital_usd = 100_000;
+    const row = baseRow();  // 1 WETH = $2350 amount_in, gross $100
+    const fwd = forwardSimulate(row, cfg)!;
+    // grossPerUsd ≈ 100/2350 = 0.04255
+    // varCostRate = 0.0009 + 0.005 + 0.001 + 0.003 + 0 = 0.0099
+    // p_copied=0, relayRate=0.05 (mainnet)
+    // effectiveGross = 0.04255 × (1 − 0 − 0.05) = 0.0404
+    // netPerUsd = 0.0404 − 0.0099 = 0.0305
+    // fixedCosts = gas 0.17625 + ops 0.01 = 0.18625; +0.5 relay floor = 0.68625
+    // required = (50 + 0.686) / 0.0305 ≈ $1661
+    const inv = inverseSize(row, cfg, { net_usd: 50, source: "strategy_config" }, fwd)!;
+    expect(inv).not.toBeNull();
+    expect(inv.target_net_usd).toBe(50);
+    expect(inv.target_source).toBe("strategy_config");
+    expect(inv.required_amount_in_usd).toBeGreaterThan(1500);
+    expect(inv.required_amount_in_usd).toBeLessThan(1800);
+    expect(inv.meets_target_at_cap).toBe(true);
+    expect(inv.suggested_amount_in_usd).toBe(inv.required_amount_in_usd);
+    expect(inv.notes).toContain("linear-extrap");
+  });
+
+  it("flags cap-bound when required > effective capital", () => {
+    const cfg = baseCfg();
+    cfg.capital_usd = 1_000;  // small cap
+    const row = baseRow();
+    const fwd = forwardSimulate(row, cfg)!;
+    const inv = inverseSize(row, cfg, { net_usd: 50, source: "strategy_config" }, fwd)!;
+    // required ≈ $1661 > cap $1000 → cap binds
+    expect(inv.meets_target_at_cap).toBe(false);
+    expect(inv.suggested_amount_in_usd).toBe(1000);
+    expect(inv.notes).toContain("cap-bound");
+  });
+
+  it("honours per-strategy cap from simulation tab", () => {
+    const cfg = baseCfg();
+    cfg.capital_usd = 100_000;
+    cfg.simulation_per_strategy_caps_usd = { dex_arb: 500 };
+    const row = baseRow();
+    const fwd = forwardSimulate(row, cfg)!;
+    const inv = inverseSize(row, cfg, { net_usd: 50, source: "simulation_tab" }, fwd)!;
+    expect(inv.cap_amount_in_usd).toBe(500);
+    expect(inv.suggested_amount_in_usd).toBe(500);
+    expect(inv.meets_target_at_cap).toBe(false);
+  });
+
+  it("returns null-ish (zero suggestion) when net_per_usd is non-positive", () => {
+    const cfg = baseCfg();
+    cfg.max_slippage_pct = 0.5;  // 50% slippage — destroys the spread
+    const row = baseRow();
+    const fwd = forwardSimulate(row, cfg)!;
+    const inv = inverseSize(row, cfg, { net_usd: 50, source: "strategy_config" }, fwd)!;
+    expect(inv.notes).toContain("net-per-usd-nonpositive");
+    expect(inv.required_amount_in_usd).toBe(Infinity);
+    expect(inv.meets_target_at_cap).toBe(false);
+    expect(inv.suggested_amount_in_usd).toBe(0);
+  });
+});
