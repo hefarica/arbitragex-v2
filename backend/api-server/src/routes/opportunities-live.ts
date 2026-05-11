@@ -176,61 +176,66 @@ LIMIT $1
  * resolved_via is null but symbol exists, surface "onchain_partial" as
  * the fallback so the frontend's "failed" branch doesn't mis-trigger.
  */
+/**
+ * Build the TokenInfo wire object for a single token (token_in or token_out).
+ *
+ * 2026-05-11 fix: previously returned null when neither the DB JOIN nor the
+ * on-demand resolver had any metadata AND the address wasn't in the curated
+ * registry. That left the row visually unmarked — the operator saw a
+ * blank "—" cell with no warning, indistinguishable from a verified token.
+ *
+ * Behavior now: ALWAYS returns a TokenInfoResult. When the symbol is
+ * unknown AND the address is not in the registry, surface
+ * `verified=false` with `verified_notes=["address-not-in-registry"]` so
+ * the frontend renders the "⚠ UNVERIFIED" badge regardless of metadata
+ * completeness. The only way a token escapes the badge is being in the
+ * curated registry (Uniswap default token list).
+ *
+ * R8 fail-honest: we still don't fabricate a symbol when we don't have one
+ * — `symbol` stays null — but we DO assert the verification status
+ * truthfully (unknown address = unverified).
+ */
 function tokenInfoFromRow(
   row: OpportunityLiveRow,
   prefix: "token_in" | "token_out",
-): TokenInfoResult | null {
+): TokenInfoResult {
   const resolvedVia = row[`${prefix}_resolved_via`];
   const symbol      = row[`${prefix}_symbol`];
   const decimals    = row[`${prefix}_decimals`];
   const logoUrl     = row[`${prefix}_logo_url`];
 
-  const allNull = resolvedVia == null && symbol == null && decimals == null && logoUrl == null;
-  if (allNull) {
-    // No tokens row joined AND resolver fallback didn't fill it either.
-    // Run verification on the bare address anyway so a known curated token
-    // (e.g. WETH detected via JOIN miss + resolver miss but registry-known)
-    // still surfaces as verified rather than dropping to null.
-    const chainId = prefix === "token_in"
-      ? row.chain_id
-      : (row.chain_id_out ?? row.chain_id);
-    const address = prefix === "token_in" ? row.token_in : row.token_out;
-    const reg = verifyToken(chainId, address ?? "", null);
-    if (!reg.registry_symbol) {
-      return null;
-    }
-    return {
-      symbol: null,
-      decimals: null,
-      logo_url: null,
-      resolved_via: null,
-      verified: reg.verified,
-      registry_symbol: reg.registry_symbol,
-      registry_name: reg.registry_name,
-      verified_notes: reg.notes,
-    };
-  }
-
-  // ── Curated-registry verification ──
-  // Cross-check the on-chain (chain_id, address, symbol) triple against the
-  // Uniswap Labs Default Token List snapshot. The result is honest: known
-  // tokens with matching symbols → verified=true; everything else
-  // (memecoins, scam tokens, impersonators) → verified=false. Frontend
-  // renders "UNVERIFIED" badge on every false case.
   const chainId = prefix === "token_in"
     ? row.chain_id
     : (row.chain_id_out ?? row.chain_id);
   const address = prefix === "token_in" ? row.token_in : row.token_out;
+
+  // Curated-registry verification — always runs against the bare address
+  // even when DB and resolver both miss. Output is canonical: in-registry
+  // tokens → verified=true; anything else → verified=false with a note.
   const reg = verifyToken(chainId, address ?? "", symbol ?? null);
 
+  // Resolution provenance for the frontend's symbol-rendering branches:
+  //   - When DB has any field         → use whatever resolved_via says (or
+  //                                      "onchain_partial" for seeded rows).
+  //   - When DB is empty but registry → "trustwallet_only" — we know the
+  //                                      token's identity from the curated
+  //                                      list even without an on-chain call.
+  //   - When DB is empty and registry → "failed" — no metadata anywhere,
+  //                                      shown as "—" symbol but still
+  //                                      flagged UNVERIFIED.
+  const allDbNull =
+    resolvedVia == null && symbol == null && decimals == null && logoUrl == null;
+  const resolvedViaOut: string = !allDbNull
+    ? (resolvedVia ?? "onchain_partial")
+    : reg.registry_symbol != null
+      ? "trustwallet_only"
+      : "failed";
+
   return {
-    symbol:       symbol      ?? null,
-    decimals:     decimals    ?? null,
-    logo_url:     logoUrl     ?? null,
-    // When the legacy NULL pattern hits (seeded row, no enricher run yet),
-    // default to "onchain_partial" so the frontend treats the row as
-    // partially-resolved (Case B) rather than "failed" (Case C).
-    resolved_via: resolvedVia ?? "onchain_partial",
+    symbol:       symbol     ?? null,
+    decimals:     decimals   ?? null,
+    logo_url:     logoUrl    ?? null,
+    resolved_via: resolvedViaOut,
     verified: reg.verified,
     registry_symbol: reg.registry_symbol,
     registry_name: reg.registry_name,

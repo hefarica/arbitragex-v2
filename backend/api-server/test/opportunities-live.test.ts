@@ -102,8 +102,12 @@ function buildApp(overridePool: Pool | null = pool) {
 // ── Test: token_in_info null when no tokens row ──────────────────────────────
 
 describe("GET /api/v1/opportunities/live — token enrichment", () => {
-  it("token_in_info is null when no tokens row exists", async () => {
-    // Insert an opportunity whose token_in has no entry in the tokens table.
+  it("token_in_info surfaces UNVERIFIED when no tokens row exists", async () => {
+    // 2026-05-11 contract change: tokenInfoFromRow no longer returns null
+    // when DB JOIN misses. It always emits a TokenInfoResult so the curated-
+    // registry verification (verified=false here, since 0xaaa...aaa is not
+    // in the Uniswap default list) reaches the dashboard. Operator never
+    // sees an unmarked unknown token.
     const tokenIn  = "0x" + "a".repeat(40);
     const tokenOut = "0x" + "b".repeat(40);
     await pool.query(`
@@ -120,9 +124,14 @@ describe("GET /api/v1/opportunities/live — token enrichment", () => {
     // Find the row we just inserted (by token address).
     const item = res.body.items.find((o: any) => o.token_in === tokenIn);
     expect(item).toBeDefined();
-    // R8 fail-honest: no tokens row → null, not a fabricated object.
-    expect(item.token_in_info).toBeNull();
-    expect(item.token_out_info).toBeNull();
+    // R8 fail-honest: no tokens row → metadata fields stay null, but the
+    // verification block IS populated so the operator sees ⚠ UNVERIFIED.
+    expect(item.token_in_info).not.toBeNull();
+    expect(item.token_in_info.symbol).toBeNull();
+    expect(item.token_in_info.verified).toBe(false);
+    expect(item.token_in_info.verified_notes).toContain("address-not-in-registry");
+    expect(item.token_out_info).not.toBeNull();
+    expect(item.token_out_info.verified).toBe(false);
   });
 
   it("token_in_info is populated when tokens row exists", async () => {
@@ -153,8 +162,11 @@ describe("GET /api/v1/opportunities/live — token enrichment", () => {
     expect(item.token_in_info.decimals).toBe(18);
     expect(item.token_in_info.logo_url).toBe("https://example.com/weth.png");
     expect(item.token_in_info.resolved_via).toBe("onchain_full");
-    // token_out still has no row in tokens → null.
-    expect(item.token_out_info).toBeNull();
+    // token_out still has no row in tokens → metadata null but block exists
+    // with verified=false so the dashboard renders ⚠ UNVERIFIED.
+    expect(item.token_out_info).not.toBeNull();
+    expect(item.token_out_info.symbol).toBeNull();
+    expect(item.token_out_info.verified).toBe(false);
   });
 });
 
