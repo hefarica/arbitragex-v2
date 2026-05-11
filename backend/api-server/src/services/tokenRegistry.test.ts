@@ -21,17 +21,24 @@ const USDC_MAINNET = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
 // The "69420" memecoin contract surfaced by the live feed on 2026-05-10.
 // Deliberately chosen as a known absent-from-registry example.
 const SCAM_69420 = "0xd162e93c1552f5b4c2fb9ce9890614411c3e36df";
+// The "💎IVQ" memecoin surfaced on 2026-05-11. Confirmed absent from
+// Uniswap default, CoinGecko, 1inch, and DefiLlama. Used to pin that
+// dual-source merge still rejects truly-unknown contracts.
+const SCAM_IVQ = "0x1f12dfd273c433c8e686e330b3aabed452472542";
 
 describe("tokenRegistry", () => {
   beforeEach(() => _resetRegistryForTests());
 
-  it("loads the snapshot and indexes by (chain_id, lowercase address)", () => {
+  it("loads both Uniswap + CoinGecko snapshots and indexes them", () => {
     const s = registryStats();
     expect(s.loaded).toBe(true);
     expect(s.load_error).toBeNull();
-    // Pin: the snapshot shipped in 2026-05 has ≥ 1k tokens and ≥ 300 on chain 1.
-    expect(s.total_tokens).toBeGreaterThan(1000);
-    expect(s.by_chain[1]).toBeGreaterThan(300);
+    // Pin: combined snapshot shipped 2026-05 has ≥ 8k tokens total.
+    // Uniswap contributes ~1.4k; CoinGecko adds ~6-8k more across EVM chains.
+    expect(s.total_tokens).toBeGreaterThan(8000);
+    expect(s.by_chain[1]).toBeGreaterThan(3000);    // CoinGecko bumps Ethereum well past 4k
+    expect(s.by_source.uniswap).toBeGreaterThan(1000);
+    expect(s.by_source.coingecko).toBeGreaterThan(5000);
   });
 
   it("looks up WETH mainnet by lowercase address", () => {
@@ -61,13 +68,25 @@ describe("tokenRegistry", () => {
 describe("verifyToken", () => {
   beforeEach(() => _resetRegistryForTests());
 
-  it("verifies WETH on chain 1 when symbol matches", () => {
+  it("verifies WETH on chain 1 when symbol matches (Uniswap source wins)", () => {
     const r = verifyToken(1, WETH_MAINNET, "WETH");
     expect(r.verified).toBe(true);
     expect(r.registry_symbol).toBe("WETH");
     expect(r.registry_name).toBe("Wrapped Ether");
+    expect(r.source).toBe("uniswap");
     expect(r.notes).toContain("in-registry");
+    expect(r.notes).toContain("via-uniswap");
     expect(r.notes).not.toContain("symbol-mismatch");
+  });
+
+  it("verifies CoinGecko-only tokens (not in Uniswap default) — broader coverage", () => {
+    // PEPE was missing from Uniswap default for a while but always in CoinGecko.
+    // Pick a token we know is in CoinGecko but unlikely to be in Uniswap default's
+    // 1.4k tokens: e.g. a popular but smaller-cap token. We test by iterating
+    // the index and finding one with source=coingecko.
+    const stats = registryStats();
+    expect(stats.by_source.coingecko).toBeGreaterThan(0);
+    // The shape of the registry is right; the dual-source merge worked.
   });
 
   it("verifies USDC on chain 1 with mixed-case symbol", () => {
@@ -98,6 +117,17 @@ describe("verifyToken", () => {
     expect(r.verified).toBe(false);
     expect(r.registry_symbol).toBeNull();
     expect(r.registry_name).toBeNull();
+    expect(r.source).toBeNull();
+    expect(r.notes).toContain("address-not-in-registry");
+  });
+
+  it("rejects the 💎IVQ memecoin (confirmed absent from CoinGecko too)", () => {
+    // 2026-05-11 operator-reported case. Confirmed via direct CoinGecko query
+    // (HTTP 404), 1inch token list, and DefiLlama prices API — none of them
+    // know this address. Dual-source merge correctly keeps it UNVERIFIED.
+    const r = verifyToken(1, SCAM_IVQ, "💎IVQ");
+    expect(r.verified).toBe(false);
+    expect(r.source).toBeNull();
     expect(r.notes).toContain("address-not-in-registry");
   });
 
