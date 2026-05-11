@@ -54,8 +54,18 @@ interface SimulatedCostBreakdown {
 
 /** Mirrors SimulatedTargetSchema from shared-ts/src/api-contracts.ts. */
 interface SimulatedTarget {
-  target_net_usd: number;
+  /** USD floor (min_profit_usd). Null when only a ROI floor was configured. */
+  target_net_usd: number | null;
+  /** ROI floor in percent (min_roi_pct). Null when only a USD floor was configured. */
+  target_roi_pct: number | null;
   target_source: "strategy_config" | "simulation_tab";
+  binding_floor:
+    | "usd-floor"
+    | "roi-floor"
+    | "roi-unreachable"
+    | "net-per-usd-nonpositive"
+    | "tie";
+  estimation_basis: "observed-gross" | "roi-assumed";
   required_amount_in_usd: number;
   cap_amount_in_usd: number;
   suggested_amount_in_usd: number;
@@ -660,40 +670,61 @@ export default function OpportunitiesClient({
                             )}
                           </div>
                           {/* Target-driven sizing hint — operator-configured
-                              target via /strategies card (priority) or
-                              Simulación tab (fallback). Only present when the
-                              forward simulator ran AND a target was found. */}
-                          {opp.simulated_target && (
-                            <div
-                              className={`text-[10px] font-mono flex items-center gap-1 ${
-                                opp.simulated_target.meets_target_at_cap
-                                  ? "text-success/90"
-                                  : "text-warning"
-                              }`}
-                              title={
-                                `Target $${opp.simulated_target.target_net_usd.toFixed(2)} from ${opp.simulated_target.target_source === "strategy_config" ? "/strategies card" : "Simulación tab"}`
-                              }
-                            >
-                              <span aria-hidden="true">
-                                {opp.simulated_target.meets_target_at_cap ? "→" : "⚠"}
-                              </span>
-                              {opp.simulated_target.meets_target_at_cap ? (
-                                <span>
-                                  ${opp.simulated_target.target_net_usd.toFixed(0)} @ borrow {formatUsdShort(opp.simulated_target.required_amount_in_usd)}
-                                </span>
-                              ) : (
-                                <span>
-                                  cap {formatUsdShort(opp.simulated_target.cap_amount_in_usd)} → max ${opp.simulated_target.suggested_net_usd.toFixed(2)}
-                                </span>
-                              )}
-                            </div>
-                          )}
+                              floors (USD min_profit and/or ROI min_pct).
+                              AND semantics: the smallest amount that
+                              satisfies BOTH floors is suggested.
+                              Visual tone:
+                                green  → meets target within cap, finite size
+                                yellow → cap-bound or infeasible (ROI
+                                         unreachable / net-per-usd-nonpositive). */}
+                          {opp.simulated_target && (() => {
+                            const t = opp.simulated_target;
+                            const infeasible =
+                              t.binding_floor === "roi-unreachable"
+                              || t.binding_floor === "net-per-usd-nonpositive";
+                            const ok = t.meets_target_at_cap && !infeasible;
+                            const titleParts: string[] = [];
+                            if (t.target_net_usd != null) titleParts.push(`min $${t.target_net_usd.toFixed(2)} net`);
+                            if (t.target_roi_pct != null) titleParts.push(`min ${t.target_roi_pct.toFixed(2)}% ROI`);
+                            const src = t.target_source === "strategy_config" ? "/strategies card" : "Simulación tab";
+                            const basis = t.estimation_basis === "roi-assumed" ? " · ROI-assumed (no gross recorded)" : "";
+                            return (
+                              <div
+                                className={`text-[10px] font-mono flex items-center gap-1 ${ok ? "text-success/90" : "text-warning"}`}
+                                title={`Floors: ${titleParts.join(" AND ")} from ${src}${basis}`}
+                              >
+                                <span aria-hidden="true">{ok ? "→" : "⚠"}</span>
+                                {t.binding_floor === "roi-unreachable" ? (
+                                  <span>ROI {t.target_roi_pct?.toFixed(1)}% inalcanzable</span>
+                                ) : t.binding_floor === "net-per-usd-nonpositive" ? (
+                                  <span>costos &gt; gross</span>
+                                ) : ok ? (
+                                  <span>
+                                    {t.target_net_usd != null && `$${t.target_net_usd.toFixed(0)}`}
+                                    {t.target_net_usd != null && t.target_roi_pct != null && " · "}
+                                    {t.target_roi_pct != null && `${t.target_roi_pct.toFixed(1)}%`}
+                                    {" @ borrow "}{formatUsdShort(t.required_amount_in_usd)}
+                                  </span>
+                                ) : (
+                                  <span>cap {formatUsdShort(t.cap_amount_in_usd)} → max ${t.suggested_net_usd.toFixed(2)}</span>
+                                )}
+                                {t.estimation_basis === "roi-assumed" && (
+                                  <span className="ml-1 px-1 rounded text-[8px] bg-warning/15 text-warning border border-warning/30 uppercase">est</span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                         {/* Tooltip popover: extended cost breakdown when
-                            simulated values are present + target attribution. */}
+                            simulated values are present + target attribution.
+                            Also shows for Path-B rows (no forward but
+                            simulated_target exists) so the operator can see
+                            target-source attribution even on opportunities
+                            without a recorded gross. */}
                         {(opp.expected_profit_usd != null
                           || opp.net_expected_profit_usd != null
-                          || opp.simulated_net_profit_usd != null) && (
+                          || opp.simulated_net_profit_usd != null
+                          || opp.simulated_target != null) && (
                           <div data-slot="popover-content" className="absolute bottom-full right-0 mb-2 w-80 p-3 bg-popover text-popover-foreground border border-border rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 text-left">
                             <div className="text-xs font-sans space-y-1">
                               <div className="flex justify-between">
@@ -748,7 +779,7 @@ export default function OpportunitiesClient({
                               {opp.simulated_target && (
                                 <div className="pt-1 border-t border-border/50 space-y-0.5">
                                   <div className="text-muted-foreground uppercase tracking-wider text-[9px] mb-1">
-                                    Target sizing
+                                    Target sizing — AND semantics (both floors must hold)
                                   </div>
                                   <div className="flex justify-between">
                                     <span>Source:</span>
@@ -758,13 +789,47 @@ export default function OpportunitiesClient({
                                         : "Simulación tab"}
                                     </span>
                                   </div>
+                                  {opp.simulated_target.target_net_usd != null && (
+                                    <div className="flex justify-between">
+                                      <span>USD floor (min profit):</span>
+                                      <span className="font-mono">${opp.simulated_target.target_net_usd.toFixed(2)}</span>
+                                    </div>
+                                  )}
+                                  {opp.simulated_target.target_roi_pct != null && (
+                                    <div className="flex justify-between">
+                                      <span>ROI floor (min %):</span>
+                                      <span className="font-mono">{opp.simulated_target.target_roi_pct.toFixed(2)}%</span>
+                                    </div>
+                                  )}
                                   <div className="flex justify-between">
-                                    <span>Target net:</span>
-                                    <span className="font-mono">${opp.simulated_target.target_net_usd.toFixed(2)}</span>
+                                    <span>Binding floor:</span>
+                                    <span className={`font-mono ${
+                                      opp.simulated_target.binding_floor === "roi-unreachable"
+                                      || opp.simulated_target.binding_floor === "net-per-usd-nonpositive"
+                                        ? "text-destructive"
+                                        : "text-foreground"
+                                    }`}>
+                                      {opp.simulated_target.binding_floor}
+                                    </span>
                                   </div>
                                   <div className="flex justify-between">
+                                    <span>Estimation basis:</span>
+                                    <span className={`font-mono ${opp.simulated_target.estimation_basis === "roi-assumed" ? "text-warning" : "text-foreground"}`}>
+                                      {opp.simulated_target.estimation_basis}
+                                    </span>
+                                  </div>
+                                  {opp.simulated_target.estimation_basis === "roi-assumed" && (
+                                    <div className="text-[10px] text-warning/80 italic pt-0.5">
+                                      No gross recorded — sizing assumes route delivers your min ROI floor as its gross rate.
+                                    </div>
+                                  )}
+                                  <div className="flex justify-between pt-1 border-t border-border/30">
                                     <span>Required amount_in:</span>
-                                    <span className="font-mono">{formatUsdShort(opp.simulated_target.required_amount_in_usd)}</span>
+                                    <span className="font-mono">
+                                      {Number.isFinite(opp.simulated_target.required_amount_in_usd)
+                                        ? formatUsdShort(opp.simulated_target.required_amount_in_usd)
+                                        : "∞"}
+                                    </span>
                                   </div>
                                   <div className="flex justify-between">
                                     <span>Effective cap:</span>

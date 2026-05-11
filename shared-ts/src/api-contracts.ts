@@ -111,8 +111,38 @@ export const SimulatedCostBreakdownSchema = z.object({
  * max achievable net at the cap.
  */
 export const SimulatedTargetSchema = z.object({
-  target_net_usd: z.number(),
+  /**
+   * Operator's USD floor (min_profit_usd). Null when only a ROI floor was
+   * configured under the strategy card or Simulación tab.
+   */
+  target_net_usd: z.number().nullable(),
+  /**
+   * Operator's ROI floor in percent (min_roi_pct, e.g. 2 means 2%). Null when
+   * only a USD floor was configured.
+   */
+  target_roi_pct: z.number().nullable(),
   target_source: z.enum(["strategy_config", "simulation_tab"]),
+  /**
+   * Which floor binds the suggested amount under AND semantics (the larger
+   * required amount wins). "roi-unreachable" / "net-per-usd-nonpositive"
+   * are honest infeasibility flags (R8 fail-honest).
+   */
+  binding_floor: z.enum([
+    "usd-floor",
+    "roi-floor",
+    "roi-unreachable",
+    "net-per-usd-nonpositive",
+    "tie",
+  ]),
+  /**
+   * How the simulator estimated the net-per-usd rate:
+   *   "observed-gross" — extrapolated from the row's recorded gross profit.
+   *   "roi-assumed"    — fallback when no gross was recorded; assumes the
+   *                      route delivers exactly the operator's ROI floor
+   *                      as its gross rate. Path B; clearly labeled in
+   *                      the dashboard tooltip.
+   */
+  estimation_basis: z.enum(["observed-gross", "roi-assumed"]),
   required_amount_in_usd: z.number(),
   cap_amount_in_usd: z.number().nonnegative(),
   suggested_amount_in_usd: z.number().nonnegative(),

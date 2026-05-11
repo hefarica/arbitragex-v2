@@ -65,8 +65,18 @@ export interface SimulatedCostBreakdown {
 }
 
 export interface SimulatedTarget {
-  target_net_usd: number;
+  /** USD floor (min_profit_usd). Null when only a ROI floor was configured. */
+  target_net_usd: number | null;
+  /** ROI floor in percent (min_roi_pct). Null when only a USD floor was configured. */
+  target_roi_pct: number | null;
   target_source: "strategy_config" | "simulation_tab";
+  binding_floor:
+    | "usd-floor"
+    | "roi-floor"
+    | "roi-unreachable"
+    | "net-per-usd-nonpositive"
+    | "tie";
+  estimation_basis: "observed-gross" | "roi-assumed";
   required_amount_in_usd: number;
   cap_amount_in_usd: number;
   suggested_amount_in_usd: number;

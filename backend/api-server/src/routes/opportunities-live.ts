@@ -264,7 +264,11 @@ function rowToOpportunity(
     sim?.forward != null ? sim.forward.cost_breakdown : null;
   const simulated_target: InverseSizingResult | null =
     sim?.inverse != null ? sim.inverse : null;
-  const simulated_at: string | null = sim?.forward != null ? sim.simulated_at : null;
+  // simulated_at is the timestamp of any sim activity (forward OR Path-B
+  // inverse). Path B rows still emit a simulated_at so the dashboard can
+  // age-stamp the suggestion.
+  const simulated_at: string | null =
+    (sim?.forward != null || sim?.inverse != null) ? sim!.simulated_at : null;
   const simulated_notes: string[] = [
     ...(sim?.forward?.notes ?? []),
     ...(sim?.inverse?.notes ?? []),
@@ -469,10 +473,25 @@ export function mountOpportunitiesLive(
           token_in_decimals: r.token_in_decimals,
         };
         const forward = forwardSimulate(simRow, snapshot);
-        if (!forward) continue;
         const target = resolveTarget(snapshot, r.strategy_kind);
-        const inverse = target ? inverseSize(simRow, snapshot, target, forward) : null;
-        simByRowId.set(r.id, { forward, inverse, simulated_at: simulatedAt });
+        // Inverse sizing has TWO paths:
+        //   Path A (observed-gross): forward exists → linear extrap.
+        //   Path B (roi-assumed):    forward null but target.roi_pct set →
+        //                            use operator's min_roi_pct as assumed
+        //                            gross_per_usd to size against USD floor.
+        //                            Unblocks the dashboard when 100% of rows
+        //                            arrive with expected_profit_usd=null
+        //                            (workers reject before profit math).
+        // When neither path is available (no forward AND no roi target),
+        // inverse stays null and the dashboard renders "—".
+        const inverse = target
+          ? inverseSize(simRow, snapshot, target, forward)
+          : null;
+        // Record a SimContext when EITHER forward or inverse produced output,
+        // so Path-B rows still get a target hint even without a forward block.
+        if (forward || inverse) {
+          simByRowId.set(r.id, { forward, inverse, simulated_at: simulatedAt });
+        }
       }
 
       res.status(200).json({

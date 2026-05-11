@@ -159,20 +159,39 @@ describe("resolveTarget", () => {
     };
     cfg.simulation_target_profit_usd = 200;  // would lose
     const t = resolveTarget(cfg, "dex_arb");
-    expect(t).toEqual({ net_usd: 50, source: "strategy_config" });
+    expect(t).toEqual({ net_usd: 50, roi_pct: null, source: "strategy_config" });
   });
 
-  it("priority 2: simulation_target_profit_usd when strategy override is null/zero", () => {
+  it("priority 1: surfaces both USD and ROI floors when both set", () => {
+    const cfg = baseCfg();
+    cfg.strategy_configs = {
+      dex_arb: { enabled: true, min_profit_usd: 10, min_roi_pct: 2 },
+    };
+    const t = resolveTarget(cfg, "dex_arb");
+    expect(t).toEqual({ net_usd: 10, roi_pct: 2, source: "strategy_config" });
+  });
+
+  it("priority 1: ROI-only floor (no USD) surfaces correctly", () => {
+    const cfg = baseCfg();
+    cfg.strategy_configs = {
+      dex_arb: { enabled: true, min_profit_usd: null, min_roi_pct: 2 },
+    };
+    const t = resolveTarget(cfg, "dex_arb");
+    expect(t).toEqual({ net_usd: null, roi_pct: 2, source: "strategy_config" });
+  });
+
+  it("priority 2: simulation tab when strategy override is null/zero on both", () => {
     const cfg = baseCfg();
     cfg.strategy_configs = {
       dex_arb: { enabled: true, min_profit_usd: 0, min_roi_pct: null },
     };
     cfg.simulation_target_profit_usd = 200;
+    cfg.simulation_target_roi_pct = 3;
     const t = resolveTarget(cfg, "dex_arb");
-    expect(t).toEqual({ net_usd: 200, source: "simulation_tab" });
+    expect(t).toEqual({ net_usd: 200, roi_pct: 3, source: "simulation_tab" });
   });
 
-  it("returns null when neither is set", () => {
+  it("returns null when neither floor is set anywhere", () => {
     const cfg = baseCfg();
     expect(resolveTarget(cfg, "dex_arb")).toBeNull();
   });
@@ -183,14 +202,14 @@ describe("resolveTarget", () => {
       DEX_ARB: { enabled: true, min_profit_usd: 99, min_roi_pct: null },
     };
     const t = resolveTarget(cfg, "dex_arb");
-    expect(t).toEqual({ net_usd: 99, source: "strategy_config" });
+    expect(t).toEqual({ net_usd: 99, roi_pct: null, source: "strategy_config" });
   });
 });
 
 // ── inverseSize ─────────────────────────────────────────────────────────────
 
 describe("inverseSize", () => {
-  it("solves target $50 net within cap, suggests scaled amount", () => {
+  it("USD-only floor: solves target $50 net within cap, suggests scaled amount", () => {
     const cfg = baseCfg();
     cfg.capital_usd = 100_000;
     const row = baseRow();  // 1 WETH = $2350 amount_in, gross $100
@@ -202,10 +221,13 @@ describe("inverseSize", () => {
     // netPerUsd = 0.0404 − 0.0099 = 0.0305
     // fixedCosts = gas 0.17625 + ops 0.01 = 0.18625; +0.5 relay floor = 0.68625
     // required = (50 + 0.686) / 0.0305 ≈ $1661
-    const inv = inverseSize(row, cfg, { net_usd: 50, source: "strategy_config" }, fwd)!;
+    const inv = inverseSize(row, cfg, { net_usd: 50, roi_pct: null, source: "strategy_config" }, fwd)!;
     expect(inv).not.toBeNull();
     expect(inv.target_net_usd).toBe(50);
+    expect(inv.target_roi_pct).toBeNull();
     expect(inv.target_source).toBe("strategy_config");
+    expect(inv.binding_floor).toBe("usd-floor");
+    expect(inv.estimation_basis).toBe("observed-gross");
     expect(inv.required_amount_in_usd).toBeGreaterThan(1500);
     expect(inv.required_amount_in_usd).toBeLessThan(1800);
     expect(inv.meets_target_at_cap).toBe(true);
@@ -213,12 +235,56 @@ describe("inverseSize", () => {
     expect(inv.notes).toContain("linear-extrap");
   });
 
+  it("AND semantics: USD floor binds when route is highly profitable (r ≫ T_roi)", () => {
+    // High r=3.05% net-per-usd from the canonical scenario, T_roi=2%.
+    // req_usd ≈ 1661, req_roi = 0.686 / (0.0305 - 0.02) ≈ 65. USD floor binds (1661 > 65).
+    const cfg = baseCfg();
+    cfg.capital_usd = 100_000;
+    const row = baseRow();
+    const fwd = forwardSimulate(row, cfg)!;
+    const inv = inverseSize(row, cfg, { net_usd: 50, roi_pct: 2, source: "strategy_config" }, fwd)!;
+    expect(inv.binding_floor).toBe("usd-floor");
+    expect(inv.required_amount_in_usd).toBeGreaterThan(1500);
+    expect(inv.required_amount_in_usd).toBeLessThan(1800);
+  });
+
+  it("AND semantics: ROI floor binds when route barely clears T_roi", () => {
+    // Force a route with thin margins so ROI floor matters. Bump slippage so
+    // effective net rate is small (~0.5%) and T_roi=0.4% sits just below it.
+    const cfg = baseCfg();
+    cfg.capital_usd = 100_000_000;
+    cfg.max_slippage_pct = 0.034;  // raises var cost rate to ~3.7%
+    const row = baseRow();
+    const fwd = forwardSimulate(row, cfg)!;
+    // grossPerUsd 0.04255 × 0.95 = 0.0404. netPerUsd = 0.0404 - 0.0379 = 0.0025
+    // T_roi 0.001 (0.1%) → req_roi = 0.686 / (0.0025 - 0.001) ≈ $457
+    // T_usd $0.50 → req_usd = (0.50 + 0.686) / 0.0025 ≈ $474 → USD just edges out
+    // Make T_usd tiny so ROI dominates:
+    const inv = inverseSize(row, cfg, { net_usd: 0.1, roi_pct: 0.1, source: "strategy_config" }, fwd)!;
+    expect(inv.binding_floor).toBe("roi-floor");
+    expect(inv.required_amount_in_usd).toBeGreaterThan(400);
+  });
+
+  it("AND semantics: roi-unreachable when r ≤ T_roi", () => {
+    const cfg = baseCfg();
+    cfg.capital_usd = 100_000;
+    const row = baseRow();
+    const fwd = forwardSimulate(row, cfg)!;
+    // netPerUsd ≈ 3.05%, ask for 10% ROI floor → unreachable.
+    const inv = inverseSize(row, cfg, { net_usd: 10, roi_pct: 10, source: "strategy_config" }, fwd)!;
+    expect(inv.binding_floor).toBe("roi-unreachable");
+    expect(inv.required_amount_in_usd).toBe(Infinity);
+    expect(inv.suggested_amount_in_usd).toBe(0);
+    expect(inv.meets_target_at_cap).toBe(false);
+    expect(inv.notes).toContain("roi-unreachable");
+  });
+
   it("flags cap-bound when required > effective capital", () => {
     const cfg = baseCfg();
     cfg.capital_usd = 1_000;  // small cap
     const row = baseRow();
     const fwd = forwardSimulate(row, cfg)!;
-    const inv = inverseSize(row, cfg, { net_usd: 50, source: "strategy_config" }, fwd)!;
+    const inv = inverseSize(row, cfg, { net_usd: 50, roi_pct: null, source: "strategy_config" }, fwd)!;
     // required ≈ $1661 > cap $1000 → cap binds
     expect(inv.meets_target_at_cap).toBe(false);
     expect(inv.suggested_amount_in_usd).toBe(1000);
@@ -231,21 +297,63 @@ describe("inverseSize", () => {
     cfg.simulation_per_strategy_caps_usd = { dex_arb: 500 };
     const row = baseRow();
     const fwd = forwardSimulate(row, cfg)!;
-    const inv = inverseSize(row, cfg, { net_usd: 50, source: "simulation_tab" }, fwd)!;
+    const inv = inverseSize(row, cfg, { net_usd: 50, roi_pct: null, source: "simulation_tab" }, fwd)!;
     expect(inv.cap_amount_in_usd).toBe(500);
     expect(inv.suggested_amount_in_usd).toBe(500);
     expect(inv.meets_target_at_cap).toBe(false);
   });
 
-  it("returns null-ish (zero suggestion) when net_per_usd is non-positive", () => {
+  it("returns net-per-usd-nonpositive when costs exceed gross", () => {
     const cfg = baseCfg();
     cfg.max_slippage_pct = 0.5;  // 50% slippage — destroys the spread
     const row = baseRow();
     const fwd = forwardSimulate(row, cfg)!;
-    const inv = inverseSize(row, cfg, { net_usd: 50, source: "strategy_config" }, fwd)!;
+    const inv = inverseSize(row, cfg, { net_usd: 50, roi_pct: null, source: "strategy_config" }, fwd)!;
+    expect(inv.binding_floor).toBe("net-per-usd-nonpositive");
     expect(inv.notes).toContain("net-per-usd-nonpositive");
     expect(inv.required_amount_in_usd).toBe(Infinity);
     expect(inv.meets_target_at_cap).toBe(false);
     expect(inv.suggested_amount_in_usd).toBe(0);
+  });
+
+  it("ROI-assumed (Path B): no forward → uses operator ROI as assumed rate, USD floor binds", () => {
+    // No forward (worker rejected before gross math). Operator config has
+    // min_profit_usd=10 + min_roi_pct=2%. Estimation_basis must be
+    // "roi-assumed". Path B only enforces the USD floor (ROI floor assumed
+    // by the spine's gate that surfaced the opp).
+    const cfg = baseCfg();
+    cfg.capital_usd = 100_000;
+    const row = baseRow();
+    const inv = inverseSize(row, cfg, { net_usd: 10, roi_pct: 2, source: "strategy_config" }, null)!;
+    expect(inv).not.toBeNull();
+    expect(inv.estimation_basis).toBe("roi-assumed");
+    expect(inv.notes).toContain("roi-based-estimate");
+    expect(inv.notes).toContain("roi-floor-assumed-by-spine-gate");
+    // Math: assumedGross=0.02, effective×0.95=0.019, var=0.0099 → netPerUsd=0.0091.
+    // fixed=gas $0.17625 + ops $0.01 + relay floor $0.50 = $0.68625.
+    // req_usd = (10 + 0.686)/0.0091 ≈ $1175. USD floor binds (only floor enforced).
+    expect(inv.binding_floor).toBe("usd-floor");
+    expect(inv.required_amount_in_usd).toBeGreaterThan(1100);
+    expect(inv.required_amount_in_usd).toBeLessThan(1250);
+  });
+
+  it("ROI-assumed (Path B): net-per-usd-nonpositive when assumed ROI doesn't cover var costs", () => {
+    // assumedGross = 0.5% (0.005), effective×0.95=0.00475, var=0.0099
+    // → netPerUsd = -0.00515. Honest: route at this assumed ROI loses money.
+    const cfg = baseCfg();
+    cfg.capital_usd = 100_000;
+    const row = baseRow();
+    const inv = inverseSize(row, cfg, { net_usd: 10, roi_pct: 0.5, source: "strategy_config" }, null)!;
+    expect(inv.estimation_basis).toBe("roi-assumed");
+    expect(inv.binding_floor).toBe("net-per-usd-nonpositive");
+    expect(inv.suggested_amount_in_usd).toBe(0);
+  });
+
+  it("ROI-assumed (Path B): returns null when no forward AND no roi_pct (cannot extrapolate)", () => {
+    const cfg = baseCfg();
+    const row = baseRow();
+    // USD-only target with no forward → no way to assume a rate → null per R8.
+    const inv = inverseSize(row, cfg, { net_usd: 10, roi_pct: null, source: "strategy_config" }, null);
+    expect(inv).toBeNull();
   });
 });
