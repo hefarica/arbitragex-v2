@@ -32,6 +32,12 @@ export interface TokenInfo {
   decimals: number | null;
   logo_url: string | null;
   resolved_via: "onchain_full" | "onchain_partial" | "trustwallet_only" | "failed";
+  verified?: boolean;
+  registry_symbol?: string | null;
+  registry_name?: string | null;
+  verified_notes?: string[] | null;
+  /** Phase 1 Token Validation Engine result — see TokenValidationBlock. */
+  validation?: TokenValidationBlock | null;
 }
 
 export type StrategyKind =
@@ -51,6 +57,21 @@ export type OpportunityStatus =
   | "reconciled"
   | "rejected"
   | "failed";
+
+/** Phase 1 Token Validation Engine block. */
+export interface TokenValidationBlock {
+  status:
+    | "VERIFIED" | "VIABLE" | "LOW_LIQUIDITY"
+    | "ILLIQUID" | "NO_DATA" | "INVALID" | "PENDING";
+  score: number;
+  liquidity_usd: number | null;
+  volume_24h_usd: number | null;
+  pair_count: number | null;
+  primary_dex: string | null;
+  registry_source: string | null;
+  validated_at: string;
+  reasons: Array<{ key: string; delta: number; note: string }> | null;
+}
 
 export interface SimulatedCostBreakdown {
   gas_usd: number;

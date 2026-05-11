@@ -11,12 +11,32 @@ import { motion, AnimatePresence } from "framer-motion";
 // We mirror the exact subset of OpportunityListItem needed here, matching
 // shared-ts/src/api-contracts.ts exactly. No cross-package import needed.
 
+/** Phase 1 Token Validation Engine block (mirrors shared-ts schema). */
+interface TokenValidationBlock {
+  status:
+    | "VERIFIED" | "VIABLE" | "LOW_LIQUIDITY"
+    | "ILLIQUID" | "NO_DATA" | "INVALID" | "PENDING";
+  score: number;
+  liquidity_usd: number | null;
+  volume_24h_usd: number | null;
+  pair_count: number | null;
+  primary_dex: string | null;
+  registry_source: string | null;
+  validated_at: string;
+  reasons: Array<{ key: string; delta: number; note: string }> | null;
+}
+
 /** Mirrors TokenInfoSchema from shared-ts/src/api-contracts.ts. */
 interface TokenInfo {
   symbol: string | null;
   decimals: number | null;
   logo_url: string | null;
   resolved_via: "onchain_full" | "onchain_partial" | "trustwallet_only" | "failed";
+  verified?: boolean;
+  registry_symbol?: string | null;
+  registry_name?: string | null;
+  verified_notes?: string[] | null;
+  validation?: TokenValidationBlock | null;
 }
 
 /** Mirrors StrategyKind from shared-ts/src/contracts/index.ts. */

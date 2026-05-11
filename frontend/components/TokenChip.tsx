@@ -27,6 +27,31 @@ import { shortAddr } from "@/lib/format";
  *   D. info = null                   → DeterministicAvatar + "—" + address.
  */
 
+/**
+ * Token Validation Engine Phase 1 — composite multi-validator output.
+ * Replaces the binary verified/unverified pill with one of seven statuses.
+ */
+export interface TokenValidationBlock {
+  status:
+    | "VERIFIED"
+    | "VIABLE"
+    | "LOW_LIQUIDITY"
+    | "ILLIQUID"
+    | "NO_DATA"
+    | "INVALID"
+    | "PENDING";
+  score: number; // 0-100
+  liquidity_usd: number | null;
+  volume_24h_usd: number | null;
+  pair_count: number | null;
+  primary_dex: string | null;
+  registry_source: string | null;
+  validated_at: string;
+  reasons:
+    | Array<{ key: string; delta: number; note: string }>
+    | null;
+}
+
 /** Mirrors TokenInfoSchema from shared-ts/src/api-contracts.ts — no cross-package import. */
 export interface TokenInfo {
   symbol: string | null;
@@ -44,6 +69,13 @@ export interface TokenInfo {
   registry_symbol?: string | null;
   registry_name?: string | null;
   verified_notes?: string[] | null;
+  /**
+   * Phase 1 Token Validation Engine result. When present, supersedes the
+   * binary `verified` flag for rendering: the badge color + label come
+   * from `validation.status` + `validation.score`. Null when the validator
+   * hasn't run yet (cold start; populated by next refresh).
+   */
+  validation?: TokenValidationBlock | null;
 }
 
 export interface TokenChipProps {
@@ -56,6 +88,129 @@ export interface TokenChipProps {
   info: TokenInfo | null;
 }
 
+/**
+ * Format USD shortened with k/M suffix. Used in validation badges to show
+ * liquidity amount inline ("$1.2M", "$50k", "$0.01").
+ */
+function formatUsdCompact(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  const abs = Math.abs(v);
+  if (abs >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
+  if (abs >= 1_000)     return `$${(v / 1_000).toFixed(1)}k`;
+  if (abs >= 1)         return `$${v.toFixed(2)}`;
+  if (abs >= 0.01)      return `$${v.toFixed(2)}`;
+  return `$${v.toFixed(4)}`;
+}
+
+interface BadgeSpec {
+  label: string;
+  className: string;
+  emoji: string;
+  title: string;
+}
+
+/**
+ * Resolve which badge to render for a given TokenInfo. Priority:
+ *   1. Validation Engine status when present (covers all 7 cases).
+ *   2. Legacy `verified` boolean as fallback (pre-validation-engine payloads).
+ *   3. Unknown (no badge).
+ */
+function resolveBadge(info: TokenInfo | null | undefined, symbol: string | null): BadgeSpec | null {
+  const v = info?.validation;
+  if (v) {
+    // The Validation Engine has run. Use its status + score directly.
+    const liqLabel = v.liquidity_usd != null ? ` ${formatUsdCompact(v.liquidity_usd)}` : "";
+    const topReason = v.reasons && v.reasons.length > 0 ? v.reasons[0]!.note : "";
+    switch (v.status) {
+      case "VERIFIED":
+        return {
+          label: "✓",
+          emoji: "✓",
+          className: "bg-success/15 text-success border-success/40",
+          title:
+            `VERIFIED (score ${v.score}) — ${info?.registry_name ?? info?.registry_symbol ?? "in curated registry"}`
+            + (v.registry_source ? ` · source: ${v.registry_source}` : ""),
+        };
+      case "VIABLE":
+        return {
+          label: `LIQ${liqLabel}`,
+          emoji: "💧",
+          className: "bg-info/15 text-info border-info/40",
+          title:
+            `VIABLE (score ${v.score}) — has real market activity` +
+            (v.liquidity_usd != null ? ` · liquidity ${formatUsdCompact(v.liquidity_usd)}` : "") +
+            (v.volume_24h_usd != null ? ` · 24h vol ${formatUsdCompact(v.volume_24h_usd)}` : "") +
+            ` · ${v.pair_count ?? 0} pair(s)`,
+        };
+      case "LOW_LIQUIDITY":
+        return {
+          label: `LOW${liqLabel}`,
+          emoji: "⚠",
+          className: "bg-warning/15 text-warning border-warning/40",
+          title:
+            `LOW LIQUIDITY (score ${v.score}) — below trading threshold` +
+            (v.liquidity_usd != null ? ` · liquidity ${formatUsdCompact(v.liquidity_usd)} < $5,000` : ""),
+        };
+      case "ILLIQUID":
+        return {
+          label: `ILLIQ${liqLabel}`,
+          emoji: "🚫",
+          className: "bg-destructive/15 text-destructive border-destructive/40",
+          title:
+            `ILLIQUID (score ${v.score}) — likely scam / wash trading / rugpull` +
+            (v.liquidity_usd != null ? ` · liquidity ${formatUsdCompact(v.liquidity_usd)}` : "") +
+            (topReason ? ` · ${topReason}` : ""),
+        };
+      case "NO_DATA":
+        return {
+          label: "NO MARKET",
+          emoji: "❓",
+          className: "bg-muted/40 text-muted-foreground border-border/60",
+          title: `NO_DATA (score ${v.score}) — no DEX pair indexed; token might be brand-new or unlisted`,
+        };
+      case "INVALID":
+        return {
+          label: "NOT ERC20",
+          emoji: "⛔",
+          className: "bg-destructive/25 text-destructive border-destructive/60",
+          title: `INVALID — address has no contract bytecode OR does not implement the ERC-20 standard`,
+        };
+      case "PENDING":
+        return {
+          label: "validating…",
+          emoji: "⏳",
+          className: "bg-muted/30 text-muted-foreground/80 border-border/40 italic",
+          title: "PENDING — validation queued; result will appear on next refresh",
+        };
+    }
+  }
+
+  // Legacy fallback: payload predates the validation engine (no `validation`
+  // field). Use the binary `verified` flag.
+  if (info?.verified === true) {
+    return {
+      label: "✓",
+      emoji: "✓",
+      className: "bg-success/15 text-success border-success/40",
+      title: info?.registry_name
+        ? `Verified — ${info.registry_name} (${info.registry_symbol ?? symbol})`
+        : "Verified by curated registry",
+    };
+  }
+  if (info?.verified === false) {
+    const isMismatch = info?.verified_notes?.includes("symbol-mismatch");
+    return {
+      label: "⚠ unverified",
+      emoji: "⚠",
+      className: "bg-destructive/15 text-destructive border-destructive/40",
+      title: isMismatch
+        ? `⚠ IMPERSONATION RISK — contract claims "${symbol}" but the canonical token at this address is "${info?.registry_symbol ?? "unknown"}". Do NOT trade.`
+        : "⚠ UNVERIFIED — address not in curated registry.",
+    };
+  }
+  return null;
+}
+
 function SymbolPlusAddress({
   avatar,
   symbol,
@@ -65,68 +220,47 @@ function SymbolPlusAddress({
   avatar: React.ReactNode;
   symbol: string | null;
   token_address: string;
-  /** Optional — when present, drives the verification badge. */
+  /** Optional — when present, drives the validation badge. */
   info?: TokenInfo | null;
 }) {
   const displaySymbol = symbol ?? "—";
-  // Verification flag is explicit boolean from the api-server. `undefined`
-  // means the field wasn't set (older payload) — treat as unknown, not
-  // verified. R8 fail-honest: only `verified === true` is safe.
-  const verifiedStatus: "verified" | "unverified" | "unknown" =
-    info?.verified === true
-      ? "verified"
-      : info?.verified === false
-      ? "unverified"
-      : "unknown";
+  const badge = resolveBadge(info, symbol);
+
+  // Symbol styling: green/normal for VERIFIED/VIABLE; warning/italic for
+  // LOW_LIQUIDITY/PENDING; destructive/italic for ILLIQUID/INVALID/unverified.
+  const status = info?.validation?.status;
   const symbolCls = symbol
-    ? verifiedStatus === "verified"
+    ? status === "VERIFIED" || status === "VIABLE"
       ? "text-foreground font-semibold"
-      : verifiedStatus === "unverified"
-      // Unverified: still bold so it's legible, but italic + muted so the
-      // operator never confuses it with a verified asset visually.
-      ? "text-muted-foreground/90 font-semibold italic"
-      : "text-foreground font-semibold"
+      : status === "INVALID" || status === "ILLIQUID"
+        ? "text-destructive font-semibold italic"
+        : status === "LOW_LIQUIDITY"
+          ? "text-warning font-semibold italic"
+          : status === "NO_DATA"
+            ? "text-muted-foreground font-semibold italic"
+            : status === "PENDING"
+              ? "text-muted-foreground/70 italic"
+              // Legacy fallback path (no validation block)
+              : info?.verified === false
+                ? "text-muted-foreground/90 font-semibold italic"
+                : "text-foreground font-semibold"
     : "text-muted-foreground/70 italic";
-  // Tooltip text for the verification status — surfaces the registry's
-  // canonical name when known, the mismatch warning when applicable.
-  const verificationTitle = (() => {
-    if (verifiedStatus === "verified") {
-      return info?.registry_name
-        ? `Verified — ${info.registry_name} (${info.registry_symbol ?? symbol})`
-        : "Verified by Uniswap Labs Default Token List";
-    }
-    if (verifiedStatus === "unverified") {
-      if (info?.verified_notes?.includes("symbol-mismatch")) {
-        return `⚠ IMPERSONATION RISK — contract claims symbol "${symbol}" but the registry's canonical token at this address is "${info?.registry_symbol ?? "unknown"}". Do NOT trade without manual verification.`;
-      }
-      return "⚠ UNVERIFIED — address not in Uniswap Labs Default Token List. May be a memecoin, scam token, or honeypot. Verify manually before trading.";
-    }
-    return symbol ?? "metadata pending";
-  })();
+
   return (
     <span className="inline-flex items-center gap-2 min-w-0">
       {avatar}
       <span className="flex flex-col min-w-0 leading-tight">
-        <span className="flex items-center gap-1 min-w-0">
-          <span className={`text-xs ${symbolCls} truncate`} title={verificationTitle}>
+        <span className="flex items-center gap-1 min-w-0 flex-wrap">
+          <span className={`text-xs ${symbolCls} truncate`} title={badge?.title ?? symbol ?? "metadata pending"}>
             {displaySymbol}
           </span>
-          {verifiedStatus === "unverified" && (
+          {badge && (
             <span
-              className="text-[8px] font-bold px-1 py-px rounded bg-destructive/15 text-destructive border border-destructive/40 uppercase tracking-wider shrink-0"
-              title={verificationTitle}
-              aria-label="Unverified token"
+              className={`text-[8px] font-bold px-1 py-px rounded border uppercase tracking-wider shrink-0 ${badge.className}`}
+              title={badge.title}
+              aria-label={badge.title}
             >
-              ⚠ unverified
-            </span>
-          )}
-          {verifiedStatus === "verified" && (
-            <span
-              className="text-[8px] font-bold px-1 py-px rounded bg-success/15 text-success border border-success/40 uppercase tracking-wider shrink-0"
-              title={verificationTitle}
-              aria-label="Verified token"
-            >
-              ✓
+              {badge.label}
             </span>
           )}
         </span>

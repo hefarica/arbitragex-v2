@@ -98,6 +98,36 @@ export const TokenInfoSchema = z.object({
    * exactly why a token is or isn't verified.
    */
   verified_notes: z.array(z.string()).nullable().optional(),
+  /**
+   * Token Validation Engine Phase 1 composite result. Replaces the binary
+   * verified/unverified pill with a multi-validator status + score:
+   *   VERIFIED      — in curated registry, on-chain symbol matches.
+   *   VIABLE        — not in registry but liquidity ≥ $5k AND volume ≥ $1k/24h.
+   *   LOW_LIQUIDITY — $100 ≤ liquidity < $5k. Caution; not blocked.
+   *   ILLIQUID      — liquidity < $100. Scam-class pattern (SCFN/IVQ/69420).
+   *   NO_DATA       — DEX Screener has no pair indexed. May be brand-new.
+   *   INVALID       — not a contract OR doesn't implement ERC-20 ABI.
+   *   PENDING       — validators haven't run yet (cold first-sighting).
+   * `score` is a 0-100 composite. UI tiers: ≥70 green, 50-69 yellow, <50 red.
+   */
+  validation: z.object({
+    status: z.enum([
+      "VERIFIED", "VIABLE", "LOW_LIQUIDITY", "ILLIQUID",
+      "NO_DATA", "INVALID", "PENDING",
+    ]),
+    score: z.number().int().min(0).max(100),
+    liquidity_usd: z.number().nullable(),
+    volume_24h_usd: z.number().nullable(),
+    pair_count: z.number().int().nonnegative().nullable(),
+    primary_dex: z.string().nullable(),
+    registry_source: z.string().nullable(),
+    validated_at: z.string().datetime({ offset: true }),
+    reasons: z.array(z.object({
+      key: z.string(),
+      delta: z.number(),
+      note: z.string(),
+    })).nullable(),
+  }).nullable().optional(),
 });
 export type TokenInfo = z.infer<typeof TokenInfoSchema>;
 

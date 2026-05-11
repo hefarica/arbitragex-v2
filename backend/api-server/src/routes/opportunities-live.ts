@@ -26,6 +26,10 @@ import type { Redis } from "ioredis";
 import { resolveTokensOnDemand, tokenCacheKey } from "./tokenResolver.js";
 import { verifyToken } from "../services/tokenRegistry.js";
 import {
+  readTokenValidationsBatch,
+  type TokenValidationRow,
+} from "../services/tokenValidation/index.js";
+import {
   getTradingConfigForChain,
   type TradingConfigSnapshot,
 } from "../simulation/tradingConfigSnapshot.js";
@@ -40,6 +44,18 @@ import {
 } from "../simulation/computeSimulatedNet.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
+
+interface TokenValidationBlock {
+  status: TokenValidationRow["final_status"];
+  score: number;
+  liquidity_usd: number | null;
+  volume_24h_usd: number | null;
+  pair_count: number | null;
+  primary_dex: string | null;
+  registry_source: string | null;
+  validated_at: string;
+  reasons: Array<{ key: string; delta: number; note: string }> | null;
+}
 
 interface TokenInfoResult {
   symbol: string | null;
@@ -58,6 +74,15 @@ interface TokenInfoResult {
   registry_symbol: string | null;
   registry_name: string | null;
   verified_notes: string[];
+  /**
+   * Token Validation Engine Phase 1 — composite multi-validator result
+   * (OnChainTruth + LiquidityReality + Registry). Replaces the binary
+   * verified/unverified pill with a real safety score and status:
+   *   VERIFIED | VIABLE | LOW_LIQUIDITY | ILLIQUID | NO_DATA | INVALID | PENDING.
+   * The frontend renders one of seven coloured badges based on `status`
+   * + `score`. Null when validation hasn't yet run (cold start).
+   */
+  validation: TokenValidationBlock | null;
 }
 
 interface OpportunityLiveRow extends QueryResultRow {
@@ -198,6 +223,7 @@ LIMIT $1
 function tokenInfoFromRow(
   row: OpportunityLiveRow,
   prefix: "token_in" | "token_out",
+  validation: TokenValidationRow | null,
 ): TokenInfoResult {
   const resolvedVia = row[`${prefix}_resolved_via`];
   const symbol      = row[`${prefix}_symbol`];
@@ -231,6 +257,26 @@ function tokenInfoFromRow(
       ? "trustwallet_only"
       : "failed";
 
+  // ── Token Validation Engine block ──
+  // The composite multi-validator output (OnChainTruth + LiquidityReality
+  // + Registry) — when present, this replaces the binary
+  // verified/unverified pill with a real safety score + status. Null when
+  // the validation hasn't completed yet on first sighting (the worker
+  // populates it within seconds, picked up on the next refresh).
+  const validationBlock: TokenValidationBlock | null = validation == null
+    ? null
+    : {
+        status:          validation.final_status,
+        score:           validation.score,
+        liquidity_usd:   validation.liquidity_usd,
+        volume_24h_usd:  validation.volume_24h_usd,
+        pair_count:      validation.pair_count,
+        primary_dex:     validation.primary_dex,
+        registry_source: validation.registry_source,
+        validated_at:    validation.validated_at,
+        reasons:         validation.score_reasons,
+      };
+
   return {
     symbol:       symbol     ?? null,
     decimals:     decimals   ?? null,
@@ -240,6 +286,7 @@ function tokenInfoFromRow(
     registry_symbol: reg.registry_symbol,
     registry_name: reg.registry_name,
     verified_notes: reg.notes,
+    validation: validationBlock,
   };
 }
 
@@ -307,7 +354,20 @@ function rowToOpportunity(
   row: OpportunityLiveRow,
   sim: SimContext | undefined,
   chainBaseTokenSymbol: string | null,
+  validations: Map<string, TokenValidationRow>,
 ) {
+  // Look up the per-token validation snapshots. Key format mirrors
+  // tokenValidation/index.ts: `${chain_id}:${address.toLowerCase()}`.
+  // Null when validation hasn't run yet (first sighting) — the
+  // dashboard renders "validating…" until the async worker writes back.
+  const tokenInChain = row.chain_id;
+  const tokenOutChain = row.chain_id_out ?? row.chain_id;
+  const validationIn = validations.get(
+    `${tokenInChain}:${row.token_in.toLowerCase()}`,
+  ) ?? null;
+  const validationOut = validations.get(
+    `${tokenOutChain}:${row.token_out.toLowerCase()}`,
+  ) ?? null;
   const simulated_net_profit_usd =
     sim?.forward != null ? sim.forward.net_usd : null;
   const simulated_amount_in_usd =
@@ -341,9 +401,9 @@ function rowToOpportunity(
     dex_b:                    row.dex_b,
     pair_symbol:              row.pair_symbol,
     token_in:                 row.token_in,
-    token_in_info:            tokenInfoFromRow(row, "token_in"),
+    token_in_info:            tokenInfoFromRow(row, "token_in", validationIn),
     token_out:                row.token_out,
-    token_out_info:           tokenInfoFromRow(row, "token_out"),
+    token_out_info:           tokenInfoFromRow(row, "token_out", validationOut),
     amount_in_wei:            row.amount_in_wei,
     // C5 fix (audit 2026-05-10): both gross and net surfaced separately so
     // the UI labels honestly. R8: both can be null (data not yet computed).
@@ -548,6 +608,26 @@ export function mountOpportunitiesLive(
         }
       }
 
+      // ── Token Validation Engine batch lookup ─────────────────────────────
+      //
+      // For every (chain_id, address) pair the response will reference,
+      // ask the validation engine for the latest composite score. Hot path
+      // reads from PG (1h TTL) + in-process cache (5min TTL); first-sighted
+      // tokens get a "PENDING" placeholder while the async worker validates
+      // in the background — the next request picks up the real result.
+      //
+      // Deduplicated inside readTokenValidationsBatch: 50 rows × 2 tokens =
+      // typically 5-10 unique (chain, address) pairs.
+      const validationPairs: Array<{ chain_id: number; address: string }> = [];
+      for (const r of q.rows) {
+        validationPairs.push({ chain_id: r.chain_id, address: r.token_in });
+        validationPairs.push({
+          chain_id: r.chain_id_out ?? r.chain_id,
+          address: r.token_out,
+        });
+      }
+      const validations = await readTokenValidationsBatch(pool, validationPairs);
+
       res.status(200).json({
         count:           q.rows.length,
         window:          "latest",
@@ -558,6 +638,7 @@ export function mountOpportunitiesLive(
                               r,
                               simByRowId.get(r.id),
                               snapshots.get(r.chain_id)?.base_token_symbol ?? null,
+                              validations,
                             ),
                           ),
         ts:              new Date().toISOString(),
