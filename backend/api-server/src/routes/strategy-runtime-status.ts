@@ -242,11 +242,22 @@ export function mountStrategyRuntimeStatus(
   app.get("/api/v1/strategies/readiness", async (req: Request, res: Response) => {
     const chainId = Number(req.query["chain_id"] ?? 1);
     
-    const sourceStatus = {
-      postgres: deps.pool ? "ok" : "unavailable",
+    const sourceStatus: Record<string, string> = {
+      postgres: "unavailable",
       redis: "ok",
       logs: "not_used",
     };
+
+    // R8: probe postgres with a real query, not just pool existence.
+    if (deps.pool) {
+      try {
+        await deps.pool.query("SELECT 1");
+        sourceStatus.postgres = "queried_ok";
+      } catch (e) {
+        sourceStatus.postgres = "configured_unreachable";
+        deps.logger.warn({ event: "strategy_readiness.pg_probe_failed", err: (e as Error).message });
+      }
+    }
 
     let poolIndexEntries: number | null = null;
     let poolIndexV3Entries: number | null = null;
