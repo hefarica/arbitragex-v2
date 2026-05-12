@@ -36,8 +36,28 @@ use shared_rs::contracts::Opportunity;
 use shared_rs::metrics::OPPORTUNITIES_TOTAL;
 use sqlx::postgres::PgPool;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tracing::error;
+
+// ---------------------------------------------------------------------------
+// EmittedRecord — for test introspection (TASK 4)
+// ---------------------------------------------------------------------------
+
+/// A record of what the emitter would have done in dry-run mode.
+/// Exposed via `recorded_emissions()` for integration tests that want to
+/// assert on the V2 pipeline's output without a real DB / Redis.
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // fields are used in integration tests (tests/v2_shadow_replay.rs)
+pub struct EmittedRecord {
+    /// The opportunity that was emitted (accepted or rejected).
+    pub opportunity: Opportunity,
+    /// The strategy label used for the emit call.
+    pub strategy: StrategyLabel,
+    /// `true` → accepted path (`emit_accepted`); `false` → rejected path.
+    pub accepted: bool,
+    /// The rejection reason, if `accepted = false`.
+    pub rejection_reason: Option<String>,
+}
 
 // ---------------------------------------------------------------------------
 // EmitOutcome
@@ -90,6 +110,12 @@ pub struct OpportunityEmitter {
     /// `ARBX_ORCHESTRATOR_MODE=shadow` to let the orchestrator evaluate
     /// candidates without writing to PG or the Redis stream.
     dry_run: bool,
+    /// Recorded emissions in dry-run mode — populated by `emit_accepted` and
+    /// `emit_rejected` when `dry_run = true`. Used by integration tests to
+    /// inspect what the pipeline would have emitted (TASK 4).
+    /// Protected by a `Mutex` so the emitter can be shared via `Arc` across
+    /// async tasks while still allowing test introspection.
+    recorded: Mutex<Vec<EmittedRecord>>,
 }
 
 impl OpportunityEmitter {
@@ -110,6 +136,7 @@ impl OpportunityEmitter {
             redis,
             opp_dedup,
             dry_run: false,
+            recorded: Mutex::new(Vec::new()),
         }
     }
 
@@ -125,7 +152,29 @@ impl OpportunityEmitter {
             redis,
             opp_dedup,
             dry_run: true,
+            recorded: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Returns `true` when this emitter is in dry-run (shadow) mode.
+    ///
+    /// Used by the orchestrator for the `v2.emitter.input` log event.
+    pub fn is_dry_run(&self) -> bool {
+        self.dry_run
+    }
+
+    /// Returns a snapshot of all emissions recorded in dry-run mode.
+    ///
+    /// Only populated when `dry_run = true` (i.e., `new_dry_run` constructor).
+    /// In live mode this always returns an empty Vec.
+    ///
+    /// Used by integration tests (TASK 4) to inspect the V2 pipeline's output.
+    #[allow(dead_code)] // used in tests/v2_shadow_replay.rs
+    pub fn recorded_emissions(&self) -> Vec<EmittedRecord> {
+        self.recorded
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default()
     }
 
     // -----------------------------------------------------------------------
@@ -149,7 +198,7 @@ impl OpportunityEmitter {
         opportunity: &Opportunity,
         strategy_label: StrategyLabel,
     ) -> anyhow::Result<EmitOutcome> {
-        // Dry-run (shadow mode): log only, no I/O.
+        // Dry-run (shadow mode): log + record, no I/O.
         if self.dry_run {
             tracing::debug!(
                 event = "opportunity_emitter.shadow_accepted",
@@ -158,6 +207,15 @@ impl OpportunityEmitter {
                 profit_usd = ?opportunity.expected_profit_usd,
                 "shadow mode: would have emitted accepted (no write)"
             );
+            // Record for test introspection (TASK 4).
+            if let Ok(mut guard) = self.recorded.lock() {
+                guard.push(EmittedRecord {
+                    opportunity: opportunity.clone(),
+                    strategy: strategy_label,
+                    accepted: true,
+                    rejection_reason: None,
+                });
+            }
             return Ok(EmitOutcome::Published);
         }
 
@@ -210,7 +268,7 @@ impl OpportunityEmitter {
         strategy_label: StrategyLabel,
         rejection_reason: &str,
     ) -> anyhow::Result<EmitOutcome> {
-        // Dry-run (shadow mode): log only, no I/O.
+        // Dry-run (shadow mode): log + record, no I/O.
         if self.dry_run {
             tracing::debug!(
                 event = "opportunity_emitter.shadow_rejected",
@@ -219,6 +277,15 @@ impl OpportunityEmitter {
                 reason = rejection_reason,
                 "shadow mode: would have emitted rejected (no write)"
             );
+            // Record for test introspection (TASK 4).
+            if let Ok(mut guard) = self.recorded.lock() {
+                guard.push(EmittedRecord {
+                    opportunity: opportunity.clone(),
+                    strategy: strategy_label,
+                    accepted: false,
+                    rejection_reason: Some(rejection_reason.to_owned()),
+                });
+            }
             return Ok(EmitOutcome::Published);
         }
 

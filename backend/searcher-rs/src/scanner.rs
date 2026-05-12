@@ -175,8 +175,9 @@ async fn build_orchestrator(
     // reserves_cache_miss for pools not yet in cache rather than fabricating data).
     match reserves_cache.hydrate_from_redis(&mut redis, chain_id).await {
         Ok(n) => {
+            // TASK 1 log #5: renamed to v2.reserves.hydrated for Grafana event taxonomy.
             info!(
-                event = "scanner.reserves_cache_hydrated",
+                event = "v2.reserves.hydrated",
                 chain_id,
                 entries = n,
                 "ReservesCache hydrated from Redis at boot"
@@ -947,6 +948,19 @@ async fn decode_and_score_tx(
                 vec![]
             }
         };
+
+        // ── TASK 1 log #1: v2.route_decoder.done ─────────────────────────
+        // Emitted once after decode, summarising all intents for this tx.
+        info!(
+            event = "v2.route_decoder.done",
+            chain_id = client.chain_id,
+            tx_hash = %hash,
+            router_kind = router.kind.as_str(),
+            intents_count = intents.len(),
+            legs_count_total = intents.iter().map(|i| i.legs.len()).sum::<usize>(),
+            source_event = DetectionSource::PublicMempool.as_str(),
+            mode = orch_mode.as_str(),
+        );
 
         for intent in intents {
             if let Err(e) = orch.on_route_intent(intent).await {

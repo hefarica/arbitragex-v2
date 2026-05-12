@@ -152,6 +152,22 @@ pub enum DetectionSource {
     LendingPositionUpdate,
 }
 
+impl DetectionSource {
+    /// Returns a stable, lowercase string suitable for log events and
+    /// Prometheus labels. Mirrors the `detection_source_as_str` helper in
+    /// `orchestrator.rs` (kept in sync — same values).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PublicMempool => "public_mempool",
+            Self::FilteredMempool => "filtered_mempool",
+            Self::PrivateHint => "private_hint",
+            Self::NewBlock => "new_block",
+            Self::OracleUpdate => "oracle_update",
+            Self::LendingPositionUpdate => "lending_position_update",
+        }
+    }
+}
+
 /// DEX protocol family for a swap leg.
 ///
 /// Determines which price model applies when projecting post-swap reserves.

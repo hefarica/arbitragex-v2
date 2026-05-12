@@ -46,18 +46,19 @@ use crate::engines::StrategyCandidate;
 use crate::impact_index::ImpactIndex;
 use crate::metrics::{
     CANDIDATES_TOTAL, DECODED_INTENTS_TOTAL, ENGINE_ERRORS_TOTAL, IMPACTED_ROUTES_TOTAL,
-    OPPORTUNITIES_PUBLISHED_TOTAL, REJECTED_NO_PROFIT_TOTAL, SIMULATION_FAILED_TOTAL,
+    OPPORTUNITIES_PUBLISHED_TOTAL, REJECTED_CONFIG_TOTAL, REJECTED_NO_PROFIT_TOTAL,
+    SIMULATION_FAILED_TOTAL,
 };
 use crate::opportunity_emitter::OpportunityEmitter;
 use crate::route_intent::RouteIntent;
-use crate::size_optimizer::SizeOptimizer;
+use crate::size_optimizer::{OptimizeOutcome, OptimizeRejectReason, SizeOptimizer};
 use crate::state_projector::StateProjector;
 use crate::strategy_label::StrategyLabel;
 use shared_rs::trading_config::TradingConfigState;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use prioritization_spine::config_aware::{ConfigAwareEvaluator, ConfigGateOutcome, NetworkSignals};
 
@@ -168,6 +169,17 @@ impl Orchestrator {
         let chain_str = chain_id.to_string();
         let source_str = detection_source_as_str(intent.source_event);
 
+        // ── TASK 1 log #2: v2.orchestrator.intent_received ───────────────
+        // FIRST line of the function per spec §TASK-1/event-2.
+        info!(
+            event = "v2.orchestrator.intent_received",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            legs_count = intent.legs.len(),
+            amount_in = %intent.amount_in,
+            source_event = source_str,
+        );
+
         // ── Step 1: decoded_intents_total metric ─────────────────────────
         DECODED_INTENTS_TOTAL
             .with_label_values(&[&chain_str, source_str])
@@ -178,6 +190,18 @@ impl Orchestrator {
             let idx = self.ctx.impact_index.read().await;
             idx.resolve(&intent)
         };
+
+        // ── TASK 1 log #3: v2.impact.resolved ────────────────────────────
+        info!(
+            event = "v2.impact.resolved",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            impacted_pairs = impact.impacted_pairs.len(),
+            impacted_pools = impact.impacted_pools.len(),
+            impacted_cycles = impact.impacted_cycles.len(),
+            impacted_lending_positions = impact.impacted_lending_positions.len(),
+            impacted_protocols = impact.impacted_protocols.len(),
+        );
 
         // ── Step 3: impacted_routes_total metric — one increment per engine
         // that WILL receive impacted routes. We emit once for the whole fan-out
@@ -212,6 +236,19 @@ impl Orchestrator {
         // None, fall back to conservative/no-USD-pricing defaults, R8 honest).
         let cfg_snapshot: Option<TradingConfigState> =
             self.ctx.config_provider.snapshot(chain_id).await;
+
+        // ── TASK 1 log #4: v2.config.snapshot ────────────────────────────
+        info!(
+            event = "v2.config.snapshot",
+            chain_id,
+            has_config = cfg_snapshot.is_some(),
+            enabled = cfg_snapshot.as_ref().map(|c| c.enabled).unwrap_or(false),
+            enabled_strategies_count = cfg_snapshot
+                .as_ref()
+                .map(|c| c.enabled_strategies.len())
+                .unwrap_or(0),
+        );
+
         // Emit metric if no config (operator visibility, not a crash).
         if cfg_snapshot.is_none() {
             ENGINE_ERRORS_TOTAL
@@ -236,6 +273,16 @@ impl Orchestrator {
                         .with_label_values(&[&chain_str, c.label.as_str()])
                         .inc();
                 }
+                // ── TASK 1 log #6: v2.engine.output (dex_engine) ──────────
+                info!(
+                    event = "v2.engine.output",
+                    chain_id,
+                    tx_hash = %intent.tx_hash,
+                    engine = "dex_engine",
+                    candidates_count = v.len(),
+                    rejected_count = v.iter().filter(|c| c.rejection_reason.is_some()).count(),
+                    accepted_shape_count = v.iter().filter(|c| c.rejection_reason.is_none()).count(),
+                );
                 v
             }
             Err(e) => {
@@ -266,6 +313,16 @@ impl Orchestrator {
                         .with_label_values(&[&chain_str, c.label.as_str()])
                         .inc();
                 }
+                // ── TASK 1 log #6: v2.engine.output (triangular_engine) ───
+                info!(
+                    event = "v2.engine.output",
+                    chain_id,
+                    tx_hash = %intent.tx_hash,
+                    engine = "triangular_engine",
+                    candidates_count = v.len(),
+                    rejected_count = v.iter().filter(|c| c.rejection_reason.is_some()).count(),
+                    accepted_shape_count = v.iter().filter(|c| c.rejection_reason.is_none()).count(),
+                );
                 v
             }
             Err(e) => {
@@ -298,6 +355,16 @@ impl Orchestrator {
                         .with_label_values(&[&chain_str, c.label.as_str()])
                         .inc();
                 }
+                // ── TASK 1 log #6: v2.engine.output (liquidation_engine) ──
+                info!(
+                    event = "v2.engine.output",
+                    chain_id,
+                    tx_hash = %intent.tx_hash,
+                    engine = "liquidation_engine",
+                    candidates_count = v.len(),
+                    rejected_count = v.iter().filter(|c| c.rejection_reason.is_some()).count(),
+                    accepted_shape_count = v.iter().filter(|c| c.rejection_reason.is_none()).count(),
+                );
                 v
             }
             Err(e) => {
@@ -336,6 +403,22 @@ impl Orchestrator {
                     .with_label_values(&[&chain_str, c.label.as_str()])
                     .inc();
             }
+            // ── TASK 1 log #6: v2.engine.output (flashloan_engine) ────────
+            info!(
+                event = "v2.engine.output",
+                chain_id,
+                tx_hash = %intent.tx_hash,
+                engine = "flashloan_engine",
+                candidates_count = wrapped.len(),
+                rejected_count = wrapped
+                    .iter()
+                    .filter(|c| c.rejection_reason.is_some())
+                    .count(),
+                accepted_shape_count = wrapped
+                    .iter()
+                    .filter(|c| c.rejection_reason.is_none())
+                    .count(),
+            );
             wrapped
         };
 
@@ -367,14 +450,31 @@ impl Orchestrator {
                 continue;
             }
 
-            // Run size_optimizer. Errors are non-fatal — treat as Ok(None).
-            let sized_opt = match self
+            // ── TASK 1 log #7: v2.optimizer.input ────────────────────────
+            info!(
+                event = "v2.optimizer.input",
+                chain_id,
+                tx_hash = %intent.tx_hash,
+                strategy = candidate.label.as_str(),
+                route_legs = candidate.route_plan.legs.len(),
+                pool_addresses = ?candidate
+                    .route_plan
+                    .legs
+                    .iter()
+                    .map(|l| l.pool_address.as_deref())
+                    .collect::<Vec<_>>(),
+                has_config = cfg_snapshot.is_some(),
+                gross_profit_usd = ?candidate.gross_profit_usd,
+            );
+
+            // Run size_optimizer (diagnostic-rich path). Errors are non-fatal.
+            let outcome = match self
                 .ctx
                 .size_optimizer
-                .optimize(candidate.clone(), &intent, cfg_snapshot.as_ref())
+                .optimize_with_reason(candidate.clone(), &intent, cfg_snapshot.as_ref())
                 .await
             {
-                Ok(s) => s,
+                Ok(o) => o,
                 Err(e) => {
                     warn!(
                         event = "orchestrator.size_optimizer_error",
@@ -383,22 +483,44 @@ impl Orchestrator {
                         error = %e,
                         "size_optimizer returned Err — treating as no profit"
                     );
-                    None
+                    OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit)
                 }
             };
 
-            let final_candidate = match sized_opt {
-                Some(sized) => {
-                    // Update the candidate with optimal sizing data.
-                    let mut c = sized.candidate;
-                    c.gross_profit_usd = Some(sized.gross_profit_usd);
-                    c.net_expected_profit_usd = Some(sized.estimated_net_profit_usd);
+            // ── TASK 1 log #8: v2.optimizer.output ───────────────────────
+            info!(
+                event = "v2.optimizer.output",
+                chain_id,
+                tx_hash = %intent.tx_hash,
+                strategy = candidate.label.as_str(),
+                result = match &outcome {
+                    OptimizeOutcome::Sized(_) => "sized",
+                    OptimizeOutcome::Rejected(_) => "rejected",
+                },
+                reason = ?outcome.reason_str(),
+                gross_profit_usd = ?outcome.gross_profit_usd(),
+                net_profit_usd = ?outcome.net_profit_usd(),
+                optimal_amount_in = ?outcome.optimal_amount_in(),
+            );
+
+            let final_candidate = match outcome {
+                OptimizeOutcome::Sized(sized) => {
+                    // Unbox and update the candidate with optimal sizing data.
+                    let s = *sized;
+                    let mut c = s.candidate;
+                    c.gross_profit_usd = Some(s.gross_profit_usd);
+                    c.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
                     c
                 }
-                None => {
-                    // Optimizer found no profitable size — emit as rejected.
+                OptimizeOutcome::Rejected(reason) => {
+                    // Route optimizer rejection to REJECTED_NO_PROFIT_TOTAL
+                    // (not SIMULATION_FAILED_TOTAL — sizing is not simulation).
+                    let reason_str = reason.as_str().to_owned();
+                    REJECTED_NO_PROFIT_TOTAL
+                        .with_label_values(&[&chain_str, candidate.label.as_str(), &reason_str])
+                        .inc();
                     let mut c = candidate;
-                    c.rejection_reason = Some("size_optimizer_no_profit".to_owned());
+                    c.rejection_reason = Some(reason_str);
                     c
                 }
             };
@@ -438,9 +560,19 @@ impl Orchestrator {
                 o.rejection_reason = Some(reason_owned.clone());
                 o
             };
-            REJECTED_NO_PROFIT_TOTAL
-                .with_label_values(&[&chain_str, label_str, &reason_owned])
-                .inc();
+            // Already counted in on_route_intent's optimizer rejection path.
+            // Avoid double-counting by not incrementing REJECTED_NO_PROFIT_TOTAL here.
+            // ── TASK 1 log #9: v2.emitter.input ─────────────────────────
+            info!(
+                event = "v2.emitter.input",
+                chain_id,
+                tx_hash = %sc.source_intent_hash,
+                strategy = label_str,
+                dry_run = self.ctx.emitter.is_dry_run(),
+                rejection_reason = ?opp_with_reason.rejection_reason,
+                expected_profit_usd = ?opp_with_reason.expected_profit_usd,
+                net_expected_profit_usd = ?opp_with_reason.net_expected_profit_usd,
+            );
             self.ctx
                 .emitter
                 .emit_rejected(&opp_with_reason, label, &reason_owned)
@@ -451,6 +583,17 @@ impl Orchestrator {
         // Evaluator not available → observe-only path (same as scanner's no_trading_config).
         let Some(state) = cfg else {
             // Persist + publish without scoring (observe-only).
+            // ── TASK 1 log #9: v2.emitter.input ─────────────────────────
+            info!(
+                event = "v2.emitter.input",
+                chain_id,
+                tx_hash = %sc.source_intent_hash,
+                strategy = label_str,
+                dry_run = self.ctx.emitter.is_dry_run(),
+                rejection_reason = ?sc.opportunity.rejection_reason,
+                expected_profit_usd = ?sc.opportunity.expected_profit_usd,
+                net_expected_profit_usd = ?sc.opportunity.net_expected_profit_usd,
+            );
             OPPORTUNITIES_PUBLISHED_TOTAL
                 .with_label_values(&[&chain_str, label_str])
                 .inc();
@@ -484,9 +627,21 @@ impl Orchestrator {
                 opp.rejection_reason = Some(reason.clone());
                 opp.roi_pct = Some(0.0);
                 opp.risk_score = Some(0.0);
-                SIMULATION_FAILED_TOTAL
-                    .with_label_values(&[&chain_str, label_str, "TokenNotAllowed"])
+                // TASK 3: use REJECTED_CONFIG_TOTAL, not SIMULATION_FAILED_TOTAL.
+                REJECTED_CONFIG_TOTAL
+                    .with_label_values(&[&chain_str, label_str, "token_not_allowed"])
                     .inc();
+                // ── TASK 1 log #9: v2.emitter.input ──────────────────────
+                info!(
+                    event = "v2.emitter.input",
+                    chain_id,
+                    tx_hash = %sc.source_intent_hash,
+                    strategy = label_str,
+                    dry_run = self.ctx.emitter.is_dry_run(),
+                    rejection_reason = ?opp.rejection_reason,
+                    expected_profit_usd = ?opp.expected_profit_usd,
+                    net_expected_profit_usd = ?opp.net_expected_profit_usd,
+                );
                 self.ctx.emitter.emit_rejected(&opp, label, &reason).await?;
             }
 
@@ -496,9 +651,21 @@ impl Orchestrator {
                 opp.rejection_reason = Some(reason.clone());
                 opp.roi_pct = Some(0.0);
                 opp.risk_score = Some(0.0);
-                SIMULATION_FAILED_TOTAL
-                    .with_label_values(&[&chain_str, label_str, "StrategyDisabled"])
+                // TASK 3: use REJECTED_CONFIG_TOTAL, not SIMULATION_FAILED_TOTAL.
+                REJECTED_CONFIG_TOTAL
+                    .with_label_values(&[&chain_str, label_str, "strategy_disabled"])
                     .inc();
+                // ── TASK 1 log #9: v2.emitter.input ──────────────────────
+                info!(
+                    event = "v2.emitter.input",
+                    chain_id,
+                    tx_hash = %sc.source_intent_hash,
+                    strategy = label_str,
+                    dry_run = self.ctx.emitter.is_dry_run(),
+                    rejection_reason = ?opp.rejection_reason,
+                    expected_profit_usd = ?opp.expected_profit_usd,
+                    net_expected_profit_usd = ?opp.net_expected_profit_usd,
+                );
                 self.ctx.emitter.emit_rejected(&opp, label, &reason).await?;
             }
 
@@ -509,9 +676,21 @@ impl Orchestrator {
                 opp.rejection_reason = Some(reason_str.clone());
                 opp.roi_pct = Some(0.0);
                 opp.risk_score = Some(0.0);
-                SIMULATION_FAILED_TOTAL
+                // TASK 3: use REJECTED_CONFIG_TOTAL, not SIMULATION_FAILED_TOTAL.
+                REJECTED_CONFIG_TOTAL
                     .with_label_values(&[&chain_str, label_str, tag])
                     .inc();
+                // ── TASK 1 log #9: v2.emitter.input ──────────────────────
+                info!(
+                    event = "v2.emitter.input",
+                    chain_id,
+                    tx_hash = %sc.source_intent_hash,
+                    strategy = label_str,
+                    dry_run = self.ctx.emitter.is_dry_run(),
+                    rejection_reason = ?opp.rejection_reason,
+                    expected_profit_usd = ?opp.expected_profit_usd,
+                    net_expected_profit_usd = ?opp.net_expected_profit_usd,
+                );
                 self.ctx
                     .emitter
                     .emit_rejected(&opp, label, &reason_str)
@@ -527,7 +706,7 @@ impl Orchestrator {
                 let mut opp = sc.opportunity.clone();
 
                 if let Some(rej_reason) = rejection {
-                    // Math gate rejected.
+                    // Math gate rejected — this is a genuine evaluation failure.
                     let reason_str = format!("{rej_reason:?}");
                     opp.rejection_reason = Some(reason_str.clone());
                     opp.roi_pct = Some(0.0);
@@ -535,9 +714,21 @@ impl Orchestrator {
                     // Propagate net_expected_profit_usd when gross is available (R8).
                     opp.net_expected_profit_usd =
                         opp.expected_profit_usd.map(|g| g - outcome.gas_cost_usd);
+                    // TASK 3: EvaluatedRejected IS a real evaluation failure → SIMULATION_FAILED.
                     SIMULATION_FAILED_TOTAL
                         .with_label_values(&[&chain_str, label_str, "EvaluatedRejected"])
                         .inc();
+                    // ── TASK 1 log #9: v2.emitter.input ──────────────────
+                    info!(
+                        event = "v2.emitter.input",
+                        chain_id,
+                        tx_hash = %sc.source_intent_hash,
+                        strategy = label_str,
+                        dry_run = self.ctx.emitter.is_dry_run(),
+                        rejection_reason = ?opp.rejection_reason,
+                        expected_profit_usd = ?opp.expected_profit_usd,
+                        net_expected_profit_usd = ?opp.net_expected_profit_usd,
+                    );
                     self.ctx
                         .emitter
                         .emit_rejected(&opp, label, &reason_str)
@@ -546,6 +737,17 @@ impl Orchestrator {
                     // Passed all gates.
                     opp.roi_pct = Some(outcome.net_roi_pct);
                     opp.net_expected_profit_usd = Some(outcome.net_profit_usd);
+                    // ── TASK 1 log #9: v2.emitter.input ──────────────────
+                    info!(
+                        event = "v2.emitter.input",
+                        chain_id,
+                        tx_hash = %sc.source_intent_hash,
+                        strategy = label_str,
+                        dry_run = self.ctx.emitter.is_dry_run(),
+                        rejection_reason = ?opp.rejection_reason,
+                        expected_profit_usd = ?opp.expected_profit_usd,
+                        net_expected_profit_usd = ?opp.net_expected_profit_usd,
+                    );
                     OPPORTUNITIES_PUBLISHED_TOTAL
                         .with_label_values(&[&chain_str, label_str])
                         .inc();
@@ -568,15 +770,7 @@ impl Orchestrator {
 /// The label is stable and matches the `DetectionSource` serde `snake_case`
 /// names so Grafana dashboards can filter by source without mapping.
 fn detection_source_as_str(src: crate::route_intent::DetectionSource) -> &'static str {
-    use crate::route_intent::DetectionSource;
-    match src {
-        DetectionSource::PublicMempool => "public_mempool",
-        DetectionSource::FilteredMempool => "filtered_mempool",
-        DetectionSource::PrivateHint => "private_hint",
-        DetectionSource::NewBlock => "new_block",
-        DetectionSource::OracleUpdate => "oracle_update",
-        DetectionSource::LendingPositionUpdate => "lending_position_update",
-    }
+    src.as_str()
 }
 
 // ---------------------------------------------------------------------------

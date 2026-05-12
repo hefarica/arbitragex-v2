@@ -133,6 +133,35 @@ pub static REJECTED_NO_PROFIT_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
 });
 
 // ---------------------------------------------------------------------------
+// rejected_config_total{chain_id, strategy, reason}  (TASK 3)
+// ---------------------------------------------------------------------------
+
+/// Number of candidates rejected by the config gate (TokenNotAllowed,
+/// StrategyDisabled, StrategyConfigGateBlocked).
+///
+/// DISTINCT from `simulation_failed_total` — the config gate runs BEFORE any
+/// simulation. Mixing them makes the Grafana funnel chart useless. This counter
+/// only fires for gate outcomes that are purely policy-driven, not math-driven.
+///
+/// `strategy` values come from `StrategyLabel::as_str()`.
+/// `reason` values:
+///   - `"token_not_allowed"`
+///   - `"strategy_disabled"`
+///   - any tag string from `ConfigGateOutcome::StrategyConfigGateBlocked { tag }`
+pub static REJECTED_CONFIG_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_rejected_config_total",
+            "Candidates rejected by the config gate (policy), by chain/strategy/reason"
+        ),
+        &["chain_id", "strategy", "reason"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
+// ---------------------------------------------------------------------------
 // simulation_failed_total{chain_id, strategy, reason}
 // ---------------------------------------------------------------------------
 
@@ -141,6 +170,11 @@ pub static REJECTED_NO_PROFIT_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
 /// `strategy` values come from `StrategyLabel::as_str()`.
 /// `reason` is the gate-outcome discriminant (e.g. `TokenNotAllowed`,
 /// `StrategyDisabled`, `NegativeNetProfit`, etc.).
+///
+/// NOTE: TokenNotAllowed / StrategyDisabled rejections are now routed to
+/// `rejected_config_total` instead. This counter is reserved for genuine
+/// simulation failures (EvaluatedRejected from the math gate, or future
+/// sim_ctl failures). It must NOT be incremented for policy-gate rejections.
 pub static SIMULATION_FAILED_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let c = IntCounterVec::new(
         prometheus::opts!(
@@ -359,6 +393,7 @@ pub fn init_orchestrator_metrics() {
     let _ = &*IMPACTED_ROUTES_TOTAL;
     let _ = &*CANDIDATES_TOTAL;
     let _ = &*REJECTED_NO_PROFIT_TOTAL;
+    let _ = &*REJECTED_CONFIG_TOTAL;
     let _ = &*SIMULATION_FAILED_TOTAL;
     let _ = &*OPPORTUNITIES_PUBLISHED_TOTAL;
     let _ = &*ENGINE_ERRORS_TOTAL;
