@@ -581,6 +581,8 @@ mod tests {
     use crate::engines::triangular_engine::{CycleSeed, ReservesCache, TriangularEngine};
     use crate::engines::StrategyCandidate;
     use crate::impact_index::{ImpactIndex, PoolRef};
+    #[allow(unused_imports)]
+    use crate::metrics::ENGINE_ERRORS_TOTAL;
     use crate::route_intent::{
         DetectionSource, ProtocolType, RouteIntent, RouteIntentLeg, RouterKind, SwapExactMode,
     };
@@ -593,8 +595,6 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::RwLock;
     use uuid::Uuid;
-    #[allow(unused_imports)]
-    use crate::metrics::ENGINE_ERRORS_TOTAL;
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 

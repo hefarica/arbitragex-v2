@@ -117,7 +117,9 @@ fn legacy_liquidation_worker_enabled() -> bool {
 // the boot sequence below. The `worker` label value must be one of the three
 // canonical module names: "triangular_worker", "flashloan_arb_worker",
 // "liquidation_worker".
-use crate::metrics::{init_orchestrator_metrics, LEGACY_WORKER_DISABLED_TOTAL, LEGACY_WORKERS_DISABLED_COUNT};
+use crate::metrics::{
+    init_orchestrator_metrics, LEGACY_WORKERS_DISABLED_COUNT, LEGACY_WORKER_DISABLED_TOTAL,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

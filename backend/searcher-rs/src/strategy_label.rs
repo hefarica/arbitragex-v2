@@ -66,6 +66,40 @@ pub enum StrategyLabel {
 }
 
 impl StrategyLabel {
+    /// Classify the strategy variant from a decoded pending swap WITHOUT
+    /// fabrication. The mapping reflects what we can legitimately infer
+    /// from a single observed transaction:
+    ///
+    ///   - The pending tx tells us the SOURCE pool's protocol (V2 or V3).
+    ///   - We do NOT yet know what other pool the searcher will route
+    ///     against; the engines (dex_engine, etc.) determine that.
+    ///   - For the LEGACY V1 single-leg-RoutePlan path, we use the source
+    ///     protocol on both legs (V2 source → DexArbV2V2, V3 source →
+    ///     DexArbV3V3). Multi-hop swaps inside the same protocol family
+    ///     still classify based on the source protocol.
+    ///
+    /// Returns `DexArbV2V2` as the safest legacy default when protocol is
+    /// Unknown — this preserves bit-for-bit compatibility with the prior
+    /// hardcoded behaviour while letting V3 swaps surface their true
+    /// classification.
+    ///
+    /// This function is NOT the orchestrator's classification path —
+    /// dex_engine does that with full impact data (source pool + other
+    /// pools). This is the legacy fallback used by scanner.rs's V1 mode
+    /// when the operator hasn't migrated to ARBX_ORCHESTRATOR_MODE=v2.
+    pub fn classify_from_decoded(decoded: &crate::calldata::DecodedSwap) -> Self {
+        use crate::calldata::ProtocolType;
+        match decoded.protocol_type {
+            ProtocolType::V2 => Self::DexArbV2V2,
+            ProtocolType::V3 => Self::DexArbV3V3,
+            // Curve, Balancer, Unknown: no V4/Curve/Balancer engines exist yet
+            // in V1 path. Fall back to the most-likely arb target (V2/V2)
+            // and let the gate evaluator decide if it matches a configured
+            // strategy. Future phases add Curve/Balancer variants.
+            _ => Self::DexArbV2V2,
+        }
+    }
+
     /// Returns the granular analytics string for this variant.
     ///
     /// All four `DexArb*` variants return distinct strings (`dex_arb_v2v2`, etc.)
@@ -286,6 +320,90 @@ mod tests {
         assert_eq!(
             StrategyLabel::Liquidation.to_contract_strategy_kind(),
             Persisted::Liquidation
+        );
+    }
+
+    // ── classify_from_decoded — protocol_type → StrategyLabel ────────────────
+
+    fn make_decoded(protocol_type: crate::calldata::ProtocolType) -> crate::calldata::DecodedSwap {
+        use ethers::types::{Address, U256};
+        crate::calldata::DecodedSwap {
+            router: "test",
+            token_in: Address::zero(),
+            token_out: Address::zero(),
+            amount_in: U256::zero(),
+            min_amount_out: U256::zero(),
+            path_len: 2,
+            deadline: U256::zero(),
+            recipient: Address::zero(),
+            selector_hex: "00000000".to_string(),
+            path_tokens: vec![Address::zero(), Address::zero()],
+            path_fees_bps: vec![30],
+            exact_mode: crate::calldata::SwapExactMode::ExactIn,
+            protocol_type,
+        }
+    }
+
+    #[test]
+    fn classify_v2_protocol_returns_v2v2() {
+        use crate::calldata::ProtocolType;
+        let decoded = make_decoded(ProtocolType::V2);
+        assert_eq!(
+            StrategyLabel::classify_from_decoded(&decoded),
+            StrategyLabel::DexArbV2V2,
+            "V2 source protocol must classify as DexArbV2V2"
+        );
+    }
+
+    #[test]
+    fn classify_v3_protocol_returns_v3v3() {
+        use crate::calldata::ProtocolType;
+        let decoded = make_decoded(ProtocolType::V3);
+        assert_eq!(
+            StrategyLabel::classify_from_decoded(&decoded),
+            StrategyLabel::DexArbV3V3,
+            "V3 source protocol must classify as DexArbV3V3"
+        );
+    }
+
+    #[test]
+    fn classify_curve_falls_back_to_v2v2() {
+        use crate::calldata::ProtocolType;
+        let decoded = make_decoded(ProtocolType::Curve);
+        assert_eq!(
+            StrategyLabel::classify_from_decoded(&decoded),
+            StrategyLabel::DexArbV2V2,
+            "Curve has no dedicated V1-path variant — fallback to DexArbV2V2"
+        );
+    }
+
+    #[test]
+    fn classify_unknown_falls_back_to_v2v2() {
+        use crate::calldata::ProtocolType;
+        let decoded = make_decoded(ProtocolType::Unknown);
+        assert_eq!(
+            StrategyLabel::classify_from_decoded(&decoded),
+            StrategyLabel::DexArbV2V2,
+            "Unknown protocol must fall back to DexArbV2V2 (legacy compat)"
+        );
+    }
+
+    #[test]
+    fn classify_from_decoded_string_matches_as_str() {
+        use crate::calldata::ProtocolType;
+        // Verify that the strings produced by classify_from_decoded are the same
+        // ones the orchestrator (V2 mode) uses — they come from as_str().
+        let v2_decoded = make_decoded(ProtocolType::V2);
+        assert_eq!(
+            StrategyLabel::classify_from_decoded(&v2_decoded).as_str(),
+            "dex_arb_v2v2",
+            "V2 decoded must yield as_str() == 'dex_arb_v2v2'"
+        );
+        let v3_decoded = make_decoded(ProtocolType::V3);
+        assert_eq!(
+            StrategyLabel::classify_from_decoded(&v3_decoded).as_str(),
+            "dex_arb_v3v3",
+            "V3 decoded must yield as_str() == 'dex_arb_v3v3'"
         );
     }
 

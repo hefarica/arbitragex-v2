@@ -66,6 +66,7 @@ use crate::route_decoder;
 use crate::route_intent::DetectionSource;
 use crate::size_optimizer::SizeOptimizer;
 use crate::state_projector::StateProjector;
+use crate::strategy_label::StrategyLabel;
 use ethers::types::Transaction;
 
 /// Mainnet QuoterV2 + Multicall3 addresses. V3 enrichment is mainnet-only for
@@ -300,33 +301,31 @@ async fn pool_sync_watcher(
         ticker.tick().await;
 
         // Query pools added after last_id.
-        let rows: Vec<(i64, String, String, String, String, Option<i32>)> = match sqlx::query_as::<
-            _,
-            (i64, String, String, String, String, Option<i32>),
-        >(
-            r#"SELECT p.id, p.address, p.protocol_type, p.token0, p.token1, p.fee_bps
+        let rows: Vec<(i64, String, String, String, String, Option<i32>)> =
+            match sqlx::query_as::<_, (i64, String, String, String, String, Option<i32>)>(
+                r#"SELECT p.id, p.address, p.protocol_type, p.token0, p.token1, p.fee_bps
                FROM pools p
                WHERE p.chain_id = $1
                  AND p.id > $2
                ORDER BY p.id ASC
                LIMIT 500"#,
-        )
-        .bind(chain_id as i64)
-        .bind(last_id)
-        .fetch_all(&db)
-        .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                warn!(
-                    event = "pool_sync_watcher.query_failed",
-                    chain_id,
-                    error = %e,
-                    "failed to query new pools from PG; will retry next tick"
-                );
-                continue;
-            }
-        };
+            )
+            .bind(chain_id as i64)
+            .bind(last_id)
+            .fetch_all(&db)
+            .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(
+                        event = "pool_sync_watcher.query_failed",
+                        chain_id,
+                        error = %e,
+                        "failed to query new pools from PG; will retry next tick"
+                    );
+                    continue;
+                }
+            };
 
         if rows.is_empty() {
             continue;
@@ -373,10 +372,7 @@ async fn pool_sync_watcher(
             last_id = new_max_id;
             info!(
                 event = "pool_sync_watcher.pools_added",
-                chain_id,
-                new_count,
-                last_id,
-                "ImpactIndex refreshed with new pools from PG"
+                chain_id, new_count, last_id, "ImpactIndex refreshed with new pools from PG"
             );
         }
     }
@@ -464,40 +460,42 @@ pub async fn run_chain(
     //
     // Phase 16: build_orchestrator is now async (loads ImpactIndex from PG+Redis at boot).
     // Returns (orchestrator, impact_index_arc) so we can spawn the pool_sync_watcher.
-    let (orchestrator, impact_index_opt): (Option<Arc<Orchestrator>>, Option<Arc<tokio::sync::RwLock<ImpactIndex>>>) =
-        match orch_mode {
-            OrchestratorMode::Shadow => {
-                match build_orchestrator(
-                    orch_mode,
-                    chain_id,
-                    db.clone(),
-                    redis.clone(),
-                    opp_dedup.clone(),
-                    trading_config.clone(),
-                )
-                .await
-                {
-                    Some((orch, idx)) => (Some(orch), Some(idx)),
-                    None => (None, None),
-                }
+    let (orchestrator, impact_index_opt): (
+        Option<Arc<Orchestrator>>,
+        Option<Arc<tokio::sync::RwLock<ImpactIndex>>>,
+    ) = match orch_mode {
+        OrchestratorMode::Shadow => {
+            match build_orchestrator(
+                orch_mode,
+                chain_id,
+                db.clone(),
+                redis.clone(),
+                opp_dedup.clone(),
+                trading_config.clone(),
+            )
+            .await
+            {
+                Some((orch, idx)) => (Some(orch), Some(idx)),
+                None => (None, None),
             }
-            OrchestratorMode::V2 => {
-                match build_orchestrator(
-                    orch_mode,
-                    chain_id,
-                    db.clone(),
-                    redis.clone(),
-                    opp_dedup.clone(),
-                    trading_config.clone(),
-                )
-                .await
-                {
-                    Some((orch, idx)) => (Some(orch), Some(idx)),
-                    None => (None, None),
-                }
+        }
+        OrchestratorMode::V2 => {
+            match build_orchestrator(
+                orch_mode,
+                chain_id,
+                db.clone(),
+                redis.clone(),
+                opp_dedup.clone(),
+                trading_config.clone(),
+            )
+            .await
+            {
+                Some((orch, idx)) => (Some(orch), Some(idx)),
+                None => (None, None),
             }
-            OrchestratorMode::V1 | OrchestratorMode::Off => (None, None),
-        };
+        }
+        OrchestratorMode::V1 | OrchestratorMode::Off => (None, None),
+    };
 
     // Phase 16: spawn the pool_sync_watcher if we have a DB + impact_index handle.
     // The watcher polls PG every 60s for new pools and calls add_pool() with a write lock.
@@ -509,8 +507,7 @@ pub async fn run_chain(
         });
         info!(
             event = "scanner.pool_sync_watcher_started",
-            chain_id,
-            "pool_sync_watcher spawned to keep ImpactIndex in sync with PG"
+            chain_id, "pool_sync_watcher spawned to keep ImpactIndex in sync with PG"
         );
     }
 
@@ -1390,9 +1387,14 @@ async fn decode_and_score_tx(
     .into_snapshot();
     let evaluator = ConfigAwareEvaluator::with_cache(&cfg, signals, snapshot_map);
 
-    // Strategy classification — when the calldata decoder grows multi-leg support,
-    // this becomes router-driven. For now every observed swap is dex_arb_v2v2.
-    let strategy_kind = "dex_arb_v2v2";
+    // 2026-05-11: Operator demanded the literal die. The strategy kind now
+    // derives from the decoded swap's actual protocol type. V2 source →
+    // dex_arb_v2v2, V3 source → dex_arb_v3v3, Unknown → dex_arb_v2v2
+    // (legacy default for bit-for-bit compat with the prior hardcode).
+    // The orchestrator path (ARBX_ORCHESTRATOR_MODE=v2) uses dex_engine
+    // which does the FULL classification with both source + target pools.
+    let strategy_label = StrategyLabel::classify_from_decoded(&decoded);
+    let strategy_kind = strategy_label.as_str();
 
     // Migration 056 — minimal RoutePlan from scanner data.
     //
@@ -1491,7 +1493,7 @@ async fn decode_and_score_tx(
             OPPORTUNITIES_TOTAL
                 .with_label_values(&[
                     &opportunity.chain_id.to_string(),
-                    "dex_arb",
+                    strategy_label.as_str(),
                     "rejected_token_allowlist",
                 ])
                 .inc();
@@ -1524,7 +1526,7 @@ async fn decode_and_score_tx(
             OPPORTUNITIES_TOTAL
                 .with_label_values(&[
                     &opportunity.chain_id.to_string(),
-                    "dex_arb",
+                    strategy_label.as_str(),
                     "rejected_strategy_disabled",
                 ])
                 .inc();
@@ -1562,7 +1564,7 @@ async fn decode_and_score_tx(
             OPPORTUNITIES_TOTAL
                 .with_label_values(&[
                     &opportunity.chain_id.to_string(),
-                    "dex_arb",
+                    strategy_label.as_str(),
                     "rejected_strategy_config_gate",
                 ])
                 .inc();
@@ -1716,7 +1718,11 @@ async fn decode_and_score_tx(
     publisher::publish(redis, &opportunity).await?;
 
     OPPORTUNITIES_TOTAL
-        .with_label_values(&[&opportunity.chain_id.to_string(), "dex_arb", "detected"])
+        .with_label_values(&[
+            &opportunity.chain_id.to_string(),
+            strategy_label.as_str(),
+            "detected",
+        ])
         .inc();
 
     Ok(())

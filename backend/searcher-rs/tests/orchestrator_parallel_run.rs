@@ -116,7 +116,8 @@ fn rand_hash() -> u64 {
 ///
 /// This is async so it can be awaited directly inside `#[tokio::test]` without
 /// the "Cannot start a runtime from within a runtime" panic.
-async fn build_test_orchestrator() -> Option<std::sync::Arc<searcher_rs::orchestrator::Orchestrator>> {
+async fn build_test_orchestrator() -> Option<std::sync::Arc<searcher_rs::orchestrator::Orchestrator>>
+{
     use searcher_rs::engines::dex_engine::DexEngine;
     use searcher_rs::engines::flashloan_engine::FlashloanEngine;
     use searcher_rs::engines::liquidation_engine::LiquidationEngine;
@@ -154,8 +155,16 @@ async fn build_test_orchestrator() -> Option<std::sync::Arc<searcher_rs::orchest
     ));
     let state_projector = Arc::new(StateProjector::new(reserves_cache.clone(), None));
     let size_optimizer = Arc::new(SizeOptimizer::new(state_projector.clone()));
-    let dex_engine = Arc::new(DexEngine::new(config.clone(), None, Some(state_projector.clone())));
-    let tri_engine = Arc::new(TriangularEngine::new(reserves_cache, config.clone(), vec![]));
+    let dex_engine = Arc::new(DexEngine::new(
+        config.clone(),
+        None,
+        Some(state_projector.clone()),
+    ));
+    let tri_engine = Arc::new(TriangularEngine::new(
+        reserves_cache,
+        config.clone(),
+        vec![],
+    ));
     let fl_engine = Arc::new(FlashloanEngine::new(config));
     let liq_indexer = Arc::new(tokio::sync::Mutex::new(LendingPositionIndexer::new(
         CHAIN_ID,
@@ -165,7 +174,10 @@ async fn build_test_orchestrator() -> Option<std::sync::Arc<searcher_rs::orchest
 
     // Dry-run emitter: logs but does NOT write to Redis/PG.
     let opp_dedup = Arc::new(searcher_rs::dedup::OppDedup::new(256));
-    let emitter = Arc::new(OpportunityEmitter::new_dry_run(opp_dedup, redis_conn.clone()));
+    let emitter = Arc::new(OpportunityEmitter::new_dry_run(
+        opp_dedup,
+        redis_conn.clone(),
+    ));
 
     let config_provider = Arc::new(ConfigProvider { trading_config });
     let impact_index = Arc::new(RwLock::new(ImpactIndex::empty()));
@@ -209,7 +221,7 @@ async fn simple_v2_swap_v1_and_v2_classify_same() {
         [0x38, 0xed, 0x17, 0x39],
         &[
             Token::Uint(U256::from(1_000_000_000_000_000_000u64)), // amountIn = 1 WETH
-            Token::Uint(U256::from(1_000_000u64)),                  // amountOutMin = 1 USDC
+            Token::Uint(U256::from(1_000_000u64)),                 // amountOutMin = 1 USDC
             Token::Array(vec![Token::Address(token_in), Token::Address(token_out)]),
             Token::Address(recipient),
             Token::Uint(U256::from(9_999_999_999u64)), // deadline
@@ -324,10 +336,10 @@ async fn v3_swap_v1_fallback_v2_classifies_v3() {
                 Token::Address(token_out),
                 Token::Uint(U256::from(fee)),
                 Token::Address(recipient),
-                Token::Uint(U256::from(9_999_999_999u64)),            // deadline
+                Token::Uint(U256::from(9_999_999_999u64)), // deadline
                 Token::Uint(U256::from(1_000_000_000_000_000_000u64)), // amountIn = 1 WETH
-                Token::Uint(U256::from(1_000_000u64)),                 // amountOutMinimum
-                Token::Uint(U256::zero()),                              // sqrtPriceLimitX96 = 0
+                Token::Uint(U256::from(1_000_000u64)),     // amountOutMinimum
+                Token::Uint(U256::zero()),                 // sqrtPriceLimitX96 = 0
             ]),
         ],
     );
@@ -378,10 +390,7 @@ async fn v3_swap_v1_fallback_v2_classifies_v3() {
         // V2: strategy_label = DexArbV3V2 or DexArbV3V3 (granular detector label)
         // This is an improvement, not a regression.
         use searcher_rs::strategy_label::StrategyLabel;
-        let v2_possible_labels = [
-            StrategyLabel::DexArbV3V2,
-            StrategyLabel::DexArbV3V3,
-        ];
+        let v2_possible_labels = [StrategyLabel::DexArbV3V2, StrategyLabel::DexArbV3V3];
         for label in &v2_possible_labels {
             assert!(
                 label.as_str().contains("v3"),
@@ -449,7 +458,7 @@ async fn multicall_v1_single_leg_v2_multi_intent() {
         [0x38, 0xed, 0x17, 0x39], // swapExactTokensForTokens
         &[
             Token::Uint(U256::from(1_000_000_000_000_000_000u64)), // amountIn = 1 WETH
-            Token::Uint(U256::from(990_000u64)),                    // amountOutMin = 0.99 DAI (6dec proxy)
+            Token::Uint(U256::from(990_000u64)), // amountOutMin = 0.99 DAI (6dec proxy)
             Token::Array(vec![
                 Token::Address(token_a),
                 Token::Address(token_b),
@@ -467,9 +476,18 @@ async fn multicall_v1_single_leg_v2_multi_intent() {
 
     // V1 KNOWN BEHAVIOUR: for a 3-token path, token_in = path[0], token_out = path[last].
     // The route has 2 hops but V1 only surfaces the endpoint pair in DecodedSwap.
-    assert_eq!(v1_decoded.token_in, token_a, "V1: token_in must be WETH (path[0])");
-    assert_eq!(v1_decoded.token_out, token_c, "V1: token_out must be DAI (path[last])");
-    assert_eq!(v1_decoded.path_len, 3, "V1: 3-token path produces path_len=3");
+    assert_eq!(
+        v1_decoded.token_in, token_a,
+        "V1: token_in must be WETH (path[0])"
+    );
+    assert_eq!(
+        v1_decoded.token_out, token_c,
+        "V1: token_out must be DAI (path[last])"
+    );
+    assert_eq!(
+        v1_decoded.path_len, 3,
+        "V1: 3-token path produces path_len=3"
+    );
 
     // V1 produces a single-pair opportunity: (WETH → DAI). The intermediate USDC hop
     // is invisible to V1.
@@ -497,22 +515,41 @@ async fn multicall_v1_single_leg_v2_multi_intent() {
     );
 
     // Leg 0: WETH → USDC
-    assert_eq!(intent.legs[0].token_in, token_a, "V2: leg[0] token_in must be WETH");
-    assert_eq!(intent.legs[0].token_out, token_b, "V2: leg[0] token_out must be USDC");
-    assert_eq!(intent.legs[0].protocol_type, ProtocolType::V2, "V2: leg[0] must be V2");
+    assert_eq!(
+        intent.legs[0].token_in, token_a,
+        "V2: leg[0] token_in must be WETH"
+    );
+    assert_eq!(
+        intent.legs[0].token_out, token_b,
+        "V2: leg[0] token_out must be USDC"
+    );
+    assert_eq!(
+        intent.legs[0].protocol_type,
+        ProtocolType::V2,
+        "V2: leg[0] must be V2"
+    );
 
     // Leg 1: USDC → DAI
-    assert_eq!(intent.legs[1].token_in, token_b, "V2: leg[1] token_in must be USDC");
-    assert_eq!(intent.legs[1].token_out, token_c, "V2: leg[1] token_out must be DAI");
-    assert_eq!(intent.legs[1].protocol_type, ProtocolType::V2, "V2: leg[1] must be V2");
+    assert_eq!(
+        intent.legs[1].token_in, token_b,
+        "V2: leg[1] token_in must be USDC"
+    );
+    assert_eq!(
+        intent.legs[1].token_out, token_c,
+        "V2: leg[1] token_out must be DAI"
+    );
+    assert_eq!(
+        intent.legs[1].protocol_type,
+        ProtocolType::V2,
+        "V2: leg[1] must be V2"
+    );
 
     // KNOWN DIFFERENCE DOCUMENTED:
     // V1 exposes (WETH, DAI) — endpoint pair only. Path details invisible.
     // V2 exposes (WETH, USDC) + (USDC, DAI) — full hop-by-hop resolution.
     // V2 is MORE accurate: it can detect triangular arb cycles that V1 misses entirely.
     assert_eq!(
-        v1_decoded.token_in,
-        intent.legs[0].token_in,
+        v1_decoded.token_in, intent.legs[0].token_in,
         "V1 and V2 agree on the FIRST token (WETH)"
     );
     // The last token in V2 legs matches V1's token_out.

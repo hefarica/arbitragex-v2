@@ -464,7 +464,11 @@ mod tests {
             .with_label_values(&[chain, strategy_str])
             .get();
 
-        assert_eq!(after - before, 1, "impacted_routes_total must increment by 1");
+        assert_eq!(
+            after - before,
+            1,
+            "impacted_routes_total must increment by 1"
+        );
         // Pin the exact label string — if StrategyLabel::as_str() ever changes
         // "dex_arb_v2v2" to something else this test catches the divergence.
         assert_eq!(
@@ -562,7 +566,11 @@ mod tests {
     #[test]
     fn legacy_worker_disabled_label_matches_module_name() {
         // The three worker names from main.rs (Phase 15).
-        let workers = ["triangular_worker", "flashloan_arb_worker", "liquidation_worker"];
+        let workers = [
+            "triangular_worker",
+            "flashloan_arb_worker",
+            "liquidation_worker",
+        ];
 
         for worker in workers {
             let before = LEGACY_WORKER_DISABLED_TOTAL
