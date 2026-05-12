@@ -158,6 +158,7 @@ import {
   formatRiskOrDash,
 } from "@/lib/format";
 import { useUserPrefs } from "@/lib/user-prefs";
+import { StrategyStatusCards } from "@/components/StrategyStatusCards";
 
 // ─── Tone → token-based class map (used for PROFIT cell) ─────────────────────
 const TONE_CLASS: Record<string, string> = {
@@ -446,6 +447,8 @@ export default function OpportunitiesClient({
           </div>
         </div>
       </div>
+
+      <StrategyStatusCards />
 
       {/* R8 fail-honest: surface WS disconnection and HTTP errors clearly. */}
       {feedStatus === 'STALE' && (

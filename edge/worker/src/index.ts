@@ -406,6 +406,9 @@ app.get("/api/strategy-catalog/active", async (c) => {
   return c.body(text, upstream.status as 200 | 400 | 500 | 503);
 });
 
+// Runtime Status - Observability per strategy
+app.get("/api/strategies/runtime-status", (c) => proxy(c, "/api/v1/strategies/runtime-status", "arbx:cache:strategy-runtime-status", 5));
+
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError((err, c) => {
   console.error(JSON.stringify({ event: "edge.error", err: err.message }));
