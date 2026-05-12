@@ -89,6 +89,7 @@ export type KpiPayload = z.infer<typeof KpiPayloadSchema>;
 export type SCurvePayload = z.infer<typeof SCurvePayloadSchema>;
 export type VariancePayload = z.infer<typeof VariancePayloadSchema>;
 export type ScannerHeartbeatSnapshot = z.infer<typeof ScannerHeartbeatSnapshotSchema>;
+export type ScannerHeartbeatResponse = z.infer<typeof ScannerHeartbeatResponseSchema>;
 export const StrategyRuntimeStatusItemSchema = z.object({
   strategy_kind: z.string(),
   enabled: z.boolean(),

@@ -25,6 +25,7 @@ interface StrategyStatus {
   last_rejection_reason: string | null;
   data_dependencies_status: DataDependenciesStatus;
   triangular_pool_map_entries?: number | null;
+  pool_index_entries?: number | null;
   reserves_cache_entries?: number | null;
   base_candidates_seen_1h?: number | null;
   lending_watchlist_size?: number | null;
