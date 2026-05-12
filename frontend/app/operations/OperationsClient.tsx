@@ -22,9 +22,6 @@ import type {
 import { KPICard } from "./components/KPICard";
 import { PipelineFunnelCard } from "./components/PipelineFunnelCard";
 import { SCurveChart } from "./components/SCurveChart";
-import { RuntimeStatusCards } from "./components/RuntimeStatusCards";
-import { getStrategyRuntimeStatus } from "@/lib/api-client";
-import type { StrategyRuntimeStatusResponse } from "@/lib/operations-schemas";
 
 interface Props {
   initialKpi: KpiPayload | null;
@@ -32,8 +29,6 @@ interface Props {
   initialHeartbeat: ScannerHeartbeatResponse | null;
   initialHeartbeatError: string | null;
   initialError: string | null;
-  initialRuntimeStatus: StrategyRuntimeStatusResponse | null;
-  initialRuntimeStatusError: string | null;
 }
 
 const POLL_MS = 30_000;
@@ -44,25 +39,20 @@ export function OperationsClient({
   initialHeartbeat,
   initialHeartbeatError,
   initialError,
-  initialRuntimeStatus,
-  initialRuntimeStatusError,
 }: Props) {
   const [kpi, setKpi] = useState<KpiPayload | null>(initialKpi);
   const [scurve, setScurve] = useState<SCurvePayload | null>(initialScurve);
   const [heartbeat, setHeartbeat] = useState<ScannerHeartbeatResponse | null>(initialHeartbeat);
   const [heartbeatError, setHeartbeatError] = useState<string | null>(initialHeartbeatError);
   const [error, setError] = useState<string | null>(initialError);
-  const [runtimeStatus, setRuntimeStatus] = useState<StrategyRuntimeStatusResponse | null>(initialRuntimeStatus);
-  const [runtimeStatusError, setRuntimeStatusError] = useState<string | null>(initialRuntimeStatusError);
 
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
-      const [k, s, h, rs] = await Promise.all([
+      const [k, s, h] = await Promise.all([
         getOperationsKpi(1),
         getOperationsScurve(1, 15),
         getScannerHeartbeat(1),
-        getStrategyRuntimeStatus(1),
       ]);
       if (cancelled) return;
       if (k.ok) {
@@ -77,12 +67,6 @@ export function OperationsClient({
         setHeartbeatError(null);
       } else {
         setHeartbeatError(h.error);
-      }
-      if (rs.ok) {
-        setRuntimeStatus(rs.data);
-        setRuntimeStatusError(null);
-      } else {
-        setRuntimeStatusError(rs.error);
       }
     };
     const id = setInterval(tick, POLL_MS);
@@ -165,13 +149,6 @@ export function OperationsClient({
           value={kpi.ops_completed.toString()}
           hint={`target ${kpi.ops_target_per_day}/day`}
           positive={kpi.ops_completed > 0}
-        />
-      </div>
-      <div className="mb-6">
-        <RuntimeStatusCards
-          data={runtimeStatus}
-          error={runtimeStatusError}
-          fetchedAt={runtimeStatus?.ts ?? null}
         />
       </div>
       <div className="mb-6">

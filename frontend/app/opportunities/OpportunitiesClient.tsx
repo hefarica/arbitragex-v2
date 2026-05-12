@@ -11,6 +11,10 @@ import { motion, AnimatePresence } from "framer-motion";
 // We mirror the exact subset of OpportunityListItem needed here, matching
 // shared-ts/src/api-contracts.ts exactly. No cross-package import needed.
 
+import { RuntimeStatusCards } from "./components/RuntimeStatusCards";
+import { getStrategyRuntimeStatus } from "@/lib/api-client";
+import type { StrategyRuntimeStatusResponse } from "@/lib/operations-schemas";
+
 /** Phase 1 Token Validation Engine block (mirrors shared-ts schema). */
 interface TokenValidationBlock {
   status:
@@ -198,8 +202,12 @@ export type OpportunitiesSnapshot = {
 
 export default function OpportunitiesClient({
   initialSnapshot,
+  initialRuntimeStatus,
+  initialRuntimeStatusError,
 }: {
   initialSnapshot: OpportunitiesSnapshot;
+  initialRuntimeStatus?: StrategyRuntimeStatusResponse | null;
+  initialRuntimeStatusError?: string | null;
 }) {
   const [snapshot, setSnapshot] = useState<OpportunitiesSnapshot>(initialSnapshot);
   const [isMounted, setIsMounted] = useState(false);
@@ -215,6 +223,8 @@ export default function OpportunitiesClient({
   const [viableOnly, setViableOnly] = useState(false);
   const [simLoading, setSimLoading] = useState<string | null>(null);
   const [selectedOpp, setSelectedOpp] = useState<OpportunityDetail | null>(null);
+  const [runtimeStatus, setRuntimeStatus] = useState<StrategyRuntimeStatusResponse | null>(initialRuntimeStatus ?? null);
+  const [runtimeStatusError, setRuntimeStatusError] = useState<string | null>(initialRuntimeStatusError ?? null);
 
   // FE-6: Track IDs already notified to avoid duplicate toasts across polls.
   // R1: useRef is SSR-safe — no access to window or localStorage.
@@ -359,6 +369,24 @@ export default function OpportunitiesClient({
     return () => clearInterval(ticker);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const id = setInterval(async () => {
+      const rs = await getStrategyRuntimeStatus(1);
+      if (cancelled) return;
+      if (rs.ok) {
+        setRuntimeStatus(rs.data);
+        setRuntimeStatusError(null);
+      } else {
+        setRuntimeStatusError(rs.error);
+      }
+    }, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
   // FE-1: Opportunities come from the WS stream (streamOpportunities).
   // snapshot is kept only for the manual Force Refresh button fallback path.
   const opportunities = streamOpportunities;
@@ -449,6 +477,10 @@ export default function OpportunitiesClient({
       </div>
 
       <StrategyStatusCards />
+      
+      <div className="mb-8">
+        <RuntimeStatusCards data={runtimeStatus} error={runtimeStatusError} fetchedAt={new Date().toISOString()} />
+      </div>
 
       {/* R8 fail-honest: surface WS disconnection and HTTP errors clearly. */}
       {feedStatus === 'STALE' && (
