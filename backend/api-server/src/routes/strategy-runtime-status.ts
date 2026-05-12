@@ -2,6 +2,16 @@ import type { Application, Request, Response } from "express";
 import type { Pool } from "pg";
 import type { Redis } from "ioredis";
 
+async function countKeysScan(redis: Redis, pattern: string): Promise<number> {
+  let count = 0;
+  let cursor = "0";
+  do {
+    const res = await redis.scan(cursor, "MATCH", pattern, "COUNT", 1000);
+    cursor = res[0];
+    count += res[1].length;
+  } while (cursor !== "0");
+  return count;
+}
 export function mountStrategyRuntimeStatus(
   app: Application,
   deps: { pool: Pool | null; redis: Redis; logger: { warn: (obj: object, msg?: string) => void } }
@@ -36,15 +46,14 @@ export function mountStrategyRuntimeStatus(
           heartbeat = JSON.parse(heartbeatRaw);
         }
 
-        // We use SCAN or KEYS to count. KEYS is okay for this read-only dashboard on a relatively small index
-        // But SCAN is safer. For simplicity in this demo endpoint without blocking the event loop:
-        const poolIndexKeys = await deps.redis.keys(`arbx:pool_index:${chainId}:*`);
-        const poolIndexV3Keys = await deps.redis.keys(`arbx:pool_index_v3:${chainId}:*`);
-        poolIndexEntries = poolIndexKeys.length + poolIndexV3Keys.length;
+        // We use SCAN to count safely without blocking the event loop:
+        const poolIndexKeysCount = await countKeysScan(deps.redis, `arbx:pool_index:${chainId}:*`);
+        const poolIndexV3KeysCount = await countKeysScan(deps.redis, `arbx:pool_index_v3:${chainId}:*`);
+        poolIndexEntries = poolIndexKeysCount + poolIndexV3KeysCount;
 
-        const reservesV2Keys = await deps.redis.keys(`arbx:pool_reserves:${chainId}:*`);
-        const reservesV3Keys = await deps.redis.keys(`arbx:v3_slot0:${chainId}:*`);
-        reservesCacheEntries = reservesV2Keys.length + reservesV3Keys.length;
+        const reservesV2KeysCount = await countKeysScan(deps.redis, `arbx:pool_reserves:${chainId}:*`);
+        const reservesV3KeysCount = await countKeysScan(deps.redis, `arbx:v3_slot0:${chainId}:*`);
+        reservesCacheEntries = reservesV2KeysCount + reservesV3KeysCount;
 
         redisOk = true;
       } catch (e) {
@@ -87,6 +96,8 @@ export function mountStrategyRuntimeStatus(
           if (family.startsWith("dex_arb")) {
             dbStats.dex_arb.active_variants.add(family);
             family = "dex_arb";
+          } else if (family === "triangular") {
+            family = "triangular_arb";
           }
 
           if (dbStats[family]) {
@@ -226,5 +237,89 @@ export function mountStrategyRuntimeStatus(
       deps.logger.warn({ event: "strategy_status.unhandled_error", err: (e as Error).message });
       res.status(500).json({ error: "internal_error", detail: (e as Error).message });
     }
+  });
+
+  app.get("/api/v1/strategies/readiness", async (req: Request, res: Response) => {
+    const chainId = Number(req.query["chain_id"] ?? 1);
+    
+    const sourceStatus = {
+      postgres: deps.pool ? "ok" : "unavailable",
+      redis: "ok",
+      logs: "not_used",
+    };
+
+    let poolIndexEntries: number | null = null;
+    let poolIndexV3Entries: number | null = null;
+    let reservesCacheEntries: number | null = null;
+    
+    let dexArbHeartbeat: string | null = null;
+    let triArbHeartbeat: string | null = null;
+    let flArbHeartbeat: string | null = null;
+    let liqHeartbeat: string | null = null;
+    let heartbeatReason: string | null = "no_per_strategy_heartbeat_source";
+
+    try {
+      // SCAN is used to safely count keys
+      poolIndexEntries = await countKeysScan(deps.redis, `arbx:pool_index:${chainId}:*`);
+      poolIndexV3Entries = await countKeysScan(deps.redis, `arbx:pool_index_v3:${chainId}:*`);
+
+      const reservesV2Count = await countKeysScan(deps.redis, `arbx:pool_reserves:${chainId}:*`);
+      const reservesV3Count = await countKeysScan(deps.redis, `arbx:v3_slot0:${chainId}:*`);
+      reservesCacheEntries = reservesV2Count + reservesV3Count;
+
+      const heartbeatKey = `arbx:heartbeat:scanner:${chainId}:latest`;
+      const heartbeatRaw = await deps.redis.get(heartbeatKey);
+      if (heartbeatRaw) {
+        const heartbeat = JSON.parse(heartbeatRaw);
+        // Map available telemetry to approximate readiness. Real per-strategy heartbeat is not yet emitted.
+        if (heartbeat.emitted_at_unix) {
+          dexArbHeartbeat = new Date(heartbeat.emitted_at_unix * 1000).toISOString();
+        }
+        if (heartbeat.triangular_cycles_scanned > 0) {
+          triArbHeartbeat = dexArbHeartbeat;
+        }
+        if (heartbeat.flashloan_arb_pairs_scanned > 0) {
+          flArbHeartbeat = dexArbHeartbeat;
+        }
+        if (heartbeat.liquidation_positions_scanned > 0) {
+          liqHeartbeat = dexArbHeartbeat;
+        }
+      }
+    } catch (e) {
+      deps.logger.warn({ event: "strategy_readiness.redis_failed", err: (e as Error).message });
+      sourceStatus.redis = "unavailable";
+      heartbeatReason = "redis_unavailable";
+    }
+
+    res.status(200).json({
+      chain_id: chainId,
+      source: sourceStatus,
+      readiness: {
+        pool_index: {
+          entries: poolIndexEntries,
+          source: "redis",
+          reason: poolIndexEntries === null ? "redis_unavailable" : null,
+        },
+        pool_index_v3: {
+          entries: poolIndexV3Entries,
+          source: "redis",
+          reason: poolIndexV3Entries === null ? "redis_unavailable" : null,
+        },
+        reserves_cache: {
+          entries: reservesCacheEntries,
+          source: "redis",
+          reason: reservesCacheEntries === null ? "redis_unavailable" : null,
+        },
+        strategy_heartbeat: {
+          dex_arb: dexArbHeartbeat,
+          triangular_arb: triArbHeartbeat,
+          flashloan_arb: flArbHeartbeat,
+          liquidation: liqHeartbeat,
+          source: "redis",
+          reason: heartbeatReason,
+        }
+      },
+      ts: new Date().toISOString()
+    });
   });
 }
