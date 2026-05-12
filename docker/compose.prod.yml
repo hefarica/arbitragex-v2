@@ -293,6 +293,11 @@ services:
       dockerfile: frontend/Dockerfile
     environment:
       NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:?NEXT_PUBLIC_EDGE_URL required (public edge URL)}
+      # Server-side fetches from Next.js Server Components / Route Handlers must
+      # reach the edge worker via Docker DNS. Without this, getApiBaseUrl()
+      # returns "" server-side, so `new URL("/admin/audit")` in api-client.ts
+      # throws TypeError: Invalid URL and pages like /audit-logs return HTTP 500.
+      INTERNAL_EDGE_URL: http://edge:8787
     ports: ["127.0.0.1:5173:5173"]
     depends_on: [edge]
     restart: unless-stopped
