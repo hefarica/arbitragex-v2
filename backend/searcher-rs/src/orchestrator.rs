@@ -45,6 +45,8 @@ use crate::engines::StrategyCandidate;
 use crate::impact_index::ImpactIndex;
 use crate::opportunity_emitter::OpportunityEmitter;
 use crate::route_intent::RouteIntent;
+use crate::size_optimizer::SizeOptimizer;
+use crate::state_projector::StateProjector;
 use shared_rs::metrics::OPPORTUNITIES_TOTAL;
 use shared_rs::trading_config::TradingConfigState;
 use std::collections::HashMap;
@@ -86,6 +88,10 @@ pub struct OrchestratorContext {
     /// Flashloan capital wrapper — wraps net-positive base candidates (Phase 10).
     pub flashloan_engine: Arc<FlashloanEngine>,
     // Phase 11: pub liquidation_engine: Arc<LiquidationEngine>,
+    /// StateProjector — virtual post-tx pool state (Phase 12).
+    pub state_projector: Arc<StateProjector>,
+    /// SizeOptimizer — optimal amount_in per candidate (Phase 13).
+    pub size_optimizer: Arc<SizeOptimizer>,
     /// Single-point emit path (PG + Redis).
     pub emitter: Arc<OpportunityEmitter>,
     /// Asynchronously fetches the live `TradingConfigState` for `chain_id`.
@@ -263,10 +269,60 @@ impl Orchestrator {
         let cfg_snapshot: Option<TradingConfigState> =
             self.ctx.config_provider.snapshot(chain_id).await;
 
-        // ── Step 6: evaluate + emit each candidate ────────────────────────
+        // ── Step 6: size + evaluate + emit each candidate ─────────────────
+        // For each candidate: run size_optimizer → update profit fields or
+        // emit as rejected if optimizer returns None. Then evaluate + emit.
         // Process base candidates first, then flashloan-wrapped variants.
-        for candidate in base_candidates.into_iter().chain(flash_candidates) {
-            self.process_candidate(candidate, cfg_snapshot.as_ref(), chain_id)
+        let all_candidates: Vec<StrategyCandidate> = base_candidates
+            .into_iter()
+            .chain(flash_candidates)
+            .collect();
+
+        for candidate in all_candidates {
+            // Skip sizing for already-rejected candidates (engine rejection).
+            if candidate.rejection_reason.is_some() {
+                self.process_candidate(candidate, cfg_snapshot.as_ref(), chain_id)
+                    .await?;
+                continue;
+            }
+
+            // Run size_optimizer. Errors are non-fatal — treat as Ok(None).
+            let sized_opt = match self
+                .ctx
+                .size_optimizer
+                .optimize(candidate.clone(), &intent, cfg_snapshot.as_ref())
+                .await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(
+                        event = "orchestrator.size_optimizer_error",
+                        chain_id,
+                        tx_hash = %intent.tx_hash,
+                        error = %e,
+                        "size_optimizer returned Err — treating as no profit"
+                    );
+                    None
+                }
+            };
+
+            let final_candidate = match sized_opt {
+                Some(sized) => {
+                    // Update the candidate with optimal sizing data.
+                    let mut c = sized.candidate;
+                    c.gross_profit_usd = Some(sized.gross_profit_usd);
+                    c.net_expected_profit_usd = Some(sized.estimated_net_profit_usd);
+                    c
+                }
+                None => {
+                    // Optimizer found no profitable size — emit as rejected.
+                    let mut c = candidate;
+                    c.rejection_reason = Some("size_optimizer_no_profit".to_owned());
+                    c
+                }
+            };
+
+            self.process_candidate(final_candidate, cfg_snapshot.as_ref(), chain_id)
                 .await?;
         }
 
@@ -653,7 +709,7 @@ mod tests {
         assert_eq!(impact.impacted_pools.len(), 2);
 
         // Build dex_engine directly and verify it produces candidates.
-        let engine = DexEngine::new(Arc::new(RwLock::new(None)), None);
+        let engine = DexEngine::new(Arc::new(RwLock::new(None)), None, None);
         let candidates = engine
             .build_from_impacted_pairs(&intent, &impact)
             .await

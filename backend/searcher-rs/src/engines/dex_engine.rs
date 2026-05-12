@@ -35,6 +35,7 @@ use crate::amm_math;
 use crate::engines::StrategyCandidate;
 use crate::impact_index::{ImpactSet, PoolRef, TokenPairKey};
 use crate::route_intent::{ProtocolType, RouteIntent};
+use crate::state_projector::StateProjector;
 use crate::strategy_label::StrategyLabel;
 use chrono::Utc;
 use ethers::types::{H256, U256};
@@ -65,6 +66,9 @@ pub struct DexEngine {
     /// `None` → V3 pools produce `rejection_reason = "no_v3_rpc"` candidates
     /// (R8 fail-honest: never fabricate a V3 quote without an RPC).
     pub v3_provider: Option<Arc<AlloyHttpProvider>>,
+    /// StateProjector for virtual post-tx state (Phase 12).
+    /// `None` → V3 gross profit stays `None` (pre-Phase-12 behaviour).
+    pub state_projector: Option<Arc<StateProjector>>,
 }
 
 impl DexEngine {
@@ -72,13 +76,16 @@ impl DexEngine {
     ///
     /// - `config`: shared live trading config (read-only for the engine).
     /// - `v3_provider`: optional alloy HTTP provider for V3 multicall quoting.
+    /// - `state_projector`: optional StateProjector for V3 virtual quotes (Phase 12).
     pub fn new(
         config: Arc<RwLock<Option<TradingConfigState>>>,
         v3_provider: Option<Arc<AlloyHttpProvider>>,
+        state_projector: Option<Arc<StateProjector>>,
     ) -> Self {
         Self {
             config,
             v3_provider,
+            state_projector,
         }
     }
 
@@ -167,30 +174,34 @@ impl DexEngine {
                     // Determine strategy label from protocol types.
                     let label = classify_label(pool_a.protocol_type, pool_b.protocol_type);
 
-                    // Compute V2-based spread for same-pair pools.
-                    // For V3 pools the engine produces the pair but marks
-                    // gross_profit_usd as None (V3 requires live RPC quotes;
-                    // the orchestrator can retry with an RPC if available).
-                    // This is R8-honest: we don't fabricate a V3 spread.
-                    let (gross_spread_units, can_price_v2) = compute_spread_v2_only(
-                        pool_a,
-                        pool_b,
-                        // Use a fixed 1 unit (1e18 wei) probe amount for spread detection.
-                        // This matches the scanner's pattern: the spread is the indicator,
-                        // not the execution size. Execution sizing lives in Phase 12.
-                        U256::from(10u128).pow(U256::from(18u32)),
-                    );
+                    // Compute spread for same-pair pools.
+                    // For V3 pools: attempt a virtual quote via state_projector
+                    // if available. Fall back to None (R8 honest) if not.
+                    let probe_amount = U256::from(10u128).pow(U256::from(18u32));
 
-                    // USD pricing via the same cascade the scanner uses:
-                    // base_token (WETH) or stablecoin → Some(usd); else None.
-                    let gross_profit_usd: Option<f64> = if !can_price_v2 {
-                        // Spread is V3-only or zero — cannot compute USD without RPC.
-                        None
+                    let (gross_spread_units, can_price_v2) =
+                        compute_spread_v2_only(pool_a, pool_b, probe_amount);
+
+                    // For V3 paths: try to get a virtual quote via state_projector.
+                    // The probe amount is 1 unit (same as scanner pattern).
+                    let v3_gross_usd: Option<f64> = if !can_price_v2 {
+                        // At least one pool is V3. Try the projector.
+                        self.compute_v3_gross_usd(pool_a, pool_b, probe_amount, &cfg_opt, intent)
+                            .await
                     } else {
-                        compute_gross_usd(&gross_spread_units, pool_a, pool_b, &cfg_opt)
+                        None
                     };
 
-                    // R8: if gross spread is non-positive, emit a rejection.
+                    // USD pricing: V2 cascade first, then V3 projector result.
+                    let gross_profit_usd: Option<f64> = if can_price_v2 {
+                        compute_gross_usd(&gross_spread_units, pool_a, pool_b, &cfg_opt)
+                    } else {
+                        // V3 path: use projector result (may still be None — R8 honest).
+                        v3_gross_usd
+                    };
+
+                    // R8: if gross spread is non-positive (V2 path), emit a rejection.
+                    // For V3 paths, gross_profit_usd drives the check.
                     if can_price_v2 && gross_spread_units.is_zero() {
                         let (opp, cand, rp) =
                             build_rejected_opportunity(chain_id, tx_hash, pool_a, pool_b, label);
@@ -265,6 +276,108 @@ impl DexEngine {
         }
 
         Ok(candidates)
+    }
+
+    // -----------------------------------------------------------------------
+    // V3 gross USD computation via StateProjector (Phase 12)
+    // -----------------------------------------------------------------------
+
+    /// Attempt to compute a gross USD spread for a V3-bearing pool pair using
+    /// the state_projector's virtual quote capability.
+    ///
+    /// For a (V3, V2) or (V2, V3) or (V3, V3) pair:
+    ///   - Get virtual quote from pool_a for `probe_amount` → `out_a`.
+    ///   - Get virtual quote from pool_b for `probe_amount` → `out_b`.
+    ///   - `spread = |out_a - out_b|` (same orientation check as V2 path).
+    ///   - Convert to USD via base_token_price_usd.
+    ///
+    /// Returns `None` when no projector is wired, when pool is V2 (handled
+    /// separately), or when the quote fails (R8 honest).
+    async fn compute_v3_gross_usd(
+        &self,
+        pool_a: &PoolRef,
+        pool_b: &PoolRef,
+        probe_amount: U256,
+        cfg_opt: &Option<TradingConfigState>,
+        intent: &RouteIntent,
+    ) -> Option<f64> {
+        let projector = self.state_projector.as_ref()?;
+        let cfg = cfg_opt.as_ref()?;
+
+        // For each V3 pool, get a virtual quote using project_v3_quote.
+        // V2 pools: use v2_amount_out with canonical unit reserves (same approximation
+        // as compute_spread_v2_only — the real reserves are used by size_optimizer).
+        let out_a = self
+            .get_pool_quote(pool_a, probe_amount, projector, intent)
+            .await?;
+        let out_b = self
+            .get_pool_quote(pool_b, probe_amount, projector, intent)
+            .await?;
+
+        if out_a.is_zero() && out_b.is_zero() {
+            return None;
+        }
+
+        // Spread = |out_a - out_b| if both are quoting the same direction.
+        let spread = if out_a >= out_b {
+            out_a.saturating_sub(out_b)
+        } else {
+            out_b.saturating_sub(out_a)
+        };
+
+        if spread.is_zero() {
+            return None;
+        }
+
+        // USD conversion: spread / 1e18 * base_token_price_usd.
+        let spread_f64 = u256_to_f64_lossy(spread) / 1e18_f64;
+        if cfg.base_token_price_usd > 0.0 {
+            Some(spread_f64 * cfg.base_token_price_usd)
+        } else {
+            None
+        }
+    }
+
+    /// Get amount_out for `probe_amount` of token_in from a pool.
+    ///
+    /// - V3 pools: uses `state_projector.project_v3_quote`.
+    /// - V2 pools: uses v2_amount_out with canonical unit reserves.
+    async fn get_pool_quote(
+        &self,
+        pool: &PoolRef,
+        probe_amount: U256,
+        projector: &StateProjector,
+        intent: &RouteIntent,
+    ) -> Option<U256> {
+        if matches!(pool.protocol_type, ProtocolType::V3) {
+            // Determine direction: zero_for_one = (token_in is token0).
+            let intent_token_in = intent.legs.first().map(|l| l.token_in).unwrap_or_default();
+            let zero_for_one =
+                intent_token_in == pool.token0 || intent_token_in == ethers::types::Address::zero();
+            let sp_pool = crate::state_projector::PoolRef {
+                address: pool.address,
+                token0: pool.token0,
+                token1: pool.token1,
+                fee_bps: pool.fee_bps,
+            };
+            projector
+                .project_v3_quote(&sp_pool, probe_amount, zero_for_one)
+                .await
+                .map(|q| q.amount_out)
+        } else {
+            // V2: use canonical unit reserves as a structural probe.
+            // Real reserves come from size_optimizer — this is a detection signal only.
+            let reserve = U256::from(10u128)
+                .pow(U256::from(18u32))
+                .saturating_mul(U256::from(1_000u32));
+            let fee = pool.fee_bps.unwrap_or(30);
+            let out = amm_math::v2_amount_out(probe_amount, reserve, reserve, fee);
+            if out.is_zero() {
+                None
+            } else {
+                Some(out)
+            }
+        }
     }
 }
 
@@ -648,7 +761,7 @@ mod tests {
     }
 
     fn make_engine() -> DexEngine {
-        DexEngine::new(Arc::new(RwLock::new(None)), None)
+        DexEngine::new(Arc::new(RwLock::new(None)), None, None)
     }
 
     // ── dex_engine::tests::v2_v2_classifies_correctly ────────────────────────

@@ -30,3 +30,7 @@ pub mod orchestrator;
 // flashloan_arb_worker) which have no async I/O in their math kernels.
 #[allow(dead_code)]
 pub mod workers;
+// Phase 12: StateProjector — virtual post-tx pool state projection.
+pub mod state_projector;
+// Phase 13: SizeOptimizer — optimal amount_in sizing for arb candidates.
+pub mod size_optimizer;

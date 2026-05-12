@@ -44,6 +44,14 @@ mod engines;
 #[allow(dead_code)]
 mod orchestrator;
 mod workers;
+// Phase 12: StateProjector — virtual post-tx pool state projection.
+// Not yet wired into scanner.rs (Phase 14); allow dead_code until integration.
+#[allow(dead_code)]
+mod state_projector;
+// Phase 13: SizeOptimizer — optimal amount_in sizing.
+// Not yet wired into scanner.rs (Phase 14); allow dead_code until integration.
+#[allow(dead_code)]
+mod size_optimizer;
 
 use shared_rs::{
     config::{require_env, AppConfig},
