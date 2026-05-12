@@ -414,3 +414,107 @@ El refactor estructural V2 existe pero sufre de silencios operacionales porque `
 - Ejecutar en VPS con `ARBX_ORCHESTRATOR_MODE=shadow` o `v2` y probar mínimo 10 minutos.
 - Verificar eventos emitidos en logs: `pool_discovery.*`, `v2.impact.discovery_retry`, `v2.reserves.hydrated`, `dex_engine.structural_candidate`.
 - Asegurar `cargo clippy` limpio, y realizar una búsqueda obligatoria: `grep -R "mock"`, `grep -R "hardcode"`, `grep -R "fake"`. Si hay fixtures en código productivo, el sistema SE RECHAZA.
+
+---
+
+## 35. ARBX RUNTIME-STATUS & OBSERVABILITY SKILLS — DETALLE OPERATIVO
+
+Familia de 10 skills registrada 2026-05-12 tras implementación del endpoint `/api/v1/strategies/runtime-status`. Skills viven en `.agents/skills/arbx-<nombre>/SKILL.md`. Auditadas contra el spec original; 4 tienen issues menores documentados abajo (no impiden uso, pero requieren fix antes de seguir literalmente).
+
+### 35.1. Inventario completo y triggers de invocación
+
+| # | Skill (path: `.agents/skills/<n>/SKILL.md`) | Cuándo invocar | Output canónico |
+|---|---------------------------------------------|----------------|------------------|
+| 1 | `arbx-fail-honest-runtime-status` | Vas a crear/modificar endpoint read-only que agrega estado desde PG/Redis | JSON con `source.<dep>="ok"\|"unavailable"\|"not_used"` + payload por estrategia |
+| 2 | `arbx-api-server-route-mounting` ⚠️ | Vas a montar ruta Express nueva en `backend/api-server/src/routes/*.ts` | Función `mountX(app, deps)` con DI explícita (`Pool`, `Redis`, logger) |
+| 3 | `arbx-pg-redis-observability` | Vas a leer counters/aggregates desde PG (intervals dinámicos) o contar keys en Redis | `SCAN`-loop function + SQL paramétrico con `interval` |
+| 4 | `arbx-strategy-status-semantics` ⚠️ | Vas a mapear conteos brutos a `data_dependencies_status` semántico por estrategia MEV | `armed_waiting_for_impact` / `waiting_for_profitable_base` / `missing_lending_watchlist` / `ok` |
+| 5 | `arbx-edge-worker-proxy-wiring` | Vas a exponer ruta interna del api-server vía Cloudflare Worker | `app.get(pub, c => proxy(c, internal, cacheKey, ttlSec))` |
+| 6 | `arbx-frontend-runtime-cards` ⚠️ | Vas a crear UI semaforizada consumiendo `/api/strategies/runtime-status` | Card React con loading/error/empty/data states explícitos |
+| 7 | `arbx-vps-verification-runbook` | Acabas de hacer deploy y necesitas confirmar que el cambio está vivo sin abrir puertos | docker ps + curl `localhost:8080` + curl `edge-arbx.ape-tv.net` + logs --tail |
+| 8 | `arbx-rust-searcher-observability` | Vas a añadir telemetry a `searcher-rs` (heartbeats, contadores, observations) | `tokio::spawn`/mpsc async → Redis `SET arbx:heartbeat:scanner:<chain>:latest` |
+| 9 | `arbx-no-mocks-no-hardcode-audit` | Pre-commit obligatorio para cualquier cambio productivo | `grep -R "mock\|fake\|hardcode\|dummy\|Math\.random"` debe retornar 0 matches |
+| 10 | `arbx-deployment-idempotency` ⚠️ | Vas a propagar un cambio commiteado al VPS | `git pull` working tree + `docker compose build --no-cache` + `up -d` + verificación |
+
+### 35.2. Issues conocidos en las 4 skills marcadas ⚠️ (auditados 2026-05-12 — fix pendiente)
+
+| Skill | Línea | Issue | Fix correcto |
+|-------|-------|-------|--------------|
+| `arbx-api-server-route-mounting` | 29 | Menciona "responder 200/206 Partial" | Solo `200` (con `source.<dep>="unavailable"`) o `503` (DB principal caída). **HTTP 206 está prohibido** por directiva explícita del usuario. |
+| `arbx-strategy-status-semantics` | 19 | Path inexistente `frontend/src/app/operations/page.tsx` | Real: `frontend/app/operations/page.tsx` (Next.js 14 App Router sin `src/`) |
+| `arbx-frontend-runtime-cards` | 19-20 | Mismo error de paths `frontend/src/...` | Real: `frontend/app/...` y `frontend/components/...` |
+| `arbx-frontend-runtime-cards` | 35 | Verification step usa palabra "Mockea" | Real: "Simula apagando el server real o devolviendo 500 desde backend real (sin mocks)" |
+| `arbx-deployment-idempotency` | 24 | `cd /opt/git/arbitragex-v2 && git pull` (bare repo, no admite pull) | Real: `cd /opt/arbitragex-v2 && git pull` (working tree). El bare repo `/opt/git/...` solo recibe pushes. |
+| `arbx-deployment-idempotency` | 26 | `docker compose build --no-cache --env-file .env <svc>` (falta `-f` compose file) | Real: `docker compose --env-file .env -f docker/compose.prod.yml build --no-cache <svc>` |
+
+### 35.3. Reglas inviolables heredadas de la directiva original al equipo
+
+Todas las skills de esta familia deben respetar:
+
+**1. Contrato de respuesta HTTP** (corrección explícita del usuario 2026-05-12):
+- `200` = respuesta válida con datos completos O parciales declarados en `source.postgres` / `source.redis`.
+- `503` = DB principal (PostgreSQL) no disponible para la query base de opportunities.
+- **PROHIBIDO HTTP 206 Partial Content**.
+
+**2. Semántica de valores en payload**:
+- `null` = dato no disponible (Redis caído, tabla no existe, query opcional falló).
+- `0` = dato real medido exactamente cero (e.g., `candidates_1h: 0` cuando query corrió OK y no había candidatos).
+- **NUNCA** reemplazar `null` por `0` para "rellenar UI".
+
+**3. Source declarations obligatorias**:
+```json
+"source": {
+  "postgres": "ok" | "partial_or_failed" | "unavailable",
+  "redis":    "ok" | "unavailable",
+  "logs":     "not_used"
+}
+```
+
+**4. Puertos y dominios canónicos** (no inventar, no rotar sin actualizar este doc):
+- api-server: interno `127.0.0.1:8080` (NO 3002).
+- selector-api: `127.0.0.1:3002`. sim-ctl: `3003`. recon: `3004`. relays-client: `3005`. token-enricher: `9004`.
+- edge worker dev: `127.0.0.1:8787`. prod: Cloudflare Worker.
+- frontend interno: `127.0.0.1:5173`. nginx público `:80` → proxy a `127.0.0.1:5173`. Cloudflare Tunnel HTTPS: `https://arbx.ape-tv.net`.
+- Cloudflare Edge API público: `https://edge-arbx.ape-tv.net` (solo `/api/*` y `/socket.io/*` y `/status`/`/health`).
+
+**5. Strategy kinds canónicos** (normalización requerida en endpoints runtime-status):
+- Familia `dex_arb`: agrupa `dex_arb`, `dex_arb_v2v2`, `dex_arb_v3v3`, cualquier prefijo `dex_arb*`.
+- Canónicos al frontend: `dex_arb`, `triangular_arb`, `flashloan_arb`, `liquidation`.
+
+**6. Semántica de "sin candidatos" por estrategia** (NO marcar como `failed`):
+- `triangular_arb` con 0 candidatos → `data_dependencies_status: "armed_waiting_for_impact"` ("Armado, esperando impacto rentable").
+- `flashloan_arb` con 0 candidatos → `"waiting_for_profitable_base"` ("Esperando base profitable").
+- `liquidation` sin watchlist → `"missing_lending_watchlist"` ("Requiere watchlist lending").
+- `dex_arb` con `rejected > 0` y `viable = 0` → "Detectando, rechazando por gates" (NO failed).
+
+**7. Prohibiciones operativas absolutas**:
+- No usar Loki desde api-server.
+- No parsear logs como fuente de datos en endpoints.
+- No abrir puertos a `0.0.0.0` salvo nginx :80 ya autorizado.
+- No modificar `searcher-rs` si el dato es inferible desde PG/Redis (regla del Principio de Mínimo Cambio).
+- No introducir mocks ni hardcodes productivos — auditar con skill #9 antes de cada commit.
+
+### 35.4. Activación automática en mi flujo (Claude Code)
+
+Cuando entre a este proyecto:
+- Si el trigger de §5.1 (root CLAUDE.md) o §35.1 (este archivo) se cumple → leo el `SKILL.md` correspondiente vía `Read` ANTES de tocar código.
+- Si voy a tocar el endpoint `runtime-status` o agregar uno similar → mínimo skills #1 + #2 + #3 + #4.
+- Si voy a tocar el edge worker → skill #5.
+- Si voy a crear UI consumiendo runtime-status → skill #6.
+- Si voy a deployar → skills #7 + #10.
+- Si voy a tocar `searcher-rs` para telemetría → skill #8.
+- **Siempre** antes de commit en código productivo → skill #9 (anti-mocks).
+
+### 35.5. Cómo aplicar los fixes de §35.2 (cuando el usuario apruebe)
+
+Las 4 skills con ⚠️ necesitan edits puntuales. Cuando el usuario apruebe:
+1. Editar `arbx-api-server-route-mounting/SKILL.md` línea 29 — remover referencia a 206.
+2. Editar `arbx-strategy-status-semantics/SKILL.md` línea 19 — corregir path `frontend/src/app/` → `frontend/app/`.
+3. Editar `arbx-frontend-runtime-cards/SKILL.md` líneas 19-20 (paths) y 35 (palabra "Mockea").
+4. Editar `arbx-deployment-idempotency/SKILL.md` líneas 24-28 — corregir bare repo path y agregar `-f docker/compose.prod.yml`.
+5. Commit: `fix(skills): correct paths, http-206 reference, and deploy commands in 4 arbx skills`
+6. Push a `github main` + `origin main` (no requiere deploy VPS — son archivos `.agents/`).
+
+---
+
+*ARBX RUNTIME-STATUS SKILLS REGISTRADAS. 10 skills × 4 fixes pendientes × 7 reglas inviolables = DOMINIO RUNTIME-STATUS OPERATIVO.*

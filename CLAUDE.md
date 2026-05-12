@@ -193,6 +193,35 @@ Lee la skill completa de `.agents/skills/<nombre>/SKILL.md` cuando la situación
 | Flashbots/MEV-Share | `flashbots-bundle-construction`, `mev-share-backrun-searching` |
 | Scoring de oportunidades | `mev-opportunity-prioritization-engine`, `expected-value-scoring-for-arbitrage` |
 | Detección de anomalías | `stale-state-detection`, `token-risk-and-asset-safety-filter` |
+| Endpoint runtime-status / cards UI / observability cross-stack | familia `arbx-*` runtime-status (10 skills — ver §5.1) |
+
+### 5.1. Familia `arbx-*` runtime-status & observability (10 skills, registradas 2026-05-12)
+
+Skills creadas durante la implementación del endpoint `/api/v1/strategies/runtime-status`. Lee el `SKILL.md` completo cuando el trigger correspondiente se active:
+
+| # | Trigger | Skill |
+|---|---------|-------|
+| 1 | Endpoint read-only que agrega estado PG/Redis sin fabricar datos (R8 Fail-Honest) | `arbx-fail-honest-runtime-status` |
+| 2 | Crear ruta Express en api-server con DI (`Pool`, `Redis`, logger) y null-handling | `arbx-api-server-route-mounting` ⚠️ |
+| 3 | Consultar PG con queries paramétricas + Redis `SCAN` (NUNCA `KEYS`) | `arbx-pg-redis-observability` |
+| 4 | Mapear semántica MEV: `armed_waiting_for_impact`, `waiting_for_profitable_base`, `missing_lending_watchlist` (no usar "failed" para esperas legítimas) | `arbx-strategy-status-semantics` ⚠️ |
+| 5 | Exponer ruta interna vía `edge/worker/src/index.ts` con `proxy(c, internal, cacheKey, ttl)` | `arbx-edge-worker-proxy-wiring` |
+| 6 | Crear cards frontend con semáforo (verde/amarillo/gris/rojo) sin fake-green ni mocks | `arbx-frontend-runtime-cards` ⚠️ |
+| 7 | Verificación post-deploy en VPS: docker ps + curl interno/edge + logs (sin abrir puertos) | `arbx-vps-verification-runbook` |
+| 8 | Telemetría de `searcher-rs` sin tocar hot-path: heartbeat Redis async, tokio::spawn, no I/O bloqueante | `arbx-rust-searcher-observability` |
+| 9 | Auditoría anti-mocks/hardcodes pre-commit (grep `mock`/`fake`/`hardcode`/`dummy`/`Math.random`) | `arbx-no-mocks-no-hardcode-audit` |
+| 10 | Deploy idempotente al VPS: `git pull` + `docker compose --env-file .env -f docker/compose.prod.yml build --no-cache <svc>` + `up -d` | `arbx-deployment-idempotency` ⚠️ |
+
+**⚠️ = skill con issue conocido** (detalle exacto, line numbers y fix correcto en `.claude/CLAUDE.md` §35.2).
+
+**Reglas inviolables heredadas de la directiva original** (aplica a toda la familia):
+- `200` = respuesta válida (datos completos o parciales declarados en `source.<dep>`).
+- `503` = DB principal (PostgreSQL) no disponible para query base.
+- `null` = dato no disponible. `0` = dato real medido cero. NUNCA reemplazar `null` por `0`.
+- **PROHIBIDO HTTP 206** — solo `200` (con `source.<dep>="unavailable"`) o `503`.
+- Nunca abrir puertos a `0.0.0.0` salvo nginx :80 ya autorizado.
+- api-server siempre :8080 interno, edge worker en `edge/worker/src/index.ts`, Cloudflare API en `https://edge-arbx.ape-tv.net`, frontend HTTPS en `https://arbx.ape-tv.net`.
+- No usar Loki. No parsear logs desde api-server. No modificar searcher-rs si el dato es inferible desde PG/Redis.
 
 ---
 
