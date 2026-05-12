@@ -52,6 +52,7 @@ sol! {
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub struct PoolDiscoveryService {
     chain_id: u64,
     db: Option<PgPool>,
@@ -59,7 +60,7 @@ pub struct PoolDiscoveryService {
     impact_index: Arc<RwLock<ImpactIndex>>,
     rpc_pool: Option<Arc<HttpRpcPool>>,
     reserves_cache: Arc<crate::engines::triangular_engine::ReservesCache>,
-    factories: RwLock<Option<Vec<(Address, crate::route_intent::ProtocolType, String)>>>,
+    factories: RwLock<Option<Vec<(u64, Address, crate::route_intent::ProtocolType, String)>>>,
 }
 
 impl PoolDiscoveryService {
@@ -82,7 +83,7 @@ impl PoolDiscoveryService {
         }
     }
 
-    async fn get_factories(&self) -> Vec<(Address, crate::route_intent::ProtocolType, String)> {
+    async fn get_factories(&self) -> Vec<(u64, Address, crate::route_intent::ProtocolType, String)> {
         let mut cache = self.factories.write().await;
         if let Some(ref facts) = *cache {
             return facts.clone();
@@ -90,32 +91,27 @@ impl PoolDiscoveryService {
         
         let mut facts = Vec::new();
         if let Some(ref db) = self.db {
-            let q = "SELECT f.address, d.protocol_type, d.name FROM factories f JOIN dexes d ON f.dex_id = d.id WHERE f.chain_id = $1";
-            if let Ok(rows) = sqlx::query_as::<_, (String, String, String)>(q)
+            let q = "SELECT f.id, f.address, d.protocol_type, d.name FROM factories f JOIN dexes d ON f.dex_id = d.id WHERE f.chain_id = $1 AND f.is_active = TRUE";
+            if let Ok(rows) = sqlx::query_as::<_, (i64, String, String, String)>(q)
                 .bind(self.chain_id as i64)
                 .fetch_all(db)
                 .await
             {
-                for (addr_str, proto_str, name) in rows {
+                for (f_id, addr_str, proto_str, name) in rows {
                     if let Ok(addr) = addr_str.parse::<Address>() {
                         let proto = match proto_str.as_str() {
-                            "UNISWAP_V2" => crate::route_intent::ProtocolType::V2,
-                            "UNISWAP_V3" => crate::route_intent::ProtocolType::V3,
+                            "UNISWAP_V2" | "V2" | "uniswap_v2" | "UniswapV2" => crate::route_intent::ProtocolType::V2,
+                            "UNISWAP_V3" | "V3" | "uniswap_v3" | "UniswapV3" => crate::route_intent::ProtocolType::V3,
                             _ => continue,
                         };
-                        facts.push((addr, proto, name));
+                        facts.push((f_id as u64, addr, proto, name));
                     }
                 }
             }
         }
         
-        // Fallback for empty DB scenario
         if facts.is_empty() {
-            facts.push((
-                Address::from_slice(&hex::decode("5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f").unwrap()),
-                crate::route_intent::ProtocolType::V2,
-                "uniswap_v2_fallback".to_string(),
-            ));
+            warn!("discovery_failed:no_factories_configured");
         }
         
         *cache = Some(facts.clone());
@@ -157,16 +153,11 @@ impl PoolDiscoveryService {
             let token_a = alloy::primitives::Address::from_slice(leg.token_in.as_bytes());
             let token_b = alloy::primitives::Address::from_slice(leg.token_out.as_bytes());
             
-            let mut found_pool: Option<(alloy::primitives::Address, crate::route_intent::ProtocolType, String, Option<u32>)> = None;
+            let mut discovered_pools: Vec<(u64, alloy::primitives::Address, crate::route_intent::ProtocolType, String, Option<u32>)> = Vec::new();
 
-            for (factory_addr, proto, dex_name) in &factories {
-                if found_pool.is_some() {
-                    break;
-                }
-
+            for (f_id, factory_addr, proto, dex_name) in &factories {
                 match proto {
                     crate::route_intent::ProtocolType::V2 => {
-                        let f_addr = *factory_addr;
                         let f_addr_alloy = alloy::primitives::Address::from_slice(factory_addr.as_bytes());
                         let discovered: Result<alloy::primitives::Address, _> = rpc.with_retry(|provider| {
                             let t_a = token_a;
@@ -186,7 +177,7 @@ impl PoolDiscoveryService {
                             }
                         }).await;
                         if let Ok(pool_addr) = discovered {
-                            found_pool = Some((pool_addr, *proto, dex_name.clone(), Some(30)));
+                            discovered_pools.push((*f_id, pool_addr, *proto, dex_name.clone(), Some(30)));
                         }
                     }
                     crate::route_intent::ProtocolType::V3 => {
@@ -212,8 +203,7 @@ impl PoolDiscoveryService {
                                 }
                             }).await;
                             if let Ok(pool_addr) = discovered {
-                                found_pool = Some((pool_addr, *proto, dex_name.clone(), Some(fee)));
-                                break;
+                                discovered_pools.push((*f_id, pool_addr, *proto, dex_name.clone(), Some(fee)));
                             }
                         }
                     }
@@ -221,9 +211,14 @@ impl PoolDiscoveryService {
                 }
             }
 
-            match found_pool {
-                Some((pool_addr, proto, dex_name, fee_bps)) => {
+            if !discovered_pools.is_empty() {
+                for (f_id, pool_addr, proto, dex_name, fee_raw) in discovered_pools {
                     let e_pool = Address::from_slice(pool_addr.as_slice());
+                    let fee_bps = fee_raw.map(|f| match proto {
+                        crate::route_intent::ProtocolType::V3 => f / 100,
+                        _ => f,
+                    });
+
                     info!(
                         event = match proto {
                             crate::route_intent::ProtocolType::V2 => "pool_discovery.v2.result",
@@ -238,18 +233,17 @@ impl PoolDiscoveryService {
                     );
 
                     self.record_observation(leg.token_in, leg.token_out, intent.router, intent.source_event, Some(e_pool)).await;
-                    
-                    if let Ok(pool_ref) = self.hydrate_and_persist_pool(rpc.clone(), pool_addr, proto, &dex_name, fee_bps).await {
+                    if let Ok(pool_ref) = self.hydrate_and_persist_pool(rpc.clone(), pool_addr, f_id, proto, &dex_name, fee_bps, token_a, token_b).await {
                         let mut idx = self.impact_index.write().await;
                         idx.add_pool(pool_ref);
                         drop(idx);
-                        info!("pool_discovery.impact_index_refreshed");
+                        info!(event = "pool_discovery.impact_index_refreshed");
                         discovered_any = true;
                     } else {
                         warn!("pool_discovery.hydration_failed");
                     }
                 }
-                None => {
+            } else {
                     warn!(
                         event = "pool_discovery.failed",
                         chain_id,
@@ -258,7 +252,6 @@ impl PoolDiscoveryService {
                     self.record_observation(leg.token_in, leg.token_out, intent.router, intent.source_event, None).await;
                 }
             }
-        }
 
         Ok(discovered_any)
     }
@@ -307,13 +300,17 @@ impl PoolDiscoveryService {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn hydrate_and_persist_pool(
         &self,
         rpc: Arc<HttpRpcPool>,
         pool_addr: alloy::primitives::Address,
+        factory_id: u64,
         proto: crate::route_intent::ProtocolType,
         dex_name: &str,
         fee_bps: Option<u32>,
+        intent_t_a: alloy::primitives::Address,
+        intent_t_b: alloy::primitives::Address,
     ) -> anyhow::Result<PoolRef> {
         let (token0, token1) = rpc.with_retry(|provider| {
             let p_addr = pool_addr;
@@ -333,20 +330,37 @@ impl PoolDiscoveryService {
             }
         }).await?;
 
+        if (token0.as_slice() != intent_t_a.as_slice() && token0.as_slice() != intent_t_b.as_slice()) || (token1.as_slice() != intent_t_a.as_slice() && token1.as_slice() != intent_t_b.as_slice()) {
+            warn!("discovery_failed:token_pair_mismatch (intent: {:?}/{:?}, pool: {:?}/{:?})", intent_t_a, intent_t_b, token0, token1);
+            anyhow::bail!("token_pair_mismatch");
+        }
+
         // Extract metadata for token0
-        let (sym0, dec0) = self.fetch_token_meta(&rpc, alloy::primitives::Address::from_slice(token0.as_slice())).await.unwrap_or_else(|_| ("UNKNOWN".to_string(), 18));
-        let (sym1, dec1) = self.fetch_token_meta(&rpc, alloy::primitives::Address::from_slice(token1.as_slice())).await.unwrap_or_else(|_| ("UNKNOWN".to_string(), 18));
+        let (sym0, dec0) = match self.fetch_token_meta(&rpc, alloy::primitives::Address::from_slice(token0.as_slice())).await {
+            Ok(meta) => meta,
+            Err(e) => {
+                warn!("token_meta_unavailable for {:?}: {}", token0, e);
+                anyhow::bail!("token_meta_unavailable");
+            }
+        };
+        let (sym1, dec1) = match self.fetch_token_meta(&rpc, alloy::primitives::Address::from_slice(token1.as_slice())).await {
+            Ok(meta) => meta,
+            Err(e) => {
+                warn!("token_meta_unavailable for {:?}: {}", token1, e);
+                anyhow::bail!("token_meta_unavailable");
+            }
+        };
 
         let e_t0 = Address::from_slice(token0.as_slice());
         let e_t1 = Address::from_slice(token1.as_slice());
         let e_pool = Address::from_slice(pool_addr.as_slice());
 
         // Upsert tokens in DB
-        self.upsert_token_in_db(e_t0, &sym0, dec0).await;
-        self.upsert_token_in_db(e_t1, &sym1, dec1).await;
+        let token0_id = self.upsert_token_in_db(e_t0, &sym0, dec0).await?;
+        let token1_id = self.upsert_token_in_db(e_t1, &sym1, dec1).await?;
 
         // Upsert pool in DB
-        self.upsert_pool_in_db(e_pool, e_t0, e_t1, fee_bps).await;
+        self.upsert_pool_in_db(e_pool, factory_id, token0_id, token1_id, fee_bps).await;
 
         // Hydrate ReservesCache
         match proto {
@@ -371,7 +385,7 @@ impl PoolDiscoveryService {
             }
             crate::route_intent::ProtocolType::V3 => {
                 // Read slot0 + liquidity
-                let (sqrt_price, tick, liq) = rpc.with_retry(|provider| {
+                let (_sqrt_price, _tick, _liq) = rpc.with_retry(|provider| {
                     let p_addr = pool_addr;
                     async move {
                         use alloy_sol_types::SolCall;
@@ -397,12 +411,41 @@ impl PoolDiscoveryService {
 
         // Update Redis pool_index
         let mut redis_conn = self.redis.clone();
-        let key = format!("arbx:pool_index:{}:{}:{}", self.chain_id, sym0.to_lowercase(), sym1.to_lowercase());
-        let val = format!("0x{:x}", e_pool);
-        if let Err(e) = redis::cmd("SADD").arg(&key).arg(&val).query_async::<_, ()>(&mut redis_conn).await {
-            warn!("Failed to SADD to redis {}: {}", key, e);
-        } else {
-            info!("pool_discovery.redis_index_updated");
+        
+        match proto {
+            crate::route_intent::ProtocolType::V2 => {
+                let key = format!("arbx:pool_index:{}:{}:{}", self.chain_id, sym0.to_lowercase(), sym1.to_lowercase());
+                let raw_val: Option<String> = redis::cmd("GET").arg(&key).query_async(&mut redis_conn).await.unwrap_or(None);
+                let mut list: Vec<String> = raw_val.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default();
+                let addr_str = format!("0x{:x}", e_pool);
+                if !list.contains(&addr_str) {
+                    list.push(addr_str);
+                    if let Ok(json) = serde_json::to_string(&list) {
+                        let _ = redis::cmd("SET").arg(&key).arg(&json).query_async::<_, ()>(&mut redis_conn).await;
+                        info!(event="pool_discovery.redis_index_updated", key=?key);
+                    }
+                }
+            }
+            crate::route_intent::ProtocolType::V3 => {
+                let key = format!("arbx:pool_index_v3:{}:{}:{}", self.chain_id, sym0.to_lowercase(), sym1.to_lowercase());
+                let raw_val: Option<String> = redis::cmd("GET").arg(&key).query_async(&mut redis_conn).await.unwrap_or(None);
+                
+                #[derive(serde::Serialize, serde::Deserialize, PartialEq)]
+                struct V3PoolInfo { address: String, fee_bps: u32 }
+                
+                let mut list: Vec<V3PoolInfo> = raw_val.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default();
+                let addr_str = format!("0x{:x}", e_pool);
+                let fee = fee_bps.unwrap_or(30);
+                
+                if !list.iter().any(|p| p.address == addr_str) {
+                    list.push(V3PoolInfo { address: addr_str, fee_bps: fee });
+                    if let Ok(json) = serde_json::to_string(&list) {
+                        let _ = redis::cmd("SET").arg(&key).arg(&json).query_async::<_, ()>(&mut redis_conn).await;
+                        info!(event="pool_discovery.redis_v3_index_updated", key=?key);
+                    }
+                }
+            }
+            _ => {}
         }
 
         Ok(PoolRef {
@@ -435,48 +478,65 @@ impl PoolDiscoveryService {
         }).await.map_err(|e| anyhow::anyhow!("token meta rpc error: {}", e))
     }
 
-    async fn upsert_token_in_db(&self, token: Address, symbol: &str, decimals: u8) {
+    async fn upsert_token_in_db(&self, token: Address, symbol: &str, decimals: u8) -> anyhow::Result<u64> {
         if let Some(ref db) = self.db {
             let t_str = format!("0x{:x}", token);
-            let q = r#"
-                INSERT INTO tokens (chain_id, address, symbol, decimals, resolved_via, resolved_at, last_seen_at)
-                VALUES ($1, $2, $3, $4, 'onchain_full', NOW(), NOW())
-                ON CONFLICT (chain_id, address) DO UPDATE SET 
-                    last_seen_at = NOW(),
-                    symbol = EXCLUDED.symbol,
-                    decimals = EXCLUDED.decimals
-            "#;
-            if let Err(e) = sqlx::query(q)
+            let q_sel = "SELECT id FROM tokens WHERE chain_id = $1 AND address = $2";
+            if let Ok(Some((id,))) = sqlx::query_as::<_, (i64,)>(q_sel)
                 .bind(self.chain_id as i64)
-                .bind(t_str)
+                .bind(&t_str)
+                .fetch_optional(db)
+                .await
+            {
+                return Ok(id as u64);
+            }
+
+            let q_ins = r#"
+                INSERT INTO tokens (chain_id, address, symbol, decimals, created_at)
+                VALUES ($1, $2, $3, $4, NOW())
+                ON CONFLICT (chain_id, address) DO UPDATE SET symbol = EXCLUDED.symbol, decimals = EXCLUDED.decimals
+                RETURNING id
+            "#;
+            if let Ok((id,)) = sqlx::query_as::<_, (i64,)>(q_ins)
+                .bind(self.chain_id as i64)
+                .bind(&t_str)
                 .bind(symbol)
                 .bind(decimals as i16)
-                .execute(db)
+                .fetch_one(db)
                 .await
             {
-                warn!("pool_discovery.upsert_token_failed: {}", e);
+                return Ok(id as u64);
             }
         }
+        anyhow::bail!("db_unavailable_or_insert_failed")
     }
 
-    async fn upsert_pool_in_db(&self, pool: Address, _token0: Address, _token1: Address, _fee_bps: Option<u32>) {
+    async fn upsert_pool_in_db(&self, pool: Address, factory_id: u64, token0_id: u64, token1_id: u64, fee_bps: Option<u32>) {
         if let Some(ref db) = self.db {
             let p_str = format!("0x{:x}", pool);
-            // We do a simplified insert just to have the pool. Factory id is missing here but address is recorded.
             let q = r#"
-                INSERT INTO pools (chain_id, address, is_active, created_at)
-                VALUES ($1, $2, TRUE, NOW())
-                ON CONFLICT (chain_id, address) DO NOTHING
+                INSERT INTO pools (chain_id, address, factory_id, token0_id, token1_id, fee_tier, is_active, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, TRUE, NOW())
+                ON CONFLICT (chain_id, address) DO UPDATE SET 
+                    factory_id = EXCLUDED.factory_id, 
+                    token0_id = EXCLUDED.token0_id, 
+                    token1_id = EXCLUDED.token1_id, 
+                    fee_tier = EXCLUDED.fee_tier,
+                    is_active = TRUE
             "#;
             if let Err(e) = sqlx::query(q)
                 .bind(self.chain_id as i64)
-                .bind(p_str)
+                .bind(&p_str)
+                .bind(factory_id as i64)
+                .bind(token0_id as i64)
+                .bind(token1_id as i64)
+                .bind(fee_bps.map(|f| f as i32))
                 .execute(db)
                 .await
             {
-                warn!("pool_discovery.upsert_pool_failed: {}", e);
+                warn!(event="pool_discovery.upsert_pool_failed", pool=?p_str, error=%e);
             } else {
-                info!("pool_discovery.pool_persisted");
+                info!(event="pool_discovery.pool_persisted", pool=?p_str);
             }
         }
     }

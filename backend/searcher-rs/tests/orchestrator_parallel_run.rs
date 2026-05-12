@@ -157,7 +157,7 @@ async fn build_test_orchestrator() -> Option<std::sync::Arc<searcher_rs::orchest
         None,
         Some(state_projector.clone()),
     ));
-    let tri_engine = Arc::new(TriangularEngine::new(reserves_cache, vec![]));
+    let tri_engine = Arc::new(TriangularEngine::new(reserves_cache.clone(), vec![]));
     let fl_engine = Arc::new(FlashloanEngine::new());
     let liq_indexer = Arc::new(tokio::sync::Mutex::new(LendingPositionIndexer::new(
         CHAIN_ID,
@@ -175,6 +175,15 @@ async fn build_test_orchestrator() -> Option<std::sync::Arc<searcher_rs::orchest
     let config_provider = Arc::new(ConfigProvider { trading_config });
     let impact_index = Arc::new(RwLock::new(ImpactIndex::empty()));
 
+    let pool_discovery = Arc::new(searcher_rs::pool_discovery::PoolDiscoveryService::new(
+        CHAIN_ID,
+        None,
+        redis_conn.clone(),
+        impact_index.clone(),
+        None,
+        reserves_cache.clone(),
+    ));
+
     let ctx = OrchestratorContext {
         impact_index,
         dex_engine,
@@ -185,6 +194,7 @@ async fn build_test_orchestrator() -> Option<std::sync::Arc<searcher_rs::orchest
         size_optimizer,
         emitter,
         config_provider,
+        pool_discovery,
         chain_id: CHAIN_ID,
     };
 

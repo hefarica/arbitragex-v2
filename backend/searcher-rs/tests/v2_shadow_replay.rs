@@ -113,7 +113,7 @@ async fn build_orchestrator_with_emitter(
         None,
         Some(state_projector.clone()),
     ));
-    let tri_engine = Arc::new(TriangularEngine::new(reserves_cache, vec![]));
+    let tri_engine = Arc::new(TriangularEngine::new(reserves_cache.clone(), vec![]));
     let fl_engine = Arc::new(FlashloanEngine::new());
 
     // Attempt to connect to local Redis. Panic with a clear message if unavailable
@@ -150,6 +150,15 @@ async fn build_orchestrator_with_emitter(
 
     let impact_idx_arc = Arc::new(RwLock::new(impact_index));
 
+    let pool_discovery = Arc::new(searcher_rs::pool_discovery::PoolDiscoveryService::new(
+        CHAIN_ID,
+        None,
+        dummy_conn.clone(),
+        impact_idx_arc.clone(),
+        None,
+        reserves_cache.clone(),
+    ));
+
     let ctx = OrchestratorContext {
         impact_index: impact_idx_arc,
         dex_engine,
@@ -160,6 +169,7 @@ async fn build_orchestrator_with_emitter(
         size_optimizer,
         emitter: emitter.clone(),
         config_provider,
+        pool_discovery,
         chain_id: CHAIN_ID,
     };
 
