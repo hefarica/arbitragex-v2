@@ -1054,6 +1054,11 @@ impl DedupState {
     pub fn len(&self) -> usize {
         self.seen.len()
     }
+    /// Returns true when the dedup set is empty.
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.seen.is_empty()
+    }
 }
 
 /// TriangularWorker — owns its tick interval and dedup state. Lives for the

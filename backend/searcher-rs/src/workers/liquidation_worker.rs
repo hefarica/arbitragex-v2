@@ -570,6 +570,10 @@ impl DedupState {
     pub fn len(&self) -> usize {
         self.seen.len()
     }
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.seen.is_empty()
+    }
 }
 
 // =============================================================================

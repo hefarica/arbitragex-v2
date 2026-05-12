@@ -38,7 +38,10 @@
 //! - `gross_profit_usd = None` from an engine propagates unchanged through
 //!   the evaluator and emitter paths.
 
-use crate::engines::dex_engine::{DexEngine, StrategyCandidate};
+use crate::engines::dex_engine::DexEngine;
+use crate::engines::flashloan_engine::FlashloanEngine;
+use crate::engines::triangular_engine::TriangularEngine;
+use crate::engines::StrategyCandidate;
 use crate::impact_index::ImpactIndex;
 use crate::opportunity_emitter::OpportunityEmitter;
 use crate::route_intent::RouteIntent;
@@ -63,6 +66,9 @@ use prioritization_spine::config_aware::{ConfigAwareEvaluator, ConfigGateOutcome
 /// standing up a real Redis/PG stack.
 pub static DEX_ENGINE_ERRORS: AtomicU64 = AtomicU64::new(0);
 
+/// Error counter for `TriangularEngine::build_from_impacted_cycles`.
+pub static TRIANGULAR_ENGINE_ERRORS: AtomicU64 = AtomicU64::new(0);
+
 // ---------------------------------------------------------------------------
 // OrchestratorContext
 // ---------------------------------------------------------------------------
@@ -75,8 +81,10 @@ pub struct OrchestratorContext {
     pub impact_index: Arc<RwLock<ImpactIndex>>,
     /// DEX arb V2/V3 engine (Phase 8).
     pub dex_engine: Arc<DexEngine>,
-    // Phase 9: pub triangular_engine: Arc<TriangularEngine>,
-    // Phase 10: pub flashloan_engine:  Arc<FlashloanEngine>,
+    /// Triangular arb engine — evaluates impacted cycles (Phase 9).
+    pub triangular_engine: Arc<TriangularEngine>,
+    /// Flashloan capital wrapper — wraps net-positive base candidates (Phase 10).
+    pub flashloan_engine: Arc<FlashloanEngine>,
     // Phase 11: pub liquidation_engine: Arc<LiquidationEngine>,
     /// Single-point emit path (PG + Redis).
     pub emitter: Arc<OpportunityEmitter>,
@@ -204,14 +212,50 @@ impl Orchestrator {
             }
         };
 
-        // Phase 9 placeholder: triangular_engine (returns Ok(vec![])).
-        // let tri_candidates = self.ctx.triangular_engine.build(...).await?;
-
-        // Phase 10 placeholder: flashloan_engine (returns Ok(vec![])).
-        // let flash_candidates = self.ctx.flashloan_engine.wrap(...).await?;
+        // TriangularEngine (Phase 9 — live).
+        let tri_candidates = match self
+            .ctx
+            .triangular_engine
+            .build_from_impacted_cycles(&intent, &impact)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                TRIANGULAR_ENGINE_ERRORS.fetch_add(1, Ordering::Relaxed);
+                error!(
+                    event = "orchestrator.triangular_engine_error",
+                    chain_id,
+                    tx_hash = %intent.tx_hash,
+                    error = %e,
+                    "TriangularEngine::build_from_impacted_cycles failed; continuing"
+                );
+                vec![]
+            }
+        };
 
         // Phase 11 placeholder: liquidation_engine (returns Ok(vec![])).
         // let liq_candidates = self.ctx.liquidation_engine.build(...).await?;
+
+        // Concatenate base candidates: DEX + triangular.
+        // Net-positive base candidates are fed to the flashloan wrapper.
+        let mut base_candidates: Vec<StrategyCandidate> =
+            Vec::with_capacity(dex_candidates.len() + tri_candidates.len());
+        base_candidates.extend(dex_candidates);
+        base_candidates.extend(tri_candidates);
+
+        // FlashloanEngine (Phase 10 — live): wrap net-positive base candidates.
+        let flash_candidates = self
+            .ctx
+            .flashloan_engine
+            .wrap_profitable_routes(&base_candidates, chain_id);
+
+        debug!(
+            event = "orchestrator.engines_done",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            base_count = base_candidates.len(),
+            flash_wrap_count = flash_candidates.len(),
+        );
 
         // ── Step 5: snapshot config once per intent ────────────────────────
         // The `TradingConfigState` is owned here so `ConfigAwareEvaluator`
@@ -220,7 +264,8 @@ impl Orchestrator {
             self.ctx.config_provider.snapshot(chain_id).await;
 
         // ── Step 6: evaluate + emit each candidate ────────────────────────
-        for candidate in dex_candidates {
+        // Process base candidates first, then flashloan-wrapped variants.
+        for candidate in base_candidates.into_iter().chain(flash_candidates) {
             self.process_candidate(candidate, cfg_snapshot.as_ref(), chain_id)
                 .await?;
         }
@@ -382,7 +427,10 @@ fn detection_source_as_str(src: crate::route_intent::DetectionSource) -> &'stati
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::engines::dex_engine::{DexEngine, StrategyCandidate};
+    use crate::engines::dex_engine::DexEngine;
+    use crate::engines::flashloan_engine::FlashloanEngine;
+    use crate::engines::triangular_engine::{CycleSeed, ReservesCache, TriangularEngine};
+    use crate::engines::StrategyCandidate;
     use crate::impact_index::{ImpactIndex, PoolRef};
     use crate::route_intent::{
         DetectionSource, ProtocolType, RouteIntent, RouteIntentLeg, RouterKind, SwapExactMode,
@@ -658,6 +706,118 @@ mod tests {
         assert!(
             c.opportunity.expected_profit_usd.is_none(),
             "expected_profit_usd must be None when not computed"
+        );
+    }
+
+    // ── orchestrator::tests::triangular_candidate_fanned_through ─────────────
+    //
+    // Verifies that a TriangularEngine (with a known cycle and reserves) produces
+    // a candidate that flows through the orchestrator engine fan-out path.
+
+    #[tokio::test]
+    async fn triangular_candidate_fanned_through() {
+        let cache = Arc::new(ReservesCache::new());
+        let config = Arc::new(RwLock::new(
+            None::<shared_rs::trading_config::TradingConfigState>,
+        ));
+
+        // Cycle with trivial reserves (equal → spot ≤ 1 → rejected, but still a candidate).
+        let tok_a = addr(0x10);
+        let tok_b = addr(0x20);
+        let tok_c = addr(0x30);
+        let pool_a = addr(0x100);
+        let pool_b = addr(0x200);
+        let pool_c = addr(0x300);
+        let unit = U256::from(10u128).pow(U256::from(18u32));
+
+        cache.insert(pool_a, unit, unit).await;
+        cache.insert(pool_b, unit, unit).await;
+        cache.insert(pool_c, unit, unit).await;
+
+        let seed = CycleSeed {
+            cycle_id: 0,
+            token_a_symbol: "WETH".to_string(),
+            pool_addresses: [pool_a, pool_b, pool_c],
+            token_ins: [tok_a, tok_b, tok_c],
+            token_outs: [tok_b, tok_c, tok_a],
+            swap_in_is_token0: [tok_a < tok_b, tok_b < tok_c, tok_c < tok_a],
+        };
+
+        let tri_engine = Arc::new(TriangularEngine::new(cache, config.clone(), vec![seed]));
+
+        // Build an ImpactSet with cycle_id = 0 impacted.
+        use crate::impact_index::ImpactSet;
+        let impact = ImpactSet {
+            impacted_cycles: vec![0],
+            ..Default::default()
+        };
+
+        let intent = make_intent(tok_a, tok_b);
+        let candidates = tri_engine
+            .build_from_impacted_cycles(&intent, &impact)
+            .await
+            .expect("triangular engine must not error");
+
+        // With equal reserves, spot_product < 1 → rejected candidate.
+        assert!(
+            !candidates.is_empty(),
+            "triangular engine must produce ≥1 candidate"
+        );
+        assert_eq!(
+            candidates[0].label,
+            StrategyLabel::TriangularArb,
+            "candidate label must be TriangularArb"
+        );
+    }
+
+    // ── orchestrator::tests::flashloan_wrap_fanned_through ────────────────────
+    //
+    // Verifies that FlashloanEngine wraps a net-positive base candidate correctly.
+
+    #[test]
+    fn flashloan_wrap_fanned_through() {
+        let config = Arc::new(RwLock::new(
+            None::<shared_rs::trading_config::TradingConfigState>,
+        ));
+        let fl_engine = FlashloanEngine::new(config);
+
+        // Base candidate: DexArbV2V2, $50 gross, WETH on mainnet.
+        let base = make_candidate(StrategyLabel::DexArbV2V2, None);
+        // Ensure gross is Some and token_in is WETH.
+        let mut base = base;
+        base.gross_profit_usd = Some(50.0);
+        base.route_plan.legs[0].token_in = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string();
+
+        let wrapped = fl_engine.wrap_profitable_routes(&[base], 1);
+
+        // On mainnet with WETH → DyDxSolo (0 bps fee) → net = $50 → accepted.
+        let accepted: Vec<_> = wrapped
+            .iter()
+            .filter(|c| c.rejection_reason.is_none())
+            .collect();
+        assert!(
+            !accepted.is_empty(),
+            "flashloan engine must produce ≥1 accepted wrapped candidate"
+        );
+        assert_eq!(accepted[0].label, StrategyLabel::FlashloanArb);
+        assert_eq!(
+            accepted[0].base_strategy,
+            Some(StrategyLabel::DexArbV2V2),
+            "base_strategy must be preserved on wrapped candidate"
+        );
+    }
+
+    // ── orchestrator::tests::triangular_engine_error_counter_increments ───────
+
+    #[test]
+    fn triangular_engine_error_counter_increments() {
+        let before = TRIANGULAR_ENGINE_ERRORS.load(Ordering::Relaxed);
+        TRIANGULAR_ENGINE_ERRORS.fetch_add(1, Ordering::Relaxed);
+        let after = TRIANGULAR_ENGINE_ERRORS.load(Ordering::Relaxed);
+        assert_eq!(
+            after,
+            before + 1,
+            "TRIANGULAR_ENGINE_ERRORS must increment by 1"
         );
     }
 }

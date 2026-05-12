@@ -32,6 +32,7 @@
 //! | `non_positive_spread`     | spread <= 0 after CPMM math                 |
 
 use crate::amm_math;
+use crate::engines::StrategyCandidate;
 use crate::impact_index::{ImpactSet, PoolRef, TokenPairKey};
 use crate::route_intent::{ProtocolType, RouteIntent};
 use crate::strategy_label::StrategyLabel;
@@ -46,41 +47,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::debug;
 use uuid::Uuid;
-
-// ---------------------------------------------------------------------------
-// StrategyCandidate — output of every engine
-// ---------------------------------------------------------------------------
-
-/// A single candidate produced by an engine.
-///
-/// Carries everything the orchestrator needs to evaluate the candidate via
-/// `ConfigAwareEvaluator` and emit it via `OpportunityEmitter`. Candidates
-/// with a `rejection_reason` still flow through `emit_rejected` so the
-/// operator sees rejection volume in the dashboard (RULE 00 transparency).
-#[derive(Debug, Clone)]
-pub struct StrategyCandidate {
-    /// Granular strategy classification (e.g. `DexArbV2V3`).
-    pub label: StrategyLabel,
-    /// The `Opportunity` row ready for PG + Redis emission.
-    pub opportunity: Opportunity,
-    /// The spine candidate for `ConfigAwareEvaluator::evaluate_with_route_plan`.
-    pub candidate: OpportunityCandidate,
-    /// The route plan for the spine gate.
-    pub route_plan: RoutePlan,
-    /// Pre-computed gross profit in USD, or `None` when either token
-    /// cannot be priced (R8 fail-honest: never fabricated).
-    pub gross_profit_usd: Option<f64>,
-    /// Net profit after gas — always `None` at engine time; filled by the
-    /// spine evaluator downstream.
-    pub net_expected_profit_usd: Option<f64>,
-    /// `None` → accepted by the engine; `Some(reason)` → rejected by the engine.
-    pub rejection_reason: Option<String>,
-    /// Hash of the originating mempool transaction (for route_id uniqueness).
-    pub source_intent_hash: H256,
-    /// `None` unless this candidate wraps a base strategy in a flashloan.
-    /// Reserved for Phase 10; always `None` from `DexEngine`.
-    pub base_strategy: Option<StrategyLabel>,
-}
 
 // ---------------------------------------------------------------------------
 // DexEngine

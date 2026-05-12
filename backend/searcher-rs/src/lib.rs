@@ -24,3 +24,9 @@ pub mod strategy_label;
 // Phase 7-8: orchestrator + engines exposed for integration tests.
 pub mod engines;
 pub mod orchestrator;
+// Phase 9: workers module exposed so engines can reuse pure math kernels.
+// Workers themselves contain I/O-heavy code that is not called from tests;
+// the lib target only needs the pure-function submodules (triangular_worker,
+// flashloan_arb_worker) which have no async I/O in their math kernels.
+#[allow(dead_code)]
+pub mod workers;
