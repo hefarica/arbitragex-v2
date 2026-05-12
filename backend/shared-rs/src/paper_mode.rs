@@ -65,7 +65,10 @@ impl PaperModeClient {
     }
 
     pub async fn is_enabled(&self) -> bool {
-        self.state().await.map(|s| s.enabled).unwrap_or(self.default_when_absent)
+        self.state()
+            .await
+            .map(|s| s.enabled)
+            .unwrap_or(self.default_when_absent)
     }
 
     pub async fn state(&self) -> Result<PaperModeState, PaperModeError> {
@@ -81,7 +84,10 @@ impl PaperModeClient {
         let raw: Option<String> = mgr.get(PAPERMODE_KEY).await?;
         let state = match raw {
             Some(v) => serde_json::from_str::<PaperModeState>(&v)?,
-            None => PaperModeState { enabled: self.default_when_absent, ..Default::default() },
+            None => PaperModeState {
+                enabled: self.default_when_absent,
+                ..Default::default()
+            },
         };
         let mut g = self.cache.write().await;
         *g = Some((state.clone(), Instant::now()));

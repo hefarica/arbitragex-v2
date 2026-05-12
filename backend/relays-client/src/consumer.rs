@@ -35,10 +35,18 @@ impl Consumer {
 
     async fn ensure_group(&mut self) -> Result<()> {
         let res: redis::RedisResult<()> = redis::cmd("XGROUP")
-            .arg("CREATE").arg(STREAM).arg(GROUP).arg("$").arg("MKSTREAM")
-            .query_async(&mut self.redis).await;
+            .arg("CREATE")
+            .arg(STREAM)
+            .arg(GROUP)
+            .arg("$")
+            .arg("MKSTREAM")
+            .query_async(&mut self.redis)
+            .await;
         match res {
-            Ok(_) => { info!(event = "relays_consumer.group_created"); Ok(()) }
+            Ok(_) => {
+                info!(event = "relays_consumer.group_created");
+                Ok(())
+            }
             Err(e) if e.to_string().contains("BUSYGROUP") => Ok(()),
             Err(e) => Err(e.into()),
         }
@@ -46,21 +54,43 @@ impl Consumer {
 
     async fn read_batch(&mut self) -> Result<()> {
         let reply: Option<Vec<redis::Value>> = redis::cmd("XREADGROUP")
-            .arg("GROUP").arg(GROUP).arg(&self.consumer_name)
-            .arg("COUNT").arg(4)
-            .arg("BLOCK").arg(2000)
-            .arg("STREAMS").arg(STREAM).arg(">")
-            .query_async(&mut self.redis).await?;
-        let Some(reply) = reply else { return Ok(()); };
+            .arg("GROUP")
+            .arg(GROUP)
+            .arg(&self.consumer_name)
+            .arg("COUNT")
+            .arg(4)
+            .arg("BLOCK")
+            .arg(2000)
+            .arg("STREAMS")
+            .arg(STREAM)
+            .arg(">")
+            .query_async(&mut self.redis)
+            .await?;
+        let Some(reply) = reply else {
+            return Ok(());
+        };
         for stream_entry in reply {
             if let redis::Value::Bulk(v) = stream_entry {
-                if v.len() != 2 { continue; }
-                let entries = match &v[1] { redis::Value::Bulk(e) => e.clone(), _ => continue };
+                if v.len() != 2 {
+                    continue;
+                }
+                let entries = match &v[1] {
+                    redis::Value::Bulk(e) => e.clone(),
+                    _ => continue,
+                };
                 for e in entries {
                     if let redis::Value::Bulk(parts) = e {
-                        if parts.len() != 2 { continue; }
-                        let id = match &parts[0] { redis::Value::Data(s) => String::from_utf8_lossy(s).to_string(), _ => continue };
-                        let fields = match &parts[1] { redis::Value::Bulk(f) => f.clone(), _ => continue };
+                        if parts.len() != 2 {
+                            continue;
+                        }
+                        let id = match &parts[0] {
+                            redis::Value::Data(s) => String::from_utf8_lossy(s).to_string(),
+                            _ => continue,
+                        };
+                        let fields = match &parts[1] {
+                            redis::Value::Bulk(f) => f.clone(),
+                            _ => continue,
+                        };
                         self.process_one(id, fields).await.ok();
                     }
                 }
@@ -72,14 +102,20 @@ impl Consumer {
     async fn process_one(&mut self, id: String, kv: Vec<redis::Value>) -> Result<()> {
         let Some(json) = extract_field(&kv, "json") else {
             warn!(event = "relays_consumer.no_json", id = %id);
-            let _: () = self.redis.xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()]).await?;
+            let _: () = self
+                .redis
+                .xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()])
+                .await?;
             return Ok(());
         };
         let opp: Opportunity = match serde_json::from_str(&json) {
             Ok(o) => o,
             Err(e) => {
                 warn!(event = "relays_consumer.parse_err", id = %id, error = %e);
-                let _: () = self.redis.xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()]).await?;
+                let _: () = self
+                    .redis
+                    .xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()])
+                    .await?;
                 return Ok(());
             }
         };
@@ -100,11 +136,21 @@ impl Consumer {
         });
         let payload_s = serde_json::to_string(&payload).unwrap_or_default();
         let _: redis::RedisResult<String> = redis::cmd("XADD")
-            .arg("arbx:opps:executed").arg("MAXLEN").arg("~").arg(10_000)
-            .arg("*").arg("json").arg(payload_s)
-            .query_async(&mut self.redis).await;
+            .arg("arbx:opps:executed")
+            .arg("MAXLEN")
+            .arg("~")
+            .arg(10_000)
+            .arg("*")
+            .arg("json")
+            .arg(payload_s)
+            .query_async(&mut self.redis)
+            .await;
 
-        let _: () = self.redis.xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()]).await.context("xack")?;
+        let _: () = self
+            .redis
+            .xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()])
+            .await
+            .context("xack")?;
         Ok(())
     }
 }
@@ -112,9 +158,17 @@ impl Consumer {
 fn extract_field(kv: &[redis::Value], name: &str) -> Option<String> {
     let mut i = 0;
     while i + 1 < kv.len() {
-        let k = match &kv[i] { redis::Value::Data(s) => std::str::from_utf8(s).ok()?.to_string(), _ => return None };
-        let v = match &kv[i+1] { redis::Value::Data(s) => String::from_utf8_lossy(s).to_string(), _ => return None };
-        if k == name { return Some(v); }
+        let k = match &kv[i] {
+            redis::Value::Data(s) => std::str::from_utf8(s).ok()?.to_string(),
+            _ => return None,
+        };
+        let v = match &kv[i + 1] {
+            redis::Value::Data(s) => String::from_utf8_lossy(s).to_string(),
+            _ => return None,
+        };
+        if k == name {
+            return Some(v);
+        }
         i += 2;
     }
     None

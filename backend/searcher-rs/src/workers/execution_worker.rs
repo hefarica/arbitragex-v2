@@ -17,19 +17,24 @@ pub struct ExecutionWorker {
 #[allow(dead_code)]
 impl ExecutionWorker {
     pub fn new(allow_live_execution: bool) -> Self {
-        Self { allow_live_execution }
+        Self {
+            allow_live_execution,
+        }
     }
 
     pub async fn start(&self) {
-        info!("[ExecutionWorker] Motor de Transacciones Iniciado. Live Execution: {}", self.allow_live_execution);
-        
+        info!(
+            "[ExecutionWorker] Motor de Transacciones Iniciado. Live Execution: {}",
+            self.allow_live_execution
+        );
+
         loop {
             // 1. Recibir oportunidad confirmada y pre-armada por SimulationWorker.
             // 2. Firmar transacción localmente usando la llave desencriptada en RAM.
             // 3. Evaluar ruteo Dark Pool (Skill 087) o Mempool público.
             // 4. Enviar eth_sendRawTransaction o eth_sendBundle (Flashbots).
             // 5. Monitorear receipt.
-            
+
             sleep(Duration::from_millis(50)).await;
         }
     }

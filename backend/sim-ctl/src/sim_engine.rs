@@ -9,8 +9,8 @@ use crate::fork_manager::ForkManager;
 use crate::tx_builder::{build_probe, BuildError};
 use chrono::Utc;
 use ethers::abi::{decode as abi_decode, ParamType};
-use ethers::prelude::*;
 use ethers::core::types::transaction::eip2718::TypedTransaction;
+use ethers::prelude::*;
 use shared_rs::contracts::{Opportunity, SimulationResult, SimulatorKind, StrategyKind};
 use std::time::Duration;
 use tokio::time::timeout;
@@ -30,8 +30,11 @@ impl SimEngine {
 
         // Guard: if no fork (no ANVIL_URL or failed to connect), honest 501-style result.
         let Some(fork) = &self.fork else {
-            return Self::not_implemented(id, trace_id,
-                "anvil_fork_not_configured (set ANVIL_URL + profile sim)");
+            return Self::not_implemented(
+                id,
+                trace_id,
+                "anvil_fork_not_configured (set ANVIL_URL + profile sim)",
+            );
         };
 
         // Build probe.
@@ -41,7 +44,11 @@ impl SimEngine {
                 return Self::not_implemented(id, trace_id, "strategy_not_simulatable_in_s4");
             }
             Err(BuildError::UnsupportedChain(c)) => {
-                return Self::not_implemented(id, trace_id, &format!("chain_{c}_not_supported_in_s4"));
+                return Self::not_implemented(
+                    id,
+                    trace_id,
+                    &format!("chain_{c}_not_supported_in_s4"),
+                );
             }
             Err(e) => return Self::failed(id, trace_id, &format!("build_error: {e}")),
         };
@@ -101,7 +108,11 @@ impl SimEngine {
             revert_risk_pct: if passed { Some(0.5) } else { Some(50.0) },
             simulated_profit_usd: None, // computed from counter-trade in S5
             simulator: SimulatorKind::Anvil,
-            fail_reason: if passed { None } else { Some("slippage_too_high".into()) },
+            fail_reason: if passed {
+                None
+            } else {
+                Some("slippage_too_high".into())
+            },
             simulated_at: Utc::now(),
             trace_id,
         }
@@ -151,7 +162,9 @@ fn decode_amount_out(output: &Bytes, opp: &Opportunity) -> Option<U256> {
                     return t.clone().into_uint();
                 }
             }
-            if let Ok(toks) = abi_decode(&[ParamType::Array(Box::new(ParamType::Uint(256)))], output) {
+            if let Ok(toks) =
+                abi_decode(&[ParamType::Array(Box::new(ParamType::Uint(256)))], output)
+            {
                 if let Some(arr) = toks.first().and_then(|t| t.clone().into_array()) {
                     return arr.last().and_then(|t| t.clone().into_uint());
                 }
@@ -173,7 +186,11 @@ fn compute_slippage(opp: &Opportunity, actual_out: Option<U256>) -> Option<f64> 
     }
     // Without a price oracle, we express slippage as (amt_in - actual) / amt_in * 100
     // when tokens are same-decimals. S6 will introduce a proper quote-based slippage.
-    let diff = if actual >= amt_in { U256::zero() } else { amt_in - actual };
+    let diff = if actual >= amt_in {
+        U256::zero()
+    } else {
+        amt_in - actual
+    };
     let pct = (diff.as_u128() as f64 / amt_in.as_u128() as f64) * 100.0;
     debug!(event = "sim.slippage_heuristic", pct);
     Some(pct)

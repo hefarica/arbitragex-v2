@@ -160,9 +160,7 @@ impl PoolSyncWorker {
         let get_reserves_calldata_bytes: Vec<u8> = get_reserves_selector.to_vec();
 
         // V3 selectors -- computed once at boot.
-        let slot0_selector: [u8; 4] = ethers::utils::keccak256("slot0()")[..4]
-            .try_into()
-            .unwrap();
+        let slot0_selector: [u8; 4] = ethers::utils::keccak256("slot0()")[..4].try_into().unwrap();
         let liquidity_selector: [u8; 4] = ethers::utils::keccak256("liquidity()")[..4]
             .try_into()
             .unwrap();
@@ -346,9 +344,7 @@ impl PoolSyncWorker {
                         let tx = TransactionRequest::default()
                             .to(multicall_alloy)
                             .input(TransactionInput::new(v3_calldata.clone().into()));
-                        async move {
-                            provider.call(tx).await.map_err(|e| anyhow::anyhow!("{e}"))
-                        }
+                        async move { provider.call(tx).await.map_err(|e| anyhow::anyhow!("{e}")) }
                     })
                     .await
                 {
@@ -362,18 +358,17 @@ impl PoolSyncWorker {
                     }
                 };
 
-                let v3_results =
-                    match multicall_abi::aggregate3Call::abi_decode_returns(&v3_raw) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            warn!(
-                                event = "pool_sync.v3_multicall_decode_failed",
-                                error = %e
-                            );
-                            sleep(self.poll_interval).await;
-                            continue;
-                        }
-                    };
+                let v3_results = match multicall_abi::aggregate3Call::abi_decode_returns(&v3_raw) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        warn!(
+                            event = "pool_sync.v3_multicall_decode_failed",
+                            error = %e
+                        );
+                        sleep(self.poll_interval).await;
+                        continue;
+                    }
+                };
 
                 let mut v3_ok = 0usize;
                 let mut v3_fail = 0usize;
@@ -566,9 +561,10 @@ impl PoolSyncWorker {
             .into_iter()
             .filter_map(|(addr,)| {
                 let lower = addr.to_lowercase();
-                Address::from_str(&lower)
-                    .ok()
-                    .map(|h| V3PoolRow { address: h, address_lower: lower })
+                Address::from_str(&lower).ok().map(|h| V3PoolRow {
+                    address: h,
+                    address_lower: lower,
+                })
             })
             .collect())
     }
@@ -592,8 +588,7 @@ impl PoolSyncWorker {
                 decimals: decimals as u8,
                 is_stablecoin: is_stable,
             };
-            if let Err(e) =
-                set_token_meta(redis, self.chain_id, &addr.to_lowercase(), &meta).await
+            if let Err(e) = set_token_meta(redis, self.chain_id, &addr.to_lowercase(), &meta).await
             {
                 warn!(event = "pool_sync.token_cache_set_failed", error = %e);
             }
@@ -615,7 +610,10 @@ impl PoolSyncWorker {
             } else {
                 (p.sym1.clone(), p.sym0.clone())
             };
-            by_pair.entry((lo, hi)).or_default().push(p.address_lower.clone());
+            by_pair
+                .entry((lo, hi))
+                .or_default()
+                .push(p.address_lower.clone());
         }
         for ((sym_a, sym_b), addrs) in by_pair {
             if let Err(e) = set_pool_index(redis, self.chain_id, &sym_a, &sym_b, &addrs).await {
@@ -664,19 +662,14 @@ impl PoolSyncWorker {
             } else {
                 (sym1.clone(), sym0.clone())
             };
-            by_pair
-                .entry((lo, hi))
-                .or_default()
-                .push(V3PoolInfo {
-                    pool_addr: addr.to_lowercase(),
-                    fee_bps: fee_tier as u32,
-                });
+            by_pair.entry((lo, hi)).or_default().push(V3PoolInfo {
+                pool_addr: addr.to_lowercase(),
+                fee_bps: fee_tier as u32,
+            });
         }
 
         for ((sym_a, sym_b), pools) in &by_pair {
-            if let Err(e) =
-                set_pool_index_v3(redis, self.chain_id, sym_a, sym_b, pools).await
-            {
+            if let Err(e) = set_pool_index_v3(redis, self.chain_id, sym_a, sym_b, pools).await {
                 warn!(event = "pool_sync.v3_pool_index_set_failed", error = %e);
             }
         }

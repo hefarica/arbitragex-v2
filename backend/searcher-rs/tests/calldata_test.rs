@@ -65,8 +65,8 @@ fn decode_univ2_swap_tokens_for_exact_tokens() {
     let input = pad_selector_and_body(
         [0x88, 0x03, 0xdb, 0xee],
         &[
-            Token::Uint(U256::from(123u64)),     // amountOut
-            Token::Uint(U256::from(456u64)),     // amountInMax
+            Token::Uint(U256::from(123u64)), // amountOut
+            Token::Uint(U256::from(456u64)), // amountInMax
             Token::Array(vec![
                 Token::Address(token_in),
                 Token::Address(token_mid),
@@ -96,7 +96,7 @@ fn decode_univ2_swap_exact_eth_for_tokens_amount_in_zero() {
     let input = pad_selector_and_body(
         [0x7f, 0xf3, 0x6a, 0xb5],
         &[
-            Token::Uint(U256::from(50u64)),      // amountOutMin
+            Token::Uint(U256::from(50u64)), // amountOutMin
             Token::Array(vec![Token::Address(weth), Token::Address(usdc)]),
             Token::Address(recipient),
             Token::Uint(U256::from(0u32)),
@@ -146,12 +146,12 @@ fn decode_univ3_exact_input_single() {
         &[Token::Tuple(vec![
             Token::Address(token_in),
             Token::Address(token_out),
-            Token::Uint(U256::from(3000u32)),     // fee
+            Token::Uint(U256::from(3000u32)), // fee
             Token::Address(recipient),
-            Token::Uint(U256::from(0xdeadu32)),   // deadline
-            Token::Uint(U256::from(1_000u64)),    // amountIn
-            Token::Uint(U256::from(950u64)),      // amountOutMinimum
-            Token::Uint(U256::zero()),            // sqrtPriceLimitX96
+            Token::Uint(U256::from(0xdeadu32)), // deadline
+            Token::Uint(U256::from(1_000u64)),  // amountIn
+            Token::Uint(U256::from(950u64)),    // amountOutMinimum
+            Token::Uint(U256::zero()),          // sqrtPriceLimitX96
         ])],
     );
 

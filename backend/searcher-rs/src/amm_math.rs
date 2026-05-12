@@ -81,7 +81,9 @@ pub fn v2_amount_out(amount_in: U256, reserve_in: U256, reserve_out: U256, fee_b
     let fee_factor = U256::from(10_000u32 - fee_bps);
     let amount_in_with_fee = amount_in.saturating_mul(fee_factor);
     let numerator = amount_in_with_fee.saturating_mul(reserve_out);
-    let denominator = reserve_in.saturating_mul(U256::from(10_000u32)).saturating_add(amount_in_with_fee);
+    let denominator = reserve_in
+        .saturating_mul(U256::from(10_000u32))
+        .saturating_add(amount_in_with_fee);
     if denominator.is_zero() {
         return U256::zero();
     }
@@ -153,19 +155,35 @@ fn quoter_v2_function() -> Function {
         inputs: vec![Param {
             name: "params".to_string(),
             kind: ParamType::Tuple(vec![
-                ParamType::Address,        // tokenIn
-                ParamType::Address,        // tokenOut
-                ParamType::Uint(256),      // amountIn
-                ParamType::Uint(24),       // fee
-                ParamType::Uint(160),      // sqrtPriceLimitX96
+                ParamType::Address,   // tokenIn
+                ParamType::Address,   // tokenOut
+                ParamType::Uint(256), // amountIn
+                ParamType::Uint(24),  // fee
+                ParamType::Uint(160), // sqrtPriceLimitX96
             ]),
             internal_type: None,
         }],
         outputs: vec![
-            Param { name: "amountOut".to_string(), kind: ParamType::Uint(256), internal_type: None },
-            Param { name: "sqrtPriceX96After".to_string(), kind: ParamType::Uint(160), internal_type: None },
-            Param { name: "initializedTicksCrossed".to_string(), kind: ParamType::Uint(32), internal_type: None },
-            Param { name: "gasEstimate".to_string(), kind: ParamType::Uint(256), internal_type: None },
+            Param {
+                name: "amountOut".to_string(),
+                kind: ParamType::Uint(256),
+                internal_type: None,
+            },
+            Param {
+                name: "sqrtPriceX96After".to_string(),
+                kind: ParamType::Uint(160),
+                internal_type: None,
+            },
+            Param {
+                name: "initializedTicksCrossed".to_string(),
+                kind: ParamType::Uint(32),
+                internal_type: None,
+            },
+            Param {
+                name: "gasEstimate".to_string(),
+                kind: ParamType::Uint(256),
+                internal_type: None,
+            },
         ],
         constant: None,
         state_mutability: StateMutability::NonPayable,
@@ -240,11 +258,7 @@ pub async fn v3_quote_exact_in_multicall(
     // failure (existing whole-batch failure counter at triangular_worker.rs
     // ~line 1493). Without this, a stalled provider would freeze the worker
     // tick indefinitely.
-    let raw_bytes = match tokio::time::timeout(
-        V3_QUOTE_MULTICALL_TIMEOUT,
-        provider.call(tx),
-    )
-    .await
+    let raw_bytes = match tokio::time::timeout(V3_QUOTE_MULTICALL_TIMEOUT, provider.call(tx)).await
     {
         Ok(Ok(b)) => b,
         Ok(Err(e)) => return Err(e.into()),
@@ -298,7 +312,7 @@ mod tests {
     /// We assert within 5% of 1987e6.
     #[test]
     fn weth_to_usdc_realistic_pool() {
-        let amount_in = U256::from(10u128).pow(18.into());                  // 1 WETH
+        let amount_in = U256::from(10u128).pow(18.into()); // 1 WETH
         let reserve_in = U256::from(3000u128) * U256::from(10u128).pow(18.into()); // 3000 WETH
         let reserve_out = U256::from(6_000_000u128) * U256::from(10u128).pow(6.into()); // 6M USDC
         let out = v2_amount_out(amount_in, reserve_in, reserve_out, 30);
@@ -322,7 +336,12 @@ mod tests {
 
     #[test]
     fn zero_amount_in_returns_zero() {
-        let out = v2_amount_out(U256::zero(), U256::from(1_000u128), U256::from(2_000u128), 30);
+        let out = v2_amount_out(
+            U256::zero(),
+            U256::from(1_000u128),
+            U256::from(2_000u128),
+            30,
+        );
         assert_eq!(out, U256::zero());
     }
 
@@ -345,7 +364,12 @@ mod tests {
         let reserve_out = U256::from(20_000_000u128);
         let no_fee = v2_amount_out(amount_in, reserve_in, reserve_out, 0);
         let with_fee = v2_amount_out(amount_in, reserve_in, reserve_out, 30);
-        assert!(with_fee < no_fee, "with_fee={} should be < no_fee={}", with_fee, no_fee);
+        assert!(
+            with_fee < no_fee,
+            "with_fee={} should be < no_fee={}",
+            with_fee,
+            no_fee
+        );
     }
 
     // ------------------------------------------------------------------
@@ -462,19 +486,23 @@ mod v3_tests {
     fn empty_quotes_returns_empty_vec() {
         // Calling v3_quote_exact_in_multicall with empty input must short-circuit
         // and return Ok(vec![]) — no RPC call made.
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         let result = rt.block_on(async {
             let provider = std::sync::Arc::new(
                 ProviderBuilder::new()
                     .disable_recommended_fillers()
-                    .connect_http("http://invalid:0".parse().unwrap())
+                    .connect_http("http://invalid:0".parse().unwrap()),
             );
             v3_quote_exact_in_multicall(
                 provider,
                 Address::from_str("0x61fFE014bA17989E743c5F6cB21bF9697530B21e").unwrap(),
                 Address::from_str("0xcA11bde05977b3631167028862bE2a173976CA11").unwrap(),
                 vec![],
-            ).await
+            )
+            .await
         });
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 0);
@@ -524,12 +552,9 @@ mod v3_tests {
                     .connect_http(url.parse().unwrap()),
             );
             let req = V3QuoteRequest {
-                pool_addr: Address::from_str("0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640")
-                    .unwrap(),
-                token_in: Address::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
-                    .unwrap(),
-                token_out: Address::from_str("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
-                    .unwrap(),
+                pool_addr: Address::from_str("0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640").unwrap(),
+                token_in: Address::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").unwrap(),
+                token_out: Address::from_str("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap(),
                 amount_in: U256::from(10).pow(U256::from(18)),
                 fee_bps: 500,
             };

@@ -68,12 +68,20 @@ pub fn key_pool_reserves(chain_id: u64, pool_addr_lower: &str) -> String {
 }
 
 pub fn key_pool_index(chain_id: u64, sym_a: &str, sym_b: &str) -> String {
-    let (lo, hi) = if sym_a < sym_b { (sym_a, sym_b) } else { (sym_b, sym_a) };
+    let (lo, hi) = if sym_a < sym_b {
+        (sym_a, sym_b)
+    } else {
+        (sym_b, sym_a)
+    };
     format!("arbx:pool_index:{}:{}:{}", chain_id, lo, hi)
 }
 
 pub fn key_pool_index_v3(chain_id: u64, sym_a: &str, sym_b: &str) -> String {
-    let (lo, hi) = if sym_a < sym_b { (sym_a, sym_b) } else { (sym_b, sym_a) };
+    let (lo, hi) = if sym_a < sym_b {
+        (sym_a, sym_b)
+    } else {
+        (sym_b, sym_a)
+    };
     format!("arbx:pool_index_v3:{}:{}:{}", chain_id, lo, hi)
 }
 
@@ -82,7 +90,10 @@ pub fn key_token(chain_id: u64, addr_lower: &str) -> String {
 }
 
 pub fn key_v3_quote(chain_id: u64, pool_addr_lower: &str, amount_in_dec: &str) -> String {
-    format!("arbx:v3_quote:{}:{}:{}", chain_id, pool_addr_lower, amount_in_dec)
+    format!(
+        "arbx:v3_quote:{}:{}:{}",
+        chain_id, pool_addr_lower, amount_in_dec
+    )
 }
 
 pub fn key_v3_slot0(chain_id: u64, pool_addr_lower: &str) -> String {
@@ -162,7 +173,9 @@ pub async fn get_reserves(
     chain_id: u64,
     pool_addr_lower: &str,
 ) -> redis::RedisResult<Option<ReservesEntry>> {
-    let raw: Option<String> = redis.get(key_pool_reserves(chain_id, pool_addr_lower)).await?;
+    let raw: Option<String> = redis
+        .get(key_pool_reserves(chain_id, pool_addr_lower))
+        .await?;
     Ok(raw.and_then(|s| serde_json::from_str(&s).ok()))
 }
 
@@ -189,7 +202,9 @@ pub async fn get_pools_for_pair(
     sym_b: &str,
 ) -> redis::RedisResult<Vec<String>> {
     let raw: Option<String> = redis.get(key_pool_index(chain_id, sym_a, sym_b)).await?;
-    Ok(raw.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default())
+    Ok(raw
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default())
 }
 
 pub async fn set_pool_index_v3(
@@ -215,7 +230,9 @@ pub async fn get_pools_for_pair_v3(
     sym_b: &str,
 ) -> redis::RedisResult<Vec<V3PoolInfo>> {
     let raw: Option<String> = redis.get(key_pool_index_v3(chain_id, sym_a, sym_b)).await?;
-    Ok(raw.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default())
+    Ok(raw
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default())
 }
 
 /// Cache a V3 quote result. Key is keyed by (chain, pool, amount_in) so two
@@ -246,7 +263,9 @@ pub async fn get_v3_quote(
     pool_addr_lower: &str,
     amount_in_dec: &str,
 ) -> redis::RedisResult<Option<String>> {
-    redis.get(key_v3_quote(chain_id, pool_addr_lower, amount_in_dec)).await
+    redis
+        .get(key_v3_quote(chain_id, pool_addr_lower, amount_in_dec))
+        .await
 }
 
 pub async fn set_token_meta(
@@ -278,8 +297,14 @@ mod tests {
 
     #[test]
     fn pool_index_key_sorts_symbols() {
-        assert_eq!(key_pool_index(1, "WETH", "USDC"), "arbx:pool_index:1:USDC:WETH");
-        assert_eq!(key_pool_index(1, "USDC", "WETH"), "arbx:pool_index:1:USDC:WETH");
+        assert_eq!(
+            key_pool_index(1, "WETH", "USDC"),
+            "arbx:pool_index:1:USDC:WETH"
+        );
+        assert_eq!(
+            key_pool_index(1, "USDC", "WETH"),
+            "arbx:pool_index:1:USDC:WETH"
+        );
     }
 
     #[test]
@@ -320,8 +345,14 @@ mod tests {
     #[test]
     fn pool_index_v3_key_sorts_symbols() {
         // Same sort invariant as V2 — readers query without knowing the seed order.
-        assert_eq!(key_pool_index_v3(1, "WETH", "USDC"), "arbx:pool_index_v3:1:USDC:WETH");
-        assert_eq!(key_pool_index_v3(1, "USDC", "WETH"), "arbx:pool_index_v3:1:USDC:WETH");
+        assert_eq!(
+            key_pool_index_v3(1, "WETH", "USDC"),
+            "arbx:pool_index_v3:1:USDC:WETH"
+        );
+        assert_eq!(
+            key_pool_index_v3(1, "USDC", "WETH"),
+            "arbx:pool_index_v3:1:USDC:WETH"
+        );
     }
 
     #[test]
@@ -348,8 +379,14 @@ mod tests {
         // The pool index stores Vec<V3PoolInfo> — the same pair can have multiple
         // fee tiers on V3 (0.05% and 0.30% for WETH/USDC are common).
         let arr = vec![
-            V3PoolInfo { pool_addr: "0xaaa".into(), fee_bps: 500 },
-            V3PoolInfo { pool_addr: "0xbbb".into(), fee_bps: 3000 },
+            V3PoolInfo {
+                pool_addr: "0xaaa".into(),
+                fee_bps: 500,
+            },
+            V3PoolInfo {
+                pool_addr: "0xbbb".into(),
+                fee_bps: 3000,
+            },
         ];
         let json = serde_json::to_string(&arr).unwrap();
         let back: Vec<V3PoolInfo> = serde_json::from_str(&json).unwrap();
@@ -365,7 +402,10 @@ mod tests {
     #[test]
     fn v3_slot0_key_layout() {
         let key = key_v3_slot0(1, "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640");
-        assert_eq!(key, "arbx:v3_slot0:1:0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640");
+        assert_eq!(
+            key,
+            "arbx:v3_slot0:1:0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640"
+        );
     }
 
     #[test]

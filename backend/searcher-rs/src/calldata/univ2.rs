@@ -10,14 +10,24 @@
 //!   swapExactTokensForTokensSupportingFeeOnTransferTokens  0x5c11d795
 //!   swapExactETHForTokensSupportingFeeOnTransferTokens     0xb6f9de95
 //!   swapExactTokensForETHSupportingFeeOnTransferTokens     0x791ac947
+//!
+//! ## Phase 1 fields
+//!
+//! All V2 decoders now populate `path_tokens` (full address array from calldata),
+//! `path_fees_bps` (30 bps per hop — Uniswap V2 protocol invariant, R8 exception),
+//! `exact_mode` (ExactIn / ExactOut per selector), and `protocol_type` (V2).
 
-use super::{DecodeFailReason, DecodedSwap};
-use ethers::abi::{decode as abi_decode, ParamType};
+use super::{DecodeFailReason, DecodedSwap, ProtocolType, SwapExactMode};
+use ethers::abi::{decode as abi_decode, ParamType, Token};
 use ethers::types::{Address, U256};
 
+/// Uniswap V2 fixed LP fee in basis points (0.30%).
+/// This is a protocol-level constant, not fabricated — R8 exception documented.
+const V2_FEE_BPS: u32 = 30;
+
 const WETH_MAINNET: [u8; 20] = [
-    0xc0, 0x2a, 0xaa, 0x39, 0xb2, 0x23, 0xfe, 0x8d, 0x0a, 0x0e,
-    0x5c, 0x4f, 0x27, 0xea, 0xd9, 0x08, 0x3c, 0x75, 0x6c, 0xc2,
+    0xc0, 0x2a, 0xaa, 0x39, 0xb2, 0x23, 0xfe, 0x8d, 0x0a, 0x0e, 0x5c, 0x4f, 0x27, 0xea, 0xd9, 0x08,
+    0x3c, 0x75, 0x6c, 0xc2,
 ];
 
 pub fn decode(selector: [u8; 4], body: &[u8]) -> Result<DecodedSwap, DecodeFailReason> {
@@ -44,6 +54,12 @@ fn selector_hex(s: [u8; 4]) -> String {
     format!("0x{:02x}{:02x}{:02x}{:02x}", s[0], s[1], s[2], s[3])
 }
 
+/// Extract ordered `Vec<Address>` from an ABI-encoded `address[]` token.
+fn extract_path(path_token: &Token) -> Option<Vec<Address>> {
+    let arr = path_token.clone().into_array()?;
+    arr.into_iter().map(|t| t.into_address()).collect()
+}
+
 fn decode_exact_in_tokens_for_tokens(
     body: &[u8],
     selector: [u8; 4],
@@ -62,17 +78,31 @@ fn decode_exact_in_tokens_for_tokens(
     )
     .map_err(|_| DecodeFailReason::AbiDecodeError)?;
 
-    let amount_in = tokens.first().and_then(|t| t.clone().into_uint()).ok_or(DecodeFailReason::AbiDecodeError)?;
-    let min_out   = tokens.get(1).and_then(|t| t.clone().into_uint()).ok_or(DecodeFailReason::AbiDecodeError)?;
-    let path      = tokens.get(2).and_then(|t| t.clone().into_array()).ok_or(DecodeFailReason::AbiDecodeError)?;
-    let to        = tokens.get(3).and_then(|t| t.clone().into_address()).ok_or(DecodeFailReason::AbiDecodeError)?;
-    let deadline  = tokens.get(4).and_then(|t| t.clone().into_uint()).ok_or(DecodeFailReason::AbiDecodeError)?;
+    let amount_in = tokens
+        .first()
+        .and_then(|t| t.clone().into_uint())
+        .ok_or(DecodeFailReason::AbiDecodeError)?;
+    let min_out = tokens
+        .get(1)
+        .and_then(|t| t.clone().into_uint())
+        .ok_or(DecodeFailReason::AbiDecodeError)?;
+    let path_token = tokens.get(2).ok_or(DecodeFailReason::AbiDecodeError)?;
+    let path = extract_path(path_token).ok_or(DecodeFailReason::AbiDecodeError)?;
+    let to = tokens
+        .get(3)
+        .and_then(|t| t.clone().into_address())
+        .ok_or(DecodeFailReason::AbiDecodeError)?;
+    let deadline = tokens
+        .get(4)
+        .and_then(|t| t.clone().into_uint())
+        .ok_or(DecodeFailReason::AbiDecodeError)?;
 
     if path.len() < 2 {
         return Err(DecodeFailReason::AbiDecodeError);
     }
-    let token_in  = path.first().and_then(|t| t.clone().into_address()).ok_or(DecodeFailReason::AbiDecodeError)?;
-    let token_out = path.last().and_then(|t| t.clone().into_address()).ok_or(DecodeFailReason::AbiDecodeError)?;
+    let token_in = *path.first().ok_or(DecodeFailReason::AbiDecodeError)?;
+    let token_out = *path.last().ok_or(DecodeFailReason::AbiDecodeError)?;
+    let hop_count = path.len() - 1;
 
     Ok(DecodedSwap {
         router: "uniswap-v2",
@@ -84,6 +114,10 @@ fn decode_exact_in_tokens_for_tokens(
         deadline,
         recipient: to,
         selector_hex: selector_hex(selector),
+        path_tokens: path,
+        path_fees_bps: vec![V2_FEE_BPS; hop_count],
+        exact_mode: SwapExactMode::ExactIn,
+        protocol_type: ProtocolType::V2,
     })
 }
 
@@ -103,17 +137,31 @@ fn decode_exact_out_tokens_for_tokens(
         body,
     )
     .map_err(|_| DecodeFailReason::AbiDecodeError)?;
-    let amount_out  = tokens.first().and_then(|t| t.clone().into_uint()).ok_or(DecodeFailReason::AbiDecodeError)?;
-    let amount_in_max = tokens.get(1).and_then(|t| t.clone().into_uint()).ok_or(DecodeFailReason::AbiDecodeError)?;
-    let path = tokens.get(2).and_then(|t| t.clone().into_array()).ok_or(DecodeFailReason::AbiDecodeError)?;
-    let to   = tokens.get(3).and_then(|t| t.clone().into_address()).ok_or(DecodeFailReason::AbiDecodeError)?;
-    let deadline = tokens.get(4).and_then(|t| t.clone().into_uint()).ok_or(DecodeFailReason::AbiDecodeError)?;
+    let amount_out = tokens
+        .first()
+        .and_then(|t| t.clone().into_uint())
+        .ok_or(DecodeFailReason::AbiDecodeError)?;
+    let amount_in_max = tokens
+        .get(1)
+        .and_then(|t| t.clone().into_uint())
+        .ok_or(DecodeFailReason::AbiDecodeError)?;
+    let path_token = tokens.get(2).ok_or(DecodeFailReason::AbiDecodeError)?;
+    let path = extract_path(path_token).ok_or(DecodeFailReason::AbiDecodeError)?;
+    let to = tokens
+        .get(3)
+        .and_then(|t| t.clone().into_address())
+        .ok_or(DecodeFailReason::AbiDecodeError)?;
+    let deadline = tokens
+        .get(4)
+        .and_then(|t| t.clone().into_uint())
+        .ok_or(DecodeFailReason::AbiDecodeError)?;
 
     if path.len() < 2 {
         return Err(DecodeFailReason::AbiDecodeError);
     }
-    let token_in  = path.first().and_then(|t| t.clone().into_address()).ok_or(DecodeFailReason::AbiDecodeError)?;
-    let token_out = path.last().and_then(|t| t.clone().into_address()).ok_or(DecodeFailReason::AbiDecodeError)?;
+    let token_in = *path.first().ok_or(DecodeFailReason::AbiDecodeError)?;
+    let token_out = *path.last().ok_or(DecodeFailReason::AbiDecodeError)?;
+    let hop_count = path.len() - 1;
 
     Ok(DecodedSwap {
         router: "uniswap-v2",
@@ -125,6 +173,10 @@ fn decode_exact_out_tokens_for_tokens(
         deadline,
         recipient: to,
         selector_hex: selector_hex(selector),
+        path_tokens: path,
+        path_fees_bps: vec![V2_FEE_BPS; hop_count],
+        exact_mode: SwapExactMode::ExactOut,
+        protocol_type: ProtocolType::V2,
     })
 }
 
@@ -132,7 +184,7 @@ fn decode_exact_in_eth_for_tokens(
     body: &[u8],
     selector: [u8; 4],
 ) -> Result<DecodedSwap, DecodeFailReason> {
-    // (uint256 amountOutMin, address[] path, address to, uint256 deadline); amountIn = msg.value (from tx.value)
+    // (uint256 amountOutMin, address[] path, address to, uint256 deadline); amountIn = msg.value
     let tokens = abi_decode(
         &[
             ParamType::Uint(256),
@@ -143,18 +195,29 @@ fn decode_exact_in_eth_for_tokens(
         body,
     )
     .map_err(|_| DecodeFailReason::AbiDecodeError)?;
-    let min_out   = tokens.first().and_then(|t| t.clone().into_uint()).ok_or(DecodeFailReason::AbiDecodeError)?;
-    let path      = tokens.get(1).and_then(|t| t.clone().into_array()).ok_or(DecodeFailReason::AbiDecodeError)?;
-    let to        = tokens.get(2).and_then(|t| t.clone().into_address()).ok_or(DecodeFailReason::AbiDecodeError)?;
-    let deadline  = tokens.get(3).and_then(|t| t.clone().into_uint()).ok_or(DecodeFailReason::AbiDecodeError)?;
+    let min_out = tokens
+        .first()
+        .and_then(|t| t.clone().into_uint())
+        .ok_or(DecodeFailReason::AbiDecodeError)?;
+    let path_token = tokens.get(1).ok_or(DecodeFailReason::AbiDecodeError)?;
+    let path = extract_path(path_token).ok_or(DecodeFailReason::AbiDecodeError)?;
+    let to = tokens
+        .get(2)
+        .and_then(|t| t.clone().into_address())
+        .ok_or(DecodeFailReason::AbiDecodeError)?;
+    let deadline = tokens
+        .get(3)
+        .and_then(|t| t.clone().into_uint())
+        .ok_or(DecodeFailReason::AbiDecodeError)?;
     if path.len() < 2 {
         return Err(DecodeFailReason::AbiDecodeError);
     }
-    // amount_in comes from tx.value; caller fills this post-decode. For now we record 0 and note it.
-    let token_in  = path.first().and_then(|t| t.clone().into_address()).ok_or(DecodeFailReason::AbiDecodeError)?;
-    // Normally path[0] is WETH for these ETH→tokens functions; left as-is.
+    // path[0] is WETH for ETH→tokens swaps.
     let _weth = Address::from(WETH_MAINNET);
-    let token_out = path.last().and_then(|t| t.clone().into_address()).ok_or(DecodeFailReason::AbiDecodeError)?;
+    let token_in = *path.first().ok_or(DecodeFailReason::AbiDecodeError)?;
+    let token_out = *path.last().ok_or(DecodeFailReason::AbiDecodeError)?;
+    let hop_count = path.len() - 1;
+
     Ok(DecodedSwap {
         router: "uniswap-v2",
         token_in,
@@ -165,5 +228,131 @@ fn decode_exact_in_eth_for_tokens(
         deadline,
         recipient: to,
         selector_hex: selector_hex(selector),
+        path_tokens: path,
+        path_fees_bps: vec![V2_FEE_BPS; hop_count],
+        exact_mode: SwapExactMode::ExactIn,
+        protocol_type: ProtocolType::V2,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use ethers::abi::{encode, Token};
+    use ethers::types::U256;
+
+    fn addr(n: u64) -> Address {
+        Address::from_low_u64_be(n)
+    }
+
+    fn v2_exact_in_calldata(path: Vec<Address>, amount_in: u64, min_out: u64) -> Vec<u8> {
+        encode(&[
+            Token::Uint(U256::from(amount_in)),
+            Token::Uint(U256::from(min_out)),
+            Token::Array(path.iter().map(|a| Token::Address(*a)).collect()),
+            Token::Address(addr(0xCC)),
+            Token::Uint(U256::from(9999u32)),
+        ])
+    }
+
+    fn v2_exact_out_calldata(path: Vec<Address>, amount_out: u64, amount_in_max: u64) -> Vec<u8> {
+        encode(&[
+            Token::Uint(U256::from(amount_out)),
+            Token::Uint(U256::from(amount_in_max)),
+            Token::Array(path.iter().map(|a| Token::Address(*a)).collect()),
+            Token::Address(addr(0xCC)),
+            Token::Uint(U256::from(9999u32)),
+        ])
+    }
+
+    // ── V2 exact-in, 2-token path: path_tokens preserved, 1 fee entry = 30 bps ──
+
+    #[test]
+    fn v2_exact_in_two_tokens_path_and_fees() {
+        let tin = addr(0xA);
+        let tout = addr(0xB);
+        let body = v2_exact_in_calldata(vec![tin, tout], 1_000, 900);
+        let decoded = decode([0x38, 0xed, 0x17, 0x39], &body).unwrap();
+
+        assert_eq!(decoded.path_tokens, vec![tin, tout]);
+        assert_eq!(decoded.path_fees_bps, vec![30]);
+        assert_eq!(decoded.exact_mode, SwapExactMode::ExactIn);
+        assert_eq!(decoded.protocol_type, ProtocolType::V2);
+    }
+
+    // ── V2 exact-in, 3-token path: 2 fee entries ────────────────────────────
+
+    #[test]
+    fn v2_exact_in_three_tokens_two_fee_entries() {
+        let tin = addr(0xA);
+        let tmid = addr(0xB);
+        let tout = addr(0xC);
+        let body = v2_exact_in_calldata(vec![tin, tmid, tout], 5_000, 4_500);
+        let decoded = decode([0x38, 0xed, 0x17, 0x39], &body).unwrap();
+
+        assert_eq!(decoded.path_tokens, vec![tin, tmid, tout]);
+        assert_eq!(
+            decoded.path_fees_bps.len(),
+            2,
+            "3-token path → 2 fee entries"
+        );
+        assert_eq!(decoded.path_fees_bps, vec![30, 30]);
+        assert_eq!(decoded.exact_mode, SwapExactMode::ExactIn);
+    }
+
+    // ── V2 exact-out: ExactOut mode, same fee logic ─────────────────────────
+
+    #[test]
+    fn v2_exact_out_path_and_fees() {
+        let tin = addr(0xA);
+        let tout = addr(0xB);
+        let body = v2_exact_out_calldata(vec![tin, tout], 900, 1_000);
+        let decoded = decode([0x88, 0x03, 0xdb, 0xee], &body).unwrap();
+
+        assert_eq!(decoded.path_tokens, vec![tin, tout]);
+        assert_eq!(decoded.path_fees_bps, vec![30]);
+        assert_eq!(decoded.exact_mode, SwapExactMode::ExactOut);
+        assert_eq!(decoded.protocol_type, ProtocolType::V2);
+    }
+
+    // ── V2 ETH-in: amount_in = 0 (caller fills from tx.value) ──────────────
+
+    #[test]
+    fn v2_eth_in_path_and_fees() {
+        let weth = addr(0xEEEE);
+        let usdc = addr(0xFFFF);
+        let body = encode(&[
+            Token::Uint(U256::from(500u64)),
+            Token::Array(vec![Token::Address(weth), Token::Address(usdc)]),
+            Token::Address(addr(0xABCD)),
+            Token::Uint(U256::from(9999u32)),
+        ]);
+        let decoded = decode([0x7f, 0xf3, 0x6a, 0xb5], &body).unwrap();
+
+        assert_eq!(decoded.path_tokens, vec![weth, usdc]);
+        assert_eq!(decoded.path_fees_bps, vec![30]);
+        assert_eq!(decoded.amount_in, U256::zero()); // caller fills from tx.value
+        assert_eq!(decoded.exact_mode, SwapExactMode::ExactIn);
+    }
+
+    // ── path_fees_bps.len() == path_tokens.len() - 1 invariant ─────────────
+
+    #[test]
+    fn fee_bps_length_invariant() {
+        for hop_count in 1usize..=4 {
+            let path: Vec<Address> = (0..=hop_count as u64).map(addr).collect();
+            let body = v2_exact_in_calldata(path.clone(), 1_000, 900);
+            let decoded = decode([0x38, 0xed, 0x17, 0x39], &body).unwrap();
+            assert_eq!(
+                decoded.path_fees_bps.len(),
+                decoded.path_tokens.len() - 1,
+                "fee_bps.len() must equal path_tokens.len()-1 for hop_count={hop_count}"
+            );
+        }
+    }
 }

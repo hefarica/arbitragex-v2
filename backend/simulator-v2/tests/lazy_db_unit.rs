@@ -58,14 +58,24 @@ fn cache_hit_returns_seeded_account_without_rpc() {
 
     // Seed the cache directly (simulates a previously-resolved RPC result).
     seed_account(&db, addr, info.clone());
-    assert_eq!(account_cache_len(&db), 1, "cache should have 1 entry after seed");
+    assert_eq!(
+        account_cache_len(&db),
+        1,
+        "cache should have 1 entry after seed"
+    );
 
     // basic() should return the cached value without calling the provider.
     let result = db.basic(addr).expect("basic() should succeed on cache hit");
     let returned_info = result.expect("seeded account should be Some");
 
-    assert_eq!(returned_info.balance, info.balance, "balance must match seeded value");
-    assert_eq!(returned_info.nonce, info.nonce, "nonce must match seeded value");
+    assert_eq!(
+        returned_info.balance, info.balance,
+        "balance must match seeded value"
+    );
+    assert_eq!(
+        returned_info.nonce, info.nonce,
+        "nonce must match seeded value"
+    );
 
     // Cache length must remain 1 — no duplicate insertion.
     assert_eq!(
@@ -84,8 +94,8 @@ fn cache_hit_returns_seeded_account_without_rpc() {
 // ---------------------------------------------------------------------------
 #[test]
 fn second_call_same_address_does_not_grow_cache() {
-    let mut db = LazyDb::new(UNREACHABLE_RPC, Some(PINNED_BLOCK))
-        .expect("LazyDb::new should succeed");
+    let mut db =
+        LazyDb::new(UNREACHABLE_RPC, Some(PINNED_BLOCK)).expect("LazyDb::new should succeed");
 
     let addr = make_address(0x02);
     seed_account(&db, addr, make_account_info(5));
@@ -109,8 +119,8 @@ fn second_call_same_address_does_not_grow_cache() {
 // ---------------------------------------------------------------------------
 #[test]
 fn storage_cache_hit_returns_seeded_value() {
-    let mut db = LazyDb::new(UNREACHABLE_RPC, Some(PINNED_BLOCK))
-        .expect("LazyDb::new should succeed");
+    let mut db =
+        LazyDb::new(UNREACHABLE_RPC, Some(PINNED_BLOCK)).expect("LazyDb::new should succeed");
 
     let addr = make_address(0x10);
     let slot = U256::from(5u64);
@@ -119,7 +129,9 @@ fn storage_cache_hit_returns_seeded_value() {
     seed_storage(&db, addr, slot, value);
     assert_eq!(storage_cache_len(&db), 1);
 
-    let result = db.storage(addr, slot).expect("storage() should succeed on cache hit");
+    let result = db
+        .storage(addr, slot)
+        .expect("storage() should succeed on cache hit");
     assert_eq!(result, value, "storage cache hit must return seeded value");
     assert_eq!(
         storage_cache_len(&db),
@@ -144,8 +156,8 @@ fn storage_cache_hit_returns_seeded_value() {
 // ---------------------------------------------------------------------------
 #[test]
 fn block_hash_overflow_returns_keccak_empty() {
-    let mut db = LazyDb::new(UNREACHABLE_RPC, Some(PINNED_BLOCK))
-        .expect("LazyDb::new should succeed");
+    let mut db =
+        LazyDb::new(UNREACHABLE_RPC, Some(PINNED_BLOCK)).expect("LazyDb::new should succeed");
 
     // U256 value larger than u64::MAX.
     let huge_number = U256::from(u64::MAX) + U256::from(1u64);
@@ -162,8 +174,8 @@ fn block_hash_overflow_returns_keccak_empty() {
 // ---------------------------------------------------------------------------
 #[test]
 fn block_hash_cache_hit_returns_seeded_hash() {
-    let mut db = LazyDb::new(UNREACHABLE_RPC, Some(PINNED_BLOCK))
-        .expect("LazyDb::new should succeed");
+    let mut db =
+        LazyDb::new(UNREACHABLE_RPC, Some(PINNED_BLOCK)).expect("LazyDb::new should succeed");
 
     let block_num: u64 = 12_345_678;
     let expected_hash = B256::new([0xABu8; 32]);
@@ -195,15 +207,18 @@ fn block_hash_cache_hit_returns_seeded_hash() {
 // ---------------------------------------------------------------------------
 #[test]
 fn code_by_hash_returns_empty_bytecode_not_error() {
-    let mut db = LazyDb::new(UNREACHABLE_RPC, Some(PINNED_BLOCK))
-        .expect("LazyDb::new should succeed");
+    let mut db =
+        LazyDb::new(UNREACHABLE_RPC, Some(PINNED_BLOCK)).expect("LazyDb::new should succeed");
 
     let dummy_hash = B256::new([0x42u8; 32]);
     let result = db
         .code_by_hash(dummy_hash)
         .expect("code_by_hash must return Ok, never Err");
 
-    assert!(result.is_empty(), "code_by_hash fallback should return empty Bytecode");
+    assert!(
+        result.is_empty(),
+        "code_by_hash fallback should return empty Bytecode"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -211,13 +226,17 @@ fn code_by_hash_returns_empty_bytecode_not_error() {
 // ---------------------------------------------------------------------------
 #[test]
 fn multiple_accounts_occupy_separate_cache_slots() {
-    let mut db = LazyDb::new(UNREACHABLE_RPC, Some(PINNED_BLOCK))
-        .expect("LazyDb::new should succeed");
+    let mut db =
+        LazyDb::new(UNREACHABLE_RPC, Some(PINNED_BLOCK)).expect("LazyDb::new should succeed");
 
     for i in 1u8..=5 {
         seed_account(&db, make_address(i), make_account_info(u64::from(i)));
     }
-    assert_eq!(account_cache_len(&db), 5, "five distinct addresses => five cache entries");
+    assert_eq!(
+        account_cache_len(&db),
+        5,
+        "five distinct addresses => five cache entries"
+    );
 
     for i in 1u8..=5 {
         let result = db
@@ -225,7 +244,10 @@ fn multiple_accounts_occupy_separate_cache_slots() {
             .expect("basic() on seeded address")
             .expect("seeded address must be Some");
         let expected_balance = U256::from(u64::from(i)) * U256::from(10u128.pow(18));
-        assert_eq!(result.balance, expected_balance, "account {i} balance mismatch");
+        assert_eq!(
+            result.balance, expected_balance,
+            "account {i} balance mismatch"
+        );
     }
     // Cache length must not have grown (all hits).
     assert_eq!(account_cache_len(&db), 5);

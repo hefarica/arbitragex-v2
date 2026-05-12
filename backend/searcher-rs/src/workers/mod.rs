@@ -117,9 +117,15 @@ impl WorkerOrchestrator {
         db: Option<PgPool>,
         redis: redis::aio::ConnectionManager,
     ) {
-        info!(event = "worker_orchestrator.boot", chain_id, god_protocol = self.god_protocol_active, kernel_bypass = self.kernel_bypass_enabled);
+        info!(
+            event = "worker_orchestrator.boot",
+            chain_id,
+            god_protocol = self.god_protocol_active,
+            kernel_bypass = self.kernel_bypass_enabled
+        );
 
-        let rpc_health_ms = read_interval_ms_env("RPC_HEALTH_INTERVAL_MS", DEFAULT_RPC_HEALTH_INTERVAL_MS);
+        let rpc_health_ms =
+            read_interval_ms_env("RPC_HEALTH_INTERVAL_MS", DEFAULT_RPC_HEALTH_INTERVAL_MS);
         let rpc_worker = rpc_health_worker::RpcHealthWorker::new(rpc_health_ms);
         tokio::spawn(async move {
             rpc_worker.start().await;
@@ -142,7 +148,11 @@ impl WorkerOrchestrator {
                     .run(gas_pool, gas_redis)
                     .await;
             });
-            info!(event = "worker_orchestrator.gas_oracle_started", chain_id, interval_ms = gas_oracle_ms);
+            info!(
+                event = "worker_orchestrator.gas_oracle_started",
+                chain_id,
+                interval_ms = gas_oracle_ms
+            );
         } else {
             info!(
                 event = "worker_orchestrator.gas_oracle_skipped",
@@ -153,7 +163,8 @@ impl WorkerOrchestrator {
         }
 
         if let (Some(db_pool), Some(pool)) = (db, rpc_pool) {
-            let pool_sync_ms = read_interval_ms_env("POOL_SYNC_INTERVAL_MS", DEFAULT_POOL_SYNC_INTERVAL_MS);
+            let pool_sync_ms =
+                read_interval_ms_env("POOL_SYNC_INTERVAL_MS", DEFAULT_POOL_SYNC_INTERVAL_MS);
             info!(
                 event = "worker_orchestrator.pool_sync_interval",
                 chain_id,
@@ -169,7 +180,10 @@ impl WorkerOrchestrator {
             });
             info!(event = "worker_orchestrator.pool_sync_started", chain_id);
         } else {
-            info!(event = "worker_orchestrator.pool_sync_skipped", reason = "no_db_pool_or_rpc");
+            info!(
+                event = "worker_orchestrator.pool_sync_skipped",
+                reason = "no_db_pool_or_rpc"
+            );
         }
     }
 }

@@ -71,6 +71,7 @@ fn short_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::calldata::{ProtocolType, SwapExactMode};
     use ethers::types::{Address, U256};
 
     #[test]
@@ -81,16 +82,22 @@ mod tests {
             tx_from: [0xab; 20],
             tx_value: U256::zero(),
         };
+        let tin = Address::from_low_u64_be(0xc0c0);
+        let tout = Address::from_low_u64_be(0xdada);
         let swap = DecodedSwap {
             router: "uniswap-v2",
-            token_in: Address::from_low_u64_be(0xc0c0),
-            token_out: Address::from_low_u64_be(0xdada),
+            token_in: tin,
+            token_out: tout,
             amount_in: U256::from(1_000_000_000_000_000_000u128),
             min_amount_out: U256::from(950_000_000u128),
             path_len: 2,
             deadline: U256::from(0xdeadbeefu32),
             recipient: Address::from_low_u64_be(0xbebe),
             selector_hex: "0x38ed1739".into(),
+            path_tokens: vec![tin, tout],
+            path_fees_bps: vec![30],
+            exact_mode: SwapExactMode::ExactIn,
+            protocol_type: ProtocolType::V2,
         };
         let o = build_dex_arb_candidate(&ctx, &swap);
         assert_eq!(o.chain_id, 1);
@@ -109,16 +116,22 @@ mod tests {
             tx_from: [0u8; 20],
             tx_value: U256::from(500_000u64),
         };
+        let tin = Address::from_low_u64_be(0xc0c0);
+        let tout = Address::from_low_u64_be(0xdada);
         let swap = DecodedSwap {
             router: "uniswap-v2",
-            token_in: Address::from_low_u64_be(0xc0c0),
-            token_out: Address::from_low_u64_be(0xdada),
+            token_in: tin,
+            token_out: tout,
             amount_in: U256::zero(),
             min_amount_out: U256::from(1u8),
             path_len: 2,
             deadline: U256::from(0u8),
             recipient: Address::from_low_u64_be(1),
             selector_hex: "0x7ff36ab5".into(),
+            path_tokens: vec![tin, tout],
+            path_fees_bps: vec![30],
+            exact_mode: SwapExactMode::ExactIn,
+            protocol_type: ProtocolType::V2,
         };
         let o = build_dex_arb_candidate(&ctx, &swap);
         assert_eq!(o.amount_in_wei, "500000");
@@ -132,20 +145,28 @@ mod tests {
             tx_from: [0xab; 20],
             tx_value: U256::zero(),
         };
+        let tin = Address::from_low_u64_be(0xc0c0);
+        let tout = Address::from_low_u64_be(0xdada);
         let swap = DecodedSwap {
             router: "uniswap-v2",
-            token_in: Address::from_low_u64_be(0xc0c0),
-            token_out: Address::from_low_u64_be(0xdada),
+            token_in: tin,
+            token_out: tout,
             amount_in: U256::from(1_000_000_000_000_000_000u128),
             min_amount_out: U256::from(950_000_000u128),
             path_len: 2,
             deadline: U256::from(0xdeadbeefu32),
             recipient: Address::from_low_u64_be(0xbebe),
             selector_hex: "0x38ed1739".into(),
+            path_tokens: vec![tin, tout],
+            path_fees_bps: vec![30],
+            exact_mode: SwapExactMode::ExactIn,
+            protocol_type: ProtocolType::V2,
         };
         let opp = build_dex_arb_candidate(&ctx, &swap);
-        assert_eq!(opp.expected_profit_usd, None,
-                   "R8 fail-honest: searcher must emit NULL for profit until simulator computes");
+        assert_eq!(
+            opp.expected_profit_usd, None,
+            "R8 fail-honest: searcher must emit NULL for profit until simulator computes"
+        );
         assert_eq!(opp.roi_pct, None);
         assert_eq!(opp.risk_score, None);
     }

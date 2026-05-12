@@ -59,7 +59,9 @@ const MIGRATION_034_TOKENS: &str =
 
 /// Apply the minimum migrations required for `tokens` table tests.
 async fn apply_token_migrations(pool: &sqlx::PgPool) -> sqlx::Result<()> {
-    sqlx::raw_sql(TEST_MIGRATION_001_ROLES).execute(pool).await?;
+    sqlx::raw_sql(TEST_MIGRATION_001_ROLES)
+        .execute(pool)
+        .await?;
     sqlx::raw_sql(MIGRATION_034_TOKENS).execute(pool).await?;
     Ok(())
 }
@@ -87,12 +89,11 @@ async fn upsert_token_inserts_lowercase_address(pool: sqlx::PgPool) -> sqlx::Res
     .await
     .unwrap();
 
-    let row = sqlx::query(
-        "SELECT address, symbol, decimals, resolved_via FROM tokens WHERE chain_id=$1",
-    )
-    .bind(1_i32)
-    .fetch_one(&pool)
-    .await?;
+    let row =
+        sqlx::query("SELECT address, symbol, decimals, resolved_via FROM tokens WHERE chain_id=$1")
+            .bind(1_i32)
+            .fetch_one(&pool)
+            .await?;
     let address: String = row.get("address");
     let symbol: Option<String> = row.get("symbol");
     let decimals: Option<i16> = row.get("decimals");
@@ -196,11 +197,9 @@ async fn upsert_promotes_failed_to_onchain_full(pool: sqlx::PgPool) -> sqlx::Res
     .await
     .unwrap();
 
-    let r1 = sqlx::query(
-        "SELECT resolved_via, resolved_at FROM tokens WHERE chain_id=1",
-    )
-    .fetch_one(&pool)
-    .await?;
+    let r1 = sqlx::query("SELECT resolved_via, resolved_at FROM tokens WHERE chain_id=1")
+        .fetch_one(&pool)
+        .await?;
     let resolved_via_1: String = r1.get("resolved_via");
     let resolved_at_1: chrono::DateTime<chrono::Utc> = r1.get("resolved_at");
     assert_eq!(resolved_via_1, "failed");
@@ -254,9 +253,7 @@ async fn upsert_promotes_failed_to_onchain_full(pool: sqlx::PgPool) -> sqlx::Res
 
 /// Token never seen → needs resolution.
 #[sqlx::test(migrations = false)]
-async fn needs_resolution_returns_true_for_unknown_token(
-    pool: sqlx::PgPool,
-) -> sqlx::Result<()> {
+async fn needs_resolution_returns_true_for_unknown_token(pool: sqlx::PgPool) -> sqlx::Result<()> {
     apply_token_migrations(&pool).await?;
     let addr = Address::from_str(&format!("0x{}", "1".repeat(40))).unwrap();
     assert!(
@@ -269,9 +266,7 @@ async fn needs_resolution_returns_true_for_unknown_token(
 
 /// Token resolved via onchain_full → does NOT need resolution.
 #[sqlx::test(migrations = false)]
-async fn needs_resolution_returns_false_for_resolved_token(
-    pool: sqlx::PgPool,
-) -> sqlx::Result<()> {
+async fn needs_resolution_returns_false_for_resolved_token(pool: sqlx::PgPool) -> sqlx::Result<()> {
     apply_token_migrations(&pool).await?;
     let addr = Address::from_str(&format!("0x{}", "2".repeat(40))).unwrap();
     upsert_token(
@@ -332,9 +327,7 @@ async fn needs_resolution_returns_false_for_recently_failed(
 /// using `NOW() - INTERVAL '7 days'`, so backdating `resolved_at` via SQL
 /// correctly triggers the retry condition regardless of the Rust process clock.
 #[sqlx::test(migrations = false)]
-async fn needs_resolution_returns_true_for_old_failed(
-    pool: sqlx::PgPool,
-) -> sqlx::Result<()> {
+async fn needs_resolution_returns_true_for_old_failed(pool: sqlx::PgPool) -> sqlx::Result<()> {
     apply_token_migrations(&pool).await?;
     let addr = Address::from_str(&format!("0x{}", "4".repeat(40))).unwrap();
     upsert_token(
@@ -353,11 +346,9 @@ async fn needs_resolution_returns_true_for_old_failed(
     // Backdate resolved_at to 8 days ago via direct SQL to simulate an expired TTL.
     // Because needs_resolution compares against PG's NOW(), this reliably triggers
     // the retry condition without requiring the test to actually wait 7 days.
-    sqlx::query(
-        "UPDATE tokens SET resolved_at = NOW() - INTERVAL '8 days' WHERE chain_id=1",
-    )
-    .execute(&pool)
-    .await?;
+    sqlx::query("UPDATE tokens SET resolved_at = NOW() - INTERVAL '8 days' WHERE chain_id=1")
+        .execute(&pool)
+        .await?;
     assert!(
         token_enricher::persistence::needs_resolution(&pool, 1, addr)
             .await

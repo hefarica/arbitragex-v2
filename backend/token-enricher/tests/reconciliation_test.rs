@@ -55,11 +55,15 @@ const MIGRATION_034_TOKENS: &str =
 /// `opportunities`, then the ALTER that adds cross-chain columns (033),
 /// then `tokens`.
 async fn apply_reconciliation_migrations(pool: &PgPool) -> sqlx::Result<()> {
-    sqlx::raw_sql(TEST_MIGRATION_001_ROLES).execute(pool).await?;
+    sqlx::raw_sql(TEST_MIGRATION_001_ROLES)
+        .execute(pool)
+        .await?;
     sqlx::raw_sql(MIGRATION_003_OPPORTUNITIES)
         .execute(pool)
         .await?;
-    sqlx::raw_sql(MIGRATION_033_CROSS_CHAIN).execute(pool).await?;
+    sqlx::raw_sql(MIGRATION_033_CROSS_CHAIN)
+        .execute(pool)
+        .await?;
     sqlx::raw_sql(MIGRATION_034_TOKENS).execute(pool).await?;
     Ok(())
 }
@@ -222,12 +226,10 @@ async fn skips_recent_failed(pool: PgPool) -> sqlx::Result<()> {
 
     // Token failed recently — `resolved_at` defaults to NOW(), well within
     // the 7-day window.
-    sqlx::query(
-        r#"INSERT INTO tokens (chain_id, address, resolved_via) VALUES (1, $1, 'failed')"#,
-    )
-    .bind(lc)
-    .execute(&pool)
-    .await?;
+    sqlx::query(r#"INSERT INTO tokens (chain_id, address, resolved_via) VALUES (1, $1, 'failed')"#)
+        .bind(lc)
+        .execute(&pool)
+        .await?;
 
     let unresolved = find_unresolved_tokens(&pool, 100).await.unwrap();
     assert!(
@@ -318,12 +320,16 @@ async fn cross_chain_token_out_routes_to_destination_chain(pool: sqlx::PgPool) -
 
     // token_in lives on source chain 1.
     assert!(
-        unresolved.iter().any(|(c, a)| *c == 1 && a == token_in_addr),
+        unresolved
+            .iter()
+            .any(|(c, a)| *c == 1 && a == token_in_addr),
         "token_in must be returned with source chain_id=1; got: {unresolved:?}"
     );
     // token_out lives on destination chain 137 (via COALESCE(chain_id_out, chain_id)).
     assert!(
-        unresolved.iter().any(|(c, a)| *c == 137 && a == token_out_addr),
+        unresolved
+            .iter()
+            .any(|(c, a)| *c == 137 && a == token_out_addr),
         "token_out must be returned with destination chain_id_out=137; got: {unresolved:?}"
     );
     Ok(())

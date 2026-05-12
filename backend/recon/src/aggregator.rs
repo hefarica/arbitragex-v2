@@ -43,13 +43,17 @@ pub async fn run_periodic(
 ) {
     let mut ticker = tokio::time::interval(Duration::from_secs(cfg.aggregator_interval_seconds));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    info!(event = "aggregator.started", interval_s = cfg.aggregator_interval_seconds);
+    info!(
+        event = "aggregator.started",
+        interval_s = cfg.aggregator_interval_seconds
+    );
     // Connection manager is cheaply cloneable (Arc-backed).
     let mut redis_opt = redis;
     loop {
         ticker.tick().await;
         let window_end = Utc::now();
-        let window_start = window_end - ChronoDuration::hours(cfg.strategy_score_window_hours as i64);
+        let window_start =
+            window_end - ChronoDuration::hours(cfg.strategy_score_window_hours as i64);
 
         match aggregate_strategy_scores(&pool, window_start, window_end).await {
             Ok(scores) => {
@@ -159,15 +163,15 @@ async fn aggregate_strategy_scores(
 
     Ok(rows
         .into_iter()
-        .map(|(strategy_kind, chain_id, success_rate, revert_rate, sample_count)| {
-            StrategyScoreRow {
+        .map(
+            |(strategy_kind, chain_id, success_rate, revert_rate, sample_count)| StrategyScoreRow {
                 strategy_kind,
                 chain_id,
                 success_rate,
                 revert_rate,
                 sample_count,
-            }
-        })
+            },
+        )
         .collect())
 }
 

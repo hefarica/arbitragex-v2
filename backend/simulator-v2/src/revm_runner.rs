@@ -51,7 +51,11 @@ use crate::{CandidateInput, SimError, SimResult};
 /// # Errors
 /// - `SimError::Reverted(reason)` — EVM executed but reverted.
 /// - `SimError::Provider(msg)` — database fetch or revm environmental error.
-pub fn run<DB>(candidate: &CandidateInput, mut db: DB, effective_block: u64) -> Result<SimResult, SimError>
+pub fn run<DB>(
+    candidate: &CandidateInput,
+    mut db: DB,
+    effective_block: u64,
+) -> Result<SimResult, SimError>
 where
     DB: Database,
     DB::Error: std::fmt::Display,
@@ -82,7 +86,9 @@ where
     let post_state = result_and_state.state;
 
     let (gas_used, output_bytes) = match &execution_result {
-        ExecutionResult::Success { gas_used, output, .. } => {
+        ExecutionResult::Success {
+            gas_used, output, ..
+        } => {
             info!(
                 event = "revm_runner.tx_executed",
                 status = "success",
@@ -136,7 +142,12 @@ where
 /// `candidate.gas_price_wei` is forwarded to `TxEnv.gas_price` so revm
 /// deducts actual gas cost from the caller's balance (CRITICAL #2 fix).
 /// `SimResult.net_profit_wei` is therefore true net-of-gas P&L (G-NET-1).
-fn build_env(candidate: &CandidateInput, caller: Address, to: Address, effective_block: u64) -> Env {
+fn build_env(
+    candidate: &CandidateInput,
+    caller: Address,
+    to: Address,
+    effective_block: u64,
+) -> Env {
     let mut cfg = CfgEnv::default();
     cfg.chain_id = candidate.chain_id;
     cfg.spec_id = SpecId::LATEST;
@@ -170,11 +181,7 @@ fn build_env(candidate: &CandidateInput, caller: Address, to: Address, effective
 /// revm only includes an account in `state` if it was touched during
 /// execution.  If the caller account is absent, its balance is unchanged
 /// (`pre_balance`).
-fn extract_post_balance(
-    caller: &Address,
-    state: &RevmState,
-    pre_balance: U256,
-) -> U256 {
+fn extract_post_balance(caller: &Address, state: &RevmState, pre_balance: U256) -> U256 {
     state
         .get(caller)
         .map(|acc| acc.info.balance)

@@ -32,13 +32,21 @@ pub struct TitanClient {
 impl TitanClient {
     /// Construct from environment. Returns `None` when any required env var is absent.
     pub fn from_env() -> Option<Self> {
-        let url = std::env::var("TITAN_BUILDER_URL").ok().filter(|v| !v.is_empty())?;
-        let auth = std::env::var("TITAN_AUTH_HEADER").ok().filter(|v| !v.is_empty())?;
+        let url = std::env::var("TITAN_BUILDER_URL")
+            .ok()
+            .filter(|v| !v.is_empty())?;
+        let auth = std::env::var("TITAN_AUTH_HEADER")
+            .ok()
+            .filter(|v| !v.is_empty())?;
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(8))
             .build()
             .expect("reqwest client for titan");
-        Some(Self { url, auth_header: auth, http })
+        Some(Self {
+            url,
+            auth_header: auth,
+            http,
+        })
     }
 }
 
@@ -81,12 +89,15 @@ impl RelayBackend for TitanClient {
         debug!(event = "titan.response", status = status.as_u16());
 
         if !status.is_success() {
-            return Err(RelayError::Rejected(format!("http {}: {}", status.as_u16(), text)));
+            return Err(RelayError::Rejected(format!(
+                "http {}: {}",
+                status.as_u16(),
+                text
+            )));
         }
 
-        let parsed: BundleResponse = serde_json::from_str(&text).map_err(|e| {
-            RelayError::Rejected(format!("parse_error: {e} body={text}"))
-        })?;
+        let parsed: BundleResponse = serde_json::from_str(&text)
+            .map_err(|e| RelayError::Rejected(format!("parse_error: {e} body={text}")))?;
 
         if let Some(err) = parsed.error {
             return Err(RelayError::Rejected(format!(

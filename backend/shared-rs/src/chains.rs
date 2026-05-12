@@ -20,10 +20,10 @@ impl RouterKind {
         match self {
             RouterKind::UniswapV2 => "uniswap-v2",
             RouterKind::UniswapV3 => "uniswap-v3",
-            RouterKind::Sushi     => "sushi",
-            RouterKind::Curve     => "curve",
-            RouterKind::Balancer  => "balancer",
-            RouterKind::Unknown   => "unknown",
+            RouterKind::Sushi => "sushi",
+            RouterKind::Curve => "curve",
+            RouterKind::Balancer => "balancer",
+            RouterKind::Unknown => "unknown",
         }
     }
 }
@@ -104,7 +104,9 @@ pub fn routers_for_chain(chain_id: u64) -> &'static [RouterEntry] {
 
 /// Finds a router entry by address (case-insensitive, byte-exact).
 pub fn find_router(chain_id: u64, addr: &[u8; 20]) -> Option<&'static RouterEntry> {
-    routers_for_chain(chain_id).iter().find(|r| &r.address == addr)
+    routers_for_chain(chain_id)
+        .iter()
+        .find(|r| &r.address == addr)
 }
 
 /// Returns the average block time in seconds for a given chain.
@@ -137,13 +139,13 @@ pub fn find_router(chain_id: u64, addr: &[u8; 20]) -> Option<&'static RouterEntr
 /// constant in `prioritization-spine/config_aware.rs`.
 pub fn block_time_s_for_chain(chain_id: u64) -> f64 {
     match chain_id {
-        1     => 12.0,  // Ethereum mainnet (PoS 12s slots)
-        56    => 3.0,   // BNB Smart Chain (PoSA ~3s)
-        137   => 2.0,   // Polygon PoS (~2s)
-        8453  => 2.0,   // Base (OP-Stack 2s slots)
-        42161 => 0.5,   // Arbitrum Nitro: ~0.25s real; 0.5s safety buffer (BE-3.7)
-        10    => 2.0,   // Optimism (OP-Stack 2s slots)
-        _     => 12.0,  // unknown → ETH-equivalent (conservative)
+        1 => 12.0,    // Ethereum mainnet (PoS 12s slots)
+        56 => 3.0,    // BNB Smart Chain (PoSA ~3s)
+        137 => 2.0,   // Polygon PoS (~2s)
+        8453 => 2.0,  // Base (OP-Stack 2s slots)
+        42161 => 0.5, // Arbitrum Nitro: ~0.25s real; 0.5s safety buffer (BE-3.7)
+        10 => 2.0,    // Optimism (OP-Stack 2s slots)
+        _ => 12.0,    // unknown → ETH-equivalent (conservative)
     }
 }
 
@@ -178,13 +180,13 @@ pub fn block_time_s_for_chain(chain_id: u64) -> f64 {
 /// sizing) and is covered by unit tests to prevent silent regression.
 pub fn reorg_buffer_blocks_for_chain(chain_id: u64) -> u32 {
     match chain_id {
-        1     => 12,   // Ethereum: ~2.4 min finality window
-        56    => 15,   // BSC: PoSA; documented reorg incidents
-        137   => 256,  // Polygon: repeated deep-reorg history
-        8453  => 0,    // Base: OP-Stack sequencer, no L2 reorgs
-        42161 => 0,    // Arbitrum Nitro: sequencer, no L2 reorgs
-        10    => 0,    // Optimism: OP-Stack sequencer, no L2 reorgs
-        _     => 12,   // unknown → ETH-equivalent (conservative)
+        1 => 12,    // Ethereum: ~2.4 min finality window
+        56 => 15,   // BSC: PoSA; documented reorg incidents
+        137 => 256, // Polygon: repeated deep-reorg history
+        8453 => 0,  // Base: OP-Stack sequencer, no L2 reorgs
+        42161 => 0, // Arbitrum Nitro: sequencer, no L2 reorgs
+        10 => 0,    // Optimism: OP-Stack sequencer, no L2 reorgs
+        _ => 12,    // unknown → ETH-equivalent (conservative)
     }
 }
 
@@ -213,8 +215,8 @@ mod tests {
     #[test]
     fn univ2_router_mainnet_address_bytes() {
         let expected: [u8; 20] = [
-            0x7a, 0x25, 0x0d, 0x56, 0x30, 0xb4, 0xcf, 0x53, 0x97, 0x39,
-            0xdf, 0x2c, 0x5d, 0xac, 0xb4, 0xc6, 0x59, 0xf2, 0x48, 0x8d,
+            0x7a, 0x25, 0x0d, 0x56, 0x30, 0xb4, 0xcf, 0x53, 0x97, 0x39, 0xdf, 0x2c, 0x5d, 0xac,
+            0xb4, 0xc6, 0x59, 0xf2, 0x48, 0x8d,
         ];
         assert_eq!(UNIV2_ROUTER_MAINNET.address, expected);
     }
@@ -244,12 +246,12 @@ mod tests {
     #[test]
     fn block_time_known_chains() {
         let cases: &[(u64, f64)] = &[
-            (1,     12.0),  // Ethereum
-            (56,    3.0),   // BSC
-            (137,   2.0),   // Polygon
-            (8453,  2.0),   // Base
-            (42161, 0.5),   // Arbitrum (BE-3.7: 0.5s safety buffer; was 0.25s)
-            (10,    2.0),   // Optimism
+            (1, 12.0),    // Ethereum
+            (56, 3.0),    // BSC
+            (137, 2.0),   // Polygon
+            (8453, 2.0),  // Base
+            (42161, 0.5), // Arbitrum (BE-3.7: 0.5s safety buffer; was 0.25s)
+            (10, 2.0),    // Optimism
         ];
         for &(chain_id, expected) in cases {
             let got = block_time_s_for_chain(chain_id);

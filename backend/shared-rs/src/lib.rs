@@ -15,16 +15,16 @@ pub mod config;
 pub mod contracts;
 pub mod health;
 pub mod killswitch;
-pub mod paper_mode;
 pub mod logging;
 pub mod metrics;
+pub mod paper_mode;
 pub mod pre_execute_checklist;
 pub mod price_oracle;
 pub mod rpc_failover;
 pub mod trading_config;
 
 pub use config::{AppConfig, ConfigError};
-pub use health::{ServiceInfo, build_health_router};
+pub use health::{build_health_router, ServiceInfo};
 pub use killswitch::{KillSwitchClient, KillSwitchError, KillSwitchState};
 pub use logging::init_tracing;
 pub use metrics::{init_metrics, metrics_handler};

@@ -10,17 +10,17 @@ use std::str::FromStr;
 
 fn strategy_kind_str(k: &StrategyKind) -> &'static str {
     match k {
-        StrategyKind::DexArb        => "dex_arb",
-        StrategyKind::Triangular    => "triangular",
-        StrategyKind::Backrun       => "backrun",
-        StrategyKind::Liquidation   => "liquidation",
-        StrategyKind::FlashloanArb  => "flashloan_arb",
+        StrategyKind::DexArb => "dex_arb",
+        StrategyKind::Triangular => "triangular",
+        StrategyKind::Backrun => "backrun",
+        StrategyKind::Liquidation => "liquidation",
+        StrategyKind::FlashloanArb => "flashloan_arb",
     }
 }
 
 pub async fn insert_opportunity(pool: &PgPool, o: &Opportunity) -> anyhow::Result<()> {
-    let amount_in_wei = BigDecimal::from_str(&o.amount_in_wei)
-        .context("amount_in_wei to BigDecimal")?;
+    let amount_in_wei =
+        BigDecimal::from_str(&o.amount_in_wei).context("amount_in_wei to BigDecimal")?;
     // GAP-2 fix (2026-05-05): persist `rejection_reason` so the operator
     // can audit WHY each opp was rejected (TokenNotAllowed vs UnknownTokenPrice
     // vs AnomalousMath vs LowLiquidity vs ...). Pre-fix this column existed

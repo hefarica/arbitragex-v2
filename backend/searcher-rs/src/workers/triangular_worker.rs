@@ -46,8 +46,8 @@ use crate::counters::counters;
 use crate::persistence;
 use crate::publisher;
 use crate::reserves::{
-    get_pools_for_pair, get_pools_for_pair_v3, get_reserves, get_token_meta,
-    ReservesEntry, V3PoolInfo,
+    get_pools_for_pair, get_pools_for_pair_v3, get_reserves, get_token_meta, ReservesEntry,
+    V3PoolInfo,
 };
 use chrono::Utc;
 use ethers::types::{Address, U256};
@@ -167,9 +167,9 @@ impl TickStats {
 pub const MVP_CYCLES: &[(&str, &str, &str)] = &[
     ("WETH", "USDC", "DAI"),
     ("WETH", "USDC", "USDT"),
-    ("WETH", "USDT", "DAI"),     // unblocked by migration 037 (DAI/USDT V2)
-    ("WETH", "WBTC", "USDC"),    // unblocked by migration 037 (WBTC/USDC V2)
-    ("USDC", "DAI", "USDT"),     // unblocked by migration 037 (DAI/USDT V2)
+    ("WETH", "USDT", "DAI"),  // unblocked by migration 037 (DAI/USDT V2)
+    ("WETH", "WBTC", "USDC"), // unblocked by migration 037 (WBTC/USDC V2)
+    ("USDC", "DAI", "USDT"),  // unblocked by migration 037 (DAI/USDT V2)
 ];
 
 /// V3-bearing triangular cycles re-introduced 2026-05-07 alongside the V3
@@ -199,7 +199,7 @@ pub const MVP_CYCLES: &[(&str, &str, &str)] = &[
 pub const V3_CYCLES: &[(&str, &str, &str)] = &[
     ("PEPE", "WETH", "USDC"),
     ("SHIB", "WETH", "USDC"),
-    ("MKR",  "WETH", "USDC"),
+    ("MKR", "WETH", "USDC"),
     ("COMP", "WETH", "USDC"),
 ];
 
@@ -242,11 +242,7 @@ pub fn spot_product(reserves: &[(f64, f64)], fee_bps: u32) -> f64 {
 ///
 /// Returns `(U256::zero(), 0)` on degenerate inputs (zero reserves) — the
 /// downstream search treats this as "not profitable here" without panicking.
-pub fn cycle_profit(
-    x: U256,
-    hop_reserves: &[(U256, U256)],
-    fee_bps: u32,
-) -> (U256, i128) {
+pub fn cycle_profit(x: U256, hop_reserves: &[(U256, U256)], fee_bps: u32) -> (U256, i128) {
     if hop_reserves.is_empty() || x.is_zero() {
         return (U256::zero(), 0);
     }
@@ -342,7 +338,11 @@ pub fn golden_section_search(
         }
     }
 
-    let x_star_f = if yc > yd { (a + d) / 2.0 } else { (c + b) / 2.0 };
+    let x_star_f = if yc > yd {
+        (a + d) / 2.0
+    } else {
+        (c + b) / 2.0
+    };
     let x_star = f64_to_u256_clamped(x_star_f);
     let (_, profit) = cycle_profit(x_star, hop_reserves, fee_bps);
     (x_star, profit)
@@ -398,7 +398,10 @@ pub fn clamp_to_cap_wei(
     let result = if x_star < cap_wei { x_star } else { cap_wei };
     // Defensive bound (anti-BUG-3): even if the math above had a subtle bug,
     // the returned value is guaranteed ≤ cap_wei.
-    debug_assert!(result <= cap_wei, "clamp_to_cap_wei produced value > cap_wei");
+    debug_assert!(
+        result <= cap_wei,
+        "clamp_to_cap_wei produced value > cap_wei"
+    );
     Some(result)
 }
 
@@ -423,14 +426,14 @@ fn known_token_address(symbol: &str) -> Option<&'static str> {
         "WETH" => Some("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
         "USDC" => Some("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
         "USDT" => Some("0xdac17f958d2ee523a2206206994597c13d831ec7"),
-        "DAI"  => Some("0x6b175474e89094c44da98b954eedeac495271d0f"),
+        "DAI" => Some("0x6b175474e89094c44da98b954eedeac495271d0f"),
         "WBTC" => Some("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"),
         // Long-tail majors (added 2026-05-07 alongside the long-tail cycles
         // in MVP_CYCLES). All four are in the operator's Tier 1 allowlist
         // applied via Redis HSET on 2026-05-07 with real Coingecko prices.
         "PEPE" => Some("0x6982508145454ce325ddbe47a25d4ec3d2311933"),
         "SHIB" => Some("0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"),
-        "MKR"  => Some("0x9f8f72aa9304c8b593d555f12ef6589cc3a579a2"),
+        "MKR" => Some("0x9f8f72aa9304c8b593d555f12ef6589cc3a579a2"),
         "COMP" => Some("0xc00e94cb662c3520282e6f5717214004a7f26888"),
         _ => None,
     }
@@ -454,7 +457,7 @@ async fn resolve_token(
     let (decimals, is_stable) = match symbol.to_ascii_uppercase().as_str() {
         "WETH" => (18, false),
         "USDC" | "USDT" => (6, true),
-        "DAI"  => (18, true),
+        "DAI" => (18, true),
         "WBTC" => (8, false),
         // Long-tail majors — all use 18 decimals per their on-chain contracts.
         "PEPE" | "SHIB" | "MKR" | "COMP" => (18, false),
@@ -547,7 +550,10 @@ async fn resolve_hop(
         .await
         .ok()?;
     let pool_addr = pools.into_iter().next()?;
-    let entry = get_reserves(redis, chain_id, &pool_addr).await.ok().flatten()?;
+    let entry = get_reserves(redis, chain_id, &pool_addr)
+        .await
+        .ok()
+        .flatten()?;
     let token0 = entry.token0_addr.as_deref()?;
     let swap_in_is_token0 = token0.eq_ignore_ascii_case(token_in_addr);
     Some(HopData {
@@ -595,7 +601,8 @@ async fn resolve_hop_any(
     token_out_addr: &str,
     token_out_sym: &str,
 ) -> Option<HopKind> {
-    if let Some(v2) = resolve_hop(redis, chain_id, token_in_addr, token_in_sym, token_out_sym).await {
+    if let Some(v2) = resolve_hop(redis, chain_id, token_in_addr, token_in_sym, token_out_sym).await
+    {
         return Some(HopKind::V2(v2));
     }
     resolve_hop_v3(
@@ -725,20 +732,23 @@ pub fn evaluate_cycle(input: &EvalInput) -> Option<EvalResult> {
     // plenty. The cap is then re-applied below to enforce the operator's
     // capital constraint.
     let r_in_first_hop = input.hop_reserves[0].0;
-    let search_ceiling = if cap_wei < r_in_first_hop { cap_wei } else { r_in_first_hop };
-    let x_hi = if search_ceiling > x_lo { search_ceiling } else { x_lo };
+    let search_ceiling = if cap_wei < r_in_first_hop {
+        cap_wei
+    } else {
+        r_in_first_hop
+    };
+    let x_hi = if search_ceiling > x_lo {
+        search_ceiling
+    } else {
+        x_lo
+    };
 
     let (x_star, profit_wei) =
         golden_section_search(x_lo, x_hi, &input.hop_reserves, input.fee_bps, 25);
 
     // Defensive cap re-application (anti-BUG-3): no matter what the search
     // found, never exceed the cap.
-    let amount_in = clamp_to_cap_wei(
-        x_star,
-        input.cap_usd,
-        token_a_price,
-        input.token_a_decimals,
-    )?;
+    let amount_in = clamp_to_cap_wei(x_star, input.cap_usd, token_a_price, input.token_a_decimals)?;
     debug_assert!(
         amount_in <= cap_wei,
         "evaluate_cycle: amount_in ({amount_in}) exceeds cap_wei ({cap_wei})"
@@ -869,7 +879,10 @@ pub fn evaluate_v3_cycle(
         return None;
     }
     for i in 1..hop_outs.len() {
-        if !chain_consistent_with_predecessor(hop_outs[i - 1].amount_out, hop_outs[i].amount_in_used) {
+        if !chain_consistent_with_predecessor(
+            hop_outs[i - 1].amount_out,
+            hop_outs[i].amount_in_used,
+        ) {
             return None;
         }
     }
@@ -1236,17 +1249,27 @@ impl TriangularWorker {
     ) -> Option<u64> {
         // Resolve token_a metadata (address, decimals). Use explicit match so
         // we can attribute the skip reason instead of `?` swallowing the cause.
-        let (addr_a, decimals_a, _is_stable_a) = match resolve_token(redis, self.chain_id, sym_a).await {
-            Some(t) => t,
-            None => { stats.skip_unknown_token += 1; return None; }
-        };
+        let (addr_a, decimals_a, _is_stable_a) =
+            match resolve_token(redis, self.chain_id, sym_a).await {
+                Some(t) => t,
+                None => {
+                    stats.skip_unknown_token += 1;
+                    return None;
+                }
+            };
         let (addr_b, _, _) = match resolve_token(redis, self.chain_id, sym_b).await {
             Some(t) => t,
-            None => { stats.skip_unknown_token += 1; return None; }
+            None => {
+                stats.skip_unknown_token += 1;
+                return None;
+            }
         };
         let (addr_c, _, _) = match resolve_token(redis, self.chain_id, sym_c).await {
             Some(t) => t,
-            None => { stats.skip_unknown_token += 1; return None; }
+            None => {
+                stats.skip_unknown_token += 1;
+                return None;
+            }
         };
 
         // Resolve all 3 hops.
@@ -1380,11 +1403,11 @@ impl TriangularWorker {
         let profit_cap_ratio = profit_usd / cap_usd;
         if profit_cap_ratio > SANITY_PROFIT_MULT_OF_CAP {
             stats.skip_no_profit += 1; // bucketed under no_profit for tick_stats
-            // Diagnostic dump: per-hop reserves + orientation actually used by
-            // the math kernel. Critical for diagnosing why the kernel produces
-            // implausible profits even with apparently-correct cached
-            // ReservesEntry.token0_addr. Each line shows pool / orientation /
-            // (r_in, r_out) so a human can reproduce the math by hand.
+                                       // Diagnostic dump: per-hop reserves + orientation actually used by
+                                       // the math kernel. Critical for diagnosing why the kernel produces
+                                       // implausible profits even with apparently-correct cached
+                                       // ReservesEntry.token0_addr. Each line shows pool / orientation /
+                                       // (r_in, r_out) so a human can reproduce the math by hand.
             let r1 = hop1.reserves_oriented();
             let r2 = hop2.reserves_oriented();
             let r3 = hop3.reserves_oriented();
@@ -1568,15 +1591,7 @@ impl TriangularWorker {
                 let (sym_a, sym_b, sym_c) = *direction;
 
                 let plan = match self
-                    .build_v3_cycle_plan(
-                        redis,
-                        cfg,
-                        price_snapshot,
-                        sym_a,
-                        sym_b,
-                        sym_c,
-                        stats,
-                    )
+                    .build_v3_cycle_plan(redis, cfg, price_snapshot, sym_a, sym_b, sym_c, stats)
                     .await
                 {
                     Some(p) => p,
@@ -1643,13 +1658,14 @@ impl TriangularWorker {
 
             // Run Phase N multicall — via with_retry so the circuit breaker
             // and failover are engaged on RPC failure.
-            let phase_results = match rpc_pool.with_retry(|provider| {
-                let reqs = phase_requests.clone();
-                async move {
-                    v3_quote_exact_in_multicall(provider, quoter, multicall_addr, reqs).await
-                }
-            })
-            .await
+            let phase_results = match rpc_pool
+                .with_retry(|provider| {
+                    let reqs = phase_requests.clone();
+                    async move {
+                        v3_quote_exact_in_multicall(provider, quoter, multicall_addr, reqs).await
+                    }
+                })
+                .await
             {
                 Ok(r) => r,
                 Err(e) => {
@@ -2059,6 +2075,7 @@ struct V3CyclePlan {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)] // M11: test module
+    #![allow(clippy::field_reassign_with_default, clippy::assertions_on_constants)]
     use super::*;
 
     // ---------------------------------------------------------------
@@ -2112,7 +2129,10 @@ mod tests {
             (U256::from(1_000_000u64), U256::from(1_000_000u64)),
         ];
         let (out, profit) = cycle_profit(U256::from(1_000u64), &reserves, 30);
-        assert!(out < U256::from(1_000u64), "balanced cycle should lose to fees");
+        assert!(
+            out < U256::from(1_000u64),
+            "balanced cycle should lose to fees"
+        );
         assert!(profit < 0, "profit={} expected negative", profit);
     }
 
@@ -2133,7 +2153,10 @@ mod tests {
             (U256::from(10_000_000u64), U256::from(10_000_000u64)),
         ];
         let (out, profit) = cycle_profit(U256::from(1_000u64), &reserves, 30);
-        assert!(out > U256::from(1_000u64), "imbalanced cycle should net positive");
+        assert!(
+            out > U256::from(1_000u64),
+            "imbalanced cycle should net positive"
+        );
         assert!(profit > 0, "profit={} expected > 0", profit);
     }
 
@@ -2177,7 +2200,12 @@ mod tests {
         ];
         let (x_star, profit) =
             golden_section_search(U256::from(1u64), U256::from(100_000u64), &reserves, 30, 25);
-        assert!(profit > 0, "profit={} at x*={} expected positive", profit, x_star);
+        assert!(
+            profit > 0,
+            "profit={} at x*={} expected positive",
+            profit,
+            x_star
+        );
         assert!(x_star > U256::from(1u64));
     }
 
@@ -2193,7 +2221,11 @@ mod tests {
         ];
         let (_, profit) =
             golden_section_search(U256::from(1u64), U256::from(100_000u64), &reserves, 30, 25);
-        assert!(profit <= 0, "balanced cycle: profit={} should be ≤ 0", profit);
+        assert!(
+            profit <= 0,
+            "balanced cycle: profit={} should be ≤ 0",
+            profit
+        );
     }
 
     #[test]
@@ -2215,12 +2247,17 @@ mod tests {
         // (factor 0.618 each) shrink the interval to ~7e-6 of the original. We
         // confirm the answer matches a brute-force search to within 5% of optimum.
         let reserves = vec![
-            (U256::from(10_000u64), U256::from(50_000_000u64)),  // 5000x
+            (U256::from(10_000u64), U256::from(50_000_000u64)), // 5000x
             (U256::from(50_000_000u64), U256::from(50_000_000u64)),
             (U256::from(50_000_000u64), U256::from(50_000_000u64)),
         ];
-        let (_, profit_search) =
-            golden_section_search(U256::from(1u64), U256::from(1_000_000u64), &reserves, 30, 25);
+        let (_, profit_search) = golden_section_search(
+            U256::from(1u64),
+            U256::from(1_000_000u64),
+            &reserves,
+            30,
+            25,
+        );
         // Brute-force every 10K-wei step: find the best.
         let mut brute_best = i128::MIN;
         for x_raw in (1..=1_000_000u64).step_by(10_000) {
@@ -2230,7 +2267,11 @@ mod tests {
             }
         }
         assert!(brute_best > 0, "brute force should find positive profit");
-        assert!(profit_search > 0, "search profit={} should be > 0", profit_search);
+        assert!(
+            profit_search > 0,
+            "search profit={} should be > 0",
+            profit_search
+        );
         // Search profit should be within 10% of brute-force optimum.
         let ratio = profit_search as f64 / brute_best as f64;
         assert!(ratio > 0.90, "search/brute ratio={} expected > 0.90", ratio);
@@ -2265,7 +2306,10 @@ mod tests {
     fn clamp_to_cap_wei_returns_none_when_floor_yields_zero_tokens() {
         // cap=$1, price=$2000/WETH → 0.0005 floor = 0 → None.
         let cap = clamp_to_cap_wei(U256::from(10u64).pow(U256::from(20u64)), 1.0, 2000.0, 18);
-        assert!(cap.is_none(), "sub-token cap must yield None, not silently emit 0 wei");
+        assert!(
+            cap.is_none(),
+            "sub-token cap must yield None, not silently emit 0 wei"
+        );
     }
 
     #[test]
@@ -2309,7 +2353,7 @@ mod tests {
         }
         assert_eq!(d.len(), 20);
         d.prune(120); // cutoff = 120 - 10 = 110
-        // Entries with blk < 110 are gone. blocks 110..120 = 10 entries remain.
+                      // Entries with blk < 110 are gone. blocks 110..120 = 10 entries remain.
         assert_eq!(d.len(), 10);
     }
 
@@ -2576,9 +2620,12 @@ mod tests {
         // MVP_CYCLES entries. All four must resolve to a real mainnet
         // address and to 18 decimals (per their on-chain contracts).
         for sym in ["PEPE", "SHIB", "MKR", "COMP"] {
-            let addr = known_token_address(sym)
-                .unwrap_or_else(|| panic!("missing address for {sym}"));
-            assert!(addr.starts_with("0x") && addr.len() == 42, "bad addr for {sym}: {addr}");
+            let addr =
+                known_token_address(sym).unwrap_or_else(|| panic!("missing address for {sym}"));
+            assert!(
+                addr.starts_with("0x") && addr.len() == 42,
+                "bad addr for {sym}: {addr}"
+            );
         }
     }
 
@@ -2713,11 +2760,17 @@ mod tests {
         let x = U256::from(2u64) * U256::exp10(18); // 2 WETH (2e18 wei)
         let reserves = vec![
             // WETH→USDC realistic (10 WETH = 1e19 wei, 20K USDC = 2e10 wei)
-            (U256::from(10u64) * U256::exp10(18), U256::from(20_000_000_000u64)),
+            (
+                U256::from(10u64) * U256::exp10(18),
+                U256::from(20_000_000_000u64),
+            ),
             // USDC→WBTC FLIPPED (this is the bug — 61M USDC wei, 50B WBTC wei… inverted)
             (U256::from(61_564_199u64), U256::from(49_997_126_049u64)),
             // WBTC→WETH realistic (1B WBTC wei = 10 WBTC, 50 WETH = 5e19 wei)
-            (U256::from(1_000_000_000u64), U256::from(50u64) * U256::exp10(18)),
+            (
+                U256::from(1_000_000_000u64),
+                U256::from(50u64) * U256::exp10(18),
+            ),
         ];
         let (out, profit) = cycle_profit(x, &reserves, 30);
         // The math kernel can't know the orientation is wrong — it does
@@ -2746,8 +2799,14 @@ mod tests {
         // they update the doc reference here. Helps reviewers find the
         // policy in one place.
         let documented_threshold: f64 = 5.0;
-        assert!(documented_threshold > 1.0, "threshold must allow legitimate profitable opps");
-        assert!(documented_threshold < 100.0, "threshold must catch orientation-flip bugs");
+        assert!(
+            documented_threshold > 1.0,
+            "threshold must allow legitimate profitable opps"
+        );
+        assert!(
+            documented_threshold < 100.0,
+            "threshold must catch orientation-flip bugs"
+        );
     }
 
     // ===================================================================
@@ -2797,9 +2856,12 @@ mod tests {
         // pure kernel — only the sanity bound at the caller uses it.
         let amount_in = U256::from(10u128).pow(U256::from(18));
         let outs = outs_v3(&[
-            (3_500_000_000u128, HopAmountSource::V2),     // mid-cycle USDC wei
+            (3_500_000_000u128, HopAmountSource::V2), // mid-cycle USDC wei
             (1_750_000u128 * 1_000_000_000_000u128, HopAmountSource::V3),
-            (amount_in.as_u128() + 1_000_000_000_000_000u128, HopAmountSource::V3),
+            (
+                amount_in.as_u128() + 1_000_000_000_000_000u128,
+                HopAmountSource::V3,
+            ),
         ]);
         let r = evaluate_v3_cycle(amount_in, &outs, Some(2_000.0), 18)
             .expect("profitable cycle must yield Some");
@@ -2848,7 +2910,10 @@ mod tests {
             (10_000u128, HopAmountSource::V3),
         ]);
         let r = evaluate_v3_cycle(amount_in, &outs, Some(2_000.0), 18);
-        assert!(r.is_none(), "any zero-amount hop must collapse cycle to None");
+        assert!(
+            r.is_none(),
+            "any zero-amount hop must collapse cycle to None"
+        );
     }
 
     #[test]
@@ -2872,7 +2937,10 @@ mod tests {
         let outs = outs_v3(&[
             (3_500_000_000u128, HopAmountSource::V2),
             (1_750_000u128 * 1_000_000_000_000u128, HopAmountSource::V3),
-            (amount_in.as_u128() + 1_000_000_000_000_000u128, HopAmountSource::V3),
+            (
+                amount_in.as_u128() + 1_000_000_000_000_000u128,
+                HopAmountSource::V3,
+            ),
         ]);
         let r = evaluate_v3_cycle(amount_in, &outs, None, 18);
         assert!(r.is_none(), "missing price must produce None");
@@ -2901,7 +2969,7 @@ mod tests {
         // This test asserts the kernel surface — the integration sanity
         // bound is mirrored in `sanity_threshold_v3_is_documented_constant`.
         let amount_in = U256::from(10u128).pow(U256::from(18)); // 1 WETH
-        let huge_out = amount_in * U256::from(1_000u32);        // 1000× return
+        let huge_out = amount_in * U256::from(1_000u32); // 1000× return
         let outs = outs_v3(&[
             (3_500_000_000u128, HopAmountSource::V2),
             (1u128, HopAmountSource::V3), // not zero, just tiny mid-cycle
@@ -2949,7 +3017,10 @@ mod tests {
         let outs = outs_v3(&[
             (1_000_000_000_000u128, HopAmountSource::V2), // V2: WETH→USDC mid
             (5_000_000_000u128, HopAmountSource::V3),     // V3: USDC→intermediate
-            (amount_in.as_u128() + 5_000_000_000_000_000u128, HopAmountSource::V3), // V3: back to WETH
+            (
+                amount_in.as_u128() + 5_000_000_000_000_000u128,
+                HopAmountSource::V3,
+            ), // V3: back to WETH
         ]);
         let r = evaluate_v3_cycle(amount_in, &outs, Some(2_000.0), 18).unwrap();
         assert!(r.profit_token_a_wei > 0);
@@ -3125,7 +3196,11 @@ mod tests {
         let long_tails = ["PEPE", "SHIB", "MKR", "COMP"];
         for sym in &long_tails {
             let found = V3_CYCLES.iter().any(|(a, _, _)| a == sym);
-            assert!(found, "V3_CYCLES must contain a cycle starting with {}", sym);
+            assert!(
+                found,
+                "V3_CYCLES must contain a cycle starting with {}",
+                sym
+            );
         }
     }
 
@@ -3403,10 +3478,19 @@ mod tests {
         // hop 1 (V2) waits on hop 0's amount_out; hop 2 (V3) waits on hop 1's.
         let mut phase1_requests: Vec<V3QuoteRequest> = Vec::new();
         let mut phase1_routing: Vec<(usize, usize)> = Vec::new();
-        let progressed1 = try_progress_plan(&mut plan, &mut phase1_requests, &mut phase1_routing, 0);
+        let progressed1 =
+            try_progress_plan(&mut plan, &mut phase1_requests, &mut phase1_routing, 0);
         assert!(progressed1, "Phase 1 must progress (queue hop 0 V3)");
-        assert_eq!(phase1_requests.len(), 1, "Phase 1 should queue exactly hop 0 V3");
-        assert_eq!(phase1_routing[0], (0, 0), "Phase 1 routing must point to hop 0");
+        assert_eq!(
+            phase1_requests.len(),
+            1,
+            "Phase 1 should queue exactly hop 0 V3"
+        );
+        assert_eq!(
+            phase1_routing[0],
+            (0, 0),
+            "Phase 1 routing must point to hop 0"
+        );
         // Hop 1 and 2 still don't have amount_in yet.
         assert_eq!(plan.hop_amount_ins[1], None);
         assert_eq!(plan.hop_amount_ins[2], None);
@@ -3429,18 +3513,38 @@ mod tests {
         //   - queue hop 2 V3 with the V2-derived amount_in.
         let mut phase2_requests: Vec<V3QuoteRequest> = Vec::new();
         let mut phase2_routing: Vec<(usize, usize)> = Vec::new();
-        let progressed2 = try_progress_plan(&mut plan, &mut phase2_requests, &mut phase2_routing, 0);
-        assert!(progressed2, "Phase 2 must progress (V2 inline + queue hop 2 V3)");
-        assert_eq!(plan.hop_amount_ins[1], Some(weth_out), "hop 1 amount_in chained");
+        let progressed2 =
+            try_progress_plan(&mut plan, &mut phase2_requests, &mut phase2_routing, 0);
+        assert!(
+            progressed2,
+            "Phase 2 must progress (V2 inline + queue hop 2 V3)"
+        );
+        assert_eq!(
+            plan.hop_amount_ins[1],
+            Some(weth_out),
+            "hop 1 amount_in chained"
+        );
         // V2 amount_out from realistic pool: ~6e6 / 3 = 2e6, but exact is computed.
         let hop1_v2_out = plan.hop_amount_outs[1].expect("hop 1 V2 amount_out filled inline");
         assert!(
             hop1_v2_out > U256::zero(),
             "V2 inline math must produce non-zero amount_out"
         );
-        assert_eq!(plan.hop_amount_ins[2], Some(hop1_v2_out), "hop 2 amount_in chained");
-        assert_eq!(phase2_requests.len(), 1, "Phase 2 should queue exactly hop 2 V3");
-        assert_eq!(phase2_routing[0], (0, 2), "Phase 2 routing must point to hop 2");
+        assert_eq!(
+            plan.hop_amount_ins[2],
+            Some(hop1_v2_out),
+            "hop 2 amount_in chained"
+        );
+        assert_eq!(
+            phase2_requests.len(),
+            1,
+            "Phase 2 should queue exactly hop 2 V3"
+        );
+        assert_eq!(
+            phase2_routing[0],
+            (0, 2),
+            "Phase 2 routing must point to hop 2"
+        );
         // Critical: hop 2's V3 query uses the chain-consistent amount_in
         // (V2's actual output) — NOT the original amount_in (the bug).
         assert_eq!(phase2_requests[0].amount_in, hop1_v2_out);
@@ -3456,8 +3560,12 @@ mod tests {
         // -------- Phase 3 (no progress expected) --------
         let mut phase3_requests: Vec<V3QuoteRequest> = Vec::new();
         let mut phase3_routing: Vec<(usize, usize)> = Vec::new();
-        let progressed3 = try_progress_plan(&mut plan, &mut phase3_requests, &mut phase3_routing, 0);
-        assert!(!progressed3, "Phase 3 must NOT progress — chain fully resolved");
+        let progressed3 =
+            try_progress_plan(&mut plan, &mut phase3_requests, &mut phase3_routing, 0);
+        assert!(
+            !progressed3,
+            "Phase 3 must NOT progress — chain fully resolved"
+        );
         assert_eq!(phase3_requests.len(), 0);
 
         // Verify chain consistency end-to-end.

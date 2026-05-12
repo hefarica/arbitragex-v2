@@ -139,8 +139,12 @@ impl GasOracleWorker {
         // charges this gas price internally so SimResult.net_profit_wei is
         // truly net-of-gas, not gross.
         let write_result: redis::RedisResult<()> = async {
-            let _: () = redis.set_ex(&ts_key, now_ts.to_string(), GAS_TS_TTL_SECS).await?;
-            let _: () = redis.set_ex(&wei_key, gas_price_wei.to_string(), GAS_TS_TTL_SECS).await?;
+            let _: () = redis
+                .set_ex(&ts_key, now_ts.to_string(), GAS_TS_TTL_SECS)
+                .await?;
+            let _: () = redis
+                .set_ex(&wei_key, gas_price_wei.to_string(), GAS_TS_TTL_SECS)
+                .await?;
             Ok(())
         }
         .await;
@@ -178,6 +182,7 @@ mod tests {
     // Pure unit tests — no Redis, no RPC. Verify constants and constructor.
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn default_interval_ms_is_positive() {
         assert!(DEFAULT_INTERVAL_MS > 0);
     }

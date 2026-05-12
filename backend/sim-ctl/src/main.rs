@@ -17,13 +17,7 @@ mod sim_engine;
 mod simulator_backend;
 mod tx_builder;
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    routing::post,
-    Json, Router,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::post, Json, Router};
 use ethers::types::Address;
 use shared_rs::{
     config::AppConfig,
@@ -76,15 +70,18 @@ async fn simulate_handler(
         );
         // serde_json::to_value only fails on non-string map keys or NaN floats.
         // NotImplementedPayload has no such fields; use unwrap_or to avoid panic.
-        let body = serde_json::to_value(payload)
-            .unwrap_or_else(|e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}));
+        let body = serde_json::to_value(payload).unwrap_or_else(
+            |e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}),
+        );
         return (StatusCode::NOT_IMPLEMENTED, Json(body));
     }
     let opp: Opportunity = match serde_json::from_value(body) {
         Ok(o) => o,
         Err(e) => {
-            return (StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({"error":"invalid_body","detail":e.to_string()})));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error":"invalid_body","detail":e.to_string()})),
+            );
         }
     };
     let sim = match st.backend.simulate(&opp).await {
@@ -97,8 +94,9 @@ async fn simulate_handler(
             );
         }
     };
-    let body = serde_json::to_value(sim)
-        .unwrap_or_else(|e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}));
+    let body = serde_json::to_value(sim).unwrap_or_else(
+        |e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}),
+    );
     (StatusCode::OK, Json(body))
 }
 
@@ -111,13 +109,21 @@ async fn main() -> anyhow::Result<()> {
     // Try to connect to anvil. If absent or unreachable → engine without fork → 501.
     let anvil_url = std::env::var("ANVIL_URL").unwrap_or_default();
     let sim_cfg = cfg.simulation.clone();
-    let sim_timeout = sim_cfg.as_ref().map(|c| Duration::from_millis(c.sim_timeout_ms)).unwrap_or(Duration::from_secs(3));
-    let max_slippage = sim_cfg.as_ref().map(|c| c.max_slippage_for_pass_pct).unwrap_or(5.0);
+    let sim_timeout = sim_cfg
+        .as_ref()
+        .map(|c| Duration::from_millis(c.sim_timeout_ms))
+        .unwrap_or(Duration::from_secs(3));
+    let max_slippage = sim_cfg
+        .as_ref()
+        .map(|c| c.max_slippage_for_pass_pct)
+        .unwrap_or(5.0);
     let pool_size = sim_cfg.as_ref().map(|c| c.snapshot_pool_size).unwrap_or(4);
 
     let fork = if anvil_url.is_empty() {
-        warn!(event = "sim.anvil_not_configured",
-              "ANVIL_URL empty — /simulate will return 501, consumer stays idle");
+        warn!(
+            event = "sim.anvil_not_configured",
+            "ANVIL_URL empty — /simulate will return 501, consumer stays idle"
+        );
         None
     } else {
         match ForkManager::connect(&anvil_url, pool_size, 5000).await {
@@ -202,12 +208,14 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // HTTP server
-    let port: u16 = std::env::var("SIM_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(3003);
+    let port: u16 = std::env::var("SIM_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3003);
     let sim_router = Router::new()
         .route("/simulate", post(simulate_handler))
         .with_state(state);
-    let app = build_health_router(ServiceInfo::new(SERVICE, VERSION))
-        .merge(sim_router);
+    let app = build_health_router(ServiceInfo::new(SERVICE, VERSION)).merge(sim_router);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!(event = "service.boot", service = SERVICE, env = %cfg.system.env, port,
@@ -216,16 +224,28 @@ async fn main() -> anyhow::Result<()> {
 
     // Spawn consumer if we have fork AND DB + Redis.
     if fork.is_some() {
-        if let (Ok(db_url), Ok(redis_url)) = (std::env::var("DATABASE_URL"), std::env::var("REDIS_URL")) {
-            let pool = PgPoolOptions::new().max_connections(4).connect(&db_url).await?;
+        if let (Ok(db_url), Ok(redis_url)) =
+            (std::env::var("DATABASE_URL"), std::env::var("REDIS_URL"))
+        {
+            let pool = PgPoolOptions::new()
+                .max_connections(4)
+                .connect(&db_url)
+                .await?;
             let redis_client = redis::Client::open(redis_url.clone())?;
             let redis_conn = redis_client.get_connection_manager().await?;
-            let killswitch = KillSwitchClient::connect(&redis_url, cfg.system.kill_switch_enabled_default).await
-                .map_err(|e| anyhow::anyhow!("killswitch: {e}"))?;
+            let killswitch =
+                KillSwitchClient::connect(&redis_url, cfg.system.kill_switch_enabled_default)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("killswitch: {e}"))?;
             let consumer = Consumer {
                 redis: redis_conn,
                 pool,
-                engine: SimEngine { fork, signer_from: signer, timeout: sim_timeout, max_slippage_for_pass_pct: max_slippage },
+                engine: SimEngine {
+                    fork,
+                    signer_from: signer,
+                    timeout: sim_timeout,
+                    max_slippage_for_pass_pct: max_slippage,
+                },
                 killswitch,
                 consumer_name: std::env::var("HOSTNAME").unwrap_or_else(|_| "sim-1".into()),
             };
@@ -236,12 +256,17 @@ async fn main() -> anyhow::Result<()> {
             });
             info!(event = "sim_consumer.spawned");
         } else {
-            warn!(event = "sim_consumer.not_spawned", reason = "DATABASE_URL or REDIS_URL missing");
+            warn!(
+                event = "sim_consumer.not_spawned",
+                reason = "DATABASE_URL or REDIS_URL missing"
+            );
         }
     }
 
     axum::serve(listener, app)
-        .with_graceful_shutdown(async { tokio::signal::ctrl_c().await.ok(); })
+        .with_graceful_shutdown(async {
+            tokio::signal::ctrl_c().await.ok();
+        })
         .await?;
     Ok(())
 }

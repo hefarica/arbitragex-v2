@@ -22,18 +22,18 @@
 //!     `PrioritizationEngine::score` keeps its signature; this evaluator builds
 //!     the inputs that engine expects, with honest values instead of stubs.
 
+use crate::decision::{ExecutionDecision, RejectReason};
 use crate::evidence::{CostBreakdown, OpportunityEvidence, PFailSource};
 use crate::feedback::FeedbackChannel;
 use crate::route_plan::RoutePlan;
 use crate::strategy_config_gate::{GateOutcome, StrategyConfigGate};
 use crate::strategy_scores_db::StrategyFailRate;
 use crate::types::OpportunityCandidate;
-use crate::decision::{ExecutionDecision, RejectReason};
 use math_engine::amm_math::{calc_univ2_price_impact, calc_univ3_price_impact_pct};
 use math_engine::risk_engine::{
-    OpportunityRiskProfile, RiskPolicy, RiskRejectionReason, validate_opportunity_risk,
+    validate_opportunity_risk, OpportunityRiskProfile, RiskPolicy, RiskRejectionReason,
 };
-use math_engine::roi_engine::{RoiCalculationParams, calc_net_profit_and_roi};
+use math_engine::roi_engine::{calc_net_profit_and_roi, RoiCalculationParams};
 use math_engine::DefiArbitrageOutcome;
 use shared_rs::chains::block_time_s_for_chain;
 use shared_rs::price_oracle::{
@@ -75,15 +75,15 @@ const SECONDS_PER_YEAR: f64 = 31_536_000.0;
 fn default_fee_bps_for_adapter(adapter_name: &str) -> u32 {
     match adapter_name.to_ascii_lowercase().as_str() {
         "uniswap-v2" => 30,
-        "sushi"      => 30,
-        "curve"      => 4,
-        "balancer"   => 10,
+        "sushi" => 30,
+        "curve" => 4,
+        "balancer" => 10,
         // V3: fee varies by pool tier (100/500/3000/10000 bps); without the
         // tier we cannot resolve it here — return 0 (R8 fail-honest: don't
         // synthesise a fee we don't know). AMM quote already reflects the fee.
         "uniswap-v3" => 0,
         // unknown / future adapters: 0 (conservative: don't add phantom fees)
-        _            => 0,
+        _ => 0,
     }
 }
 
@@ -102,7 +102,11 @@ impl NetworkSignals {
     /// fail conservatively. Never reaches production paths once `chain_client`
     /// exposes basefee live.
     pub fn unknown(block_number: u64) -> Self {
-        Self { basefee_gwei: 0.0, p75_priority_tip_gwei: 0.0, block_number }
+        Self {
+            basefee_gwei: 0.0,
+            p75_priority_tip_gwei: 0.0,
+            block_number,
+        }
     }
 }
 
@@ -162,7 +166,8 @@ fn policy_from_config(cfg: &TradingConfigState, effective_capital_usd: f64) -> R
 /// Conservative: when neither basefee nor fixed price is known, returns 0
 /// (caller must check `signals != unknown` before relying on this).
 fn estimate_gas_cost_usd(cfg: &TradingConfigState, signals: NetworkSignals) -> f64 {
-    let gas_price_gwei = cfg.resolve_gas_price_gwei(signals.basefee_gwei, signals.p75_priority_tip_gwei);
+    let gas_price_gwei =
+        cfg.resolve_gas_price_gwei(signals.basefee_gwei, signals.p75_priority_tip_gwei);
     let gas_units = cfg.gas_estimate_units as f64;
     // gwei → wei → ETH → USD (using operator's base_token_price_usd as ETH price proxy).
     // This is correct when base_token = WETH; for non-WETH base operators the
@@ -554,7 +559,11 @@ impl<'a> ConfigAwareEvaluator<'a> {
 
         // 2. Strategy gate (empty list = permissive default).
         if !self.config.enabled_strategies.is_empty()
-            && !self.config.enabled_strategies.iter().any(|s| s == strategy_kind)
+            && !self
+                .config
+                .enabled_strategies
+                .iter()
+                .any(|s| s == strategy_kind)
         {
             return ConfigGateOutcome::StrategyDisabled {
                 strategy_kind: strategy_kind.to_string(),
@@ -592,13 +601,10 @@ impl<'a> ConfigAwareEvaluator<'a> {
         // cascade is rebuilt per-evaluate so the lifetimes line up cleanly with
         // `&self.config`. Construction cost is microseconds — two `Box::new`s
         // and a `Vec::push` — negligible vs the math + risk + serde work below.
-        let cache_oracle =
-            RedisCachedPriceOracle::from_snapshot(self.price_cache_snapshot.clone());
+        let cache_oracle = RedisCachedPriceOracle::from_snapshot(self.price_cache_snapshot.clone());
         let config_oracle = ConfigPriceOracle::new(self.config);
-        let oracle: CascadePriceOracle = CascadePriceOracle::new(vec![
-            Box::new(cache_oracle),
-            Box::new(config_oracle),
-        ]);
+        let oracle: CascadePriceOracle =
+            CascadePriceOracle::new(vec![Box::new(cache_oracle), Box::new(config_oracle)]);
         let token_in_id = candidate
             .token_addresses
             .first()
@@ -663,31 +669,29 @@ impl<'a> ConfigAwareEvaluator<'a> {
         //     (how many token_out units one token_in buys at oracle fair value)
         //
         // Reject when spread_ratio < 1/mult OR spread_ratio > mult.
-        let spread_sanity_rejection: Option<RejectReason> = if !unknown_price
-            && candidate.amount_in > 0.0
-            && out_price > 0.0
-        {
-            let observed_rate = candidate.expected_amount_out / candidate.amount_in;
-            // reference_rate: how many token_out units = 1 token_in at oracle prices
-            let reference_rate = in_price / out_price;
-            if reference_rate > 0.0 {
-                let spread_ratio = observed_rate / reference_rate;
-                let mult = self.config.spread_sanity_mult;
-                if spread_ratio < (1.0 / mult) || spread_ratio > mult {
-                    Some(RejectReason::ImplausibleSpread {
-                        observed_rate,
-                        reference_rate,
-                        threshold_mult: mult,
-                    })
+        let spread_sanity_rejection: Option<RejectReason> =
+            if !unknown_price && candidate.amount_in > 0.0 && out_price > 0.0 {
+                let observed_rate = candidate.expected_amount_out / candidate.amount_in;
+                // reference_rate: how many token_out units = 1 token_in at oracle prices
+                let reference_rate = in_price / out_price;
+                if reference_rate > 0.0 {
+                    let spread_ratio = observed_rate / reference_rate;
+                    let mult = self.config.spread_sanity_mult;
+                    if spread_ratio < (1.0 / mult) || spread_ratio > mult {
+                        Some(RejectReason::ImplausibleSpread {
+                            observed_rate,
+                            reference_rate,
+                            threshold_mult: mult,
+                        })
+                    } else {
+                        None
+                    }
                 } else {
-                    None
+                    None // reference_rate=0 → oracle malfunction; skip check (R8)
                 }
             } else {
-                None // reference_rate=0 → oracle malfunction; skip check (R8)
-            }
-        } else {
-            None // unknown prices → handled below; don't double-reject
-        };
+                None // unknown prices → handled below; don't double-reject
+            };
 
         // 3c. Component 5 (Sprint C): p_copied heuristic from dex_chain_metrics.
         //
@@ -753,7 +757,9 @@ impl<'a> ConfigAwareEvaluator<'a> {
         //
         // Both functions return a fraction (0.0–1.0); multiply by 100.0 to reach
         // the pct scale that `RoiCalculationParams.price_impact_pct` expects.
-        let price_impact_pct: f64 = if let Some((reserve_in, _reserve_out)) = self.v2_reserve_snapshot {
+        let price_impact_pct: f64 = if let Some((reserve_in, _reserve_out)) =
+            self.v2_reserve_snapshot
+        {
             if reserve_in > 0.0 && amount_in_usd > 0.0 {
                 // Derive fee fraction from the primary dex adapter.
                 // Falls back to 30bps when adapter unknown — conservative.
@@ -763,7 +769,8 @@ impl<'a> ConfigAwareEvaluator<'a> {
                     .map(|a| default_fee_bps_for_adapter(a))
                     .unwrap_or(30);
                 let fee_fraction = fee_bps as f64 / 10_000.0;
-                let impact_fraction = calc_univ2_price_impact(amount_in_usd, reserve_in, fee_fraction);
+                let impact_fraction =
+                    calc_univ2_price_impact(amount_in_usd, reserve_in, fee_fraction);
                 impact_fraction * 100.0
             } else {
                 0.0 // zero reserves → fall through to proxy
@@ -1036,10 +1043,14 @@ impl<'a> ConfigAwareEvaluator<'a> {
             route_fingerprint: candidate.route_fingerprint.clone(),
             amount_in: candidate.amount_in,
             expected_amount_out: candidate.expected_amount_out,
-            min_amount_out: candidate.expected_amount_out * (1.0 - self.config.max_slippage_pct / 100.0),
+            min_amount_out: candidate.expected_amount_out
+                * (1.0 - self.config.max_slippage_pct / 100.0),
             gross_profit: outcome.gross_profit_usd,
             gas_units_estimated: self.config.gas_estimate_units,
-            gas_price: self.config.resolve_gas_price_gwei(self.signals.basefee_gwei, self.signals.p75_priority_tip_gwei) * 1e9,
+            gas_price: self.config.resolve_gas_price_gwei(
+                self.signals.basefee_gwei,
+                self.signals.p75_priority_tip_gwei,
+            ) * 1e9,
             gas_cost: outcome.gas_cost_usd,
             bribe: 0.0,
             flashloan_fee: outcome.flashloan_fee_usd,
@@ -1149,7 +1160,11 @@ mod tests {
     }
 
     fn signals() -> NetworkSignals {
-        NetworkSignals { basefee_gwei: 25.0, p75_priority_tip_gwei: 2.0, block_number: 19_000_000 }
+        NetworkSignals {
+            basefee_gwei: 25.0,
+            p75_priority_tip_gwei: 2.0,
+            block_number: 19_000_000,
+        }
     }
 
     #[test]
@@ -1165,7 +1180,11 @@ mod tests {
             gross_profit: 0.0001,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
-            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
         );
         assert!(matches!(out, ConfigGateOutcome::TokenNotAllowed { .. }));
     }
@@ -1183,7 +1202,11 @@ mod tests {
             gross_profit: 0.0001,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
-            &candidate, "curve_stable", 1, "rpc".into(), 10,
+            &candidate,
+            "curve_stable",
+            1,
+            "rpc".into(),
+            10,
         );
         assert!(matches!(out, ConfigGateOutcome::StrategyDisabled { .. }));
     }
@@ -1202,7 +1225,11 @@ mod tests {
             gross_profit: 0.01,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
-            &candidate, "anything_goes", 1, "rpc".into(), 10,
+            &candidate,
+            "anything_goes",
+            1,
+            "rpc".into(),
+            10,
         );
         match out {
             ConfigGateOutcome::Evaluated { .. } => {}
@@ -1213,7 +1240,7 @@ mod tests {
     #[test]
     fn capital_caps_amount_in() {
         let c = cfg(); // capital = $1000
-        // candidate observed at 1.0 ETH = $2000 (above capital cap)
+                       // candidate observed at 1.0 ETH = $2000 (above capital cap)
         let candidate = OpportunityCandidate {
             route_fingerprint: "test".into(),
             pool_addresses: vec![],
@@ -1224,12 +1251,19 @@ mod tests {
             gross_profit: 0.005,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
-            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
         );
         if let ConfigGateOutcome::Evaluated { outcome, .. } = out {
             // Total capital required is capped at $1000, not $2000
-            assert!(outcome.total_capital_required_usd <= 1000.0,
-                    "expected capital cap, got {}", outcome.total_capital_required_usd);
+            assert!(
+                outcome.total_capital_required_usd <= 1000.0,
+                "expected capital cap, got {}",
+                outcome.total_capital_required_usd
+            );
         } else {
             panic!("expected evaluated outcome");
         }
@@ -1263,12 +1297,16 @@ mod tests {
             pool_addresses: vec![],
             token_addresses: vec!["WETH".into(), "BNB".into()],
             dex_adapters: vec!["uniswap-v3".into()],
-            amount_in: 0.05,            // observed: 0.05 ETH = $125 (>> $10 capital)
-            expected_amount_out: 0.05,  // ~same magnitude → no real spread
+            amount_in: 0.05,           // observed: 0.05 ETH = $125 (>> $10 capital)
+            expected_amount_out: 0.05, // ~same magnitude → no real spread
             gross_profit: 0.0,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
-            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
         );
         let outcome = match out {
             ConfigGateOutcome::Evaluated { outcome, .. } => outcome,
@@ -1311,7 +1349,11 @@ mod tests {
             gross_profit: 0.0,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
-            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
         );
         let outcome = match out {
             ConfigGateOutcome::Evaluated { outcome, .. } => outcome,
@@ -1363,10 +1405,16 @@ mod tests {
             gross_profit: 0.0,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
-            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
         );
         let (outcome, rejection) = match out {
-            ConfigGateOutcome::Evaluated { outcome, rejection, .. } => (outcome, rejection),
+            ConfigGateOutcome::Evaluated {
+                outcome, rejection, ..
+            } => (outcome, rejection),
             other => panic!("expected Evaluated outcome, got {:?}", other),
         };
 
@@ -1422,10 +1470,16 @@ mod tests {
             gross_profit: 0.0,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
-            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
         );
         let (outcome, rejection) = match out {
-            ConfigGateOutcome::Evaluated { outcome, rejection, .. } => (outcome, rejection),
+            ConfigGateOutcome::Evaluated {
+                outcome, rejection, ..
+            } => (outcome, rejection),
             other => panic!("expected Evaluated outcome, got {:?}", other),
         };
         assert_eq!(
@@ -1434,8 +1488,11 @@ mod tests {
             "unknown token_in should reject with UnknownTokenPrice, got {:?}",
             rejection,
         );
-        assert_eq!(outcome.gross_profit_usd, 0.0,
-                   "outcome must be zeroed when price unknown, got {}", outcome.gross_profit_usd);
+        assert_eq!(
+            outcome.gross_profit_usd, 0.0,
+            "outcome must be zeroed when price unknown, got {}",
+            outcome.gross_profit_usd
+        );
         assert!(!outcome.is_viable);
     }
 
@@ -1454,10 +1511,16 @@ mod tests {
             gross_profit: 0.0,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
-            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
         );
         let (outcome, rejection) = match out {
-            ConfigGateOutcome::Evaluated { outcome, rejection, .. } => (outcome, rejection),
+            ConfigGateOutcome::Evaluated {
+                outcome, rejection, ..
+            } => (outcome, rejection),
             other => panic!("expected Evaluated outcome, got {:?}", other),
         };
         assert_eq!(
@@ -1491,12 +1554,16 @@ mod tests {
             pool_addresses: vec![],
             token_addresses: vec!["WETH".into(), "USDC".into()],
             dex_adapters: vec!["uniswap-v3".into()],
-            amount_in: 5.0,             // 5 WETH = $10K (above operational $1K cap)
+            amount_in: 5.0,                // 5 WETH = $10K (above operational $1K cap)
             expected_amount_out: 10_500.0, // 10,500 USDC = $10,500 → 5% gross
             gross_profit: 0.0,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
-            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
         );
         let outcome = match out {
             ConfigGateOutcome::Evaluated { outcome, .. } => outcome,
@@ -1533,7 +1600,11 @@ mod tests {
             gross_profit: 0.0,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
-            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
         );
         let outcome = match out {
             ConfigGateOutcome::Evaluated { outcome, .. } => outcome,
@@ -1569,7 +1640,11 @@ mod tests {
             gross_profit: 0.0,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
-            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
         );
         let outcome = match out {
             ConfigGateOutcome::Evaluated { outcome, .. } => outcome,
@@ -1589,7 +1664,7 @@ mod tests {
     #[test]
     fn simulation_capital_none_falls_back_to_operational() {
         let c = cfg(); // simulation_capital_usd = None, capital_usd = 1000
-        // Same 5 ETH input as above — must hit the $1000 operational cap.
+                       // Same 5 ETH input as above — must hit the $1000 operational cap.
         let candidate = OpportunityCandidate {
             route_fingerprint: "test".into(),
             pool_addresses: vec![],
@@ -1600,7 +1675,11 @@ mod tests {
             gross_profit: 0.0,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
-            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
         );
         let outcome = match out {
             ConfigGateOutcome::Evaluated { outcome, .. } => outcome,
@@ -1626,9 +1705,9 @@ mod tests {
     #[test]
     fn both_tokens_known_evaluates_with_real_per_token_prices() {
         let mut c = cfg(); // WETH base @ $2000, USDC stablecoin @ $1
-        // Bump capital so observed input ($2000) fits without proportional cap
-        // muddying the assertion — we want to test PRICE resolution here, not
-        // cap-ratio interaction (covered by BUG-3 tests).
+                           // Bump capital so observed input ($2000) fits without proportional cap
+                           // muddying the assertion — we want to test PRICE resolution here, not
+                           // cap-ratio interaction (covered by BUG-3 tests).
         c.capital_usd = 5_000.0;
         // 1 ETH → 2100 USDC swap (5% gross spread, realistic arb)
         let candidate = OpportunityCandidate {
@@ -1636,15 +1715,21 @@ mod tests {
             pool_addresses: vec![],
             token_addresses: vec!["WETH".into(), "USDC".into()],
             dex_adapters: vec!["uniswap-v3".into()],
-            amount_in: 1.0,             // 1 WETH = $2000 (cfg base price)
+            amount_in: 1.0,              // 1 WETH = $2000 (cfg base price)
             expected_amount_out: 2100.0, // 2100 USDC = $2100 (stablecoin default)
             gross_profit: 0.0,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
-            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
         );
         let (outcome, rejection) = match out {
-            ConfigGateOutcome::Evaluated { outcome, rejection, .. } => (outcome, rejection),
+            ConfigGateOutcome::Evaluated {
+                outcome, rejection, ..
+            } => (outcome, rejection),
             other => panic!("expected Evaluated outcome, got {:?}", other),
         };
 
@@ -1695,8 +1780,13 @@ mod tests {
             expected_amount_out: 2550.0,
             gross_profit: 0.0,
         };
-        let out = ConfigAwareEvaluator::with_cache(&c, signals(), snapshot)
-            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        let out = ConfigAwareEvaluator::with_cache(&c, signals(), snapshot).evaluate(
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
+        );
         let outcome = match out {
             ConfigGateOutcome::Evaluated { outcome, .. } => outcome,
             other => panic!("expected Evaluated, got {:?}", other),
@@ -1727,10 +1817,20 @@ mod tests {
         };
         // Two evaluators with same config — one with empty cache, one without.
         // Outcomes must match (cache empty = no contribution).
-        let out1 = ConfigAwareEvaluator::with_cache(&c, signals(), HashMap::new())
-            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
-        let out2 = ConfigAwareEvaluator::new(&c, signals())
-            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        let out1 = ConfigAwareEvaluator::with_cache(&c, signals(), HashMap::new()).evaluate(
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
+        );
+        let out2 = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
+        );
         let g1 = match out1 {
             ConfigGateOutcome::Evaluated { outcome, .. } => outcome.gross_profit_usd,
             other => panic!("e1 unexpected: {:?}", other),
@@ -1765,14 +1865,21 @@ mod tests {
             pool_addresses: vec![],
             token_addresses: vec!["WETH".into(), "USDC".into()],
             dex_adapters: vec!["uniswap-v3".into()],
-            amount_in: 1.0,           // 1 WETH (cache: $2500)
+            amount_in: 1.0,              // 1 WETH (cache: $2500)
             expected_amount_out: 2550.0, // 2550 USDC (config stable: $1)
             gross_profit: 0.0,
         };
-        let out = ConfigAwareEvaluator::with_cache(&c, signals(), snapshot)
-            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        let out = ConfigAwareEvaluator::with_cache(&c, signals(), snapshot).evaluate(
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
+        );
         let (outcome, rejection) = match out {
-            ConfigGateOutcome::Evaluated { outcome, rejection, .. } => (outcome, rejection),
+            ConfigGateOutcome::Evaluated {
+                outcome, rejection, ..
+            } => (outcome, rejection),
             other => panic!("expected Evaluated, got {:?}", other),
         };
         assert_ne!(
@@ -1819,7 +1926,11 @@ mod tests {
             gross_profit: 0.0,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
-            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
         );
         let outcome = match out {
             ConfigGateOutcome::Evaluated { outcome, .. } => outcome,
@@ -1867,10 +1978,16 @@ mod tests {
             gross_profit: 0.0,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
-            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
         );
         let (_, rejection) = match out {
-            ConfigGateOutcome::Evaluated { outcome, rejection, .. } => (outcome, rejection),
+            ConfigGateOutcome::Evaluated {
+                outcome, rejection, ..
+            } => (outcome, rejection),
             other => panic!("expected Evaluated, got {:?}", other),
         };
         assert!(
@@ -1900,7 +2017,11 @@ mod tests {
             gross_profit: 0.0,
         };
         let out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
-            &candidate, "dex_arb_v2v2", 1, "rpc".into(), 10,
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
         );
         let rejection = match out {
             ConfigGateOutcome::Evaluated { rejection, .. } => rejection,
@@ -1940,17 +2061,27 @@ mod tests {
             pool_addresses: vec![],
             token_addresses: vec!["WETH".into(), "USDC".into()],
             dex_adapters: vec!["uniswap-v2".into()],
-            amount_in: 1.0,          // 1 WETH = $2000 at cfg base price
+            amount_in: 1.0,              // 1 WETH = $2000 at cfg base price
             expected_amount_out: 2020.0, // $20 gross
             gross_profit: 0.0,
         };
 
         // ETH (12s block) capital_cost = $2000 × 0.05 × (12 / 31_536_000) ≈ $3.8e-5
-        let eth_out = ConfigAwareEvaluator::new(&c, signals())
-            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        let eth_out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
+        );
         // ARB (0.25s block) capital_cost = $2000 × 0.05 × (0.25 / 31_536_000) ≈ $7.9e-7
-        let arb_out = ConfigAwareEvaluator::new(&c, signals())
-            .evaluate(&candidate, "dex_arb_v2v2", 42161, "rpc".into(), 10);
+        let arb_out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate,
+            "dex_arb_v2v2",
+            42161,
+            "rpc".into(),
+            10,
+        );
 
         let eth_net = match eth_out {
             ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,
@@ -2005,11 +2136,21 @@ mod tests {
         };
 
         // Non-flash result for comparison (same chain, same params).
-        let non_flash_out = ConfigAwareEvaluator::new(&c, signals())
-            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        let non_flash_out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
+        );
         // Flash-loan strategy — strategy_kind contains "flash".
-        let flash_out = ConfigAwareEvaluator::new(&c, signals())
-            .evaluate(&candidate, "flashloan_arb", 1, "rpc".into(), 10);
+        let flash_out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate,
+            "flashloan_arb",
+            1,
+            "rpc".into(),
+            10,
+        );
 
         let non_flash_net = match non_flash_out {
             ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,
@@ -2037,14 +2178,14 @@ mod tests {
     #[test]
     fn fee_bps_lookup_known_adapters() {
         assert_eq!(default_fee_bps_for_adapter("uniswap-v2"), 30);
-        assert_eq!(default_fee_bps_for_adapter("sushi"),      30);
-        assert_eq!(default_fee_bps_for_adapter("curve"),       4);
-        assert_eq!(default_fee_bps_for_adapter("balancer"),   10);
+        assert_eq!(default_fee_bps_for_adapter("sushi"), 30);
+        assert_eq!(default_fee_bps_for_adapter("curve"), 4);
+        assert_eq!(default_fee_bps_for_adapter("balancer"), 10);
         // V3 returns 0 — per-pool fee is unknown without fee-tier context
-        assert_eq!(default_fee_bps_for_adapter("uniswap-v3"),  0);
+        assert_eq!(default_fee_bps_for_adapter("uniswap-v3"), 0);
         // Unknown/future adapters: 0 (no phantom fees)
-        assert_eq!(default_fee_bps_for_adapter("unknown"),     0);
-        assert_eq!(default_fee_bps_for_adapter(""),            0);
+        assert_eq!(default_fee_bps_for_adapter("unknown"), 0);
+        assert_eq!(default_fee_bps_for_adapter(""), 0);
     }
 
     /// UniswapV2 candidate: lp_fees_usd is non-zero because 30bps is resolved.
@@ -2073,7 +2214,7 @@ mod tests {
             pool_addresses: vec![],
             token_addresses: vec!["WETH".into(), "USDC".into()],
             dex_adapters: vec!["uniswap-v2".into(), "uniswap-v2".into()],
-            amount_in: 1.0,             // 1 WETH = $2000
+            amount_in: 1.0,              // 1 WETH = $2000
             expected_amount_out: 2020.0, // 2020 USDC = $2020 (gross ≈ $20)
             gross_profit: 0.0,
         };
@@ -2083,10 +2224,20 @@ mod tests {
             ..candidate_v2.clone()
         };
 
-        let v2_out = ConfigAwareEvaluator::new(&c, signals())
-            .evaluate(&candidate_v2, "dex_arb_v2v2", 1, "rpc".into(), 10);
-        let v3_out = ConfigAwareEvaluator::new(&c, signals())
-            .evaluate(&candidate_v3, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        let v2_out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate_v2,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
+        );
+        let v3_out = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate_v3,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
+        );
 
         let v2_net = match v2_out {
             ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,
@@ -2129,7 +2280,7 @@ mod tests {
             route_fingerprint: "no_adapter".into(),
             pool_addresses: vec![],
             token_addresses: vec!["WETH".into(), "USDC".into()],
-            dex_adapters: vec![],  // empty
+            dex_adapters: vec![], // empty
             amount_in: 1.0,
             expected_amount_out: 2020.0,
             gross_profit: 0.0,
@@ -2139,10 +2290,20 @@ mod tests {
             ..candidate_no_adapter.clone()
         };
 
-        let out_no = ConfigAwareEvaluator::new(&c, signals())
-            .evaluate(&candidate_no_adapter, "dex_arb_v2v2", 1, "rpc".into(), 10);
-        let out_unknown = ConfigAwareEvaluator::new(&c, signals())
-            .evaluate(&candidate_unknown, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        let out_no = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate_no_adapter,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
+        );
+        let out_unknown = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate_unknown,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
+        );
 
         let net_no = match out_no {
             ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,
@@ -2187,7 +2348,7 @@ mod tests {
             pool_addresses: vec!["0xpool1".into()],
             token_addresses: vec!["WETH".into(), "USDC".into()],
             dex_adapters: vec!["uniswap-v2".into()],
-            amount_in: 1.0,          // 1 WETH
+            amount_in: 1.0, // 1 WETH
             expected_amount_out: 2020.0,
             gross_profit: 0.0,
         };
@@ -2195,16 +2356,26 @@ mod tests {
         // reserve_in = 1e19 (10 WETH in wei) → in USD-equivalent token units
         // The evaluator receives (reserve_in, reserve_out) as token-unit floats.
         // 10.0 WETH reserve_in, large USDC reserve_out.
-        let reserve_in = 10.0_f64;    // 10 WETH as token units
+        let reserve_in = 10.0_f64; // 10 WETH as token units
         let reserve_out = 20_000.0_f64; // 20,000 USDC token units
 
-        let without_reserves = ConfigAwareEvaluator::new(&c, signals())
-            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        let without_reserves = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
+        );
 
         let with_reserves = ConfigAwareEvaluator::with_reserves(
-            &c, signals(), HashMap::new(), None, None,
+            &c,
+            signals(),
+            HashMap::new(),
+            None,
+            None,
             Some((reserve_in, reserve_out)),
-        ).evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        )
+        .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
 
         let net_without = match without_reserves {
             ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,
@@ -2254,11 +2425,16 @@ mod tests {
             gross_profit: 0.0,
         };
 
-        let out_default = ConfigAwareEvaluator::new(&c, signals())
-            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
-        let out_explicit_none = ConfigAwareEvaluator::with_reserves(
-            &c, signals(), HashMap::new(), None, None, None,
-        ).evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        let out_default = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
+        );
+        let out_explicit_none =
+            ConfigAwareEvaluator::with_reserves(&c, signals(), HashMap::new(), None, None, None)
+                .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
 
         let net_default = match out_default {
             ConfigGateOutcome::Evaluated { outcome, .. } => outcome.net_profit_usd,

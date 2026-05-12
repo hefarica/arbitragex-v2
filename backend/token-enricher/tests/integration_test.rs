@@ -30,8 +30,8 @@ use alloy_primitives::Address;
 use alloy_sol_types::SolCall;
 use std::str::FromStr;
 use token_enricher::multicall::{
-    build_calls_for, decode_decimals_result, decode_symbol_result, pair_results,
-    IMulticall3, MULTICALL3_ADDRESS,
+    build_calls_for, decode_decimals_result, decode_symbol_result, pair_results, IMulticall3,
+    MULTICALL3_ADDRESS,
 };
 
 // ---------------------------------------------------------------------------
@@ -108,20 +108,18 @@ fn decode_symbol_roundtrip_usdc() {
 #[test]
 fn decode_decimals_roundtrip_6() {
     // uint8 decimals = 6 (USDC).
-    let returndata = hex::decode(
-        "0000000000000000000000000000000000000000000000000000000000000006",
-    )
-    .expect("hex decode");
+    let returndata =
+        hex::decode("0000000000000000000000000000000000000000000000000000000000000006")
+            .expect("hex decode");
     let dec = decode_decimals_result(&returndata).expect("decode decimals");
     assert_eq!(dec, 6u8);
 }
 
 #[test]
 fn decode_decimals_roundtrip_18() {
-    let returndata = hex::decode(
-        "0000000000000000000000000000000000000000000000000000000000000012",
-    )
-    .expect("hex decode");
+    let returndata =
+        hex::decode("0000000000000000000000000000000000000000000000000000000000000012")
+            .expect("hex decode");
     let dec = decode_decimals_result(&returndata).expect("decode decimals");
     assert_eq!(dec, 18u8);
 }
@@ -149,10 +147,9 @@ fn pair_results_both_success() {
          5745544800000000000000000000000000000000000000000000000000000000",
     )
     .expect("hex decode");
-    let decimals_data = hex::decode(
-        "0000000000000000000000000000000000000000000000000000000000000012",
-    )
-    .expect("hex decode");
+    let decimals_data =
+        hex::decode("0000000000000000000000000000000000000000000000000000000000000012")
+            .expect("hex decode");
 
     let results = vec![
         IMulticall3::Result {
@@ -173,10 +170,9 @@ fn pair_results_both_success() {
 
 #[test]
 fn pair_results_symbol_fails_decimals_ok() {
-    let decimals_data = hex::decode(
-        "0000000000000000000000000000000000000000000000000000000000000012",
-    )
-    .expect("hex decode");
+    let decimals_data =
+        hex::decode("0000000000000000000000000000000000000000000000000000000000000012")
+            .expect("hex decode");
 
     let results = vec![
         IMulticall3::Result {
@@ -223,17 +219,28 @@ fn pair_results_two_tokens() {
          5745544800000000000000000000000000000000000000000000000000000000",
     )
     .expect("hex decode");
-    let decimals_data = hex::decode(
-        "0000000000000000000000000000000000000000000000000000000000000012",
-    )
-    .expect("hex decode");
+    let decimals_data =
+        hex::decode("0000000000000000000000000000000000000000000000000000000000000012")
+            .expect("hex decode");
 
     let results = vec![
-        IMulticall3::Result { success: true, returnData: symbol_data.clone().into() },
-        IMulticall3::Result { success: true, returnData: decimals_data.clone().into() },
+        IMulticall3::Result {
+            success: true,
+            returnData: symbol_data.clone().into(),
+        },
+        IMulticall3::Result {
+            success: true,
+            returnData: decimals_data.clone().into(),
+        },
         // Second token: symbol fails, decimals ok.
-        IMulticall3::Result { success: false, returnData: alloy_primitives::Bytes::new() },
-        IMulticall3::Result { success: true, returnData: decimals_data.into() },
+        IMulticall3::Result {
+            success: false,
+            returnData: alloy_primitives::Bytes::new(),
+        },
+        IMulticall3::Result {
+            success: true,
+            returnData: decimals_data.into(),
+        },
     ];
 
     let resolved = pair_results(results, 2);
@@ -255,12 +262,19 @@ fn aggregate3_encode_decode_roundtrip() {
     let calls = build_calls_for(&[weth]);
 
     // Encode the call.
-    let calldata = IMulticall3::aggregate3Call { calls: calls.clone() }.abi_encode();
+    let calldata = IMulticall3::aggregate3Call {
+        calls: calls.clone(),
+    }
+    .abi_encode();
     assert!(!calldata.is_empty(), "calldata must not be empty");
 
     // The aggregate3 function signature is 0x82ad56cb.
     let selector = &calldata[..4];
-    assert_eq!(selector, &[0x82, 0xad, 0x56, 0xcb], "aggregate3 selector mismatch");
+    assert_eq!(
+        selector,
+        &[0x82, 0xad, 0x56, 0xcb],
+        "aggregate3 selector mismatch"
+    );
 
     // Verify the call count encoded in calldata matches what we passed.
     // (We don't decode the full calldata here; the selector check suffices.)

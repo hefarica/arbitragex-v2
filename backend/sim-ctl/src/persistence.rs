@@ -9,9 +9,13 @@ use std::str::FromStr;
 
 pub async fn insert_simulation(pool: &PgPool, r: &SimulationResult) -> Result<()> {
     let sim_str = simulator_str(&r.simulator);
-    let gas_est: Option<BigDecimal> = r.gas_estimate_wei.as_deref()
+    let gas_est: Option<BigDecimal> = r
+        .gas_estimate_wei
+        .as_deref()
         .and_then(|s| BigDecimal::from_str(s).ok());
-    let gas_price: Option<BigDecimal> = r.gas_price_wei.as_deref()
+    let gas_price: Option<BigDecimal> = r
+        .gas_price_wei
+        .as_deref()
         .and_then(|s| BigDecimal::from_str(s).ok());
 
     let mut tx = pool.begin().await.context("begin tx")?;
@@ -42,7 +46,11 @@ pub async fn insert_simulation(pool: &PgPool, r: &SimulationResult) -> Result<()
 
     // Advance opportunity state. 'simulated' if passed, else 'rejected'.
     let next_status = if r.passed { "simulated" } else { "rejected" };
-    let reject_reason = if r.passed { None } else { r.fail_reason.clone() };
+    let reject_reason = if r.passed {
+        None
+    } else {
+        r.fail_reason.clone()
+    };
     sqlx::query(
         r#"
         UPDATE opportunities

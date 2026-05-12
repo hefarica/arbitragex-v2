@@ -21,11 +21,16 @@ impl Signer {
             return Ok(None);
         }
         let trimmed = key.trim_start_matches("0x");
-        let wallet: LocalWallet = trimmed.parse::<LocalWallet>()
+        let wallet: LocalWallet = trimmed
+            .parse::<LocalWallet>()
             .context("invalid FLASHBOTS_SIGNER_KEY (expected hex private key)")?;
         let wallet = wallet.with_chain_id(chain_id);
         let address = wallet.address();
-        Ok(Some(Self { wallet, address, chain_id }))
+        Ok(Some(Self {
+            wallet,
+            address,
+            chain_id,
+        }))
     }
 
     /// Signs an arbitrary body for Flashbots' X-Flashbots-Signature header.
@@ -34,9 +39,16 @@ impl Signer {
         let digest = keccak256(body);
         // Convention: the message signed is the hex encoding of the digest.
         let msg = format!("0x{}", hex::encode(digest));
-        let sig = self.wallet.sign_message(msg.as_bytes()).await
+        let sig = self
+            .wallet
+            .sign_message(msg.as_bytes())
+            .await
             .context("flashbots auth signature")?;
-        Ok(format!("0x{}:0x{}", hex::encode(self.address.as_bytes()), sig))
+        Ok(format!(
+            "0x{}:0x{}",
+            hex::encode(self.address.as_bytes()),
+            sig
+        ))
     }
 }
 

@@ -1,12 +1,11 @@
 //! Motor de Riesgo y Scoring para DeFi
 
-
 /// Parámetros de la política de riesgo en vivo
 #[derive(Debug, Clone)]
 pub struct RiskPolicy {
     pub min_net_profit_usd: f64,
     pub min_net_roi_pct: f64,
-    pub max_gas_cost_ratio: f64,    // gas_cost / gross_profit
+    pub max_gas_cost_ratio: f64, // gas_cost / gross_profit
     pub max_slippage_pct: f64,
     pub max_price_impact_pct: f64,
     pub min_liquidity_usd: f64,
@@ -51,7 +50,7 @@ pub fn validate_opportunity_risk(
     if profile.net_roi_pct < policy.min_net_roi_pct {
         return Err(RiskRejectionReason::NetRoiTooLow);
     }
-    
+
     let gas_ratio = if profile.gross_profit_usd > 0.0 {
         profile.gas_cost_usd / profile.gross_profit_usd
     } else {
@@ -124,7 +123,7 @@ mod tests {
 
         assert!(validate_opportunity_risk(&profile, &policy).is_ok());
     }
-    
+
     #[test]
     fn test_risk_validation_gas_too_high() {
         let policy = RiskPolicy {

@@ -49,8 +49,8 @@ pub fn decode_symbol_result(returndata: &[u8]) -> Result<String> {
     if returndata.is_empty() {
         anyhow::bail!("empty returndata for symbol()");
     }
-    let decoded = IERC20::symbolCall::abi_decode_returns(returndata)
-        .context("decode symbol() returndata")?;
+    let decoded =
+        IERC20::symbolCall::abi_decode_returns(returndata).context("decode symbol() returndata")?;
     Ok(decoded)
 }
 

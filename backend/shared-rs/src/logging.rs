@@ -5,8 +5,7 @@
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 pub fn init_tracing(service: &str, log_level: &str) -> anyhow::Result<()> {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(log_level));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
 
     let fmt_layer = tracing_subscriber::fmt::layer()
         .json()

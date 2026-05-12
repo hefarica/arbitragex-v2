@@ -16,8 +16,13 @@ use tracing::debug;
 
 pub enum InclusionOutcome {
     /// `gas_used` is `u64` — alloy 1.0 `TransactionReceipt.gas_used` type.
-    Included { block: u64, gas_used: u64 },
-    Reverted { block: u64 },
+    Included {
+        block: u64,
+        gas_used: u64,
+    },
+    Reverted {
+        block: u64,
+    },
     Dropped,
 }
 
@@ -38,7 +43,10 @@ pub async fn wait_for_inclusion(
                 let gas = r.gas_used;
                 // alloy 1.0: receipt.status() returns bool (true = success / 1).
                 if r.status() {
-                    return InclusionOutcome::Included { block, gas_used: gas };
+                    return InclusionOutcome::Included {
+                        block,
+                        gas_used: gas,
+                    };
                 } else {
                     return InclusionOutcome::Reverted { block };
                 }
@@ -47,7 +55,12 @@ pub async fn wait_for_inclusion(
                 // alloy 1.0: get_block_number() returns u64 directly.
                 let cur = provider.get_block_number().await.unwrap_or(start_block);
                 if cur >= end_block {
-                    debug!(event = "tracker.timeout", start = start_block, end = end_block, current = cur);
+                    debug!(
+                        event = "tracker.timeout",
+                        start = start_block,
+                        end = end_block,
+                        current = cur
+                    );
                     return InclusionOutcome::Dropped;
                 }
             }

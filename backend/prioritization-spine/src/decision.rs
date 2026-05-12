@@ -56,16 +56,27 @@ pub enum RejectReason {
     // the dashboard with enough context for the operator to fix the gap.
     //
     /// `strategy_configs[kind].enabled = false` (per-strategy explicit off).
-    StrategyConfigDisabled { strategy_kind: String },
+    StrategyConfigDisabled {
+        strategy_kind: String,
+    },
     /// Per-strategy `allowed_chain_ids` is set and excludes this chain.
-    StrategyConfigChainBlocked { strategy_kind: String, chain_id: u64 },
+    StrategyConfigChainBlocked {
+        strategy_kind: String,
+        chain_id: u64,
+    },
     /// A leg's `dex_id` is not in the effective DEX allowlist (per-strategy
     /// or chain-level `enabled_dex_ids`). `dex_id` carries the offending UUID
     /// so the dashboard links straight to the DEX row.
-    StrategyConfigDexBlocked { strategy_kind: String, dex_id: String },
+    StrategyConfigDexBlocked {
+        strategy_kind: String,
+        dex_id: String,
+    },
     /// Audit 2026-05-10 follow-up: per-strategy `enabled_pool_ids` is set
     /// and a leg's `pool_id` is not in it. UUID surfaced for dashboard links.
-    StrategyConfigPoolBlocked { strategy_kind: String, pool_id: String },
+    StrategyConfigPoolBlocked {
+        strategy_kind: String,
+        pool_id: String,
+    },
     /// A leg's `protocol_type` is not in the per-strategy
     /// `enabled_protocol_types` allowlist (when non-empty).
     StrategyConfigProtocolBlocked {
@@ -133,12 +144,8 @@ impl RejectReason {
                 "strategy_config_protocol_blocked"
             }
             RejectReason::StrategyConfigRouteBlocked { .. } => "strategy_config_route_blocked",
-            RejectReason::StrategyConfigPoolBelowFloor { .. } => {
-                "strategy_config_pool_below_floor"
-            }
-            RejectReason::StrategyConfigBelowMinProfit { .. } => {
-                "strategy_config_below_min_profit"
-            }
+            RejectReason::StrategyConfigPoolBelowFloor { .. } => "strategy_config_pool_below_floor",
+            RejectReason::StrategyConfigBelowMinProfit { .. } => "strategy_config_below_min_profit",
             RejectReason::StrategyConfigBelowMinRoi { .. } => "strategy_config_below_min_roi",
         }
     }

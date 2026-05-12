@@ -59,7 +59,11 @@ impl WsChainClient {
         let provider = timeout(Duration::from_secs(10), Provider::<Ws>::connect(url))
             .await
             .context("ws connect timeout")??;
-        let observed_chain = provider.get_chainid().await.context("get_chainid")?.as_u64();
+        let observed_chain = provider
+            .get_chainid()
+            .await
+            .context("get_chainid")?
+            .as_u64();
         if observed_chain != chain_id {
             anyhow::bail!(
                 "chain_id mismatch: config={} observed={} (url likely wrong)",
@@ -67,7 +71,10 @@ impl WsChainClient {
                 observed_chain
             );
         }
-        info!(event = "chain_client.connected", chain_id, "ws provider connected");
+        info!(
+            event = "chain_client.connected",
+            chain_id, "ws provider connected"
+        );
         Ok(Self {
             chain_id,
             provider: Arc::new(provider),
@@ -81,9 +88,7 @@ impl WsChainClient {
     /// costs ~10 CU per delivered hash plus a follow-up `eth_getTransactionByHash`
     /// (26 CU) to fetch the body. Prefer `subscribe_pending_filtered_txs` when
     /// the upstream is Alchemy and we already know the routers we care about.
-    pub async fn subscribe_pending(
-        &self,
-    ) -> anyhow::Result<impl Stream<Item = H256> + Send + '_> {
+    pub async fn subscribe_pending(&self) -> anyhow::Result<impl Stream<Item = H256> + Send + '_> {
         let sub = self
             .provider
             .subscribe_pending_txs()
@@ -103,7 +108,9 @@ impl WsChainClient {
         to_addresses: &[String],
     ) -> anyhow::Result<SubscriptionStream<'_, Ws, Transaction>> {
         if to_addresses.is_empty() {
-            anyhow::bail!("subscribe_pending_filtered_txs: empty allowlist would unfilter the stream");
+            anyhow::bail!(
+                "subscribe_pending_filtered_txs: empty allowlist would unfilter the stream"
+            );
         }
         let params: Value = json!([
             "alchemy_pendingTransactions",
@@ -169,7 +176,7 @@ impl MempoolMode {
             MempoolMode::Disabled => "disabled",
             MempoolMode::Filtered => "filtered",
             MempoolMode::Firehose => "firehose",
-            MempoolMode::Auto     => "auto",
+            MempoolMode::Auto => "auto",
         }
     }
 
@@ -179,9 +186,9 @@ impl MempoolMode {
         match std::env::var("ARBX_MEMPOOL_MODE") {
             Ok(v) => match v.trim().to_ascii_lowercase().as_str() {
                 "disabled" | "off" | "none" => MempoolMode::Disabled,
-                "filtered" | "alchemy"      => MempoolMode::Filtered,
-                "firehose" | "all" | "raw"  => MempoolMode::Firehose,
-                "auto" | ""                 => MempoolMode::Auto,
+                "filtered" | "alchemy" => MempoolMode::Filtered,
+                "firehose" | "all" | "raw" => MempoolMode::Firehose,
+                "auto" | "" => MempoolMode::Auto,
                 _ => {
                     warn!(
                         event = "chain_client.mempool_mode_unknown",
@@ -230,9 +237,8 @@ pub fn parse_extra_allowlist_from_env() -> Vec<String> {
         if s.is_empty() {
             continue;
         }
-        let valid = s.len() == 42
-            && s.starts_with("0x")
-            && s[2..].chars().all(|c| c.is_ascii_hexdigit());
+        let valid =
+            s.len() == 42 && s.starts_with("0x") && s[2..].chars().all(|c| c.is_ascii_hexdigit());
         if !valid {
             warn!(
                 event = "chain_client.allowlist_invalid_entry",
@@ -252,9 +258,15 @@ mod tests {
 
     #[test]
     fn alchemy_endpoint_recognition() {
-        assert!(is_alchemy_endpoint("wss://eth-mainnet.g.alchemy.com/v2/abc"));
-        assert!(is_alchemy_endpoint("wss://eth-mainnet.alchemyapi.io/v2/xyz"));
-        assert!(is_alchemy_endpoint("https://Eth-Mainnet.g.Alchemy.com/v2/X"));
+        assert!(is_alchemy_endpoint(
+            "wss://eth-mainnet.g.alchemy.com/v2/abc"
+        ));
+        assert!(is_alchemy_endpoint(
+            "wss://eth-mainnet.alchemyapi.io/v2/xyz"
+        ));
+        assert!(is_alchemy_endpoint(
+            "https://Eth-Mainnet.g.Alchemy.com/v2/X"
+        ));
         assert!(!is_alchemy_endpoint("wss://mainnet.infura.io/ws/v3/abc"));
         assert!(!is_alchemy_endpoint("wss://rpc.flashbots.net"));
     }
@@ -276,9 +288,18 @@ mod tests {
 
     #[test]
     fn mempool_mode_explicit_choice_passes_through() {
-        assert_eq!(MempoolMode::Disabled.resolve(true, 4), MempoolMode::Disabled);
-        assert_eq!(MempoolMode::Filtered.resolve(false, 0), MempoolMode::Filtered);
-        assert_eq!(MempoolMode::Firehose.resolve(true, 4), MempoolMode::Firehose);
+        assert_eq!(
+            MempoolMode::Disabled.resolve(true, 4),
+            MempoolMode::Disabled
+        );
+        assert_eq!(
+            MempoolMode::Filtered.resolve(false, 0),
+            MempoolMode::Filtered
+        );
+        assert_eq!(
+            MempoolMode::Firehose.resolve(true, 4),
+            MempoolMode::Firehose
+        );
     }
 
     #[test]

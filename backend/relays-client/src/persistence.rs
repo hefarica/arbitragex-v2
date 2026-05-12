@@ -12,7 +12,10 @@ use std::str::FromStr;
 
 pub async fn persist_execution(pool: &PgPool, r: &ExecutionResult, chain_id: i64) -> Result<()> {
     let status = status_str(&r.status);
-    let gas_used: Option<BigDecimal> = r.gas_used_wei.as_deref().and_then(|s| BigDecimal::from_str(s).ok());
+    let gas_used: Option<BigDecimal> = r
+        .gas_used_wei
+        .as_deref()
+        .and_then(|s| BigDecimal::from_str(s).ok());
     let mut tx = pool.begin().await.context("begin")?;
 
     sqlx::query(
@@ -44,7 +47,9 @@ pub async fn persist_execution(pool: &PgPool, r: &ExecutionResult, chain_id: i64
         ExecutionStatus::Included => "executed",
         ExecutionStatus::Reverted => "failed",
         ExecutionStatus::Dropped | ExecutionStatus::Replaced => "failed",
-        ExecutionStatus::NotSubmitted | ExecutionStatus::Submitted | ExecutionStatus::NotImplemented => "simulated", // leave as simulated (no on-chain action)
+        ExecutionStatus::NotSubmitted
+        | ExecutionStatus::Submitted
+        | ExecutionStatus::NotImplemented => "simulated", // leave as simulated (no on-chain action)
     };
     sqlx::query(
         r#"

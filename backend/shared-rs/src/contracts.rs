@@ -149,7 +149,16 @@ pub struct NotImplementedPayload {
 }
 
 impl NotImplementedPayload {
-    pub fn new(requires: Vec<&'static str>, sprint: &'static str, detail: impl Into<String>) -> Self {
-        Self { error: "not_implemented", requires, sprint, detail: detail.into() }
+    pub fn new(
+        requires: Vec<&'static str>,
+        sprint: &'static str,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self {
+            error: "not_implemented",
+            requires,
+            sprint,
+            detail: detail.into(),
+        }
     }
 }

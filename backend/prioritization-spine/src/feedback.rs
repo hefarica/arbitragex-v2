@@ -58,10 +58,7 @@ pub struct AdaptiveSignal {
 impl AdaptiveSignal {
     /// Returns `true` when the signal was received within the TTL window.
     pub fn is_fresh(&self) -> bool {
-        self.received_at
-            .elapsed()
-            .unwrap_or(Duration::MAX)
-            < SIGNAL_TTL
+        self.received_at.elapsed().unwrap_or(Duration::MAX) < SIGNAL_TTL
     }
 }
 
@@ -181,7 +178,10 @@ impl FeedbackChannel {
                 let key = (signal.strategy_kind.clone(), signal.chain_id);
                 // std::sync::RwLock::write() — instant; subscriber is the only writer.
                 // Poisoned lock is treated as fatal (panic propagates to task boundary).
-                self.inner.write().expect("feedback RwLock poisoned").insert(key, signal);
+                self.inner
+                    .write()
+                    .expect("feedback RwLock poisoned")
+                    .insert(key, signal);
             }
 
             warn!(
@@ -213,7 +213,10 @@ impl FeedbackChannel {
     #[cfg(test)]
     pub fn insert_for_test(&self, signal: AdaptiveSignal) {
         let key = (signal.strategy_kind.clone(), signal.chain_id);
-        self.inner.write().expect("feedback RwLock poisoned").insert(key, signal);
+        self.inner
+            .write()
+            .expect("feedback RwLock poisoned")
+            .insert(key, signal);
     }
 }
 

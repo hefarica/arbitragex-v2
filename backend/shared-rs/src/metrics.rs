@@ -8,9 +8,13 @@ pub static REGISTRY: Lazy<Registry> = Lazy::new(Registry::new);
 
 pub static HTTP_REQUESTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let c = IntCounterVec::new(
-        prometheus::opts!("arbx_http_requests_total", "Total HTTP requests by service/method/path/status"),
+        prometheus::opts!(
+            "arbx_http_requests_total",
+            "Total HTTP requests by service/method/path/status"
+        ),
         &["service", "method", "path", "status"],
-    ).expect("metric");
+    )
+    .expect("metric");
     REGISTRY.register(Box::new(c.clone())).expect("register");
     c
 });
@@ -23,25 +27,34 @@ pub static HTTP_REQUEST_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
             prometheus::exponential_buckets(0.001, 2.0, 12).unwrap()
         ),
         &["service", "method", "path"],
-    ).expect("metric");
+    )
+    .expect("metric");
     REGISTRY.register(Box::new(h.clone())).expect("register");
     h
 });
 
 pub static OPPORTUNITIES_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let c = IntCounterVec::new(
-        prometheus::opts!("arbx_opportunity_total", "Opportunities by chain/strategy/status"),
+        prometheus::opts!(
+            "arbx_opportunity_total",
+            "Opportunities by chain/strategy/status"
+        ),
         &["chain_id", "strategy_kind", "status"],
-    ).expect("metric");
+    )
+    .expect("metric");
     REGISTRY.register(Box::new(c.clone())).expect("register");
     c
 });
 
 pub static SIMULATIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let c = IntCounterVec::new(
-        prometheus::opts!("arbx_simulation_total", "Simulations by simulator and pass/fail"),
+        prometheus::opts!(
+            "arbx_simulation_total",
+            "Simulations by simulator and pass/fail"
+        ),
         &["simulator", "passed"],
-    ).expect("metric");
+    )
+    .expect("metric");
     REGISTRY.register(Box::new(c.clone())).expect("register");
     c
 });
@@ -50,7 +63,8 @@ pub static EXECUTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let c = IntCounterVec::new(
         prometheus::opts!("arbx_execution_total", "Executions by relay/status/chain"),
         &["relay", "status", "chain_id"],
-    ).expect("metric");
+    )
+    .expect("metric");
     REGISTRY.register(Box::new(c.clone())).expect("register");
     c
 });
@@ -69,55 +83,78 @@ pub static SERVICE_UP: Lazy<IntGauge> = Lazy::new(|| {
 
 pub static SEARCHER_BACKEND_STATE: Lazy<prometheus::IntGaugeVec> = Lazy::new(|| {
     let g = prometheus::IntGaugeVec::new(
-        prometheus::opts!("arbx_searcher_backend_state",
-            "One-hot searcher backend state per chain (1 if matches)"),
+        prometheus::opts!(
+            "arbx_searcher_backend_state",
+            "One-hot searcher backend state per chain (1 if matches)"
+        ),
         &["chain_id", "state"],
-    ).expect("metric");
+    )
+    .expect("metric");
     REGISTRY.register(Box::new(g.clone())).expect("register");
     g
 });
 
 pub static SEARCHER_PENDING_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let c = IntCounterVec::new(
-        prometheus::opts!("arbx_searcher_pending_total", "Pending tx hashes seen from WS"),
+        prometheus::opts!(
+            "arbx_searcher_pending_total",
+            "Pending tx hashes seen from WS"
+        ),
         &["chain_id"],
-    ).expect("metric");
+    )
+    .expect("metric");
     REGISTRY.register(Box::new(c.clone())).expect("register");
     c
 });
 
 pub static SEARCHER_DECODED_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let c = IntCounterVec::new(
-        prometheus::opts!("arbx_searcher_decoded_total", "Pending txs successfully decoded"),
+        prometheus::opts!(
+            "arbx_searcher_decoded_total",
+            "Pending txs successfully decoded"
+        ),
         &["chain_id", "router"],
-    ).expect("metric");
+    )
+    .expect("metric");
     REGISTRY.register(Box::new(c.clone())).expect("register");
     c
 });
 
 pub static SEARCHER_UNDECODED_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let c = IntCounterVec::new(
-        prometheus::opts!("arbx_searcher_undecoded_total", "Pending txs not decoded, by reason"),
+        prometheus::opts!(
+            "arbx_searcher_undecoded_total",
+            "Pending txs not decoded, by reason"
+        ),
         &["chain_id", "reason"],
-    ).expect("metric");
+    )
+    .expect("metric");
     REGISTRY.register(Box::new(c.clone())).expect("register");
     c
 });
 
 pub static SEARCHER_DROPPED_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let c = IntCounterVec::new(
-        prometheus::opts!("arbx_searcher_dropped_total", "Pending txs dropped before processing"),
+        prometheus::opts!(
+            "arbx_searcher_dropped_total",
+            "Pending txs dropped before processing"
+        ),
         &["chain_id", "reason"],
-    ).expect("metric");
+    )
+    .expect("metric");
     REGISTRY.register(Box::new(c.clone())).expect("register");
     c
 });
 
 pub static SEARCHER_WS_RECONNECTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let c = IntCounterVec::new(
-        prometheus::opts!("arbx_searcher_ws_reconnects_total", "WebSocket reconnection attempts"),
+        prometheus::opts!(
+            "arbx_searcher_ws_reconnects_total",
+            "WebSocket reconnection attempts"
+        ),
         &["chain_id"],
-    ).expect("metric");
+    )
+    .expect("metric");
     REGISTRY.register(Box::new(c.clone())).expect("register");
     c
 });

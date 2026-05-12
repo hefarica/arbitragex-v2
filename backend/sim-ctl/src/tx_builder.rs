@@ -53,16 +53,28 @@ pub fn build_probe(opp: &Opportunity, signer_from: Address) -> Result<ProbeTx, B
         return Err(BuildError::InvalidAmount("zero amount_in".into()));
     }
 
-    let router_entry = find_router_by_name(opp.chain_id, &opp.dex_a)
-        .ok_or_else(|| BuildError::UnknownRouter { chain: opp.chain_id, dex: opp.dex_a.clone() })?;
+    let router_entry =
+        find_router_by_name(opp.chain_id, &opp.dex_a).ok_or_else(|| BuildError::UnknownRouter {
+            chain: opp.chain_id,
+            dex: opp.dex_a.clone(),
+        })?;
     let to = Address::from(router_entry.address);
 
     let deadline = U256::from(now_secs() + DEADLINE_OFFSET_SECS);
 
     let data: Bytes = match router_entry.kind {
-        RouterKind::UniswapV2 | RouterKind::Sushi => encode_v2(token_in, token_out, amount_in, signer_from, deadline),
-        RouterKind::UniswapV3 => encode_v3_exact_input_single(token_in, token_out, amount_in, signer_from, deadline),
-        _ => return Err(BuildError::UnknownRouter { chain: opp.chain_id, dex: opp.dex_a.clone() }),
+        RouterKind::UniswapV2 | RouterKind::Sushi => {
+            encode_v2(token_in, token_out, amount_in, signer_from, deadline)
+        }
+        RouterKind::UniswapV3 => {
+            encode_v3_exact_input_single(token_in, token_out, amount_in, signer_from, deadline)
+        }
+        _ => {
+            return Err(BuildError::UnknownRouter {
+                chain: opp.chain_id,
+                dex: opp.dex_a.clone(),
+            })
+        }
     };
 
     Ok(ProbeTx {
@@ -75,7 +87,10 @@ pub fn build_probe(opp: &Opportunity, signer_from: Address) -> Result<ProbeTx, B
 }
 
 /// Search router catalog by human-readable `dex_a` name (e.g. "uniswap-v2").
-fn find_router_by_name(chain_id: u64, dex_a: &str) -> Option<&'static shared_rs::chains::RouterEntry> {
+fn find_router_by_name(
+    chain_id: u64,
+    dex_a: &str,
+) -> Option<&'static shared_rs::chains::RouterEntry> {
     shared_rs::chains::routers_for_chain(chain_id)
         .iter()
         .find(|r| r.name.starts_with(dex_a) || r.kind.as_str() == dex_a)
@@ -93,12 +108,21 @@ fn parse_addr(s: &str) -> Result<Address, BuildError> {
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// UniV2 Router02: swapExactTokensForTokens(uint256,uint256,address[],address,uint256)
 /// Selector: 0x38ed1739
-fn encode_v2(token_in: Address, token_out: Address, amount_in: U256, to: Address, deadline: U256) -> Bytes {
+fn encode_v2(
+    token_in: Address,
+    token_out: Address,
+    amount_in: U256,
+    to: Address,
+    deadline: U256,
+) -> Bytes {
     let selector: [u8; 4] = [0x38, 0xed, 0x17, 0x39];
     let tokens = vec![
         Token::Uint(amount_in),
@@ -114,7 +138,13 @@ fn encode_v2(token_in: Address, token_out: Address, amount_in: U256, to: Address
 
 /// UniV3 SwapRouter: exactInputSingle(ExactInputSingleParams)
 /// Selector: 0x414bf389
-fn encode_v3_exact_input_single(token_in: Address, token_out: Address, amount_in: U256, to: Address, deadline: U256) -> Bytes {
+fn encode_v3_exact_input_single(
+    token_in: Address,
+    token_out: Address,
+    amount_in: U256,
+    to: Address,
+    deadline: U256,
+) -> Bytes {
     let selector: [u8; 4] = [0x41, 0x4b, 0xf3, 0x89];
     let params = Token::Tuple(vec![
         Token::Address(token_in),
@@ -132,6 +162,7 @@ fn encode_v3_exact_input_single(token_in: Address, token_out: Address, amount_in
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use chrono::Utc;
@@ -150,7 +181,9 @@ mod tests {
             amount_in_wei: "1000000000000000000".into(),
             expected_profit_usd: Some(10.0),
             net_expected_profit_usd: None,
-            roi_pct: None, risk_score: None, block_number: None,
+            roi_pct: None,
+            risk_score: None,
+            block_number: None,
             rejection_reason: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
@@ -178,21 +211,35 @@ mod tests {
     #[test]
     fn non_dex_arb_rejected() {
         let signer: Address = [0; 20].into();
-        for kind in [StrategyKind::Triangular, StrategyKind::Backrun, StrategyKind::Liquidation, StrategyKind::FlashloanArb] {
+        for kind in [
+            StrategyKind::Triangular,
+            StrategyKind::Backrun,
+            StrategyKind::Liquidation,
+            StrategyKind::FlashloanArb,
+        ] {
             let o = opp(kind.clone(), 1, "uniswap-v2");
-            assert!(matches!(build_probe(&o, signer), Err(BuildError::UnsupportedStrategy(_))));
+            assert!(matches!(
+                build_probe(&o, signer),
+                Err(BuildError::UnsupportedStrategy(_))
+            ));
         }
     }
 
     #[test]
     fn non_mainnet_rejected() {
         let o = opp(StrategyKind::DexArb, 137, "uniswap-v2");
-        assert!(matches!(build_probe(&o, [0; 20].into()), Err(BuildError::UnsupportedChain(137))));
+        assert!(matches!(
+            build_probe(&o, [0; 20].into()),
+            Err(BuildError::UnsupportedChain(137))
+        ));
     }
 
     #[test]
     fn unknown_dex_rejected() {
         let o = opp(StrategyKind::DexArb, 1, "some-unknown-dex");
-        assert!(matches!(build_probe(&o, [0; 20].into()), Err(BuildError::UnknownRouter { .. })));
+        assert!(matches!(
+            build_probe(&o, [0; 20].into()),
+            Err(BuildError::UnknownRouter { .. })
+        ));
     }
 }

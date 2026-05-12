@@ -74,10 +74,7 @@ fn default_since() -> DateTime<Utc> {
     Utc::now() - chrono::Duration::hours(24)
 }
 
-async fn pnl_one(
-    State(st): State<Arc<AppState>>,
-    Path(id): Path<Uuid>,
-) -> impl IntoResponse {
+async fn pnl_one(State(st): State<Arc<AppState>>, Path(id): Path<Uuid>) -> impl IntoResponse {
     use sqlx::Row;
     let row = sqlx::query(
         r#"
@@ -93,7 +90,8 @@ async fn pnl_one(
         "#,
     )
     .bind(id)
-    .fetch_optional(&st.db).await;
+    .fetch_optional(&st.db)
+    .await;
 
     match row {
         Ok(Some(r)) => {
@@ -101,22 +99,38 @@ async fn pnl_one(
             let actual: f64 = r.try_get("actual_profit_usd").unwrap_or(0.0);
             let created_at: Option<DateTime<Utc>> = r.try_get("created_at").ok();
             let variance_usd = actual - expected;
-            let variance_pct = if expected.abs() > 1e-9 { (variance_usd / expected) * 100.0 } else { 0.0 };
-            (StatusCode::OK, Json(serde_json::to_value(PnlRow {
-                opportunity_id: r.try_get::<Uuid, _>("opportunity_id").unwrap_or(id),
-                expected_profit_usd: expected,
-                actual_profit_usd: actual,
-                variance_usd,
-                variance_pct,
-                created_at: created_at.unwrap_or_else(Utc::now),
-            }).unwrap()))
+            let variance_pct = if expected.abs() > 1e-9 {
+                (variance_usd / expected) * 100.0
+            } else {
+                0.0
+            };
+            (
+                StatusCode::OK,
+                Json(
+                    serde_json::to_value(PnlRow {
+                        opportunity_id: r.try_get::<Uuid, _>("opportunity_id").unwrap_or(id),
+                        expected_profit_usd: expected,
+                        actual_profit_usd: actual,
+                        variance_usd,
+                        variance_pct,
+                        created_at: created_at.unwrap_or_else(Utc::now),
+                    })
+                    .unwrap(),
+                ),
+            )
         }
-        Ok(None) => (StatusCode::NOT_FOUND, Json(serde_json::json!({
-            "error":"not_found","opportunity_id":id
-        }))),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-            "error":"db_error","detail":e.to_string()
-        }))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error":"not_found","opportunity_id":id
+            })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error":"db_error","detail":e.to_string()
+            })),
+        ),
     }
 }
 
@@ -144,16 +158,25 @@ async fn pnl_summary(
     .fetch_one(&st.db).await;
 
     match row {
-        Ok(r) => (StatusCode::OK, Json(serde_json::to_value(PnlSummary {
-            sample_count: r.try_get::<i64, _>("sample_count").unwrap_or(0),
-            total_expected_usd: r.try_get::<f64, _>("total_expected_usd").unwrap_or(0.0),
-            total_actual_usd: r.try_get::<f64, _>("total_actual_usd").unwrap_or(0.0),
-            avg_variance_pct: r.try_get::<f64, _>("avg_variance_pct").unwrap_or(0.0),
-            since: q.since,
-        }).unwrap())),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-            "error":"db_error","detail":e.to_string()
-        }))),
+        Ok(r) => (
+            StatusCode::OK,
+            Json(
+                serde_json::to_value(PnlSummary {
+                    sample_count: r.try_get::<i64, _>("sample_count").unwrap_or(0),
+                    total_expected_usd: r.try_get::<f64, _>("total_expected_usd").unwrap_or(0.0),
+                    total_actual_usd: r.try_get::<f64, _>("total_actual_usd").unwrap_or(0.0),
+                    avg_variance_pct: r.try_get::<f64, _>("avg_variance_pct").unwrap_or(0.0),
+                    since: q.since,
+                })
+                .unwrap(),
+            ),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error":"db_error","detail":e.to_string()
+            })),
+        ),
     }
 }
 
@@ -164,73 +187,95 @@ async fn main() -> anyhow::Result<()> {
     init_metrics();
 
     let db_url = require_env("DATABASE_URL")?;
-    let db = PgPoolOptions::new().max_connections(5).connect(&db_url).await?;
+    let db = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&db_url)
+        .await?;
     let state = Arc::new(AppState { db });
 
     let port: u16 = std::env::var("RECON_PORT")
-        .ok().and_then(|v| v.parse().ok()).unwrap_or(3004);
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3004);
 
     let pnl_router = Router::new()
         .route("/pnl/:id", get(pnl_one))
         .route("/pnl/summary", get(pnl_summary))
         .with_state(state);
-    let app = build_health_router(ServiceInfo::new(SERVICE_NAME, SERVICE_VERSION))
-        .merge(pnl_router);
+    let app =
+        build_health_router(ServiceInfo::new(SERVICE_NAME, SERVICE_VERSION)).merge(pnl_router);
 
     info!(event = "service.boot", service = SERVICE_NAME, env = %cfg.system.env, port,
           "recon listening — S6: consumer + aggregator active when infra ready");
 
     // S6: spawn consumer if RPC + REDIS + recon cfg present.
     if let Some(recon_cfg) = cfg.recon.clone() {
-        let chain_id = cfg.chains.iter().find(|c| c.enabled).map(|c| c.chain_id).unwrap_or(1);
+        let chain_id = cfg
+            .chains
+            .iter()
+            .find(|c| c.enabled)
+            .map(|c| c.chain_id)
+            .unwrap_or(1);
         let redis_url = std::env::var("REDIS_URL").unwrap_or_default();
         if redis_url.is_empty() {
-            warn!(event = "recon.consumer_not_spawned", reason = "redis_url_missing");
+            warn!(
+                event = "recon.consumer_not_spawned",
+                reason = "redis_url_missing"
+            );
         } else {
             // RPC failover discipline (G-RPC-1): build a multi-vendor HTTP
             // pool from env. recon's consumer fetches receipts on chain — we
             // pick the primary at boot and let the pool's health loop publish
             // metrics + drift detection + per-provider circuit state.
-            let provider_arc: Option<Arc<AlloyHttpProvider>> = match HttpRpcPool::from_env(chain_id).await {
-                Ok(Some(pool)) => {
-                    let pool = Arc::new(pool);
-                    let _health_task = pool.spawn_health_loop();
-                    match pool.pick() {
-                        Ok(e) => {
-                            info!(
-                                event = "rpc_pool.primary_selected",
-                                provider = %e.name, chain_id,
-                                "recon primary RPC selected"
-                            );
-                            Some(e.provider.clone())
-                        }
-                        Err(e) => {
-                            warn!(event = "rpc_pool.no_healthy", error = %e);
-                            None
+            let provider_arc: Option<Arc<AlloyHttpProvider>> =
+                match HttpRpcPool::from_env(chain_id).await {
+                    Ok(Some(pool)) => {
+                        let pool = Arc::new(pool);
+                        let _health_task = pool.spawn_health_loop();
+                        match pool.pick() {
+                            Ok(e) => {
+                                info!(
+                                    event = "rpc_pool.primary_selected",
+                                    provider = %e.name, chain_id,
+                                    "recon primary RPC selected"
+                                );
+                                Some(e.provider.clone())
+                            }
+                            Err(e) => {
+                                warn!(event = "rpc_pool.no_healthy", error = %e);
+                                None
+                            }
                         }
                     }
-                }
-                Ok(None) => {
-                    warn!(
+                    Ok(None) => {
+                        warn!(
                         event = "rpc_pool.absent",
                         chain_id,
                         "RPC_HTTP_{chain_id} not set; recon stays read-only (no receipt fetching)"
                     );
-                    None
-                }
-                Err(e) => {
-                    warn!(event = "rpc_pool.invalid", chain_id, error = %e);
-                    None
-                }
-            };
+                        None
+                    }
+                    Err(e) => {
+                        warn!(event = "rpc_pool.invalid", chain_id, error = %e);
+                        None
+                    }
+                };
 
             if let Some(provider) = provider_arc {
-                let db_for_consumer = PgPoolOptions::new().max_connections(4).connect(&db_url).await?;
-                let db_for_aggregator = PgPoolOptions::new().max_connections(2).connect(&db_url).await?;
+                let db_for_consumer = PgPoolOptions::new()
+                    .max_connections(4)
+                    .connect(&db_url)
+                    .await?;
+                let db_for_aggregator = PgPoolOptions::new()
+                    .max_connections(2)
+                    .connect(&db_url)
+                    .await?;
                 let redis_client = redis::Client::open(redis_url.clone())?;
                 let redis_conn = redis_client.get_connection_manager().await?;
-                let killswitch = KillSwitchClient::connect(&redis_url, cfg.system.kill_switch_enabled_default).await
-                    .map_err(|e| anyhow::anyhow!("killswitch: {e}"))?;
+                let killswitch =
+                    KillSwitchClient::connect(&redis_url, cfg.system.kill_switch_enabled_default)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("killswitch: {e}"))?;
 
                 let consumer = consumer::Consumer {
                     redis: redis_conn,
@@ -269,23 +314,30 @@ async fn main() -> anyhow::Result<()> {
 
                 let cfg_agg = recon_cfg.clone();
                 tokio::spawn(async move {
-                    aggregator::run_periodic(db_for_aggregator, cfg_agg, killswitch, redis_agg).await;
+                    aggregator::run_periodic(db_for_aggregator, cfg_agg, killswitch, redis_agg)
+                        .await;
                 });
                 info!(event = "aggregator.spawned");
             } else {
-                warn!(event = "recon.consumer_not_spawned",
-                      "RPC pool empty/unhealthy or absent; running read-only");
+                warn!(
+                    event = "recon.consumer_not_spawned",
+                    "RPC pool empty/unhealthy or absent; running read-only"
+                );
             }
         }
     } else {
-        warn!(event = "recon.cfg_absent",
-              "[recon] config section missing; running read-only without consumer+aggregator");
+        warn!(
+            event = "recon.cfg_absent",
+            "[recon] config section missing; running read-only without consumer+aggregator"
+        );
     }
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app)
-        .with_graceful_shutdown(async { tokio::signal::ctrl_c().await.ok(); })
+        .with_graceful_shutdown(async {
+            tokio::signal::ctrl_c().await.ok();
+        })
         .await?;
     Ok(())
 }

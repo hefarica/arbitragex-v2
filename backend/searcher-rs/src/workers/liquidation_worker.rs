@@ -158,13 +158,13 @@ const LIQUIDATION_PROFIT_SANITY_MULT_OF_DEBT: f64 = 0.20;
 /// fallback only applies during cold-start or misconfigured chains.
 fn min_profit_usd_fallback(chain_id: u64) -> f64 {
     match chain_id {
-        1     => 50.0,  // Ethereum mainnet
-        42161 => 10.0,  // Arbitrum One
-        56    => 5.0,   // BNB Smart Chain
-        10    => 5.0,   // Optimism
-        8453  => 5.0,   // Base
-        137   => 2.0,   // Polygon
-        _     => 10.0,  // Unknown chain: conservative default
+        1 => 50.0,     // Ethereum mainnet
+        42161 => 10.0, // Arbitrum One
+        56 => 5.0,     // BNB Smart Chain
+        10 => 5.0,     // Optimism
+        8453 => 5.0,   // Base
+        137 => 2.0,    // Polygon
+        _ => 10.0,     // Unknown chain: conservative default
     }
 }
 
@@ -348,12 +348,36 @@ fn get_user_account_data_function() -> Function {
             internal_type: None,
         }],
         outputs: vec![
-            Param { name: "totalCollateralBase".to_string(),       kind: ParamType::Uint(256), internal_type: None },
-            Param { name: "totalDebtBase".to_string(),             kind: ParamType::Uint(256), internal_type: None },
-            Param { name: "availableBorrowsBase".to_string(),      kind: ParamType::Uint(256), internal_type: None },
-            Param { name: "currentLiquidationThreshold".to_string(), kind: ParamType::Uint(256), internal_type: None },
-            Param { name: "ltv".to_string(),                        kind: ParamType::Uint(256), internal_type: None },
-            Param { name: "healthFactor".to_string(),               kind: ParamType::Uint(256), internal_type: None },
+            Param {
+                name: "totalCollateralBase".to_string(),
+                kind: ParamType::Uint(256),
+                internal_type: None,
+            },
+            Param {
+                name: "totalDebtBase".to_string(),
+                kind: ParamType::Uint(256),
+                internal_type: None,
+            },
+            Param {
+                name: "availableBorrowsBase".to_string(),
+                kind: ParamType::Uint(256),
+                internal_type: None,
+            },
+            Param {
+                name: "currentLiquidationThreshold".to_string(),
+                kind: ParamType::Uint(256),
+                internal_type: None,
+            },
+            Param {
+                name: "ltv".to_string(),
+                kind: ParamType::Uint(256),
+                internal_type: None,
+            },
+            Param {
+                name: "healthFactor".to_string(),
+                kind: ParamType::Uint(256),
+                internal_type: None,
+            },
         ],
         constant: None,
         state_mutability: StateMutability::View,
@@ -375,7 +399,7 @@ pub fn decode_user_account_data(return_data: &[u8]) -> Option<UserAccountData> {
     }
     Some(UserAccountData {
         total_collateral_base: U256::from_big_endian(&return_data[0..32]),
-        total_debt_base:       U256::from_big_endian(&return_data[32..64]),
+        total_debt_base: U256::from_big_endian(&return_data[32..64]),
         available_borrows_base: U256::from_big_endian(&return_data[64..96]),
         current_liquidation_threshold: U256::from_big_endian(&return_data[96..128]),
         ltv: U256::from_big_endian(&return_data[128..160]),
@@ -472,9 +496,7 @@ async fn multicall_get_user_account_data(
             let tx = TransactionRequest::default()
                 .to(multicall_alloy)
                 .input(TransactionInput::new(calldata.clone().into()));
-            async move {
-                provider.call(tx).await.map_err(|e| anyhow::anyhow!("{e}"))
-            }
+            async move { provider.call(tx).await.map_err(|e| anyhow::anyhow!("{e}")) }
         }),
     )
     .await
@@ -501,7 +523,10 @@ async fn multicall_get_user_account_data(
             let data = decode_user_account_data(&res.returnData);
             out.push(UserDataResult { user: *user, data });
         } else {
-            out.push(UserDataResult { user: *user, data: None });
+            out.push(UserDataResult {
+                user: *user,
+                data: None,
+            });
         }
     }
     Ok(out)
@@ -603,10 +628,7 @@ impl TickStats {
 /// Read the operator-managed watchlist from Redis. Returns the list of
 /// lowercase 0x-prefixed addresses. On Redis error or empty set returns an
 /// empty Vec (caller increments `skip_empty_watchlist` and skips the tick).
-async fn read_watchlist(
-    redis: &mut ConnectionManager,
-    chain_id: u64,
-) -> Vec<String> {
+async fn read_watchlist(redis: &mut ConnectionManager, chain_id: u64) -> Vec<String> {
     let key = watchlist_redis_key(chain_id);
     let members: redis::RedisResult<Vec<String>> = redis.smembers(&key).await;
     match members {
@@ -776,7 +798,9 @@ impl LiquidationWorker {
             let current_block: u64 = match tokio::time::timeout(
                 MULTICALL_TIMEOUT,
                 rpc_pool.with_retry(|p| async move {
-                    p.get_block_number().await.map_err(|e| anyhow::anyhow!("{e}"))
+                    p.get_block_number()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{e}"))
                 }),
             )
             .await
@@ -801,12 +825,13 @@ impl LiquidationWorker {
             // refinement; current MVP only needs USD-denominated debt from
             // Aave's base unit, but we plumb the snapshot through so the
             // follow-up task (per-asset bonus) can use it without refactoring.
-            let _price_snapshot = shared_rs::price_oracle::RedisCachedPriceOracle::snapshot_from_redis(
-                &mut redis,
-                self.chain_id,
-            )
-            .await
-            .into_snapshot();
+            let _price_snapshot =
+                shared_rs::price_oracle::RedisCachedPriceOracle::snapshot_from_redis(
+                    &mut redis,
+                    self.chain_id,
+                )
+                .await
+                .into_snapshot();
 
             let results = match multicall_get_user_account_data(
                 rpc_pool.clone(),
@@ -861,7 +886,8 @@ impl LiquidationWorker {
                     }
                 };
 
-                let total_collateral_usd = match decode_aave_base_to_usd(data.total_collateral_base) {
+                let total_collateral_usd = match decode_aave_base_to_usd(data.total_collateral_base)
+                {
                     Some(v) if v > 0.0 => v,
                     _ => {
                         // No collateral = liquidation impossible (nothing to seize).
@@ -957,15 +983,15 @@ impl LiquidationWorker {
                 // here because liquidation calls use a USD-equivalent amount,
                 // and the executor reads the strategy_kind to interpret the
                 // unit (spine + executor are aware of this convention).
-                let debt_to_repay_aave_base =
-                    (estimate.debt_to_repay_usd * 10f64.powi(AAVE_BASE_UNIT_DECIMALS as i32)).round();
-                let amount_in_str = if debt_to_repay_aave_base.is_finite()
-                    && debt_to_repay_aave_base >= 0.0
-                {
-                    format!("{:.0}", debt_to_repay_aave_base)
-                } else {
-                    "0".to_string()
-                };
+                let debt_to_repay_aave_base = (estimate.debt_to_repay_usd
+                    * 10f64.powi(AAVE_BASE_UNIT_DECIMALS as i32))
+                .round();
+                let amount_in_str =
+                    if debt_to_repay_aave_base.is_finite() && debt_to_repay_aave_base >= 0.0 {
+                        format!("{:.0}", debt_to_repay_aave_base)
+                    } else {
+                        "0".to_string()
+                    };
 
                 let opp = Opportunity {
                     id: Uuid::new_v4(),
@@ -985,7 +1011,11 @@ impl LiquidationWorker {
                     net_expected_profit_usd: Some(estimate.net_profit_usd),
                     roi_pct: None,
                     risk_score: None,
-                    block_number: if current_block > 0 { Some(current_block) } else { None },
+                    block_number: if current_block > 0 {
+                        Some(current_block)
+                    } else {
+                        None
+                    },
                     rejection_reason: None,
                     detected_at: Utc::now(),
                     trace_id: Uuid::new_v4(),
@@ -1064,6 +1094,7 @@ impl LiquidationWorker {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)] // M11: test module
+    #![allow(clippy::field_reassign_with_default)]
     use super::*;
 
     // ---------------------------------------------------------------
@@ -1416,8 +1447,14 @@ mod tests {
     fn liquidation_bonus_bps_returns_default_for_any_asset() {
         // MVP: every asset returns DEFAULT_LIQUIDATION_BONUS_BPS until the
         // per-asset on-chain lookup lands in the follow-up task.
-        assert_eq!(liquidation_bonus_bps_for_asset("0xanything"), DEFAULT_LIQUIDATION_BONUS_BPS);
-        assert_eq!(liquidation_bonus_bps_for_asset(""), DEFAULT_LIQUIDATION_BONUS_BPS);
+        assert_eq!(
+            liquidation_bonus_bps_for_asset("0xanything"),
+            DEFAULT_LIQUIDATION_BONUS_BPS
+        );
+        assert_eq!(
+            liquidation_bonus_bps_for_asset(""),
+            DEFAULT_LIQUIDATION_BONUS_BPS
+        );
     }
 
     // ---------------------------------------------------------------

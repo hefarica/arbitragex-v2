@@ -99,11 +99,7 @@ pub async fn fetch_pool_ticks(
         .timeout(std::time::Duration::from_secs(10))
         .build()?;
 
-    let resp = client
-        .post(&url)
-        .json(&body)
-        .send()
-        .await?;
+    let resp = client.post(&url).json(&body).send().await?;
 
     if !resp.status().is_success() {
         return Err(anyhow::anyhow!(
@@ -139,8 +135,7 @@ pub async fn fetch_pool_ticks(
         .unwrap_or(0);
 
     // Subgraph ticks are already ordered by tickIdx (ascending) per the query.
-    let ticks: Vec<TickInfo> =
-        serde_json::from_value(pool["ticks"].clone()).unwrap_or_default();
+    let ticks: Vec<TickInfo> = serde_json::from_value(pool["ticks"].clone()).unwrap_or_default();
 
     Ok(Some(PoolTickDistribution {
         pool_addr: pool_addr.to_lowercase(),

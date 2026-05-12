@@ -21,13 +21,18 @@ pub struct ArbitrageGraph {
 
 impl ArbitrageGraph {
     pub fn new() -> Self {
-        ArbitrageGraph { nodes: HashMap::new() }
+        ArbitrageGraph {
+            nodes: HashMap::new(),
+        }
     }
 
     pub fn add_edge(&mut self, from: Address, to: Address, rate: f64, pool: Address) {
         self.nodes.entry(from).or_default().push((to, rate, pool));
         // Reverse edge (1/rate)
-        self.nodes.entry(to).or_default().push((from, 1.0 / rate, pool));
+        self.nodes
+            .entry(to)
+            .or_default()
+            .push((from, 1.0 / rate, pool));
     }
 
     /// Find a negative-weight cycle reachable from `start` within `max_depth`
@@ -127,7 +132,11 @@ mod tests {
         let cycle = g.find_arbitrage_cycle(a, 4);
         assert!(cycle.is_some(), "expected negative cycle to be detected");
         let path = cycle.unwrap();
-        assert!(path.len() >= 2, "cycle path should have at least 2 nodes, got {}", path.len());
+        assert!(
+            path.len() >= 2,
+            "cycle path should have at least 2 nodes, got {}",
+            path.len()
+        );
     }
 
     #[test]

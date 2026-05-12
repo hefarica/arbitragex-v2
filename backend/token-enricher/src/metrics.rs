@@ -174,11 +174,7 @@ pub async fn serve_metrics(port: u16) {
                     // ISSUE-5: 5-second read timeout prevents slow-read DoS from
                     // holding a semaphore permit indefinitely.
                     let mut buf = [0u8; 256];
-                    match tokio::time::timeout(
-                        Duration::from_secs(5),
-                        stream.read(&mut buf),
-                    )
-                    .await
+                    match tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buf)).await
                     {
                         Ok(Ok(_)) => {}
                         Ok(Err(e)) => {

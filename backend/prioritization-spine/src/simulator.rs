@@ -1,12 +1,12 @@
+use crate::lazy_db::LazyRpcDatabase;
+use crate::types::OpportunityCandidate;
+use ethers::providers::{Provider, Ws};
 use revm::{
     primitives::{Address, Bytes, TransactTo, U256},
     EVM,
 };
-use crate::types::OpportunityCandidate;
-use tracing::{info, warn, error};
 use std::sync::Arc;
-use ethers::providers::{Provider, Ws};
-use crate::lazy_db::LazyRpcDatabase;
+use tracing::{error, info, warn};
 
 pub struct EvmSimulator {
     db: LazyRpcDatabase,
@@ -26,7 +26,7 @@ impl EvmSimulator {
         let mut evm = EVM::new();
         evm.database(&mut self.db);
 
-        // TODO: In a production setting, we would lazily fetch the real state 
+        // TODO: In a production setting, we would lazily fetch the real state
         // using an Ethers Provider here for `pool_addresses` and `token_addresses`.
         // For now, we set up a mock transaction environment to satisfy the Spine.
 

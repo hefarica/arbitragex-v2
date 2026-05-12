@@ -86,18 +86,30 @@ pub async fn build_and_sign(
         });
     }
 
-    let router_entry = routers_for_chain(opp.chain_id).iter()
+    let router_entry = routers_for_chain(opp.chain_id)
+        .iter()
         .find(|r| r.name.starts_with(&opp.dex_a) || r.kind.as_str() == opp.dex_a)
         .ok_or_else(|| BuildError::UnknownRouter(opp.dex_a.clone()))?;
 
     let deadline = U256::from(now_secs() + 120);
     let data = match router_entry.kind {
-        RouterKind::UniswapV2 | RouterKind::Sushi => encode_v2(token_in, token_out, amount_in, signer.address, deadline),
-        RouterKind::UniswapV3 => encode_v3(token_in, token_out, amount_in, signer.address, deadline),
-        _ => return Err(BuildError::UnknownRouter(format!("{:?}", router_entry.kind))),
+        RouterKind::UniswapV2 | RouterKind::Sushi => {
+            encode_v2(token_in, token_out, amount_in, signer.address, deadline)
+        }
+        RouterKind::UniswapV3 => {
+            encode_v3(token_in, token_out, amount_in, signer.address, deadline)
+        }
+        _ => {
+            return Err(BuildError::UnknownRouter(format!(
+                "{:?}",
+                router_entry.kind
+            )))
+        }
     };
 
-    let nonce = nonce_mgr.next(opp.chain_id, signer.address).await
+    let nonce = nonce_mgr
+        .next(opp.chain_id, signer.address)
+        .await
         .map_err(|e| BuildError::Provider(e.to_string()))?;
 
     // Fee estimation. For S5 we use simple "latest base fee + 2 gwei priority".
@@ -112,7 +124,9 @@ pub async fn build_and_sign(
         .map_err(|e| BuildError::Provider(e.to_string()))?
         .ok_or_else(|| BuildError::Provider("no_latest_block".into()))?;
     // base_fee_per_gas is u64 in alloy 1.0 → convert to ethers U256 for signing.
-    let base_fee_u64: u64 = latest_block.header.base_fee_per_gas
+    let base_fee_u64: u64 = latest_block
+        .header
+        .base_fee_per_gas
         .unwrap_or(30_000_000_000u64); // 30 gwei fallback
     let base_fee = U256::from(base_fee_u64);
     let priority_fee = U256::from(2_000_000_000u64); // 2 gwei default
@@ -132,7 +146,10 @@ pub async fn build_and_sign(
         .gas(500_000u64);
 
     let typed: TypedTransaction = tx.into();
-    let signature = signer.wallet.sign_transaction(&typed).await
+    let signature = signer
+        .wallet
+        .sign_transaction(&typed)
+        .await
         .map_err(|e| BuildError::Provider(format!("sign_tx: {e}")))?;
     let raw: Bytes = typed.rlp_signed(&signature);
     let tx_hash = keccak256_bytes(&raw);
@@ -159,7 +176,10 @@ fn amount_in_to_eth(amount: U256) -> f64 {
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn parse_addr(s: &str) -> Result<Address, BuildError> {
@@ -173,7 +193,13 @@ fn parse_addr(s: &str) -> Result<Address, BuildError> {
     Ok(Address::from(arr))
 }
 
-fn encode_v2(token_in: Address, token_out: Address, amount_in: U256, to: Address, deadline: U256) -> Bytes {
+fn encode_v2(
+    token_in: Address,
+    token_out: Address,
+    amount_in: U256,
+    to: Address,
+    deadline: U256,
+) -> Bytes {
     let selector: [u8; 4] = [0x38, 0xed, 0x17, 0x39];
     let tokens = vec![
         Token::Uint(amount_in),
@@ -187,7 +213,13 @@ fn encode_v2(token_in: Address, token_out: Address, amount_in: U256, to: Address
     Bytes::from(buf)
 }
 
-fn encode_v3(token_in: Address, token_out: Address, amount_in: U256, to: Address, deadline: U256) -> Bytes {
+fn encode_v3(
+    token_in: Address,
+    token_out: Address,
+    amount_in: U256,
+    to: Address,
+    deadline: U256,
+) -> Bytes {
     let selector: [u8; 4] = [0x41, 0x4b, 0xf3, 0x89];
     let params = Token::Tuple(vec![
         Token::Address(token_in),
@@ -203,7 +235,6 @@ fn encode_v3(token_in: Address, token_out: Address, amount_in: U256, to: Address
     buf.extend(encode(&[params]));
     Bytes::from(buf)
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -293,9 +293,15 @@ mod tests {
 
     // ─── Uniswap V3 tests (Phase 2 of #6) ─────────────────────────────────
 
-    fn weth() -> Address { addr("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2") }
-    fn usdc() -> Address { addr("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48") }
-    fn dai() -> Address { addr("0x6b175474e89094c44da98b954eedeac495271d0f") }
+    fn weth() -> Address {
+        addr("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
+    }
+    fn usdc() -> Address {
+        addr("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+    }
+    fn dai() -> Address {
+        addr("0x6b175474e89094c44da98b954eedeac495271d0f")
+    }
 
     /// Selector verified against Etherscan disassembly of SwapRouter
     /// 0xE592427A0AEce92De3Edee1F18E0157C05861564.
@@ -372,10 +378,9 @@ mod tests {
         for fee in [100u32, 500, 3000, 10000] {
             let path = encode_v3_path(&[weth(), usdc()], &[fee]).unwrap();
             let fee_bytes_in_path = &path[20..23];
-            let recovered =
-                ((fee_bytes_in_path[0] as u32) << 16)
-              | ((fee_bytes_in_path[1] as u32) << 8)
-              |  (fee_bytes_in_path[2] as u32);
+            let recovered = ((fee_bytes_in_path[0] as u32) << 16)
+                | ((fee_bytes_in_path[1] as u32) << 8)
+                | (fee_bytes_in_path[2] as u32);
             assert_eq!(recovered, fee, "fee tier {fee} round-trip failed");
         }
     }

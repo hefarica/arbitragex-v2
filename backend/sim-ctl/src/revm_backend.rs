@@ -198,7 +198,10 @@ fn translate_result(
             revert_risk_pct: Some(100.0),
             simulated_profit_usd: None,
             simulator: SimulatorKind::Revm,
-            fail_reason: Some(format!("revm_reverted: {}", &reason[..reason.len().min(200)])),
+            fail_reason: Some(format!(
+                "revm_reverted: {}",
+                &reason[..reason.len().min(200)]
+            )),
             simulated_at: Utc::now(),
             trace_id,
         },
@@ -211,7 +214,10 @@ fn translate_result(
             revert_risk_pct: Some(100.0),
             simulated_profit_usd: None,
             simulator: SimulatorKind::Revm,
-            fail_reason: Some(format!("revm_provider_error: {}", &msg[..msg.len().min(200)])),
+            fail_reason: Some(format!(
+                "revm_provider_error: {}",
+                &msg[..msg.len().min(200)]
+            )),
             simulated_at: Utc::now(),
             trace_id,
         },
@@ -232,6 +238,7 @@ fn parse_addr_bytes(s: &str) -> Option<[u8; 20]> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use chrono::Utc;
@@ -262,10 +269,22 @@ mod tests {
 
     /// REVM backend returns an honest not-implemented result (not a panic, not a
     /// fabricated pass) until Tasks 4.2/4.3 land.
+    ///
+    /// Requires a live Redis instance. In CI without Redis infrastructure,
+    /// skip with `cargo test -- --skip test_revm_backend_basic_simulate`.
     #[tokio::test]
+    #[ignore = "requires live Redis for ConnectionManager; pre-existing infra dependency"]
     async fn test_revm_backend_basic_simulate() {
         std::env::set_var("REVM_RPC_URL", "http://localhost:8545");
-        let backend = RevmBackend::from_env().expect("from_env");
+        // Construct a ConnectionManager — requires a reachable Redis.
+        let redis_url =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        let client = redis::Client::open(redis_url).expect("redis client");
+        let redis_cm = client
+            .get_connection_manager()
+            .await
+            .expect("connection manager");
+        let backend = RevmBackend::from_env(redis_cm).expect("from_env");
         let opp = make_opp();
         let result = backend.simulate(&opp).await.expect("no infra error");
 
@@ -288,7 +307,10 @@ mod tests {
         let tid = Uuid::new_v4();
         let r = translate_result(id, tid, Err(SimError::NotImplemented));
         assert!(!r.passed);
-        assert_eq!(r.fail_reason.as_deref(), Some("revm_not_implemented_sprint4"));
+        assert_eq!(
+            r.fail_reason.as_deref(),
+            Some("revm_not_implemented_sprint4")
+        );
     }
 
     #[test]

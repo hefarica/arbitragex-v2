@@ -219,7 +219,11 @@ pub async fn pre_execute_checklist(ctx: &mut PreExecuteContext<'_>) -> Result<()
     check_gas_price_fresh(ctx.redis, ctx.chain_id).await?;
 
     // 7. Net profit above floor — depends on min_profit_usd from check 4.
-    check_net_profit_above_floor(ctx.expected_profit_usd, ctx.estimated_gas_usd, min_profit_usd)?;
+    check_net_profit_above_floor(
+        ctx.expected_profit_usd,
+        ctx.estimated_gas_usd,
+        min_profit_usd,
+    )?;
 
     // 8. Tokens in allowlist — every route token must be active + safe.
     check_tokens_in_allowlist(ctx.pg, ctx.chain_id, ctx.route_tokens).await?;
@@ -301,12 +305,10 @@ async fn check_paper_mode(redis: &mut ConnectionManager) -> Result<(), Checklist
 /// Check 3: Chain active — `SELECT is_active FROM chains WHERE chain_id = $1`.
 /// Absent row OR `is_active = false` → block.
 async fn check_chain_active(pg: &PgPool, chain_id: u64) -> Result<(), ChecklistError> {
-    let row: Option<(bool,)> = sqlx::query_as(
-        "SELECT is_active FROM chains WHERE chain_id = $1",
-    )
-    .bind(chain_id as i64)
-    .fetch_optional(pg)
-    .await?;
+    let row: Option<(bool,)> = sqlx::query_as("SELECT is_active FROM chains WHERE chain_id = $1")
+        .bind(chain_id as i64)
+        .fetch_optional(pg)
+        .await?;
 
     match row {
         Some((true,)) => Ok(()),
@@ -316,10 +318,7 @@ async fn check_chain_active(pg: &PgPool, chain_id: u64) -> Result<(), ChecklistE
 
 /// Check 4: Trading config loaded — row must exist with non-NULL `min_profit_usd`.
 /// Returns the floor value so check 7 can reuse it without a second DB round-trip.
-async fn check_trading_config_loaded(
-    pg: &PgPool,
-    chain_id: u64,
-) -> Result<f64, ChecklistError> {
+async fn check_trading_config_loaded(pg: &PgPool, chain_id: u64) -> Result<f64, ChecklistError> {
     let row: Option<(Option<f64>,)> = sqlx::query_as(
         "SELECT min_profit_usd::float8 FROM trading_config WHERE chain_id = $1 AND enabled = TRUE",
     )
@@ -336,12 +335,11 @@ async fn check_trading_config_loaded(
 /// Check 5: RPC health — at least one entry in `rpcs` table with `is_active = true`
 /// for this chain. Does NOT ping the endpoint; that is the rpc_health_worker's job.
 async fn check_rpc_health(pg: &PgPool, chain_id: u64) -> Result<(), ChecklistError> {
-    let row: Option<(i64,)> = sqlx::query_as(
-        "SELECT COUNT(*) FROM rpcs WHERE chain_id = $1 AND is_active = TRUE",
-    )
-    .bind(chain_id as i64)
-    .fetch_optional(pg)
-    .await?;
+    let row: Option<(i64,)> =
+        sqlx::query_as("SELECT COUNT(*) FROM rpcs WHERE chain_id = $1 AND is_active = TRUE")
+            .bind(chain_id as i64)
+            .fetch_optional(pg)
+            .await?;
 
     let count = row.map(|(c,)| c).unwrap_or(0);
     if count == 0 {
@@ -364,7 +362,10 @@ async fn check_gas_price_fresh(
         Some(v) => v.trim().parse::<u64>().unwrap_or(0),
         // Absent = never updated = stale.
         None => {
-            return Err(ChecklistError::GasPriceStale(u64::MAX, GAS_PRICE_MAX_AGE_SECS));
+            return Err(ChecklistError::GasPriceStale(
+                u64::MAX,
+                GAS_PRICE_MAX_AGE_SECS,
+            ));
         }
     };
 
@@ -375,7 +376,10 @@ async fn check_gas_price_fresh(
 
     let age_secs = now_secs.saturating_sub(last_ts);
     if age_secs > GAS_PRICE_MAX_AGE_SECS {
-        return Err(ChecklistError::GasPriceStale(age_secs, GAS_PRICE_MAX_AGE_SECS));
+        return Err(ChecklistError::GasPriceStale(
+            age_secs,
+            GAS_PRICE_MAX_AGE_SECS,
+        ));
     }
     Ok(())
 }
@@ -414,13 +418,12 @@ async fn check_tokens_in_allowlist(
 ) -> Result<(), ChecklistError> {
     for token_addr in route_tokens {
         // Tier a: tokens table — must be active.
-        let active_row: Option<(bool,)> = sqlx::query_as(
-            "SELECT is_active FROM tokens WHERE chain_id = $1 AND address = $2",
-        )
-        .bind(chain_id as i64)
-        .bind(token_addr.as_str())
-        .fetch_optional(pg)
-        .await?;
+        let active_row: Option<(bool,)> =
+            sqlx::query_as("SELECT is_active FROM tokens WHERE chain_id = $1 AND address = $2")
+                .bind(chain_id as i64)
+                .bind(token_addr.as_str())
+                .fetch_optional(pg)
+                .await?;
 
         match active_row {
             Some((true,)) => {}
@@ -470,13 +473,12 @@ async fn check_factories_active(
     route_factories: &[String],
 ) -> Result<(), ChecklistError> {
     for factory_addr in route_factories {
-        let row: Option<(bool,)> = sqlx::query_as(
-            "SELECT is_active FROM factories WHERE chain_id = $1 AND address = $2",
-        )
-        .bind(chain_id as i64)
-        .bind(factory_addr.as_str())
-        .fetch_optional(pg)
-        .await?;
+        let row: Option<(bool,)> =
+            sqlx::query_as("SELECT is_active FROM factories WHERE chain_id = $1 AND address = $2")
+                .bind(chain_id as i64)
+                .bind(factory_addr.as_str())
+                .fetch_optional(pg)
+                .await?;
 
         match row {
             Some((true,)) => {}
@@ -581,7 +583,11 @@ mod tests {
     fn test_net_profit_exactly_at_floor_passes() {
         // $52.00 profit - $2.00 gas = $50.00 net, floor is $50.00 — must pass.
         let result = check_net_profit_above_floor(52.0, 2.0, 50.0);
-        assert!(result.is_ok(), "expected Ok when net==floor, got: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "expected Ok when net==floor, got: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -598,7 +604,9 @@ mod tests {
     /// Mirrors the kill-switch parse logic without network I/O.
     fn parse_kill_switch_enabled(json: &str) -> Option<bool> {
         #[derive(serde::Deserialize)]
-        struct Ks { enabled: bool }
+        struct Ks {
+            enabled: bool,
+        }
         serde_json::from_str::<Ks>(json).ok().map(|s| s.enabled)
     }
 
@@ -626,7 +634,9 @@ mod tests {
 
     fn parse_paper_mode_enabled(json: &str) -> Option<bool> {
         #[derive(serde::Deserialize)]
-        struct Pm { enabled: bool }
+        struct Pm {
+            enabled: bool,
+        }
         serde_json::from_str::<Pm>(json).ok().map(|s| s.enabled)
     }
 
@@ -646,7 +656,10 @@ mod tests {
     // Chain inactive: logic mirror (no DB).
     // ---------------------------------------------------------------------------
 
-    fn simulate_chain_active_check(is_active_in_db: Option<bool>, chain_id: u64) -> Result<(), ChecklistError> {
+    fn simulate_chain_active_check(
+        is_active_in_db: Option<bool>,
+        chain_id: u64,
+    ) -> Result<(), ChecklistError> {
         match is_active_in_db {
             Some(true) => Ok(()),
             Some(false) | None => Err(ChecklistError::ChainInactive(chain_id)),
@@ -706,6 +719,9 @@ mod tests {
             Some(ref s) if s.trim() == "normal" => false,
             Some(_) => true,
         };
-        assert!(!tripped, "circuit breaker should not be tripped when key absent");
+        assert!(
+            !tripped,
+            "circuit breaker should not be tripped when key absent"
+        );
     }
 }

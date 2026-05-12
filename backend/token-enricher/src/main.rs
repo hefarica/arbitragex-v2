@@ -274,10 +274,8 @@ async fn process_batch(
             .with_retry(|provider| {
                 let tx = tx.clone();
                 async move {
-                    let result: anyhow::Result<Bytes> = provider
-                        .call(tx)
-                        .await
-                        .map_err(anyhow::Error::from);
+                    let result: anyhow::Result<Bytes> =
+                        provider.call(tx).await.map_err(anyhow::Error::from);
                     result
                 }
             })
@@ -349,7 +347,10 @@ async fn process_batch(
         let resolved_data = pair_results(mc_results, addrs.len());
 
         // --- Step 4: parallel TrustWallet HEAD verifications (Defect #2) ---
-        let logo_futures: Vec<_> = addrs.iter().map(|addr| tw.verify(*chain_id, *addr)).collect();
+        let logo_futures: Vec<_> = addrs
+            .iter()
+            .map(|addr| tw.verify(*chain_id, *addr))
+            .collect();
         let logos: Vec<Option<String>> = join_all(logo_futures)
             .await
             .into_iter()
@@ -715,11 +716,17 @@ mod tests {
     #[test]
     fn triples_to_pairs_deduplicates() {
         let triples = vec![
-            (1u64, "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string(),
-             "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".to_string()),
+            (
+                1u64,
+                "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string(),
+                "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".to_string(),
+            ),
             // duplicate of first token_in
-            (1u64, "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string(),
-             "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string()),
+            (
+                1u64,
+                "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string(),
+                "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
+            ),
         ];
         let pairs = triples_to_pairs(triples);
         // 3 unique addresses across 2 triples.
@@ -728,10 +735,11 @@ mod tests {
 
     #[test]
     fn triples_to_pairs_skips_bad_addresses() {
-        let triples = vec![
-            (1u64, "not-an-address".to_string(),
-             "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string()),
-        ];
+        let triples = vec![(
+            1u64,
+            "not-an-address".to_string(),
+            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string(),
+        )];
         let pairs = triples_to_pairs(triples);
         // Only the valid address survives.
         assert_eq!(pairs.len(), 1);

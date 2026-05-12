@@ -1,12 +1,12 @@
 //! ArbitrageX DeFi Math Engine
-//! 
+//!
 //! Pure, deterministic mathematical functions for DeFi arbitrage.
 //! Zero side-effects, zero hardcoded values. All inputs are provided by the caller.
 
 pub mod amm_math;
+pub mod risk_engine;
 pub mod roi_engine;
 pub mod route_math;
-pub mod risk_engine;
 pub mod subgraph_client;
 
 /// Represents a DeFi arbitrage financial outcome.

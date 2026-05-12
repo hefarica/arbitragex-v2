@@ -322,12 +322,7 @@ impl CexDexWorker {
             .as_deref()
             .unwrap_or("https://api.binance.com");
         let url = format!("{}/api/v3/ticker/price?symbol={}", base, pair.symbol);
-        let resp = self
-            .http
-            .get(&url)
-            .send()
-            .await?
-            .error_for_status()?;
+        let resp = self.http.get(&url).send().await?.error_for_status()?;
         let parsed: BinanceTickerPrice = resp.json().await?;
         parsed
             .price
@@ -344,12 +339,7 @@ impl CexDexWorker {
             .as_deref()
             .unwrap_or("https://www.okx.com");
         let url = format!("{}/api/v5/market/ticker?instId={}", base, inst_id);
-        let resp = self
-            .http
-            .get(&url)
-            .send()
-            .await?
-            .error_for_status()?;
+        let resp = self.http.get(&url).send().await?.error_for_status()?;
         let parsed: OkxTickerResponse = resp.json().await?;
         let entry = parsed
             .data
@@ -539,9 +529,7 @@ mod tests {
             price: String,
         }
         let r: R = resp.json().await?;
-        r.price
-            .parse::<f64>()
-            .map_err(|e| anyhow::anyhow!("{e}"))
+        r.price.parse::<f64>().map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     async fn get_okx_price(client: &Client, base: &str, inst_id: &str) -> anyhow::Result<f64> {
@@ -556,8 +544,15 @@ mod tests {
             data: Vec<Entry>,
         }
         let r: R = resp.json().await?;
-        let entry = r.data.into_iter().next().ok_or_else(|| anyhow::anyhow!("empty"))?;
-        entry.last.parse::<f64>().map_err(|e| anyhow::anyhow!("{e}"))
+        let entry = r
+            .data
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("empty"))?;
+        entry
+            .last
+            .parse::<f64>()
+            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     // ── Binance HTTP tests ──────────────────────────────────────────────────

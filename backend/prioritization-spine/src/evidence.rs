@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::decision::{ExecutionDecision, RejectReason};
+use serde::{Deserialize, Serialize};
 
 /// Identifies how the component-4 failure-risk buffer was computed.
 ///

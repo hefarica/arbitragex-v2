@@ -11,29 +11,25 @@ pub fn calc_univ2_amount_out(
     if amount_in <= 0.0 || reserve_in <= 0.0 || reserve_out <= 0.0 {
         return 0.0;
     }
-    
+
     // El fee_multiplier es (1 - fee_pct), típicamente 0.997 (para 0.3%)
     let fee_multiplier = 1.0 - fee_pct;
     let amount_in_with_fee = amount_in * fee_multiplier;
     let numerator = amount_in_with_fee * reserve_out;
     let denominator = reserve_in + amount_in_with_fee;
-    
+
     numerator / denominator
 }
 
 /// Estima el Price Impact de un swap en un pool UniV2.
-pub fn calc_univ2_price_impact(
-    amount_in: f64,
-    reserve_in: f64,
-    fee_pct: f64,
-) -> f64 {
+pub fn calc_univ2_price_impact(amount_in: f64, reserve_in: f64, fee_pct: f64) -> f64 {
     if amount_in <= 0.0 || reserve_in <= 0.0 {
         return 0.0;
     }
-    
+
     let fee_multiplier = 1.0 - fee_pct;
     let amount_in_with_fee = amount_in * fee_multiplier;
-    
+
     // Price Impact en Constant Product Market Maker = amount_in_with_fee / (reserve_in + amount_in_with_fee)
     amount_in_with_fee / (reserve_in + amount_in_with_fee)
 }
@@ -350,8 +346,7 @@ pub fn calc_univ3_price_impact_with_distribution(
 
     // Price impact = 2 × |Δ√P / √P_initial| (same as first-order proxy).
     // Factor of 2: d(P)/P = 2 × d(√P)/√P for small moves.
-    let delta_ratio =
-        (current_sqrt_price - initial_sqrt_price_f64).abs() / initial_sqrt_price_f64;
+    let delta_ratio = (current_sqrt_price - initial_sqrt_price_f64).abs() / initial_sqrt_price_f64;
     (2.0 * delta_ratio).min(1.0)
 }
 
@@ -415,11 +410,14 @@ mod tests {
     fn test_v3_zero_sqrt_price_returns_zero() {
         let impact = calc_univ3_price_impact_pct(
             1_000_000_000_000_000u128,
-            0u128,                     // sqrt_price_x96 = 0
+            0u128, // sqrt_price_x96 = 0
             1_000_000_000_000_000_000u128,
             false,
         );
-        assert_eq!(impact, 0.0, "zero sqrtPriceX96 must return 0.0 (fail-honest)");
+        assert_eq!(
+            impact, 0.0,
+            "zero sqrtPriceX96 must return 0.0 (fail-honest)"
+        );
     }
 
     /// Small swap (0.1% of liquidity) → impact well below 1%.
@@ -431,7 +429,7 @@ mod tests {
     #[test]
     fn test_v3_small_swap_low_impact() {
         let liquidity: u128 = 1_000_000_000_000_000_000; // 10^18
-        let amount_in: u128 = 1_000_000_000_000_000;     // 10^15 (0.1% of L)
+        let amount_in: u128 = 1_000_000_000_000_000; // 10^15 (0.1% of L)
 
         let impact_t0t1 = calc_univ3_price_impact_pct(amount_in, Q96_U128, liquidity, true);
         // Expected: 2 × 1.0 × 1e15 / 1e18 = 0.002
@@ -455,14 +453,20 @@ mod tests {
     /// amount_in = 10^30 >> L = 10^18 → unclamped impact ≈ 2e12; capped at 1.0.
     #[test]
     fn test_v3_large_swap_capped_at_one() {
-        let liquidity: u128 = 1_000_000_000_000_000_000;  // 10^18
+        let liquidity: u128 = 1_000_000_000_000_000_000; // 10^18
         let amount_in: u128 = 1_000_000_000_000_000_000_000_000_000_000; // 10^30
 
         let impact = calc_univ3_price_impact_pct(amount_in, Q96_U128, liquidity, true);
-        assert_eq!(impact, 1.0, "extreme trade must be clamped to 1.0, got {impact}");
+        assert_eq!(
+            impact, 1.0,
+            "extreme trade must be clamped to 1.0, got {impact}"
+        );
 
         let impact_rev = calc_univ3_price_impact_pct(amount_in, Q96_U128, liquidity, false);
-        assert_eq!(impact_rev, 1.0, "extreme trade (reverse) must be clamped to 1.0");
+        assert_eq!(
+            impact_rev, 1.0,
+            "extreme trade (reverse) must be clamped to 1.0"
+        );
     }
 
     /// Directionality: same trade size, different direction → different impact
@@ -484,7 +488,7 @@ mod tests {
         // 2 × 2^96 = 2^97 ≈ 1.59e29  ≪  u128::MAX ≈ 3.40e38. Safe.
         let sqrt_price_2x: u128 = 2u128 * Q96_U128;
         let liquidity: u128 = 1_000_000_000_000_000_000; // 10^18
-        let amount_in: u128 = 1_000_000_000_000_000;     // 10^15
+        let amount_in: u128 = 1_000_000_000_000_000; // 10^15
 
         let impact_t0t1 = calc_univ3_price_impact_pct(amount_in, sqrt_price_2x, liquidity, true);
         // 2 × 2.0 × 10^15 / 10^18 = 0.004
@@ -532,8 +536,7 @@ mod tests {
     /// With sqrt_price_x96=0 and liquidity=0, proxy returns 0.0 (R8 fail-honest).
     #[test]
     fn test_v3_walk_no_distribution_falls_back() {
-        let impact =
-            calc_univ3_price_impact_with_distribution(100_000_000_000_000_000, None, true);
+        let impact = calc_univ3_price_impact_with_distribution(100_000_000_000_000_000, None, true);
         // Fallback calls calc_univ3_price_impact_pct(amt, 0, 0, true) → 0.0
         assert_eq!(
             impact, 0.0,
@@ -550,7 +553,7 @@ mod tests {
             0,
             Q96_U128,
             1_000_000_000_000_000_000_000u128, // 10^21 (huge)
-            vec![],                             // no tick list → trade stays in current range
+            vec![],                            // no tick list → trade stays in current range
         );
         let impact = calc_univ3_price_impact_with_distribution(
             1_000_000_000_000_000_000u128, // 1 token in (10^18)
@@ -560,7 +563,7 @@ mod tests {
         // With L = 10^21 and amt = 10^18: impact ≈ 2 × 10^18 / 10^21 = 0.002
         // (after exhausting tick list the remainder is handled by the tail formula)
         assert!(
-            impact >= 0.0 && impact < 0.01,
+            (0.0..0.01).contains(&impact),
             "small trade on deep pool must have impact < 1%, got {impact}"
         );
     }
@@ -574,7 +577,10 @@ mod tests {
             Some(&dist),
             true,
         );
-        assert_eq!(impact, 0.0, "zero liquidity distribution must return 0.0 (R8)");
+        assert_eq!(
+            impact, 0.0,
+            "zero liquidity distribution must return 0.0 (R8)"
+        );
     }
 
     /// Single tick crossing with thin liquidity → measurable cross-tick impact.
@@ -612,10 +618,7 @@ mod tests {
     fn test_tick_to_sqrt_price_x96_at_zero() {
         let result = tick_to_sqrt_price_x96(0);
         // 1.0001^0 = 1.0; 1.0 × 2^96 = 2^96
-        assert_eq!(
-            result, Q96_U128,
-            "tick=0 must map to 2^96, got {result}"
-        );
+        assert_eq!(result, Q96_U128, "tick=0 must map to 2^96, got {result}");
     }
 
     /// tick_to_sqrt_price_x96 sanity: positive tick → larger sqrtPrice.

@@ -93,8 +93,10 @@ impl SubmitEngine {
         // operators see the gap.  Paper-mode data collection must not stall
         // just because spine hasn't processed a cold-start row yet.
         // -----------------------------------------------------------------------
-        let paper_env = std::env::var("ARBX_PAPER_MODE").ok()
-            .map(|v| v.eq_ignore_ascii_case("true")).unwrap_or(false);
+        let paper_env = std::env::var("ARBX_PAPER_MODE")
+            .ok()
+            .map(|v| v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         let paper_dynamic = self.paper_mode.is_enabled().await;
         let paper = paper_dynamic || paper_env;
 
@@ -112,10 +114,8 @@ impl SubmitEngine {
             // route_tokens: the two tokens in the trade. Stored as lowercase
             // hex in the tokens table (added by migration 021). We normalise
             // to lowercase here so check 8 finds the rows reliably.
-            let route_tokens: Vec<String> = vec![
-                opp.token_in.to_lowercase(),
-                opp.token_out.to_lowercase(),
-            ];
+            let route_tokens: Vec<String> =
+                vec![opp.token_in.to_lowercase(), opp.token_out.to_lowercase()];
 
             // route_factories: Opportunity carries dex_a/dex_b as exchange
             // names (e.g. "uniswap_v2"), not factory hex addresses. The
@@ -271,7 +271,9 @@ impl SubmitEngine {
             nonce.as_ref(),
             self.cfg.execution.max_value_eth,
             self.cfg.execution.target_block_offset,
-        ).await {
+        )
+        .await
+        {
             Ok(b) => b,
             Err(BuildError::ValueExceedsCap { value_eth, cap_eth }) => {
                 warn!(event = "submit.value_cap_exceeded", opp_id = %opp.id,
@@ -279,10 +281,14 @@ impl SubmitEngine {
                 return ExecutionResult {
                     opportunity_id: opp.id,
                     status: ExecutionStatus::Dropped,
-                    tx_hash: None, relay_used: None, block_included: None,
-                    gas_used_wei: None, actual_profit_usd: None,
+                    tx_hash: None,
+                    relay_used: None,
+                    block_included: None,
+                    gas_used_wei: None,
+                    actual_profit_usd: None,
                     error_message: Some(format!("value_cap_exceeded: {value_eth} ETH > {cap_eth}")),
-                    submitted_at: Utc::now(), trace_id: opp.trace_id,
+                    submitted_at: Utc::now(),
+                    trace_id: opp.trace_id,
                 };
             }
             Err(e) => {
@@ -353,7 +359,10 @@ impl SubmitEngine {
         // The existing on-chain inclusion check (step 7) remains the true gate.
         if let Some(ref flashbots) = self.flashbots_for_callbundle {
             let target_block = bundle.target_block;
-            match flashbots.call_bundle(signer.as_ref(), &bundle.tx_raw_hex, target_block).await {
+            match flashbots
+                .call_bundle(signer.as_ref(), &bundle.tx_raw_hex, target_block)
+                .await
+            {
                 Ok(sim) if sim.any_failed() => {
                     let reasons: Vec<String> = sim
                         .tx_results
@@ -405,8 +414,8 @@ impl SubmitEngine {
                     // falls back to the cold-start doctrine floor on the next eval.
                     // R8 fail-honest: we only update when coinbase_diff_wei > 0.
                     if sim.coinbase_diff_wei > 0 {
-                        let strategy_kind_str = format!("{:?}", opp.strategy_kind)
-                            .to_ascii_lowercase();
+                        let strategy_kind_str =
+                            format!("{:?}", opp.strategy_kind).to_ascii_lowercase();
                         let ewma_key = relay_fee_ewma_key(opp.chain_id, &strategy_kind_str);
                         let observed_wei = sim.coinbase_diff_wei as f64;
                         let mut redis_conn = self.redis.clone();
@@ -550,7 +559,8 @@ impl SubmitEngine {
             bundle.target_block,
             self.cfg.execution.max_inclusion_wait_blocks,
             1000,
-        ).await;
+        )
+        .await;
 
         // CODE-4: Check 11 cleanup — tx resolved (included, reverted, or
         // dropped). Delete the pending tracker so the next broadcast is not
@@ -669,8 +679,11 @@ impl SubmitEngine {
         ExecutionResult {
             opportunity_id: opp.id,
             status: ExecutionStatus::NotSubmitted,
-            tx_hash: None, relay_used: None, block_included: None,
-            gas_used_wei: None, actual_profit_usd: None,
+            tx_hash: None,
+            relay_used: None,
+            block_included: None,
+            gas_used_wei: None,
+            actual_profit_usd: None,
             error_message: Some(reason.to_string()),
             submitted_at: Utc::now(),
             trace_id: opp.trace_id,
@@ -681,8 +694,11 @@ impl SubmitEngine {
         ExecutionResult {
             opportunity_id: opp.id,
             status: ExecutionStatus::Dropped,
-            tx_hash: None, relay_used: None, block_included: None,
-            gas_used_wei: None, actual_profit_usd: None,
+            tx_hash: None,
+            relay_used: None,
+            block_included: None,
+            gas_used_wei: None,
+            actual_profit_usd: None,
             error_message: Some(reason.to_string()),
             submitted_at: Utc::now(),
             trace_id: opp.trace_id,
@@ -762,7 +778,8 @@ mod tests {
     fn c1_paper_mode_net_absent_falls_back_to_gross() {
         let opp = make_opp(Some(52.0), None);
         let result = SubmitEngine::resolve_profit_for_checklist(&opp, true /* paper */);
-        let profit = result.expect("paper mode with net=None must return Ok (gross fallback allowed)");
+        let profit =
+            result.expect("paper mode with net=None must return Ok (gross fallback allowed)");
         assert!(
             (profit - 52.0).abs() < f64::EPSILON,
             "C1 paper mode: expected 52.0 (gross fallback), got {profit}"

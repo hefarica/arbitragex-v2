@@ -80,8 +80,12 @@ pub struct RouteConstraints {
     pub min_pool_volume_24h_usd: Option<f64>,
 }
 
-fn default_min_legs() -> u32 { 1 }
-fn default_max_legs() -> u32 { 8 }
+fn default_min_legs() -> u32 {
+    1
+}
+fn default_max_legs() -> u32 {
+    8
+}
 
 impl Default for RouteConstraints {
     /// Manual `Default` (NOT derived) so `min_legs` / `max_legs` start at
@@ -167,7 +171,9 @@ pub struct StrategyRuntimeConfig {
     pub route_constraints: RouteConstraints,
 }
 
-fn default_strategy_enabled() -> bool { true }
+fn default_strategy_enabled() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradingConfigState {
@@ -291,7 +297,6 @@ pub struct TradingConfigState {
     pub strategy_configs: HashMap<String, StrategyRuntimeConfig>,
 
     // --- Sprint A: Component 6 & 7 config scalars ---
-
     /// Annual opportunity-cost rate for capital locked during execution.
     ///
     /// Formula applied by `config_aware.rs`:
@@ -313,7 +318,6 @@ pub struct TradingConfigState {
     pub ops_overhead_usd_per_attempt: f64,
 
     // --- Sprint C: Component 9 (spread sanity) + Component 5 (p_copied) ---
-
     /// Multiplier for the AMM-vs-oracle spread sanity check (Component 9).
     ///
     /// The evaluator computes `spread_ratio = observed_rate / reference_rate`.
@@ -379,7 +383,9 @@ impl TradingConfigState {
     pub fn resolve_gas_price_gwei(&self, live_basefee_gwei: f64, live_p75_tip_gwei: f64) -> f64 {
         match self.gas_price_strategy {
             GasPriceStrategy::Fixed => self.fixed_gas_price_gwei.unwrap_or(live_basefee_gwei),
-            GasPriceStrategy::DynamicBasefeePlusTip => live_basefee_gwei + live_p75_tip_gwei.max(1.0),
+            GasPriceStrategy::DynamicBasefeePlusTip => {
+                live_basefee_gwei + live_p75_tip_gwei.max(1.0)
+            }
             GasPriceStrategy::Percentile75 => live_p75_tip_gwei.max(live_basefee_gwei),
         }
     }
@@ -615,7 +621,10 @@ impl TradingConfigClient {
     }
 
     /// Returns `None` if no operator config exists for this chain (idle by design).
-    pub async fn state(&self, chain_id: u64) -> Result<Option<TradingConfigState>, TradingConfigError> {
+    pub async fn state(
+        &self,
+        chain_id: u64,
+    ) -> Result<Option<TradingConfigState>, TradingConfigError> {
         {
             let g = self.cache.read().await;
             if let Some((s, at)) = g.get(&chain_id) {
@@ -640,10 +649,7 @@ impl TradingConfigClient {
     /// Idempotent write — used by api-server when the operator submits new config.
     /// Sets the Redis key AND publishes to the change channel so subscribers
     /// (searcher-rs, sim-ctl) refresh their caches.
-    pub async fn put(
-        &self,
-        state: &TradingConfigState,
-    ) -> Result<(), TradingConfigError> {
+    pub async fn put(&self, state: &TradingConfigState) -> Result<(), TradingConfigError> {
         let json = serde_json::to_string(state)?;
         let mut mgr = self.mgr.clone();
         let _: () = mgr.set(redis_key(state.chain_id), &json).await?;
@@ -788,7 +794,8 @@ mod tests {
     fn effective_capital_for_per_token_cap_applies_when_token_matches() {
         let mut s = sample_state();
         s.simulation_capital_usd = Some(50_000.0);
-        s.simulation_per_token_amounts_usd.insert("WETH".into(), 5_000.0);
+        s.simulation_per_token_amounts_usd
+            .insert("WETH".into(), 5_000.0);
         // WETH input: per-token $5K wins over global $50K (MIN)
         assert_eq!(s.effective_capital_for("WETH", "dex_arb_v2v2"), 5_000.0);
         // USDC input: per-token doesn't apply, global $50K used
@@ -799,7 +806,8 @@ mod tests {
     fn effective_capital_for_per_strategy_cap_applies_when_strategy_matches() {
         let mut s = sample_state();
         s.simulation_capital_usd = Some(50_000.0);
-        s.simulation_per_strategy_caps_usd.insert("triangular".into(), 2_000.0);
+        s.simulation_per_strategy_caps_usd
+            .insert("triangular".into(), 2_000.0);
         // triangular: per-strategy $2K wins over global $50K
         assert_eq!(s.effective_capital_for("WETH", "triangular"), 2_000.0);
         // dex_arb: per-strategy doesn't apply, global $50K used
@@ -810,8 +818,10 @@ mod tests {
     fn effective_capital_for_uses_min_when_multiple_caps_apply() {
         let mut s = sample_state();
         s.simulation_capital_usd = Some(50_000.0);
-        s.simulation_per_token_amounts_usd.insert("WETH".into(), 5_000.0);
-        s.simulation_per_strategy_caps_usd.insert("triangular".into(), 2_000.0);
+        s.simulation_per_token_amounts_usd
+            .insert("WETH".into(), 5_000.0);
+        s.simulation_per_strategy_caps_usd
+            .insert("triangular".into(), 2_000.0);
         // WETH + triangular: per-strategy $2K is MIN (wins over $5K and $50K)
         assert_eq!(s.effective_capital_for("WETH", "triangular"), 2_000.0);
         // WETH + dex_arb: per-token $5K wins (only token cap applies)
@@ -825,8 +835,10 @@ mod tests {
     #[test]
     fn effective_capital_for_lookups_are_case_insensitive() {
         let mut s = sample_state();
-        s.simulation_per_token_amounts_usd.insert("WETH".into(), 5_000.0);
-        s.simulation_per_strategy_caps_usd.insert("dex_arb_v2v2".into(), 3_000.0);
+        s.simulation_per_token_amounts_usd
+            .insert("WETH".into(), 5_000.0);
+        s.simulation_per_strategy_caps_usd
+            .insert("dex_arb_v2v2".into(), 3_000.0);
         // Lower-case input should still match upper-case keys
         assert_eq!(s.effective_capital_for("weth", "dex_arb_v2v2"), 3_000.0);
         assert_eq!(s.effective_capital_for("WeTh", "DEX_ARB_V2V2"), 3_000.0);
@@ -837,7 +849,8 @@ mod tests {
         // If operator only sets per-token caps (no global, no per-strategy),
         // the per-token cap takes precedence over operational capital_usd.
         let mut s = sample_state(); // capital_usd = 1000
-        s.simulation_per_token_amounts_usd.insert("WETH".into(), 250.0);
+        s.simulation_per_token_amounts_usd
+            .insert("WETH".into(), 250.0);
         assert_eq!(s.effective_capital_for("WETH", "dex_arb_v2v2"), 250.0);
         // Non-matching token: no sim cap → operational capital $1000
         assert_eq!(s.effective_capital_for("USDC", "dex_arb_v2v2"), 1000.0);

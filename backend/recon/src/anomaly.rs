@@ -39,8 +39,14 @@ pub async fn check_and_react(
         let chain: i32 = r.try_get("chain_id").unwrap_or(0);
         let reverts: i64 = r.try_get("reverts").unwrap_or(0);
         let total: i64 = r.try_get("total").unwrap_or(0);
-        let rate_pct = if total > 0 { (reverts as f64 / total as f64) * 100.0 } else { 0.0 };
-        if rate_pct <= cfg.anomaly_revert_rate_pct { continue; }
+        let rate_pct = if total > 0 {
+            (reverts as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
+        if rate_pct <= cfg.anomaly_revert_rate_pct {
+            continue;
+        }
         anomalies += 1;
         warn!(event = "anomaly.high_revert_rate", strategy = %strategy,
               chain_id = chain, rate_pct, reverts, total);
@@ -66,7 +72,10 @@ pub async fn check_and_react(
 
         if cfg.auto_trip_on_high_revert_rate {
             let reason = format!("auto_trip:revert_rate:{strategy}:{rate_pct:.1}%");
-            if let Err(e) = kill.set(true, Some(reason.clone()), Some("recon_auto".to_string())).await {
+            if let Err(e) = kill
+                .set(true, Some(reason.clone()), Some("recon_auto".to_string()))
+                .await
+            {
                 warn!(event = "anomaly.kill_switch_set_failed", error = %e);
             } else {
                 info!(event = "anomaly.kill_switch_tripped", reason);

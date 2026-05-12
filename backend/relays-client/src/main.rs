@@ -25,21 +25,15 @@ mod signer;
 mod submit_engine;
 mod tracker;
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    routing::post,
-    Json, Router,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::post, Json, Router};
 use shared_rs::{
-    config::{AppConfig, require_env},
+    config::{require_env, AppConfig},
     contracts::{NotImplementedPayload, Opportunity},
     health::{build_health_router, ServiceInfo},
     killswitch::KillSwitchClient,
-    paper_mode::PaperModeClient,
     logging::init_tracing,
     metrics::init_metrics,
+    paper_mode::PaperModeClient,
     rpc_failover::HttpRpcPool,
 };
 use sqlx::postgres::PgPoolOptions;
@@ -72,24 +66,33 @@ async fn execute_handler(
         let payload = NotImplementedPayload::new(
             vec!["FLASHBOTS_SIGNER_KEY", "RPC_HTTP_1"],
             "S5",
-            format!("relays-client up but signer not configured (env={})", st.env),
+            format!(
+                "relays-client up but signer not configured (env={})",
+                st.env
+            ),
         );
         // serde_json::to_value only fails if the type contains a non-string map key
         // or an f32/f64 NaN. NotImplementedPayload is a flat struct with String fields;
         // serialisation is infallible in practice. Use unwrap_or to convert the
         // impossible error path to a generic 500 body instead of a panic.
-        let body = serde_json::to_value(payload)
-            .unwrap_or_else(|e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}));
+        let body = serde_json::to_value(payload).unwrap_or_else(
+            |e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}),
+        );
         return (StatusCode::NOT_IMPLEMENTED, Json(body));
     }
     let opp: Opportunity = match serde_json::from_value(body) {
         Ok(o) => o,
-        Err(e) => return (StatusCode::BAD_REQUEST,
-                          Json(serde_json::json!({"error":"invalid_body","detail":e.to_string()}))),
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error":"invalid_body","detail":e.to_string()})),
+            )
+        }
     };
     let result = st.engine.execute(&opp).await;
-    let body = serde_json::to_value(result)
-        .unwrap_or_else(|e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}));
+    let body = serde_json::to_value(result).unwrap_or_else(
+        |e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}),
+    );
     (StatusCode::OK, Json(body))
 }
 
@@ -100,10 +103,12 @@ async fn main() -> anyhow::Result<()> {
     init_metrics();
 
     let redis_url = require_env("REDIS_URL")?;
-    let killswitch = KillSwitchClient::connect(&redis_url, cfg.system.kill_switch_enabled_default).await
+    let killswitch = KillSwitchClient::connect(&redis_url, cfg.system.kill_switch_enabled_default)
+        .await
         .map_err(|e| anyhow::anyhow!("killswitch: {e}"))?;
-        
-    let paper_mode = PaperModeClient::connect(&redis_url, cfg.execution.paper_mode).await
+
+    let paper_mode = PaperModeClient::connect(&redis_url, cfg.execution.paper_mode)
+        .await
         .map_err(|e| anyhow::anyhow!("papermode: {e}"))?;
 
     // SECURE_BOOT (audit A2, 2026-05-10): refuse to start if paper_mode=false
@@ -142,14 +147,22 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Try to load signer.
-    let chain_id = cfg.chains.iter().find(|c| c.enabled).map(|c| c.chain_id).unwrap_or(1);
+    let chain_id = cfg
+        .chains
+        .iter()
+        .find(|c| c.enabled)
+        .map(|c| c.chain_id)
+        .unwrap_or(1);
     let signer = match Signer::from_env(chain_id)? {
         Some(s) => {
             info!(event = "signer.loaded", address = %s.address, chain_id = s.chain_id);
             Some(Arc::new(s))
         }
         None => {
-            warn!(event = "signer.missing", "FLASHBOTS_SIGNER_KEY empty/unset — /execute stays 501, consumer idle");
+            warn!(
+                event = "signer.missing",
+                "FLASHBOTS_SIGNER_KEY empty/unset — /execute stays 501, consumer idle"
+            );
             None
         }
     };
@@ -194,8 +207,7 @@ async fn main() -> anyhow::Result<()> {
         Ok(None) => {
             warn!(
                 event = "rpc_pool.absent",
-                chain_id,
-                "RPC_HTTP_{chain_id} not set; relays-client stays in 501 mode"
+                chain_id, "RPC_HTTP_{chain_id} not set; relays-client stays in 501 mode"
             );
             None
         }
@@ -325,7 +337,10 @@ async fn main() -> anyhow::Result<()> {
             info!(event = "bloxroute.configured", "bloxroute backend added");
             backends.push(Arc::new(blx));
         } else {
-            info!(event = "bloxroute.skipped", reason = "BLOXROUTE_AUTH_HEADER not set");
+            info!(
+                event = "bloxroute.skipped",
+                reason = "BLOXROUTE_AUTH_HEADER not set"
+            );
         }
 
         // ── Titan ────────────────────────────────────────────────────────────
@@ -333,7 +348,10 @@ async fn main() -> anyhow::Result<()> {
             info!(event = "titan.configured", "titan backend added");
             backends.push(Arc::new(titan));
         } else {
-            info!(event = "titan.skipped", reason = "TITAN_BUILDER_URL or TITAN_AUTH_HEADER not set");
+            info!(
+                event = "titan.skipped",
+                reason = "TITAN_BUILDER_URL or TITAN_AUTH_HEADER not set"
+            );
         }
 
         if backends.is_empty() {
@@ -383,12 +401,14 @@ async fn main() -> anyhow::Result<()> {
         env: cfg.system.env.clone(),
     });
 
-    let port: u16 = std::env::var("RELAYS_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(3005);
+    let port: u16 = std::env::var("RELAYS_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3005);
     let exec_router = Router::new()
         .route("/execute", post(execute_handler))
         .with_state(state);
-    let app = build_health_router(ServiceInfo::new(SERVICE, VERSION))
-        .merge(exec_router);
+    let app = build_health_router(ServiceInfo::new(SERVICE, VERSION)).merge(exec_router);
 
     info!(
         event = "service.boot",
@@ -404,7 +424,8 @@ async fn main() -> anyhow::Result<()> {
     // Consumer spawns only when signer + rpc_pool + DB pool are all present.
     // We reuse the pool opened above for the relay catalog lookup, so we don't
     // double up connections.
-    if let (Some(pg_pool), true, true) = (db_pool_opt.clone(), signer.is_some(), rpc_pool.is_some()) {
+    if let (Some(pg_pool), true, true) = (db_pool_opt.clone(), signer.is_some(), rpc_pool.is_some())
+    {
         let redis_client = redis::Client::open(redis_url.clone())?;
         let redis_conn = redis_client.get_connection_manager().await?;
         let consumer = consumer::Consumer {
@@ -443,7 +464,9 @@ async fn main() -> anyhow::Result<()> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app)
-        .with_graceful_shutdown(async { tokio::signal::ctrl_c().await.ok(); })
+        .with_graceful_shutdown(async {
+            tokio::signal::ctrl_c().await.ok();
+        })
         .await?;
     Ok(())
 }

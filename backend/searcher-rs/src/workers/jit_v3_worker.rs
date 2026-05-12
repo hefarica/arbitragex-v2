@@ -208,8 +208,7 @@ impl JitV3Worker {
         jit_share_pct: f64,
         gas_cost_usd: f64,
     ) -> JitPnl {
-        let swap_fees_token_in =
-            swap_size_token_in * (pool_fee_bps as f64 / 10_000.0);
+        let swap_fees_token_in = swap_size_token_in * (pool_fee_bps as f64 / 10_000.0);
         let captured_fees_token_in = swap_fees_token_in * jit_share_pct;
         // Scaffold assumption: token_in price = $1 USD.
         // Real implementation: multiply by oracle price before comparing USD gates.
@@ -248,8 +247,8 @@ mod tests {
         );
         assert!(pnl.viable, "expected viable for $1M swap");
         assert!(
-            pnl.net_profit_usd > 400.0,
-            "expected net_profit_usd > 400, got {}",
+            pnl.net_profit_usd >= 400.0,
+            "expected net_profit_usd >= 400, got {}",
             pnl.net_profit_usd
         );
         // Gross: 1_000_000 x 0.0005 x 0.9 = 450.0

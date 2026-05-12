@@ -208,7 +208,7 @@ pub fn calc_net_profit_and_roi(params: &RoiCalculationParams) -> DefiArbitrageOu
         - params.capital_cost_usd               // component 6 (Sprint A)
         - params.ops_overhead_usd               // component 7 (Sprint A)
         - copied_buffer_usd                     // component 5 (Sprint C)
-        - params.estimated_relay_fee_usd;       // component 8 (C2 fix: relay bribe EWMA)
+        - params.estimated_relay_fee_usd; // component 8 (C2 fix: relay bribe EWMA)
 
     let capital_required = params.amount_in_usd;
     let net_roi_pct = if capital_required > 0.0 {
@@ -328,7 +328,7 @@ mod tests {
         let result = calc_net_profit_and_roi(&params);
 
         let expected_slippage_with_impact = 10_050.0 * 0.02; // $201.00
-        let expected_slippage_proxy = 10_050.0 * 0.001;      // $10.05
+        let expected_slippage_proxy = 10_050.0 * 0.001; // $10.05
         let expected_net = base_net - (expected_slippage_with_impact - expected_slippage_proxy);
 
         assert!(
@@ -431,7 +431,11 @@ mod tests {
         let result = calc_net_profit_and_roi(&params);
 
         // gross = $100
-        assert!((result.gross_profit_usd - 100.0).abs() < 1e-9, "gross={}", result.gross_profit_usd);
+        assert!(
+            (result.gross_profit_usd - 100.0).abs() < 1e-9,
+            "gross={}",
+            result.gross_profit_usd
+        );
 
         // net = 1100 - 1000 - 2 - 0 - 1 - 1.10 - 0 - 0.50 - 0.01 = $95.39
         let expected_net = 1_100.0 - 1_000.0 - 2.0 - 0.0 - 1.0 - 1.10 - 0.0 - 0.50 - 0.01;
@@ -708,19 +712,23 @@ mod tests {
             expected_amount_out_usd: 1_100.0,
             expected_gas_cost_usd: 2.0,
             flashloan_fee_pct: 0.0,
-            max_slippage_pct: 0.005, // unused — price_impact takes over
+            max_slippage_pct: 0.005,      // unused — price_impact takes over
             failure_risk_buffer_usd: 0.0, // unused — p_fail takes over
             lp_fees_usd: 1.0,
-            price_impact_pct: 0.1,   // 0.1% → $1100 × 0.001 = $1.10
+            price_impact_pct: 0.1, // 0.1% → $1100 × 0.001 = $1.10
             capital_cost_usd: 0.50,
             ops_overhead_usd: 0.01,
-            p_fail: Some(0.1),       // 0.1 × $2 gas = $0.20
-            p_copied: Some(0.1),     // 0.1 × $100 gross = $10.00
+            p_fail: Some(0.1),            // 0.1 × $2 gas = $0.20
+            p_copied: Some(0.1),          // 0.1 × $100 gross = $10.00
             estimated_relay_fee_usd: 0.0, // C2: zero to preserve legacy arithmetic
         };
         let result = calc_net_profit_and_roi(&params);
 
-        assert!((result.gross_profit_usd - 100.0).abs() < 1e-9, "gross={}", result.gross_profit_usd);
+        assert!(
+            (result.gross_profit_usd - 100.0).abs() < 1e-9,
+            "gross={}",
+            result.gross_profit_usd
+        );
 
         // Exact formula:
         // 1100 - 1000            = $100 gross
@@ -741,14 +749,18 @@ mod tests {
             - 0.20      // failure (0.1 × 2.0)
             - 0.50      // capital_cost
             - 0.01      // ops_overhead
-            - 10.00;    // copied_buffer (0.1 × 100.0 gross)
+            - 10.00; // copied_buffer (0.1 × 100.0 gross)
         assert!(
             (result.net_profit_usd - expected_net).abs() < 1e-6,
             "Sprint A+B+C combined: expected net={:.6} got {:.6}",
             expected_net,
             result.net_profit_usd,
         );
-        assert!(result.is_viable, "net=${} must be viable", result.net_profit_usd);
+        assert!(
+            result.is_viable,
+            "net=${} must be viable",
+            result.net_profit_usd
+        );
     }
 
     // ----------------------------------------------------------------

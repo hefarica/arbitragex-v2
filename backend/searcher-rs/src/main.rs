@@ -14,6 +14,7 @@
 //!   5. Serve `/health` + `/metrics` on SEARCHER_HEALTH_PORT.
 //!   6. Await ctrl-c.
 
+mod amm_math;
 mod calldata;
 mod chain_client;
 mod counters;
@@ -21,10 +22,18 @@ mod dedup;
 mod patterns;
 mod persistence;
 mod publisher;
-mod scanner;
-mod workers;
-mod amm_math;
 mod reserves;
+mod scanner;
+// Phase 1-3: new orchestrator modules declared here so the binary links them.
+// Items are not yet wired into scanner.rs (Phase 12); allow dead_code until
+// the integration lands.
+#[allow(dead_code)]
+mod route_decoder;
+#[allow(dead_code)]
+mod route_intent;
+#[allow(dead_code)]
+mod strategy_label;
+mod workers;
 
 use shared_rs::{
     config::{require_env, AppConfig},
@@ -49,10 +58,13 @@ async fn main() -> anyhow::Result<()> {
     init_metrics();
 
     let port: u16 = std::env::var("SEARCHER_HEALTH_PORT")
-        .ok().and_then(|v| v.parse().ok()).unwrap_or(9001);
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(9001);
 
     let redis_url = require_env("REDIS_URL")?;
-    let killswitch = KillSwitchClient::connect(&redis_url, cfg.system.kill_switch_enabled_default).await
+    let killswitch = KillSwitchClient::connect(&redis_url, cfg.system.kill_switch_enabled_default)
+        .await
         .map_err(|e| anyhow::anyhow!("killswitch connect: {e}"))?;
 
     // Shared redis connection manager for scanners.
@@ -83,7 +95,11 @@ async fn main() -> anyhow::Result<()> {
             "ARBX_USE_SIMULATOR_V2=true acknowledged; simulator-v2 Task 4.3 not integrated yet, falling through to v1"
         );
     } else {
-        info!(event = "simulator.version", version = "v1", "using prioritization-spine stub simulator (default)");
+        info!(
+            event = "simulator.version",
+            version = "v1",
+            "using prioritization-spine stub simulator (default)"
+        );
     }
 
     // DB pool — optional: if DATABASE_URL absent, run without persistence.
@@ -97,7 +113,11 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(8);
     let db_pool = match std::env::var("DATABASE_URL") {
-        Ok(url) if !url.is_empty() => match PgPoolOptions::new().max_connections(db_pool_max).connect(&url).await {
+        Ok(url) if !url.is_empty() => match PgPoolOptions::new()
+            .max_connections(db_pool_max)
+            .connect(&url)
+            .await
+        {
             Ok(p) => {
                 info!(event = "db.connected", "postgres pool up");
                 Some(p)
@@ -109,16 +129,15 @@ async fn main() -> anyhow::Result<()> {
             }
         },
         _ => {
-            warn!(event = "db.not_configured",
-                  "DATABASE_URL not set; scanner will publish to stream but NOT persist");
+            warn!(
+                event = "db.not_configured",
+                "DATABASE_URL not set; scanner will publish to stream but NOT persist"
+            );
             None
         }
     };
 
-    let dedup = Arc::new(dedup::Dedup::new(
-        50_000,
-        Duration::from_secs(60),
-    ));
+    let dedup = Arc::new(dedup::Dedup::new(50_000, Duration::from_secs(60)));
 
     // BE-3.6: opportunity-level dedup — collapses same route+time+profit re-emits.
     // 4096 slots covers ~400 distinct routes × 10 profit buckets with headroom.
@@ -234,7 +253,8 @@ async fn main() -> anyhow::Result<()> {
     let heartbeat_db = db_pool.clone();
     let heartbeat_chain = primary_chain;
     tokio::spawn(async move {
-        let hb = workers::heartbeat_worker::HeartbeatWorker::new(heartbeat_period_secs, heartbeat_chain);
+        let hb =
+            workers::heartbeat_worker::HeartbeatWorker::new(heartbeat_period_secs, heartbeat_chain);
         hb.run(heartbeat_redis, heartbeat_db).await;
     });
 
@@ -266,13 +286,24 @@ async fn main() -> anyhow::Result<()> {
     // pool state instead of silent skip.
     let triangular_v3_pool: Option<Arc<HttpRpcPool>> = if triangular_chain == 1 {
         if primary_rpc_pool.is_some() {
-            info!(event = "triangular_worker.v3_pool_ready", chain_id = triangular_chain);
+            info!(
+                event = "triangular_worker.v3_pool_ready",
+                chain_id = triangular_chain
+            );
         } else {
-            info!(event = "triangular_worker.v3_disabled", chain_id = triangular_chain, reason = "no_rpc_http_url");
+            info!(
+                event = "triangular_worker.v3_disabled",
+                chain_id = triangular_chain,
+                reason = "no_rpc_http_url"
+            );
         }
         primary_rpc_pool.clone()
     } else {
-        info!(event = "triangular_worker.v3_disabled", chain_id = triangular_chain, reason = "non-mainnet");
+        info!(
+            event = "triangular_worker.v3_disabled",
+            chain_id = triangular_chain,
+            reason = "non-mainnet"
+        );
         None
     };
     tokio::spawn(async move {
@@ -350,13 +381,24 @@ async fn main() -> anyhow::Result<()> {
     // so the heartbeat surfaces the missing pool state).
     let liquidation_pool: Option<Arc<HttpRpcPool>> = if liquidation_chain == 1 {
         if primary_rpc_pool.is_some() {
-            info!(event = "liquidation_worker.pool_ready", chain_id = liquidation_chain);
+            info!(
+                event = "liquidation_worker.pool_ready",
+                chain_id = liquidation_chain
+            );
         } else {
-            info!(event = "liquidation_worker.provider_disabled", chain_id = liquidation_chain, reason = "no_rpc_http_url");
+            info!(
+                event = "liquidation_worker.provider_disabled",
+                chain_id = liquidation_chain,
+                reason = "no_rpc_http_url"
+            );
         }
         primary_rpc_pool.clone()
     } else {
-        info!(event = "liquidation_worker.provider_disabled", chain_id = liquidation_chain, reason = "non-mainnet");
+        info!(
+            event = "liquidation_worker.provider_disabled",
+            chain_id = liquidation_chain,
+            reason = "non-mainnet"
+        );
         None
     };
     tokio::spawn(async move {
@@ -367,7 +409,8 @@ async fn main() -> anyhow::Result<()> {
         if let Some(pool) = liquidation_pool {
             lw = lw.with_provider(pool);
         }
-        lw.run(liquidation_redis, liquidation_db, liquidation_tc).await;
+        lw.run(liquidation_redis, liquidation_db, liquidation_tc)
+            .await;
     });
 
     // CEX-DEX worker (BE-3.2 Phase 1 scaffold) — detects spread between Binance
@@ -385,7 +428,9 @@ async fn main() -> anyhow::Result<()> {
         let cfg = workers::cex_dex_worker::CexDexWorkerConfig::new(cex_dex_chain, cex_dex_tick_ms);
         match workers::cex_dex_worker::CexDexWorker::new(cfg, cex_dex_rpc) {
             Ok(worker) => worker.run().await,
-            Err(e) => warn!(event = "cex_dex_worker.boot_failed", chain_id = cex_dex_chain, error = %e),
+            Err(e) => {
+                warn!(event = "cex_dex_worker.boot_failed", chain_id = cex_dex_chain, error = %e)
+            }
         }
     });
 
@@ -405,7 +450,19 @@ async fn main() -> anyhow::Result<()> {
         let tc_c = trading_config.clone();
         let rpc_pool_c = rpc_pools.get(&chain_id).cloned();
         tokio::spawn(async move {
-            if let Err(e) = scanner::run_chain(chain_id, cfg_c, ks, redis_c, db_c, dedup_c, opp_dedup_c, tc_c, rpc_pool_c).await {
+            if let Err(e) = scanner::run_chain(
+                chain_id,
+                cfg_c,
+                ks,
+                redis_c,
+                db_c,
+                dedup_c,
+                opp_dedup_c,
+                tc_c,
+                rpc_pool_c,
+            )
+            .await
+            {
                 error!(event = "scanner.spawn_failed", chain_id, error = %e);
             }
         });
@@ -418,7 +475,9 @@ async fn main() -> anyhow::Result<()> {
     info!(event = "http.listen", addr = %addr, "searcher-rs health/metrics bound");
 
     axum::serve(listener, app)
-        .with_graceful_shutdown(async { tokio::signal::ctrl_c().await.ok(); })
+        .with_graceful_shutdown(async {
+            tokio::signal::ctrl_c().await.ok();
+        })
         .await?;
 
     Ok(())

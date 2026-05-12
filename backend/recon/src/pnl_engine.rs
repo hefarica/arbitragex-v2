@@ -14,8 +14,8 @@
 use alloy::primitives::B256;
 use alloy::providers::Provider as AlloyProvider;
 use chrono::Utc;
-use ethers::utils::keccak256;
 use ethers::types::{Address, H256, U256};
+use ethers::utils::keccak256;
 use shared_rs::contracts::{ExecutionResult, Opportunity, ReconReport};
 use shared_rs::rpc_failover::AlloyHttpProvider;
 use std::time::Duration;
@@ -37,9 +37,12 @@ pub async fn compute(
 ) -> ReconReport {
     let trace_id = opp.trace_id;
     let now = Utc::now();
-    let common = |gas_used: Option<String>, gas_price: Option<String>,
-                  actual_out: Option<String>, variance_pct: Option<f64>,
-                  variance_native: Option<String>, fail_reason: Option<String>| ReconReport {
+    let common = |gas_used: Option<String>,
+                  gas_price: Option<String>,
+                  actual_out: Option<String>,
+                  variance_pct: Option<f64>,
+                  variance_native: Option<String>,
+                  fail_reason: Option<String>| ReconReport {
         opportunity_id: opp.id,
         execution_id: None, // not tracked through stream; derive via tx_hash later
         tx_hash: exec.tx_hash.clone(),
@@ -72,14 +75,31 @@ pub async fn compute(
     let receipt_res = timeout(
         Duration::from_millis(receipt_timeout_ms),
         provider.get_transaction_receipt(tx_hash_alloy),
-    ).await;
+    )
+    .await;
 
     let receipt = match receipt_res {
         Ok(Ok(Some(r))) => r,
-        Ok(Ok(None)) => return common(None, None, None, None, None, Some("receipt_not_found".into())),
+        Ok(Ok(None)) => {
+            return common(
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("receipt_not_found".into()),
+            )
+        }
         Ok(Err(e)) => {
             warn!(event = "recon.receipt_err", hash = %hash, error = %e);
-            return common(None, None, None, None, None, Some(format!("rpc_error: {e}")));
+            return common(
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(format!("rpc_error: {e}")),
+            );
         }
         Err(_) => return common(None, None, None, None, None, Some("receipt_timeout".into())),
     };
@@ -91,7 +111,16 @@ pub async fn compute(
     // Decode ERC20 Transfer logs targeting the tx origin (from addr) to find amount_out.
     let from_addr = match opp.token_out.parse::<Address>() {
         Ok(a) => a,
-        Err(_) => return common(gas_used, gas_price, None, None, None, Some("invalid_token_out".into())),
+        Err(_) => {
+            return common(
+                gas_used,
+                gas_price,
+                None,
+                None,
+                None,
+                Some("invalid_token_out".into()),
+            )
+        }
     };
     let topic = transfer_topic();
     let mut candidate_out: Option<U256> = None;
@@ -101,11 +130,17 @@ pub async fn compute(
     // We compare addresses and topics by bytes.
     for log in receipt.logs() {
         // Compare topic0 as raw bytes.
-        let Some(topic0) = log.topics().first() else { continue };
-        if topic0.as_slice() != topic.as_bytes() { continue; }
+        let Some(topic0) = log.topics().first() else {
+            continue;
+        };
+        if topic0.as_slice() != topic.as_bytes() {
+            continue;
+        }
 
         // Compare log.address bytes to from_addr (ethers Address) bytes.
-        if log.address().as_slice() != from_addr.as_bytes() { continue; }
+        if log.address().as_slice() != from_addr.as_bytes() {
+            continue;
+        }
 
         // data contains the `value` (first 32 bytes = uint256).
         let raw = log.data().data.as_ref();
@@ -125,7 +160,11 @@ pub async fn compute(
             if let Ok(out_u) = out_str.parse::<u128>() {
                 let diff = out_u.abs_diff(in_u);
                 let pct = (diff as f64 / in_u as f64) * 100.0;
-                let sign = if out_u >= in_u { diff as i128 } else { -(diff as i128) };
+                let sign = if out_u >= in_u {
+                    diff as i128
+                } else {
+                    -(diff as i128)
+                };
                 (Some(pct), Some(sign.to_string()))
             } else {
                 (None, None)
@@ -136,5 +175,12 @@ pub async fn compute(
 
     debug!(event = "recon.computed", tx = %hash, variance_pct = ?variance_pct);
     let _ = Uuid::nil(); // keep uuid import used even when fail paths dominate
-    common(gas_used, gas_price, actual_out, variance_pct, variance_native, None)
+    common(
+        gas_used,
+        gas_price,
+        actual_out,
+        variance_pct,
+        variance_native,
+        None,
+    )
 }

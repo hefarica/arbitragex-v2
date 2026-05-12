@@ -87,8 +87,7 @@ impl EnricherConsumer {
     /// a warning but does not prevent startup — the consumer will attempt to
     /// read anyway and fail explicitly there if the connection is broken.
     pub async fn connect(redis_url: &str) -> Result<Self> {
-        let client = redis::Client::open(redis_url)
-            .context("redis::Client::open")?;
+        let client = redis::Client::open(redis_url).context("redis::Client::open")?;
         let mut conn = client
             .get_multiplexed_async_connection()
             .await
@@ -106,9 +105,17 @@ impl EnricherConsumer {
             .query_async::<_, ()>(&mut conn)
             .await
         {
-            Ok(_) => info!(event = "enricher.group_created", stream = STREAM, group = GROUP),
+            Ok(_) => info!(
+                event = "enricher.group_created",
+                stream = STREAM,
+                group = GROUP
+            ),
             Err(ref e) if e.to_string().contains("BUSYGROUP") => {
-                debug!(event = "enricher.group_already_exists", stream = STREAM, group = GROUP)
+                debug!(
+                    event = "enricher.group_already_exists",
+                    stream = STREAM,
+                    group = GROUP
+                )
             }
             Err(e) => warn!(
                 event = "enricher.group_create_failed",
@@ -135,10 +142,7 @@ impl EnricherConsumer {
     /// Poison entries (missing payload, bad JSON, zero chain_id, empty
     /// addresses) are logged and included in `ids` so they get ACKed and
     /// do not block the PEL forever.
-    fn parse(
-        &self,
-        reply: StreamReadReply,
-    ) -> (Vec<(u64, String, String)>, Vec<String>) {
+    fn parse(&self, reply: StreamReadReply) -> (Vec<(u64, String, String)>, Vec<String>) {
         let mut out: Vec<(u64, String, String)> = Vec::new();
         let mut ids_to_ack: Vec<String> = Vec::new();
 
@@ -154,13 +158,10 @@ impl EnricherConsumer {
 
                 // Extract the JSON payload from the `"payload"` field.
                 // In redis 0.24, map values are `Value::Data(Vec<u8>)`.
-                let payload_bytes: Option<&[u8]> = entry
-                    .map
-                    .get("payload")
-                    .and_then(|v| match v {
-                        Value::Data(b) => Some(b.as_slice()),
-                        _ => None,
-                    });
+                let payload_bytes: Option<&[u8]> = entry.map.get("payload").and_then(|v| match v {
+                    Value::Data(b) => Some(b.as_slice()),
+                    _ => None,
+                });
 
                 let payload_bytes = match payload_bytes {
                     Some(b) => b,
@@ -176,14 +177,8 @@ impl EnricherConsumer {
                 match serde_json::from_slice::<JsonValue>(payload_bytes) {
                     Ok(v) => {
                         let chain = v["chain_id"].as_u64().unwrap_or(0);
-                        let ti = v["token_in"]
-                            .as_str()
-                            .unwrap_or("")
-                            .to_lowercase();
-                        let to = v["token_out"]
-                            .as_str()
-                            .unwrap_or("")
-                            .to_lowercase();
+                        let ti = v["token_in"].as_str().unwrap_or("").to_lowercase();
+                        let to = v["token_out"].as_str().unwrap_or("").to_lowercase();
                         if chain > 0 && !ti.is_empty() && !to.is_empty() {
                             out.push((chain, ti, to));
                         } else {
@@ -222,10 +217,7 @@ impl EnricherConsumer {
         if ids.is_empty() {
             return Ok(());
         }
-        let ack_result: redis::RedisResult<i64> = self
-            .conn
-            .xack(STREAM, GROUP, &ids)
-            .await;
+        let ack_result: redis::RedisResult<i64> = self.conn.xack(STREAM, GROUP, &ids).await;
         if let Err(e) = ack_result {
             warn!(event = "enricher.xack_error", err = %e);
         }
@@ -275,17 +267,14 @@ impl EnricherConsumer {
             // Do NOT pass .block() here — PEL reads with delivery-id "0" return
             // immediately when empty; blocking is only for ">" (new entries).
 
-            let reply: StreamReadReply = match self
-                .conn
-                .xread_options(&[STREAM], &["0"], &opts)
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    warn!(event = "enricher.drain_pel_error", err = %e);
-                    break;
-                }
-            };
+            let reply: StreamReadReply =
+                match self.conn.xread_options(&[STREAM], &["0"], &opts).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        warn!(event = "enricher.drain_pel_error", err = %e);
+                        break;
+                    }
+                };
 
             // Empty reply = PEL exhausted.
             let total_entries: usize = reply.keys.iter().map(|k| k.ids.len()).sum();
@@ -331,11 +320,7 @@ impl EnricherConsumer {
             .count(BATCH_SIZE)
             .block(BLOCK_MS);
 
-        let reply: StreamReadReply = match self
-            .conn
-            .xread_options(&[STREAM], &[">"], &opts)
-            .await
-        {
+        let reply: StreamReadReply = match self.conn.xread_options(&[STREAM], &[">"], &opts).await {
             Ok(r) => r,
             Err(e) => {
                 warn!(event = "enricher.xreadgroup_error", err = %e);

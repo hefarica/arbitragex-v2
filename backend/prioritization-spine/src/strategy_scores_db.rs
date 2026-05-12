@@ -101,9 +101,7 @@ impl StrategyScoresCache {
                 if entry.is_fresh() {
                     debug!(
                         event = "strategy_scores_cache.hit",
-                        strategy_kind,
-                        chain_id,
-                        "strategy_scores cache hit"
+                        strategy_kind, chain_id, "strategy_scores cache hit"
                     );
                     return entry.value.clone();
                 }
@@ -192,9 +190,7 @@ async fn query_latest_revert_rate(
                     // unusual but possible if the learning loop hasn't written it yet.
                     debug!(
                         event = "strategy_scores_db.null_revert_rate",
-                        strategy_kind,
-                        chain_id,
-                        "revert_rate is NULL — proxy fallback"
+                        strategy_kind, chain_id, "revert_rate is NULL — proxy fallback"
                     );
                     return None;
                 }

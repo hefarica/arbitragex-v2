@@ -55,7 +55,10 @@ impl RpcHealthWorker {
             .and_then(|v| v.trim().parse::<u64>().ok())
             .unwrap_or(1);
 
-        info!(event = "rpc_health.boot", chain_id, "rpc health worker starting");
+        info!(
+            event = "rpc_health.boot",
+            chain_id, "rpc health worker starting"
+        );
 
         let pool = match HttpRpcPool::from_env(chain_id).await {
             Ok(Some(p)) => p,
@@ -111,8 +114,12 @@ impl RpcHealthWorker {
                                 + ((1.0 - LATENCY_EWMA_ALPHA) * prev_ewma as f64))
                                 .round() as u64
                         };
-                        entry.latency_ms_ewma.store(new_ewma, std::sync::atomic::Ordering::Relaxed);
-                        entry.last_block.store(block, std::sync::atomic::Ordering::Relaxed);
+                        entry
+                            .latency_ms_ewma
+                            .store(new_ewma, std::sync::atomic::Ordering::Relaxed);
+                        entry
+                            .last_block
+                            .store(block, std::sync::atomic::Ordering::Relaxed);
 
                         // Update state: Degraded if EWMA above threshold, else Healthy.
                         // Open state is reserved for the circuit breaker — we don't

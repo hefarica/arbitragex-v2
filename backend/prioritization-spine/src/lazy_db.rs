@@ -4,10 +4,10 @@ use revm::{
     primitives::{AccountInfo, Address, Bytecode, B256, U256},
     Database,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 use tracing::{debug, warn};
-use std::collections::HashMap;
 
 /// A Database for REVM that lazily fetches state from an RPC using ethers-rs.
 /// It caches results locally in memory to avoid repeated network calls.
@@ -60,9 +60,18 @@ impl Database for LazyRpcDatabase {
         // Block inside sync trait
         let (balance, nonce, code) = tokio::task::block_in_place(|| {
             Handle::current().block_on(async {
-                let bal: EthersU256 = provider.get_balance(ethers_addr, None).await.unwrap_or_default();
-                let non: EthersU256 = provider.get_transaction_count(ethers_addr, None).await.unwrap_or_default();
-                let cod: ethers::types::Bytes = provider.get_code(ethers_addr, None).await.unwrap_or_default();
+                let bal: EthersU256 = provider
+                    .get_balance(ethers_addr, None)
+                    .await
+                    .unwrap_or_default();
+                let non: EthersU256 = provider
+                    .get_transaction_count(ethers_addr, None)
+                    .await
+                    .unwrap_or_default();
+                let cod: ethers::types::Bytes = provider
+                    .get_code(ethers_addr, None)
+                    .await
+                    .unwrap_or_default();
                 (bal, non, cod)
             })
         });
@@ -115,7 +124,10 @@ impl Database for LazyRpcDatabase {
 
         let storage_val = tokio::task::block_in_place(|| {
             Handle::current().block_on(async {
-                provider.get_storage_at(ethers_addr, ethers_idx_h256, None).await.unwrap_or_default()
+                provider
+                    .get_storage_at(ethers_addr, ethers_idx_h256, None)
+                    .await
+                    .unwrap_or_default()
             })
         });
 

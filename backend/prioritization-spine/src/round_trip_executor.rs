@@ -39,9 +39,7 @@
 
 use ethers::types::{Address, Bytes, U256};
 
-use crate::swap_encoder::{
-    encode_erc20_balance_of, encode_v2_swap_exact_tokens_for_tokens,
-};
+use crate::swap_encoder::{encode_erc20_balance_of, encode_v2_swap_exact_tokens_for_tokens};
 
 /// Output of a round-trip simulation. Either the simulation completed
 /// successfully (`passed = true`) and we have realised profit + gas, OR
@@ -205,9 +203,7 @@ fn u256_to_f64_lossy(v: U256) -> f64 {
 ///
 /// The signature is finalised here (consumers in config_aware can depend
 /// on the SimulationOutcome shape). Implementation follows.
-pub fn execute_round_trip(
-    _plan: &RoundTripPlan,
-) -> SimulationOutcome {
+pub fn execute_round_trip(_plan: &RoundTripPlan) -> SimulationOutcome {
     // TODO Phase 5: implement using LazyRpcDatabase + revm EVM.
     // See module docs for the 9-step orchestration.
     SimulationOutcome::failed("execute_round_trip pending Phase 5 implementation")
@@ -222,8 +218,12 @@ mod tests {
         Address::from_str(hex).expect("valid hex address")
     }
 
-    fn weth() -> Address { addr("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2") }
-    fn usdc() -> Address { addr("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48") }
+    fn weth() -> Address {
+        addr("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
+    }
+    fn usdc() -> Address {
+        addr("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+    }
 
     #[test]
     fn decode_balance_of_return_standard_word() {
@@ -248,7 +248,9 @@ mod tests {
         let val = U256::from(999_888_777u64);
         val.to_big_endian(&mut bytes[..32]);
         // bytes[32..64] is garbage; should be ignored
-        for b in &mut bytes[32..] { *b = 0xff; }
+        for b in &mut bytes[32..] {
+            *b = 0xff;
+        }
         assert_eq!(decode_balance_of_return(&bytes), val);
     }
 
@@ -261,7 +263,10 @@ mod tests {
         let final_ = initial + U256::from(5_000_000_000_000_000u64); // +0.005 ETH
         let gas_price = U256::from(25_000_000_000u64); // 25 gwei
         let net = compute_profit_usd(initial, final_, 18, 2500.0, 200_000, gas_price, 2500.0);
-        assert!((net - 0.0).abs() < 0.5, "net should be ~$0 (gross $12.5 - gas $12.5), got {net}");
+        assert!(
+            (net - 0.0).abs() < 0.5,
+            "net should be ~$0 (gross $12.5 - gas $12.5), got {net}"
+        );
     }
 
     #[test]
@@ -288,7 +293,10 @@ mod tests {
         let gas_price = U256::from(20_000_000_000u64);
         // 100_000 gas * 20 gwei = 2_000_000_000_000_000 wei = 0.002 ETH * $500 = $1
         let net = compute_profit_usd(initial, final_, 6, 1.0, 100_000, gas_price, 500.0);
-        assert!((net - 9.0).abs() < 0.1, "expected ~$9 net for USDC trade, got {net}");
+        assert!(
+            (net - 9.0).abs() < 0.1,
+            "expected ~$9 net for USDC trade, got {net}"
+        );
     }
 
     #[test]
@@ -309,8 +317,14 @@ mod tests {
         // Forward calldata starts with V2 swapExactTokensForTokens selector
         assert_eq!(&plan.forward_calldata[..4], &[0x38, 0xed, 0x17, 0x39]);
         // BalanceOf calls start with the standard selector
-        assert_eq!(&plan.balance_of_caller_token_out_calldata[..4], &[0x70, 0xa0, 0x82, 0x31]);
-        assert_eq!(&plan.balance_of_caller_token_in_calldata[..4], &[0x70, 0xa0, 0x82, 0x31]);
+        assert_eq!(
+            &plan.balance_of_caller_token_out_calldata[..4],
+            &[0x70, 0xa0, 0x82, 0x31]
+        );
+        assert_eq!(
+            &plan.balance_of_caller_token_in_calldata[..4],
+            &[0x70, 0xa0, 0x82, 0x31]
+        );
     }
 
     #[test]

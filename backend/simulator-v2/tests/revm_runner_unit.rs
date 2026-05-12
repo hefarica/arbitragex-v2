@@ -21,7 +21,9 @@
 
 use std::collections::HashMap;
 
-use revm::primitives::{AccountInfo, Address, Bytecode, Bytes as RevmBytes, B256, KECCAK_EMPTY, U256};
+use revm::primitives::{
+    AccountInfo, Address, Bytecode, Bytes as RevmBytes, B256, KECCAK_EMPTY, U256,
+};
 use revm::Database;
 use simulator_v2::revm_runner::run;
 use simulator_v2::{CandidateInput, SimError};
@@ -57,7 +59,9 @@ impl Database for MapDb {
     type Error = String;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        Ok(Some(self.accounts.get(&address).cloned().unwrap_or_default()))
+        Ok(Some(
+            self.accounts.get(&address).cloned().unwrap_or_default(),
+        ))
     }
 
     fn code_by_hash(&mut self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
@@ -160,7 +164,8 @@ fn valid_call_returns_ok_sim_result_with_nonzero_gas() {
         gas_price_wei: 0,
     };
 
-    let result = run(&candidate, db, 21_000_000).expect("valid call to NOOP contract should succeed");
+    let result =
+        run(&candidate, db, 21_000_000).expect("valid call to NOOP contract should succeed");
 
     assert!(
         result.gas_used > 0,
@@ -170,8 +175,7 @@ fn valid_call_returns_ok_sim_result_with_nonzero_gas() {
     // trace_hash must be a non-zero 32-byte array (SHA-256 of empty calldata
     // || STOP return data is never all-zeros).
     assert_ne!(
-        result.trace_hash,
-        [0u8; 32],
+        result.trace_hash, [0u8; 32],
         "trace_hash must not be all zeros"
     );
 }
@@ -222,7 +226,10 @@ fn reverted_call_returns_sim_error_reverted() {
     match result {
         Err(SimError::Reverted(_)) => { /* expected */ }
         Err(e) => panic!("expected Reverted error, got: {e:?}"),
-        Ok(r) => panic!("expected Reverted error, got Ok with gas_used={}", r.gas_used),
+        Ok(r) => panic!(
+            "expected Reverted error, got Ok with gas_used={}",
+            r.gas_used
+        ),
     }
 }
 
@@ -576,10 +583,8 @@ fn test_block_memoization_with_block_is_consistent() {
 
     // SimulatorV2::with_block() pre-populates the OnceLock.
     // Both run() calls use the same effective_block = PINNED_BLOCK.
-    let r1 = run(&candidate, make_db(), PINNED_BLOCK)
-        .expect("first simulate call");
-    let r2 = run(&candidate, make_db(), PINNED_BLOCK)
-        .expect("second simulate call");
+    let r1 = run(&candidate, make_db(), PINNED_BLOCK).expect("first simulate call");
+    let r2 = run(&candidate, make_db(), PINNED_BLOCK).expect("second simulate call");
 
     // Both calls against the same pinned block must produce the same gas_used
     // (deterministic execution) and the same trace_hash.
@@ -610,9 +615,9 @@ fn test_block_memoization_with_block_is_consistent() {
 #[test]
 fn test_block_env_number_matches_effective_block() {
     // Deployed bytecode: read block.number and return it.
-    let block_number_bytecode = Bytecode::new_raw(revm::primitives::Bytes::from_static(
-        &[0x43, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3],
-    ));
+    let block_number_bytecode = Bytecode::new_raw(revm::primitives::Bytes::from_static(&[
+        0x43, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3,
+    ]));
     let code_hash = block_number_bytecode.hash_slow();
 
     let caller = make_addr(0x14);
@@ -670,31 +675,45 @@ fn test_block_env_number_matches_effective_block() {
 
     // Verify via two calls with DIFFERENT effective blocks → different trace hashes.
     // This proves BlockEnv.number actually changes with effective_block.
-    let noop2 = Bytecode::new_raw(revm::primitives::Bytes::from_static(
-        &[0x43, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3],
-    ));
+    let noop2 = Bytecode::new_raw(revm::primitives::Bytes::from_static(&[
+        0x43, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3,
+    ]));
     let code_hash2 = noop2.hash_slow();
     let caller2 = make_addr(0x16);
     let contract2 = make_addr(0x17);
     let mut db2 = MapDb::new();
-    db2.insert_account(caller2, AccountInfo {
-        balance: U256::from(10u64.pow(18)), nonce: 0, code_hash: KECCAK_EMPTY,
-        code: Some(Bytecode::new()),
-    });
-    db2.insert_account(contract2, AccountInfo {
-        balance: U256::ZERO, nonce: 1, code_hash: code_hash2,
-        code: Some(noop2),
-    });
+    db2.insert_account(
+        caller2,
+        AccountInfo {
+            balance: U256::from(10u64.pow(18)),
+            nonce: 0,
+            code_hash: KECCAK_EMPTY,
+            code: Some(Bytecode::new()),
+        },
+    );
+    db2.insert_account(
+        contract2,
+        AccountInfo {
+            balance: U256::ZERO,
+            nonce: 1,
+            code_hash: code_hash2,
+            code: Some(noop2),
+        },
+    );
 
     let candidate2 = CandidateInput {
-        chain_id: 1, block_number: 0,
-        from: make_addr_arr(0x16), to: make_addr_arr(0x17),
-        calldata: vec![], value_wei: 0, gas_price_wei: 0,
+        chain_id: 1,
+        block_number: 0,
+        from: make_addr_arr(0x16),
+        to: make_addr_arr(0x17),
+        calldata: vec![],
+        value_wei: 0,
+        gas_price_wei: 0,
     };
 
     const DIFFERENT_BLOCK: u64 = 20_000_001;
-    let result2 = run(&candidate2, db2, DIFFERENT_BLOCK)
-        .expect("second BLOCKNUMBER call should succeed");
+    let result2 =
+        run(&candidate2, db2, DIFFERENT_BLOCK).expect("second BLOCKNUMBER call should succeed");
 
     // Different effective_block → different BLOCKNUMBER output → different trace_hash.
     // If BlockEnv.number were ignored, both hashes would be equal (both return 0).

@@ -300,7 +300,9 @@ impl PriceWorker {
                     );
                 }
                 Err(e) => {
-                    counters().price_worker_errors.fetch_add(1, Ordering::Relaxed);
+                    counters()
+                        .price_worker_errors
+                        .fetch_add(1, Ordering::Relaxed);
                     warn!(event = "price_worker.tick_failed", chain_id = self.cfg.chain_id, error = %e);
                 }
             }
@@ -309,10 +311,7 @@ impl PriceWorker {
 
     /// One refresh cycle. Public for testability — tests call this directly
     /// with mocked HTTP servers and verify Redis state.
-    pub async fn run_one_tick(
-        &self,
-        redis: &mut ConnectionManager,
-    ) -> anyhow::Result<TickStats> {
+    pub async fn run_one_tick(&self, redis: &mut ConnectionManager) -> anyhow::Result<TickStats> {
         let started = Instant::now();
         let tokens = self.discover_tokens(redis).await?;
         if tokens.is_empty() {
@@ -336,7 +335,9 @@ impl PriceWorker {
                         }
                     }
                     Err(e) => {
-                        counters().price_worker_errors.fetch_add(1, Ordering::Relaxed);
+                        counters()
+                            .price_worker_errors
+                            .fetch_add(1, Ordering::Relaxed);
                         warn!(
                             event = "price_worker.alchemy_failed",
                             chain_id = self.cfg.chain_id,
@@ -367,8 +368,7 @@ impl PriceWorker {
                         for (sym, price) in map {
                             // Don't overwrite an existing Alchemy hit. Use Entry
                             // API for clippy::map_entry compliance + clearer intent.
-                            if let std::collections::hash_map::Entry::Vacant(e) =
-                                prices.entry(sym)
+                            if let std::collections::hash_map::Entry::Vacant(e) = prices.entry(sym)
                             {
                                 e.insert(price);
                                 coingecko_hits += 1;
@@ -376,7 +376,9 @@ impl PriceWorker {
                         }
                     }
                     Err(e) => {
-                        counters().price_worker_errors.fetch_add(1, Ordering::Relaxed);
+                        counters()
+                            .price_worker_errors
+                            .fetch_add(1, Ordering::Relaxed);
                         warn!(
                             event = "price_worker.coingecko_failed",
                             chain_id = self.cfg.chain_id,
@@ -455,9 +457,15 @@ impl PriceWorker {
         // map (lowercased addr). Chains rarely have >2K tokens so SCAN with
         // a generous COUNT hint is fine; we don't paginate further.
         let pattern = format!("arbx:tokens:{}:*", self.cfg.chain_id);
-        let mut iter: redis::AsyncIter<String> =
-            redis::cmd("SCAN").cursor_arg(0).arg("MATCH").arg(&pattern).arg("COUNT").arg(500).clone()
-                .iter_async(redis).await?;
+        let mut iter: redis::AsyncIter<String> = redis::cmd("SCAN")
+            .cursor_arg(0)
+            .arg("MATCH")
+            .arg(&pattern)
+            .arg("COUNT")
+            .arg(500)
+            .clone()
+            .iter_async(redis)
+            .await?;
         let mut keys: Vec<String> = Vec::new();
         while let Some(k) = iter.next_item().await {
             keys.push(k);
@@ -499,17 +507,18 @@ impl PriceWorker {
     /// POST one batch to Alchemy. Returns `symbol → price` for tokens that
     /// came back with a parseable USD quote. Tokens missing a quote are
     /// simply absent from the returned map (no fabricated entries).
-    async fn fetch_alchemy(
-        &self,
-        tokens: &[TokenRef],
-    ) -> anyhow::Result<HashMap<String, f64>> {
+    async fn fetch_alchemy(&self, tokens: &[TokenRef]) -> anyhow::Result<HashMap<String, f64>> {
         let api_key = self
             .cfg
             .alchemy_api_key
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("alchemy api key not configured"))?;
-        let network = alchemy_network_slug(self.cfg.chain_id)
-            .ok_or_else(|| anyhow::anyhow!("alchemy network slug missing for chain {}", self.cfg.chain_id))?;
+        let network = alchemy_network_slug(self.cfg.chain_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "alchemy network slug missing for chain {}",
+                self.cfg.chain_id
+            )
+        })?;
         let url = match &self.cfg.alchemy_base_url_override {
             Some(u) => u.clone(),
             None => alchemy_prices_url(api_key),
@@ -562,12 +571,13 @@ impl PriceWorker {
     }
 
     /// GET one batch to Coingecko free tier. Same return semantics as Alchemy.
-    async fn fetch_coingecko(
-        &self,
-        tokens: &[TokenRef],
-    ) -> anyhow::Result<HashMap<String, f64>> {
-        let platform = coingecko_platform_slug(self.cfg.chain_id)
-            .ok_or_else(|| anyhow::anyhow!("coingecko platform slug missing for chain {}", self.cfg.chain_id))?;
+    async fn fetch_coingecko(&self, tokens: &[TokenRef]) -> anyhow::Result<HashMap<String, f64>> {
+        let platform = coingecko_platform_slug(self.cfg.chain_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "coingecko platform slug missing for chain {}",
+                self.cfg.chain_id
+            )
+        })?;
         let base = match &self.cfg.coingecko_base_url_override {
             Some(u) => u.clone(),
             None => coingecko_prices_url(platform),
@@ -768,7 +778,10 @@ mod tests {
             token_ref("WETH", "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
             token_ref("USDC", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
         ];
-        let result = worker.fetch_alchemy(&tokens).await.expect("alchemy call ok");
+        let result = worker
+            .fetch_alchemy(&tokens)
+            .await
+            .expect("alchemy call ok");
         assert_eq!(result.get("WETH"), Some(&2517.42));
         assert_eq!(result.get("USDC"), Some(&1.0001));
     }

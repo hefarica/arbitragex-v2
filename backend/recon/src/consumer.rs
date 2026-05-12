@@ -1,7 +1,7 @@
 //! Redis Streams consumer: arbx:opps:executed → PnlEngine → persist → XACK.
 
-use crate::pnl_engine;
 use crate::persistence::{insert_risk_event, persist_recon_report};
+use crate::pnl_engine;
 use crate::variance;
 use anyhow::{Context, Result};
 use redis::aio::ConnectionManager;
@@ -39,10 +39,18 @@ impl Consumer {
 
     async fn ensure_group(&mut self) -> Result<()> {
         let res: redis::RedisResult<()> = redis::cmd("XGROUP")
-            .arg("CREATE").arg(STREAM).arg(GROUP).arg("$").arg("MKSTREAM")
-            .query_async(&mut self.redis).await;
+            .arg("CREATE")
+            .arg(STREAM)
+            .arg(GROUP)
+            .arg("$")
+            .arg("MKSTREAM")
+            .query_async(&mut self.redis)
+            .await;
         match res {
-            Ok(_) => { info!(event = "recon_consumer.group_created"); Ok(()) }
+            Ok(_) => {
+                info!(event = "recon_consumer.group_created");
+                Ok(())
+            }
             Err(e) if e.to_string().contains("BUSYGROUP") => Ok(()),
             Err(e) => Err(e.into()),
         }
@@ -50,21 +58,43 @@ impl Consumer {
 
     async fn read_batch(&mut self) -> Result<()> {
         let reply: Option<Vec<redis::Value>> = redis::cmd("XREADGROUP")
-            .arg("GROUP").arg(GROUP).arg(&self.consumer_name)
-            .arg("COUNT").arg(4)
-            .arg("BLOCK").arg(2000)
-            .arg("STREAMS").arg(STREAM).arg(">")
-            .query_async(&mut self.redis).await?;
-        let Some(reply) = reply else { return Ok(()); };
+            .arg("GROUP")
+            .arg(GROUP)
+            .arg(&self.consumer_name)
+            .arg("COUNT")
+            .arg(4)
+            .arg("BLOCK")
+            .arg(2000)
+            .arg("STREAMS")
+            .arg(STREAM)
+            .arg(">")
+            .query_async(&mut self.redis)
+            .await?;
+        let Some(reply) = reply else {
+            return Ok(());
+        };
         for stream_entry in reply {
             if let redis::Value::Bulk(v) = stream_entry {
-                if v.len() != 2 { continue; }
-                let entries = match &v[1] { redis::Value::Bulk(e) => e.clone(), _ => continue };
+                if v.len() != 2 {
+                    continue;
+                }
+                let entries = match &v[1] {
+                    redis::Value::Bulk(e) => e.clone(),
+                    _ => continue,
+                };
                 for e in entries {
                     if let redis::Value::Bulk(parts) = e {
-                        if parts.len() != 2 { continue; }
-                        let id = match &parts[0] { redis::Value::Data(s) => String::from_utf8_lossy(s).to_string(), _ => continue };
-                        let fields = match &parts[1] { redis::Value::Bulk(f) => f.clone(), _ => continue };
+                        if parts.len() != 2 {
+                            continue;
+                        }
+                        let id = match &parts[0] {
+                            redis::Value::Data(s) => String::from_utf8_lossy(s).to_string(),
+                            _ => continue,
+                        };
+                        let fields = match &parts[1] {
+                            redis::Value::Bulk(f) => f.clone(),
+                            _ => continue,
+                        };
                         self.process_one(id, fields).await.ok();
                     }
                 }
@@ -76,25 +106,36 @@ impl Consumer {
     async fn process_one(&mut self, id: String, kv: Vec<redis::Value>) -> Result<()> {
         let Some(json) = extract_field(&kv, "json") else {
             warn!(event = "recon_consumer.no_json", id = %id);
-            let _: () = self.redis.xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()]).await?;
+            let _: () = self
+                .redis
+                .xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()])
+                .await?;
             return Ok(());
         };
         #[derive(serde::Deserialize)]
-        struct Combined { opportunity: Opportunity, execution: ExecutionResult }
+        struct Combined {
+            opportunity: Opportunity,
+            execution: ExecutionResult,
+        }
         let combined: Combined = match serde_json::from_str(&json) {
             Ok(c) => c,
             Err(e) => {
                 warn!(event = "recon_consumer.parse_err", id = %id, error = %e);
-                let _: () = self.redis.xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()]).await?;
+                let _: () = self
+                    .redis
+                    .xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()])
+                    .await?;
                 return Ok(());
             }
         };
 
         let report = pnl_engine::compute(
-            &combined.opportunity, &combined.execution,
+            &combined.opportunity,
+            &combined.execution,
             self.provider.as_ref(),
             self.cfg.receipt_fetch_timeout_ms,
-        ).await;
+        )
+        .await;
         debug!(event = "recon_consumer.computed", opp = %combined.opportunity.id,
                variance_pct = ?report.variance_pct, fail = ?report.fail_reason);
 
@@ -106,13 +147,25 @@ impl Consumer {
 
         // Variance check → risk_event
         if let Some(evt) = variance::check(&report, self.cfg.variance_threshold_pct) {
-            if let Err(e) = insert_risk_event(&self.pool, &evt.event_type, &evt.severity,
-                                              evt.payload, evt.trace_id, evt.opportunity_id).await {
+            if let Err(e) = insert_risk_event(
+                &self.pool,
+                &evt.event_type,
+                &evt.severity,
+                evt.payload,
+                evt.trace_id,
+                evt.opportunity_id,
+            )
+            .await
+            {
                 warn!(event = "recon_consumer.risk_event_err", error = %e);
             }
         }
 
-        let _: () = self.redis.xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()]).await.context("xack")?;
+        let _: () = self
+            .redis
+            .xack::<_, _, &str, ()>(STREAM, GROUP, &[id.as_str()])
+            .await
+            .context("xack")?;
         Ok(())
     }
 }
@@ -120,9 +173,17 @@ impl Consumer {
 fn extract_field(kv: &[redis::Value], name: &str) -> Option<String> {
     let mut i = 0;
     while i + 1 < kv.len() {
-        let k = match &kv[i] { redis::Value::Data(s) => std::str::from_utf8(s).ok()?.to_string(), _ => return None };
-        let v = match &kv[i+1] { redis::Value::Data(s) => String::from_utf8_lossy(s).to_string(), _ => return None };
-        if k == name { return Some(v); }
+        let k = match &kv[i] {
+            redis::Value::Data(s) => std::str::from_utf8(s).ok()?.to_string(),
+            _ => return None,
+        };
+        let v = match &kv[i + 1] {
+            redis::Value::Data(s) => String::from_utf8_lossy(s).to_string(),
+            _ => return None,
+        };
+        if k == name {
+            return Some(v);
+        }
         i += 2;
     }
     None

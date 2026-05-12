@@ -16,13 +16,13 @@ use tracing::{debug, warn};
 /// `blockchains/<path>/assets/`. Returns `None` for unsupported chains.
 pub fn chain_path(chain_id: u64) -> Option<&'static str> {
     match chain_id {
-        1     => Some("ethereum"),
+        1 => Some("ethereum"),
         42161 => Some("arbitrum"),
-        10    => Some("optimism"),
-        8453  => Some("base"),
-        137   => Some("polygon"),
-        56    => Some("smartchain"),
-        _     => None,
+        10 => Some("optimism"),
+        8453 => Some("base"),
+        137 => Some("polygon"),
+        56 => Some("smartchain"),
+        _ => None,
     }
 }
 
@@ -47,13 +47,18 @@ pub struct TrustWalletClient {
 impl TrustWalletClient {
     pub fn new(github_token: Option<String>) -> Result<Self> {
         let http = Client::builder().timeout(Duration::from_secs(8)).build()?;
-        Ok(Self { http, auth_token: github_token })
+        Ok(Self {
+            http,
+            auth_token: github_token,
+        })
     }
 
     /// Returns `Some(url)` if the asset exists (HEAD 200). `None` on 404 or rate-limit.
     /// Errs only on network failure.
     pub async fn verify(&self, chain_id: u64, address: Address) -> Result<Option<String>> {
-        let Some(url) = checksum_url_for(chain_id, address) else { return Ok(None); };
+        let Some(url) = checksum_url_for(chain_id, address) else {
+            return Ok(None);
+        };
         let mut req = self.http.head(&url);
         if let Some(t) = &self.auth_token {
             req = req.header("authorization", format!("Bearer {t}"));

@@ -434,11 +434,8 @@ impl HttpRpcPool {
 
                     // Probe.
                     let started = Instant::now();
-                    match tokio::time::timeout(
-                        HEALTH_CHECK_TIMEOUT,
-                        e.provider.get_block_number(),
-                    )
-                    .await
+                    match tokio::time::timeout(HEALTH_CHECK_TIMEOUT, e.provider.get_block_number())
+                        .await
                     {
                         Ok(Ok(bn)) => {
                             let bn: u64 = bn;
@@ -448,16 +445,14 @@ impl HttpRpcPool {
                                 .set(bn as i64);
                             // For success, run through pool's report_success-like
                             // path inline (we don't have &self here; emulate).
-                            let lat_ms =
-                                started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+                            let lat_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
                             let prev = e.latency_ms_ewma.load(Ordering::Relaxed);
                             let next = if prev == 0 {
                                 lat_ms
                             } else {
                                 let alpha = EWMA_ALPHA_BPS;
                                 let beta = 10_000u64.saturating_sub(alpha);
-                                (alpha.saturating_mul(lat_ms) + beta.saturating_mul(prev))
-                                    / 10_000
+                                (alpha.saturating_mul(lat_ms) + beta.saturating_mul(prev)) / 10_000
                             };
                             e.latency_ms_ewma.store(next, Ordering::Relaxed);
                             crate::metrics::RPC_PROVIDER_LATENCY_MS
@@ -486,15 +481,18 @@ impl HttpRpcPool {
                         }
                         Ok(Err(err)) => {
                             crate::metrics::RPC_PROVIDER_ERRORS_TOTAL
-                                .with_label_values(&[e.name.as_str(), "http", classify_cause(&format!("{err}"))])
+                                .with_label_values(&[
+                                    e.name.as_str(),
+                                    "http",
+                                    classify_cause(&format!("{err}")),
+                                ])
                                 .inc();
                             let mut cb = e.circuit.write().await;
                             let now = Instant::now();
                             cb.failures_window
                                 .retain(|t| now.duration_since(*t) < CB_WINDOW);
                             cb.failures_window.push(now);
-                            if cb.failures_window.len() >= CB_ERROR_LIMIT
-                                && cb.opened_at.is_none()
+                            if cb.failures_window.len() >= CB_ERROR_LIMIT && cb.opened_at.is_none()
                             {
                                 cb.opened_at = Some(now);
                                 cb.half_open_pending = false;
@@ -834,7 +832,9 @@ mod tests {
             chain_id: 1,
             entries: vec![dummy_entry("a"), dummy_entry("b")],
         };
-        pool.entries[0].latency_ms_ewma.store(200, Ordering::Relaxed);
+        pool.entries[0]
+            .latency_ms_ewma
+            .store(200, Ordering::Relaxed);
         pool.entries[1].latency_ms_ewma.store(50, Ordering::Relaxed);
         let picked = pool.pick().unwrap();
         assert_eq!(picked.name, "b");

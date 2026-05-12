@@ -17,17 +17,24 @@
 //! No fabricated data. No partial records. Every Opportunity that reaches DB
 //! corresponds to a real pending tx observed on the wire.
 
-use crate::{
-    calldata, dedup::{Dedup, OppDedup}, patterns, persistence, publisher,
-};
 use crate::amm_math;
 use crate::counters::counters;
 use crate::reserves;
-use std::sync::atomic::Ordering;
+use crate::{
+    calldata,
+    dedup::{Dedup, OppDedup},
+    patterns, persistence, publisher,
+};
 use ethers::types::{Address, H256};
 use futures_util::StreamExt;
+use prioritization_spine::config_aware::{ConfigAwareEvaluator, ConfigGateOutcome, NetworkSignals};
+use prioritization_spine::decision::{ExecutionDecision, RejectReason};
+use prioritization_spine::gates::can_execute;
+use prioritization_spine::route_plan::{RouteLeg, RoutePlan};
+use prioritization_spine::scoring::{OpportunityScorer, PrioritizationEngine};
+use prioritization_spine::simulator::EvmSimulator;
+use prioritization_spine::types::OpportunityCandidate;
 use rand::Rng;
-use std::str::FromStr;
 use shared_rs::{
     chains::{self, RouterKind},
     config::AppConfig,
@@ -37,18 +44,12 @@ use shared_rs::{
     trading_config::TradingConfigClient,
 };
 use sqlx::postgres::PgPool;
-use std::{sync::Arc, time::Duration};
-use tracing::{debug, error, info, warn};
-use prioritization_spine::types::{OpportunityCandidate};
-use prioritization_spine::scoring::{OpportunityScorer, PrioritizationEngine};
-use prioritization_spine::gates::{can_execute};
-use prioritization_spine::decision::{ExecutionDecision, RejectReason};
-use prioritization_spine::simulator::EvmSimulator;
-use prioritization_spine::config_aware::{ConfigAwareEvaluator, ConfigGateOutcome, NetworkSignals};
-use prioritization_spine::route_plan::{RouteLeg, RoutePlan};
 use std::fs::OpenOptions;
 use std::io::Write;
-
+use std::str::FromStr;
+use std::sync::atomic::Ordering;
+use std::{sync::Arc, time::Duration};
+use tracing::{debug, error, info, warn};
 
 use crate::chain_client::{
     is_alchemy_endpoint, parse_extra_allowlist_from_env, MempoolMode, WsChainClient,
@@ -118,17 +119,34 @@ pub async fn run_chain(
         if rpc_http_pool.is_some() {
             info!(event = "scanner.v3_pool_ready", chain_id);
         } else {
-            info!(event = "scanner.v3_disabled", chain_id, reason = "no_rpc_http_pool");
+            info!(
+                event = "scanner.v3_disabled",
+                chain_id,
+                reason = "no_rpc_http_pool"
+            );
         }
         rpc_http_pool
     } else {
-        info!(event = "scanner.v3_disabled", chain_id, reason = "non-mainnet");
+        info!(
+            event = "scanner.v3_disabled",
+            chain_id,
+            reason = "non-mainnet"
+        );
         None
     };
 
     // Spawn the detection loop with the full endpoint list.
     tokio::spawn(detection_loop(
-        chain_id, pool.endpoints, cfg, killswitch, redis, db, dedup, opp_dedup, trading_config, v3_rpc_pool,
+        chain_id,
+        pool.endpoints,
+        cfg,
+        killswitch,
+        redis,
+        db,
+        dedup,
+        opp_dedup,
+        trading_config,
+        v3_rpc_pool,
     ));
     Ok(ScannerHandle { chain_id })
 }
@@ -228,7 +246,19 @@ async fn detection_loop(
             }
         };
 
-        if let Err(e) = run_subscription(&client, &killswitch, &mut redis, db.as_ref(), &dedup, &opp_dedup, &trading_config, v3_rpc_pool.as_ref(), mempool_mode).await {
+        if let Err(e) = run_subscription(
+            &client,
+            &killswitch,
+            &mut redis,
+            db.as_ref(),
+            &dedup,
+            &opp_dedup,
+            &trading_config,
+            v3_rpc_pool.as_ref(),
+            mempool_mode,
+        )
+        .await
+        {
             error!(
                 event = "scanner.subscription_error",
                 chain_id,
@@ -312,7 +342,18 @@ async fn run_subscription(
                         allowlist_size = allowlist.len()
                     );
                     while let Some(tx) = stream.next().await {
-                        if let Err(e) = process_pending_tx(client, tx, redis, db, dedup, opp_dedup, trading_config, v3_rpc_pool).await {
+                        if let Err(e) = process_pending_tx(
+                            client,
+                            tx,
+                            redis,
+                            db,
+                            dedup,
+                            opp_dedup,
+                            trading_config,
+                            v3_rpc_pool,
+                        )
+                        .await
+                        {
                             debug!(event = "scanner.process_err", error = %e);
                         }
                     }
@@ -335,10 +376,25 @@ async fn run_subscription(
     }
 
     let mut stream = client.subscribe_pending().await?;
-    info!(event = "scanner.subscribed", chain_id = client.chain_id, mode = "firehose");
+    info!(
+        event = "scanner.subscribed",
+        chain_id = client.chain_id,
+        mode = "firehose"
+    );
 
     while let Some(hash) = stream.next().await {
-        if let Err(e) = process_pending(client, hash, redis, db, dedup, opp_dedup, trading_config, v3_rpc_pool).await {
+        if let Err(e) = process_pending(
+            client,
+            hash,
+            redis,
+            db,
+            dedup,
+            opp_dedup,
+            trading_config,
+            v3_rpc_pool,
+        )
+        .await
+        {
             debug!(event = "scanner.process_err", hash = %hash, error = %e);
         }
     }
@@ -366,7 +422,16 @@ async fn process_pending(
         Some(t) => t,
         None => return Ok(()), // dropped from mempool before we got it
     };
-    decode_and_score_tx(client, tx, redis, db, opp_dedup, trading_config, v3_rpc_pool).await
+    decode_and_score_tx(
+        client,
+        tx,
+        redis,
+        db,
+        opp_dedup,
+        trading_config,
+        v3_rpc_pool,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -387,7 +452,16 @@ async fn process_pending_tx(
         return Ok(());
     }
     counters().pending_received.fetch_add(1, Ordering::Relaxed);
-    decode_and_score_tx(client, tx, redis, db, opp_dedup, trading_config, v3_rpc_pool).await
+    decode_and_score_tx(
+        client,
+        tx,
+        redis,
+        db,
+        opp_dedup,
+        trading_config,
+        v3_rpc_pool,
+    )
+    .await
 }
 
 async fn decode_and_score_tx(
@@ -412,7 +486,11 @@ async fn decode_and_score_tx(
     let decoded = match calldata::decode(&tx.input, router.kind) {
         Ok(d) => d,
         Err(reason) => {
-            debug!(event = "scanner.decode_failed", reason = reason.as_str(), router = router.kind.as_str());
+            debug!(
+                event = "scanner.decode_failed",
+                reason = reason.as_str(),
+                router = router.kind.as_str()
+            );
             return Ok(());
         }
     };
@@ -453,8 +531,14 @@ async fn decode_and_score_tx(
     let amount_in_wei_u256 = ethers::types::U256::from_dec_str(&opportunity.amount_in_wei)
         .unwrap_or_else(|_| ethers::types::U256::zero());
 
-    let meta_in = reserves::get_token_meta(redis, client.chain_id, &token_in_lower).await.ok().flatten();
-    let meta_out = reserves::get_token_meta(redis, client.chain_id, &token_out_lower).await.ok().flatten();
+    let meta_in = reserves::get_token_meta(redis, client.chain_id, &token_in_lower)
+        .await
+        .ok()
+        .flatten();
+    let meta_out = reserves::get_token_meta(redis, client.chain_id, &token_out_lower)
+        .await
+        .ok()
+        .flatten();
 
     // BUG-1 fix (2026-05-04): use the token's actual decimals when converting
     // amount_in_wei to f64 token units. The pre-fix code divided by 1e18
@@ -464,10 +548,8 @@ async fn decode_and_score_tx(
     // the token meta is unknown — preserving prior behaviour for unmapped
     // tokens while honouring real decimals for the curated allowlist.
     let amount_in_decimals: u8 = meta_in.as_ref().map(|m| m.decimals).unwrap_or(18);
-    let amount_in_f64 = amm_math::wei_str_to_token_units(
-        &opportunity.amount_in_wei,
-        amount_in_decimals,
-    );
+    let amount_in_f64 =
+        amm_math::wei_str_to_token_units(&opportunity.amount_in_wei, amount_in_decimals);
 
     let mut expected_amount_out_f64 = amount_in_f64;
     // R8 fail-honest: None = "we could not compute USD profit" (oracle gap,
@@ -482,18 +564,23 @@ async fn decode_and_score_tx(
         // Read both V2 and V3 pool indexes for this pair. The two indexes are
         // independent (V2: just addresses; V3: address + fee_bps tuple) and
         // contain disjoint pools — see reserves.rs key layout doc.
-        let pools_v2 = reserves::get_pools_for_pair(redis, client.chain_id, &m_in.symbol, &m_out.symbol)
-            .await
-            .unwrap_or_default();
-        let pools_v3 = reserves::get_pools_for_pair_v3(redis, client.chain_id, &m_in.symbol, &m_out.symbol)
-            .await
-            .unwrap_or_default();
+        let pools_v2 =
+            reserves::get_pools_for_pair(redis, client.chain_id, &m_in.symbol, &m_out.symbol)
+                .await
+                .unwrap_or_default();
+        let pools_v3 =
+            reserves::get_pools_for_pair_v3(redis, client.chain_id, &m_in.symbol, &m_out.symbol)
+                .await
+                .unwrap_or_default();
         let total_pools = pools_v2.len() + pools_v3.len();
 
         if total_pools < 2 {
-            debug!(event = "scanner.single_pool_no_spread",
-                   pair = format!("{}-{}", m_in.symbol, m_out.symbol),
-                   v2 = pools_v2.len(), v3 = pools_v3.len());
+            debug!(
+                event = "scanner.single_pool_no_spread",
+                pair = format!("{}-{}", m_in.symbol, m_out.symbol),
+                v2 = pools_v2.len(),
+                v3 = pools_v3.len()
+            );
         } else {
             let mut outs: Vec<ethers::types::U256> = Vec::with_capacity(total_pools);
 
@@ -510,12 +597,18 @@ async fn decode_and_score_tx(
             // magnitude heuristic — same behaviour as pre-fix, gradually
             // displaced as pool_sync_worker re-writes entries every 5s.
             for pool_addr in &pools_v2 {
-                let entry = match reserves::get_reserves(redis, client.chain_id, pool_addr).await.ok().flatten() {
+                let entry = match reserves::get_reserves(redis, client.chain_id, pool_addr)
+                    .await
+                    .ok()
+                    .flatten()
+                {
                     Some(e) => e,
                     None => continue,
                 };
-                let r0 = ethers::types::U256::from_dec_str(&entry.r0).unwrap_or_else(|_| ethers::types::U256::zero());
-                let r1 = ethers::types::U256::from_dec_str(&entry.r1).unwrap_or_else(|_| ethers::types::U256::zero());
+                let r0 = ethers::types::U256::from_dec_str(&entry.r0)
+                    .unwrap_or_else(|_| ethers::types::U256::zero());
+                let r1 = ethers::types::U256::from_dec_str(&entry.r1)
+                    .unwrap_or_else(|_| ethers::types::U256::zero());
 
                 let out = if let Some(t0) = entry.token0_addr.as_deref() {
                     // Direct orientation — t0 is canonical token0 of the pool.
@@ -526,7 +619,8 @@ async fn decode_and_score_tx(
                     } else {
                         (r1, r0)
                     };
-                    let direct = amm_math::v2_amount_out(amount_in_wei_u256, reserve_in, reserve_out, 30);
+                    let direct =
+                        amm_math::v2_amount_out(amount_in_wei_u256, reserve_in, reserve_out, 30);
                     if direct.is_zero() {
                         continue;
                     }
@@ -575,17 +669,31 @@ async fn decode_and_score_tx(
 
                 for info in &pools_v3 {
                     if let Ok(Some(cached)) = reserves::get_v3_quote(
-                        redis, client.chain_id, &info.pool_addr, &amount_in_dec,
-                    ).await {
+                        redis,
+                        client.chain_id,
+                        &info.pool_addr,
+                        &amount_in_dec,
+                    )
+                    .await
+                    {
                         let val = ethers::types::U256::from_dec_str(&cached)
                             .unwrap_or_else(|_| ethers::types::U256::zero());
                         cached_outs.push(val);
                         continue;
                     }
                     // Build a Quoter request for cache-miss pools.
-                    let pool_a = match Address::from_str(&info.pool_addr) { Ok(a) => a, Err(_) => continue };
-                    let tin_a = match Address::from_str(&token_in_lower) { Ok(a) => a, Err(_) => continue };
-                    let tout_a = match Address::from_str(&token_out_lower) { Ok(a) => a, Err(_) => continue };
+                    let pool_a = match Address::from_str(&info.pool_addr) {
+                        Ok(a) => a,
+                        Err(_) => continue,
+                    };
+                    let tin_a = match Address::from_str(&token_in_lower) {
+                        Ok(a) => a,
+                        Err(_) => continue,
+                    };
+                    let tout_a = match Address::from_str(&token_out_lower) {
+                        Ok(a) => a,
+                        Err(_) => continue,
+                    };
                     to_quote.push(amm_math::V3QuoteRequest {
                         pool_addr: pool_a,
                         token_in: tin_a,
@@ -611,14 +719,18 @@ async fn decode_and_score_tx(
                         let quoter = Address::from_str(V3_QUOTER_V2_MAINNET).unwrap();
                         let multicall = Address::from_str(V3_MULTICALL3_ADDR).unwrap();
                         let quotes_to_send = to_quote.clone();
-                        match rpc_pool.with_retry(|provider| {
-                            let reqs = quotes_to_send.clone();
-                            async move {
-                                amm_math::v3_quote_exact_in_multicall(
-                                    provider, quoter, multicall, reqs,
-                                ).await
-                            }
-                        }).await {
+                        match rpc_pool
+                            .with_retry(|provider| {
+                                let reqs = quotes_to_send.clone();
+                                async move {
+                                    amm_math::v3_quote_exact_in_multicall(
+                                        provider, quoter, multicall, reqs,
+                                    )
+                                    .await
+                                }
+                            })
+                            .await
+                        {
                             Ok(results) => {
                                 for r in &results {
                                     if r.success && !r.amount_out.is_zero() {
@@ -626,10 +738,14 @@ async fn decode_and_score_tx(
                                         let pool_lower = format!("0x{:040x}", r.pool_addr);
                                         let amount_out_dec = r.amount_out.to_string();
                                         let _ = reserves::set_v3_quote(
-                                            redis, client.chain_id, &pool_lower,
-                                            &amount_in_dec, &amount_out_dec,
+                                            redis,
+                                            client.chain_id,
+                                            &pool_lower,
+                                            &amount_in_dec,
+                                            &amount_out_dec,
                                             V3_QUOTE_CACHE_TTL_SECS,
-                                        ).await;
+                                        )
+                                        .await;
                                         outs.push(r.amount_out);
                                         v3_used += 1;
                                     }
@@ -642,9 +758,11 @@ async fn decode_and_score_tx(
                             }
                         }
                     } else {
-                        debug!(event = "scanner.v3_pool_unavailable",
-                               pair = format!("{}-{}", m_in.symbol, m_out.symbol),
-                               pending_quotes = to_quote.len());
+                        debug!(
+                            event = "scanner.v3_pool_unavailable",
+                            pair = format!("{}-{}", m_in.symbol, m_out.symbol),
+                            pending_quotes = to_quote.len()
+                        );
                     }
                 }
             }
@@ -668,7 +786,9 @@ async fn decode_and_score_tx(
                 gross_profit_f64 = if let Some(cfg_ref) = cfg_opt.as_ref() {
                     let result = compute_gross_usd_for_spread(
                         spread_token_out_f64,
-                        m_out.symbol.eq_ignore_ascii_case(&cfg_ref.base_token_symbol),
+                        m_out
+                            .symbol
+                            .eq_ignore_ascii_case(&cfg_ref.base_token_symbol),
                         cfg_ref.base_token_price_usd,
                         m_out.is_stablecoin,
                     );
@@ -740,7 +860,10 @@ async fn decode_and_score_tx(
         .unwrap_or_else(|| opportunity.token_out.clone());
 
     let candidate = OpportunityCandidate {
-        route_fingerprint: format!("{}_{}_{}", opportunity.dex_a, opportunity.token_in, opportunity.token_out),
+        route_fingerprint: format!(
+            "{}_{}_{}",
+            opportunity.dex_a, opportunity.token_in, opportunity.token_out
+        ),
         pool_addresses: vec![],
         token_addresses: vec![token_in_for_gate, token_out_for_gate],
         dex_adapters: vec![opportunity.dex_a.clone()],
@@ -775,7 +898,11 @@ async fn decode_and_score_tx(
         }
         publisher::publish(redis, &opportunity).await?;
         OPPORTUNITIES_TOTAL
-            .with_label_values(&[&opportunity.chain_id.to_string(), "dex_arb", "observed_no_config"])
+            .with_label_values(&[
+                &opportunity.chain_id.to_string(),
+                "dex_arb",
+                "observed_no_config",
+            ])
             .inc();
         return Ok(());
     };
@@ -873,7 +1000,9 @@ async fn decode_and_score_tx(
     // with risk_score=0 + roi_pct=0 so the operator sees rejection volume +
     // can iterate the allowlist with real evidence (RULE 00 transparency).
     let (mut final_evidence, math_outcome, config_rejection) = match gate_outcome {
-        ConfigGateOutcome::TokenNotAllowed { token_symbol_or_addr } => {
+        ConfigGateOutcome::TokenNotAllowed {
+            token_symbol_or_addr,
+        } => {
             info!(
                 event = "config.token_not_allowed",
                 chain_id = client.chain_id,
@@ -891,7 +1020,9 @@ async fn decode_and_score_tx(
             // GAP-2 fix: persist diagnostic reason — operator filters by
             // `rejection_reason` in the dashboard to count and audit allowlist gaps.
             opportunity.rejection_reason = Some(format!("TokenNotAllowed:{token_symbol_or_addr}"));
-            counters().gate_token_not_allowed.fetch_add(1, Ordering::Relaxed);
+            counters()
+                .gate_token_not_allowed
+                .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
                 if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
                     counters().db_errors.fetch_add(1, Ordering::Relaxed);
@@ -902,7 +1033,11 @@ async fn decode_and_score_tx(
             }
             publisher::publish(redis, &opportunity).await?;
             OPPORTUNITIES_TOTAL
-                .with_label_values(&[&opportunity.chain_id.to_string(), "dex_arb", "rejected_token_allowlist"])
+                .with_label_values(&[
+                    &opportunity.chain_id.to_string(),
+                    "dex_arb",
+                    "rejected_token_allowlist",
+                ])
                 .inc();
             return Ok(());
         }
@@ -918,7 +1053,9 @@ async fn decode_and_score_tx(
             opportunity.roi_pct = Some(0.0);
             opportunity.risk_score = Some(0.0);
             opportunity.rejection_reason = Some(format!("StrategyDisabled:{strategy_kind}"));
-            counters().gate_strategy_disabled.fetch_add(1, Ordering::Relaxed);
+            counters()
+                .gate_strategy_disabled
+                .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
                 if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
                     counters().db_errors.fetch_add(1, Ordering::Relaxed);
@@ -929,7 +1066,11 @@ async fn decode_and_score_tx(
             }
             publisher::publish(redis, &opportunity).await?;
             OPPORTUNITIES_TOTAL
-                .with_label_values(&[&opportunity.chain_id.to_string(), "dex_arb", "rejected_strategy_disabled"])
+                .with_label_values(&[
+                    &opportunity.chain_id.to_string(),
+                    "dex_arb",
+                    "rejected_strategy_disabled",
+                ])
                 .inc();
             return Ok(());
         }
@@ -950,7 +1091,9 @@ async fn decode_and_score_tx(
             opportunity.roi_pct = Some(0.0);
             opportunity.risk_score = Some(0.0);
             opportunity.rejection_reason = Some(format!("{tag}:{reason:?}"));
-            counters().gate_strategy_disabled.fetch_add(1, Ordering::Relaxed);
+            counters()
+                .gate_strategy_disabled
+                .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
                 if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
                     counters().db_errors.fetch_add(1, Ordering::Relaxed);
@@ -961,11 +1104,20 @@ async fn decode_and_score_tx(
             }
             publisher::publish(redis, &opportunity).await?;
             OPPORTUNITIES_TOTAL
-                .with_label_values(&[&opportunity.chain_id.to_string(), "dex_arb", "rejected_strategy_config_gate"])
+                .with_label_values(&[
+                    &opportunity.chain_id.to_string(),
+                    "dex_arb",
+                    "rejected_strategy_config_gate",
+                ])
                 .inc();
             return Ok(());
         }
-        ConfigGateOutcome::Evaluated { outcome, evidence, rejection, partial_data_quality: _ } => (evidence, outcome, rejection),
+        ConfigGateOutcome::Evaluated {
+            outcome,
+            evidence,
+            rejection,
+            partial_data_quality: _,
+        } => (evidence, outcome, rejection),
     };
 
     // REVM atomic sim gate (still a structural placeholder until lazy state
@@ -1011,23 +1163,32 @@ async fn decode_and_score_tx(
         // BUG-2-class issues (UnknownTokenPrice) and defense-in-depth
         // hits (AnomalousMath) separately from operational risk gates.
         if reason_str.starts_with("UnknownTokenPrice") {
-            counters().gate_unknown_token_price.fetch_add(1, Ordering::Relaxed);
+            counters()
+                .gate_unknown_token_price
+                .fetch_add(1, Ordering::Relaxed);
         } else if reason_str.starts_with("AnomalousMath") {
-            counters().gate_anomalous_math.fetch_add(1, Ordering::Relaxed);
+            counters()
+                .gate_anomalous_math
+                .fetch_add(1, Ordering::Relaxed);
         } else {
-            counters().gate_other_rejected.fetch_add(1, Ordering::Relaxed);
+            counters()
+                .gate_other_rejected
+                .fetch_add(1, Ordering::Relaxed);
         }
         // CODE-2 fix: populate net_expected_profit_usd for gate-rejected rows.
         // H2 fix populated it only in the passed_all_gates branch, leaving all
         // rejected rows with net=NULL even when gross was computed.
         // Pattern mirrors H2 (commit 69fb24c): gross - gas_cost. When gross is
         // None (oracle gap), net propagates as None — R8 fail-honest.
-        opportunity.net_expected_profit_usd = opportunity.expected_profit_usd
+        opportunity.net_expected_profit_usd = opportunity
+            .expected_profit_usd
             .map(|gross| gross - cfg.gas_cost_usd());
     } else {
         counters().passed_all_gates.fetch_add(1, Ordering::Relaxed);
         // Spine scoring on REAL evidence (no more hardcoded 0.95 / 0.9 / 1.0).
-        let engine = PrioritizationEngine { min_profit_threshold: cfg.min_profit_usd };
+        let engine = PrioritizationEngine {
+            min_profit_threshold: cfg.min_profit_usd,
+        };
         match engine.score(&candidate, &final_evidence) {
             Ok(score) => {
                 final_evidence.net_expected_profit = score.net_expected_profit;
@@ -1063,7 +1224,6 @@ async fn decode_and_score_tx(
     }
     // --- END CONFIG-AWARE SPINE INTERCEPTOR ---
 
-
     // BE-3.6: opportunity-level dedup gate.
     // Check compound key (route + 5min time bucket + $0.10 profit bucket) before
     // persisting or publishing. This prevents the same route+spread from flooding
@@ -1082,7 +1242,9 @@ async fn decode_and_score_tx(
             profit_usd = ?opportunity.expected_profit_usd,
             "opportunity suppressed by route+time+profit dedup (BE-3.6)"
         );
-        counters().gate_other_rejected.fetch_add(1, Ordering::Relaxed);
+        counters()
+            .gate_other_rejected
+            .fetch_add(1, Ordering::Relaxed);
         return Ok(());
     }
 
@@ -1098,11 +1260,7 @@ async fn decode_and_score_tx(
     publisher::publish(redis, &opportunity).await?;
 
     OPPORTUNITIES_TOTAL
-        .with_label_values(&[
-            &opportunity.chain_id.to_string(),
-            "dex_arb",
-            "detected",
-        ])
+        .with_label_values(&[&opportunity.chain_id.to_string(), "dex_arb", "detected"])
         .inc();
 
     Ok(())
@@ -1190,8 +1348,7 @@ mod tests {
 
         // Critical R8 invariant: oracle gap MUST be None, never Some(0.0).
         assert_eq!(
-            gap_result,
-            None,
+            gap_result, None,
             "R8 violation: oracle gap path must produce None (uncomputed), \
              not Some(0.0) (computed-and-zero). Persisting Some(0.0) silently \
              claims we computed a zero profit, hiding the missing price oracle."

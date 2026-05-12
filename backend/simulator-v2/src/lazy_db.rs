@@ -114,9 +114,7 @@ mod bridge {
             // CurrentThread flavor or no ambient runtime: use owned fallback.
             _ => owned_rt.block_on(timed),
         };
-        res.map_err(|_| {
-            LazyDbError::Timeout(format!("rpc timeout ({timeout_secs}s): {context}"))
-        })
+        res.map_err(|_| LazyDbError::Timeout(format!("rpc timeout ({timeout_secs}s): {context}")))
     }
 }
 
@@ -190,8 +188,7 @@ impl LazyDb {
         // Always create an owned fallback runtime.
         // It handles both CurrentThread contexts and no-runtime contexts.
         let fallback_rt = Arc::new(
-            Runtime::new()
-                .map_err(|e| LazyDbError::Provider(format!("tokio rt create: {e}")))?,
+            Runtime::new().map_err(|e| LazyDbError::Provider(format!("tokio rt create: {e}")))?,
         );
 
         let (pinned_block_number, pinned_block) = match block_number {
@@ -322,10 +319,10 @@ impl Database for LazyDb {
 
         let eth_balance = balance_res
             .map_err(|e| LazyDbError::Provider(format!("get_balance({address}): {e}")))?;
-        let eth_nonce = nonce_res
-            .map_err(|e| LazyDbError::Provider(format!("get_nonce({address}): {e}")))?;
-        let code_bytes = code_res
-            .map_err(|e| LazyDbError::Provider(format!("get_code({address}): {e}")))?;
+        let eth_nonce =
+            nonce_res.map_err(|e| LazyDbError::Provider(format!("get_nonce({address}): {e}")))?;
+        let code_bytes =
+            code_res.map_err(|e| LazyDbError::Provider(format!("get_code({address}): {e}")))?;
 
         // ethers U256 limbs are stored little-endian (lowest 64 bits first).
         // revm U256::from_limbs expects the same layout.
@@ -393,7 +390,8 @@ impl Database for LazyDb {
 
         let raw = self.rpc(
             &format!("get_storage_at({address}, {index})"),
-            self.client.get_storage_at(eth_addr, slot_h256, Some(self.pinned_block)),
+            self.client
+                .get_storage_at(eth_addr, slot_h256, Some(self.pinned_block)),
         )?;
 
         let value = Self::h256_to_u256(raw);
@@ -436,10 +434,7 @@ impl Database for LazyDb {
         );
 
         let block_id = BlockId::Number(BlockNumber::Number(EU64::from(n)));
-        let maybe_block = self.rpc(
-            &format!("get_block({n})"),
-            self.client.get_block(block_id),
-        )?;
+        let maybe_block = self.rpc(&format!("get_block({n})"), self.client.get_block(block_id))?;
 
         let hash = match maybe_block.and_then(|b| b.hash) {
             Some(h) => Self::h256_to_b256(h),

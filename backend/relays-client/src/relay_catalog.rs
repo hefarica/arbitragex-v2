@@ -28,7 +28,7 @@ use tracing::{info, warn};
 pub struct RelayCatalogEntry {
     pub name: String,
     pub chain_id: i32,
-    pub endpoint: String,           // non-empty by DB constraint when enabled
+    pub endpoint: String, // non-empty by DB constraint when enabled
     pub auth_scheme: String,
     pub auth_secret_ref: Option<String>,
     pub priority: i32,
@@ -60,20 +60,22 @@ pub async fn load_enabled(pool: &PgPool, chain_id: i32) -> Result<Vec<RelayCatal
 
     let entries: Vec<RelayCatalogEntry> = rows
         .into_iter()
-        .filter_map(|(name, chain_id, endpoint_opt, auth_scheme, auth_secret_ref, priority)| {
-            // The SQL `length(endpoint) >= 8` already filters, but re-check
-            // defensively so callers never receive an empty endpoint.
-            endpoint_opt
-                .filter(|e| e.len() >= 8)
-                .map(|endpoint| RelayCatalogEntry {
-                    name,
-                    chain_id,
-                    endpoint,
-                    auth_scheme,
-                    auth_secret_ref,
-                    priority,
-                })
-        })
+        .filter_map(
+            |(name, chain_id, endpoint_opt, auth_scheme, auth_secret_ref, priority)| {
+                // The SQL `length(endpoint) >= 8` already filters, but re-check
+                // defensively so callers never receive an empty endpoint.
+                endpoint_opt
+                    .filter(|e| e.len() >= 8)
+                    .map(|endpoint| RelayCatalogEntry {
+                        name,
+                        chain_id,
+                        endpoint,
+                        auth_scheme,
+                        auth_secret_ref,
+                        priority,
+                    })
+            },
+        )
         .collect();
 
     info!(

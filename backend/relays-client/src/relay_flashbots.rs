@@ -44,7 +44,9 @@ impl FlashbotsClient {
     /// test convenience; it is not called from the production boot path.
     #[allow(dead_code)]
     pub fn from_env(timeout: Duration) -> Option<Self> {
-        let url = std::env::var("FLASHBOTS_RELAY_URL").ok().filter(|v| !v.is_empty())?;
+        let url = std::env::var("FLASHBOTS_RELAY_URL")
+            .ok()
+            .filter(|v| !v.is_empty())?;
         Some(Self::new(url, timeout))
     }
 
@@ -86,7 +88,11 @@ impl FlashbotsClient {
     }
 
     /// Returns the Flashbots response with bundleHash on success.
-    pub async fn send_bundle(&self, signer: &Signer, bundle: &SignedBundle) -> Result<BundleResponse> {
+    pub async fn send_bundle(
+        &self,
+        signer: &Signer,
+        bundle: &SignedBundle,
+    ) -> Result<BundleResponse> {
         let body = BundleRequest::from(bundle);
         let body_json = serde_json::to_string(&body).context("serialize bundle")?;
         let text = self.signed_post(signer, body_json).await?;
@@ -259,6 +265,10 @@ struct TxCallResultRaw {
 /// Parse a `"0x…"` hex string into `u128`. Returns `None` on malformed input.
 fn parse_hex_u128(s: &str) -> Option<u128> {
     let trimmed = s.trim_start_matches("0x").trim_start_matches("0X");
+    // Empty string after stripping prefix (e.g. "" or bare "0x") represents 0.
+    if trimmed.is_empty() {
+        return Some(0u128);
+    }
     u128::from_str_radix(trimmed, 16).ok()
 }
 
@@ -372,8 +382,7 @@ mod tests {
             }
         }"#;
 
-        let raw: CallBundleResponse =
-            serde_json::from_str(json).expect("parse failed");
+        let raw: CallBundleResponse = serde_json::from_str(json).expect("parse failed");
         let result_raw = raw.result.expect("missing result");
 
         let coinbase = parse_hex_u128(&result_raw.coinbase_diff).unwrap_or(0);
@@ -403,7 +412,10 @@ mod tests {
                 })
                 .collect(),
         };
-        assert!(!call_result.any_failed(), "success path must not flag any_failed");
+        assert!(
+            !call_result.any_failed(),
+            "success path must not flag any_failed"
+        );
     }
 
     /// Revert path: tx has a non-null `revert` field.
@@ -426,8 +438,7 @@ mod tests {
             }
         }"#;
 
-        let raw: CallBundleResponse =
-            serde_json::from_str(json).expect("parse failed");
+        let raw: CallBundleResponse = serde_json::from_str(json).expect("parse failed");
         let result_raw = raw.result.expect("missing result");
 
         let call_result = CallBundleResult {
@@ -446,10 +457,7 @@ mod tests {
                 .collect(),
         };
 
-        assert!(
-            call_result.any_failed(),
-            "revert path must flag any_failed"
-        );
+        assert!(call_result.any_failed(), "revert path must flag any_failed");
         let reason = call_result.tx_results[0].revert.as_deref().unwrap_or("");
         assert!(
             reason.contains("insufficient output"),
@@ -477,8 +485,7 @@ mod tests {
             }
         }"#;
 
-        let raw: CallBundleResponse =
-            serde_json::from_str(json).expect("parse failed");
+        let raw: CallBundleResponse = serde_json::from_str(json).expect("parse failed");
         let result_raw = raw.result.expect("missing result");
 
         let call_result = CallBundleResult {
@@ -497,10 +504,7 @@ mod tests {
                 .collect(),
         };
 
-        assert!(
-            call_result.any_failed(),
-            "error path must flag any_failed"
-        );
+        assert!(call_result.any_failed(), "error path must flag any_failed");
         let err_msg = call_result.tx_results[0].error.as_deref().unwrap_or("");
         assert!(
             err_msg.contains("out of gas"),
@@ -512,9 +516,12 @@ mod tests {
     #[test]
     fn test_parse_hex_u128() {
         assert_eq!(parse_hex_u128("0x0"), Some(0u128));
-        assert_eq!(parse_hex_u128("0x2386f26fc10000"), Some(10_000_000_000_000_000u128));
+        assert_eq!(
+            parse_hex_u128("0x2386f26fc10000"),
+            Some(10_000_000_000_000_000u128)
+        );
         assert_eq!(parse_hex_u128("0X1F"), Some(31u128));
         assert_eq!(parse_hex_u128(""), Some(0u128)); // empty hex = 0
-        assert_eq!(parse_hex_u128("0xGG"), None);   // invalid hex digits
+        assert_eq!(parse_hex_u128("0xGG"), None); // invalid hex digits
     }
 }

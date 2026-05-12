@@ -20,7 +20,12 @@ pub fn check(report: &ReconReport, threshold_pct: f64) -> Option<RiskEventOut> {
     }
     Some(RiskEventOut {
         event_type: "degradation".to_string(),
-        severity: if v.abs() > threshold_pct * 2.0 { "critical" } else { "warning" }.to_string(),
+        severity: if v.abs() > threshold_pct * 2.0 {
+            "critical"
+        } else {
+            "warning"
+        }
+        .to_string(),
         payload: serde_json::json!({
             "reason": "variance_exceeded",
             "variance_pct": v,

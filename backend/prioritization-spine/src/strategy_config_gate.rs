@@ -28,9 +28,9 @@
 use crate::decision::RejectReason;
 use crate::route_plan::RoutePlan;
 use crate::types::OpportunityCandidate;
-use shared_rs::trading_config::TradingConfigState;
 #[cfg(test)]
 use shared_rs::trading_config::StrategyRuntimeConfig;
+use shared_rs::trading_config::TradingConfigState;
 
 /// Outcome of `StrategyConfigGate::check_pre_math`.
 ///
@@ -131,10 +131,8 @@ impl StrategyConfigGate {
         if let Some(strat_cfg) = cfg.strategy_config(strategy_kind) {
             if let Some(ref allow_pools) = strat_cfg.enabled_pool_ids {
                 if let Some(plan) = route_plan {
-                    let allow: Vec<String> = allow_pools
-                        .iter()
-                        .map(|s| s.to_ascii_lowercase())
-                        .collect();
+                    let allow: Vec<String> =
+                        allow_pools.iter().map(|s| s.to_ascii_lowercase()).collect();
                     for leg in &plan.legs {
                         let leg_pool_id = leg
                             .pool_id
@@ -244,7 +242,9 @@ impl StrategyConfigGate {
                         detail: format!("legs(pool_count)={n} > max_legs={}", rc.max_legs),
                     });
                 }
-                if partial_missing.is_none() && (rc.require_atomic || !rc.allowed_base_tokens.is_empty()) {
+                if partial_missing.is_none()
+                    && (rc.require_atomic || !rc.allowed_base_tokens.is_empty())
+                {
                     partial_missing = Some("route_plan");
                 }
             }
@@ -263,15 +263,13 @@ impl StrategyConfigGate {
                     if let Some(first_leg) = plan.legs.first() {
                         let tin = first_leg.token_in.to_ascii_lowercase();
                         if !allow.iter().any(|a| a == &tin) {
-                            return GateOutcome::Reject(
-                                RejectReason::StrategyConfigRouteBlocked {
-                                    strategy_kind: strategy_kind.to_string(),
-                                    detail: format!(
-                                        "base token {} not in allowed_base_tokens",
-                                        first_leg.token_in
-                                    ),
-                                },
-                            );
+                            return GateOutcome::Reject(RejectReason::StrategyConfigRouteBlocked {
+                                strategy_kind: strategy_kind.to_string(),
+                                detail: format!(
+                                    "base token {} not in allowed_base_tokens",
+                                    first_leg.token_in
+                                ),
+                            });
                         }
                     }
                 }
@@ -328,34 +326,25 @@ impl StrategyConfigGate {
             for leg in &plan.legs {
                 if let (Some(min), Some(actual)) = (rc.min_pool_tvl_usd, leg.tvl_usd) {
                     if actual < min {
-                        return GateOutcome::Reject(
-                            RejectReason::StrategyConfigPoolBelowFloor {
-                                strategy_kind: strategy_kind.to_string(),
-                                pool_address: leg
-                                    .pool_address
-                                    .clone()
-                                    .unwrap_or_else(|| "?".into()),
-                                metric: "tvl_usd".into(),
-                                actual_usd: actual,
-                                threshold_usd: min,
-                            },
-                        );
+                        return GateOutcome::Reject(RejectReason::StrategyConfigPoolBelowFloor {
+                            strategy_kind: strategy_kind.to_string(),
+                            pool_address: leg.pool_address.clone().unwrap_or_else(|| "?".into()),
+                            metric: "tvl_usd".into(),
+                            actual_usd: actual,
+                            threshold_usd: min,
+                        });
                     }
                 }
-                if let (Some(min), Some(actual)) = (rc.min_pool_volume_24h_usd, leg.volume_24h_usd) {
+                if let (Some(min), Some(actual)) = (rc.min_pool_volume_24h_usd, leg.volume_24h_usd)
+                {
                     if actual < min {
-                        return GateOutcome::Reject(
-                            RejectReason::StrategyConfigPoolBelowFloor {
-                                strategy_kind: strategy_kind.to_string(),
-                                pool_address: leg
-                                    .pool_address
-                                    .clone()
-                                    .unwrap_or_else(|| "?".into()),
-                                metric: "volume_24h_usd".into(),
-                                actual_usd: actual,
-                                threshold_usd: min,
-                            },
-                        );
+                        return GateOutcome::Reject(RejectReason::StrategyConfigPoolBelowFloor {
+                            strategy_kind: strategy_kind.to_string(),
+                            pool_address: leg.pool_address.clone().unwrap_or_else(|| "?".into()),
+                            metric: "volume_24h_usd".into(),
+                            actual_usd: actual,
+                            threshold_usd: min,
+                        });
                     }
                 }
             }
@@ -461,9 +450,7 @@ mod tests {
     #[test]
     fn pass_when_no_strategy_config_set() {
         let c = cfg();
-        let outcome = StrategyConfigGate::check_pre_math(
-            &c, &cand(), None, "dex_arb_v2v2", 1,
-        );
+        let outcome = StrategyConfigGate::check_pre_math(&c, &cand(), None, "dex_arb_v2v2", 1);
         assert!(matches!(outcome, GateOutcome::Pass));
     }
 
@@ -477,9 +464,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let outcome = StrategyConfigGate::check_pre_math(
-            &c, &cand(), None, "dex_arb_v2v2", 1,
-        );
+        let outcome = StrategyConfigGate::check_pre_math(&c, &cand(), None, "dex_arb_v2v2", 1);
         match outcome {
             GateOutcome::Reject(RejectReason::StrategyConfigDisabled { strategy_kind }) => {
                 assert_eq!(strategy_kind, "dex_arb_v2v2");
@@ -499,9 +484,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let outcome = StrategyConfigGate::check_pre_math(
-            &c, &cand(), None, "dex_arb_v2v2", 1,
-        );
+        let outcome = StrategyConfigGate::check_pre_math(&c, &cand(), None, "dex_arb_v2v2", 1);
         assert!(matches!(
             outcome,
             GateOutcome::Reject(RejectReason::StrategyConfigChainBlocked { chain_id: 1, .. })
@@ -513,9 +496,7 @@ mod tests {
         let mut c = cfg();
         c.enabled_dex_ids = Some(vec!["allowed-uuid".into()]);
         let p = plan(vec![leg("blocked-uuid", "uniswap-v2")]);
-        let outcome = StrategyConfigGate::check_pre_math(
-            &c, &cand(), Some(&p), "dex_arb_v2v2", 1,
-        );
+        let outcome = StrategyConfigGate::check_pre_math(&c, &cand(), Some(&p), "dex_arb_v2v2", 1);
         match outcome {
             GateOutcome::Reject(RejectReason::StrategyConfigDexBlocked { dex_id, .. }) => {
                 assert_eq!(dex_id, "blocked-uuid");
@@ -530,9 +511,7 @@ mod tests {
         let mut c = cfg();
         c.enabled_dex_ids = Some(vec![]);
         let p = plan(vec![leg("any-uuid", "uniswap-v2")]);
-        let outcome = StrategyConfigGate::check_pre_math(
-            &c, &cand(), Some(&p), "dex_arb_v2v2", 1,
-        );
+        let outcome = StrategyConfigGate::check_pre_math(&c, &cand(), Some(&p), "dex_arb_v2v2", 1);
         assert!(matches!(
             outcome,
             GateOutcome::Reject(RejectReason::StrategyConfigDexBlocked { .. })
@@ -546,12 +525,12 @@ mod tests {
         // PartialPass so the dashboard surfaces data_quality=partial.
         let mut c = cfg();
         c.enabled_dex_ids = Some(vec!["allowed-uuid".into()]);
-        let outcome = StrategyConfigGate::check_pre_math(
-            &c, &cand(), None, "dex_arb_v2v2", 1,
-        );
+        let outcome = StrategyConfigGate::check_pre_math(&c, &cand(), None, "dex_arb_v2v2", 1);
         assert!(matches!(
             outcome,
-            GateOutcome::PartialPass { missing: "route_plan" }
+            GateOutcome::PartialPass {
+                missing: "route_plan"
+            }
         ));
     }
 
@@ -567,12 +546,11 @@ mod tests {
             },
         );
         let p = plan(vec![leg("uuid", "uniswap-v2")]); // v2 leg
-        let outcome = StrategyConfigGate::check_pre_math(
-            &c, &cand(), Some(&p), "dex_arb_v2v2", 1,
-        );
+        let outcome = StrategyConfigGate::check_pre_math(&c, &cand(), Some(&p), "dex_arb_v2v2", 1);
         match outcome {
             GateOutcome::Reject(RejectReason::StrategyConfigProtocolBlocked {
-                protocol_type, ..
+                protocol_type,
+                ..
             }) => {
                 assert_eq!(protocol_type, "uniswap-v2");
             }
@@ -585,9 +563,8 @@ mod tests {
         let mut leg_inactive = leg("uuid", "uniswap-v2");
         leg_inactive.pool_is_active = false;
         let p = plan(vec![leg_inactive]);
-        let outcome = StrategyConfigGate::check_pre_math(
-            &cfg(), &cand(), Some(&p), "dex_arb_v2v2", 1,
-        );
+        let outcome =
+            StrategyConfigGate::check_pre_math(&cfg(), &cand(), Some(&p), "dex_arb_v2v2", 1);
         assert!(matches!(
             outcome,
             GateOutcome::Reject(RejectReason::StrategyConfigRouteBlocked { .. })
@@ -614,9 +591,7 @@ mod tests {
         let p = plan(vec![leg("uuid", "uniswap-v2")]);
         // strategy_kind triangular needs to be in chain-level enabled_strategies
         c.enabled_strategies.push("triangular".into());
-        let outcome = StrategyConfigGate::check_pre_math(
-            &c, &cand(), Some(&p), "triangular", 1,
-        );
+        let outcome = StrategyConfigGate::check_pre_math(&c, &cand(), Some(&p), "triangular", 1);
         assert!(matches!(
             outcome,
             GateOutcome::Reject(RejectReason::StrategyConfigRouteBlocked { .. })
@@ -639,9 +614,7 @@ mod tests {
         );
         let mut p = plan(vec![leg("uuid", "uniswap-v2")]);
         p.atomic = false;
-        let outcome = StrategyConfigGate::check_pre_math(
-            &c, &cand(), Some(&p), "dex_arb_v2v2", 1,
-        );
+        let outcome = StrategyConfigGate::check_pre_math(&c, &cand(), Some(&p), "dex_arb_v2v2", 1);
         match outcome {
             GateOutcome::Reject(RejectReason::StrategyConfigRouteBlocked { detail, .. }) => {
                 assert!(detail.contains("non-atomic"));
@@ -654,8 +627,7 @@ mod tests {
 
     #[test]
     fn post_math_pass_when_no_overrides() {
-        let outcome =
-            StrategyConfigGate::check_post_math(&cfg(), None, "dex_arb_v2v2", 100.0, 5.0);
+        let outcome = StrategyConfigGate::check_post_math(&cfg(), None, "dex_arb_v2v2", 100.0, 5.0);
         assert!(matches!(outcome, GateOutcome::Pass));
     }
 
@@ -670,8 +642,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let outcome =
-            StrategyConfigGate::check_post_math(&c, None, "dex_arb_v2v2", 25.0, 5.0);
+        let outcome = StrategyConfigGate::check_post_math(&c, None, "dex_arb_v2v2", 25.0, 5.0);
         assert!(matches!(
             outcome,
             GateOutcome::Reject(RejectReason::StrategyConfigBelowMinProfit { .. })
@@ -689,8 +660,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let outcome =
-            StrategyConfigGate::check_post_math(&c, None, "dex_arb_v2v2", 100.0, 0.5);
+        let outcome = StrategyConfigGate::check_post_math(&c, None, "dex_arb_v2v2", 100.0, 0.5);
         assert!(matches!(
             outcome,
             GateOutcome::Reject(RejectReason::StrategyConfigBelowMinRoi { .. })
@@ -713,8 +683,7 @@ mod tests {
         );
         // leg.tvl_usd = 2M, floor = 5M → reject
         let p = plan(vec![leg("uuid", "uniswap-v2")]);
-        let outcome =
-            StrategyConfigGate::check_post_math(&c, Some(&p), "dex_arb_v2v2", 100.0, 5.0);
+        let outcome = StrategyConfigGate::check_post_math(&c, Some(&p), "dex_arb_v2v2", 100.0, 5.0);
         match outcome {
             GateOutcome::Reject(RejectReason::StrategyConfigPoolBelowFloor {
                 metric,
@@ -746,8 +715,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let outcome =
-            StrategyConfigGate::check_post_math(&c, None, "dex_arb_v2v2", 100.0, 5.0);
+        let outcome = StrategyConfigGate::check_post_math(&c, None, "dex_arb_v2v2", 100.0, 5.0);
         assert!(matches!(outcome, GateOutcome::Pass));
     }
 }

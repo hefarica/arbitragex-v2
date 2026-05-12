@@ -136,12 +136,24 @@ pub struct ExecutionCfg {
     #[serde(default = "default_priority_fee_inc")]
     pub priority_fee_increment_pct: f64,
 }
-fn default_paper_mode() -> bool { true }
-fn default_one() -> u64 { 1 }
-fn default_five() -> u32 { 5 }
-fn default_max_value() -> f64 { 1.0 }
-fn default_submit_timeout() -> u64 { 5000 }
-fn default_priority_fee_inc() -> f64 { 10.0 }
+fn default_paper_mode() -> bool {
+    true
+}
+fn default_one() -> u64 {
+    1
+}
+fn default_five() -> u32 {
+    5
+}
+fn default_max_value() -> f64 {
+    1.0
+}
+fn default_submit_timeout() -> u64 {
+    5000
+}
+fn default_priority_fee_inc() -> f64 {
+    10.0
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObsCfg {
@@ -150,7 +162,9 @@ pub struct ObsCfg {
     #[serde(default = "default_log_level")]
     pub log_level: String,
 }
-fn default_log_level() -> String { "info".into() }
+fn default_log_level() -> String {
+    "info".into()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainCfg {
@@ -181,8 +195,7 @@ impl AppConfig {
             return Err(ConfigError::NotFound(path.to_path_buf()));
         }
         let raw = std::fs::read_to_string(path)?;
-        let cfg: AppConfig = toml::from_str(&raw)
-            .map_err(|e| ConfigError::Parse(e.to_string()))?;
+        let cfg: AppConfig = toml::from_str(&raw).map_err(|e| ConfigError::Parse(e.to_string()))?;
 
         if std::env::var("ARBX_VALIDATE_SCHEMA").ok().as_deref() == Some("1") {
             cfg.validate_against_schema()?;
@@ -212,7 +225,7 @@ impl AppConfig {
     fn sanity_check(&self) -> Result<(), ConfigError> {
         if self.chains.iter().all(|c| !c.enabled) {
             return Err(ConfigError::Parse(
-                "no chains enabled in configs/app.toml — at least one must be enabled".into()
+                "no chains enabled in configs/app.toml — at least one must be enabled".into(),
             ));
         }
         Ok(())
@@ -234,7 +247,8 @@ impl AppConfig {
     ///   ARBX_ENABLED_CHAINS=1         → Ethereum only (even if TOML enables more)
     ///   (unset)                       → all chains marked `enabled = true` in TOML
     pub fn enabled_chains(&self) -> Vec<u64> {
-        let toml_enabled: Vec<u64> = self.chains
+        let toml_enabled: Vec<u64> = self
+            .chains
             .iter()
             .filter(|c| c.enabled)
             .map(|c| c.chain_id)
@@ -258,7 +272,8 @@ impl AppConfig {
 
     /// Returns relays enabled for a given chain_id.
     pub fn relays_for_chain(&self, chain_id: u64) -> Vec<&RelayCfg> {
-        self.relays.iter()
+        self.relays
+            .iter()
             .filter(|r| r.enabled && r.chains.contains(&chain_id))
             .collect()
     }
@@ -370,7 +385,9 @@ chains = [1]
     fn loads_minimal_config() {
         let _g = ENV_LOCK.lock().unwrap();
         // Guard: ensure env override is absent so TOML is authoritative.
-        unsafe { std::env::remove_var("ARBX_ENABLED_CHAINS"); }
+        unsafe {
+            std::env::remove_var("ARBX_ENABLED_CHAINS");
+        }
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let mut f = std::fs::File::create(tmp.path()).unwrap();
         f.write_all(minimal_toml().as_bytes()).unwrap();
@@ -383,25 +400,37 @@ chains = [1]
     fn enabled_chains_env_override_filters_to_subset() {
         let _g = ENV_LOCK.lock().unwrap();
         // TOML enables chains 1 + 42161; env var keeps only 1.
-        unsafe { std::env::set_var("ARBX_ENABLED_CHAINS", "1"); }
+        unsafe {
+            std::env::set_var("ARBX_ENABLED_CHAINS", "1");
+        }
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), multichain_toml()).unwrap();
         let cfg = AppConfig::load_from(tmp.path()).unwrap();
         let chains = cfg.enabled_chains();
-        unsafe { std::env::remove_var("ARBX_ENABLED_CHAINS"); }
-        assert_eq!(chains, vec![1], "env override must restrict to requested subset");
+        unsafe {
+            std::env::remove_var("ARBX_ENABLED_CHAINS");
+        }
+        assert_eq!(
+            chains,
+            vec![1],
+            "env override must restrict to requested subset"
+        );
     }
 
     #[test]
     fn enabled_chains_env_override_multiple() {
         let _g = ENV_LOCK.lock().unwrap();
         // TOML enables chains 1 + 42161; env var requests both.
-        unsafe { std::env::set_var("ARBX_ENABLED_CHAINS", "1,42161"); }
+        unsafe {
+            std::env::set_var("ARBX_ENABLED_CHAINS", "1,42161");
+        }
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), multichain_toml()).unwrap();
         let cfg = AppConfig::load_from(tmp.path()).unwrap();
         let chains = cfg.enabled_chains();
-        unsafe { std::env::remove_var("ARBX_ENABLED_CHAINS"); }
+        unsafe {
+            std::env::remove_var("ARBX_ENABLED_CHAINS");
+        }
         assert!(chains.contains(&1));
         assert!(chains.contains(&42161));
         assert_eq!(chains.len(), 2);
@@ -411,12 +440,16 @@ chains = [1]
     fn enabled_chains_env_override_ignores_unknown_chain() {
         let _g = ENV_LOCK.lock().unwrap();
         // Chain 999 is not in TOML — must be silently dropped (no-hardcode doctrine).
-        unsafe { std::env::set_var("ARBX_ENABLED_CHAINS", "1,999"); }
+        unsafe {
+            std::env::set_var("ARBX_ENABLED_CHAINS", "1,999");
+        }
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), multichain_toml()).unwrap();
         let cfg = AppConfig::load_from(tmp.path()).unwrap();
         let chains = cfg.enabled_chains();
-        unsafe { std::env::remove_var("ARBX_ENABLED_CHAINS"); }
+        unsafe {
+            std::env::remove_var("ARBX_ENABLED_CHAINS");
+        }
         assert_eq!(chains, vec![1], "unknown chain_id 999 must be dropped");
     }
 
@@ -424,21 +457,33 @@ chains = [1]
     fn enabled_chains_env_override_ignores_disabled_chain() {
         let _g = ENV_LOCK.lock().unwrap();
         // Chain 137 is in TOML but enabled=false — env var cannot re-enable it.
-        unsafe { std::env::set_var("ARBX_ENABLED_CHAINS", "1,137"); }
+        unsafe {
+            std::env::set_var("ARBX_ENABLED_CHAINS", "1,137");
+        }
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), multichain_toml()).unwrap();
         let cfg = AppConfig::load_from(tmp.path()).unwrap();
         let chains = cfg.enabled_chains();
-        unsafe { std::env::remove_var("ARBX_ENABLED_CHAINS"); }
-        assert!(!chains.contains(&137), "env var must not re-enable a TOML-disabled chain");
+        unsafe {
+            std::env::remove_var("ARBX_ENABLED_CHAINS");
+        }
+        assert!(
+            !chains.contains(&137),
+            "env var must not re-enable a TOML-disabled chain"
+        );
     }
 
     #[test]
     fn fails_when_no_chains_enabled() {
         let _g = ENV_LOCK.lock().unwrap();
-        unsafe { std::env::remove_var("ARBX_ENABLED_CHAINS"); }
+        unsafe {
+            std::env::remove_var("ARBX_ENABLED_CHAINS");
+        }
         let mut bad = minimal_toml().to_string();
-        bad = bad.replace("enabled = true\n\n[[relays]]", "enabled = false\n\n[[relays]]");
+        bad = bad.replace(
+            "enabled = true\n\n[[relays]]",
+            "enabled = false\n\n[[relays]]",
+        );
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), bad).unwrap();
         let err = AppConfig::load_from(tmp.path()).unwrap_err();
@@ -448,6 +493,9 @@ chains = [1]
     #[test]
     fn require_env_missing_is_error() {
         std::env::remove_var("ARBX_TEST_UNSET");
-        assert!(matches!(require_env("ARBX_TEST_UNSET"), Err(ConfigError::MissingEnv(_))));
+        assert!(matches!(
+            require_env("ARBX_TEST_UNSET"),
+            Err(ConfigError::MissingEnv(_))
+        ));
     }
 }

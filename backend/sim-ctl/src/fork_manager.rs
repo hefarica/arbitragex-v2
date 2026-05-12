@@ -25,16 +25,12 @@ pub struct ForkManager {
 
 impl ForkManager {
     pub async fn connect(anvil_url: &str, pool_size: u32, connect_timeout_ms: u64) -> Result<Self> {
-        let provider = tokio::time::timeout(
-            Duration::from_millis(connect_timeout_ms),
-            async {
-                let p = Provider::<Http>::try_from(anvil_url)
-                    .context("anvil url parse")?;
-                // sanity: block number responds
-                let _bn = p.get_block_number().await.context("eth_blockNumber")?;
-                Ok::<_, anyhow::Error>(p)
-            },
-        )
+        let provider = tokio::time::timeout(Duration::from_millis(connect_timeout_ms), async {
+            let p = Provider::<Http>::try_from(anvil_url).context("anvil url parse")?;
+            // sanity: block number responds
+            let _bn = p.get_block_number().await.context("eth_blockNumber")?;
+            Ok::<_, anyhow::Error>(p)
+        })
         .await
         .context("anvil connect timeout")??;
 
@@ -47,20 +43,30 @@ impl ForkManager {
 
     /// Acquire a snapshot handle. The caller MUST release() it to revert state.
     pub async fn acquire(&self) -> Result<SnapshotHandle> {
-        let permit = self.pool.clone().acquire_owned().await
+        let permit = self
+            .pool
+            .clone()
+            .acquire_owned()
+            .await
             .context("acquire semaphore")?;
-        let id_hex: String = self.provider
+        let id_hex: String = self
+            .provider
             .request("evm_snapshot", ())
             .await
             .context("evm_snapshot")?;
-        Ok(SnapshotHandle { id: id_hex, _permit: permit, provider: self.provider.clone() })
+        Ok(SnapshotHandle {
+            id: id_hex,
+            _permit: permit,
+            provider: self.provider.clone(),
+        })
     }
 
     #[allow(dead_code)]
     pub async fn anvil_reset(&self, fork_url: &str) -> Result<()> {
         let _guard = self.active.lock().await;
         let forking = serde_json::json!({ "forking": { "jsonRpcUrl": fork_url }});
-        let _: serde_json::Value = self.provider
+        let _: serde_json::Value = self
+            .provider
             .request("anvil_reset", [forking])
             .await
             .context("anvil_reset")?;
@@ -81,7 +87,8 @@ pub struct SnapshotHandle {
 impl SnapshotHandle {
     /// Revert the fork to the snapshot state. Always called by sim_engine.
     pub async fn release(self) -> Result<()> {
-        let _: bool = self.provider
+        let _: bool = self
+            .provider
             .request("evm_revert", [self.id.clone()])
             .await
             .context("evm_revert")?;

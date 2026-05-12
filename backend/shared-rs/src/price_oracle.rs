@@ -309,12 +309,7 @@ mod tests {
             capital_usd: 1000.0,
             base_token_symbol: "WETH".into(),
             base_token_price_usd: 2500.0,
-            allowed_token_symbols: vec![
-                "WETH".into(),
-                "USDC".into(),
-                "WBTC".into(),
-                "UNI".into(),
-            ],
+            allowed_token_symbols: vec!["WETH".into(), "USDC".into(), "WBTC".into(), "UNI".into()],
             token_prices_usd: prices,
             simulation_capital_usd: None,
             simulation_per_token_amounts_usd: HashMap::new(),
@@ -400,7 +395,10 @@ mod tests {
         assert_eq!(oracle.price_usd("UNKNOWN"), None);
         // Hex addresses (caller passed when meta cache was empty) — also None
         // because oracle indexes by symbol. Caller treats this as REJECT.
-        assert_eq!(oracle.price_usd("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"), None);
+        assert_eq!(
+            oracle.price_usd("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
+            None
+        );
     }
 
     #[test]
@@ -418,8 +416,7 @@ mod tests {
         // requires explicit governance update with reasoning. This test
         // documents the canonical list AND the explicitly-excluded set.
         for s in [
-            "USDC", "USDT", "DAI", "BUSD", "FRAX", "LUSD", "USDP", "TUSD",
-            "GUSD", "USDD", "PYUSD",
+            "USDC", "USDT", "DAI", "BUSD", "FRAX", "LUSD", "USDP", "TUSD", "GUSD", "USDD", "PYUSD",
         ] {
             assert!(is_known_stablecoin(s), "expected {s} in trust list");
         }

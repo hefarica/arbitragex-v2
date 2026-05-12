@@ -63,9 +63,7 @@ use crate::amm_math::v2_amount_out;
 use crate::counters::counters;
 use crate::persistence;
 use crate::publisher;
-use crate::reserves::{
-    get_pools_for_pair, get_reserves, get_token_meta, ReservesEntry,
-};
+use crate::reserves::{get_pools_for_pair, get_reserves, get_token_meta, ReservesEntry};
 use chrono::Utc;
 use ethers::types::U256;
 use redis::aio::ConnectionManager;
@@ -118,13 +116,13 @@ const FLASHLOAN_PROFIT_SANITY_MULT: f64 = 0.10;
 /// fallback is only active during the bootstrap window.
 fn min_profit_usd_fallback(chain_id: u64) -> f64 {
     match chain_id {
-        1     => 50.0,  // Ethereum mainnet
-        42161 => 10.0,  // Arbitrum One
-        56    => 5.0,   // BNB Smart Chain
-        10    => 5.0,   // Optimism
-        8453  => 5.0,   // Base
-        137   => 2.0,   // Polygon
-        _     => 10.0,  // Unknown chain: conservative default
+        1 => 50.0,     // Ethereum mainnet
+        42161 => 10.0, // Arbitrum One
+        56 => 5.0,     // BNB Smart Chain
+        10 => 5.0,     // Optimism
+        8453 => 5.0,   // Base
+        137 => 2.0,    // Polygon
+        _ => 10.0,     // Unknown chain: conservative default
     }
 }
 
@@ -326,7 +324,15 @@ pub fn golden_section_search_2hop(
     iterations: u32,
 ) -> (U256, i128) {
     if x_lo >= x_hi {
-        let p = flash_arb_profit(x_lo, buy_r_in, buy_r_out, sell_r_in, sell_r_out, fee_bps, premium_bps);
+        let p = flash_arb_profit(
+            x_lo,
+            buy_r_in,
+            buy_r_out,
+            sell_r_in,
+            sell_r_out,
+            fee_bps,
+            premium_bps,
+        );
         return (x_lo, p);
     }
     let phi: f64 = (1.0 + 5.0_f64.sqrt()) / 2.0;
@@ -342,7 +348,15 @@ pub fn golden_section_search_2hop(
 
     let f = |x: f64| -> f64 {
         let xi = f64_to_u256_clamped(x);
-        flash_arb_profit(xi, buy_r_in, buy_r_out, sell_r_in, sell_r_out, fee_bps, premium_bps) as f64
+        flash_arb_profit(
+            xi,
+            buy_r_in,
+            buy_r_out,
+            sell_r_in,
+            sell_r_out,
+            fee_bps,
+            premium_bps,
+        ) as f64
     };
 
     let mut yc = f(c);
@@ -366,16 +380,32 @@ pub fn golden_section_search_2hop(
         }
     }
 
-    let x_star_f = if yc > yd { (a + d) / 2.0 } else { (c + b) / 2.0 };
+    let x_star_f = if yc > yd {
+        (a + d) / 2.0
+    } else {
+        (c + b) / 2.0
+    };
     let x_star = f64_to_u256_clamped(x_star_f);
-    let profit = flash_arb_profit(x_star, buy_r_in, buy_r_out, sell_r_in, sell_r_out, fee_bps, premium_bps);
+    let profit = flash_arb_profit(
+        x_star,
+        buy_r_in,
+        buy_r_out,
+        sell_r_in,
+        sell_r_out,
+        fee_bps,
+        premium_bps,
+    );
     (x_star, profit)
 }
 
 /// Convert profit_token_a_wei + price + decimals → USD. Returns None when
 /// any input is non-finite / non-positive — R8 fail-honest, never fabricate
 /// USD from missing data.
-pub fn profit_to_usd(profit_token_a_wei: i128, token_a_price_usd: f64, decimals: u8) -> Option<f64> {
+pub fn profit_to_usd(
+    profit_token_a_wei: i128,
+    token_a_price_usd: f64,
+    decimals: u8,
+) -> Option<f64> {
     if profit_token_a_wei <= 0 {
         return None;
     }
@@ -591,10 +621,14 @@ pub fn evaluate_combo(input: &EvalInput) -> Option<EvalResult> {
     let x_hi = cap_by_pools;
 
     let (x_star, profit_wei) = golden_section_search_2hop(
-        x_lo, x_hi,
-        buy_a, buy_b,
-        sell_b, sell_a,  // sell pool: hop B→A so reserve_in = sell_b, reserve_out = sell_a
-        input.fee_bps, input.premium_bps,
+        x_lo,
+        x_hi,
+        buy_a,
+        buy_b,
+        sell_b,
+        sell_a, // sell pool: hop B→A so reserve_in = sell_b, reserve_out = sell_a
+        input.fee_bps,
+        input.premium_bps,
         25,
     );
 
@@ -611,9 +645,12 @@ pub fn evaluate_combo(input: &EvalInput) -> Option<EvalResult> {
     // Re-evaluate at clamped to ensure profit reflects clamped borrow.
     let profit_at_clamped = flash_arb_profit(
         borrow_wei,
-        buy_a, buy_b,
-        sell_b, sell_a,
-        input.fee_bps, input.premium_bps,
+        buy_a,
+        buy_b,
+        sell_b,
+        sell_a,
+        input.fee_bps,
+        input.premium_bps,
     );
     if profit_at_clamped <= 0 {
         return None;
@@ -652,7 +689,7 @@ fn known_token_address(symbol: &str) -> Option<&'static str> {
         "WETH" => Some("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
         "USDC" => Some("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
         "USDT" => Some("0xdac17f958d2ee523a2206206994597c13d831ec7"),
-        "DAI"  => Some("0x6b175474e89094c44da98b954eedeac495271d0f"),
+        "DAI" => Some("0x6b175474e89094c44da98b954eedeac495271d0f"),
         "WBTC" => Some("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"),
         _ => None,
     }
@@ -672,7 +709,7 @@ async fn resolve_token(
     let (decimals, is_stable) = match symbol.to_ascii_uppercase().as_str() {
         "WETH" => (18, false),
         "USDC" | "USDT" => (6, true),
-        "DAI"  => (18, true),
+        "DAI" => (18, true),
         "WBTC" => (8, false),
         _ => return None,
     };
@@ -687,7 +724,10 @@ async fn fetch_pool_data(
     pool_addr: &str,
     token_a_addr: &str,
 ) -> Option<PoolData> {
-    let entry = get_reserves(redis, chain_id, pool_addr).await.ok().flatten()?;
+    let entry = get_reserves(redis, chain_id, pool_addr)
+        .await
+        .ok()
+        .flatten()?;
     let token0 = entry.token0_addr.as_deref()?;
     let swap_a_to_b_uses_token0_in = token0.eq_ignore_ascii_case(token_a_addr);
     Some(PoolData {
@@ -748,19 +788,20 @@ impl FlashloanArbWorker {
             // yet (cold start or operator has not configured this chain).
             // H2 landmine fix: also extract gas_cost_usd so scan_one_pair can
             // populate net_expected_profit_usd at the emit site.
-            let (min_profit_usd, gas_cost_usd_tick) = match trading_config.state(self.chain_id).await {
-                Ok(Some(ref cfg)) => (cfg.min_profit_usd, Some(cfg.gas_cost_usd())),
-                Ok(None) => (fallback_min, None),
-                Err(e) => {
-                    debug!(
-                        event = "flashloan_arb_worker.cfg_fetch_failed",
-                        chain_id = self.chain_id,
-                        error = %e,
-                        fallback = fallback_min,
-                    );
-                    (fallback_min, None)
-                }
-            };
+            let (min_profit_usd, gas_cost_usd_tick) =
+                match trading_config.state(self.chain_id).await {
+                    Ok(Some(ref cfg)) => (cfg.min_profit_usd, Some(cfg.gas_cost_usd())),
+                    Ok(None) => (fallback_min, None),
+                    Err(e) => {
+                        debug!(
+                            event = "flashloan_arb_worker.cfg_fetch_failed",
+                            chain_id = self.chain_id,
+                            error = %e,
+                            fallback = fallback_min,
+                        );
+                        (fallback_min, None)
+                    }
+                };
 
             // Snapshot price oracle once per tick.
             let snapshot_map =
@@ -845,13 +886,20 @@ impl FlashloanArbWorker {
         stats: &mut TickStats,
     ) -> Option<u64> {
         // Resolve token A (borrow currency) + decimals + addr.
-        let (addr_a, decimals_a, _is_stable_a) = match resolve_token(redis, self.chain_id, sym_a).await {
-            Some(t) => t,
-            None => { stats.skip_unknown_token += 1; return None; }
-        };
+        let (addr_a, decimals_a, _is_stable_a) =
+            match resolve_token(redis, self.chain_id, sym_a).await {
+                Some(t) => t,
+                None => {
+                    stats.skip_unknown_token += 1;
+                    return None;
+                }
+            };
         let (_addr_b, _, _) = match resolve_token(redis, self.chain_id, sym_b).await {
             Some(t) => t,
-            None => { stats.skip_unknown_token += 1; return None; }
+            None => {
+                stats.skip_unknown_token += 1;
+                return None;
+            }
         };
 
         // Fetch all pools for the pair. On Redis error we degrade to "no pools"
@@ -916,11 +964,17 @@ impl FlashloanArbWorker {
 
                 let buy_reserves = match buy_pd.reserves_a_then_b() {
                     Some(r) => r,
-                    None => { stats.skip_no_profit += 1; continue; }
+                    None => {
+                        stats.skip_no_profit += 1;
+                        continue;
+                    }
                 };
                 let sell_reserves = match sell_pd.reserves_a_then_b() {
                     Some(r) => r,
-                    None => { stats.skip_no_profit += 1; continue; }
+                    None => {
+                        stats.skip_no_profit += 1;
+                        continue;
+                    }
                 };
 
                 let input = EvalInput {
@@ -941,9 +995,7 @@ impl FlashloanArbWorker {
                         // Could be: spot diff too small, no profit, below min,
                         // OR sanity_reject. Re-check the sanity branch explicitly
                         // because that one needs a warn log, not a debug.
-                        if let Some((profit_usd, borrow_usd)) =
-                            recheck_sanity_for_log(&input)
-                        {
+                        if let Some((profit_usd, borrow_usd)) = recheck_sanity_for_log(&input) {
                             stats.skip_sanity_reject += 1;
                             counters()
                                 .flashloan_arb_sanity_reject
@@ -1069,7 +1121,7 @@ fn recheck_sanity_for_log(input: &EvalInput) -> Option<(f64, f64)> {
     // A profitable cycle requires sell_rate_a_per_b > 1/buy_rate_b_per_a, i.e. the round-trip
     // spot rate exceeds 1.0 before fees. We pre-screen by checking that the sell pool
     // offers a better A-per-B rate than 1/buy_rate (a necessary but not sufficient condition).
-    let buy_rate = spot_rate(buy_a, buy_b, input.fee_bps);   // B per A (buy leg)
+    let buy_rate = spot_rate(buy_a, buy_b, input.fee_bps); // B per A (buy leg)
     let sell_rate = spot_rate(sell_b, sell_a, input.fee_bps); // A per B (sell leg)
     if buy_rate <= 0.0 || sell_rate <= 0.0 {
         return None;
@@ -1089,12 +1141,20 @@ fn recheck_sanity_for_log(input: &EvalInput) -> Option<(f64, f64)> {
     // that is precisely the scenario this function is designed to catch.
     let cap_by_pools = if buy_a < sell_a { buy_a } else { sell_a };
     let x_lo = U256::from(1u64);
-    let x_hi = if cap_by_pools < x_lo { x_lo } else { cap_by_pools };
+    let x_hi = if cap_by_pools < x_lo {
+        x_lo
+    } else {
+        cap_by_pools
+    };
     let (x_star, profit_wei) = golden_section_search_2hop(
-        x_lo, x_hi,
-        buy_a, buy_b,
-        sell_b, sell_a,
-        input.fee_bps, input.premium_bps,
+        x_lo,
+        x_hi,
+        buy_a,
+        buy_b,
+        sell_b,
+        sell_a,
+        input.fee_bps,
+        input.premium_bps,
         25,
     );
     if profit_wei <= 0 {
@@ -1158,9 +1218,12 @@ mod tests {
         let r0 = U256::from(1_000_000u64);
         let p = flash_arb_profit(
             U256::from(1_000u64),
-            r0, r0,  // buy
-            r0, r0,  // sell
-            30, 5,
+            r0,
+            r0, // buy
+            r0,
+            r0, // sell
+            30,
+            5,
         );
         assert!(p < 0, "balanced pools must produce loss; got profit={}", p);
     }
@@ -1170,9 +1233,12 @@ mod tests {
         assert_eq!(
             flash_arb_profit(
                 U256::zero(),
-                U256::from(1u64), U256::from(1u64),
-                U256::from(1u64), U256::from(1u64),
-                30, 5
+                U256::from(1u64),
+                U256::from(1u64),
+                U256::from(1u64),
+                U256::from(1u64),
+                30,
+                5
             ),
             0
         );
@@ -1196,12 +1262,12 @@ mod tests {
         // in hop 1, causing a large negative AMM price impact that wiped the
         // spread. Fixed by scaling to deep (1M ETH) pools.
         let one_eth = U256::from(1_000_000_000_000_000_000u64); // 1e18 wei
-        let million_eth = one_eth * U256::from(1_000_000u64);   // 1e24 wei
-        let buy_a  = million_eth;                                          // 1M ETH A
-        let buy_b  = million_eth * U256::from(1_010u64);                   // 1.01B ETH B (ratio 1010)
-        let sell_b = million_eth * U256::from(990u64);                     // 990M ETH B
-        let sell_a = million_eth;                                           // 1M ETH A  (ratio 990)
-        let borrow = U256::from(10_000_000_000_000_000u64);               // 0.01 ETH
+        let million_eth = one_eth * U256::from(1_000_000u64); // 1e24 wei
+        let buy_a = million_eth; // 1M ETH A
+        let buy_b = million_eth * U256::from(1_010u64); // 1.01B ETH B (ratio 1010)
+        let sell_b = million_eth * U256::from(990u64); // 990M ETH B
+        let sell_a = million_eth; // 1M ETH A  (ratio 990)
+        let borrow = U256::from(10_000_000_000_000_000u64); // 0.01 ETH
         let p = flash_arb_profit(borrow, buy_a, buy_b, sell_b, sell_a, 30, 5);
         assert!(p > 0, "imbalanced cycle must produce profit; got {}", p);
     }
@@ -1223,23 +1289,22 @@ mod tests {
         //
         // Buy: B/A = 2410 → 5000 WETH (5e21) vs 12_050_000 USDC (1.205e13)
         // Sell: B/A = 2390 → 5000 WETH (5e21) vs 11_950_000 USDC (1.195e13)
-        let buy_a = U256::from(5_000u64) * U256::from(10u64).pow(U256::from(18u64));   // 5e21 WETH wei
+        let buy_a = U256::from(5_000u64) * U256::from(10u64).pow(U256::from(18u64)); // 5e21 WETH wei
         let buy_b = U256::from(12_050_000u64) * U256::from(10u64).pow(U256::from(6u64)); // 1.205e13 USDC wei
-        let sell_a = U256::from(5_000u64) * U256::from(10u64).pow(U256::from(18u64));  // 5e21
+        let sell_a = U256::from(5_000u64) * U256::from(10u64).pow(U256::from(18u64)); // 5e21
         let sell_b = U256::from(11_950_000u64) * U256::from(10u64).pow(U256::from(6u64)); // 1.195e13
 
         // Borrow 1 WETH = 1e18.
         let borrow = U256::from(10u64).pow(U256::from(18u64));
-        let p = flash_arb_profit(
-            borrow,
-            buy_a, buy_b,
-            sell_b, sell_a,
-            30, 5,
-        );
+        let p = flash_arb_profit(borrow, buy_a, buy_b, sell_b, sell_a, 30, 5);
         // 30bps spread > 30bps round-trip fee + 5bps premium → small positive profit.
         // Rough order: 1 WETH * (2410/2390 - 1 - 0.0030*2 - 0.0005) ≈ 1 WETH * 0.0019
         // ≈ 1.9e15 wei ≈ 0.0019 ETH ≈ $4-5 at $2400/ETH.
-        assert!(p > 0, "30bps spread on real WETH/USDC magnitudes should profit; got {}", p);
+        assert!(
+            p > 0,
+            "30bps spread on real WETH/USDC magnitudes should profit; got {}",
+            p
+        );
         // Sanity: profit should not exceed 1% of borrow at this spread.
         let profit_ratio = p as f64 / borrow.as_u128() as f64;
         assert!(
@@ -1260,19 +1325,14 @@ mod tests {
         // Token A = WBTC.
         // buy pool B/A higher: 100 WBTC / 5_012_500 USDC (5.0125e12)
         // sell pool B/A lower: 100 WBTC / 4_987_500 USDC (4.9875e12)
-        let buy_a = U256::from(100u64) * U256::from(10u64).pow(U256::from(8u64));   // 1e10 WBTC wei
-        let buy_b = U256::from(5_012_500u64) * U256::from(10u64).pow(U256::from(6u64));   // 5.0125e12 USDC wei
-        let sell_a = U256::from(100u64) * U256::from(10u64).pow(U256::from(8u64));  // 1e10
+        let buy_a = U256::from(100u64) * U256::from(10u64).pow(U256::from(8u64)); // 1e10 WBTC wei
+        let buy_b = U256::from(5_012_500u64) * U256::from(10u64).pow(U256::from(6u64)); // 5.0125e12 USDC wei
+        let sell_a = U256::from(100u64) * U256::from(10u64).pow(U256::from(8u64)); // 1e10
         let sell_b = U256::from(4_987_500u64) * U256::from(10u64).pow(U256::from(6u64)); // 4.9875e12
 
         // Borrow 0.01 WBTC = 1e6 wei (small relative to 100 WBTC pool).
         let borrow = U256::from(1_000_000u64);
-        let p = flash_arb_profit(
-            borrow,
-            buy_a, buy_b,
-            sell_b, sell_a,
-            30, 5,
-        );
+        let p = flash_arb_profit(borrow, buy_a, buy_b, sell_b, sell_a, 30, 5);
         // 50bps spread minus 30bps×2 fees minus 5bps premium ≈ -15bps → loss.
         // Expected: small loss, NOT a giant profit (which would indicate a
         // decimal-mismatch bug as in Incidente #9).
@@ -1289,13 +1349,16 @@ mod tests {
         // Two pools with identical reserves → no spread → guaranteed loss
         // (fees + premium). Verifies our profit kernel is honest about
         // unprofitable opportunities (no fabrication).
-        let r_a = U256::from(10u64).pow(U256::from(20u64));   // 1e20
-        let r_b = U256::from(2_400u64) * U256::from(10u64).pow(U256::from(8u64));  // 2400 * 1e8
+        let r_a = U256::from(10u64).pow(U256::from(20u64)); // 1e20
+        let r_b = U256::from(2_400u64) * U256::from(10u64).pow(U256::from(8u64)); // 2400 * 1e8
         let p = flash_arb_profit(
-            U256::from(10u64).pow(U256::from(17u64)),  // 0.1 ETH
-            r_a, r_b,
-            r_b, r_a,
-            30, 5,
+            U256::from(10u64).pow(U256::from(17u64)), // 0.1 ETH
+            r_a,
+            r_b,
+            r_b,
+            r_a,
+            30,
+            5,
         );
         assert!(p <= 0, "equilibrium pools should not profit; got {}", p);
     }
@@ -1314,11 +1377,20 @@ mod tests {
         let (x, p) = golden_section_search_2hop(
             U256::from(1u64),
             U256::from(10_000_000_000_000_000u64),
-            buy_a, buy_b,
-            sell_b, sell_a,
-            30, 5, 25,
+            buy_a,
+            buy_b,
+            sell_b,
+            sell_a,
+            30,
+            5,
+            25,
         );
-        assert!(p > 0, "golden-section: profit={} at x={} expected positive", p, x);
+        assert!(
+            p > 0,
+            "golden-section: profit={} at x={} expected positive",
+            p,
+            x
+        );
         assert!(x > U256::from(1u64));
     }
 
@@ -1326,9 +1398,15 @@ mod tests {
     fn golden_section_returns_non_positive_for_balanced() {
         let r0 = U256::from(1_000_000u64);
         let (_, p) = golden_section_search_2hop(
-            U256::from(1u64), U256::from(10_000u64),
-            r0, r0, r0, r0,
-            30, 5, 25,
+            U256::from(1u64),
+            U256::from(10_000u64),
+            r0,
+            r0,
+            r0,
+            r0,
+            30,
+            5,
+            25,
         );
         assert!(p <= 0, "balanced pools: profit={} should be ≤ 0", p);
     }
@@ -1337,9 +1415,15 @@ mod tests {
     fn golden_section_degenerate_interval_returns_endpoint() {
         let r0 = U256::from(1_000u64);
         let (x, _) = golden_section_search_2hop(
-            U256::from(7u64), U256::from(7u64),
-            r0, r0, r0, r0,
-            30, 5, 25,
+            U256::from(7u64),
+            U256::from(7u64),
+            r0,
+            r0,
+            r0,
+            r0,
+            30,
+            5,
+            25,
         );
         assert_eq!(x, U256::from(7u64));
     }
@@ -1564,7 +1648,9 @@ mod tests {
             assert!(
                 r.expected_profit_usd <= r.borrow_usd * FLASHLOAN_PROFIT_SANITY_MULT,
                 "profit_usd {} > sanity {} * borrow_usd {} — this should have been rejected",
-                r.expected_profit_usd, FLASHLOAN_PROFIT_SANITY_MULT, r.borrow_usd,
+                r.expected_profit_usd,
+                FLASHLOAN_PROFIT_SANITY_MULT,
+                r.borrow_usd,
             );
         }
     }
@@ -1573,10 +1659,10 @@ mod tests {
     fn evaluate_combo_sanity_rejects_huge_profit() {
         // Construct a wildly-mispriced setup that produces profit > 10% of borrow
         // — must be rejected by the sanity bound (return None).
-        let buy_a = U256::from(1_000_000_000_000u64);   // tiny pool A side
-        let buy_b = U256::from(10u64).pow(U256::from(24u64));  // huge B side (massive B per A)
+        let buy_a = U256::from(1_000_000_000_000u64); // tiny pool A side
+        let buy_b = U256::from(10u64).pow(U256::from(24u64)); // huge B side (massive B per A)
         let sell_a = U256::from(10u64).pow(U256::from(24u64)); // huge A side on sell
-        let sell_b = U256::from(1_000_000_000_000u64);  // tiny B side on sell
+        let sell_b = U256::from(1_000_000_000_000u64); // tiny B side on sell
         let inp = EvalInput {
             buy_reserves: (buy_a, buy_b),
             sell_reserves: (sell_a, sell_b),
@@ -1785,10 +1871,10 @@ mod tests {
         //
         // Construct that exact scenario: feed evaluate_combo reserves as if
         // they came from a flipped pool. The spread looks like 100x not 0.3%.
-        let buy_a = U256::from(1u64);  // "1 wei A" (impossibly small)
-        let buy_b = U256::from(10u64).pow(U256::from(20u64));  // 1e20 B
+        let buy_a = U256::from(1u64); // "1 wei A" (impossibly small)
+        let buy_b = U256::from(10u64).pow(U256::from(20u64)); // 1e20 B
         let sell_a = U256::from(10u64).pow(U256::from(20u64)); // 1e20 A
-        let sell_b = U256::from(1u64);  // "1 wei B"
+        let sell_b = U256::from(1u64); // "1 wei B"
         let inp = EvalInput {
             buy_reserves: (buy_a, buy_b),
             sell_reserves: (sell_a, sell_b),

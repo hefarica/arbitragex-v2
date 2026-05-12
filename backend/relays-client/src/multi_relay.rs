@@ -98,11 +98,7 @@ impl MultiRelayClient {
     /// Returns as soon as all futures settle (success, error, or timeout).
     /// The caller should treat `result.successes.len() >= 1` as "at least one
     /// relay accepted"; `wait_for_inclusion` then polls the chain.
-    pub async fn broadcast(
-        &self,
-        bundle: &SignedBundle,
-        signer: &Signer,
-    ) -> MultiRelayResult {
+    pub async fn broadcast(&self, bundle: &SignedBundle, signer: &Signer) -> MultiRelayResult {
         let timeout = Duration::from_millis(self.timeout_ms);
 
         // Build one future per backend. Each future is independent — no shared
@@ -132,11 +128,9 @@ impl MultiRelayClient {
                         nonce,
                         value_wei,
                     };
-                    let result = tokio::time::timeout(
-                        timeout,
-                        backend.send_bundle(&owned_bundle, signer),
-                    )
-                    .await;
+                    let result =
+                        tokio::time::timeout(timeout, backend.send_bundle(&owned_bundle, signer))
+                            .await;
                     (backend.name().to_string(), result)
                 }
             })
@@ -179,7 +173,10 @@ impl MultiRelayClient {
             }
         }
 
-        MultiRelayResult { successes, failures }
+        MultiRelayResult {
+            successes,
+            failures,
+        }
     }
 
     /// Comma-joined names of all configured backends (for logging at boot).
@@ -219,9 +216,7 @@ impl MultiRelayResult {
 
     /// First accepted bundle hash, if any relay returned one.
     pub fn first_bundle_hash(&self) -> Option<&str> {
-        self.successes
-            .iter()
-            .find_map(|r| r.bundle_hash.as_deref())
+        self.successes.iter().find_map(|r| r.bundle_hash.as_deref())
     }
 }
 
@@ -289,7 +284,11 @@ mod tests {
                 .expect("valid test key");
         let wallet = ethers::signers::Signer::with_chain_id(wallet, 1u64);
         let address = ethers::signers::Signer::address(&wallet);
-        Signer { wallet, address, chain_id: 1 }
+        Signer {
+            wallet,
+            address,
+            chain_id: 1,
+        }
     }
 
     /// Single backend returns success → 1 success, 0 failures.
@@ -315,9 +314,21 @@ mod tests {
     async fn test_broadcast_all_fail() {
         let client = MultiRelayClient {
             backends: vec![
-                Arc::new(MockRelayBackend { name: "r1", success_hash: None, delay_ms: 0 }),
-                Arc::new(MockRelayBackend { name: "r2", success_hash: None, delay_ms: 0 }),
-                Arc::new(MockRelayBackend { name: "r3", success_hash: None, delay_ms: 0 }),
+                Arc::new(MockRelayBackend {
+                    name: "r1",
+                    success_hash: None,
+                    delay_ms: 0,
+                }),
+                Arc::new(MockRelayBackend {
+                    name: "r2",
+                    success_hash: None,
+                    delay_ms: 0,
+                }),
+                Arc::new(MockRelayBackend {
+                    name: "r3",
+                    success_hash: None,
+                    delay_ms: 0,
+                }),
             ],
             timeout_ms: 1000,
         };
@@ -333,9 +344,21 @@ mod tests {
     async fn test_broadcast_partial_success() {
         let client = MultiRelayClient {
             backends: vec![
-                Arc::new(MockRelayBackend { name: "ok1", success_hash: Some("0x111"), delay_ms: 0 }),
-                Arc::new(MockRelayBackend { name: "fail", success_hash: None, delay_ms: 0 }),
-                Arc::new(MockRelayBackend { name: "ok2", success_hash: Some("0x222"), delay_ms: 0 }),
+                Arc::new(MockRelayBackend {
+                    name: "ok1",
+                    success_hash: Some("0x111"),
+                    delay_ms: 0,
+                }),
+                Arc::new(MockRelayBackend {
+                    name: "fail",
+                    success_hash: None,
+                    delay_ms: 0,
+                }),
+                Arc::new(MockRelayBackend {
+                    name: "ok2",
+                    success_hash: Some("0x222"),
+                    delay_ms: 0,
+                }),
             ],
             timeout_ms: 1000,
         };
@@ -360,7 +383,11 @@ mod tests {
             timeout_ms: 50, // timeout at 50ms
         };
         let result = client.broadcast(&make_bundle(), &make_signer()).await;
-        assert_eq!(result.successes.len(), 0, "timeout must not produce a success");
+        assert_eq!(
+            result.successes.len(),
+            0,
+            "timeout must not produce a success"
+        );
         assert_eq!(result.failures.len(), 1);
         assert!(
             result.failures[0].1.contains("timeout"),

@@ -70,7 +70,10 @@ impl KillSwitchClient {
     /// True if the kill-switch is currently armed. Safe-by-default: on any error
     /// returns `default_when_absent` (pass `true` in prod, `false` in dev).
     pub async fn is_enabled(&self) -> bool {
-        self.state().await.map(|s| s.enabled).unwrap_or(self.default_when_absent)
+        self.state()
+            .await
+            .map(|s| s.enabled)
+            .unwrap_or(self.default_when_absent)
     }
 
     pub async fn state(&self) -> Result<KillSwitchState, KillSwitchError> {
@@ -86,7 +89,10 @@ impl KillSwitchClient {
         let raw: Option<String> = mgr.get(KILLSWITCH_KEY).await?;
         let state = match raw {
             Some(v) => serde_json::from_str::<KillSwitchState>(&v)?,
-            None => KillSwitchState { enabled: self.default_when_absent, ..Default::default() },
+            None => KillSwitchState {
+                enabled: self.default_when_absent,
+                ..Default::default()
+            },
         };
         let mut g = self.cache.write().await;
         *g = Some((state.clone(), Instant::now()));

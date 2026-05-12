@@ -56,16 +56,15 @@ pub struct Dedup {
 impl Dedup {
     pub fn new(capacity: usize, redis_ttl: Duration) -> Self {
         let cap = NonZeroUsize::new(capacity).unwrap_or(NonZeroUsize::new(1).unwrap());
-        Self { lru: Mutex::new(LruCache::new(cap)), redis_ttl }
+        Self {
+            lru: Mutex::new(LruCache::new(cap)),
+            redis_ttl,
+        }
     }
 
     /// Returns true if the hash is fresh (not seen). false if duplicate.
     /// Call ORDER: check LRU first; if fresh, check Redis SETNX; if fresh there too, accept.
-    pub async fn check_and_mark(
-        &self,
-        hash: H256,
-        redis: &mut ConnectionManager,
-    ) -> bool {
+    pub async fn check_and_mark(&self, hash: H256, redis: &mut ConnectionManager) -> bool {
         // L1 LRU
         {
             let mut lru = self.lru.lock().expect("lru mutex");
@@ -104,7 +103,9 @@ impl OppDedup {
     /// comfortable headroom before the LRU starts evicting.
     pub fn new(capacity: usize) -> Self {
         let cap = NonZeroUsize::new(capacity).unwrap_or(NonZeroUsize::new(1).unwrap());
-        Self { lru: Mutex::new(LruCache::new(cap)) }
+        Self {
+            lru: Mutex::new(LruCache::new(cap)),
+        }
     }
 
     /// Returns `true` if this (route, time_bucket, profit_bucket) triple is fresh.
@@ -138,9 +139,7 @@ pub fn build_opp_dedup_key(route_hash: &str, profit_usd: Option<f64>) -> String 
         .unwrap_or_default()
         .as_secs();
     let bucket_5min = unix_secs / 300;
-    let profit_bucket = profit_usd
-        .map(|p| (p * 100.0) as i64 / 10)
-        .unwrap_or(0);
+    let profit_bucket = profit_usd.map(|p| (p * 100.0) as i64 / 10).unwrap_or(0);
     format!("{route_hash}:{bucket_5min}:{profit_bucket}")
 }
 
@@ -155,8 +154,14 @@ mod tests {
     fn opp_dedup_same_route_same_profit_is_dup() {
         let dedup = OppDedup::new(64);
         let route = "uniswap_v2_0xabc_0xdef";
-        assert!(dedup.check_and_mark(route, Some(1.50)), "first call must be fresh");
-        assert!(!dedup.check_and_mark(route, Some(1.50)), "second identical call must be dup");
+        assert!(
+            dedup.check_and_mark(route, Some(1.50)),
+            "first call must be fresh"
+        );
+        assert!(
+            !dedup.check_and_mark(route, Some(1.50)),
+            "second identical call must be dup"
+        );
     }
 
     /// Different routes are never deduped regardless of profit.
@@ -209,10 +214,17 @@ mod tests {
         // keys for the same inputs.
         let k1 = build_opp_dedup_key("route_X", Some(5.0));
         let k2 = build_opp_dedup_key("route_X", Some(5.0));
-        assert_eq!(k1, k2, "keys for identical inputs must match within same second");
+        assert_eq!(
+            k1, k2,
+            "keys for identical inputs must match within same second"
+        );
         // Three colon-separated segments.
         let parts: Vec<&str> = k1.splitn(3, ':').collect();
-        assert_eq!(parts.len(), 3, "key must have 3 colon-separated segments: route:bucket:profit");
+        assert_eq!(
+            parts.len(),
+            3,
+            "key must have 3 colon-separated segments: route:bucket:profit"
+        );
         assert_eq!(parts[0], "route_X");
     }
 
@@ -236,7 +248,10 @@ mod tests {
         // Same-bin guarantee: $5.00 and $5.09 dedup together.
         assert_eq!(b_500, b_509, "$5.00 and $5.09 must share a profit bucket");
         // Different-bin guarantee: $5.00 and $5.20 do NOT dedup.
-        assert_ne!(b_500, b_520, "$5.00 and $5.20 must be in different profit buckets");
+        assert_ne!(
+            b_500, b_520,
+            "$5.00 and $5.20 must be in different profit buckets"
+        );
     }
 
     /// Negative profit (valid edge case from spine) produces a negative bucket —
@@ -244,6 +259,9 @@ mod tests {
     #[test]
     fn negative_profit_produces_negative_bucket() {
         let bucket = (-1.50_f64 * 100.0) as i64 / 10;
-        assert!(bucket < 0, "negative profit must produce negative bucket, got {bucket}");
+        assert!(
+            bucket < 0,
+            "negative profit must produce negative bucket, got {bucket}"
+        );
     }
 }

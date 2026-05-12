@@ -29,7 +29,10 @@ pub struct NonceManager {
 
 impl NonceManager {
     pub fn new(pool: Arc<HttpRpcPool>) -> Self {
-        Self { pool, state: Arc::new(Mutex::new(HashMap::new())) }
+        Self {
+            pool,
+            state: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     /// Returns the next nonce for this (chain, address) and increments the local counter.
@@ -68,7 +71,8 @@ impl NonceManager {
     /// `Address` via `from_slice` on the raw bytes — both types are `[u8; 20]`.
     async fn fetch(&self, addr: Address) -> Result<u64> {
         let alloy_addr = AlloyAddress::from_slice(addr.as_bytes());
-        let count = self.pool
+        let count = self
+            .pool
             .with_retry(|provider| async move {
                 provider
                     .get_transaction_count(alloy_addr)

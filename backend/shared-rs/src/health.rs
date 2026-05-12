@@ -17,7 +17,11 @@ impl ServiceInfo {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        Self { name, version, started_at_unix }
+        Self {
+            name,
+            version,
+            started_at_unix,
+        }
     }
 }
 
@@ -31,18 +35,24 @@ struct HealthBody {
 
 pub fn build_health_router(info: ServiceInfo) -> Router {
     Router::new()
-        .route("/health", get(move || {
-            let info = info.clone();
-            async move {
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-                let uptime = now.saturating_sub(info.started_at_unix);
-                Json(HealthBody {
-                    ok: true,
-                    service: info.name,
-                    version: info.version,
-                    uptime_s: uptime,
-                })
-            }
-        }))
+        .route(
+            "/health",
+            get(move || {
+                let info = info.clone();
+                async move {
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let uptime = now.saturating_sub(info.started_at_unix);
+                    Json(HealthBody {
+                        ok: true,
+                        service: info.name,
+                        version: info.version,
+                        uptime_s: uptime,
+                    })
+                }
+            }),
+        )
         .route("/metrics", get(crate::metrics::metrics_handler))
 }

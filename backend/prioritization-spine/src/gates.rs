@@ -1,5 +1,5 @@
-use crate::evidence::OpportunityEvidence;
 use crate::decision::{ExecutionDecision, RejectReason};
+use crate::evidence::OpportunityEvidence;
 
 pub struct EvidenceGate {}
 
@@ -25,7 +25,7 @@ pub fn can_execute(evidence: &OpportunityEvidence, shadow_mode: bool) -> Executi
     if EvidenceGate::validate(evidence).is_some() {
         return ExecutionDecision::Reject;
     }
-    
+
     if shadow_mode {
         return ExecutionDecision::Hold;
     }
