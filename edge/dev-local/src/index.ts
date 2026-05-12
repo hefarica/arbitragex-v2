@@ -146,6 +146,10 @@ app.get("/api/scanner/heartbeat", (req, res) => {
   const chain = String(req.query["chain_id"] ?? 1);
   proxy(`/api/v1/scanner/heartbeat?chain_id=${encodeURIComponent(chain)}`, req, res);
 });
+app.get("/api/strategies/runtime-status", (req, res) => {
+  const chain = String(req.query["chain_id"] ?? 1);
+  proxy(`/api/v1/strategies/runtime-status?chain_id=${encodeURIComponent(chain)}`, req, res);
+});
 app.get("/api/risk/alerts", (req, res) => proxy("/api/v1/risk/alerts", req, res));
 // S7: new operator-console endpoints.
 app.get("/api/executions/recent", (req, res) => proxy("/api/v1/executions/recent", req, res));
