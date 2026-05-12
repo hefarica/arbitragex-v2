@@ -8,19 +8,21 @@
 //! from a mempool transaction. It:
 //!
 //!   1. Converts the intent into its `ImpactSet` via `ImpactIndex`.
-//!   2. Fans out to strategy engines (currently only `DexEngine`).
+//!   2. Fans out to strategy engines (`DexEngine`, `TriangularEngine`,
+//!      `LiquidationEngine`, then `FlashloanEngine` wrapping).
 //!   3. Evaluates each `StrategyCandidate` through `ConfigAwareEvaluator`.
 //!   4. Emits accepted or rejected candidates via `OpportunityEmitter`.
 //!
-//! ## Phase 7 scope
+//! ## Current scope (updated)
 //!
-//! - `DexEngine` is the only real engine; the other three engine slots
-//!   (`triangular`, `flashloan`, `liquidation`) are structural placeholders
-//!   that return `Ok(vec![])`. Phases 9-11 fill them in.
-//! - `state_projector` and `size_optimizer` are NOT wired yet (Phase 12-13).
-//! - Scanner integration (Phase 14) is NOT done yet; `scanner.rs` keeps its
-//!   legacy hardcoded path and the orchestrator is called from a separate
-//!   entry point.
+//! - `DexEngine`, `TriangularEngine`, and `LiquidationEngine` are invoked in
+//!   the intent pipeline; their candidates are merged into `base_candidates`.
+//! - `FlashloanEngine` runs after base-candidate assembly to wrap net-positive
+//!   routes.
+//! - `state_projector` and `size_optimizer` are wired in context and used by
+//!   downstream optimization/evaluation paths.
+//! - Scanner/orchestrator integration status depends on boot wiring in
+//!   `main.rs`; do not infer production enablement from this file header alone.
 //!
 //! ## Critical rule: no hardcoded strategy strings
 //!
