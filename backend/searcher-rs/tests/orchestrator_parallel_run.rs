@@ -150,22 +150,15 @@ async fn build_test_orchestrator() -> Option<std::sync::Arc<searcher_rs::orchest
     let trading_config = TradingConfigClient::from_manager(redis_conn.clone());
 
     let reserves_cache = Arc::new(ReservesCache::new());
-    let config = Arc::new(RwLock::new(
-        None::<shared_rs::trading_config::TradingConfigState>,
-    ));
     let state_projector = Arc::new(StateProjector::new(reserves_cache.clone(), None));
     let size_optimizer = Arc::new(SizeOptimizer::new(state_projector.clone()));
     let dex_engine = Arc::new(DexEngine::new(
-        config.clone(),
+        reserves_cache.clone(),
         None,
         Some(state_projector.clone()),
     ));
-    let tri_engine = Arc::new(TriangularEngine::new(
-        reserves_cache,
-        config.clone(),
-        vec![],
-    ));
-    let fl_engine = Arc::new(FlashloanEngine::new(config));
+    let tri_engine = Arc::new(TriangularEngine::new(reserves_cache, vec![]));
+    let fl_engine = Arc::new(FlashloanEngine::new());
     let liq_indexer = Arc::new(tokio::sync::Mutex::new(LendingPositionIndexer::new(
         CHAIN_ID,
         redis_conn.clone(),

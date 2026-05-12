@@ -37,6 +37,7 @@
 
 use crate::engines::StrategyCandidate;
 use crate::impact_index::{CycleId, ImpactSet};
+use crate::reserves::ReservesEntry;
 use crate::route_intent::RouteIntent;
 use crate::strategy_label::StrategyLabel;
 use crate::workers::triangular_worker::{evaluate_cycle, spot_product, EvalInput, MVP_CYCLES};
@@ -44,13 +45,15 @@ use chrono::Utc;
 use ethers::types::{Address, H256, U256};
 use prioritization_spine::route_plan::{RouteLeg, RoutePlan};
 use prioritization_spine::types::OpportunityCandidate;
+use redis::aio::ConnectionManager;
+use redis::AsyncCommands;
 use shared_rs::contracts::Opportunity;
 use shared_rs::trading_config::TradingConfigState;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::debug;
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
@@ -101,6 +104,121 @@ impl ReservesCache {
         let guard = self.inner.read().await;
         guard.get(pool).copied()
     }
+
+    /// Hydrate the in-memory cache from Redis keys matching
+    /// `arbx:pool_reserves:<chain_id>:*`.
+    ///
+    /// Called once at scanner boot (before `build_orchestrator` returns) and
+    /// optionally on every `pool_sync_worker` tick. Best-effort: malformed
+    /// entries are skipped with a warning; a Redis scan error logs and returns
+    /// `Ok(0)` (cold-start is acceptable — engines handle cache-miss via
+    /// `reserves_cache_miss` rejection label, R8 fail-honest).
+    ///
+    /// Returns the number of entries successfully loaded.
+    pub async fn hydrate_from_redis(
+        &self,
+        redis: &mut ConnectionManager,
+        chain_id: u64,
+    ) -> anyhow::Result<usize> {
+        // SCAN for all keys under the pool_reserves prefix for this chain.
+        let pattern = format!("arbx:pool_reserves:{}:*", chain_id);
+        let mut cursor: u64 = 0;
+        let mut loaded = 0usize;
+
+        loop {
+            // SCAN returns (next_cursor, Vec<key>). cursor == 0 on the last page.
+            let (next_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(200u64)
+                .query_async(redis)
+                .await
+                .map_err(|e| anyhow::anyhow!("Redis SCAN error: {}", e))?;
+
+            for key in keys {
+                // Extract pool address from key suffix: arbx:pool_reserves:<chain>:<addr>
+                let addr_str = match key.split(':').next_back() {
+                    Some(s) => s,
+                    None => {
+                        warn!(
+                            event = "reserves_cache.hydrate_bad_key",
+                            key, "skipping: cannot extract address from key"
+                        );
+                        continue;
+                    }
+                };
+                let pool_addr = match Address::from_str(addr_str) {
+                    Ok(a) => a,
+                    Err(_) => {
+                        warn!(
+                            event = "reserves_cache.hydrate_bad_addr",
+                            addr = addr_str, "skipping: cannot parse pool address"
+                        );
+                        continue;
+                    }
+                };
+
+                let raw: Option<String> = match redis.get(&key).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!(
+                            event = "reserves_cache.hydrate_get_failed",
+                            key, error = %e, "skipping: GET failed"
+                        );
+                        continue;
+                    }
+                };
+
+                let entry: ReservesEntry = match raw.and_then(|s| serde_json::from_str(&s).ok()) {
+                    Some(e) => e,
+                    None => {
+                        warn!(
+                            event = "reserves_cache.hydrate_malformed",
+                            key, "skipping: JSON parse failed or key empty"
+                        );
+                        continue;
+                    }
+                };
+
+                let r0 = match entry.r0.parse::<u128>() {
+                    Ok(v) => U256::from(v),
+                    Err(_) => {
+                        warn!(
+                            event = "reserves_cache.hydrate_bad_r0",
+                            key,
+                            r0 = entry.r0,
+                            "skipping: r0 not a valid u128"
+                        );
+                        continue;
+                    }
+                };
+                let r1 = match entry.r1.parse::<u128>() {
+                    Ok(v) => U256::from(v),
+                    Err(_) => {
+                        warn!(
+                            event = "reserves_cache.hydrate_bad_r1",
+                            key,
+                            r1 = entry.r1,
+                            "skipping: r1 not a valid u128"
+                        );
+                        continue;
+                    }
+                };
+
+                self.insert(pool_addr, r0, r1).await;
+                loaded += 1;
+            }
+
+            cursor = next_cursor;
+            if cursor == 0 {
+                break;
+            }
+        }
+
+        Ok(loaded)
+    }
 }
 
 impl Default for ReservesCache {
@@ -150,8 +268,6 @@ pub struct CycleDefinition {
 pub struct TriangularEngine {
     /// Shared in-memory reserves cache. Populated by `PoolSyncWorker`.
     reserves_cache: Arc<ReservesCache>,
-    /// Shared trading config. Read once per `build_from_impacted_cycles` call.
-    config: Arc<RwLock<Option<TradingConfigState>>>,
     /// Cycle registry: cycle_id → CycleDefinition.
     /// Built from `MVP_CYCLES` at construction time.
     cycle_registry: HashMap<CycleId, CycleDefinition>,
@@ -170,13 +286,11 @@ impl TriangularEngine {
     /// resolution path.
     pub fn new(
         reserves_cache: Arc<ReservesCache>,
-        config: Arc<RwLock<Option<TradingConfigState>>>,
         cycle_seeds: Vec<CycleSeed>,
     ) -> Self {
         let cycle_registry = build_registry_from_seeds(cycle_seeds);
         Self {
             reserves_cache,
-            config,
             cycle_registry,
         }
     }
@@ -189,11 +303,10 @@ impl TriangularEngine {
     /// cycle (skip gracefully — fail-honest, same as cold-cache path in worker).
     pub fn from_mvp_cycles(
         reserves_cache: Arc<ReservesCache>,
-        config: Arc<RwLock<Option<TradingConfigState>>>,
         pool_map: &HashMap<(String, String), Address>,
     ) -> Self {
         let seeds = seeds_from_mvp_cycles(pool_map);
-        Self::new(reserves_cache, config, seeds)
+        Self::new(reserves_cache, seeds)
     }
 
     // -----------------------------------------------------------------------
@@ -203,6 +316,11 @@ impl TriangularEngine {
     /// Evaluate ONLY the cycles in `impact.impacted_cycles`.
     ///
     /// Returns an empty `Vec` immediately when `impacted_cycles.is_empty()`.
+    ///
+    /// `cfg`: live operator config snapshot for the current chain, taken once
+    /// per intent by the orchestrator before calling this method. Pass `None`
+    /// when the orchestrator has no config (observe-only path); evaluation then
+    /// falls back to conservative defaults (no USD pricing, conservative cap).
     ///
     /// For each cycle:
     ///   - Missing from registry → skipped (pool-index not seeded for this cycle).
@@ -214,6 +332,7 @@ impl TriangularEngine {
         &self,
         intent: &RouteIntent,
         impact: &ImpactSet,
+        cfg: Option<&TradingConfigState>,
     ) -> anyhow::Result<Vec<StrategyCandidate>> {
         if impact.impacted_cycles.is_empty() {
             return Ok(vec![]);
@@ -222,11 +341,7 @@ impl TriangularEngine {
         let chain_id = intent.chain_id;
         let tx_hash = intent.tx_hash;
 
-        // Snapshot config once for the call.
-        let cfg_opt: Option<TradingConfigState> = {
-            let guard = self.config.read().await;
-            guard.clone()
-        };
+        let cfg_opt: Option<TradingConfigState> = cfg.cloned();
 
         let mut candidates = Vec::new();
 
@@ -738,7 +853,6 @@ mod tests {
     use shared_rs::contracts::StrategyKind;
     use shared_rs::trading_config::{GasPriceStrategy, TradingConfigState};
     use std::collections::HashMap;
-    use tokio::sync::RwLock;
 
     /// Build a minimal `TradingConfigState` suitable for engine tests.
     fn make_cfg(base_token_price_usd: f64, capital_usd: f64) -> TradingConfigState {
@@ -822,7 +936,6 @@ mod tests {
         reserves: Option<Vec<(Address, U256, U256)>>,
     ) -> (TriangularEngine, Arc<ReservesCache>) {
         let cache = Arc::new(ReservesCache::new());
-        let config = Arc::new(RwLock::new(None::<TradingConfigState>));
 
         let seed = CycleSeed {
             cycle_id: 0,
@@ -832,7 +945,7 @@ mod tests {
             token_outs: [tok_b, tok_c, tok_a],
             swap_in_is_token0: [tok_a < tok_b, tok_b < tok_c, tok_c < tok_a],
         };
-        let engine = TriangularEngine::new(cache.clone(), config, vec![seed]);
+        let engine = TriangularEngine::new(cache.clone(), vec![seed]);
 
         if let Some(rs) = reserves {
             for (pool, r0, r1) in rs {
@@ -848,13 +961,12 @@ mod tests {
     #[tokio::test]
     async fn empty_impacted_cycles_returns_empty() {
         let cache = Arc::new(ReservesCache::new());
-        let config = Arc::new(RwLock::new(None::<TradingConfigState>));
-        let engine = TriangularEngine::new(cache, config, vec![]);
+        let engine = TriangularEngine::new(cache, vec![]);
         let intent = make_intent();
         let impact = ImpactSet::default();
 
         let result = engine
-            .build_from_impacted_cycles(&intent, &impact)
+            .build_from_impacted_cycles(&intent, &impact, None)
             .await
             .expect("must not error");
 
@@ -888,7 +1000,7 @@ mod tests {
         };
 
         let result = engine
-            .build_from_impacted_cycles(&intent, &impact)
+            .build_from_impacted_cycles(&intent, &impact, None)
             .await
             .expect("must not error");
 
@@ -934,7 +1046,7 @@ mod tests {
         };
 
         let result = engine
-            .build_from_impacted_cycles(&intent, &impact)
+            .build_from_impacted_cycles(&intent, &impact, None)
             .await
             .expect("must not error");
 
@@ -1007,7 +1119,7 @@ mod tests {
         };
 
         let result = engine
-            .build_from_impacted_cycles(&intent, &impact)
+            .build_from_impacted_cycles(&intent, &impact, None)
             .await
             .expect("must not error");
 
@@ -1059,8 +1171,6 @@ mod tests {
         // Build a minimal config with WETH price and large capital cap.
         let cfg_state = make_cfg(3000.0, 50_000.0);
 
-        let config = Arc::new(RwLock::new(Some(cfg_state)));
-
         let seed = CycleSeed {
             cycle_id: 0,
             token_a_symbol: "WETH".to_string(),
@@ -1069,7 +1179,7 @@ mod tests {
             token_outs: [tok_b, tok_c, tok_a],
             swap_in_is_token0: [tok_a < tok_b, tok_b < tok_c, tok_c < tok_a],
         };
-        let engine = TriangularEngine::new(cache, config, vec![seed]);
+        let engine = TriangularEngine::new(cache, vec![seed]);
 
         let intent = make_intent();
         let impact = ImpactSet {
@@ -1077,8 +1187,9 @@ mod tests {
             ..Default::default()
         };
 
+        // Pass the config snapshot as a method parameter (Bug 4 fix).
         let result = engine
-            .build_from_impacted_cycles(&intent, &impact)
+            .build_from_impacted_cycles(&intent, &impact, Some(&cfg_state))
             .await
             .expect("must not error");
 
@@ -1161,7 +1272,6 @@ mod tests {
         // Tiny capital: 0.001 USD. Any real profit will exceed 5× this.
         let cfg_state = make_cfg(3000.0, 0.001);
 
-        let config = Arc::new(RwLock::new(Some(cfg_state)));
         let seed = CycleSeed {
             cycle_id: 0,
             token_a_symbol: "WETH".to_string(),
@@ -1170,7 +1280,7 @@ mod tests {
             token_outs: [tok_b, tok_c, tok_a],
             swap_in_is_token0: [tok_a < tok_b, tok_b < tok_c, tok_c < tok_a],
         };
-        let engine = TriangularEngine::new(cache, config, vec![seed]);
+        let engine = TriangularEngine::new(cache, vec![seed]);
 
         let intent = make_intent();
         let impact = ImpactSet {
@@ -1179,7 +1289,7 @@ mod tests {
         };
 
         let result = engine
-            .build_from_impacted_cycles(&intent, &impact)
+            .build_from_impacted_cycles(&intent, &impact, Some(&cfg_state))
             .await
             .expect("must not error");
 
@@ -1236,7 +1346,7 @@ mod tests {
         };
 
         let result = engine
-            .build_from_impacted_cycles(&intent, &impact)
+            .build_from_impacted_cycles(&intent, &impact, None)
             .await
             .expect("must not error");
 
@@ -1298,7 +1408,7 @@ mod tests {
             ..Default::default()
         };
         let result = engine
-            .build_from_impacted_cycles(&intent, &impact)
+            .build_from_impacted_cycles(&intent, &impact, None)
             .await
             .expect("no error");
 
@@ -1310,5 +1420,182 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── ReservesCache::hydrate_from_redis tests ────────────────────────────────
+    // These tests require a live Redis instance. They run on the VPS where
+    // REDIS_URL is set; they are skipped in CI by virtue of the #[ignore] tag.
+    // Rule 00: no mock Redis — these test against real Redis only.
+    //
+    // To run locally: `cargo test -p searcher-rs hydrate -- --ignored`
+    // with REDIS_URL=redis://127.0.0.1:6379 in the environment.
+
+    /// Populate Redis with 3 valid `ReservesEntry` records under chain_id=9999,
+    /// call `hydrate_from_redis`, and assert the cache contains exactly 3 entries.
+    ///
+    /// The pool addresses used are synthetic (low u64 → deterministic) and the
+    /// chain_id 9999 is not used in production, so the test keys do not collide
+    /// with live data.
+    #[tokio::test]
+    #[ignore = "requires live Redis (REDIS_URL env var); run on VPS with `cargo test -- --ignored`"]
+    async fn hydrate_from_redis_populates_cache() {
+        use crate::reserves::{key_pool_reserves, set_reserves, ReservesEntry};
+        let redis_url = std::env::var("REDIS_URL")
+            .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        let client = redis::Client::open(redis_url).expect("redis client");
+        let mut conn = redis::aio::ConnectionManager::new(client)
+            .await
+            .expect("redis connection");
+
+        let chain_id = 9999u64;
+        let pools = [addr(0xAA01), addr(0xAA02), addr(0xAA03)];
+
+        // Write 3 entries.
+        for pool in &pools {
+            let addr_str = format!("0x{:040x}", pool);
+            let entry = ReservesEntry {
+                r0: "1000000000000000000".to_string(), // 1e18
+                r1: "2000000000000000000".to_string(), // 2e18
+                token0_addr: Some(addr_str.clone()),
+                blk: 1,
+                ts: 1,
+            };
+            set_reserves(&mut conn, chain_id, &addr_str, &entry, 120)
+                .await
+                .expect("set_reserves");
+        }
+
+        // Hydrate.
+        let cache = Arc::new(ReservesCache::new());
+        let loaded = cache
+            .hydrate_from_redis(&mut conn, chain_id)
+            .await
+            .expect("hydrate_from_redis must not error");
+
+        assert_eq!(loaded, 3, "must load exactly 3 entries from Redis");
+
+        // Verify all 3 pools are in the cache.
+        for pool in &pools {
+            let hit = cache.get(pool).await;
+            assert!(
+                hit.is_some(),
+                "pool {pool:?} must be in the cache after hydration"
+            );
+            let (r0, r1) = hit.unwrap();
+            assert_eq!(
+                r0,
+                ethers::types::U256::from(1_000_000_000_000_000_000u128),
+                "r0 must be 1e18"
+            );
+            assert_eq!(
+                r1,
+                ethers::types::U256::from(2_000_000_000_000_000_000u128),
+                "r1 must be 2e18"
+            );
+        }
+
+        // Cleanup: delete test keys so the next run starts clean.
+        for pool in &pools {
+            let addr_str = format!("0x{:040x}", pool);
+            let key = key_pool_reserves(chain_id, &addr_str);
+            let _: () = redis::cmd("DEL")
+                .arg(&key)
+                .query_async(&mut conn)
+                .await
+                .expect("DEL cleanup");
+        }
+    }
+
+    /// Write one valid entry and one entry with a garbage JSON value.
+    /// `hydrate_from_redis` must skip the malformed entry and return `Ok(1)`.
+    #[tokio::test]
+    #[ignore = "requires live Redis (REDIS_URL env var); run on VPS with `cargo test -- --ignored`"]
+    async fn hydrate_skips_malformed_entries() {
+        use crate::reserves::{key_pool_reserves, set_reserves, ReservesEntry};
+        use redis::AsyncCommands;
+
+        let redis_url = std::env::var("REDIS_URL")
+            .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        let client = redis::Client::open(redis_url).expect("redis client");
+        let mut conn = redis::aio::ConnectionManager::new(client)
+            .await
+            .expect("redis connection");
+
+        let chain_id = 9998u64;
+        let good_pool = addr(0xBB01);
+        let bad_pool_addr_str = format!("0x{:040x}", addr(0xBB02));
+        let good_pool_addr_str = format!("0x{:040x}", good_pool);
+
+        // Write one good entry.
+        let good_entry = ReservesEntry {
+            r0: "500000000000000000".to_string(),
+            r1: "500000000000000000".to_string(),
+            token0_addr: None,
+            blk: 2,
+            ts: 2,
+        };
+        set_reserves(&mut conn, chain_id, &good_pool_addr_str, &good_entry, 120)
+            .await
+            .expect("set good entry");
+
+        // Write one malformed (not valid JSON for ReservesEntry) entry directly.
+        let bad_key = key_pool_reserves(chain_id, &bad_pool_addr_str);
+        let _: () = conn
+            .set_ex(&bad_key, "NOT_VALID_JSON###", 120u64)
+            .await
+            .expect("set bad entry");
+
+        // Hydrate.
+        let cache = Arc::new(ReservesCache::new());
+        let loaded = cache
+            .hydrate_from_redis(&mut conn, chain_id)
+            .await
+            .expect("hydrate_from_redis must not error even with malformed entry");
+
+        assert_eq!(loaded, 1, "must load exactly 1 valid entry, skip 1 malformed");
+
+        // Good pool in cache, bad pool not in cache.
+        assert!(
+            cache.get(&good_pool).await.is_some(),
+            "good pool must be in cache"
+        );
+        assert!(
+            cache.get(&addr(0xBB02)).await.is_none(),
+            "malformed pool must NOT be in cache"
+        );
+
+        // Cleanup.
+        for key in &[
+            key_pool_reserves(chain_id, &good_pool_addr_str),
+            bad_key,
+        ] {
+            let _: () = redis::cmd("DEL")
+                .arg(key)
+                .query_async(&mut conn)
+                .await
+                .expect("DEL cleanup");
+        }
+    }
+
+    /// Empty Redis (no keys for chain 9997) → `hydrate_from_redis` must return `Ok(0)`.
+    #[tokio::test]
+    #[ignore = "requires live Redis (REDIS_URL env var); run on VPS with `cargo test -- --ignored`"]
+    async fn hydrate_returns_zero_on_empty_redis() {
+        let redis_url = std::env::var("REDIS_URL")
+            .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        let client = redis::Client::open(redis_url).expect("redis client");
+        let mut conn = redis::aio::ConnectionManager::new(client)
+            .await
+            .expect("redis connection");
+
+        // chain_id 9997 is unused — no keys exist for it under the reserves prefix.
+        let chain_id = 9997u64;
+        let cache = Arc::new(ReservesCache::new());
+        let loaded = cache
+            .hydrate_from_redis(&mut conn, chain_id)
+            .await
+            .expect("hydrate_from_redis must return Ok(0) on empty Redis");
+
+        assert_eq!(loaded, 0, "empty Redis must produce 0 loaded entries");
     }
 }

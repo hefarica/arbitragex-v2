@@ -44,8 +44,6 @@
 use crate::engines::StrategyCandidate;
 use crate::strategy_label::StrategyLabel;
 use shared_rs::trading_config::TradingConfigState;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::debug;
 
 // ---------------------------------------------------------------------------
@@ -106,18 +104,18 @@ const BALANCER_CHAINS: &[u64] = &[1, 10, 42161, 8453, 137];
 // FlashloanEngine
 // ---------------------------------------------------------------------------
 
-/// Capital wrapper engine. Stateless beyond the config reference.
+/// Capital wrapper engine. Stateless — no stored config.
+///
+/// The operator config is received as a method parameter on each call so the
+/// engine always sees the freshest snapshot without lock contention.
 ///
 /// Constructed once at boot and `Arc`-cloned into the orchestrator.
-pub struct FlashloanEngine {
-    /// Shared trading config for chain_id and capital sizing.
-    config: Arc<RwLock<Option<TradingConfigState>>>,
-}
+pub struct FlashloanEngine {}
 
 impl FlashloanEngine {
     /// Constructs a new `FlashloanEngine`.
-    pub fn new(config: Arc<RwLock<Option<TradingConfigState>>>) -> Self {
-        Self { config }
+    pub fn new() -> Self {
+        Self {}
     }
 
     // -----------------------------------------------------------------------
@@ -131,23 +129,17 @@ impl FlashloanEngine {
     /// - Candidates with `gross_profit_usd = None` → skipped (R8: no fabrication).
     /// - Remaining: wrapped if provider available + net > 0.
     ///
-    /// Note: this is a synchronous function (no I/O). It reads config via
-    /// the `Arc<RwLock<...>>` by blocking on a future — safe in tests.
-    /// The async version would `await` the read; for phase 10 we use a
-    /// `tokio::runtime::Handle::current().block_on(...)` pattern in tests
-    /// and expose an async wrapper `wrap_profitable_routes_async` for
-    /// production use.
+    /// `cfg`: live operator config snapshot (taken once per intent by the
+    /// orchestrator before calling this method). `None` = no config for this
+    /// chain — borrow-amount estimation falls back to the gross_profit × 20
+    /// proxy, which is conservative and R8-correct.
     pub fn wrap_profitable_routes(
         &self,
         base_candidates: &[StrategyCandidate],
         chain_id: u64,
+        cfg: Option<&TradingConfigState>,
     ) -> Vec<StrategyCandidate> {
-        // Read config synchronously (the read lock is uncontended here — the
-        // engine does no async I/O, so this will not block in practice).
-        let cfg_opt: Option<TradingConfigState> = {
-            // Use try_read to avoid blocking; fall back to None if locked.
-            self.config.try_read().ok().and_then(|g| g.clone())
-        };
+        let cfg_opt: Option<TradingConfigState> = cfg.cloned();
 
         let mut out = Vec::new();
 
@@ -215,6 +207,12 @@ impl FlashloanEngine {
         }
 
         out
+    }
+}
+
+impl Default for FlashloanEngine {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -392,8 +390,6 @@ mod tests {
     use prioritization_spine::route_plan::{RouteLeg, RoutePlan};
     use prioritization_spine::types::OpportunityCandidate;
     use shared_rs::contracts::{Opportunity, StrategyKind};
-    use std::sync::Arc;
-    use tokio::sync::RwLock;
     use uuid::Uuid;
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -497,7 +493,7 @@ mod tests {
     }
 
     fn make_engine() -> FlashloanEngine {
-        FlashloanEngine::new(Arc::new(RwLock::new(None)))
+        FlashloanEngine::new()
     }
 
     // WETH mainnet address.
@@ -515,7 +511,7 @@ mod tests {
             1.0,
             WETH,
         );
-        let result = engine.wrap_profitable_routes(&[base], 1);
+        let result = engine.wrap_profitable_routes(&[base], 1, None);
         assert!(
             result.is_empty(),
             "rejected base candidates must not be wrapped"
@@ -534,7 +530,7 @@ mod tests {
             1.0,
             WETH,
         );
-        let result = engine.wrap_profitable_routes(&[base], 1);
+        let result = engine.wrap_profitable_routes(&[base], 1, None);
         assert!(
             result.is_empty(),
             "base with None gross_profit_usd must not be wrapped (R8)"
@@ -549,7 +545,7 @@ mod tests {
         // Base candidate: $50 gross, borrowing 1.0 WETH.
         // Balancer (mainnet, chain 1) → 0 bps fee → net = $50.
         let base = make_candidate(StrategyLabel::DexArbV2V2, None, Some(50.0), 1.0, WETH);
-        let result = engine.wrap_profitable_routes(&[base], 1);
+        let result = engine.wrap_profitable_routes(&[base], 1, None);
 
         // On mainnet with WETH and no config, select_provider picks DyDxSolo (0 fee).
         // net_after_flash = 50.0 - 0.0 = 50.0 > 0 → wrapped.
@@ -700,7 +696,7 @@ mod tests {
         // flashloan_negative_after_fee:
         let engine = make_engine();
         let base = make_candidate(StrategyLabel::DexArbV2V2, None, Some(1.0), 1.0, WETH);
-        let wrapped = engine.wrap_profitable_routes(&[base], 999_999);
+        let wrapped = engine.wrap_profitable_routes(&[base], 999_999, None);
         assert_eq!(wrapped.len(), 1);
         assert_eq!(
             wrapped[0].rejection_reason.as_deref(),
@@ -715,7 +711,7 @@ mod tests {
     fn rejects_when_no_provider() {
         let engine = make_engine();
         let base = make_candidate(StrategyLabel::DexArbV2V2, None, Some(10.0), 1.0, WETH);
-        let result = engine.wrap_profitable_routes(&[base], 999_999);
+        let result = engine.wrap_profitable_routes(&[base], 999_999, None);
         assert_eq!(result.len(), 1, "must emit one rejected candidate");
         assert_eq!(
             result[0].rejection_reason.as_deref(),
@@ -751,7 +747,7 @@ mod tests {
     fn base_strategy_preserved() {
         let engine = make_engine();
         let base = make_candidate(StrategyLabel::DexArbV2V3, None, Some(50.0), 1.0, WETH);
-        let result = engine.wrap_profitable_routes(&[base], 1);
+        let result = engine.wrap_profitable_routes(&[base], 1, None);
         assert!(!result.is_empty(), "must produce a wrapped candidate");
         let found = result
             .iter()
@@ -770,7 +766,7 @@ mod tests {
     fn label_is_flashloan_arb_on_wrap() {
         let engine = make_engine();
         let base = make_candidate(StrategyLabel::DexArbV2V2, None, Some(50.0), 1.0, WETH);
-        let result = engine.wrap_profitable_routes(&[base], 1);
+        let result = engine.wrap_profitable_routes(&[base], 1, None);
         assert!(!result.is_empty());
         let accepted: Vec<_> = result
             .iter()
@@ -792,7 +788,7 @@ mod tests {
     fn route_plan_strategy_kind_overridden() {
         let engine = make_engine();
         let base = make_candidate(StrategyLabel::DexArbV2V2, None, Some(50.0), 1.0, WETH);
-        let result = engine.wrap_profitable_routes(&[base], 1);
+        let result = engine.wrap_profitable_routes(&[base], 1, None);
         let accepted: Vec<_> = result
             .iter()
             .filter(|c| c.rejection_reason.is_none())

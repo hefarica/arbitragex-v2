@@ -168,9 +168,29 @@ async fn build_orchestrator(
     }
 
     let reserves_cache = Arc::new(ReservesCache::new());
-    let config = Arc::new(tokio::sync::RwLock::new(
-        None::<shared_rs::trading_config::TradingConfigState>,
-    ));
+
+    // Bug 3 fix: hydrate ReservesCache from Redis BEFORE building the orchestrator.
+    // This ensures engines see real reserves on the first intents rather than cold-cache.
+    // Best-effort: partial or empty hydration is R8 fail-honest (engines emit
+    // reserves_cache_miss for pools not yet in cache rather than fabricating data).
+    match reserves_cache.hydrate_from_redis(&mut redis, chain_id).await {
+        Ok(n) => {
+            info!(
+                event = "scanner.reserves_cache_hydrated",
+                chain_id,
+                entries = n,
+                "ReservesCache hydrated from Redis at boot"
+            );
+        }
+        Err(e) => {
+            warn!(
+                event = "scanner.reserves_cache_hydrate_failed",
+                chain_id,
+                error = %e,
+                "ReservesCache hydration failed; starting cold (R8 fail-honest)"
+            );
+        }
+    }
 
     let state_projector = Arc::new(StateProjector::new(
         reserves_cache.clone(),
@@ -179,19 +199,21 @@ async fn build_orchestrator(
 
     let size_optimizer = Arc::new(SizeOptimizer::new(state_projector.clone()));
 
+    // Bug 4 fix: engines no longer store Arc<RwLock<Option<TradingConfigState>>>.
+    // The orchestrator snapshots config once per intent and passes it as a
+    // method parameter to every engine call.
     let dex_engine = Arc::new(DexEngine::new(
-        config.clone(),
-        None, // v3_provider: Phase 15
+        reserves_cache.clone(), // Bug 2+3 fix: real reserves from cache
+        None,                   // v3_provider: Phase 15
         Some(state_projector.clone()),
     ));
 
     let tri_engine = Arc::new(TriangularEngine::new(
         reserves_cache,
-        config.clone(),
         vec![], // seeds: provided via MVP_CYCLES in from_registry below
     ));
 
-    let fl_engine = Arc::new(FlashloanEngine::new(config.clone()));
+    let fl_engine = Arc::new(FlashloanEngine::new());
 
     // Phase 11: LiquidationEngine backed by a fresh LendingPositionIndexer.
     // The indexer starts empty; `liquidation_worker` and future event-based
@@ -301,14 +323,28 @@ async fn pool_sync_watcher(
         ticker.tick().await;
 
         // Query pools added after last_id.
+        // Join shape matches ImpactIndex::from_registry (load_pools_from_pg) exactly:
+        //   pools → factories → dexes (for protocol_type) → tokens×2 (for token addresses).
+        // Column aliases are kept identical to the boot-time loader to share the same
+        // row-parsing logic and ensure the impact index stays consistent.
         let rows: Vec<(i64, String, String, String, String, Option<i32>)> =
             match sqlx::query_as::<_, (i64, String, String, String, String, Option<i32>)>(
-                r#"SELECT p.id, p.address, p.protocol_type, p.token0, p.token1, p.fee_bps
-               FROM pools p
-               WHERE p.chain_id = $1
-                 AND p.id > $2
-               ORDER BY p.id ASC
-               LIMIT 500"#,
+                r#"SELECT
+                     p.id,
+                     p.address,
+                     d.protocol_type,
+                     t0.address AS token0_addr,
+                     t1.address AS token1_addr,
+                     p.fee_tier
+                   FROM pools p
+                   JOIN factories f  ON f.id = p.factory_id
+                   JOIN dexes    d   ON d.id = f.dex_id
+                   JOIN tokens   t0  ON t0.id = p.token0_id
+                   JOIN tokens   t1  ON t1.id = p.token1_id
+                   WHERE p.chain_id = $1
+                     AND p.id > $2
+                   ORDER BY p.id ASC
+                   LIMIT 500"#,
             )
             .bind(chain_id as i64)
             .bind(last_id)
@@ -348,10 +384,14 @@ async fn pool_sync_watcher(
                 Ok(a) => a,
                 Err(_) => continue,
             };
-            let protocol_type = match proto_str.as_str() {
-                "v2" | "uniswap_v2" | "uniswap-v2" => ProtocolType::V2,
-                "v3" | "uniswap_v3" | "uniswap-v3" => ProtocolType::V3,
-                _ => ProtocolType::V2,
+            // Use the same mapping as impact_index::parse_protocol_type so the
+            // watcher and boot-time loader treat dexes.protocol_type strings identically.
+            let protocol_type = match proto_str.to_ascii_uppercase().as_str() {
+                "UNISWAP_V2" | "V2" => ProtocolType::V2,
+                "UNISWAP_V3" | "V3" => ProtocolType::V3,
+                "CURVE" => ProtocolType::Curve,
+                "BALANCER" => ProtocolType::Balancer,
+                _ => ProtocolType::Unknown,
             };
             let pool_ref = PoolRef {
                 chain_id,

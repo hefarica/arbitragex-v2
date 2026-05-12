@@ -205,13 +205,27 @@ impl Orchestrator {
             impacted_cycles = impact.impacted_cycles.len(),
         );
 
-        // ── Step 4: fan out to engines ───────────────────────────────────
+        // ── Step 4: snapshot config ONCE per intent, before engine fan-out ──
+        // Engines receive the snapshot as a method parameter (Bug 4 fix):
+        // no stored Arc<RwLock<Option<...>>> on each engine struct.
+        // When config is None: continue in observe-only mode (engines receive
+        // None, fall back to conservative/no-USD-pricing defaults, R8 honest).
+        let cfg_snapshot: Option<TradingConfigState> =
+            self.ctx.config_provider.snapshot(chain_id).await;
+        // Emit metric if no config (operator visibility, not a crash).
+        if cfg_snapshot.is_none() {
+            ENGINE_ERRORS_TOTAL
+                .with_label_values(&[&chain_str, "all", "no_trading_config"])
+                .inc();
+        }
+
+        // ── Step 5: fan out to engines ───────────────────────────────────
 
         // DexEngine (Phase 8 — live).
         let dex_candidates = match self
             .ctx
             .dex_engine
-            .build_from_impacted_pairs(&intent, &impact)
+            .build_from_impacted_pairs(&intent, &impact, cfg_snapshot.as_ref())
             .await
         {
             Ok(v) => {
@@ -243,7 +257,7 @@ impl Orchestrator {
         let tri_candidates = match self
             .ctx
             .triangular_engine
-            .build_from_impacted_cycles(&intent, &impact)
+            .build_from_impacted_cycles(&intent, &impact, cfg_snapshot.as_ref())
             .await
         {
             Ok(v) => {
@@ -275,7 +289,7 @@ impl Orchestrator {
         let liq_candidates = match self
             .ctx
             .liquidation_engine
-            .build_from_lending_impact(&intent, &impact)
+            .build_from_lending_impact(&intent, &impact, cfg_snapshot.as_ref())
             .await
         {
             Ok(v) => {
@@ -315,7 +329,7 @@ impl Orchestrator {
             let wrapped = self
                 .ctx
                 .flashloan_engine
-                .wrap_profitable_routes(&base_candidates, chain_id);
+                .wrap_profitable_routes(&base_candidates, chain_id, cfg_snapshot.as_ref());
             // Count flashloan candidates — label comes from the candidate itself.
             for c in &wrapped {
                 CANDIDATES_TOTAL
@@ -333,13 +347,10 @@ impl Orchestrator {
             flash_wrap_count = flash_candidates.len(),
         );
 
-        // ── Step 5: snapshot config once per intent ────────────────────────
-        // The `TradingConfigState` is owned here so `ConfigAwareEvaluator`
-        // can borrow it for the entire candidate loop without lifetime issues.
-        let cfg_snapshot: Option<TradingConfigState> =
-            self.ctx.config_provider.snapshot(chain_id).await;
-
         // ── Step 6: size + evaluate + emit each candidate ─────────────────
+        // cfg_snapshot was already taken before engine fan-out (Step 4) so
+        // the evaluator uses the same snapshot the engines used — consistent
+        // within one intent's processing window.
         // For each candidate: run size_optimizer → update profit fields or
         // emit as rejected if optimizer returns None. Then evaluate + emit.
         // Process base candidates first, then flashloan-wrapped variants.
@@ -593,7 +604,6 @@ mod tests {
     use prioritization_spine::types::OpportunityCandidate;
     use shared_rs::contracts::Opportunity;
     use std::sync::Arc;
-    use tokio::sync::RwLock;
     use uuid::Uuid;
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -820,9 +830,11 @@ mod tests {
         assert_eq!(impact.impacted_pools.len(), 2);
 
         // Build dex_engine directly and verify it produces candidates.
-        let engine = DexEngine::new(Arc::new(RwLock::new(None)), None, None);
+        // V2/V2 pair with empty reserves cache → reserves_cache_miss rejections, which
+        // are still candidates (rejected, but candidates). One per pair combination.
+        let engine = DexEngine::new(Arc::new(ReservesCache::new()), None, None);
         let candidates = engine
-            .build_from_impacted_pairs(&intent, &impact)
+            .build_from_impacted_pairs(&intent, &impact, None)
             .await
             .expect("dex_engine must not error");
 
@@ -884,9 +896,6 @@ mod tests {
     #[tokio::test]
     async fn triangular_candidate_fanned_through() {
         let cache = Arc::new(ReservesCache::new());
-        let config = Arc::new(RwLock::new(
-            None::<shared_rs::trading_config::TradingConfigState>,
-        ));
 
         // Cycle with trivial reserves (equal → spot ≤ 1 → rejected, but still a candidate).
         let tok_a = addr(0x10);
@@ -910,7 +919,7 @@ mod tests {
             swap_in_is_token0: [tok_a < tok_b, tok_b < tok_c, tok_c < tok_a],
         };
 
-        let tri_engine = Arc::new(TriangularEngine::new(cache, config.clone(), vec![seed]));
+        let tri_engine = Arc::new(TriangularEngine::new(cache, vec![seed]));
 
         // Build an ImpactSet with cycle_id = 0 impacted.
         use crate::impact_index::ImpactSet;
@@ -921,7 +930,7 @@ mod tests {
 
         let intent = make_intent(tok_a, tok_b);
         let candidates = tri_engine
-            .build_from_impacted_cycles(&intent, &impact)
+            .build_from_impacted_cycles(&intent, &impact, None)
             .await
             .expect("triangular engine must not error");
 
@@ -943,10 +952,7 @@ mod tests {
 
     #[test]
     fn flashloan_wrap_fanned_through() {
-        let config = Arc::new(RwLock::new(
-            None::<shared_rs::trading_config::TradingConfigState>,
-        ));
-        let fl_engine = FlashloanEngine::new(config);
+        let fl_engine = FlashloanEngine::new();
 
         // Base candidate: DexArbV2V2, $50 gross, WETH on mainnet.
         let base = make_candidate(StrategyLabel::DexArbV2V2, None);
@@ -955,7 +961,7 @@ mod tests {
         base.gross_profit_usd = Some(50.0);
         base.route_plan.legs[0].token_in = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string();
 
-        let wrapped = fl_engine.wrap_profitable_routes(&[base], 1);
+        let wrapped = fl_engine.wrap_profitable_routes(&[base], 1, None);
 
         // On mainnet with WETH → DyDxSolo (0 bps fee) → net = $50 → accepted.
         let accepted: Vec<_> = wrapped

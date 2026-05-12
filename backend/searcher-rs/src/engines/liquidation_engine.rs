@@ -47,6 +47,7 @@ use ethers::types::H256;
 use prioritization_spine::route_plan::{RouteLeg, RoutePlan};
 use prioritization_spine::types::OpportunityCandidate;
 use shared_rs::contracts::Opportunity;
+use shared_rs::trading_config::TradingConfigState;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
@@ -98,6 +99,7 @@ impl LiquidationEngine {
         &self,
         intent: &RouteIntent,
         impact: &ImpactSet,
+        _cfg: Option<&TradingConfigState>,
     ) -> anyhow::Result<Vec<StrategyCandidate>> {
         // ── Empty-watchlist transparency (R8) ────────────────────────────────
         if impact.impacted_lending_positions.is_empty() {

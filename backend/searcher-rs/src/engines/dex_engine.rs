@@ -32,20 +32,20 @@
 //! | `non_positive_spread`     | spread <= 0 after CPMM math                 |
 
 use crate::amm_math;
+use crate::engines::triangular_engine::ReservesCache;
 use crate::engines::StrategyCandidate;
 use crate::impact_index::{ImpactSet, PoolRef, TokenPairKey};
 use crate::route_intent::{ProtocolType, RouteIntent};
 use crate::state_projector::StateProjector;
 use crate::strategy_label::StrategyLabel;
 use chrono::Utc;
-use ethers::types::{H256, U256};
+use ethers::types::{Address, H256, U256};
 use prioritization_spine::route_plan::{RouteLeg, RoutePlan};
 use prioritization_spine::types::OpportunityCandidate;
 use shared_rs::contracts::{Opportunity, StrategyKind};
 use shared_rs::rpc_failover::AlloyHttpProvider;
 use shared_rs::trading_config::TradingConfigState;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::debug;
 use uuid::Uuid;
 
@@ -58,10 +58,15 @@ use uuid::Uuid;
 /// Constructed once at boot and `Arc`-cloned into the orchestrator.
 /// All internal state is either stateless helpers or `Arc`-wrapped shared
 /// data — no `Mutex` on the hot path.
+///
+/// The operator config is NOT stored here — it is received as a method
+/// parameter on each call so the engine always sees the freshest snapshot
+/// without lock contention (Bug 4 fix).
 pub struct DexEngine {
-    /// Shared trading config (operator tunable thresholds, allowlist, etc.).
-    /// Hot-reloaded by `TradingConfigClient`; the engine reads it via `Arc<RwLock<>>`.
-    pub config: Arc<RwLock<Option<TradingConfigState>>>,
+    /// Shared in-memory reserves cache (hydrated from Redis at boot and on
+    /// every `pool_sync_worker` tick). Used by `build_from_impacted_pairs` to
+    /// fetch real V2 reserves instead of fabricating unit reserves (Bug 2 fix).
+    pub reserves_cache: Arc<ReservesCache>,
     /// Optional alloy HTTP provider for V3 Quoter calls.
     /// `None` → V3 pools produce `rejection_reason = "no_v3_rpc"` candidates
     /// (R8 fail-honest: never fabricate a V3 quote without an RPC).
@@ -74,16 +79,16 @@ pub struct DexEngine {
 impl DexEngine {
     /// Constructs a new `DexEngine`.
     ///
-    /// - `config`: shared live trading config (read-only for the engine).
+    /// - `reserves_cache`: shared in-memory reserves cache (populated from Redis).
     /// - `v3_provider`: optional alloy HTTP provider for V3 multicall quoting.
     /// - `state_projector`: optional StateProjector for V3 virtual quotes (Phase 12).
     pub fn new(
-        config: Arc<RwLock<Option<TradingConfigState>>>,
+        reserves_cache: Arc<ReservesCache>,
         v3_provider: Option<Arc<AlloyHttpProvider>>,
         state_projector: Option<Arc<StateProjector>>,
     ) -> Self {
         Self {
-            config,
+            reserves_cache,
             v3_provider,
             state_projector,
         }
@@ -111,19 +116,20 @@ impl DexEngine {
     /// - `gross_profit_usd = None` when either token cannot be priced.
     /// - `net_expected_profit_usd = None` (always — evaluator fills later).
     /// - `pool_address` on every `RouteLeg` is `Some(...)`.
+    ///
+    /// `cfg`: live operator config snapshot taken once per intent by the
+    /// orchestrator before calling this method. `None` = no config for this
+    /// chain — USD pricing falls back to `None` (R8 fail-honest).
     pub async fn build_from_impacted_pairs(
         &self,
         intent: &RouteIntent,
         impact: &ImpactSet,
+        cfg: Option<&TradingConfigState>,
     ) -> anyhow::Result<Vec<StrategyCandidate>> {
         let chain_id = intent.chain_id;
         let tx_hash = intent.tx_hash;
 
-        // Snapshot config once for the entire call (lock held as long as needed).
-        let cfg_opt: Option<TradingConfigState> = {
-            let guard = self.config.read().await;
-            guard.clone()
-        };
+        let cfg_opt: Option<TradingConfigState> = cfg.cloned();
 
         // Group impacted pools by canonical token pair.
         let mut pair_to_pools: std::collections::HashMap<TokenPairKey, Vec<&PoolRef>> =
@@ -174,18 +180,89 @@ impl DexEngine {
                     // Determine strategy label from protocol types.
                     let label = classify_label(pool_a.protocol_type, pool_b.protocol_type);
 
-                    // Compute spread for same-pair pools.
-                    // For V3 pools: attempt a virtual quote via state_projector
-                    // if available. Fall back to None (R8 honest) if not.
+                    // Fetch real reserves from ReservesCache for V2 pools.
+                    // Missing reserves → emit reserves_cache_miss rejection (R8 honest,
+                    // never fabricate). The SizeOptimizer and evaluator receive only
+                    // candidates where data is available.
+                    //
+                    // For V3 pools: attempt a virtual quote via state_projector.
                     let probe_amount = U256::from(10u128).pow(U256::from(18u32));
 
-                    let (gross_spread_units, can_price_v2) =
-                        compute_spread_v2_only(pool_a, pool_b, probe_amount);
+                    let a_is_v2 = matches!(
+                        pool_a.protocol_type,
+                        ProtocolType::V2 | ProtocolType::Curve | ProtocolType::Balancer
+                    );
+                    let b_is_v2 = matches!(
+                        pool_b.protocol_type,
+                        ProtocolType::V2 | ProtocolType::Curve | ProtocolType::Balancer
+                    );
+
+                    // Fetch reserves for V2 pools. Miss on either → reserves_cache_miss.
+                    let reserves_a: Option<(U256, U256)> = if a_is_v2 {
+                        self.reserves_cache.get(&pool_a.address).await
+                    } else {
+                        None // V3: handled via state_projector below
+                    };
+                    let reserves_b: Option<(U256, U256)> = if b_is_v2 {
+                        self.reserves_cache.get(&pool_b.address).await
+                    } else {
+                        None
+                    };
+
+                    // If both pools are V2 and EITHER has missing reserves → reserves_cache_miss.
+                    if a_is_v2 && b_is_v2 && (reserves_a.is_none() || reserves_b.is_none()) {
+                        let (opp, cand, rp) =
+                            build_rejected_opportunity(chain_id, tx_hash, pool_a, pool_b, label);
+                        candidates.push(StrategyCandidate {
+                            label,
+                            opportunity: opp,
+                            candidate: cand,
+                            route_plan: rp,
+                            gross_profit_usd: None,
+                            net_expected_profit_usd: None,
+                            rejection_reason: Some("reserves_cache_miss".to_owned()),
+                            source_intent_hash: tx_hash,
+                            base_strategy: None,
+                        });
+                        continue;
+                    }
+
+                    // Compute spread using real reserves.
+                    let (gross_spread_units, can_price_v2) = if a_is_v2
+                        && b_is_v2
+                        && reserves_a.is_some()
+                        && reserves_b.is_some()
+                    {
+                        // Both V2: reserves guaranteed Some by the guard above.
+                        // Use if-let to satisfy clippy::unwrap_used.
+                        let Some(ra) = reserves_a else {
+                            // unreachable — guarded above, but required for exhaustiveness
+                            continue;
+                        };
+                        let Some(rb) = reserves_b else {
+                            continue;
+                        };
+                        let (r_in_a, r_out_a) = orient_reserves(ra, pool_a, intent);
+                        let (r_in_b, r_out_b) = orient_reserves(rb, pool_b, intent);
+                        let fee_a = pool_a.fee_bps.unwrap_or(30);
+                        let fee_b = pool_b.fee_bps.unwrap_or(30);
+                        let out_a =
+                            amm_math::v2_amount_out(probe_amount, r_in_a, r_out_a, fee_a);
+                        let out_b =
+                            amm_math::v2_amount_out(probe_amount, r_in_b, r_out_b, fee_b);
+                        let spread = if out_a >= out_b {
+                            out_a.saturating_sub(out_b)
+                        } else {
+                            out_b.saturating_sub(out_a)
+                        };
+                        (spread, true)
+                    } else {
+                        // At least one pool is V3 — cannot compute spread here without projector.
+                        (U256::zero(), false)
+                    };
 
                     // For V3 paths: try to get a virtual quote via state_projector.
-                    // The probe amount is 1 unit (same as scanner pattern).
                     let v3_gross_usd: Option<f64> = if !can_price_v2 {
-                        // At least one pool is V3. Try the projector.
                         self.compute_v3_gross_usd(pool_a, pool_b, probe_amount, &cfg_opt, intent)
                             .await
                     } else {
@@ -196,34 +273,21 @@ impl DexEngine {
                     let gross_profit_usd: Option<f64> = if can_price_v2 {
                         compute_gross_usd(&gross_spread_units, pool_a, pool_b, &cfg_opt)
                     } else {
-                        // V3 path: use projector result (may still be None — R8 honest).
                         v3_gross_usd
                     };
 
-                    // R8: if gross spread is non-positive (V2 path), emit a rejection.
-                    // For V3 paths, gross_profit_usd drives the check.
-                    if can_price_v2 && gross_spread_units.is_zero() {
-                        let (opp, cand, rp) =
-                            build_rejected_opportunity(chain_id, tx_hash, pool_a, pool_b, label);
-                        candidates.push(StrategyCandidate {
-                            label,
-                            opportunity: opp,
-                            candidate: cand,
-                            route_plan: rp,
-                            gross_profit_usd: None,
-                            net_expected_profit_usd: None,
-                            rejection_reason: Some("non_positive_spread".to_owned()),
-                            source_intent_hash: tx_hash,
-                            base_strategy: None,
-                        });
-                        continue;
-                    }
+                    // EMIT the candidate — the SizeOptimizer decides final profitability.
+                    // We no longer pre-reject V2/V2 pairs with spread=0 at this point.
+                    // A spread=0 with real reserves is an honest equilibrium market reading;
+                    // the SizeOptimizer will reject with size_optimizer_no_profit if costs
+                    // exceed gross profit. R8 fail-honest: emit honest data, don't reject
+                    // prematurely based on a unit-reserves approximation.
+                    //
+                    // Exception: single-pool (handled above). V3 with no projector (below).
 
-                    // R8: if both tokens unpriceable → no_price_oracle rejection.
-                    if gross_profit_usd.is_none() && cfg_opt.is_some() {
-                        // Config is present but we still can't price: oracle gap.
-                        // Only emit this rejection if we actually have a config
-                        // (if config is None, None is expected and not a gap).
+                    // R8: if both tokens unpriceable AND config present → no_price_oracle.
+                    if gross_profit_usd.is_none() && cfg_opt.is_some() && !can_price_v2 {
+                        // Config present but no V3 projector and both pools need quoting.
                         let (opp, cand, rp) =
                             build_rejected_opportunity(chain_id, tx_hash, pool_a, pool_b, label);
                         candidates.push(StrategyCandidate {
@@ -338,10 +402,11 @@ impl DexEngine {
         }
     }
 
-    /// Get amount_out for `probe_amount` of token_in from a pool.
+    /// Get amount_out for `probe_amount` of token_in from a V3 pool using
+    /// the state_projector's virtual quote capability.
     ///
-    /// - V3 pools: uses `state_projector.project_v3_quote`.
-    /// - V2 pools: uses v2_amount_out with canonical unit reserves.
+    /// V2 pools are handled directly in `build_from_impacted_pairs` with
+    /// real reserves from `ReservesCache`. This method is called only for V3.
     async fn get_pool_quote(
         &self,
         pool: &PoolRef,
@@ -349,11 +414,11 @@ impl DexEngine {
         projector: &StateProjector,
         intent: &RouteIntent,
     ) -> Option<U256> {
+        // Only called for V3 pools. V2 uses real reserves in the caller.
         if matches!(pool.protocol_type, ProtocolType::V3) {
-            // Determine direction: zero_for_one = (token_in is token0).
             let intent_token_in = intent.legs.first().map(|l| l.token_in).unwrap_or_default();
             let zero_for_one =
-                intent_token_in == pool.token0 || intent_token_in == ethers::types::Address::zero();
+                intent_token_in == pool.token0 || intent_token_in == Address::zero();
             let sp_pool = crate::state_projector::PoolRef {
                 address: pool.address,
                 token0: pool.token0,
@@ -365,18 +430,9 @@ impl DexEngine {
                 .await
                 .map(|q| q.amount_out)
         } else {
-            // V2: use canonical unit reserves as a structural probe.
-            // Real reserves come from size_optimizer — this is a detection signal only.
-            let reserve = U256::from(10u128)
-                .pow(U256::from(18u32))
-                .saturating_mul(U256::from(1_000u32));
-            let fee = pool.fee_bps.unwrap_or(30);
-            let out = amm_math::v2_amount_out(probe_amount, reserve, reserve, fee);
-            if out.is_zero() {
-                None
-            } else {
-                Some(out)
-            }
+            // V2 pools should never reach here — handled via ReservesCache in caller.
+            // Return None (R8: no fabrication).
+            None
         }
     }
 }
@@ -404,84 +460,33 @@ pub fn classify_label(source: ProtocolType, other: ProtocolType) -> StrategyLabe
 }
 
 // ---------------------------------------------------------------------------
-// Spread computation
+// Reserves orientation
 // ---------------------------------------------------------------------------
 
-/// Compute a V2-only spread between two pools for the given token pair.
+/// Orient canonical (reserve0, reserve1) into (reserve_in, reserve_out) for a
+/// given intent's token_in direction.
 ///
-/// Uses `amm_math::v2_amount_out` on the pool that is V2-compatible; skips
-/// the other pool if it is V3 (we don't have a live RPC here for QuoterV2).
-///
-/// Returns `(spread_in_token_out_units, can_price)` where `can_price = false`
-/// when the spread requires a V3 quote that is unavailable without RPC.
-///
-/// Reuses the same orientation logic as scanner.rs (~line 613-651).
-fn compute_spread_v2_only(
-    pool_a: &PoolRef,
-    pool_b: &PoolRef,
-    probe_amount_in: U256,
-) -> (U256, bool) {
-    // We only compute a reliable spread when BOTH pools are V2-compatible.
-    // If either pool is V3, we would need a live QuoterV2 call.
-    // R8: don't fabricate; return (zero, false) to signal oracle gap.
-    let a_is_v2 = matches!(
-        pool_a.protocol_type,
-        ProtocolType::V2 | ProtocolType::Curve | ProtocolType::Balancer
-    );
-    let b_is_v2 = matches!(
-        pool_b.protocol_type,
-        ProtocolType::V2 | ProtocolType::Curve | ProtocolType::Balancer
-    );
-
-    if !a_is_v2 || !b_is_v2 {
-        // At least one pool requires a V3 quote — cannot compute spread here.
-        return (U256::zero(), false);
-    }
-
-    // For V2 spread: compute the output from pool_a with probe_amount_in,
-    // then compute the output from pool_b with the same probe.
-    // The spread is |out_a - out_b| if both directions are the same.
-    // We use a fixed reserve approximation: since we don't have reserves
-    // in the ImpactSet (they live in Redis), we use a 1:1 ratio as a
-    // structural signal (non-zero means the pair exists; the evaluator
-    // will use real reserves for scoring).
-    //
-    // This is the SAME conservative approach as the scanner's cold-cache
-    // path: when reserves are not cached yet, spread=0 and the opportunity
-    // is skipped — fail-honest.
-    //
-    // TODO (Phase 12): wire reserves fetch from Redis via a passed-in cache
-    // so the engine has real reserves. Until then, non-zero spread signals
-    // structural opportunity; zero signals a cold-cache miss.
-    //
-    // For test fixtures that set fee_bps explicitly: use them. Otherwise
-    // default to 30 bps (V2 standard).
-    let fee_a = pool_a.fee_bps.unwrap_or(30);
-    let fee_b = pool_b.fee_bps.unwrap_or(30);
-
-    // Without real reserves, the best we can do structurally:
-    // - Two pools with different fees → different outputs on the same probe.
-    // - Same fee → spread is technically 0 (no structural edge).
-    // This is conservative: we emit a candidate when fees differ (there MAY
-    // be an edge) and reject when they are identical (no structural signal).
-    //
-    // Use unit reserves (1e18 each) as a canonical stand-in that allows
-    // v2_amount_out to compute a non-trivial output. The spread between
-    // two V2 pools with equal reserves but different fees is fee_a - fee_b
-    // in bps terms.
-    let reserve = U256::from(10u128)
-        .pow(U256::from(18u32))
-        .saturating_mul(U256::from(1_000u32));
-    let out_a = amm_math::v2_amount_out(probe_amount_in, reserve, reserve, fee_a);
-    let out_b = amm_math::v2_amount_out(probe_amount_in, reserve, reserve, fee_b);
-
-    let spread = if out_a >= out_b {
-        out_a.saturating_sub(out_b)
+/// `reserve0` corresponds to `pool.token0`; `reserve1` to `pool.token1`.
+/// If the intent swaps token0 → token1: `reserve_in = r0, reserve_out = r1`.
+/// If the intent swaps token1 → token0: `reserve_in = r1, reserve_out = r0`.
+/// When the intent's token_in is unknown (zero address or no legs): default to
+/// token0→token1 direction (conservative; SizeOptimizer will re-orient).
+fn orient_reserves(
+    reserves: (U256, U256),
+    pool: &PoolRef,
+    intent: &RouteIntent,
+) -> (U256, U256) {
+    let (r0, r1) = reserves;
+    let intent_token_in = intent.legs.first().map(|l| l.token_in).unwrap_or_default();
+    // If token_in matches token1 (i.e. swapping token1 in), swap the orientations.
+    if intent_token_in == pool.token1
+        && intent_token_in != Address::zero()
+        && intent_token_in != pool.token0
+    {
+        (r1, r0)
     } else {
-        out_b.saturating_sub(out_a)
-    };
-
-    (spread, true)
+        (r0, r1)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -695,6 +700,7 @@ fn u256_to_f64_lossy(v: U256) -> f64 {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::engines::triangular_engine::ReservesCache;
     use crate::impact_index::{ImpactSet, PoolRef};
     use crate::route_intent::{
         DetectionSource, ProtocolType, RouteIntent, RouteIntentLeg, RouterKind, SwapExactMode,
@@ -702,7 +708,6 @@ mod tests {
     use crate::strategy_label::StrategyLabel;
     use ethers::types::{Address, H256, U256};
     use shared_rs::contracts::StrategyKind;
-    use tokio::sync::RwLock;
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -760,8 +765,91 @@ mod tests {
         }
     }
 
+    /// Build engine with specified reserves pre-loaded into the cache.
+    /// `reserves`: (pool_address, reserve0, reserve1).
+    async fn make_engine_with_reserves(reserves: Vec<(Address, U256, U256)>) -> DexEngine {
+        let cache = Arc::new(ReservesCache::new());
+        for (addr, r0, r1) in reserves {
+            cache.insert(addr, r0, r1).await;
+        }
+        DexEngine::new(cache, None, None)
+    }
+
     fn make_engine() -> DexEngine {
-        DexEngine::new(Arc::new(RwLock::new(None)), None, None)
+        DexEngine::new(Arc::new(ReservesCache::new()), None, None)
+    }
+
+    // ── dex_engine::tests::v2_v2_real_reserves_emits_candidate_for_optimizer ──
+    // Bug 2 fix: two V2 pools with real reserves loaded — candidate emitted
+    // (not rejected) so SizeOptimizer can evaluate.
+
+    #[tokio::test]
+    async fn v2_v2_real_reserves_emits_candidate_for_optimizer() {
+        let tok_a = addr(0x1);
+        let tok_b = addr(0x2);
+        let pool_addr1 = addr(0x10);
+        let pool_addr2 = addr(0x11);
+        let pool1 = make_pool(pool_addr1, tok_a, tok_b, ProtocolType::V2);
+        let pool2 = make_pool(pool_addr2, tok_a, tok_b, ProtocolType::V2);
+        let intent = make_intent(tok_a, tok_b);
+        let impact = make_impact(vec![pool1, pool2]);
+
+        // Pre-load real (nonzero) reserves into the cache.
+        let unit = U256::from(10u128).pow(U256::from(18u32)) * U256::from(1_000u32);
+        let engine = make_engine_with_reserves(vec![
+            (pool_addr1, unit, unit),
+            (pool_addr2, unit, unit),
+        ])
+        .await;
+
+        let candidates = engine
+            .build_from_impacted_pairs(&intent, &impact, None)
+            .await
+            .expect("engine must not error");
+
+        // Must emit at least one candidate — not rejected for reserves_cache_miss.
+        assert!(!candidates.is_empty(), "must produce at least one candidate");
+        // No reserves_cache_miss rejection.
+        for c in &candidates {
+            assert_ne!(
+                c.rejection_reason.as_deref(),
+                Some("reserves_cache_miss"),
+                "must not reject with reserves_cache_miss when reserves are present"
+            );
+        }
+        // All must be DexArbV2V2.
+        for c in &candidates {
+            assert_eq!(c.label, StrategyLabel::DexArbV2V2, "must classify as DexArbV2V2");
+        }
+    }
+
+    // ── dex_engine::tests::v2_v2_no_cache_emits_reserves_cache_miss ──────────
+    // Bug 2 fix: V2 pool not in cache → rejected with reserves_cache_miss.
+
+    #[tokio::test]
+    async fn v2_v2_no_cache_emits_reserves_cache_miss() {
+        let tok_a = addr(0x1);
+        let tok_b = addr(0x2);
+        let pool1 = make_pool(addr(0x10), tok_a, tok_b, ProtocolType::V2);
+        let pool2 = make_pool(addr(0x11), tok_a, tok_b, ProtocolType::V2);
+        let intent = make_intent(tok_a, tok_b);
+        let impact = make_impact(vec![pool1, pool2]);
+        // Empty cache — no reserves loaded.
+        let engine = make_engine();
+
+        let candidates = engine
+            .build_from_impacted_pairs(&intent, &impact, None)
+            .await
+            .expect("engine must not error");
+
+        assert!(!candidates.is_empty(), "must produce rejection candidates");
+        let has_cache_miss = candidates
+            .iter()
+            .any(|c| c.rejection_reason.as_deref() == Some("reserves_cache_miss"));
+        assert!(
+            has_cache_miss,
+            "must have at least one reserves_cache_miss rejection when cache is empty"
+        );
     }
 
     // ── dex_engine::tests::v2_v2_classifies_correctly ────────────────────────
@@ -770,24 +858,32 @@ mod tests {
     async fn v2_v2_classifies_correctly() {
         let tok_a = addr(0x1);
         let tok_b = addr(0x2);
-        let pool1 = make_pool(addr(0x10), tok_a, tok_b, ProtocolType::V2);
-        let pool2 = make_pool(addr(0x11), tok_a, tok_b, ProtocolType::V2);
+        let pool_addr1 = addr(0x10);
+        let pool_addr2 = addr(0x11);
+        let pool1 = make_pool(pool_addr1, tok_a, tok_b, ProtocolType::V2);
+        let pool2 = make_pool(pool_addr2, tok_a, tok_b, ProtocolType::V2);
         let intent = make_intent(tok_a, tok_b);
         let impact = make_impact(vec![pool1, pool2]);
-        let engine = make_engine();
+        // Pre-load reserves so the engine proceeds past the cache-miss gate.
+        let unit = U256::from(10u128).pow(U256::from(18u32)) * U256::from(1_000u32);
+        let engine = make_engine_with_reserves(vec![
+            (pool_addr1, unit, unit),
+            (pool_addr2, unit, unit),
+        ])
+        .await;
 
         let candidates = engine
-            .build_from_impacted_pairs(&intent, &impact)
+            .build_from_impacted_pairs(&intent, &impact, None)
             .await
             .expect("engine must not error");
 
-        // Should have at least one candidate (may be accepted or rejected for
-        // non_positive_spread if fees are identical — both are valid R8 outcomes).
+        // Should have at least one candidate (may be accepted or may have no_price_oracle
+        // since config is None, but must never be reserves_cache_miss).
         assert!(
             !candidates.is_empty(),
             "must produce at least one candidate"
         );
-        // All DexArbV2V2 labels (or rejected V2V2).
+        // All DexArbV2V2 labels.
         for c in &candidates {
             assert_eq!(
                 c.label,
@@ -807,6 +903,41 @@ mod tests {
         }
     }
 
+    // ── dex_engine::tests::v3_legs_use_state_projector_quote ────────────────
+    // Bug 2 fix: V3 pools go through state_projector (no_price_oracle when None).
+
+    #[tokio::test]
+    async fn v3_legs_use_state_projector_quote() {
+        let tok_a = addr(0x1);
+        let tok_b = addr(0x2);
+        let pool_v3 = make_pool(addr(0x10), tok_a, tok_b, ProtocolType::V3);
+        let pool_v2 = make_pool(addr(0x11), tok_a, tok_b, ProtocolType::V2);
+        let intent = make_intent(tok_a, tok_b);
+        let impact = make_impact(vec![pool_v3.clone(), pool_v2.clone()]);
+        // Engine with no state_projector → V3 path cannot quote.
+        let engine = make_engine();
+
+        let candidates = engine
+            .build_from_impacted_pairs(&intent, &impact, None)
+            .await
+            .expect("engine must not error");
+
+        // V2/V3 mix: since projector is None and both pools are not V2-only,
+        // can_price_v2=false. The engine emits no_price_oracle (config=None so
+        // the oracle-gap check doesn't fire; instead the candidate falls through
+        // to accepted path with gross=None). Either way: candidates is non-empty
+        // and labels include V2V3 or V3V2.
+        assert!(!candidates.is_empty(), "must produce at least one candidate");
+        let labels: std::collections::HashSet<StrategyLabel> =
+            candidates.iter().map(|c| c.label).collect();
+        let has_v2v3_or_v3v2 = labels.contains(&StrategyLabel::DexArbV2V3)
+            || labels.contains(&StrategyLabel::DexArbV3V2);
+        assert!(
+            has_v2v3_or_v3v2,
+            "V2/V3 pair must classify as DexArbV2V3 or DexArbV3V2"
+        );
+    }
+
     // ── dex_engine::tests::v2_v3_classifies_correctly ────────────────────────
 
     #[tokio::test]
@@ -822,14 +953,10 @@ mod tests {
         let engine = make_engine();
 
         let candidates = engine
-            .build_from_impacted_pairs(&intent, &impact)
+            .build_from_impacted_pairs(&intent, &impact, None)
             .await
             .expect("engine must not error");
 
-        // One pool is V3 → compute_spread_v2_only returns can_price=false.
-        // The candidate should have rejection_reason = "no_price_oracle" OR
-        // gross_profit_usd = None depending on config. Either way label should
-        // be DexArbV2V3 or DexArbV3V2 (asymmetric — depends on pool order).
         assert!(!candidates.is_empty());
         let labels: std::collections::HashSet<StrategyLabel> =
             candidates.iter().map(|c| c.label).collect();
@@ -855,12 +982,11 @@ mod tests {
         let engine = make_engine();
 
         let candidates = engine
-            .build_from_impacted_pairs(&intent, &impact)
+            .build_from_impacted_pairs(&intent, &impact, None)
             .await
             .expect("engine must not error");
 
         assert!(!candidates.is_empty());
-        // When pool ordering is (V3, V2), classify_label(V3, V2) = DexArbV3V2.
         let has_v3v2 = candidates
             .iter()
             .any(|c| c.label == StrategyLabel::DexArbV3V2);
@@ -884,7 +1010,7 @@ mod tests {
         let engine = make_engine();
 
         let candidates = engine
-            .build_from_impacted_pairs(&intent, &impact)
+            .build_from_impacted_pairs(&intent, &impact, None)
             .await
             .expect("engine must not error");
 
@@ -907,7 +1033,7 @@ mod tests {
         let engine = make_engine();
 
         let candidates = engine
-            .build_from_impacted_pairs(&intent, &impact)
+            .build_from_impacted_pairs(&intent, &impact, None)
             .await
             .expect("engine must not error");
 
@@ -930,17 +1056,25 @@ mod tests {
         // No config → gross_profit_usd must be None (R8 invariant).
         let tok_a = addr(0x1);
         let tok_b = addr(0x2);
-        let pool1 = make_pool(addr(0x10), tok_a, tok_b, ProtocolType::V2);
+        let pool_addr1 = addr(0x10);
+        let pool_addr2 = addr(0x11);
+        let pool1 = make_pool(pool_addr1, tok_a, tok_b, ProtocolType::V2);
         let pool2_different_fee = PoolRef {
-            fee_bps: Some(100), // different fee → non-zero spread
-            ..make_pool(addr(0x11), tok_a, tok_b, ProtocolType::V2)
+            fee_bps: Some(100), // different fee → different spread
+            ..make_pool(pool_addr2, tok_a, tok_b, ProtocolType::V2)
         };
         let intent = make_intent(tok_a, tok_b);
         let impact = make_impact(vec![pool1, pool2_different_fee]);
-        let engine = make_engine(); // config = None
+        // Pre-load reserves so the engine gets past the cache-miss gate.
+        let unit = U256::from(10u128).pow(U256::from(18u32)) * U256::from(1_000u32);
+        let engine = make_engine_with_reserves(vec![
+            (pool_addr1, unit, unit),
+            (pool_addr2, unit, unit),
+        ])
+        .await;
 
         let candidates = engine
-            .build_from_impacted_pairs(&intent, &impact)
+            .build_from_impacted_pairs(&intent, &impact, None) // config = None
             .await
             .expect("engine must not error");
 
@@ -959,33 +1093,42 @@ mod tests {
     async fn route_plan_has_two_legs_with_pool_addresses() {
         let tok_a = addr(0x1);
         let tok_b = addr(0x2);
-        let pool1 = make_pool(addr(0xAA), tok_a, tok_b, ProtocolType::V2);
+        let pool_addr1 = addr(0xAA);
+        let pool_addr2 = addr(0xBB);
+        let pool1 = make_pool(pool_addr1, tok_a, tok_b, ProtocolType::V2);
         let pool2 = PoolRef {
-            fee_bps: Some(100), // different fee → non-zero spread, candidate emitted
-            ..make_pool(addr(0xBB), tok_a, tok_b, ProtocolType::V2)
+            fee_bps: Some(100), // different fee → asymmetric spread
+            ..make_pool(pool_addr2, tok_a, tok_b, ProtocolType::V2)
         };
         let intent = make_intent(tok_a, tok_b);
         let impact = make_impact(vec![pool1.clone(), pool2.clone()]);
-        let engine = make_engine();
+        let unit = U256::from(10u128).pow(U256::from(18u32)) * U256::from(1_000u32);
+        let engine = make_engine_with_reserves(vec![
+            (pool_addr1, unit, unit),
+            (pool_addr2, unit, unit),
+        ])
+        .await;
 
         let candidates = engine
-            .build_from_impacted_pairs(&intent, &impact)
+            .build_from_impacted_pairs(&intent, &impact, None)
             .await
             .expect("engine must not error");
 
-        // Find the candidate that is not a single_pool rejection.
-        let accepted: Vec<_> = candidates
+        // Find candidates that are not single_pool or reserves_cache_miss.
+        let two_pool: Vec<_> = candidates
             .iter()
-            .filter(|c| c.rejection_reason.as_deref() != Some("single_pool_no_spread"))
+            .filter(|c| {
+                c.rejection_reason.as_deref() != Some("single_pool_no_spread")
+                    && c.rejection_reason.as_deref() != Some("reserves_cache_miss")
+            })
             .collect();
 
-        // There must be at least one accepted or "no_price_oracle" (still 2-leg) candidate.
         assert!(
-            !accepted.is_empty(),
-            "must produce at least one 2-pool candidate (accepted or rejected for other reason)"
+            !two_pool.is_empty(),
+            "must produce at least one 2-pool candidate"
         );
 
-        for c in &accepted {
+        for c in &two_pool {
             assert_eq!(c.route_plan.legs.len(), 2, "route_plan must have 2 legs");
             assert!(
                 c.route_plan.legs[0].pool_address.is_some(),
@@ -1046,26 +1189,31 @@ mod tests {
     async fn route_plan_strategy_kind_matches_label() {
         let tok_a = addr(0x1);
         let tok_b = addr(0x2);
-        let pool1 = make_pool(addr(0x10), tok_a, tok_b, ProtocolType::V2);
+        let pool_addr1 = addr(0x10);
+        let pool_addr2 = addr(0x11);
+        let pool1 = make_pool(pool_addr1, tok_a, tok_b, ProtocolType::V2);
         let pool2 = PoolRef {
             fee_bps: Some(100),
-            ..make_pool(addr(0x11), tok_a, tok_b, ProtocolType::V2)
+            ..make_pool(pool_addr2, tok_a, tok_b, ProtocolType::V2)
         };
         let intent = make_intent(tok_a, tok_b);
         let impact = make_impact(vec![pool1, pool2]);
-        let engine = make_engine();
+        let unit = U256::from(10u128).pow(U256::from(18u32)) * U256::from(1_000u32);
+        let engine = make_engine_with_reserves(vec![
+            (pool_addr1, unit, unit),
+            (pool_addr2, unit, unit),
+        ])
+        .await;
 
         let candidates = engine
-            .build_from_impacted_pairs(&intent, &impact)
+            .build_from_impacted_pairs(&intent, &impact, None)
             .await
             .expect("engine must not error");
 
-        // For accepted or non-single-pool candidates: strategy_kind in route_plan
-        // must equal label.as_str().
-        for c in candidates
-            .iter()
-            .filter(|c| c.rejection_reason.as_deref() != Some("single_pool_no_spread"))
-        {
+        for c in candidates.iter().filter(|c| {
+            c.rejection_reason.as_deref() != Some("single_pool_no_spread")
+                && c.rejection_reason.as_deref() != Some("reserves_cache_miss")
+        }) {
             assert_eq!(
                 c.route_plan.strategy_kind,
                 c.label.as_str(),
