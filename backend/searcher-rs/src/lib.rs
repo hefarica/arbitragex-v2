@@ -34,3 +34,6 @@ pub mod workers;
 pub mod state_projector;
 // Phase 13: SizeOptimizer — optimal amount_in sizing for arb candidates.
 pub mod size_optimizer;
+// Phase 11: LendingPositionIndexer — Redis-backed watchlist + cache for
+// Aave V3 / Compound V2 positions, consumed by LiquidationEngine.
+pub mod lending_position_indexer;

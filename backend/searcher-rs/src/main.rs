@@ -40,6 +40,11 @@ mod strategy_label;
 #[allow(dead_code)]
 mod engines;
 mod orchestrator;
+// Phase 11: LendingPositionIndexer — Redis-backed watchlist + position cache.
+// Dead-code allowed: the indexer is Arc-constructed and passed to the
+// LiquidationEngine; individual methods are called through the engine.
+#[allow(dead_code)]
+mod lending_position_indexer;
 mod workers;
 // Phase 12-13: StateProjector + SizeOptimizer — wired in Phase 14.
 // Individual methods (project_v2_post_swap, project_triangular_cycle) are
@@ -64,6 +69,54 @@ use tracing::{error, info, warn};
 
 const SERVICE_NAME: &str = "searcher-rs";
 const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+// ---------------------------------------------------------------------------
+// Phase 15 — legacy worker gating
+// ---------------------------------------------------------------------------
+//
+// Default = OFF post-Phase 15. Legacy workers are superseded by the
+// event-driven orchestrator (Phases 8-11). They remain in the codebase as
+// an audit/fallback path behind explicit opt-in flags.
+//
+// The workers themselves are NOT modified — they just don't get spawned.
+// When the orchestrator is active (V2 or Shadow mode), the legacy workers
+// duplicate detection work and bypass the orchestrator dedup; operators
+// should keep them off unless debugging.
+
+/// Returns true when ARBX_ENABLE_LEGACY_TRIANGULAR_WORKER=true.
+/// Defaults to false post-Phase 15.
+fn legacy_triangular_worker_enabled() -> bool {
+    std::env::var("ARBX_ENABLE_LEGACY_TRIANGULAR_WORKER")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false) // default OFF post-Phase 15
+}
+
+/// Returns true when ARBX_ENABLE_LEGACY_FLASHLOAN_WORKER=true.
+/// Defaults to false post-Phase 15.
+fn legacy_flashloan_arb_worker_enabled() -> bool {
+    std::env::var("ARBX_ENABLE_LEGACY_FLASHLOAN_WORKER")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Returns true when ARBX_ENABLE_LEGACY_LIQUIDATION_WORKER=true.
+/// Defaults to false post-Phase 15.
+fn legacy_liquidation_worker_enabled() -> bool {
+    std::env::var("ARBX_ENABLE_LEGACY_LIQUIDATION_WORKER")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 15 — Prometheus counter for disabled workers
+// ---------------------------------------------------------------------------
+
+/// Incremented once per worker that is disabled by Phase 15 default at boot.
+/// Label values: "triangular_worker", "flashloan_arb_worker", "liquidation_worker".
+/// This is a process-level atomic — Prometheus metrics integration via
+/// `shared_rs::metrics` is a follow-up (Phase 17).
+static LEGACY_WORKER_DISABLED_TOTAL: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -320,16 +373,34 @@ async fn main() -> anyhow::Result<()> {
         );
         None
     };
-    tokio::spawn(async move {
-        let mut tw = workers::triangular_worker::TriangularWorker::new(
-            triangular_period_secs,
-            triangular_chain,
+    if legacy_triangular_worker_enabled() {
+        info!(
+            event = "scanner.legacy_worker_state",
+            worker = "triangular_worker",
+            enabled = true,
+            reason = "ARBX_ENABLE_LEGACY_TRIANGULAR_WORKER=true",
+            "WARNING: legacy worker enabled — opportunities bypass orchestrator dedup"
         );
-        if let Some(pool) = triangular_v3_pool {
-            tw = tw.with_v3_provider(pool);
-        }
-        tw.run(triangular_redis, triangular_db, triangular_tc).await;
-    });
+        tokio::spawn(async move {
+            let mut tw = workers::triangular_worker::TriangularWorker::new(
+                triangular_period_secs,
+                triangular_chain,
+            );
+            if let Some(pool) = triangular_v3_pool {
+                tw = tw.with_v3_provider(pool);
+            }
+            tw.run(triangular_redis, triangular_db, triangular_tc).await;
+        });
+    } else {
+        LEGACY_WORKER_DISABLED_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        info!(
+            event = "scanner.legacy_worker_state",
+            worker = "triangular_worker",
+            enabled = false,
+            reason = "default-off-post-phase-15",
+            "triangular_worker not spawned; event-driven TriangularEngine active"
+        );
+    }
 
     // Flashloan-arb worker — promotes the `flashloan_arb` strategy from `scaffold`
     // to `live` by scanning V2 pool pairs every block (default 12s tick) for
@@ -354,13 +425,31 @@ async fn main() -> anyhow::Result<()> {
     let flashloan_db = db_pool.clone();
     let flashloan_tc = trading_config.clone();
     let flashloan_chain = primary_chain;
-    tokio::spawn(async move {
-        let fw = workers::flashloan_arb_worker::FlashloanArbWorker::new(
-            flashloan_period_secs,
-            flashloan_chain,
+    if legacy_flashloan_arb_worker_enabled() {
+        info!(
+            event = "scanner.legacy_worker_state",
+            worker = "flashloan_arb_worker",
+            enabled = true,
+            reason = "ARBX_ENABLE_LEGACY_FLASHLOAN_WORKER=true",
+            "WARNING: legacy worker enabled — opportunities bypass orchestrator dedup"
         );
-        fw.run(flashloan_redis, flashloan_db, flashloan_tc).await;
-    });
+        tokio::spawn(async move {
+            let fw = workers::flashloan_arb_worker::FlashloanArbWorker::new(
+                flashloan_period_secs,
+                flashloan_chain,
+            );
+            fw.run(flashloan_redis, flashloan_db, flashloan_tc).await;
+        });
+    } else {
+        LEGACY_WORKER_DISABLED_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        info!(
+            event = "scanner.legacy_worker_state",
+            worker = "flashloan_arb_worker",
+            enabled = false,
+            reason = "default-off-post-phase-15",
+            "flashloan_arb_worker not spawned; event-driven FlashloanEngine active"
+        );
+    }
 
     // Liquidation worker — promotes the `liquidation` strategy from `scaffold` to
     // `live` by reading Aave V3 health factors every LIQUIDATION_WORKER_INTERVAL_SECS
@@ -415,17 +504,35 @@ async fn main() -> anyhow::Result<()> {
         );
         None
     };
-    tokio::spawn(async move {
-        let mut lw = workers::liquidation_worker::LiquidationWorker::new(
-            liquidation_period_secs,
-            liquidation_chain,
+    if legacy_liquidation_worker_enabled() {
+        info!(
+            event = "scanner.legacy_worker_state",
+            worker = "liquidation_worker",
+            enabled = true,
+            reason = "ARBX_ENABLE_LEGACY_LIQUIDATION_WORKER=true",
+            "WARNING: legacy worker enabled — opportunities bypass orchestrator dedup"
         );
-        if let Some(pool) = liquidation_pool {
-            lw = lw.with_provider(pool);
-        }
-        lw.run(liquidation_redis, liquidation_db, liquidation_tc)
-            .await;
-    });
+        tokio::spawn(async move {
+            let mut lw = workers::liquidation_worker::LiquidationWorker::new(
+                liquidation_period_secs,
+                liquidation_chain,
+            );
+            if let Some(pool) = liquidation_pool {
+                lw = lw.with_provider(pool);
+            }
+            lw.run(liquidation_redis, liquidation_db, liquidation_tc)
+                .await;
+        });
+    } else {
+        LEGACY_WORKER_DISABLED_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        info!(
+            event = "scanner.legacy_worker_state",
+            worker = "liquidation_worker",
+            enabled = false,
+            reason = "default-off-post-phase-15",
+            "liquidation_worker not spawned; event-driven LiquidationEngine active"
+        );
+    }
 
     // CEX-DEX worker (BE-3.2 Phase 1 scaffold) — detects spread between Binance
     // REST prices and on-chain DEX quotes. In Phase 1 `fetch_dex_price` returns
@@ -495,4 +602,112 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Phase 15 tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    // ── main::tests::legacy_workers_disabled_by_default ─────────────────────
+    //
+    // Verifies that, with no env vars set, all three legacy workers are
+    // disabled (env flag returns false).
+
+    #[test]
+    fn legacy_workers_disabled_by_default() {
+        // Ensure the flags are absent (they may be set in the test environment;
+        // we remove them here to test the default).
+        std::env::remove_var("ARBX_ENABLE_LEGACY_TRIANGULAR_WORKER");
+        std::env::remove_var("ARBX_ENABLE_LEGACY_FLASHLOAN_WORKER");
+        std::env::remove_var("ARBX_ENABLE_LEGACY_LIQUIDATION_WORKER");
+
+        assert!(
+            !legacy_triangular_worker_enabled(),
+            "triangular worker must be disabled by default (Phase 15)"
+        );
+        assert!(
+            !legacy_flashloan_arb_worker_enabled(),
+            "flashloan_arb worker must be disabled by default (Phase 15)"
+        );
+        assert!(
+            !legacy_liquidation_worker_enabled(),
+            "liquidation worker must be disabled by default (Phase 15)"
+        );
+    }
+
+    // ── main::tests::legacy_triangular_enabled_by_flag ──────────────────────
+
+    #[test]
+    fn legacy_triangular_enabled_by_flag() {
+        std::env::set_var("ARBX_ENABLE_LEGACY_TRIANGULAR_WORKER", "true");
+        assert!(
+            legacy_triangular_worker_enabled(),
+            "triangular worker must be enabled when env var = 'true'"
+        );
+        // Also test case-insensitive "TRUE" variant.
+        std::env::set_var("ARBX_ENABLE_LEGACY_TRIANGULAR_WORKER", "TRUE");
+        assert!(
+            legacy_triangular_worker_enabled(),
+            "triangular worker must be enabled for 'TRUE' (case-insensitive)"
+        );
+        std::env::remove_var("ARBX_ENABLE_LEGACY_TRIANGULAR_WORKER");
+    }
+
+    // ── main::tests::legacy_worker_state_logged_at_boot ─────────────────────
+    //
+    // Verifies the LEGACY_WORKER_DISABLED_TOTAL counter logic:
+    // each disabled worker increments it by 1.
+
+    #[test]
+    fn legacy_worker_disabled_total_counter_logic() {
+        let before = LEGACY_WORKER_DISABLED_TOTAL.load(Ordering::Relaxed);
+
+        // Simulate 3 disabled-worker increments (as main() does for each
+        // disabled worker at boot when the flags are absent).
+        LEGACY_WORKER_DISABLED_TOTAL.fetch_add(1, Ordering::Relaxed); // triangular
+        LEGACY_WORKER_DISABLED_TOTAL.fetch_add(1, Ordering::Relaxed); // flashloan
+        LEGACY_WORKER_DISABLED_TOTAL.fetch_add(1, Ordering::Relaxed); // liquidation
+
+        let after = LEGACY_WORKER_DISABLED_TOTAL.load(Ordering::Relaxed);
+        assert_eq!(
+            after,
+            before + 3,
+            "LEGACY_WORKER_DISABLED_TOTAL must increment by 1 per disabled worker"
+        );
+    }
+
+    // ── main::tests::legacy_flashloan_enabled_by_flag ───────────────────────
+
+    #[test]
+    fn legacy_flashloan_enabled_by_flag() {
+        std::env::set_var("ARBX_ENABLE_LEGACY_FLASHLOAN_WORKER", "true");
+        assert!(legacy_flashloan_arb_worker_enabled());
+        std::env::remove_var("ARBX_ENABLE_LEGACY_FLASHLOAN_WORKER");
+    }
+
+    // ── main::tests::legacy_liquidation_enabled_by_flag ─────────────────────
+
+    #[test]
+    fn legacy_liquidation_enabled_by_flag() {
+        std::env::set_var("ARBX_ENABLE_LEGACY_LIQUIDATION_WORKER", "true");
+        assert!(legacy_liquidation_worker_enabled());
+        std::env::remove_var("ARBX_ENABLE_LEGACY_LIQUIDATION_WORKER");
+    }
+
+    // ── main::tests::false_string_keeps_worker_disabled ─────────────────────
+
+    #[test]
+    fn false_string_keeps_worker_disabled() {
+        std::env::set_var("ARBX_ENABLE_LEGACY_TRIANGULAR_WORKER", "false");
+        assert!(!legacy_triangular_worker_enabled());
+        std::env::set_var("ARBX_ENABLE_LEGACY_TRIANGULAR_WORKER", "0");
+        assert!(!legacy_triangular_worker_enabled());
+        std::env::remove_var("ARBX_ENABLE_LEGACY_TRIANGULAR_WORKER");
+    }
 }

@@ -24,5 +24,5 @@ pub use candidate::StrategyCandidate;
 
 pub mod dex_engine;
 pub mod flashloan_engine;
+pub mod liquidation_engine;
 pub mod triangular_engine;
-// pub mod liquidation_engine; — Phase 11

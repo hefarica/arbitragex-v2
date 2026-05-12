@@ -56,8 +56,10 @@ use crate::chain_client::{
 };
 use crate::engines::dex_engine::DexEngine;
 use crate::engines::flashloan_engine::FlashloanEngine;
+use crate::engines::liquidation_engine::LiquidationEngine;
 use crate::engines::triangular_engine::{ReservesCache, TriangularEngine};
 use crate::impact_index::ImpactIndex;
+use crate::lending_position_indexer::LendingPositionIndexer;
 use crate::opportunity_emitter::OpportunityEmitter;
 use crate::orchestrator::{ConfigProvider, Orchestrator, OrchestratorContext};
 use crate::route_decoder;
@@ -182,6 +184,15 @@ fn build_orchestrator(
 
     let fl_engine = Arc::new(FlashloanEngine::new(config.clone()));
 
+    // Phase 11: LiquidationEngine backed by a fresh LendingPositionIndexer.
+    // The indexer starts empty; `liquidation_worker` and future event-based
+    // wiring populate it via watchlist_add / recompute_position.
+    let liq_indexer = Arc::new(tokio::sync::Mutex::new(LendingPositionIndexer::new(
+        chain_id,
+        redis.clone(),
+    )));
+    let liq_engine = Arc::new(LiquidationEngine::new(liq_indexer, chain_id));
+
     let emitter = Arc::new(if mode == OrchestratorMode::Shadow {
         OpportunityEmitter::new_dry_run(opp_dedup, redis)
     } else {
@@ -197,6 +208,7 @@ fn build_orchestrator(
         dex_engine,
         triangular_engine: tri_engine,
         flashloan_engine: fl_engine,
+        liquidation_engine: liq_engine,
         state_projector,
         size_optimizer,
         emitter,
