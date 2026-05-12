@@ -209,6 +209,8 @@ export function mountStrategyRuntimeStatus(
         data_dependencies_status: liqDataStatus,
         lending_watchlist_size: lendingWatchlistSize,
         indexed_positions: lendingWatchlistSize,
+        impacted_lending_positions_1h: null,
+        hf_below_one_count: null,
         impacted_lending_positions_1h: heartbeat.liquidation_positions_scanned ?? null,
         hf_below_one_count: dbStats.liquidation.candidates_1h,
         liquidation_candidates_1h: dbStats.liquidation.candidates_1h,
