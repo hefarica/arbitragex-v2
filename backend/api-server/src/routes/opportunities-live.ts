@@ -469,11 +469,11 @@ export function mountOpportunitiesLive(
 
     // viable_only filters out rows persisted as gate rejections (rejection_reason
     // populated by spine when an opportunity is rejected before profit eval).
-    // Default true so /opportunities UI no longer shows a wall of $0.00 rows
-    // dominated by TokenNotAllowed et al. Rejections still surface in the
-    // Pipeline Funnel widget on /operations and via direct PG query.
+    // Default false so operators can see activity from ALL strategy families
+    // in one live feed (including rejected rows). Pass viable_only=true to
+    // restrict to viable lifecycle states only.
     const viableOnly =
-      String(req.query["viable_only"] ?? "true").toLowerCase() !== "false";
+      String(req.query["viable_only"] ?? "false").toLowerCase() !== "false";
 
     // 2026-05-10 hotfix: bound the live window so the SSR snapshot can never
     // surface opportunities from days ago when no fresh viable rows exist.
