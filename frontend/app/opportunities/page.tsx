@@ -1,6 +1,5 @@
 import OpportunitiesClient, { type OpportunitiesSnapshot } from "./OpportunitiesClient";
 import { getApiBaseUrl } from "@/lib/api-client";
-import { getStrategyRuntimeStatus } from "@/lib/api-client";
 
 export const dynamic = "force-dynamic";
 
@@ -40,13 +39,6 @@ async function getInitialOpportunities(): Promise<OpportunitiesSnapshot> {
 
 export default async function OpportunitiesPage() {
   const initialSnapshot = await getInitialOpportunities();
-  const runtimeStatusRes = await getStrategyRuntimeStatus(1);
-  const initialRuntimeStatus = runtimeStatusRes.ok ? runtimeStatusRes.data : null;
-  const initialRuntimeStatusError = !runtimeStatusRes.ok ? runtimeStatusRes.error : null;
 
-  return <OpportunitiesClient 
-    initialSnapshot={initialSnapshot} 
-    initialRuntimeStatus={initialRuntimeStatus}
-    initialRuntimeStatusError={initialRuntimeStatusError}
-  />;
+  return <OpportunitiesClient initialSnapshot={initialSnapshot} />;
 }
