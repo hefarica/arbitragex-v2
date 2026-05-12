@@ -305,32 +305,25 @@ async fn pool_sync_watcher(
 
     const REFRESH_SECS: u64 = 60; // check for new pools once per minute
 
-    let mut last_id: i64 = {
-        // Prime last_id to the current max so we only pick up genuinely NEW pools.
-        match sqlx::query_scalar::<_, Option<i64>>("SELECT MAX(id) FROM pools WHERE chain_id=$1")
-            .bind(chain_id as i64)
-            .fetch_one(&db)
-            .await
-        {
-            Ok(Some(n)) => n,
-            _ => 0,
-        }
-    };
+    // Use `created_at` as the cursor — pools.id is UUID (not comparable with >).
+    // Prime to NOW() so we only pick up genuinely NEW pools inserted after boot.
+    let mut last_created_at: chrono::DateTime<chrono::Utc> = chrono::Utc::now();
 
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(REFRESH_SECS));
 
     loop {
         ticker.tick().await;
 
-        // Query pools added after last_id.
+        // Query pools inserted after `last_created_at`.
         // Join shape matches ImpactIndex::from_registry (load_pools_from_pg) exactly:
         //   pools → factories → dexes (for protocol_type) → tokens×2 (for token addresses).
         // Column aliases are kept identical to the boot-time loader to share the same
         // row-parsing logic and ensure the impact index stays consistent.
-        let rows: Vec<(i64, String, String, String, String, Option<i32>)> =
-            match sqlx::query_as::<_, (i64, String, String, String, String, Option<i32>)>(
+        type NewPoolRow = (chrono::DateTime<chrono::Utc>, String, String, String, String, Option<i32>);
+        let rows: Vec<NewPoolRow> =
+            match sqlx::query_as::<_, NewPoolRow>(
                 r#"SELECT
-                     p.id,
+                     p.created_at,
                      p.address,
                      d.protocol_type,
                      t0.address AS token0_addr,
@@ -342,12 +335,12 @@ async fn pool_sync_watcher(
                    JOIN tokens   t0  ON t0.id = p.token0_id
                    JOIN tokens   t1  ON t1.id = p.token1_id
                    WHERE p.chain_id = $1
-                     AND p.id > $2
-                   ORDER BY p.id ASC
+                     AND p.created_at > $2
+                   ORDER BY p.created_at ASC
                    LIMIT 500"#,
             )
             .bind(chain_id as i64)
-            .bind(last_id)
+            .bind(last_created_at)
             .fetch_all(&db)
             .await
             {
@@ -367,11 +360,11 @@ async fn pool_sync_watcher(
             continue;
         }
 
-        let new_max_id = rows.last().map(|r| r.0).unwrap_or(last_id);
+        let new_max_ts = rows.last().map(|r| r.0).unwrap_or(last_created_at);
         let mut new_count = 0usize;
 
         let mut idx = impact_index.write().await;
-        for (row_id, addr_str, proto_str, tok0_str, tok1_str, fee_bps_opt) in rows {
+        for (row_ts, addr_str, proto_str, tok0_str, tok1_str, fee_bps_opt) in rows {
             let address = match Address::from_str(&addr_str) {
                 Ok(a) => a,
                 Err(_) => continue,
@@ -403,16 +396,19 @@ async fn pool_sync_watcher(
                 fee_bps: fee_bps_opt.map(|f| f as u32),
             };
             idx.add_pool(pool_ref);
-            last_id = row_id;
+            last_created_at = row_ts;
             new_count += 1;
         }
         drop(idx);
 
         if new_count > 0 {
-            last_id = new_max_id;
+            last_created_at = new_max_ts;
             info!(
                 event = "pool_sync_watcher.pools_added",
-                chain_id, new_count, last_id, "ImpactIndex refreshed with new pools from PG"
+                chain_id,
+                new_count,
+                last_created_at = %last_created_at,
+                "ImpactIndex refreshed with new pools from PG"
             );
         }
     }
