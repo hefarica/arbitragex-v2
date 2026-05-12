@@ -94,6 +94,8 @@ pub struct OrchestratorContext {
     /// Asynchronously fetches the live `TradingConfigState` for `chain_id`.
     /// `None` return → no operator config for this chain (observe-only path).
     pub config_provider: Arc<ConfigProvider>,
+    /// Pool discovery service for on-the-fly resolution of unmapped pairs.
+    pub pool_discovery: Arc<crate::pool_discovery::PoolDiscoveryService>,
     /// EVM chain ID for this orchestrator instance.
     pub chain_id: u64,
 }
@@ -219,6 +221,26 @@ impl Orchestrator {
                     .with_label_values(&[&chain_str, label.as_str()])
                     .inc();
             }
+        } else {
+            // No pools impacted. This is an unmapped pair.
+            // Dispatch asynchronously to the PoolDiscoveryService.
+            let discovery_svc = Arc::clone(&self.ctx.pool_discovery);
+            let intent_clone = intent.clone();
+            tokio::spawn(async move {
+                if let Err(e) = discovery_svc.discover_from_intent(&intent_clone).await {
+                    debug!("Pool discovery background task error: {}", e);
+                }
+            });
+            // We return Ok early. The discovery happens asynchronously.
+            // When the pool is discovered, subsequent intents will match it.
+            // For this specific intent, we log 'impact_zero' per fail-honest rule.
+            debug!(
+                event = "orchestrator.impact_zero",
+                chain_id,
+                tx_hash = %intent.tx_hash,
+                "rejection_reason" = "impact_zero"
+            );
+            return Ok(());
         }
 
         debug!(

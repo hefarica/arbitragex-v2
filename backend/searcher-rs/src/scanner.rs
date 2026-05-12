@@ -162,6 +162,7 @@ async fn build_orchestrator(
     mut redis: redis::aio::ConnectionManager,
     opp_dedup: Arc<OppDedup>,
     trading_config: TradingConfigClient,
+    rpc_pool: Option<Arc<shared_rs::rpc_failover::HttpRpcPool>>,
 ) -> Option<(Arc<Orchestrator>, Arc<tokio::sync::RwLock<ImpactIndex>>)> {
     if mode == OrchestratorMode::V1 || mode == OrchestratorMode::Off {
         return None;
@@ -268,9 +269,17 @@ async fn build_orchestrator(
     };
 
     let impact_index = Arc::new(tokio::sync::RwLock::new(impact_index_inner));
+    let pool_discovery = Arc::new(crate::pool_discovery::PoolDiscoveryService::new(
+        chain_id,
+        db.clone(),
+        redis.clone(),
+        impact_index.clone(),
+        rpc_pool,
+    ));
 
     let ctx = OrchestratorContext {
         impact_index: impact_index.clone(),
+        pool_discovery,
         dex_engine,
         triangular_engine: tri_engine,
         flashloan_engine: fl_engine,
@@ -509,6 +518,7 @@ pub async fn run_chain(
                 redis.clone(),
                 opp_dedup.clone(),
                 trading_config.clone(),
+                rpc_http_pool.clone(),
             )
             .await
             {
@@ -524,6 +534,7 @@ pub async fn run_chain(
                 redis.clone(),
                 opp_dedup.clone(),
                 trading_config.clone(),
+                rpc_http_pool.clone(),
             )
             .await
             {

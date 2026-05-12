@@ -23,6 +23,7 @@ pub mod reserves;
 pub mod route_decoder;
 pub mod route_intent;
 pub mod strategy_label;
+pub mod pool_discovery;
 // Phase 7-8: orchestrator + engines exposed for integration tests.
 pub mod engines;
 pub mod orchestrator;

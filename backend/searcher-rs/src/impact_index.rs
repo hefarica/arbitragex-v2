@@ -290,6 +290,11 @@ impl ImpactIndex {
         self.token_pair_to_pools.entry(key).or_default().push(pool);
     }
 
+    /// Checks if the index has any pools for the given pair key.
+    pub fn has_pools_for_pair(&self, key: TokenPairKey) -> bool {
+        self.token_pair_to_pools.contains_key(&key)
+    }
+
     /// Seeds `pool_to_cycles` from the `MVP_CYCLES` constant.
     ///
     /// Each `MvpCycleSeed` maps one pool address to the cycle it belongs to.
