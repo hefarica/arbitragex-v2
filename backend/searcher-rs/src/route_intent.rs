@@ -155,7 +155,7 @@ pub enum DetectionSource {
 /// DEX protocol family for a swap leg.
 ///
 /// Determines which price model applies when projecting post-swap reserves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProtocolType {
     /// Uniswap V2 / SushiSwap constant-product AMM (x*y=k).

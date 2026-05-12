@@ -28,6 +28,10 @@ mod scanner;
 // Items are not yet wired into scanner.rs (Phase 12); allow dead_code until
 // the integration lands.
 #[allow(dead_code)]
+mod impact_index;
+#[allow(dead_code)]
+mod opportunity_emitter;
+#[allow(dead_code)]
 mod route_decoder;
 #[allow(dead_code)]
 mod route_intent;
