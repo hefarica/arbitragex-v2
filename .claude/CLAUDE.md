@@ -385,3 +385,32 @@ Incluir en el resumen de compactación:
 
 *SUPERPOWERS + OMEGA TEAM + COMPACT PROTOCOL CARGADOS. 10 estrategias × 5 capas riesgo × 16 skills SOP × 10 subagentes PhD × PMI/EVM = ARSENAL MÁXIMO.*
 
+---
+
+## 34. MISIÓN ACTUAL: V2 POOL DISCOVERY & PAPER TRADE (Desbloqueo)
+
+El refactor estructural V2 existe pero sufre de silencios operacionales porque `ImpactIndex::resolve` retorna 0 pools ante pares no indexados del mempool (memecoins, long-tail). La misión es implementar expansión dinámica "on-the-fly".
+
+### 34.1. PoolDiscoveryService (Implementación Obligatoria)
+- **Ubicación:** `backend/searcher-rs/src/pool_discovery.rs`
+- **Responsabilidad:** Usar RPC real para consultar on-chain `getPair()` o `getPool()`.
+- **Reglas de inserción:**
+  - Si retorna `address(0)` o falla al consultar reservas, NO inventar/insertar.
+  - V3: probar fee tiers `100, 500, 3000, 10000` → convertir a bps (1, 5, 30, 100).
+- **Persistencia en PG:** Respetar schema actual. Guardar tokens mínimos reales (address, symbol, decimals). No escribir columnas ficticias ni valores nulos forzados si el schema lo impide.
+
+### 34.2. Observed Unindexed Pairs & Retry Workflow
+- Si un intent no arroja impactos, registrar en `observed_unindexed_pairs`.
+- Llamar a `PoolDiscoveryService` síncronamente o lanzar proceso asíncrono.
+- Una vez descubiertos los pools → actualizar Redis + inyectar en `ImpactIndex` vivo (`impact_index.write().await.add_pool()`).
+- Reintentar `ImpactIndex::resolve(&intent)`. Si ahora impacta >0, continuar pipeline.
+
+### 34.3. Paper Trade & Observabilidad (Fail-Honest)
+- Variable mandatoria: `ARBX_TRADE_MODE=paper`.
+- Las observaciones (`opportunity_observations`) DEBEN emitir en cada fase (`impact_zero`, `discovery_failed`, `optimizer_rejected`, `paper_accepted`). 
+- **Cero Ejecución:** En modo paper, no se firma ni envía nada a la red. Todo se persiste como paper opportunity con `gross_profit_usd` / `net_profit_usd` computado con reservas reales de V2/V3.
+
+### 34.4. Validaciones Requeridas (Shadow / Paper)
+- Ejecutar en VPS con `ARBX_ORCHESTRATOR_MODE=shadow` o `v2` y probar mínimo 10 minutos.
+- Verificar eventos emitidos en logs: `pool_discovery.*`, `v2.impact.discovery_retry`, `v2.reserves.hydrated`, `dex_engine.structural_candidate`.
+- Asegurar `cargo clippy` limpio, y realizar una búsqueda obligatoria: `grep -R "mock"`, `grep -R "hardcode"`, `grep -R "fake"`. Si hay fixtures en código productivo, el sistema SE RECHAZA.

@@ -215,13 +215,13 @@ async fn build_orchestrator(
     // Without this, ImpactIndex resolves cycle_ids but the engine can't look them up.
     let pool_map = {
         let mut map = std::collections::HashMap::<(String, String), ethers::types::Address>::new();
-        for &(sym_a, sym_b, sym_c) in crate::workers::triangular_worker::MVP_CYCLES {
+        for &(_sym_a, sym_b, sym_c) in crate::workers::triangular_worker::MVP_CYCLES {
             // Each cycle has 3 edges; collect pool addresses for each unique edge.
-            let edges: [(&str, &str); 3] = [(sym_a, sym_b), (sym_b, sym_c), (sym_a, sym_c)];
+            let edges: [(&str, &str); 3] = [(_sym_a, sym_b), (sym_b, sym_c), (_sym_a, sym_c)];
             for (s0, s1) in edges {
                 let (lo, hi) = if s0 <= s1 { (s0, s1) } else { (s1, s0) };
                 let key = format!("arbx:pool_index:{}:{}:{}", chain_id, lo, hi);
-                let raw: Result<Option<String>, _> = redis::cmd("GET").arg(&key).query_async(&mut redis).await;
+                let raw: Result<Option<String>, _> = redis::AsyncCommands::get(&mut redis, &key).await;
                 if let Ok(Some(json)) = raw {
                     if let Ok(addrs) = serde_json::from_str::<Vec<String>>(&json) {
                         if let Some(first) = addrs.first() {

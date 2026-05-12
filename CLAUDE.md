@@ -50,8 +50,9 @@ Antes de emitir cualquier respuesta o escribir una línea de código, ejecuta un
 ### RULE 00 — DOCTRINA ZERO MOCKS
 **ESTRICTAMENTE PROHIBIDO** inyectar, generar o servir datos falsos, hardcodeados, simulados o "decorativos" en CUALQUIER capa.
 - **Frontend**: Renderiza exactamente lo que devuelve la API. Array vacío = mostrar vacío.
-- **Backend**: Datos ÚNICAMENTE de fuentes veraces (PostgreSQL, Redis, nodos RPC reales).
-- **Errores**: Si un servicio está caído → Fail-Fast ruidosamente. NUNCA ocultar con datos falsos.
+- **Backend**: Datos ÚNICAMENTE de fuentes veraces (Mempool real, RPC, Contratos on-chain, PostgreSQL, Redis, Configuración declarativa validada).
+- **Prohibiciones Absolutas**: Prohibido usar mocks para hacer pasar pipelines. Prohibido hardcodear pools, tokens, oportunidades, strategy_kind, rutas, reserves, impacted_pools, o fábricas.
+- **Errores**: Si un servicio está caído o faltan datos → Fail-Fast ruidosamente o Fail-Honest (Observation). NUNCA fabricar una Opportunity ni ocultar silencios operacionales.
 
 ### RULE 01 — DEPLOYMENT WORKFLOW (LOCAL → GIT → VPS)
 ```
@@ -153,7 +154,9 @@ curl localhost:8787/api/opportunities/live | head
 - PG tiene datos pero API no → error en el query del `api-server`.
 - API tiene datos pero Dashboard no → error de frontend/edge/proxy.
 
----
+### R8 — Fail-Honest Pattern
+El sistema debe fallar honestamente: `None = no computado`, `Some(0.0) = computado y exactamente cero`.
+Si no hay datos reales, registrar una **observation** con la razón exacta (`impact_zero`, `discovery_failed`, `discovery_no_pool_found`, `missing_reserves`, `unknown_token_price`, `no_base_candidates`, `watchlist_empty`, etc.) y detener esa rama. NUNCA inventar datos para avanzar. NUNCA fabricar una `Opportunity`.
 
 ## 4. OMEGA ARCHITECTURAL FIDELITY
 
@@ -165,10 +168,10 @@ curl localhost:8787/api/opportunities/live | head
 5. **Cero Dependencias Obesas**: WebSocket directo > SDK gigante. Protocolo FIX/TCP donde sea viable.
 
 ### Arquitectura C-S-E (Collector-Strategy-Executor)
-1. **Collector (searcher-rs)**: Escucha WebSockets de Alchemy. Emite eventos al broker/frontend.
-2. **Strategy Engine (api-server + rust)**: Filtra y detecta oportunidades.
-3. **Risk Engine (NUEVO)**: Interceptor estricto antes del Executor. Evalúa `arbx-mev-ethics-gate`.
-4. **Executor (Mock por ahora)**: Paper-trading que registra en PostgreSQL. `ARBX_PAPER_TRADE=true` por defecto.
+1. **Collector (searcher-rs)**: Escucha WebSockets de Alchemy (Mempool real). Emite eventos al broker/frontend.
+2. **Strategy Engine (api-server + rust)**: Filtra y detecta oportunidades. Si no hay pools indexados, lanza `PoolDiscoveryService`.
+3. **Risk Engine**: Interceptor estricto antes del Executor. Evalúa `arbx-mev-ethics-gate`.
+4. **Executor (Paper Trade)**: Modo actual obligatorio (`ARBX_TRADE_MODE=paper`). Detecta, simula, puntúa y persiste como paper. NO firma, NO envía bundle, NO mueve fondos.
 
 ---
 
@@ -319,6 +322,7 @@ Lee `.agents/memory/anti_reincidencia.md` para el historial completo. Resumen:
 7. **DESPLEGAR.** Seguir R3 estrictamente (`--no-cache --env-file .env`). Shortcut: `/project:deploy`.
 8. **VERIFICAR EN PRODUCCIÓN.** Confirmar consola limpia en URL pública. Shortcut: `/project:status`.
 9. **DOCUMENTAR.** Actualizar `.agents/memory/anti_reincidencia.md`.
+10. **VALIDAR ANTI-MOCKS.** Asegurar que no se hayan insertado hardcodes ni fixtures que alimenten el runtime productivo (`grep -R "mock"`, `grep -R "hardcode"`).
 
 ---
 
