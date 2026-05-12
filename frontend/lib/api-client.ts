@@ -24,6 +24,8 @@ import {
   type SCurvePayload,
   type VariancePayload,
   type ScannerHeartbeatResponse,
+  StrategyRuntimeStatusResponseSchema,
+  type StrategyRuntimeStatusResponse,
 } from "@/lib/operations-schemas";
 
 // Server Components run inside Docker — INTERNAL_EDGE_URL reaches the edge via
@@ -476,6 +478,10 @@ export function getOperationsVariance(chainId = 1): Promise<Result<VariancePaylo
 // down or recently restarted) — UI treats as "loading" state.
 export function getScannerHeartbeat(chainId = 1): Promise<Result<ScannerHeartbeatResponse>> {
   return getValidated(`/api/scanner/heartbeat?chain_id=${chainId}`, ScannerHeartbeatResponseSchema);
+}
+
+export function getStrategyRuntimeStatus(chainId = 1): Promise<Result<StrategyRuntimeStatusResponse>> {
+  return getValidated(`/api/strategies/runtime-status?chain_id=${chainId}`, StrategyRuntimeStatusResponseSchema);
 }
 
 // ── Strategy Catalog (Sprint 2) ─────────────────────────────────────────
