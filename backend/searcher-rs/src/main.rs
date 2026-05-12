@@ -37,6 +37,12 @@ mod route_decoder;
 mod route_intent;
 #[allow(dead_code)]
 mod strategy_label;
+// Phase 7-8: orchestrator skeleton + engines (dex_engine).
+// Not yet integrated into scanner.rs (Phase 14).
+#[allow(dead_code)]
+mod engines;
+#[allow(dead_code)]
+mod orchestrator;
 mod workers;
 
 use shared_rs::{
