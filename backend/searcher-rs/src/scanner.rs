@@ -54,6 +54,16 @@ use tracing::{debug, error, info, warn};
 use crate::chain_client::{
     is_alchemy_endpoint, parse_extra_allowlist_from_env, MempoolMode, WsChainClient,
 };
+use crate::engines::dex_engine::DexEngine;
+use crate::engines::flashloan_engine::FlashloanEngine;
+use crate::engines::triangular_engine::{ReservesCache, TriangularEngine};
+use crate::impact_index::ImpactIndex;
+use crate::opportunity_emitter::OpportunityEmitter;
+use crate::orchestrator::{ConfigProvider, Orchestrator, OrchestratorContext};
+use crate::route_decoder;
+use crate::route_intent::DetectionSource;
+use crate::size_optimizer::SizeOptimizer;
+use crate::state_projector::StateProjector;
 use ethers::types::Transaction;
 
 /// Mainnet QuoterV2 + Multicall3 addresses. V3 enrichment is mainnet-only for
@@ -64,9 +74,137 @@ const V3_QUOTER_V2_MAINNET: &str = "0x61fFE014bA17989E743c5F6cB21bF9697530B21e";
 const V3_MULTICALL3_ADDR: &str = "0xcA11bde05977b3631167028862bE2a173976CA11";
 const V3_QUOTE_CACHE_TTL_SECS: u64 = 5;
 
+// ---------------------------------------------------------------------------
+// OrchestratorMode — feature flag for Phase 14 scanner integration
+// ---------------------------------------------------------------------------
+
+/// Controls which detection path `decode_and_score_tx` executes.
+///
+/// Read once at `run_chain` boot from `ARBX_ORCHESTRATOR_MODE` env var.
+/// Default is `V1` (legacy path only) until Phase 14 is validated in shadow.
+///
+/// | Value    | Behaviour |
+/// |----------|-----------|
+/// | `v1`     | Legacy hardcoded path only (current behaviour). Default. |
+/// | `v2`     | Orchestrator path only. The hardcoded `strategy_kind` is replaced. |
+/// | `shadow` | Both paths run. Orchestrator evaluates and LOGS only (dry-run). Legacy path EMITS. |
+/// | `off`    | Scanner returns Ok immediately — no detection at all (emergency). |
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrchestratorMode {
+    V1,
+    V2,
+    Shadow,
+    Off,
+}
+
+impl OrchestratorMode {
+    /// Reads `ARBX_ORCHESTRATOR_MODE` env var. Defaults to `V1`.
+    pub fn from_env() -> Self {
+        match std::env::var("ARBX_ORCHESTRATOR_MODE")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "v2" => Self::V2,
+            "shadow" => Self::Shadow,
+            "off" => Self::Off,
+            _ => Self::V1,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::V1 => "v1",
+            Self::V2 => "v2",
+            Self::Shadow => "shadow",
+            Self::Off => "off",
+        }
+    }
+}
+
 pub struct ScannerHandle {
     #[allow(dead_code)]
     pub chain_id: u64,
+}
+
+/// Constructs an `Orchestrator` for `chain_id` when mode is `V2` or `Shadow`.
+///
+/// Returns `None` for `V1` and `Off` (no orchestrator needed).
+///
+/// The constructed orchestrator uses:
+/// - An empty `ImpactIndex` (populated at runtime by `pool_sync_worker` via
+///   `ImpactIndex::add_pool` calls — Phase 15 wires the live feed).
+/// - A fresh `ReservesCache` shared between `TriangularEngine` and
+///   `StateProjector`. The polled worker's separate cache is not shared
+///   yet (Phase 15).
+/// - `DexEngine`, `TriangularEngine`, `FlashloanEngine` with no seeds —
+///   they return empty candidate sets on cold cache, which is correct
+///   R8 behaviour (honest skip).
+///
+/// In `Shadow` mode the emitter uses `dry_run = true` so candidates are
+/// evaluated and logged but NOT written to PG or Redis (the legacy path
+/// handles those writes).
+fn build_orchestrator(
+    mode: OrchestratorMode,
+    chain_id: u64,
+    db: Option<PgPool>,
+    redis: redis::aio::ConnectionManager,
+    opp_dedup: Arc<OppDedup>,
+    trading_config: TradingConfigClient,
+) -> Option<Arc<Orchestrator>> {
+    if mode == OrchestratorMode::V1 || mode == OrchestratorMode::Off {
+        return None;
+    }
+
+    let reserves_cache = Arc::new(ReservesCache::new());
+    let config = Arc::new(tokio::sync::RwLock::new(
+        None::<shared_rs::trading_config::TradingConfigState>,
+    ));
+
+    let state_projector = Arc::new(StateProjector::new(
+        reserves_cache.clone(),
+        None, // V3 provider: Phase 15
+    ));
+
+    let size_optimizer = Arc::new(SizeOptimizer::new(state_projector.clone()));
+
+    let dex_engine = Arc::new(DexEngine::new(
+        config.clone(),
+        None, // v3_provider: Phase 15
+        Some(state_projector.clone()),
+    ));
+
+    let tri_engine = Arc::new(TriangularEngine::new(
+        reserves_cache,
+        config.clone(),
+        vec![], // seeds: Phase 15 wires from MVP_CYCLES + pool index
+    ));
+
+    let fl_engine = Arc::new(FlashloanEngine::new(config.clone()));
+
+    let emitter = Arc::new(if mode == OrchestratorMode::Shadow {
+        OpportunityEmitter::new_dry_run(opp_dedup, redis)
+    } else {
+        OpportunityEmitter::new(db, redis, opp_dedup)
+    });
+
+    let config_provider = Arc::new(ConfigProvider { trading_config });
+
+    let impact_index = Arc::new(tokio::sync::RwLock::new(ImpactIndex::empty()));
+
+    let ctx = OrchestratorContext {
+        impact_index,
+        dex_engine,
+        triangular_engine: tri_engine,
+        flashloan_engine: fl_engine,
+        state_projector,
+        size_optimizer,
+        emitter,
+        config_provider,
+        chain_id,
+    };
+
+    Some(Arc::new(Orchestrator::new(ctx)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -135,6 +273,39 @@ pub async fn run_chain(
         None
     };
 
+    // Read orchestrator mode ONCE at run_chain boot. Redis/PG are cloned
+    // for the orchestrator before being moved into detection_loop.
+    let orch_mode = OrchestratorMode::from_env();
+    info!(
+        event = "scanner.orchestrator_mode",
+        chain_id,
+        mode = orch_mode.as_str(),
+        "orchestrator mode resolved from ARBX_ORCHESTRATOR_MODE"
+    );
+
+    // Build the orchestrator (or None for V1/Off).
+    // For Shadow: takes a clone of redis + opp_dedup; legacy path still owns the originals.
+    // For V2: takes ownership of redis + opp_dedup (legacy path won't need them for emit).
+    let orchestrator: Option<Arc<Orchestrator>> = match orch_mode {
+        OrchestratorMode::Shadow => build_orchestrator(
+            orch_mode,
+            chain_id,
+            db.clone(), // dry-run so PG not actually used but kept for consistency
+            redis.clone(),
+            opp_dedup.clone(),
+            trading_config.clone(),
+        ),
+        OrchestratorMode::V2 => build_orchestrator(
+            orch_mode,
+            chain_id,
+            db.clone(),
+            redis.clone(),
+            opp_dedup.clone(),
+            trading_config.clone(),
+        ),
+        OrchestratorMode::V1 | OrchestratorMode::Off => None,
+    };
+
     // Spawn the detection loop with the full endpoint list.
     tokio::spawn(detection_loop(
         chain_id,
@@ -147,6 +318,8 @@ pub async fn run_chain(
         opp_dedup,
         trading_config,
         v3_rpc_pool,
+        orchestrator,
+        orch_mode,
     ));
     Ok(ScannerHandle { chain_id })
 }
@@ -177,6 +350,8 @@ async fn detection_loop(
     opp_dedup: Arc<OppDedup>,
     trading_config: TradingConfigClient,
     v3_rpc_pool: Option<Arc<HttpRpcPool>>,
+    orchestrator: Option<Arc<Orchestrator>>,
+    orch_mode: OrchestratorMode,
 ) {
     // Operator-selected mempool coverage. Read once at boot — re-deploy to
     // change. `Auto` is resolved per-endpoint inside `run_subscription` since
@@ -256,6 +431,8 @@ async fn detection_loop(
             &trading_config,
             v3_rpc_pool.as_ref(),
             mempool_mode,
+            orchestrator.as_ref(),
+            orch_mode,
         )
         .await
         {
@@ -291,6 +468,8 @@ async fn run_subscription(
     trading_config: &TradingConfigClient,
     v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
     mempool_mode: MempoolMode,
+    orchestrator: Option<&Arc<Orchestrator>>,
+    orch_mode: OrchestratorMode,
 ) -> anyhow::Result<()> {
     let _ = killswitch; // reserved: kill-switch only blocks downstream execution
 
@@ -351,6 +530,8 @@ async fn run_subscription(
                             opp_dedup,
                             trading_config,
                             v3_rpc_pool,
+                            orchestrator,
+                            orch_mode,
                         )
                         .await
                         {
@@ -392,6 +573,8 @@ async fn run_subscription(
             opp_dedup,
             trading_config,
             v3_rpc_pool,
+            orchestrator,
+            orch_mode,
         )
         .await
         {
@@ -411,6 +594,8 @@ async fn process_pending(
     opp_dedup: &OppDedup,
     trading_config: &TradingConfigClient,
     v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
+    orchestrator: Option<&Arc<Orchestrator>>,
+    orch_mode: OrchestratorMode,
 ) -> anyhow::Result<()> {
     // Firehose path: dedup BEFORE get_tx so we don't pay the 26-CU
     // eth_getTransactionByHash for duplicates that the relay re-emits.
@@ -430,6 +615,8 @@ async fn process_pending(
         opp_dedup,
         trading_config,
         v3_rpc_pool,
+        orchestrator,
+        orch_mode,
     )
     .await
 }
@@ -444,6 +631,8 @@ async fn process_pending_tx(
     opp_dedup: &OppDedup,
     trading_config: &TradingConfigClient,
     v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
+    orchestrator: Option<&Arc<Orchestrator>>,
+    orch_mode: OrchestratorMode,
 ) -> anyhow::Result<()> {
     // Filtered path: tx body is already on hand from the WS event, so dedup
     // here by tx.hash collapses reorg / duplicate notifications. No CU cost
@@ -460,10 +649,13 @@ async fn process_pending_tx(
         opp_dedup,
         trading_config,
         v3_rpc_pool,
+        orchestrator,
+        orch_mode,
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn decode_and_score_tx(
     client: &WsChainClient,
     tx: Transaction,
@@ -472,7 +664,15 @@ async fn decode_and_score_tx(
     opp_dedup: &OppDedup,
     trading_config: &TradingConfigClient,
     v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
+    orchestrator: Option<&Arc<Orchestrator>>,
+    orch_mode: OrchestratorMode,
 ) -> anyhow::Result<()> {
+    // ── `Off` mode: scanner disabled by operator ─────────────────────────
+    // Emergency gate — returns immediately without any detection work.
+    if orch_mode == OrchestratorMode::Off {
+        return Ok(());
+    }
+
     let hash = tx.hash;
     let to = match tx.to {
         Some(a) => a,
@@ -483,6 +683,54 @@ async fn decode_and_score_tx(
         Some(r) => r,
         None => return Ok(()),
     };
+
+    // ── Orchestrator path (V2 / Shadow) ──────────────────────────────────
+    // Decode the tx into one or more `RouteIntent`s and dispatch to the
+    // event-driven orchestrator. In `Shadow` mode the orchestrator is in
+    // dry-run (logs only); in `V2` mode it is the sole emit path.
+    if let Some(orch) = orchestrator {
+        let intents = match route_decoder::decode_to_route_intents(
+            &tx,
+            router,
+            client.chain_id,
+            DetectionSource::PublicMempool,
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    event = "scanner.orch_decode_failed",
+                    hash = %hash,
+                    error = %e,
+                    "route_decoder returned Err; continuing"
+                );
+                vec![]
+            }
+        };
+
+        for intent in intents {
+            if let Err(e) = orch.on_route_intent(intent).await {
+                // Non-fatal: log and continue. One intent failure must not
+                // kill the subscription loop.
+                warn!(
+                    event = "scanner.orch_intent_error",
+                    hash = %hash,
+                    error = %e,
+                    "orchestrator.on_route_intent returned Err"
+                );
+            }
+        }
+
+        // In `V2` mode the orchestrator is the sole emit path — skip legacy.
+        if orch_mode == OrchestratorMode::V2 {
+            return Ok(());
+        }
+        // In `Shadow` mode: fall through to the legacy path below.
+    }
+
+    // ── Legacy path (V1 / Shadow fall-through) ────────────────────────────
+    // All code below is the original `decode_and_score_tx` body, unchanged.
+    // Scanner integration spec §4: "BEFORE" block untouched until V2 ships.
+
     let decoded = match calldata::decode(&tx.input, router.kind) {
         Ok(d) => d,
         Err(reason) => {

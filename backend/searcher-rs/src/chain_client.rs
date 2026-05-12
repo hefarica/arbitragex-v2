@@ -253,8 +253,13 @@ pub fn parse_extra_allowlist_from_env() -> Vec<String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    // Serialize tests that mutate ARBX_MEMPOOL_ALLOWLIST — std::env::set_var
+    // is not thread-safe under parallel test execution.
+    static ALLOWLIST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn alchemy_endpoint_recognition() {
@@ -304,26 +309,28 @@ mod tests {
 
     #[test]
     fn parse_allowlist_accepts_well_formed_csv() {
+        let _guard = ALLOWLIST_LOCK.lock().unwrap();
         std::env::set_var(
             "ARBX_MEMPOOL_ALLOWLIST",
             "0x111111125421ca6dc452d289314280a0f8842a65, 0xDEF1C0DED9BEC7F1A1670819833240F027B25EFF",
         );
         let v = parse_extra_allowlist_from_env();
+        std::env::remove_var("ARBX_MEMPOOL_ALLOWLIST");
         assert_eq!(v.len(), 2);
         assert_eq!(v[0], "0x111111125421ca6dc452d289314280a0f8842a65");
         assert_eq!(v[1], "0xdef1c0ded9bec7f1a1670819833240f027b25eff");
-        std::env::remove_var("ARBX_MEMPOOL_ALLOWLIST");
     }
 
     #[test]
     fn parse_allowlist_drops_malformed_entries() {
+        let _guard = ALLOWLIST_LOCK.lock().unwrap();
         std::env::set_var(
             "ARBX_MEMPOOL_ALLOWLIST",
             "0xabc,not-an-address,0x111111125421ca6dc452d289314280a0f8842a65",
         );
         let v = parse_extra_allowlist_from_env();
+        std::env::remove_var("ARBX_MEMPOOL_ALLOWLIST");
         assert_eq!(v.len(), 1);
         assert_eq!(v[0], "0x111111125421ca6dc452d289314280a0f8842a65");
-        std::env::remove_var("ARBX_MEMPOOL_ALLOWLIST");
     }
 }

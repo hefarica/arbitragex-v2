@@ -86,6 +86,10 @@ pub struct OpportunityEmitter {
     pool: Option<PgPool>,
     redis: redis::aio::ConnectionManager,
     opp_dedup: Arc<OppDedup>,
+    /// When `true` all emit calls are no-ops (log only). Used in
+    /// `ARBX_ORCHESTRATOR_MODE=shadow` to let the orchestrator evaluate
+    /// candidates without writing to PG or the Redis stream.
+    dry_run: bool,
 }
 
 impl OpportunityEmitter {
@@ -105,6 +109,22 @@ impl OpportunityEmitter {
             pool,
             redis,
             opp_dedup,
+            dry_run: false,
+        }
+    }
+
+    /// Creates an emitter in dry-run mode.
+    ///
+    /// All emit calls succeed immediately without I/O — they only log.
+    /// Used when `ARBX_ORCHESTRATOR_MODE=shadow` so the orchestrator path
+    /// evaluates candidates without duplicating writes that the legacy path
+    /// already performs.
+    pub fn new_dry_run(opp_dedup: Arc<OppDedup>, redis: redis::aio::ConnectionManager) -> Self {
+        Self {
+            pool: None,
+            redis,
+            opp_dedup,
+            dry_run: true,
         }
     }
 
@@ -129,6 +149,18 @@ impl OpportunityEmitter {
         opportunity: &Opportunity,
         strategy_label: StrategyLabel,
     ) -> anyhow::Result<EmitOutcome> {
+        // Dry-run (shadow mode): log only, no I/O.
+        if self.dry_run {
+            tracing::debug!(
+                event = "opportunity_emitter.shadow_accepted",
+                opp_id = %opportunity.id,
+                strategy = strategy_label.as_str(),
+                profit_usd = ?opportunity.expected_profit_usd,
+                "shadow mode: would have emitted accepted (no write)"
+            );
+            return Ok(EmitOutcome::Published);
+        }
+
         // ── Dedup check ───────────────────────────────────────────────────
         let route_hash = build_route_hash(opportunity);
         let is_fresh = self
@@ -178,6 +210,18 @@ impl OpportunityEmitter {
         strategy_label: StrategyLabel,
         rejection_reason: &str,
     ) -> anyhow::Result<EmitOutcome> {
+        // Dry-run (shadow mode): log only, no I/O.
+        if self.dry_run {
+            tracing::debug!(
+                event = "opportunity_emitter.shadow_rejected",
+                opp_id = %opportunity.id,
+                strategy = strategy_label.as_str(),
+                reason = rejection_reason,
+                "shadow mode: would have emitted rejected (no write)"
+            );
+            return Ok(EmitOutcome::Published);
+        }
+
         // ── PG write ──────────────────────────────────────────────────────
         // Mutate a local copy so the caller's value is not modified.
         let mut rejected = opportunity.clone();

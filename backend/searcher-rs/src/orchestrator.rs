@@ -89,6 +89,10 @@ pub struct OrchestratorContext {
     pub flashloan_engine: Arc<FlashloanEngine>,
     // Phase 11: pub liquidation_engine: Arc<LiquidationEngine>,
     /// StateProjector — virtual post-tx pool state (Phase 12).
+    /// Stored here so Phase 15 can access it directly from the context for
+    /// on-demand per-candidate projection. Currently accessed indirectly via
+    /// `size_optimizer` which owns a clone of the same `Arc`.
+    #[allow(dead_code)]
     pub state_projector: Arc<StateProjector>,
     /// SizeOptimizer — optimal amount_in per candidate (Phase 13).
     pub size_optimizer: Arc<SizeOptimizer>,

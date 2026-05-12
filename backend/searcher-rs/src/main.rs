@@ -24,34 +24,30 @@ mod persistence;
 mod publisher;
 mod reserves;
 mod scanner;
-// Phase 1-3: new orchestrator modules declared here so the binary links them.
-// Items are not yet wired into scanner.rs (Phase 12); allow dead_code until
-// the integration lands.
+// Phase 1-3: orchestrator modules — fully wired in Phase 14.
+// `impact_index` still has Phase-15 functions (from_registry, add_pool,
+// seed_cycles_from_mvp) that are public API but not yet called by the binary.
+// Allow dead_code for those; the binary uses ImpactIndex::empty() and resolve().
 #[allow(dead_code)]
 mod impact_index;
-#[allow(dead_code)]
 mod opportunity_emitter;
-#[allow(dead_code)]
 mod route_decoder;
-#[allow(dead_code)]
 mod route_intent;
-#[allow(dead_code)]
 mod strategy_label;
-// Phase 7-8: orchestrator skeleton + engines (dex_engine).
-// Not yet integrated into scanner.rs (Phase 14).
+// Phase 7-8: orchestrator + engines — fully wired in Phase 14.
+// `engines` still has Phase-15 hooks (insert, from_mvp_cycles, etc.) unused
+// by the binary yet. Allow dead_code on the module; they ARE used in lib tests.
 #[allow(dead_code)]
 mod engines;
-#[allow(dead_code)]
 mod orchestrator;
 mod workers;
-// Phase 12: StateProjector — virtual post-tx pool state projection.
-// Not yet wired into scanner.rs (Phase 14); allow dead_code until integration.
-#[allow(dead_code)]
-mod state_projector;
-// Phase 13: SizeOptimizer — optimal amount_in sizing.
-// Not yet wired into scanner.rs (Phase 14); allow dead_code until integration.
+// Phase 12-13: StateProjector + SizeOptimizer — wired in Phase 14.
+// Individual methods (project_v2_post_swap, project_triangular_cycle) are
+// Phase-15 hooks not yet called from the binary; allow dead_code.
 #[allow(dead_code)]
 mod size_optimizer;
+#[allow(dead_code)]
+mod state_projector;
 
 use shared_rs::{
     config::{require_env, AppConfig},
