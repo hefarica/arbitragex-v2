@@ -9,7 +9,7 @@ Scope: `opportunities-live`, `strategy-runtime-status`, `trading-config`, `strat
 2. `/api/v1/opportunities/live` is fail-honest and bounded by freshness window; returns 503 on query failure.  
 3. `/api/v1/strategies/runtime-status` is fail-honest for PG main query and uses real heartbeat + PG counters for most fields.
 4. Liquidation semantic fields currently preserve null for metrics without source (`impacted_lending_positions_1h`, `hf_below_one_count`) and keep `enabled: false` as config-style flag.
-5. High-risk gap: contradictory orchestrator header comments still describe old phase skeleton while code executes triangular/flashloan/liquidation paths.
+5. **[RESOLVED]** High-risk gap: contradictory orchestrator header comments still describe old phase skeleton while code executes triangular/flashloan/liquidation paths.
 
 ## Evidence matrix
 
@@ -38,26 +38,27 @@ Scope: `opportunities-live`, `strategy-runtime-status`, `trading-config`, `strat
 - None confirmed in current tree for duplicate liquidation keys; current file has single definitions and null fail-honest values.
 
 ### P1
-1. **Documentation drift in orchestrator header**: comments claim only Dex engine is real, but runtime code executes multiple engines.
-2. **Operator confusion risk**: `viable_only=false` default in live feed can overrepresent rejected flow as "activity".
-3. **Naming consistency audit still needed** for `triangular` vs `triangular_arb` across persistence/config/reporting layers.
+1. **[RESOLVED]** Documentation drift in orchestrator header: comments claim only Dex engine is real, but runtime code executes multiple engines.
+2. Operator confusion risk: `viable_only=false` default in live feed can overrepresent rejected flow as "activity".
+3. **[RESOLVED]** Naming consistency audit still needed for `triangular` vs `triangular_arb` across persistence/config/reporting layers.
 
 ### P2
-1. Missing unified readiness endpoint combining config + heartbeat + PG publish health by strategy.
+1. **[RESOLVED]** Missing unified readiness endpoint combining config + heartbeat + PG publish health by strategy.
 2. Missing explicit dex/pool coverage summary endpoint for operational dashboard.
 
 ## Recommended actions
 
 ### Action A (safe, no behavior change)
-- Update stale orchestrator header comments to match current runtime behavior.
+- [x] Update stale orchestrator header comments to match current runtime behavior.
 
 ### Action B (operational clarity)
-- Add a readiness read model per strategy with explicit states:
+- [x] Add a readiness read model per strategy with explicit states:
   - `config_enabled`
   - `engine_invoked_recently`
   - `candidates_seen_1h`
   - `opportunities_published_1h`
   - `blocked_reason`
+  - Note: implemented as `GET /api/v1/strategies/readiness` returning redis & postgres health per strategy pipeline.
 
 ### Action C (data source transparency)
 - Maintain null semantics for fields without strict telemetry source.
