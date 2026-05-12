@@ -35,7 +35,8 @@
 
 use crate::engines::StrategyCandidate;
 use crate::impact_index::{ImpactSet, LendingProtocol, UserPositionRef};
-use crate::lending_position_indexer::{LendingPositionIndexer, POSITIONS_WATCHLIST_EMPTY_TOTAL};
+use crate::lending_position_indexer::LendingPositionIndexer;
+use crate::metrics::POSITIONS_WATCHLIST_EMPTY_TOTAL;
 use crate::route_intent::RouteIntent;
 use crate::strategy_label::StrategyLabel;
 use crate::workers::liquidation_worker::{
@@ -46,7 +47,6 @@ use ethers::types::H256;
 use prioritization_spine::route_plan::{RouteLeg, RoutePlan};
 use prioritization_spine::types::OpportunityCandidate;
 use shared_rs::contracts::Opportunity;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
@@ -117,7 +117,9 @@ impl LiquidationEngine {
                 Err(_) => false,
             };
             if overall_empty {
-                POSITIONS_WATCHLIST_EMPTY_TOTAL.fetch_add(1, Ordering::Relaxed);
+                POSITIONS_WATCHLIST_EMPTY_TOTAL
+                    .with_label_values(&[&self.chain_id.to_string()])
+                    .inc();
                 debug!(
                     event = "liquidation_engine.watchlist_empty",
                     chain_id = self.chain_id,
@@ -459,7 +461,11 @@ mod tests {
         // NOTE: We use a dummy URL. The connection manager creation will fail
         // but we can construct it lazily. Instead, test the math-only path by
         // checking the static counter and the engine logic.
-        let counter_before = POSITIONS_WATCHLIST_EMPTY_TOTAL.load(Ordering::Relaxed);
+        use crate::metrics::POSITIONS_WATCHLIST_EMPTY_TOTAL;
+
+        let counter_before = POSITIONS_WATCHLIST_EMPTY_TOTAL
+            .with_label_values(&["1"])
+            .get();
 
         // Build impact with no lending positions.
         let impact = ImpactSet {
@@ -471,7 +477,9 @@ mod tests {
         // Pin the invariant at the pure-function level: if impacted_lending_positions
         // is empty, the first branch triggers. The watchlist_size check requires Redis.
         // Verify the counter unchanged (no Redis → no increment due to fail-honest guard).
-        let counter_after = POSITIONS_WATCHLIST_EMPTY_TOTAL.load(Ordering::Relaxed);
+        let counter_after = POSITIONS_WATCHLIST_EMPTY_TOTAL
+            .with_label_values(&["1"])
+            .get();
         assert!(counter_after >= counter_before, "counter must not decrease");
         // The impact set has no positions.
         assert!(impact.impacted_lending_positions.is_empty());

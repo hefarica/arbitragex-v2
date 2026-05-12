@@ -44,36 +44,22 @@ use crate::engines::liquidation_engine::LiquidationEngine;
 use crate::engines::triangular_engine::TriangularEngine;
 use crate::engines::StrategyCandidate;
 use crate::impact_index::ImpactIndex;
+use crate::metrics::{
+    CANDIDATES_TOTAL, DECODED_INTENTS_TOTAL, ENGINE_ERRORS_TOTAL, IMPACTED_ROUTES_TOTAL,
+    OPPORTUNITIES_PUBLISHED_TOTAL, REJECTED_NO_PROFIT_TOTAL, SIMULATION_FAILED_TOTAL,
+};
 use crate::opportunity_emitter::OpportunityEmitter;
 use crate::route_intent::RouteIntent;
 use crate::size_optimizer::SizeOptimizer;
 use crate::state_projector::StateProjector;
-use shared_rs::metrics::OPPORTUNITIES_TOTAL;
+use crate::strategy_label::StrategyLabel;
 use shared_rs::trading_config::TradingConfigState;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, warn};
 
 use prioritization_spine::config_aware::{ConfigAwareEvaluator, ConfigGateOutcome, NetworkSignals};
-
-// ---------------------------------------------------------------------------
-// Per-strategy error counters
-// ---------------------------------------------------------------------------
-
-/// Per-engine error counter incremented when `DexEngine::build_from_impacted_pairs` returns Err.
-///
-/// Lock-free `AtomicU64`. Exposed so tests can verify counter increments without
-/// standing up a real Redis/PG stack.
-pub static DEX_ENGINE_ERRORS: AtomicU64 = AtomicU64::new(0);
-
-/// Error counter for `TriangularEngine::build_from_impacted_cycles`.
-pub static TRIANGULAR_ENGINE_ERRORS: AtomicU64 = AtomicU64::new(0);
-
-/// Error counter for `LiquidationEngine::build_from_lending_impact`.
-pub static LIQUIDATION_ENGINE_ERRORS: AtomicU64 = AtomicU64::new(0);
 
 // ---------------------------------------------------------------------------
 // OrchestratorContext
@@ -179,11 +165,12 @@ impl Orchestrator {
     /// swallowed per-candidate with a logged counter increment.
     pub async fn on_route_intent(&self, intent: RouteIntent) -> anyhow::Result<()> {
         let chain_id = self.ctx.chain_id;
+        let chain_str = chain_id.to_string();
         let source_str = detection_source_as_str(intent.source_event);
 
         // ── Step 1: decoded_intents_total metric ─────────────────────────
-        OPPORTUNITIES_TOTAL
-            .with_label_values(&[&chain_id.to_string(), source_str, "intent_decoded"])
+        DECODED_INTENTS_TOTAL
+            .with_label_values(&[&chain_str, source_str])
             .inc();
 
         // ── Step 2: resolve ImpactSet ────────────────────────────────────
@@ -192,10 +179,23 @@ impl Orchestrator {
             idx.resolve(&intent)
         };
 
-        // ── Step 3: impacted_routes_total metric ─────────────────────────
-        OPPORTUNITIES_TOTAL
-            .with_label_values(&[&chain_id.to_string(), "all", "impacted_pools_resolved"])
-            .inc();
+        // ── Step 3: impacted_routes_total metric — one increment per engine
+        // that WILL receive impacted routes. We emit once for the whole fan-out
+        // (pool count is captured in the debug log below rather than per-engine
+        // to avoid over-counting when multiple engines share the same impact).
+        // The per-engine candidates_total counter below tracks engine output.
+        if !impact.impacted_pools.is_empty() || !impact.impacted_cycles.is_empty() {
+            for label in &[
+                StrategyLabel::DexArbV2V2,
+                StrategyLabel::TriangularArb,
+                StrategyLabel::FlashloanArb,
+                StrategyLabel::Liquidation,
+            ] {
+                IMPACTED_ROUTES_TOTAL
+                    .with_label_values(&[&chain_str, label.as_str()])
+                    .inc();
+            }
+        }
 
         debug!(
             event = "orchestrator.impact_resolved",
@@ -214,9 +214,20 @@ impl Orchestrator {
             .build_from_impacted_pairs(&intent, &impact)
             .await
         {
-            Ok(v) => v,
+            Ok(v) => {
+                // Count candidates produced by the engine — label comes from the
+                // candidate itself (never a hardcoded string).
+                for c in &v {
+                    CANDIDATES_TOTAL
+                        .with_label_values(&[&chain_str, c.label.as_str()])
+                        .inc();
+                }
+                v
+            }
             Err(e) => {
-                DEX_ENGINE_ERRORS.fetch_add(1, Ordering::Relaxed);
+                ENGINE_ERRORS_TOTAL
+                    .with_label_values(&[&chain_str, StrategyLabel::DexArbV2V2.as_str()])
+                    .inc();
                 error!(
                     event = "orchestrator.dex_engine_error",
                     chain_id,
@@ -235,9 +246,18 @@ impl Orchestrator {
             .build_from_impacted_cycles(&intent, &impact)
             .await
         {
-            Ok(v) => v,
+            Ok(v) => {
+                for c in &v {
+                    CANDIDATES_TOTAL
+                        .with_label_values(&[&chain_str, c.label.as_str()])
+                        .inc();
+                }
+                v
+            }
             Err(e) => {
-                TRIANGULAR_ENGINE_ERRORS.fetch_add(1, Ordering::Relaxed);
+                ENGINE_ERRORS_TOTAL
+                    .with_label_values(&[&chain_str, StrategyLabel::TriangularArb.as_str()])
+                    .inc();
                 error!(
                     event = "orchestrator.triangular_engine_error",
                     chain_id,
@@ -258,9 +278,18 @@ impl Orchestrator {
             .build_from_lending_impact(&intent, &impact)
             .await
         {
-            Ok(v) => v,
+            Ok(v) => {
+                for c in &v {
+                    CANDIDATES_TOTAL
+                        .with_label_values(&[&chain_str, c.label.as_str()])
+                        .inc();
+                }
+                v
+            }
             Err(e) => {
-                LIQUIDATION_ENGINE_ERRORS.fetch_add(1, Ordering::Relaxed);
+                ENGINE_ERRORS_TOTAL
+                    .with_label_values(&[&chain_str, StrategyLabel::Liquidation.as_str()])
+                    .inc();
                 error!(
                     event = "orchestrator.liquidation_engine_error",
                     chain_id,
@@ -282,10 +311,19 @@ impl Orchestrator {
         base_candidates.extend(liq_candidates);
 
         // FlashloanEngine (Phase 10 — live): wrap net-positive base candidates.
-        let flash_candidates = self
-            .ctx
-            .flashloan_engine
-            .wrap_profitable_routes(&base_candidates, chain_id);
+        let flash_candidates = {
+            let wrapped = self
+                .ctx
+                .flashloan_engine
+                .wrap_profitable_routes(&base_candidates, chain_id);
+            // Count flashloan candidates — label comes from the candidate itself.
+            for c in &wrapped {
+                CANDIDATES_TOTAL
+                    .with_label_values(&[&chain_str, c.label.as_str()])
+                    .inc();
+            }
+            wrapped
+        };
 
         debug!(
             event = "orchestrator.engines_done",
@@ -379,6 +417,8 @@ impl Orchestrator {
         let label = sc.label;
         let label_str = label.as_str();
 
+        let chain_str = chain_id.to_string();
+
         // Engine-level rejection: no need to evaluate, just emit rejected.
         if let Some(reason) = &sc.rejection_reason {
             let reason_owned = reason.clone();
@@ -387,6 +427,9 @@ impl Orchestrator {
                 o.rejection_reason = Some(reason_owned.clone());
                 o
             };
+            REJECTED_NO_PROFIT_TOTAL
+                .with_label_values(&[&chain_str, label_str, &reason_owned])
+                .inc();
             self.ctx
                 .emitter
                 .emit_rejected(&opp_with_reason, label, &reason_owned)
@@ -397,6 +440,9 @@ impl Orchestrator {
         // Evaluator not available → observe-only path (same as scanner's no_trading_config).
         let Some(state) = cfg else {
             // Persist + publish without scoring (observe-only).
+            OPPORTUNITIES_PUBLISHED_TOTAL
+                .with_label_values(&[&chain_str, label_str])
+                .inc();
             self.ctx
                 .emitter
                 .emit_accepted(&sc.opportunity, label)
@@ -427,6 +473,9 @@ impl Orchestrator {
                 opp.rejection_reason = Some(reason.clone());
                 opp.roi_pct = Some(0.0);
                 opp.risk_score = Some(0.0);
+                SIMULATION_FAILED_TOTAL
+                    .with_label_values(&[&chain_str, label_str, "TokenNotAllowed"])
+                    .inc();
                 self.ctx.emitter.emit_rejected(&opp, label, &reason).await?;
             }
 
@@ -436,6 +485,9 @@ impl Orchestrator {
                 opp.rejection_reason = Some(reason.clone());
                 opp.roi_pct = Some(0.0);
                 opp.risk_score = Some(0.0);
+                SIMULATION_FAILED_TOTAL
+                    .with_label_values(&[&chain_str, label_str, "StrategyDisabled"])
+                    .inc();
                 self.ctx.emitter.emit_rejected(&opp, label, &reason).await?;
             }
 
@@ -446,6 +498,9 @@ impl Orchestrator {
                 opp.rejection_reason = Some(reason_str.clone());
                 opp.roi_pct = Some(0.0);
                 opp.risk_score = Some(0.0);
+                SIMULATION_FAILED_TOTAL
+                    .with_label_values(&[&chain_str, label_str, tag])
+                    .inc();
                 self.ctx
                     .emitter
                     .emit_rejected(&opp, label, &reason_str)
@@ -469,6 +524,9 @@ impl Orchestrator {
                     // Propagate net_expected_profit_usd when gross is available (R8).
                     opp.net_expected_profit_usd =
                         opp.expected_profit_usd.map(|g| g - outcome.gas_cost_usd);
+                    SIMULATION_FAILED_TOTAL
+                        .with_label_values(&[&chain_str, label_str, "EvaluatedRejected"])
+                        .inc();
                     self.ctx
                         .emitter
                         .emit_rejected(&opp, label, &reason_str)
@@ -477,6 +535,9 @@ impl Orchestrator {
                     // Passed all gates.
                     opp.roi_pct = Some(outcome.net_roi_pct);
                     opp.net_expected_profit_usd = Some(outcome.net_profit_usd);
+                    OPPORTUNITIES_PUBLISHED_TOTAL
+                        .with_label_values(&[&chain_str, label_str])
+                        .inc();
                     self.ctx.emitter.emit_accepted(&opp, label).await?;
                 }
             }
@@ -532,6 +593,8 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::RwLock;
     use uuid::Uuid;
+    #[allow(unused_imports)]
+    use crate::metrics::ENGINE_ERRORS_TOTAL;
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -705,16 +768,32 @@ mod tests {
 
     // ── orchestrator::tests::engine_error_does_not_crash ─────────────────────
     //
-    // Verifies the counter increments correctly (validates the error path
-    // counter logic in on_route_intent). The full async test would require
-    // a mock engine; we validate the counter wiring here.
+    // Verifies that the Prometheus ENGINE_ERRORS_TOTAL counter increments
+    // correctly. The label value MUST come from StrategyLabel::as_str() —
+    // never a hardcoded string literal.
 
     #[test]
     fn engine_error_counter_increments() {
-        let before = DEX_ENGINE_ERRORS.load(Ordering::Relaxed);
-        DEX_ENGINE_ERRORS.fetch_add(1, Ordering::Relaxed);
-        let after = DEX_ENGINE_ERRORS.load(Ordering::Relaxed);
-        assert_eq!(after, before + 1, "DEX_ENGINE_ERRORS must increment by 1");
+        use crate::metrics::ENGINE_ERRORS_TOTAL;
+
+        let label = StrategyLabel::DexArbV2V2;
+        let label_str = label.as_str(); // exclusively from StrategyLabel::as_str()
+        let chain = "1";
+
+        let before = ENGINE_ERRORS_TOTAL
+            .with_label_values(&[chain, label_str])
+            .get();
+        ENGINE_ERRORS_TOTAL
+            .with_label_values(&[chain, label_str])
+            .inc();
+        let after = ENGINE_ERRORS_TOTAL
+            .with_label_values(&[chain, label_str])
+            .get();
+        assert_eq!(
+            after,
+            before + 1,
+            "ENGINE_ERRORS_TOTAL must increment by 1 for strategy={label_str}"
+        );
     }
 
     // ── orchestrator::tests::valid_intent_fans_to_dex_engine ─────────────────
@@ -899,13 +978,25 @@ mod tests {
 
     #[test]
     fn triangular_engine_error_counter_increments() {
-        let before = TRIANGULAR_ENGINE_ERRORS.load(Ordering::Relaxed);
-        TRIANGULAR_ENGINE_ERRORS.fetch_add(1, Ordering::Relaxed);
-        let after = TRIANGULAR_ENGINE_ERRORS.load(Ordering::Relaxed);
+        use crate::metrics::ENGINE_ERRORS_TOTAL;
+
+        let label = StrategyLabel::TriangularArb;
+        let label_str = label.as_str(); // exclusively from StrategyLabel::as_str()
+        let chain = "1";
+
+        let before = ENGINE_ERRORS_TOTAL
+            .with_label_values(&[chain, label_str])
+            .get();
+        ENGINE_ERRORS_TOTAL
+            .with_label_values(&[chain, label_str])
+            .inc();
+        let after = ENGINE_ERRORS_TOTAL
+            .with_label_values(&[chain, label_str])
+            .get();
         assert_eq!(
             after,
             before + 1,
-            "TRIANGULAR_ENGINE_ERRORS must increment by 1"
+            "ENGINE_ERRORS_TOTAL must increment by 1 for strategy={label_str}"
         );
     }
 
@@ -979,13 +1070,25 @@ mod tests {
 
     #[test]
     fn liquidation_engine_error_counter_increments() {
-        let before = LIQUIDATION_ENGINE_ERRORS.load(Ordering::Relaxed);
-        LIQUIDATION_ENGINE_ERRORS.fetch_add(1, Ordering::Relaxed);
-        let after = LIQUIDATION_ENGINE_ERRORS.load(Ordering::Relaxed);
+        use crate::metrics::ENGINE_ERRORS_TOTAL;
+
+        let label = StrategyLabel::Liquidation;
+        let label_str = label.as_str(); // exclusively from StrategyLabel::as_str()
+        let chain = "1";
+
+        let before = ENGINE_ERRORS_TOTAL
+            .with_label_values(&[chain, label_str])
+            .get();
+        ENGINE_ERRORS_TOTAL
+            .with_label_values(&[chain, label_str])
+            .inc();
+        let after = ENGINE_ERRORS_TOTAL
+            .with_label_values(&[chain, label_str])
+            .get();
         assert_eq!(
             after,
             before + 1,
-            "LIQUIDATION_ENGINE_ERRORS must increment by 1"
+            "ENGINE_ERRORS_TOTAL must increment by 1 for strategy={label_str}"
         );
     }
 }

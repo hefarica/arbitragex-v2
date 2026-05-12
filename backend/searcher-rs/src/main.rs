@@ -19,6 +19,8 @@ mod calldata;
 mod chain_client;
 mod counters;
 mod dedup;
+// Phase 16: per-strategy Prometheus metrics for the event-driven orchestrator.
+mod metrics;
 mod patterns;
 mod persistence;
 mod publisher;
@@ -108,21 +110,22 @@ fn legacy_liquidation_worker_enabled() -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 15 — Prometheus counter for disabled workers
+// Phase 16 — Prometheus counter for disabled workers (replaces AtomicU64)
 // ---------------------------------------------------------------------------
-
-/// Incremented once per worker that is disabled by Phase 15 default at boot.
-/// Label values: "triangular_worker", "flashloan_arb_worker", "liquidation_worker".
-/// This is a process-level atomic — Prometheus metrics integration via
-/// `shared_rs::metrics` is a follow-up (Phase 17).
-static LEGACY_WORKER_DISABLED_TOTAL: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+// The counter is defined in metrics.rs (LEGACY_WORKER_DISABLED_TOTAL) and
+// registered in the shared Prometheus registry. We import it here for use in
+// the boot sequence below. The `worker` label value must be one of the three
+// canonical module names: "triangular_worker", "flashloan_arb_worker",
+// "liquidation_worker".
+use crate::metrics::{init_orchestrator_metrics, LEGACY_WORKER_DISABLED_TOTAL, LEGACY_WORKERS_DISABLED_COUNT};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cfg = Arc::new(AppConfig::load()?);
     init_tracing(SERVICE_NAME, &cfg.observability.log_level)?;
     init_metrics();
+    // Phase 16: register per-strategy orchestrator metrics into the shared registry.
+    init_orchestrator_metrics();
 
     let port: u16 = std::env::var("SEARCHER_HEALTH_PORT")
         .ok()
@@ -392,7 +395,12 @@ async fn main() -> anyhow::Result<()> {
             tw.run(triangular_redis, triangular_db, triangular_tc).await;
         });
     } else {
-        LEGACY_WORKER_DISABLED_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // Label value comes from the canonical module name — never a hardcoded
+        // abbreviation. This is the single source of truth for Grafana dashboards.
+        LEGACY_WORKER_DISABLED_TOTAL
+            .with_label_values(&["triangular_worker"])
+            .inc();
+        LEGACY_WORKERS_DISABLED_COUNT.inc();
         info!(
             event = "scanner.legacy_worker_state",
             worker = "triangular_worker",
@@ -441,7 +449,10 @@ async fn main() -> anyhow::Result<()> {
             fw.run(flashloan_redis, flashloan_db, flashloan_tc).await;
         });
     } else {
-        LEGACY_WORKER_DISABLED_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        LEGACY_WORKER_DISABLED_TOTAL
+            .with_label_values(&["flashloan_arb_worker"])
+            .inc();
+        LEGACY_WORKERS_DISABLED_COUNT.inc();
         info!(
             event = "scanner.legacy_worker_state",
             worker = "flashloan_arb_worker",
@@ -524,7 +535,10 @@ async fn main() -> anyhow::Result<()> {
                 .await;
         });
     } else {
-        LEGACY_WORKER_DISABLED_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        LEGACY_WORKER_DISABLED_TOTAL
+            .with_label_values(&["liquidation_worker"])
+            .inc();
+        LEGACY_WORKERS_DISABLED_COUNT.inc();
         info!(
             event = "scanner.legacy_worker_state",
             worker = "liquidation_worker",
@@ -612,7 +626,6 @@ async fn main() -> anyhow::Result<()> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use std::sync::atomic::Ordering;
 
     // ── main::tests::legacy_workers_disabled_by_default ─────────────────────
     //
@@ -661,25 +674,34 @@ mod tests {
 
     // ── main::tests::legacy_worker_state_logged_at_boot ─────────────────────
     //
-    // Verifies the LEGACY_WORKER_DISABLED_TOTAL counter logic:
-    // each disabled worker increments it by 1.
+    // Verifies the LEGACY_WORKER_DISABLED_TOTAL Prometheus counter logic:
+    // each disabled worker increments it by 1 with the correct worker label.
+    // Label values MUST match the canonical module names.
 
     #[test]
     fn legacy_worker_disabled_total_counter_logic() {
-        let before = LEGACY_WORKER_DISABLED_TOTAL.load(Ordering::Relaxed);
+        let workers = [
+            "triangular_worker",
+            "flashloan_arb_worker",
+            "liquidation_worker",
+        ];
 
-        // Simulate 3 disabled-worker increments (as main() does for each
-        // disabled worker at boot when the flags are absent).
-        LEGACY_WORKER_DISABLED_TOTAL.fetch_add(1, Ordering::Relaxed); // triangular
-        LEGACY_WORKER_DISABLED_TOTAL.fetch_add(1, Ordering::Relaxed); // flashloan
-        LEGACY_WORKER_DISABLED_TOTAL.fetch_add(1, Ordering::Relaxed); // liquidation
-
-        let after = LEGACY_WORKER_DISABLED_TOTAL.load(Ordering::Relaxed);
-        assert_eq!(
-            after,
-            before + 3,
-            "LEGACY_WORKER_DISABLED_TOTAL must increment by 1 per disabled worker"
-        );
+        for worker in &workers {
+            let before = LEGACY_WORKER_DISABLED_TOTAL
+                .with_label_values(&[worker])
+                .get();
+            LEGACY_WORKER_DISABLED_TOTAL
+                .with_label_values(&[worker])
+                .inc();
+            let after = LEGACY_WORKER_DISABLED_TOTAL
+                .with_label_values(&[worker])
+                .get();
+            assert_eq!(
+                after,
+                before + 1,
+                "LEGACY_WORKER_DISABLED_TOTAL must increment by 1 for worker={worker}"
+            );
+        }
     }
 
     // ── main::tests::legacy_flashloan_enabled_by_flag ───────────────────────

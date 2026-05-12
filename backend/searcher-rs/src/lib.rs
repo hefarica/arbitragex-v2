@@ -12,6 +12,8 @@ pub mod amm_math;
 pub mod calldata;
 pub mod counters;
 pub mod dedup;
+// Phase 16: per-strategy Prometheus metrics for the orchestrator.
+pub mod metrics;
 pub mod impact_index;
 pub mod opportunity_emitter;
 pub mod patterns;

@@ -133,27 +133,35 @@ pub struct ScannerHandle {
 ///
 /// Returns `None` for `V1` and `Off` (no orchestrator needed).
 ///
-/// The constructed orchestrator uses:
-/// - An empty `ImpactIndex` (populated at runtime by `pool_sync_worker` via
-///   `ImpactIndex::add_pool` calls — Phase 15 wires the live feed).
-/// - A fresh `ReservesCache` shared between `TriangularEngine` and
-///   `StateProjector`. The polled worker's separate cache is not shared
-///   yet (Phase 15).
-/// - `DexEngine`, `TriangularEngine`, `FlashloanEngine` with no seeds —
-///   they return empty candidate sets on cold cache, which is correct
-///   R8 behaviour (honest skip).
+/// ## ImpactIndex boot strategy (Phase 16 — spec §TASK-2)
+///
+/// The `ImpactIndex` is now loaded at boot via `ImpactIndex::from_registry`:
+///   1. PG `pools` table → `token_pair_to_pools` (the DEX arb pair resolution map).
+///   2. Redis `arbx:pool_index` keys for `MVP_CYCLES` → `pool_to_cycles` (triangular).
+///
+/// Cold boot with no DB: the index starts empty — R8 fail-honest. The engines will
+/// produce zero candidates on the first intents, which is correct (no fabrication).
+///
+/// ## Incremental pool refresh (Phase 16 — spec §TASK-2)
+///
+/// An `Arc<RwLock<ImpactIndex>>` handle is returned alongside the orchestrator so
+/// `run_chain` can spawn a periodic refresh task. The refresh task queries PG for
+/// pools added after the boot snapshot and calls `impact_index.add_pool(pool_ref)`
+/// with a write lock. This is the `pool_sync_watcher` spawned in `run_chain`.
+///
+/// ## Shadow mode
 ///
 /// In `Shadow` mode the emitter uses `dry_run = true` so candidates are
 /// evaluated and logged but NOT written to PG or Redis (the legacy path
 /// handles those writes).
-fn build_orchestrator(
+async fn build_orchestrator(
     mode: OrchestratorMode,
     chain_id: u64,
     db: Option<PgPool>,
-    redis: redis::aio::ConnectionManager,
+    mut redis: redis::aio::ConnectionManager,
     opp_dedup: Arc<OppDedup>,
     trading_config: TradingConfigClient,
-) -> Option<Arc<Orchestrator>> {
+) -> Option<(Arc<Orchestrator>, Arc<tokio::sync::RwLock<ImpactIndex>>)> {
     if mode == OrchestratorMode::V1 || mode == OrchestratorMode::Off {
         return None;
     }
@@ -179,7 +187,7 @@ fn build_orchestrator(
     let tri_engine = Arc::new(TriangularEngine::new(
         reserves_cache,
         config.clone(),
-        vec![], // seeds: Phase 15 wires from MVP_CYCLES + pool index
+        vec![], // seeds: provided via MVP_CYCLES in from_registry below
     ));
 
     let fl_engine = Arc::new(FlashloanEngine::new(config.clone()));
@@ -194,17 +202,51 @@ fn build_orchestrator(
     let liq_engine = Arc::new(LiquidationEngine::new(liq_indexer, chain_id));
 
     let emitter = Arc::new(if mode == OrchestratorMode::Shadow {
-        OpportunityEmitter::new_dry_run(opp_dedup, redis)
+        OpportunityEmitter::new_dry_run(opp_dedup, redis.clone())
     } else {
-        OpportunityEmitter::new(db, redis, opp_dedup)
+        OpportunityEmitter::new(db.clone(), redis.clone(), opp_dedup)
     });
 
     let config_provider = Arc::new(ConfigProvider { trading_config });
 
-    let impact_index = Arc::new(tokio::sync::RwLock::new(ImpactIndex::empty()));
+    // ── Phase 16: populate ImpactIndex from PG + Redis at boot ─────────────
+    // `from_registry` loads:
+    //   - PG `pools` table  → token_pair_to_pools  (DEX pair resolution)
+    //   - Redis pool_index  → pool_to_cycles        (triangular cycle seeds)
+    // On failure (no DB, Redis unreachable) the index starts empty — R8
+    // fail-honest: no fabrication, engines skip silently.
+    let impact_index_inner = match ImpactIndex::from_registry(
+        db.as_ref(),
+        &mut redis,
+        chain_id,
+        crate::workers::triangular_worker::MVP_CYCLES,
+    )
+    .await
+    {
+        Ok(idx) => {
+            info!(
+                event = "scanner.impact_index_loaded",
+                chain_id,
+                mode = mode.as_str(),
+                "ImpactIndex loaded from registry at boot"
+            );
+            idx
+        }
+        Err(e) => {
+            warn!(
+                event = "scanner.impact_index_load_failed",
+                chain_id,
+                error = %e,
+                "ImpactIndex::from_registry failed; booting with empty index (R8 fail-honest)"
+            );
+            ImpactIndex::empty()
+        }
+    };
+
+    let impact_index = Arc::new(tokio::sync::RwLock::new(impact_index_inner));
 
     let ctx = OrchestratorContext {
-        impact_index,
+        impact_index: impact_index.clone(),
         dex_engine,
         triangular_engine: tri_engine,
         flashloan_engine: fl_engine,
@@ -216,7 +258,128 @@ fn build_orchestrator(
         chain_id,
     };
 
-    Some(Arc::new(Orchestrator::new(ctx)))
+    Some((Arc::new(Orchestrator::new(ctx)), impact_index))
+}
+
+/// Periodically refreshes the `ImpactIndex` with pools added to PG after the
+/// initial boot snapshot. Runs as a background task spawned by `run_chain`.
+///
+/// R8 fail-honest: if PG is unavailable the task logs a warning and retries
+/// on the next tick. No fabricated PoolRefs are ever inserted.
+///
+/// The task queries `pools WHERE id > last_known_id` every
+/// `POOL_SYNC_REFRESH_SECS` seconds. This is independent of `pool_sync_worker`
+/// which writes reserves — this task only cares about NEW pool *registrations*.
+async fn pool_sync_watcher(
+    chain_id: u64,
+    db: PgPool,
+    impact_index: Arc<tokio::sync::RwLock<ImpactIndex>>,
+) {
+    use crate::impact_index::PoolRef;
+    use crate::route_intent::ProtocolType;
+    use ethers::types::Address;
+    use std::str::FromStr;
+
+    const REFRESH_SECS: u64 = 60; // check for new pools once per minute
+
+    let mut last_id: i64 = {
+        // Prime last_id to the current max so we only pick up genuinely NEW pools.
+        match sqlx::query_scalar::<_, Option<i64>>("SELECT MAX(id) FROM pools WHERE chain_id=$1")
+            .bind(chain_id as i64)
+            .fetch_one(&db)
+            .await
+        {
+            Ok(Some(n)) => n,
+            _ => 0,
+        }
+    };
+
+    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(REFRESH_SECS));
+
+    loop {
+        ticker.tick().await;
+
+        // Query pools added after last_id.
+        let rows: Vec<(i64, String, String, String, String, Option<i32>)> = match sqlx::query_as::<
+            _,
+            (i64, String, String, String, String, Option<i32>),
+        >(
+            r#"SELECT p.id, p.address, p.protocol_type, p.token0, p.token1, p.fee_bps
+               FROM pools p
+               WHERE p.chain_id = $1
+                 AND p.id > $2
+               ORDER BY p.id ASC
+               LIMIT 500"#,
+        )
+        .bind(chain_id as i64)
+        .bind(last_id)
+        .fetch_all(&db)
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(
+                    event = "pool_sync_watcher.query_failed",
+                    chain_id,
+                    error = %e,
+                    "failed to query new pools from PG; will retry next tick"
+                );
+                continue;
+            }
+        };
+
+        if rows.is_empty() {
+            continue;
+        }
+
+        let new_max_id = rows.last().map(|r| r.0).unwrap_or(last_id);
+        let mut new_count = 0usize;
+
+        let mut idx = impact_index.write().await;
+        for (row_id, addr_str, proto_str, tok0_str, tok1_str, fee_bps_opt) in rows {
+            let address = match Address::from_str(&addr_str) {
+                Ok(a) => a,
+                Err(_) => continue,
+            };
+            let token0 = match Address::from_str(&tok0_str) {
+                Ok(a) => a,
+                Err(_) => continue,
+            };
+            let token1 = match Address::from_str(&tok1_str) {
+                Ok(a) => a,
+                Err(_) => continue,
+            };
+            let protocol_type = match proto_str.as_str() {
+                "v2" | "uniswap_v2" | "uniswap-v2" => ProtocolType::V2,
+                "v3" | "uniswap_v3" | "uniswap-v3" => ProtocolType::V3,
+                _ => ProtocolType::V2,
+            };
+            let pool_ref = PoolRef {
+                chain_id,
+                address,
+                dex_name: "unknown".to_string(), // resolved later via factory
+                protocol_type,
+                token0,
+                token1,
+                fee_bps: fee_bps_opt.map(|f| f as u32),
+            };
+            idx.add_pool(pool_ref);
+            last_id = row_id;
+            new_count += 1;
+        }
+        drop(idx);
+
+        if new_count > 0 {
+            last_id = new_max_id;
+            info!(
+                event = "pool_sync_watcher.pools_added",
+                chain_id,
+                new_count,
+                last_id,
+                "ImpactIndex refreshed with new pools from PG"
+            );
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -298,25 +461,58 @@ pub async fn run_chain(
     // Build the orchestrator (or None for V1/Off).
     // For Shadow: takes a clone of redis + opp_dedup; legacy path still owns the originals.
     // For V2: takes ownership of redis + opp_dedup (legacy path won't need them for emit).
-    let orchestrator: Option<Arc<Orchestrator>> = match orch_mode {
-        OrchestratorMode::Shadow => build_orchestrator(
-            orch_mode,
+    //
+    // Phase 16: build_orchestrator is now async (loads ImpactIndex from PG+Redis at boot).
+    // Returns (orchestrator, impact_index_arc) so we can spawn the pool_sync_watcher.
+    let (orchestrator, impact_index_opt): (Option<Arc<Orchestrator>>, Option<Arc<tokio::sync::RwLock<ImpactIndex>>>) =
+        match orch_mode {
+            OrchestratorMode::Shadow => {
+                match build_orchestrator(
+                    orch_mode,
+                    chain_id,
+                    db.clone(),
+                    redis.clone(),
+                    opp_dedup.clone(),
+                    trading_config.clone(),
+                )
+                .await
+                {
+                    Some((orch, idx)) => (Some(orch), Some(idx)),
+                    None => (None, None),
+                }
+            }
+            OrchestratorMode::V2 => {
+                match build_orchestrator(
+                    orch_mode,
+                    chain_id,
+                    db.clone(),
+                    redis.clone(),
+                    opp_dedup.clone(),
+                    trading_config.clone(),
+                )
+                .await
+                {
+                    Some((orch, idx)) => (Some(orch), Some(idx)),
+                    None => (None, None),
+                }
+            }
+            OrchestratorMode::V1 | OrchestratorMode::Off => (None, None),
+        };
+
+    // Phase 16: spawn the pool_sync_watcher if we have a DB + impact_index handle.
+    // The watcher polls PG every 60s for new pools and calls add_pool() with a write lock.
+    // Rule: DO NOT modify pool_sync_worker internals — this task is independent.
+    if let (Some(idx_arc), Some(db_pool)) = (impact_index_opt, db.clone()) {
+        let watcher_chain = chain_id;
+        tokio::spawn(async move {
+            pool_sync_watcher(watcher_chain, db_pool, idx_arc).await;
+        });
+        info!(
+            event = "scanner.pool_sync_watcher_started",
             chain_id,
-            db.clone(), // dry-run so PG not actually used but kept for consistency
-            redis.clone(),
-            opp_dedup.clone(),
-            trading_config.clone(),
-        ),
-        OrchestratorMode::V2 => build_orchestrator(
-            orch_mode,
-            chain_id,
-            db.clone(),
-            redis.clone(),
-            opp_dedup.clone(),
-            trading_config.clone(),
-        ),
-        OrchestratorMode::V1 | OrchestratorMode::Off => None,
-    };
+            "pool_sync_watcher spawned to keep ImpactIndex in sync with PG"
+        );
+    }
 
     // Spawn the detection loop with the full endpoint list.
     tokio::spawn(detection_loop(

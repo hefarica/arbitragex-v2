@@ -36,17 +36,7 @@ use ethers::types::Address;
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::AtomicU64;
 use tracing::{debug, warn};
-
-// ---------------------------------------------------------------------------
-// Prometheus-style counter for empty-watchlist events
-// ---------------------------------------------------------------------------
-
-/// Incremented once per `build_from_lending_impact` call when both the
-/// `impact.impacted_lending_positions` slice AND the indexer's overall
-/// watchlist are empty. Surfaces the data-gap to the operator (R8 transparency).
-pub static POSITIONS_WATCHLIST_EMPTY_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 // ---------------------------------------------------------------------------
 // LendingPosition
@@ -306,7 +296,7 @@ impl LendingPositionIndexer {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use std::sync::atomic::Ordering;
+    use crate::metrics::POSITIONS_WATCHLIST_EMPTY_TOTAL;
 
     // ── Helper: build a minimal LendingPosition ──────────────────────────────
 
@@ -377,12 +367,22 @@ mod tests {
     }
 
     // ── indexer::tests::positions_watchlist_empty_total_counter ─────────────
+    //
+    // Verifies the Prometheus counter (Phase 16) increments correctly.
+    // Label chain_id="1" is used for the mainnet instance.
 
     #[test]
     fn positions_watchlist_empty_total_counter_increments() {
-        let before = POSITIONS_WATCHLIST_EMPTY_TOTAL.load(Ordering::Relaxed);
-        POSITIONS_WATCHLIST_EMPTY_TOTAL.fetch_add(1, Ordering::Relaxed);
-        let after = POSITIONS_WATCHLIST_EMPTY_TOTAL.load(Ordering::Relaxed);
+        let chain = "1";
+        let before = POSITIONS_WATCHLIST_EMPTY_TOTAL
+            .with_label_values(&[chain])
+            .get();
+        POSITIONS_WATCHLIST_EMPTY_TOTAL
+            .with_label_values(&[chain])
+            .inc();
+        let after = POSITIONS_WATCHLIST_EMPTY_TOTAL
+            .with_label_values(&[chain])
+            .get();
         assert_eq!(after, before + 1);
     }
 
