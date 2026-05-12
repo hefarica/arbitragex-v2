@@ -26,7 +26,7 @@ export function mountStrategyRuntimeStatus(
       let heartbeat: any = {};
       let poolIndexEntries = 0;
       let reservesCacheEntries = 0;
-      let lendingWatchlistSize = 0; // Mock until actual watchlist indexer exists
+      let lendingWatchlistSize = 0;
       let redisOk = false;
 
       try {
@@ -68,6 +68,7 @@ export function mountStrategyRuntimeStatus(
         liquidation: { candidates_1h: 0, rejections_1h: 0, last_candidate_at: null, last_rejection_reason: null },
       };
 
+      let flashloanNoProviderRejections: number | null = 0;
       try {
         const query = `
           SELECT 
@@ -92,6 +93,9 @@ export function mountStrategyRuntimeStatus(
             dbStats[family].candidates_1h++;
             if (row.rejection_reason || row.status === "rejected") {
               dbStats[family].rejections_1h++;
+              if (family === "flashloan_arb" && row.rejection_reason === "flashloan_no_provider") {
+                flashloanNoProviderRejections = (flashloanNoProviderRejections ?? 0) + 1;
+              }
               // Keep the latest rejection reason
               if (!dbStats[family].last_rejection_reason) {
                 dbStats[family].last_rejection_reason = row.rejection_reason;
@@ -180,8 +184,8 @@ export function mountStrategyRuntimeStatus(
         data_dependencies_status: flDataStatus,
         base_candidates_seen_1h: baseCandidates,
         wrapped_candidates_1h: wrappedCandidates,
-        no_provider_rejections: 0,
-        negative_after_fee_rejections: heartbeat.flashloan_arb_sanity_reject || 0,
+        no_provider_rejections: flashloanNoProviderRejections,
+        negative_after_fee_rejections: heartbeat.flashloan_arb_sanity_reject ?? null,
       };
 
       // Assemble Liquidation
@@ -194,7 +198,7 @@ export function mountStrategyRuntimeStatus(
 
       const liquidation = {
         strategy_kind: "liquidation",
-        enabled: false,
+        enabled: liqInvoked || dbStats.liquidation.candidates_1h > 0,
         engine_loaded: engineLoaded,
         engine_invoked: liqInvoked,
         last_invoked_at: liqInvoked ? lastInvokedAt : null,
@@ -205,8 +209,8 @@ export function mountStrategyRuntimeStatus(
         data_dependencies_status: liqDataStatus,
         lending_watchlist_size: lendingWatchlistSize,
         indexed_positions: lendingWatchlistSize,
-        impacted_lending_positions_1h: 0,
-        hf_below_one_count: 0,
+        impacted_lending_positions_1h: heartbeat.liquidation_positions_scanned ?? null,
+        hf_below_one_count: dbStats.liquidation.candidates_1h,
         liquidation_candidates_1h: dbStats.liquidation.candidates_1h,
       };
 
