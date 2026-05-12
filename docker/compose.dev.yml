@@ -264,7 +264,7 @@ services:
       DATABASE_URL: postgres://arbx_rw:${ARBX_RW_PASSWORD:-arbx_rw_dev_only}@postgres:5432/arbitragex
       DATABASE_READONLY_URL: postgres://arbx_ro:${ARBX_RO_PASSWORD:-arbx_ro_dev_only}@postgres:5432/arbitragex
       REDIS_URL: redis://redis:6379
-      ARBX_ADMIN_TOKEN: ${ARBX_ADMIN_TOKEN:-dev_admin_token_change_me}
+      ARBX_ADMIN_TOKEN: ${ARBX_ADMIN_TOKEN:-dev_admin_token_change_me_0123456789}
       API_PORT: "8080"
       SELECTOR_URL: http://selector-api:3002
       SIM_URL: http://sim-ctl:3003
@@ -296,7 +296,7 @@ services:
     env_file: ["../.env"]
     environment:
       API_SERVER_URL: http://api-server:8080
-      ARBX_EDGE_TOKEN: ${ARBX_EDGE_TOKEN:-dev_edge_token_change_me}
+      ARBX_EDGE_TOKEN: ${ARBX_EDGE_TOKEN:-dev_edge_token_change_me_0123456789}
       EDGE_PORT: "8787"
     ports: ["8787:8787"]
     depends_on: [api-server]
