@@ -198,7 +198,7 @@ export function mountStrategyRuntimeStatus(
 
       const liquidation = {
         strategy_kind: "liquidation",
-        enabled: liqInvoked || dbStats.liquidation.candidates_1h > 0,
+        enabled: false,
         engine_loaded: engineLoaded,
         engine_invoked: liqInvoked,
         last_invoked_at: liqInvoked ? lastInvokedAt : null,
@@ -211,8 +211,6 @@ export function mountStrategyRuntimeStatus(
         indexed_positions: lendingWatchlistSize,
         impacted_lending_positions_1h: null,
         hf_below_one_count: null,
-        impacted_lending_positions_1h: heartbeat.liquidation_positions_scanned ?? null,
-        hf_below_one_count: dbStats.liquidation.candidates_1h,
         liquidation_candidates_1h: dbStats.liquidation.candidates_1h,
       };
 
