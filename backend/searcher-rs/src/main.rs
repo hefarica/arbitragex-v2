@@ -33,6 +33,7 @@ mod scanner;
 #[allow(dead_code)]
 mod impact_index;
 mod opportunity_emitter;
+mod pool_discovery;
 mod route_decoder;
 mod route_intent;
 mod strategy_label;

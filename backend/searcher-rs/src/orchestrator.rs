@@ -205,42 +205,58 @@ impl Orchestrator {
             impacted_protocols = impact.impacted_protocols.len(),
         );
 
-        // ── Step 3: impacted_routes_total metric — one increment per engine
-        // that WILL receive impacted routes. We emit once for the whole fan-out
-        // (pool count is captured in the debug log below rather than per-engine
-        // to avoid over-counting when multiple engines share the same impact).
-        // The per-engine candidates_total counter below tracks engine output.
-        if !impact.impacted_pools.is_empty() || !impact.impacted_cycles.is_empty() {
-            for label in &[
-                StrategyLabel::DexArbV2V2,
-                StrategyLabel::TriangularArb,
-                StrategyLabel::FlashloanArb,
-                StrategyLabel::Liquidation,
-            ] {
-                IMPACTED_ROUTES_TOTAL
-                    .with_label_values(&[&chain_str, label.as_str()])
-                    .inc();
-            }
-        } else {
+        let mut impact = impact;
+        if impact.impacted_pools.is_empty() && impact.impacted_cycles.is_empty() {
             // No pools impacted. This is an unmapped pair.
-            // Dispatch asynchronously to the PoolDiscoveryService.
-            let discovery_svc = Arc::clone(&self.ctx.pool_discovery);
-            let intent_clone = intent.clone();
-            tokio::spawn(async move {
-                if let Err(e) = discovery_svc.discover_from_intent(&intent_clone).await {
-                    debug!("Pool discovery background task error: {}", e);
+            // Dispatch synchronously to the PoolDiscoveryService.
+            self.ctx.pool_discovery.record_opportunity_observation(&intent, "discovery_started", None, None).await;
+            
+            match self.ctx.pool_discovery.discover_from_intent(&intent).await {
+                Ok(true) => {
+                    // Retry impact resolution
+                    impact = {
+                        let idx = self.ctx.impact_index.read().await;
+                        idx.resolve(&intent)
+                    };
+                    info!(
+                        event = "v2.impact.discovery_retry",
+                        chain_id,
+                        tx_hash = %intent.tx_hash,
+                        impact_after_pools = impact.impacted_pools.len(),
+                        "Retried impact resolution after successful discovery"
+                    );
                 }
-            });
-            // We return Ok early. The discovery happens asynchronously.
-            // When the pool is discovered, subsequent intents will match it.
-            // For this specific intent, we log 'impact_zero' per fail-honest rule.
-            debug!(
-                event = "orchestrator.impact_zero",
-                chain_id,
-                tx_hash = %intent.tx_hash,
-                "rejection_reason" = "impact_zero"
-            );
-            return Ok(());
+                Ok(false) => {
+                    self.ctx.pool_discovery.record_opportunity_observation(&intent, "discovery_no_pool_found", None, None).await;
+                }
+                Err(e) => {
+                    warn!("Pool discovery error: {}", e);
+                    self.ctx.pool_discovery.record_opportunity_observation(&intent, "discovery_failed", None, None).await;
+                }
+            }
+
+            if impact.impacted_pools.is_empty() && impact.impacted_cycles.is_empty() {
+                debug!(
+                    event = "orchestrator.impact_zero",
+                    chain_id,
+                    tx_hash = %intent.tx_hash,
+                    "rejection_reason" = "impact_zero"
+                );
+                self.ctx.pool_discovery.record_opportunity_observation(&intent, "impact_zero", None, None).await;
+                return Ok(());
+            }
+        }
+
+        // ── Step 3: impacted_routes_total metric — one increment per engine
+        for label in &[
+            StrategyLabel::DexArbV2V2,
+            StrategyLabel::TriangularArb,
+            StrategyLabel::FlashloanArb,
+            StrategyLabel::Liquidation,
+        ] {
+            IMPACTED_ROUTES_TOTAL
+                .with_label_values(&[&chain_str, label.as_str()])
+                .inc();
         }
 
         debug!(

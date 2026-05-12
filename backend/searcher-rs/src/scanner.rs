@@ -211,7 +211,7 @@ async fn build_orchestrator(
     ));
 
     let tri_engine = Arc::new(TriangularEngine::new(
-        reserves_cache,
+        reserves_cache.clone(),
         vec![], // seeds: provided via MVP_CYCLES in from_registry below
     ));
 
@@ -275,6 +275,7 @@ async fn build_orchestrator(
         redis.clone(),
         impact_index.clone(),
         rpc_pool,
+        reserves_cache.clone(),
     ));
 
     let ctx = OrchestratorContext {
@@ -480,7 +481,7 @@ pub async fn run_chain(
                 reason = "no_rpc_http_pool"
             );
         }
-        rpc_http_pool
+        rpc_http_pool.clone()
     } else {
         info!(
             event = "scanner.v3_disabled",
