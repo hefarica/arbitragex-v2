@@ -210,9 +210,41 @@ async fn build_orchestrator(
         Some(state_projector.clone()),
     ));
 
-    let tri_engine = Arc::new(TriangularEngine::new(
+    // Build pool_map from Redis so TriangularEngine's cycle_registry matches
+    // ImpactIndex's pool_to_cycles seeding (same data source: MVP_CYCLES × Redis).
+    // Without this, ImpactIndex resolves cycle_ids but the engine can't look them up.
+    let pool_map = {
+        let mut map = std::collections::HashMap::<(String, String), ethers::types::Address>::new();
+        for &(sym_a, sym_b, sym_c) in crate::workers::triangular_worker::MVP_CYCLES {
+            // Each cycle has 3 edges; collect pool addresses for each unique edge.
+            let edges: [(&str, &str); 3] = [(sym_a, sym_b), (sym_b, sym_c), (sym_a, sym_c)];
+            for (s0, s1) in edges {
+                let (lo, hi) = if s0 <= s1 { (s0, s1) } else { (s1, s0) };
+                let key = format!("arbx:pool_index:{}:{}:{}", chain_id, lo, hi);
+                let raw: Result<Option<String>, _> = redis::cmd("GET").arg(&key).query_async(&mut redis).await;
+                if let Ok(Some(json)) = raw {
+                    if let Ok(addrs) = serde_json::from_str::<Vec<String>>(&json) {
+                        if let Some(first) = addrs.first() {
+                            if let Ok(addr) = ethers::types::Address::from_str(first) {
+                                map.entry((lo.to_ascii_lowercase(), hi.to_ascii_lowercase()))
+                                    .or_insert(addr);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        info!(
+            event = "scanner.triangular_pool_map_built",
+            chain_id,
+            entries = map.len(),
+            "Built pool_map from Redis for TriangularEngine cycle_registry"
+        );
+        map
+    };
+    let tri_engine = Arc::new(TriangularEngine::from_mvp_cycles(
         reserves_cache.clone(),
-        vec![], // seeds: provided via MVP_CYCLES in from_registry below
+        &pool_map,
     ));
 
     let fl_engine = Arc::new(FlashloanEngine::new());
