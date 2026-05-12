@@ -105,7 +105,12 @@ export function mountStrategyRuntimeStatus(
         }
       } catch (e) {
         deps.logger.warn({ event: "strategy_status.pg_failed", err: (e as Error).message });
-        sourceStatus.postgres = "partial_or_failed";
+        sourceStatus.postgres = "unavailable";
+        return res.status(503).json({
+          error: "opportunities_query_failed",
+          detail: (e as Error).message,
+          source: sourceStatus,
+        });
       }
 
       // Assemble DEX
