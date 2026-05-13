@@ -6,16 +6,21 @@ rust-version.workspace = true
 license.workspace = true
 description = "Sequential Equilibrium Dispatcher — quantitative mathematical orchestration layer"
 
-# Doctrine note (2026-05-13 Phase 1 scaffold):
+# Doctrine note (2026-05-13 — amended for V1.2 Holonomic Loop Resolution):
 #
-# The spec at docs/superpowers/specs/2026-05-13-sequential-equilibrium-
-# dispatcher-v1.1.md §5.2 lists a richer dep matrix (nalgebra, argmin,
-# revm 14.0, etc.). Phase 1 only covers `types/` — the typestate +
-# kill-switch gate + infrastructure prerequisite — none of which need
-# linear algebra or REVM. The math-bearing deps are intentionally
-# absent here so the Phase 1 build stays small and the workspace REVM
-# pin (3.5.0) does not collide with the spec's forward-looking 14.0.
-# Future phases will re-introduce them per-feature.
+# Phase 1 scaffold shipped only types/ (typestate + kill-switch + 501
+# prereq). V1.2 amendment (ANEXOS_V1.2.md, 2026-05-13) introduces
+# `HolonomicLoopResolution` as a third sealed variant of
+# `PostResolutionTopology`. The constructor + supporting types
+# (`ClosedContourTrajectory`, `TopologicalYield`) carry math directly on
+# the typestate surface (closed-contour integral, vector norms over
+# transition points), so `nalgebra` is now a required dep — not feature-
+# gated. Phase 2 (filtration math kernels) layers `rand_distr` on top
+# behind the `filtration` feature.
+#
+# REVM 14.0 collision with workspace pin (3.5.0) remains deferred to a
+# future migration sprint; allocator/hedger phases will reintroduce it
+# per-feature when they land.
 
 [dependencies]
 # Workspace dependencies — match existing crates' style.
@@ -28,22 +33,39 @@ tracing.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 
+# B1.e V1.2 (2026-05-13) — Linear algebra required by the
+# HolonomicLoopResolution typestate (DVector<f64> for transition points
+# of closed-contour trajectories on liquidity manifolds). Not feature-
+# gated because the constructor lives in the default surface.
+nalgebra = { workspace = true }
+
+# B1.e V1.2 Phase 2 — Stochastic distributions for filtration kernels.
+# Optional because only the Markov jump / Poisson random measure path
+# under the `filtration` feature consumes it; default builds stay slim.
+rand_distr = { workspace = true, optional = true }
+
 # Internal path dependency. shared-rs hosts KillSwitchClient + health
 # checking primitives that the SED gates integrate with.
 shared-rs = { workspace = true }
 
 [features]
-# Default ships ONLY the types/ surface — the math modules are stubs in
-# Phase 1 and add no public API. Future phases will add features per
-# module (filtration, eigenstate, allocator, hedger) gating the math
-# kernels behind opt-in flags so downstream crates pull only what they
-# consume — see spec §5.3.
+# Default ships the V1.1 + V1.2 typestate surface — bundle position
+# typestate (3 sealed variants now), kill-switch gate, 501 infra prereq,
+# closed-contour trajectory + topological yield. The math-bearing
+# modules (filtration, eigenstate, allocator, hedger) remain stub-only
+# in the default profile and graduate behind opt-in features.
 default = []
 
-# Reserved feature names for future phases. Currently no-op — declared
-# here so the spec's downstream `features = ["filtration", ...]` usage
-# does not error in consumer crates ahead of the math landing.
-filtration = []
+# Phase 2 — stochastic wave filtration kernels (Markov jump process,
+# Poisson random measure, State Divergence Coefficient). Enables the
+# rand_distr dep + activates the filtration::markov_jump and
+# filtration::cdc_calculator submodules. See spec §3.1.
+filtration = ["dep:rand_distr"]
+
+# Reserved feature names for Phase 3-6 — currently no-op until each
+# module lands its math body. Declared here so the spec's downstream
+# `features = ["eigenstate", "allocator", ...]` usage does not error in
+# consumer crates ahead of the math landing.
 eigenstate = []
 allocator = []
 hedger = []

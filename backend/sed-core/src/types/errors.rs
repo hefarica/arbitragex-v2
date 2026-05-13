@@ -39,6 +39,51 @@ pub enum TopologyValidationError {
     /// injection point.
     #[error("invalid liquidity manifold: metric tensor degenerate")]
     InvalidManifold,
+
+    // ── V1.2 amendment (2026-05-13, ANEXOS_V1.2.md §4.1.6) ─────────────
+    // Holonomic loop construction failures. Each variant maps 1:1 to one
+    // of the six validations in `BundlePosition<HolonomicLoopResolution>::
+    // new_holonomic_loop`. See `bundle_position.rs` for the constructor.
+
+    /// Validation 1 — `ClosedContourTrajectory::is_closed()` returned
+    /// `false`. The start and end transition points do not coincide
+    /// within `1e-9`, OR the manifold list is below `MIN_LOOP_SIZE`,
+    /// OR the transition points list is empty/dim-mismatched.
+    #[error("open contour trajectory: γ(0) ≠ γ(1) within 1e-9")]
+    OpenContourTrajectory,
+
+    /// Validation 2 — `loop_cardinality < MIN_LOOP_SIZE` (= 3).
+    /// A two-pool round trip is the degenerate `DiracImpulseOnly` case
+    /// and is rejected from the holonomic path.
+    #[error("insufficient loop cardinality: < 3 manifolds")]
+    InsufficientLoopCardinality,
+
+    /// Validation 3 — `|∮_γ (dp/p)| < 1e-12`. The contour integral is
+    /// numerical noise; there is no exploitable price discrepancy.
+    /// Includes the `NaN` case (NaN comparisons against 1e-12 are
+    /// false → fail-honest).
+    #[error("trivial holonomy: |∮_γ (dp/p)| < 1e-12")]
+    TrivialHolonomy,
+
+    /// Validation 4 — `|contour.contour_integral() − yield.raw_holonomy|
+    /// > 1e-9`. The contour-derived holonomy disagrees with the yield
+    /// struct's raw_holonomy field. Indicates a caller wired up two
+    /// inconsistent inputs.
+    #[error("holonomy/yield mismatch: contour integral disagrees with yield.raw_holonomy")]
+    HolonomyYieldMismatch,
+
+    /// Validation 5 — `TopologicalYield::is_economically_viable()`
+    /// returned `false`. `net_yield ≤ MINIMUM_VIABLE_YIELD` (= 1e-15).
+    /// The cycle is at-best break-even or unprofitable after friction.
+    #[error("non-positive topological yield: net_yield ≤ 1e-15")]
+    NonPositiveTopologicalYield,
+
+    /// Validation 6 — `|raw_holonomy − network_friction − net_yield|
+    /// > 1e-9`. The caller-supplied `net_yield` is inconsistent with
+    /// the identity `net = raw − friction`. Indicates a stale or
+    /// hand-edited yield record.
+    #[error("friction deduction invalid: net_yield ≠ raw_holonomy − network_friction within 1e-9")]
+    FrictionDeductionInvalid,
 }
 
 /// Runtime dispatch errors. Surface at the `GateManager` boundary.
