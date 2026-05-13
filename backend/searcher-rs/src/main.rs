@@ -44,6 +44,12 @@ mod kelly_sizing;
 // filters. Pure math primitives for the candidate-selection layer.
 #[allow(dead_code)]
 mod bayesian_filter;
+// Phase A.3.c.2: Multi-step REVM orchestrator skeleton + plan builder.
+// Combines sim_prefund storage overrides with RoundTripContext to build
+// a deterministic multi-step execution plan. REVM CacheDB execution is
+// deferred to A.3.c.3; this module ships validation + plan + tests.
+#[allow(dead_code)]
+mod sim_multistep;
 // Phase 16: per-strategy Prometheus metrics for the event-driven orchestrator.
 mod metrics;
 mod patterns;

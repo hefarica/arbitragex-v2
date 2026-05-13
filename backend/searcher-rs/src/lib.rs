@@ -61,3 +61,7 @@ pub mod kelly_sizing;
 // exposed so the prioritization-spine evaluator can consume posterior
 // acceptance gates without re-implementing the math.
 pub mod bayesian_filter;
+// Phase A.3.c.2: Multi-step REVM orchestrator. Exposed so integration
+// tests + the future A.3.c.3 REVM CacheDB executor can drive the plan
+// builder against fixtures and real chain state.
+pub mod sim_multistep;
