@@ -54,3 +54,6 @@ pub mod sim_orchestrator;
 // tests + the future A.3.c.3 multi-step orchestrator can consume the
 // `PrefundPlan` API to apply storage overrides on REVM state.
 pub mod sim_prefund;
+// Phase OMEGA: Kelly Criterion + V3 concentrated liquidity math primitives.
+// Pure module exposed so size_optimizer + tests can consume Kelly sizing.
+pub mod kelly_sizing;

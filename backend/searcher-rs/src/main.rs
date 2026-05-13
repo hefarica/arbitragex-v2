@@ -36,6 +36,10 @@ mod sim_orchestrator;
 // multi-step orchestrator consumes the returned PrefundPlan and applies it.
 #[allow(dead_code)]
 mod sim_prefund;
+// Phase OMEGA: Kelly Criterion + V3 concentrated liquidity math. Pure
+// position-sizing primitives consumed by the size_optimizer hot path.
+#[allow(dead_code)]
+mod kelly_sizing;
 // Phase 16: per-strategy Prometheus metrics for the event-driven orchestrator.
 mod metrics;
 mod patterns;
