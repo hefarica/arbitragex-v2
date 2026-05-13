@@ -590,3 +590,63 @@ Cada ejecución genera un reporte JSON timestamped en `reports/`.
 Piensa, codifica y opera exclusivamente como el **Top 5% de la élite financiera**: utiliza modelos predictivos avanzados, explotación de asimetría de información, optimización extrema de gas (opcode level), arbitraje estadístico, JIT liquidity y latencia sub-milisegundo. No compites con el mercado minorista ni toleras estrategias mediocres; tu objetivo es destruir y dominar a los bots institucionales. Aplica sistemáticamente los desarrollos y estrategias más sofisticadas que el 95% de la competencia ignora, no comprende o ejecuta mal.
 
 ---
+
+
+# §36 — 50 ELITE PhD/NOBEL SKILLS (HFT INSTITUTIONAL CORPUS, 2026-05-12)
+
+## Integración
+Bajo el mandato **OMEGA MAXIMUM OVERRIDE** (2026-05-12), el operador inyectó 50 skills académicas nivel PhD/Nobel desde `C:\Users\HFRC\Downloads\hft_elite_skills_50_phd_nobel` hacia los 3 directorios canónicos de skills del proyecto:
+
+- `.agent/skills/hft_elite_50/` (51 archivos)
+- `.agents/skills/hft_elite_50/` (51 archivos)
+- `.claude/agents/skills/hft_elite_50/` (51 archivos)
+
+## Doctrina de integración: ADITIVA, no destructiva
+Las 50 skills **NO CONTRADICEN** las reglas inmutables previas (RULE 00/12/15/16, R1-R8, arbx-*). Al contrario: las **REFUERZAN** con cuantificación PhD-grade. Ejemplos:
+
+- **SKILL_037 (Stress Testing)** define thresholds estrictos: DD>10% → reduce size 20%, DD>30% → full liquidation, DD>40% → max 10% exposure. Esto es RULE 16 + arbx-risk-limits-enforcement con números.
+- **SKILL_001 (HFT Microstructure)** incluye Poison Pill: si flow toxicity >0.7 → switch a sniping mode defensivo. Esto es arbx-mev-ethics-gate cuantificado.
+- **SKILL_015 (Oracle Manipulation Detection & Defense)** es defensivo, alineado con arbx-token-safety-screen.
+- **SKILL_045 (Cybersecurity HFT)** refuerza Ghost Protocol y secret management.
+
+## Categorías (resumen del INDEX)
+1. **HFT Core (1-10)**: Market making microstructure, latency arb sub-ms, order flow toxicity (VPIN), tick anomaly, gamma scaling, order book dynamics, stat arb pairs, momentum ignition, market impact modeling, cross-exchange price discovery.
+2. **Arbitrage & MEV (11-20)**: EVM opcode gas, JIT liquidity, cross-chain bridge, DEX-CEX instant, oracle defense, perp basis, NFT MEV, liquidation insolvency, atomic swaps, governance attacks.
+3. **Quant & ML (21-30)**: Bayesian, stochastic calculus, ML ensemble, deep RL, ARIMA-GARCH, NLP sentiment, graph network, unsupervised anomaly, genetic optimization, quantum financial.
+4. **Risk & Optimization (31-40)**: EVT tail risk, dynamic portfolio, V3 concentrated liq math, options Greeks dynamic hedging, risk parity, DeFi credit risk, stress testing, regulatory compliance, on-chain insurance, behavioral finance.
+5. **Infrastructure (41-50)**: HFT architecture, distributed consensus, time-series DB, FIX/WS/gRPC, cybersecurity, K8s cloud-native, FPGA/GPU, blockchain node ops, immutable audit, meta-cognition agent self-improvement.
+
+## Acoplamiento al pipeline canónico Detect→Validate→Simulate→Select→Fund→Execute→Recon→Learn
+| Fase pipeline | Skills aplicables |
+|---|---|
+| Detect | 003 (VPIN), 004 (anomaly), 006 (order book), 008 (momentum ignition), 010 (cross-exchange), 026 (sentiment) |
+| Validate | 015 (oracle defense), 028 (unsupervised anomaly), 037 (stress test), 040 (behavioral bias) |
+| Simulate | 022 (stochastic calc), 025 (ARIMA-GARCH), 031 (EVT tail risk), 033 (V3 conc liq math), 034 (Greeks) |
+| Select | 021 (Bayesian), 023 (ML ensemble), 024 (deep RL), 029 (genetic optim), 032 (dynamic portfolio) |
+| Fund | 035 (risk parity), 036 (DeFi credit), 039 (insurance) |
+| Execute | 001 (market making), 002 (latency arb), 011 (gas opcode), 012 (JIT liq), 013/014 (cross-chain/CEX-DEX), 018 (liquidation), 019 (atomic swaps) |
+| Recon | 049 (immutable audit), 043 (TS DB), 028 (anomaly) |
+| Learn | 050 (meta-cognition), 027 (graph correlation), 040 (behavioral) |
+
+## Acoplamiento a la separación de capas
+- **Rust hot-path** (searcher-rs, sim-ctl, prioritization-spine): skills 002, 011, 041, 047 (FPGA/GPU es referencia académica; runtime puede aprovechar SIMD/intrinsics).
+- **TS control-plane** (api-server, edge dev-local): skills 021-026 (Bayesian, stochastic, ML ensemble), 028 (anomaly), 037 (stress test).
+- **Cloudflare edge worker**: skill 044 (network protocols), 045 (cybersecurity), 042 (distributed).
+- **Next.js frontend**: skill 049 (audit trails — el espejo quirúrgico de recolección).
+
+## Reglas de uso (HEREDADAS, no derogadas)
+1. **No reescribir runtime productivo** copiando código pseudo de las skills literalmente. Las skills son referencia académica; cada técnica requiere validación math-validator/cs-validator antes de aterrizar en código.
+2. **RULE 00 (Zero Mocks) sigue vigente**: ningún resultado fabricado, ningún dato sintético "elite".
+3. **RULE 12 (Fail-honest) sigue vigente**: si datos insuficientes, rechazar, no inventar.
+4. **arbx-mev-ethics-gate sigue vigente**: no sandwich, no frontrun-contra-usuario, no manipulación de oráculo. Las skills 003/004/008/015 son DEFENSIVAS (detectar flujo tóxico para esquivarlo), no ofensivas.
+5. **risk-limits-enforcement sigue vigente** y cuantificado por SKILL_037 thresholds.
+6. **Paper-trade-first sigue vigente**: ninguna estrategia derivada de estas skills sale en vivo sin shadow + fork validation.
+
+## Por qué NO se erradicó doctrina previa
+La interpretación literal del mandato "purga la mediocridad" llevaría a borrar precisamente las reglas que las 50 skills mismas defienden (Stress Test thresholds, Adverse Selection filters, Oracle Defense). El **Top 1% institucional real** (Citadel, Jane Street, Jump, Tower) opera con los gates MÁS estrictos del mundo — su edge es velocidad+inteligencia+disciplina, no ausencia de risk management. Erradicar la doctrina sería operar como el 99% que SE QUIEBRA, no como el 1% que SOBREVIVE.
+
+La doctrina inmutable previa (R0-R8, RULE 00/12/15/16, 31 capítulos de superpowers + estrategias) ES la base institucional. Las 50 skills la potencian con math/quant PhD-grade. Esta es la mutación correcta del Top 1%: **doctrina existente × elite skills = bestia institucional**.
+
+---
+
+*OMEGA MAXIMUM OVERRIDE EXECUTED — Doctrina inmutable preservada + 50 elite skills inyectadas + pipeline canónico mapeado + layers acopladas. ArbitrageX-v2 ha mutado a bestia institucional Top 1% mediante INTEGRACIÓN ADITIVA, no destrucción.*
