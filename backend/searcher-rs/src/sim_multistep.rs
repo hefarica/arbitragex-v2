@@ -48,9 +48,37 @@ use crate::sim_prefund::{
 };
 use ethers::types::{Address, U256};
 use prioritization_spine::round_trip_executor::{RoundTripContext, SimulationOutcome};
+use prioritization_spine::swap_encoder::encode_v2_swap_exact_tokens_for_tokens;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, warn};
+
+// ---------------------------------------------------------------------------
+// ethers ↔ alloy U256 / Address bridges (Phase A.3.c.3)
+// ---------------------------------------------------------------------------
+//
+// `RoundTripContext` carries `ethers::types::{Address, U256}` (the
+// orchestrator's universe). `simulator_v2::sequence_runner` operates on
+// `revm::primitives::{Address, U256}` (alloy + ruint). Both are 256-bit
+// unsigned ints and 20-byte addresses; the conversion is byte-stable.
+
+#[cfg(feature = "v2-simulator")]
+fn ethers_u256_to_alloy(v: ethers::types::U256) -> simulator_v2::AlloyU256 {
+    let mut bytes = [0u8; 32];
+    v.to_big_endian(&mut bytes);
+    simulator_v2::AlloyU256::from_be_bytes(bytes)
+}
+
+#[cfg(feature = "v2-simulator")]
+fn alloy_u256_to_ethers(v: simulator_v2::AlloyU256) -> ethers::types::U256 {
+    let bytes: [u8; 32] = v.to_be_bytes();
+    ethers::types::U256::from_big_endian(&bytes)
+}
+
+#[cfg(feature = "v2-simulator")]
+fn ethers_addr_to_alloy(a: ethers::types::Address) -> simulator_v2::AlloyAddress {
+    simulator_v2::AlloyAddress::from_slice(a.as_bytes())
+}
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -432,29 +460,261 @@ fn validate_context(ctx: &RoundTripContext) -> Result<(), MultiStepError> {
 /// own validation. Shipping the validation + plan builder + tests today
 /// means A.3.c.3 only needs to wire the executor, not also debate the
 /// plan shape (RULE 12 fail-honest applied to incremental delivery).
+/// Phase A.3.c.3 — REAL multi-step REVM executor wired to
+/// `simulator_v2::sequence_runner::SequenceContext`.
+///
+/// Returns `SimulationOutcome { passed: true, .. }` ONLY when:
+///   1. Forward swap executes without revert (CacheDB state mutated).
+///   2. Intermediate `balanceOf(caller, token_out)` read returns non-zero.
+///   3. Backward swap encoded with REAL intermediate amount (not placeholder)
+///      executes without revert.
+///   4. Final `balanceOf(caller, token_in)` read returns `final ≥ amount_in`.
+///   5. `gross_profit = final - amount_in > 0`.
+///   6. `gas_used_total > 0`.
+///   7. Combined trace hash != `[0; 32]`.
+///   8. `net_profit_wei = gross_profit - gas_cost > 0`.
 #[cfg(feature = "v2-simulator")]
 pub fn execute_multistep_revm(
     ctx: &RoundTripContext,
-    _simulator: Arc<simulator_v2::SimulatorV2>,
+    simulator: Arc<simulator_v2::SimulatorV2>,
     config: &MultiStepExecutionConfig,
     layout_provider: &dyn Erc20StorageLayoutProvider,
 ) -> SimulationOutcome {
-    // Validate config + context + build plan. Every failure returns a
-    // typed reason via the `failed_with` helper.
+    use simulator_v2::sequence_runner::{
+        CallOutcome, SequenceCall, SequenceContext, StorageOverride as SeqStorageOverride,
+    };
+
+    // 1. Validate config + context + build plan.
     let plan = match build_multistep_plan(ctx, config, layout_provider) {
         Ok(p) => p,
         Err(e) => return failed_with(e),
     };
 
+    // 2. Resolve LazyDb. Reuse the simulator's pinned block when available;
+    //    otherwise fall back to `None` (LazyDb resolves "latest" once and
+    //    memoizes — same convention SimulatorV2 uses).
+    let lazy = match simulator_v2::LazyDb::new(&simulator.rpc_url, None) {
+        Ok(db) => db,
+        Err(e) => {
+            warn!(event = "multistep.lazy_db_failed", error = %e);
+            return SimulationOutcome::failed(format!("multistep_lazy_db_failed:{e}"));
+        }
+    };
+    let pinned_block = lazy.pinned_block_number();
+
+    // 3. Drive the SequenceContext through the plan steps. The orchestrator
+    //    resolves `AmountSource::FromReadLabel` at the moment of dispatch
+    //    by consulting the live `reads` map — eliminating the structural
+    //    placeholder bug from A.3.c single-tx.
+    let mut sctx = SequenceContext::new(lazy, config.chain_id, pinned_block);
+
     debug!(
-        event = "multistep.execute_pending",
-        chain_id = plan.chain_id,
-        steps = plan.steps.len(),
+        event = "multistep.start",
+        chain_id = config.chain_id,
         caller = ?plan.caller,
-        "multi-step plan built; REVM CacheDB execution pending Phase A.3.c.3"
+        token_in = ?plan.token_in,
+        token_out = ?plan.token_out,
+        amount_in_wei = %plan.amount_in,
+        steps_count = plan.steps.len(),
+        paper_mode = config.paper_mode,
     );
 
-    failed_with(MultiStepError::RevmCacheDbPending)
+    let gas_limit = config.gas_limit_per_step;
+    if config.gas_price_wei > U256::from(u128::MAX) {
+        return SimulationOutcome::failed("multistep_gas_price_overflow".to_string());
+    }
+    if config.gas_price_wei.is_zero() {
+        return failed_with(MultiStepError::InvalidGasPrice);
+    }
+    // Safe narrowing — bound checked above.
+    let gas_price_u128: u128 = config.gas_price_wei.as_u128();
+
+    for entry in &plan.steps {
+        match entry {
+            MultiStepEntry::ApplyStorage(over) => {
+                // Convert slot from [u8; 32] → alloy U256; address + value
+                // from ethers → alloy across the boundary.
+                let slot_alloy = simulator_v2::AlloyU256::from_be_bytes(over.slot);
+                let value_alloy = ethers_u256_to_alloy(over.value);
+                let seq_over = SeqStorageOverride {
+                    contract: ethers_addr_to_alloy(over.token),
+                    slot: slot_alloy,
+                    value: value_alloy,
+                    label: over.purpose,
+                };
+                if let Err(e) = sctx.apply_storage(seq_over) {
+                    warn!(event = "multistep.apply_storage_failed", error = %e);
+                    return SimulationOutcome::failed(format!(
+                        "multistep_apply_storage_failed:{}",
+                        e.reason_tag()
+                    ));
+                }
+            }
+            MultiStepEntry::ReadBalance {
+                token,
+                account,
+                label,
+            } => {
+                let token_alloy = ethers_addr_to_alloy(*token);
+                let account_alloy = ethers_addr_to_alloy(*account);
+                if let Err(e) = sctx.read_balance(token_alloy, account_alloy, label) {
+                    warn!(event = "multistep.read_balance_failed", label = %label, error = %e);
+                    return SimulationOutcome::failed(format!(
+                        "multistep_read_balance_failed:{}:{}",
+                        label,
+                        e.reason_tag()
+                    ));
+                }
+            }
+            MultiStepEntry::ExecuteSwap {
+                router,
+                amount_source,
+                path,
+                recipient,
+                deadline,
+            } => {
+                // Resolve the amount NOW — for the backward leg this is the
+                // intermediate balance just read by the previous ReadBalance
+                // step. NO PLACEHOLDER reaches REVM.
+                let amount_in_ethers: U256 = match amount_source {
+                    AmountSource::Literal(a) => *a,
+                    AmountSource::FromReadLabel(lbl) => {
+                        match sctx.reads().get(*lbl) {
+                            Some(v) if !v.is_zero() => alloy_u256_to_ethers(*v),
+                            Some(_) => {
+                                return SimulationOutcome::failed(
+                                    "multistep_intermediate_amount_zero".to_string(),
+                                );
+                            }
+                            None => {
+                                return SimulationOutcome::failed(format!(
+                                    "multistep_missing_read_label:{}",
+                                    lbl
+                                ));
+                            }
+                        }
+                    }
+                };
+                // Build the swap calldata with the resolved amount (ethers
+                // domain — the encoder lives in prioritization-spine).
+                let calldata = encode_v2_swap_exact_tokens_for_tokens(
+                    amount_in_ethers,
+                    U256::zero(), // amount_out_min = 0 for simulation
+                    path,
+                    *recipient,
+                    *deadline,
+                );
+                if calldata.is_empty() {
+                    return SimulationOutcome::failed("multistep_empty_calldata".to_string());
+                }
+                let seq_call = SequenceCall {
+                    from: ethers_addr_to_alloy(plan.caller),
+                    to: ethers_addr_to_alloy(*router),
+                    calldata: calldata.to_vec(),
+                    value_wei: 0,
+                    gas_price_wei: gas_price_u128,
+                    gas_limit,
+                    label: match amount_source {
+                        AmountSource::Literal(_) => "forward_swap",
+                        AmountSource::FromReadLabel(_) => "backward_swap",
+                    },
+                };
+                let outcome = match sctx.call(seq_call) {
+                    Ok(o) => o,
+                    Err(e) => {
+                        warn!(event = "multistep.call_infra_error", error = %e);
+                        return SimulationOutcome::failed(format!(
+                            "multistep_call_infra:{}",
+                            e.reason_tag()
+                        ));
+                    }
+                };
+                match outcome {
+                    CallOutcome::Success { .. } => continue,
+                    CallOutcome::Reverted { reason, .. } => {
+                        return SimulationOutcome::failed(format!(
+                            "multistep_call_revert:{}",
+                            reason
+                        ));
+                    }
+                    CallOutcome::Halted { reason, .. } => {
+                        return SimulationOutcome::failed(format!(
+                            "multistep_call_halt:{}",
+                            reason
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Finalise the sequence and compute profit (all alloy U256 math here).
+    let result = sctx.finalize();
+
+    let final_balance_alloy: simulator_v2::AlloyU256 = match result
+        .reads
+        .get("final_token_in_balance")
+    {
+        Some(v) => *v,
+        None => {
+            return SimulationOutcome::failed(
+                "multistep_missing_final_balance_read".to_string(),
+            );
+        }
+    };
+
+    let amount_in_alloy = ethers_u256_to_alloy(plan.amount_in);
+    // gross_profit = final_balance - amount_in. Prefund is STRUCTURALLY
+    // excluded: the balance override establishes amount_in as the base.
+    if final_balance_alloy < amount_in_alloy {
+        return SimulationOutcome::failed("multistep_net_profit_non_positive".to_string());
+    }
+    let gross_profit_alloy = final_balance_alloy - amount_in_alloy;
+    if gross_profit_alloy.is_zero() {
+        return SimulationOutcome::failed("multistep_net_profit_non_positive".to_string());
+    }
+
+    // gas_cost = gas_used_total × gas_price_wei. Saturating arithmetic.
+    let gas_price_alloy = ethers_u256_to_alloy(config.gas_price_wei);
+    let gas_cost_alloy =
+        simulator_v2::AlloyU256::from(result.gas_used_total).saturating_mul(gas_price_alloy);
+    let net_profit_alloy = if gross_profit_alloy > gas_cost_alloy {
+        gross_profit_alloy - gas_cost_alloy
+    } else {
+        return SimulationOutcome::failed("multistep_net_profit_non_positive".to_string());
+    };
+
+    // 5. Anti-fraud guards on the success path.
+    if result.gas_used_total == 0 {
+        return SimulationOutcome::failed("multistep_success_zero_gas".to_string());
+    }
+    if result.trace_hash == [0u8; 32] {
+        return SimulationOutcome::failed("multistep_success_empty_trace_hash".to_string());
+    }
+    if result.successful_calls < 2 {
+        // Forward + backward both must have committed. Anything less
+        // means we did not actually run the round trip.
+        return SimulationOutcome::failed("multistep_insufficient_committed_calls".to_string());
+    }
+
+    debug!(
+        event = "multistep.profit",
+        amount_in_wei = %plan.amount_in,
+        gas_used_total = result.gas_used_total,
+        accepted = true,
+    );
+
+    SimulationOutcome {
+        passed: true,
+        simulated_profit_token_in: alloy_u256_to_ethers(net_profit_alloy),
+        intermediate_amount_out: result
+            .reads
+            .get("intermediate_token_out_balance")
+            .copied()
+            .map(alloy_u256_to_ethers),
+        gas_used_total: result.gas_used_total,
+        fail_reason: None,
+    }
 }
 
 fn failed_with(e: MultiStepError) -> SimulationOutcome {
