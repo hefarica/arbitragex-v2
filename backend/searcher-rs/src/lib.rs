@@ -57,3 +57,7 @@ pub mod sim_prefund;
 // Phase OMEGA: Kelly Criterion + V3 concentrated liquidity math primitives.
 // Pure module exposed so size_optimizer + tests can consume Kelly sizing.
 pub mod kelly_sizing;
+// Phase OMEGA 3.2: Bayesian inference + VPIN/PIN filters. Pure module
+// exposed so the prioritization-spine evaluator can consume posterior
+// acceptance gates without re-implementing the math.
+pub mod bayesian_filter;

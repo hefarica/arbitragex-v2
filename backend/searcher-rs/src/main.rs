@@ -40,6 +40,10 @@ mod sim_prefund;
 // position-sizing primitives consumed by the size_optimizer hot path.
 #[allow(dead_code)]
 mod kelly_sizing;
+// Phase OMEGA 3.2: Bayesian inference + VPIN/PIN adverse-selection
+// filters. Pure math primitives for the candidate-selection layer.
+#[allow(dead_code)]
+mod bayesian_filter;
 // Phase 16: per-strategy Prometheus metrics for the event-driven orchestrator.
 mod metrics;
 mod patterns;
