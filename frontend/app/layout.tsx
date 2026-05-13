@@ -7,6 +7,7 @@ import { SiteHeader } from "@/components/site-header";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AnimatedBg } from "@/components/animated-bg";
 import { ThemeScript } from "@/components/theme-toggle";
+import { SystemGuardBanner } from "@/components/SystemGuardBanner";
 import { Toaster } from "sonner";
 
 export const metadata = {
@@ -43,6 +44,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         </a>
         <div className="flex min-h-dvh flex-col">
           <SiteHeader />
+          <SystemGuardBanner />
           <div className="flex flex-1">
             <AppSidebar />
             <main id="main" tabIndex={-1} className="min-w-0 flex-1 outline-none">

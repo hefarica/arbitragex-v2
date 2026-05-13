@@ -615,3 +615,46 @@ export type DefiRpcsResponse = z.infer<typeof DefiRpcsResponseSchema>;
 export type DefiPoolRow = z.infer<typeof DefiPoolRowSchema>;
 export type DefiPoolsResponse = z.infer<typeof DefiPoolsResponseSchema>;
 export type DefiMetricsResponse = z.infer<typeof DefiMetricsResponseSchema>;
+
+// ─────── Strategy Runtime Status (per-strategy observability) ───────
+//
+// R8 fail-honest: backend declares per-source health in `source.*`:
+//   "ok"                 → query ran and returned data
+//   "partial_or_failed"  → query failed but is non-fatal (e.g., Redis down)
+//   "unavailable"        → query failed and the strategy section is omitted
+//   "not_used"           → endpoint never reads from this source
+// We use `z.string()` (not `z.enum`) so the FE never breaks if the backend
+// adds new states (forward-compat). UI maps unknown → "unavailable" badge.
+//
+// Strategies array carries per-strategy details. `.passthrough()` so future
+// backend fields (per-strategy variants, additional counters) don't break
+// existing FE — we only depend on the minimal fields below.
+export const RuntimeStatusStrategySchema = z
+  .object({
+    strategy_kind: z.string(),
+    enabled: z.boolean(),
+    engine_loaded: z.boolean(),
+    engine_invoked: z.boolean(),
+    last_invoked_at: z.string().nullable(),
+    last_candidate_at: z.string().nullable().optional(),
+    candidates_1h: z.number().int().nonnegative(),
+    rejections_1h: z.number().int().nonnegative(),
+    last_rejection_reason: z.string().nullable().optional(),
+    data_dependencies_status: z.string(),
+  })
+  .passthrough();
+
+export const RuntimeStatusResponseSchema = z.object({
+  chain_id: z.number().int().positive(),
+  window_seconds: z.number().int().positive(),
+  source: z.object({
+    postgres: z.string(),
+    redis: z.string(),
+    logs: z.string().optional(),
+  }),
+  strategies: z.array(RuntimeStatusStrategySchema),
+  ts: z.string(),
+});
+
+export type RuntimeStatusStrategy = z.infer<typeof RuntimeStatusStrategySchema>;
+export type RuntimeStatusResponse = z.infer<typeof RuntimeStatusResponseSchema>;

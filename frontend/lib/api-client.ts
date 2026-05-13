@@ -274,6 +274,17 @@ export function getReadiness() {
   return getValidated("/api/readiness", S.ReadinessReportSchema);
 }
 
+// Strategy runtime status — per-strategy observability fed by Postgres
+// (opportunities table) + Redis (heartbeat, pool index, reserves cache).
+// Backend returns 503 if PG unavailable; FE renders SystemGuardBanner's
+// "Engine status" tile as `unavailable` in that case (R8 fail-honest).
+export function getRuntimeStatus(chainId = 1) {
+  return getValidated(
+    `/api/strategies/runtime-status?chain_id=${chainId}`,
+    S.RuntimeStatusResponseSchema,
+  );
+}
+
 export function getTradingConfig(chainId: number) {
   return getValidated(`/api/trading-config?chain_id=${chainId}`, S.TradingConfigResponseSchema);
 }

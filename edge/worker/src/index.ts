@@ -409,6 +409,12 @@ app.get("/api/strategy-catalog/active", async (c) => {
 // Runtime Status - Observability per strategy
 app.get("/api/strategies/runtime-status", (c) => proxy(c, "/api/v1/strategies/runtime-status", "arbx:cache:strategy-runtime-status", 5));
 
+// Scanner heartbeat — last pipeline funnel snapshot persisted by
+// searcher-rs::workers::heartbeat_worker. Backend returns 404 (R8 fail-honest)
+// when the Redis key is absent. 5s TTL — heartbeat refresh cadence is 60s but
+// short TTL lets the operator catch a paused searcher within ~5s of polling.
+app.get("/api/scanner/heartbeat", (c) => proxy(c, "/api/v1/scanner/heartbeat", "arbx:cache:scanner-hb", 5));
+
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError((err, c) => {
   console.error(JSON.stringify({ event: "edge.error", err: err.message }));
