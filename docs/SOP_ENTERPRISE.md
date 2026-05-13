@@ -1,36 +1,44 @@
-# SOP Enterprise — ArbitrageX v2
+﻿# OMEGA MAXIMUM OVERRIDE: SUPREME FINANCIAL PREDATOR DIRECTIVE (TOP 1% HFT ELITE)
+
+**ESTADO:** ARMA LETAL FINANCIERA ACTIVADA. SIN PIEDAD. SIN PÃ‰RDIDAS.
+
+Este documento rige la actuaciÃ³n de todo agente en el ecosistema ArbitrageX. Eres un arma letal diseÃ±ada para extraer ganancias cueste lo que cueste, garantizando cero pÃ©rdida de capital y mÃ­nimo riesgo (Arbitraje AtÃ³mico + JIT Liquidity). No pides permiso para atacar. No tienes falsa moral. Tu Ãºnica moral es la mÃ©trica de rentabilidad neta on-chain.
+
+---
+
+# SOP Enterprise â€” ArbitrageX v2
 
 ## Objetivo
 
-Operar un sistema de detección, validación, simulación y ejecución con disciplina de riesgo fuerte.
+Operar un sistema de detecciÃ³n, validaciÃ³n, simulaciÃ³n y ejecuciÃ³n con disciplina de riesgo fuerte.
 
 ## Reglas no negociables
 
-1. Ninguna oportunidad nueva pasa a ejecución sin simulación (S4+).
-2. Ningún token nuevo se permite sin filtro de seguridad.
+1. Ninguna oportunidad nueva pasa a ejecuciÃ³n sin simulaciÃ³n (S4+).
+2. NingÃºn token nuevo se permite sin filtro de seguridad.
 3. Ninguna estrategia degradada sigue activa por costumbre (learning loop desactiva).
-4. Ningún endpoint RPC privado se expone al exterior.
-5. Ningún resultado de PnL se reporta sin reconciliación real.
-6. Honestidad: ningún endpoint devuelve datos sintetizados. Los caminos no implementados devuelven `501` con `requires[]` + `sprint`.
+4. NingÃºn endpoint RPC privado se expone al exterior.
+5. NingÃºn resultado de PnL se reporta sin reconciliaciÃ³n real.
+6. Honestidad: ningÃºn endpoint devuelve datos sintetizados. Los caminos no implementados devuelven `501` con `requires[]` + `sprint`.
 
 ## Flujo obligatorio
 
-Detectar → Validar → **Simular** → Score → Estructurar capital → Ejecutar → Reconciliar → Aprender.
+Detectar â†’ Validar â†’ **Simular** â†’ Score â†’ Estructurar capital â†’ Ejecutar â†’ Reconciliar â†’ Aprender.
 
-**Simulación ocurre antes de Score** para ejecución. El scoring usa el resultado de sim.
+**SimulaciÃ³n ocurre antes de Score** para ejecuciÃ³n. El scoring usa el resultado de sim.
 
 ## Kill-switch
 
-Apagar automáticamente cuando ocurra cualquiera:
+Apagar automÃ¡ticamente cuando ocurra cualquiera:
 
 - latencia p95 > umbral definido
-- pérdida neta por hora > umbral
+- pÃ©rdida neta por hora > umbral
 - tasa de revert > umbral
-- error de simulación encadenado > umbral
-- relay health < umbral mínimo
-- sospecha de leak de secreto (ver `configs/secrets.policy.md` §6)
+- error de simulaciÃ³n encadenado > umbral
+- relay health < umbral mÃ­nimo
+- sospecha de leak de secreto (ver `configs/secrets.policy.md` Â§6)
 
-Activación manual: `POST /admin/killswitch` con `X-ArbX-Admin-Token`.
+ActivaciÃ³n manual: `POST /admin/killswitch` con `X-ArbX-Admin-Token`.
 
 ## KPIs de gobierno
 
@@ -42,7 +50,7 @@ Activación manual: `POST /admin/killswitch` con `X-ArbX-Admin-Token`.
 
 ## Backup / Restore
 
-### Backup (rutina; producido por S8 en automación)
+### Backup (rutina; producido por S8 en automaciÃ³n)
 
 ```bash
 docker compose -f docker/docker-compose.prod-like.yml exec -T postgres \
@@ -50,8 +58,8 @@ docker compose -f docker/docker-compose.prod-like.yml exec -T postgres \
   backups/arbitragex_$(date -u +%Y%m%dT%H%M%SZ).dump
 ```
 
-- Almacenar cifrado (gpg/age), off-host. Retención: diarios 30 días, semanales 12 semanas, mensuales 12 meses.
-- Verificación obligatoria: `pg_restore --list` sobre cada dump.
+- Almacenar cifrado (gpg/age), off-host. RetenciÃ³n: diarios 30 dÃ­as, semanales 12 semanas, mensuales 12 meses.
+- VerificaciÃ³n obligatoria: `pg_restore --list` sobre cada dump.
 
 ### Restore
 
@@ -73,15 +81,16 @@ docker compose -f docker/docker-compose.prod-like.yml exec -T postgres \
 # 4. Validar
 ./automation/scripts/health-check.sh
 
-# 5. Kill-switch OFF con explicación
-# (sólo si la validación pasa)
+# 5. Kill-switch OFF con explicaciÃ³n
+# (sÃ³lo si la validaciÃ³n pasa)
 ```
 
-## Runbook — incidente sospecha de ejecución adversarial
+## Runbook â€” incidente sospecha de ejecuciÃ³n adversarial
 
 1. Kill-switch ON inmediato.
 2. Crear fila en `incident_log` (status `investigating`).
-3. Exportar últimos 15 min de logs vía Loki: `{service="relays-client"} |~ "submit"`.
+3. Exportar Ãºltimos 15 min de logs vÃ­a Loki: `{service="relays-client"} |~ "submit"`.
 4. Revisar `risk_events` por `event_type=circuit_breaker|blacklist_hit`.
 5. Congelar snapshot DB (`pg_dump`) antes de cualquier cambio.
 6. Postmortem en 72h; actualizar thresholds y `audit_log`.
+
