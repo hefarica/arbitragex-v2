@@ -727,6 +727,11 @@ async fn detection_loop(
         // The kill-switch blocks execution downstream (relays-client), but the intelligence
         // layer always detects opportunities to populate the real-time dashboards.
 
+        // --- OMEGA MAXIMUM OVERRIDE: SKILL_002 (LATENCY ARBITRAGE) & SKILL_004 (ANOMALY DETECTION) ---
+        // La inteligencia HFT exige latencia sub-milisegundo. Cualquier loop que tome >1ms es un fallo.
+        // El scanner opera como un DEPREDADOR MATEMÁTICO. No pedimos permiso para interceptar transacciones.
+        let loop_start = std::time::Instant::now();
+        
         // Pick the next endpoint round-robin. With a healthy primary the index
         // resets on success below, so failures rotate through the pool.
         let endpoint = &endpoints[idx % endpoints.len()];
@@ -778,11 +783,14 @@ async fn detection_loop(
         )
         .await
         {
+            // OMEGA PROTOCOL: Fail-Honest Implacable. Si el provider cae, no lloramos, rotamos agresivamente.
             error!(
                 event = "scanner.subscription_error",
                 chain_id,
                 provider = %endpoint.name,
-                error = %e
+                error = %e,
+                latency_ms = loop_start.elapsed().as_millis(),
+                "OMEGA_ALERTA: Caída de provider. Ejecutando evasión táctica y rotación."
             );
             // Rotate on subscription death too — the WS connection died, try next.
             idx = (idx + 1) % endpoints.len();
