@@ -164,10 +164,56 @@ function GateBadge({ label, value }: { label: string; value: string | null }) {
   );
 }
 
+// A.8: render basis-points scores honestly. null → "Unavailable", real value
+// → bps with explanatory tooltip. Backend pipeline currently NEVER emits these,
+// so today's UI is uniformly "Unavailable" — exactly the R8 fail-honest output.
+function ScoreBps({
+  value,
+  label,
+  hint,
+}: {
+  value: number | null | undefined;
+  label: string;
+  hint?: string;
+}) {
+  if (value === null || value === undefined) {
+    return <Unavailable reason={`Backend has not produced a ${label} for this opportunity yet (A.8 pipeline pending).`} />;
+  }
+  // bps = basis points = value / 10000. Render as both raw bps and pct.
+  const pct = (value / 100).toFixed(2);
+  return (
+    <span
+      data-slot={`evidence-${label.toLowerCase()}-bps`}
+      className="font-mono text-xs"
+      title={hint ?? `${value} basis points (${pct}%)`}
+    >
+      {value}
+      <span className="ml-1 text-[10px] text-muted-foreground">bps</span>
+    </span>
+  );
+}
+
+function ScoringDecision({ value }: { value: string | null }) {
+  if (value === null || value === "") {
+    return <Unavailable reason="No scoring decision recorded for this opportunity yet (A.8 pipeline pending)." />;
+  }
+  const upper = value.toUpperCase();
+  const isAccept = upper === "ACCEPT_PAPER";
+  const isBlocked = upper.startsWith("BLOCKED");
+  const variant = isAccept ? "info" : isBlocked ? "outline" : "destructive";
+  return (
+    <Badge data-slot="evidence-scoring-decision" variant={variant} className="font-mono text-[10px]">
+      {upper}
+    </Badge>
+  );
+}
+
 export const OpportunityEvidenceCell = {
   SimClassification,
   NetProfit,
   GasUsed,
   Hash,
   Gates,
+  ScoreBps,
+  ScoringDecision,
 };

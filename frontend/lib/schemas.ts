@@ -85,6 +85,19 @@ export const OpportunityRowSchema = z.object({
   simulated_net_profit_usd: z.number().nullable().optional(),
   evidence_gate: z.string().nullable().optional(),
   net_profit_gate: z.string().nullable().optional(),
+  // ─── A.8 confidence scoring (audit 2026-05-13) ───
+  // All nullable+optional: backend does not yet emit these on
+  // /api/opportunities/live (scoring_pipeline_wired=false). When the future
+  // commit wires the scanner pipeline, these fields populate; the UI shows
+  // "Unavailable" today via OpportunityEvidenceCell.
+  // Units are basis points (bps) — integer math, no floats for final money.
+  confidence_score_bps: z.number().int().nullable().optional(),
+  posterior_probability_bps: z.number().int().nullable().optional(),
+  kelly_fraction_bps: z.number().int().nullable().optional(),
+  scoring_decision: z.string().nullable().optional(),
+  scoring_reason: z.string().nullable().optional(),
+  scoring_version: z.string().nullable().optional(),
+  scoring_input_hash: z.string().nullable().optional(),
 });
 
 export const OpportunitiesLiveSchema = z.object({
@@ -796,3 +809,54 @@ export const AgentsStatusResponseSchema = z.object({
 
 export type AgentStatusRow = z.infer<typeof AgentStatusRowSchema>;
 export type AgentsStatusResponse = z.infer<typeof AgentsStatusResponseSchema>;
+
+// ─────── A.8 Confidence Scoring Wire Status ───────
+//
+// Backend reports the honest wire state of the bayesian/kelly primitives.
+// Schema permissive (z.string()) for forward-compat with future decisions
+// or component additions. min_expected_value_wei is a string (i256 may
+// exceed JS Number); UI handles it as a hex/decimal string.
+
+export const ScoringComponentSchema = z.object({
+  name: z.string(),
+  wired: z.boolean(),
+  evidence_ref: z.string(),
+  description: z.string(),
+});
+
+export const ScoringBlockedReasonSchema = z.object({
+  id: z.string(),
+  severity: z.string(),
+  description: z.string(),
+  evidence_ref: z.string(),
+  required_action: z.string(),
+});
+
+export const ScoringStatusResponseSchema = z.object({
+  generated_at: z.string(),
+  source: z.string(),
+  mode: z.string(),
+  scoring_status: z.string(),
+  scoring_enabled: z.boolean(),
+  bayesian_filter_wired: z.boolean(),
+  kelly_sizing_wired: z.boolean(),
+  vpin_wired: z.boolean(),
+  scoring_pipeline_wired: z.boolean(),
+  components: z.array(ScoringComponentSchema),
+  confidence_threshold_bps: z.number().int().nonnegative(),
+  min_expected_value_wei: z.string().nullable(),
+  scoring_version: z.string(),
+  recent_scored_count: z.number().int().nonnegative(),
+  last_scored_at: z.string().nullable(),
+  blocked_reasons: z.array(ScoringBlockedReasonSchema),
+  available_decisions: z.array(z.string()),
+  live_trading: z.boolean(),
+  private_relay: z.boolean(),
+  submit_enabled: z.boolean(),
+  capital_exposure_usd: z.number().nonnegative(),
+  next_action: z.string(),
+});
+
+export type ScoringComponent = z.infer<typeof ScoringComponentSchema>;
+export type ScoringBlockedReason = z.infer<typeof ScoringBlockedReasonSchema>;
+export type ScoringStatusResponse = z.infer<typeof ScoringStatusResponseSchema>;

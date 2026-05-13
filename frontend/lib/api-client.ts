@@ -304,6 +304,13 @@ export function getAgentTeamsStatus() {
   return getValidated("/api/agents/status", S.AgentsStatusResponseSchema);
 }
 
+// A.8 confidence scoring wire status. Reports honest "primitives wired vs
+// pipeline integration" split. Backend returns scoring_pipeline_wired=false
+// until the scanner hot-path actually invokes bayesian/kelly per candidate.
+export function getScoringStatus() {
+  return getValidated("/api/scoring/status", S.ScoringStatusResponseSchema);
+}
+
 export function getTradingConfig(chainId: number) {
   return getValidated(`/api/trading-config?chain_id=${chainId}`, S.TradingConfigResponseSchema);
 }

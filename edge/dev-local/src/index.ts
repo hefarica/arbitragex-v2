@@ -164,6 +164,8 @@ app.get("/api/readiness/blockers", (req, res) => proxy("/api/v1/readiness/blocke
 app.get("/api/readiness/decision", (req, res) => proxy("/api/v1/readiness/decision", req, res));
 // P2-continued: agent teams status.
 app.get("/api/agents/status", (req, res) => proxy("/api/v1/agents/status", req, res));
+// A.8 confidence scoring wire status.
+app.get("/api/scoring/status", (req, res) => proxy("/api/v1/scoring/status", req, res));
 // Trading Config — operator-tunable strategy parameters per chain.
 app.get("/api/trading-config", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";

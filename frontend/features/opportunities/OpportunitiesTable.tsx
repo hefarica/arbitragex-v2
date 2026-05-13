@@ -97,6 +97,51 @@ export function OpportunitiesTable({ items }: { items: OpportunityRow[] }) {
           />
         ),
       },
+      // ─── A.8 confidence scoring columns (audit 2026-05-13) ───
+      // R8 fail-honest: every cell renders "Unavailable" today because the
+      // backend pipeline does not yet emit scoring fields. When the future
+      // wire commit lands and PG opportunities table gains the columns, these
+      // cells populate automatically without schema change.
+      {
+        id: "confidence_score_bps",
+        header: "Confidence",
+        meta: { align: "right", className: "font-mono tabular-nums" },
+        cell: ({ row }) => (
+          <OpportunityEvidenceCell.ScoreBps
+            value={row.original.confidence_score_bps ?? null}
+            label="confidence"
+          />
+        ),
+      },
+      {
+        id: "posterior_probability_bps",
+        header: "Posterior",
+        meta: { align: "right", className: "font-mono tabular-nums" },
+        cell: ({ row }) => (
+          <OpportunityEvidenceCell.ScoreBps
+            value={row.original.posterior_probability_bps ?? null}
+            label="posterior"
+          />
+        ),
+      },
+      {
+        id: "kelly_fraction_bps",
+        header: "Kelly",
+        meta: { align: "right", className: "font-mono tabular-nums" },
+        cell: ({ row }) => (
+          <OpportunityEvidenceCell.ScoreBps
+            value={row.original.kelly_fraction_bps ?? null}
+            label="kelly fraction"
+          />
+        ),
+      },
+      {
+        id: "scoring_decision",
+        header: "Scoring",
+        cell: ({ row }) => (
+          <OpportunityEvidenceCell.ScoringDecision value={row.original.scoring_decision ?? null} />
+        ),
+      },
     ],
     [],
   );

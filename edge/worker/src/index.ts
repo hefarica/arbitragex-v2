@@ -427,6 +427,10 @@ app.get("/api/readiness/decision", (c) => proxy(c, "/api/v1/readiness/decision",
 // change on commit, not on runtime drift, so a slower cadence is fine.
 app.get("/api/agents/status", (c) => proxy(c, "/api/v1/agents/status", "arbx:cache:agents-status", 30));
 
+// A.8 confidence scoring wire status (P2-continued + A.8). Workspace-verified
+// component map. 30s KV TTL — wire status moves on commits, not runtime drift.
+app.get("/api/scoring/status", (c) => proxy(c, "/api/v1/scoring/status", "arbx:cache:scoring-status", 30));
+
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError((err, c) => {
   console.error(JSON.stringify({ event: "edge.error", err: err.message }));

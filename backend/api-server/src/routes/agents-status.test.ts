@@ -16,8 +16,8 @@ import { __forTesting } from "./agents-status.js";
 const { AGENT_DEFS, runtimeOverlay, summarize, overallStatus } = __forTesting;
 
 describe("agents-status — doctrinal completeness", () => {
-  it("defines exactly 17 agents", () => {
-    expect(AGENT_DEFS.length).toBe(17);
+  it("defines exactly 18 agents (17 originals + scoring-primitives-agent A.8)", () => {
+    expect(AGENT_DEFS.length).toBe(18);
   });
 
   it("includes each documented Agent Team id", () => {
@@ -35,6 +35,7 @@ describe("agents-status — doctrinal completeness", () => {
       "data-wiring-agent",
       "security-guard-agent",
       "risk-circuit-agent",
+      "scoring-primitives-agent",
       "anti-mock-agent",
       "visual-regression-agent",
       "performance-agent",
@@ -101,10 +102,10 @@ describe("summarize", () => {
   it("counts verdict buckets correctly", () => {
     const agents = AGENT_DEFS.map((d) => runtimeOverlay(d, { readinessOk: true, readinessFailDetail: null }));
     const s = summarize(agents);
-    expect(s.total).toBe(17);
-    expect(s.pass + s.partial + s.blocked + s.no_go + s.not_run + s.unknown).toBe(17);
-    // At baseline: 15 PASS, 1 PARTIAL (risk-circuit), 1 NO_GO (go-no-go).
-    expect(s.partial).toBeGreaterThanOrEqual(1);
+    expect(s.total).toBe(18);
+    expect(s.pass + s.partial + s.blocked + s.no_go + s.not_run + s.unknown).toBe(18);
+    // Post-A.8 baseline: 15 PASS, 2 PARTIAL (risk-circuit + scoring-primitives), 1 NO_GO (go-no-go).
+    expect(s.partial).toBeGreaterThanOrEqual(2);
     expect(s.no_go).toBeGreaterThanOrEqual(1);
   });
 });
@@ -117,12 +118,12 @@ describe("overallStatus", () => {
   });
 
   it("returns 'ready' when all PASS", () => {
-    const fakeS = { pass: 17, blocked: 0, partial: 0, no_go: 0, not_run: 0, unknown: 0, total: 17 };
+    const fakeS = { pass: 18, blocked: 0, partial: 0, no_go: 0, not_run: 0, unknown: 0, total: 18 };
     expect(overallStatus(fakeS)).toBe("ready");
   });
 
   it("returns 'partial' when only PARTIAL/UNKNOWN/NOT_RUN", () => {
-    expect(overallStatus({ pass: 15, blocked: 0, partial: 2, no_go: 0, not_run: 0, unknown: 0, total: 17 }))
+    expect(overallStatus({ pass: 15, blocked: 0, partial: 3, no_go: 0, not_run: 0, unknown: 0, total: 18 }))
       .toBe("partial");
   });
 });
