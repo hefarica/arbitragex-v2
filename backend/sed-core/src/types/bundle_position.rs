@@ -145,13 +145,28 @@ impl PostResolutionTopology for HolonomicLoopResolution {} // V1.2 amendment
 /// dispatched.
 ///
 /// `PhantomData<T>` carries the type without runtime cost.
+///
+/// ## Field privacy (V1.2 audit follow-up, 2026-05-13)
+///
+/// All fields are private. Construction is only possible through the
+/// validated `new_*` constructors below — there is no struct-literal
+/// path that bypasses the mathematical proof arguments. Read access is
+/// via the accessor methods on `impl<T> BundlePosition<T>`.
+///
+/// Earlier the fields were `pub`, which silently allowed external code
+/// to write `BundlePosition::<OrthogonalEquilibrium> { market_id: …,
+/// variance_exposure: f64::MAX, topology_state: PhantomData }` —
+/// bypassing `verify_null_covariance` entirely. The sealed trait
+/// blocks new topologies, but field privacy is what blocks fabricating
+/// instances of existing ones. Both layers are required for the
+/// typestate to mean what the doctrine says it means.
 #[derive(Debug)]
 pub struct BundlePosition<T> {
-    pub market_id: String,
-    pub token_pair: (String, String),
-    pub liquidity_commitment: f64,
-    pub variance_exposure: f64,
-    pub topology_state: PhantomData<T>,
+    market_id: String,
+    token_pair: (String, String),
+    liquidity_commitment: f64,
+    variance_exposure: f64,
+    topology_state: PhantomData<T>,
 }
 
 impl<T> BundlePosition<T> {
@@ -164,6 +179,19 @@ impl<T> BundlePosition<T> {
     /// Read-only accessor for the token pair.
     pub fn token_pair(&self) -> &(String, String) {
         &self.token_pair
+    }
+
+    /// Read-only accessor for the position's liquidity commitment, in
+    /// the same units the constructor received (typically USD-notional).
+    pub fn liquidity_commitment(&self) -> f64 {
+        self.liquidity_commitment
+    }
+
+    /// Read-only accessor for the position's variance exposure. This is
+    /// the field the GateManager (Phase 4) reads when enforcing the
+    /// system-level "varianza monótona no-creciente" invariant.
+    pub fn variance_exposure(&self) -> f64 {
+        self.variance_exposure
     }
 }
 

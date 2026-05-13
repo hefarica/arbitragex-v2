@@ -62,6 +62,27 @@
 //! Downstream MUST treat `NaN` as "do not dispatch": NaN comparisons
 //! against thresholds are always false, so a `T_exec < T_half_life`
 //! check on a NaN half-life correctly rejects.
+//!
+//! ## Variance monotone non-increasing invariant (Remediación 3.3)
+//!
+//! The system-level invariant "varianza monótona no-creciente" (monotone
+//! non-increasing variance over time) is NOT enforced inside this
+//! calculator nor inside the underlying [`PdmpEstimator`].
+//!
+//! **Reason**: the Welford estimator is an unbiased, numerically stable
+//! running estimator of the population σ². Artificially clamping or
+//! rejecting updates that would increase σ̂² would introduce bias and
+//! destroy the asymptotic convergence guarantee `σ̂² → σ²` as `n → ∞`.
+//! The estimator MUST see all data, including regime-change spikes that
+//! temporarily inflate σ̂².
+//!
+//! The invariant is instead enforced at the `GateManager` (Phase 4)
+//! level, which reads `variance_exposure()` from the sealed
+//! `BundlePosition<T>` and refuses to dispatch a new bundle whose
+//! marginal variance contribution would violate the portfolio-level
+//! ceiling. This separation preserves statistical hygiene (unbiased
+//! estimator) while still enforcing the operational constraint (bounded
+//! risk at the dispatch gate).
 
 use crate::filtration::markov_jump::PdmpEstimator;
 
@@ -205,10 +226,31 @@ impl CdcCalculator {
             };
         }
 
-        let mu_recent = self.recent.current_mean();
-        let mu_long = self.long_term.current_mean();
+        // Remediación 3.4(a) — Dimensional correctness (2026-05-13).
+        //
+        // `current_mean()` returns the per-observation running mean μ̂,
+        // whose units are log-return/tick. `stats().mu` rescales to
+        // log-return/second via the implied sample rate `n/elapsed_s`.
+        //
+        // When the recent window rotates, it resets to n=0 and accumulates
+        // a fresh elapsed_seconds counter. If the two estimators have
+        // different sample rates (they will, especially right after a
+        // rotation), `current_mean_recent − current_mean_long` compares
+        // apples (per-obs-recent) to oranges (per-obs-long) — the
+        // dimensional error scales with the ratio of sample rates.
+        //
+        // Using `stats().mu` for both normalises to 1/s, making the
+        // CDC formula |Δμ|/(σ·τ) dimensionally homogeneous:
+        //   numerator: |μ_recent[1/s] − μ_long[1/s]| → [1/s]
+        //   denominator: σ[1] · τ[s] → [s]
+        //   CDC → [1/s²] → inverted to half_life[s²] — see spec §3.1.
+        let recent_stats = self.recent.stats();
+        let long_stats = self.long_term.stats();
+        let mu_recent = recent_stats.mu;
+        let mu_long = long_stats.mu;
         let sigma_long = self.long_term.current_sigma();
         let elapsed_recent = self.recent.elapsed_seconds();
+
 
         if sigma_long <= 0.0 || elapsed_recent <= 0.0 {
             return StateDivergenceCoefficient {
