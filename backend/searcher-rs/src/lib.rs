@@ -40,3 +40,7 @@ pub mod size_optimizer;
 // Phase 11: LendingPositionIndexer — Redis-backed watchlist + cache for
 // Aave V3 / Compound V2 positions, consumed by LiquidationEngine.
 pub mod lending_position_indexer;
+// Phase A.3.a: `OpportunityCandidate → RoundTripContext` encoder. Exposed
+// here so integration tests can drive the encoder against real candidate
+// shapes without going through `decode_and_score_tx`.
+pub mod sim_encoder;

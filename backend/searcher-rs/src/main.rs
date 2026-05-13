@@ -19,6 +19,18 @@ mod calldata;
 mod chain_client;
 mod counters;
 mod dedup;
+// Phase A.3.a: OpportunityCandidate → RoundTripContext encoder. Pure bridge
+// from the abstract candidate to the typed simulator input. NO REVM dispatch
+// here (that lands in Phase A.3.b); only validation + payload pre-shaping.
+//
+// `dead_code` is allowed at the module level because Phase A.3.a ships the
+// encoder + 26 unit tests; the runtime wire from `scanner::decode_and_score_tx`
+// lands together with Phase A.3.b's decimals provider (PG-backed) and
+// execute_round_trip orchestrator. Until then the module is exercised only
+// by its own tests, which is honest fail-closed behaviour (every candidate
+// continues to land in the existing SIM_DISABLED_FAIL_CLOSED path).
+#[allow(dead_code)]
+mod sim_encoder;
 // Phase 16: per-strategy Prometheus metrics for the event-driven orchestrator.
 mod metrics;
 mod patterns;
