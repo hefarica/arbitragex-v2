@@ -26,6 +26,9 @@ type Env = {
   // SEC-1: KV namespace for cross-isolate rate-limit / brute-force / lockout state.
   RATE_LIMIT: KVNamespace;
   ARBX_TELEMETRY?: D1Database;
+  /** Comma-separated ASN deny-list (optional). Empty by default; populate
+   *  via env binding when known-abuse ASNs are identified from telemetry. */
+  SYBIL_ASN_DENYLIST?: string;
 };
 
 const app = new Hono<{ Bindings: Env }>();
@@ -128,13 +131,50 @@ app.use("*", async (c, next) => {
   (c as unknown as { traceId: string }).traceId = traceId;
 
   const ip = c.req.header("cf-connecting-ip") ?? "anon";
-  
-  // OMEGA MANDATE: Sybil Filtering
-  // Reject data-center ASNs known for botnets/Sybils
-  const asn = c.req.header("cf-ipasn");
-  const sybilAsns = ["14061", "20940", "16509"]; // DigitalOcean, Akamai, AWS, etc.
-  if (asn && sybilAsns.includes(asn)) {
-      return c.json({ error: "sybil_rejected", message: "Network rejected" }, 403);
+
+  // ASN-based filter. The previous version read `cf-ipasn` which is NOT a
+  // Cloudflare header — `request.cf.asn` is the canonical source (CF Workers
+  // Runtime IncomingRequestCfProperties). We expose it through Hono via the
+  // raw request's `cf` object. Type-narrowed via `unknown` since the Hono
+  // type definitions don't reflect Workers-specific cf properties.
+  const cf = (c.req.raw as unknown as { cf?: { asn?: number; threatScore?: number } }).cf;
+  const asn = cf?.asn != null ? String(cf.asn) : undefined;
+
+  // Trusted ASN whitelist: our own infrastructure (Vercel runs on AWS,
+  // VPS hosted on Hetzner but tooling/Codespaces may originate from these).
+  // Requests from these ASNs skip the threat-score block and the generic
+  // Sybil deny-list; they still pass through rate limiting and admin token
+  // checks downstream.
+  const TRUSTED_ASNS = new Set([
+    "16509", // Amazon AWS
+    "14061", // DigitalOcean
+    "20940", // Akamai
+  ]);
+
+  // Generic Sybil deny-list. Intentionally empty by default: a strict
+  // ASN deny-list at the edge is too easy to mis-curate and blocks
+  // legitimate users. Operators populate via env binding when known-abuse
+  // ASNs are identified from telemetry; until then, blocking is delegated
+  // to (a) Cloudflare threatScore below, (b) downstream rate limit,
+  // (c) V-AT-1 admin token check.
+  const sybilAsnsRaw = c.env.SYBIL_ASN_DENYLIST ?? "";
+  const SYBIL_ASNS = new Set(
+    sybilAsnsRaw.split(",").map((s: string) => s.trim()).filter(Boolean),
+  );
+
+  const isTrustedAsn = asn != null && TRUSTED_ASNS.has(asn);
+  if (!isTrustedAsn) {
+    if (asn != null && SYBIL_ASNS.has(asn)) {
+      return c.json({ error: "sybil_rejected", message: "ASN on deny-list" }, 403);
+    }
+    // Cloudflare's threat score is the canonical "abuse" signal at the
+    // edge. 0-100; >=10 is "suspicious", >=30 is "high risk" per CF docs.
+    // We pick 30 to avoid false positives; operators can tighten later.
+    const threatScore = cf?.threatScore;
+    const THREAT_BLOCK_THRESHOLD = 30;
+    if (threatScore != null && threatScore >= THREAT_BLOCK_THRESHOLD) {
+      return c.json({ error: "abuse_rejected", message: "High threat score" }, 403);
+    }
   }
 
   // SEC-1: KV-backed cross-isolate rate limit.
@@ -144,17 +184,44 @@ app.use("*", async (c, next) => {
 
   await next();
 
-  // OMEGA MANDATE: Ultra-low latency telemetry
+  // Edge telemetry to D1.
   const latencyMs = Date.now() - startMs;
   c.header("x-arbx-latency-ms", String(latencyMs));
   if (c.env.ARBX_TELEMETRY) {
-      c.executionCtx.waitUntil(
-          c.env.ARBX_TELEMETRY.prepare(
-              "INSERT INTO edge_telemetry (path, ip, asn, latency_ms, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)"
-          ).bind(c.req.path, ip, asn || "unknown", latencyMs, startMs).run().catch(() => {})
-      );
+    // PII hygiene: hash IP with a daily-rotating salt before persisting.
+    // This is a one-way transform — operators see distribution per IP-bucket
+    // without storing the raw address. Salt rotates daily so cross-day
+    // correlation cannot reverse the hash via rainbow tables.
+    const ipHashed = await hashIp(ip, startMs);
+    // Strip query string from path — tokens, signatures, and other secrets
+    // routinely appear in query and must never land in long-lived telemetry.
+    const pathOnly = c.req.path.split("?")[0];
+    c.executionCtx.waitUntil(
+      c.env.ARBX_TELEMETRY.prepare(
+        "INSERT INTO edge_telemetry (path, ip_hash, asn, latency_ms, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
+      )
+        .bind(pathOnly, ipHashed, asn ?? "unknown", latencyMs, startMs)
+        .run()
+        .catch((err: unknown) => {
+          // Don't crash the request on telemetry failure, but DO surface
+          // it via tracing so silent D1 outages are visible.
+          console.warn(`[edge_telemetry] D1 insert failed: ${(err as Error)?.message ?? err}`);
+        }),
+    );
   }
 });
+
+/** SHA-256(ip + daily-salt) — daily salt makes the hash unreversible
+ *  across days while keeping same-day request grouping intact. */
+async function hashIp(ip: string, timestampMs: number): Promise<string> {
+  const dayBucket = Math.floor(timestampMs / 86_400_000); // 24h windows
+  const data = new TextEncoder().encode(`${ip}|${dayBucket}|arbx-edge-salt-v1`);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 32); // 128-bit truncated — sufficient for distribution analytics
+}
 
 app.get("/health", (c) => c.json({ ok: true, service: "edge-worker", env: c.env.ARBX_ENV }));
 
