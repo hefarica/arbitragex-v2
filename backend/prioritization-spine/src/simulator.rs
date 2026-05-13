@@ -1,84 +1,127 @@
-use crate::lazy_db::LazyRpcDatabase;
-use crate::types::OpportunityCandidate;
-use ethers::providers::{Provider, Ws};
-use revm::{
-    primitives::{Address, Bytes, TransactTo, U256},
-    EVM,
-};
-use std::sync::Arc;
-use tracing::{error, info, warn};
+//! ⚠️ DEPRECATED — v1 simulator stub (Phase A.1/A.2 fail-closed neutralization).
+//!
+//! ## What this file used to do
+//!
+//! The legacy `EvmSimulator::simulate_candidate` built a `revm::EVM` against a
+//! `LazyRpcDatabase`, then ran a fabricated transaction with:
+//!   - `caller   = 0x1111…1111` (RULE 00 hardcode violation)
+//!   - `target   = 0x2222…2222` (RULE 00 hardcode violation)
+//!   - `value    = 0`
+//!   - `calldata = Bytes::new()` (empty — REVM had nothing to execute)
+//!
+//! revm always returned `Success` for that empty no-op transaction, so the stub
+//! reported `simulation_status = "PASS"` for every candidate. Downstream
+//! (`gates.rs::EvidenceGate`) accepted "PASS" as a valid simulation, and the
+//! paper-trade pipeline persisted "viable" opportunities that had never been
+//! verified against any real state.
+//!
+//! This was a RULE 00 violation: the system claimed to simulate but did not.
+//!
+//! ## What this file does now
+//!
+//! It is wired **fail-closed**. `EvmSimulator::simulate_candidate` returns the
+//! sentinel string `"SIM_DISABLED_FAIL_CLOSED"`, which `gates.rs:11` maps to
+//! `RejectReason::SimulationFailed`. Every candidate routed through this stub
+//! is rejected at the simulator gate.
+//!
+//! ## Why the type is kept (not deleted)
+//!
+//! The scanner's hot path (`backend/searcher-rs/src/scanner.rs`) no longer
+//! constructs `EvmSimulator`. The struct stays here as a deprecation shim so
+//! that any forgotten caller (CI, integration tests, downstream forks) fails
+//! loud with a deprecation warning at compile time AND fails closed at
+//! runtime. RULE 16: changes must be idempotent and reversible.
+//!
+//! ## When this file goes away
+//!
+//! Phase A.3 lands the `OpportunityCandidate → CandidateInput` encoder and
+//! wires the scanner directly to `simulator_v2::SimulatorV2`. At that point
+//! this file is removed and `EvmSimulator` deleted from the public API.
 
+use crate::types::OpportunityCandidate;
+use tracing::warn;
+
+/// Sentinel value returned by the deprecated v1 stub.
+///
+/// `gates.rs::EvidenceGate::validate` maps every value other than `"PASS"` or
+/// `"SIM_SUCCESS"` (the Phase A.3 sentinel for real REVM success) to
+/// `RejectReason::SimulationFailed` — so this string causes a fail-closed
+/// rejection at the simulator gate.
+pub const FAIL_CLOSED_SENTINEL: &str = "SIM_DISABLED_FAIL_CLOSED";
+
+/// ⚠️ DEPRECATED — legacy v1 simulator. Use `simulator_v2::SimulatorV2`.
+///
+/// This shim exists only so that out-of-tree callers fail loudly. The scanner
+/// no longer constructs it. See the module-level docs for context.
+#[deprecated(
+    since = "0.2.0",
+    note = "v1 stub fabricated PASS results (RULE 00 violation). \
+            Use `simulator_v2::SimulatorV2` once the Phase A.3 encoder lands. \
+            This shim returns SIM_DISABLED_FAIL_CLOSED and triggers fail-closed \
+            rejection in gates.rs. See feat/wire-simulator-v2-revm."
+)]
+#[allow(dead_code)]
 pub struct EvmSimulator {
-    db: LazyRpcDatabase,
+    _private: (),
 }
 
+#[allow(deprecated)]
 impl EvmSimulator {
-    pub fn new(provider: Arc<Provider<Ws>>) -> Self {
-        Self {
-            db: LazyRpcDatabase::new(provider),
-        }
+    /// Construct the deprecated shim. The argument is ignored; we kept a unit
+    /// type as a no-op constructor surface so old call sites compile against
+    /// the deprecation warning while the migration to simulator-v2 lands.
+    pub fn new<T>(_provider: T) -> Self {
+        warn!(
+            event = "simulator.v1_stub_constructed",
+            "EvmSimulator constructed (DEPRECATED). v1 stub is wired fail-closed \
+             since Phase A.1/A.2. Migrate to simulator_v2::SimulatorV2."
+        );
+        Self { _private: () }
     }
 
-    /// Simulates the given candidate in the local EVM.
-    /// Returns "PASS" if the simulation is successful, or a revert reason.
+    /// Returns `FAIL_CLOSED_SENTINEL` unconditionally. Phase A.3 will route
+    /// real candidates to `simulator_v2::SimulatorV2::simulate()` and remove
+    /// this shim entirely.
     pub fn simulate_candidate(&mut self, candidate: &OpportunityCandidate) -> String {
-        // Initialize the EVM with the in-memory database
-        let mut evm = EVM::new();
-        evm.database(&mut self.db);
+        warn!(
+            event = "simulator.v1_stub_fail_closed",
+            candidate_fingerprint = %candidate.route_fingerprint,
+            sentinel = FAIL_CLOSED_SENTINEL,
+            "v1 simulator stub invoked — returning fail-closed sentinel. \
+             No REVM simulation performed. Candidate will be rejected by \
+             EvidenceGate (RULE 00 honesty)."
+        );
+        FAIL_CLOSED_SENTINEL.to_string()
+    }
+}
 
-        // TODO: In a production setting, we would lazily fetch the real state
-        // using an Ethers Provider here for `pool_addresses` and `token_addresses`.
-        // For now, we set up a mock transaction environment to satisfy the Spine.
+#[cfg(test)]
+#[allow(deprecated)]
+mod tests {
+    use super::*;
 
-        // Set up the transaction environment
-        let caller = Address::from_slice(&[0x11; 20]);
-        // Target an arbitrary executor or the first pool address if available
-        let target = Address::from_slice(&[0x22; 20]);
-
-        evm.env.tx.caller = caller;
-        evm.env.tx.transact_to = TransactTo::Call(target);
-        evm.env.tx.value = U256::ZERO;
-        evm.env.tx.data = Bytes::new(); // Dummy calldata
-
-        // Execute the transaction
-        let result = evm.transact();
-
-        match result {
-            Ok(ref res) => match res.result {
-                revm::primitives::ExecutionResult::Success { .. } => {
-                    info!(
-                        event = "simulator.success",
-                        candidate_fingerprint = %candidate.route_fingerprint,
-                        "REVM simulation passed successfully"
-                    );
-                    "PASS".to_string()
-                }
-                revm::primitives::ExecutionResult::Revert { .. } => {
-                    warn!(
-                        event = "simulator.revert",
-                        candidate_fingerprint = %candidate.route_fingerprint,
-                        "REVM simulation reverted"
-                    );
-                    "REVERT".to_string() // Could decode revert reason here
-                }
-                revm::primitives::ExecutionResult::Halt { .. } => {
-                    warn!(
-                        event = "simulator.halt",
-                        candidate_fingerprint = %candidate.route_fingerprint,
-                        "REVM simulation halted unexpectedly"
-                    );
-                    "HALT".to_string()
-                }
-            },
-            Err(e) => {
-                error!(
-                    event = "simulator.error",
-                    candidate_fingerprint = %candidate.route_fingerprint,
-                    error = ?e,
-                    "REVM execution error"
-                );
-                format!("ERROR: {:?}", e)
-            }
-        }
+    /// The shim MUST always return the fail-closed sentinel. Any change to
+    /// this contract is a RULE 00 regression — if a future edit makes this
+    /// test return "PASS" without real REVM execution, the system is back to
+    /// fabricating simulation results.
+    #[test]
+    fn v1_stub_always_returns_fail_closed_sentinel() {
+        let mut sim = EvmSimulator::new(());
+        let candidate = OpportunityCandidate {
+            route_fingerprint: "test_route".into(),
+            pool_addresses: vec![],
+            token_addresses: vec![],
+            dex_adapters: vec![],
+            amount_in: 1.0,
+            expected_amount_out: 1.0,
+            gross_profit: 0.0,
+        };
+        let result = sim.simulate_candidate(&candidate);
+        assert_eq!(result, FAIL_CLOSED_SENTINEL);
+        assert_ne!(result, "PASS", "RULE 00: v1 stub must never return PASS");
+        assert_ne!(
+            result, "SIM_SUCCESS",
+            "v1 stub must not impersonate the Phase A.3 success sentinel"
+        );
     }
 }

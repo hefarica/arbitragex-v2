@@ -131,6 +131,38 @@ pub struct ScannerCounters {
     /// After Phase 2 wiring the counter should drop to near-zero between
     /// genuine network failures.
     pub cex_dex_fetch_errors: AtomicU64,
+    /// Simulator Phase A.1+A.2 fail-closed semantics — candidates rejected at
+    /// the simulator gate because no real REVM result could be produced.
+    ///
+    /// Increments when:
+    /// - `v2-simulator` feature is disabled at compile time, OR
+    /// - `simulator-v2` has no RPC URL configured for the candidate's chain, OR
+    /// - the candidate has no executable calldata (the encoder lands in
+    ///   Phase A.3 — until then every candidate falls into this bucket).
+    ///
+    /// Doctrine: this counter is **expected to be high** during the
+    /// Phase A.1/A.2 transition. The legacy stub used to fabricate a "PASS"
+    /// for every candidate (RULE 00 violation); fail-closed honesty means we
+    /// reject instead of lying. Counter drops once Phase A.3 (calldata
+    /// encoder against `ArbitrageExecutor.sol`) ships.
+    pub simulator_fail_closed_rejected: AtomicU64,
+    /// Simulator Phase A.1+A.2 — REVM ran and returned a successful result
+    /// (`SimResult` with `net_profit_wei > 0`). Zero until A.3 encoder lands;
+    /// non-zero afterwards proves REVM is actually executing real calldata.
+    ///
+    /// Forward-declared: Phase A.3 wires the increment site once the encoder
+    /// produces `CandidateInput` with real calldata. Kept here so the metric
+    /// schema is stable between PRs (heartbeat + Grafana panels can be wired
+    /// against the field name today).
+    #[allow(dead_code)]
+    pub simulator_revm_success: AtomicU64,
+    /// Simulator Phase A.1+A.2 — REVM ran and the transaction reverted.
+    /// A non-zero value with real calldata is HEALTHY (means we're catching
+    /// candidates that would have lost money before relay submit).
+    ///
+    /// Forward-declared: same rationale as `simulator_revm_success`.
+    #[allow(dead_code)]
+    pub simulator_revm_revert: AtomicU64,
 }
 
 /// Process-global counters. First call initialises; subsequent calls return

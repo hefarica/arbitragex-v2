@@ -150,30 +150,39 @@ async fn main() -> anyhow::Result<()> {
     // service restart.
     let trading_config = TradingConfigClient::from_manager(redis_conn.clone());
 
-    // Sprint 4 — opt-in v2 simulator dispatch flag.
-    // Default = v1 stub in `prioritization-spine` (current production behaviour).
-    // When ARBX_USE_SIMULATOR_V2=true the operator opts in to the new REVM-backed
-    // simulator. Until simulator-v2 Tasks 4.2 (lazy_db) + 4.3 (revm_runner) land
-    // end-to-end, this branch logs a warning and the candidate pipeline keeps
-    // using v1 — no production candidate is ever scored against an unimplemented!()
-    // path. The flag exists today so dashboards + alerting can verify the
-    // configuration plumbing now and the cutover requires zero deploy when 4.3
-    // ships.
+    // Sprint 4 — Phase A.1/A.2 honest simulator boot announcement.
+    //
+    // The legacy v1 stub (`prioritization_spine::simulator::EvmSimulator`) is
+    // DEPRECATED. It fabricated a "PASS" for every candidate (caller=0x11..11,
+    // target=0x22..22, calldata=Bytes::new()) — RULE 00 violation. As of this
+    // commit the stub is wired fail-closed: it returns `SIM_DISABLED_FAIL_CLOSED`
+    // and the scanner rejects every candidate at the simulator gate.
+    //
+    // Phase A.3 (separate PR) will land:
+    //   - `OpportunityCandidate` → `simulator_v2::CandidateInput` encoder
+    //   - per-chain `Arc<SimulatorV2>` construction at boot
+    //   - real `executeArbitrage(...)` calldata against `ArbitrageExecutor.sol`
+    //   - net_profit_wei extraction from real REVM balance delta
+    //
+    // The `v2-simulator` cargo feature is enabled by default at compile time
+    // (see Cargo.toml); the runtime dispatch is gated by the Phase A.3 encoder.
+    // Until then, paper-trade pipeline emits zero viable opportunities — that
+    // is the HONEST state of the system (RULE 12: "Si no hay simulador real
+    // disponible, el candidato debe fallar, no pasar").
     let use_simulator_v2 = std::env::var("ARBX_USE_SIMULATOR_V2")
         .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    if use_simulator_v2 {
-        warn!(
-            event = "simulator.v2_requested_but_pending",
-            "ARBX_USE_SIMULATOR_V2=true acknowledged; simulator-v2 Task 4.3 not integrated yet, falling through to v1"
-        );
-    } else {
-        info!(
-            event = "simulator.version",
-            version = "v1",
-            "using prioritization-spine stub simulator (default)"
-        );
-    }
+    info!(
+        event = "simulator.boot",
+        v2_feature_compiled = cfg!(feature = "v2-simulator"),
+        v2_runtime_requested = use_simulator_v2,
+        backend = "fail_closed_pending_encoder",
+        paper_mode = true,
+        live_execution = false,
+        fallback_stub = false,
+        "Simulator gate active in fail-closed mode — Phase A.3 encoder pending; \
+         every candidate rejected at simulator gate (RULE 00 honesty)"
+    );
 
     // DB pool — optional: if DATABASE_URL absent, run without persistence.
     // max_connections=8 accommodates 5+ concurrent writers (price_worker,

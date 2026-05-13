@@ -32,7 +32,11 @@ use prioritization_spine::decision::{ExecutionDecision, RejectReason};
 use prioritization_spine::gates::can_execute;
 use prioritization_spine::route_plan::{RouteLeg, RoutePlan};
 use prioritization_spine::scoring::{OpportunityScorer, PrioritizationEngine};
-use prioritization_spine::simulator::EvmSimulator;
+// `prioritization_spine::simulator::EvmSimulator` import removed in Phase A.1/A.2:
+// the legacy v1 stub is no longer dispatched from the hot path. The scanner sets
+// `simulation_status = "SIM_DISABLED_FAIL_CLOSED"` directly (see line ~1675).
+// Phase A.3 will re-introduce `use simulator_v2::SimulatorV2;` once the encoder
+// can produce real calldata.
 use prioritization_spine::types::OpportunityCandidate;
 use rand::Rng;
 use shared_rs::{
@@ -1672,11 +1676,42 @@ async fn decode_and_score_tx(
         } => (evidence, outcome, rejection),
     };
 
-    // REVM atomic sim gate (still a structural placeholder until lazy state
-    // wires in — keeps the gate honest: simulator.rs returns "PASS" for empty
-    // calldata so we don't reject the entire pipeline).
-    let mut simulator = EvmSimulator::new(client.provider.clone());
-    final_evidence.simulation_status = simulator.simulate_candidate(&candidate);
+    // REVM atomic sim gate — Phase A.1/A.2 FAIL-CLOSED honest dispatch.
+    //
+    // RULE 00 + RULE 12 + RULE 15:
+    //   "Si no hay simulador real disponible, el candidato debe fallar, no pasar."
+    //   "Si el net_profit_wei no se puede calcular con datos reales, rechazar."
+    //
+    // The legacy `EvmSimulator` returned a fabricated "PASS" for every candidate
+    // (caller=0x11..11, target=0x22..22, calldata=Bytes::new()). That was a
+    // structural lie — the system had no way to encode the executor call from
+    // `OpportunityCandidate` (which carries `route_fingerprint`, `pool_addresses`,
+    // `token_addresses`, `amount_in`, `expected_amount_out`, `gross_profit` but
+    // NOT chain_id, block_number, from, to, calldata, value_wei, or gas_price_wei).
+    //
+    // Phase A.3 will introduce:
+    //   - `OpportunityCandidate` → `simulator_v2::CandidateInput` encoder,
+    //     using the `ArbitrageExecutor.sol` ABI from `contracts/out/`.
+    //   - per-chain `Arc<SimulatorV2>` constructed at boot, threaded here.
+    //   - real `executeArbitrage(borrowToken, borrowAmount, steps[])` calldata.
+    //
+    // Until then this gate fails closed: simulation_status = SIM_DISABLED_FAIL_CLOSED.
+    // gates.rs:11 maps this to RejectReason::SimulationFailed, the candidate is
+    // persisted as rejected (R8 fail-honest), and zero paper opportunities
+    // survive — exactly the truth of the system today.
+    final_evidence.simulation_status = "SIM_DISABLED_FAIL_CLOSED".to_string();
+    final_evidence.simulation_trace_hash = Some("fail_closed:phase_a3_encoder_pending".to_string());
+    counters()
+        .simulator_fail_closed_rejected
+        .fetch_add(1, Ordering::Relaxed);
+    debug!(
+        event = "simulator.fail_closed",
+        hash = %hash,
+        chain_id = client.chain_id,
+        reason = "phase_a3_encoder_pending",
+        v2_feature_compiled = cfg!(feature = "v2-simulator"),
+        "candidate rejected at simulator gate — no real REVM dispatch available"
+    );
 
     // Connect math results to the persisted Opportunity row.
     // R8 fail-honest: expected_profit_usd MUST be None when USD profit was not
