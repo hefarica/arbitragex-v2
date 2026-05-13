@@ -271,16 +271,26 @@ impl LazyDb {
 // revm::Database implementation
 // ---------------------------------------------------------------------------
 
-impl Database for LazyDb {
-    type Error = LazyDbError;
-
-    /// Return basic account info for `address`.
-    ///
-    /// - **Cache hit**: returns the cached `AccountInfo` without any RPC call.
-    /// - **Cache miss**: fires 3 parallel RPC calls (`eth_getBalance`,
-    ///   `eth_getTransactionCount`, `eth_getCode`), assembles `AccountInfo`,
-    ///   stores it in the cache, and returns it.
-    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+// ---------------------------------------------------------------------------
+// Shared read paths (&self) — Phase A.3.c.4
+// ---------------------------------------------------------------------------
+//
+// Every public read path (`basic`, `storage`, `block_hash`, `code_by_hash`)
+// only consumes `&self` semantically — the `DashMap` caches are concurrency-
+// safe under shared references, the `client` is an `Arc`, and `pinned_block`,
+// `timeout_secs`, `fallback_rt` are read-only after construction. The `&mut
+// self` on the original `Database` impl is purely the trait signature.
+//
+// To support both `revm::Database` AND `revm::DatabaseRef` from the SAME
+// underlying implementation we extract the bodies to `*_inner` helpers that
+// take `&self`. Both traits delegate. This makes the equivalence between
+// `Database` and `DatabaseRef` structural (one code path = one truth) and
+// unlocks `revm::db::CacheDB<LazyDb>` for the multi-step REVM executor
+// (Phase A.3.c.3).
+impl LazyDb {
+    /// Shared body for `Database::basic` and `DatabaseRef::basic_ref`.
+    /// All DashMap operations are `&self`-safe.
+    fn basic_inner(&self, address: Address) -> Result<Option<AccountInfo>, LazyDbError> {
         // Fast path.
         if let Some(cached) = self.account_cache.get(&address) {
             debug!(
@@ -343,14 +353,11 @@ impl Database for LazyDb {
         Ok(Some(info))
     }
 
-    /// `LazyDb` always returns bytecode inline in `basic()`, so this path is
-    /// never reached in normal revm operation.  We return an empty `Bytecode`
-    /// rather than panic, because panicking in library code violates the
-    /// project's fail-honest invariant.
-    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
-        // Why: revm only calls code_by_hash when AccountInfo.code == None.
-        // Our basic() always populates the code field, so this branch is a
-        // defensive fallback, not a production code path.
+    /// Shared body for `Database::code_by_hash` and
+    /// `DatabaseRef::code_by_hash_ref`. Defensive fallback — `basic_inner`
+    /// always populates bytecode inline so revm never reaches this branch
+    /// in normal operation.
+    fn code_by_hash_inner(&self, code_hash: B256) -> Result<Bytecode, LazyDbError> {
         warn!(
             event = "lazy_db.code_by_hash_called",
             hash = %code_hash,
@@ -359,11 +366,8 @@ impl Database for LazyDb {
         Ok(Bytecode::new())
     }
 
-    /// Return the value of storage slot `index` for `address`.
-    ///
-    /// - **Cache hit**: zero RPC calls.
-    /// - **Cache miss**: one `eth_getStorageAt` at the pinned block.
-    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+    /// Shared body for `Database::storage` and `DatabaseRef::storage_ref`.
+    fn storage_inner(&self, address: Address, index: U256) -> Result<U256, LazyDbError> {
         let key = (address, index);
 
         if let Some(val) = self.storage_cache.get(&key) {
@@ -399,12 +403,8 @@ impl Database for LazyDb {
         Ok(value)
     }
 
-    /// Return the block hash for the given block `number`.
-    ///
-    /// Returns `B256::ZERO` (not an error) for blocks whose hash is not
-    /// available: contracts rarely use `BLOCKHASH` for ancient blocks, and a
-    /// zero value is safe for simulation purposes.
-    fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
+    /// Shared body for `Database::block_hash` and `DatabaseRef::block_hash_ref`.
+    fn block_hash_inner(&self, number: U256) -> Result<B256, LazyDbError> {
         // Block numbers above u64::MAX are impossible on any EVM chain.
         if number > U256::from(u64::MAX) {
             warn!(
@@ -454,6 +454,58 @@ impl Database for LazyDb {
 }
 
 // ---------------------------------------------------------------------------
+// revm::Database — mutable-reference trait (legacy revm 3.5 contract).
+// Delegates to the &self `*_inner` helpers above. Equivalent to the
+// `DatabaseRef` impl below for the same input.
+// ---------------------------------------------------------------------------
+impl Database for LazyDb {
+    type Error = LazyDbError;
+
+    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        self.basic_inner(address)
+    }
+
+    fn code_by_hash(&mut self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        self.code_by_hash_inner(code_hash)
+    }
+
+    fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        self.storage_inner(address, index)
+    }
+
+    fn block_hash(&mut self, number: U256) -> Result<B256, Self::Error> {
+        self.block_hash_inner(number)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// revm::DatabaseRef — shared-reference trait (revm 3.5+ contract). Required
+// by `revm::db::CacheDB<DB>` so multi-step REVM executors can persist state
+// between transactions (Phase A.3.c.3 sequence_runner). Delegates to the
+// same `*_inner` helpers as `Database` — Database and DatabaseRef are
+// structurally equivalent.
+// ---------------------------------------------------------------------------
+impl revm::db::DatabaseRef for LazyDb {
+    type Error = LazyDbError;
+
+    fn basic(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+        self.basic_inner(address)
+    }
+
+    fn code_by_hash(&self, code_hash: B256) -> Result<Bytecode, Self::Error> {
+        self.code_by_hash_inner(code_hash)
+    }
+
+    fn storage(&self, address: Address, index: U256) -> Result<U256, Self::Error> {
+        self.storage_inner(address, index)
+    }
+
+    fn block_hash(&self, number: U256) -> Result<B256, Self::Error> {
+        self.block_hash_inner(number)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Test helpers — used by integration test files in tests/.
 // The #[allow(dead_code)] suppresses the warning when building the lib target
 // alone; the functions are exercised by cargo test --tests.
@@ -493,4 +545,191 @@ pub fn storage_cache_len(db: &LazyDb) -> usize {
 #[allow(dead_code)]
 pub fn block_hash_cache_len(db: &LazyDb) -> usize {
     db.block_hash_cache.len()
+}
+
+// ---------------------------------------------------------------------------
+// Tests — Phase A.3.c.4 DatabaseRef foundation
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use revm::db::{CacheDB, DatabaseRef};
+
+    /// Construct a LazyDb without contacting the chain. `connect_lazy`-style
+    /// setup: the constructor only fails on URL parse, so any well-formed
+    /// URL works for the trait-bound checks below (no RPC calls happen).
+    fn lazy_offline() -> LazyDb {
+        // Use a URL that parses but is never reachable; tests below do not
+        // issue any RPC call — they exercise cache-hit / trait-bound paths.
+        LazyDb::new("http://127.0.0.1:1/never", Some(1)).expect("LazyDb::new should accept a well-formed URL")
+    }
+
+    /// THE CRITICAL TEST: this is the trait-bound that A.3.c.3's
+    /// sequence_runner needs. If LazyDb does not implement `DatabaseRef`,
+    /// this line fails to compile and A.3.c.3 cannot proceed.
+    #[test]
+    fn cache_db_accepts_lazy_db_database_ref() {
+        let lazy = lazy_offline();
+        // Pre-seed the account so `insert_account_storage` finds it via the
+        // cache and never reaches the RPC backend (the offline URL would
+        // refuse the connection otherwise).
+        let addr = Address::from([0x42u8; 20]);
+        seed_account(
+            &lazy,
+            addr,
+            AccountInfo {
+                balance: U256::from(1u64),
+                nonce: 0,
+                code_hash: KECCAK_EMPTY,
+                code: Some(Bytecode::new()),
+            },
+        );
+        // THE CRITICAL TRAIT-BOUND CHECK: CacheDB<LazyDb> must instantiate.
+        // If `DatabaseRef` were missing this line would fail with the
+        // exact E0277 error A.3.c.3 hit.
+        let mut cache: CacheDB<LazyDb> = CacheDB::new(lazy);
+        let slot = U256::from(0u64);
+        let value = U256::from(123u64);
+        cache
+            .insert_account_storage(addr, slot, value)
+            .expect("insert_account_storage on CacheDB<LazyDb> must compile and run");
+    }
+
+    /// Equivalence between `Database::basic` and `DatabaseRef::basic` for
+    /// a seeded account. Uses `seed_account` so no RPC is needed.
+    #[test]
+    fn database_ref_basic_matches_database_basic_for_seeded_account() {
+        let lazy = lazy_offline();
+        let addr = Address::from([0x42u8; 20]);
+        let info = AccountInfo {
+            balance: U256::from(7777u64),
+            nonce: 3,
+            code_hash: KECCAK_EMPTY,
+            code: Some(Bytecode::new()),
+        };
+        seed_account(&lazy, addr, info.clone());
+        // DatabaseRef path
+        let ref_result = DatabaseRef::basic(&lazy, addr).expect("basic_ref ok");
+        // Database path (needs &mut)
+        let mut lazy_mut = lazy;
+        let mut_result = Database::basic(&mut lazy_mut, addr).expect("basic ok");
+        assert_eq!(ref_result.map(|i| (i.balance, i.nonce)), mut_result.map(|i| (i.balance, i.nonce)));
+    }
+
+    /// Equivalence between `Database::storage` and `DatabaseRef::storage`
+    /// for a seeded slot. Uses `seed_storage` so no RPC is needed.
+    #[test]
+    fn database_ref_storage_matches_database_storage_for_seeded_slot() {
+        let lazy = lazy_offline();
+        let addr = Address::from([0x07u8; 20]);
+        let slot = U256::from(42u64);
+        let value = U256::from(12345u64);
+        seed_storage(&lazy, addr, slot, value);
+        let ref_result = DatabaseRef::storage(&lazy, addr, slot).expect("storage_ref ok");
+        let mut lazy_mut = lazy;
+        let mut_result = Database::storage(&mut lazy_mut, addr, slot).expect("storage ok");
+        assert_eq!(ref_result, mut_result);
+        assert_eq!(ref_result, value);
+    }
+
+    /// Equivalence between `Database::block_hash` and
+    /// `DatabaseRef::block_hash` for a seeded block. Uses `seed_block_hash`.
+    #[test]
+    fn database_ref_block_hash_matches_database_block_hash_for_seeded_block() {
+        let lazy = lazy_offline();
+        let block_n = 100u64;
+        let h = B256::from([0xab; 32]);
+        seed_block_hash(&lazy, block_n, h);
+        let n_u256 = U256::from(block_n);
+        let ref_result = DatabaseRef::block_hash(&lazy, n_u256).expect("block_hash_ref ok");
+        let mut lazy_mut = lazy;
+        let mut_result = Database::block_hash(&mut lazy_mut, n_u256).expect("block_hash ok");
+        assert_eq!(ref_result, mut_result);
+        assert_eq!(ref_result, h);
+    }
+
+    /// `code_by_hash` returns empty bytecode in both paths (defensive — see
+    /// `code_by_hash_inner` docs).
+    #[test]
+    fn database_ref_code_by_hash_matches_database_code_by_hash() {
+        let lazy = lazy_offline();
+        let hash = B256::from([0u8; 32]);
+        let ref_result = DatabaseRef::code_by_hash(&lazy, hash).expect("code_by_hash_ref ok");
+        let mut lazy_mut = lazy;
+        let mut_result = Database::code_by_hash(&mut lazy_mut, hash).expect("code_by_hash ok");
+        assert!(ref_result.is_empty());
+        assert!(mut_result.is_empty());
+    }
+
+    /// Two `DatabaseRef::basic` calls on the same seeded account hit the
+    /// cache on the second call. Verified by reading via the cache helper.
+    #[test]
+    fn database_ref_basic_hits_cache_on_repeat() {
+        let lazy = lazy_offline();
+        let addr = Address::from([0xfeu8; 20]);
+        let info = AccountInfo {
+            balance: U256::from(99u64),
+            nonce: 1,
+            code_hash: KECCAK_EMPTY,
+            code: Some(Bytecode::new()),
+        };
+        seed_account(&lazy, addr, info);
+        // Two reads — cache populated on first, hit on second.
+        let _ = DatabaseRef::basic(&lazy, addr).expect("first ok");
+        let _ = DatabaseRef::basic(&lazy, addr).expect("second ok");
+        assert_eq!(account_cache_len(&lazy), 1, "single entry expected");
+    }
+
+    /// Concurrent readers do not panic (DashMap is internally Sync).
+    #[test]
+    fn database_ref_concurrent_basic_reads_do_not_panic() {
+        use std::sync::Arc;
+        use std::thread;
+        let lazy = Arc::new(lazy_offline());
+        let addr = Address::from([0x11u8; 20]);
+        let info = AccountInfo {
+            balance: U256::from(1u64),
+            nonce: 0,
+            code_hash: KECCAK_EMPTY,
+            code: Some(Bytecode::new()),
+        };
+        seed_account(&lazy, addr, info);
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let lazy_c = Arc::clone(&lazy);
+            handles.push(thread::spawn(move || {
+                for _ in 0..32 {
+                    let _ = DatabaseRef::basic(lazy_c.as_ref(), addr).unwrap();
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread joined without panic");
+        }
+        assert_eq!(account_cache_len(&lazy), 1);
+    }
+
+    /// `pinned_block_number` is stable across `DatabaseRef` reads — A.3.c.3
+    /// relies on every sequence step seeing the same block snapshot.
+    #[test]
+    fn database_ref_respects_pinned_block() {
+        let lazy = LazyDb::new("http://127.0.0.1:1/never", Some(21_000_000)).expect("new ok");
+        assert_eq!(lazy.pinned_block_number(), 21_000_000);
+        // No method call mutates the pinned block; even after seeded reads,
+        // the value is unchanged.
+        let addr = Address::from([0u8; 20]);
+        seed_account(
+            &lazy,
+            addr,
+            AccountInfo {
+                balance: U256::ZERO,
+                nonce: 0,
+                code_hash: KECCAK_EMPTY,
+                code: Some(Bytecode::new()),
+            },
+        );
+        let _ = DatabaseRef::basic(&lazy, addr);
+        assert_eq!(lazy.pinned_block_number(), 21_000_000);
+    }
 }
