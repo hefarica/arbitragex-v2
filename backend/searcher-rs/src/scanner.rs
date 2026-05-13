@@ -961,9 +961,14 @@ async fn process_pending<'a>(
         return Ok(());
     }
     chain_counters(client.chain_id).pending_received.fetch_add(1, Ordering::Relaxed);
-    let tx = match client.get_tx(hash).await? {
-        Some(t) => t,
-        None => return Ok(()), // dropped from mempool before we got it
+    let tx = match tokio::time::timeout(std::time::Duration::from_millis(1), client.get_tx(hash)).await {
+        Ok(Ok(Some(t))) => t,
+        Ok(Ok(None)) => return Ok(()), // dropped from mempool before we got it
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_) => {
+            tracing::warn!(event = "scanner.rpc_timeout", hash = %hash, "RPC timeout (<1ms) fetching tx; discarding");
+            return Ok(());
+        }
     };
     decode_and_score_tx(
         client,

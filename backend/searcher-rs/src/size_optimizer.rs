@@ -230,7 +230,15 @@ impl SizeOptimizer {
         let token_in_symbol = resolve_token_in_symbol(&candidate, state);
 
         // Step 3: capital cap in USD.
-        let cap_usd = state.effective_capital_for(&token_in_symbol, candidate.label.as_str());
+        let base_cap_usd = state.effective_capital_for(&token_in_symbol, candidate.label.as_str());
+        
+        // OMEGA MANDATE: Kelly Criterion Sizing
+        // Uses high win prob (0.95) and modest gain/loss ratios typical of MEV arb.
+        let cap_usd = if let Some(kelly_frac) = crate::kelly_sizing::fractional_kelly(0.95, 0.01, 0.005, 0.5, 1.0) {
+            base_cap_usd * kelly_frac
+        } else {
+            base_cap_usd
+        };
         if cap_usd <= 0.0 {
             debug!(
                 event = "size_optimizer.zero_cap",

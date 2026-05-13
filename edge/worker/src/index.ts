@@ -114,6 +114,7 @@ const SESSION_TTL_COOKIE = "arbx_admin_session_ttl";
 const SESSION_TTL_S = 8 * 60 * 60; // 8 hours
 
 app.use("*", async (c, next) => {
+  const startMs = Date.now();
   const origin = c.req.header("origin") ?? "";
   const allowed = c.env.ALLOWED_ORIGINS === "*" ? "*" :
     c.env.ALLOWED_ORIGINS.split(",").map(s => s.trim()).includes(origin) ? origin : "";
@@ -126,13 +127,33 @@ app.use("*", async (c, next) => {
   c.header("x-arbx-trace-id", traceId);
   (c as unknown as { traceId: string }).traceId = traceId;
 
-  const key = c.req.header("cf-connecting-ip") ?? "anon";
+  const ip = c.req.header("cf-connecting-ip") ?? "anon";
+  
+  // OMEGA MANDATE: Sybil Filtering
+  // Reject data-center ASNs known for botnets/Sybils
+  const asn = c.req.header("cf-ipasn");
+  const sybilAsns = ["14061", "20940", "16509"]; // DigitalOcean, Akamai, AWS, etc.
+  if (asn && sybilAsns.includes(asn)) {
+      return c.json({ error: "sybil_rejected", message: "Network rejected" }, 403);
+  }
+
   // SEC-1: KV-backed cross-isolate rate limit.
-  const rl = await checkRl(c.env, key, RL_GENERAL_MAX, RL_GENERAL_WINDOW_S, "rl");
+  const rl = await checkRl(c.env, ip, RL_GENERAL_MAX, RL_GENERAL_WINDOW_S, "rl");
   c.header("x-ratelimit-remaining", String(rl.remaining));
   if (!rl.ok) return c.json({ error: "rate_limited" }, 429);
 
   await next();
+
+  // OMEGA MANDATE: Ultra-low latency telemetry
+  const latencyMs = Date.now() - startMs;
+  c.header("x-arbx-latency-ms", String(latencyMs));
+  if (c.env.ARBX_TELEMETRY) {
+      c.executionCtx.waitUntil(
+          c.env.ARBX_TELEMETRY.prepare(
+              "INSERT INTO edge_telemetry (path, ip, asn, latency_ms, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)"
+          ).bind(c.req.path, ip, asn || "unknown", latencyMs, startMs).run().catch(() => {})
+      );
+  }
 });
 
 app.get("/health", (c) => c.json({ ok: true, service: "edge-worker", env: c.env.ARBX_ENV }));
