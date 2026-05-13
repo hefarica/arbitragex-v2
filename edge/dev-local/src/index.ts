@@ -166,6 +166,9 @@ app.get("/api/readiness/decision", (req, res) => proxy("/api/v1/readiness/decisi
 app.get("/api/agents/status", (req, res) => proxy("/api/v1/agents/status", req, res));
 // A.8 confidence scoring wire status.
 app.get("/api/scoring/status", (req, res) => proxy("/api/v1/scoring/status", req, res));
+// A.6 comprehensive circuit breakers.
+app.get("/api/risk/circuit-breakers/status", (req, res) => proxy("/api/v1/risk/circuit-breakers/status", req, res));
+app.get("/api/risk/circuit-breakers/events", (req, res) => proxy("/api/v1/risk/circuit-breakers/events", req, res));
 // Trading Config — operator-tunable strategy parameters per chain.
 app.get("/api/trading-config", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";

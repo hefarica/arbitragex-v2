@@ -431,6 +431,12 @@ app.get("/api/agents/status", (c) => proxy(c, "/api/v1/agents/status", "arbx:cac
 // component map. 30s KV TTL — wire status moves on commits, not runtime drift.
 app.get("/api/scoring/status", (c) => proxy(c, "/api/v1/scoring/status", "arbx:cache:scoring-status", 30));
 
+// A.6 comprehensive circuit breakers status + events. 15s KV TTL — kill_switch
+// state can change at any moment; readiness verifier outcomes refresh every
+// 5s on api-server, so 15s edge cache is a safe ceiling.
+app.get("/api/risk/circuit-breakers/status", (c) => proxy(c, "/api/v1/risk/circuit-breakers/status", "arbx:cache:cb-status", 15));
+app.get("/api/risk/circuit-breakers/events", (c) => proxy(c, "/api/v1/risk/circuit-breakers/events", "arbx:cache:cb-events", 30));
+
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError((err, c) => {
   console.error(JSON.stringify({ event: "edge.error", err: err.message }));

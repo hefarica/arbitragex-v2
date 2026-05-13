@@ -311,6 +311,18 @@ export function getScoringStatus() {
   return getValidated("/api/scoring/status", S.ScoringStatusResponseSchema);
 }
 
+// A.6 comprehensive circuit breakers. 10 breakers with honest state evaluation
+// (PASS / WARN / PAUSED / KILLED / BLOCKED / NOT_AVAILABLE / UNKNOWN). Missing
+// data sources (DD curve, revert window, gas burn ledger) render NOT_AVAILABLE
+// — never fabricated PASS.
+export function getCircuitBreakersStatus() {
+  return getValidated("/api/risk/circuit-breakers/status", S.CircuitBreakersStatusResponseSchema);
+}
+
+export function getCircuitBreakerEvents() {
+  return getValidated("/api/risk/circuit-breakers/events", S.CircuitBreakerEventsResponseSchema);
+}
+
 export function getTradingConfig(chainId: number) {
   return getValidated(`/api/trading-config?chain_id=${chainId}`, S.TradingConfigResponseSchema);
 }

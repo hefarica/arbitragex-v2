@@ -15,6 +15,7 @@ import { BlockersPanel } from "@/features/readiness/BlockersPanel";
 import { GoNoGoPanel } from "@/features/readiness/GoNoGoPanel";
 import { AgentTeamsPanel } from "@/features/readiness/AgentTeamsPanel";
 import { ConfidenceScoringPanel } from "@/features/readiness/ConfidenceScoringPanel";
+import { RiskCircuitPanel } from "@/features/risk/RiskCircuitPanel";
 
 // ─── Aesthetic helpers ───────────────────────────────────────────────────
 
@@ -325,6 +326,7 @@ export default function LiveReadinessPage() {
         <BlockersPanel />
         <AgentTeamsPanel />
         <ConfidenceScoringPanel />
+        <RiskCircuitPanel />
       </div>
     </>
   );

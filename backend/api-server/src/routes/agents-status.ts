@@ -309,11 +309,11 @@ const AGENT_DEFS: AgentDef[] = [
     evidence: [
       "Basic kill-switch + readiness gate exist",
       "A.8 (2026-05-13): Bayesian/Kelly/VPIN primitives exposed via /api/v1/scoring/status (scoring_pipeline_wired=false)",
-      "A.6 comprehensive CBs (DD tiers, revert rate, gas burn, latency, SIM_ERROR, blacklists) NOT implemented",
+      "A.6 (2026-05-13): 10 comprehensive breakers exposed via /api/v1/risk/circuit-breakers/status (kill_switch real runtime; DD/revert/gas marked NOT_AVAILABLE until A.5 paper-shadow runs)",
     ],
     source: "workspace_verified",
     blocks: ["LIVE"],
-    next_action: "Wire bayesian + kelly into scanner pipeline (A.8 hot-path), then implement A.6 comprehensive CBs; persist trips to risk_events.",
+    next_action: "Run A.5 paper-shadow to populate DD/revert/gas data sources; wire bayesian + kelly into scanner pipeline (A.8 hot-path).",
     risk: "high",
     operator_required: false,
   },

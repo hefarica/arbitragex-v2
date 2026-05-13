@@ -860,3 +860,73 @@ export const ScoringStatusResponseSchema = z.object({
 export type ScoringComponent = z.infer<typeof ScoringComponentSchema>;
 export type ScoringBlockedReason = z.infer<typeof ScoringBlockedReasonSchema>;
 export type ScoringStatusResponse = z.infer<typeof ScoringStatusResponseSchema>;
+
+// ─────── A.6 Circuit Breakers ───────
+//
+// 10 comprehensive breakers with honest state evaluation. Permissive enums
+// (z.string()) for forward-compat; current_value is union(string|number|null)
+// because some breakers report dimensional (ms, %, gwei) and others report
+// categorical ("env_present"/"armed"/"disarmed").
+
+export const CircuitBreakerEvidenceSchema = z.object({
+  source: z.string(),
+  detail: z.string(),
+  current_value: z.union([z.string(), z.number(), z.null()]),
+  threshold: z.union([z.string(), z.number(), z.null()]),
+  unit: z.string().nullable(),
+  ref: z.string().optional(),
+});
+
+export const CircuitBreakerSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  category: z.string(),
+  state: z.string(),
+  severity: z.string(),
+  action: z.string(),
+  evidence: CircuitBreakerEvidenceSchema,
+  blocks: z.array(z.string()),
+  operator_required: z.boolean(),
+  last_evaluated_at: z.string(),
+  description: z.string(),
+  required_action: z.string().nullable(),
+});
+
+export const CircuitBreakerSummarySchema = z.object({
+  pass: z.number().int().nonnegative(),
+  warn: z.number().int().nonnegative(),
+  paused: z.number().int().nonnegative(),
+  killed: z.number().int().nonnegative(),
+  blocked: z.number().int().nonnegative(),
+  not_available: z.number().int().nonnegative(),
+  unknown: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+});
+
+export const CircuitBreakersStatusResponseSchema = z.object({
+  generated_at: z.string(),
+  mode: z.string(),
+  live_trading: z.boolean(),
+  private_relay: z.boolean(),
+  submit_enabled: z.boolean(),
+  capital_exposure_usd: z.number().nonnegative(),
+  overall_state: z.string(),
+  breakers: z.array(CircuitBreakerSchema),
+  summary: CircuitBreakerSummarySchema,
+  next_action: z.string(),
+  version: z.string(),
+});
+
+export const CircuitBreakerEventsResponseSchema = z.object({
+  generated_at: z.string(),
+  event_source: z.string(),
+  events: z.array(z.unknown()),
+  blocked_reason: z.string().nullable(),
+  next_action: z.string(),
+});
+
+export type CircuitBreakerEvidence = z.infer<typeof CircuitBreakerEvidenceSchema>;
+export type CircuitBreaker = z.infer<typeof CircuitBreakerSchema>;
+export type CircuitBreakerSummary = z.infer<typeof CircuitBreakerSummarySchema>;
+export type CircuitBreakersStatusResponse = z.infer<typeof CircuitBreakersStatusResponseSchema>;
+export type CircuitBreakerEventsResponse = z.infer<typeof CircuitBreakerEventsResponseSchema>;
