@@ -150,39 +150,25 @@ async fn main() -> anyhow::Result<()> {
     // service restart.
     let trading_config = TradingConfigClient::from_manager(redis_conn.clone());
 
-    // Sprint 4 — Phase A.1/A.2 honest simulator boot announcement.
+    // Sprint 4 — Phase A.1/A.2/A.2.5 simulator boot announcement.
     //
-    // The legacy v1 stub (`prioritization_spine::simulator::EvmSimulator`) is
-    // DEPRECATED. It fabricated a "PASS" for every candidate (caller=0x11..11,
-    // target=0x22..22, calldata=Bytes::new()) — RULE 00 violation. As of this
-    // commit the stub is wired fail-closed: it returns `SIM_DISABLED_FAIL_CLOSED`
-    // and the scanner rejects every candidate at the simulator gate.
+    // History:
+    //   - A.1/A.2: legacy v1 stub neutralized (`prioritization_spine::simulator::
+    //     EvmSimulator` was fabricating "PASS" with caller=0x11..11/target=0x22..22/
+    //     calldata=Bytes::new() — RULE 00 violation).
+    //   - A.2.5 (this PR): construct per-chain `Arc<SimulatorV2>` at boot when
+    //     `RPC_HTTP_<chain_id>` is configured. Thread through scanner. Hot path
+    //     stays fail-closed until the A.3 encoder lands; the only behavioural
+    //     change today is the reason code emitted on rejection.
     //
     // Phase A.3 (separate PR) will land:
     //   - `OpportunityCandidate` → `simulator_v2::CandidateInput` encoder
-    //   - per-chain `Arc<SimulatorV2>` construction at boot
     //   - real `executeArbitrage(...)` calldata against `ArbitrageExecutor.sol`
     //   - net_profit_wei extraction from real REVM balance delta
-    //
-    // The `v2-simulator` cargo feature is enabled by default at compile time
-    // (see Cargo.toml); the runtime dispatch is gated by the Phase A.3 encoder.
-    // Until then, paper-trade pipeline emits zero viable opportunities — that
-    // is the HONEST state of the system (RULE 12: "Si no hay simulador real
-    // disponible, el candidato debe fallar, no pasar").
     let use_simulator_v2 = std::env::var("ARBX_USE_SIMULATOR_V2")
         .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    info!(
-        event = "simulator.boot",
-        v2_feature_compiled = cfg!(feature = "v2-simulator"),
-        v2_runtime_requested = use_simulator_v2,
-        backend = "fail_closed_pending_encoder",
-        paper_mode = true,
-        live_execution = false,
-        fallback_stub = false,
-        "Simulator gate active in fail-closed mode — Phase A.3 encoder pending; \
-         every candidate rejected at simulator gate (RULE 00 honesty)"
-    );
+    let _ = use_simulator_v2; // honoured by the boot log below; no runtime flip yet.
 
     // DB pool — optional: if DATABASE_URL absent, run without persistence.
     // max_connections=8 accommodates 5+ concurrent writers (price_worker,
@@ -272,6 +258,96 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
+
+    // Sprint 4 — Phase A.2.5: per-chain `Arc<SimulatorV2>` construction.
+    //
+    // For every chain that has a healthy HTTP RPC pool, spin up exactly one
+    // `SimulatorV2` instance and share it across all per-chain tasks via Arc.
+    // The simulator is constructed with the FIRST pool entry's URL (failover
+    // for sim is degraded vs the broader hot path — accepted trade-off for the
+    // initial wire-up; revisit once latency telemetry is in place).
+    //
+    // ## Linearizability pin (cs-validator MAJOR finding 2026-05-12)
+    //
+    // `SimulatorV2` memoizes the block number via `OnceLock`. Multiple tokio
+    // tasks racing on the first `simulate()` call could each resolve "latest"
+    // independently and land on different blocks (the OnceLock keeps the
+    // first writer, but the losing tasks have already used their own value
+    // for the in-flight call).
+    //
+    // Mitigation: when the pool's health loop has already observed a block
+    // (`snapshot_block() > 0`), pin the simulator to that block via
+    // `with_block(N)`. All tasks then see the same block from the very first
+    // call. When the health loop has not yet reported (rare boot race),
+    // `SimulatorV2` falls back to lazy "latest" resolution which still
+    // converges to the same block within a single slot.
+    //
+    // ## No fallback to stub (RULE 12)
+    //
+    // Chains without `RPC_HTTP_<id>` get NO simulator. The scanner sees
+    // `None` for that chain and keeps emitting `SIM_DISABLED_FAIL_CLOSED`
+    // (Phase A.1/A.2 behaviour). This is honest fail-closed, not silent
+    // degradation.
+    #[cfg(feature = "v2-simulator")]
+    let simulators_v2: HashMap<u64, Arc<simulator_v2::SimulatorV2>> = {
+        let mut map: HashMap<u64, Arc<simulator_v2::SimulatorV2>> = HashMap::new();
+        for (&cid, pool) in rpc_pools.iter() {
+            // `pick()` honours circuit-breaker + EWMA. If every entry is
+            // unhealthy we skip the chain (R8 fail-honest, no stub fallback).
+            let primary = match pool.pick() {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!(
+                        event = "simulator_v2.unavailable",
+                        chain_id = cid,
+                        error = %e,
+                        reason = "all_providers_unhealthy",
+                        "no simulator constructed for chain (RULE 12 fail-closed)"
+                    );
+                    continue;
+                }
+            };
+            let observed_block = primary.snapshot_block();
+            let sim = if observed_block > 0 {
+                // Pin the block so concurrent simulate() calls all see the
+                // same state snapshot (cs-validator MAJOR fix).
+                simulator_v2::SimulatorV2::new(primary.url.clone()).with_block(observed_block)
+            } else {
+                // Health loop has not reported yet; first simulate() will
+                // resolve "latest" and memoize. The window is bounded to a
+                // single block slot in practice.
+                simulator_v2::SimulatorV2::new(primary.url.clone())
+            };
+            map.insert(cid, Arc::new(sim));
+            info!(
+                event = "simulator_v2.available",
+                chain_id = cid,
+                provider = %primary.name,
+                pinned_block = observed_block,
+                "per-chain SimulatorV2 constructed (Phase A.2.5)"
+            );
+        }
+        map
+    };
+    #[cfg(not(feature = "v2-simulator"))]
+    let simulators_v2: HashMap<u64, ()> = HashMap::new();
+
+    let chains_with_simulator = simulators_v2.len();
+    let chains_without_simulator = enabled_chains.len().saturating_sub(chains_with_simulator);
+    info!(
+        event = "simulator.boot",
+        phase = "A.2.5",
+        v2_feature_compiled = cfg!(feature = "v2-simulator"),
+        v2_runtime_requested = use_simulator_v2,
+        backend = "revm",
+        paper_mode = true,
+        live_execution = false,
+        fallback_stub = false,
+        chains_with_simulator,
+        chains_without_simulator,
+        "SimulatorV2 instances constructed per chain; hot path stays fail-closed \
+         (reason=encoder_not_ready) until Phase A.3 encoder lands"
+    );
 
     // primary_chain: first enabled chain, used by the single-chain workers
     // (price, heartbeat, triangular, flashloan, liquidation) that are scoped
@@ -596,6 +672,13 @@ async fn main() -> anyhow::Result<()> {
         let opp_dedup_c = opp_dedup.clone();
         let tc_c = trading_config.clone();
         let rpc_pool_c = rpc_pools.get(&chain_id).cloned();
+        // Phase A.2.5: pass the per-chain SimulatorV2 (or None for chains
+        // without RPC_HTTP). Scanner falls back to fail-closed when None.
+        #[cfg(feature = "v2-simulator")]
+        let sim_v2_c: Option<Arc<simulator_v2::SimulatorV2>> =
+            simulators_v2.get(&chain_id).cloned();
+        #[cfg(not(feature = "v2-simulator"))]
+        let sim_v2_c: Option<()> = None;
         tokio::spawn(async move {
             if let Err(e) = scanner::run_chain(
                 chain_id,
@@ -607,6 +690,7 @@ async fn main() -> anyhow::Result<()> {
                 opp_dedup_c,
                 tc_c,
                 rpc_pool_c,
+                sim_v2_c,
             )
             .await
             {

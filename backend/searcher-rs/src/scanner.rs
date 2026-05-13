@@ -35,9 +35,33 @@ use prioritization_spine::scoring::{OpportunityScorer, PrioritizationEngine};
 // `prioritization_spine::simulator::EvmSimulator` import removed in Phase A.1/A.2:
 // the legacy v1 stub is no longer dispatched from the hot path. The scanner sets
 // `simulation_status = "SIM_DISABLED_FAIL_CLOSED"` directly (see line ~1675).
-// Phase A.3 will re-introduce `use simulator_v2::SimulatorV2;` once the encoder
-// can produce real calldata.
+// Phase A.3 will re-introduce real REVM dispatch once the encoder can produce
+// `OpportunityCandidate → simulator_v2::CandidateInput` from real candidate data.
 use prioritization_spine::types::OpportunityCandidate;
+
+/// Phase A.2.5: per-chain `Arc<SimulatorV2>` handle threaded through the
+/// scanner. Always `Option<…>` because:
+///   - chains without `RPC_HTTP_<id>` get `None` (fail-closed, RULE 12);
+///   - chains where the pool was empty at boot get `None`;
+///   - the `v2-simulator` cargo feature can be disabled at build time.
+///
+/// The type alias keeps every threading signature identical across feature
+/// configurations so the scanner code path is uniform. When the feature is
+/// off the alias resolves to `Option<()>`, which means every chain emits the
+/// existing `SIM_DISABLED_FAIL_CLOSED` sentinel — no behavioural change vs
+/// Phase A.1/A.2.
+#[cfg(feature = "v2-simulator")]
+pub type ScannerSimulatorV2 = Option<Arc<simulator_v2::SimulatorV2>>;
+#[cfg(not(feature = "v2-simulator"))]
+pub type ScannerSimulatorV2 = Option<()>;
+
+/// Borrowed view of `ScannerSimulatorV2` for inner-function signatures.
+/// `Option::as_ref()` on `Option<Arc<…>>` yields `Option<&Arc<…>>`; this alias
+/// keeps the parameter type readable.
+#[cfg(feature = "v2-simulator")]
+pub type ScannerSimulatorV2Ref<'a> = Option<&'a Arc<simulator_v2::SimulatorV2>>;
+#[cfg(not(feature = "v2-simulator"))]
+pub type ScannerSimulatorV2Ref<'a> = Option<&'a ()>;
 use rand::Rng;
 use shared_rs::{
     chains::{self, RouterKind},
@@ -472,6 +496,11 @@ pub async fn run_chain(
     opp_dedup: Arc<OppDedup>,
     trading_config: TradingConfigClient,
     rpc_http_pool: Option<Arc<HttpRpcPool>>,
+    // Phase A.2.5: per-chain SimulatorV2. None when this chain has no RPC
+    // HTTP pool or when `v2-simulator` is disabled at build time. The scanner
+    // hot path consults this to emit either `no_simulator_for_chain` or
+    // `encoder_not_ready` as the fail-closed reason.
+    simulator_v2: ScannerSimulatorV2,
 ) -> anyhow::Result<ScannerHandle> {
     // RPC failover discipline (G-RPC-1): build a multi-vendor pool from env.
     // CSV format `name=url,name=url`; bare URLs accepted for back-compat.
@@ -610,6 +639,7 @@ pub async fn run_chain(
         v3_rpc_pool,
         orchestrator,
         orch_mode,
+        simulator_v2,
     ));
     Ok(ScannerHandle { chain_id })
 }
@@ -642,6 +672,7 @@ async fn detection_loop(
     v3_rpc_pool: Option<Arc<HttpRpcPool>>,
     orchestrator: Option<Arc<Orchestrator>>,
     orch_mode: OrchestratorMode,
+    simulator_v2: ScannerSimulatorV2,
 ) {
     // Operator-selected mempool coverage. Read once at boot — re-deploy to
     // change. `Auto` is resolved per-endpoint inside `run_subscription` since
@@ -723,6 +754,7 @@ async fn detection_loop(
             mempool_mode,
             orchestrator.as_ref(),
             orch_mode,
+            simulator_v2.as_ref(),
         )
         .await
         {
@@ -748,7 +780,7 @@ async fn sleep_with_backoff(backoff_ms: &mut u64) {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run_subscription(
+async fn run_subscription<'a>(
     client: &WsChainClient,
     killswitch: &KillSwitchClient,
     redis: &mut redis::aio::ConnectionManager,
@@ -760,6 +792,7 @@ async fn run_subscription(
     mempool_mode: MempoolMode,
     orchestrator: Option<&Arc<Orchestrator>>,
     orch_mode: OrchestratorMode,
+    simulator_v2: ScannerSimulatorV2Ref<'a>,
 ) -> anyhow::Result<()> {
     let _ = killswitch; // reserved: kill-switch only blocks downstream execution
 
@@ -822,6 +855,7 @@ async fn run_subscription(
                             v3_rpc_pool,
                             orchestrator,
                             orch_mode,
+                            simulator_v2,
                         )
                         .await
                         {
@@ -865,6 +899,7 @@ async fn run_subscription(
             v3_rpc_pool,
             orchestrator,
             orch_mode,
+            simulator_v2,
         )
         .await
         {
@@ -875,7 +910,7 @@ async fn run_subscription(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn process_pending(
+async fn process_pending<'a>(
     client: &WsChainClient,
     hash: H256,
     redis: &mut redis::aio::ConnectionManager,
@@ -886,6 +921,7 @@ async fn process_pending(
     v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
     orchestrator: Option<&Arc<Orchestrator>>,
     orch_mode: OrchestratorMode,
+    simulator_v2: ScannerSimulatorV2Ref<'a>,
 ) -> anyhow::Result<()> {
     // Firehose path: dedup BEFORE get_tx so we don't pay the 26-CU
     // eth_getTransactionByHash for duplicates that the relay re-emits.
@@ -907,12 +943,13 @@ async fn process_pending(
         v3_rpc_pool,
         orchestrator,
         orch_mode,
+        simulator_v2,
     )
     .await
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn process_pending_tx(
+async fn process_pending_tx<'a>(
     client: &WsChainClient,
     tx: Transaction,
     redis: &mut redis::aio::ConnectionManager,
@@ -923,6 +960,7 @@ async fn process_pending_tx(
     v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
     orchestrator: Option<&Arc<Orchestrator>>,
     orch_mode: OrchestratorMode,
+    simulator_v2: ScannerSimulatorV2Ref<'a>,
 ) -> anyhow::Result<()> {
     // Filtered path: tx body is already on hand from the WS event, so dedup
     // here by tx.hash collapses reorg / duplicate notifications. No CU cost
@@ -941,12 +979,13 @@ async fn process_pending_tx(
         v3_rpc_pool,
         orchestrator,
         orch_mode,
+        simulator_v2,
     )
     .await
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn decode_and_score_tx(
+async fn decode_and_score_tx<'a>(
     client: &WsChainClient,
     tx: Transaction,
     redis: &mut redis::aio::ConnectionManager,
@@ -956,6 +995,7 @@ async fn decode_and_score_tx(
     v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
     orchestrator: Option<&Arc<Orchestrator>>,
     orch_mode: OrchestratorMode,
+    simulator_v2: ScannerSimulatorV2Ref<'a>,
 ) -> anyhow::Result<()> {
     // ── `Off` mode: scanner disabled by operator ─────────────────────────
     // Emergency gate — returns immediately without any detection work.
@@ -1676,39 +1716,70 @@ async fn decode_and_score_tx(
         } => (evidence, outcome, rejection),
     };
 
-    // REVM atomic sim gate — Phase A.1/A.2 FAIL-CLOSED honest dispatch.
+    // REVM atomic sim gate — Phase A.2.5 FAIL-CLOSED honest dispatch.
     //
     // RULE 00 + RULE 12 + RULE 15:
     //   "Si no hay simulador real disponible, el candidato debe fallar, no pasar."
     //   "Si el net_profit_wei no se puede calcular con datos reales, rechazar."
     //
-    // The legacy `EvmSimulator` returned a fabricated "PASS" for every candidate
-    // (caller=0x11..11, target=0x22..22, calldata=Bytes::new()). That was a
-    // structural lie — the system had no way to encode the executor call from
-    // `OpportunityCandidate` (which carries `route_fingerprint`, `pool_addresses`,
-    // `token_addresses`, `amount_in`, `expected_amount_out`, `gross_profit` but
-    // NOT chain_id, block_number, from, to, calldata, value_wei, or gas_price_wei).
+    // Pipeline status (this commit):
+    //   - A.1/A.2 (commit 2b7502a): legacy v1 stub neutralized. No more
+    //     fabricated `caller=0x11..11, target=0x22..22, calldata=Bytes::new()`
+    //     → "PASS" path. The hot path no longer constructs `EvmSimulator`.
+    //   - A.2.5 (this commit): per-chain `Arc<SimulatorV2>` constructed at
+    //     boot (see `main.rs::simulators_v2`) and threaded through the call
+    //     stack. The simulator handle is available HERE — but the encoder
+    //     that converts `OpportunityCandidate` → `simulator_v2::CandidateInput`
+    //     lands in Phase A.3.
     //
-    // Phase A.3 will introduce:
-    //   - `OpportunityCandidate` → `simulator_v2::CandidateInput` encoder,
-    //     using the `ArbitrageExecutor.sol` ABI from `contracts/out/`.
-    //   - per-chain `Arc<SimulatorV2>` constructed at boot, threaded here.
-    //   - real `executeArbitrage(borrowToken, borrowAmount, steps[])` calldata.
+    // What the hot path reports today:
+    //   - `simulator_v2` is `Some` (chain has RPC HTTP + healthy pool) → emit
+    //     `simulation_status = "SIM_DISABLED_FAIL_CLOSED"` with reason
+    //     `encoder_not_ready`. The simulator is reachable; we just cannot yet
+    //     build executable calldata from the candidate. Phase A.3 replaces
+    //     this branch with a real `simulator_v2::simulate()` call wrapped in
+    //     `tokio::task::spawn_blocking` (REVM is synchronous; cs-validator
+    //     finding 2026-05-12 — never block the tokio worker thread).
+    //   - `simulator_v2` is `None` (no RPC HTTP for chain, or pool drained)
+    //     → emit `simulation_status = "SIM_DISABLED_FAIL_CLOSED"` with reason
+    //     `no_simulator_for_chain`. Honest fail-closed; the operator can
+    //     either configure `RPC_HTTP_<chain_id>` or accept that this chain
+    //     contributes zero paper opportunities.
     //
-    // Until then this gate fails closed: simulation_status = SIM_DISABLED_FAIL_CLOSED.
-    // gates.rs:11 maps this to RejectReason::SimulationFailed, the candidate is
+    // Both branches keep `gates.rs:11` honest: every non-`PASS`/`SIM_SUCCESS`
+    // value maps to `RejectReason::SimulationFailed`, the candidate is
     // persisted as rejected (R8 fail-honest), and zero paper opportunities
     // survive — exactly the truth of the system today.
+    let (fail_closed_reason, trace_hash_sentinel) = match simulator_v2 {
+        Some(_) => (
+            "encoder_not_ready",
+            "fail_closed:phase_a3_encoder_pending",
+        ),
+        None => (
+            "no_simulator_for_chain",
+            "fail_closed:no_rpc_http_for_chain",
+        ),
+    };
     final_evidence.simulation_status = "SIM_DISABLED_FAIL_CLOSED".to_string();
-    final_evidence.simulation_trace_hash = Some("fail_closed:phase_a3_encoder_pending".to_string());
+    final_evidence.simulation_trace_hash = Some(trace_hash_sentinel.to_string());
     counters()
         .simulator_fail_closed_rejected
         .fetch_add(1, Ordering::Relaxed);
+    if fail_closed_reason == "encoder_not_ready" {
+        counters()
+            .simulator_v2_encoder_not_ready
+            .fetch_add(1, Ordering::Relaxed);
+    } else {
+        counters()
+            .simulator_v2_no_simulator_for_chain
+            .fetch_add(1, Ordering::Relaxed);
+    }
     debug!(
         event = "simulator.fail_closed",
         hash = %hash,
         chain_id = client.chain_id,
-        reason = "phase_a3_encoder_pending",
+        reason = fail_closed_reason,
+        simulator_available = simulator_v2.is_some(),
         v2_feature_compiled = cfg!(feature = "v2-simulator"),
         "candidate rejected at simulator gate — no real REVM dispatch available"
     );

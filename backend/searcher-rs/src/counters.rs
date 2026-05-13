@@ -163,6 +163,29 @@ pub struct ScannerCounters {
     /// Forward-declared: same rationale as `simulator_revm_success`.
     #[allow(dead_code)]
     pub simulator_revm_revert: AtomicU64,
+    /// Phase A.2.5 — candidate reached the hot path with a per-chain
+    /// `Arc<SimulatorV2>` available (RPC_HTTP_<chain_id> configured and pool
+    /// healthy at boot) BUT the `OpportunityCandidate → simulator_v2::
+    /// CandidateInput` encoder is not yet wired (Phase A.3 deliverable).
+    ///
+    /// This is the **honest interim state**: the simulator is reachable but
+    /// the system has no way to encode an executable transaction from the
+    /// abstract candidate. The candidate is rejected fail-closed; real REVM
+    /// dispatch lands once the encoder ships.
+    ///
+    /// During Phase A.2.5 transition this counter should equal
+    /// `simulator_fail_closed_rejected` for any chain that has a pool.
+    pub simulator_v2_encoder_not_ready: AtomicU64,
+    /// Phase A.2.5 — candidate reached the hot path on a chain that has NO
+    /// `Arc<SimulatorV2>` available. Two root causes:
+    ///   - `RPC_HTTP_<chain_id>` is not configured in env, OR
+    ///   - the pool was empty / all providers unhealthy at boot.
+    ///
+    /// Distinct from `encoder_not_ready` because the remediation is different:
+    /// here the operator must provide an RPC endpoint; there the operator
+    /// waits for the encoder PR. The two values together account for every
+    /// `SIM_DISABLED_FAIL_CLOSED` rejection.
+    pub simulator_v2_no_simulator_for_chain: AtomicU64,
 }
 
 /// Process-global counters. First call initialises; subsequent calls return
