@@ -223,6 +223,31 @@ pub struct ScannerCounters {
     /// flashloan_arb, liquidation shapes all map here).
     #[allow(dead_code)]
     pub encoder_unsupported_route_shape_total: AtomicU64,
+    /// Phase A.3.b — encoder produced a valid `RoundTripContext` and the
+    /// hot path is fail-closed waiting for the `execute_round_trip` REVM
+    /// orchestrator (Phase A.3.c). A non-zero rate here proves the wire
+    /// works end-to-end and the only remaining bottleneck is the
+    /// orchestrator itself.
+    pub encoder_round_trip_executor_pending_total: AtomicU64,
+    /// Phase A.3.b — encoder rejected because the parsed `token_in` is the
+    /// zero address (caught by `parse_token_address` before the decimals
+    /// provider is even consulted).
+    pub encoder_zero_token_address_total: AtomicU64,
+    /// Phase A.3.b — encoder rejected for an unhandled `SimEncoderError`
+    /// variant not covered by the specific counters above. Should stay at
+    /// zero in normal operation; non-zero indicates a new error variant
+    /// has been added to `SimEncoderError` without a corresponding counter.
+    pub encoder_other_rejected_total: AtomicU64,
+    /// Phase A.3.b — every cached lookup that returned `Some(decimals)`.
+    pub encoder_provider_cache_hit_total: AtomicU64,
+    /// Phase A.3.b — every cached lookup that returned `None` (cold token).
+    /// Bootstrap warm-up should bring this near zero for well-trafficked
+    /// tokens within the first refresh tick (~60s after boot).
+    pub encoder_provider_cache_miss_total: AtomicU64,
+    /// Phase A.3.b — encoder hot-path gate skipped because no decimals
+    /// provider was threaded into the scanner. Indicates a main.rs wiring
+    /// regression — should stay at zero.
+    pub encoder_missing_provider_total: AtomicU64,
 }
 
 /// Process-global counters. First call initialises; subsequent calls return

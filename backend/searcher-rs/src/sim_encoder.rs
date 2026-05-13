@@ -50,6 +50,8 @@ use ethers::types::{Address, U256};
 use prioritization_spine::round_trip_executor::RoundTripContext;
 use prioritization_spine::types::OpportunityCandidate;
 use shared_rs::chains::{routers_for_chain, RouterKind};
+// `HashMap` is only used by the test-only `InMemoryTokenDecimalsProvider`.
+#[cfg(test)]
 use std::collections::HashMap;
 use std::str::FromStr;
 use thiserror::Error;
@@ -182,11 +184,17 @@ pub trait TokenDecimalsProvider: Send + Sync {
 /// In-memory provider for unit tests. Constructed empty by default; tests
 /// populate it explicitly via `with_decimals`. Production code MUST NOT use
 /// this — it would force every operator to manually pre-load every token.
+///
+/// Gated under `#[cfg(test)]` so the type is invisible to the binary build
+/// (RULE 1: no test fixtures leak into runtime). Phase A.3.b production wire
+/// uses `sim_encoder_pg::PgTokenDecimalsProvider`.
+#[cfg(test)]
 #[derive(Debug, Default, Clone)]
 pub struct InMemoryTokenDecimalsProvider {
     table: HashMap<(u64, Address), u8>,
 }
 
+#[cfg(test)]
 impl InMemoryTokenDecimalsProvider {
     pub fn new() -> Self {
         Self::default()
@@ -198,6 +206,7 @@ impl InMemoryTokenDecimalsProvider {
     }
 }
 
+#[cfg(test)]
 impl TokenDecimalsProvider for InMemoryTokenDecimalsProvider {
     fn decimals(&self, chain_id: u64, token: &Address) -> Option<u8> {
         self.table.get(&(chain_id, *token)).copied()

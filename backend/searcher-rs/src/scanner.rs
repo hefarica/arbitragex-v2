@@ -62,6 +62,18 @@ pub type ScannerSimulatorV2 = Option<()>;
 pub type ScannerSimulatorV2Ref<'a> = Option<&'a Arc<simulator_v2::SimulatorV2>>;
 #[cfg(not(feature = "v2-simulator"))]
 pub type ScannerSimulatorV2Ref<'a> = Option<&'a ()>;
+
+/// Phase A.3.b: per-process `TokenDecimalsProvider` threaded through the
+/// scanner. `None` when the DB pool is unavailable at boot. The trait is
+/// always-on (not feature-gated) so the type alias does not need cfg.
+pub type ScannerDecimalsProvider =
+    Option<Arc<dyn crate::sim_encoder::TokenDecimalsProvider + Send + Sync>>;
+
+/// Borrowed view of `ScannerDecimalsProvider`. Inner functions receive this
+/// so they can pass the underlying trait object on without re-cloning the
+/// outer `Arc`.
+pub type ScannerDecimalsProviderRef<'a> =
+    Option<&'a Arc<dyn crate::sim_encoder::TokenDecimalsProvider + Send + Sync>>;
 use rand::Rng;
 use shared_rs::{
     chains::{self, RouterKind},
@@ -501,6 +513,11 @@ pub async fn run_chain(
     // hot path consults this to emit either `no_simulator_for_chain` or
     // `encoder_not_ready` as the fail-closed reason.
     simulator_v2: ScannerSimulatorV2,
+    // Phase A.3.b: per-process token decimals provider. `None` when the DB
+    // pool was not constructed at boot (no DATABASE_URL). The scanner hot
+    // path consults this from the encoder dispatch; absence drives a
+    // `missing_provider` fail-closed reason.
+    decimals_provider: ScannerDecimalsProvider,
 ) -> anyhow::Result<ScannerHandle> {
     // RPC failover discipline (G-RPC-1): build a multi-vendor pool from env.
     // CSV format `name=url,name=url`; bare URLs accepted for back-compat.
@@ -640,6 +657,7 @@ pub async fn run_chain(
         orchestrator,
         orch_mode,
         simulator_v2,
+        decimals_provider,
     ));
     Ok(ScannerHandle { chain_id })
 }
@@ -673,6 +691,7 @@ async fn detection_loop(
     orchestrator: Option<Arc<Orchestrator>>,
     orch_mode: OrchestratorMode,
     simulator_v2: ScannerSimulatorV2,
+    decimals_provider: ScannerDecimalsProvider,
 ) {
     // Operator-selected mempool coverage. Read once at boot — re-deploy to
     // change. `Auto` is resolved per-endpoint inside `run_subscription` since
@@ -755,6 +774,7 @@ async fn detection_loop(
             orchestrator.as_ref(),
             orch_mode,
             simulator_v2.as_ref(),
+            decimals_provider.as_ref(),
         )
         .await
         {
@@ -793,6 +813,7 @@ async fn run_subscription<'a>(
     orchestrator: Option<&Arc<Orchestrator>>,
     orch_mode: OrchestratorMode,
     simulator_v2: ScannerSimulatorV2Ref<'a>,
+    decimals_provider: ScannerDecimalsProviderRef<'a>,
 ) -> anyhow::Result<()> {
     let _ = killswitch; // reserved: kill-switch only blocks downstream execution
 
@@ -856,6 +877,7 @@ async fn run_subscription<'a>(
                             orchestrator,
                             orch_mode,
                             simulator_v2,
+                            decimals_provider,
                         )
                         .await
                         {
@@ -900,6 +922,7 @@ async fn run_subscription<'a>(
             orchestrator,
             orch_mode,
             simulator_v2,
+            decimals_provider,
         )
         .await
         {
@@ -922,6 +945,7 @@ async fn process_pending<'a>(
     orchestrator: Option<&Arc<Orchestrator>>,
     orch_mode: OrchestratorMode,
     simulator_v2: ScannerSimulatorV2Ref<'a>,
+    decimals_provider: ScannerDecimalsProviderRef<'a>,
 ) -> anyhow::Result<()> {
     // Firehose path: dedup BEFORE get_tx so we don't pay the 26-CU
     // eth_getTransactionByHash for duplicates that the relay re-emits.
@@ -944,6 +968,7 @@ async fn process_pending<'a>(
         orchestrator,
         orch_mode,
         simulator_v2,
+        decimals_provider,
     )
     .await
 }
@@ -961,6 +986,7 @@ async fn process_pending_tx<'a>(
     orchestrator: Option<&Arc<Orchestrator>>,
     orch_mode: OrchestratorMode,
     simulator_v2: ScannerSimulatorV2Ref<'a>,
+    decimals_provider: ScannerDecimalsProviderRef<'a>,
 ) -> anyhow::Result<()> {
     // Filtered path: tx body is already on hand from the WS event, so dedup
     // here by tx.hash collapses reorg / duplicate notifications. No CU cost
@@ -980,6 +1006,7 @@ async fn process_pending_tx<'a>(
         orchestrator,
         orch_mode,
         simulator_v2,
+        decimals_provider,
     )
     .await
 }
@@ -996,6 +1023,7 @@ async fn decode_and_score_tx<'a>(
     orchestrator: Option<&Arc<Orchestrator>>,
     orch_mode: OrchestratorMode,
     simulator_v2: ScannerSimulatorV2Ref<'a>,
+    decimals_provider: ScannerDecimalsProviderRef<'a>,
 ) -> anyhow::Result<()> {
     // ── `Off` mode: scanner disabled by operator ─────────────────────────
     // Emergency gate — returns immediately without any detection work.
@@ -1716,72 +1744,68 @@ async fn decode_and_score_tx<'a>(
         } => (evidence, outcome, rejection),
     };
 
-    // REVM atomic sim gate — Phase A.2.5 FAIL-CLOSED honest dispatch.
+    // REVM atomic sim gate — Phase A.3.b RUNTIME WIRE.
     //
     // RULE 00 + RULE 12 + RULE 15:
     //   "Si no hay simulador real disponible, el candidato debe fallar, no pasar."
     //   "Si el net_profit_wei no se puede calcular con datos reales, rechazar."
     //
-    // Pipeline status (this commit):
-    //   - A.1/A.2 (commit 2b7502a): legacy v1 stub neutralized. No more
-    //     fabricated `caller=0x11..11, target=0x22..22, calldata=Bytes::new()`
-    //     → "PASS" path. The hot path no longer constructs `EvmSimulator`.
-    //   - A.2.5 (this commit): per-chain `Arc<SimulatorV2>` constructed at
-    //     boot (see `main.rs::simulators_v2`) and threaded through the call
-    //     stack. The simulator handle is available HERE — but the encoder
-    //     that converts `OpportunityCandidate` → `simulator_v2::CandidateInput`
-    //     lands in Phase A.3.
+    // Pipeline status (this commit, Phase A.3.b):
+    //   - A.1/A.2 (commit 2b7502a): legacy v1 stub neutralized.
+    //   - A.2.5 (commit 36cda55): per-chain `Arc<SimulatorV2>` threaded.
+    //   - A.3.a (commit 8a359e4): `OpportunityCandidate → RoundTripContext`
+    //     encoder shipped with 26 unit tests.
+    //   - A.3.b (this commit): PG decimals provider threaded, encoder INVOKED
+    //     from the hot path. Every candidate with a simulator + provider in
+    //     hand attempts a real encoder dispatch; outcome maps to typed
+    //     counters and reasons. The system STILL stays in
+    //     `SIM_DISABLED_FAIL_CLOSED` — the next phase (`execute_round_trip`
+    //     REVM orchestrator) is the only remaining gate before SIM_SUCCESS
+    //     can be emitted.
     //
-    // What the hot path reports today:
-    //   - `simulator_v2` is `Some` (chain has RPC HTTP + healthy pool) → emit
-    //     `simulation_status = "SIM_DISABLED_FAIL_CLOSED"` with reason
-    //     `encoder_not_ready`. The simulator is reachable; we just cannot yet
-    //     build executable calldata from the candidate. Phase A.3 replaces
-    //     this branch with a real `simulator_v2::simulate()` call wrapped in
-    //     `tokio::task::spawn_blocking` (REVM is synchronous; cs-validator
-    //     finding 2026-05-12 — never block the tokio worker thread).
-    //   - `simulator_v2` is `None` (no RPC HTTP for chain, or pool drained)
-    //     → emit `simulation_status = "SIM_DISABLED_FAIL_CLOSED"` with reason
-    //     `no_simulator_for_chain`. Honest fail-closed; the operator can
-    //     either configure `RPC_HTTP_<chain_id>` or accept that this chain
-    //     contributes zero paper opportunities.
+    // Dispatch outcomes today (all map to `SIM_DISABLED_FAIL_CLOSED`):
+    //   * No simulator for chain → reason `no_simulator_for_chain`.
+    //   * Simulator but no decimals provider → reason `missing_provider`
+    //     (main.rs wiring regression — should never fire).
+    //   * Encoder returns `Ok(RoundTripContext)` → reason
+    //     `round_trip_executor_pending`. This is the SUCCESS PATH of A.3.b;
+    //     it proves the wire is end-to-end functional. The candidate is
+    //     still rejected at the EvidenceGate because the orchestrator
+    //     hasn't computed an actual SimulationOutcome yet.
+    //   * Encoder returns `Err(SimEncoderError::*)` → reason
+    //     `encoder_rejected:<tag>` where `<tag>` is the variant's
+    //     `reason_tag()`. The exact rejection reason is observable in the
+    //     `encoder.runtime_event` log and the counter-by-tag breakdown.
     //
-    // Both branches keep `gates.rs:11` honest: every non-`PASS`/`SIM_SUCCESS`
-    // value maps to `RejectReason::SimulationFailed`, the candidate is
-    // persisted as rejected (R8 fail-honest), and zero paper opportunities
-    // survive — exactly the truth of the system today.
-    let (fail_closed_reason, trace_hash_sentinel) = match simulator_v2 {
-        Some(_) => (
-            "encoder_not_ready",
-            "fail_closed:phase_a3_encoder_pending",
-        ),
-        None => (
-            "no_simulator_for_chain",
-            "fail_closed:no_rpc_http_for_chain",
-        ),
-    };
+    // `gates.rs::EvidenceGate::validate` (line 11) keeps everything honest:
+    // every value other than `PASS` or `SIM_SUCCESS` maps to
+    // `RejectReason::SimulationFailed`. Zero paper opportunities survive
+    // this PR — that is the truth of the system today (RULE 12 fail-honest).
+    let gate_outcome = dispatch_encoder_gate(
+        &candidate,
+        client.chain_id,
+        simulator_v2,
+        decimals_provider,
+    );
+    let (fail_closed_reason, trace_hash_sentinel) = gate_outcome.to_status();
     final_evidence.simulation_status = "SIM_DISABLED_FAIL_CLOSED".to_string();
     final_evidence.simulation_trace_hash = Some(trace_hash_sentinel.to_string());
     counters()
         .simulator_fail_closed_rejected
         .fetch_add(1, Ordering::Relaxed);
-    if fail_closed_reason == "encoder_not_ready" {
-        counters()
-            .simulator_v2_encoder_not_ready
-            .fetch_add(1, Ordering::Relaxed);
-    } else {
-        counters()
-            .simulator_v2_no_simulator_for_chain
-            .fetch_add(1, Ordering::Relaxed);
-    }
+    bump_encoder_gate_counter(&gate_outcome);
     debug!(
-        event = "simulator.fail_closed",
+        event = "encoder.runtime_event",
         hash = %hash,
         chain_id = client.chain_id,
-        reason = fail_closed_reason,
+        candidate_id = %candidate.route_fingerprint,
+        legs_count = candidate.dex_adapters.len(),
         simulator_available = simulator_v2.is_some(),
+        provider_available = decimals_provider.is_some(),
+        status = gate_outcome.status_label(),
+        reason = fail_closed_reason,
         v2_feature_compiled = cfg!(feature = "v2-simulator"),
-        "candidate rejected at simulator gate — no real REVM dispatch available"
+        "candidate evaluated at A.3.b encoder gate"
     );
 
     // Connect math results to the persisted Opportunity row.
@@ -1970,6 +1994,181 @@ fn compute_gross_usd_for_spread(
         // Oracle gap — cannot price in USD without an external oracle.
         // R8: return None, NOT Some(0.0).
         None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase A.3.b — encoder dispatch helper
+// ---------------------------------------------------------------------------
+
+/// Outcome of the A.3.b encoder dispatch gate. Distinct variants per failure
+/// mode + per encoder error reason so the scanner can map each to a typed
+/// counter without re-inspecting the underlying `SimEncoderError`.
+///
+/// This is a pure data type: `dispatch_encoder_gate` returns one of these
+/// variants, the caller updates counters + emits the fail-closed signal.
+/// Extracted from the hot path so it is unit-testable without WS/RPC infra.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum EncoderGateOutcome {
+    /// No `Arc<SimulatorV2>` for this chain. RPC_HTTP_<id> not configured
+    /// or pool fully unhealthy at boot. Operator action: provide RPC.
+    NoSimulator,
+    /// SimulatorV2 present but `Arc<dyn TokenDecimalsProvider>` is `None`.
+    /// Should only occur if main.rs wired the simulator but not the PG
+    /// pool — typically a regression. The counter `encoder_missing_provider_total`
+    /// surfaces it.
+    NoProvider,
+    /// Encoder ran successfully; `RoundTripContext` would be available to
+    /// the next phase. The hot path STILL emits SIM_DISABLED_FAIL_CLOSED
+    /// because the `execute_round_trip` orchestrator is the next deliverable.
+    Success,
+    /// Encoder rejected the candidate with a typed reason. The tag matches
+    /// `SimEncoderError::reason_tag()` verbatim.
+    Rejected { reason_tag: &'static str },
+}
+
+impl EncoderGateOutcome {
+    /// Map to (fail_closed_reason, trace_hash_sentinel) for the
+    /// `final_evidence.simulation_status` + `simulation_trace_hash` fields.
+    /// Both fields stay in the fail-closed family until Phase A.3.c lands.
+    fn to_status(&self) -> (&'static str, &'static str) {
+        match self {
+            Self::NoSimulator => (
+                "no_simulator_for_chain",
+                "fail_closed:no_rpc_http_for_chain",
+            ),
+            Self::NoProvider => (
+                "missing_provider",
+                "fail_closed:missing_token_decimals_provider",
+            ),
+            Self::Success => (
+                "round_trip_executor_pending",
+                "fail_closed:phase_a3c_orchestrator_pending",
+            ),
+            Self::Rejected { reason_tag } => (
+                reason_tag,
+                "fail_closed:encoder_rejected",
+            ),
+        }
+    }
+
+    fn status_label(&self) -> &'static str {
+        match self {
+            Self::NoSimulator => "fail_closed_no_simulator",
+            Self::NoProvider => "fail_closed_no_provider",
+            Self::Success => "encoder_success_fail_closed_pending_orchestrator",
+            Self::Rejected { .. } => "encoder_rejected",
+        }
+    }
+}
+
+/// Pure dispatch logic — testable in isolation. Builds an
+/// `sim_encoder::RouteEncodingConfig`, resolves the executor address via
+/// `EXECUTOR_<chain_id>`, calls `build_round_trip_context_from_candidate`,
+/// and maps the outcome.
+///
+/// Reads ONE env var (`EXECUTOR_<chain_id>`) inside `parse_executor_address`.
+/// Reads system time once (for `now_unix_ts`). No other I/O.
+pub(crate) fn dispatch_encoder_gate(
+    candidate: &OpportunityCandidate,
+    chain_id: u64,
+    simulator_v2: ScannerSimulatorV2Ref<'_>,
+    decimals_provider: ScannerDecimalsProviderRef<'_>,
+) -> EncoderGateOutcome {
+    if simulator_v2.is_none() {
+        return EncoderGateOutcome::NoSimulator;
+    }
+    let provider = match decimals_provider {
+        Some(p) => p,
+        None => return EncoderGateOutcome::NoProvider,
+    };
+    let executor = match crate::sim_encoder::parse_executor_address(chain_id) {
+        Ok(addr) => addr,
+        Err(e) => {
+            return EncoderGateOutcome::Rejected {
+                reason_tag: e.reason_tag(),
+            };
+        }
+    };
+    // Config: deadline default 60s; now from SystemTime; min_profit_wei is
+    // the bare contract minimum (1 wei = "any positive profit accepted") so
+    // the encoder's required-non-zero invariant is satisfied without
+    // inventing an economic floor. Real economic profit gating happens
+    // downstream at the NetProfitGate using `net_expected_profit_usd`
+    // (see `gates.rs`).
+    let now_unix_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let config = crate::sim_encoder::RouteEncodingConfig {
+        deadline_seconds: 60,
+        now_unix_ts,
+        min_profit_wei: ethers::types::U256::from(1u64),
+    };
+    let provider_ref: &dyn crate::sim_encoder::TokenDecimalsProvider = provider.as_ref();
+    match crate::sim_encoder::build_round_trip_context_from_candidate(
+        candidate,
+        chain_id,
+        executor,
+        provider_ref,
+        &config,
+    ) {
+        Ok(_round_trip_context) => EncoderGateOutcome::Success,
+        Err(e) => EncoderGateOutcome::Rejected {
+            reason_tag: e.reason_tag(),
+        },
+    }
+}
+
+/// Translate the gate outcome into per-tag counter increments. Centralised so
+/// adding a new `SimEncoderError` variant only requires touching one place.
+fn bump_encoder_gate_counter(outcome: &EncoderGateOutcome) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let c = counters();
+    match outcome {
+        EncoderGateOutcome::NoSimulator => {
+            c.simulator_v2_no_simulator_for_chain.fetch_add(1, Relaxed);
+        }
+        EncoderGateOutcome::NoProvider => {
+            c.simulator_v2_encoder_not_ready.fetch_add(1, Relaxed);
+            c.encoder_missing_provider_total.fetch_add(1, Relaxed);
+        }
+        EncoderGateOutcome::Success => {
+            c.encoder_success_total.fetch_add(1, Relaxed);
+            c.encoder_round_trip_executor_pending_total
+                .fetch_add(1, Relaxed);
+        }
+        EncoderGateOutcome::Rejected { reason_tag } => {
+            c.encoder_rejected_total.fetch_add(1, Relaxed);
+            match *reason_tag {
+                "missing_executor" | "invalid_executor" | "zero_executor" => {
+                    c.encoder_missing_executor_total.fetch_add(1, Relaxed);
+                }
+                "missing_decimals" | "invalid_decimals" => {
+                    c.encoder_missing_decimals_total.fetch_add(1, Relaxed);
+                }
+                "amount_nan" | "amount_infinite" | "amount_non_positive"
+                | "amount_overflow" | "amount_too_small" => {
+                    c.encoder_invalid_amount_total.fetch_add(1, Relaxed);
+                }
+                "unsupported_dex_kind" | "missing_router" => {
+                    c.encoder_unsupported_dex_total.fetch_add(1, Relaxed);
+                }
+                "unsupported_route_shape" | "missing_route_legs" => {
+                    c.encoder_unsupported_route_shape_total.fetch_add(1, Relaxed);
+                }
+                "zero_token_address" => {
+                    c.encoder_zero_token_address_total.fetch_add(1, Relaxed);
+                }
+                _ => {
+                    // Catches `missing_token_in`, `missing_token_out`,
+                    // `invalid_token_address`, `same_token_in_out`,
+                    // `missing_deadline_config`, `missing_min_profit`,
+                    // and any future variant.
+                    c.encoder_other_rejected_total.fetch_add(1, Relaxed);
+                }
+            }
+        }
     }
 }
 

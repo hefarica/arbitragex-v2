@@ -21,16 +21,12 @@ mod counters;
 mod dedup;
 // Phase A.3.a: OpportunityCandidate → RoundTripContext encoder. Pure bridge
 // from the abstract candidate to the typed simulator input. NO REVM dispatch
-// here (that lands in Phase A.3.b); only validation + payload pre-shaping.
-//
-// `dead_code` is allowed at the module level because Phase A.3.a ships the
-// encoder + 26 unit tests; the runtime wire from `scanner::decode_and_score_tx`
-// lands together with Phase A.3.b's decimals provider (PG-backed) and
-// execute_round_trip orchestrator. Until then the module is exercised only
-// by its own tests, which is honest fail-closed behaviour (every candidate
-// continues to land in the existing SIM_DISABLED_FAIL_CLOSED path).
-#[allow(dead_code)]
+// here (that lands with execute_round_trip); only validation + payload pre-shaping.
 mod sim_encoder;
+// Phase A.3.b: PostgreSQL-backed `TokenDecimalsProvider` runtime impl. Holds
+// an LRU cache kept warm by a background refresh task; the trait method is
+// a pure cache lookup so the hot path never blocks on a PG query.
+mod sim_encoder_pg;
 // Phase 16: per-strategy Prometheus metrics for the event-driven orchestrator.
 mod metrics;
 mod patterns;
@@ -212,6 +208,60 @@ async fn main() -> anyhow::Result<()> {
             warn!(
                 event = "db.not_configured",
                 "DATABASE_URL not set; scanner will publish to stream but NOT persist"
+            );
+            None
+        }
+    };
+
+    // Phase A.3.b runtime wire — `PgTokenDecimalsProvider` construction.
+    //
+    // When the DB pool is up, build a single per-process provider that the
+    // scanner consults from the simulator gate. Bootstrap-loads the cache
+    // synchronously so the first hot-path candidates already see warm data;
+    // spawns a 60s refresh loop in the background.
+    //
+    // Without a DB pool the encoder cannot resolve decimals — scanner stays
+    // in the Phase A.2.5 fail-closed path (`no_simulator_for_chain` /
+    // `encoder_not_ready`) for every candidate (RULE 12 fail-honest).
+    let token_decimals_provider: Option<
+        Arc<dyn sim_encoder::TokenDecimalsProvider + Send + Sync>,
+    > = match &db_pool {
+        Some(pool) => {
+            let provider = Arc::new(sim_encoder_pg::PgTokenDecimalsProvider::with_default_capacity(
+                pool.clone(),
+            ));
+            match provider.bootstrap_load().await {
+                Ok(loaded) => info!(
+                    event = "sim_encoder.boot",
+                    provider = "pg",
+                    cache_max_entries = sim_encoder_pg::DEFAULT_CACHE_CAPACITY,
+                    bootstrap_loaded = loaded,
+                    refresh_interval_secs = sim_encoder_pg::DEFAULT_REFRESH_INTERVAL_SECS,
+                    runtime_enabled = true,
+                    "PG decimals provider bootstrapped"
+                ),
+                Err(e) => warn!(
+                    event = "sim_encoder.bootstrap_failed",
+                    error = %e,
+                    "PG decimals provider bootstrap failed; cache stays empty until first refresh"
+                ),
+            };
+            // Refresh loop fills the cache from PG every N seconds. Handle
+            // intentionally dropped — task runs until process exit.
+            provider
+                .clone()
+                .spawn_refresh_loop(Duration::from_secs(
+                    sim_encoder_pg::DEFAULT_REFRESH_INTERVAL_SECS,
+                ));
+            Some(provider as Arc<dyn sim_encoder::TokenDecimalsProvider + Send + Sync>)
+        }
+        None => {
+            warn!(
+                event = "sim_encoder.boot",
+                provider = "none",
+                runtime_enabled = false,
+                reason = "no_db_pool",
+                "no PG pool available — token decimals provider not constructed"
             );
             None
         }
@@ -691,6 +741,8 @@ async fn main() -> anyhow::Result<()> {
             simulators_v2.get(&chain_id).cloned();
         #[cfg(not(feature = "v2-simulator"))]
         let sim_v2_c: Option<()> = None;
+        // Phase A.3.b: clone the per-process decimals provider Arc.
+        let decimals_provider_c = token_decimals_provider.clone();
         tokio::spawn(async move {
             if let Err(e) = scanner::run_chain(
                 chain_id,
@@ -703,6 +755,7 @@ async fn main() -> anyhow::Result<()> {
                 tc_c,
                 rpc_pool_c,
                 sim_v2_c,
+                decimals_provider_c,
             )
             .await
             {
