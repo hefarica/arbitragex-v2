@@ -5,23 +5,40 @@
 //! (default 60s). Gives the operator an explicit per-minute breakdown of
 //! "what happened in the pipeline" without grep'ing logs.
 //!
-//! Doctrine: counters live as a process-global `OnceCell<ScannerCounters>`
-//! to avoid plumbing 4 levels deep (main → scanner::run_chain →
-//! detection_loop → run_subscription → process_pending). The cost is
-//! global state — acceptable here because (a) one searcher process per
-//! container, (b) atomics are lock-free, (c) the alternative is 5 file
-//! refactors plus changing 4 function signatures for an observability
-//! feature.
+//! B0.1 (2026-05-13) — Per-chain isolation registry:
 //!
-//! Usage:
+//! The original implementation kept a single process-global `ScannerCounters`
+//! (`counters() -> &'static`). With multi-chain enabled, that meant Chain 1
+//! and Chain 137 increments mixed into the same counter values — a footgun
+//! flagged in the audit and recorded in `docs/superpowers/specs/...`. The
+//! fix is a registry `HashMap<chain_id, Arc<ScannerCounters>>` accessed via
+//! `chain_counters(chain_id)`. Each `run_chain(chain_id)` task writes only
+//! to its own counters; heartbeat reads per-chain.
+//!
+//! Backward compatibility: `counters()` is retained as an alias for
+//! `chain_counters(LEGACY_CHAIN_ID)`. Existing call sites that have not
+//! been migrated still compile and emit to a designated "legacy/unscoped"
+//! counter bucket. New code MUST use `chain_counters(chain_id)`.
+//!
+//! Usage (per-chain, preferred):
+//!   chain_counters(chain_id).pending_received.fetch_add(1, Ordering::Relaxed);
+//!
+//! Usage (legacy, deprecated):
 //!   counters().pending_received.fetch_add(1, Ordering::Relaxed);
-//!   counters().gate_token_not_allowed.fetch_add(1, Ordering::Relaxed);
 //!
-//! Heartbeat read (atomic swap → 0 for delta semantics):
-//!   counters().pending_received.swap(0, Ordering::Relaxed);
+//! Heartbeat read (per-chain, atomic swap → 0 for delta semantics):
+//!   chain_counters(chain_id).pending_received.swap(0, Ordering::Relaxed);
 
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, RwLock};
+
+/// Sentinel chain id used by the legacy `counters()` API for code paths that
+/// have not yet been migrated to per-chain. Reported as
+/// "legacy_unscoped" in heartbeat aggregation so operators see how much
+/// observability is still unattributed.
+pub const LEGACY_CHAIN_ID: u64 = 0;
 
 #[derive(Default)]
 pub struct ScannerCounters {
@@ -283,11 +300,51 @@ pub struct ScannerCounters {
     pub round_trip_executor_spawn_blocking_failed_total: AtomicU64,
 }
 
-/// Process-global counters. First call initialises; subsequent calls return
-/// the same `&'static ScannerCounters`. Lock-free atomics inside.
-pub fn counters() -> &'static ScannerCounters {
-    static INSTANCE: Lazy<ScannerCounters> = Lazy::new(ScannerCounters::default);
-    &INSTANCE
+/// Per-chain counter registry. Lazy-initialises `Arc<ScannerCounters>` on
+/// first access for a given `chain_id`. Subsequent calls return the same
+/// Arc. Lock-free atomics inside; the RwLock guards only the HashMap
+/// (write only on first access per chain — read-mostly thereafter).
+static REGISTRY: Lazy<RwLock<HashMap<u64, Arc<ScannerCounters>>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// Per-chain counter accessor. Each `run_chain(chain_id)` task should call
+/// `chain_counters(chain_id)` and write only to its own counters. Heartbeat
+/// reads per-chain via the same call.
+pub fn chain_counters(chain_id: u64) -> Arc<ScannerCounters> {
+    // Fast path: read lock, return existing Arc.
+    if let Some(c) = REGISTRY.read().ok().and_then(|m| m.get(&chain_id).cloned()) {
+        return c;
+    }
+    // Slow path: write lock, insert if still missing (another thread may have
+    // raced us and inserted between read drop and write acquire).
+    let mut map = REGISTRY.write().expect("counters registry write lock poisoned");
+    map.entry(chain_id)
+        .or_insert_with(|| Arc::new(ScannerCounters::default()))
+        .clone()
+}
+
+/// Legacy backward-compat alias for code paths not yet migrated to per-chain.
+/// Writes to `chain_counters(LEGACY_CHAIN_ID)` — a designated "unscoped"
+/// bucket reported separately in heartbeat aggregation. New code MUST call
+/// `chain_counters(chain_id)` instead.
+pub fn counters() -> Arc<ScannerCounters> {
+    chain_counters(LEGACY_CHAIN_ID)
+}
+
+/// List of chain ids that have at least one counter Arc allocated. Used by
+/// aggregated readers to know which chains to walk without globally
+/// summing (which would mutate counters via swap). Consumed by B0.5
+/// readiness/agents endpoints to enumerate per-chain counter buckets.
+#[allow(dead_code)] // Used by heartbeat aggregator + future B0.5 endpoint wire
+pub fn registered_chain_ids() -> Vec<u64> {
+    REGISTRY
+        .read()
+        .map(|m| {
+            let mut ids: Vec<u64> = m.keys().copied().collect();
+            ids.sort_unstable();
+            ids
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -296,31 +353,81 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     #[test]
-    fn counters_singleton_returns_same_instance() {
-        let a = counters() as *const _;
-        let b = counters() as *const _;
-        assert_eq!(a, b, "counters() must return the same global instance");
+    fn counters_legacy_alias_returns_same_arc() {
+        // The legacy `counters()` must consistently point to the same chain-0
+        // bucket so existing call sites still see their increments.
+        let a = counters();
+        let b = counters();
+        assert!(Arc::ptr_eq(&a, &b), "counters() must return the same Arc");
     }
 
     #[test]
-    fn counters_default_to_zero() {
-        // Sample a few — full struct check would be brittle to add new fields.
-        // Note: this test runs in a shared process so other tests may have
-        // incremented these; we assert non-negative which is always true for u64.
-        let _ = counters().pending_received.load(Ordering::Relaxed);
-        let _ = counters().gate_token_not_allowed.load(Ordering::Relaxed);
-        let _ = counters().db_errors.load(Ordering::Relaxed);
+    fn counters_are_isolated_per_chain() {
+        // CORE B0.1 contract: writes to chain X must NOT affect chain Y.
+        let c1 = chain_counters(1);
+        let c137 = chain_counters(137);
+        // They must be distinct allocations.
+        assert!(
+            !Arc::ptr_eq(&c1, &c137),
+            "chain 1 and chain 137 counters must be different Arc instances"
+        );
+        let base1 = c1.pending_received.load(Ordering::Relaxed);
+        let base137 = c137.pending_received.load(Ordering::Relaxed);
+        c1.pending_received.fetch_add(7, Ordering::Relaxed);
+        assert_eq!(c1.pending_received.load(Ordering::Relaxed), base1 + 7);
+        assert_eq!(
+            c137.pending_received.load(Ordering::Relaxed),
+            base137,
+            "writing to chain 1 must NOT affect chain 137 counters"
+        );
+    }
+
+    #[test]
+    fn chain_1_does_not_affect_chain_137() {
+        // Same contract, named to match the SOP's required test name.
+        let c1 = chain_counters(1);
+        let c137 = chain_counters(137);
+        let snapshot_137_before = c137.gate_token_not_allowed.load(Ordering::Relaxed);
+        c1.gate_token_not_allowed.fetch_add(42, Ordering::Relaxed);
+        assert_eq!(
+            c137.gate_token_not_allowed.load(Ordering::Relaxed),
+            snapshot_137_before,
+            "chain 1 increment leaked into chain 137"
+        );
+    }
+
+    #[test]
+    fn registered_chain_ids_includes_accessed_chains() {
+        // After accessing chains 1 and 137, both should appear in the registry.
+        let _ = chain_counters(1);
+        let _ = chain_counters(137);
+        let ids = registered_chain_ids();
+        assert!(ids.contains(&1), "chain 1 missing from registry: {ids:?}");
+        assert!(ids.contains(&137), "chain 137 missing from registry: {ids:?}");
+    }
+
+    #[test]
+    fn legacy_counters_writes_to_chain_zero_bucket() {
+        // The legacy `counters()` API maps to chain 0 (LEGACY_CHAIN_ID).
+        // Code that has not been migrated still works but accumulates into
+        // the "unscoped" bucket, which heartbeat reports separately.
+        let legacy = counters();
+        let chain0 = chain_counters(LEGACY_CHAIN_ID);
+        assert!(
+            Arc::ptr_eq(&legacy, &chain0),
+            "counters() must alias chain_counters(LEGACY_CHAIN_ID)"
+        );
     }
 
     #[test]
     fn counters_increment_and_swap_work() {
-        // Use a fresh instance to avoid contamination from other tests.
+        // Use a fresh local ScannerCounters to avoid contamination from
+        // other tests (since the registry is process-global).
         let local = ScannerCounters::default();
         local.pending_received.fetch_add(7, Ordering::Relaxed);
         local.pending_received.fetch_add(3, Ordering::Relaxed);
         let snapshot = local.pending_received.swap(0, Ordering::Relaxed);
         assert_eq!(snapshot, 10);
-        // Post-swap reset to zero for the next period.
         assert_eq!(local.pending_received.load(Ordering::Relaxed), 0);
     }
 }

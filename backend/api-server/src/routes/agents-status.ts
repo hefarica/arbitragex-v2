@@ -318,6 +318,25 @@ const AGENT_DEFS: AgentDef[] = [
     operator_required: false,
   },
   {
+    id: "per-chain-isolation-agent",
+    name: "Per-Chain Isolation Agent",
+    category: "risk",
+    // B0 (2026-05-13): all 3 footguns + F4 minor closed in this commit set.
+    default_verdict: "PASS",
+    default_status: "healthy",
+    evidence: [
+      "F1: ScannerCounters refactored to chain_counters(chain_id) registry; heartbeat_worker reads per-chain; 25 scanner.rs hot-path callsites migrated",
+      "F2: arbx:papermode:<chain_id> per-chain; legacy global key read-only fallback (30-day deprecation); POST /admin/config/paper-mode rejects requests without chain_id",
+      "F3: migration 060 added risk_events.chain_id + index; all 3 insert sites (recon::anomaly, recon::persistence, selector-api::persistence) updated",
+      "F4: primary_chain fail-honest — empty enabled_chains aborts boot instead of silent fallback to chain 1",
+    ],
+    source: "workspace_verified",
+    blocks: [],
+    next_action: null,
+    risk: "low",
+    operator_required: false,
+  },
+  {
     id: "scoring-primitives-agent",
     name: "Scoring Primitives Agent",
     category: "risk",

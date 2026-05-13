@@ -18,7 +18,7 @@
 //! corresponds to a real pending tx observed on the wire.
 
 use crate::amm_math;
-use crate::counters::counters;
+use crate::counters::{chain_counters, counters};
 use crate::reserves;
 use crate::{
     calldata,
@@ -960,7 +960,7 @@ async fn process_pending<'a>(
     if !dedup.check_and_mark(hash, redis).await {
         return Ok(());
     }
-    counters().pending_received.fetch_add(1, Ordering::Relaxed);
+    chain_counters(client.chain_id).pending_received.fetch_add(1, Ordering::Relaxed);
     let tx = match client.get_tx(hash).await? {
         Some(t) => t,
         None => return Ok(()), // dropped from mempool before we got it
@@ -1002,7 +1002,7 @@ async fn process_pending_tx<'a>(
     if !dedup.check_and_mark(tx.hash, redis).await {
         return Ok(());
     }
-    counters().pending_received.fetch_add(1, Ordering::Relaxed);
+    chain_counters(client.chain_id).pending_received.fetch_add(1, Ordering::Relaxed);
     decode_and_score_tx(
         client,
         tx,
@@ -1124,7 +1124,7 @@ async fn decode_and_score_tx<'a>(
     if router.kind == RouterKind::Unknown {
         return Ok(());
     }
-    counters().decoded_ok.fetch_add(1, Ordering::Relaxed);
+    chain_counters(client.chain_id).decoded_ok.fetch_add(1, Ordering::Relaxed);
 
     let ctx = patterns::TxContext {
         chain_id: client.chain_id,
@@ -1436,10 +1436,10 @@ async fn decode_and_score_tx<'a>(
                 // Distinguish V2-only enrichment from V2+V3 in the event name so
                 // dashboards can chart V3 reach growth without parsing fields.
                 let event_name = if v3_used > 0 {
-                    counters().enriched_v3.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).enriched_v3.fetch_add(1, Ordering::Relaxed);
                     "scanner.candidate_enriched_v3"
                 } else {
-                    counters().enriched_v2.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).enriched_v2.fetch_add(1, Ordering::Relaxed);
                     "scanner.candidate_enriched"
                 };
                 info!(event = event_name,
@@ -1512,15 +1512,15 @@ async fn decode_and_score_tx<'a>(
             hash = %hash,
             "configure /config/trading to enable scoring; persisting raw observation"
         );
-        counters().gate_no_config.fetch_add(1, Ordering::Relaxed);
+        chain_counters(client.chain_id).gate_no_config.fetch_add(1, Ordering::Relaxed);
         opportunity.roi_pct = None;
         opportunity.risk_score = None;
         if let Some(pool) = db {
             if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-                counters().db_errors.fetch_add(1, Ordering::Relaxed);
+                chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
                 error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
             } else {
-                counters().db_persisted.fetch_add(1, Ordering::Relaxed);
+                chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
             }
         }
         publisher::publish(redis, &opportunity).await?;
@@ -1652,15 +1652,15 @@ async fn decode_and_score_tx<'a>(
             // GAP-2 fix: persist diagnostic reason — operator filters by
             // `rejection_reason` in the dashboard to count and audit allowlist gaps.
             opportunity.rejection_reason = Some(format!("TokenNotAllowed:{token_symbol_or_addr}"));
-            counters()
+            chain_counters(client.chain_id)
                 .gate_token_not_allowed
                 .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
                 if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-                    counters().db_errors.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
                     error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
                 } else {
-                    counters().db_persisted.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
                 }
             }
             publisher::publish(redis, &opportunity).await?;
@@ -1685,15 +1685,15 @@ async fn decode_and_score_tx<'a>(
             opportunity.roi_pct = Some(0.0);
             opportunity.risk_score = Some(0.0);
             opportunity.rejection_reason = Some(format!("StrategyDisabled:{strategy_kind}"));
-            counters()
+            chain_counters(client.chain_id)
                 .gate_strategy_disabled
                 .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
                 if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-                    counters().db_errors.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
                     error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
                 } else {
-                    counters().db_persisted.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
                 }
             }
             publisher::publish(redis, &opportunity).await?;
@@ -1723,15 +1723,15 @@ async fn decode_and_score_tx<'a>(
             opportunity.roi_pct = Some(0.0);
             opportunity.risk_score = Some(0.0);
             opportunity.rejection_reason = Some(format!("{tag}:{reason:?}"));
-            counters()
+            chain_counters(client.chain_id)
                 .gate_strategy_disabled
                 .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
                 if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-                    counters().db_errors.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
                     error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
                 } else {
-                    counters().db_persisted.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
                 }
             }
             publisher::publish(redis, &opportunity).await?;
@@ -1824,7 +1824,7 @@ async fn decode_and_score_tx<'a>(
     final_evidence.simulation_status = sim_status_str.clone();
     final_evidence.simulation_trace_hash = Some(trace_hash_sentinel.clone());
     if sim_status_str != "SIM_SUCCESS" {
-        counters()
+        chain_counters(client.chain_id)
             .simulator_fail_closed_rejected
             .fetch_add(1, Ordering::Relaxed);
     }
@@ -1880,15 +1880,15 @@ async fn decode_and_score_tx<'a>(
         // BUG-2-class issues (UnknownTokenPrice) and defense-in-depth
         // hits (AnomalousMath) separately from operational risk gates.
         if reason_str.starts_with("UnknownTokenPrice") {
-            counters()
+            chain_counters(client.chain_id)
                 .gate_unknown_token_price
                 .fetch_add(1, Ordering::Relaxed);
         } else if reason_str.starts_with("AnomalousMath") {
-            counters()
+            chain_counters(client.chain_id)
                 .gate_anomalous_math
                 .fetch_add(1, Ordering::Relaxed);
         } else {
-            counters()
+            chain_counters(client.chain_id)
                 .gate_other_rejected
                 .fetch_add(1, Ordering::Relaxed);
         }
@@ -1901,7 +1901,7 @@ async fn decode_and_score_tx<'a>(
             .expected_profit_usd
             .map(|gross| gross - cfg.gas_cost_usd());
     } else {
-        counters().passed_all_gates.fetch_add(1, Ordering::Relaxed);
+        chain_counters(client.chain_id).passed_all_gates.fetch_add(1, Ordering::Relaxed);
         // Spine scoring on REAL evidence (no more hardcoded 0.95 / 0.9 / 1.0).
         let engine = PrioritizationEngine {
             min_profit_threshold: cfg.min_profit_usd,
@@ -1959,7 +1959,7 @@ async fn decode_and_score_tx<'a>(
             profit_usd = ?opportunity.expected_profit_usd,
             "opportunity suppressed by route+time+profit dedup (BE-3.6)"
         );
-        counters()
+        chain_counters(client.chain_id)
             .gate_other_rejected
             .fetch_add(1, Ordering::Relaxed);
         return Ok(());
@@ -1968,10 +1968,10 @@ async fn decode_and_score_tx<'a>(
     // Persist + publish. Both are best-effort with their own error paths.
     if let Some(pool) = db {
         if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-            counters().db_errors.fetch_add(1, Ordering::Relaxed);
+            chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
             error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
         } else {
-            counters().db_persisted.fetch_add(1, Ordering::Relaxed);
+            chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
         }
     }
     publisher::publish(redis, &opportunity).await?;

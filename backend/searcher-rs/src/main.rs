@@ -437,7 +437,21 @@ async fn main() -> anyhow::Result<()> {
     // primary_chain: first enabled chain, used by the single-chain workers
     // (price, heartbeat, triangular, flashloan, liquidation) that are scoped
     // to one chain in this sprint. Multi-chain variants land in BE-3.2+.
-    let primary_chain: u64 = enabled_chains.first().copied().unwrap_or(1);
+    //
+    // B0.4 (2026-05-13) — Fail-honest if enabled_chains is empty.
+    //
+    // Previously this used `.unwrap_or(1)` which silently defaulted to chain 1
+    // even when the operator had no chains configured. That hid the real
+    // misconfiguration. Now we fail loudly: an empty enabled_chains list is
+    // a fatal boot error (paper-mode safety: no scanner without chains).
+    let primary_chain: u64 = match enabled_chains.first().copied() {
+        Some(c) => c,
+        None => {
+            anyhow::bail!(
+                "B0.4 fail-honest: enabled_chains is empty. Boot refused. Configure at least one chain via configs/app.toml [[chains]] (with enabled=true) or ARBX_ENABLED_CHAINS env var. No silent fallback to chain 1."
+            );
+        }
+    };
     let primary_rpc_pool: Option<Arc<HttpRpcPool>> = rpc_pools.get(&primary_chain).cloned();
 
     // BE-3.1 multichain orchestrator — spawns RpcHealth + GasOracle + PoolSync

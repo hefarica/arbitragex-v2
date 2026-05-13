@@ -13,7 +13,7 @@
 //!
 //! Cost: 1 Redis XLEN + 1 PG count query per period (default 60s).
 
-use crate::counters::counters;
+use crate::counters::chain_counters;
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
 use serde::Serialize;
@@ -224,7 +224,12 @@ impl HeartbeatWorker {
             // Drain in-memory scanner counters via atomic swap → 0
             // so each heartbeat reports the delta for the just-elapsed period.
             // Lock-free; safe across all increment sites in scanner.rs.
-            let c = counters();
+            //
+            // B0.1 (2026-05-13): per-chain isolation. Each HeartbeatWorker is
+            // already constructed with `chain_id`; we now drain ONLY the
+            // counters for this chain. Other chains' counters are read by
+            // their own HeartbeatWorker instances. Crosstalk eliminated.
+            let c = chain_counters(self.chain_id);
             let pending = c.pending_received.swap(0, Ordering::Relaxed);
             let decoded = c.decoded_ok.swap(0, Ordering::Relaxed);
             let enriched_v2 = c.enriched_v2.swap(0, Ordering::Relaxed);

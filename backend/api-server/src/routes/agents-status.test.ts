@@ -17,7 +17,7 @@ const { AGENT_DEFS, runtimeOverlay, summarize, overallStatus } = __forTesting;
 
 describe("agents-status — doctrinal completeness", () => {
   it("defines exactly 18 agents (17 originals + scoring-primitives-agent A.8)", () => {
-    expect(AGENT_DEFS.length).toBe(18);
+    expect(AGENT_DEFS.length).toBe(19);
   });
 
   it("includes each documented Agent Team id", () => {
@@ -35,6 +35,7 @@ describe("agents-status — doctrinal completeness", () => {
       "data-wiring-agent",
       "security-guard-agent",
       "risk-circuit-agent",
+      "per-chain-isolation-agent",
       "scoring-primitives-agent",
       "anti-mock-agent",
       "visual-regression-agent",
@@ -102,8 +103,8 @@ describe("summarize", () => {
   it("counts verdict buckets correctly", () => {
     const agents = AGENT_DEFS.map((d) => runtimeOverlay(d, { readinessOk: true, readinessFailDetail: null }));
     const s = summarize(agents);
-    expect(s.total).toBe(18);
-    expect(s.pass + s.partial + s.blocked + s.no_go + s.not_run + s.unknown).toBe(18);
+    expect(s.total).toBe(19);
+    expect(s.pass + s.partial + s.blocked + s.no_go + s.not_run + s.unknown).toBe(19);
     // Post-A.8 baseline: 15 PASS, 2 PARTIAL (risk-circuit + scoring-primitives), 1 NO_GO (go-no-go).
     expect(s.partial).toBeGreaterThanOrEqual(2);
     expect(s.no_go).toBeGreaterThanOrEqual(1);
