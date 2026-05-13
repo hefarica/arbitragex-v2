@@ -1007,7 +1007,7 @@ async fn process_pending<'a>(
     {
         Ok(Ok(Some(t))) => t,
         Ok(Ok(None)) => return Ok(()), // dropped from mempool before we got it
-        Ok(Err(e)) => return Err(e.into()),
+        Ok(Err(e)) => return Err(e),
         Err(_) => {
             chain_counters(client.chain_id)
                 .pending_received

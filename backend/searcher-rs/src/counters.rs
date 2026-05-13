@@ -317,7 +317,16 @@ pub fn chain_counters(chain_id: u64) -> Arc<ScannerCounters> {
     }
     // Slow path: write lock, insert if still missing (another thread may have
     // raced us and inserted between read drop and write acquire).
-    let mut map = REGISTRY.write().expect("counters registry write lock poisoned");
+    //
+    // On lock poison: counters are atomic primitives, so a poisoned guard
+    // observed under R8 fail-honest means another thread panicked WHILE
+    // holding the write lock — the per-chain map itself is still valid for
+    // read. `into_inner` returns the underlying guard so we proceed; the
+    // calling counter remains a fresh `AtomicU64::default()` regardless.
+    let mut map = match REGISTRY.write() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    };
     map.entry(chain_id)
         .or_insert_with(|| Arc::new(ScannerCounters::default()))
         .clone()

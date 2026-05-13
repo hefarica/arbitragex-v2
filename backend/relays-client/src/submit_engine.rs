@@ -102,7 +102,7 @@ impl SubmitEngine {
         // never affects Chain Y. Falls back to legacy `arbx:papermode` for 30
         // days from 2026-05-13 (PaperModeClient::state_for_chain handles the
         // fallback chain internally with PaperModeSource attribution).
-        let paper_dynamic = self.paper_mode.is_enabled_for_chain(opp.chain_id as u64).await;
+        let paper_dynamic = self.paper_mode.is_enabled_for_chain(opp.chain_id).await;
         let paper = paper_dynamic || paper_env;
 
         // -----------------------------------------------------------------------
