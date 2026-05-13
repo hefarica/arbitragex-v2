@@ -5913,6 +5913,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "sed-core"
+version = "1.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "shared-rs",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid 1.23.1",
+]
+
+[[package]]
 name = "semver"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

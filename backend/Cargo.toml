@@ -9,6 +9,11 @@ members = [
     "prioritization-spine",
     "simulator-v2",
     "token-enricher",
+    # B1.e (2026-05-13) — Sequential Equilibrium Dispatcher quantitative
+    # orchestration layer. Phase 1 scaffold ships only types/ (typestate
+    # + kill-switch + 501 prereq); math bodies (filtration, eigenstate,
+    # allocator, hedger) defer to Phase 2.
+    "sed-core",
 ]
 
 [workspace.package]
