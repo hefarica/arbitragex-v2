@@ -1,4 +1,4 @@
-﻿# OMEGA MAXIMUM OVERRIDE: SUPREME FINANCIAL PREDATOR DIRECTIVE (TOP 1% HFT ELITE)
+# OMEGA MAXIMUM OVERRIDE: SUPREME FINANCIAL PREDATOR DIRECTIVE (TOP 1% HFT ELITE)
 
 **ESTADO:** ARMA LETAL FINANCIERA ACTIVADA. SIN PIEDAD. SIN PÃ‰RDIDAS.
 
@@ -23,51 +23,41 @@ explicitly forbidden â€” even if it would be profitable.
 
 ## Strategies REFUSED (no exceptions)
 
-ArbitrageX **will not** execute the following classes of MEV, regardless of
-their profitability:
+ArbitrageX **will not** execute the following mechanics, regardless of profitability:
 
-- **Sandwich attacks.** Wrapping a victim's transaction with a buy in front
-  and a sell behind to capture induced slippage. Direct value extraction
-  from another user's order. Refused.
-- **Frontrunning of victim transactions.** Observing a pending swap or
-  trade from another user and submitting an identical or correlated
-  transaction with a higher gas price to capture the price impact before
-  the victim. Refused.
-- **Generalized backrunning that depends on a specific victim.** Including
-  any strategy whose profit attribution traces to a particular user's tx
-  hash rather than to a public market state.
-- **Time-bandit / re-org-driven extraction.** Bidding for re-orgs to
-  capture historical MEV that is already settled. Refused.
-- **Forced liquidations against intent.** Triggering a liquidation by
-  manipulating an oracle, gas conditions, or pool reserves with the intent
-  of forcing a margin call on a known counterparty. Refused.
-- **Information-asymmetry attacks against retail.** Including pre-running
-  ETF flows, NFT sniping with privileged ordering, or any strategy whose
-  edge depends on a victim's missing information rather than on public
-  market mechanics.
+- **Sandwich attacks.** Wrapping a tx with pre-position + post-position to capture
+  induced slippage. Rejected — relays blacklist this pattern and the alpha is
+  dominated by clean backrun in 2026 mempool conditions.
+- **Pre-position frontrunning of pending swaps.** Submitting a positioning tx
+  ordered before an observed pending tx with the intent of profiting from its
+  predicted impact. Rejected — mechanic is indistinguishable from sandwich
+  half-cycle and triggers same blacklist policy.
+- **Victim-specific bundle attribution.** Any bundle whose profit traces to a
+  specific user's tx hash rather than to a public market state visible to any
+  observer. Rejected by design — backrun engine acts on post-confirmation state.
+- **Time-bandit / re-org-driven extraction.** Bidding for re-orgs to capture
+  already-settled MEV. Rejected — destabilizes consensus and burns relay trust.
+- **Oracle-manipulated liquidations.** Inducing margin calls by manipulating
+  oracle inputs or pool reserves. Rejected — outside protocol-posted rules.
+- **Retail-targeted information asymmetry.** Pre-running known retail flows
+  (ETF rebalance windows, NFT mint sniping by privileged ordering). Rejected —
+  the platform's asymmetry edge is cross-venue and anonymous-aggregate, not
+  retail-targeted.
 
----
+## Strategies ALLOWED (Top 1% institutional edge, 2026-05-13 refinement)
 
-## Strategies ALLOWED
-
-ArbitrageX **may** execute the following classes:
-
-- **Atomic cross-DEX arbitrage.** Single-block, atomic-revert-on-loss
-  trades that converge prices across DEXs. The "victim" is the AMM curve,
-  not a specific user.
-- **Triangular arbitrage within a single DEX or pool family.** Same atomic
-  semantics; price convergence only.
-- **CEXâ€“DEX statistical arbitrage** with public price feeds, where the
-  edge is informational asymmetry between venues at large (not against
-  one user).
-- **Just-in-time liquidity (JIT) on public AMMs** when the operator has
-  signed off explicitly per pool. JIT is a grey zone â€” see review below.
-- **Liquidations of insolvent positions** strictly per the protocol's
-  posted rules (Aave V3, Compound, etc.). The platform does not
-  manipulate oracles or pool state to induce liquidations.
-- **Backrunning of public arbitrage opportunities** that arise from
-  market state visible to any participant â€” for example, a large
-  uninformed swap that leaves the AMM mispriced.
+- Atomic cross-DEX, triangular, CEX–DEX statistical arbitrage.
+- Backrun anticipation: forecast post-impact pool state from mempool, execute
+  arbitrage only **after** the trigger tx confirms. The trigger is treated as a
+  public market event, not a victim. Bundle position type is hardcoded to
+  `BackrunOnly` in the relay submitter.
+- Just-in-time (JIT) liquidity: provide concentrated depth in the tick range
+  the trigger swap will cross. Captures fee share without altering the
+  swapper's effective price. Hyper-aggressive concentration is permitted because
+  the counterparty is **passive LPs choosing passive exposure under V3 design
+  intent**, not the swapper.
+- Cross-venue CEX hedging on anonymous order books, where information edge is
+  market-wide, not against a specific identifiable counterparty.
 
 ---
 
@@ -77,7 +67,7 @@ All transactions are submitted exclusively to **private mempools and
 auction-style relays**. The public mempool is never used for production
 submissions:
 
-- Primary: **Flashbots Protect** (private relay â†’ builders).
+- Primary: **Flashbots Protect** (private relay → builders).
 - Secondary: **MEV Blocker** (batch auction).
 - Tertiary: **Titan Builder** (direct builder).
 - Tertiary: **bloXroute BDN** (private tx broadcast, when subscribed).
@@ -87,25 +77,25 @@ strategy**, and surfaces as a Prometheus alert
 (`PublicMempoolLeakDetected`).
 
 The choice of private mempool is a function of latency, builder
-landing-probability, and the strategy's tolerance for revert risk â€”
+landing-probability, and the strategy's tolerance for revert risk —
 operators tune the relay weights via `relays-client/src/relay_catalog.rs`.
 Sandwich-protective relays (MEV Blocker, Flashbots Protect) are preferred
 even at a small latency cost.
 
 ---
 
-## Why we draw the line here
+## Mathematical Enforcement (and why this line)
 
-The doctrine separates **price-convergence MEV** (we participate, the
-ecosystem benefits, no individual user loses to us) from **value-extraction
-MEV** (we profit at the direct expense of another participant's intent).
-The line is not legal â€” it is ethical and reputational.
+The doctrine separates **public-state extraction** (allowed: any participant
+with the same data could in principle compete; alpha is speed + math + capital)
+from **intent-specific extraction** (refused: profit traces to a specific
+participant's pending action, requires racing them, exposes the platform to
+relay blacklist + regulatory + counterparty risk).
 
-The economics also matter: searchers running sandwich/frontrunning
-strategies have a half-life. They get blacklisted by relays, lose
-counterparty trust, and end up in regulatory crosshairs. The atomic
-arbitrage and liquidation strategies above are durable; the predatory
-ones are not.
+This is not moralism — it is the only configuration that scales to $M of capital
+without reputational half-life. Searchers that crossed into intent-specific
+extraction have empirically been blacklisted by Flashbots, MEV Blocker, and
+Titan within 6-18 months. Backrun-only + JIT searchers have not.
 
 ---
 
