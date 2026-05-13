@@ -687,3 +687,71 @@ export const RuntimeStatusResponseSchema = z.object({
 
 export type RuntimeStatusStrategy = z.infer<typeof RuntimeStatusStrategySchema>;
 export type RuntimeStatusResponse = z.infer<typeof RuntimeStatusResponseSchema>;
+
+// ─────── Readiness extras: blockers + decision (P2) ───────
+//
+// Wire contract for /api/v1/readiness/blockers and /api/v1/readiness/decision.
+// All enums use z.string() with passthrough at the schema level so the FE never
+// breaks on backend additions (forward-compat). The redacted_value field is
+// either the literal "present" or null — the raw value is NEVER on the wire.
+
+export const ReadinessBlockerEvidenceSchema = z.object({
+  env_present: z.boolean(),
+  redacted_value: z.union([z.literal("present"), z.null()]),
+  value_length: z.number().int().nonnegative().nullable(),
+  source: z.string(),
+  readiness_id: z.string().optional(),
+  readiness_status: z.string().optional(),
+});
+
+export const ReadinessBlockerSchema = z.object({
+  id: z.string(),
+  category: z.string(),
+  severity: z.string(),
+  status: z.string(),
+  title: z.string(),
+  description: z.string(),
+  required_action: z.string(),
+  operator_required: z.boolean(),
+  can_auto_resolve: z.boolean(),
+  blocks: z.array(z.string()),
+  evidence: ReadinessBlockerEvidenceSchema,
+});
+
+export const ReadinessBlockersResponseSchema = z.object({
+  generated_at: z.string(),
+  source: z.string(),
+  overall_status: z.string(),
+  blockers: z.array(ReadinessBlockerSchema),
+  summary: z.object({
+    critical: z.number().int().nonnegative(),
+    high: z.number().int().nonnegative(),
+    medium: z.number().int().nonnegative(),
+    low: z.number().int().nonnegative(),
+    blocked_phases: z.array(z.string()),
+  }),
+});
+
+export const ReadinessDecisionResponseSchema = z.object({
+  generated_at: z.string(),
+  go_a5: z.boolean(),
+  go_live: z.boolean(),
+  verdict: z.string(),
+  phase: z.string(),
+  // Backend declares capital_exposure_usd as the LITERAL 0. We accept any
+  // non-negative number here (defensive) but the only valid runtime value is 0.
+  capital_exposure_usd: z.number().nonnegative(),
+  live_trading: z.boolean(),
+  private_relay: z.boolean(),
+  submit_enabled: z.boolean(),
+  paper_mode: z.boolean(),
+  reasons: z.array(z.string()),
+  next_action: z.string(),
+  blockers_ref: z.string(),
+  required_for_go_live: z.array(z.string()),
+});
+
+export type ReadinessBlockerEvidence = z.infer<typeof ReadinessBlockerEvidenceSchema>;
+export type ReadinessBlocker = z.infer<typeof ReadinessBlockerSchema>;
+export type ReadinessBlockersResponse = z.infer<typeof ReadinessBlockersResponseSchema>;
+export type ReadinessDecisionResponse = z.infer<typeof ReadinessDecisionResponseSchema>;

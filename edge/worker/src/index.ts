@@ -415,6 +415,13 @@ app.get("/api/strategies/runtime-status", (c) => proxy(c, "/api/v1/strategies/ru
 // short TTL lets the operator catch a paused searcher within ~5s of polling.
 app.get("/api/scanner/heartbeat", (c) => proxy(c, "/api/v1/scanner/heartbeat", "arbx:cache:scanner-hb", 5));
 
+// Readiness extras (P2). Derived views over /api/v1/readiness:
+//   /api/readiness/blockers — flat list of redacted env + doctrinal blockers.
+//   /api/readiness/decision — go_live / go_a5 verdict + reasons + next_action.
+// Same 15s KV TTL as /api/readiness so the operator sees coherent state.
+app.get("/api/readiness/blockers", (c) => proxy(c, "/api/v1/readiness/blockers", "arbx:cache:readiness-blockers", 15));
+app.get("/api/readiness/decision", (c) => proxy(c, "/api/v1/readiness/decision", "arbx:cache:readiness-decision", 15));
+
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError((err, c) => {
   console.error(JSON.stringify({ event: "edge.error", err: err.message }));

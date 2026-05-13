@@ -11,6 +11,8 @@ import type {
   ReadinessReport,
   ReadinessStatus,
 } from "@/lib/schemas";
+import { BlockersPanel } from "@/features/readiness/BlockersPanel";
+import { GoNoGoPanel } from "@/features/readiness/GoNoGoPanel";
 
 // ─── Aesthetic helpers ───────────────────────────────────────────────────
 
@@ -310,6 +312,14 @@ export default function LiveReadinessPage() {
           <FlipToggle report={report} />
         </>
       )}
+
+      {/* P2 (2026-05-13): derived blockers + GO/NO-GO decision panels.
+          Rendered AFTER the existing 17-item verifier list and FlipToggle,
+          additively. Failures in these panels do not affect the existing UI. */}
+      <div className="mt-10 space-y-6 border-t border-border/40 pt-8">
+        <GoNoGoPanel />
+        <BlockersPanel />
+      </div>
     </>
   );
 }

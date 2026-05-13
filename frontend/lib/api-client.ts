@@ -285,6 +285,18 @@ export function getRuntimeStatus(chainId = 1) {
   );
 }
 
+// Readiness blockers — flat list of every concrete obstacle between paper
+// mode and live execution. Env values are NEVER on the wire (presence-only).
+export function getReadinessBlockers() {
+  return getValidated("/api/readiness/blockers", S.ReadinessBlockersResponseSchema);
+}
+
+// Readiness decision — go/no-go verdict derived from blockers + immutable
+// safety flags (live_trading=false, capital_exposure_usd=0).
+export function getReadinessDecision() {
+  return getValidated("/api/readiness/decision", S.ReadinessDecisionResponseSchema);
+}
+
 export function getTradingConfig(chainId: number) {
   return getValidated(`/api/trading-config?chain_id=${chainId}`, S.TradingConfigResponseSchema);
 }

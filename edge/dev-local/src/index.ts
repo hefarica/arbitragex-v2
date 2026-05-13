@@ -159,6 +159,9 @@ app.get("/api/config/current", (req, res) => proxy("/api/v1/config/current", req
 app.get("/api/relays", (req, res) => proxy("/api/v1/relays", req, res));
 app.get("/api/onboarding/status", (req, res) => proxy("/api/v1/onboarding/status", req, res));
 app.get("/api/readiness", (req, res) => proxy("/api/v1/readiness", req, res));
+// P2 readiness extras: derived blockers list and go/no-go decision.
+app.get("/api/readiness/blockers", (req, res) => proxy("/api/v1/readiness/blockers", req, res));
+app.get("/api/readiness/decision", (req, res) => proxy("/api/v1/readiness/decision", req, res));
 // Trading Config — operator-tunable strategy parameters per chain.
 app.get("/api/trading-config", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
