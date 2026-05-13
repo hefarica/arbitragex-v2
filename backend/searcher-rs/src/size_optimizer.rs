@@ -78,6 +78,17 @@ pub enum OptimizeRejectReason {
     /// `clamp_to_cap_wei` returned `None` (internal overflow guard — should never fire
     /// in practice but is modelled explicitly to distinguish from missing reserves).
     CapClampFailed,
+    /// Net profit below the gas-safety floor: `net_usd < gas_usd × kelly_gas_safety_multiplier`.
+    /// The trade is viable in the kernel's view (net > 0) but does not survive the
+    /// stricter post-optimization floor that protects against gas price spikes
+    /// between forecast and inclusion (operator directive 2026-05-13).
+    GasFloorBreach,
+    /// Kelly criterion computed a non-positive fraction → mathematical edge is
+    /// against us. Specifically `p × W ≤ (1 − p)`: the win-probability adjusted
+    /// gain does not exceed the loss-probability adjusted loss. Rejecting here
+    /// avoids deploying capital on bets where the expected logarithmic growth
+    /// is negative even after the kernel found a profit-optimal point.
+    KellyNegativeEdge,
 }
 
 impl OptimizeRejectReason {
@@ -98,6 +109,8 @@ impl OptimizeRejectReason {
             Self::NonPositiveGrossUsd => "non_positive_gross_usd",
             Self::NonPositiveNetUsd => "non_positive_net_usd",
             Self::CapClampFailed => "cap_clamp_failed",
+            Self::GasFloorBreach => "gas_floor_breach",
+            Self::KellyNegativeEdge => "kelly_negative_edge",
         }
     }
 }
@@ -230,15 +243,15 @@ impl SizeOptimizer {
         let token_in_symbol = resolve_token_in_symbol(&candidate, state);
 
         // Step 3: capital cap in USD.
-        let base_cap_usd = state.effective_capital_for(&token_in_symbol, candidate.label.as_str());
-        
-        // OMEGA MANDATE: Kelly Criterion Sizing
-        // Uses high win prob (0.95) and modest gain/loss ratios typical of MEV arb.
-        let cap_usd = if let Some(kelly_frac) = crate::kelly_sizing::fractional_kelly(0.95, 0.01, 0.005, 0.5, 1.0) {
-            base_cap_usd * kelly_frac
-        } else {
-            base_cap_usd
-        };
+        //
+        // Kelly is applied POST-optimization (after the kernel finds the
+        // profit-optimal `optimal_amount_in`) — see `apply_kelly_constraints`
+        // below. Applying Kelly here as a pre-cap on the search range would
+        // require pre-estimating win_prob/gain/loss without candidate-specific
+        // evidence, yielding a constant scaling rather than a real Kelly cap.
+        // The previous in-tree version (commit 7df940f) did exactly that with
+        // hardcoded 0.95/0.01/0.005 — removed.
+        let cap_usd = state.effective_capital_for(&token_in_symbol, candidate.label.as_str());
         if cap_usd <= 0.0 {
             debug!(
                 event = "size_optimizer.zero_cap",
@@ -284,7 +297,7 @@ impl SizeOptimizer {
         }
 
         // Step 7: dispatch to the correct sizing kernel.
-        let result_opt = match candidate.label {
+        let kernel_outcome = match candidate.label {
             StrategyLabel::TriangularArb => {
                 self.size_triangular_with_reason(
                     &candidate,
@@ -310,7 +323,169 @@ impl SizeOptimizer {
             }
         };
 
+        // Step 8: Kelly post-optimization constraints (fix-2, 2026-05-13).
+        // Replaces the static hardcoded Kelly that the previous version
+        // applied as a 50% pre-cap on the search range. Now uses
+        // candidate-specific gross/net ratios + config-sourced multiplier
+        // and per-trade cap.
+        let result_opt = Self::apply_kelly_constraints(
+            kernel_outcome,
+            state,
+            cap_usd,
+            token_price_usd,
+            decimals,
+        );
+
         Ok(result_opt)
+    }
+
+    // -----------------------------------------------------------------------
+    // Step 8 — Kelly post-optimization constraints
+    // -----------------------------------------------------------------------
+
+    /// Apply the constrained-fractional-Kelly + gas-floor + intersection-min
+    /// constraints to the kernel's profit-optimal candidate.
+    ///
+    /// Math (operator directive, 2026-05-13):
+    ///   f* = p − (1 − p)/W                           [constrained Kelly]
+    ///   p  = state.min_landing_probability ∈ (0, 1)  [conservative; swap for
+    ///                                                 candidate.evidence.landing_probability
+    ///                                                 once that field is wired post-A.4]
+    ///   W  = gross_profit_usd / total_cost_usd        [gain/loss ratio per
+    ///                                                 unit capital, cost
+    ///                                                 proxy includes gas +
+    ///                                                 flashloan fee + ops]
+    ///   final_size = min(kernel_optimum,
+    ///                   nav × f* × kelly_multiplier  capped at kelly_max_per_trade_fraction)
+    ///   Gas floor: net_usd ≥ cost_usd × kelly_gas_safety_multiplier
+    fn apply_kelly_constraints(
+        outcome: OptimizeOutcome,
+        state: &TradingConfigState,
+        cap_usd: f64,
+        token_price_usd: f64,
+        decimals: u8,
+    ) -> OptimizeOutcome {
+        let mut sized = match outcome {
+            OptimizeOutcome::Sized(boxed) => *boxed,
+            // Rejected outcomes pass through — kernel already named the reason.
+            OptimizeOutcome::Rejected(r) => return OptimizeOutcome::Rejected(r),
+        };
+
+        let gross_usd = sized.gross_profit_usd;
+        let net_usd = sized.estimated_net_profit_usd;
+        if gross_usd <= 0.0 || net_usd <= 0.0 {
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveNetUsd);
+        }
+
+        // Cost proxy: everything that the kernel subtracted from gross to
+        // arrive at net (gas + flashloan fee + ops overhead + capital cost).
+        // Using the full proxy makes the safety floor strictly stronger than
+        // gas-only — desirable for the conservative posture.
+        let cost_proxy_usd = (gross_usd - net_usd).max(0.0);
+
+        // Gas Floor (operator directive #3): require net ≥ multiplier × cost.
+        if net_usd < cost_proxy_usd * state.kelly_gas_safety_multiplier {
+            debug!(
+                event = "size_optimizer.kelly_gas_floor_breach",
+                label = sized.candidate.label.as_str(),
+                net_usd,
+                cost_proxy_usd,
+                multiplier = state.kelly_gas_safety_multiplier,
+            );
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::GasFloorBreach);
+        }
+
+        // Constrained Fractional Kelly (operator directive #1).
+        let p = state.min_landing_probability.clamp(0.01, 0.99);
+        let w_ratio = if cost_proxy_usd > 1e-9 {
+            gross_usd / cost_proxy_usd
+        } else {
+            // Degenerate cost: gain dominates loss → cap fraction by p
+            // (the Kelly limit as W → ∞).
+            f64::INFINITY
+        };
+
+        let f_raw = if w_ratio.is_infinite() {
+            p
+        } else {
+            p - (1.0 - p) / w_ratio
+        };
+
+        if !f_raw.is_finite() || f_raw <= 0.0 {
+            debug!(
+                event = "size_optimizer.kelly_negative_edge",
+                label = sized.candidate.label.as_str(),
+                p,
+                w_ratio,
+            );
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::KellyNegativeEdge);
+        }
+
+        // Apply config-sourced multiplier and per-trade cap (operator
+        // directive #4 + no-hardcode doctrine).
+        let f_scaled = (f_raw * state.kelly_multiplier).clamp(0.0, 1.0);
+        let f_capped = f_scaled.min(state.kelly_max_per_trade_fraction);
+
+        // Convert Kelly USD cap → wei. Unlike the kernel's `clamp_to_cap_wei`
+        // (which floors the whole-token count and returns None for sub-token
+        // caps), Kelly must support fractional-token caps because the
+        // fractional-Kelly bound on small NAVs frequently yields amounts
+        // smaller than one token (e.g., 0.001 WETH = 10^15 wei is valid).
+        let kelly_cap_usd = cap_usd * f_capped;
+        let kelly_cap_wei = if kelly_cap_usd > 0.0
+            && token_price_usd.is_finite()
+            && token_price_usd > 0.0
+        {
+            let tokens_capped = kelly_cap_usd / token_price_usd;
+            let wei_f = tokens_capped * 10f64.powi(i32::from(decimals));
+            if !wei_f.is_finite() || wei_f <= 0.0 {
+                // Kelly cap rounds to zero wei — too small to bet at all.
+                return OptimizeOutcome::Rejected(
+                    OptimizeRejectReason::ZeroCapitalCap,
+                );
+            }
+            f64_to_u256_clamped(wei_f.floor())
+        } else {
+            // Numerical edge — keep kernel result (conservative fall-back).
+            return OptimizeOutcome::Sized(Box::new(sized));
+        };
+
+        if sized.optimal_amount_in <= kelly_cap_wei {
+            // Kelly cap not binding — kernel's optimum is already inside Kelly's
+            // budget. No further action.
+            return OptimizeOutcome::Sized(Box::new(sized));
+        }
+
+        // Kelly binds: rescale to the capped amount. Profit scales
+        // approximately linearly for small-to-medium bets relative to pool
+        // depth (V2 CPMM) and exactly when entirely within a V3 tick range.
+        // Gas does not rescale — same tx, same gas. For exact precision at
+        // the new amount, the kernel would need a second pass; deferred
+        // here as the approximation is conservative (overestimates gas
+        // weight at smaller sizes).
+        let denom = u256_to_f64_lossy(sized.optimal_amount_in);
+        let ratio = if denom > 0.0 {
+            (u256_to_f64_lossy(kelly_cap_wei) / denom).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let new_gross = (gross_usd * ratio).max(0.0);
+        let new_net = (new_gross - cost_proxy_usd).max(0.0);
+
+        if new_net <= 0.0 {
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveNetUsd);
+        }
+        // Re-check gas floor on the scaled profit. A Kelly cap that drives
+        // profit below the floor means the size we were forced down to is
+        // not worth running at all.
+        if new_net < cost_proxy_usd * state.kelly_gas_safety_multiplier {
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::GasFloorBreach);
+        }
+
+        sized.optimal_amount_in = kelly_cap_wei;
+        sized.gross_profit_usd = new_gross;
+        sized.estimated_net_profit_usd = new_net;
+        OptimizeOutcome::Sized(Box::new(sized))
     }
 
     // -----------------------------------------------------------------------
@@ -940,6 +1115,11 @@ mod tests {
             spread_sanity_mult: 3.0,
             p_copied_volume_threshold_usd: 1_000_000.0,
             p_copied_max: 0.5,
+            // Kelly fix-2 fields. Tests use loose values to keep existing
+            // golden-path tests passing; Kelly-specific tests override.
+            kelly_multiplier: 0.5,
+            kelly_max_per_trade_fraction: 1.0, // no cap in legacy tests
+            kelly_gas_safety_multiplier: 1.0,  // permissive in legacy tests
             enabled: true,
             updated_at: Utc::now(),
             updated_by: None,
@@ -1814,6 +1994,229 @@ mod tests {
         assert!(
             result.is_none(),
             "symmetric pools must return None even for flashloan candidate"
+        );
+    }
+
+    // ── Fix-2 (2026-05-13): Kelly post-optimization tests ──────────────
+
+    /// Build a SizedCandidate with explicit gross/net/optimal_amount_in
+    /// for direct `apply_kelly_constraints` testing.
+    fn make_sized(
+        optimal_amount_in_wei: U256,
+        gross_usd: f64,
+        net_usd: f64,
+    ) -> SizedCandidate {
+        let pa = addr(1);
+        let pb = addr(2);
+        let ti = addr(3);
+        let to = addr(4);
+        let cand = make_dex_candidate(pa, pb, ti, to, StrategyLabel::DexArbV2V2);
+        SizedCandidate {
+            candidate: cand,
+            optimal_amount_in: optimal_amount_in_wei,
+            gross_profit_usd: gross_usd,
+            estimated_net_profit_usd: net_usd,
+        }
+    }
+
+    /// Cfg helper that lets us override the Kelly knobs independently.
+    fn make_cfg_kelly(
+        capital_usd: f64,
+        kelly_multiplier: f64,
+        kelly_max_per_trade_fraction: f64,
+        kelly_gas_safety_multiplier: f64,
+        min_landing_probability: f64,
+    ) -> TradingConfigState {
+        let mut c = make_cfg(capital_usd);
+        c.kelly_multiplier = kelly_multiplier;
+        c.kelly_max_per_trade_fraction = kelly_max_per_trade_fraction;
+        c.kelly_gas_safety_multiplier = kelly_gas_safety_multiplier;
+        c.min_landing_probability = min_landing_probability;
+        c
+    }
+
+    #[test]
+    fn kelly_passes_rejected_through_unchanged() {
+        let cfg = make_cfg(1000.0);
+        let result = SizeOptimizer::apply_kelly_constraints(
+            OptimizeOutcome::Rejected(OptimizeRejectReason::NoConfig),
+            &cfg,
+            1000.0,
+            3000.0,
+            18,
+        );
+        match result {
+            OptimizeOutcome::Rejected(OptimizeRejectReason::NoConfig) => {}
+            _ => panic!("expected pass-through Rejected(NoConfig)"),
+        }
+    }
+
+    #[test]
+    fn kelly_passes_when_cap_not_binding() {
+        // Generous cap and permissive gates → Kelly does not change the kernel
+        // result.
+        let cfg = make_cfg_kelly(
+            /* capital_usd */ 1_000_000.0,
+            /* multiplier */ 0.5,
+            /* max_per_trade */ 1.0,
+            /* gas_safety */ 1.0,
+            /* min_p */ 0.8,
+        );
+        let sized = make_sized(unit(1), 100.0, 90.0); // 1 WETH bet; cap is huge
+        let result = SizeOptimizer::apply_kelly_constraints(
+            OptimizeOutcome::Sized(Box::new(sized.clone())),
+            &cfg,
+            cfg.capital_usd,
+            3000.0,
+            18,
+        );
+        match result {
+            OptimizeOutcome::Sized(s) => {
+                assert_eq!(s.optimal_amount_in, sized.optimal_amount_in);
+                assert_eq!(s.gross_profit_usd, sized.gross_profit_usd);
+                assert_eq!(s.estimated_net_profit_usd, sized.estimated_net_profit_usd);
+            }
+            OptimizeOutcome::Rejected(r) => panic!("unexpected reject {:?}", r),
+        }
+    }
+
+    #[test]
+    fn kelly_caps_optimal_when_max_per_trade_binds() {
+        // Tight max_per_trade forces the cap to bind. Profit must scale down.
+        let cfg = make_cfg_kelly(
+            /* capital_usd */ 3_000.0,    // $3K cap
+            /* multiplier */ 0.5,
+            /* max_per_trade */ 0.001, // 0.1% of NAV → max bet $3
+            /* gas_safety */ 1.0,
+            /* min_p */ 0.8,
+        );
+        // Kernel says: 1 WETH ≈ $3000, gross=$100, net=$90 (cost=$10).
+        let sized = make_sized(unit(1), 100.0, 90.0);
+        let result = SizeOptimizer::apply_kelly_constraints(
+            OptimizeOutcome::Sized(Box::new(sized.clone())),
+            &cfg,
+            cfg.capital_usd,
+            3000.0,
+            18,
+        );
+        match result {
+            OptimizeOutcome::Sized(s) => {
+                assert!(
+                    s.optimal_amount_in < sized.optimal_amount_in,
+                    "Kelly cap should have reduced optimal_amount_in (was {}, now {})",
+                    sized.optimal_amount_in,
+                    s.optimal_amount_in,
+                );
+                assert!(
+                    s.gross_profit_usd < sized.gross_profit_usd,
+                    "gross should scale down when amount caps down",
+                );
+            }
+            OptimizeOutcome::Rejected(r) => {
+                // The scaled net may drop below gas floor at very tight caps;
+                // both Sized-with-smaller-amount and Rejected(GasFloorBreach
+                // / NonPositiveNetUsd) are doctrinally correct outcomes.
+                assert!(
+                    matches!(
+                        r,
+                        OptimizeRejectReason::GasFloorBreach
+                            | OptimizeRejectReason::NonPositiveNetUsd
+                    ),
+                    "unexpected reject {:?}",
+                    r,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn gas_floor_rejects_when_net_below_safety_multiplier() {
+        // gross=10, net=4 → cost_proxy=6. With gas_safety=3.0, floor=18.
+        // net (4) < floor (18) → reject GasFloorBreach.
+        let cfg = make_cfg_kelly(1000.0, 0.5, 1.0, 3.0, 0.8);
+        let sized = make_sized(unit(1), 10.0, 4.0);
+        let result = SizeOptimizer::apply_kelly_constraints(
+            OptimizeOutcome::Sized(Box::new(sized)),
+            &cfg,
+            1000.0,
+            3000.0,
+            18,
+        );
+        match result {
+            OptimizeOutcome::Rejected(OptimizeRejectReason::GasFloorBreach) => {}
+            other => panic!("expected GasFloorBreach, got {:?}", other.reason_str()),
+        }
+    }
+
+    #[test]
+    fn gas_floor_accepts_when_net_meets_safety_multiplier() {
+        // gross=100, net=90 → cost_proxy=10. With gas_safety=3.0, floor=30.
+        // net (90) ≥ floor (30) → accepts.
+        let cfg = make_cfg_kelly(1_000_000.0, 0.5, 1.0, 3.0, 0.8);
+        let sized = make_sized(unit(1), 100.0, 90.0);
+        let result = SizeOptimizer::apply_kelly_constraints(
+            OptimizeOutcome::Sized(Box::new(sized)),
+            &cfg,
+            1_000_000.0,
+            3000.0,
+            18,
+        );
+        assert!(
+            matches!(result, OptimizeOutcome::Sized(_)),
+            "gas floor should not reject when net ≥ multiplier × cost",
+        );
+    }
+
+    #[test]
+    fn kelly_rejects_negative_edge() {
+        // Setup so gas-floor passes but Kelly says negative edge.
+        // gross=100, net=70 → cost=30. With gas_safety=1.0, floor=30 ≤ net.
+        // W = gross/cost = 100/30 ≈ 3.33. p=0.2:
+        //   f* = 0.2 - 0.8/3.33 ≈ 0.2 - 0.24 = -0.04 < 0 → KellyNegativeEdge.
+        let cfg = make_cfg_kelly(1_000_000.0, 0.5, 1.0, 1.0, 0.2);
+        let sized = make_sized(unit(1), 100.0, 70.0);
+        let result = SizeOptimizer::apply_kelly_constraints(
+            OptimizeOutcome::Sized(Box::new(sized)),
+            &cfg,
+            1_000_000.0,
+            3000.0,
+            18,
+        );
+        match result {
+            OptimizeOutcome::Rejected(OptimizeRejectReason::KellyNegativeEdge) => {}
+            other => panic!("expected KellyNegativeEdge, got {:?}", other.reason_str()),
+        }
+    }
+
+    #[test]
+    fn kelly_accepts_when_edge_is_positive() {
+        // p=0.7 (good), W = gross/cost = 100/10 = 10
+        // f* = 0.7 - 0.3/10 = 0.67 > 0 → accept (with cap).
+        let cfg = make_cfg_kelly(1_000_000.0, 0.5, 1.0, 1.0, 0.7);
+        let sized = make_sized(unit(1), 100.0, 90.0);
+        let result = SizeOptimizer::apply_kelly_constraints(
+            OptimizeOutcome::Sized(Box::new(sized)),
+            &cfg,
+            1_000_000.0,
+            3000.0,
+            18,
+        );
+        assert!(
+            matches!(result, OptimizeOutcome::Sized(_)),
+            "positive Kelly edge should accept",
+        );
+    }
+
+    #[test]
+    fn reject_reason_strings_cover_new_variants() {
+        // Regression alarm: every variant must map to a stable label.
+        assert_eq!(
+            OptimizeRejectReason::GasFloorBreach.as_str(),
+            "gas_floor_breach"
+        );
+        assert_eq!(
+            OptimizeRejectReason::KellyNegativeEdge.as_str(),
+            "kelly_negative_edge"
         );
     }
 }
