@@ -961,12 +961,34 @@ async fn process_pending<'a>(
         return Ok(());
     }
     chain_counters(client.chain_id).pending_received.fetch_add(1, Ordering::Relaxed);
-    let tx = match tokio::time::timeout(std::time::Duration::from_millis(1), client.get_tx(hash)).await {
+    // Aggressive but realistic timeout for eth_getTransactionByHash.
+    // 1ms (the previous value) drops 100% of healthy network RPCs and effectively
+    // disables enrichment — auto-DDOS of our own pipeline. 50ms accepts healthy
+    // RPC roundtrips (typical Alchemy/Infura p95 is 15-40ms) while still
+    // discarding degraded nodes. The cap is a function of how long we are
+    // willing to delay tx scoring; 50ms remains well inside our mempool
+    // dwell-time budget (block time / 12s on Ethereum).
+    const RPC_GET_TX_TIMEOUT_MS: u64 = 50;
+    let tx = match tokio::time::timeout(
+        std::time::Duration::from_millis(RPC_GET_TX_TIMEOUT_MS),
+        client.get_tx(hash),
+    )
+    .await
+    {
         Ok(Ok(Some(t))) => t,
         Ok(Ok(None)) => return Ok(()), // dropped from mempool before we got it
         Ok(Err(e)) => return Err(e.into()),
         Err(_) => {
-            tracing::warn!(event = "scanner.rpc_timeout", hash = %hash, "RPC timeout (<1ms) fetching tx; discarding");
+            chain_counters(client.chain_id)
+                .pending_received
+                .fetch_sub(1, Ordering::Relaxed); // undo the optimistic increment above
+            tracing::warn!(
+                event = "scanner.rpc_timeout",
+                hash = %hash,
+                chain_id = client.chain_id,
+                timeout_ms = RPC_GET_TX_TIMEOUT_MS,
+                "RPC timeout fetching tx; discarding (degraded node?)"
+            );
             return Ok(());
         }
     };
