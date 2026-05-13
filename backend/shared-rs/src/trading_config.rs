@@ -351,6 +351,33 @@ pub struct TradingConfigState {
     #[serde(default = "default_p_copied_max")]
     pub p_copied_max: f64,
 
+    // ── Kelly criterion post-optimization cap (size_optimizer fix-2) ────
+    /// Fractional-Kelly defensive scaling multiplier ∈ (0, 1]. Top-1% HFT
+    /// firms never run full Kelly because estimation error in `win_prob`
+    /// makes full-Kelly variance unacceptable; quarter-Kelly (0.25) is the
+    /// institutional baseline.
+    ///
+    /// Default `0.25`. `serde(default)` keeps legacy Redis configs valid.
+    #[serde(default = "default_kelly_multiplier")]
+    pub kelly_multiplier: f64,
+
+    /// Hard cap on fraction of NAV deployed per trade, regardless of what
+    /// Kelly says. Per the project doctrine (CLAUDE.md §24), DD > 10%
+    /// triggers size reduction; a 2% per-trade cap keeps DD well bounded.
+    ///
+    /// Default `0.02` (2% of NAV).
+    #[serde(default = "default_kelly_max_per_trade_fraction")]
+    pub kelly_max_per_trade_fraction: f64,
+
+    /// Multiplier the net profit must exceed gas cost by for the candidate
+    /// to pass the gas-floor viability check. `net_usd >= gas_usd × multiplier`
+    /// or the candidate is rejected. Standard institutional value is 3×
+    /// (gas can spike during the few seconds between forecast and inclusion).
+    ///
+    /// Default `3.0`.
+    #[serde(default = "default_kelly_gas_safety_multiplier")]
+    pub kelly_gas_safety_multiplier: f64,
+
     pub enabled: bool,
     pub updated_at: DateTime<Utc>,
     pub updated_by: Option<String>,
@@ -374,6 +401,24 @@ fn default_p_copied_volume_threshold_usd() -> f64 {
 /// Provides the serde default for `p_copied_max` (50%).
 fn default_p_copied_max() -> f64 {
     0.5
+}
+
+/// Quarter-Kelly default — institutional baseline (Thorp 1969, MacLean et al.
+/// 2010). Operators tune via Redis hot-reload.
+fn default_kelly_multiplier() -> f64 {
+    0.25
+}
+
+/// 2% per-trade cap on NAV. Bounded drawdown under DD<10% trigger
+/// (CLAUDE.md §24).
+fn default_kelly_max_per_trade_fraction() -> f64 {
+    0.02
+}
+
+/// Require net ≥ 3× gas as the viability floor. Institutional standard
+/// accounts for gas spikes between forecast and inclusion.
+fn default_kelly_gas_safety_multiplier() -> f64 {
+    3.0
 }
 
 impl TradingConfigState {
@@ -703,6 +748,9 @@ mod tests {
             spread_sanity_mult: 3.0,
             p_copied_volume_threshold_usd: 1_000_000.0,
             p_copied_max: 0.5,
+            kelly_multiplier: 0.5,
+            kelly_max_per_trade_fraction: 1.0,
+            kelly_gas_safety_multiplier: 1.0,
             enabled: true,
             updated_at: Utc::now(),
             updated_by: Some("ops".into()),

@@ -65,3 +65,9 @@ pub mod bayesian_filter;
 // tests + the future A.3.c.3 REVM CacheDB executor can drive the plan
 // builder against fixtures and real chain state.
 pub mod sim_multistep;
+// B1.c: chain config hot-reload subscriber. Listens on the Redis pub/sub
+// channel `arbx:config:chains:reload` emitted by the api-server admin
+// endpoint when an operator mutates chains_runtime; tracks last-seen
+// config_hash per chain to skip no-op reloads. Public so the future
+// B1.d chain-task supervisor can consume the dedup map.
+pub mod config_reload;

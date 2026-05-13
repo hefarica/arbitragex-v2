@@ -50,6 +50,10 @@ mod bayesian_filter;
 // deferred to A.3.c.3; this module ships validation + plan + tests.
 #[allow(dead_code)]
 mod sim_multistep;
+// B1.c (2026-05-13) — chain config hot-reload subscriber. Listens on Redis
+// pub/sub `arbx:config:chains:reload` for events from the api-server admin
+// endpoint.
+mod config_reload;
 // Phase 16: per-strategy Prometheus metrics for the event-driven orchestrator.
 mod metrics;
 mod patterns;
@@ -180,6 +184,39 @@ async fn main() -> anyhow::Result<()> {
     // calls `state(chain_id)` per opportunity to honour operator updates without
     // service restart.
     let trading_config = TradingConfigClient::from_manager(redis_conn.clone());
+
+    // B1.c (2026-05-13) — chain config hot-reload subscriber.
+    //
+    // Listens on Redis pub/sub `arbx:config:chains:reload` for events
+    // published by the api-server admin endpoint when an operator
+    // mutates `chains_runtime` via the `/admin/chains` UI. Tracks
+    // last-seen config_hash per chain to skip no-op reloads. Runs in
+    // its own tokio task — never blocks the scanner main thread.
+    //
+    // Graceful shutdown is wired via `CancellationToken`; for the
+    // current MVP we hold the token for the process lifetime (no
+    // cancellation path is triggered yet). B1.d will plumb the token
+    // to the chain task supervisor so a global "rebuild this chain"
+    // event can use the dedup map exposed via `seen_hashes()`.
+    let chain_reload_cancel = tokio_util::sync::CancellationToken::new();
+    let chain_reload_redis_url = redis_url.clone();
+    let _chain_reload_cancel_handle = chain_reload_cancel.clone();
+    tokio::spawn({
+        let cancel = chain_reload_cancel.clone();
+        async move {
+            let reloader = config_reload::ChainConfigReloader::new(
+                chain_reload_redis_url,
+                cancel,
+            );
+            if let Err(e) = reloader.run().await {
+                warn!(
+                    event = "chain_reload.boot_failed",
+                    error = %e,
+                    "chain config reload subscriber exited with error; restart pod to recover"
+                );
+            }
+        }
+    });
 
     // Sprint 4 — Phase A.1/A.2/A.2.5 simulator boot announcement.
     //

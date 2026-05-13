@@ -9,6 +9,7 @@ description = "ArbitrageX v2 — MEV opportunity searcher. S2: real mempool inge
 [dependencies]
 shared-rs.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
