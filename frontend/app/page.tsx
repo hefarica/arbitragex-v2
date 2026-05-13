@@ -15,6 +15,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { HomeKpiStrip } from "@/features/home/HomeKpiStrip";
+import { ProgressRealCard } from "@/features/home/ProgressRealCard";
 import { getReconSummary, getStatus } from "@/lib/api-client";
 
 export const dynamic = "force-dynamic";
@@ -60,6 +61,8 @@ export default async function Home() {
       </div>
 
       <HomeKpiStrip status={status} recon={recon} />
+
+      <ProgressRealCard />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {TILES.map((t) => {

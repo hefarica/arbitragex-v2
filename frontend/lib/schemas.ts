@@ -56,6 +56,35 @@ export const OpportunityRowSchema = z.object({
   status: z.string(),
   detected_at: z.string(),
   trace_id: z.string(),
+  // ─── P1 simulation/evidence enrichment (audit 2026-05-13) ───
+  //
+  // ALL fields below are `.nullable().optional()` so the schema parses every
+  // current payload (the backend doesn't yet emit them on /api/opportunities/live)
+  // AND every future payload that includes them. R8 fail-honest: when the
+  // backend returns the field as null, the UI renders "Unavailable" — never 0
+  // and never invents a value.
+  //
+  // Wire contract (target, not yet emitted by every code path):
+  //   simulation_status  : "pending" | "running" | "success" | "reverted" | "halted" | null
+  //   sim_classification : "SIM_SUCCESS" | "SIM_REVERT" | "SIM_HALT" | "SIM_SKIP" | null
+  //   revert_reason      : free-form string when sim_classification = SIM_REVERT
+  //   trace_hash         : 0x… (SHA-256 over SequenceContext calldata+output)
+  //   evidence_hash      : 0x… (operator audit hash, future A.8 confidence wire)
+  //   gas_used           : revm.gas_used (sum across multi-step sequence)
+  //   net_profit_wei     : i128 as decimal string (negative allowed)
+  //   simulated_net_profit_usd : derived USD net, null when sim hasn't run
+  //   evidence_gate      : "PASS" | "FAIL" | null  (future A.8)
+  //   net_profit_gate    : "PASS" | "FAIL" | null  (G-NET-1)
+  simulation_status: z.string().nullable().optional(),
+  sim_classification: z.string().nullable().optional(),
+  revert_reason: z.string().nullable().optional(),
+  trace_hash: z.string().nullable().optional(),
+  evidence_hash: z.string().nullable().optional(),
+  gas_used: z.union([z.string(), z.number()]).nullable().optional(),
+  net_profit_wei: z.string().nullable().optional(),
+  simulated_net_profit_usd: z.number().nullable().optional(),
+  evidence_gate: z.string().nullable().optional(),
+  net_profit_gate: z.string().nullable().optional(),
 });
 
 export const OpportunitiesLiveSchema = z.object({

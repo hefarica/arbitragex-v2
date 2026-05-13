@@ -1,0 +1,81 @@
+/**
+ * ProgressRealCard tests — SSR-only static markup assertions.
+ *
+ * What this guards:
+ *   - The doctrinal milestone percentages are present (workspace-verified
+ *     truth ledger).
+ *   - "Live trading: OFF" badge is rendered on every server render — this
+ *     is the structural barrier paired with SystemGuardBanner.
+ *   - "Capital exposure: $0" is rendered.
+ *   - A.4 = BLOCKED and A.5 = NO-GO are rendered.
+ *   - 100% on full system or live tile is NEVER rendered.
+ *
+ * The card also fires a useEffect that calls getReadiness + getRuntimeStatus.
+ * Under renderToStaticMarkup the effect never runs, so we don't need to mock
+ * those endpoints. The "Loading runtime probe…" copy is the SSR-time state.
+ */
+import React from "react";
+import { describe, it, expect } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ProgressRealCard } from "../ProgressRealCard";
+
+const html = renderToStaticMarkup(<ProgressRealCard />);
+
+describe("ProgressRealCard", () => {
+  it("renders the workspace-verified doctrinal label", () => {
+    expect(html).toMatch(/doctrinal/i);
+    expect(html).toMatch(/workspace-verified/i);
+  });
+
+  it("renders pre-live simulation percentage = 85%", () => {
+    expect(html).toContain("85%");
+    expect(html).toMatch(/Pre-live simulation honesty/i);
+  });
+
+  it("renders full-system percentage (mid-range, never 100%)", () => {
+    expect(html).toMatch(/Full system to live-minimum/i);
+    expect(html).toContain("58%");
+  });
+
+  it("renders frontend audit = 100%", () => {
+    expect(html).toMatch(/Frontend forensic audit/i);
+    expect(html).toContain("100%");
+  });
+
+  it("renders frontend integration percentage (post-P1)", () => {
+    expect(html).toMatch(/Frontend integration applied/i);
+    expect(html).toContain("22%");
+  });
+
+  it("asserts Live trading: OFF (structural barrier badge)", () => {
+    // The badge renders "<svg .../>Live trading: OFF</span>" — text inline
+    // with the SVG, no intermediate tag. Just confirm the literal substring.
+    expect(html).toContain("Live trading: OFF");
+  });
+
+  it("asserts A.4 fork = BLOCKED", () => {
+    expect(html).toMatch(/A\.4 fork/i);
+    expect(html).toContain("BLOCKED");
+  });
+
+  it("asserts A.5 paper-shadow = NO-GO", () => {
+    expect(html).toMatch(/A\.5 paper-shadow/i);
+    expect(html).toContain("NO-GO");
+  });
+
+  it("asserts Capital exposure = $0", () => {
+    expect(html).toMatch(/Capital exposure/i);
+    expect(html).toContain("$0");
+  });
+
+  it("renders the loading runtime probe on initial server render", () => {
+    expect(html).toMatch(/Loading runtime probe/i);
+  });
+
+  it("regression alarm: NEVER renders 'Live trading: ON' or full-system 100%", () => {
+    expect(html).not.toMatch(/Live trading[^<]*<[^>]*>[^<]*ON</i);
+    // Full system must not be at 100%. If a future commit sets it to 100,
+    // a milestone-level review is required before merge.
+    expect(html).not.toMatch(/Full system to live-minimum[\s\S]{0,200}100%/i);
+  });
+});
