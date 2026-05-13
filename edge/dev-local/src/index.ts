@@ -169,6 +169,14 @@ app.get("/api/scoring/status", (req, res) => proxy("/api/v1/scoring/status", req
 // A.6 comprehensive circuit breakers.
 app.get("/api/risk/circuit-breakers/status", (req, res) => proxy("/api/v1/risk/circuit-breakers/status", req, res));
 app.get("/api/risk/circuit-breakers/events", (req, res) => proxy("/api/v1/risk/circuit-breakers/events", req, res));
+
+// B1 Chains Admin CRUD (admin-token gated; dev-local forwards header).
+app.get("/api/admin/chains", (req, res) => proxy("/api/v1/admin/chains" + (new URL(req.url, "http://x").search || ""), req, res));
+app.get("/api/admin/chains/:chain_id", (req, res) => proxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res));
+app.post("/api/admin/chains", (req, res) => proxy("/api/v1/admin/chains", req, res));
+app.put("/api/admin/chains/:chain_id", (req, res) => proxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res));
+app.delete("/api/admin/chains/:chain_id", (req, res) => proxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res));
+app.post("/api/admin/chains/:chain_id/probe", (req, res) => proxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}/probe${new URL(req.url, "http://x").search || ""}`, req, res));
 // Trading Config — operator-tunable strategy parameters per chain.
 app.get("/api/trading-config", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";

@@ -930,3 +930,66 @@ export type CircuitBreaker = z.infer<typeof CircuitBreakerSchema>;
 export type CircuitBreakerSummary = z.infer<typeof CircuitBreakerSummarySchema>;
 export type CircuitBreakersStatusResponse = z.infer<typeof CircuitBreakersStatusResponseSchema>;
 export type CircuitBreakerEventsResponse = z.infer<typeof CircuitBreakerEventsResponseSchema>;
+
+// ─────── B1 Chains Admin CRUD ───────
+//
+// Operator Admin Console: admin-gated CRUD over chains_runtime PG table.
+// All endpoints require V-AT-1 admin cookie. Permissive enum strings for
+// forward-compat. Soft-delete only (enabled=false; never physical DELETE).
+
+export const AdminChainRowSchema = z.object({
+  id: z.number().int().positive(),
+  chain_id: z.number().int().positive(),
+  name: z.string(),
+  rpc_http_url: z.string(),
+  rpc_ws_url: z.string().nullable(),
+  native_currency: z.string(),
+  block_time_ms: z.number().int().positive(),
+  enabled: z.boolean(),
+  config_hash: z.string().nullable(),
+  notes: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  created_by: z.string().nullable(),
+  updated_by: z.string().nullable(),
+});
+
+export const AdminChainsListSchema = z.object({
+  count: z.number().int().nonnegative(),
+  items: z.array(AdminChainRowSchema),
+  ts: z.string(),
+});
+
+export const AdminChainProbeResultSchema = z.object({
+  chain_id: z.number().int().positive(),
+  probed_rpc_url_redacted: z.string(),
+  reachable: z.boolean(),
+  matches: z.boolean().nullable(),
+  observed_chain_id: z.number().int().nullable(),
+  latency_ms: z.number().int().nullable(),
+  block_number: z.number().int().nullable(),
+  error: z.string().nullable(),
+  probed_at: z.string(),
+});
+
+// Request body schemas (mirror backend Zod 1:1).
+export const AdminChainCreateBodySchema = z.object({
+  chain_id: z.number().int().positive(),
+  name: z.string().min(1).max(64),
+  rpc_http_url: z.string().url(),
+  rpc_ws_url: z.string().url().optional(),
+  native_currency: z.string().min(1).max(16).optional(),
+  block_time_ms: z.number().int().positive().max(600_000).optional(),
+  enabled: z.boolean().optional(),
+  notes: z.string().max(1024).optional(),
+});
+
+export const AdminChainUpdateBodySchema = AdminChainCreateBodySchema
+  .omit({ chain_id: true })
+  .partial();
+
+export type AdminChainRow = z.infer<typeof AdminChainRowSchema>;
+export type AdminChainsList = z.infer<typeof AdminChainsListSchema>;
+export type AdminChainProbeResult = z.infer<typeof AdminChainProbeResultSchema>;
+export type AdminChainCreateBody = z.infer<typeof AdminChainCreateBodySchema>;
+export type AdminChainUpdateBody = z.infer<typeof AdminChainUpdateBodySchema>;

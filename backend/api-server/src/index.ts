@@ -86,6 +86,7 @@ import { mountReadinessExtras } from "./routes/readiness-extras.js";
 import { mountAgentsStatus } from "./routes/agents-status.js";
 import { mountScoringStatus } from "./routes/scoring-status.js";
 import { mountRiskCircuitBreakers } from "./routes/risk-circuit-breakers.js";
+import { mountAdminChains } from "./routes/admin-chains.js";
 import { setupWebSocketGateway, broadcastOpportunity } from "./websocket.js";
 import { createServer } from "http";
 import rateLimit from "express-rate-limit";
@@ -434,6 +435,14 @@ mountReadinessExtras(app, { pool, logger });
 mountAgentsStatus(app, { pool, logger });
 mountScoringStatus(app, { pool, logger });
 mountRiskCircuitBreakers(app, { pool, killSwitch, logger });
+mountAdminChains(app, {
+  pool,
+  redis,
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
+  writeAudit,
+  logger,
+});
 
 // Scanner heartbeat snapshot — read latest pipeline counters from Redis.
 // Persisted by searcher-rs::workers::heartbeat_worker every period (default

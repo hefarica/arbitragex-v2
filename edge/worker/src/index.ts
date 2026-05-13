@@ -437,6 +437,78 @@ app.get("/api/scoring/status", (c) => proxy(c, "/api/v1/scoring/status", "arbx:c
 app.get("/api/risk/circuit-breakers/status", (c) => proxy(c, "/api/v1/risk/circuit-breakers/status", "arbx:cache:cb-status", 15));
 app.get("/api/risk/circuit-breakers/events", (c) => proxy(c, "/api/v1/risk/circuit-breakers/events", "arbx:cache:cb-events", 30));
 
+// B1 — Chains Admin CRUD. Admin-token gated; edge forwards header.
+// GET list/single use short cache (5s) since runtime chain state changes
+// infrequently. POST/PUT/DELETE/probe are pass-through (mutations).
+app.get("/api/admin/chains", async (c) => {
+  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains${new URL(c.req.url).search}`, {
+    headers: { "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN, "x-arbx-admin-token": adminToken },
+  });
+  const t = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(t, upstream.status as 200 | 401 | 503);
+});
+app.get("/api/admin/chains/:chain_id", async (c) => {
+  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains/${encodeURIComponent(c.req.param("chain_id") ?? "")}`, {
+    headers: { "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN, "x-arbx-admin-token": adminToken },
+  });
+  const t = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(t, upstream.status as 200 | 404 | 503);
+});
+app.post("/api/admin/chains", async (c) => {
+  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const body = await c.req.text();
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN, "x-arbx-admin-token": adminToken },
+    body,
+  });
+  const t = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(t, upstream.status as 200 | 201 | 400 | 409 | 503);
+});
+app.put("/api/admin/chains/:chain_id", async (c) => {
+  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const body = await c.req.text();
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains/${encodeURIComponent(c.req.param("chain_id") ?? "")}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN, "x-arbx-admin-token": adminToken },
+    body,
+  });
+  const t = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(t, upstream.status as 200 | 400 | 404 | 503);
+});
+app.delete("/api/admin/chains/:chain_id", async (c) => {
+  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains/${encodeURIComponent(c.req.param("chain_id") ?? "")}`, {
+    method: "DELETE",
+    headers: { "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN, "x-arbx-admin-token": adminToken },
+  });
+  const t = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(t, upstream.status as 200 | 404 | 503);
+});
+app.post("/api/admin/chains/:chain_id/probe", async (c) => {
+  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains/${encodeURIComponent(c.req.param("chain_id") ?? "")}/probe${new URL(c.req.url).search}`, {
+    method: "POST",
+    headers: { "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN, "x-arbx-admin-token": adminToken },
+  });
+  const t = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(t, upstream.status as 200 | 404 | 503);
+});
+
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError((err, c) => {
   console.error(JSON.stringify({ event: "edge.error", err: err.message }));
