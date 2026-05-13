@@ -1787,13 +1787,39 @@ async fn decode_and_score_tx<'a>(
         simulator_v2,
         decimals_provider,
     );
-    let (fail_closed_reason, trace_hash_sentinel) = gate_outcome.to_status();
-    final_evidence.simulation_status = "SIM_DISABLED_FAIL_CLOSED".to_string();
-    final_evidence.simulation_trace_hash = Some(trace_hash_sentinel.to_string());
-    counters()
-        .simulator_fail_closed_rejected
-        .fetch_add(1, Ordering::Relaxed);
     bump_encoder_gate_counter(&gate_outcome);
+
+    // Phase A.3.c — if the encoder produced a RoundTripContext AND we have a
+    // SimulatorV2 in hand, dispatch `execute_round_trip_revm` synchronously on
+    // a blocking tokio thread. cs-validator finding 2026-05-12: REVM is
+    // synchronous; running it on the tokio worker would park the event loop.
+    let (fail_closed_reason, trace_hash_sentinel, sim_status_str) =
+        if let (EncoderGateOutcome::EncoderOk(ctx), Some(simulator_arc)) =
+            (&gate_outcome, simulator_v2.cloned())
+        {
+            dispatch_orchestrator_and_classify(
+                ctx.clone(),
+                simulator_arc,
+                client.chain_id,
+                &candidate,
+            )
+            .await
+        } else {
+            let (fcr, ths) = gate_outcome.to_status();
+            (
+                fcr.to_string(),
+                ths.to_string(),
+                "SIM_DISABLED_FAIL_CLOSED".to_string(),
+            )
+        };
+
+    final_evidence.simulation_status = sim_status_str.clone();
+    final_evidence.simulation_trace_hash = Some(trace_hash_sentinel.clone());
+    if sim_status_str != "SIM_SUCCESS" {
+        counters()
+            .simulator_fail_closed_rejected
+            .fetch_add(1, Ordering::Relaxed);
+    }
     debug!(
         event = "encoder.runtime_event",
         hash = %hash,
@@ -1803,9 +1829,10 @@ async fn decode_and_score_tx<'a>(
         simulator_available = simulator_v2.is_some(),
         provider_available = decimals_provider.is_some(),
         status = gate_outcome.status_label(),
-        reason = fail_closed_reason,
+        reason = %fail_closed_reason,
+        sim_status = %sim_status_str,
         v2_feature_compiled = cfg!(feature = "v2-simulator"),
-        "candidate evaluated at A.3.b encoder gate"
+        "candidate evaluated at A.3.c orchestrator gate"
     );
 
     // Connect math results to the persisted Opportunity row.
@@ -2008,7 +2035,7 @@ fn compute_gross_usd_for_spread(
 /// This is a pure data type: `dispatch_encoder_gate` returns one of these
 /// variants, the caller updates counters + emits the fail-closed signal.
 /// Extracted from the hot path so it is unit-testable without WS/RPC infra.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub(crate) enum EncoderGateOutcome {
     /// No `Arc<SimulatorV2>` for this chain. RPC_HTTP_<id> not configured
     /// or pool fully unhealthy at boot. Operator action: provide RPC.
@@ -2018,10 +2045,11 @@ pub(crate) enum EncoderGateOutcome {
     /// pool — typically a regression. The counter `encoder_missing_provider_total`
     /// surfaces it.
     NoProvider,
-    /// Encoder ran successfully; `RoundTripContext` would be available to
-    /// the next phase. The hot path STILL emits SIM_DISABLED_FAIL_CLOSED
-    /// because the `execute_round_trip` orchestrator is the next deliverable.
-    Success,
+    /// Encoder ran successfully; the produced `RoundTripContext` is the
+    /// next-phase input for `sim_orchestrator::execute_round_trip_revm`.
+    /// Phase A.3.c lifts this from a fail-closed marker to a real REVM
+    /// dispatch via `tokio::task::spawn_blocking` in `decode_and_score_tx`.
+    EncoderOk(prioritization_spine::round_trip_executor::RoundTripContext),
     /// Encoder rejected the candidate with a typed reason. The tag matches
     /// `SimEncoderError::reason_tag()` verbatim.
     Rejected { reason_tag: &'static str },
@@ -2041,9 +2069,9 @@ impl EncoderGateOutcome {
                 "missing_provider",
                 "fail_closed:missing_token_decimals_provider",
             ),
-            Self::Success => (
-                "round_trip_executor_pending",
-                "fail_closed:phase_a3c_orchestrator_pending",
+            Self::EncoderOk(_) => (
+                "encoder_ok_orchestrator_dispatched",
+                "fail_closed:orchestrator_in_flight",
             ),
             Self::Rejected { reason_tag } => (
                 reason_tag,
@@ -2056,7 +2084,7 @@ impl EncoderGateOutcome {
         match self {
             Self::NoSimulator => "fail_closed_no_simulator",
             Self::NoProvider => "fail_closed_no_provider",
-            Self::Success => "encoder_success_fail_closed_pending_orchestrator",
+            Self::EncoderOk(_) => "encoder_ok_orchestrator_dispatched",
             Self::Rejected { .. } => "encoder_rejected",
         }
     }
@@ -2113,7 +2141,7 @@ pub(crate) fn dispatch_encoder_gate(
         provider_ref,
         &config,
     ) {
-        Ok(_round_trip_context) => EncoderGateOutcome::Success,
+        Ok(round_trip_context) => EncoderGateOutcome::EncoderOk(round_trip_context),
         Err(e) => EncoderGateOutcome::Rejected {
             reason_tag: e.reason_tag(),
         },
@@ -2133,10 +2161,13 @@ fn bump_encoder_gate_counter(outcome: &EncoderGateOutcome) {
             c.simulator_v2_encoder_not_ready.fetch_add(1, Relaxed);
             c.encoder_missing_provider_total.fetch_add(1, Relaxed);
         }
-        EncoderGateOutcome::Success => {
+        EncoderGateOutcome::EncoderOk(_) => {
             c.encoder_success_total.fetch_add(1, Relaxed);
-            c.encoder_round_trip_executor_pending_total
-                .fetch_add(1, Relaxed);
+            // `encoder_round_trip_executor_pending_total` is no longer the
+            // terminal counter for the success path — Phase A.3.c dispatches
+            // the orchestrator. The pending counter increments only in the
+            // brief window between encoder OK and orchestrator dispatch (i.e.
+            // never in the steady state under A.3.c).
         }
         EncoderGateOutcome::Rejected { reason_tag } => {
             c.encoder_rejected_total.fetch_add(1, Relaxed);
@@ -2170,6 +2201,127 @@ fn bump_encoder_gate_counter(outcome: &EncoderGateOutcome) {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Phase A.3.c — orchestrator dispatch helper
+// ---------------------------------------------------------------------------
+
+/// Dispatch the REVM orchestrator on a blocking tokio thread, classify the
+/// returned `SimulationOutcome`, and produce the (fail_closed_reason,
+/// trace_hash_sentinel, simulation_status) triple consumed by the hot path.
+///
+/// The function is async so it can await the spawn_blocking join handle.
+/// Returns owned Strings because the orchestrator may bubble up dynamic
+/// REVM revert reasons that don't fit a &'static str.
+///
+/// `SimulationOutcome.passed=true` is the ONLY path that admits SIM_SUCCESS.
+/// On false the simulation_status stays SIM_DISABLED_FAIL_CLOSED and the
+/// fail_reason's tag prefix routes to the right A.3.c counter.
+#[cfg(feature = "v2-simulator")]
+async fn dispatch_orchestrator_and_classify(
+    ctx: prioritization_spine::round_trip_executor::RoundTripContext,
+    simulator: Arc<simulator_v2::SimulatorV2>,
+    chain_id: u64,
+    candidate: &prioritization_spine::types::OpportunityCandidate,
+) -> (String, String, String) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let c = counters();
+    c.round_trip_executor_started_total.fetch_add(1, Relaxed);
+
+    // Resolve executor address (re-read; sim_encoder already validated but the
+    // orchestrator config needs the parsed value).
+    let executor = match crate::sim_encoder::parse_executor_address(chain_id) {
+        Ok(addr) => addr,
+        Err(_) => {
+            c.round_trip_executor_rejected_pre_revm_total.fetch_add(1, Relaxed);
+            return (
+                "missing_executor".to_string(),
+                "fail_closed:missing_executor".to_string(),
+                "SIM_DISABLED_FAIL_CLOSED".to_string(),
+            );
+        }
+    };
+
+    // Read gas price from env (`SIM_ORCHESTRATOR_GAS_PRICE_WEI`) or default
+    // to 25 gwei. Default is documented in module docs; operator can override
+    // explicitly per the directive's "explicit config" rule.
+    let gas_price_wei = std::env::var("SIM_ORCHESTRATOR_GAS_PRICE_WEI")
+        .ok()
+        .and_then(|v| v.parse::<u128>().ok())
+        .map(ethers::types::U256::from)
+        .unwrap_or_else(|| ethers::types::U256::from(25_000_000_000u64));
+
+    // route_hash: derive a stable 32-byte tag from the candidate's
+    // `route_fingerprint` so the orchestrator's calldata is deterministic.
+    // Uses keccak256 (already a workspace dep via ethers).
+    let route_hash: [u8; 32] = ethers::utils::keccak256(candidate.route_fingerprint.as_bytes());
+
+    let orch_config = crate::sim_orchestrator::RoundTripExecutionConfig {
+        chain_id,
+        executor_address: executor,
+        gas_limit: 30_000_000,
+        gas_price_wei,
+        route_hash,
+        min_profit_wei: ethers::types::U256::from(1u64),
+        paper_mode: true,
+    };
+
+    // Run REVM on a blocking thread.
+    let outcome = match tokio::task::spawn_blocking(move || {
+        crate::sim_orchestrator::execute_round_trip_revm(&ctx, simulator, &orch_config)
+    })
+    .await
+    {
+        Ok(o) => o,
+        Err(e) => {
+            c.round_trip_executor_spawn_blocking_failed_total.fetch_add(1, Relaxed);
+            return (
+                format!("spawn_blocking_failed:{e}"),
+                "fail_closed:spawn_blocking_failed".to_string(),
+                "SIM_DISABLED_FAIL_CLOSED".to_string(),
+            );
+        }
+    };
+
+    if outcome.passed {
+        c.round_trip_executor_success_total.fetch_add(1, Relaxed);
+        c.simulator_revm_success.fetch_add(1, Relaxed);
+        return (
+            "round_trip_success".to_string(),
+            "orchestrator_success".to_string(),
+            "SIM_SUCCESS".to_string(),
+        );
+    }
+
+    // Failed path — classify by reason_tag prefix.
+    let reason = outcome.fail_reason.clone().unwrap_or_default();
+    let tag = reason.split(':').next().unwrap_or("unknown");
+    match tag {
+        "revm_reverted" => {
+            c.round_trip_executor_revert_total.fetch_add(1, Relaxed);
+            c.simulator_revm_revert.fetch_add(1, Relaxed);
+        }
+        "revm_infra_error" => {
+            c.round_trip_executor_error_total.fetch_add(1, Relaxed);
+        }
+        "net_profit_non_positive" => {
+            c.round_trip_executor_net_profit_non_positive_total
+                .fetch_add(1, Relaxed);
+        }
+        "success_zero_gas" | "success_empty_trace_hash" => {
+            c.round_trip_executor_antifraud_rejected_total
+                .fetch_add(1, Relaxed);
+        }
+        _ => {
+            c.round_trip_executor_rejected_pre_revm_total.fetch_add(1, Relaxed);
+        }
+    }
+    (
+        reason,
+        "fail_closed:orchestrator_rejected".to_string(),
+        "SIM_DISABLED_FAIL_CLOSED".to_string(),
+    )
 }
 
 #[cfg(test)]

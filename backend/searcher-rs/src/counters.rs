@@ -225,9 +225,11 @@ pub struct ScannerCounters {
     pub encoder_unsupported_route_shape_total: AtomicU64,
     /// Phase A.3.b — encoder produced a valid `RoundTripContext` and the
     /// hot path is fail-closed waiting for the `execute_round_trip` REVM
-    /// orchestrator (Phase A.3.c). A non-zero rate here proves the wire
-    /// works end-to-end and the only remaining bottleneck is the
-    /// orchestrator itself.
+    /// orchestrator (Phase A.3.c). NO LONGER INCREMENTED in A.3.c — the
+    /// orchestrator dispatch happens immediately after encoder OK, so the
+    /// "pending" window is observationally zero. Kept here as a stable
+    /// Prometheus metric name for dashboards built against earlier phases.
+    #[allow(dead_code)]
     pub encoder_round_trip_executor_pending_total: AtomicU64,
     /// Phase A.3.b — encoder rejected because the parsed `token_in` is the
     /// zero address (caught by `parse_token_address` before the decimals
@@ -248,6 +250,37 @@ pub struct ScannerCounters {
     /// provider was threaded into the scanner. Indicates a main.rs wiring
     /// regression — should stay at zero.
     pub encoder_missing_provider_total: AtomicU64,
+    /// Phase A.3.c — orchestrator entered `execute_round_trip_revm`. The
+    /// floor of every other A.3.c counter; useful for computing rates.
+    pub round_trip_executor_started_total: AtomicU64,
+    /// Phase A.3.c — REVM ran successfully AND all anti-fraud guards
+    /// passed (gas_used > 0, trace_hash non-zero, net_profit_wei > 0).
+    /// The single bucket that admits a candidate to the EvidenceGate as
+    /// `SIM_SUCCESS`.
+    pub round_trip_executor_success_total: AtomicU64,
+    /// Phase A.3.c — REVM returned `SimError::Reverted`. Expected
+    /// behaviour for the majority of candidates until A.3.c.2 lands
+    /// ERC-20 prefund + role storage cheating (RULE 12 fail-honest).
+    pub round_trip_executor_revert_total: AtomicU64,
+    /// Phase A.3.c — REVM returned an infrastructure error
+    /// (`SimError::Provider` / `NotImplemented`). Non-zero rate indicates
+    /// an RPC / LazyDb issue.
+    pub round_trip_executor_error_total: AtomicU64,
+    /// Phase A.3.c — orchestrator rejected the candidate before reaching
+    /// REVM (validation, config, gas-price overflow, etc.).
+    pub round_trip_executor_rejected_pre_revm_total: AtomicU64,
+    /// Phase A.3.c — `simulator.simulate()` returned success but the
+    /// candidate failed the `net_profit_wei > 0` gate. Genuinely-non-
+    /// profitable simulated routes land here.
+    pub round_trip_executor_net_profit_non_positive_total: AtomicU64,
+    /// Phase A.3.c — REVM succeeded but the orchestrator's anti-fraud
+    /// guards rejected the result (zero gas or empty trace_hash). Non-
+    /// zero indicates a SimulatorV2 contract change that needs review.
+    pub round_trip_executor_antifraud_rejected_total: AtomicU64,
+    /// Phase A.3.c — scanner-side counter for `tokio::task::spawn_blocking`
+    /// returning `JoinError` (panic inside the orchestrator). Should
+    /// always be zero.
+    pub round_trip_executor_spawn_blocking_failed_total: AtomicU64,
 }
 
 /// Process-global counters. First call initialises; subsequent calls return

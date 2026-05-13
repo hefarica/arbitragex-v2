@@ -27,6 +27,10 @@ mod sim_encoder;
 // an LRU cache kept warm by a background refresh task; the trait method is
 // a pure cache lookup so the hot path never blocks on a PG query.
 mod sim_encoder_pg;
+// Phase A.3.c: REVM execution orchestrator. Builds executeArbitrage calldata
+// from RoundTripContext and dispatches a single REVM transaction through
+// SimulatorV2. Synchronous; the scanner wraps it in spawn_blocking.
+mod sim_orchestrator;
 // Phase 16: per-strategy Prometheus metrics for the event-driven orchestrator.
 mod metrics;
 mod patterns;

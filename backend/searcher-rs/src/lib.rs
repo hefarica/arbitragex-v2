@@ -47,3 +47,6 @@ pub mod sim_encoder;
 // Phase A.3.b: PostgreSQL-backed `TokenDecimalsProvider`. Exposed for
 // integration tests that want to drive the provider against a test DB.
 pub mod sim_encoder_pg;
+// Phase A.3.c: REVM orchestrator. Exposed so integration tests can drive
+// it against a real fork without going through the full hot path.
+pub mod sim_orchestrator;
