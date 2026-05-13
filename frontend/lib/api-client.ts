@@ -297,6 +297,13 @@ export function getReadinessDecision() {
   return getValidated("/api/readiness/decision", S.ReadinessDecisionResponseSchema);
 }
 
+// Agent teams status — 17 workspace-verified agent verdicts (P2-continued).
+// Backend overlays runtime context (verifyAll outcome) onto each agent so
+// PASS demotes to BLOCKED when readiness fails.
+export function getAgentTeamsStatus() {
+  return getValidated("/api/agents/status", S.AgentsStatusResponseSchema);
+}
+
 export function getTradingConfig(chainId: number) {
   return getValidated(`/api/trading-config?chain_id=${chainId}`, S.TradingConfigResponseSchema);
 }

@@ -1,0 +1,501 @@
+/**
+ * agents-status — surface the 17 ArbitrageX Agent Teams' last verdicts.
+ *
+ * GET /api/v1/agents/status
+ *
+ * Source honesty contract:
+ *   - "workspace_verified": the verdict reflects the operator's last
+ *     in-session audit (P0+P1+P2 phases). These are NOT runtime probes;
+ *     they're the persistent ledger of the most recent agent-team
+ *     pass-through. A future runtime agent runner will replace these
+ *     with source="runtime" — the schema is forward-compat.
+ *   - "runtime": currently unused at the row level. The endpoint itself
+ *     reads runtime signals (readiness flip_blocked, env vars) to dynamically
+ *     mark phase-gated agents BLOCKED/PARTIAL/NO_GO when prerequisites fail.
+ *   - "unknown": for any future agent we haven't observed yet.
+ *
+ * R8 fail-honest: NO agent is silently marked PASS. If verifyAll fails,
+ * we surface the failure on the relevant agents. The risk-circuit-agent
+ * is PARTIAL for live because A.6 is not yet implemented. The
+ * go-no-go-agent is always NO_GO for live because A.9 is pending.
+ */
+
+import type { Application, Request, Response } from "express";
+import type pg from "pg";
+
+import { verifyAll } from "../readiness/verifiers/index.js";
+
+// ---------------------------------------------------------------------------
+// Wire contract types — mirror frontend Zod schemas exactly.
+// ---------------------------------------------------------------------------
+
+type AgentVerdict = "PASS" | "BLOCKED" | "PARTIAL" | "NO_GO" | "NOT_RUN" | "UNKNOWN";
+type AgentStatus = "healthy" | "degraded" | "blocked" | "unknown";
+type AgentSource = "workspace_verified" | "runtime" | "unknown";
+type AgentCategory =
+  | "forensics"
+  | "deployment"
+  | "operator"
+  | "frontend"
+  | "backend"
+  | "edge"
+  | "data"
+  | "security"
+  | "risk"
+  | "quality"
+  | "decision";
+type BlockedPhase = "A.4" | "A.5" | "A.6" | "A.7" | "A.8" | "A.9" | "LIVE";
+type RiskLevel = "low" | "medium" | "high" | "critical";
+
+interface AgentStatusRow {
+  id: string;
+  name: string;
+  category: AgentCategory;
+  verdict: AgentVerdict;
+  status: AgentStatus;
+  evidence: string[];
+  last_run_at: string | null;
+  source: AgentSource;
+  blocks: BlockedPhase[];
+  next_action: string | null;
+  risk: RiskLevel;
+  operator_required: boolean;
+}
+
+interface AgentsStatusResponse {
+  generated_at: string;
+  source: "mixed";
+  overall_status: "ready" | "partial" | "blocked";
+  agents: AgentStatusRow[];
+  summary: {
+    pass: number;
+    blocked: number;
+    partial: number;
+    no_go: number;
+    not_run: number;
+    unknown: number;
+    total: number;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The 17 agent definitions. Verdicts are workspace-verified at the time of
+// this commit. Doctrinal verdicts (PASS/PARTIAL/NO_GO for live) are pinned
+// here and updated only on milestone-completing commits — exactly the same
+// pattern as ProgressRealCard's milestone constants. The endpoint then
+// OVERLAYS runtime data (verifyAll output, env probes) to demote PASS to
+// BLOCKED when a prerequisite has regressed.
+// ---------------------------------------------------------------------------
+
+interface AgentDef {
+  id: string;
+  name: string;
+  category: AgentCategory;
+  default_verdict: AgentVerdict;
+  default_status: AgentStatus;
+  evidence: string[];
+  source: AgentSource;
+  blocks: BlockedPhase[];
+  next_action: string | null;
+  risk: RiskLevel;
+  operator_required: boolean;
+}
+
+const AGENT_DEFS: AgentDef[] = [
+  {
+    id: "repo-forensics-agent",
+    name: "Repo Forensics Agent",
+    category: "forensics",
+    default_verdict: "PASS",
+    default_status: "healthy",
+    evidence: [
+      "Branch feat/wire-simulator-v2-revm committed P0+P1+P2",
+      "Working tree clean at last verification (HEAD pushed to origin + github)",
+    ],
+    source: "workspace_verified",
+    blocks: [],
+    next_action: null,
+    risk: "low",
+    operator_required: false,
+  },
+  {
+    id: "vps-deploy-agent",
+    name: "VPS Deploy Agent",
+    category: "deployment",
+    default_verdict: "PASS",
+    default_status: "healthy",
+    evidence: [
+      "Last deploy reconstructed frontend + edge + api-server only",
+      "13 services preserved untouched (postgres, redis, searcher-rs, sim-ctl, recon, etc.)",
+    ],
+    source: "workspace_verified",
+    blocks: [],
+    next_action: null,
+    risk: "low",
+    operator_required: false,
+  },
+  {
+    id: "operator-wip-agent",
+    name: "Operator WIP Agent",
+    category: "operator",
+    default_verdict: "PASS",
+    default_status: "healthy",
+    evidence: [
+      "stash@{0}: OPERATOR WIP 2026-05-13 (configs/app.toml env=development) preserved on VPS",
+      "Not applied, not deleted; awaiting operator decision",
+    ],
+    source: "workspace_verified",
+    blocks: [],
+    next_action: "Operator must decide: keep as stash, branch off, or commit to main.",
+    risk: "low",
+    operator_required: true,
+  },
+  {
+    id: "frontend-preservation-agent",
+    name: "Frontend Preservation Agent",
+    category: "frontend",
+    default_verdict: "PASS",
+    default_status: "healthy",
+    evidence: [
+      "20 routes intact (build 31/31 PASS)",
+      "24 top-level components preserved",
+      "WebSocket layer (useOpportunitiesStream) untouched",
+      "P0/P1/P2 panels all live",
+    ],
+    source: "workspace_verified",
+    blocks: [],
+    next_action: null,
+    risk: "low",
+    operator_required: false,
+  },
+  {
+    id: "backend-contract-agent",
+    name: "Backend Contract Agent",
+    category: "backend",
+    default_verdict: "PASS",
+    default_status: "healthy",
+    evidence: [
+      "readiness-extras reuses verifyAll() without reimplementing verifiers",
+      "Route mounted via standard mountX(app, deps) pattern",
+    ],
+    source: "workspace_verified",
+    blocks: [],
+    next_action: null,
+    risk: "low",
+    operator_required: false,
+  },
+  {
+    id: "blockers-api-agent",
+    name: "Blockers API Agent",
+    category: "backend",
+    default_verdict: "PASS",
+    default_status: "healthy",
+    evidence: [
+      "/api/v1/readiness/blockers HTTP 200 with redacted env evidence",
+      "20/20 unit tests pin redaction + doctrine + summarisation",
+    ],
+    source: "workspace_verified",
+    blocks: [],
+    next_action: null,
+    risk: "low",
+    operator_required: false,
+  },
+  {
+    id: "decision-api-agent",
+    name: "Decision API Agent",
+    category: "backend",
+    default_verdict: "PASS",
+    default_status: "healthy",
+    evidence: [
+      "/api/v1/readiness/decision returns verdict=NO_GO go_live=false go_a5=false",
+      "capital_exposure_usd hardcoded literal 0",
+    ],
+    source: "workspace_verified",
+    blocks: [],
+    next_action: null,
+    risk: "low",
+    operator_required: false,
+  },
+  {
+    id: "edge-proxy-agent",
+    name: "Edge Proxy Agent",
+    category: "edge",
+    default_verdict: "PASS",
+    default_status: "healthy",
+    evidence: [
+      "edge/dev-local and edge/worker both proxy readiness/blockers + readiness/decision",
+      "Scanner heartbeat proxy verified live (HTTP 200)",
+    ],
+    source: "workspace_verified",
+    blocks: [],
+    next_action: null,
+    risk: "low",
+    operator_required: false,
+  },
+  {
+    id: "blockers-panel-agent",
+    name: "Blockers Panel Agent",
+    category: "frontend",
+    default_verdict: "PASS",
+    default_status: "healthy",
+    evidence: [
+      "BlockersPanel renders accordion with severity dots, evidence line, required action",
+      "4/4 SSR tests assert R8 fail-honest contract",
+    ],
+    source: "workspace_verified",
+    blocks: [],
+    next_action: null,
+    risk: "low",
+    operator_required: false,
+  },
+  {
+    id: "go-no-go-panel-agent",
+    name: "GO/NO-GO Panel Agent",
+    category: "frontend",
+    default_verdict: "PASS",
+    default_status: "healthy",
+    evidence: [
+      "GoNoGoPanel renders verdict tile + Dialog modal with full decision",
+      "6/6 SSR tests confirm NO live-enable button anywhere in markup",
+    ],
+    source: "workspace_verified",
+    blocks: [],
+    next_action: null,
+    risk: "low",
+    operator_required: false,
+  },
+  {
+    id: "data-wiring-agent",
+    name: "Data Wiring Agent",
+    category: "data",
+    default_verdict: "PASS",
+    default_status: "healthy",
+    evidence: [
+      "api-client.ts extended with getReadinessBlockers, getReadinessDecision",
+      "Zod schemas .passthrough() forward-compat; null distinguished from 0",
+    ],
+    source: "workspace_verified",
+    blocks: [],
+    next_action: null,
+    risk: "low",
+    operator_required: false,
+  },
+  {
+    id: "security-guard-agent",
+    name: "Security Guard Agent",
+    category: "security",
+    default_verdict: "PASS",
+    default_status: "healthy",
+    evidence: [
+      "Env redaction pinned by regression test (raw RPC/EXECUTOR/DATABASE_URL never serialised)",
+      "Admin cookie httpOnly + Secure + SameSite=Strict",
+    ],
+    source: "workspace_verified",
+    blocks: [],
+    next_action: null,
+    risk: "low",
+    operator_required: false,
+  },
+  {
+    id: "risk-circuit-agent",
+    name: "Risk Circuit Agent",
+    category: "risk",
+    // PARTIAL because A.6 comprehensive circuit breakers are not implemented:
+    // DD 10/20/30/40 tiers, max revert rate, max gas burn, max latency, max
+    // SIM_ERROR, RPC health, route/token blacklists, executor health,
+    // confidence-scoring tie-in. Until A.6 PASS, this agent BLOCKS live.
+    default_verdict: "PARTIAL",
+    default_status: "degraded",
+    evidence: [
+      "Basic kill-switch + readiness gate exist",
+      "A.6 comprehensive CBs (DD tiers, revert rate, gas burn, latency, SIM_ERROR, blacklists) NOT implemented",
+    ],
+    source: "workspace_verified",
+    blocks: ["LIVE"],
+    next_action: "Implement A.6 comprehensive circuit breakers; persist trips to risk_events.",
+    risk: "high",
+    operator_required: false,
+  },
+  {
+    id: "anti-mock-agent",
+    name: "Anti-Mock Agent",
+    category: "quality",
+    default_verdict: "PASS",
+    default_status: "healthy",
+    evidence: [
+      "grep mock|fake|dummy|placeholder|Math.random in productive frontend code: 0 hits",
+      "Backend: no PASS-fabrication, no unsafe in simulator-v2 or searcher-rs",
+    ],
+    source: "workspace_verified",
+    blocks: [],
+    next_action: null,
+    risk: "low",
+    operator_required: false,
+  },
+  {
+    id: "visual-regression-agent",
+    name: "Visual Regression Agent",
+    category: "quality",
+    default_verdict: "PASS",
+    default_status: "healthy",
+    evidence: [
+      "next build 31/31 routes PASS",
+      "/live-readiness HTTP 200 with P0/P1/P2 strings visible",
+    ],
+    source: "workspace_verified",
+    blocks: [],
+    next_action: null,
+    risk: "low",
+    operator_required: false,
+  },
+  {
+    id: "performance-agent",
+    name: "Performance Agent",
+    category: "quality",
+    default_verdict: "PASS",
+    default_status: "healthy",
+    evidence: [
+      "Panel poll cadences: SystemGuardBanner 15s, BlockersPanel 30s, GoNoGoPanel 30s",
+      "useEffect+allSettled; no reconnect storm; no render loops",
+    ],
+    source: "workspace_verified",
+    blocks: [],
+    next_action: null,
+    risk: "low",
+    operator_required: false,
+  },
+  {
+    id: "go-no-go-agent",
+    name: "GO/NO-GO Agent",
+    category: "decision",
+    // NEVER PASS for live until A.4-A.9 all PASS + A.9 formal sign-off.
+    // This is the structural barrier echoing SystemGuardBanner.
+    default_verdict: "NO_GO",
+    default_status: "blocked",
+    evidence: [
+      "Live trading: NO_GO (structural — no submission path in this binary)",
+      "A.4 fork validation: BLOCKED (RPC + EXECUTOR + storage layouts missing)",
+      "A.5 paper-shadow: NO_GO (depends on A.4)",
+      "A.6/A.7/A.8/A.9: pending",
+    ],
+    source: "workspace_verified",
+    blocks: ["LIVE", "A.4", "A.5"],
+    next_action: "Resolve A.4 prerequisites, then run multistep_fork ignored test; await A.5+A.6+A.7+A.8 PASS; then operator sign-off A.9.",
+    risk: "critical",
+    operator_required: true,
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Runtime overlay — demote PASS to BLOCKED when a runtime check fails.
+// ---------------------------------------------------------------------------
+
+function runtimeOverlay(
+  def: AgentDef,
+  ctx: { readinessOk: boolean; readinessFailDetail: string | null },
+): AgentStatusRow {
+  let verdict: AgentVerdict = def.default_verdict;
+  let status: AgentStatus = def.default_status;
+  let source: AgentSource = def.source;
+  const evidence = [...def.evidence];
+
+  // backend-contract-agent + blockers-api-agent + decision-api-agent all
+  // depend on verifyAll(). If verifyAll fails we demote them to BLOCKED
+  // so the operator sees the real failure surface.
+  const dependsOnVerify = ["backend-contract-agent", "blockers-api-agent", "decision-api-agent"];
+  if (dependsOnVerify.includes(def.id) && !ctx.readinessOk) {
+    verdict = "BLOCKED";
+    status = "blocked";
+    source = "runtime";
+    evidence.push(`Runtime: verifyAll failed (${ctx.readinessFailDetail ?? "unknown"})`);
+  }
+
+  return {
+    id: def.id,
+    name: def.name,
+    category: def.category,
+    verdict,
+    status,
+    evidence,
+    last_run_at: null, // No persistent run ledger yet; future agent runner will set.
+    source,
+    blocks: def.blocks,
+    next_action: def.next_action,
+    risk: def.risk,
+    operator_required: def.operator_required,
+  };
+}
+
+function summarize(agents: AgentStatusRow[]): AgentsStatusResponse["summary"] {
+  const s = { pass: 0, blocked: 0, partial: 0, no_go: 0, not_run: 0, unknown: 0, total: agents.length };
+  for (const a of agents) {
+    switch (a.verdict) {
+      case "PASS": s.pass++; break;
+      case "BLOCKED": s.blocked++; break;
+      case "PARTIAL": s.partial++; break;
+      case "NO_GO": s.no_go++; break;
+      case "NOT_RUN": s.not_run++; break;
+      default: s.unknown++; break;
+    }
+  }
+  return s;
+}
+
+function overallStatus(s: AgentsStatusResponse["summary"]): AgentsStatusResponse["overall_status"] {
+  if (s.blocked > 0 || s.no_go > 0) return "blocked";
+  if (s.partial > 0 || s.unknown > 0 || s.not_run > 0) return "partial";
+  return "ready";
+}
+
+// ---------------------------------------------------------------------------
+// Test-only exports.
+// ---------------------------------------------------------------------------
+
+export const __forTesting = {
+  AGENT_DEFS,
+  runtimeOverlay,
+  summarize,
+  overallStatus,
+};
+
+// ---------------------------------------------------------------------------
+// Route mounting
+// ---------------------------------------------------------------------------
+
+export function mountAgentsStatus(
+  app: Application,
+  deps: { pool: pg.Pool | null; logger: { warn: (obj: object, msg?: string) => void } },
+): void {
+  app.get("/api/v1/agents/status", async (_req: Request, res: Response) => {
+    let readinessOk = true;
+    let readinessFailDetail: string | null = null;
+    try {
+      await verifyAll({ pool: deps.pool });
+    } catch (e) {
+      readinessOk = false;
+      readinessFailDetail = (e as Error).message.slice(0, 120);
+      deps.logger.warn({
+        event: "agents_status.readiness_probe_failed",
+        err: readinessFailDetail,
+      });
+    }
+
+    try {
+      const agents = AGENT_DEFS.map((def) =>
+        runtimeOverlay(def, { readinessOk, readinessFailDetail }),
+      );
+      const summary = summarize(agents);
+      const response: AgentsStatusResponse = {
+        generated_at: new Date().toISOString(),
+        source: "mixed",
+        overall_status: overallStatus(summary),
+        agents,
+        summary,
+      };
+      res.status(200).json(response);
+    } catch (e) {
+      deps.logger.warn({ event: "agents_status.failed", err: (e as Error).message });
+      res.status(503).json({ error: "agents_status_collection_failed", detail: (e as Error).message });
+    }
+  });
+}

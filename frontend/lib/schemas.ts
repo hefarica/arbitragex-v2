@@ -755,3 +755,44 @@ export type ReadinessBlockerEvidence = z.infer<typeof ReadinessBlockerEvidenceSc
 export type ReadinessBlocker = z.infer<typeof ReadinessBlockerSchema>;
 export type ReadinessBlockersResponse = z.infer<typeof ReadinessBlockersResponseSchema>;
 export type ReadinessDecisionResponse = z.infer<typeof ReadinessDecisionResponseSchema>;
+
+// ─────── Agent Teams Status (P2-continued) ───────
+//
+// 17 workspace-verified agent verdicts from the build/audit/deploy cycle.
+// Backend overlays runtime context (verifyAll outcome) to demote PASS to
+// BLOCKED where prerequisites have regressed. Permissive enums (z.string())
+// for forward-compat.
+
+export const AgentStatusRowSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  category: z.string(),
+  verdict: z.string(),
+  status: z.string(),
+  evidence: z.array(z.string()),
+  last_run_at: z.string().nullable(),
+  source: z.string(),
+  blocks: z.array(z.string()),
+  next_action: z.string().nullable(),
+  risk: z.string(),
+  operator_required: z.boolean(),
+});
+
+export const AgentsStatusResponseSchema = z.object({
+  generated_at: z.string(),
+  source: z.string(),
+  overall_status: z.string(),
+  agents: z.array(AgentStatusRowSchema),
+  summary: z.object({
+    pass: z.number().int().nonnegative(),
+    blocked: z.number().int().nonnegative(),
+    partial: z.number().int().nonnegative(),
+    no_go: z.number().int().nonnegative(),
+    not_run: z.number().int().nonnegative(),
+    unknown: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  }),
+});
+
+export type AgentStatusRow = z.infer<typeof AgentStatusRowSchema>;
+export type AgentsStatusResponse = z.infer<typeof AgentsStatusResponseSchema>;

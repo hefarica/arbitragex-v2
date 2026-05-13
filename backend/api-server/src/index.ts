@@ -83,6 +83,7 @@ import { mountStubs } from "./routes/stubs.js";
 import { mountWallets } from "./routes/wallets.js";
 import { mountStrategyRuntimeStatus } from "./routes/strategy-runtime-status.js";
 import { mountReadinessExtras } from "./routes/readiness-extras.js";
+import { mountAgentsStatus } from "./routes/agents-status.js";
 import { setupWebSocketGateway, broadcastOpportunity } from "./websocket.js";
 import { createServer } from "http";
 import rateLimit from "express-rate-limit";
@@ -428,6 +429,7 @@ mountWallets(app, { pool, logger });
 mountDefi(app, { pool, logger });
 mountStrategyRuntimeStatus(app, { pool, redis, logger });
 mountReadinessExtras(app, { pool, logger });
+mountAgentsStatus(app, { pool, logger });
 
 // Scanner heartbeat snapshot — read latest pipeline counters from Redis.
 // Persisted by searcher-rs::workers::heartbeat_worker every period (default
