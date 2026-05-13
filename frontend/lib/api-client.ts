@@ -274,6 +274,194 @@ export function getReadiness() {
   return getValidated("/api/readiness", S.ReadinessReportSchema);
 }
 
+// Strategy runtime status — per-strategy observability fed by Postgres
+// (opportunities table) + Redis (heartbeat, pool index, reserves cache).
+// Backend returns 503 if PG unavailable; FE renders SystemGuardBanner's
+// "Engine status" tile as `unavailable` in that case (R8 fail-honest).
+export function getRuntimeStatus(chainId = 1) {
+  return getValidated(
+    `/api/strategies/runtime-status?chain_id=${chainId}`,
+    S.RuntimeStatusResponseSchema,
+  );
+}
+
+// Readiness blockers — flat list of every concrete obstacle between paper
+// mode and live execution. Env values are NEVER on the wire (presence-only).
+export function getReadinessBlockers() {
+  return getValidated("/api/readiness/blockers", S.ReadinessBlockersResponseSchema);
+}
+
+// Readiness decision — go/no-go verdict derived from blockers + immutable
+// safety flags (live_trading=false, capital_exposure_usd=0).
+export function getReadinessDecision() {
+  return getValidated("/api/readiness/decision", S.ReadinessDecisionResponseSchema);
+}
+
+// Agent teams status — 17 workspace-verified agent verdicts (P2-continued).
+// Backend overlays runtime context (verifyAll outcome) onto each agent so
+// PASS demotes to BLOCKED when readiness fails.
+export function getAgentTeamsStatus() {
+  return getValidated("/api/agents/status", S.AgentsStatusResponseSchema);
+}
+
+// A.8 confidence scoring wire status. Reports honest "primitives wired vs
+// pipeline integration" split. Backend returns scoring_pipeline_wired=false
+// until the scanner hot-path actually invokes bayesian/kelly per candidate.
+export function getScoringStatus() {
+  return getValidated("/api/scoring/status", S.ScoringStatusResponseSchema);
+}
+
+// A.6 comprehensive circuit breakers. 10 breakers with honest state evaluation
+// (PASS / WARN / PAUSED / KILLED / BLOCKED / NOT_AVAILABLE / UNKNOWN). Missing
+// data sources (DD curve, revert window, gas burn ledger) render NOT_AVAILABLE
+// — never fabricated PASS.
+export function getCircuitBreakersStatus() {
+  return getValidated("/api/risk/circuit-breakers/status", S.CircuitBreakersStatusResponseSchema);
+}
+
+export function getCircuitBreakerEvents() {
+  return getValidated("/api/risk/circuit-breakers/events", S.CircuitBreakerEventsResponseSchema);
+}
+
+// ─────── B1 Chains Admin CRUD client (admin-token gated) ───────
+//
+// All mutations route through the edge with `credentials: "include"` so the
+// V-AT-1 httpOnly cookie travels automatically. GETs use the same
+// getValidated() shared pipeline.
+
+export function getAdminChains(enabledFilter?: boolean) {
+  const qs = enabledFilter == null ? "" : `?enabled=${enabledFilter ? "true" : "false"}`;
+  return getValidated(`/api/admin/chains${qs}`, S.AdminChainsListSchema);
+}
+
+export function getAdminChain(chainId: number) {
+  return getValidated(`/api/admin/chains/${chainId}`, S.AdminChainRowSchema);
+}
+
+export async function createAdminChain(
+  body: S.AdminChainCreateBody,
+  adminToken: string,
+  actor: string,
+): Promise<{ ok: true; data: S.AdminChainRow } | { ok: false; error: string }> {
+  const url = `${getApiBaseUrl()}/api/admin/chains`;
+  try {
+    const r = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-arbx-admin-token": adminToken,
+          "x-arbx-actor": actor,
+        },
+        credentials: "include",
+        body: JSON.stringify(body),
+      },
+      DEFAULT_TIMEOUT_MS,
+    );
+    const text = await r.text();
+    if (!r.ok) return { ok: false, error: `HTTP ${r.status}: ${text.slice(0, MAX_ERROR_PREVIEW)}` };
+    let parsed: unknown;
+    try { parsed = JSON.parse(text); } catch (e) { return { ok: false, error: `invalid JSON: ${(e as Error).message}` }; }
+    const result = S.AdminChainRowSchema.safeParse(parsed);
+    if (!result.success) return { ok: false, error: `edge response shape invalid: ${formatSchemaIssues(result.error)}` };
+    return { ok: true, data: result.data };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+export async function updateAdminChain(
+  chainId: number,
+  body: S.AdminChainUpdateBody,
+  adminToken: string,
+  actor: string,
+): Promise<{ ok: true; data: S.AdminChainRow } | { ok: false; error: string }> {
+  const url = `${getApiBaseUrl()}/api/admin/chains/${chainId}`;
+  try {
+    const r = await fetchWithTimeout(
+      url,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          "x-arbx-admin-token": adminToken,
+          "x-arbx-actor": actor,
+        },
+        credentials: "include",
+        body: JSON.stringify(body),
+      },
+      DEFAULT_TIMEOUT_MS,
+    );
+    const text = await r.text();
+    if (!r.ok) return { ok: false, error: `HTTP ${r.status}: ${text.slice(0, MAX_ERROR_PREVIEW)}` };
+    let parsed: unknown;
+    try { parsed = JSON.parse(text); } catch (e) { return { ok: false, error: `invalid JSON: ${(e as Error).message}` }; }
+    // Response may include `hash_changed` extra field; relax schema via passthrough on parse error.
+    const result = S.AdminChainRowSchema.safeParse(parsed);
+    if (!result.success) return { ok: false, error: `edge response shape invalid: ${formatSchemaIssues(result.error)}` };
+    return { ok: true, data: result.data };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+export async function deleteAdminChain(
+  chainId: number,
+  adminToken: string,
+  actor: string,
+): Promise<{ ok: true; data: S.AdminChainRow } | { ok: false; error: string }> {
+  const url = `${getApiBaseUrl()}/api/admin/chains/${chainId}`;
+  try {
+    const r = await fetchWithTimeout(
+      url,
+      {
+        method: "DELETE",
+        headers: { "x-arbx-admin-token": adminToken, "x-arbx-actor": actor },
+        credentials: "include",
+      },
+      DEFAULT_TIMEOUT_MS,
+    );
+    const text = await r.text();
+    if (!r.ok) return { ok: false, error: `HTTP ${r.status}: ${text.slice(0, MAX_ERROR_PREVIEW)}` };
+    let parsed: unknown;
+    try { parsed = JSON.parse(text); } catch (e) { return { ok: false, error: `invalid JSON: ${(e as Error).message}` }; }
+    const result = S.AdminChainRowSchema.safeParse(parsed);
+    if (!result.success) return { ok: false, error: `edge response shape invalid: ${formatSchemaIssues(result.error)}` };
+    return { ok: true, data: result.data };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+export async function probeAdminChain(
+  chainId: number,
+  adminToken: string,
+  timeoutMs = 5000,
+): Promise<{ ok: true; data: S.AdminChainProbeResult } | { ok: false; error: string }> {
+  const url = `${getApiBaseUrl()}/api/admin/chains/${chainId}/probe?timeout_ms=${timeoutMs}`;
+  try {
+    const r = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: { "x-arbx-admin-token": adminToken },
+        credentials: "include",
+      },
+      Math.min(timeoutMs + 2000, 30_000),
+    );
+    const text = await r.text();
+    if (!r.ok) return { ok: false, error: `HTTP ${r.status}: ${text.slice(0, MAX_ERROR_PREVIEW)}` };
+    let parsed: unknown;
+    try { parsed = JSON.parse(text); } catch (e) { return { ok: false, error: `invalid JSON: ${(e as Error).message}` }; }
+    const result = S.AdminChainProbeResultSchema.safeParse(parsed);
+    if (!result.success) return { ok: false, error: `edge response shape invalid: ${formatSchemaIssues(result.error)}` };
+    return { ok: true, data: result.data };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
 export function getTradingConfig(chainId: number) {
   return getValidated(`/api/trading-config?chain_id=${chainId}`, S.TradingConfigResponseSchema);
 }

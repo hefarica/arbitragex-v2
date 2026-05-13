@@ -82,6 +82,11 @@ import { mountPools } from "./routes/pools.js";
 import { mountStubs } from "./routes/stubs.js";
 import { mountWallets } from "./routes/wallets.js";
 import { mountStrategyRuntimeStatus } from "./routes/strategy-runtime-status.js";
+import { mountReadinessExtras } from "./routes/readiness-extras.js";
+import { mountAgentsStatus } from "./routes/agents-status.js";
+import { mountScoringStatus } from "./routes/scoring-status.js";
+import { mountRiskCircuitBreakers } from "./routes/risk-circuit-breakers.js";
+import { mountAdminChains } from "./routes/admin-chains.js";
 import { setupWebSocketGateway, broadcastOpportunity } from "./websocket.js";
 import { createServer } from "http";
 import rateLimit from "express-rate-limit";
@@ -426,6 +431,18 @@ mountPools(app, { pool, logger });
 mountWallets(app, { pool, logger });
 mountDefi(app, { pool, logger });
 mountStrategyRuntimeStatus(app, { pool, redis, logger });
+mountReadinessExtras(app, { pool, logger });
+mountAgentsStatus(app, { pool, logger });
+mountScoringStatus(app, { pool, logger });
+mountRiskCircuitBreakers(app, { pool, killSwitch, logger });
+mountAdminChains(app, {
+  pool,
+  redis,
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
+  writeAudit,
+  logger,
+});
 
 // Scanner heartbeat snapshot — read latest pipeline counters from Redis.
 // Persisted by searcher-rs::workers::heartbeat_worker every period (default
@@ -725,11 +742,28 @@ app.put("/admin/relays/:id", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, re
                    existing, parsed.data, req.ip ?? null, (req as any).traceId ?? null, reqUA(req));
 });
 
+// Paper mode admin endpoint.
+//
+// B0.2 (2026-05-13) — Per-chain isolation:
+//   - Body accepts optional `chain_id` (integer). When present, writes to
+//     `arbx:papermode:<chain_id>` and publishes `arbx:papermode:<chain_id>:changes`.
+//   - When `chain_id` is OMITTED, the call is REJECTED with 400. Operator
+//     must explicitly target a chain — no more global flip footgun.
+//   - The legacy global `arbx:papermode` key is now READ-ONLY (fallback for
+//     30 days from 2026-05-13). All NEW writes are per-chain.
 app.post("/admin/config/paper-mode", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
   const actor = req.header("x-arbx-actor") ?? "admin";
-  const { enabled, updated_by } = req.body;
+  const { enabled, updated_by, chain_id } = req.body;
   if (typeof enabled !== "boolean") {
     res.status(400).json({ error: "invalid_body", detail: "enabled must be boolean" });
+    return;
+  }
+  // B0.2 enforcement: operator MUST specify chain_id. No more global flips.
+  if (typeof chain_id !== "number" || !Number.isInteger(chain_id) || chain_id < 1) {
+    res.status(400).json({
+      error: "chain_id_required",
+      detail: "B0.2 isolation: chain_id (positive integer) is required to avoid global papermode flips. Use {enabled, chain_id: 1} per-chain.",
+    });
     return;
   }
   try {
@@ -742,14 +776,20 @@ app.post("/admin/config/paper-mode", requireAdminToken(ARBX_ADMIN_TOKEN), async 
       enabled,
       updated_at: new Date().toISOString(),
       updated_by: updated_by ?? actor,
+      chain_id,
     };
     const json = JSON.stringify(state);
-    await rc.set("arbx:papermode", json);
+    const perChainKey = `arbx:papermode:${chain_id}`;
+    const perChainChannel = `arbx:papermode:${chain_id}:changes`;
+    await rc.set(perChainKey, json);
+    await rc.publish(perChainChannel, json);
+    // Compat: also publish on legacy channel for subscribers not yet migrated.
+    // We do NOT write to legacy KEY (that would defeat the isolation).
     await rc.publish("arbx:papermode:changes", json);
-    
-    await writeAudit("config.papermode.update", actor, "config", "papermode",
+
+    await writeAudit("config.papermode.update", actor, "config", `papermode:${chain_id}`,
                      null, state, req.ip ?? null, (req as any).traceId ?? null, reqUA(req));
-    res.status(200).json(state);
+    res.status(200).json({ ...state, source: "per_chain", key: perChainKey });
   } catch (e) {
     logger.error({ err: (e as Error).message }, "papermode update failed");
     res.status(500).json({ error: "redis_error" });
@@ -864,25 +904,58 @@ app.use(buildCredentialsRouter({
 }));
 
 app.get("/api/v1/config/current", async (_req, res) => {
-  // Merge dynamic paper_mode from Redis if available
-  let dynamicPaperMode = cfg.execution.paper_mode;
+  // Merge dynamic paper_mode from Redis (B0.2: per-chain key with legacy fallback).
+  //
+  // Reads per-chain keys for every chain in cfg.chains. Reports the per-chain
+  // map under `paper_mode_per_chain` so the operator can see each chain
+  // independently. The legacy `execution.paper_mode` boolean is kept for
+  // retro-compat and is set to TRUE if ANY chain is in paper mode (safe-side
+  // aggregation — never reports live unless ALL chains agree).
+  const perChainPaperMode: Record<number, { enabled: boolean; source: string }> = {};
+  let anyEnabled = false;
+  let allEnabled = true;
   try {
     const rc = redis;
     if (rc) {
-      const pmStr = await rc.get("arbx:papermode");
-      if (pmStr) {
-        const pm = JSON.parse(pmStr);
-        dynamicPaperMode = pm.enabled;
+      for (const c of cfg.chains ?? []) {
+        if (!c.enabled) continue;
+        const perChainKey = `arbx:papermode:${c.chain_id}`;
+        let raw = await rc.get(perChainKey);
+        let source = "per_chain";
+        if (!raw) {
+          // Legacy fallback (read-only; 30 days from 2026-05-13).
+          raw = await rc.get("arbx:papermode");
+          source = raw ? "legacy_fallback" : "default";
+        }
+        let enabled = cfg.execution.paper_mode;
+        if (raw) {
+          try {
+            enabled = JSON.parse(raw).enabled === true;
+          } catch { /* keep config default */ }
+        }
+        perChainPaperMode[c.chain_id] = { enabled, source };
+        anyEnabled = anyEnabled || enabled;
+        allEnabled = allEnabled && enabled;
       }
     }
   } catch (e) {
-    logger.warn({ err: (e as Error).message }, "failed to read dynamic papermode from redis");
+    logger.warn({ err: (e as Error).message }, "failed to read per-chain papermode from redis");
   }
+
+  // Aggregate flag: TRUE if any chain still in paper-mode (safe-side default).
+  const dynamicPaperMode = Object.keys(perChainPaperMode).length === 0
+    ? cfg.execution.paper_mode
+    : anyEnabled;
 
   res.status(200).json({
     system: cfg.system,
     risk: cfg.risk,
-    execution: { ...cfg.execution, paper_mode: dynamicPaperMode },
+    execution: {
+      ...cfg.execution,
+      paper_mode: dynamicPaperMode,
+      paper_mode_per_chain: perChainPaperMode,
+      paper_mode_all_chains_in_paper: allEnabled,
+    },
     observability: cfg.observability,
     chains: cfg.chains,
     relays: cfg.relays,

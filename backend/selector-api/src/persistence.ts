@@ -38,12 +38,13 @@ export async function persistDecision(
       const eventType = decision.reason === "blacklist_hit" ? "blacklist_hit"
         : decision.reason === "token_safety_circuit_open" ? "circuit_breaker"
         : "degradation";
+      // B0.3 (2026-05-13): include chain_id column for per-chain traceability.
       await client.query(
-        `INSERT INTO risk_events (event_type, severity, source_service, payload, trace_id, opportunity_id)
-         VALUES ($1, $2, 'selector-api', $3::jsonb, $4, $5)`,
+        `INSERT INTO risk_events (event_type, severity, source_service, payload, trace_id, opportunity_id, chain_id)
+         VALUES ($1, $2, 'selector-api', $3::jsonb, $4, $5, $6)`,
         [eventType, decision.severity, JSON.stringify({
           reason: decision.reason, score: decision.score, chain_id: chainId,
-        }), traceId, opportunityId],
+        }), traceId, opportunityId, chainId],
       );
     }
 

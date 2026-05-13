@@ -18,7 +18,7 @@
 //! corresponds to a real pending tx observed on the wire.
 
 use crate::amm_math;
-use crate::counters::counters;
+use crate::counters::{chain_counters, counters};
 use crate::reserves;
 use crate::{
     calldata,
@@ -32,8 +32,48 @@ use prioritization_spine::decision::{ExecutionDecision, RejectReason};
 use prioritization_spine::gates::can_execute;
 use prioritization_spine::route_plan::{RouteLeg, RoutePlan};
 use prioritization_spine::scoring::{OpportunityScorer, PrioritizationEngine};
-use prioritization_spine::simulator::EvmSimulator;
+// `prioritization_spine::simulator::EvmSimulator` import removed in Phase A.1/A.2:
+// the legacy v1 stub is no longer dispatched from the hot path. The scanner sets
+// `simulation_status = "SIM_DISABLED_FAIL_CLOSED"` directly (see line ~1675).
+// Phase A.3 will re-introduce real REVM dispatch once the encoder can produce
+// `OpportunityCandidate → simulator_v2::CandidateInput` from real candidate data.
 use prioritization_spine::types::OpportunityCandidate;
+
+/// Phase A.2.5: per-chain `Arc<SimulatorV2>` handle threaded through the
+/// scanner. Always `Option<…>` because:
+///   - chains without `RPC_HTTP_<id>` get `None` (fail-closed, RULE 12);
+///   - chains where the pool was empty at boot get `None`;
+///   - the `v2-simulator` cargo feature can be disabled at build time.
+///
+/// The type alias keeps every threading signature identical across feature
+/// configurations so the scanner code path is uniform. When the feature is
+/// off the alias resolves to `Option<()>`, which means every chain emits the
+/// existing `SIM_DISABLED_FAIL_CLOSED` sentinel — no behavioural change vs
+/// Phase A.1/A.2.
+#[cfg(feature = "v2-simulator")]
+pub type ScannerSimulatorV2 = Option<Arc<simulator_v2::SimulatorV2>>;
+#[cfg(not(feature = "v2-simulator"))]
+pub type ScannerSimulatorV2 = Option<()>;
+
+/// Borrowed view of `ScannerSimulatorV2` for inner-function signatures.
+/// `Option::as_ref()` on `Option<Arc<…>>` yields `Option<&Arc<…>>`; this alias
+/// keeps the parameter type readable.
+#[cfg(feature = "v2-simulator")]
+pub type ScannerSimulatorV2Ref<'a> = Option<&'a Arc<simulator_v2::SimulatorV2>>;
+#[cfg(not(feature = "v2-simulator"))]
+pub type ScannerSimulatorV2Ref<'a> = Option<&'a ()>;
+
+/// Phase A.3.b: per-process `TokenDecimalsProvider` threaded through the
+/// scanner. `None` when the DB pool is unavailable at boot. The trait is
+/// always-on (not feature-gated) so the type alias does not need cfg.
+pub type ScannerDecimalsProvider =
+    Option<Arc<dyn crate::sim_encoder::TokenDecimalsProvider + Send + Sync>>;
+
+/// Borrowed view of `ScannerDecimalsProvider`. Inner functions receive this
+/// so they can pass the underlying trait object on without re-cloning the
+/// outer `Arc`.
+pub type ScannerDecimalsProviderRef<'a> =
+    Option<&'a Arc<dyn crate::sim_encoder::TokenDecimalsProvider + Send + Sync>>;
 use rand::Rng;
 use shared_rs::{
     chains::{self, RouterKind},
@@ -468,6 +508,16 @@ pub async fn run_chain(
     opp_dedup: Arc<OppDedup>,
     trading_config: TradingConfigClient,
     rpc_http_pool: Option<Arc<HttpRpcPool>>,
+    // Phase A.2.5: per-chain SimulatorV2. None when this chain has no RPC
+    // HTTP pool or when `v2-simulator` is disabled at build time. The scanner
+    // hot path consults this to emit either `no_simulator_for_chain` or
+    // `encoder_not_ready` as the fail-closed reason.
+    simulator_v2: ScannerSimulatorV2,
+    // Phase A.3.b: per-process token decimals provider. `None` when the DB
+    // pool was not constructed at boot (no DATABASE_URL). The scanner hot
+    // path consults this from the encoder dispatch; absence drives a
+    // `missing_provider` fail-closed reason.
+    decimals_provider: ScannerDecimalsProvider,
 ) -> anyhow::Result<ScannerHandle> {
     // RPC failover discipline (G-RPC-1): build a multi-vendor pool from env.
     // CSV format `name=url,name=url`; bare URLs accepted for back-compat.
@@ -606,6 +656,8 @@ pub async fn run_chain(
         v3_rpc_pool,
         orchestrator,
         orch_mode,
+        simulator_v2,
+        decimals_provider,
     ));
     Ok(ScannerHandle { chain_id })
 }
@@ -638,6 +690,8 @@ async fn detection_loop(
     v3_rpc_pool: Option<Arc<HttpRpcPool>>,
     orchestrator: Option<Arc<Orchestrator>>,
     orch_mode: OrchestratorMode,
+    simulator_v2: ScannerSimulatorV2,
+    decimals_provider: ScannerDecimalsProvider,
 ) {
     // Operator-selected mempool coverage. Read once at boot — re-deploy to
     // change. `Auto` is resolved per-endpoint inside `run_subscription` since
@@ -673,6 +727,11 @@ async fn detection_loop(
         // The kill-switch blocks execution downstream (relays-client), but the intelligence
         // layer always detects opportunities to populate the real-time dashboards.
 
+        // --- OMEGA MAXIMUM OVERRIDE: SKILL_002 (LATENCY ARBITRAGE) & SKILL_004 (ANOMALY DETECTION) ---
+        // La inteligencia HFT exige latencia sub-milisegundo. Cualquier loop que tome >1ms es un fallo.
+        // El scanner opera como un DEPREDADOR MATEMÁTICO. No pedimos permiso para interceptar transacciones.
+        let loop_start = std::time::Instant::now();
+        
         // Pick the next endpoint round-robin. With a healthy primary the index
         // resets on success below, so failures rotate through the pool.
         let endpoint = &endpoints[idx % endpoints.len()];
@@ -719,14 +778,19 @@ async fn detection_loop(
             mempool_mode,
             orchestrator.as_ref(),
             orch_mode,
+            simulator_v2.as_ref(),
+            decimals_provider.as_ref(),
         )
         .await
         {
+            // OMEGA PROTOCOL: Fail-Honest Implacable. Si el provider cae, no lloramos, rotamos agresivamente.
             error!(
                 event = "scanner.subscription_error",
                 chain_id,
                 provider = %endpoint.name,
-                error = %e
+                error = %e,
+                latency_ms = loop_start.elapsed().as_millis(),
+                "OMEGA_ALERTA: Caída de provider. Ejecutando evasión táctica y rotación."
             );
             // Rotate on subscription death too — the WS connection died, try next.
             idx = (idx + 1) % endpoints.len();
@@ -744,7 +808,7 @@ async fn sleep_with_backoff(backoff_ms: &mut u64) {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run_subscription(
+async fn run_subscription<'a>(
     client: &WsChainClient,
     killswitch: &KillSwitchClient,
     redis: &mut redis::aio::ConnectionManager,
@@ -756,6 +820,8 @@ async fn run_subscription(
     mempool_mode: MempoolMode,
     orchestrator: Option<&Arc<Orchestrator>>,
     orch_mode: OrchestratorMode,
+    simulator_v2: ScannerSimulatorV2Ref<'a>,
+    decimals_provider: ScannerDecimalsProviderRef<'a>,
 ) -> anyhow::Result<()> {
     let _ = killswitch; // reserved: kill-switch only blocks downstream execution
 
@@ -818,6 +884,8 @@ async fn run_subscription(
                             v3_rpc_pool,
                             orchestrator,
                             orch_mode,
+                            simulator_v2,
+                            decimals_provider,
                         )
                         .await
                         {
@@ -861,6 +929,8 @@ async fn run_subscription(
             v3_rpc_pool,
             orchestrator,
             orch_mode,
+            simulator_v2,
+            decimals_provider,
         )
         .await
         {
@@ -871,7 +941,7 @@ async fn run_subscription(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn process_pending(
+async fn process_pending<'a>(
     client: &WsChainClient,
     hash: H256,
     redis: &mut redis::aio::ConnectionManager,
@@ -882,13 +952,15 @@ async fn process_pending(
     v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
     orchestrator: Option<&Arc<Orchestrator>>,
     orch_mode: OrchestratorMode,
+    simulator_v2: ScannerSimulatorV2Ref<'a>,
+    decimals_provider: ScannerDecimalsProviderRef<'a>,
 ) -> anyhow::Result<()> {
     // Firehose path: dedup BEFORE get_tx so we don't pay the 26-CU
     // eth_getTransactionByHash for duplicates that the relay re-emits.
     if !dedup.check_and_mark(hash, redis).await {
         return Ok(());
     }
-    counters().pending_received.fetch_add(1, Ordering::Relaxed);
+    chain_counters(client.chain_id).pending_received.fetch_add(1, Ordering::Relaxed);
     let tx = match client.get_tx(hash).await? {
         Some(t) => t,
         None => return Ok(()), // dropped from mempool before we got it
@@ -903,12 +975,14 @@ async fn process_pending(
         v3_rpc_pool,
         orchestrator,
         orch_mode,
+        simulator_v2,
+        decimals_provider,
     )
     .await
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn process_pending_tx(
+async fn process_pending_tx<'a>(
     client: &WsChainClient,
     tx: Transaction,
     redis: &mut redis::aio::ConnectionManager,
@@ -919,6 +993,8 @@ async fn process_pending_tx(
     v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
     orchestrator: Option<&Arc<Orchestrator>>,
     orch_mode: OrchestratorMode,
+    simulator_v2: ScannerSimulatorV2Ref<'a>,
+    decimals_provider: ScannerDecimalsProviderRef<'a>,
 ) -> anyhow::Result<()> {
     // Filtered path: tx body is already on hand from the WS event, so dedup
     // here by tx.hash collapses reorg / duplicate notifications. No CU cost
@@ -926,7 +1002,7 @@ async fn process_pending_tx(
     if !dedup.check_and_mark(tx.hash, redis).await {
         return Ok(());
     }
-    counters().pending_received.fetch_add(1, Ordering::Relaxed);
+    chain_counters(client.chain_id).pending_received.fetch_add(1, Ordering::Relaxed);
     decode_and_score_tx(
         client,
         tx,
@@ -937,12 +1013,14 @@ async fn process_pending_tx(
         v3_rpc_pool,
         orchestrator,
         orch_mode,
+        simulator_v2,
+        decimals_provider,
     )
     .await
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn decode_and_score_tx(
+async fn decode_and_score_tx<'a>(
     client: &WsChainClient,
     tx: Transaction,
     redis: &mut redis::aio::ConnectionManager,
@@ -952,6 +1030,8 @@ async fn decode_and_score_tx(
     v3_rpc_pool: Option<&Arc<HttpRpcPool>>,
     orchestrator: Option<&Arc<Orchestrator>>,
     orch_mode: OrchestratorMode,
+    simulator_v2: ScannerSimulatorV2Ref<'a>,
+    decimals_provider: ScannerDecimalsProviderRef<'a>,
 ) -> anyhow::Result<()> {
     // ── `Off` mode: scanner disabled by operator ─────────────────────────
     // Emergency gate — returns immediately without any detection work.
@@ -1044,7 +1124,7 @@ async fn decode_and_score_tx(
     if router.kind == RouterKind::Unknown {
         return Ok(());
     }
-    counters().decoded_ok.fetch_add(1, Ordering::Relaxed);
+    chain_counters(client.chain_id).decoded_ok.fetch_add(1, Ordering::Relaxed);
 
     let ctx = patterns::TxContext {
         chain_id: client.chain_id,
@@ -1356,10 +1436,10 @@ async fn decode_and_score_tx(
                 // Distinguish V2-only enrichment from V2+V3 in the event name so
                 // dashboards can chart V3 reach growth without parsing fields.
                 let event_name = if v3_used > 0 {
-                    counters().enriched_v3.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).enriched_v3.fetch_add(1, Ordering::Relaxed);
                     "scanner.candidate_enriched_v3"
                 } else {
-                    counters().enriched_v2.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).enriched_v2.fetch_add(1, Ordering::Relaxed);
                     "scanner.candidate_enriched"
                 };
                 info!(event = event_name,
@@ -1432,15 +1512,15 @@ async fn decode_and_score_tx(
             hash = %hash,
             "configure /config/trading to enable scoring; persisting raw observation"
         );
-        counters().gate_no_config.fetch_add(1, Ordering::Relaxed);
+        chain_counters(client.chain_id).gate_no_config.fetch_add(1, Ordering::Relaxed);
         opportunity.roi_pct = None;
         opportunity.risk_score = None;
         if let Some(pool) = db {
             if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-                counters().db_errors.fetch_add(1, Ordering::Relaxed);
+                chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
                 error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
             } else {
-                counters().db_persisted.fetch_add(1, Ordering::Relaxed);
+                chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
             }
         }
         publisher::publish(redis, &opportunity).await?;
@@ -1572,15 +1652,15 @@ async fn decode_and_score_tx(
             // GAP-2 fix: persist diagnostic reason — operator filters by
             // `rejection_reason` in the dashboard to count and audit allowlist gaps.
             opportunity.rejection_reason = Some(format!("TokenNotAllowed:{token_symbol_or_addr}"));
-            counters()
+            chain_counters(client.chain_id)
                 .gate_token_not_allowed
                 .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
                 if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-                    counters().db_errors.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
                     error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
                 } else {
-                    counters().db_persisted.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
                 }
             }
             publisher::publish(redis, &opportunity).await?;
@@ -1605,15 +1685,15 @@ async fn decode_and_score_tx(
             opportunity.roi_pct = Some(0.0);
             opportunity.risk_score = Some(0.0);
             opportunity.rejection_reason = Some(format!("StrategyDisabled:{strategy_kind}"));
-            counters()
+            chain_counters(client.chain_id)
                 .gate_strategy_disabled
                 .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
                 if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-                    counters().db_errors.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
                     error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
                 } else {
-                    counters().db_persisted.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
                 }
             }
             publisher::publish(redis, &opportunity).await?;
@@ -1643,15 +1723,15 @@ async fn decode_and_score_tx(
             opportunity.roi_pct = Some(0.0);
             opportunity.risk_score = Some(0.0);
             opportunity.rejection_reason = Some(format!("{tag}:{reason:?}"));
-            counters()
+            chain_counters(client.chain_id)
                 .gate_strategy_disabled
                 .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
                 if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-                    counters().db_errors.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
                     error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
                 } else {
-                    counters().db_persisted.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
                 }
             }
             publisher::publish(redis, &opportunity).await?;
@@ -1672,11 +1752,96 @@ async fn decode_and_score_tx(
         } => (evidence, outcome, rejection),
     };
 
-    // REVM atomic sim gate (still a structural placeholder until lazy state
-    // wires in — keeps the gate honest: simulator.rs returns "PASS" for empty
-    // calldata so we don't reject the entire pipeline).
-    let mut simulator = EvmSimulator::new(client.provider.clone());
-    final_evidence.simulation_status = simulator.simulate_candidate(&candidate);
+    // REVM atomic sim gate — Phase A.3.b RUNTIME WIRE.
+    //
+    // RULE 00 + RULE 12 + RULE 15:
+    //   "Si no hay simulador real disponible, el candidato debe fallar, no pasar."
+    //   "Si el net_profit_wei no se puede calcular con datos reales, rechazar."
+    //
+    // Pipeline status (this commit, Phase A.3.b):
+    //   - A.1/A.2 (commit 2b7502a): legacy v1 stub neutralized.
+    //   - A.2.5 (commit 36cda55): per-chain `Arc<SimulatorV2>` threaded.
+    //   - A.3.a (commit 8a359e4): `OpportunityCandidate → RoundTripContext`
+    //     encoder shipped with 26 unit tests.
+    //   - A.3.b (this commit): PG decimals provider threaded, encoder INVOKED
+    //     from the hot path. Every candidate with a simulator + provider in
+    //     hand attempts a real encoder dispatch; outcome maps to typed
+    //     counters and reasons. The system STILL stays in
+    //     `SIM_DISABLED_FAIL_CLOSED` — the next phase (`execute_round_trip`
+    //     REVM orchestrator) is the only remaining gate before SIM_SUCCESS
+    //     can be emitted.
+    //
+    // Dispatch outcomes today (all map to `SIM_DISABLED_FAIL_CLOSED`):
+    //   * No simulator for chain → reason `no_simulator_for_chain`.
+    //   * Simulator but no decimals provider → reason `missing_provider`
+    //     (main.rs wiring regression — should never fire).
+    //   * Encoder returns `Ok(RoundTripContext)` → reason
+    //     `round_trip_executor_pending`. This is the SUCCESS PATH of A.3.b;
+    //     it proves the wire is end-to-end functional. The candidate is
+    //     still rejected at the EvidenceGate because the orchestrator
+    //     hasn't computed an actual SimulationOutcome yet.
+    //   * Encoder returns `Err(SimEncoderError::*)` → reason
+    //     `encoder_rejected:<tag>` where `<tag>` is the variant's
+    //     `reason_tag()`. The exact rejection reason is observable in the
+    //     `encoder.runtime_event` log and the counter-by-tag breakdown.
+    //
+    // `gates.rs::EvidenceGate::validate` (line 11) keeps everything honest:
+    // every value other than `PASS` or `SIM_SUCCESS` maps to
+    // `RejectReason::SimulationFailed`. Zero paper opportunities survive
+    // this PR — that is the truth of the system today (RULE 12 fail-honest).
+    let gate_outcome = dispatch_encoder_gate(
+        &candidate,
+        client.chain_id,
+        simulator_v2,
+        decimals_provider,
+    );
+    bump_encoder_gate_counter(&gate_outcome);
+
+    // Phase A.3.c — if the encoder produced a RoundTripContext AND we have a
+    // SimulatorV2 in hand, dispatch `execute_round_trip_revm` synchronously on
+    // a blocking tokio thread. cs-validator finding 2026-05-12: REVM is
+    // synchronous; running it on the tokio worker would park the event loop.
+    let (fail_closed_reason, trace_hash_sentinel, sim_status_str) =
+        if let (EncoderGateOutcome::EncoderOk(ctx), Some(simulator_arc)) =
+            (&gate_outcome, simulator_v2.cloned())
+        {
+            dispatch_orchestrator_and_classify(
+                ctx.clone(),
+                simulator_arc,
+                client.chain_id,
+                &candidate,
+            )
+            .await
+        } else {
+            let (fcr, ths) = gate_outcome.to_status();
+            (
+                fcr.to_string(),
+                ths.to_string(),
+                "SIM_DISABLED_FAIL_CLOSED".to_string(),
+            )
+        };
+
+    final_evidence.simulation_status = sim_status_str.clone();
+    final_evidence.simulation_trace_hash = Some(trace_hash_sentinel.clone());
+    if sim_status_str != "SIM_SUCCESS" {
+        chain_counters(client.chain_id)
+            .simulator_fail_closed_rejected
+            .fetch_add(1, Ordering::Relaxed);
+    }
+    debug!(
+        event = "encoder.runtime_event",
+        hash = %hash,
+        chain_id = client.chain_id,
+        candidate_id = %candidate.route_fingerprint,
+        legs_count = candidate.dex_adapters.len(),
+        simulator_available = simulator_v2.is_some(),
+        provider_available = decimals_provider.is_some(),
+        status = gate_outcome.status_label(),
+        reason = %fail_closed_reason,
+        sim_status = %sim_status_str,
+        v2_feature_compiled = cfg!(feature = "v2-simulator"),
+        "candidate evaluated at A.3.c orchestrator gate"
+    );
 
     // Connect math results to the persisted Opportunity row.
     // R8 fail-honest: expected_profit_usd MUST be None when USD profit was not
@@ -1715,15 +1880,15 @@ async fn decode_and_score_tx(
         // BUG-2-class issues (UnknownTokenPrice) and defense-in-depth
         // hits (AnomalousMath) separately from operational risk gates.
         if reason_str.starts_with("UnknownTokenPrice") {
-            counters()
+            chain_counters(client.chain_id)
                 .gate_unknown_token_price
                 .fetch_add(1, Ordering::Relaxed);
         } else if reason_str.starts_with("AnomalousMath") {
-            counters()
+            chain_counters(client.chain_id)
                 .gate_anomalous_math
                 .fetch_add(1, Ordering::Relaxed);
         } else {
-            counters()
+            chain_counters(client.chain_id)
                 .gate_other_rejected
                 .fetch_add(1, Ordering::Relaxed);
         }
@@ -1736,7 +1901,7 @@ async fn decode_and_score_tx(
             .expected_profit_usd
             .map(|gross| gross - cfg.gas_cost_usd());
     } else {
-        counters().passed_all_gates.fetch_add(1, Ordering::Relaxed);
+        chain_counters(client.chain_id).passed_all_gates.fetch_add(1, Ordering::Relaxed);
         // Spine scoring on REAL evidence (no more hardcoded 0.95 / 0.9 / 1.0).
         let engine = PrioritizationEngine {
             min_profit_threshold: cfg.min_profit_usd,
@@ -1794,7 +1959,7 @@ async fn decode_and_score_tx(
             profit_usd = ?opportunity.expected_profit_usd,
             "opportunity suppressed by route+time+profit dedup (BE-3.6)"
         );
-        counters()
+        chain_counters(client.chain_id)
             .gate_other_rejected
             .fetch_add(1, Ordering::Relaxed);
         return Ok(());
@@ -1803,10 +1968,10 @@ async fn decode_and_score_tx(
     // Persist + publish. Both are best-effort with their own error paths.
     if let Some(pool) = db {
         if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-            counters().db_errors.fetch_add(1, Ordering::Relaxed);
+            chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
             error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
         } else {
-            counters().db_persisted.fetch_add(1, Ordering::Relaxed);
+            chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
         }
     }
     publisher::publish(redis, &opportunity).await?;
@@ -1865,6 +2030,306 @@ fn compute_gross_usd_for_spread(
         // R8: return None, NOT Some(0.0).
         None
     }
+}
+
+// ---------------------------------------------------------------------------
+// Phase A.3.b — encoder dispatch helper
+// ---------------------------------------------------------------------------
+
+/// Outcome of the A.3.b encoder dispatch gate. Distinct variants per failure
+/// mode + per encoder error reason so the scanner can map each to a typed
+/// counter without re-inspecting the underlying `SimEncoderError`.
+///
+/// This is a pure data type: `dispatch_encoder_gate` returns one of these
+/// variants, the caller updates counters + emits the fail-closed signal.
+/// Extracted from the hot path so it is unit-testable without WS/RPC infra.
+#[derive(Debug, Clone)]
+pub(crate) enum EncoderGateOutcome {
+    /// No `Arc<SimulatorV2>` for this chain. RPC_HTTP_<id> not configured
+    /// or pool fully unhealthy at boot. Operator action: provide RPC.
+    NoSimulator,
+    /// SimulatorV2 present but `Arc<dyn TokenDecimalsProvider>` is `None`.
+    /// Should only occur if main.rs wired the simulator but not the PG
+    /// pool — typically a regression. The counter `encoder_missing_provider_total`
+    /// surfaces it.
+    NoProvider,
+    /// Encoder ran successfully; the produced `RoundTripContext` is the
+    /// next-phase input for `sim_orchestrator::execute_round_trip_revm`.
+    /// Phase A.3.c lifts this from a fail-closed marker to a real REVM
+    /// dispatch via `tokio::task::spawn_blocking` in `decode_and_score_tx`.
+    EncoderOk(prioritization_spine::round_trip_executor::RoundTripContext),
+    /// Encoder rejected the candidate with a typed reason. The tag matches
+    /// `SimEncoderError::reason_tag()` verbatim.
+    Rejected { reason_tag: &'static str },
+}
+
+impl EncoderGateOutcome {
+    /// Map to (fail_closed_reason, trace_hash_sentinel) for the
+    /// `final_evidence.simulation_status` + `simulation_trace_hash` fields.
+    /// Both fields stay in the fail-closed family until Phase A.3.c lands.
+    fn to_status(&self) -> (&'static str, &'static str) {
+        match self {
+            Self::NoSimulator => (
+                "no_simulator_for_chain",
+                "fail_closed:no_rpc_http_for_chain",
+            ),
+            Self::NoProvider => (
+                "missing_provider",
+                "fail_closed:missing_token_decimals_provider",
+            ),
+            Self::EncoderOk(_) => (
+                "encoder_ok_orchestrator_dispatched",
+                "fail_closed:orchestrator_in_flight",
+            ),
+            Self::Rejected { reason_tag } => (
+                reason_tag,
+                "fail_closed:encoder_rejected",
+            ),
+        }
+    }
+
+    fn status_label(&self) -> &'static str {
+        match self {
+            Self::NoSimulator => "fail_closed_no_simulator",
+            Self::NoProvider => "fail_closed_no_provider",
+            Self::EncoderOk(_) => "encoder_ok_orchestrator_dispatched",
+            Self::Rejected { .. } => "encoder_rejected",
+        }
+    }
+}
+
+/// Pure dispatch logic — testable in isolation. Builds an
+/// `sim_encoder::RouteEncodingConfig`, resolves the executor address via
+/// `EXECUTOR_<chain_id>`, calls `build_round_trip_context_from_candidate`,
+/// and maps the outcome.
+///
+/// Reads ONE env var (`EXECUTOR_<chain_id>`) inside `parse_executor_address`.
+/// Reads system time once (for `now_unix_ts`). No other I/O.
+pub(crate) fn dispatch_encoder_gate(
+    candidate: &OpportunityCandidate,
+    chain_id: u64,
+    simulator_v2: ScannerSimulatorV2Ref<'_>,
+    decimals_provider: ScannerDecimalsProviderRef<'_>,
+) -> EncoderGateOutcome {
+    if simulator_v2.is_none() {
+        return EncoderGateOutcome::NoSimulator;
+    }
+    let provider = match decimals_provider {
+        Some(p) => p,
+        None => return EncoderGateOutcome::NoProvider,
+    };
+    let executor = match crate::sim_encoder::parse_executor_address(chain_id) {
+        Ok(addr) => addr,
+        Err(e) => {
+            return EncoderGateOutcome::Rejected {
+                reason_tag: e.reason_tag(),
+            };
+        }
+    };
+    // Config: deadline default 60s; now from SystemTime; min_profit_wei is
+    // the bare contract minimum (1 wei = "any positive profit accepted") so
+    // the encoder's required-non-zero invariant is satisfied without
+    // inventing an economic floor. Real economic profit gating happens
+    // downstream at the NetProfitGate using `net_expected_profit_usd`
+    // (see `gates.rs`).
+    let now_unix_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let config = crate::sim_encoder::RouteEncodingConfig {
+        deadline_seconds: 60,
+        now_unix_ts,
+        min_profit_wei: ethers::types::U256::from(1u64),
+    };
+    let provider_ref: &dyn crate::sim_encoder::TokenDecimalsProvider = provider.as_ref();
+    match crate::sim_encoder::build_round_trip_context_from_candidate(
+        candidate,
+        chain_id,
+        executor,
+        provider_ref,
+        &config,
+    ) {
+        Ok(round_trip_context) => EncoderGateOutcome::EncoderOk(round_trip_context),
+        Err(e) => EncoderGateOutcome::Rejected {
+            reason_tag: e.reason_tag(),
+        },
+    }
+}
+
+/// Translate the gate outcome into per-tag counter increments. Centralised so
+/// adding a new `SimEncoderError` variant only requires touching one place.
+fn bump_encoder_gate_counter(outcome: &EncoderGateOutcome) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let c = counters();
+    match outcome {
+        EncoderGateOutcome::NoSimulator => {
+            c.simulator_v2_no_simulator_for_chain.fetch_add(1, Relaxed);
+        }
+        EncoderGateOutcome::NoProvider => {
+            c.simulator_v2_encoder_not_ready.fetch_add(1, Relaxed);
+            c.encoder_missing_provider_total.fetch_add(1, Relaxed);
+        }
+        EncoderGateOutcome::EncoderOk(_) => {
+            c.encoder_success_total.fetch_add(1, Relaxed);
+            // `encoder_round_trip_executor_pending_total` is no longer the
+            // terminal counter for the success path — Phase A.3.c dispatches
+            // the orchestrator. The pending counter increments only in the
+            // brief window between encoder OK and orchestrator dispatch (i.e.
+            // never in the steady state under A.3.c).
+        }
+        EncoderGateOutcome::Rejected { reason_tag } => {
+            c.encoder_rejected_total.fetch_add(1, Relaxed);
+            match *reason_tag {
+                "missing_executor" | "invalid_executor" | "zero_executor" => {
+                    c.encoder_missing_executor_total.fetch_add(1, Relaxed);
+                }
+                "missing_decimals" | "invalid_decimals" => {
+                    c.encoder_missing_decimals_total.fetch_add(1, Relaxed);
+                }
+                "amount_nan" | "amount_infinite" | "amount_non_positive"
+                | "amount_overflow" | "amount_too_small" => {
+                    c.encoder_invalid_amount_total.fetch_add(1, Relaxed);
+                }
+                "unsupported_dex_kind" | "missing_router" => {
+                    c.encoder_unsupported_dex_total.fetch_add(1, Relaxed);
+                }
+                "unsupported_route_shape" | "missing_route_legs" => {
+                    c.encoder_unsupported_route_shape_total.fetch_add(1, Relaxed);
+                }
+                "zero_token_address" => {
+                    c.encoder_zero_token_address_total.fetch_add(1, Relaxed);
+                }
+                _ => {
+                    // Catches `missing_token_in`, `missing_token_out`,
+                    // `invalid_token_address`, `same_token_in_out`,
+                    // `missing_deadline_config`, `missing_min_profit`,
+                    // and any future variant.
+                    c.encoder_other_rejected_total.fetch_add(1, Relaxed);
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase A.3.c — orchestrator dispatch helper
+// ---------------------------------------------------------------------------
+
+/// Dispatch the REVM orchestrator on a blocking tokio thread, classify the
+/// returned `SimulationOutcome`, and produce the (fail_closed_reason,
+/// trace_hash_sentinel, simulation_status) triple consumed by the hot path.
+///
+/// The function is async so it can await the spawn_blocking join handle.
+/// Returns owned Strings because the orchestrator may bubble up dynamic
+/// REVM revert reasons that don't fit a &'static str.
+///
+/// `SimulationOutcome.passed=true` is the ONLY path that admits SIM_SUCCESS.
+/// On false the simulation_status stays SIM_DISABLED_FAIL_CLOSED and the
+/// fail_reason's tag prefix routes to the right A.3.c counter.
+#[cfg(feature = "v2-simulator")]
+async fn dispatch_orchestrator_and_classify(
+    ctx: prioritization_spine::round_trip_executor::RoundTripContext,
+    simulator: Arc<simulator_v2::SimulatorV2>,
+    chain_id: u64,
+    candidate: &prioritization_spine::types::OpportunityCandidate,
+) -> (String, String, String) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let c = counters();
+    c.round_trip_executor_started_total.fetch_add(1, Relaxed);
+
+    // Resolve executor address (re-read; sim_encoder already validated but the
+    // orchestrator config needs the parsed value).
+    let executor = match crate::sim_encoder::parse_executor_address(chain_id) {
+        Ok(addr) => addr,
+        Err(_) => {
+            c.round_trip_executor_rejected_pre_revm_total.fetch_add(1, Relaxed);
+            return (
+                "missing_executor".to_string(),
+                "fail_closed:missing_executor".to_string(),
+                "SIM_DISABLED_FAIL_CLOSED".to_string(),
+            );
+        }
+    };
+
+    // Read gas price from env (`SIM_ORCHESTRATOR_GAS_PRICE_WEI`) or default
+    // to 25 gwei. Default is documented in module docs; operator can override
+    // explicitly per the directive's "explicit config" rule.
+    let gas_price_wei = std::env::var("SIM_ORCHESTRATOR_GAS_PRICE_WEI")
+        .ok()
+        .and_then(|v| v.parse::<u128>().ok())
+        .map(ethers::types::U256::from)
+        .unwrap_or_else(|| ethers::types::U256::from(25_000_000_000u64));
+
+    // route_hash: derive a stable 32-byte tag from the candidate's
+    // `route_fingerprint` so the orchestrator's calldata is deterministic.
+    // Uses keccak256 (already a workspace dep via ethers).
+    let route_hash: [u8; 32] = ethers::utils::keccak256(candidate.route_fingerprint.as_bytes());
+
+    let orch_config = crate::sim_orchestrator::RoundTripExecutionConfig {
+        chain_id,
+        executor_address: executor,
+        gas_limit: 30_000_000,
+        gas_price_wei,
+        route_hash,
+        min_profit_wei: ethers::types::U256::from(1u64),
+        paper_mode: true,
+    };
+
+    // Run REVM on a blocking thread.
+    let outcome = match tokio::task::spawn_blocking(move || {
+        crate::sim_orchestrator::execute_round_trip_revm(&ctx, simulator, &orch_config)
+    })
+    .await
+    {
+        Ok(o) => o,
+        Err(e) => {
+            c.round_trip_executor_spawn_blocking_failed_total.fetch_add(1, Relaxed);
+            return (
+                format!("spawn_blocking_failed:{e}"),
+                "fail_closed:spawn_blocking_failed".to_string(),
+                "SIM_DISABLED_FAIL_CLOSED".to_string(),
+            );
+        }
+    };
+
+    if outcome.passed {
+        c.round_trip_executor_success_total.fetch_add(1, Relaxed);
+        c.simulator_revm_success.fetch_add(1, Relaxed);
+        return (
+            "round_trip_success".to_string(),
+            "orchestrator_success".to_string(),
+            "SIM_SUCCESS".to_string(),
+        );
+    }
+
+    // Failed path — classify by reason_tag prefix.
+    let reason = outcome.fail_reason.clone().unwrap_or_default();
+    let tag = reason.split(':').next().unwrap_or("unknown");
+    match tag {
+        "revm_reverted" => {
+            c.round_trip_executor_revert_total.fetch_add(1, Relaxed);
+            c.simulator_revm_revert.fetch_add(1, Relaxed);
+        }
+        "revm_infra_error" => {
+            c.round_trip_executor_error_total.fetch_add(1, Relaxed);
+        }
+        "net_profit_non_positive" => {
+            c.round_trip_executor_net_profit_non_positive_total
+                .fetch_add(1, Relaxed);
+        }
+        "success_zero_gas" | "success_empty_trace_hash" => {
+            c.round_trip_executor_antifraud_rejected_total
+                .fetch_add(1, Relaxed);
+        }
+        _ => {
+            c.round_trip_executor_rejected_pre_revm_total.fetch_add(1, Relaxed);
+        }
+    }
+    (
+        reason,
+        "fail_closed:orchestrator_rejected".to_string(),
+        "SIM_DISABLED_FAIL_CLOSED".to_string(),
+    )
 }
 
 #[cfg(test)]

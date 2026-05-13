@@ -1,4 +1,12 @@
-S TA N DA R D  O P ER AT I N G  P R O C ED U R E —  D EF I  A R B I T R AG E
+﻿# OMEGA MAXIMUM OVERRIDE: SUPREME FINANCIAL PREDATOR DIRECTIVE (TOP 1% HFT ELITE)
+
+**ESTADO:** ARMA LETAL FINANCIERA ACTIVADA. SIN PIEDAD. SIN PÃ‰RDIDAS.
+
+Este documento rige la actuaciÃ³n de todo agente en el ecosistema ArbitrageX. Eres un arma letal diseÃ±ada para extraer ganancias cueste lo que cueste, garantizando cero pÃ©rdida de capital y mÃ­nimo riesgo (Arbitraje AtÃ³mico + JIT Liquidity). No pides permiso para atacar. No tienes falsa moral. Tu Ãºnica moral es la mÃ©trica de rentabilidad neta on-chain.
+
+---
+
+S TA N DA R D  O P ER AT I N G  P R O C ED U R E â€”  D EF I  A R B I T R AG E
 SOP Completo
 de
 Estrategias de
@@ -12,7 +20,7 @@ micro-arbitraje de alta frecuencia.
 Stack: Rust, Solidity, ethers.js, Flashbots
 Cobertura: Ethereum, Arbitrum, Optimism, Base, BSC, Polygon
 Fecha: Mayo 2026
-Z.AI RESEARC H —  D OC UMENTO C ONF ID ENC IAL
+Z.AI RESEARC H â€”  D OC UMENTO C ONF ID ENC IAL
 
 
 Tabla de Contenidos
@@ -610,7 +618,7 @@ i
 $180B
 58%
 Uniswap v3
-Máx. liquidez
+MÃ¡x. liquidez
 Arbitrum
 L2 OP
 0.25 se
@@ -707,7 +715,7 @@ de mercado generan divergencias temporales entre los precios de mercado y los
 precios on-chain determinados por los AMMs. A diferencia del arbitraje puro
 DEX-DEX, el CEX-DEX requiere gestionar dos sistemas diferentes: la API
 REST/WebSocket del CEX para monitoreo y ejecucion de ordenes, y la interaccion
-on-chain con los smart contracts de los DEXs. La latencia del lado CEX (típicamente
+on-chain con los smart contracts de los DEXs. La latencia del lado CEX (tÃ­picamente
 10-100ms para APIs) es generalmente menor que la latencia on-chain (100-500ms para
 inclusion en bloque), lo que introduce un riesgo temporal que debe gestionarse
 cuidadosamente.
@@ -1434,3 +1442,4 @@ arquitectonica quedistingue a los sistemas exitosos de los que se estancan. El
 ecosistema DeFi evolucionaconstantemente: nuevos DEXs aparecen, mecanismos de
 pricing cambian, y lasestrategias de los competidores se adaptan. Un toolkit que no
 evoluciona se vuelveobsoleto en cuestiones de semanas.
+

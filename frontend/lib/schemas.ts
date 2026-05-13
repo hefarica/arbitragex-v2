@@ -56,6 +56,48 @@ export const OpportunityRowSchema = z.object({
   status: z.string(),
   detected_at: z.string(),
   trace_id: z.string(),
+  // ─── P1 simulation/evidence enrichment (audit 2026-05-13) ───
+  //
+  // ALL fields below are `.nullable().optional()` so the schema parses every
+  // current payload (the backend doesn't yet emit them on /api/opportunities/live)
+  // AND every future payload that includes them. R8 fail-honest: when the
+  // backend returns the field as null, the UI renders "Unavailable" — never 0
+  // and never invents a value.
+  //
+  // Wire contract (target, not yet emitted by every code path):
+  //   simulation_status  : "pending" | "running" | "success" | "reverted" | "halted" | null
+  //   sim_classification : "SIM_SUCCESS" | "SIM_REVERT" | "SIM_HALT" | "SIM_SKIP" | null
+  //   revert_reason      : free-form string when sim_classification = SIM_REVERT
+  //   trace_hash         : 0x… (SHA-256 over SequenceContext calldata+output)
+  //   evidence_hash      : 0x… (operator audit hash, future A.8 confidence wire)
+  //   gas_used           : revm.gas_used (sum across multi-step sequence)
+  //   net_profit_wei     : i128 as decimal string (negative allowed)
+  //   simulated_net_profit_usd : derived USD net, null when sim hasn't run
+  //   evidence_gate      : "PASS" | "FAIL" | null  (future A.8)
+  //   net_profit_gate    : "PASS" | "FAIL" | null  (G-NET-1)
+  simulation_status: z.string().nullable().optional(),
+  sim_classification: z.string().nullable().optional(),
+  revert_reason: z.string().nullable().optional(),
+  trace_hash: z.string().nullable().optional(),
+  evidence_hash: z.string().nullable().optional(),
+  gas_used: z.union([z.string(), z.number()]).nullable().optional(),
+  net_profit_wei: z.string().nullable().optional(),
+  simulated_net_profit_usd: z.number().nullable().optional(),
+  evidence_gate: z.string().nullable().optional(),
+  net_profit_gate: z.string().nullable().optional(),
+  // ─── A.8 confidence scoring (audit 2026-05-13) ───
+  // All nullable+optional: backend does not yet emit these on
+  // /api/opportunities/live (scoring_pipeline_wired=false). When the future
+  // commit wires the scanner pipeline, these fields populate; the UI shows
+  // "Unavailable" today via OpportunityEvidenceCell.
+  // Units are basis points (bps) — integer math, no floats for final money.
+  confidence_score_bps: z.number().int().nullable().optional(),
+  posterior_probability_bps: z.number().int().nullable().optional(),
+  kelly_fraction_bps: z.number().int().nullable().optional(),
+  scoring_decision: z.string().nullable().optional(),
+  scoring_reason: z.string().nullable().optional(),
+  scoring_version: z.string().nullable().optional(),
+  scoring_input_hash: z.string().nullable().optional(),
 });
 
 export const OpportunitiesLiveSchema = z.object({
@@ -615,3 +657,339 @@ export type DefiRpcsResponse = z.infer<typeof DefiRpcsResponseSchema>;
 export type DefiPoolRow = z.infer<typeof DefiPoolRowSchema>;
 export type DefiPoolsResponse = z.infer<typeof DefiPoolsResponseSchema>;
 export type DefiMetricsResponse = z.infer<typeof DefiMetricsResponseSchema>;
+
+// ─────── Strategy Runtime Status (per-strategy observability) ───────
+//
+// R8 fail-honest: backend declares per-source health in `source.*`:
+//   "ok"                 → query ran and returned data
+//   "partial_or_failed"  → query failed but is non-fatal (e.g., Redis down)
+//   "unavailable"        → query failed and the strategy section is omitted
+//   "not_used"           → endpoint never reads from this source
+// We use `z.string()` (not `z.enum`) so the FE never breaks if the backend
+// adds new states (forward-compat). UI maps unknown → "unavailable" badge.
+//
+// Strategies array carries per-strategy details. `.passthrough()` so future
+// backend fields (per-strategy variants, additional counters) don't break
+// existing FE — we only depend on the minimal fields below.
+export const RuntimeStatusStrategySchema = z
+  .object({
+    strategy_kind: z.string(),
+    enabled: z.boolean(),
+    engine_loaded: z.boolean(),
+    engine_invoked: z.boolean(),
+    last_invoked_at: z.string().nullable(),
+    last_candidate_at: z.string().nullable().optional(),
+    candidates_1h: z.number().int().nonnegative(),
+    rejections_1h: z.number().int().nonnegative(),
+    last_rejection_reason: z.string().nullable().optional(),
+    data_dependencies_status: z.string(),
+  })
+  .passthrough();
+
+export const RuntimeStatusResponseSchema = z.object({
+  chain_id: z.number().int().positive(),
+  window_seconds: z.number().int().positive(),
+  source: z.object({
+    postgres: z.string(),
+    redis: z.string(),
+    logs: z.string().optional(),
+  }),
+  strategies: z.array(RuntimeStatusStrategySchema),
+  ts: z.string(),
+});
+
+export type RuntimeStatusStrategy = z.infer<typeof RuntimeStatusStrategySchema>;
+export type RuntimeStatusResponse = z.infer<typeof RuntimeStatusResponseSchema>;
+
+// ─────── Readiness extras: blockers + decision (P2) ───────
+//
+// Wire contract for /api/v1/readiness/blockers and /api/v1/readiness/decision.
+// All enums use z.string() with passthrough at the schema level so the FE never
+// breaks on backend additions (forward-compat). The redacted_value field is
+// either the literal "present" or null — the raw value is NEVER on the wire.
+
+export const ReadinessBlockerEvidenceSchema = z.object({
+  env_present: z.boolean(),
+  redacted_value: z.union([z.literal("present"), z.null()]),
+  value_length: z.number().int().nonnegative().nullable(),
+  source: z.string(),
+  readiness_id: z.string().optional(),
+  readiness_status: z.string().optional(),
+});
+
+export const ReadinessBlockerSchema = z.object({
+  id: z.string(),
+  category: z.string(),
+  severity: z.string(),
+  status: z.string(),
+  title: z.string(),
+  description: z.string(),
+  required_action: z.string(),
+  operator_required: z.boolean(),
+  can_auto_resolve: z.boolean(),
+  blocks: z.array(z.string()),
+  evidence: ReadinessBlockerEvidenceSchema,
+});
+
+export const ReadinessBlockersResponseSchema = z.object({
+  generated_at: z.string(),
+  source: z.string(),
+  overall_status: z.string(),
+  blockers: z.array(ReadinessBlockerSchema),
+  summary: z.object({
+    critical: z.number().int().nonnegative(),
+    high: z.number().int().nonnegative(),
+    medium: z.number().int().nonnegative(),
+    low: z.number().int().nonnegative(),
+    blocked_phases: z.array(z.string()),
+  }),
+});
+
+export const ReadinessDecisionResponseSchema = z.object({
+  generated_at: z.string(),
+  go_a5: z.boolean(),
+  go_live: z.boolean(),
+  verdict: z.string(),
+  phase: z.string(),
+  // Backend declares capital_exposure_usd as the LITERAL 0. We accept any
+  // non-negative number here (defensive) but the only valid runtime value is 0.
+  capital_exposure_usd: z.number().nonnegative(),
+  live_trading: z.boolean(),
+  private_relay: z.boolean(),
+  submit_enabled: z.boolean(),
+  paper_mode: z.boolean(),
+  reasons: z.array(z.string()),
+  next_action: z.string(),
+  blockers_ref: z.string(),
+  required_for_go_live: z.array(z.string()),
+});
+
+export type ReadinessBlockerEvidence = z.infer<typeof ReadinessBlockerEvidenceSchema>;
+export type ReadinessBlocker = z.infer<typeof ReadinessBlockerSchema>;
+export type ReadinessBlockersResponse = z.infer<typeof ReadinessBlockersResponseSchema>;
+export type ReadinessDecisionResponse = z.infer<typeof ReadinessDecisionResponseSchema>;
+
+// ─────── Agent Teams Status (P2-continued) ───────
+//
+// 17 workspace-verified agent verdicts from the build/audit/deploy cycle.
+// Backend overlays runtime context (verifyAll outcome) to demote PASS to
+// BLOCKED where prerequisites have regressed. Permissive enums (z.string())
+// for forward-compat.
+
+export const AgentStatusRowSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  category: z.string(),
+  verdict: z.string(),
+  status: z.string(),
+  evidence: z.array(z.string()),
+  last_run_at: z.string().nullable(),
+  source: z.string(),
+  blocks: z.array(z.string()),
+  next_action: z.string().nullable(),
+  risk: z.string(),
+  operator_required: z.boolean(),
+});
+
+export const AgentsStatusResponseSchema = z.object({
+  generated_at: z.string(),
+  source: z.string(),
+  overall_status: z.string(),
+  agents: z.array(AgentStatusRowSchema),
+  summary: z.object({
+    pass: z.number().int().nonnegative(),
+    blocked: z.number().int().nonnegative(),
+    partial: z.number().int().nonnegative(),
+    no_go: z.number().int().nonnegative(),
+    not_run: z.number().int().nonnegative(),
+    unknown: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  }),
+});
+
+export type AgentStatusRow = z.infer<typeof AgentStatusRowSchema>;
+export type AgentsStatusResponse = z.infer<typeof AgentsStatusResponseSchema>;
+
+// ─────── A.8 Confidence Scoring Wire Status ───────
+//
+// Backend reports the honest wire state of the bayesian/kelly primitives.
+// Schema permissive (z.string()) for forward-compat with future decisions
+// or component additions. min_expected_value_wei is a string (i256 may
+// exceed JS Number); UI handles it as a hex/decimal string.
+
+export const ScoringComponentSchema = z.object({
+  name: z.string(),
+  wired: z.boolean(),
+  evidence_ref: z.string(),
+  description: z.string(),
+});
+
+export const ScoringBlockedReasonSchema = z.object({
+  id: z.string(),
+  severity: z.string(),
+  description: z.string(),
+  evidence_ref: z.string(),
+  required_action: z.string(),
+});
+
+export const ScoringStatusResponseSchema = z.object({
+  generated_at: z.string(),
+  source: z.string(),
+  mode: z.string(),
+  scoring_status: z.string(),
+  scoring_enabled: z.boolean(),
+  bayesian_filter_wired: z.boolean(),
+  kelly_sizing_wired: z.boolean(),
+  vpin_wired: z.boolean(),
+  scoring_pipeline_wired: z.boolean(),
+  components: z.array(ScoringComponentSchema),
+  confidence_threshold_bps: z.number().int().nonnegative(),
+  min_expected_value_wei: z.string().nullable(),
+  scoring_version: z.string(),
+  recent_scored_count: z.number().int().nonnegative(),
+  last_scored_at: z.string().nullable(),
+  blocked_reasons: z.array(ScoringBlockedReasonSchema),
+  available_decisions: z.array(z.string()),
+  live_trading: z.boolean(),
+  private_relay: z.boolean(),
+  submit_enabled: z.boolean(),
+  capital_exposure_usd: z.number().nonnegative(),
+  next_action: z.string(),
+});
+
+export type ScoringComponent = z.infer<typeof ScoringComponentSchema>;
+export type ScoringBlockedReason = z.infer<typeof ScoringBlockedReasonSchema>;
+export type ScoringStatusResponse = z.infer<typeof ScoringStatusResponseSchema>;
+
+// ─────── A.6 Circuit Breakers ───────
+//
+// 10 comprehensive breakers with honest state evaluation. Permissive enums
+// (z.string()) for forward-compat; current_value is union(string|number|null)
+// because some breakers report dimensional (ms, %, gwei) and others report
+// categorical ("env_present"/"armed"/"disarmed").
+
+export const CircuitBreakerEvidenceSchema = z.object({
+  source: z.string(),
+  detail: z.string(),
+  current_value: z.union([z.string(), z.number(), z.null()]),
+  threshold: z.union([z.string(), z.number(), z.null()]),
+  unit: z.string().nullable(),
+  ref: z.string().optional(),
+});
+
+export const CircuitBreakerSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  category: z.string(),
+  state: z.string(),
+  severity: z.string(),
+  action: z.string(),
+  evidence: CircuitBreakerEvidenceSchema,
+  blocks: z.array(z.string()),
+  operator_required: z.boolean(),
+  last_evaluated_at: z.string(),
+  description: z.string(),
+  required_action: z.string().nullable(),
+});
+
+export const CircuitBreakerSummarySchema = z.object({
+  pass: z.number().int().nonnegative(),
+  warn: z.number().int().nonnegative(),
+  paused: z.number().int().nonnegative(),
+  killed: z.number().int().nonnegative(),
+  blocked: z.number().int().nonnegative(),
+  not_available: z.number().int().nonnegative(),
+  unknown: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+});
+
+export const CircuitBreakersStatusResponseSchema = z.object({
+  generated_at: z.string(),
+  mode: z.string(),
+  live_trading: z.boolean(),
+  private_relay: z.boolean(),
+  submit_enabled: z.boolean(),
+  capital_exposure_usd: z.number().nonnegative(),
+  overall_state: z.string(),
+  breakers: z.array(CircuitBreakerSchema),
+  summary: CircuitBreakerSummarySchema,
+  next_action: z.string(),
+  version: z.string(),
+});
+
+export const CircuitBreakerEventsResponseSchema = z.object({
+  generated_at: z.string(),
+  event_source: z.string(),
+  events: z.array(z.unknown()),
+  blocked_reason: z.string().nullable(),
+  next_action: z.string(),
+});
+
+export type CircuitBreakerEvidence = z.infer<typeof CircuitBreakerEvidenceSchema>;
+export type CircuitBreaker = z.infer<typeof CircuitBreakerSchema>;
+export type CircuitBreakerSummary = z.infer<typeof CircuitBreakerSummarySchema>;
+export type CircuitBreakersStatusResponse = z.infer<typeof CircuitBreakersStatusResponseSchema>;
+export type CircuitBreakerEventsResponse = z.infer<typeof CircuitBreakerEventsResponseSchema>;
+
+// ─────── B1 Chains Admin CRUD ───────
+//
+// Operator Admin Console: admin-gated CRUD over chains_runtime PG table.
+// All endpoints require V-AT-1 admin cookie. Permissive enum strings for
+// forward-compat. Soft-delete only (enabled=false; never physical DELETE).
+
+export const AdminChainRowSchema = z.object({
+  id: z.number().int().positive(),
+  chain_id: z.number().int().positive(),
+  name: z.string(),
+  rpc_http_url: z.string(),
+  rpc_ws_url: z.string().nullable(),
+  native_currency: z.string(),
+  block_time_ms: z.number().int().positive(),
+  enabled: z.boolean(),
+  config_hash: z.string().nullable(),
+  notes: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  created_by: z.string().nullable(),
+  updated_by: z.string().nullable(),
+});
+
+export const AdminChainsListSchema = z.object({
+  count: z.number().int().nonnegative(),
+  items: z.array(AdminChainRowSchema),
+  ts: z.string(),
+});
+
+export const AdminChainProbeResultSchema = z.object({
+  chain_id: z.number().int().positive(),
+  probed_rpc_url_redacted: z.string(),
+  reachable: z.boolean(),
+  matches: z.boolean().nullable(),
+  observed_chain_id: z.number().int().nullable(),
+  latency_ms: z.number().int().nullable(),
+  block_number: z.number().int().nullable(),
+  error: z.string().nullable(),
+  probed_at: z.string(),
+});
+
+// Request body schemas (mirror backend Zod 1:1).
+export const AdminChainCreateBodySchema = z.object({
+  chain_id: z.number().int().positive(),
+  name: z.string().min(1).max(64),
+  rpc_http_url: z.string().url(),
+  rpc_ws_url: z.string().url().optional(),
+  native_currency: z.string().min(1).max(16).optional(),
+  block_time_ms: z.number().int().positive().max(600_000).optional(),
+  enabled: z.boolean().optional(),
+  notes: z.string().max(1024).optional(),
+});
+
+export const AdminChainUpdateBodySchema = AdminChainCreateBodySchema
+  .omit({ chain_id: true })
+  .partial();
+
+export type AdminChainRow = z.infer<typeof AdminChainRowSchema>;
+export type AdminChainsList = z.infer<typeof AdminChainsListSchema>;
+export type AdminChainProbeResult = z.infer<typeof AdminChainProbeResultSchema>;
+export type AdminChainCreateBody = z.infer<typeof AdminChainCreateBodySchema>;
+export type AdminChainUpdateBody = z.infer<typeof AdminChainUpdateBodySchema>;

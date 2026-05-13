@@ -36,13 +36,15 @@ rand.workspace = true
 prioritization-spine = { workspace = true }
 math-engine = { workspace = true }
 
-# Sprint 4 — opt-in v2 simulator. Enabled at compile time with the
-# `v2-simulator` feature; activated at runtime by ARBX_USE_SIMULATOR_V2=true.
-# Default build path stays on the v1 stub in prioritization-spine.
+# Sprint 4 — REVM-backed simulator (Phase A.1+A.2 fail-closed wire).
+# Enabled by default at compile time; runtime is gated by RPC_HTTP_<chain>
+# being present per chain. When the feature is OFF, the scanner fails closed
+# (RULE 00 — no fabricated PASS). The legacy v1 stub in prioritization-spine
+# is deprecated; see `feat/wire-simulator-v2-revm` for context.
 simulator-v2 = { path = "../simulator-v2", optional = true }
 
 [features]
-default = []
+default = ["v2-simulator"]
 v2-simulator = ["dep:simulator-v2"]
 
 [dev-dependencies]

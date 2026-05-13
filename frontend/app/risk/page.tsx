@@ -5,6 +5,7 @@ import { FocusOnMount } from "@/components/focus-on-mount";
 import { PageHeader } from "@/components/page-header";
 import { KillswitchBanner } from "@/features/risk/KillswitchBanner";
 import { RiskAlertsTable } from "@/features/risk/RiskAlertsTable";
+import { RiskCircuitPanel } from "@/features/risk/RiskCircuitPanel";
 import { getRiskAlerts } from "@/lib/api-client";
 import { fmtTime } from "@/lib/formatters";
 
@@ -46,7 +47,15 @@ export default async function RiskPage() {
 
       {killswitch && <KillswitchBanner ks={killswitch} />}
 
-      <h2>Recent events</h2>
+      {/* A.6 (2026-05-13): comprehensive circuit breakers panel. Rendered
+          BEFORE the recent events table so the operator sees current breaker
+          state first. Additive — does not remove KillswitchBanner or
+          RiskAlertsTable. */}
+      <div className="mt-6">
+        <RiskCircuitPanel />
+      </div>
+
+      <h2 className="mt-8">Recent events</h2>
       <RiskAlertsTable alerts={alerts} windowHours={window_hours} />
     </>
   );

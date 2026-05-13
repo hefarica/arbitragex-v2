@@ -159,6 +159,24 @@ app.get("/api/config/current", (req, res) => proxy("/api/v1/config/current", req
 app.get("/api/relays", (req, res) => proxy("/api/v1/relays", req, res));
 app.get("/api/onboarding/status", (req, res) => proxy("/api/v1/onboarding/status", req, res));
 app.get("/api/readiness", (req, res) => proxy("/api/v1/readiness", req, res));
+// P2 readiness extras: derived blockers list and go/no-go decision.
+app.get("/api/readiness/blockers", (req, res) => proxy("/api/v1/readiness/blockers", req, res));
+app.get("/api/readiness/decision", (req, res) => proxy("/api/v1/readiness/decision", req, res));
+// P2-continued: agent teams status.
+app.get("/api/agents/status", (req, res) => proxy("/api/v1/agents/status", req, res));
+// A.8 confidence scoring wire status.
+app.get("/api/scoring/status", (req, res) => proxy("/api/v1/scoring/status", req, res));
+// A.6 comprehensive circuit breakers.
+app.get("/api/risk/circuit-breakers/status", (req, res) => proxy("/api/v1/risk/circuit-breakers/status", req, res));
+app.get("/api/risk/circuit-breakers/events", (req, res) => proxy("/api/v1/risk/circuit-breakers/events", req, res));
+
+// B1 Chains Admin CRUD (admin-token gated; dev-local forwards header).
+app.get("/api/admin/chains", (req, res) => proxy("/api/v1/admin/chains" + (new URL(req.url, "http://x").search || ""), req, res));
+app.get("/api/admin/chains/:chain_id", (req, res) => proxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res));
+app.post("/api/admin/chains", (req, res) => proxy("/api/v1/admin/chains", req, res));
+app.put("/api/admin/chains/:chain_id", (req, res) => proxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res));
+app.delete("/api/admin/chains/:chain_id", (req, res) => proxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res));
+app.post("/api/admin/chains/:chain_id/probe", (req, res) => proxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}/probe${new URL(req.url, "http://x").search || ""}`, req, res));
 // Trading Config — operator-tunable strategy parameters per chain.
 app.get("/api/trading-config", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";

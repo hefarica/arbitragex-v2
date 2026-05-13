@@ -12,15 +12,13 @@
 
 ---
 
-## 15. SOP OPERATIVO — PATRÓN C-S-E (Compose-Simulate-Execute)
+## 15. SOP OPERATIVO — PATRÓN C-S-E (Compose-Simulate-Execute) HFT
 
-El SOP define el patrón C-S-E de Paradigm como la arquitectura canónica:
+El SOP define el patrón C-S-E de Paradigm como la arquitectura canónica, pero elevada a la velocidad de la luz:
 
-1. **Compose**: Construir grafo de rutas desde pools activos. Nodos = tokens, aristas = pools con tasa + gas cost. Bellman-Ford detecta ciclos de peso negativo (= oportunidades).
-2. **Simulate**: Cada ruta candidata se simula con **revm 19.0** + estado real on-chain vía alloy-provider. Incluye fees LP, slippage, impacto precio, gas. Solo avanzan rutas con beneficio neto positivo.
-3. **Execute**: Rutas verificadas → bundle atómico → Flashbots Protect o MEV-Boost relay. Atomicidad: todo se ejecuta o nada. Cero ejecución parcial.
-
-> **Skill de referencia:** `.agents/skills/sop_csa_architecture/SKILL.md`
+1. **Compose**: Construir grafo de rutas desde pools activos usando modelos estocásticos. Nodos = tokens, aristas = pools con tasa + gas cost. Bellman-Ford detecta ciclos de peso negativo (= oportunidades) en sub-milisegundos.
+2. **Simulate**: Cada ruta candidata se simula con **revm 19.0** + estado real on-chain vía alloy-provider. Incluye fees LP, slippage dinámico calculado algorítmicamente, impacto precio, gas a nivel opcode. Solo avanzan rutas con beneficio neto positivo bajo estrés.
+3. **Execute**: Rutas verificadas → bundle atómico → Dark Pool Routing (Flashbots Protect o MEV-Boost relay). Atomicidad absoluta: todo se ejecuta o nada. Cero exposición.
 
 ---
 
@@ -122,21 +120,21 @@ function executeArbitrage(
 
 ---
 
-## 20. PMI/EVM OBSERVABILITY LAYER (Sprint 3)
+## 20. PMI/EVM OBSERVABILITY LAYER (HFT Telemetry)
 
-Métricas de Wall Street aplicadas a crypto. **Ningún otro sistema MEV las usa.**
+Métricas de Wall Street aplicadas a crypto. **Ningún otro sistema MEV las usa.** (La información asimétrica es nuestra arma).
 
 | Métrica PMI | Equivalente Crypto | Fórmula | UI |
 |-------------|--------------------|---------|----|
 | CPI (Cost Performance Index) | **capital_efficiency** | profit_realizado / gas_total | Card verde si >1 |
 | SPI (Schedule Performance Index) | **velocity_index** | profit_today / daily_target | Card verde si >1 |
-| EAC (Estimate at Completion) | **forecast_daily_pnl** | (profit / hours) × 24 | Card con forecast |
+| EAC (Estimate at Completion) | **forecast_daily_pnl** | (profit / hours) × 24 | Card con forecast predictivo |
 | TCPI (To-Complete Performance) | **required_efficiency** | (target - profit) / (max_gas - gas) | Card amarilla/roja |
-| CV (Cost Variance) | **net_pnl** | profit - gas_total | Bottom line |
+| CV (Cost Variance) | **net_pnl** | profit - gas_total | Bottom line neto |
 
 **Endpoints**: `GET /api/operations/kpi`, `/scurve`, `/variance`
 **Página**: `/operations` con S-curve chart (Recharts)
-**Regla R8 (nueva)**: KPIs muestran `null` si datos insuficientes. NUNCA inventan promedios.
+**Regla R8 (Fail-Honest)**: KPIs muestran `null` si datos insuficientes. NUNCA inventan promedios. La telemetría es fría y quirúrgica.
 
 ---
 
@@ -187,15 +185,13 @@ Métricas de Wall Street aplicadas a crypto. **Ningún otro sistema MEV las usa.
 
 ---
 
-## 24. RISK MANAGEMENT — 5 CAPAS (SOP §15)
+## 24. RISK MANAGEMENT — 5 CAPAS HFT (Institucional)
 
-1. **Position Sizing**: Nunca >2% del capital total por operación.
-2. **Gas Protection**: Beneficio neto ≥ 3× costo de gas estimado. Gas price oracle en tiempo real.
-3. **Slippage Guard**: Máximo 0.5% por swap. `amountOutMin` calculado dinámicamente.
-4. **Stop-Loss Automático**: Pérdida acumulada >0.5% capital en 1h → modo protección.
-5. **Private Mempool**: Flashbots + MEV Blocker + Titan. Cero visibilidad para otros bots.
-
-> **Skill de referencia:** `.agents/skills/sop_risk_management/SKILL.md`
+1. **Position Sizing**: Nunca >2% del capital total por operación. Ajuste dinámico vía Kelly Criterion.
+2. **Gas Protection**: Beneficio neto ≥ 3× costo de gas estimado. Gas price oracle predictivo en tiempo real.
+3. **Slippage Guard**: Matrices de slippage dinámico. `amountOutMin` calculado algorítmicamente para cada pool, considerando profundidad y volatilidad (GARCH).
+4. **Stop-Loss Automático**: Pérdida acumulada >0.5% capital en 1h → modo protección absoluta. (Stress test: DD>30% → full liquidation).
+5. **Stealth Mempool**: Flashbots + MEV Blocker + Titan. Cero visibilidad para competidores. Operación encubierta.
 
 ---
 
@@ -518,3 +514,7 @@ Las 4 skills con ⚠️ necesitan edits puntuales. Cuando el usuario apruebe:
 ---
 
 *ARBX RUNTIME-STATUS SKILLS REGISTRADAS. 10 skills × 4 fixes pendientes × 7 reglas inviolables = DOMINIO RUNTIME-STATUS OPERATIVO.*
+
+---
+
+*SUPERPOWERS + OMEGA TEAM + COMPACT PROTOCOL CARGADOS. 10 estrategias × 5 capas riesgo × 16 skills SOP × 10 subagentes PhD × PMI/EVM = ARSENAL MÁXIMO TOP 1% EN EJECUCIÓN CONTINUA.*

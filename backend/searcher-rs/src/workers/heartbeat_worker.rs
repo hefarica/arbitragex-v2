@@ -13,7 +13,7 @@
 //!
 //! Cost: 1 Redis XLEN + 1 PG count query per period (default 60s).
 
-use crate::counters::counters;
+use crate::counters::chain_counters;
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
 use serde::Serialize;
@@ -156,6 +156,14 @@ pub struct HeartbeatSnapshot {
     /// `liquidation_worker.sanity_reject` warn log for the diagnostic dump.
     #[serde(default)]
     pub liquidation_sanity_reject: u64,
+    /// Phase A.1/A.2 simulator gate — candidates rejected because no real REVM
+    /// dispatch is available (Phase A.3 encoder pending). Until the encoder
+    /// ships, this counter is expected to equal `passed_all_gates_pre_simulator`
+    /// for the period — every candidate that passes earlier gates fails closed
+    /// at the simulator. Drops once Phase A.3 produces real `SimulatorV2`
+    /// verdicts (success / revert / error).
+    #[serde(default)]
+    pub simulator_fail_closed_rejected: u64,
 }
 
 pub fn heartbeat_redis_key(chain_id: u64) -> String {
@@ -216,7 +224,12 @@ impl HeartbeatWorker {
             // Drain in-memory scanner counters via atomic swap → 0
             // so each heartbeat reports the delta for the just-elapsed period.
             // Lock-free; safe across all increment sites in scanner.rs.
-            let c = counters();
+            //
+            // B0.1 (2026-05-13): per-chain isolation. Each HeartbeatWorker is
+            // already constructed with `chain_id`; we now drain ONLY the
+            // counters for this chain. Other chains' counters are read by
+            // their own HeartbeatWorker instances. Crosstalk eliminated.
+            let c = chain_counters(self.chain_id);
             let pending = c.pending_received.swap(0, Ordering::Relaxed);
             let decoded = c.decoded_ok.swap(0, Ordering::Relaxed);
             let enriched_v2 = c.enriched_v2.swap(0, Ordering::Relaxed);
@@ -245,6 +258,7 @@ impl HeartbeatWorker {
             let liq_scanned = c.liquidation_positions_scanned.swap(0, Ordering::Relaxed);
             let liq_emitted = c.liquidation_opps_emitted.swap(0, Ordering::Relaxed);
             let liq_sanity = c.liquidation_sanity_reject.swap(0, Ordering::Relaxed);
+            let sim_fail_closed = c.simulator_fail_closed_rejected.swap(0, Ordering::Relaxed);
 
             info!(
                 event = "scanner.heartbeat",
@@ -282,6 +296,7 @@ impl HeartbeatWorker {
                 liquidation_positions_scanned = liq_scanned,
                 liquidation_opps_emitted = liq_emitted,
                 liquidation_sanity_reject = liq_sanity,
+                simulator_fail_closed_rejected = sim_fail_closed,
                 "scanner pipeline heartbeat"
             );
 
@@ -327,6 +342,7 @@ impl HeartbeatWorker {
                 liquidation_positions_scanned: liq_scanned,
                 liquidation_opps_emitted: liq_emitted,
                 liquidation_sanity_reject: liq_sanity,
+                simulator_fail_closed_rejected: sim_fail_closed,
             };
             if let Ok(json) = serde_json::to_string(&snapshot) {
                 let key = heartbeat_redis_key(self.chain_id);

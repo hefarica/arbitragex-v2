@@ -1,0 +1,27 @@
+{
+  "skill_id": "flashbots-bundle-simulation-and-debugging",
+  "name": "Flashbots Bundle Simulation And Debugging",
+  "version": "1.0.0",
+  "domain": "MEV | CFMM | Routing | Simulation | Infra | Risk | Searcher | Solana | Ethereum | Cross-chain",
+  "level": "PhD-applied",
+  "created_for_project": "arbitragex_v2_productivo_full",
+  "output_path": "C:\\Users\\HFRC\\Desktop\\arbitragex_v2_productivo_full\\.agents\\skills\\flashbots-bundle-simulation-and-debugging",
+  "primary_sources": [],
+  "secondary_sources": [],
+  "knowledge_type": [],
+  "algorithms": [],
+  "formulas": [],
+  "implementation_languages": [
+    "Rust",
+    "TypeScript",
+    "Python",
+    "Solidity"
+  ],
+  "runtime_dependencies": [],
+  "risk_level": "medium",
+  "production_readiness": "prototype",
+  "requires_real_data": true,
+  "hardcode_allowed": false,
+  "mocks_allowed": false,
+  "last_reviewed": "2026-05-03"
+}

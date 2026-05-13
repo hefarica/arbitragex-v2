@@ -8,7 +8,15 @@ impl EvidenceGate {
         if evidence.net_expected_profit <= 0.0 {
             return Some(RejectReason::NegativeNetProfit);
         }
-        if evidence.simulation_status != "PASS" {
+        // Phase A.1/A.2 — accept legacy "PASS" (until prioritization-spine v1
+        // stub is fully removed) AND the new fail-honest "SIM_SUCCESS" sentinel
+        // emitted by the simulator-v2 dispatch (Phase A.3+).
+        //
+        // Whitelist semantics: every other value — including the new
+        // "SIM_DISABLED_FAIL_CLOSED" emitted while the encoder is pending —
+        // maps to `RejectReason::SimulationFailed`. That is the only honest
+        // outcome until Phase A.3 produces real REVM verdicts (RULE 12 + RULE 15).
+        if !matches!(evidence.simulation_status.as_str(), "PASS" | "SIM_SUCCESS") {
             return Some(RejectReason::SimulationFailed);
         }
         if evidence.landing_probability < 0.5 {

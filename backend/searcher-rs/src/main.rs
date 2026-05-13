@@ -19,6 +19,37 @@ mod calldata;
 mod chain_client;
 mod counters;
 mod dedup;
+// Phase A.3.a: OpportunityCandidate → RoundTripContext encoder. Pure bridge
+// from the abstract candidate to the typed simulator input. NO REVM dispatch
+// here (that lands with execute_round_trip); only validation + payload pre-shaping.
+mod sim_encoder;
+// Phase A.3.b: PostgreSQL-backed `TokenDecimalsProvider` runtime impl. Holds
+// an LRU cache kept warm by a background refresh task; the trait method is
+// a pure cache lookup so the hot path never blocks on a PG query.
+mod sim_encoder_pg;
+// Phase A.3.c: REVM execution orchestrator. Builds executeArbitrage calldata
+// from RoundTripContext and dispatches a single REVM transaction through
+// SimulatorV2. Synchronous; the scanner wraps it in spawn_blocking.
+mod sim_orchestrator;
+// Phase A.3.c.2: ERC-20 storage prefund computation layer. Pure helpers +
+// provider trait + slot computation. Does NOT mutate REVM state; the A.3.c.3
+// multi-step orchestrator consumes the returned PrefundPlan and applies it.
+#[allow(dead_code)]
+mod sim_prefund;
+// Phase OMEGA: Kelly Criterion + V3 concentrated liquidity math. Pure
+// position-sizing primitives consumed by the size_optimizer hot path.
+#[allow(dead_code)]
+mod kelly_sizing;
+// Phase OMEGA 3.2: Bayesian inference + VPIN/PIN adverse-selection
+// filters. Pure math primitives for the candidate-selection layer.
+#[allow(dead_code)]
+mod bayesian_filter;
+// Phase A.3.c.2: Multi-step REVM orchestrator skeleton + plan builder.
+// Combines sim_prefund storage overrides with RoundTripContext to build
+// a deterministic multi-step execution plan. REVM CacheDB execution is
+// deferred to A.3.c.3; this module ships validation + plan + tests.
+#[allow(dead_code)]
+mod sim_multistep;
 // Phase 16: per-strategy Prometheus metrics for the event-driven orchestrator.
 mod metrics;
 mod patterns;
@@ -150,30 +181,25 @@ async fn main() -> anyhow::Result<()> {
     // service restart.
     let trading_config = TradingConfigClient::from_manager(redis_conn.clone());
 
-    // Sprint 4 — opt-in v2 simulator dispatch flag.
-    // Default = v1 stub in `prioritization-spine` (current production behaviour).
-    // When ARBX_USE_SIMULATOR_V2=true the operator opts in to the new REVM-backed
-    // simulator. Until simulator-v2 Tasks 4.2 (lazy_db) + 4.3 (revm_runner) land
-    // end-to-end, this branch logs a warning and the candidate pipeline keeps
-    // using v1 — no production candidate is ever scored against an unimplemented!()
-    // path. The flag exists today so dashboards + alerting can verify the
-    // configuration plumbing now and the cutover requires zero deploy when 4.3
-    // ships.
+    // Sprint 4 — Phase A.1/A.2/A.2.5 simulator boot announcement.
+    //
+    // History:
+    //   - A.1/A.2: legacy v1 stub neutralized (`prioritization_spine::simulator::
+    //     EvmSimulator` was fabricating "PASS" with caller=0x11..11/target=0x22..22/
+    //     calldata=Bytes::new() — RULE 00 violation).
+    //   - A.2.5 (this PR): construct per-chain `Arc<SimulatorV2>` at boot when
+    //     `RPC_HTTP_<chain_id>` is configured. Thread through scanner. Hot path
+    //     stays fail-closed until the A.3 encoder lands; the only behavioural
+    //     change today is the reason code emitted on rejection.
+    //
+    // Phase A.3 (separate PR) will land:
+    //   - `OpportunityCandidate` → `simulator_v2::CandidateInput` encoder
+    //   - real `executeArbitrage(...)` calldata against `ArbitrageExecutor.sol`
+    //   - net_profit_wei extraction from real REVM balance delta
     let use_simulator_v2 = std::env::var("ARBX_USE_SIMULATOR_V2")
         .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    if use_simulator_v2 {
-        warn!(
-            event = "simulator.v2_requested_but_pending",
-            "ARBX_USE_SIMULATOR_V2=true acknowledged; simulator-v2 Task 4.3 not integrated yet, falling through to v1"
-        );
-    } else {
-        info!(
-            event = "simulator.version",
-            version = "v1",
-            "using prioritization-spine stub simulator (default)"
-        );
-    }
+    let _ = use_simulator_v2; // honoured by the boot log below; no runtime flip yet.
 
     // DB pool — optional: if DATABASE_URL absent, run without persistence.
     // max_connections=8 accommodates 5+ concurrent writers (price_worker,
@@ -205,6 +231,60 @@ async fn main() -> anyhow::Result<()> {
             warn!(
                 event = "db.not_configured",
                 "DATABASE_URL not set; scanner will publish to stream but NOT persist"
+            );
+            None
+        }
+    };
+
+    // Phase A.3.b runtime wire — `PgTokenDecimalsProvider` construction.
+    //
+    // When the DB pool is up, build a single per-process provider that the
+    // scanner consults from the simulator gate. Bootstrap-loads the cache
+    // synchronously so the first hot-path candidates already see warm data;
+    // spawns a 60s refresh loop in the background.
+    //
+    // Without a DB pool the encoder cannot resolve decimals — scanner stays
+    // in the Phase A.2.5 fail-closed path (`no_simulator_for_chain` /
+    // `encoder_not_ready`) for every candidate (RULE 12 fail-honest).
+    let token_decimals_provider: Option<
+        Arc<dyn sim_encoder::TokenDecimalsProvider + Send + Sync>,
+    > = match &db_pool {
+        Some(pool) => {
+            let provider = Arc::new(sim_encoder_pg::PgTokenDecimalsProvider::with_default_capacity(
+                pool.clone(),
+            ));
+            match provider.bootstrap_load().await {
+                Ok(loaded) => info!(
+                    event = "sim_encoder.boot",
+                    provider = "pg",
+                    cache_max_entries = sim_encoder_pg::DEFAULT_CACHE_CAPACITY,
+                    bootstrap_loaded = loaded,
+                    refresh_interval_secs = sim_encoder_pg::DEFAULT_REFRESH_INTERVAL_SECS,
+                    runtime_enabled = true,
+                    "PG decimals provider bootstrapped"
+                ),
+                Err(e) => warn!(
+                    event = "sim_encoder.bootstrap_failed",
+                    error = %e,
+                    "PG decimals provider bootstrap failed; cache stays empty until first refresh"
+                ),
+            };
+            // Refresh loop fills the cache from PG every N seconds. Handle
+            // intentionally dropped — task runs until process exit.
+            provider
+                .clone()
+                .spawn_refresh_loop(Duration::from_secs(
+                    sim_encoder_pg::DEFAULT_REFRESH_INTERVAL_SECS,
+                ));
+            Some(provider as Arc<dyn sim_encoder::TokenDecimalsProvider + Send + Sync>)
+        }
+        None => {
+            warn!(
+                event = "sim_encoder.boot",
+                provider = "none",
+                runtime_enabled = false,
+                reason = "no_db_pool",
+                "no PG pool available — token decimals provider not constructed"
             );
             None
         }
@@ -264,10 +344,114 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Sprint 4 — Phase A.2.5: per-chain `Arc<SimulatorV2>` construction.
+    //
+    // For every chain that has a healthy HTTP RPC pool, spin up exactly one
+    // `SimulatorV2` instance and share it across all per-chain tasks via Arc.
+    // The simulator is constructed with the FIRST pool entry's URL (failover
+    // for sim is degraded vs the broader hot path — accepted trade-off for the
+    // initial wire-up; revisit once latency telemetry is in place).
+    //
+    // ## Linearizability pin (cs-validator MAJOR finding 2026-05-12)
+    //
+    // `SimulatorV2` memoizes the block number via `OnceLock`. Multiple tokio
+    // tasks racing on the first `simulate()` call could each resolve "latest"
+    // independently and land on different blocks (the OnceLock keeps the
+    // first writer, but the losing tasks have already used their own value
+    // for the in-flight call).
+    //
+    // Mitigation: when the pool's health loop has already observed a block
+    // (`snapshot_block() > 0`), pin the simulator to that block via
+    // `with_block(N)`. All tasks then see the same block from the very first
+    // call. When the health loop has not yet reported (rare boot race),
+    // `SimulatorV2` falls back to lazy "latest" resolution which still
+    // converges to the same block within a single slot.
+    //
+    // ## No fallback to stub (RULE 12)
+    //
+    // Chains without `RPC_HTTP_<id>` get NO simulator. The scanner sees
+    // `None` for that chain and keeps emitting `SIM_DISABLED_FAIL_CLOSED`
+    // (Phase A.1/A.2 behaviour). This is honest fail-closed, not silent
+    // degradation.
+    #[cfg(feature = "v2-simulator")]
+    let simulators_v2: HashMap<u64, Arc<simulator_v2::SimulatorV2>> = {
+        let mut map: HashMap<u64, Arc<simulator_v2::SimulatorV2>> = HashMap::new();
+        for (&cid, pool) in rpc_pools.iter() {
+            // `pick()` honours circuit-breaker + EWMA. If every entry is
+            // unhealthy we skip the chain (R8 fail-honest, no stub fallback).
+            let primary = match pool.pick() {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!(
+                        event = "simulator_v2.unavailable",
+                        chain_id = cid,
+                        error = %e,
+                        reason = "all_providers_unhealthy",
+                        "no simulator constructed for chain (RULE 12 fail-closed)"
+                    );
+                    continue;
+                }
+            };
+            let observed_block = primary.snapshot_block();
+            let sim = if observed_block > 0 {
+                // Pin the block so concurrent simulate() calls all see the
+                // same state snapshot (cs-validator MAJOR fix).
+                simulator_v2::SimulatorV2::new(primary.url.clone()).with_block(observed_block)
+            } else {
+                // Health loop has not reported yet; first simulate() will
+                // resolve "latest" and memoize. The window is bounded to a
+                // single block slot in practice.
+                simulator_v2::SimulatorV2::new(primary.url.clone())
+            };
+            map.insert(cid, Arc::new(sim));
+            info!(
+                event = "simulator_v2.available",
+                chain_id = cid,
+                provider = %primary.name,
+                pinned_block = observed_block,
+                "per-chain SimulatorV2 constructed (Phase A.2.5)"
+            );
+        }
+        map
+    };
+    #[cfg(not(feature = "v2-simulator"))]
+    let simulators_v2: HashMap<u64, ()> = HashMap::new();
+
+    let chains_with_simulator = simulators_v2.len();
+    let chains_without_simulator = enabled_chains.len().saturating_sub(chains_with_simulator);
+    info!(
+        event = "simulator.boot",
+        phase = "A.2.5",
+        v2_feature_compiled = cfg!(feature = "v2-simulator"),
+        v2_runtime_requested = use_simulator_v2,
+        backend = "revm",
+        paper_mode = true,
+        live_execution = false,
+        fallback_stub = false,
+        chains_with_simulator,
+        chains_without_simulator,
+        "SimulatorV2 instances constructed per chain; hot path stays fail-closed \
+         (reason=encoder_not_ready) until Phase A.3 encoder lands"
+    );
+
     // primary_chain: first enabled chain, used by the single-chain workers
     // (price, heartbeat, triangular, flashloan, liquidation) that are scoped
     // to one chain in this sprint. Multi-chain variants land in BE-3.2+.
-    let primary_chain: u64 = enabled_chains.first().copied().unwrap_or(1);
+    //
+    // B0.4 (2026-05-13) — Fail-honest if enabled_chains is empty.
+    //
+    // Previously this used `.unwrap_or(1)` which silently defaulted to chain 1
+    // even when the operator had no chains configured. That hid the real
+    // misconfiguration. Now we fail loudly: an empty enabled_chains list is
+    // a fatal boot error (paper-mode safety: no scanner without chains).
+    let primary_chain: u64 = match enabled_chains.first().copied() {
+        Some(c) => c,
+        None => {
+            anyhow::bail!(
+                "B0.4 fail-honest: enabled_chains is empty. Boot refused. Configure at least one chain via configs/app.toml [[chains]] (with enabled=true) or ARBX_ENABLED_CHAINS env var. No silent fallback to chain 1."
+            );
+        }
+    };
     let primary_rpc_pool: Option<Arc<HttpRpcPool>> = rpc_pools.get(&primary_chain).cloned();
 
     // BE-3.1 multichain orchestrator — spawns RpcHealth + GasOracle + PoolSync
@@ -587,6 +771,15 @@ async fn main() -> anyhow::Result<()> {
         let opp_dedup_c = opp_dedup.clone();
         let tc_c = trading_config.clone();
         let rpc_pool_c = rpc_pools.get(&chain_id).cloned();
+        // Phase A.2.5: pass the per-chain SimulatorV2 (or None for chains
+        // without RPC_HTTP). Scanner falls back to fail-closed when None.
+        #[cfg(feature = "v2-simulator")]
+        let sim_v2_c: Option<Arc<simulator_v2::SimulatorV2>> =
+            simulators_v2.get(&chain_id).cloned();
+        #[cfg(not(feature = "v2-simulator"))]
+        let sim_v2_c: Option<()> = None;
+        // Phase A.3.b: clone the per-process decimals provider Arc.
+        let decimals_provider_c = token_decimals_provider.clone();
         tokio::spawn(async move {
             if let Err(e) = scanner::run_chain(
                 chain_id,
@@ -598,6 +791,8 @@ async fn main() -> anyhow::Result<()> {
                 opp_dedup_c,
                 tc_c,
                 rpc_pool_c,
+                sim_v2_c,
+                decimals_provider_c,
             )
             .await
             {

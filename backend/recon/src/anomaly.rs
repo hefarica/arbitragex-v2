@@ -51,11 +51,11 @@ pub async fn check_and_react(
         warn!(event = "anomaly.high_revert_rate", strategy = %strategy,
               chain_id = chain, rate_pct, reverts, total);
 
-        // Insert risk_event
+        // Insert risk_event (B0.3 2026-05-13: chain_id column required for traceability).
         let _ = sqlx::query(
             r#"
-            INSERT INTO risk_events (event_type, severity, source_service, payload)
-            VALUES ('degradation', 'critical', 'recon', $1::jsonb)
+            INSERT INTO risk_events (event_type, severity, source_service, payload, chain_id)
+            VALUES ('degradation', 'critical', 'recon', $1::jsonb, $2)
             "#,
         )
         .bind(serde_json::json!({
@@ -67,6 +67,7 @@ pub async fn check_and_react(
             "total": total,
             "window_minutes": cfg.anomaly_window_minutes,
         }))
+        .bind(chain as i64)
         .execute(pool)
         .await;
 

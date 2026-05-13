@@ -60,6 +60,12 @@ pub async fn persist_recon_report(pool: &PgPool, r: &ReconReport) -> Result<()> 
     Ok(())
 }
 
+/// Insert a risk event row.
+///
+/// B0.3 (2026-05-13): `chain_id` is now required for traceability per
+/// migration 060. Callers must supply the chain that emitted the event;
+/// passing `None` is preserved only for legacy data backfill and emits
+/// a warn-level audit on the SQL side via NULL.
 pub async fn insert_risk_event(
     pool: &PgPool,
     event_type: &str,
@@ -67,11 +73,12 @@ pub async fn insert_risk_event(
     payload: serde_json::Value,
     trace_id: uuid::Uuid,
     opp_id: Option<uuid::Uuid>,
+    chain_id: Option<i64>,
 ) -> Result<()> {
     sqlx::query(
         r#"
-        INSERT INTO risk_events (event_type, severity, source_service, payload, trace_id, opportunity_id)
-        VALUES ($1,$2,'recon',$3::jsonb,$4,$5)
+        INSERT INTO risk_events (event_type, severity, source_service, payload, trace_id, opportunity_id, chain_id)
+        VALUES ($1,$2,'recon',$3::jsonb,$4,$5,$6)
         "#,
     )
     .bind(event_type)
@@ -79,6 +86,7 @@ pub async fn insert_risk_event(
     .bind(payload)
     .bind(trace_id)
     .bind(opp_id)
+    .bind(chain_id)
     .execute(pool)
     .await
     .context("insert risk_event")?;

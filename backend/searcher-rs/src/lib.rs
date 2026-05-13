@@ -40,3 +40,28 @@ pub mod size_optimizer;
 // Phase 11: LendingPositionIndexer — Redis-backed watchlist + cache for
 // Aave V3 / Compound V2 positions, consumed by LiquidationEngine.
 pub mod lending_position_indexer;
+// Phase A.3.a: `OpportunityCandidate → RoundTripContext` encoder. Exposed
+// here so integration tests can drive the encoder against real candidate
+// shapes without going through `decode_and_score_tx`.
+pub mod sim_encoder;
+// Phase A.3.b: PostgreSQL-backed `TokenDecimalsProvider`. Exposed for
+// integration tests that want to drive the provider against a test DB.
+pub mod sim_encoder_pg;
+// Phase A.3.c: REVM orchestrator. Exposed so integration tests can drive
+// it against a real fork without going through the full hot path.
+pub mod sim_orchestrator;
+// Phase A.3.c.2: ERC-20 storage prefund computation. Exposed so integration
+// tests + the future A.3.c.3 multi-step orchestrator can consume the
+// `PrefundPlan` API to apply storage overrides on REVM state.
+pub mod sim_prefund;
+// Phase OMEGA: Kelly Criterion + V3 concentrated liquidity math primitives.
+// Pure module exposed so size_optimizer + tests can consume Kelly sizing.
+pub mod kelly_sizing;
+// Phase OMEGA 3.2: Bayesian inference + VPIN/PIN filters. Pure module
+// exposed so the prioritization-spine evaluator can consume posterior
+// acceptance gates without re-implementing the math.
+pub mod bayesian_filter;
+// Phase A.3.c.2: Multi-step REVM orchestrator. Exposed so integration
+// tests + the future A.3.c.3 REVM CacheDB executor can drive the plan
+// builder against fixtures and real chain state.
+pub mod sim_multistep;

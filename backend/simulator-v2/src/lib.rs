@@ -20,9 +20,17 @@
 pub mod bellman_ford;
 pub mod lazy_db;
 pub mod revm_runner;
+// Phase A.3.c.3: multi-step REVM sequence runner with persistent CacheDB
+// for round-trip simulations (forward swap → read intermediate → backward).
+// Unblocked by A.3.c.4's `DatabaseRef for LazyDb` foundation.
+pub mod sequence_runner;
 
 pub use lazy_db::LazyDb;
 pub use lazy_db::LazyDbError;
+// Phase A.3.c.3 — re-export revm primitives so downstream crates
+// (searcher-rs) can construct `StorageOverride`, `SequenceCall`, etc.
+// without depending on `revm` directly.
+pub use revm::primitives::{Address as AlloyAddress, U256 as AlloyU256};
 
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;

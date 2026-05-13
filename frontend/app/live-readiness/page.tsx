@@ -11,6 +11,11 @@ import type {
   ReadinessReport,
   ReadinessStatus,
 } from "@/lib/schemas";
+import { BlockersPanel } from "@/features/readiness/BlockersPanel";
+import { GoNoGoPanel } from "@/features/readiness/GoNoGoPanel";
+import { AgentTeamsPanel } from "@/features/readiness/AgentTeamsPanel";
+import { ConfidenceScoringPanel } from "@/features/readiness/ConfidenceScoringPanel";
+import { RiskCircuitPanel } from "@/features/risk/RiskCircuitPanel";
 
 // ─── Aesthetic helpers ───────────────────────────────────────────────────
 
@@ -310,6 +315,19 @@ export default function LiveReadinessPage() {
           <FlipToggle report={report} />
         </>
       )}
+
+      {/* P2 (2026-05-13): derived blockers + GO/NO-GO decision panels.
+          Rendered AFTER the existing 17-item verifier list and FlipToggle,
+          additively. Failures in these panels do not affect the existing UI.
+
+          P2-continued (2026-05-13): AgentTeamsPanel — 17 agent verdicts. */}
+      <div className="mt-10 space-y-6 border-t border-border/40 pt-8">
+        <GoNoGoPanel />
+        <BlockersPanel />
+        <AgentTeamsPanel />
+        <ConfidenceScoringPanel />
+        <RiskCircuitPanel />
+      </div>
     </>
   );
 }

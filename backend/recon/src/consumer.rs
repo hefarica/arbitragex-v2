@@ -147,6 +147,9 @@ impl Consumer {
 
         // Variance check → risk_event
         if let Some(evt) = variance::check(&report, self.cfg.variance_threshold_pct) {
+            // B0.3 (2026-05-13): pass chain_id from the underlying opportunity
+            // so the event is traceable per-chain in risk_events table.
+            let evt_chain_id = combined.opportunity.chain_id as i64;
             if let Err(e) = insert_risk_event(
                 &self.pool,
                 &evt.event_type,
@@ -154,6 +157,7 @@ impl Consumer {
                 evt.payload,
                 evt.trace_id,
                 evt.opportunity_id,
+                Some(evt_chain_id),
             )
             .await
             {
