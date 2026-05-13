@@ -17,6 +17,7 @@
 mod amm_math;
 mod calldata;
 mod chain_client;
+mod chain_supervisor;
 mod counters;
 mod dedup;
 // Phase A.3.a: OpportunityCandidate → RoundTripContext encoder. Pure bridge
@@ -103,7 +104,7 @@ use shared_rs::{
 };
 use sqlx::postgres::PgPoolOptions;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 const SERVICE_NAME: &str = "searcher-rs";
 const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -201,20 +202,20 @@ async fn main() -> anyhow::Result<()> {
     let chain_reload_cancel = tokio_util::sync::CancellationToken::new();
     let chain_reload_redis_url = redis_url.clone();
     let _chain_reload_cancel_handle = chain_reload_cancel.clone();
-    tokio::spawn({
-        let cancel = chain_reload_cancel.clone();
-        async move {
-            let reloader = config_reload::ChainConfigReloader::new(
-                chain_reload_redis_url,
-                cancel,
+    
+    let reloader = config_reload::ChainConfigReloader::new(
+        chain_reload_redis_url,
+        chain_reload_cancel,
+    );
+    let event_rx = reloader.event_tx.subscribe();
+    
+    tokio::spawn(async move {
+        if let Err(e) = reloader.run().await {
+            warn!(
+                event = "chain_reload.boot_failed",
+                error = %e,
+                "chain config reload subscriber exited with error; restart pod to recover"
             );
-            if let Err(e) = reloader.run().await {
-                warn!(
-                    event = "chain_reload.boot_failed",
-                    error = %e,
-                    "chain config reload subscriber exited with error; restart pod to recover"
-                );
-            }
         }
     });
 
@@ -793,50 +794,24 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // Spawn one scanner per chain. Each scanner receives the HttpRpcPool for
-    // its own chain_id (if configured), enabling V3 QuoterV2 batched calls
-    // with circuit-breaker + failover machinery per chain.
-    // BE-3.1: rpc_pool_c now comes from the per-chain HashMap instead of a
-    // primary_chain equality check — scanners for every enabled chain get their
-    // own pool, not only the first one.
-    for chain_id in enabled_chains {
-        let ks = killswitch.clone();
-        let cfg_c = cfg.clone();
-        let redis_c = redis_conn.clone();
-        let db_c = db_pool.clone();
-        let dedup_c = dedup.clone();
-        let opp_dedup_c = opp_dedup.clone();
-        let tc_c = trading_config.clone();
-        let rpc_pool_c = rpc_pools.get(&chain_id).cloned();
-        // Phase A.2.5: pass the per-chain SimulatorV2 (or None for chains
-        // without RPC_HTTP). Scanner falls back to fail-closed when None.
-        #[cfg(feature = "v2-simulator")]
-        let sim_v2_c: Option<Arc<simulator_v2::SimulatorV2>> =
-            simulators_v2.get(&chain_id).cloned();
-        #[cfg(not(feature = "v2-simulator"))]
-        let sim_v2_c: Option<()> = None;
-        // Phase A.3.b: clone the per-process decimals provider Arc.
-        let decimals_provider_c = token_decimals_provider.clone();
-        tokio::spawn(async move {
-            if let Err(e) = scanner::run_chain(
-                chain_id,
-                cfg_c,
-                ks,
-                redis_c,
-                db_c,
-                dedup_c,
-                opp_dedup_c,
-                tc_c,
-                rpc_pool_c,
-                sim_v2_c,
-                decimals_provider_c,
-            )
-            .await
-            {
-                error!(event = "scanner.spawn_failed", chain_id, error = %e);
-            }
-        });
-    }
+    // B1.d: Chain Task Supervisor
+    // Consumes `seen_hashes` events to orchestrate hot-reloads without blocking.
+    let supervisor = chain_supervisor::ChainSupervisor::new(
+        cfg.clone(),
+        killswitch.clone(),
+        redis_conn.clone(),
+        db_pool.clone(),
+        dedup.clone(),
+        opp_dedup.clone(),
+        trading_config.clone(),
+        token_decimals_provider.clone(),
+        event_rx,
+    );
+    
+    let initial_chains = enabled_chains.clone();
+    tokio::spawn(async move {
+        supervisor.run(initial_chains).await;
+    });
 
     // HTTP server.
     let app = build_health_router(ServiceInfo::new(SERVICE_NAME, SERVICE_VERSION));

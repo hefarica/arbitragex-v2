@@ -100,6 +100,7 @@ pub struct ChainConfigReloader {
     redis_url: String,
     cancel: CancellationToken,
     seen: SeenHashes,
+    pub event_tx: tokio::sync::broadcast::Sender<ChainReloadEvent>,
 }
 
 impl ChainConfigReloader {
@@ -107,10 +108,12 @@ impl ChainConfigReloader {
     /// happens at the start of `run()` so construction stays cheap and
     /// infallible.
     pub fn new(redis_url: String, cancel: CancellationToken) -> Self {
+        let (tx, _) = tokio::sync::broadcast::channel(100);
         Self {
             redis_url,
             cancel,
             seen: Arc::new(RwLock::new(HashMap::new())),
+            event_tx: tx,
         }
     }
 
@@ -256,6 +259,7 @@ impl ChainConfigReloader {
                     config_hash = %event.config_hash,
                     "chain config change observed; downstream rebuild deferred to B1.d"
                 );
+                let _ = self.event_tx.send(event.clone());
             }
             ReloadDecision::DedupSkipped => {
                 debug!(
