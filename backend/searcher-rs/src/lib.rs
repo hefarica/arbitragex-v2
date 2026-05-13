@@ -50,3 +50,7 @@ pub mod sim_encoder_pg;
 // Phase A.3.c: REVM orchestrator. Exposed so integration tests can drive
 // it against a real fork without going through the full hot path.
 pub mod sim_orchestrator;
+// Phase A.3.c.2: ERC-20 storage prefund computation. Exposed so integration
+// tests + the future A.3.c.3 multi-step orchestrator can consume the
+// `PrefundPlan` API to apply storage overrides on REVM state.
+pub mod sim_prefund;

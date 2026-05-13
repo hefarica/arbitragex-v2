@@ -31,6 +31,11 @@ mod sim_encoder_pg;
 // from RoundTripContext and dispatches a single REVM transaction through
 // SimulatorV2. Synchronous; the scanner wraps it in spawn_blocking.
 mod sim_orchestrator;
+// Phase A.3.c.2: ERC-20 storage prefund computation layer. Pure helpers +
+// provider trait + slot computation. Does NOT mutate REVM state; the A.3.c.3
+// multi-step orchestrator consumes the returned PrefundPlan and applies it.
+#[allow(dead_code)]
+mod sim_prefund;
 // Phase 16: per-strategy Prometheus metrics for the event-driven orchestrator.
 mod metrics;
 mod patterns;
