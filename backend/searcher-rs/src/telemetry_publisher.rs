@@ -1,6 +1,11 @@
 use sed_core::telemetry::{ConvergencePublisher, ConvergenceSignal};
 
-/// Publisher Redis real. Envía señales al canal `arbx:signals:convergence`.
+/// Canal Redis para señales de convergencia SED.
+/// Centralizado como constante para evitar hardcode disperso y satisfacer
+/// el lint `no-hardcode` del workspace.
+pub const CONVERGENCE_CHANNEL: &str = "arbx:signals:convergence";
+
+/// Publisher Redis real. Envía señales al canal definido en [`CONVERGENCE_CHANNEL`].
 /// Fire-and-forget: usa redis::aio::Connection para no bloquear.
 pub struct RedisPublisher {
     redis_url: String,
@@ -27,7 +32,7 @@ impl ConvergencePublisher for RedisPublisher {
 
         // Fire-and-forget: tokio::spawn para no bloquear el pipeline
         let redis_url = self.redis_url.clone();
-        let channel = "arbx:signals:convergence".to_string();
+        let channel = CONVERGENCE_CHANNEL.to_string();
         tokio::spawn(async move {
             let client_result = redis::Client::open(redis_url.as_str());
             let client = match client_result {
