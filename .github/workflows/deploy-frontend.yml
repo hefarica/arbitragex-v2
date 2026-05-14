@@ -111,10 +111,12 @@ jobs:
             cd /opt/arbitragex-v2
             git rev-parse HEAD > "$BACKUP_DIR/HEAD.txt"
             git status -s > "$BACKUP_DIR/status.txt"
-            cp -r docker "$BACKUP_DIR/"
+            # Tolerantes: si el working tree quedó inconsistente por un run previo,
+            # no abortamos el deploy — el rollback usa hard-tag de imagen, no este snapshot.
+            cp -r docker "$BACKUP_DIR/" 2>/dev/null || echo "⚠ docker/ no presente; saltando (no bloqueante)"
             cp .env "$BACKUP_DIR/" 2>/dev/null || true
             cp docker-compose.edge.yml "$BACKUP_DIR/" 2>/dev/null || true
-            tar czf "$BACKUP_DIR/frontend.tar.gz" frontend/ 2>/dev/null
+            tar czf "$BACKUP_DIR/frontend.tar.gz" frontend/ 2>/dev/null || echo "⚠ frontend/ tar falló; saltando"
             echo "✅ Snapshot creado"
             du -sh "$BACKUP_DIR"
             ls -t /root/arbitragex-v2-backup-* 2>/dev/null | tail -n +4 | xargs -r rm -rf
