@@ -153,6 +153,26 @@ jobs:
           path: arbx-checkout
           fetch-depth: 1
 
+      - name: "[F5b-pre] Restaurar .env si fue eliminado por un run previo"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set -e
+            cd ${{ env.REPO_PATH }}
+            if [ ! -f .env ]; then
+              echo "⚠ .env ausente. Buscando en backups..."
+              LATEST_ENV=$(ls -t /root/arbitragex-v2-backup-*/.env 2>/dev/null | head -1 || true)
+              if [ -n "$LATEST_ENV" ]; then
+                cp "$LATEST_ENV" .env
+                echo "✅ Restaurado desde $LATEST_ENV"
+              else
+                echo "❌ CRÍTICO: no hay .env ni backup. Abortando."
+                exit 1
+              fi
+            else
+              echo "✅ .env presente"
+            fi
+          REMOTE
+
       - name: "[F5b] Sync target SHA → VPS via rsync over SSH"
         run: |
           set -e
@@ -168,11 +188,20 @@ jobs:
           echo "── rsync repo → VPS:${{ env.REPO_PATH }} ──"
           # rsync con preservación de permisos, exclusión de .git/.next/node_modules
           # --delete asegura paridad bit-a-bit con el SHA target
-          rsync -az --delete \
+          # CRITICAL: preservar archivos sensibles del VPS que no están versionados.
+          # --delete-after asegura que archivos en VPS sin contraparte en repo
+          # se eliminan, PERO los exclude-patterns NUNCA se tocan (ni se transfieren
+          # ni se eliminan en el destino).
+          rsync -az --delete-after \
             --exclude='.git/' \
             --exclude='node_modules/' \
             --exclude='.next/' \
             --exclude='target/' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            --exclude='.htpasswd' \
+            --exclude='*.sql.gz' \
+            --exclude='dist/' \
             -e "ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no" \
             ./ root@${{ env.VPS_HOST }}:${{ env.REPO_PATH }}/
           echo "✅ Sync completo"
