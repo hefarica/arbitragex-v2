@@ -6,6 +6,7 @@
 //! - The typestate marker types + sealed trait (to construct
 //!   [`BundlePosition`] values).
 //! - The kill-switch / infrastructure gates.
+//! - The GateManager (Phase 4) invariant guardian.
 //! - The canonical error enums.
 //!
 //! Importing `use sed_core::prelude::*;` brings these into scope without
@@ -16,5 +17,9 @@ pub use crate::types::bundle_position::{
     Unresolved,
 };
 pub use crate::types::errors::{DispatchError, InfrastructureError, TopologyValidationError};
+pub use crate::types::gate_manager::{
+    DispatchRejection, GateManager, GateVerdict, InfraPrereqConfig, StochasticGateInput,
+};
 pub use crate::types::infrastructure::{InfrastructurePrerequisite, NotImplementedResponse};
 pub use crate::types::kill_switch::{KillSwitchGate, KillSwitchState};
+

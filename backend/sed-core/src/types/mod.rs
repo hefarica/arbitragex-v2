@@ -16,10 +16,16 @@
 //! - [`holonomic`] — (V1.2) `ClosedContourTrajectory` + `TopologicalYield`,
 //!   the mathematical evidence carried into the `HolonomicLoopResolution`
 //!   constructor. See `ANEXOS_V1.2.md` §4.1.3–§4.1.4.
+//! - [`gate_manager`] — (Phase 4) `GateManager` — the invariant guardian that
+//!   enforces four sequential barriers before any bundle dispatch:
+//!   infrastructure, kill-switch, stochastic gate (eigenstate O(1)), and
+//!   thermodynamic variance ceiling (monotone non-increasing invariant).
 //! - [`errors`] — explicit error enums shared across the crate.
 
 pub mod bundle_position;
 pub mod errors;
+pub mod gate_manager;
 pub mod holonomic;
 pub mod infrastructure;
 pub mod kill_switch;
+
