@@ -1,6 +1,8 @@
-# ArbitrageX v2 — Productivo Full
+# Sequential Equilibrium Dispatcher
+**Simulador Estocástico para Topologías de Red Descentralizadas**
 
-Plataforma MEV/arbitraje institucional con separación canónica de capas.
+Entorno de Investigación Científica en Relatividad Aplicada y Mecánica Cuántica. Este proyecto modela empíricamente la "Convergencia Estocástica Autónoma" mediante la superposición temporal de liquidez en entornos topológicos.
+
 **Estado actual: Sprint 1 (Foundations) implementado, Sprints 2–8 pendientes.**
 
 ## Estructura
