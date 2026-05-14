@@ -1,0 +1,269 @@
+name: Ω-S5++ APEX Deploy to VPS arbx
+
+# Ejecución doctrinal:
+#   - Manual (workflow_dispatch) — siempre que tú decidas, no automático en push
+#   - Permite override de SHA específico para deploys/rollbacks puntuales
+#   - Concurrency: 1 deploy a la vez, cancela jobs encolados
+#   - Timeout total: 45 min (build no-cache de Rust puede tomar 20-30 min)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: 'Commit SHA a desplegar (default: HEAD de main)'
+        required: false
+        default: ''
+      skip_no_cache:
+        description: 'Usar cache Docker (deploy rápido sin --no-cache)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+concurrency:
+  group: deploy-arbx
+  cancel-in-progress: false  # NUNCA cancelar un deploy en curso
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy a arbx (195.201.235.70)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: production
+      url: http://195.201.235.70/
+
+    steps:
+      # ─────────────────────────────────────────────────────────────────
+      # FASE 0: Setup SSH (clave desde Secrets, jamás en logs)
+      # ─────────────────────────────────────────────────────────────────
+      - name: 🔐 Setup SSH key + known_hosts
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: 195.201.235.70
+          VPS_USER: root
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Fija el host key del VPS para evitar MITM (StrictHostKeyChecking=yes)
+          ssh-keyscan -H -p 22 -t rsa,ecdsa,ed25519 $VPS_HOST > ~/.ssh/known_hosts 2>/dev/null
+          chmod 644 ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host arbx
+            HostName $VPS_HOST
+            User $VPS_USER
+            Port 22
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+            ServerAliveInterval 30
+            ServerAliveCountMax 4
+          EOF
+          chmod 600 ~/.ssh/config
+          # Validar conectividad ANTES de cualquier acción destructiva
+          ssh arbx 'echo "SSH OK · hostname=$(hostname) · uptime=$(uptime -p)"'
+
+      # ─────────────────────────────────────────────────────────────────
+      # FASE 1: PRE-FLIGHT (cero cambios destructivos)
+      # ─────────────────────────────────────────────────────────────────
+      - name: 📊 Pre-flight diagnóstico
+        run: |
+          ssh arbx 'bash -s' <<'EOSSH'
+          set -e
+          cd /opt/arbitragex-v2
+          echo "=== git status ==="
+          git status --porcelain | head -20
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "⚠️  STOP: working tree no está limpio. Otro agente puede estar trabajando."
+            echo "    Si es seguro proceder, ejecuta manualmente: git stash && git clean -fd"
+            exit 10
+          fi
+          echo ""
+          echo "=== HEAD actual ==="
+          git log --oneline -5
+          echo ""
+          echo "=== Docker containers actuales ==="
+          docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+          echo ""
+          echo "=== Recursos disponibles ==="
+          df -h /
+          free -h
+          echo ""
+          echo "=== Health pre-deploy ==="
+          curl -sf -o /dev/null -w "  /              → %{http_code}\n" http://localhost/
+          curl -sf -o /dev/null -w "  /api/health    → %{http_code}\n" http://localhost/api/health || true
+          EOSSH
+
+      # ─────────────────────────────────────────────────────────────────
+      # FASE 2: BACKUP (irreversibilidad protegida)
+      # ─────────────────────────────────────────────────────────────────
+      - name: 💾 Backup pre-deploy
+        id: backup
+        run: |
+          BACKUP_NAME="arbitragex-backup-$(date -u +%Y%m%dT%H%M%SZ).tgz"
+          ssh arbx "bash -s" <<EOSSH
+          set -e
+          cd /opt/arbitragex-v2
+          PREV_SHA=\$(git rev-parse HEAD)
+          echo "PREV_SHA=\$PREV_SHA" > /root/last-deploy.env
+          # Backup config + data + estado git actual (NO sources, se recuperan de git)
+          tar czf /root/$BACKUP_NAME \
+            --exclude='node_modules' --exclude='target' --exclude='.next' \
+            .env docker/ data/ 2>/dev/null || tar czf /root/$BACKUP_NAME .env docker/ 2>/dev/null || true
+          ls -lh /root/$BACKUP_NAME
+          echo "Backup: /root/$BACKUP_NAME · Previous SHA: \$PREV_SHA"
+          EOSSH
+          echo "backup_name=$BACKUP_NAME" >> $GITHUB_OUTPUT
+
+      # ─────────────────────────────────────────────────────────────────
+      # FASE 3: ANCLAJE git (solo después de pre-flight + backup OK)
+      # ─────────────────────────────────────────────────────────────────
+      - name: 🎯 Anclar a SHA objetivo
+        env:
+          TARGET_SHA: ${{ github.event.inputs.target_sha }}
+        run: |
+          SHA="${TARGET_SHA:-c815ef8c9048e8d6c6e97adc6865d884bfea6140}"
+          ssh arbx "bash -s" <<EOSSH
+          set -e
+          cd /opt/arbitragex-v2
+          git fetch --all --prune
+          git checkout -f $SHA
+          git log -1 --oneline
+          echo "✅ Anclado a $SHA"
+          EOSSH
+
+      # ─────────────────────────────────────────────────────────────────
+      # FASE 4: BUILD SECUENCIAL (Crisol Termodinámico)
+      # Cada build verifica recursos antes y después
+      # ─────────────────────────────────────────────────────────────────
+      - name: 🔥 Build searcher-rs (Hot-Path)
+        env:
+          SKIP_NO_CACHE: ${{ github.event.inputs.skip_no_cache }}
+        run: |
+          CACHE_FLAG=$([ "$SKIP_NO_CACHE" = "true" ] && echo "" || echo "--no-cache")
+          ssh arbx "bash -s" <<EOSSH
+          set -e
+          cd /opt/arbitragex-v2
+          echo "=== Pre-build resources ==="; free -h; df -h /
+          time docker compose --env-file .env -f docker/compose.prod.yml build $CACHE_FLAG searcher-rs
+          echo "=== Post-build resources ==="; free -h; df -h /
+          EOSSH
+
+      - name: 🔥 Build api-server (Plano de Control)
+        env:
+          SKIP_NO_CACHE: ${{ github.event.inputs.skip_no_cache }}
+        run: |
+          CACHE_FLAG=$([ "$SKIP_NO_CACHE" = "true" ] && echo "" || echo "--no-cache")
+          ssh arbx "bash -s" <<EOSSH
+          set -e
+          cd /opt/arbitragex-v2
+          echo "=== Pre-build resources ==="; free -h; df -h /
+          time docker compose --env-file .env -f docker/compose.prod.yml build $CACHE_FLAG api-server
+          echo "=== Post-build resources ==="; free -h; df -h /
+          EOSSH
+
+      - name: 🔥 Build frontend + nginx-gateway (Bóveda Visual)
+        env:
+          SKIP_NO_CACHE: ${{ github.event.inputs.skip_no_cache }}
+        run: |
+          CACHE_FLAG=$([ "$SKIP_NO_CACHE" = "true" ] && echo "" || echo "--no-cache")
+          ssh arbx "bash -s" <<EOSSH
+          set -e
+          cd /opt/arbitragex-v2
+          echo "=== Pre-build resources ==="; free -h; df -h /
+          time docker compose --env-file .env -f docker/compose.prod.yml build $CACHE_FLAG frontend nginx-gateway
+          echo "=== Post-build resources ==="; free -h; df -h /
+          EOSSH
+
+      # ─────────────────────────────────────────────────────────────────
+      # FASE 5: HOT-SWAP atómico
+      # ─────────────────────────────────────────────────────────────────
+      - name: 🚀 Hot-swap containers
+        run: |
+          ssh arbx "bash -s" <<'EOSSH'
+          set -e
+          cd /opt/arbitragex-v2
+          docker compose --env-file .env -f docker/compose.prod.yml up -d --remove-orphans \
+            searcher-rs api-server frontend nginx-gateway
+          sleep 15
+          docker compose --env-file .env -f docker/compose.prod.yml ps
+          EOSSH
+
+      # ─────────────────────────────────────────────────────────────────
+      # FASE 6: HEALTHCHECK post-deploy
+      # Si falla → step "Rollback" se dispara
+      # ─────────────────────────────────────────────────────────────────
+      - name: ✅ Healthcheck post-deploy
+        id: healthcheck
+        run: |
+          ssh arbx "bash -s" <<'EOSSH'
+          set -e
+          echo "=== Aguardando 20s para warmup ==="; sleep 20
+
+          fail=0
+          probe() {
+            local path=$1; local expected=$2
+            local code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "http://localhost$path")
+            if [ "$code" = "$expected" ]; then
+              echo "  ✅ $path → $code"
+            else
+              echo "  ❌ $path → $code (expected $expected)"
+              fail=$((fail+1))
+            fi
+          }
+
+          echo "=== Endpoints críticos (base) ==="
+          probe /             200
+          probe /api/health   200
+          probe /chains       200
+          probe /executions   200
+          probe /opportunities 200
+
+          echo "=== Endpoints APEX gap-closure (deben aparecer ahora) ==="
+          probe /apex/allocator 200
+          probe /omega-s5/core  200
+
+          echo "=== Docker health ==="
+          docker compose --env-file .env -f docker/compose.prod.yml ps --format json | \
+            jq -r '. | "  " + .Service + " · " + .State + " · " + .Health'
+
+          if [ $fail -gt 0 ]; then
+            echo "❌ $fail endpoints fallaron — rollback obligatorio"
+            exit 1
+          fi
+          echo "✅ Todos los endpoints PASS — deploy OK"
+          EOSSH
+
+      # ─────────────────────────────────────────────────────────────────
+      # FASE 7: ROLLBACK automático si healthcheck falla
+      # ─────────────────────────────────────────────────────────────────
+      - name: 🔄 Rollback (solo si healthcheck falló)
+        if: failure() && steps.healthcheck.outcome == 'failure'
+        run: |
+          ssh arbx "bash -s" <<'EOSSH'
+          set -e
+          source /root/last-deploy.env  # contiene PREV_SHA
+          cd /opt/arbitragex-v2
+          echo "🔄 Rollback a $PREV_SHA"
+          git checkout -f $PREV_SHA
+          docker compose --env-file .env -f docker/compose.prod.yml up -d --remove-orphans \
+            searcher-rs api-server frontend nginx-gateway
+          sleep 20
+          curl -sf -o /dev/null -w "Rollback health: %{http_code}\n" http://localhost/api/health
+          EOSSH
+
+      # ─────────────────────────────────────────────────────────────────
+      # FASE 8: Limpieza SSH (siempre, incluso si falla)
+      # ─────────────────────────────────────────────────────────────────
+      - name: 🧹 Cleanup SSH
+        if: always()
+        run: |
+          shred -u ~/.ssh/deploy_key 2>/dev/null || rm -f ~/.ssh/deploy_key
+          rm -f ~/.ssh/config ~/.ssh/known_hosts
+          echo "SSH key destruida del runner"
