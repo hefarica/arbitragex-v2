@@ -144,27 +144,58 @@ jobs:
             echo "✅ ID de imagen segura guardado en /root/last-known-good-frontend.id"
           REMOTE
 
-      - name: "[F5] Git anchor → c815ef8 (idempotente)"
+      - name: "[F5a] Checkout target SHA en el runner"
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          path: arbx-checkout
+          fetch-depth: 1
+
+      - name: "[F5b] Sync target SHA → VPS via rsync over SSH"
         run: |
+          set -e
+          echo "═══ SYNC ${{ env.TARGET_SHA }} → VPS ═══"
+          # Validar que tenemos el SHA esperado en el runner
+          cd $GITHUB_WORKSPACE/arbx-checkout
+          ACTUAL=$(git rev-parse HEAD)
+          echo "Runner HEAD: $ACTUAL"
+          if [ "$ACTUAL" != "${{ env.TARGET_SHA }}" ]; then
+            echo "❌ ABORT: runner no está en TARGET_SHA"
+            exit 1
+          fi
+          echo "── rsync repo → VPS:${{ env.REPO_PATH }} ──"
+          # rsync con preservación de permisos, exclusión de .git/.next/node_modules
+          # --delete asegura paridad bit-a-bit con el SHA target
+          rsync -az --delete \
+            --exclude='.git/' \
+            --exclude='node_modules/' \
+            --exclude='.next/' \
+            --exclude='target/' \
+            -e "ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no" \
+            ./ root@${{ env.VPS_HOST }}:${{ env.REPO_PATH }}/
+          echo "✅ Sync completo"
+          # Verificación remota de los archivos del delta
           ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
             set -e
             cd ${{ env.REPO_PATH }}
-            echo "═══ GIT ANCHOR → ${{ env.TARGET_SHA }} ═══"
-            CURRENT=$(git rev-parse HEAD)
-            echo "HEAD actual: $CURRENT"
-            if [ "$CURRENT" = "${{ env.TARGET_SHA }}" ]; then
-              echo "✅ Ya estamos en c815ef8 (idempotente, no fetch necesario)"
-            else
-              echo "── Fetch y checkout ──"
-              git fetch origin main
-              git checkout ${{ env.TARGET_SHA }}
-              echo "✅ HEAD ahora: $(git rev-parse HEAD)"
-            fi
-            # Verificar archivos APEX presentes
-            echo "── Verificación de archivos del delta ──"
+            echo "── Verificación de archivos del delta APEX ──"
             for f in \
               frontend/app/apex/allocator/page.tsx \
               frontend/app/apex/allocator/AllocatorClient.tsx; do
+              if [ -f "$f" ]; then
+                echo "  ✅ $f ($(wc -l < $f) líneas)"
+              else
+                echo "  ❌ FALTA: $f"
+                exit 1
+              fi
+            done
+            echo "── Verificación de archivos del REPAIR c815ef9 ──"
+            for f in \
+              frontend/app/omega-s5/registry/'[entity]'/page.tsx \
+              frontend/features/drift/DriftPanel.tsx \
+              frontend/lib/drift/types.ts \
+              frontend/lib/drift/useDriftDetection.ts \
+              frontend/lib/statemachine/types.ts; do
               if [ -f "$f" ]; then
                 echo "  ✅ $f ($(wc -l < $f) líneas)"
               else
