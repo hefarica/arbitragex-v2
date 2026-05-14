@@ -1,22 +1,55 @@
-//! `eigenstate` — eigenstate transition projector (spec §3.2).
+//! `eigenstate` — eigenstate transition projector (spec §3.2, Phase 3).
 //!
-//! **Phase 1 status (V1.2 amended, 2026-05-13)**: scaffold + opaque
-//! [`LiquidityManifold`] placeholder. The Lanczos solver, effective
-//! Hamiltonian, transition projector, and equilibrium boundary land in
-//! Phase 3 with their own `num-complex` dependency. `LiquidityManifold`
-//! is introduced here ahead of schedule because the V1.2 holonomic
-//! typestate ([`crate::types::holonomic::ClosedContourTrajectory`])
-//! references it by composition — the closed-contour trajectory walks
-//! over a sequence of manifolds.
+//! ## Phase 1 (V1.2 amended, 2026-05-13)
+//!
+//! Scaffold + opaque [`LiquidityManifold`] placeholder. Introduced
+//! ahead of schedule because the V1.2 holonomic typestate
+//! ([`crate::types::holonomic::ClosedContourTrajectory`]) references
+//! it by composition — the closed-contour trajectory walks over a
+//! sequence of manifolds.
+//!
+//! ## Phase 3 (2026-05-13) — Eigenstate Decomposition
+//!
+//! Three submodules graduate behind the `eigenstate` Cargo feature:
+//!
+//! - [`effective_hamiltonian`] — constructs the N×N symmetric Hamiltonian
+//!   of the liquidity manifold network. Diagonal = self-energy (TVL × σ),
+//!   off-diagonal = inter-manifold coupling. The CDC from Phase 2 enters
+//!   as a diagonal perturbation.
+//!
+//! - [`lanczos_solver`] — eigendecomposition via nalgebra's `SymmetricEigen`
+//!   (implicit QR, O(N³)). Returns sorted eigenvalues, eigenvectors,
+//!   spectral gap, and ground-state participation ratio. Lanczos iterative
+//!   path reserved for N > 50 manifolds (Phase 3.1).
+//!
+//! - [`transition_projector`] — computes ground-state transition
+//!   probabilities under CDC perturbation. The `should_dispatch()` method
+//!   is the O(1) gate that the GateManager (Phase 4) will call on every
+//!   candidate bundle. When `--features "filtration eigenstate"` is active,
+//!   the projector directly consumes `StateDivergenceCoefficient` from
+//!   Phase 2's `CdcCalculator`.
+//!
+//! ## Coupling to Phase 2 (Filtration)
+//!
+//! The transition projector's `project_from_cdc()` method is conditionally
+//! compiled under `#[cfg(feature = "filtration")]`. This means the full
+//! Phase 2 → Phase 3 pipeline is available when both features are active:
+//!
+//! ```text
+//! PdmpEstimator (Phase 2)
+//!   → CdcCalculator::compute() → StateDivergenceCoefficient
+//!     → TransitionProjector::project_from_cdc()
+//!       → TransitionProjection::should_dispatch()  ← O(1) gate
+//! ```
 
 use serde::{Deserialize, Serialize};
 
 /// Opaque identifier for a liquidity manifold (a single CPMM / V3 pool /
 /// stable pool / weighted pool surface).
 ///
-/// **Phase 1 surface**: only the `id` is materialised. Downstream Phase 3
-/// will attach the manifold's Riemannian metric tensor `g_ij`, the
-/// curvature scalar `R`, and the geodesic transition operator.
+/// **Phase 1 surface**: only the `id` is materialised. Phase 3 attaches
+/// the manifold's self-energy and coupling parameters via the
+/// [`EffectiveHamiltonian`](effective_hamiltonian::EffectiveHamiltonian).
 ///
 /// The struct is intentionally minimal so the V1.2 typestate amendment
 /// can name the type without dragging in the eigenstate math kernel.
@@ -43,6 +76,30 @@ impl LiquidityManifold {
         }
     }
 }
+
+// ── Phase 3 submodules (feature-gated) ────────────────────────────────
+
+#[cfg(feature = "eigenstate")]
+pub mod effective_hamiltonian;
+
+#[cfg(feature = "eigenstate")]
+pub mod lanczos_solver;
+
+#[cfg(feature = "eigenstate")]
+pub mod transition_projector;
+
+// ── Phase 3 re-exports ────────────────────────────────────────────────
+
+#[cfg(feature = "eigenstate")]
+pub use effective_hamiltonian::{EffectiveHamiltonian, HamiltonianError};
+
+#[cfg(feature = "eigenstate")]
+pub use lanczos_solver::{EigenstateDecomposition, LanczosError, LANCZOS_THRESHOLD};
+
+#[cfg(feature = "eigenstate")]
+pub use transition_projector::{
+    ProjectionError, TransitionProjection, TransitionProjector,
+};
 
 #[cfg(test)]
 mod tests {

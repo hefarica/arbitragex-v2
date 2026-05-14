@@ -62,16 +62,23 @@ default = []
 # filtration::cdc_calculator submodules. See spec §3.1.
 filtration = ["dep:rand_distr"]
 
-# Reserved feature names for Phase 3-6 — currently no-op until each
-# module lands its math body. Declared here so the spec's downstream
-# `features = ["eigenstate", "allocator", ...]` usage does not error in
-# consumer crates ahead of the math landing.
+# Phase 3 — eigenstate decomposition (effective Hamiltonian, Lanczos solver,
+# transition projector). Uses nalgebra (already a required dep) for
+# SymmetricEigen. The transition_projector::project_from_cdc() bridge to
+# Phase 2 is conditionally compiled under `filtration` — both features
+# must be active for the full pipeline.
 eigenstate = []
+
+# Combined feature for the full Phase 2 + Phase 3 pipeline:
+# PdmpEstimator → CdcCalculator → TransitionProjector → should_dispatch().
+eigenstate-full = ["filtration", "eigenstate"]
+
 allocator = []
 hedger = []
 metrics = []
 persistence = []
 kill_switch = []
+
 
 [lints.rust]
 # Future-proof: the math modules will contain todo!() bodies during
