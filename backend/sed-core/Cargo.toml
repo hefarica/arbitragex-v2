@@ -88,9 +88,15 @@ hedger = ["allocator"]
 # Full pipeline: Phases 2 + 3 + 5 + 6.
 pipeline-full = ["filtration", "eigenstate", "allocator", "hedger"]
 
+# Metrics — trait-based observability (no external deps, just the API surface).
 metrics = []
+
+# Persistence — DAO types for PostgreSQL (SQL templates only, no sqlx runtime).
 persistence = []
-kill_switch = []
+
+# Paper-Shadow Mode — real data connectors (mempool WS, reserves, gas, Flashbots dry-run).
+# Requires shared-rs for config + RPC pool access. Capital exposed: STRICTLY 0.
+paper-shadow = ["allocator"]
 
 
 [lints.rust]

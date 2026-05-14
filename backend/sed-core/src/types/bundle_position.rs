@@ -8,7 +8,7 @@
 //!
 //! - [`OrthogonalEquilibrium`] — null-covariance cross-venue hedge state.
 //! - [`DiracImpulseOnly`] — single Dirac impulse on the CPMM manifold.
-//! - [`HolonomicLoopResolution`] — closed-contour atomic arbitrage cycle
+//! - [`HolonomicLoopResolution`] — closed-contour atomic resolution cycle
 //!   over N ≥ 3 liquidity manifolds (V1.2 amendment, 2026-05-13,
 //!   `ANEXOS_V1.2.md` §4.1.1–§4.1.5). Doctrinally clean: the constructor
 //!   refuses sandwich/frontrun shapes because they have no closed
@@ -79,7 +79,7 @@ pub struct OrthogonalEquilibrium;
 pub struct DiracImpulseOnly;
 
 /// Marker for bundles whose post-resolution topology is a closed-contour
-/// atomic arbitrage cycle over N ≥ 3 liquidity manifolds (V1.2 amendment,
+/// atomic resolution cycle over N ≥ 3 liquidity manifolds (V1.2 amendment,
 /// 2026-05-13, `ANEXOS_V1.2.md` §4.1.1).
 ///
 /// **Doctrinal note**: This variant is doctrinally distinct from the
@@ -109,7 +109,7 @@ pub struct HolonomicLoopResolution;
 /// Sealed trait. Only this crate may add implementors.
 ///
 /// **Operator note**: adding a new implementor (e.g., for a future
-/// `AtomicBackrun` variant tied to a `BackrunArbitrageProof`) is gated by
+/// `AtomicBackrun` variant tied to a `BackrunResolutionProof`) is gated by
 /// `mev-ethics.md §Amendments` — operator + on-call sign-off + 7-day
 /// cooldown.
 pub trait PostResolutionTopology: private::Sealed {}
@@ -257,7 +257,7 @@ impl BundlePosition<HolonomicLoopResolution> {
     /// Construct a `HolonomicLoopResolution` bundle (V1.2 amendment,
     /// `ANEXOS_V1.2.md` §4.1.5).
     ///
-    /// Models an atomic arbitrage cycle over N ≥ 3 liquidity manifolds.
+    /// Models an atomic holonomic resolution cycle over N ≥ 3 liquidity manifolds.
     /// Six mathematical validations gate the constructor; failure of
     /// any one yields a specific `TopologyValidationError`. The
     /// validations are applied in order — the first failure short-

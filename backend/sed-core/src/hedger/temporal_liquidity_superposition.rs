@@ -230,15 +230,45 @@ impl TemporalLiquidityEngine {
         })
     }
 
-    /// Construye un BundlePosition<HolonomicLoopResolution> sellado
+    /// Construye un BundlePosition\u003cHolonomicLoopResolution\u003e sellado
     /// a partir de un resultado TLS exitoso.
     pub fn to_bundle_position(
         &self,
         result: &TlsExecutionResult,
         contour: &ClosedContourTrajectory,
     ) -> Result<crate::types::bundle_position::BundlePosition<crate::types::bundle_position::HolonomicLoopResolution>, crate::types::errors::TopologyValidationError> {
-        let canonical_contour = contour.to_canonical();
-        let canonical_yield = result.topological_yield.to_canonical();
+        use nalgebra::DVector;
+
+        // Build canonical ClosedContourTrajectory from hedger types
+        let manifolds = contour.manifolds.iter()
+            .map(|m| crate::eigenstate::LiquidityManifold::new(&m.pool_address))
+            .collect();
+        let mut transition_points: Vec<DVector<f64>> = contour.transition_points.iter()
+            .map(|v| DVector::from(vec![v.x, v.y]))
+            .collect();
+        // Append closing point (γ(0) = γ(1))
+        if let Some(first) = transition_points.first().cloned() {
+            transition_points.push(first);
+        }
+        let canonical_contour = crate::types::holonomic::ClosedContourTrajectory {
+            manifolds,
+            transition_points,
+            relative_prices: contour.relative_prices.clone(),
+            contour_length: contour.contour_length,
+            loop_cardinality: contour.loop_cardinality,
+        };
+
+        // Build canonical TopologicalYield
+        let ty = &result.topological_yield;
+        let canonical_yield = crate::types::holonomic::TopologicalYield {
+            raw_holonomy: ty.raw_holonomy,
+            network_friction: ty.network_friction,
+            net_yield: ty.net_yield,
+            efficiency_factor: ty.efficiency_factor,
+            manifold_ids: ty.manifold_ids.clone(),
+            resolved_at: ty.resolved_at / 1000, // ms → sec
+        };
+
         crate::types::bundle_position::BundlePosition::new_holonomic_loop(
             contour.start_token.clone(),
             (contour.start_token.clone(), contour.start_token.clone()),

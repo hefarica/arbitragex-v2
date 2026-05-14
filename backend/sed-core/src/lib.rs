@@ -54,5 +54,15 @@ pub mod allocator;
 pub mod eigenstate;
 pub mod filtration;
 pub mod hedger;
+pub mod metrics;
+pub mod persistence;
 pub mod prelude;
 pub mod types;
+
+// Paper-Shadow E2E pipeline integration test (test-only).
+#[cfg(test)]
+mod pipeline_e2e;
+
+// Paper-Shadow Mode connectors — real data ingestion (feature-gated).
+#[cfg(feature = "paper-shadow")]
+pub mod connectors;

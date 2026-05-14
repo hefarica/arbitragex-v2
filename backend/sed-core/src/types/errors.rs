@@ -74,7 +74,7 @@ pub enum TopologyValidationError {
 
     /// Validation 5 — `TopologicalYield::is_economically_viable()`
     /// returned `false`. `net_yield ≤ MINIMUM_VIABLE_YIELD` (= 1e-15).
-    /// The cycle is at-best break-even or unprofitable after friction.
+    /// The cycle is at-best break-even or negative-yield after friction.
     #[error("non-positive topological yield: net_yield ≤ 1e-15")]
     NonPositiveTopologicalYield,
 
