@@ -39,7 +39,7 @@ export function OpportunitiesTable({ items }: { items: OpportunityRow[] }) {
       },
       {
         accessorKey: "roi_pct",
-        header: "ROI",
+        header: "Conv. Ratio",
         meta: { align: "right", className: "font-mono tabular-nums" },
         cell: ({ row }) => fmtPct100(row.original.roi_pct),
         sortUndefined: "last",

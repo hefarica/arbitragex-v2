@@ -24,7 +24,7 @@ import type {
 const GAS_STRATEGIES: { value: GasPriceStrategy; label: string; help: string }[] = [
   { value: "dynamic_basefee_plus_tip", label: "Dynamic (basefee + p75 tip)", help: "Reacts to live gas; preferred when block utilisation is volatile." },
   { value: "percentile_75", label: "P75 of recent blocks", help: "Conservative: targets the 75th percentile of priority fees observed in the last 5 blocks." },
-  { value: "fixed", label: "Fixed gwei", help: "Operator pins a hard ceiling. Use when arbitrage edge depends on predictable bidding." },
+  { value: "fixed", label: "Fixed gwei", help: "Operator pins a hard ceiling. Use when resolution edge depends on predictable bidding." },
 ];
 
 // Audit 2026-05-10 fix: replaced hardcoded STRATEGY_OPTIONS with a dynamic
@@ -278,7 +278,7 @@ export function TradingConfigForm({
               placeholder="WETH"
             />
             <p className="text-xs text-muted-foreground mt-1">
-              Used to denominate ROI and convert profit-token → USD.
+              Used to denominate Convergence Ratio and convert yield-token → USD.
             </p>
           </div>
           <div>
@@ -312,14 +312,14 @@ export function TradingConfigForm({
 
       <Card>
         <CardHeader>
-          <CardTitle>Profit gate thresholds</CardTitle>
+          <CardTitle>Yield gate thresholds</CardTitle>
           <CardDescription>
-            Decide when a candidate is &quot;worth it&quot;. The math-engine computes net_profit and ROI deterministically; these are the floors.
+            Decide when a candidate is &quot;worth it&quot;. The math-engine computes net_profit and Convergence Ratio deterministically; these are the floors.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-3">
           <div>
-            <Label htmlFor="min_profit">Min net profit (USD)</Label>
+            <Label htmlFor="min_profit">Min net yield (USD)</Label>
             <Input
               id="min_profit"
               type="number"
@@ -330,7 +330,7 @@ export function TradingConfigForm({
             />
           </div>
           <div>
-            <Label htmlFor="min_roi">Min ROI (%)</Label>
+            <Label htmlFor="min_roi">Min convergence ratio (%)</Label>
             <Input
               id="min_roi"
               type="number"

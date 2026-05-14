@@ -97,7 +97,7 @@ const CATEGORIES: CategorySpec[] = [
   {
     id: "prices",
     label: "Price oracles",
-    description: "Token price feeds for USD-denominated profit math. Either Coingecko (free or pro) or Alchemy Prices is sufficient; operator-managed prices in trading_config are the ultimate fallback.",
+    description: "Token price feeds for USD-denominated yield math. Either Coingecko (free or pro) or Alchemy Prices is sufficient; operator-managed prices in trading_config are the ultimate fallback.",
     creds: [
       {
         provider: "coingecko_demo",

@@ -86,9 +86,9 @@ export interface SimulatedCostBreakdown {
 }
 
 export interface SimulatedTarget {
-  /** USD floor (min_profit_usd). Null when only a ROI floor was configured. */
+  /** USD floor (min_profit_usd). Null when only a Convergence Ratio floor was configured. */
   target_net_usd: number | null;
-  /** ROI floor in percent (min_roi_pct). Null when only a USD floor was configured. */
+  /** Convergence Ratio floor in percent (min_roi_pct). Null when only a USD floor was configured. */
   target_roi_pct: number | null;
   target_source: "strategy_config" | "simulation_tab";
   binding_floor:
@@ -126,11 +126,11 @@ export interface OpportunityListItem {
   token_out: string;
   token_out_info: TokenInfo | null;
   amount_in_wei: string;
-  // GROSS profit (pre-cost). The dashboard's "Net Profit" column does NOT
+  // GROSS yield (pre-cost). The dashboard's "Net Yield" column does NOT
   // display this any more — see C5 fix in OpportunitiesClient.
   expected_profit_usd: number | null;
-  // C5 fix (audit 2026-05-10): NET profit (gross - gas - slippage - relay
-  // fee - flashloan fee - failure buffer). Optional because older payloads
+  // C5 fix (audit 2026-05-10): NET yield (gross - gas - slippage - relay
+  // fee - flash convergence fee - failure buffer). Optional because older payloads
   // (pre-Phase-1 of the wiring fix) emit only gross.
   net_expected_profit_usd?: number | null;
   /** Derived by api-server from `rejection_reason IS NULL`. */

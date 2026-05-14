@@ -86,3 +86,10 @@ pub mod sed_engine;
 // decomposition for stochastic dispatch decisions.
 #[cfg(feature = "paper-shadow")]
 pub mod sed_bridge;
+
+// OMEGA Nivel 0 — Telemetry publisher (ConvergenceSignal → Redis).
+// Fire-and-forget: tokio::spawn, never blocks the pipeline.
+// NOTE: gated behind paper-shadow because it imports from sed-core,
+//       which is an optional path dependency only available with that feature.
+#[cfg(feature = "paper-shadow")]
+pub mod telemetry_publisher;

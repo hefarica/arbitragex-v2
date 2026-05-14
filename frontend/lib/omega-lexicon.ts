@@ -54,8 +54,10 @@ export function sanitizeForDisplay(text: string): string {
     const regex = new RegExp(`\\b${prohibited}\\b`, "gi");
     result = result.replace(regex, (match) => {
       // Preservar capitalización: si el original empezaba con mayúscula
-      if (match[0] === match[0].toUpperCase()) {
-        return substitute[0].toUpperCase() + substitute.slice(1);
+      const firstMatch = match.charAt(0);
+      const firstSub = substitute.charAt(0);
+      if (firstMatch && firstMatch === firstMatch.toUpperCase()) {
+        return firstSub.toUpperCase() + substitute.slice(1);
       }
       return substitute;
     });

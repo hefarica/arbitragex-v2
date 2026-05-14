@@ -38,11 +38,11 @@ export const OpportunityRowSchema = z.object({
   token_in: z.string(),
   token_out: z.string(),
   amount_in_wei: z.string(),
-  // GROSS profit (pre-cost). The dashboard MUST NOT label this as "Net".
+  // GROSS yield (pre-cost). The dashboard MUST NOT label this as "Net".
   expected_profit_usd: z.number().nullable(),
-  // C5 fix (audit 2026-05-10): NET profit (gross - gas - slippage - relay
-  // fee - flashloan fee - failure buffer). This is the column the
-  // /opportunities table now displays under "Net Profit".
+  // C5 fix (audit 2026-05-10): NET yield (gross - gas - slippage - relay
+  // fee - flash convergence fee - failure buffer). This is the column the
+  // /opportunities table now displays under "Net Yield".
   // R8 fail-honest: null when data was not yet computed.
   // .optional() so older payloads without this field still parse.
   net_expected_profit_usd: z.number().nullable().optional(),
@@ -462,14 +462,14 @@ const TradingConfigBaseFields = {
   // bleed `| undefined` through every Record<string, T> consumer.
   strategy_configs: StrategyConfigsSchema,
   enabled: z.boolean(),
-  // ── Net Profit Gate — Sprint A+B+C (migrations 047+048) ──────────────
+  // ── Net Yield Gate — Sprint A+B+C (migrations 047+048) ──────────────
   // Capital cost fields (Sprint A).
   // capital_cost_rate_annual_pct: hurdle rate for capital deployed.
-  //   0 = ignore (appropriate for flash-loan arb where capital isn't locked).
-  //   Set > 0 to require profit > (capital × rate/8760) per opportunity.
+  //   0 = ignore (appropriate for flash convergence resolution where capital isn't locked).
+  //   Set > 0 to require yield > (capital × rate/8760) per opportunity.
   capital_cost_rate_annual_pct: z.number().min(0).max(50).optional(),
   // ops_overhead_usd_per_attempt: amortised infra/RPC cost per scored attempt.
-  //   Deducted from gross profit before the net_profit gate comparison.
+  //   Deducted from gross yield before the net_profit gate comparison.
   ops_overhead_usd_per_attempt: z.number().min(0).max(100).optional(),
   // Spread sanity gate (Sprint B).
   // spread_sanity_mult: reject if AMM-reported spread > oracle reference × mult.

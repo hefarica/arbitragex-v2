@@ -102,7 +102,7 @@ export function OpportunityDetailDialog({ opportunity, onClose }: Props) {
             <Row label="DEX B" value={opp.dex_b} />
             <Row label="Pair" value={opp.pair_symbol} />
             <Row
-              label="Net Profit (USD)"
+              label="Net Yield (USD)"
               value={
                 opp.expected_profit_usd != null
                   ? `$${opp.expected_profit_usd.toFixed(4)}`
@@ -110,7 +110,7 @@ export function OpportunityDetailDialog({ opportunity, onClose }: Props) {
               }
             />
             <Row
-              label="ROI"
+              label="Convergence Ratio"
               value={opp.roi_pct != null ? `${opp.roi_pct.toFixed(4)}%` : null}
             />
             <Row

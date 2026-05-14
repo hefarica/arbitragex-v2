@@ -75,9 +75,9 @@ interface SimulatedCostBreakdown {
 
 /** Mirrors SimulatedTargetSchema from shared-ts/src/api-contracts.ts. */
 interface SimulatedTarget {
-  /** USD floor (min_profit_usd). Null when only a ROI floor was configured. */
+  /** USD floor (min_profit_usd). Null when only a Convergence Ratio floor was configured. */
   target_net_usd: number | null;
-  /** ROI floor in percent (min_roi_pct). Null when only a USD floor was configured. */
+  /** Convergence Ratio floor in percent (min_roi_pct). Null when only a USD floor was configured. */
   target_roi_pct: number | null;
   target_source: "strategy_config" | "simulation_tab";
   binding_floor:
@@ -115,8 +115,8 @@ interface OpportunityListItem {
   token_out_info: TokenInfo | null;
   amount_in_wei: string;
   expected_profit_usd: number | null;
-  // C5 fix (audit 2026-05-10): NET profit (gross minus gas, slippage, relay
-  // fee, flashloan fee, failure buffer). The "Net Profit" column displays
+  // C5 fix (audit 2026-05-10): NET yield (gross minus gas, slippage, relay
+  // fee, flash convergence fee, failure buffer). The "Net Yield" column displays
   // this when present; falls back to expected_profit_usd labeled "Gross"
   // when the spine has not yet computed net (cold-start, gate-rejected
   // before math). R8 fail-honest: null means "not yet computed", never zero.
@@ -160,7 +160,7 @@ import {
 } from "@/lib/format";
 import { useUserPrefs } from "@/lib/user-prefs";
 
-// ─── Tone → token-based class map (used for PROFIT cell) ─────────────────────
+// ─── Tone → token-based class map (used for YIELD cell) ─────────────────────
 const TONE_CLASS: Record<string, string> = {
   positive: "text-success",
   negative: "text-destructive",
@@ -171,7 +171,7 @@ const TONE_CLASS: Record<string, string> = {
 
 /**
  * Compact USD formatter for the inverse-sizing hint (e.g. `$12.5k`, `$1.8M`).
- * Used only for the suggested-amount subline; primary profit numbers keep the
+ * Used only for the suggested-amount subline; primary yield numbers keep the
  * full `formatProfitUSD` precision.
  */
 function formatUsdShort(value: number): string {
@@ -264,9 +264,9 @@ export default function OpportunitiesClient({
         return;
       }
       const result = await res.json() as { profit_usd?: number; net_profit_usd?: number };
-      const profit = result.net_profit_usd ?? result.profit_usd;
+      const yieldVal = result.net_profit_usd ?? result.profit_usd;
       toast.success("Simulation complete", {
-        description: profit != null ? `Net profit: $${profit.toFixed(4)}` : "No profit data returned",
+        description: yieldVal != null ? `Net yield: $${yieldVal.toFixed(4)}` : "No yield data returned",
       });
     } catch (e) {
       const err = e as Error;
@@ -337,10 +337,10 @@ export default function OpportunitiesClient({
     for (const opp of streamOpportunities) {
       if (seenNotifiedIds.current.has(opp.id)) continue;
       seenNotifiedIds.current.add(opp.id);
-      const profit = opp.expected_profit_usd ?? 0;
-      if (profit >= prefs.notification_threshold_usd) {
+      const yieldVal = opp.expected_profit_usd ?? 0;
+      if (yieldVal >= prefs.notification_threshold_usd) {
         toast.success(`High-value opportunity — ${opp.strategy_kind}`, {
-          description: `Net profit $${profit.toFixed(2)} · chain ${opp.chain_id} · ${opp.dex_a}${opp.dex_b ? ` → ${opp.dex_b}` : ""}`,
+          description: `Net yield $${yieldVal.toFixed(2)} · chain ${opp.chain_id} · ${opp.dex_a}${opp.dex_b ? ` → ${opp.dex_b}` : ""}`,
           duration: 8_000,
         });
       }
@@ -481,7 +481,7 @@ export default function OpportunitiesClient({
             <p className="text-sm mt-1">
               {viableOnly
                 ? "No viable opportunities yet. Toggle \"Show all\" to inspect rejected detections."
-                : sanitizeForDisplay("Searcher-rs is actively hunting for arbitrage routes. Opportunities will appear here instantly.")}
+                : sanitizeForDisplay("Searcher-rs is actively hunting for resolution routes. Opportunities will appear here instantly.")}
             </p>
           </div>
         </div>
@@ -496,10 +496,12 @@ export default function OpportunitiesClient({
               <th className="p-4 border-b border-border">Status</th>
               {/* C5 (audit 2026-05-10): split Gross vs Net columns. Net is the
                   honest after-cost number; Gross is the AMM-quoted swap delta. */}
-              <th className="p-4 border-b border-border text-right" title="Gross profit before gas/slippage/relay fees (AMM quote)">Gross (USD)</th>
-              <th className="p-4 border-b border-border text-right" title="Net profit after gas, slippage, relay fee, flashloan fee, failure buffer">Net Profit (USD)</th>
-              <th className="p-4 border-b border-border text-right">Net ROI</th>
+              <th className="p-4 border-b border-border text-right" title="Gross yield before gas/slippage/relay fees (AMM quote)">Gross (USD)</th>
+              <th className="p-4 border-b border-border text-right" title="Net yield after gas, slippage, relay fee, flash convergence fee, failure buffer">Net Yield (USD)</th>
+              <th className="p-4 border-b border-border text-right">Net Convergence Ratio</th>
               <th className="p-4 border-b border-border text-center">Score</th>
+              <th className="p-4 border-b border-border text-center">Confidence</th>
+              <th className="p-4 border-b border-border text-right">Gas Used</th>
               <th className="p-4 border-b border-border text-center">Action</th>
             </tr>
           </thead>
@@ -653,7 +655,7 @@ export default function OpportunitiesClient({
                       {!viableOnly && opp.rejection_reason && (
                         <span className="mt-1 flex items-center gap-1 text-xs text-destructive font-mono">
                           <span className="inline-block w-1 h-1 rounded-full bg-destructive flex-shrink-0" aria-hidden="true" />
-                          {opp.rejection_reason}
+                          {sanitizeForDisplay(opp.rejection_reason)}
                         </span>
                       )}
                     </td>
@@ -662,18 +664,18 @@ export default function OpportunitiesClient({
                     <td className="p-4 text-right" data-col="gross">
                       <span
                         className="font-mono text-sm text-muted-foreground"
-                        title="Gross profit = expected_amount_out − amount_in (USD). Pre-gas, pre-slippage, pre-relay-fee. R8: '—' when not yet computed."
+                        title="Gross yield = expected_amount_out − amount_in (USD). Pre-gas, pre-slippage, pre-relay-fee. R8: '—' when not yet computed."
                       >
                         {gross.display}
                       </span>
                     </td>
 
-                    {/* ── NET PROFIT column — R8 fail-honest, post-cost truth.
+                    {/* ── NET YIELD column — R8 fail-honest, post-cost truth.
                           Priority: canonical spine net → TS simulated net (with
                           [SIM] info pill) → "—". Sub-line: target-driven
                           inverse sizing hint when the operator has configured
                           a target via /strategies card or the Simulación tab. */}
-                    <td className="p-4 text-right" data-col="profit">
+                    <td className="p-4 text-right" data-col="yield">
                       <div className="group relative inline-block cursor-help">
                         <div className="flex flex-col items-end gap-0.5">
                           <div className="flex items-center gap-1.5 justify-end">
@@ -681,10 +683,10 @@ export default function OpportunitiesClient({
                               className={`font-mono font-bold text-base drop-shadow-md border-b border-dashed border-current/30 ${TONE_CLASS[net.tone] ?? 'text-muted-foreground'}`}
                               title={
                                 netSource === "canonical"
-                                  ? "Net profit (canonical spine output) = gross − gas − slippage − relay fee − flashloan fee − failure buffer."
+                                  ? "Net yield (canonical spine output) = gross − gas − slippage − relay fee − flash convergence fee − failure buffer."
                                   : netSource === "simulated"
-                                  ? "Net profit (TS forward simulation) — operator's trading_config applied at the row's recorded amount_in. Canonical spine value not yet available."
-                                  : "Net profit not yet computed — neither spine output nor simulator could produce a number. R8 fail-honest: '—'."
+                                  ? "Net yield (TS forward simulation) — operator's trading_config applied at the row's recorded amount_in. Canonical spine value not yet available."
+                                  : "Net yield not yet computed — neither spine output nor simulator could produce a number. R8 fail-honest: '—'."
                               }
                             >
                               {netSource === "simulated" ? `~${net.display}` : net.display}
@@ -699,12 +701,12 @@ export default function OpportunitiesClient({
                             )}
                           </div>
                           {/* Target-driven sizing hint — operator-configured
-                              floors (USD min_profit and/or ROI min_pct).
+                              floors (USD min_profit and/or Convergence Ratio min_pct).
                               AND semantics: the smallest amount that
                               satisfies BOTH floors is suggested.
                               Visual tone:
                                 green  → meets target within cap, finite size
-                                yellow → cap-bound or infeasible (ROI
+                                yellow → cap-bound or infeasible (Convergence Ratio
                                          unreachable / net-per-usd-nonpositive). */}
                           {opp.simulated_target && (() => {
                             const t = opp.simulated_target;
@@ -714,9 +716,9 @@ export default function OpportunitiesClient({
                             const ok = t.meets_target_at_cap && !infeasible;
                             const titleParts: string[] = [];
                             if (t.target_net_usd != null) titleParts.push(`min $${t.target_net_usd.toFixed(2)} net`);
-                            if (t.target_roi_pct != null) titleParts.push(`min ${t.target_roi_pct.toFixed(2)}% ROI`);
+                            if (t.target_roi_pct != null) titleParts.push(`min ${t.target_roi_pct.toFixed(2)}% Convergence Ratio`);
                             const src = t.target_source === "strategy_config" ? "/strategies card" : "Simulación tab";
-                            const basis = t.estimation_basis === "roi-assumed" ? " · ROI-assumed (no gross recorded)" : "";
+                            const basis = t.estimation_basis === "roi-assumed" ? " · Convergence Ratio-assumed (no gross recorded)" : "";
                             return (
                               <div
                                 className={`text-[10px] font-mono flex items-center gap-1 ${ok ? "text-success/90" : "text-warning"}`}
@@ -724,7 +726,7 @@ export default function OpportunitiesClient({
                               >
                                 <span aria-hidden="true">{ok ? "→" : "⚠"}</span>
                                 {t.binding_floor === "roi-unreachable" ? (
-                                  <span>ROI {t.target_roi_pct?.toFixed(1)}% inalcanzable</span>
+                                  <span>Convergence Ratio {t.target_roi_pct?.toFixed(1)}% inalcanzable</span>
                                 ) : t.binding_floor === "net-per-usd-nonpositive" ? (
                                   <span>costos &gt; gross</span>
                                 ) : ok ? (
@@ -782,7 +784,7 @@ export default function OpportunitiesClient({
                                   </div>
                                   {[
                                     ["Gas", opp.simulated_cost_breakdown.gas_usd],
-                                    ["Flashloan fee", opp.simulated_cost_breakdown.flashloan_fee_usd],
+                                    ["Flash Convergence fee", opp.simulated_cost_breakdown.flashloan_fee_usd],
                                     ["LP fees", opp.simulated_cost_breakdown.lp_fees_usd],
                                     ["Slippage", opp.simulated_cost_breakdown.slippage_usd],
                                     ["Failure buffer", opp.simulated_cost_breakdown.failure_buffer_usd],
@@ -820,13 +822,13 @@ export default function OpportunitiesClient({
                                   </div>
                                   {opp.simulated_target.target_net_usd != null && (
                                     <div className="flex justify-between">
-                                      <span>USD floor (min profit):</span>
+                                      <span>USD floor (min yield):</span>
                                       <span className="font-mono">${opp.simulated_target.target_net_usd.toFixed(2)}</span>
                                     </div>
                                   )}
                                   {opp.simulated_target.target_roi_pct != null && (
                                     <div className="flex justify-between">
-                                      <span>ROI floor (min %):</span>
+                                      <span>Convergence Ratio floor (min %):</span>
                                       <span className="font-mono">{opp.simulated_target.target_roi_pct.toFixed(2)}%</span>
                                     </div>
                                   )}
@@ -849,7 +851,7 @@ export default function OpportunitiesClient({
                                   </div>
                                   {opp.simulated_target.estimation_basis === "roi-assumed" && (
                                     <div className="text-[10px] text-warning/80 italic pt-0.5">
-                                      No gross recorded — sizing assumes route delivers your min ROI floor as its gross rate.
+                                      No gross recorded — sizing assumes route delivers your min convergence ratio floor as its gross rate.
                                     </div>
                                   )}
                                   <div className="flex justify-between pt-1 border-t border-border/30">
@@ -901,8 +903,8 @@ export default function OpportunitiesClient({
                       </div>
                     </td>
 
-                    {/* ── NET ROI column — R8 fail-honest via formatPctOrDash ── */}
-                    <td className="p-4 text-right font-mono text-foreground" data-col="roi">
+                    {/* ── NET Convergence Ratio column — R8 fail-honest via formatPctOrDash ── */}
+                    <td className="p-4 text-right font-mono text-foreground" data-col="convergence-ratio">
                       <span className="bg-muted/50 px-2 py-1 rounded border border-border">
                         {formatPctOrDash(opp.roi_pct)}
                       </span>
@@ -913,6 +915,22 @@ export default function OpportunitiesClient({
                       <span className={`px-3 py-1 rounded-full text-xs font-bold border ${scorePercent > 95 ? 'bg-warning/20 text-warning border-warning/50 animate-pulse' : scorePercent > 70 ? 'bg-success/10 text-success border-success/30' : 'bg-info/10 text-info border-info/30'}`}>
                         {formatRiskOrDash(opp.risk_score)}
                       </span>
+                    </td>
+
+                    {/* ── CONFIDENCE column — R8: null → "—" ── */}
+                    <td className="p-4 text-center" data-col="confidence">
+                      <span className="font-mono text-sm">
+                        {opp.confidence_score_bps != null
+                          ? `${(opp.confidence_score_bps / 100).toFixed(2)}%`
+                          : "—"}
+                      </span>
+                    </td>
+
+                    {/* ── GAS USED column — R8: null → "—" ── */}
+                    <td className="p-4 text-right font-mono text-sm" data-col="gas-used">
+                      {opp.gas_used != null
+                        ? opp.gas_used.toLocaleString()
+                        : "—"}
                     </td>
 
                     {/* ── ACTION column ── */}
@@ -943,7 +961,7 @@ export default function OpportunitiesClient({
             </AnimatePresence>
             {opportunities.length === 0 && (
               <tr>
-                <td colSpan={7} className="p-8 text-center text-muted-foreground italic">No opportunities detected. Searcher scanning mempool...</td>
+                <td colSpan={9} className="p-8 text-center text-muted-foreground italic">No opportunities detected. Searcher scanning mempool...</td>
               </tr>
             )}
           </tbody>
