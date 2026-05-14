@@ -33,6 +33,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/risk",          label: "Entropy & alerts",       icon: AlertTriangleIcon, group: "observe" },
   { href: "/recon",         label: "Recon & yield",          icon: GaugeIcon,         group: "observe" },
   { href: "/operations",    label: "Convergence metrics",    icon: TrendingUpIcon,    group: "observe" },
+  { href: "/sed",           label: "SED Pipeline",           icon: ActivityIcon,      group: "observe" },
   { href: "/config",        label: "Config",                 icon: SettingsIcon,      group: "control" },
   { href: "/strategies",    label: "Resolution engines",     icon: SlidersHorizontalIcon, group: "control" },
   { href: "/killswitch",    label: "Kill-switch",            icon: PowerIcon,         group: "control" },

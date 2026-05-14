@@ -500,6 +500,8 @@ export default function OpportunitiesClient({
               <th className="p-4 border-b border-border text-right" title="Net yield after gas, slippage, relay fee, flash convergence fee, failure buffer">Net Yield (USD)</th>
               <th className="p-4 border-b border-border text-right">Net Convergence Ratio</th>
               <th className="p-4 border-b border-border text-center">Score</th>
+              <th className="p-4 border-b border-border text-center">Confidence</th>
+              <th className="p-4 border-b border-border text-right">Gas Used</th>
               <th className="p-4 border-b border-border text-center">Action</th>
             </tr>
           </thead>
@@ -653,7 +655,7 @@ export default function OpportunitiesClient({
                       {!viableOnly && opp.rejection_reason && (
                         <span className="mt-1 flex items-center gap-1 text-xs text-destructive font-mono">
                           <span className="inline-block w-1 h-1 rounded-full bg-destructive flex-shrink-0" aria-hidden="true" />
-                          {opp.rejection_reason}
+                          {sanitizeForDisplay(opp.rejection_reason)}
                         </span>
                       )}
                     </td>
@@ -915,6 +917,22 @@ export default function OpportunitiesClient({
                       </span>
                     </td>
 
+                    {/* ── CONFIDENCE column — R8: null → "—" ── */}
+                    <td className="p-4 text-center" data-col="confidence">
+                      <span className="font-mono text-sm">
+                        {opp.confidence_score_bps != null
+                          ? `${(opp.confidence_score_bps / 100).toFixed(2)}%`
+                          : "—"}
+                      </span>
+                    </td>
+
+                    {/* ── GAS USED column — R8: null → "—" ── */}
+                    <td className="p-4 text-right font-mono text-sm" data-col="gas-used">
+                      {opp.gas_used != null
+                        ? opp.gas_used.toLocaleString()
+                        : "—"}
+                    </td>
+
                     {/* ── ACTION column ── */}
                     {/*
                       C6 fix (audit 2026-05-10): the SIMULATE button calls
@@ -943,7 +961,7 @@ export default function OpportunitiesClient({
             </AnimatePresence>
             {opportunities.length === 0 && (
               <tr>
-                <td colSpan={7} className="p-8 text-center text-muted-foreground italic">No opportunities detected. Searcher scanning mempool...</td>
+                <td colSpan={9} className="p-8 text-center text-muted-foreground italic">No opportunities detected. Searcher scanning mempool...</td>
               </tr>
             )}
           </tbody>

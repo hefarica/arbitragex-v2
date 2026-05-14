@@ -71,6 +71,7 @@ pub mod hedger;
 pub mod metrics;
 pub mod persistence;
 pub mod prelude;
+pub mod telemetry;
 pub mod types;
 
 // Paper-Shadow E2E pipeline integration test (test-only).
