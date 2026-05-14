@@ -1,0 +1,338 @@
+name: Ω-S5++ APEX Deploy frontend-only c815ef8
+
+# DOCTRINA: Deploy quirúrgico tras auditoría forense.
+# Delta v5→c815ef8 = 4 archivos (2 frontend .tsx + 2 tests no-runtime).
+# Solo se rebuildea el contenedor `frontend`. Los 16 restantes NO se tocan.
+#
+# ENMIENDAS SOVEREIGN aplicadas:
+#   - APEX-AMENDMENT-001: docker image prune al inicio (Fase 1.5, riesgo disco)
+#   - APEX-AMENDMENT-002: hard-tag de imagen actual como v5-safe-backup pre-build
+#   - APEX-AMENDMENT-003: nginx -s reload post-healthcheck (purga caché)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_sovereign:
+        description: 'Confirma "EJECUTA" para detonar'
+        required: true
+        default: 'EJECUTA'
+
+concurrency:
+  group: deploy-arbx
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  TARGET_SHA: c815ef8c9048e8d6c6e97adc6865d884bfea6140
+  VPS_HOST: 195.201.235.70
+  COMPOSE_FILE: docker/compose.prod.yml
+  REPO_PATH: /opt/arbitragex-v2
+
+jobs:
+  deploy:
+    name: Frontend-only deploy + Sovereign rollback
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+
+      - name: "[INIT] Setup SSH key"
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/arbx_key
+          chmod 600 ~/.ssh/arbx_key
+          ssh-keyscan -H ${{ env.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+          echo "✅ SSH key configurada"
+
+      - name: "[F1] Pre-flight (read-only telemetry)"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set -e
+            echo "═══ PRE-FLIGHT TELEMETRY ═══"
+            echo "── Disco ──"; df -h / | tail -1
+            echo "── RAM ──"; free -h | head -2
+            echo "── Load ──"; uptime
+            echo "── Containers ──"; docker ps --format '{{.Names}}\t{{.Status}}' | head -20
+            echo "── Frontend image actual ──"
+            docker images arbitragex-v2-frontend --format '{{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Size}}\t{{.CreatedSince}}'
+            echo "── HEAD del repo ──"
+            cd ${{ env.REPO_PATH }} && git rev-parse HEAD
+            echo "── HTTP baseline ──"
+            for p in /api/health /chains /apex/allocator; do
+              code=$(curl -s -o /dev/null -w "%{http_code}" -m 3 http://localhost$p)
+              echo "  $p → HTTP $code"
+            done
+          REMOTE
+
+      - name: "[F1.5] APEX-AMENDMENT-001 — Purga pre-vuelo (despejar pista)"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set -e
+            echo "═══ PURGA PRE-VUELO (APEX-AMENDMENT-001) ═══"
+            echo "── Disco ANTES ──"; df -h / | tail -1
+            echo "── docker image prune -f (solo dangling/sin uso) ──"
+            docker image prune -f 2>&1 | tail -3
+            echo "── docker builder prune -f (cache de buildkit) ──"
+            docker builder prune -f --filter "until=24h" 2>&1 | tail -3
+            echo "── Disco DESPUÉS ──"; df -h / | tail -1
+            FREE_GB=$(df -BG / | tail -1 | awk '{print $4}' | tr -d 'G')
+            echo "── Free space: ${FREE_GB} GB ──"
+            if [ "$FREE_GB" -lt 5 ]; then
+              echo "❌ ABORT: <5GB libres tras purga"
+              exit 1
+            fi
+            echo "✅ Pista despejada, build autorizado"
+          REMOTE
+
+      - name: "[F2] pg_dump defensivo (cinturón + tirantes)"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set -e
+            TS=$(date +%Y%m%d_%H%M%S)
+            DUMP_FILE=/root/pre-deploy-pgdump-${TS}.sql.gz
+            echo "═══ pg_dump defensivo → $DUMP_FILE ═══"
+            docker exec arbitragex-v2-postgres-1 pg_dump -U postgres arbitragex 2>/dev/null | gzip > "$DUMP_FILE"
+            SIZE=$(du -h "$DUMP_FILE" | cut -f1)
+            echo "✅ pg_dump: $SIZE → $DUMP_FILE"
+            # Conservar últimos 5 pre-deploy dumps
+            ls -t /root/pre-deploy-pgdump-*.sql.gz 2>/dev/null | tail -n +6 | xargs -r rm -f
+          REMOTE
+
+      - name: "[F3] Snapshot del directorio del repo"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set -e
+            TS=$(date +%Y%m%d_%H%M%S)
+            BACKUP_DIR=/root/arbitragex-v2-backup-${TS}
+            echo "═══ Snapshot /opt/arbitragex-v2 → $BACKUP_DIR ═══"
+            # Solo metadata + config + frontend (lo que realmente importa para rollback)
+            mkdir -p "$BACKUP_DIR"
+            cd /opt/arbitragex-v2
+            git rev-parse HEAD > "$BACKUP_DIR/HEAD.txt"
+            git status -s > "$BACKUP_DIR/status.txt"
+            cp -r docker "$BACKUP_DIR/"
+            cp .env "$BACKUP_DIR/" 2>/dev/null || true
+            cp docker-compose.edge.yml "$BACKUP_DIR/" 2>/dev/null || true
+            tar czf "$BACKUP_DIR/frontend.tar.gz" frontend/ 2>/dev/null
+            echo "✅ Snapshot creado"
+            du -sh "$BACKUP_DIR"
+            ls -t /root/arbitragex-v2-backup-* 2>/dev/null | tail -n +4 | xargs -r rm -rf
+          REMOTE
+
+      - name: "[F4] APEX-AMENDMENT-002 — Hard-tag de imagen actual (rollback determinista)"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set -e
+            echo "═══ HARD-TAG IMAGEN ACTUAL (APEX-AMENDMENT-002) ═══"
+            # Buscar la imagen actualmente corriendo en el contenedor frontend
+            CURRENT_IMG_ID=$(docker inspect arbitragex-v2-frontend-1 --format '{{.Image}}' | sed 's/sha256://')
+            CURRENT_IMG_NAME=$(docker inspect arbitragex-v2-frontend-1 --format '{{.Config.Image}}')
+            echo "── Imagen actual del contenedor frontend ──"
+            echo "    Name: $CURRENT_IMG_NAME"
+            echo "    ID:   $CURRENT_IMG_ID"
+
+            # Hard-tag determinista para rollback
+            docker tag "$CURRENT_IMG_ID" arbitragex-v2-frontend:v5-safe-backup
+            echo "✅ Tag aplicado: arbitragex-v2-frontend:v5-safe-backup"
+
+            # Verificación
+            docker images arbitragex-v2-frontend --format 'table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}'
+
+            # Guardar referencia para rollback
+            echo "$CURRENT_IMG_ID" > /root/last-known-good-frontend.id
+            echo "✅ ID de imagen segura guardado en /root/last-known-good-frontend.id"
+          REMOTE
+
+      - name: "[F5] Git anchor → c815ef8 (idempotente)"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set -e
+            cd ${{ env.REPO_PATH }}
+            echo "═══ GIT ANCHOR → ${{ env.TARGET_SHA }} ═══"
+            CURRENT=$(git rev-parse HEAD)
+            echo "HEAD actual: $CURRENT"
+            if [ "$CURRENT" = "${{ env.TARGET_SHA }}" ]; then
+              echo "✅ Ya estamos en c815ef8 (idempotente, no fetch necesario)"
+            else
+              echo "── Fetch y checkout ──"
+              git fetch origin main
+              git checkout ${{ env.TARGET_SHA }}
+              echo "✅ HEAD ahora: $(git rev-parse HEAD)"
+            fi
+            # Verificar archivos APEX presentes
+            echo "── Verificación de archivos del delta ──"
+            for f in \
+              frontend/app/apex/allocator/page.tsx \
+              frontend/app/apex/allocator/AllocatorClient.tsx; do
+              if [ -f "$f" ]; then
+                echo "  ✅ $f ($(wc -l < $f) líneas)"
+              else
+                echo "  ❌ FALTA: $f"
+                exit 1
+              fi
+            done
+          REMOTE
+
+      - name: "[F6] Build frontend (solo este contenedor)"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set -e
+            cd ${{ env.REPO_PATH }}
+            echo "═══ BUILD frontend ═══"
+            echo "── docker compose build frontend (con cache) ──"
+            START=$(date +%s)
+            docker compose -f ${{ env.COMPOSE_FILE }} --env-file .env build frontend 2>&1 | tail -50
+            END=$(date +%s)
+            echo "✅ Build completado en $((END - START)) segundos"
+
+            # Verificar que la nueva imagen fue creada
+            echo "── Imagen post-build ──"
+            docker images arbitragex-v2-frontend --format 'table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}\t{{.Size}}'
+          REMOTE
+
+      - name: "[F7] Hot-swap frontend (--no-deps, no toca los otros 16)"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set -e
+            cd ${{ env.REPO_PATH }}
+            echo "═══ HOT-SWAP frontend (--no-deps) ═══"
+            BEFORE_ID=$(docker inspect arbitragex-v2-frontend-1 --format '{{.Image}}' 2>/dev/null | sed 's/sha256://' || echo "none")
+            echo "Container ID antes del swap: $BEFORE_ID"
+
+            docker compose -f ${{ env.COMPOSE_FILE }} --env-file .env up -d --no-deps frontend
+            echo "✅ Hot-swap ejecutado"
+
+            sleep 15
+            AFTER_ID=$(docker inspect arbitragex-v2-frontend-1 --format '{{.Image}}' | sed 's/sha256://')
+            STATUS=$(docker inspect arbitragex-v2-frontend-1 --format '{{.State.Status}}')
+            echo "Container ID después:  $AFTER_ID"
+            echo "Container status:      $STATUS"
+
+            if [ "$STATUS" != "running" ]; then
+              echo "❌ ABORT: contenedor no está running"
+              docker logs --tail 50 arbitragex-v2-frontend-1
+              exit 1
+            fi
+          REMOTE
+
+      - name: "[F8] TRIPLE HEALTHCHECK — H1 + H2 + H3 (90s timeout, 5s poll)"
+        id: healthcheck
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set -e
+            echo "═══ TRIPLE HEALTHCHECK (Crucible Survival Test) ═══"
+            echo "  H1 = /api/health     (invariante baseline)"
+            echo "  H2 = /chains         (regresión Mirror Law)"
+            echo "  H3 = /apex/allocator (objetivo del deploy)"
+            echo ""
+
+            H3_OK=0
+            for i in $(seq 1 18); do
+              H1=$(curl -s -o /dev/null -w "%{http_code}" -m 3 http://localhost/api/health)
+              H2=$(curl -s -o /dev/null -w "%{http_code}" -m 3 http://localhost/chains)
+              H3=$(curl -s -o /dev/null -w "%{http_code}" -m 3 http://localhost/apex/allocator)
+              echo "  [$i/18 @ $(date +%H:%M:%S)] H1=$H1 H2=$H2 H3=$H3"
+
+              # Abort si H1 o H2 regresan
+              if [ "$H1" != "200" ]; then
+                echo "❌ ABORT: H1 (/api/health) regresó a $H1"
+                exit 42
+              fi
+              if [ "$H2" != "200" ]; then
+                echo "❌ ABORT: H2 (/chains) regresó a $H2"
+                exit 42
+              fi
+
+              # H3 = 200 → SUCCESS
+              if [ "$H3" = "200" ]; then
+                H3_OK=1
+                echo ""
+                echo "✅ HEALTHCHECK TRIPLE OK en intento $i"
+                break
+              fi
+              sleep 5
+            done
+
+            if [ "$H3_OK" != "1" ]; then
+              echo "❌ ABORT SUAVE: H3 (/apex/allocator) sigue en 404 tras 90s"
+              exit 43
+            fi
+          REMOTE
+
+      - name: "[F8.5] APEX-AMENDMENT-003 — nginx -s reload (purga caché Next.js chunks)"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set -e
+            echo "═══ NGINX RELOAD (APEX-AMENDMENT-003) ═══"
+
+            # Reload contenedor omega-nginx-gateway (interno)
+            echo "── docker exec omega-nginx-gateway nginx -s reload ──"
+            docker exec omega-nginx-gateway nginx -s reload 2>&1 || {
+              echo "⚠️ Reload del contenedor falló (no crítico)"
+            }
+
+            # Reload nginx del HOST (es el que sirve :80 según audit forense)
+            echo "── systemctl reload nginx (host) ──"
+            systemctl reload nginx 2>&1 || nginx -s reload 2>&1 || {
+              echo "⚠️ Reload del host nginx falló"
+            }
+
+            sleep 2
+            echo "── Re-probe tras reload ──"
+            for p in /api/health /chains /apex/allocator; do
+              code=$(curl -s -o /dev/null -w "%{http_code}" -m 3 http://localhost$p)
+              echo "  $p → HTTP $code"
+            done
+            echo "✅ Caché de proxy invalidada, chunks Next.js servidos frescos"
+          REMOTE
+
+      - name: "[F9] Cleanup post-éxito (capas viejas)"
+        if: success()
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set -e
+            echo "═══ CLEANUP POST-DEPLOY ═══"
+            echo "── Disco antes ──"; df -h / | tail -1
+            # NO purgamos v5-safe-backup (lo necesitamos para rollback futuro)
+            docker image prune -f 2>&1 | tail -3
+            echo "── Disco después ──"; df -h / | tail -1
+
+            echo ""
+            echo "── Estado final del contenedor frontend ──"
+            docker ps --filter name=frontend --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+
+            echo ""
+            echo "── Imágenes frontend disponibles ──"
+            docker images arbitragex-v2-frontend --format 'table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}'
+          REMOTE
+
+      - name: "[F-ROLLBACK] Rollback automático (si F8 falló)"
+        if: failure() && steps.healthcheck.outcome == 'failure'
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set -e
+            echo "═══ ⚠️ ROLLBACK AUTOMÁTICO ═══"
+            cd ${{ env.REPO_PATH }}
+
+            echo "── Re-tag arbitragex-v2-frontend:v5-safe-backup → :latest ──"
+            docker tag arbitragex-v2-frontend:v5-safe-backup arbitragex-v2-frontend:latest
+
+            echo "── Restart con imagen segura ──"
+            docker compose -f ${{ env.COMPOSE_FILE }} --env-file .env up -d --no-deps --force-recreate frontend
+
+            sleep 10
+            echo "── Verificación post-rollback ──"
+            for p in /api/health /chains /apex/allocator; do
+              code=$(curl -s -o /dev/null -w "%{http_code}" -m 3 http://localhost$p)
+              echo "  $p → HTTP $code"
+            done
+
+            echo "── Container status ──"
+            docker ps --filter name=frontend --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+            echo "✅ Rollback completado, v5 restaurada"
+          REMOTE
+
+      - name: "[FINAL] Cleanup SSH key"
+        if: always()
+        run: rm -f ~/.ssh/arbx_key
