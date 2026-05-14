@@ -15,7 +15,7 @@
   "dependencies": {
     "@arbx/shared": "*",
     "express": "^4.19.2",
-    "http-proxy-middleware": "^3.0.5"
+    "http-proxy-middleware": "^4.0.0"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
