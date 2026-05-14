@@ -1,5 +1,5 @@
 /**
- * Sprint 3 Task 3.4 — Operations PnL client component.
+ * Sprint 3 Task 3.4 — Convergence Metrics client component.
  *
  * Mounted Snapshot Pattern (R1): receives initialKpi/initialScurve from the
  * Server Component, hydrates state with them, polls every 30s. All
@@ -82,7 +82,7 @@ export function OperationsClient({
     return (
       <Alert variant="destructive">
         <AlertCircleIcon />
-        <AlertTitle>operations endpoint error</AlertTitle>
+        <AlertTitle>convergence endpoint error</AlertTitle>
         <AlertDescription className="font-mono text-xs">{error}</AlertDescription>
       </Alert>
     );
@@ -91,7 +91,7 @@ export function OperationsClient({
   if (!kpi) {
     return (
       <Card>
-        <CardContent className="py-8 text-sm text-muted-foreground">Loading PMI metrics…</CardContent>
+        <CardContent className="py-8 text-sm text-muted-foreground">Loading convergence metrics…</CardContent>
       </Card>
     );
   }
@@ -105,7 +105,7 @@ export function OperationsClient({
         <KPICard
           title="CPI · Capital Efficiency"
           value={k.cpi.toFixed(4)}
-          hint={`profit / capital · ${k.cpi >= 0.05 ? "above target" : "below target"}`}
+          hint={`yield / capital · ${k.cpi >= 0.05 ? "above target" : "below target"}`}
           positive={k.cpi >= 0.05}
         />
         <KPICard
@@ -115,7 +115,7 @@ export function OperationsClient({
           positive={k.spi >= 1}
         />
         <KPICard
-          title="EAC · Forecast Daily PnL"
+          title="EAC · Forecast Daily Yield"
           value={fmtUsd(k.eac_usd)}
           hint="end-of-day projection"
           positive={k.eac_usd >= 0}

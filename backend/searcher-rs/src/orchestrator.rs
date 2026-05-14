@@ -100,6 +100,12 @@ pub struct OrchestratorContext {
     pub pool_discovery: Arc<crate::pool_discovery::PoolDiscoveryService>,
     /// EVM chain ID for this orchestrator instance.
     pub chain_id: u64,
+    /// SED Bridge — connects to sed-core math pipeline (paper-shadow only).
+    /// When `Some`, feeds gas observations and enriches candidates with
+    /// stochastic convergence metrics. When `None`, orchestrator runs
+    /// without mathematical overlay (standard V2 mode).
+    #[cfg(feature = "paper-shadow")]
+    pub sed_bridge: Option<Arc<crate::sed_bridge::SedBridge>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +200,28 @@ impl Orchestrator {
             let idx = self.ctx.impact_index.read().await;
             idx.resolve(&intent)
         };
+
+        // ── SED Bridge: feed gas observation from this intent ─────────
+        // Every mempool tx carries a value signal. We use the swap amount_in
+        // as a proxy for market regime detection (larger swaps correlate with
+        // higher volatility regimes). The actual gas price will be threaded
+        // through when RouteIntent carries it from the pending tx.
+        // TODO(SED-BRIDGE): Thread raw tx.gas_price through RouteIntent.
+        #[cfg(feature = "paper-shadow")]
+        if let Some(ref bridge) = self.ctx.sed_bridge {
+            // Convert U256 amount_in to f64 as a regime proxy signal.
+            // Clamp to prevent NaN/Inf in log-return computation.
+            let signal = {
+                let raw = intent.amount_in.as_u128() as f64;
+                // Normalize to a reasonable range [0.001, 1e18]
+                raw.max(0.001).min(1e18)
+            };
+            let ts_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            bridge.feed_gas_observation(signal, ts_ms).await;
+        }
 
         // ── TASK 1 log #3: v2.impact.resolved ────────────────────────────
         info!(

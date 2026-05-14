@@ -1,0 +1,71 @@
+# ═══════════════════════════════════════════════════════════════
+# STAGE 1: BUILDER
+# Compilación cruzada optimizada para Linux x86_64
+# SOP-EDGE-001 — Edge Node Dockerfile (Paper-Shadow)
+# ═══════════════════════════════════════════════════════════════
+FROM rust:1.78-slim-bookworm AS builder
+
+WORKDIR /app
+
+# Instalar dependencias de compilación
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copiar manifests primero para cachear dependencies
+COPY Cargo.toml Cargo.lock ./
+COPY shared-rs/Cargo.toml shared-rs/
+COPY searcher-rs/Cargo.toml searcher-rs/
+
+# Crear estructura dummy para cachear build de dependencies
+RUN mkdir -p shared-rs/src searcher-rs/src && \
+    echo "fn main() {}" > shared-rs/src/lib.rs && \
+    echo "fn main() {}" > searcher-rs/src/main.rs && \
+    cargo build --release --features paper-shadow && \
+    rm -rf shared-rs/src searcher-rs/src
+
+# Copiar código fuente REAL
+COPY shared-rs/src shared-rs/src/
+COPY searcher-rs/src searcher-rs/src/
+COPY searcher-rs/Cargo.toml searcher-rs/
+
+# Forzar recompilación del código real (no dependencies)
+RUN touch searcher-rs/src/main.rs && \
+    cargo build --release --features paper-shadow --bin searcher-rs
+
+# ═══════════════════════════════════════════════════════════════
+# STAGE 2: RUNTIME
+# Imagen final mínima — distroless o debian-slim
+# ═══════════════════════════════════════════════════════════════
+FROM debian:bookworm-slim AS runtime
+
+# Crear usuario no-root (seguridad)
+RUN groupadd -r sedgroup && useradd -r -g sedgroup seduser
+
+# Instalar solo librerías runtime esenciales
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+WORKDIR /app
+
+# Copiar binario compilado
+COPY --from=builder /app/target/release/searcher-rs /app/sed-core
+
+# Cambiar ownership
+RUN chown -R seduser:sedgroup /app
+
+USER seduser
+
+# Puerto de métricas Prometheus
+EXPOSE 9001
+
+# Healthcheck
+HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:9001/health || exit 1
+
+ENTRYPOINT ["./sed-core"]

@@ -1,7 +1,7 @@
 import DexRegistryClient, { type DexRegistrySnapshot } from "./DexRegistryClient";
 import { getApiBaseUrl } from "@/lib/api-client";
 
-export const metadata = { title: "DEX Registry | ArbitrageX" };
+export const metadata = { title: "Exchange Registry | QuantumX" };
 export const dynamic = "force-dynamic";
 
 async function getInitialDexes(): Promise<DexRegistrySnapshot> {

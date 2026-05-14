@@ -3,7 +3,7 @@
  *
  * Renders the per-period scanner funnel as a cascading bar chart, exposing
  * where mempool throughput converges vs drops (allowlist filter, math gate,
- * pool coverage gap, etc.). Operator can answer "why am I not seeing profit?"
+ * pool coverage gap, etc.). Operator can answer "why is convergence stalling?"
  * in one glance instead of grepping logs.
  *
  * Snapshot is poll-fetched by the parent OperationsClient every 30s. Card
@@ -177,7 +177,7 @@ export function PipelineFunnelCard({ snapshot, error, fetchedAt }: Props) {
         <div className="grid grid-cols-3 gap-3 pt-3 border-t mt-3 text-xs">
           <Stat label="Redis stream Δ" value={snapshot.redis_stream_delta} signed />
           <Stat label="PG inserted (period)" value={snapshot.pg_period_inserted} />
-          <Stat label="PG profit > 0" value={snapshot.pg_period_profit_pos} positive />
+          <Stat label="PG yield > 0" value={snapshot.pg_period_profit_pos} positive />
         </div>
       </CardContent>
     </Card>

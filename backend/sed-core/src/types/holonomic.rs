@@ -5,7 +5,7 @@
 //! `BundlePosition<HolonomicLoopResolution>` constructor consumes:
 //!
 //! - [`ClosedContourTrajectory`] — γ: [0,1] → ℳ with γ(0) = γ(1).
-//!   Models a multi-pool atomic arbitrage cycle (ℒ₁ → ℒ₂ → … → ℒₙ → ℒ₁).
+//!   Models a multi-pool atomic holonomic resolution cycle (ℒ₁ → ℒ₂ → … → ℒₙ → ℒ₁).
 //! - [`TopologicalYield`] — `Y_topo = ∮_γ (dp/p) − F_net`. The raw
 //!   holonomy minus the total network friction. Must be strictly
 //!   positive for the cycle to be economically viable.
@@ -124,8 +124,8 @@ impl ClosedContourTrajectory {
 ///
 /// **Viability**: `net_yield > MINIMUM_VIABLE_YIELD` (= 1e-15). The
 /// floor is intentionally absurd-small — it filters out exactly-zero
-/// and negative profits, while letting the operator's higher-level
-/// profit-gate (CLAUDE.md §24 "Gas Protection: net ≥ 3× gas") enforce
+/// and negative topological yields, while letting the operator's higher-level
+/// yield-gate (CLAUDE.md §24 "Gas Protection: net ≥ 3× gas") enforce
 /// the real economic threshold one layer up.
 pub struct TopologicalYield {
     /// Valor bruto de la holonomía: ∮_γ (dp/p) ≠ 0. Must agree with
@@ -166,7 +166,7 @@ pub struct TopologicalYield {
 
 impl TopologicalYield {
     /// Floor on viable net yield. Below this, the cycle is treated as
-    /// economically dead — either truly zero-profit or in numerical
+    /// economically dead — either truly zero-yield or in numerical
     /// noise where rounding alone can flip sign.
     pub const MINIMUM_VIABLE_YIELD: f64 = 1e-15;
 

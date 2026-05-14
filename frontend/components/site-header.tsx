@@ -43,7 +43,7 @@ export function SiteHeader() {
           </SheetTrigger>
           <SheetContent side="left" className="p-0">
             <SheetHeader>
-              <SheetTitle>ArbitrageX v2</SheetTitle>
+              <SheetTitle>QuantumX</SheetTitle>
             </SheetHeader>
             <div className="flex flex-col gap-6 px-3 pb-6">
               <SidebarContents onNavigate={() => setMobileOpen(false)} />
@@ -61,15 +61,15 @@ export function SiteHeader() {
             }}
           />
           <div className="flex flex-col -space-y-0.5 leading-none">
-            <span className="text-sm font-semibold">ArbitrageX</span>
+            <span className="text-sm font-semibold">QuantumX</span>
             <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-              v2 · operator
+              control plane
             </span>
           </div>
         </Link>
 
         <Badge variant="info" className="hidden sm:inline-flex">
-          <span className="size-1.5 rounded-full bg-info" aria-hidden /> paper-mode
+          <span className="size-1.5 rounded-full bg-info" aria-hidden /> ghost-protocol
         </Badge>
 
         <div className="ml-auto flex items-center gap-2">

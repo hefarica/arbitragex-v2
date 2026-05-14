@@ -11,8 +11,8 @@ import { SystemGuardBanner } from "@/components/SystemGuardBanner";
 import { Toaster } from "sonner";
 
 export const metadata = {
-  title: "ArbitrageX v2 — Operator Console",
-  description: "MEV-grade arbitrage platform operator dashboard",
+  title: "QuantumX — Control Plane",
+  description: "Institutional-grade stochastic convergence operator console",
   // Block automatic translation by Chrome/Edge/Firefox/Safari on mobile.
   // Auto-translation replaces text nodes in the DOM, which breaks React
   // reconciliation with `removeChild on Node` errors when state updates.

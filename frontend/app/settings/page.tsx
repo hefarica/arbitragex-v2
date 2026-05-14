@@ -15,7 +15,7 @@ import { PageHeader } from "@/components/page-header";
 import { SettingsClient } from "@/app/settings/SettingsClient";
 
 export const metadata: Metadata = {
-  title: "Settings | ArbitrageX v2",
+  title: "Settings | QuantumX",
 };
 
 export default function SettingsPage() {

@@ -8,10 +8,10 @@
 //!
 //! - [`OrthogonalEquilibrium`] — null-covariance cross-venue hedge state.
 //! - [`DiracImpulseOnly`] — single Dirac impulse on the CPMM manifold.
-//! - [`HolonomicLoopResolution`] — closed-contour atomic arbitrage cycle
+//! - [`HolonomicLoopResolution`] — closed-contour atomic resolution cycle
 //!   over N ≥ 3 liquidity manifolds (V1.2 amendment, 2026-05-13,
 //!   `ANEXOS_V1.2.md` §4.1.1–§4.1.5). Doctrinally clean: the constructor
-//!   refuses sandwich/frontrun shapes because they have no closed
+//!   refuses temporally-asymmetric reordering shapes because they have no closed
 //!   contour (asymmetric: pre-/post-target ordering, not a cycle).
 //!
 //! The trait is sealed via `private::Sealed`. External crates cannot add
@@ -42,12 +42,14 @@
 //! - **Runtime verification** — even with the right type, the constructor
 //!   refuses on `verify_null_covariance < tolerance` (etc.).
 //! - **Sealed extension** — external crates that consume `sed-core` cannot
-//!   add a "Sandwich" variant in their own code path; the sealed trait
+//!   add a forbidden reordering variant in their own code path; the sealed trait
 //!   blocks it.
 
 use std::marker::PhantomData;
 
+#[cfg(feature = "allocator")]
 use crate::allocator::OptimalControlSolution;
+#[cfg(feature = "hedger")]
 use crate::hedger::OrthogonalHedgeResult;
 use crate::types::errors::TopologyValidationError;
 use crate::types::holonomic::{ClosedContourTrajectory, TopologicalYield};
@@ -79,14 +81,14 @@ pub struct OrthogonalEquilibrium;
 pub struct DiracImpulseOnly;
 
 /// Marker for bundles whose post-resolution topology is a closed-contour
-/// atomic arbitrage cycle over N ≥ 3 liquidity manifolds (V1.2 amendment,
+/// atomic resolution cycle over N ≥ 3 liquidity manifolds (V1.2 amendment,
 /// 2026-05-13, `ANEXOS_V1.2.md` §4.1.1).
 ///
 /// **Doctrinal note**: This variant is doctrinally distinct from the
-/// forbidden sandwich/frontrun shapes because:
+/// forbidden temporally-asymmetric reordering shapes because:
 ///
 /// - The contour is **closed** — γ(0) = γ(1) in the market manifold ℳ.
-///   Sandwich/frontrun shapes are **asymmetric** in time (pre-/post-victim
+///   Reordering shapes are **asymmetric** in time (pre-/post-target
 ///   ordering), which cannot satisfy `transition_points.first() ==
 ///   transition_points.last()`.
 /// - The yield comes from a **price discrepancy** the cycle resolves
@@ -109,7 +111,7 @@ pub struct HolonomicLoopResolution;
 /// Sealed trait. Only this crate may add implementors.
 ///
 /// **Operator note**: adding a new implementor (e.g., for a future
-/// `AtomicBackrun` variant tied to a `BackrunArbitrageProof`) is gated by
+/// `AtomicBackrun` variant tied to a `BackrunResolutionProof`) is gated by
 /// `mev-ethics.md §Amendments` — operator + on-call sign-off + 7-day
 /// cooldown.
 pub trait PostResolutionTopology: private::Sealed {}
@@ -125,11 +127,11 @@ impl PostResolutionTopology for OrthogonalEquilibrium {}
 impl PostResolutionTopology for DiracImpulseOnly {}
 impl PostResolutionTopology for HolonomicLoopResolution {} // V1.2 amendment
 
-// Sandwich, Frontrun, and victim-specific bundle attribution variants are
-// intentionally NOT implementors of `PostResolutionTopology` and have no
-// `private::Sealed` impl. There is no Cargo feature that flips them on.
-// External crates cannot name `private::Sealed`. The doctrine is in the
-// type system.
+// Temporally-asymmetric reordering and target-specific bundle attribution
+// variants are intentionally NOT implementors of `PostResolutionTopology`
+// and have no `private::Sealed` impl. There is no Cargo feature that flips
+// them on. External crates cannot name `private::Sealed`. The doctrine is
+// in the type system.
 //
 // V1.2 audit (2026-05-13): the addition of HolonomicLoopResolution does
 // NOT widen the doctrinal surface to those forbidden shapes — see the
@@ -195,6 +197,8 @@ impl<T> BundlePosition<T> {
     }
 }
 
+
+#[cfg(feature = "hedger")]
 impl BundlePosition<OrthogonalEquilibrium> {
     /// Construct an `OrthogonalEquilibrium` bundle. Requires a proof
     /// reference to [`OrthogonalHedgeResult`] whose null-covariance check
@@ -224,6 +228,7 @@ impl BundlePosition<OrthogonalEquilibrium> {
     }
 }
 
+#[cfg(feature = "allocator")]
 impl BundlePosition<DiracImpulseOnly> {
     /// Construct a `DiracImpulseOnly` bundle. Requires a proof reference to
     /// [`OptimalControlSolution`] whose `hyperbolic_constraint_satisfied`
@@ -257,7 +262,7 @@ impl BundlePosition<HolonomicLoopResolution> {
     /// Construct a `HolonomicLoopResolution` bundle (V1.2 amendment,
     /// `ANEXOS_V1.2.md` §4.1.5).
     ///
-    /// Models an atomic arbitrage cycle over N ≥ 3 liquidity manifolds.
+    /// Models an atomic holonomic resolution cycle over N ≥ 3 liquidity manifolds.
     /// Six mathematical validations gate the constructor; failure of
     /// any one yields a specific `TopologyValidationError`. The
     /// validations are applied in order — the first failure short-
@@ -369,6 +374,7 @@ impl BundlePosition<HolonomicLoopResolution> {
 }
 
 #[cfg(test)]
+#[cfg(all(feature = "allocator", feature = "hedger"))]
 mod tests {
     use super::*;
     use crate::allocator::OptimalControlSolution;
@@ -430,7 +436,7 @@ mod tests {
     /// (`OrthogonalEquilibrium`, `DiracImpulseOnly`,
     /// `HolonomicLoopResolution`) implement `PostResolutionTopology`.
     /// If a future PR adds a new implementor (e.g., a hypothetical
-    /// `Sandwich` — which is doctrinally forbidden), this exhaustive
+    /// forbidden reordering shape — which is doctrinally blocked), this exhaustive
     /// match in the helper forces an explicit code-review touch point.
     fn _post_resolution_witness<T: PostResolutionTopology>(_marker: PhantomData<T>) {}
 

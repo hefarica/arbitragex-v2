@@ -16,7 +16,7 @@ import { AdminChainsListSchema } from "@/lib/schemas";
 
 import { ChainsAdminClient, type ChainsAdminSnapshot } from "./ChainsAdminClient";
 
-export const metadata = { title: "Chains Admin | ArbitrageX" };
+export const metadata = { title: "Chains Admin | QuantumX" };
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 

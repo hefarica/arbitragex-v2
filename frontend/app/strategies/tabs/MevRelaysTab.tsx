@@ -1,5 +1,5 @@
 /**
- * Sprint 2 Task 2.3 — MEV Services tab.
+ * Resolution Relays tab.
  *
  * Read-only display of relay configuration. The `relays` table (migration
  * 013) has its own admin endpoint already; this tab is a pointer to the
@@ -11,11 +11,11 @@ export function MevRelaysTab() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>MEV Services</CardTitle>
+        <CardTitle>Resolution Relays</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-sm text-muted-foreground">
         <p>
-          MEV relay configuration (Flashbots Protect / MEV Blocker / Titan / BloxRoute / Eden)
+          Resolution relay configuration (Flashbots Protect / Blocker / Titan / BloxRoute / Eden)
           lives in the <code className="font-mono text-xs">relays</code> table (migration 013)
           with its own admin endpoints under <code className="font-mono text-xs">/admin/relays</code>.
         </p>

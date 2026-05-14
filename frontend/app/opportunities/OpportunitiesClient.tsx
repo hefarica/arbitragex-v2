@@ -2,6 +2,7 @@
 import React, { useEffect, useState, useCallback, startTransition, useRef } from "react";
 import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, Clock, AlertTriangle, EyeOff, Eye } from "lucide-react";
 import { useOpportunitiesStream } from "@/lib/hooks/useOpportunitiesStream";
+import { sanitizeForDisplay } from "@/lib/omega-lexicon";
 import { toast } from "sonner";
 import { OpportunityDetailDialog, type OpportunityDetail } from "@/components/OpportunityDetailDialog";
 import { motion, AnimatePresence } from "framer-motion";
@@ -372,7 +373,7 @@ export default function OpportunitiesClient({
       <div className="flex justify-between items-center border-b border-border pb-4 mb-8">
         <div>
           <h1 className={`text-4xl font-extrabold tracking-tight bg-clip-text text-transparent ${isError ? 'bg-gradient-to-r from-destructive to-destructive/70' : 'bg-gradient-to-r from-primary to-success'}`}>
-            Live MEV Feed
+            {sanitizeForDisplay("Live MEV Feed")}
           </h1>
           <p className="text-muted-foreground mt-2 text-sm" suppressHydrationWarning>
             {feedStatus === "LIVE"
@@ -480,7 +481,7 @@ export default function OpportunitiesClient({
             <p className="text-sm mt-1">
               {viableOnly
                 ? "No viable opportunities yet. Toggle \"Show all\" to inspect rejected detections."
-                : "Searcher-rs is actively hunting for arbitrage routes. Opportunities will appear here instantly."}
+                : sanitizeForDisplay("Searcher-rs is actively hunting for arbitrage routes. Opportunities will appear here instantly.")}
             </p>
           </div>
         </div>

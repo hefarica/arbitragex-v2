@@ -12,7 +12,7 @@
 //! normal modes — the collective oscillation patterns of liquidity across
 //! the network. The ground state (smallest eigenvalue) represents the
 //! equilibrium configuration; excited states represent transient
-//! arbitrage-exploitable discrepancies.
+//! topologically exploitable discrepancies.
 //!
 //! ## CDC Perturbation
 //!

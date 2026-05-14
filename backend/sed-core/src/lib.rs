@@ -18,7 +18,7 @@
 //! - [`DiracImpulseOnly`](types::bundle_position::DiracImpulseOnly) —
 //!   JIT-style liquidity impulse on the CPMM manifold.
 //!
-//! `Sandwich`, `Frontrun`, and "victim-specific bundle attribution" variants
+//! Temporally-asymmetric reordering and "target-specific bundle attribution" variants
 //! are intentionally absent and cannot be added by external crates because the
 //! `PostResolutionTopology` trait is sealed via [`types::bundle_position::private::Sealed`].
 //!
@@ -50,9 +50,33 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+// Phase 5 — Dirac Manifold Allocator (Pontryagin OCP).
+// Feature-gated: only compiles when `allocator` (or a composite like `pipeline-full`) is enabled.
+#[cfg(feature = "allocator")]
 pub mod allocator;
+
+// Phase 3 — Eigenstate Decomposition (Lanczos solver, transition projector).
+#[cfg(feature = "eigenstate")]
 pub mod eigenstate;
+
+// Phase 2 — Stochastic Filtration (CDC calculator, Markov jump, Poisson measure).
+#[cfg(feature = "filtration")]
 pub mod filtration;
+
+// Phase 6 — Hedger (orthogonal variance, holonomic loop, temporal liquidity).
+// Depends on allocator (LiquidityManifold, DiracImpulse).
+#[cfg(feature = "hedger")]
 pub mod hedger;
+
+pub mod metrics;
+pub mod persistence;
 pub mod prelude;
 pub mod types;
+
+// Paper-Shadow E2E pipeline integration test (test-only).
+#[cfg(test)]
+mod pipeline_e2e;
+
+// Paper-Shadow Mode connectors — real data ingestion (feature-gated).
+#[cfg(feature = "paper-shadow")]
+pub mod connectors;

@@ -29,8 +29,8 @@ export default async function StrategiesPage() {
   return (
     <>
       <PageHeader
-        title="Strategies"
-        lede="Capital, risk gates, MEV strategy catalog, token allowlist, audit trail. Hot-reloads to searcher in ≤1s on save."
+        title="Resolution Engines"
+        lede="Capital allocation, entropy gates, resolution engine catalog, token allowlist, audit trail. Hot-reloads to searcher in ≤1s on save."
         showRefresh
       />
       <StrategiesClient

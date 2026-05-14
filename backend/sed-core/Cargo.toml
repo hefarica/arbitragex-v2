@@ -47,6 +47,9 @@ rand_distr = { workspace = true, optional = true }
 # Phase 5 — Complex-valued eigenstates in the allocator.
 num-complex = { version = "0.4", optional = true }
 
+# Production Prometheus metrics recorder (optional — only needed in prod).
+prometheus = { workspace = true, optional = true }
+
 # Internal path dependency. shared-rs hosts KillSwitchClient + health
 # checking primitives that the SED gates integrate with.
 shared-rs = { workspace = true }
@@ -80,16 +83,27 @@ eigenstate-full = ["filtration", "eigenstate"]
 # DiracImpulse regularization). Requires num-complex for EigenState amplitudes.
 allocator = ["dep:num-complex"]
 
-# Phase 6 — Orthogonal Variance Hedger + Holonomic Loop Resolution.
-# Builds the covariance engine and closed-contour graph searcher.
-hedger = []
+# Phase 6 — Orthogonal Variance Hedger + Holonomic Loop Resolution +
+# Temporal Liquidity Superposition. Depends on allocator (Phase 5) for
+# LiquidityManifold, DiracImpulse, HyperbolicConstraint.
+hedger = ["allocator"]
 
 # Full pipeline: Phases 2 + 3 + 5 + 6.
 pipeline-full = ["filtration", "eigenstate", "allocator", "hedger"]
 
+# Metrics — trait-based observability (no external deps, just the API surface).
 metrics = []
+
+# Prometheus-backed metrics recorder for production.
+# Requires `metrics` (trait surface) + the `prometheus` crate dep.
+prometheus-metrics = ["metrics", "dep:prometheus"]
+
+# Persistence — DAO types for PostgreSQL (SQL templates only, no sqlx runtime).
 persistence = []
-kill_switch = []
+
+# Paper-Shadow Mode — real data connectors (mempool WS, reserves, gas, Flashbots dry-run).
+# Requires shared-rs for config + RPC pool access. Capital exposed: STRICTLY 0.
+paper-shadow = ["allocator"]
 
 
 [lints.rust]

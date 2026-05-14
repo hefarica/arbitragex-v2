@@ -44,9 +44,17 @@ math-engine = { workspace = true }
 # is deprecated; see `feat/wire-simulator-v2-revm` for context.
 simulator-v2 = { path = "../simulator-v2", optional = true }
 
+# SOP-EDGE-001: lazy_static for SedMetrics singleton (paper-shadow feature)
+lazy_static = { version = "1", optional = true }
+
+# sed-core: quantitative orchestration layer (paper-shadow mode)
+# Provides CDC filtration, eigenstate decomposition, Pontryagin allocator.
+sed-core = { path = "../sed-core", optional = true }
+
 [features]
 default = ["v2-simulator"]
 v2-simulator = ["dep:simulator-v2"]
+paper-shadow = ["dep:lazy_static", "dep:sed-core", "sed-core?/filtration", "sed-core?/eigenstate", "sed-core?/metrics"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros","rt-multi-thread","test-util"] }
