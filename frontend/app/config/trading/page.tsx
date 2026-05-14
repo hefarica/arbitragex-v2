@@ -44,7 +44,7 @@ export default async function TradingConfigPage() {
     <>
       <PageHeader
         title="Trading config"
-        lede="Capital, token allowlist, profit thresholds, gas strategy. searcher-rs reads these in ≤1s; the system stays idle for any chain without a row."
+        lede="Capital, token allowlist, yield thresholds, gas strategy. searcher-rs reads these in ≤1s; the system stays idle for any chain without a row."
         showRefresh
       />
 
@@ -54,7 +54,7 @@ export default async function TradingConfigPage() {
           <AlertTitle>Chain {initial.chain_id} is not configured yet</AlertTitle>
           <AlertDescription>
             The scanner is observing pending transactions but is not scoring opportunities.
-            Submit the form below to seed strategy parameters and start net-profit gating.
+            Submit the form below to seed strategy parameters and start net-yield gating.
           </AlertDescription>
         </Alert>
       )}

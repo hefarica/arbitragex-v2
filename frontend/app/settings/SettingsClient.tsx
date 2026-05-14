@@ -124,13 +124,13 @@ export function SettingsClient() {
         <CardHeader className="pb-3">
           <h2 className="text-base font-semibold mt-0 mb-0">Notifications</h2>
           <p className="text-xs text-muted-foreground">
-            Toast alerts triggered when a live opportunity exceeds the profit threshold.
+            Toast alerts triggered when a live opportunity exceeds the yield threshold.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="notification_threshold_usd">
-              Profit threshold (USD)
+              Yield threshold (USD)
             </Label>
             <Input
               id="notification_threshold_usd"
@@ -147,7 +147,7 @@ export function SettingsClient() {
               placeholder="50"
             />
             <p className="text-xs text-muted-foreground">
-              Opportunities with net profit &ge; this value show a toast. 0 = notify on all.
+              Opportunities with net yield &ge; this value show a toast. 0 = notify on all.
             </p>
           </div>
         </CardContent>

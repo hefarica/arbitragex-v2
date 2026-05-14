@@ -16,7 +16,7 @@ import { useEffect, useState, useCallback } from "react";
 // ─── Schema ──────────────────────────────────────────────────────────────────
 
 export interface UserPrefs {
-  /** Minimum net profit (USD) that triggers a toast notification. */
+  /** Minimum net yield (USD) that triggers a toast notification. */
   notification_threshold_usd: number;
   /** Polling interval in milliseconds for live feeds that support it. */
   polling_interval_ms: number;

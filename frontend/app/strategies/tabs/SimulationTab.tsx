@@ -130,14 +130,14 @@ export function SimulationTab({ config, onSaved, adminToken, actor }: Props) {
             onChange={setCapital}
           />
           <Field
-            label="Target profit min (USD) · UI filter"
+            label="Target yield min (USD) · UI filter"
             value={targetProfit}
             placeholder="(vacío = sin filtro)"
             onChange={setTargetProfit}
             step="0.01"
           />
           <Field
-            label="Target ROI min (%) · UI filter"
+            label="Target Convergence Ratio min (%) · UI filter"
             value={targetRoi}
             placeholder="(vacío = sin filtro)"
             onChange={setTargetRoi}
@@ -146,7 +146,7 @@ export function SimulationTab({ config, onSaved, adminToken, actor }: Props) {
           <p className="text-xs text-muted-foreground md:col-span-3">
             <strong>Capital simulación</strong> sobreescribe el capital operacional para el cálculo del cap_ratio
             del spine — pero solo si NO hay un cap más estricto por-token o por-estrategia abajo. <strong>Target
-            profit/ROI</strong> son filtros de UI: el backend persiste todas las opps, la dashboard suprime las
+            yield/Convergence Ratio</strong> son filtros de UI: el backend persiste todas las opps, la dashboard suprime las
             que estén por debajo del target. Modo paper-trade activo por defecto · cero ejecución on-chain.
           </p>
         </CardContent>

@@ -32,13 +32,13 @@ describe("formatProfitUSD", () => {
     expect(r.tone).toBe("zero");
   });
 
-  it("returns positive tone for positive profit", () => {
+  it("returns positive tone for positive yield", () => {
     const r = formatProfitUSD(12.5);
     expect(r.display).toBe("+$12.50");
     expect(r.tone).toBe("positive");
   });
 
-  it("returns negative tone for negative profit", () => {
+  it("returns negative tone for negative yield", () => {
     const r = formatProfitUSD(-3.75);
     expect(r.display).toBe("-$3.75");
     expect(r.tone).toBe("negative");

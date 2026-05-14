@@ -34,7 +34,7 @@ type DraftField =
   | "min_liquidity_confidence"
   | "max_token_risk_score"
   | "max_slippage_pct"
-  // Net Profit Gate — Sprint A+B+C (migrations 047+048)
+  // Net Yield Gate — Sprint A+B+C (migrations 047+048)
   | "capital_cost_rate_annual_pct"
   | "ops_overhead_usd_per_attempt"
   | "spread_sanity_mult"
@@ -92,8 +92,8 @@ export function CapitalRiskTab({ config, onSaved, adminToken, actor }: Props) {
       <CardContent className="grid gap-4 md:grid-cols-2">
         <Field label="Capital (USD)" value={draft.capital_usd} onChange={(v) => setField("capital_usd", v)} />
         <Field label="Base token price (USD)" value={draft.base_token_price_usd} step="0.01" onChange={(v) => setField("base_token_price_usd", v)} />
-        <Field label="Min profit (USD)" value={draft.min_profit_usd} step="0.01" onChange={(v) => setField("min_profit_usd", v)} />
-        <Field label="Min ROI (%)" value={draft.min_roi_pct} step="0.01" onChange={(v) => setField("min_roi_pct", v)} />
+        <Field label="Min yield (USD)" value={draft.min_profit_usd} step="0.01" onChange={(v) => setField("min_profit_usd", v)} />
+        <Field label="Min convergence ratio (%)" value={draft.min_roi_pct} step="0.01" onChange={(v) => setField("min_roi_pct", v)} />
         <Field label="Max slippage (%)" value={draft.max_slippage_pct} step="0.01" onChange={(v) => setField("max_slippage_pct", v)} />
         <Field label="Min landing probability" value={draft.min_landing_probability} step="0.01" min={0} max={1} onChange={(v) => setField("min_landing_probability", v)} />
         <Field label="Min liquidity confidence" value={draft.min_liquidity_confidence} step="0.01" min={0} max={1} onChange={(v) => setField("min_liquidity_confidence", v)} />
@@ -109,7 +109,7 @@ export function CapitalRiskTab({ config, onSaved, adminToken, actor }: Props) {
               step="0.1"
               min={0}
               max={50}
-              tooltip="Hurdle rate for locked capital. 0 = ignore (correct for flash-loan arb where capital is not locked). Set > 0 to require profit > capital × rate/8760 per attempt."
+              tooltip="Hurdle rate for locked capital. 0 = ignore (correct for flash convergence resolution where capital is not locked). Set > 0 to require yield > capital × rate/8760 per attempt."
               onChange={(v) => setField("capital_cost_rate_annual_pct", v)}
             />
             <Field
@@ -118,7 +118,7 @@ export function CapitalRiskTab({ config, onSaved, adminToken, actor }: Props) {
               step="0.001"
               min={0}
               max={100}
-              tooltip="Amortised infrastructure + RPC cost subtracted from gross profit before the net-profit gate. Example: 0.01 = 1 cent per scored opportunity."
+              tooltip="Amortised infrastructure + RPC cost subtracted from gross yield before the net-yield gate. Example: 0.01 = 1 cent per scored opportunity."
               onChange={(v) => setField("ops_overhead_usd_per_attempt", v)}
             />
           </div>

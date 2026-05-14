@@ -15,11 +15,11 @@
  *
  * NOTE on data-status selector:
  *   In OpportunitiesClient.tsx, `data-status={opp.status}` is on the Route <td>
- *   (column 2), NOT on the <tr>.  `data-col="profit"` is on the Profit <td>
+ *   (column 2), NOT on the <tr>.  `data-col="yield"` is on the Net Yield <td>
  *   (column 4) — a sibling, not a descendant.
  *   We therefore select rows as `tr:has(td[data-status="detected"])` so that
- *   `.locator('[data-col="profit"]')` searches inside the full <tr> and reaches
- *   the profit cell correctly.
+ *   `.locator('[data-col="yield"]')` searches inside the full <tr> and reaches
+ *   the yield cell correctly.
  */
 import { test, expect } from "@playwright/test";
 
@@ -30,18 +30,18 @@ test("opportunities page shows enriched tokens or honest fallback", async ({ pag
   await page.waitForSelector("table");
 
   // R8: every row whose Route cell has data-status="detected" MUST show "—"
-  // in the profit cell — never "$0.00".
+  // in the yield cell — never "$0.00".
   //
   // We select the full <tr> that contains a td[data-status="detected"] so that
-  // the subsequent `.locator('[data-col="profit"]')` searches inside the row and
-  // reaches the sibling profit <td>.
+  // the subsequent `.locator('[data-col="yield"]')` searches inside the row and
+  // reaches the sibling yield <td>.
   const detectedRows = page.locator('tr:has(td[data-status="detected"])');
   const count = await detectedRows.count();
 
   for (let i = 0; i < count; i++) {
     const row = detectedRows.nth(i);
-    const profit = await row.locator('[data-col="profit"]').textContent();
-    expect(profit?.trim()).toBe("—");
+    const yieldCell = await row.locator('[data-col="yield"]').textContent();
+    expect(yieldCell?.trim()).toBe("—");
   }
 
   // After the enricher has been running for a few minutes, at least one Trust
@@ -55,5 +55,5 @@ test("opportunities page shows enriched tokens or honest fallback", async ({ pag
     );
   }
   // When logos > 0 the count itself is the evidence; no assertion required here.
-  // The test only fails if the profit-cell invariant above is violated.
+  // The test only fails if the yield-cell invariant above is violated.
 });

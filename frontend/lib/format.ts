@@ -14,7 +14,7 @@
 const DASH = "—";
 
 /**
- * "zero"    — real zero value (e.g. $0.00 profit).
+ * "zero"    — real zero value (e.g. $0.00 yield).
  * "neutral" — non-zero value that carries no directional sentiment (e.g. spread ≤ 0 bps).
  * "pending" — no data available (null/undefined/NaN per R8 fail-honest).
  */
@@ -28,10 +28,10 @@ export interface FormattedValue {
 const PENDING: FormattedValue = { display: DASH, tone: "pending" };
 
 /**
- * Formats a USD profit/loss value for display in opportunity table cells.
+ * Formats a USD yield/loss value for display in opportunity table cells.
  *
  * R8: null/undefined/NaN → DASH + pending tone.
- * 0 is a real value (zero profit) → "$0.00" + zero tone (plan §7.3).
+ * 0 is a real value (zero yield) → "$0.00" + zero tone (plan §7.3).
  */
 export function formatProfitUSD(value: number | null | undefined): FormattedValue {
   if (value == null || Number.isNaN(value)) return PENDING;

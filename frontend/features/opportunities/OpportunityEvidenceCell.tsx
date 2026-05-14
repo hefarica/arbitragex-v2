@@ -61,12 +61,12 @@ function NetProfit({ usd, wei }: { usd: number | null; wei: string | null }) {
   // shown as a tooltip when USD is null but wei is non-null (rare path — the
   // backend usually emits both or neither).
   if (usd === null && (wei === null || wei === "")) {
-    return <Unavailable reason="Simulation has not produced net profit yet." />;
+    return <Unavailable reason="Simulation has not produced net yield yet." />;
   }
   if (usd === null) {
     return (
       <span
-        data-slot="evidence-net-profit"
+        data-slot="evidence-net-yield"
         data-source="wei-only"
         className="text-xs italic text-muted-foreground"
         title={`USD conversion pending — raw wei: ${wei}`}
@@ -84,7 +84,7 @@ function NetProfit({ usd, wei }: { usd: number | null; wei: string | null }) {
     maximumFractionDigits: 2,
   }).format(usd);
   return (
-    <span data-slot="evidence-net-profit" data-source="usd" className={cn("font-semibold", sign)}>
+    <span data-slot="evidence-net-yield" data-source="usd" className={cn("font-semibold", sign)}>
       {formatted}
     </span>
   );

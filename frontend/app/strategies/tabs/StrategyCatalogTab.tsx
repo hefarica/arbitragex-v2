@@ -209,7 +209,7 @@ export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor
                     <Badge variant="outline" className="text-[10px]">edge: {s.competitive_advantage}</Badge>
                   )}
                   {s.requires_flashloan && (
-                    <Badge variant="outline" className="text-[10px]">flashloan</Badge>
+                    <Badge variant="outline" className="text-[10px]">flash convergence</Badge>
                   )}
                   {stratCfg && (
                     <Badge variant="outline" className="text-[10px] bg-info/10 text-info">
@@ -220,11 +220,11 @@ export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor
                 {showThresholds && (
                   <div className="grid grid-cols-2 gap-2 border-t border-border pt-3 mt-2">
                     <div className="space-y-1">
-                      <Label htmlFor={`${s.kind}-min-profit`} className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                        min profit USD
+                      <Label htmlFor={`${s.kind}-min-yield`} className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        min yield (USD)
                       </Label>
                       <Input
-                        id={`${s.kind}-min-profit`}
+                        id={`${s.kind}-min-yield`}
                         type="number"
                         inputMode="decimal"
                         step="0.01"
@@ -238,15 +238,15 @@ export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor
                             min_profit_usd: v === "" ? null : Number(v),
                           });
                         }}
-                        title="Per-strategy minimum net profit in USD. Empty inherits the chain-level threshold."
+                        title="Per-strategy minimum net yield in USD. Empty inherits the chain-level threshold."
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label htmlFor={`${s.kind}-min-roi`} className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                        min ROI %
+                      <Label htmlFor={`${s.kind}-min-conv-ratio`} className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        min convergence ratio %
                       </Label>
                       <Input
-                        id={`${s.kind}-min-roi`}
+                        id={`${s.kind}-min-conv-ratio`}
                         type="number"
                         inputMode="decimal"
                         step="0.01"
@@ -260,7 +260,7 @@ export function StrategyCatalogTab({ config, catalog, onSaved, adminToken, actor
                             min_roi_pct: v === "" ? null : Number(v),
                           });
                         }}
-                        title="Per-strategy minimum net ROI percent. Empty inherits the chain-level threshold."
+                        title="Per-strategy minimum net Convergence Ratio percent. Empty inherits the chain-level threshold."
                       />
                     </div>
                     <div className="space-y-1 col-span-2">
