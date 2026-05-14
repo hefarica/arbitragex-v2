@@ -26,7 +26,7 @@
     "@types/node": "^20.11.30",
     "@types/pg": "^8.20.0",
     "supertest": "^7.0.0",
-    "@types/supertest": "^6.0.2",
+    "@types/supertest": "^7.2.0",
     "tsx": "^4.7.2",
     "typescript": "^5.4.5",
     "vitest": "^1.5.0"
