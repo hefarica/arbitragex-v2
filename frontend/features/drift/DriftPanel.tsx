@@ -4,18 +4,20 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDriftDetection } from "@/lib/drift/useDriftDetection";
-import { ACTION_STATE_LABELS } from "@/lib/statemachine/types";
+// REPAIR c815ef9: removed unused import of ACTION_STATE_LABELS (no longer exported).
 
 /**
  * Maps a DriftStatus to the Badge visual variant.
  */
 function driftStatusVariant(
-  status: "consistent" | "drift_detected" | "partial" | "unknown",
+  status: "consistent" | "drift_detected" | "partial" | "blocked" | "unknown",
 ): "default" | "secondary" | "destructive" | "outline" {
   switch (status) {
     case "consistent":
       return "outline";
     case "drift_detected":
+      return "destructive";
+    case "blocked":
       return "destructive";
     case "partial":
       return "secondary";
@@ -28,12 +30,14 @@ function driftStatusVariant(
 /**
  * Maps a DriftStatus to a human-readable label.
  */
-function driftStatusLabel(status: "consistent" | "drift_detected" | "partial" | "unknown"): string {
+function driftStatusLabel(status: "consistent" | "drift_detected" | "partial" | "blocked" | "unknown"): string {
   switch (status) {
     case "consistent":
       return "CONSISTENT";
     case "drift_detected":
       return "DRIFT DETECTED";
+    case "blocked":
+      return "BLOCKED";
     case "partial":
       return "PARTIAL";
     case "unknown":
@@ -44,16 +48,22 @@ function driftStatusLabel(status: "consistent" | "drift_detected" | "partial" | 
 /**
  * Maps a drift action to a Badge variant for per-row display.
  */
+// REPAIR c815ef9: ampliado para aceptar tanto el vocabulario de divergencia
+// (mismatch/missing_in_*/stale) como el de remediación (reconcile/reload/investigate)
+// emitido por el backend en DriftDifference.action.
 function driftActionVariant(
-  action: "mismatch" | "missing_in_a" | "missing_in_b" | "stale",
+  action: string,
 ): "default" | "secondary" | "destructive" | "outline" {
   switch (action) {
     case "mismatch":
+    case "investigate":
       return "destructive";
     case "missing_in_a":
     case "missing_in_b":
+    case "reload":
       return "secondary";
     case "stale":
+    case "reconcile":
       return "outline";
     default:
       return "default";

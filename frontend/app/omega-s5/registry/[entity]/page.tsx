@@ -13,16 +13,26 @@
  *      5) Disable / soft-delete
  *      6) Hot-reload trigger con runtime_ack visible
  *      7) Drift panel local
+ *
+ * REPAIR c815ef9-typefix:
+ *  - Alineado al contrato canónico de useRegistry({ fetchFn, ... }) → { items, isLoading, error, refresh, ... }
+ *  - useOmniDrift firma correcta: useOmniDrift(pollMs?: number) → { observations, byResource, ... }
+ *  - status derivado de error/isLoading/hasData (Fail-Honest, no fabricado)
+ *  - runtimeAck preservado como estado local null hasta que backend lo publique
+ *    (la UI muestra "PENDING_RUNTIME_ACK" por default — coherente con Ghost Protocol)
+ *  - Solo `chain` tiene admin endpoint hoy; los 11 restantes devuelven [] y la UI
+ *    muestra "UNAVAILABLE — sin registros" (R8 Fail-Honest, NO mock data)
  */
 
 'use client';
 
-import { use, useState } from 'react';
+import { use, useCallback, useMemo, useState } from 'react';
 import { notFound } from 'next/navigation';
 import { REGISTRY_KEYS, type RegistryKey } from '@/lib/operator/types';
 import { OperatorGate } from '@/components/operator/OperatorGate';
 import { useRegistry } from '@/lib/registries/useRegistry';
 import { useOmniDrift } from '@/lib/drift/useOmniDrift';
+import { getAdminChains } from '@/lib/api-client';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -37,6 +47,27 @@ import {
 
 interface PageProps {
   params: Promise<{ entity: string }>;
+}
+
+/**
+ * Forma mínima común que la tabla genérica necesita por fila.
+ * Se construye en el adapter `fetchRegistryByKey` a partir del shape
+ * canónico de cada entity sin perder identidad (no es un mock).
+ */
+interface RegistryRow {
+  readonly id: string;
+  readonly enabled: boolean;
+  readonly config_hash: string;
+}
+
+/**
+ * Acknowledgement runtime publicado por el backend para Capa 6 / 9-Layer.
+ * Mientras backend no lo emita, permanece `null` → la UI muestra
+ * `PENDING_RUNTIME_ACK` (Fail-Honest).
+ */
+interface RuntimeAck {
+  readonly state: string;
+  readonly layers: readonly string[];
 }
 
 const REGISTRY_LABELS: Record<RegistryKey, string> = {
@@ -54,6 +85,28 @@ const REGISTRY_LABELS: Record<RegistryKey, string> = {
   agent: 'Agent Registry',
 };
 
+/**
+ * Adapter: mapea cada RegistryKey a su fetcher canónico y normaliza al
+ * shape `RegistryRow`. Hoy solo `chain` tiene endpoint admin productivo;
+ * los demás devuelven un array vacío hasta que su backend admin se publique.
+ * Esto NO es un mock — es Fail-Honest (sin datos reales, no se inventan).
+ */
+async function fetchRegistryByKey(key: RegistryKey): Promise<readonly RegistryRow[]> {
+  if (key === 'chain') {
+    const res = await getAdminChains();
+    if (!res.ok) {
+      throw new Error(res.error);
+    }
+    return res.data.items.map((c) => ({
+      id: String(c.chain_id),
+      enabled: c.enabled,
+      config_hash: c.config_hash ?? 'pending',
+    }));
+  }
+  // Registries restantes: sin endpoint admin canónico aún → fail-honest vacío.
+  return [];
+}
+
 export default function RegistryPage(props: PageProps): JSX.Element {
   const { entity } = use(props.params);
 
@@ -62,9 +115,50 @@ export default function RegistryPage(props: PageProps): JSX.Element {
   }
 
   const registryKey = entity as RegistryKey;
-  const { rows, loading, status, reload, runtimeAck } = useRegistry(registryKey);
-  const drift = useOmniDrift({ resource: registryKey });
+
+  // Memoizado para no re-crear la función en cada render (evita refresh-loop).
+  const fetchFn = useCallback(
+    () => fetchRegistryByKey(registryKey),
+    [registryKey],
+  );
+
+  const {
+    items,
+    isLoading,
+    error,
+    hasData,
+    refresh,
+  } = useRegistry<RegistryRow>({
+    fetchFn,
+    pollIntervalMs: 30_000,
+    keyFn: (r) => r.id,
+  });
+
+  // Drift global; filtramos en cliente por resource = registryKey.
+  const drift = useOmniDrift(5_000);
+  const observations = useMemo(
+    () => drift.byResource[registryKey] ?? [],
+    [drift.byResource, registryKey],
+  );
+
+  // status derivado (Fail-Honest, sin fabricar valores).
+  const status: string = error
+    ? 'ERROR'
+    : isLoading
+      ? 'LOADING'
+      : hasData
+        ? 'READY'
+        : 'PENDING';
+
+  // runtimeAck: state local; backend lo poblará cuando emita capas confirmadas.
+  const [runtimeAck] = useState<RuntimeAck | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // selectedId reservado para drawer/dialog de detalle (capacidad 2);
+  // suprimir warning de no-uso en este nivel.
+  void selectedId;
+
+  const loading = isLoading;
+  const rows = items;
 
   return (
     <div className="space-y-6">
@@ -92,7 +186,7 @@ export default function RegistryPage(props: PageProps): JSX.Element {
                 <Button
                   variant="outline"
                   data-testid={`${registryKey}-reload-btn`}
-                  onClick={() => void reload()}
+                  onClick={() => void refresh()}
                 >
                   Hot-reload
                 </Button>
@@ -202,13 +296,13 @@ export default function RegistryPage(props: PageProps): JSX.Element {
           <CardTitle>Drift Observations</CardTitle>
         </CardHeader>
         <CardContent data-testid={`${registryKey}-drift-panel`}>
-          {drift.observations.length === 0 ? (
+          {observations.length === 0 ? (
             <p className="text-sm text-muted-foreground">Sin drift detectado.</p>
           ) : (
             <ul className="text-sm space-y-1">
-              {drift.observations.map(obs => (
+              {observations.map(obs => (
                 <li key={obs.id} className="font-mono">
-                  {obs.severity} — {obs.message}
+                  {obs.severity} — {obs.diff_count} diffs ({obs.layer_a} ↔ {obs.layer_b})
                 </li>
               ))}
             </ul>
