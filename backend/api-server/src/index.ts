@@ -87,7 +87,12 @@ import { mountAgentsStatus } from "./routes/agents-status.js";
 import { mountScoringStatus } from "./routes/scoring-status.js";
 import { mountRiskCircuitBreakers } from "./routes/risk-circuit-breakers.js";
 import { mountAdminChains } from "./routes/admin-chains.js";
-import { setupWebSocketGateway, broadcastOpportunity } from "./websocket.js";
+import { mountSedStatus } from "./routes/sed-status.js";
+import {
+  setupWebSocketGateway,
+  broadcastOpportunity,
+  subscribeToConvergenceSignals,
+} from "./websocket.js";
 import { createServer } from "http";
 import rateLimit from "express-rate-limit";
 
@@ -443,6 +448,8 @@ mountAdminChains(app, {
   writeAudit,
   logger,
 });
+
+mountSedStatus(app, { pool, logger });
 
 // Scanner heartbeat snapshot — read latest pipeline counters from Redis.
 // Persisted by searcher-rs::workers::heartbeat_worker every period (default
@@ -1004,6 +1011,13 @@ const PORT = Number(process.env["API_PORT"] ?? 3000); // 3000 to match frontend 
 const httpServer = createServer(app);
 const io = setupWebSocketGateway(httpServer);
 
+// Arteria WSS — OMEGA-v2: puente Redis Pub/Sub → WebSocket para señales de
+// convergencia del motor SED (Rust).  Instancia dedicada (subscriber) porque
+// ioredis no permite mezclar comandos regulares con modo SUBSCRIBE.
+// Fail-honest: si Redis falla, las oportunidades por PostgreSQL NOTIFY
+// siguen funcionando; la conexión se auto-reconecta.
+const convergenceSubscriber = subscribeToConvergenceSignals(io, REDIS_URL);
+
 if (pool) {
   pool.connect().then(client => {
     client.query('LISTEN opportunities_channel');
@@ -1031,6 +1045,9 @@ httpServer.listen(PORT, () => {
 const shutdown = async (sig: string) => {
   logger.info({ event: "service.shutdown", signal: sig }, "shutting down");
   await killSwitch.close().catch(() => {});
+  // Arteria WSS: cerrar el subscriber de convergencia antes que el redis
+  // principal para evitar errores de "Connection is closed" en handlers.
+  await convergenceSubscriber.quit().catch(() => {});
   await redis.quit().catch(() => {});
   if (pool) await pool.end().catch(() => {});
   process.exit(0);

@@ -15,3 +15,11 @@ pub mod sed_metrics;
 
 #[cfg(feature = "metrics")]
 pub use sed_metrics::*;
+
+// Production Prometheus recorder — feature-gated behind `prometheus-metrics`
+// so non-production builds don't pull the prometheus crate.
+#[cfg(feature = "prometheus-metrics")]
+pub mod prometheus_recorder;
+
+#[cfg(feature = "prometheus-metrics")]
+pub use prometheus_recorder::PrometheusMetricsRecorder;

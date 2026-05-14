@@ -163,6 +163,19 @@ export interface OpportunityListItem {
   simulated_target?: SimulatedTarget | null;
   simulated_at?: string | null;
   simulated_notes?: string[] | null;
+  /**
+   * Confidence score en basis points (0-10000), calculado por sed-core.
+   * Representa la confianza del motor matemático en la oportunidad.
+   * Null cuando sed-core no ha procesado la oportunidad.
+   */
+  confidence_score_bps?: number | null;
+  /**
+   * Gas usado en la simulación (unidades de gas), reportado por sed-core.
+   * Diferente de gas_estimate_units de trading_config: este es el gas
+   * REAL consumido en la simulación dry-run.
+   * Null cuando la simulación no ha corrido.
+   */
+  gas_used?: number | null;
 }
 
 // ─── Configuration constants ──────────────────────────────────────────────────

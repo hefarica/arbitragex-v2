@@ -18,8 +18,22 @@ import type { Redis } from "ioredis";
 import { z } from "zod";
 
 export const TRADING_CONFIG_CHANNEL = "arbx:trading_config:changes";
+
+/** Canal de compatibilidad para sed-core y otros suscriptores legacy.
+ *  Publicación dual: tanto TRADING_CONFIG_CHANNEL como HOT_RELOAD_CHANNEL
+ *  reciben el mismo payload JSON. Los suscriptores pueden escuchar cualquiera.
+ *  Migración futura: deprecar HOT_RELOAD_CHANNEL cuando todos los consumidores
+ *  migren a TRADING_CONFIG_CHANNEL.
+ */
+export const HOT_RELOAD_CHANNEL = "arbx:config:hot_reload";
+
 export const tradingConfigKey = (chainId: number): string =>
   `arbx:trading_config:${chainId}`;
+
+// Dual-channel hot-reload (2026-05-14):
+// - TRADING_CONFIG_CHANNEL ("arbx:trading_config:changes"): canal canónico actual
+// - HOT_RELOAD_CHANNEL ("arbx:config:hot_reload"): canal de compatibilidad SOP-EDGE-001
+// Ambos canales reciben el mismo payload. Los consumidores pueden migrar gradualmente.
 
 const GasStrategy = z.enum(["fixed", "dynamic_basefee_plus_tip", "percentile_75"]);
 
@@ -511,6 +525,19 @@ export function buildTradingConfigRouter(deps: Deps): Router {
         await deps.redis.set(tradingConfigKey(chainId), json);
         const subs = await deps.redis.publish(TRADING_CONFIG_CHANNEL, json);
 
+        // Dual-channel publish: sed-core y otros consumidores legacy escuchan
+        // HOT_RELOAD_CHANNEL. El fallo de esta publicación no afecta el canal
+        // canónico ni la respuesta al cliente (fail-honest).
+        let subsHotReload = 0;
+        try {
+          subsHotReload = await deps.redis.publish(HOT_RELOAD_CHANNEL, json);
+        } catch (err) {
+          deps.logger.warn(
+            { event: "trading_config.hot_reload_publish_failed", chain_id: chainId, err: (err as Error).message },
+            "HOT_RELOAD_CHANNEL publish failed; TRADING_CONFIG_CHANNEL succeeded",
+          );
+        }
+
         await deps.writeAudit(
           "trading_config.upsert",
           actor,
@@ -525,10 +552,24 @@ export function buildTradingConfigRouter(deps: Deps): Router {
         );
 
         deps.logger.info(
-          { event: "trading_config.upsert", chain_id: chainId, actor, subscribers_notified: subs },
+          {
+            event: "trading_config.upsert",
+            chain_id: chainId,
+            actor,
+            subscribers_trading_config: subs,
+            subscribers_hot_reload: subsHotReload,
+            channels: [TRADING_CONFIG_CHANNEL, HOT_RELOAD_CHANNEL],
+          },
           "trading config persisted and broadcast",
         );
-        res.status(200).json({ ok: true, chain_id: chainId, subscribers_notified: subs, ...redisState });
+        res.status(200).json({
+          ok: true,
+          chain_id: chainId,
+          subscribers_trading_config: subs,
+          subscribers_hot_reload: subsHotReload,
+          channels: [TRADING_CONFIG_CHANNEL, HOT_RELOAD_CHANNEL],
+          ...redisState,
+        });
       } catch (e) {
         deps.logger.warn({ event: "trading_config.upsert_failed", err: (e as Error).message });
         res.status(500).json({ error: "db_error", detail: (e as Error).message });

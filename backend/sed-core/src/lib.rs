@@ -50,10 +50,24 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+// Phase 5 — Dirac Manifold Allocator (Pontryagin OCP).
+// Feature-gated: only compiles when `allocator` (or a composite like `pipeline-full`) is enabled.
+#[cfg(feature = "allocator")]
 pub mod allocator;
+
+// Phase 3 — Eigenstate Decomposition (Lanczos solver, transition projector).
+#[cfg(feature = "eigenstate")]
 pub mod eigenstate;
+
+// Phase 2 — Stochastic Filtration (CDC calculator, Markov jump, Poisson measure).
+#[cfg(feature = "filtration")]
 pub mod filtration;
+
+// Phase 6 — Hedger (orthogonal variance, holonomic loop, temporal liquidity).
+// Depends on allocator (LiquidityManifold, DiracImpulse).
+#[cfg(feature = "hedger")]
 pub mod hedger;
+
 pub mod metrics;
 pub mod persistence;
 pub mod prelude;

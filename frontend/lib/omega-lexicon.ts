@@ -1,142 +1,111 @@
 /**
- * OMEGA Lexicón Absoluto — Presentation Layer Translation.
+ * OMEGA LEXICON — Sanitización léxica para interfaz de operador
  *
- * This module provides PRESENTATION-ONLY translations from raw backend
- * field names (which use legacy financial terminology) to the QuantumX
- * OMEGA academic lexicon. It NEVER modifies API request/response shapes.
+ * Propósito: Reemplazar terminología sensible ("bot", "snipe", "arbitrage")
+ * con términos neutros para el operador del dashboard.
  *
- * Usage: import { omegaLabel } from "@/lib/omega-lexicon";
- *        <span>{omegaLabel("expected_profit_usd")}</span>
+ * Ghost Protocol: Esta sanitización solo afecta lo RENDERIZADO en UI.
+ * Los datos internos, logs técnicos, y comunicación backend-backend
+ * mantienen su nomenclatura original.
  *
- * The backend contract (schemas.ts field names, API endpoints, DB columns)
- * remains 100% untouched. This is a cosmetic translation layer only.
+ * R8 Fail-honest: la sustitución es 1:1 transparente, nunca altera semántica.
  */
 
-/** Strategy kind → OMEGA display name */
-const STRATEGY_LABELS: Record<string, string> = {
-  dex_arb: "DEX Convergence",
-  triangular_arb: "Triangular Resolution",
-  flashloan_arb: "Flash Convergence",
-  liquidation: "Entropy Liquidation",
-  sandwich: "Temporal Reordering Defense",
-  jit_liquidity: "JIT Liquidity Provisioning",
-  cex_dex: "Cross-Domain Convergence",
-  micro_arb: "Micro-Resolution HFT",
-  cross_chain: "Cross-Topology Resolution",
+/** Tabla de sustitución: término prohibido → término aceptado */
+export const OMEGA_SUBSTITUTIONS: Readonly<Record<string, string>> = {
+  // Términos prohibidos y sus sustitutos
+  "bot": "worker",
+  "bots": "workers",
+  "snipe": "capture",
+  "snipes": "captures",
+  "sniping": "capturing",
+  "sniped": "captured",
+  "arbitrage": "cross-venue opportunity",
+  "arbitrages": "cross-venue opportunities",
+  "arb": "opportunity",
+  "arbs": "opportunities",
+  "mev": "network value",
+  "mev extraction": "value capture",
+  "sandwich": "reordering pattern",
+  "frontrun": "pre-positioning",
+  "backrun": "follow-through",
 };
 
-/** Raw backend field → OMEGA display label */
-const FIELD_LABELS: Record<string, string> = {
-  // Profit → Yield / Rendimiento
-  expected_profit_usd: "Expected Yield (USD)",
-  net_expected_profit_usd: "Net Expected Yield (USD)",
-  actual_profit_usd: "Realized Yield (USD)",
-  simulated_net_profit_usd: "Simulated Net Yield (USD)",
-  net_profit_wei: "Net Yield (wei)",
-  min_profit_usd: "Min Yield Threshold (USD)",
-  avg_profit_usd: "Avg Yield (USD)",
-  avg_pnl_included_usd: "Avg Convergence Yield (USD)",
-  profit_cumulative_usd: "Cumulative Yield (USD)",
-  simulation_target_profit_usd: "Simulation Target Yield (USD)",
-  capital_cost_rate_annual_pct: "Capital Entropy Rate (%/yr)",
-
-  // Trading → Convergence
-  trading_config: "Convergence Config",
-
-  // ROI → Convergence Ratio
-  roi_pct: "Convergence Ratio (%)",
-  min_roi_pct: "Min Convergence Ratio (%)",
-
-  // Risk → Entropy
-  risk_score: "Entropy Score",
-  risk_level: "Entropy Level",
-  max_token_risk_score: "Max Token Entropy",
-
-  // Strategy → Resolution Engine
-  strategy_kind: "Resolution Engine",
-  enabled_strategies: "Active Engines",
-
-  // MEV → Resolution Protocol
-  mev: "Resolution Protocol",
-
-  // Wallet → Observer
-  wallet: "Observer",
-  wallets: "Observers",
-
-  // Arbitrage → Convergence / Resolution
-  arbitrage: "Topological Convergence",
-  arb: "Convergence",
-
-  // Paper mode → Ghost Protocol
-  paper_mode: "Ghost Protocol",
-  paper_viable: "Ghost-Viable",
-  paper_rejected: "Ghost-Rejected",
-  paper_status: "Ghost Status",
-
-  // Slippage → Phase Drift
-  max_slippage_pct: "Max Phase Drift (%)",
-  slippage: "Phase Drift",
-
-  // Gas → Execution Entropy
-  max_gas_usd: "Max Execution Entropy (USD)",
-  gas_used: "Execution Entropy Consumed",
-
-  // Sandwich → Temporal Reordering
-  sandwich: "Temporal Reordering",
-  anti_sandwich: "Anti-Reordering Shield",
-
-  // Flashloan → Flash Convergence
-  flashloan_fee_pct: "Flash Convergence Fee (%)",
-  requires_flashloan: "Requires Flash Convergence",
-
-  // Bundle → Resolution Bundle
-  bundle_hash: "Resolution Bundle Hash",
-
-  // Opportunity → Signal
-  opportunity: "Convergence Signal",
-  opportunities: "Convergence Signals",
-};
-
-/** Category labels for strategy catalog */
-const CATEGORY_LABELS: Record<string, string> = {
-  "direct-arb": "Direct Convergence",
-  "complex-arb": "Complex Convergence",
-  "lending-liquidation": "Lending Entropy Resolution",
-  "yield-temporal": "Temporal Yield Extraction",
-  "defensive": "Defensive Protocol",
-};
+/** Flag para activar/desactivar sanitización globalmente */
+export const LEXICON_ENABLED = true;
 
 /**
- * Translate a raw backend field name to its OMEGA display label.
- * Returns the original if no translation exists (fail-safe).
+ * Sanitiza una cadena de texto reemplazando términos prohibidos.
+ * @param text Texto original (puede contener múltiples ocurrencias)
+ * @returns Texto sanitizado, o el original si LEXICON_ENABLED es false
  */
-export function omegaLabel(rawField: string): string {
-  return FIELD_LABELS[rawField] ?? rawField;
+export function sanitizeForDisplay(text: string): string {
+  if (!LEXICON_ENABLED || !text) return text;
+
+  let result = text;
+  // Ordenar por longitud descendente para evitar sustituciones parciales
+  // (ej: "arbitrage" debe reemplazarse antes que "arb")
+  const entries = Object.entries(OMEGA_SUBSTITUTIONS).sort(
+    ([a], [b]) => b.length - a.length
+  );
+
+  for (const [prohibited, substitute] of entries) {
+    // Reemplazo case-insensitive con preservación de mayúsculas iniciales
+    const regex = new RegExp(`\\b${prohibited}\\b`, "gi");
+    result = result.replace(regex, (match) => {
+      // Preservar capitalización: si el original empezaba con mayúscula
+      if (match[0] === match[0].toUpperCase()) {
+        return substitute[0].toUpperCase() + substitute.slice(1);
+      }
+      return substitute;
+    });
+  }
+
+  return result;
 }
 
 /**
- * Translate a strategy_kind value to its OMEGA display name.
- * Returns the original with underscores replaced if no translation exists.
+ * Sanitiza valores de texto dentro de un objeto, solo en campos específicos.
+ * @param obj Objeto original (no mutado)
+ * @param fields Nombres de campos a sanitizar
+ * @returns Nuevo objeto con campos sanitizados
  */
-export function omegaStrategy(strategyKind: string): string {
-  return STRATEGY_LABELS[strategyKind] ?? strategyKind.replace(/_/g, " ");
-}
+export function sanitizeObject<T extends Record<string, unknown>>(
+  obj: T,
+  fields: string[]
+): T {
+  if (!LEXICON_ENABLED) return obj;
 
-/**
- * Translate a strategy category to its OMEGA display name.
- */
-export function omegaCategory(category: string): string {
-  return CATEGORY_LABELS[category] ?? category;
-}
-
-/**
- * Bulk-translate an object's keys for display purposes.
- * Does NOT mutate the original — returns a new display-ready map.
- */
-export function omegaDisplayMap(raw: Record<string, unknown>): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(raw)) {
-    result[omegaLabel(key)] = value;
+  const result = { ...obj };
+  for (const field of fields) {
+    if (typeof result[field] === "string") {
+      (result as Record<string, unknown>)[field] = sanitizeForDisplay(
+        result[field] as string
+      );
+    }
   }
   return result;
+}
+
+/**
+ * Sanitiza un array de objetos aplicando sanitizeObject a cada elemento.
+ */
+export function sanitizeArray<T extends Record<string, unknown>>(
+  arr: T[],
+  fields: string[]
+): T[] {
+  if (!LEXICON_ENABLED) return arr;
+  return arr.map((item) => sanitizeObject(item, fields));
+}
+
+/**
+ * Verifica si un texto contiene términos prohibidos (útil para testing).
+ */
+export function containsProhibitedTerms(text: string): boolean {
+  const entries = Object.keys(OMEGA_SUBSTITUTIONS);
+  for (const term of entries) {
+    const regex = new RegExp(`\\b${term}\\b`, "i");
+    if (regex.test(text)) return true;
+  }
+  return false;
 }

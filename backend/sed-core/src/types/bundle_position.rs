@@ -47,7 +47,9 @@
 
 use std::marker::PhantomData;
 
+#[cfg(feature = "allocator")]
 use crate::allocator::OptimalControlSolution;
+#[cfg(feature = "hedger")]
 use crate::hedger::OrthogonalHedgeResult;
 use crate::types::errors::TopologyValidationError;
 use crate::types::holonomic::{ClosedContourTrajectory, TopologicalYield};
@@ -195,6 +197,8 @@ impl<T> BundlePosition<T> {
     }
 }
 
+
+#[cfg(feature = "hedger")]
 impl BundlePosition<OrthogonalEquilibrium> {
     /// Construct an `OrthogonalEquilibrium` bundle. Requires a proof
     /// reference to [`OrthogonalHedgeResult`] whose null-covariance check
@@ -224,6 +228,7 @@ impl BundlePosition<OrthogonalEquilibrium> {
     }
 }
 
+#[cfg(feature = "allocator")]
 impl BundlePosition<DiracImpulseOnly> {
     /// Construct a `DiracImpulseOnly` bundle. Requires a proof reference to
     /// [`OptimalControlSolution`] whose `hyperbolic_constraint_satisfied`
@@ -369,6 +374,7 @@ impl BundlePosition<HolonomicLoopResolution> {
 }
 
 #[cfg(test)]
+#[cfg(all(feature = "allocator", feature = "hedger"))]
 mod tests {
     use super::*;
     use crate::allocator::OptimalControlSolution;

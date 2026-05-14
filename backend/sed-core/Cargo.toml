@@ -47,6 +47,9 @@ rand_distr = { workspace = true, optional = true }
 # Phase 5 — Complex-valued eigenstates in the allocator.
 num-complex = { version = "0.4", optional = true }
 
+# Production Prometheus metrics recorder (optional — only needed in prod).
+prometheus = { workspace = true, optional = true }
+
 # Internal path dependency. shared-rs hosts KillSwitchClient + health
 # checking primitives that the SED gates integrate with.
 shared-rs = { workspace = true }
@@ -90,6 +93,10 @@ pipeline-full = ["filtration", "eigenstate", "allocator", "hedger"]
 
 # Metrics — trait-based observability (no external deps, just the API surface).
 metrics = []
+
+# Prometheus-backed metrics recorder for production.
+# Requires `metrics` (trait surface) + the `prometheus` crate dep.
+prometheus-metrics = ["metrics", "dep:prometheus"]
 
 # Persistence — DAO types for PostgreSQL (SQL templates only, no sqlx runtime).
 persistence = []

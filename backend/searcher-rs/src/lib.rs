@@ -33,14 +33,14 @@ pub mod orchestrator;
 // flashloan_arb_worker) which have no async I/O in their math kernels.
 #[allow(dead_code)]
 pub mod workers;
-// Phase 12: StateProjector — virtual post-tx pool state projection.
+// Phase 12: StateProjector -- virtual post-tx pool state projection.
 pub mod state_projector;
-// Phase 13: SizeOptimizer — optimal amount_in sizing for arb candidates.
+// Phase 13: SizeOptimizer -- optimal amount_in sizing for arb candidates.
 pub mod size_optimizer;
-// Phase 11: LendingPositionIndexer — Redis-backed watchlist + cache for
+// Phase 11: LendingPositionIndexer -- Redis-backed watchlist + cache for
 // Aave V3 / Compound V2 positions, consumed by LiquidationEngine.
 pub mod lending_position_indexer;
-// Phase A.3.a: `OpportunityCandidate → RoundTripContext` encoder. Exposed
+// Phase A.3.a: `OpportunityCandidate -> RoundTripContext` encoder. Exposed
 // here so integration tests can drive the encoder against real candidate
 // shapes without going through `decode_and_score_tx`.
 pub mod sim_encoder;
@@ -72,8 +72,8 @@ pub mod sim_multistep;
 // B1.d chain-task supervisor can consume the dedup map.
 pub mod config_reload;
 
-// ── SOP-EDGE-001: Edge Node modules (paper-shadow feature gate) ───────
-// These modules implement the Alloy anti-mock layer, U256↔f64 normalization,
+// -- SOP-EDGE-001: Edge Node modules (paper-shadow feature gate) -------
+// These modules implement the Alloy anti-mock layer, U256<->f64 normalization,
 // and the 6-phase SED Engine for the Edge Node deployment.
 #[cfg(feature = "paper-shadow")]
 pub mod connectors;
@@ -81,3 +81,8 @@ pub mod connectors;
 pub mod normalization;
 #[cfg(feature = "paper-shadow")]
 pub mod sed_engine;
+// SED Bridge: connects searcher-rs I/O pipeline to sed-core math layer.
+// Feeds gas-price log-returns into CDC calculator and runs eigenstate
+// decomposition for stochastic dispatch decisions.
+#[cfg(feature = "paper-shadow")]
+pub mod sed_bridge;
