@@ -236,6 +236,65 @@ jobs:
             done
           REMOTE
 
+      - name: "[F5c] Sync VPS git metadata with deployed TARGET_SHA"
+        # Mandato Operador Lead + Arquitecto OMEGA (post-Acción A+).
+        # Mantiene el índice git del VPS coherente con los archivos físicos
+        # rsync-eados, evitando decoherencia HEAD ↔ archivos en deploys futuros.
+        # NO toca: archivos físicos, .env, stash del operador, contenedores.
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set +e
+            cd ${{ env.REPO_PATH }}
+            echo "═══ [F5c] Alineación metadata git (índice + HEAD + remote) ═══"
+
+            # 1) Asegurar que el remote 'origin' apunta a GitHub (no al bare local muerto)
+            GH_REMOTE="https://github.com/hefarica/arbitragex-v2.git"
+            if git remote get-url origin >/dev/null 2>&1; then
+              CURRENT=$(git remote get-url origin)
+              if [ "$CURRENT" != "$GH_REMOTE" ]; then
+                git remote set-url origin "$GH_REMOTE"
+                echo "✅ origin reapuntado: $CURRENT → $GH_REMOTE"
+              else
+                echo "✅ origin ya apunta a GitHub"
+              fi
+            else
+              git remote add origin "$GH_REMOTE"
+              echo "✅ origin creado: $GH_REMOTE"
+            fi
+
+            # 2) Si el objeto TARGET_SHA no existe localmente, descargarlo
+            if ! git cat-file -e ${{ env.TARGET_SHA }} 2>/dev/null; then
+              echo "── TARGET_SHA no está local — fetch desde GitHub ──"
+              git fetch --no-tags --depth=50 origin main 2>&1 | tail -10
+              if ! git cat-file -e ${{ env.TARGET_SHA }} 2>/dev/null; then
+                echo "⚠ fetch no trajo TARGET_SHA — saltando reset (no bloqueante)"
+                exit 0
+              fi
+            fi
+
+            # 3) Reapuntar refs/heads/main y HEAD al TARGET_SHA
+            git update-ref "refs/heads/main" "${{ env.TARGET_SHA }}" || \
+              { echo "⚠ update-ref falló (no bloqueante)"; exit 0; }
+            git symbolic-ref HEAD "refs/heads/main"
+
+            # 4) git reset --mixed sincroniza índice SIN tocar working tree
+            #    Las restricciones absolutas (no --hard, no stash) se respetan.
+            git reset --mixed "${{ env.TARGET_SHA }}" 2>&1 | tail -5
+
+            # 5) Verificación
+            HEAD_NOW=$(git rev-parse HEAD)
+            echo "── HEAD post-alignment: $HEAD_NOW ──"
+            STATUS_OUT=$(git status --short)
+            if [ -z "$STATUS_OUT" ]; then
+              echo "✅ Working tree LIMPIO"
+            else
+              echo "── git status restante (esperable solo si rsync trajo extras) ──"
+              echo "$STATUS_OUT" | head -10
+            fi
+            echo "── stash preservado ──"
+            git stash list | head -5
+          REMOTE
+
       - name: "[F6] Build frontend (solo este contenedor)"
         run: |
           ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
