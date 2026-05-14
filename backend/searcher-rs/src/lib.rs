@@ -71,3 +71,13 @@ pub mod sim_multistep;
 // config_hash per chain to skip no-op reloads. Public so the future
 // B1.d chain-task supervisor can consume the dedup map.
 pub mod config_reload;
+
+// ── SOP-EDGE-001: Edge Node modules (paper-shadow feature gate) ───────
+// These modules implement the Alloy anti-mock layer, U256↔f64 normalization,
+// and the 6-phase SED Engine for the Edge Node deployment.
+#[cfg(feature = "paper-shadow")]
+pub mod connectors;
+#[cfg(feature = "paper-shadow")]
+pub mod normalization;
+#[cfg(feature = "paper-shadow")]
+pub mod sed_engine;

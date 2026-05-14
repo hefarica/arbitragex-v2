@@ -5888,6 +5888,7 @@ dependencies = [
  "ethers",
  "futures-util",
  "hex",
+ "lazy_static",
  "lru 0.12.5",
  "math-engine",
  "once_cell",
