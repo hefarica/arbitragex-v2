@@ -289,12 +289,10 @@ export function subscribeToConvergenceSignals(io: Server, redisUrl: string): Red
 
     // ---- Suscripción al canal de convergencia ----
 
-    subscriber.subscribe(CONVERGENCE_CHANNEL, (err: Error | null) => {
-        if (err) {
-            console.error(`[ArteriaWSS] Failed to subscribe to ${CONVERGENCE_CHANNEL}:`, err.message);
-            return;
-        }
+    subscriber.subscribe(CONVERGENCE_CHANNEL).then(() => {
         console.log(`[ArteriaWSS] Subscribed to Redis channel: ${CONVERGENCE_CHANNEL}`);
+    }).catch((err: Error) => {
+        console.error(`[ArteriaWSS] Failed to subscribe to ${CONVERGENCE_CHANNEL}:`, err.message);
     });
 
     // ---- Handler de mensajes ----
