@@ -80,9 +80,10 @@ eigenstate-full = ["filtration", "eigenstate"]
 # DiracImpulse regularization). Requires num-complex for EigenState amplitudes.
 allocator = ["dep:num-complex"]
 
-# Phase 6 — Orthogonal Variance Hedger + Holonomic Loop Resolution.
-# Builds the covariance engine and closed-contour graph searcher.
-hedger = []
+# Phase 6 — Orthogonal Variance Hedger + Holonomic Loop Resolution +
+# Temporal Liquidity Superposition. Depends on allocator (Phase 5) for
+# LiquidityManifold, DiracImpulse, HyperbolicConstraint.
+hedger = ["allocator"]
 
 # Full pipeline: Phases 2 + 3 + 5 + 6.
 pipeline-full = ["filtration", "eigenstate", "allocator", "hedger"]

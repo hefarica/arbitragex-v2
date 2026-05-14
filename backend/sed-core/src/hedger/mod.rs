@@ -1,53 +1,74 @@
-//! `hedger` — Orthogonal Variance Hedger + Holonomic Loop Resolution (Phase 6).
+//! Phase 6 — Hedger & Holonomic Resolution
 //!
-//! ## Architecture
+//! Último eslabón del SED. Compuesto de tres sub-módulos:
 //!
-//! Phase 6 will implement two remaining topological resolutions:
+//! 1. `orthogonal_variance_hedger`: Entrelazamiento DEX↔CEX, covarianza nula.
+//! 2. `holonomic_loop_resolution`: Búsqueda topológica de ciclos de arbitraje.
+//! 3. `temporal_liquidity_superposition`: Flash-loan / LP borrowing atómico.
 //!
-//! 1. **Orthogonal Variance Hedger**: Computes inverse compensation vectors
-//!    in orthogonal venues to guarantee null aggregate covariance.
+//! Consume:
+//! - `DiracImpulse` desde Phase 5 (Allocator)
+//! - `LiquidityManifold` desde Phase 5
+//! - `GateVerdict::Dispatch` desde Phase 4
 //!
-//! 2. **Holonomic Loop Resolution**: Bellman-Ford graph search for closed
-//!    contour trajectories across N ≥ 3 manifolds.
-//!
-//! ## Current status
-//!
-//! `OrthogonalHedgeResult` is available unconditionally for
-//! `bundle_position.rs` backward compatibility. The full covariance engine
-//! and graph searcher are pending Phase 6 implementation.
+//! Produce:
+//! - `OrthogonalHedgeResult` con covarianza nula certificada
+//! - `ClosedContourTrajectory` con holonomía calculada
+//! - `BundlePosition<HolonomicLoopResolution>` sellado
 
-// ── Always-available types (no feature gate) ──────────────────────────
-// OrthogonalHedgeResult must be importable unconditionally because
-// bundle_position.rs uses it.
+// Phase 6 submodules — only compiled with the `hedger` feature.
+#[cfg(feature = "hedger")]
+pub mod orthogonal_variance_hedger;
+#[cfg(feature = "hedger")]
+pub mod holonomic_loop_resolution;
+#[cfg(feature = "hedger")]
+pub mod temporal_liquidity_superposition;
 
-/// Post-resolution proof type required by
-/// `BundlePosition::new_orthogonal_equilibrium`.
-///
-/// Phase 6 will replace this with a full covariance engine.
-/// Currently provides the `verify_null_covariance` gate and
-/// a test-only `stub()` constructor.
-#[derive(Debug, Clone)]
-pub struct OrthogonalHedgeResult {
-    /// `true` when the covariance matrix's off-diagonal is below
-    /// tolerance and the residual direction is short enough.
-    null_covariance: bool,
-}
+#[cfg(feature = "hedger")]
+pub use orthogonal_variance_hedger::*;
+#[cfg(feature = "hedger")]
+pub use holonomic_loop_resolution::*;
+#[cfg(feature = "hedger")]
+pub use temporal_liquidity_superposition::*;
 
-impl OrthogonalHedgeResult {
-    /// Check the null-covariance invariant.
-    pub fn verify_null_covariance(&self, _tolerance: f64) -> bool {
-        self.null_covariance
+// ── Unconditional stub: OrthogonalHedgeResult ─────────────────────────
+//
+// The `BundlePosition<OrthogonalEquilibrium>` constructor (Phase 1) needs
+// `OrthogonalHedgeResult` at all times. When the full Phase 6 is active
+// (`hedger` feature), the real `OrthogonalHedgeResult` from
+// `orthogonal_variance_hedger` is re-exported above and shadows this stub.
+// When `hedger` is OFF, this minimal proof-of-hedge struct provides the
+// `verify_null_covariance` API that the typestate constructor requires.
+
+#[cfg(not(feature = "hedger"))]
+mod stub {
+    /// Stub proof-of-hedge result (Phase 1 backward compatibility).
+    ///
+    /// Replaced by the real `OrthogonalHedgeResult` when the `hedger`
+    /// feature is active.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct OrthogonalHedgeResult {
+        /// True only when the real hedger certifies null covariance.
+        pub is_fully_neutralized: bool,
+        /// Off-diagonal covariance entry (quick check).
+        pub covariance_off_diagonal: f64,
     }
 
-    /// Test-only constructor.
-    #[doc(hidden)]
-    pub fn stub(null_cov: bool) -> Self {
-        Self {
-            null_covariance: null_cov,
+    impl OrthogonalHedgeResult {
+        /// Phase 1 stub: caller supplies is_null manually.
+        pub fn stub(is_null: bool) -> Self {
+            Self {
+                is_fully_neutralized: is_null,
+                covariance_off_diagonal: if is_null { 0.0 } else { f64::NAN },
+            }
+        }
+
+        /// Verifica covarianza nula dentro de tolerancia numérica.
+        pub fn verify_null_covariance(&self, tolerance: f64) -> bool {
+            self.covariance_off_diagonal.abs() < tolerance && self.is_fully_neutralized
         }
     }
 }
 
-// Phase 6 submodules will be added here when implementation begins:
-// pub mod orthogonal_variance_hedger;
-// pub mod holonomic_loop_resolution;
+#[cfg(not(feature = "hedger"))]
+pub use stub::OrthogonalHedgeResult;

@@ -1,0 +1,535 @@
+//! Resolución de Lazos Holonómicos — La Joya de la Corona
+//!
+//! Implementa la búsqueda topológica de trayectorias de contorno cerrado
+//! γ: ℒ₁ → ℒ₂ → ... → ℒₙ → ℒ₁  con  n ≥ 3.
+//!
+//! Si la integral de contorno de precios relativos ∮_γ (dp/p) ≠ 0,
+//! el sistema extrae un TopologicalYield neto positivo (post-fricción)
+//! y construye un BundlePosition<HolonomicLoopResolution> sellado.
+
+use nalgebra::{DVector, Vector2};
+use std::collections::{HashMap, HashSet};
+use crate::allocator::LiquidityManifold;
+
+/// Trayectoria de contorno cerrado sobre N ≥ 3 variedades de liquidez.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClosedContourTrajectory {
+    /// Variedades en orden de recorrido del ciclo
+    pub manifolds: Vec<LiquidityManifold>,
+    /// Puntos de transición (reservas en cada pool al entrar)
+    pub transition_points: Vec<Vector2<f64>>,
+    /// Precios relativos en cada arista: p_i = price_{i+1} / price_i
+    pub relative_prices: Vec<f64>,
+    /// Longitud geodésica total del contorno
+    pub contour_length: f64,
+    /// Cardinalidad del lazo (N)
+    pub loop_cardinality: usize,
+    /// Token de inicio (debe coincidir con token de fin)
+    pub start_token: String,
+}
+
+impl ClosedContourTrajectory {
+    pub const MIN_LOOP_SIZE: usize = 3;
+
+    /// Verifica que el contorno sea cerrado topológicamente:
+    /// punto inicial = punto final  y  token inicial = token final.
+    pub fn is_closed(&self) -> bool {
+        if self.manifolds.len() < Self::MIN_LOOP_SIZE {
+            return false;
+        }
+        // Verificar que el token de salida del último pool sea el token de entrada del primero
+        if let (Some(first), Some(last)) = (self.manifolds.first(), self.manifolds.last()) {
+            let first_in = &first.token_pair.0;
+            let last_out = &last.token_pair.1;
+            first_in == last_out
+        } else {
+            false
+        }
+    }
+
+    /// Calcula la integral de contorno de log-precios relativos:
+    /// ∮_γ (dp/p) = Σᵢ ln(p_{i+1} / p_i)
+    pub fn contour_integral(&self) -> f64 {
+        self.relative_prices.iter().map(|p| p.ln()).sum()
+    }
+
+    /// Producto de precios relativos alrededor del ciclo.
+    /// Para un ciclo perfecto: Π p_i = 1.  Si ≠ 1, hay holonomía.
+    pub fn price_product(&self) -> f64 {
+        self.relative_prices.iter().product()
+    }
+
+    /// Verifica que no haya autointersección (pools repetidos en el lazo).
+    pub fn is_simple(&self) -> bool {
+        let mut seen = HashSet::new();
+        for m in &self.manifolds {
+            let key = format!("{}-{}", m.pool_address, m.token_pair.0);
+            if !seen.insert(key) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Convierte a la representación canónica de types::holonomic para
+    /// sellar un BundlePosition<HolonomicLoopResolution>.
+    pub fn to_canonical(&self) -> crate::types::holonomic::ClosedContourTrajectory {
+        let manifolds = self.manifolds.iter()
+            .map(|m| crate::eigenstate::LiquidityManifold::new(&m.pool_address))
+            .collect();
+        let mut transition_points: Vec<DVector<f64>> = self.transition_points.iter()
+            .map(|v| DVector::from(vec![v.x, v.y]))
+            .collect();
+        // Append closing point (γ(0) = γ(1))
+        if let Some(first) = transition_points.first().cloned() {
+            transition_points.push(first);
+        }
+        crate::types::holonomic::ClosedContourTrajectory {
+            manifolds,
+            transition_points,
+            relative_prices: self.relative_prices.clone(),
+            contour_length: self.contour_length,
+            loop_cardinality: self.loop_cardinality,
+        }
+    }
+}
+
+/// Rendimiento topológico extraído de una holonomía de mercado.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TopologicalYield {
+    /// Holonomía bruta: ∮_γ (dp/p)
+    pub raw_holonomy: f64,
+    /// Fricción termodinámica total de la red:
+    /// gas_cost + slippage + lp_fees + flash_loan_fee
+    pub network_friction: f64,
+    /// Rendimiento neto: raw_holonomy − network_friction
+    pub net_yield: f64,
+    /// Factor de eficiencia: net_yield / |raw_holonomy|
+    pub efficiency_factor: f64,
+    /// IDs de las variedades involucradas
+    pub manifold_ids: Vec<String>,
+    /// Timestamp de resolución (ms desde epoch)
+    pub resolved_at: u64,
+    /// Costo de decoherencia del vacío (TLS)
+    pub vacuum_decoherence_cost: f64,
+}
+
+impl TopologicalYield {
+    /// Umbral mínimo de rendimiento neto para viabilidad económica.
+    pub const MINIMUM_VIABLE_YIELD: f64 = 1e-15;
+
+    /// Verifica que el rendimiento neto sea estrictamente positivo.
+    pub fn is_economically_viable(&self) -> bool {
+        self.net_yield > Self::MINIMUM_VIABLE_YIELD
+    }
+
+    /// Verifica que la holonomía sea no trivial (fase no nula).
+    pub fn is_nontrivial_holonomy(&self) -> bool {
+        self.raw_holonomy.abs() > 1e-12
+    }
+
+    /// Construye un yield deduciendo la fricción de red.
+    pub fn from_holonomy_and_friction(
+        raw_holonomy: f64,
+        network_friction: f64,
+        vacuum_decoherence_cost: f64,
+        manifold_ids: Vec<String>,
+    ) -> Self {
+        let total_friction = network_friction + vacuum_decoherence_cost;
+        let net = raw_holonomy - total_friction;
+        let efficiency = if raw_holonomy.abs() > 1e-15 {
+            net / raw_holonomy.abs()
+        } else {
+            0.0
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        Self {
+            raw_holonomy,
+            network_friction: total_friction,
+            net_yield: net,
+            efficiency_factor: efficiency,
+            manifold_ids,
+            resolved_at: now,
+            vacuum_decoherence_cost,
+        }
+    }
+
+    /// Convierte a la representación canónica de types::holonomic para
+    /// sellar un BundlePosition<HolonomicLoopResolution>.
+    pub fn to_canonical(&self) -> crate::types::holonomic::TopologicalYield {
+        crate::types::holonomic::TopologicalYield {
+            raw_holonomy: self.raw_holonomy,
+            network_friction: self.network_friction,
+            net_yield: self.net_yield,
+            efficiency_factor: self.efficiency_factor,
+            manifold_ids: self.manifold_ids.clone(),
+            resolved_at: self.resolved_at / 1000, // ms → sec
+        }
+    }
+}
+
+/// Grafo de manifolds donde nodos = tokens, aristas = pools.
+/// Peso de arista = log(precio relativo) = ln(p_{out}/p_{in}).
+#[derive(Debug, Clone)]
+pub struct LiquidityGraph {
+    /// Adjacency list: token → [(vecino, pool, log_price)]
+    pub edges: HashMap<String, Vec<LiquidityEdge>>,
+    /// Todos los manifolds indexados por dirección de pool
+    pub manifolds: HashMap<String, LiquidityManifold>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LiquidityEdge {
+    pub to_token: String,
+    pub pool_address: String,
+    pub log_price: f64, // ln(price) = ln(reserve_out / reserve_in)
+}
+
+impl LiquidityGraph {
+    pub fn new() -> Self {
+        Self {
+            edges: HashMap::new(),
+            manifolds: HashMap::new(),
+        }
+    }
+
+    /// Añade un pool (arista bidireccional) al grafo.
+    pub fn add_pool(&mut self, manifold: &LiquidityManifold) {
+        let token0 = manifold.token_pair.0.clone();
+        let token1 = manifold.token_pair.1.clone();
+        let addr = manifold.pool_address.clone();
+
+        // Precio token0→token1: p = y/x
+        let price_0_to_1 = manifold.spot_price();
+        // Precio token1→token0: p = x/y
+        let price_1_to_0 = 1.0 / price_0_to_1;
+
+        self.edges.entry(token0.clone()).or_default().push(LiquidityEdge {
+            to_token: token1.clone(),
+            pool_address: addr.clone(),
+            log_price: price_0_to_1.ln(),
+        });
+        self.edges.entry(token1.clone()).or_default().push(LiquidityEdge {
+            to_token: token0.clone(),
+            pool_address: addr.clone(),
+            log_price: price_1_to_0.ln(),
+        });
+
+        self.manifolds.insert(addr.clone(), manifold.clone());
+    }
+
+    /// Búsqueda de ciclos holonómicos mediante DFS con límite de profundidad.
+    pub fn find_holonomic_cycles(
+        &self,
+        start_token: &str,
+        max_depth: usize,
+        min_holonomy: f64,
+    ) -> Vec<ClosedContourTrajectory> {
+        let mut results = Vec::new();
+        let mut visited = HashSet::new();
+        let mut path = Vec::new();
+        let mut price_path = Vec::new();
+
+        self.dfs_cycles(
+            start_token,
+            start_token,
+            max_depth,
+            min_holonomy,
+            &mut visited,
+            &mut path,
+            &mut price_path,
+            &mut results,
+        );
+
+        results
+    }
+
+    fn dfs_cycles(
+        &self,
+        current: &str,
+        start: &str,
+        remaining_depth: usize,
+        min_holonomy: f64,
+        visited: &mut HashSet<String>,
+        path: &mut Vec<LiquidityEdge>,
+        price_path: &mut Vec<f64>,
+        results: &mut Vec<ClosedContourTrajectory>,
+    ) {
+        if remaining_depth == 0 {
+            return;
+        }
+
+        if let Some(edges) = self.edges.get(current) {
+            for edge in edges {
+                // Evitar ciclos trivialmente cortos (A→B→A)
+                if path.len() == 1 && edge.to_token == start {
+                    continue;
+                }
+
+                if edge.to_token == start && path.len() >= ClosedContourTrajectory::MIN_LOOP_SIZE - 1 {
+                    // ¡Ciclo cerrado encontrado!
+                    price_path.push(edge.log_price.exp());
+                    let holonomy = price_path.iter().map(|p| p.ln()).sum::<f64>();
+
+                    if holonomy.abs() > min_holonomy {
+                        let mut manifolds = Vec::with_capacity(path.len() + 1);
+                        let mut transitions = Vec::with_capacity(path.len() + 1);
+                        let mut prices = Vec::with_capacity(path.len() + 1);
+
+                        for e in path.iter() {
+                            if let Some(m) = self.manifolds.get(&e.pool_address) {
+                                manifolds.push(m.clone());
+                                transitions.push(Vector2::new(m.token0_reserve, m.token1_reserve));
+                                prices.push(e.log_price.exp());
+                            }
+                        }
+                        // Añadir arista de cierre
+                        if let Some(m) = self.manifolds.get(&edge.pool_address) {
+                            manifolds.push(m.clone());
+                            transitions.push(Vector2::new(m.token0_reserve, m.token1_reserve));
+                            prices.push(edge.log_price.exp());
+                        }
+
+                        let contour_length = transitions.windows(2)
+                            .map(|w| {
+                                let dx = w[1].x - w[0].x;
+                                let dy = w[1].y - w[0].y;
+                                (dx*dx + dy*dy).sqrt()
+                            })
+                            .sum();
+
+                        results.push(ClosedContourTrajectory {
+                            manifolds,
+                            transition_points: transitions,
+                            relative_prices: prices,
+                            contour_length,
+                            loop_cardinality: path.len() + 1,
+                            start_token: start.to_string(),
+                        });
+                    }
+                    price_path.pop();
+                    continue;
+                }
+
+                if !visited.contains(&edge.to_token) {
+                    visited.insert(edge.to_token.clone());
+                    path.push(edge.clone());
+                    price_path.push(edge.log_price.exp());
+
+                    self.dfs_cycles(
+                        &edge.to_token, start, remaining_depth - 1,
+                        min_holonomy, visited, path, price_path, results,
+                    );
+
+                    path.pop();
+                    price_path.pop();
+                    visited.remove(&edge.to_token);
+                }
+            }
+        }
+    }
+}
+
+/// Verificador de invariante holonómica — 5 sub-condiciones formales.
+pub struct HolonomicInvariantChecker;
+
+impl HolonomicInvariantChecker {
+    /// Verifica las 5 condiciones de la invariante holonómica.
+    pub fn verify(
+        contour: &ClosedContourTrajectory,
+        yield_data: &TopologicalYield,
+        execution_time_ms: u64,
+        cdc_half_life_ms: u64,
+    ) -> Result<HolonomicInvariantReport, InvariantViolation> {
+        // (1) Holonomía no trivial
+        let holonomy = contour.contour_integral();
+        if holonomy.abs() < 1e-12 {
+            return Err(InvariantViolation::TrivialHolonomy { value: holonomy });
+        }
+
+        // (2) Viabilidad económica
+        if !yield_data.is_economically_viable() {
+            return Err(InvariantViolation::NonViableYield {
+                net_yield: yield_data.net_yield,
+                threshold: TopologicalYield::MINIMUM_VIABLE_YIELD,
+            });
+        }
+
+        // (3) Contorno cerrado
+        if !contour.is_closed() {
+            return Err(InvariantViolation::OpenContour);
+        }
+
+        // (4) Sin autointersección
+        if !contour.is_simple() {
+            return Err(InvariantViolation::SelfIntersectingContour);
+        }
+
+        // (5) Ejecución atómica antes de decaimiento
+        if execution_time_ms >= cdc_half_life_ms {
+            return Err(InvariantViolation::ExecutionTooSlow {
+                execution_time_ms,
+                half_life_ms: cdc_half_life_ms,
+            });
+        }
+
+        Ok(HolonomicInvariantReport {
+            holonomy,
+            net_yield: yield_data.net_yield,
+            is_closed: true,
+            is_simple: true,
+            is_atomic: true,
+            verification_timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HolonomicInvariantReport {
+    pub holonomy: f64,
+    pub net_yield: f64,
+    pub is_closed: bool,
+    pub is_simple: bool,
+    pub is_atomic: bool,
+    pub verification_timestamp: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum InvariantViolation {
+    #[error("Holonomía trivial: {value}")]
+    TrivialHolonomy { value: f64 },
+    #[error("Rendimiento no viable: net_yield={net_yield} < threshold={threshold}")]
+    NonViableYield { net_yield: f64, threshold: f64 },
+    #[error("Contorno no cerrado")]
+    OpenContour,
+    #[error("Contorno con autointersección")]
+    SelfIntersectingContour,
+    #[error("Ejecución demasiado lenta: {execution_time_ms}ms >= half-life {half_life_ms}ms")]
+    ExecutionTooSlow { execution_time_ms: u64, half_life_ms: u64 },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pool(addr: &str, token0: &str, token1: &str, x: f64, y: f64) -> LiquidityManifold {
+        LiquidityManifold::new(x * y, x, y, addr.to_string(),
+            (token0.to_string(), token1.to_string()), 1).unwrap()
+    }
+
+    #[test]
+    fn contour_integral_detects_arbitrage() {
+        let m1 = pool("0xA", "WETH", "USDC", 1.0, 2000.0);
+        let m2 = pool("0xB", "USDC", "DAI", 1000.0, 1000.0);
+        let m3 = pool("0xC", "DAI", "WETH", 1900.0, 1.0);
+
+        let contour = ClosedContourTrajectory {
+            manifolds: vec![m1, m2, m3],
+            transition_points: vec![
+                Vector2::new(1.0, 2000.0),
+                Vector2::new(1000.0, 1000.0),
+                Vector2::new(1900.0, 1.0),
+            ],
+            relative_prices: vec![2000.0, 1.0, 1.0/1900.0],
+            contour_length: 0.0,
+            loop_cardinality: 3,
+            start_token: "WETH".to_string(),
+        };
+
+        assert!(contour.is_closed());
+        let holonomy = contour.contour_integral();
+        assert!(holonomy.abs() > 1e-3, "Holonomy too small: {}", holonomy);
+    }
+
+    #[test]
+    fn topological_yield_positive_after_friction() {
+        let yield_data = TopologicalYield::from_holonomy_and_friction(
+            0.05, 0.01, 0.005,
+            vec!["0xA".to_string(), "0xB".to_string(), "0xC".to_string()],
+        );
+        assert!(yield_data.is_economically_viable());
+        assert_eq!(yield_data.net_yield, 0.035);
+    }
+
+    #[test]
+    fn topological_yield_rejects_negative() {
+        let yield_data = TopologicalYield::from_holonomy_and_friction(
+            0.005, 0.01, 0.001,
+            vec!["0xA".to_string()],
+        );
+        assert!(!yield_data.is_economically_viable());
+        assert!(yield_data.net_yield < 0.0);
+    }
+
+    #[test]
+    fn graph_finds_triangular_arbitrage() {
+        let mut graph = LiquidityGraph::new();
+        graph.add_pool(&pool("0xA", "WETH", "USDC", 1.0, 2000.0));
+        graph.add_pool(&pool("0xB", "USDC", "DAI", 1000.0, 1000.0));
+        graph.add_pool(&pool("0xC", "DAI", "WETH", 1900.0, 1.0));
+
+        let cycles = graph.find_holonomic_cycles("WETH", 4, 1e-4);
+        assert!(!cycles.is_empty(), "No cycles found");
+        assert!(cycles[0].loop_cardinality >= 3);
+        assert!(cycles[0].contour_integral().abs() > 1e-4);
+    }
+
+    #[test]
+    fn invariant_checker_accepts_valid_cycle() {
+        let contour = ClosedContourTrajectory {
+            manifolds: vec![
+                pool("0xA", "WETH", "USDC", 1.0, 2000.0),
+                pool("0xB", "USDC", "DAI", 1000.0, 1000.0),
+                pool("0xC", "DAI", "WETH", 1900.0, 1.0),
+            ],
+            transition_points: vec![
+                Vector2::new(1.0, 2000.0),
+                Vector2::new(1000.0, 1000.0),
+                Vector2::new(1900.0, 1.0),
+            ],
+            relative_prices: vec![2000.0, 1.0, 1.0/1900.0],
+            contour_length: 0.0,
+            loop_cardinality: 3,
+            start_token: "WETH".to_string(),
+        };
+        let yield_data = TopologicalYield::from_holonomy_and_friction(
+            contour.contour_integral(), 0.001, 0.0005,
+            vec!["0xA".to_string(), "0xB".to_string(), "0xC".to_string()],
+        );
+        let result = HolonomicInvariantChecker::verify(&contour, &yield_data, 100, 5000);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn invariant_checker_rejects_trivial_holonomy() {
+        let contour = ClosedContourTrajectory {
+            manifolds: vec![
+                pool("0xA", "WETH", "USDC", 1.0, 2000.0),
+                pool("0xB", "USDC", "DAI", 1000.0, 1000.0),
+                pool("0xC", "DAI", "WETH", 2000.0, 1.0),
+            ],
+            transition_points: vec![
+                Vector2::new(1.0, 2000.0),
+                Vector2::new(1000.0, 1000.0),
+                Vector2::new(2000.0, 1.0),
+            ],
+            relative_prices: vec![2000.0, 1.0, 1.0/2000.0],
+            contour_length: 0.0,
+            loop_cardinality: 3,
+            start_token: "WETH".to_string(),
+        };
+        let yield_data = TopologicalYield::from_holonomy_and_friction(
+            contour.contour_integral(), 0.0, 0.0,
+            vec!["0xA".to_string()],
+        );
+        let result = HolonomicInvariantChecker::verify(&contour, &yield_data, 100, 5000);
+        assert!(matches!(result, Err(InvariantViolation::TrivialHolonomy { .. })));
+    }
+}
