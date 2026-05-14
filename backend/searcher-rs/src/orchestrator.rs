@@ -1,6 +1,6 @@
 // M11 allow: test modules use .unwrap()/.expect() for readability;
 // production paths use ? / anyhow throughout.
-//! Orchestrator — Phase 7 skeleton.
+//! Orchestrator — Live Engine Pipeline (Phases 8-11 wired).
 //!
 //! ## Design (spec §3.5)
 //!
@@ -164,7 +164,7 @@ impl Orchestrator {
     ///   1. Increment `decoded_intents_total` metric.
     ///   2. Resolve `ImpactSet` from `ImpactIndex`.
     ///   3. Increment `impacted_routes_total` metric.
-    ///   4. Fan out to `DexEngine` (other engines: placeholder Ok(vec![])).
+    ///   4. Fan out to `DexEngine`, `TriangularEngine`, and `LiquidationEngine`, then wrap with `FlashloanEngine`.
     ///   5. For each `StrategyCandidate`:
     ///      a. Snapshot config (once per intent, not per candidate).
     ///      b. Call `evaluate_with_route_plan`.
