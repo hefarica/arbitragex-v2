@@ -1,7 +1,7 @@
 name: Ω-S5++ APEX Deploy frontend-only c815ef8
 
 # DOCTRINA: Deploy quirúrgico tras auditoría forense.
-# Delta v5→c815ef8 = 4 archivos (2 frontend .tsx + 2 tests no-runtime).
+# Delta v5→c815ef8+typefix = 9 archivos (4 originales + 5 repair) (2 frontend .tsx + 2 tests no-runtime).
 # Solo se rebuildea el contenedor `frontend`. Los 16 restantes NO se tocan.
 #
 # ENMIENDAS SOVEREIGN aplicadas:
@@ -25,7 +25,7 @@ permissions:
   contents: read
 
 env:
-  TARGET_SHA: c815ef8c9048e8d6c6e97adc6865d884bfea6140
+  TARGET_SHA: 6c922106fb6db30152d011ef109da78af16ece23
   VPS_HOST: 195.201.235.70
   COMPOSE_FILE: docker/compose.prod.yml
   REPO_PATH: /opt/arbitragex-v2
