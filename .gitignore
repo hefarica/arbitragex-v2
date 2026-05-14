@@ -12,6 +12,7 @@ secrets/
 *.p12
 *.pfx
 signer.txt
+.htpasswd
 
 # Rust
 target/
