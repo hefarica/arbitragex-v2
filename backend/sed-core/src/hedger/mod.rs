@@ -1,38 +1,45 @@
-//! `hedger` — orthogonal variance hedger (spec §3.4).
+//! `hedger` — Orthogonal Variance Hedger + Holonomic Loop Resolution (Phase 6).
 //!
-//! **Phase 1 status**: only the proof-bearing type referenced by
-//! `bundle_position::OrthogonalEquilibrium` is stubbed. The full entangled
-//! state synchroniser (covariance engine, orthogonal hyperplane builder)
-//! lands in Phase 2 with `nalgebra` + `num-complex` dependencies.
+//! ## Architecture
+//!
+//! Phase 6 will implement two remaining topological resolutions:
+//!
+//! 1. **Orthogonal Variance Hedger**: Computes inverse compensation vectors
+//!    in orthogonal venues to guarantee null aggregate covariance.
+//!
+//! 2. **Holonomic Loop Resolution**: Bellman-Ford graph search for closed
+//!    contour trajectories across N ≥ 3 manifolds.
+//!
+//! ## Current status
+//!
+//! `OrthogonalHedgeResult` is available unconditionally for
+//! `bundle_position.rs` backward compatibility. The full covariance engine
+//! and graph searcher are pending Phase 6 implementation.
 
-/// Stub of the post-resolution proof type required by
-/// [`crate::types::bundle_position::BundlePosition::new_orthogonal_equilibrium`].
+// ── Always-available types (no feature gate) ──────────────────────────
+// OrthogonalHedgeResult must be importable unconditionally because
+// bundle_position.rs uses it.
+
+/// Post-resolution proof type required by
+/// `BundlePosition::new_orthogonal_equilibrium`.
 ///
-/// In Phase 2 this gets a full hedged state, covariance matrix, residual
-/// direction, orthogonality error, etc., per spec §3.4.3. For Phase 1 we
-/// expose only the method the typestate constructor calls —
-/// `verify_null_covariance(tolerance)` — so the type-system invariant
-/// compiles end-to-end and tests assert the typestate behaviour without
-/// a real covariance solver.
+/// Phase 6 will replace this with a full covariance engine.
+/// Currently provides the `verify_null_covariance` gate and
+/// a test-only `stub()` constructor.
 #[derive(Debug, Clone)]
 pub struct OrthogonalHedgeResult {
-    /// `true` when the covariance matrix's off-diagonal is below the
-    /// caller-supplied tolerance and the residual direction is short
-    /// enough that null-covariance is asserted.
+    /// `true` when the covariance matrix's off-diagonal is below
+    /// tolerance and the residual direction is short enough.
     null_covariance: bool,
 }
 
 impl OrthogonalHedgeResult {
-    /// Check the null-covariance invariant. Phase 1 stub: returns the
-    /// stored `null_covariance` flag and ignores `_tolerance`. Phase 2
-    /// will compute the actual covariance and compare off-diagonal terms
-    /// against `_tolerance` per the spec.
+    /// Check the null-covariance invariant.
     pub fn verify_null_covariance(&self, _tolerance: f64) -> bool {
         self.null_covariance
     }
 
-    /// Test-only constructor. See `allocator::OptimalControlSolution::stub`
-    /// for the rationale on exposing this unconditionally during Phase 1.
+    /// Test-only constructor.
     #[doc(hidden)]
     pub fn stub(null_cov: bool) -> Self {
         Self {
@@ -40,3 +47,7 @@ impl OrthogonalHedgeResult {
         }
     }
 }
+
+// Phase 6 submodules will be added here when implementation begins:
+// pub mod orthogonal_variance_hedger;
+// pub mod holonomic_loop_resolution;

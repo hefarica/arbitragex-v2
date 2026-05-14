@@ -56,26 +56,26 @@ use crate::types::holonomic::{ClosedContourTrajectory, TopologicalYield};
 
 /// Pre-resolution marker. A `BundlePosition<Unresolved>` carries the
 /// market identity but no mathematical commitment yet. Cannot be dispatched.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Unresolved;
 
 /// Generic "resolved" marker, primarily for internal pipelines. Most
 /// callers use one of the two specific markers below instead.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Resolved;
 
 /// Marker for bundles whose post-resolution topology is a null-covariance
 /// orthogonal hyperplane (CEX cross-venue hedge state). Constructor requires
 /// a proof reference to [`OrthogonalHedgeResult`] with verified
 /// `verify_null_covariance(1e-9) == true`.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OrthogonalEquilibrium;
 
 /// Marker for bundles whose post-resolution topology is a single Dirac
 /// liquidity impulse on the CPMM manifold (JIT-style depth provision).
 /// Constructor requires a proof reference to [`OptimalControlSolution`]
 /// with verified `hyperbolic_constraint_satisfied == true`.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DiracImpulseOnly;
 
 /// Marker for bundles whose post-resolution topology is a closed-contour
@@ -101,7 +101,7 @@ pub struct DiracImpulseOnly;
 /// non-trivial) and [`TopologicalYield`] (the economic evidence: net
 /// yield positive after friction). Six runtime validations gate the
 /// constructor — see `new_holonomic_loop`.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HolonomicLoopResolution;
 
 // ── Sealed trait pattern ──────────────────────────────────────────────
@@ -160,7 +160,7 @@ impl PostResolutionTopology for HolonomicLoopResolution {} // V1.2 amendment
 /// blocks new topologies, but field privacy is what blocks fabricating
 /// instances of existing ones. Both layers are required for the
 /// typestate to mean what the doctrine says it means.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BundlePosition<T> {
     market_id: String,
     token_pair: (String, String),
