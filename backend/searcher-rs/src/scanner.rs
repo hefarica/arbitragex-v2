@@ -380,6 +380,7 @@ async fn pool_sync_watcher(
     chain_id: u64,
     db: PgPool,
     impact_index: Arc<tokio::sync::RwLock<ImpactIndex>>,
+    cancel: tokio_util::sync::CancellationToken,
 ) {
     use crate::impact_index::PoolRef;
     use crate::route_intent::ProtocolType;
@@ -395,7 +396,13 @@ async fn pool_sync_watcher(
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(REFRESH_SECS));
 
     loop {
-        ticker.tick().await;
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                info!(event = "pool_sync_watcher.cancelled", chain_id, "exiting pool sync watcher gracefully");
+                break;
+            }
+            _ = ticker.tick() => {}
+        }
 
         // Query pools inserted after `last_created_at`.
         // Join shape matches ImpactIndex::from_registry (load_pools_from_pg) exactly:
@@ -518,6 +525,7 @@ pub async fn run_chain(
     // path consults this from the encoder dispatch; absence drives a
     // `missing_provider` fail-closed reason.
     decimals_provider: ScannerDecimalsProvider,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<ScannerHandle> {
     // RPC failover discipline (G-RPC-1): build a multi-vendor pool from env.
     // CSV format `name=url,name=url`; bare URLs accepted for back-compat.
@@ -531,7 +539,7 @@ pub async fn run_chain(
                 "RPC_WS not configured; scanner stays idle for this chain (no detection, no fabrication)"
             );
             tokio::spawn(async move {
-                idle_chain_loop(chain_id, killswitch).await;
+                idle_chain_loop(chain_id, killswitch, cancel).await;
             });
             return Ok(ScannerHandle { chain_id });
         }
@@ -543,7 +551,7 @@ pub async fn run_chain(
                 "RPC_WS env value did not parse — scanner idle"
             );
             tokio::spawn(async move {
-                idle_chain_loop(chain_id, killswitch).await;
+                idle_chain_loop(chain_id, killswitch, cancel).await;
             });
             return Ok(ScannerHandle { chain_id });
         }
@@ -633,8 +641,9 @@ pub async fn run_chain(
     // Rule: DO NOT modify pool_sync_worker internals — this task is independent.
     if let (Some(idx_arc), Some(db_pool)) = (impact_index_opt, db.clone()) {
         let watcher_chain = chain_id;
+        let watcher_cancel = cancel.clone();
         tokio::spawn(async move {
-            pool_sync_watcher(watcher_chain, db_pool, idx_arc).await;
+            pool_sync_watcher(watcher_chain, db_pool, idx_arc, watcher_cancel).await;
         });
         info!(
             event = "scanner.pool_sync_watcher_started",
@@ -658,21 +667,29 @@ pub async fn run_chain(
         orch_mode,
         simulator_v2,
         decimals_provider,
+        cancel,
     ));
     Ok(ScannerHandle { chain_id })
 }
 
-async fn idle_chain_loop(chain_id: u64, killswitch: KillSwitchClient) {
+async fn idle_chain_loop(chain_id: u64, killswitch: KillSwitchClient, cancel: tokio_util::sync::CancellationToken) {
     let mut ticker = tokio::time::interval(Duration::from_secs(60));
     loop {
-        ticker.tick().await;
-        let ks = killswitch.is_enabled().await;
-        info!(
-            event = "scanner.idle",
-            chain_id,
-            kill_switch = ks,
-            "scanner is alive but RPC_WS_{chain_id} not set; no detection happening"
-        );
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                info!(event = "scanner.idle.cancelled", chain_id, "idle loop cancelled gracefully");
+                break;
+            }
+            _ = ticker.tick() => {
+                let ks = killswitch.is_enabled().await;
+                info!(
+                    event = "scanner.idle",
+                    chain_id,
+                    kill_switch = ks,
+                    "scanner is alive but RPC_WS_{chain_id} not set; no detection happening"
+                );
+            }
+        }
     }
 }
 
@@ -692,6 +709,7 @@ async fn detection_loop(
     orch_mode: OrchestratorMode,
     simulator_v2: ScannerSimulatorV2,
     decimals_provider: ScannerDecimalsProvider,
+    cancel: tokio_util::sync::CancellationToken,
 ) {
     // Operator-selected mempool coverage. Read once at boot — re-deploy to
     // change. `Auto` is resolved per-endpoint inside `run_subscription` since
@@ -709,20 +727,32 @@ async fn detection_loop(
     if mempool_mode == MempoolMode::Disabled {
         let mut ticker = tokio::time::interval(Duration::from_secs(60));
         loop {
-            ticker.tick().await;
-            let ks = killswitch.is_enabled().await;
-            info!(
-                event = "scanner.mempool_disabled_heartbeat",
-                chain_id,
-                kill_switch = ks,
-                "mempool disabled by ARBX_MEMPOOL_MODE; relying on block-based workers"
-            );
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    info!(event = "scanner.disabled.cancelled", chain_id, "disabled loop cancelled gracefully");
+                    return;
+                }
+                _ = ticker.tick() => {
+                    let ks = killswitch.is_enabled().await;
+                    info!(
+                        event = "scanner.mempool_disabled_heartbeat",
+                        chain_id,
+                        kill_switch = ks,
+                        "mempool disabled by ARBX_MEMPOOL_MODE; relying on block-based workers"
+                    );
+                }
+            }
         }
     }
 
     let mut backoff_ms: u64 = 1000;
     let mut idx: usize = 0;
     loop {
+        if cancel.is_cancelled() {
+            info!(event = "scanner.detection_loop.cancelled", chain_id, "exiting detection loop gracefully");
+            break;
+        }
+
         // The searcher-rs scanner runs continuously, even if the kill-switch is ARMED.
         // The kill-switch blocks execution downstream (relays-client), but the intelligence
         // layer always detects opportunities to populate the real-time dashboards.
@@ -977,7 +1007,7 @@ async fn process_pending<'a>(
     {
         Ok(Ok(Some(t))) => t,
         Ok(Ok(None)) => return Ok(()), // dropped from mempool before we got it
-        Ok(Err(e)) => return Err(e.into()),
+        Ok(Err(e)) => return Err(e),
         Err(_) => {
             chain_counters(client.chain_id)
                 .pending_received
