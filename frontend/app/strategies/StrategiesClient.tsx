@@ -53,7 +53,7 @@ export function StrategiesClient({ initialConfig, initialCatalog, initialError }
     return (
       <Alert variant="destructive">
         <AlertCircleIcon />
-        <AlertTitle>strategies endpoint error</AlertTitle>
+        <AlertTitle>resolution endpoint error</AlertTitle>
         <AlertDescription className="font-mono text-xs">{initialError}</AlertDescription>
       </Alert>
     );
@@ -63,7 +63,7 @@ export function StrategiesClient({ initialConfig, initialCatalog, initialError }
     return (
       <Alert>
         <AlertCircleIcon />
-        <AlertTitle>trading_config not seeded</AlertTitle>
+        <AlertTitle>convergence_config not seeded</AlertTitle>
         <AlertDescription>
           Chain 1 has no trading config row. Seed it via the existing{" "}
           <a href="/config/trading" className="underline">/config/trading</a> form first, then return to this page.
@@ -75,14 +75,14 @@ export function StrategiesClient({ initialConfig, initialCatalog, initialError }
   return (
     <Tabs defaultValue="capital-risk" className="w-full">
       <TabsList>
-        <TabsTrigger value="capital-risk">Capital &amp; Risk</TabsTrigger>
-        <TabsTrigger value="catalog">Catálogo</TabsTrigger>
-        <TabsTrigger value="dexes">DEXes</TabsTrigger>
+        <TabsTrigger value="capital-risk">Capital &amp; Entropy</TabsTrigger>
+        <TabsTrigger value="catalog">Engine Catalog</TabsTrigger>
+        <TabsTrigger value="dexes">Exchanges</TabsTrigger>
         <TabsTrigger value="pools">Pools</TabsTrigger>
-        <TabsTrigger value="relays">MEV Services</TabsTrigger>
+        <TabsTrigger value="relays">Resolution Relays</TabsTrigger>
         <TabsTrigger value="tokens">Tokens</TabsTrigger>
-        <TabsTrigger value="simulation">Simulación</TabsTrigger>
-        <TabsTrigger value="audit">Auditoría</TabsTrigger>
+        <TabsTrigger value="simulation">Simulation</TabsTrigger>
+        <TabsTrigger value="audit">Audit Trail</TabsTrigger>
       </TabsList>
 
       <TabsContent value="capital-risk" className="mt-4">

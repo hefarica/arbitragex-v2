@@ -215,6 +215,49 @@ services:
 
     command: -config.file=/etc/promtail/config.yml
 
+  # ═══════════════════════════════════════════════════════════
+  # BLINDAJE: Nginx Reverse Proxy (Bóveda Institucional)
+  # HTTP Basic Auth protects the QuantumX Control Plane.
+  # Frontend port 3000 is NEVER exposed externally.
+  # ═══════════════════════════════════════════════════════════
+  nginx-gateway:
+    image: nginx:1.25-alpine
+    container_name: omega-nginx-gateway
+    restart: unless-stopped
+
+    volumes:
+      - ./frontend/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./.htpasswd:/etc/nginx/.htpasswd:ro
+
+    ports:
+      - "80:80"    # Único punto de entrada público al Control Plane
+
+    networks:
+      - omega-edge-net
+
+    depends_on:
+      - grafana
+
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=10m
+      - /var/cache/nginx:noexec,nosuid,size=50m
+      - /var/run:noexec,nosuid,size=10m
+
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost/nginx-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
 # ═══════════════════════════════════════════════════════════════
 # REDES
 # ═══════════════════════════════════════════════════════════════

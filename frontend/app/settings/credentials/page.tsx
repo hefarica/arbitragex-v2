@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export const metadata: Metadata = {
-  title: "Credentials — ArbitrageX v2",
+  title: "Credentials — QuantumX",
   description: "Operator credentials store — RPC, CEX, MEV, prices. Live status per credential.",
 };
 

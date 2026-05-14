@@ -32,8 +32,8 @@ export default async function OperationsPage() {
   return (
     <>
       <PageHeader
-        title="Operations PnL"
-        lede="PMI Earned Value Management metrics + scanner pipeline funnel. Updated every 30s."
+        title="Convergence Metrics"
+        lede="Earned Value convergence metrics + scanner pipeline funnel. Updated every 30s."
         showRefresh
       />
       <OperationsClient

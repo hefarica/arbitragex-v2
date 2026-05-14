@@ -1,7 +1,7 @@
 import WalletsClient, { type WalletsSnapshot } from "./WalletsClient";
 import { getApiBaseUrl } from "@/lib/api-client";
 
-export const metadata = { title: "Wallets & Allowances | ArbitrageX" };
+export const metadata = { title: "Observers & Allowances | QuantumX" };
 export const dynamic = "force-dynamic";
 
 async function getInitialWallets(): Promise<WalletsSnapshot> {
