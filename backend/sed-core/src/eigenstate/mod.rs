@@ -101,6 +101,61 @@ pub use transition_projector::{
     ProjectionError, TransitionProjection, TransitionProjector,
 };
 
+// ── Phase 5 bridge types (allocator consumes these from eigenstate) ───
+
+use nalgebra::DVector;
+
+/// Equilibrium boundary hypersurface from eigenstate decomposition.
+///
+/// The boundary represents the set of reserve configurations where the
+/// network's ground-state eigenvalue crosses a critical threshold.
+/// Phase 5's Pontryagin solver uses this as the target set ∂Ω_eq for
+/// the optimal control problem.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EquilibriumBoundary {
+    /// Points sampling the boundary hypersurface in reserve-space ℝⁿ.
+    pub boundary_hypersurface: Vec<DVector<f64>>,
+    /// Critical probability threshold for the boundary (typically 0.95).
+    pub critical_probability: f64,
+    /// Convergence radius: maximum geodesic distance from the boundary
+    /// within which the OCP solver will accept targets.
+    pub convergence_radius: f64,
+    /// Stability exponent: decay rate of perturbations near the boundary.
+    pub stability_exponent: f64,
+}
+
+impl EquilibriumBoundary {
+    /// Check if a point lies within the convergence radius of the boundary.
+    pub fn contains(&self, point: &DVector<f64>) -> bool {
+        if self.convergence_radius.is_infinite() {
+            return true;
+        }
+        self.boundary_hypersurface.iter().any(|bp| {
+            let diff = bp - point;
+            diff.norm() <= self.convergence_radius
+        })
+    }
+}
+
+/// Eigenstate of the liquidity network Hamiltonian.
+///
+/// Carries the amplitude vector (complex-valued for generality),
+/// energy eigenvalue, degeneracy, and quantum numbers.
+/// Phase 5's allocator extracts the target reserve configuration
+/// from the ground-state eigenvector.
+#[cfg(feature = "allocator")]
+#[derive(Debug, Clone, PartialEq)]
+pub struct EigenState {
+    /// Complex amplitude vector of the eigenstate.
+    pub amplitude: DVector<num_complex::Complex64>,
+    /// Energy eigenvalue.
+    pub energy: f64,
+    /// Degeneracy count (1 = non-degenerate).
+    pub degeneracy: usize,
+    /// Quantum numbers labeling this state.
+    pub quantum_numbers: Vec<i64>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,4 +172,31 @@ mod tests {
         let b = LiquidityManifold::new("0xaaa");
         assert_eq!(a, b);
     }
+
+    #[test]
+    fn equilibrium_boundary_contains_within_radius() {
+        let boundary = EquilibriumBoundary {
+            boundary_hypersurface: vec![DVector::from(vec![1000.0, 1000.0])],
+            critical_probability: 0.95,
+            convergence_radius: 100.0,
+            stability_exponent: 0.0,
+        };
+        let close = DVector::from(vec![1050.0, 1050.0]);
+        let far = DVector::from(vec![2000.0, 2000.0]);
+        assert!(boundary.contains(&close));
+        assert!(!boundary.contains(&far));
+    }
+
+    #[test]
+    fn equilibrium_boundary_infinite_radius_contains_everything() {
+        let boundary = EquilibriumBoundary {
+            boundary_hypersurface: vec![DVector::from(vec![0.0, 0.0])],
+            critical_probability: 0.95,
+            convergence_radius: f64::INFINITY,
+            stability_exponent: 0.0,
+        };
+        let far = DVector::from(vec![1e12, 1e12]);
+        assert!(boundary.contains(&far));
+    }
 }
+

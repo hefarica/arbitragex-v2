@@ -44,6 +44,9 @@ nalgebra = { workspace = true }
 # under the `filtration` feature consumes it; default builds stay slim.
 rand_distr = { workspace = true, optional = true }
 
+# Phase 5 — Complex-valued eigenstates in the allocator.
+num-complex = { version = "0.4", optional = true }
+
 # Internal path dependency. shared-rs hosts KillSwitchClient + health
 # checking primitives that the SED gates integrate with.
 shared-rs = { workspace = true }
@@ -73,8 +76,17 @@ eigenstate = []
 # PdmpEstimator → CdcCalculator → TransitionProjector → should_dispatch().
 eigenstate-full = ["filtration", "eigenstate"]
 
-allocator = []
+# Phase 5 — Dirac Manifold Allocator (Pontryagin OCP, hyperbolic constraint,
+# DiracImpulse regularization). Requires num-complex for EigenState amplitudes.
+allocator = ["dep:num-complex"]
+
+# Phase 6 — Orthogonal Variance Hedger + Holonomic Loop Resolution.
+# Builds the covariance engine and closed-contour graph searcher.
 hedger = []
+
+# Full pipeline: Phases 2 + 3 + 5 + 6.
+pipeline-full = ["filtration", "eigenstate", "allocator", "hedger"]
+
 metrics = []
 persistence = []
 kill_switch = []
