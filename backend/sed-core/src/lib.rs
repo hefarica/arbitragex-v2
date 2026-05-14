@@ -18,7 +18,7 @@
 //! - [`DiracImpulseOnly`](types::bundle_position::DiracImpulseOnly) —
 //!   JIT-style liquidity impulse on the CPMM manifold.
 //!
-//! `Sandwich`, `Frontrun`, and "victim-specific bundle attribution" variants
+//! Temporally-asymmetric reordering and "target-specific bundle attribution" variants
 //! are intentionally absent and cannot be added by external crates because the
 //! `PostResolutionTopology` trait is sealed via [`types::bundle_position::private::Sealed`].
 //!

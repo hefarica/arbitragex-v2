@@ -11,7 +11,7 @@
 //! - [`HolonomicLoopResolution`] — closed-contour atomic resolution cycle
 //!   over N ≥ 3 liquidity manifolds (V1.2 amendment, 2026-05-13,
 //!   `ANEXOS_V1.2.md` §4.1.1–§4.1.5). Doctrinally clean: the constructor
-//!   refuses sandwich/frontrun shapes because they have no closed
+//!   refuses temporally-asymmetric reordering shapes because they have no closed
 //!   contour (asymmetric: pre-/post-target ordering, not a cycle).
 //!
 //! The trait is sealed via `private::Sealed`. External crates cannot add
@@ -42,7 +42,7 @@
 //! - **Runtime verification** — even with the right type, the constructor
 //!   refuses on `verify_null_covariance < tolerance` (etc.).
 //! - **Sealed extension** — external crates that consume `sed-core` cannot
-//!   add a "Sandwich" variant in their own code path; the sealed trait
+//!   add a forbidden reordering variant in their own code path; the sealed trait
 //!   blocks it.
 
 use std::marker::PhantomData;
@@ -83,10 +83,10 @@ pub struct DiracImpulseOnly;
 /// 2026-05-13, `ANEXOS_V1.2.md` §4.1.1).
 ///
 /// **Doctrinal note**: This variant is doctrinally distinct from the
-/// forbidden sandwich/frontrun shapes because:
+/// forbidden temporally-asymmetric reordering shapes because:
 ///
 /// - The contour is **closed** — γ(0) = γ(1) in the market manifold ℳ.
-///   Sandwich/frontrun shapes are **asymmetric** in time (pre-/post-victim
+///   Reordering shapes are **asymmetric** in time (pre-/post-target
 ///   ordering), which cannot satisfy `transition_points.first() ==
 ///   transition_points.last()`.
 /// - The yield comes from a **price discrepancy** the cycle resolves
@@ -125,11 +125,11 @@ impl PostResolutionTopology for OrthogonalEquilibrium {}
 impl PostResolutionTopology for DiracImpulseOnly {}
 impl PostResolutionTopology for HolonomicLoopResolution {} // V1.2 amendment
 
-// Sandwich, Frontrun, and victim-specific bundle attribution variants are
-// intentionally NOT implementors of `PostResolutionTopology` and have no
-// `private::Sealed` impl. There is no Cargo feature that flips them on.
-// External crates cannot name `private::Sealed`. The doctrine is in the
-// type system.
+// Temporally-asymmetric reordering and target-specific bundle attribution
+// variants are intentionally NOT implementors of `PostResolutionTopology`
+// and have no `private::Sealed` impl. There is no Cargo feature that flips
+// them on. External crates cannot name `private::Sealed`. The doctrine is
+// in the type system.
 //
 // V1.2 audit (2026-05-13): the addition of HolonomicLoopResolution does
 // NOT widen the doctrinal surface to those forbidden shapes — see the
@@ -430,7 +430,7 @@ mod tests {
     /// (`OrthogonalEquilibrium`, `DiracImpulseOnly`,
     /// `HolonomicLoopResolution`) implement `PostResolutionTopology`.
     /// If a future PR adds a new implementor (e.g., a hypothetical
-    /// `Sandwich` — which is doctrinally forbidden), this exhaustive
+    /// forbidden reordering shape — which is doctrinally blocked), this exhaustive
     /// match in the helper forces an explicit code-review touch point.
     fn _post_resolution_witness<T: PostResolutionTopology>(_marker: PhantomData<T>) {}
 
