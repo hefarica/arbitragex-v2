@@ -2,94 +2,96 @@ name: Ω-S5++ APEX Verify admin session wiring (READ-ONLY)
 on:
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: 195.201.235.70
+
 jobs:
   verify:
-    runs-on: self-hosted
-    timeout-minutes: 5
-    env:
-      ARBX_ADMIN_TOKEN: ${{ secrets.ARBX_ADMIN_TOKEN }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
     steps:
-      - name: Container layout
+      - name: Setup SSH
         run: |
-          set -u
-          echo "=== Containers ==="
-          docker ps --format '{{.Names}}\t{{.Ports}}\t{{.Status}}' | grep -E 'edge|frontend|api-server' || true
-          echo "=== Edge HEAD ==="
-          docker inspect arbitragex-v2-edge-1 --format '{{.Config.Cmd}}' 2>&1 | head -3 || true
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/arbx_key
+          chmod 600 ~/.ssh/arbx_key
+          ssh-keyscan -H ${{ env.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: M1 verify — POST /admin/session
+      - name: "Verify admin session wiring E2E"
         run: |
-          set -u
-          rm -f /tmp/c
-          echo "=== POST /admin/session ==="
-          HTTP=$(curl -sk -o /tmp/r1.json -w '%{http_code}' -c /tmp/c \
-            -X POST http://127.0.0.1:8787/admin/session \
-            -H 'content-type: application/json' \
-            -d "{\"token\":\"$ARBX_ADMIN_TOKEN\"}")
-          echo "status=$HTTP"
-          echo "--- response body ---"
-          cat /tmp/r1.json | head -c 500; echo
-          echo "--- cookies issued ---"
-          grep -E '^[^#]' /tmp/c | awk '{print $6"="substr($7,1,8)"..."}' || true
-          test "$HTTP" = "200" || { echo "❌ session endpoint not 200"; exit 1; }
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set +e
+            ADMIN_TOKEN=$(grep -E '^ARBX_ADMIN_TOKEN=' /opt/arbitragex-v2/.env | cut -d= -f2-)
+            PASS=0
+            FAIL=0
+            run() {
+              local name="$1"; local expected="$2"; local got="$3"
+              if [ "$got" = "$expected" ]; then
+                echo "  ✓ $name → $got"; PASS=$((PASS+1))
+              else
+                echo "  ❌ $name → got $got, expected $expected"; FAIL=$((FAIL+1))
+              fi
+            }
 
-      - name: M1 verify — GET /api/admin/chains with cookie
-        run: |
-          set -u
-          echo "=== GET /api/admin/chains with cookie (the actual bug fix) ==="
-          HTTP=$(curl -sk -o /tmp/r2.json -w '%{http_code}' -b /tmp/c http://127.0.0.1:8787/api/admin/chains)
-          echo "status=$HTTP"
-          echo "--- response body (first 600 chars) ---"
-          cat /tmp/r2.json | head -c 600; echo
-          test "$HTTP" = "200" || { echo "❌ /api/admin/chains not 200 with cookie — wiring fix FAILED"; exit 1; }
+            echo "═══ M1.A — POST /admin/session (create cookie) ═══"
+            rm -f /tmp/c
+            HTTP=$(curl -sk -o /tmp/r1.json -w '%{http_code}' -c /tmp/c \
+              -X POST http://127.0.0.1:8787/admin/session \
+              -H 'content-type: application/json' \
+              -d "{\"token\":\"$ADMIN_TOKEN\"}")
+            run "POST /admin/session" "200" "$HTTP"
+            echo "    response: $(head -c 200 /tmp/r1.json)"
+            echo "    cookies issued: $(grep -E '^[^#]' /tmp/c | awk '{print $6}' | tr '\n' ' ')"
 
-      - name: M1 verify — GET /api/admin/chains WITHOUT cookie (expect 401)
-        run: |
-          set -u
-          HTTP=$(curl -sk -o /tmp/r3.json -w '%{http_code}' http://127.0.0.1:8787/api/admin/chains)
-          echo "status without cookie=$HTTP"
-          test "$HTTP" = "401" || { echo "⚠ expected 401 without cookie, got $HTTP"; exit 1; }
+            echo ""
+            echo "═══ M1.B — GET /api/admin/chains WITH cookie (THE BUG FIX) ═══"
+            HTTP=$(curl -sk -o /tmp/r2.json -w '%{http_code}' -b /tmp/c http://127.0.0.1:8787/api/admin/chains)
+            run "GET /api/admin/chains (cookie)" "200" "$HTTP"
+            echo "    response: $(head -c 300 /tmp/r2.json)"
 
-      - name: M3 verify — /omega-s5/registry/chain SSR anon (must be 200, not 500)
-        run: |
-          set -u
-          echo "=== GET /omega-s5/registry/chain (no cookie) — must be 200 AUTH_REQUIRED, not 500 ==="
-          HTTP=$(curl -sk -o /tmp/page-anon.html -w '%{http_code}' http://127.0.0.1:3000/omega-s5/registry/chain)
-          echo "status=$HTTP"
-          echo "--- AUTH_REQUIRED markers ---"
-          grep -c -E 'AUTH_REQUIRED|Admin session required|signin' /tmp/page-anon.html || echo "0 markers"
-          test "$HTTP" = "200" || { echo "❌ SSR anon returned $HTTP (expected 200 fail-honest)"; exit 1; }
+            echo ""
+            echo "═══ M1.C — GET /api/admin/chains WITHOUT cookie (must be 401) ═══"
+            HTTP=$(curl -sk -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/api/admin/chains)
+            run "GET /api/admin/chains (no cookie)" "401" "$HTTP"
 
-      - name: M3 verify — /omega-s5/registry/token SSR anon
-        run: |
-          set -u
-          HTTP=$(curl -sk -o /tmp/page-token.html -w '%{http_code}' http://127.0.0.1:3000/omega-s5/registry/token)
-          echo "status=$HTTP"
-          test "$HTTP" = "200" || { echo "❌ /omega-s5/registry/token returned $HTTP"; exit 1; }
+            echo ""
+            echo "═══ M3.A — SSR /omega-s5/registry/chain anon (must be 200 fail-honest) ═══"
+            HTTP=$(curl -sk -o /tmp/page-anon.html -w '%{http_code}' http://127.0.0.1:3000/omega-s5/registry/chain)
+            run "SSR /registry/chain (anon)" "200" "$HTTP"
+            MARKERS=$(grep -c -iE 'AUTH_REQUIRED|admin.session.required|sign.?in' /tmp/page-anon.html 2>/dev/null || echo "0")
+            echo "    AUTH_REQUIRED markers in HTML: $MARKERS"
 
-      - name: M3 verify — /omega-s5/registry/chain WITH cookie
-        run: |
-          set -u
-          HTTP=$(curl -sk -o /tmp/page-auth.html -w '%{http_code}' -b /tmp/c http://127.0.0.1:3000/omega-s5/registry/chain)
-          echo "status with cookie=$HTTP"
-          test "$HTTP" = "200" || { echo "❌ SSR with cookie returned $HTTP"; exit 1; }
+            echo ""
+            echo "═══ M3.B — SSR /omega-s5/registry/token anon ═══"
+            HTTP=$(curl -sk -o /tmp/page-token.html -w '%{http_code}' http://127.0.0.1:3000/omega-s5/registry/token)
+            run "SSR /registry/token (anon)" "200" "$HTTP"
 
-      - name: M4 verify — /admin/signin page renders
-        run: |
-          set -u
-          HTTP=$(curl -sk -o /tmp/signin.html -w '%{http_code}' http://127.0.0.1:3000/admin/signin)
-          echo "status=$HTTP"
-          grep -c -iE 'admin.token|sign.?in' /tmp/signin.html || echo "0 markers"
-          test "$HTTP" = "200" || { echo "❌ /admin/signin not 200"; exit 1; }
+            echo ""
+            echo "═══ M3.C — SSR /omega-s5/registry/chain WITH cookie ═══"
+            HTTP=$(curl -sk -o /tmp/page-auth.html -w '%{http_code}' -b /tmp/c http://127.0.0.1:3000/omega-s5/registry/chain)
+            run "SSR /registry/chain (cookie)" "200" "$HTTP"
 
-      - name: Final summary
-        run: |
-          echo "════════════════════════════════════════════"
-          echo "  HOLONOMIC RESOLUTION CONFIRMED"
-          echo "════════════════════════════════════════════"
-          echo "  M1 edge cookie → header translation:  ✓"
-          echo "  M1 401 without cookie:                 ✓"
-          echo "  M3 SSR fail-honest anon:               ✓"
-          echo "  M3 SSR fail-honest authed:             ✓"
-          echo "  M4 /admin/signin reachable:            ✓"
-          echo "════════════════════════════════════════════"
+            echo ""
+            echo "═══ M4 — /admin/signin reachable ═══"
+            HTTP=$(curl -sk -o /tmp/signin.html -w '%{http_code}' http://127.0.0.1:3000/admin/signin)
+            run "GET /admin/signin" "200" "$HTTP"
+            grep -c -iE 'admin.token|password' /tmp/signin.html 2>/dev/null | head -1
+
+            echo ""
+            echo "═══ M3.D — comparison: /apex/allocator must still be 200 (non-admin route) ═══"
+            HTTP=$(curl -sk -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/apex/allocator)
+            run "GET /apex/allocator" "200" "$HTTP"
+
+            echo ""
+            echo "════════════════════════════════════════════"
+            echo "  RESULT: $PASS passed, $FAIL failed"
+            echo "════════════════════════════════════════════"
+            test "$FAIL" = "0"
+          REMOTE
+
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/arbx_key
