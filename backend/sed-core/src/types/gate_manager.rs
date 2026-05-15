@@ -307,7 +307,13 @@ impl GateManager {
     }
 }
 
-#[cfg(test)]
+// Tests reach into `crate::hedger` (Phase 6) and `crate::allocator`
+// (Phase 5) for the stub proof witnesses needed by the
+// `new_orthogonal_equilibrium` / `new_dirac_impulse_only` constructors
+// (also feature-gated on `hedger` / `allocator`). Gate the whole module
+// on the same features so default-profile `cargo test -p sed-core`
+// stays Z=0; CI exercises the gate logic via `--features pipeline-full`.
+#[cfg(all(test, feature = "hedger", feature = "allocator"))]
 mod tests {
     use super::*;
     use crate::hedger::OrthogonalHedgeResult;
