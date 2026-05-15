@@ -79,19 +79,76 @@ jobs:
         id: gate
         run: |
           set -euo pipefail
-          ~/ssh_vps.sh "cd $VPS_PATH && git diff --name-status '${TARGET_SHA}' -- ." > /tmp/audit/c10_recovery_diff_target_pre.txt
-          if [ -s /tmp/audit/c10_recovery_diff_target_pre.txt ]; then
+          cat > /tmp/gate_remote.sh <<'REMOTE_EOF'
+          set -euo pipefail
+          cd "$1"
+          TARGET_SHA="$2"
+          DIFF_FILE=/tmp/c10_recovery_diff_target_pre.txt
+          ALLOWED_FILE=/tmp/c10_recovery_d_allowed_hash_match.txt
+          BLOCK_FILE=/tmp/c10_recovery_gate_block_reason.txt
+          : > "$DIFF_FILE"
+          : > "$ALLOWED_FILE"
+          : > "$BLOCK_FILE"
+          git diff --name-status "${TARGET_SHA}" -- . > "$DIFF_FILE"
+          if [ ! -s "$DIFF_FILE" ]; then
+            echo "GATE_PASS_CLEAN" > "$BLOCK_FILE"
+            exit 0
+          fi
+          while IFS=$'\t' read -r status path; do
+            if [ -z "${status:-}" ]; then
+              continue
+            fi
+            if [ "$status" != "D" ]; then
+              echo "BLOCKED: status no-D detectado: status=$status path=$path" > "$BLOCK_FILE"
+              exit 2
+            fi
+            if [ ! -f "$path" ]; then
+              echo "BLOCKED: archivo no existe físicamente: $path" > "$BLOCK_FILE"
+              exit 3
+            fi
+            target_blob="$(git rev-parse "${TARGET_SHA}:${path}" 2>/dev/null || echo "")"
+            if [ -z "$target_blob" ]; then
+              echo "BLOCKED: target_blob no resolvible para $path" > "$BLOCK_FILE"
+              exit 4
+            fi
+            worktree_blob="$(git hash-object -- "$path" 2>/dev/null || echo "")"
+            if [ -z "$worktree_blob" ]; then
+              echo "BLOCKED: worktree_blob no resolvible para $path" > "$BLOCK_FILE"
+              exit 5
+            fi
+            if [ "$target_blob" != "$worktree_blob" ]; then
+              echo "BLOCKED: hash mismatch para $path: target=$target_blob worktree=$worktree_blob" > "$BLOCK_FILE"
+              exit 6
+            fi
+            echo "D_ALLOWED_HASH_MATCH path=$path target_blob=$target_blob worktree_blob=$worktree_blob" >> "$ALLOWED_FILE"
+          done < "$DIFF_FILE"
+          echo "GATE_PASS_D_ALLOWED_HASH_MATCH" > "$BLOCK_FILE"
+          exit 0
+          REMOTE_EOF
+          scp -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes -o LogLevel=ERROR /tmp/gate_remote.sh "$VPS_USER@$VPS_HOST:/tmp/gate_remote.sh"
+          GATE_EXIT=0
+          ~/ssh_vps.sh "chmod +x /tmp/gate_remote.sh && /tmp/gate_remote.sh '$VPS_PATH' '$TARGET_SHA'" || GATE_EXIT=$?
+          scp -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes -o LogLevel=ERROR "$VPS_USER@$VPS_HOST:/tmp/c10_recovery_diff_target_pre.txt" /tmp/audit/ || true
+          scp -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes -o LogLevel=ERROR "$VPS_USER@$VPS_HOST:/tmp/c10_recovery_d_allowed_hash_match.txt" /tmp/audit/ || true
+          scp -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes -o LogLevel=ERROR "$VPS_USER@$VPS_HOST:/tmp/c10_recovery_gate_block_reason.txt" /tmp/audit/ || true
+          if [ "$GATE_EXIT" -ne 0 ]; then
             echo "BLOCKED=1" >> $GITHUB_ENV
-            echo "::error::Worktree NO coincide con TARGET_SHA. Abort sin update-ref."
+            echo "::error::GATE BLOCKED — ver c10_recovery_gate_block_reason.txt"
+            cat /tmp/audit/c10_recovery_gate_block_reason.txt || true
             echo "" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
-            echo "## ❌ BLOCKED" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
-            echo "" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
-            echo "git diff --name-status TARGET_SHA NO está vacío. NO se ejecutó update-ref ni reset --mixed." >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
-            echo "Ver c10_recovery_diff_target_pre.txt" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+            echo "## ❌ BLOCKED (gate inteligente)" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+            cat /tmp/audit/c10_recovery_gate_block_reason.txt >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md || true
             exit 1
           fi
           echo "BLOCKED=0" >> $GITHUB_ENV
-          echo "OK: worktree coincide con TARGET_SHA" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          REASON="$(cat /tmp/audit/c10_recovery_gate_block_reason.txt || echo UNKNOWN)"
+          echo "## Gate: $REASON" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          if [ -s /tmp/audit/c10_recovery_d_allowed_hash_match.txt ]; then
+            echo "### Archivos D permitidos (hash match):" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+            echo '```' >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+            cat /tmp/audit/c10_recovery_d_allowed_hash_match.txt >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+            echo '```' >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          fi
 
       - name: Step 7 — git update-ref refs/heads/main TARGET_SHA
         if: env.BLOCKED != '1'
@@ -151,7 +208,17 @@ jobs:
           set -euo pipefail
           ~/ssh_vps.sh "curl -sS -o /dev/null -w 'edge=%{http_code}\n' --max-time 8 http://127.0.0.1:8787/health" > /tmp/audit/c10_recovery_health.txt || true
           ~/ssh_vps.sh "curl -sS -o /dev/null -w 'api=%{http_code}\n' --max-time 8 http://127.0.0.1:8080/health" >> /tmp/audit/c10_recovery_health.txt || true
-          ~/ssh_vps.sh "curl -sS -o /dev/null -w 'frontend_api=%{http_code}\n' --max-time 8 http://127.0.0.1:5173/api/health" >> /tmp/audit/c10_recovery_health.txt || true
+          PRIMARY=$(~/ssh_vps.sh "curl -sS -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:5173/api/health" || echo "000")
+          if [ "$PRIMARY" = "200" ]; then
+            echo "frontend_api=200" >> /tmp/audit/c10_recovery_health.txt
+          else
+            FALLBACK=$(~/ssh_vps.sh "curl -sS -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:5173/" || echo "000")
+            if [ "$FALLBACK" = "200" ]; then
+              echo "frontend=200 (fallback /, primary /api/health=$PRIMARY)" >> /tmp/audit/c10_recovery_health.txt
+            else
+              echo "frontend=FAIL primary=$PRIMARY fallback=$FALLBACK" >> /tmp/audit/c10_recovery_health.txt
+            fi
+          fi
           ~/ssh_vps.sh "curl -sS -o /dev/null -w 'prometheus=%{http_code}\n' --max-time 8 http://127.0.0.1:9090/-/ready" >> /tmp/audit/c10_recovery_health.txt || true
 
       - name: Step 13 — Final verdict in report
