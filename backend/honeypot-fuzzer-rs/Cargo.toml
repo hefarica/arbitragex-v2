@@ -1,0 +1,21 @@
+[workspace]
+
+[package]
+name = "honeypot-fuzzer-rs"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+# Activar solo cuando se enchufa un revm real con fork mainnet.
+revm-real = []
+
+[dependencies]
+thiserror = "1.0"
+tracing = "0.1"
+async-trait = "0.1"
+tokio = { version = "1.41", features = ["sync", "time", "macros", "rt", "rt-multi-thread"] }
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+tokio = { version = "1.41", features = ["full", "test-util"] }
