@@ -1,0 +1,509 @@
+---
+# Ω-S5++ C10 Fase 0 — Auditoría VPS Wiring (READ-ONLY)
+#
+# Auditoría no destructiva de 7 capas (GitHub, VPS Git, VPS FS, Docker,
+# Health, Routing, Riesgo) sobre el VPS arbx. Cero mutaciones: no hay
+# git pull/fetch/push/reset/checkout, ni docker pull/build/up/stop/rm,
+# ni rsync/scp/sudo. La reparación de hallazgos requiere autorización
+# explícita del operador en Fase 1.
+#
+# Mirror Fidelity: el reporte refleja la topología real del VPS sin
+# perturbar el estado base (Spectral Gap preservado).
+
+name: audit-vps-wiring
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: "SHA de referencia (solo informativo; Fase 0 no sincroniza)"
+        required: false
+        type: string
+  # Activar tras validar el primer reporte manualmente:
+  # schedule:
+  #   - cron: '0 8 * * *'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: audit-vps-wiring
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Auditar VPS arbx (read-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VPS_HOST: 195.201.235.70
+      VPS_USER: root
+      VPS_PATH: /opt/arbitragex-v2
+      REPO_SLUG: hefarica/arbitragex-v2
+      TARGET_SHA: ${{ inputs.target_sha }}
+
+    steps:
+      - name: Checkout repositorio (referencia local)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Preparar metadatos del run
+        id: meta
+        run: |
+          set -euo pipefail
+          TS_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          TS_FILE="$(date -u +%Y%m%dT%H%M%SZ)"
+          SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+          OUT_BASE="audits/AUDIT-${SHORT_SHA}-${TS_FILE}"
+          {
+            echo "ts_utc=${TS_UTC}"
+            echo "ts_file=${TS_FILE}"
+            echo "short_sha=${SHORT_SHA}"
+            echo "out_json=${OUT_BASE}.json"
+            echo "out_md=${OUT_BASE}.md"
+          } >> "$GITHUB_OUTPUT"
+          mkdir -p audits
+
+      - name: Capa A — Auditar GitHub (runner local)
+        id: capa_a
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          OUT=audits/_capa_a.json
+          DEFAULT_BRANCH="$(gh api "repos/${REPO_SLUG}" --jq '.default_branch' 2>/dev/null || echo 'desconocido')"
+          FULL_NAME="$(gh api "repos/${REPO_SLUG}" --jq '.full_name' 2>/dev/null || echo "${REPO_SLUG}")"
+          HEAD_SHA="$(git rev-parse HEAD)"
+          WORKFLOWS="$(ls .github/workflows/*.yml 2>/dev/null | xargs -n1 basename | jq -R . | jq -s .)"
+          SECRETS_LIST="$(gh secret list --repo "${REPO_SLUG}" --json name --jq '[.[].name]' 2>/dev/null || echo '[]')"
+          ENVIRONMENTS="$(gh api "repos/${REPO_SLUG}/environments" --jq '[.environments[]?.name]' 2>/dev/null || echo '[]')"
+          PROTECTION="$(gh api "repos/${REPO_SLUG}/branches/main/protection" --jq '{required_status_checks, enforce_admins, required_pull_request_reviews}' 2>/dev/null || echo 'null')"
+          jq -n \
+            --arg default_branch "${DEFAULT_BRANCH}" \
+            --arg full_name "${FULL_NAME}" \
+            --arg head_sha "${HEAD_SHA}" \
+            --argjson workflows "${WORKFLOWS}" \
+            --argjson secrets "${SECRETS_LIST}" \
+            --argjson environments "${ENVIRONMENTS}" \
+            --argjson protection "${PROTECTION}" \
+            '{default_branch:$default_branch, full_name:$full_name, head_sha:$head_sha, workflows:$workflows, secrets:$secrets, environments:$environments, branch_protection:$protection}' \
+            > "${OUT}"
+          echo "Capa A escrita en ${OUT}"
+
+      - name: Setup SSH (clave efímera)
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cat >> ~/.ssh/config <<EOF
+          Host arbx
+            HostName ${VPS_HOST}
+            User ${VPS_USER}
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+            ConnectTimeout 10
+            ServerAliveInterval 15
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Capas B-F — Auditar VPS arbx (SSH read-only)
+        id: capa_vps
+        run: |
+          set -euo pipefail
+          # Recolección read-only en VPS. Cualquier comando que mute estado
+          # está PROHIBIDO. Salida emitida como bloques delimitados con
+          # marcadores sentinela para parseo seguro.
+          ssh arbx 'bash -s' > audits/_vps_raw.txt <<'EOSSH'
+          set +e
+          REDACT() { sed 's/[A-Za-z0-9_\-]\{32,\}/***REDACTED***/g'; }
+
+          echo "===BEGIN_B_GIT==="
+          cd /opt/arbitragex-v2 2>/dev/null || { echo "VPS_PATH_MISSING"; }
+          echo "--pwd--"; pwd
+          echo "--status--"; git status -sb 2>&1 | head -200
+          echo "--head--"; git rev-parse HEAD 2>&1
+          echo "--branch--"; git rev-parse --abbrev-ref HEAD 2>&1
+          echo "--remote--"; git remote -v 2>&1
+          echo "--remote_url--"; git config --get-all remote.origin.url 2>&1
+          echo "--stash--"; git stash list 2>&1
+          echo "--refs--"; git for-each-ref --format='%(refname) %(objectname:short)' refs/heads refs/remotes 2>&1 | head -100
+          echo "===END_B_GIT==="
+
+          echo "===BEGIN_C_FS==="
+          echo "--env_meta--"; ls -la /opt/arbitragex-v2/.env 2>/dev/null | awk '{print $1, $3, $4, $5}'
+          echo "--env_perm--"; stat -c '%a' /opt/arbitragex-v2/.env 2>/dev/null || echo "missing"
+          echo "--env_size--"; stat -c '%s' /opt/arbitragex-v2/.env 2>/dev/null || echo "0"
+          echo "--docker_dir--"; ls /opt/arbitragex-v2/docker/ 2>/dev/null
+          echo "--workflows_vps--"; find /opt/arbitragex-v2/.github/workflows -maxdepth 1 -name '*.yml' 2>/dev/null | xargs -I{} basename {} 2>/dev/null
+          echo "--disk--"; df -h /opt/arbitragex-v2 2>/dev/null | tail -1
+          echo "===END_C_FS==="
+
+          echo "===BEGIN_D_DOCKER==="
+          echo "--ps--"; docker ps --format '{{.Names}}|{{.Status}}|{{.Image}}|{{.Ports}}' 2>&1 | head -50
+          echo "--images--"; docker images --filter "reference=arbitragex-v2-*" --format '{{.Repository}}:{{.Tag}}|{{.ID}}|{{.CreatedSince}}|{{.Size}}' 2>&1 | head -30
+          echo "--backup_tags--"; docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -Ei 'pre-|backup|rollback' | head -20
+          echo "--compose_meta--"; ls -la /opt/arbitragex-v2/docker/compose.prod.yml 2>/dev/null | awk '{print $1, $3, $4, $5, $6, $7, $8, $9}'
+          echo "--compose_head--"; head -20 /opt/arbitragex-v2/docker/compose.prod.yml 2>/dev/null | REDACT
+          echo "===END_D_DOCKER==="
+
+          echo "===BEGIN_E_HEALTH==="
+          for SPEC in \
+            "edge|http://127.0.0.1:8787/health" \
+            "api_server|http://127.0.0.1:8080/health" \
+            "frontend|http://127.0.0.1:3000/api/health" \
+            "prometheus|http://127.0.0.1:9090/-/healthy"; do
+            NAME="${SPEC%%|*}"
+            URL="${SPEC#*|}"
+            RES="$(curl -s -o /dev/null -w '%{http_code} %{time_total}s' -m 5 "${URL}" 2>/dev/null || echo 'CONN_FAIL')"
+            echo "${NAME}|${RES}"
+          done
+          echo "===END_E_HEALTH==="
+
+          echo "===BEGIN_F_ROUTING==="
+          if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^omega-nginx-gateway$'; then
+            docker exec omega-nginx-gateway nginx -T 2>&1 | grep -E 'server_name|proxy_pass|location' | head -40
+          else
+            echo "NGINX_GAP"
+          fi
+          echo "===END_F_ROUTING==="
+          EOSSH
+          echo "Salida cruda VPS: $(wc -l < audits/_vps_raw.txt) líneas"
+
+      - name: Parsear salida VPS y consolidar JSON
+        id: parse
+        env:
+          OUT_JSON: ${{ steps.meta.outputs.out_json }}
+          OUT_MD: ${{ steps.meta.outputs.out_md }}
+          TS_UTC: ${{ steps.meta.outputs.ts_utc }}
+          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
+        run: |
+          set -euo pipefail
+          RAW=audits/_vps_raw.txt
+          [ -s "$RAW" ] || { echo "Salida VPS vacía"; echo "" > "$RAW"; }
+
+          extract_block() {
+            awk -v B="===BEGIN_$1===" -v E="===END_$1===" \
+              '$0==B{f=1;next} $0==E{f=0} f' "$RAW"
+          }
+
+          B_GIT="$(extract_block B_GIT)"
+          C_FS="$(extract_block C_FS)"
+          D_DOCKER="$(extract_block D_DOCKER)"
+          E_HEALTH="$(extract_block E_HEALTH)"
+          F_ROUTING="$(extract_block F_ROUTING)"
+
+          field() { awk -v K="--$1--" '$0==K{flag=1;next} /^--[a-z_]+--$/{flag=0} flag' <<<"$2" | sed 's/[[:space:]]*$//'; }
+
+          VPS_HEAD="$(field head "$B_GIT" | head -1)"
+          VPS_BRANCH="$(field branch "$B_GIT" | head -1)"
+          VPS_REMOTE_URL="$(field remote_url "$B_GIT" | head -1)"
+          VPS_REMOTE_RAW="$(field remote "$B_GIT")"
+          VPS_STATUS="$(field status "$B_GIT")"
+          VPS_STASH="$(field stash "$B_GIT")"
+
+          ENV_PERM="$(field env_perm "$C_FS" | head -1)"
+          ENV_SIZE="$(field env_size "$C_FS" | head -1)"
+          ENV_META="$(field env_meta "$C_FS" | head -1)"
+          DISK="$(field disk "$C_FS" | head -1)"
+          WF_VPS="$(field workflows_vps "$C_FS")"
+
+          DOCKER_PS="$(field ps "$D_DOCKER")"
+          DOCKER_IMAGES="$(field images "$D_DOCKER")"
+          DOCKER_BACKUPS="$(field backup_tags "$D_DOCKER")"
+
+          # Risk derivations
+          REMOTE_BROKEN=false
+          if echo "$VPS_REMOTE_URL" | grep -qE '/opt/git/arbitragex-v2\.git'; then
+            REMOTE_BROKEN=true
+          fi
+          if [ -z "$VPS_REMOTE_URL" ] || echo "$VPS_REMOTE_URL" | grep -qi 'fatal\|not a git'; then
+            REMOTE_BROKEN=true
+          fi
+
+          DIRTY_COUNT=$(echo "$VPS_STATUS" | grep -cE '^[[:space:]]*[?MADRCU]' || true)
+          WORKING_DIRTY=false
+          [ "${DIRTY_COUNT:-0}" -gt 0 ] && WORKING_DIRTY=true
+
+          STASH_COUNT=$(echo "$VPS_STASH" | grep -c '^stash@' || true)
+          STASHES_PRESENT=false
+          [ "${STASH_COUNT:-0}" -gt 0 ] && STASHES_PRESENT=true
+
+          ENV_PERM_OK=false
+          [ "$ENV_PERM" = "600" ] && ENV_PERM_OK=true
+
+          GH_HEAD="$(jq -r .head_sha audits/_capa_a.json)"
+          HEAD_DESYNC=false
+          if [ -n "$VPS_HEAD" ] && [ -n "$GH_HEAD" ] && [ "$VPS_HEAD" != "$GH_HEAD" ]; then
+            HEAD_DESYNC=true
+          fi
+
+          # Health parsing
+          health_for() { echo "$E_HEALTH" | awk -F'|' -v K="$1" '$1==K{print $2}' | head -1; }
+          H_EDGE="$(health_for edge)"
+          H_API="$(health_for api_server)"
+          H_FRONT="$(health_for frontend)"
+          H_PROM="$(health_for prometheus)"
+
+          # Routing
+          ROUTING_SUMMARY="$F_ROUTING"
+          ROUTING_GAP=false
+          echo "$F_ROUTING" | grep -q 'NGINX_GAP' && ROUTING_GAP=true
+
+          # Containers parse
+          CONTAINERS_JSON="$(printf '%s\n' "$DOCKER_PS" | awk -F'|' 'NF>=3{printf "{\"name\":\"%s\",\"status\":\"%s\",\"image\":\"%s\",\"ports\":\"%s\"}\n",$1,$2,$3,$4}' | jq -s . 2>/dev/null || echo '[]')"
+          IMAGES_JSON="$(printf '%s\n' "$DOCKER_IMAGES" | awk -F'|' 'NF>=2{printf "{\"ref\":\"%s\",\"id\":\"%s\",\"created\":\"%s\",\"size\":\"%s\"}\n",$1,$2,$3,$4}' | jq -s . 2>/dev/null || echo '[]')"
+          BACKUPS_JSON="$(printf '%s\n' "$DOCKER_BACKUPS" | sed '/^$/d' | jq -R . | jq -s . 2>/dev/null || echo '[]')"
+          STASHES_JSON="$(printf '%s\n' "$VPS_STASH" | sed '/^$/d' | jq -R . | jq -s . 2>/dev/null || echo '[]')"
+          WF_VPS_JSON="$(printf '%s\n' "$WF_VPS" | sed '/^$/d' | jq -R . | jq -s . 2>/dev/null || echo '[]')"
+
+          jq -n \
+            --arg ts "$TS_UTC" \
+            --arg sha "$SHORT_SHA" \
+            --arg run "${GITHUB_RUN_ID:-}" \
+            --slurpfile gh audits/_capa_a.json \
+            --arg vps_head "$VPS_HEAD" \
+            --arg vps_branch "$VPS_BRANCH" \
+            --arg vps_remote_url "$VPS_REMOTE_URL" \
+            --argjson stashes "$STASHES_JSON" \
+            --arg env_perm "$ENV_PERM" \
+            --arg env_size "$ENV_SIZE" \
+            --arg env_meta "$ENV_META" \
+            --arg disk "$DISK" \
+            --argjson workflows_vps "$WF_VPS_JSON" \
+            --argjson containers "$CONTAINERS_JSON" \
+            --argjson images "$IMAGES_JSON" \
+            --argjson backups "$BACKUPS_JSON" \
+            --arg edge "$H_EDGE" \
+            --arg api_server "$H_API" \
+            --arg frontend "$H_FRONT" \
+            --arg prometheus "$H_PROM" \
+            --arg routing "$ROUTING_SUMMARY" \
+            --argjson routing_gap "$ROUTING_GAP" \
+            --argjson remote_broken "$REMOTE_BROKEN" \
+            --argjson head_desync "$HEAD_DESYNC" \
+            --argjson working_dirty "$WORKING_DIRTY" \
+            --argjson stashes_present "$STASHES_PRESENT" \
+            --argjson env_perm_ok "$ENV_PERM_OK" \
+            --arg dirty_count "$DIRTY_COUNT" \
+            --arg stash_count "$STASH_COUNT" \
+            '{
+              meta: {timestamp_utc:$ts, github_sha:$sha, workflow_run_id:$run},
+              github: $gh[0],
+              vps_git: {
+                head: $vps_head,
+                branch: $vps_branch,
+                remote_url: $vps_remote_url,
+                remote_broken: $remote_broken,
+                stashes: $stashes,
+                workflows_present: $workflows_vps
+              },
+              vps_fs: {
+                env_perm: $env_perm,
+                env_size_bytes: ($env_size|tonumber? // 0),
+                env_meta: $env_meta,
+                disk: $disk
+              },
+              docker: {
+                containers: $containers,
+                images: $images,
+                backup_tags: $backups
+              },
+              health: {
+                edge: $edge,
+                api_server: $api_server,
+                frontend: $frontend,
+                prometheus: $prometheus
+              },
+              routing: {
+                config_summary: $routing,
+                gap: $routing_gap
+              },
+              risk: {
+                remote_broken: $remote_broken,
+                head_desync: $head_desync,
+                working_tree_dirty: $working_dirty,
+                dirty_count: ($dirty_count|tonumber? // 0),
+                stashes_present: $stashes_present,
+                stashes_count: ($stash_count|tonumber? // 0),
+                env_perm_correct: $env_perm_ok
+              }
+            }' > "$OUT_JSON"
+          echo "JSON consolidado: $OUT_JSON"
+
+      - name: Generar reporte markdown
+        id: render
+        env:
+          OUT_JSON: ${{ steps.meta.outputs.out_json }}
+          OUT_MD: ${{ steps.meta.outputs.out_md }}
+          TS_UTC: ${{ steps.meta.outputs.ts_utc }}
+          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
+        run: |
+          set -euo pipefail
+          J="$OUT_JSON"
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          DEFAULT_BRANCH="$(jq -r '.github.default_branch' "$J")"
+          GH_HEAD="$(jq -r '.github.head_sha' "$J")"
+          VPS_HEAD="$(jq -r '.vps_git.head' "$J")"
+          REMOTE_URL="$(jq -r '.vps_git.remote_url' "$J")"
+          REMOTE_BROKEN="$(jq -r '.risk.remote_broken' "$J")"
+          HEAD_DESYNC="$(jq -r '.risk.head_desync' "$J")"
+          DIRTY="$(jq -r '.risk.working_tree_dirty' "$J")"
+          DIRTY_COUNT="$(jq -r '.risk.dirty_count' "$J")"
+          STASH_COUNT="$(jq -r '.risk.stashes_count' "$J")"
+          ENV_PERM_OK="$(jq -r '.risk.env_perm_correct' "$J")"
+          ENV_PERM="$(jq -r '.vps_fs.env_perm' "$J")"
+          H_EDGE="$(jq -r '.health.edge' "$J")"
+          H_API="$(jq -r '.health.api_server' "$J")"
+          H_FRONT="$(jq -r '.health.frontend' "$J")"
+          H_PROM="$(jq -r '.health.prometheus' "$J")"
+          ROUTING_GAP="$(jq -r '.routing.gap' "$J")"
+          BACKUPS_N="$(jq -r '.docker.backup_tags | length' "$J")"
+          CONT_N="$(jq -r '.docker.containers | length' "$J")"
+
+          estado() {
+            case "$1" in
+              true) echo "$2" ;;
+              false) echo "$3" ;;
+              *) echo "$4" ;;
+            esac
+          }
+
+          READY="SI"
+          BLOQUEOS=()
+          [ "$REMOTE_BROKEN" = "true" ] && { READY="NO"; BLOQUEOS+=("remote origin apunta a destino inexistente"); }
+          [ "$HEAD_DESYNC" = "true" ] && { READY="NO"; BLOQUEOS+=("HEAD VPS desincronizado vs GitHub HEAD"); }
+          [ "$DIRTY" = "true" ] && BLOQUEOS+=("working tree sucio (${DIRTY_COUNT} entradas)")
+          [ "$ENV_PERM_OK" = "false" ] && { READY="NO"; BLOQUEOS+=(".env con permisos != 600"); }
+
+          BLOQ_TXT="ninguno"
+          if [ "${#BLOQUEOS[@]}" -gt 0 ]; then
+            BLOQ_TXT="$(printf -- '- %s\n' "${BLOQUEOS[@]}")"
+          fi
+
+          health_state() {
+            local v="$1"
+            local code="${v%% *}"
+            case "$code" in
+              200) echo "OK" ;;
+              CONN_FAIL|"") echo "GAP" ;;
+              *) echo "REVISAR" ;;
+            esac
+          }
+
+          {
+            echo "# Auditoría VPS Wiring — C10 Fase 0"
+            echo ""
+            echo "**Timestamp:** ${TS_UTC} · **Run:** [#${GITHUB_RUN_NUMBER}](${RUN_URL}) · **SHA:** \`${SHORT_SHA}\`"
+            echo ""
+            echo "> Si no puedes medirlo, no está cableado. Si no puedes revertirlo, no está listo. Si no puedes trazar entrada y salida, no es HFT: es un dashboard."
+            echo ""
+            echo "## Tabla principal"
+            echo ""
+            echo "| Capa | Estado | Evidencia | Riesgo | Acción recomendada |"
+            echo "|---|---|---|---|---|"
+            echo "| GitHub default branch | OK | \`${DEFAULT_BRANCH}\` HEAD \`${GH_HEAD:0:7}\` | bajo | ninguna |"
+            echo "| VPS HEAD | $(estado "$HEAD_DESYNC" "BLOQUEADO" "OK" "DESCONOCIDO") | \`${VPS_HEAD:0:12}\` | $(estado "$HEAD_DESYNC" "alto" "bajo" "medio") | $(estado "$HEAD_DESYNC" "sincronizar en Fase 1" "ninguna" "investigar") |"
+            echo "| Remote origin VPS | $(estado "$REMOTE_BROKEN" "BLOQUEADO" "OK" "DESCONOCIDO") | \`${REMOTE_URL}\` | $(estado "$REMOTE_BROKEN" "alto" "bajo" "medio") | $(estado "$REMOTE_BROKEN" "reparar metadata Git en Fase 1" "ninguna" "verificar") |"
+            echo "| Working tree | $(estado "$DIRTY" "SUCIO" "LIMPIO" "DESCONOCIDO") | ${DIRTY_COUNT} entradas modified/untracked | $(estado "$DIRTY" "medio" "bajo" "medio") | $(estado "$DIRTY" "preservar en stash antes de Fase 1" "ninguna" "investigar") |"
+            echo "| Stashes operador | ${STASH_COUNT} presentes | git stash list | bajo | preservar |"
+            echo "| Permisos .env | $(estado "$ENV_PERM_OK" "OK" "BLOQUEADO" "DESCONOCIDO") | \`${ENV_PERM}\` | $(estado "$ENV_PERM_OK" "bajo" "alto" "medio") | $(estado "$ENV_PERM_OK" "ninguna" "chmod 600 en Fase 1" "verificar") |"
+            echo "| Docker containers | ${CONT_N} activos | docker ps | bajo | ninguna |"
+            echo "| Edge /health | $(health_state "$H_EDGE") | ${H_EDGE} | bajo | ninguna |"
+            echo "| api-server /health | $(health_state "$H_API") | ${H_API} | bajo | ninguna |"
+            echo "| Frontend /api/health | $(health_state "$H_FRONT") | ${H_FRONT} | medio | crear endpoint en PR futuro si GAP |"
+            echo "| Prometheus /-/healthy | $(health_state "$H_PROM") | ${H_PROM} | bajo | ninguna |"
+            echo "| Nginx routing | $(estado "$ROUTING_GAP" "GAP" "OK" "DESCONOCIDO") | docker exec nginx -T | medio | $(estado "$ROUTING_GAP" "documentar topología real" "ninguna" "verificar") |"
+            echo "| Backups Docker | ${BACKUPS_N} tags pre-/backup/rollback | docker images | bajo | preservar para reversibilidad |"
+            echo ""
+            echo "## Detalle por capa"
+            echo ""
+            echo "### Capa A — GitHub"
+            echo ""
+            echo '```json'
+            jq '.github' "$J"
+            echo '```'
+            echo ""
+            echo "### Capa B — VPS Git metadata"
+            echo ""
+            echo '```json'
+            jq '.vps_git' "$J"
+            echo '```'
+            echo ""
+            echo "### Capa C — VPS Filesystem"
+            echo ""
+            echo '```json'
+            jq '.vps_fs' "$J"
+            echo '```'
+            echo ""
+            echo "### Capa D — Docker"
+            echo ""
+            echo '```json'
+            jq '.docker' "$J"
+            echo '```'
+            echo ""
+            echo "### Capa E — Health endpoints"
+            echo ""
+            echo '```json'
+            jq '.health' "$J"
+            echo '```'
+            echo ""
+            echo "### Capa F — Routing"
+            echo ""
+            echo '```json'
+            jq '.routing' "$J"
+            echo '```'
+            echo ""
+            echo "### Capa G — Análisis de riesgo"
+            echo ""
+            echo '```json'
+            jq '.risk' "$J"
+            echo '```'
+            echo ""
+            echo "## Veredicto Fase 0"
+            echo ""
+            echo "- **READY para Fase 1:** ${READY}"
+            echo "- **Bloqueos detectados:**"
+            echo ""
+            echo "${BLOQ_TXT}"
+            echo ""
+            echo "- **Próxima acción:** Operador revisa este reporte y autoriza Fase 1 (blindaje metadata Git VPS)."
+          } > "$OUT_MD"
+
+          echo "Reporte markdown: $OUT_MD"
+
+      - name: Publicar resumen en $GITHUB_STEP_SUMMARY
+        if: always()
+        env:
+          OUT_MD: ${{ steps.meta.outputs.out_md }}
+        run: |
+          if [ -f "$OUT_MD" ]; then
+            cat "$OUT_MD" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## Auditoría incompleta" >> "$GITHUB_STEP_SUMMARY"
+            echo "El reporte no fue generado. Revisar logs del run." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Limpiar artefactos temporales antes de subir
+        if: always()
+        run: |
+          rm -f audits/_capa_a.json audits/_vps_raw.txt || true
+
+      - name: Subir artifact con JSON + Markdown
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-fase0-${{ github.run_number }}
+          path: |
+            audits/AUDIT-*.json
+            audits/AUDIT-*.md
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key ~/.ssh/config
