@@ -36,8 +36,9 @@ COPY token-enricher ./token-enricher
 RUN cargo build --release --locked -p searcher-rs
 
 FROM debian:bookworm-slim AS runtime
+# wget added for compose healthcheck (M2 Capa1 Fase 2 — 2026-05-15).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates tini \
+        ca-certificates tini wget \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r arbx && useradd -r -g arbx arbx
 WORKDIR /app

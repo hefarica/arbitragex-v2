@@ -18,7 +18,8 @@ ENV SQLX_OFFLINE=true
 RUN cargo build --release -p recon
 
 FROM debian:bookworm-slim AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tini \
+# wget added for compose healthcheck (M2 Capa1 Fase 2 — 2026-05-15).
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tini wget \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r arbx && useradd -r -g arbx arbx
 WORKDIR /app

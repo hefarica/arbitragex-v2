@@ -112,6 +112,13 @@ services:
     depends_on:
       redis: { condition: service_healthy }
       postgres: { condition: service_healthy }
+    # M2 Capa1 Fase 2 — /health served on SEARCHER_HEALTH_PORT (9001).
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:9001/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
     networks: [arbx-net]
     # INF-1: searcher-rs is the heaviest Rust service (REVM + WS fan-out).
@@ -141,6 +148,13 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+    # M2 Capa1 Fase 2 — /health on SIM_PORT (3003).
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3003/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
     networks: [arbx-net]
     # INF-1: sim-ctl runs REVM simulations; 2G prevents OOM during burst.
@@ -170,6 +184,13 @@ services:
     ports: ["127.0.0.1:3005:3005"]
     depends_on:
       redis: { condition: service_healthy }
+    # M2 Capa1 Fase 2 — /health on RELAYS_PORT (3005).
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3005/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
     networks: [arbx-net]
     # INF-1: relays-client manages Flashbots/BloxRoute HTTP connections.
@@ -196,6 +217,13 @@ services:
     ports: ["127.0.0.1:3004:3004"]
     depends_on:
       postgres: { condition: service_healthy }
+    # M2 Capa1 Fase 2 — /health on RECON_PORT (3004).
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3004/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
     networks: [arbx-net]
     # INF-1: recon does reconciliation queries; 1G is sufficient.
@@ -222,6 +250,14 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+    # M2 Capa1 Fase 2 — /health on SELECTOR_PORT (3002). Node `http` built-in,
+    # no wget/curl required on the slim image.
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3002/health',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
     networks: [arbx-net]
     # INF-1: selector-api is a lightweight TS service; 512M is generous.
@@ -253,6 +289,13 @@ services:
     ports: ["127.0.0.1:8080:8080"]
     depends_on:
       redis: { condition: service_healthy }
+    # M2 Capa1 Fase 2 — /api/health on API_PORT (8080). Node `http` built-in.
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8080/api/health',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
     networks: [arbx-net]
     # INF-1: api-server handles REST + WS fan-out to all backend services.
@@ -281,6 +324,13 @@ services:
       EDGE_PORT: "8787"
     ports: ["127.0.0.1:8787:8787"]
     depends_on: [api-server]
+    # M2 Capa1 Fase 2 — /health on EDGE_PORT (8787). Node `http` built-in.
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8787/health',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
     networks: [arbx-net]
     <<: *common-logging
@@ -300,6 +350,14 @@ services:
       INTERNAL_EDGE_URL: http://edge:8787
     ports: ["127.0.0.1:5173:5173"]
     depends_on: [edge]
+    # M2 Capa1 Fase 2 — root path on Next.js port 5173. Node `http` built-in.
+    # No /health endpoint in App Router yet; root URL ready = SSR pipeline up.
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:5173/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
     networks: [arbx-net]
     # INF-1: frontend serves static Next.js output; 1G covers SSR memory overhead.
@@ -414,6 +472,15 @@ services:
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       RUST_LOG: ${RUST_LOG}
     ports: ["127.0.0.1:9004:9004"]
+    # M2 Capa1 Fase 2 — /metrics on ENRICHER_METRICS_PORT (9004); fallback only,
+    # service has no /health endpoint. Dockerfile already declares a wget-based
+    # HEALTHCHECK; restate at compose level for explicit `service_healthy` deps.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:9004/metrics 2>/dev/null | grep -q 'arbx_enricher_up 1' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
     depends_on:
       postgres: { condition: service_healthy }
@@ -558,6 +625,14 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    # M2 Capa1 Fase 2/10 — /-/healthy on --http-address (10902).
+    # alpine base => BusyBox wget available.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:10902/-/healthy >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
     networks: [arbx-net]
     deploy:
@@ -583,6 +658,13 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+    # M2 Capa1 Fase 2/10 — /-/healthy on --http-address (10902).
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:10902/-/healthy >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
     networks: [arbx-net]
     deploy:
@@ -607,6 +689,13 @@ services:
     depends_on:
       - thanos-sidecar
       - thanos-store
+    # M2 Capa1 Fase 2/10 — /-/healthy on --http-address (10904).
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:10904/-/healthy >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
     networks: [arbx-net]
     deploy:
