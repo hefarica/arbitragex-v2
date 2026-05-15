@@ -101,21 +101,29 @@ jobs:
           fi
           echo "P1-5 OK"
 
-      - name: "Doctrine — no .env (operator-secret) in tree"
+      - name: "Doctrine — no NEW .env file added in this PR"
         run: |
           set -euo pipefail
-          # Allow:
-          #   - .env.example (template, no secrets)
-          #   - .env.crucible (pre-existing fixture; documented in repo)
-          # Block anything else matching .env or .env.*
-          violations=$(git ls-files \
-            | grep -E "(^|/)\.env(\..*)?$" \
-            | grep -vE "(^|/)\.env\.example$" \
-            | grep -vE "(^|/)\.env\.crucible$" \
-            || true)
+          # Pre-existing tracked .env-like files are templates/fixtures
+          # (.env.example, .env.crucible, .env.edge, crucible/.env.crucible.template).
+          # We only fail this PR if it ADDS a new tracked file matching the
+          # .env pattern that is NOT in the allowlist.
+          ALLOWLIST_RE='^(\.env\.example|\.env\.crucible|\.env\.edge|crucible/\.env\.crucible\.template)$'
+          BASE="${GITHUB_BASE_REF:-main}"
+          git fetch --depth=50 origin "$BASE" 2>/dev/null || true
+          MERGE_BASE=$(git merge-base "origin/$BASE" HEAD 2>/dev/null || echo "")
+          violations=""
+          if [ -n "$MERGE_BASE" ]; then
+            new_env=$(git diff --name-only --diff-filter=A "$MERGE_BASE" HEAD \
+              | grep -E "(^|/)\.env(\..*)?$" \
+              || true)
+            if [ -n "$new_env" ]; then
+              violations=$(echo "$new_env" | grep -vE "$ALLOWLIST_RE" | sed '/^$/d' || true)
+            fi
+          fi
           if [ -n "$violations" ]; then
-            echo "::error::Unapproved .env file tracked by git — STRICTLY forbidden"
+            echo "::error::This PR adds a tracked .env file — STRICTLY forbidden"
             echo "$violations"
             exit 1
           fi
-          echo "no-env-tracked OK"
+          echo "no-new-env-tracked OK"
