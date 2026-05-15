@@ -115,16 +115,10 @@ export default function DexRegistryClient({ initialSnapshot }: Props) {
       e.stopPropagation();
       setToggling(dex.id);
       setToggleError(null);
-      // Admin auth: edge accepts the sentinel "__session_active__" when the
-      // operator's httpOnly cookie session is live; localStorage fallback
-      // covers tooling. R8: surface 404/401 as-is.
-      const sessionActive =
-        typeof document !== "undefined" &&
-        /(?:^|;\s*)arbx_admin_session_ttl=/.test(document.cookie);
-      const adminToken = sessionActive
-        ? "__session_active__"
-        : (typeof window !== "undefined" &&
-            localStorage.getItem("arbx-admin-token")) || "";
+      // V-AT-1 / OMEGA-8 M5: never read admin token from localStorage. Cookie
+      // session is the only path; empty string lets the request fail-fast at
+      // the api-server's admin gate if no session is active.
+      const adminToken = "";
       const res = await toggleDexActive(EDGE_URL, dex.id, !dex.is_active, adminToken);
       if (res.ok) {
         setDexes((prev) =>
@@ -144,13 +138,8 @@ export default function DexRegistryClient({ initialSnapshot }: Props) {
     if (!removeTarget) return;
     setRemoving(true);
     setRemoveError(null);
-    const sessionActive =
-      typeof document !== "undefined" &&
-      /(?:^|;\s*)arbx_admin_session_ttl=/.test(document.cookie);
-    const adminToken = sessionActive
-      ? "__session_active__"
-      : (typeof window !== "undefined" &&
-          localStorage.getItem("arbx-admin-token")) || "";
+    // V-AT-1 / OMEGA-8 M5: never read admin token from localStorage.
+    const adminToken = "";
     const res = await deleteDex(EDGE_URL, removeTarget.id, adminToken);
     setRemoving(false);
     if (res.ok) {
@@ -460,13 +449,8 @@ function AddDexDialog({ chains, onClose, onCreated }: AddDexDialogProps) {
     setErr(null);
     setSubmitting(true);
     const edgeUrl = process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
-    const sessionActive =
-      typeof document !== "undefined" &&
-      /(?:^|;\s*)arbx_admin_session_ttl=/.test(document.cookie);
-    const adminToken = sessionActive
-      ? "__session_active__"
-      : (typeof window !== "undefined" &&
-          localStorage.getItem("arbx-admin-token")) || "";
+    // V-AT-1 / OMEGA-8 M5: never read admin token from localStorage.
+    const adminToken = "";
     const payload: { name: string; protocol_type: string; factories: CreateDexFactory[] } = {
       name: name.trim(),
       protocol_type: protocolType.trim(),

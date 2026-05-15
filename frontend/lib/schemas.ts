@@ -1049,11 +1049,16 @@ export type ContractEntityRow = z.infer<typeof ContractEntitySchema>;
 export type ContractsResponse = z.infer<typeof ContractsResponseSchema>;
 
 // OMEGA-S5 — /api/system/feature_manifest
+// Matches backend FeatureManifestEntry shape (see registries/types-omni.ts).
 export const FeatureManifestEntrySchema = z
   .object({
-    name: z.string(),
-    enabled: z.boolean().optional(),
-    status: z.string().optional(),
+    feature_key: z.string(),
+    description: z.string().optional(),
+    layer: z.string().optional(),
+    state_hash: z.string().optional(),
+    panel_path: z.string().optional(),
+    required: z.boolean().optional(),
+    updated_at: z.string().optional(),
   })
   .passthrough();
 export const FeatureManifestResponseSchema = z
@@ -1062,14 +1067,20 @@ export const FeatureManifestResponseSchema = z
     rows: z.array(FeatureManifestEntrySchema).optional(),
   })
   .passthrough();
+export type FeatureManifestEntry = z.infer<typeof FeatureManifestEntrySchema>;
 export type FeatureManifestResponse = z.infer<typeof FeatureManifestResponseSchema>;
 
 // OMEGA-S5 — /api/crucible/status
 export const CrucibleStatusRowSchema = z
   .object({
-    chain_id: z.number().int().nullable().optional(),
-    name: z.string().optional(),
-    status: z.string().optional(),
+    chain_id: z.number().int(),
+    network: z.string(),
+    resolutions_total: z.number().int().nonnegative(),
+    resolutions_success: z.number().int().nonnegative(),
+    success_rate_pct: z.number(),
+    runtime_hours: z.number().nonnegative(),
+    doctrinal_reverts: z.number().int().nonnegative(),
+    capital_cap_usd: z.number().nonnegative(),
   })
   .passthrough();
 export const CrucibleStatusResponseSchema = z
@@ -1077,6 +1088,7 @@ export const CrucibleStatusResponseSchema = z
     networks: z.array(CrucibleStatusRowSchema).optional(),
   })
   .passthrough();
+export type CrucibleStatusRow = z.infer<typeof CrucibleStatusRowSchema>;
 export type CrucibleStatusResponse = z.infer<typeof CrucibleStatusResponseSchema>;
 
 // OMEGA-S5 — /api/capital-gates

@@ -10,7 +10,13 @@ import { ClearAdminTokenButton } from "@/components/clear-admin-token";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/page-header";
-import { adminTokenExpiresInMs, fmtRemaining, getAdminToken, setAdminToken } from "@/lib/admin-token";
+import {
+  adminTokenExpiresInMs,
+  fmtRemaining,
+  getAdminSessionState,
+  hasAdminSession,
+  setAdminToken,
+} from "@/lib/admin-token";
 import { getStatus, toggleKillswitch, type KillSwitchState } from "@/lib/api-client";
 
 export default function KillSwitchPage() {
@@ -24,10 +30,9 @@ export default function KillSwitchPage() {
   const [lastOutcome, setLastOutcome] = useState<string | null>(null);
 
   useEffect(() => {
-    const t = getAdminToken();
-    if (t !== "__session_active__") {
-      setToken(t);
-    }
+    // OMEGA-8 / M5 Fase 11: no longer compare against the fragile sentinel
+    // string `"__session_active__"`. `hasAdminSession()` is the canonical
+    // check — the typed input remains empty until the operator types one.
     setTokenExpiresIn(adminTokenExpiresInMs());
     void refresh();
   }, []);
@@ -42,23 +47,41 @@ export default function KillSwitchPage() {
   }
 
   async function onToggle(next: boolean) {
-    if (!token && getAdminToken() !== "__session_active__") { setError("admin token required"); return; }
-    if (!reason.trim()) { setError("reason is required for the audit log"); return; }
+    // OMEGA-8 / M5 Fase 11: three-state session view replaces fragile sentinel
+    // comparisons. The mutation accepts either a live cookie session OR a
+    // typed token (which we use to establish the session first).
+    const sessionState = getAdminSessionState(token);
+    if (sessionState.kind === "unauthenticated") {
+      setError("admin session required — paste your ARBX_ADMIN_TOKEN to establish one");
+      return;
+    }
+    if (!reason.trim()) {
+      setError("reason is required for the audit log");
+      return;
+    }
     setBusy(true);
-    let tokenToUse = token;
-    if (!token && getAdminToken() === "__session_active__") {
-      // If they have an active session but didn't enter a new token, let the proxy use the cookie.
+    let tokenToUse = "";
+    if (sessionState.kind === "cookie_session_active") {
+      // Cookie travels automatically; no header needed.
       tokenToUse = "";
     } else {
-      // V-AT-1: setAdminToken is now async — establishes httpOnly cookie session.
+      // typed_token: V-AT-1 establishes a httpOnly cookie via /admin/session.
       const sessionOk = await setAdminToken(token);
-      if (!sessionOk) { setBusy(false); setError("failed to establish admin session — check token"); return; }
+      if (!sessionOk) {
+        setBusy(false);
+        setError("failed to establish admin session — check token");
+        return;
+      }
+      tokenToUse = token; // also pass via header for this single request fallback
     }
     setTokenExpiresIn(adminTokenExpiresInMs());
-    // Token is now in the httpOnly cookie; the header is a fallback for this request.
     const r = await toggleKillswitch(next, reason.trim(), tokenToUse);
     setBusy(false);
-    if (!r.ok) { setError(r.error); setLastOutcome(null); return; }
+    if (!r.ok) {
+      setError(r.error);
+      setLastOutcome(null);
+      return;
+    }
     setError(null);
     setState(r.data);
     setLastOutcome(`kill-switch set to ${next ? "ARMED" : "disabled"} at ${new Date().toLocaleTimeString()}`);

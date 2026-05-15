@@ -21,6 +21,7 @@ import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/page-header";
 import { hasAdminSession } from "@/lib/admin-token";
 import { completeOnboardingPhase5, type OnboardingStatus } from "@/lib/api-client";
+import { useActionState } from "@/lib/statemachine/useActionState";
 
 interface Props {
   initialSnapshot: OnboardingStatus;
@@ -40,6 +41,16 @@ export function Phase5Client({ initialSnapshot }: Props) {
   const [busy, setBusy] = useState(false);
   const [resultOk, setResultOk] = useState<string | null>(null);
   const [resultErr, setResultErr] = useState<string | null>(null);
+
+  // OMEGA-8 / M5 Fase 5 (P1-ACT-2): paper-mode flip is the single most
+  // consequential mutation in the platform. We thread it through
+  // `useActionState` so the operator sees the full chain:
+  //   IDLE → VALIDATING → WRITING_DB → WAITING_RUNTIME_ACK → VERIFIED
+  // The `runtime_ack` WSS subscription (PR #74) inside `useActionState`
+  // listens for the backend broadcast post-INSERT and only then transitions
+  // to VERIFIED — no optimistic "guardado" if the searcher never applied
+  // the change.
+  const action = useActionState();
 
   // R1: non-deterministic reads deferred to useEffect.
   useEffect(() => {
@@ -69,6 +80,15 @@ export function Phase5Client({ initialSnapshot }: Props) {
     setBusy(true);
     setResultOk(null);
     setResultErr(null);
+
+    // F-5 P1-ACT-2 state machine chain: idempotency_key acts as event_id.
+    const eventId =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `phase5-${Date.now()}-${Math.floor(Math.random() * 1e9).toString(16)}`;
+    action.start(eventId);
+    action.writeDb(eventId);
+
     const r = await completeOnboardingPhase5(
       confirmedBy.trim(),
       pagerdutKeyRef.trim(),
@@ -77,21 +97,31 @@ export function Phase5Client({ initialSnapshot }: Props) {
       parsedContacts,
       paperModeOff,
     );
-    setBusy(false);
+
     if (!r.ok) {
+      setBusy(false);
       const isNotImpl = r.error.includes("404") || r.error.includes("501") || r.error.includes("not implemented");
-      setResultErr(
-        isNotImpl
-          ? "endpoint not yet implemented on this deployment — use the curl command below"
-          : r.error,
-      );
+      const reason = isNotImpl
+        ? "endpoint not yet implemented on this deployment — use the curl command below"
+        : r.error;
+      setResultErr(reason);
+      action.fail(reason, /*rollback*/ false);
       return;
     }
+
+    // Mutation accepted — wait for runtime_ack via the WSS bridge inside
+    // useActionState. If the searcher never applies the change, the hook
+    // transitions to FAILED via onNack('timeout') after timeoutMs (30 s).
+    action.emitReload(eventId);
+    action.waitAck(eventId, 0);
+
+    // Persist the recorded result on screen (the verified state is governed
+    // by the runtime_ack listener inside useActionState).
     const paperAt = r.data.phase_5_paper_mode_off_at
       ? new Date(r.data.phase_5_paper_mode_off_at).toLocaleString()
       : "not flipped";
     setResultOk(
-      `Phase 5 completed at ${new Date(r.data.phase_5_completed_at).toLocaleString()} by ${r.data.phase_5_completed_by}. Paper mode flipped: ${paperAt}.`,
+      `Phase 5 recorded at ${new Date(r.data.phase_5_completed_at).toLocaleString()} by ${r.data.phase_5_completed_by}. Paper mode flipped: ${paperAt}. Awaiting runtime ack…`,
     );
     setStatus((prev) => ({
       ...prev,
@@ -99,6 +129,7 @@ export function Phase5Client({ initialSnapshot }: Props) {
       phase_5_completed_by: r.data.phase_5_completed_by,
       phase_5_paper_mode_off_at: r.data.phase_5_paper_mode_off_at,
     }));
+    setBusy(false);
   }
 
   return (
@@ -318,6 +349,27 @@ export function Phase5Client({ initialSnapshot }: Props) {
               <AlertDescription>{resultOk}</AlertDescription>
             </Alert>
           )}
+
+          {/* OMEGA-8 / M5 Fase 5: explicit state machine chain visible to the
+              operator. The single mutation cannot declare success until the
+              runtime_ack WSS broadcast arrives (PR #74). */}
+          <div className="mt-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs font-mono">
+            <span className="text-muted-foreground">state:</span>{" "}
+            <strong data-testid="phase5-action-state">{action.state.kind}</strong>
+            {action.state.kind === "WAITING_RUNTIME_ACK" && (
+              <span className="ml-2 text-muted-foreground">
+                event_id={action.state.event_id.slice(0, 8)}…
+              </span>
+            )}
+            {action.state.kind === "VERIFIED" && (
+              <span className="ml-2 text-green-700">
+                config_hash={action.state.config_hash_after.slice(0, 16)}…
+              </span>
+            )}
+            {action.state.kind === "FAILED" && (
+              <span className="ml-2 text-red-700">reason={action.state.error}</span>
+            )}
+          </div>
 
           <div className="flex items-center gap-3 pt-2 border-t">
             <Button

@@ -104,6 +104,32 @@ export function adminTokenExpiresInMs(): number {
   return Math.max(0, exp - now());
 }
 
+/**
+ * Three-state admin session view used by pages that mutate.
+ *
+ * OMEGA-8 / M5 Fase 11: prefer this over comparing `getAdminToken()` to the
+ * literal sentinel string `"__session_active__"` — that comparison leaks the
+ * sentinel into UI logic and is fragile to refactors of admin-token.ts.
+ *
+ *   cookie_session_active  → httpOnly cookie set, TTL not yet expired.
+ *   typed_token            → operator typed a token but no session yet.
+ *   unauthenticated        → no session AND no typed token.
+ */
+export type AdminSessionState =
+  | { kind: "cookie_session_active"; expires_in_ms: number }
+  | { kind: "typed_token"; token_length: number }
+  | { kind: "unauthenticated" };
+
+export function getAdminSessionState(typedToken: string): AdminSessionState {
+  if (hasAdminSession()) {
+    return { kind: "cookie_session_active", expires_in_ms: adminTokenExpiresInMs() };
+  }
+  if (typedToken && typedToken.length > 0) {
+    return { kind: "typed_token", token_length: typedToken.length };
+  }
+  return { kind: "unauthenticated" };
+}
+
 export function fmtRemaining(ms: number): string {
   if (ms <= 0) return "expired";
   const totalMin = Math.floor(ms / 60_000);

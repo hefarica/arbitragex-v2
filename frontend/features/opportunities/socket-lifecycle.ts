@@ -1,6 +1,24 @@
 // frontend/features/opportunities/socket-lifecycle.ts
 
+import { z } from "zod";
+
 export type WsStatus = "CONNECTING" | "LIVE" | "STALE";
+
+// OMEGA-8 / M5 Fase 8 (P1-WS-1): every WSS frontier must parse with Zod
+// before reaching React state — no `as Opportunity` casts. Schema kept
+// permissive (passthrough on string ids, optional fields) because the
+// scanner pipeline emits enriched fields incrementally (A.8 confidence
+// scoring) — but the *shape* of the row we render is locked.
+export const WsOpportunitySchema = z
+  .object({
+    id: z.string().min(1),
+    timestamp: z.union([z.number(), z.string()]),
+    route: z.string(),
+    expected_profit_usd: z.number(),
+    net_roi_pct: z.number(),
+    score: z.number(),
+  })
+  .passthrough();
 
 export interface Opportunity {
   id: string;
@@ -78,7 +96,20 @@ export function createOpportunitySocket(
   });
 
   socket.on("new_opportunity", (opp: unknown) => {
-    onOpportunity(opp as Opportunity);
+    // OMEGA-8 / M5 Fase 8 (P1-WS-1): safeParse Fail-Closed — a malformed
+    // payload MUST NOT reach React state. Drop silently (count via a side
+    // channel later) but never cast.
+    const parsed = WsOpportunitySchema.safeParse(opp);
+    if (!parsed.success) {
+      if (typeof console !== "undefined" && typeof console.warn === "function") {
+        console.warn(
+          "[opportunities-ws] dropped malformed payload:",
+          parsed.error.issues.slice(0, 2).map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+        );
+      }
+      return;
+    }
+    onOpportunity(parsed.data);
   });
 
   return {
