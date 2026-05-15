@@ -59,7 +59,7 @@ jobs:
           F=".github/workflows/sync-vps-metadata.yml"
           gh api -H "Accept: application/vnd.github.raw" \
             "repos/${{ github.repository }}/contents/${F}?ref=${{ github.sha }}" \
-            -o /tmp/self.yml
+            > /tmp/self.yml
           python3 - <<'PY'
           import re, sys
           banned = [
