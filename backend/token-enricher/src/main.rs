@@ -60,7 +60,6 @@ use alloy_sol_types::SolCall;
 use anyhow::{Context, Result};
 use futures_util::future::join_all;
 use shared_rs::rpc_failover::HttpRpcPool;
-use sqlx::postgres::PgPoolOptions;
 use std::{collections::HashMap, collections::HashSet, str::FromStr, sync::Arc, time::Duration};
 use tracing::{error, info, warn};
 
@@ -451,12 +450,13 @@ async fn main() -> Result<()> {
     init_metrics();
 
     // --- 4. PostgreSQL ---
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .acquire_timeout(Duration::from_secs(10))
-        .connect(&database_url)
-        .await
-        .context("PgPoolOptions::connect")?;
+    // OMEGA-8/M3 P1-2: full timeouts (acquire + idle + max_lifetime + min).
+    let pool = shared_rs::db_pool::options_with_timeouts(
+        &shared_rs::db_pool::PoolConfig::from_env(5),
+    )
+    .connect(&database_url)
+    .await
+    .context("PgPoolOptions::connect")?;
     info!(event = "enricher.db_connected");
 
     // --- 4b. Parse enabled chains + build HttpRpcPool per chain ---
