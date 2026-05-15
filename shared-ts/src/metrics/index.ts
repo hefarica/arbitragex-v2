@@ -131,6 +131,25 @@ export const auditEmitFailedTotal = new Counter({
   registers: [registry],
 });
 
+// ─────────── OMEGA-7 PR-1: runtime_ack WSS bridge metrics ───────────
+// Emitted from broadcastRuntimeAck after a successful PostgreSQL INSERT in
+// POST /api/system/runtime-ack. Closes the dark-channel decoherence between
+// searcher-rs Arc-swap acks and the frontend useActionState 12-states
+// WAITING_RUNTIME_ACK → VERIFIED transition.
+export const runtimeAckBroadcastTotal = new Counter({
+  name: "arbx_runtime_ack_broadcast_total",
+  help: "Runtime ACK WSS broadcasts emitted post-INSERT by status",
+  labelNames: ["status"] as const,
+  registers: [registry],
+});
+
+export const runtimeAckBroadcastLatencyMs = new Histogram({
+  name: "arbx_runtime_ack_broadcast_latency_ms",
+  help: "Latency (ms) of the WSS emit step inside broadcastRuntimeAck",
+  buckets: [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 25, 50, 100, 250, 500],
+  registers: [registry],
+});
+
 export function initMetrics(serviceName: string) {
   serviceUp.labels(serviceName).set(1);
 }

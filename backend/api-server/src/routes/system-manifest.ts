@@ -15,7 +15,9 @@
 import { Router, type Request, type Response } from "express";
 import type { Pool } from "pg";
 import type { Redis } from "ioredis";
+import type { Server as IoServer } from "socket.io";
 import { z } from "zod";
+import { broadcastRuntimeAck } from "../websocket.js";
 
 const RuntimeAckSchema = z.object({
   event_id: z.string().uuid(),
@@ -34,7 +36,7 @@ const RuntimeAckSchema = z.object({
   error: z.string().max(2000).nullable().optional(),
 });
 
-export function mountSystemManifest(db: Pool, _redis: Redis): Router {
+export function mountSystemManifest(db: Pool, _redis: Redis, io: IoServer): Router {
   const r = Router();
 
   r.get("/feature_manifest", async (_req: Request, res: Response) => {
@@ -97,6 +99,19 @@ export function mountSystemManifest(db: Pool, _redis: Redis): Router {
         p.error ?? null,
       ],
     );
+    // OMEGA-7 PR-1: emit the ack into the runtime_ack WSS room AFTER the
+    // INSERT has succeeded (invariant I-2 idempotencia POST-INSERT). The
+    // broadcast is best-effort — if it throws for any reason we log and
+    // continue, because the ack is already durably persisted in PostgreSQL
+    // and the client can recover via the (future) GET /:event_id fallback.
+    try {
+      broadcastRuntimeAck(io, p);
+    } catch (err) {
+      console.warn(
+        '[system-manifest] broadcastRuntimeAck failed post-INSERT (ack persisted; emit skipped):',
+        (err as Error).message,
+      );
+    }
     res.status(202).json({ accepted: true });
   });
 
