@@ -1,0 +1,18 @@
+[workspace]
+
+[package]
+name = "pqc-kyber-rs"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+# Activar SOLO cuando se engancha pqcrypto-kyber o ml-kem (NIST FIPS-203) real.
+kyber-real = []
+
+[dependencies]
+thiserror = "1.0"
+tracing = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
