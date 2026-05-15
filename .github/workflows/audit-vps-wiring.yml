@@ -73,13 +73,122 @@ jobs:
         run: |
           set -euo pipefail
           OUT=audits/_capa_a.json
-          DEFAULT_BRANCH="$(gh api "repos/${REPO_SLUG}" --jq '.default_branch' 2>/dev/null || echo 'desconocido')"
-          FULL_NAME="$(gh api "repos/${REPO_SLUG}" --jq '.full_name' 2>/dev/null || echo "${REPO_SLUG}")"
+          ERR_DIR="$(mktemp -d)"
+          # Limpieza acotada del directorio temporal local del runner (no toca repo ni VPS).
+          # Por política de auditoría se evita la limpieza recursiva forzada: se borran
+          # solo archivos regulares creados por este step y luego rmdir del directorio vacío.
+          trap 'find "${ERR_DIR}" -maxdepth 1 -type f -delete 2>/dev/null; rmdir "${ERR_DIR}" 2>/dev/null || true' EXIT
+
+          # --------------------------------------------------------------
+          # safe_gh_api: invocación read-only fail-soft contra GitHub API.
+          # Captura stderr en archivo temporal (no /dev/null) para
+          # diagnóstico. Si la llamada falla, devuelve un JSON literal
+          # válido para que jq --argjson nunca reciba basura.
+          #
+          # Mapeo de fallos (fail-honest, sin maquillaje):
+          #   HTTP 404 → fallback recibido por argumento (p.ej. 'null', '[]', '{}')
+          #              o '{"status":"UNAVAILABLE_NO_BRANCH_PROTECTION"}' si así se pide.
+          #   HTTP 403 → '{"status":"FORBIDDEN","reason":"INSUFFICIENT_PERMISSIONS"}'
+          #   otros    → '{"status":"UNAVAILABLE"}'
+          #
+          # Parámetros:
+          #   $1 = endpoint (p.ej. "repos/owner/repo")
+          #   $2 = fallback JSON literal válido para 404 (p.ej. 'null' o '[]')
+          #   $3 = (opcional) flags adicionales para gh api (p.ej. "--jq .x")
+          #
+          # NO imprime stderr en stdout. NO contamina jq.
+          # --------------------------------------------------------------
+          safe_gh_api() {
+            local endpoint="$1"
+            local fallback_404="$2"
+            shift 2
+            local err_file
+            err_file="$(mktemp -p "${ERR_DIR}")"
+            local out
+            if out="$(gh api "${endpoint}" "$@" 2>"${err_file}")"; then
+              printf '%s' "${out}"
+              return 0
+            fi
+            # Extraer código HTTP del stderr de gh (formato: "HTTP 404: ...")
+            local http_code
+            http_code="$(grep -oE 'HTTP [0-9]+' "${err_file}" | head -1 | awk '{print $2}')"
+            case "${http_code}" in
+              404) printf '%s' "${fallback_404}" ;;
+              403) printf '%s' '{"status":"FORBIDDEN","reason":"INSUFFICIENT_PERMISSIONS"}' ;;
+              401) printf '%s' '{"status":"FORBIDDEN","reason":"UNAUTHENTICATED"}' ;;
+              *)   printf '%s' '{"status":"UNAVAILABLE"}' ;;
+            esac
+            return 0
+          }
+
+          # safe_gh_cmd: variante para subcomandos gh que ya devuelven JSON
+          # (p.ej. `gh secret list ... --json name`). Mismo contrato fail-soft.
+          safe_gh_cmd() {
+            local fallback="$1"
+            shift
+            local err_file
+            err_file="$(mktemp -p "${ERR_DIR}")"
+            local out
+            if out="$(gh "$@" 2>"${err_file}")"; then
+              printf '%s' "${out}"
+              return 0
+            fi
+            printf '%s' "${fallback}"
+            return 0
+          }
+
+          # Helpers de extracción defensiva.
+          # Si la respuesta es un JSON de error fail-soft (objeto con .status),
+          # devolvemos el marcador textual literal en vez de un campo inexistente.
+          DEFAULT_BRANCH_RAW="$(safe_gh_api "repos/${REPO_SLUG}" 'null')"
+          if echo "${DEFAULT_BRANCH_RAW}" | jq -e 'type=="object" and has("default_branch")' >/dev/null 2>&1; then
+            DEFAULT_BRANCH="$(printf '%s' "${DEFAULT_BRANCH_RAW}" | jq -r '.default_branch')"
+            FULL_NAME="$(printf '%s' "${DEFAULT_BRANCH_RAW}" | jq -r '.full_name // empty')"
+            [ -z "${FULL_NAME}" ] && FULL_NAME="${REPO_SLUG}"
+          else
+            DEFAULT_BRANCH="UNAVAILABLE"
+            FULL_NAME="${REPO_SLUG}"
+          fi
+
           HEAD_SHA="$(git rev-parse HEAD)"
+
+          # Workflows locales (filesystem checkout): no depende de GitHub API.
           WORKFLOWS="$(ls .github/workflows/*.yml 2>/dev/null | xargs -n1 basename | jq -R . | jq -s .)"
-          SECRETS_LIST="$(gh secret list --repo "${REPO_SLUG}" --json name --jq '[.[].name]' 2>/dev/null || echo '[]')"
-          ENVIRONMENTS="$(gh api "repos/${REPO_SLUG}/environments" --jq '[.environments[]?.name]' 2>/dev/null || echo '[]')"
-          PROTECTION="$(gh api "repos/${REPO_SLUG}/branches/main/protection" --jq '{required_status_checks, enforce_admins, required_pull_request_reviews}' 2>/dev/null || echo 'null')"
+          [ -z "${WORKFLOWS}" ] && WORKFLOWS='[]'
+
+          # Secrets list (puede fallar por permisos del token efímero).
+          SECRETS_LIST="$(safe_gh_cmd '[]' secret list --repo "${REPO_SLUG}" --json name --jq '[.[].name]')"
+          # Si lo que volvió no parsea como array, sustituimos por array vacío fail-soft.
+          if ! echo "${SECRETS_LIST}" | jq -e 'type=="array"' >/dev/null 2>&1; then
+            SECRETS_LIST='[]'
+          fi
+
+          # Environments: puede no existir → 404 → array vacío.
+          ENV_RAW="$(safe_gh_api "repos/${REPO_SLUG}/environments" '{"environments":[]}')"
+          if echo "${ENV_RAW}" | jq -e 'type=="object" and has("environments")' >/dev/null 2>&1; then
+            ENVIRONMENTS="$(printf '%s' "${ENV_RAW}" | jq -c '[.environments[]?.name]')"
+          else
+            ENVIRONMENTS='[]'
+          fi
+          if ! echo "${ENVIRONMENTS}" | jq -e 'type=="array"' >/dev/null 2>&1; then
+            ENVIRONMENTS='[]'
+          fi
+
+          # Branch protection: rama sin protección → 404 → marcador fail-honest.
+          # NO convertimos UNAVAILABLE en {} silencioso; preservamos el estado.
+          PROTECTION_RAW="$(safe_gh_api "repos/${REPO_SLUG}/branches/main/protection" '{"status":"UNAVAILABLE_NO_BRANCH_PROTECTION"}')"
+          if echo "${PROTECTION_RAW}" | jq -e 'type=="object" and has("required_status_checks")' >/dev/null 2>&1; then
+            PROTECTION="$(printf '%s' "${PROTECTION_RAW}" | jq -c '{required_status_checks, enforce_admins, required_pull_request_reviews}')"
+          else
+            # Conservamos el marcador (UNAVAILABLE_NO_BRANCH_PROTECTION / FORBIDDEN / UNAVAILABLE)
+            PROTECTION="${PROTECTION_RAW}"
+          fi
+          # Salvaguarda final: si por cualquier razón PROTECTION no es JSON válido,
+          # caemos a un objeto fail-honest. Nunca pasa basura a --argjson.
+          if ! echo "${PROTECTION}" | jq -e '.' >/dev/null 2>&1; then
+            PROTECTION='{"status":"UNAVAILABLE"}'
+          fi
+
           jq -n \
             --arg default_branch "${DEFAULT_BRANCH}" \
             --arg full_name "${FULL_NAME}" \
