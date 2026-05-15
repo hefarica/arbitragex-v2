@@ -34,7 +34,7 @@ Names are the GitHub Actions job names as they appear today.
 | Workflow | Job name | Notes |
 |----------|----------|-------|
 | `rust.yml`           | `cargo check + clippy + test` | hard gate today |
-| `typescript.yml`     | `tsc --noEmit (all workspaces)` | hard gate today |
+| `typescript.yml`     | `tsc --noEmit (all workspaces)` | **advisory** (M2 Fase 7) — flip to hard gate once M4/Capa 3 clears the 5 api-server type errors |
 | `security.yml`       | `cargo audit (Rust advisories)` | hard gate today |
 | `security.yml`       | `gitleaks (secrets scan)` | hard gate today |
 | `security.yml`       | `npm audit (prod deps, high+)` | hard gate today |
