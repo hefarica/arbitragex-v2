@@ -30,6 +30,14 @@ jobs:
           npm install
           npx playwright install --with-deps chromium
 
+      - name: Materialize .env from .env.example (Ghost-safe — placeholders T2 only)
+        run: |
+          # Doctrina: .env.example contiene SOLO placeholders públicos T2 (puertos,
+          # log levels, feature flags). NO contiene secretos reales. Compose.dev.yml
+          # requiere env_file: ../.env por design — esto es materialización CI legítima.
+          cp .env.example .env
+          echo "::notice::.env materialized from .env.example (T2 placeholders only)"
+
       - name: Bring up compose stack (dev — defaults OK for CI)
         run: |
           docker compose -f docker/compose.dev.yml up -d --build \
