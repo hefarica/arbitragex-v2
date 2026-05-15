@@ -117,6 +117,10 @@ async function getValidated<T>(
   const init: RequestInit = {
     next: { revalidate: 0 },
     headers: { accept: "application/json" },
+    // V-AT-1: browser sends the arbx_admin_session httpOnly cookie cross-port
+    // so admin-gated GETs (e.g. /api/admin/chains) authenticate. Public GETs
+    // ignore the cookie upstream; no harm in always including credentials.
+    credentials: "include",
   } as RequestInit;
 
   let lastError = "unknown error";
