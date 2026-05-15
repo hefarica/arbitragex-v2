@@ -197,6 +197,3 @@ mod tests {
         assert_eq!(signer.address, signer_eth.address);
     }
 }
-            .finish_non_exhaustive()
-    }
-}
