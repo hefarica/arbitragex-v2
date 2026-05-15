@@ -11,16 +11,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      VPS_HOST: ${{ secrets.VPS_HOST }}
-      VPS_USER: ${{ secrets.VPS_USER }}
-      VPS_PATH: ${{ secrets.VPS_PATH }}
+      VPS_HOST: 195.201.235.70
+      VPS_USER: root
+      VPS_PATH: /opt/arbitragex-v2
       EXPECTED_VPS_HEAD: "1019447ecfc32af027de40eea668b948e0919412"
     steps:
       - name: Step 1 — SSH setup
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
           cat > ~/ssh_vps.sh <<'EOS'
