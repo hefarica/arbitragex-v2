@@ -317,7 +317,7 @@ jobs:
       - name: Step 10 — Danger pattern detector
         run: |
           set -euo pipefail
-          DANGER=$(grep -iE '(^|/)\.env(\s|$|\.[a-zA-Z0-9_-]+(\s|$))|(^|/)backups/|\.pem(\s|$)|(^|/)[^/]*\.key(\s|$)|\.p12(\s|$)|(^|/)secrets/|(^|/)credentials(\s|/|$)|(^|/)private\.key|(^|/)id_rsa(\s|$)|(^|/)id_ed25519(\s|$)|(^|/)\.git/|stash@\{|\.pfx(\s|$)|(^|/)[^/]*\.crt(\s|$)' \
+          DANGER=$(grep -iE '(^|/|\s)\.env(\s|$|\.[a-zA-Z0-9_-]+(\s|$))|(^|/|\s)backups/|\.(pem|key|p12|pfx|crt)(\s|$)|(^|/|\s)secrets/|(^|/|\s)credentials(\s|$)|(^|/|\s)credentials\.(env|json|ya?ml|toml|ini|conf|txt|csv)(\s|$)|(^|/|\s)private\.key(\s|$)|(^|/|\s)id_rsa(\s|$|\.[a-zA-Z0-9_-]+(\s|$))|(^|/|\s)id_ed25519(\s|$|\.[a-zA-Z0-9_-]+(\s|$))|(^|/|\s)\.git/|stash@\{' \
                    /tmp/audit/rsync_dryrun.txt || true)
           if [[ -n "$DANGER" ]]; then
             echo "$DANGER" > /tmp/audit/danger_report.txt
