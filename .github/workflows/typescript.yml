@@ -26,6 +26,10 @@ on:
       - 'package-lock.json'
       - '.github/workflows/typescript.yml'
 
+# M2 Capa1 Fase 4 — read-only token.
+permissions:
+  contents: read
+
 jobs:
   typecheck:
     name: tsc --noEmit (all workspaces)

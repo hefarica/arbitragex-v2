@@ -12,6 +12,11 @@ on:
       - 'contracts/**'
       - '.github/workflows/foundry.yml'
 
+# M2 Capa1 Fase 4 — read-only token. fork-test job pulls MAINNET_RPC_URL
+# from secrets but never writes back to the repo.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: forge build + test
