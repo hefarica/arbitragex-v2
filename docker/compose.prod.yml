@@ -385,7 +385,9 @@ services:
       - --web.enable-lifecycle
     ports: ["127.0.0.1:9090:9090"]
     volumes:
-      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # M2 Capa1 Fase 10 — prod-specific config (env: prod, scrape token-enricher).
+      # See monitoring/prometheus/prometheus.prod.yml.
+      - ../monitoring/prometheus/prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
       - ../monitoring/alerts.rules.yml:/etc/prometheus/alerts.rules.yml:ro
       - prometheus_data:/prometheus
     # INF-3: healthcheck via /-/healthy endpoint.
