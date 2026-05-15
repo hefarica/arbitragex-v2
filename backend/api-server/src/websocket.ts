@@ -1,11 +1,72 @@
 import { Server } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import { Redis } from 'ioredis';
-import { safeTokenEqual } from '@arbx/shared';
+import {
+    safeTokenEqual,
+    runtimeAckBroadcastTotal,
+    runtimeAckBroadcastLatencyMs,
+} from '@arbx/shared';
 
 // ---------------------------------------------------------------------------
 // Tipos públicos
 // ---------------------------------------------------------------------------
+
+/**
+ * OMEGA-7 PR-1: runtime_ack room identifier.
+ *
+ * Clients subscribe via `socket.emit('subscribe:runtime_ack')`. The api-server
+ * emits a single `runtime_ack` event into this room *after* a successful
+ * PostgreSQL INSERT in POST /api/system/runtime-ack (invariant I-2).
+ */
+export const RUNTIME_ACK_ROOM = 'runtime_ack' as const;
+
+/** Layers accepted by the runtime_ack handler. Isomorphic 1:1 to the Zod enum
+ *  in routes/system-manifest.ts:28-31 — DO NOT drift these without updating
+ *  both the server schema and the frontend schema together (invariant I-3). */
+export type RuntimeAckLayer =
+    | 'api'
+    | 'persistence'
+    | 'redis_pubsub'
+    | 'searcher_rs'
+    | 'arc_swap'
+    | 'frontend_refresh'
+    | 'readiness'
+    | 'audit';
+
+/** Status terminal-set accepted by the runtime_ack handler. Isomorphic 1:1 to
+ *  routes/system-manifest.ts:32. */
+export type RuntimeAckStatus =
+    | 'pending'
+    | 'received'
+    | 'applied'
+    | 'rejected'
+    | 'timeout'
+    | 'failed';
+
+/**
+ * OMEGA-7 PR-1: WSS broadcast payload for a runtime ack.
+ *
+ * Shape is **isomorphic 1:1** to RuntimeAckSchema in
+ * routes/system-manifest.ts:20-35. Eleven fields, exact same names, exact
+ * same enums. The route handler emits *the parsed Zod object* unchanged, so
+ * any drift between this type and the Zod schema is a bug — the schema is
+ * the single source of truth (invariant I-3 conservación schema_version).
+ *
+ * @since OMEGA-7 — Tribunal remediation Option A
+ */
+export interface RuntimeAckBroadcast {
+    event_id: string;
+    resource: string;
+    chain_id: number | null;
+    idempotency_key: string;
+    config_hash_before: string | null;
+    config_hash_after: string;
+    worker_id: string;
+    layer: RuntimeAckLayer;
+    status: RuntimeAckStatus;
+    latency_ms?: number | null | undefined;
+    error?: string | null | undefined;
+}
 
 /**
  * Señal de convergencia emitida por el motor SED (sed-core, Rust) a través
@@ -158,6 +219,16 @@ export function setupWebSocketGateway(server: HttpServer) {
             socket.join('convergence');
         });
 
+        // OMEGA-7 PR-1: runtime_ack room. Receives the ack broadcast emitted by
+        // broadcastRuntimeAck after a successful POST /api/system/runtime-ack
+        // INSERT. Frontend useActionState 12-states transitions
+        // WAITING_RUNTIME_ACK → VERIFIED on receipt of an event with the
+        // matching event_id.
+        socket.on('subscribe:runtime_ack', () => {
+            console.log(`[WebSocket] Cliente ${socket.id} se suscribió a Runtime ACK`);
+            socket.join(RUNTIME_ACK_ROOM);
+        });
+
         socket.on('disconnect', () => {
             console.log(`[WebSocket] Cliente desconectado: ${socket.id}`);
         });
@@ -192,6 +263,79 @@ export function broadcastOpportunity(io: Server, opp: any) {
  */
 export function broadcastConvergenceSignal(io: Server, signal: ConvergenceSignal) {
     io.to('convergence').emit('convergence_signal', signal);
+}
+
+// ---------------------------------------------------------------------------
+// Broadcast helpers — RuntimeAck (POST /api/system/runtime-ack → WebSocket)
+// ---------------------------------------------------------------------------
+
+const RUNTIME_ACK_LAYERS: ReadonlySet<RuntimeAckLayer> = new Set<RuntimeAckLayer>([
+    'api', 'persistence', 'redis_pubsub', 'searcher_rs', 'arc_swap',
+    'frontend_refresh', 'readiness', 'audit',
+]);
+const RUNTIME_ACK_STATUSES: ReadonlySet<RuntimeAckStatus> = new Set<RuntimeAckStatus>([
+    'pending', 'received', 'applied', 'rejected', 'timeout', 'failed',
+]);
+
+/**
+ * Defense-in-depth type guard for a RuntimeAckBroadcast payload. The route
+ * handler already validated the same shape via Zod, but this guard ensures
+ * `broadcastRuntimeAck` cannot silently emit a corrupt payload if any caller
+ * ever bypasses the route (tests, internal scripts, future refactors). It
+ * does NOT replace the route's Zod schema — both checks coexist; the Zod
+ * schema in system-manifest.ts is the source of truth (invariant I-3).
+ */
+export function isValidRuntimeAck(payload: unknown): payload is RuntimeAckBroadcast {
+    if (typeof payload !== 'object' || payload === null) return false;
+    const p = payload as Record<string, unknown>;
+    if (typeof p.event_id !== 'string' || p.event_id.length === 0) return false;
+    if (typeof p.resource !== 'string' || p.resource.length === 0) return false;
+    if (p.chain_id !== null && typeof p.chain_id !== 'number') return false;
+    if (typeof p.idempotency_key !== 'string' || p.idempotency_key.length === 0) return false;
+    if (p.config_hash_before !== null && typeof p.config_hash_before !== 'string') return false;
+    if (typeof p.config_hash_after !== 'string' || p.config_hash_after.length === 0) return false;
+    if (typeof p.worker_id !== 'string' || p.worker_id.length === 0) return false;
+    if (typeof p.layer !== 'string' || !RUNTIME_ACK_LAYERS.has(p.layer as RuntimeAckLayer)) return false;
+    if (typeof p.status !== 'string' || !RUNTIME_ACK_STATUSES.has(p.status as RuntimeAckStatus)) return false;
+    if (p.latency_ms !== undefined && p.latency_ms !== null && typeof p.latency_ms !== 'number') return false;
+    if (p.error !== undefined && p.error !== null && typeof p.error !== 'string') return false;
+    return true;
+}
+
+/**
+ * OMEGA-7 PR-1: emit a runtime_ack event into the `runtime_ack` room.
+ *
+ * **Invariant I-2 (idempotencia POST-INSERT):** this MUST be called *only
+ * after* the PostgreSQL INSERT for the same payload has succeeded inside
+ * POST /api/system/runtime-ack. The route handler enforces that ordering.
+ *
+ * **Invariant I-1 (bijection event_id):** Socket.IO `io.to(room).emit(...)` is
+ * a single fan-out — each connected subscriber receives exactly one delivery
+ * per call. The frontend hook filters by `event_id` so cross-talk between
+ * concurrent ack flows cannot trigger spurious onAck dispatches.
+ *
+ * Fail-honest: if the type guard rejects the payload (which should be
+ * impossible because the route already Zod-parsed it), we increment the
+ * `rejected` status counter and return without emitting — never crash the
+ * surrounding INSERT-success path. The caller catches synchronous throws
+ * defensively in any case.
+ *
+ * @since OMEGA-7 — Tribunal remediation Option A
+ */
+export function broadcastRuntimeAck(io: Server, payload: RuntimeAckBroadcast): void {
+    if (!isValidRuntimeAck(payload)) {
+        runtimeAckBroadcastTotal.labels('rejected').inc();
+        console.warn(
+            '[RuntimeAck] payload rejected by isValidRuntimeAck guard, not emitting',
+        );
+        return;
+    }
+    const start = process.hrtime.bigint();
+    io.to(RUNTIME_ACK_ROOM).emit('runtime_ack', payload);
+    const elapsedNs = process.hrtime.bigint() - start;
+    const elapsedMs = Number(elapsedNs) / 1_000_000;
+    runtimeAckBroadcastLatencyMs.observe(elapsedMs);
+    runtimeAckBroadcastTotal.labels(payload.status).inc();
 }
 
 // ---------------------------------------------------------------------------

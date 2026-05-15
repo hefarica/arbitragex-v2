@@ -88,6 +88,7 @@ import { mountScoringStatus } from "./routes/scoring-status.js";
 import { mountRiskCircuitBreakers } from "./routes/risk-circuit-breakers.js";
 import { mountAdminChains } from "./routes/admin-chains.js";
 import { mountSedStatus } from "./routes/sed-status.js";
+import { mountSystemManifest } from "./routes/system-manifest.js";
 import {
   setupWebSocketGateway,
   broadcastOpportunity,
@@ -1010,6 +1011,20 @@ app.get("/api/v1/readiness", async (req, res) => {
 const PORT = Number(process.env["API_PORT"] ?? 3000); // 3000 to match frontend fetch
 const httpServer = createServer(app);
 const io = setupWebSocketGateway(httpServer);
+
+// OMEGA-7 PR-1: system manifest + runtime_ack handler. Must be mounted AFTER
+// `io` exists because POST /api/system/runtime-ack emits a WSS broadcast into
+// the `runtime_ack` room after a successful PostgreSQL INSERT (invariant
+// I-2). Requires `pool` to be non-null; if the DB is missing this is a
+// fail-fast condition because runtime_ack persistence is non-negotiable.
+if (pool) {
+  app.use("/api/system", mountSystemManifest(pool, redis, io));
+} else {
+  logger.error(
+    { event: "system_manifest.disabled" },
+    "system-manifest routes NOT mounted — DATABASE_URL missing",
+  );
+}
 
 // Arteria WSS — OMEGA-v2: puente Redis Pub/Sub → WebSocket para señales de
 // convergencia del motor SED (Rust).  Instancia dedicada (subscriber) porque
