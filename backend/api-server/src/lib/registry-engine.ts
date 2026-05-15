@@ -138,12 +138,18 @@ export async function writeAuditEvent(
     traceId?: string;
   },
 ): Promise<void> {
+  // OMEGA-8/M3 P1-3: PII hardening wired-in. ip_address envuelta con
+  // arbx_anonymize_ip()::cidr (post-mig 070); user_agent con
+  // arbx_hash_user_agent(). Raw IP/UA NUNCA llegan a la fila.
   await client.query(
     `INSERT INTO audit_event (
        actor, action, entity_type, entity_id, chain_id,
        before_state, after_state, config_hash_before, config_hash_after,
        idempotency_key, result, error, ip_address, user_agent, trace_id
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+               arbx_anonymize_ip($13)::cidr,
+               arbx_hash_user_agent($14),
+               $15)
      ON CONFLICT (idempotency_key) DO NOTHING`,
     [
       params.actor,
