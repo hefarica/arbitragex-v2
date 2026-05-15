@@ -170,3 +170,67 @@ export function traceIdMiddleware(): RequestHandler {
     next();
   };
 }
+
+/**
+ * OMEGA-8/M4 Fase 7 — security headers middleware.
+ *
+ * Hand-rolled subset of helmet's recommended defaults, chosen so the
+ * backend api-server and selector-api expose institutional-grade HTTP
+ * hardening without pulling helmet's transitive deps. Matches the spec's
+ * required header set:
+ *
+ *   - `X-Content-Type-Options: nosniff`
+ *   - `X-Frame-Options: DENY` (frameguard)
+ *   - `Referrer-Policy: no-referrer`
+ *   - `Cross-Origin-Resource-Policy: same-site`
+ *   - `Cross-Origin-Opener-Policy: same-origin`
+ *   - `Content-Security-Policy` — restrictive but compatible with Socket.IO
+ *     handshake (default-src 'self'; connect-src 'self' ws: wss:).
+ *   - `Strict-Transport-Security: max-age=63072000` — opt-in via
+ *     `ARBX_ENABLE_HSTS=true`. NEVER set unconditionally because the
+ *     api-server runs behind plain HTTP inside the VPS network; only the
+ *     edge worker is TLS-terminated. Setting HSTS on plain HTTP would
+ *     break browser access.
+ *
+ * `app.disable("x-powered-by")` must still be called explicitly at the app
+ * level — it is an Express setting, not a header.
+ */
+export function securityHeadersMiddleware(opts?: {
+  enableHsts?: boolean;
+  cspExtras?: string;
+}): RequestHandler {
+  const enableHsts =
+    opts?.enableHsts ??
+    process.env["ARBX_ENABLE_HSTS"] === "true";
+  // Default CSP: deny everything except same-origin for fetch + Socket.IO
+  // websocket upgrades. `cspExtras` (callers can pass) appends additional
+  // directives without re-implementing the policy in each service.
+  const cspBase =
+    "default-src 'self'; " +
+    "script-src 'self'; " +
+    "style-src 'self'; " +
+    "img-src 'self' data:; " +
+    "connect-src 'self' ws: wss:; " +
+    "frame-ancestors 'none'; " +
+    "base-uri 'self'; " +
+    "object-src 'none';";
+  const csp = opts?.cspExtras ? `${cspBase} ${opts.cspExtras}` : cspBase;
+
+  return (_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Cross-Origin-Resource-Policy", "same-site");
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+    res.setHeader("Content-Security-Policy", csp);
+    if (enableHsts) {
+      // 2 years, includeSubDomains. Only emit when the caller knows it's
+      // behind real TLS.
+      res.setHeader(
+        "Strict-Transport-Security",
+        "max-age=63072000; includeSubDomains",
+      );
+    }
+    next();
+  };
+}

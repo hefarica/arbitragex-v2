@@ -10,6 +10,7 @@ import {
   metricsHandler,
   metricsMiddleware,
   traceIdMiddleware,
+  securityHeadersMiddleware,
   requireEnv,
   OpportunitySchema,
   SimulationResultSchema,
@@ -94,6 +95,8 @@ const ScoreRequest = z.object({
 const startedAt = new Date();
 const app = express();
 app.disable("x-powered-by");
+// OMEGA-8/M4 Fase 7: institutional HTTP security headers (see api-server).
+app.use(securityHeadersMiddleware());
 app.use(express.json({ limit: "1mb" }));
 app.use(traceIdMiddleware());
 app.use(createHttpLogger(SERVICE, cfg.observability.log_level ?? "info"));

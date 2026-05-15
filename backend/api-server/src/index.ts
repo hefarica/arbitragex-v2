@@ -13,6 +13,7 @@ import {
   metricsHandler,
   metricsMiddleware,
   traceIdMiddleware,
+  securityHeadersMiddleware,
   requireEnv,
   requireAdminToken,
   requireEdgeToken,
@@ -104,6 +105,11 @@ import rateLimit from "express-rate-limit";
 // defi routes mounted later (after `pool` and `logger` are constructed). See mountDefi() below.
 
 app.disable("x-powered-by");
+// OMEGA-8/M4 Fase 7: institutional HTTP security headers. nosniff, frameguard,
+// no-referrer, CSP compatible with Socket.IO ws:/wss: upgrades. HSTS is gated
+// by ARBX_ENABLE_HSTS=true because the api-server runs behind plain HTTP
+// inside the VPS network — only the edge worker is TLS-terminated.
+app.use(securityHeadersMiddleware());
 app.use(express.json({ limit: "256kb" }));
 app.use(traceIdMiddleware());
 app.use(createHttpLogger(SERVICE, cfg.observability.log_level ?? "info"));
