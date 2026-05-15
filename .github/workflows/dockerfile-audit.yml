@@ -21,6 +21,10 @@ on:
       - 'automation/scripts/audit-dockerfiles.sh'
       - '.github/workflows/dockerfile-audit.yml'
 
+# M2 Capa1 Fase 4 — read-only token; this workflow only runs a local audit script.
+permissions:
+  contents: read
+
 jobs:
   audit:
     name: audit Dockerfiles for complete COPY coverage

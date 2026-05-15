@@ -6,6 +6,10 @@ on:
   push:
     branches: [main]
 
+# M2 Capa1 Fase 4 — read-only token.
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest

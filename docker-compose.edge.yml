@@ -1,5 +1,15 @@
 # ═══════════════════════════════════════════════════════════════
-# DOCKER COMPOSE — EDGE NODE ORQUESTATION
+# DEPRECATED — DO NOT USE FOR DEPLOY
+# ───────────────────────────────────────────────────────────────
+# M2 Capa1 Fase 11 (2026-05-15): this file predates the unified
+# docker/compose.{dev,prod}.yml split and is NOT referenced by any
+# workflow on `main` today. Kept temporarily as historical reference
+# (OMEGA SOP-EDGE-001 §5.2). For deployments use:
+#   - docker/compose.prod.yml  (production stack)
+#   - docker/compose.dev.yml   (local development)
+# See docs/operations/DEPLOY_WORKFLOWS_CANONICAL.md.
+# ═══════════════════════════════════════════════════════════════
+# DOCKER COMPOSE — EDGE NODE ORQUESTATION (historical)
 # Proyecto OMEGA — Nodo de Borde Completo
 # SOP-EDGE-001 §5.2
 # ═══════════════════════════════════════════════════════════════

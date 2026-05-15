@@ -11,6 +11,10 @@ on:
   pull_request:
     branches: [main]
 
+# M2 Capa1 Fase 4 — read-only token; grep gates only inspect tree.
+permissions:
+  contents: read
+
 jobs:
   grep-gates:
     name: Doctrine grep gates
