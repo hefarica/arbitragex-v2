@@ -45,8 +45,6 @@ jobs:
       # the VPS at runtime via `docker compose up --build`.
       NEXT_PUBLIC_EDGE_URL: https://edge.ci.invalid
       NEXT_PUBLIC_WS_URL: wss://ws.ci.invalid
-      # Hard-fail flag mirroring prod posture.
-      NODE_ENV: production
 
     steps:
       - uses: actions/checkout@v6
@@ -57,7 +55,11 @@ jobs:
           cache: npm
 
       - name: Install all workspace dependencies
-        # npm ci uses the lockfile so the build matches what shipped on main.
+        # IMPORTANT: do NOT set NODE_ENV=production at the job level — that
+        # makes npm ci skip devDependencies (@types/*, vitest, typescript,
+        # next-cli compile deps), which then breaks the @arbx/shared tsc
+        # build later in this workflow. NODE_ENV is set on the build step
+        # itself so `next build` still produces a production bundle.
         run: npm ci
 
       - name: Build @arbx/shared
@@ -69,6 +71,11 @@ jobs:
         run: npm run -w @arbx/frontend typecheck
 
       - name: next build (frontend)
+        # NODE_ENV scoped to the build step — next build sets it itself
+        # internally, but pinning it here keeps the bake fully production-
+        # like without poisoning the install step above.
+        env:
+          NODE_ENV: production
         run: npm run -w @arbx/frontend build
 
       - name: Validate no-localhost guard fired
