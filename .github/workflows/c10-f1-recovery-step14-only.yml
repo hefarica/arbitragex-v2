@@ -1,0 +1,185 @@
+name: Ω-S5++ C10 Fase 1 — Recovery Step 14 Only
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recovery-step14-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TARGET_SHA: 1019447ecfc32af027de40eea668b948e0919412
+      PRE_HEAD: 99cc24db12cebf9b47845ca779eba3c2a7f47f13
+      PRE_SYNC_STASH: C10-F1-pre-sync-25900368867-20260515T043257Z
+      VPS_HOST: 195.201.235.70
+      VPS_USER: root
+      VPS_PATH: /opt/arbitragex-v2
+    steps:
+      - name: Step 1 — SSH setup
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          cat > ~/ssh_vps.sh <<'EOS'
+          #!/usr/bin/env bash
+          ssh -i ~/.ssh/id_ed25519 \
+              -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=10 \
+              -o LogLevel=ERROR \
+              "$VPS_USER@$VPS_HOST" "$@"
+          EOS
+          chmod +x ~/ssh_vps.sh
+
+      - name: Step 2 — Prepare audit dir
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/audit
+          echo "=== RECOVERY STEP14-ONLY ===" > /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo "" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo "- TARGET_SHA: $TARGET_SHA" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo "- PRE_HEAD: $PRE_HEAD" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo "- PRE_SYNC_STASH: $PRE_SYNC_STASH" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo "- RUN_ID: ${{ github.run_id }}" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo "" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+
+      - name: Step 3 — Snapshot pre (HEAD, status, stash list, .env stat)
+        run: |
+          set -euo pipefail
+          ~/ssh_vps.sh "cd $VPS_PATH && git rev-parse HEAD" > /tmp/audit/c10_recovery_head_pre.txt
+          ~/ssh_vps.sh "cd $VPS_PATH && git status --porcelain=v1" > /tmp/audit/c10_recovery_status_pre.txt
+          ~/ssh_vps.sh "cd $VPS_PATH && git stash list" > /tmp/audit/c10_recovery_stash_pre.txt
+          ~/ssh_vps.sh "cd $VPS_PATH && stat -c '%a %s %U %G' .env" > /tmp/audit/c10_recovery_env_pre.txt
+          PRE_HEAD_VPS="$(cat /tmp/audit/c10_recovery_head_pre.txt)"
+          echo "## Snapshot Pre" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo "- HEAD pre: $PRE_HEAD_VPS" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo "- .env metadata pre: $(cat /tmp/audit/c10_recovery_env_pre.txt)" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo "" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+
+      - name: Step 4 — Fetch objects only (no tags)
+        run: |
+          set -euo pipefail
+          ~/ssh_vps.sh "cd $VPS_PATH && git fetch --no-tags origin main" 2>&1 | tee /tmp/audit/c10_recovery_fetch.txt
+
+      - name: Step 5 — Verify TARGET_SHA exists as commit object
+        run: |
+          set -euo pipefail
+          ~/ssh_vps.sh "cd $VPS_PATH && git cat-file -e '${TARGET_SHA}^{commit}'" || \
+            { echo "::error::TARGET_SHA $TARGET_SHA no es objeto commit válido tras fetch"; exit 1; }
+          echo "OK: TARGET_SHA verificado como commit" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+
+      - name: Step 6 — GATE — Verify worktree matches TARGET_SHA BEFORE update-ref
+        id: gate
+        run: |
+          set -euo pipefail
+          ~/ssh_vps.sh "cd $VPS_PATH && git diff --name-status '${TARGET_SHA}' -- ." > /tmp/audit/c10_recovery_diff_target_pre.txt
+          if [ -s /tmp/audit/c10_recovery_diff_target_pre.txt ]; then
+            echo "BLOCKED=1" >> $GITHUB_ENV
+            echo "::error::Worktree NO coincide con TARGET_SHA. Abort sin update-ref."
+            echo "" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+            echo "## ❌ BLOCKED" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+            echo "" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+            echo "git diff --name-status TARGET_SHA NO está vacío. NO se ejecutó update-ref ni reset --mixed." >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+            echo "Ver c10_recovery_diff_target_pre.txt" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+            exit 1
+          fi
+          echo "BLOCKED=0" >> $GITHUB_ENV
+          echo "OK: worktree coincide con TARGET_SHA" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+
+      - name: Step 7 — git update-ref refs/heads/main TARGET_SHA
+        if: env.BLOCKED != '1'
+        run: |
+          set -euo pipefail
+          ~/ssh_vps.sh "cd $VPS_PATH && git update-ref refs/heads/main '${TARGET_SHA}'"
+          echo "update-ref OK" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+
+      - name: Step 8 — git reset --mixed TARGET_SHA
+        if: env.BLOCKED != '1'
+        run: |
+          set -euo pipefail
+          ~/ssh_vps.sh "cd $VPS_PATH && git reset --mixed '${TARGET_SHA}'"
+          echo "reset --mixed OK" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+
+      - name: Step 9 — Snapshot post
+        if: always()
+        run: |
+          set -euo pipefail
+          ~/ssh_vps.sh "cd $VPS_PATH && git rev-parse HEAD" > /tmp/audit/c10_recovery_head_post.txt || true
+          ~/ssh_vps.sh "cd $VPS_PATH && git status --porcelain=v1" > /tmp/audit/c10_recovery_status_post.txt || true
+          ~/ssh_vps.sh "cd $VPS_PATH && git stash list" > /tmp/audit/c10_recovery_stash_post.txt || true
+          ~/ssh_vps.sh "cd $VPS_PATH && stat -c '%a %s %U %G' .env" > /tmp/audit/c10_recovery_env_post.txt || true
+
+      - name: Step 10 — Validations
+        if: env.BLOCKED != '1'
+        run: |
+          set -euo pipefail
+          POST_HEAD="$(cat /tmp/audit/c10_recovery_head_post.txt)"
+          if [ "$POST_HEAD" != "$TARGET_SHA" ]; then
+            echo "::error::HEAD mismatch: $POST_HEAD != $TARGET_SHA"; exit 1
+          fi
+          grep -q "OPERATOR WIP 2026-05-13: configs/app.toml" /tmp/audit/c10_recovery_stash_post.txt || \
+            { echo "::error::stash operador configs/app.toml ausente"; exit 1; }
+          grep -q "opportunities page uses HTTP polling" /tmp/audit/c10_recovery_stash_post.txt || \
+            { echo "::error::stash operador opportunities ausente"; exit 1; }
+          grep -q "C10-F1-pre-sync-25900368867-20260515T043257Z" /tmp/audit/c10_recovery_stash_post.txt || \
+            { echo "::error::pre-sync stash ausente"; exit 1; }
+          diff /tmp/audit/c10_recovery_env_pre.txt /tmp/audit/c10_recovery_env_post.txt || \
+            { echo "::error::.env metadata cambió"; exit 1; }
+          echo "" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo "## Validations" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo "- HEAD post == TARGET_SHA: OK" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo "- Stashes operador: ambos presentes" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo "- Pre-sync stash: presente" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo "- .env metadata pre == post" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+
+      - name: Step 11 — Docker ps
+        if: always()
+        run: |
+          set -euo pipefail
+          ~/ssh_vps.sh "docker ps --format '{{.Names}}|{{.Image}}|{{.Status}}'" > /tmp/audit/c10_recovery_docker_ps.txt || true
+
+      - name: Step 12 — Health checks
+        if: always()
+        run: |
+          set -euo pipefail
+          ~/ssh_vps.sh "curl -sS -o /dev/null -w 'edge=%{http_code}\n' --max-time 8 http://127.0.0.1:8787/health" > /tmp/audit/c10_recovery_health.txt || true
+          ~/ssh_vps.sh "curl -sS -o /dev/null -w 'api=%{http_code}\n' --max-time 8 http://127.0.0.1:8080/health" >> /tmp/audit/c10_recovery_health.txt || true
+          ~/ssh_vps.sh "curl -sS -o /dev/null -w 'frontend_api=%{http_code}\n' --max-time 8 http://127.0.0.1:5173/api/health" >> /tmp/audit/c10_recovery_health.txt || true
+          ~/ssh_vps.sh "curl -sS -o /dev/null -w 'prometheus=%{http_code}\n' --max-time 8 http://127.0.0.1:9090/-/ready" >> /tmp/audit/c10_recovery_health.txt || true
+
+      - name: Step 13 — Final verdict in report
+        if: always()
+        run: |
+          set -euo pipefail
+          echo "" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo "## Docker PS" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo '```' >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          cat /tmp/audit/c10_recovery_docker_ps.txt >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md || true
+          echo '```' >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo "" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo "## Health" >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          echo '```' >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+          cat /tmp/audit/c10_recovery_health.txt >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md || true
+          echo '```' >> /tmp/audit/REPORT_RECOVERY_STEP14_ONLY.md
+
+      - name: Step 14 — Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: c10-f1-recovery-step14-only-${{ github.run_id }}
+          path: /tmp/audit/
+          retention-days: 30
+
+      - name: Step 15 — Cleanup SSH
+        if: always()
+        run: |
+          set -euo pipefail
+          shred -u ~/.ssh/id_ed25519 2>/dev/null || rm -f ~/.ssh/id_ed25519 || true
+          rm -f ~/ssh_vps.sh || true
