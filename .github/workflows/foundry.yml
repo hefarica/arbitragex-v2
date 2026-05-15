@@ -63,7 +63,16 @@ jobs:
     runs-on: ubuntu-latest
     # Only run on PRs targeting main — not on every push.
     # Fork tests cost RPC credits and can be flaky under rate limits.
-    if: github.event_name == 'pull_request'
+    #
+    # M2 Capa1 Fase 5 (P1-2): fork guard. NEVER expose MAINNET_RPC_URL to a
+    # PR originating from a fork — `pull_request.head.repo.fork` is `true` in
+    # that case. Same-repo branch PRs and push events to main can use the
+    # secret. The reference compare against `github.repository` is a belt-and-
+    # braces second guard against `pull_request_target` misuse.
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.fork == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
     # Require non-fork tests to pass first — no point forking if unit tests fail.
     needs: test
     timeout-minutes: 20
