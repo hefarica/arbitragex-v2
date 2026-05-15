@@ -184,3 +184,21 @@ pub async fn compute(
         None,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// OMEGA-8/M4 Fase 6: the Transfer(address,address,uint256) event
+    /// keccak256 topic is hardcoded by EVM convention. Lock it in so a
+    /// silent regression (e.g. mis-typed event signature) can't ship.
+    #[test]
+    fn transfer_topic_matches_evm_standard() {
+        let t = transfer_topic();
+        // Reference: keccak256("Transfer(address,address,uint256)") =
+        //   0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
+        let expected = "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+        let got = hex::encode(t.as_bytes());
+        assert_eq!(got, expected, "ERC20 Transfer topic regressed");
+    }
+}

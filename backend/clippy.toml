@@ -1,6 +1,28 @@
-# M11 (audit 2026-05-10): conservative clippy config for ArbitrageX backend.
+# OMEGA-8/M4 Fase 3 (2026-05-15): conservative clippy config for ArbitrageX backend.
 # Tighten over time as individual modules are cleaned up.
 # Promotion path: warn here -> per-module #[deny] -> workspace deny in CI.
+#
+# Static audit (OMEGA-8/M4 Fase 3) — production unwraps remaining by crate
+# (excluding #[cfg(test)] modules and boot-time builders):
+#   - searcher-rs        : addressed two V3 quoter hot-path unwraps in Fase 1
+#                          (Lazy<Result<Address>>). The remaining file-wide
+#                          `#![allow(clippy::unwrap_used)]` covers documented
+#                          M11-TODO sites; promoting requires per-fn audits.
+#   - sed-core           : addressed first/last unwrap pre-dispatch panic in
+#                          Fase 2 (closure_check + slice-pattern is_closed).
+#                          Remaining hits are inside test modules or
+#                          numerical-invariant code paths that already guard
+#                          via thiserror enums.
+#   - relays-client      : remaining `.expect("reqwest client")` calls are at
+#                          construction time (boot-fail), not pre-dispatch.
+#                          Surfaced in Fase 4 integration tests.
+#   - prioritization-spine, simulator-v2, recon, math-engine : production
+#                          unwraps audited; no pre-dispatch panic surface
+#                          found. Surfaced in Fase 5/6 property + cobertura
+#                          tests.
+#
+# Per-crate clippy.toml override (M5+ work): add `[lints.clippy] unwrap_used = "deny"`
+# to each Cargo.toml once the audit memo accepts the remaining sites.
 
 msrv = "1.85"
 

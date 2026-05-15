@@ -33,13 +33,47 @@ impl ClosedContourTrajectory {
 
     /// Verifica que el contorno sea cerrado topológicamente:
     /// punto inicial = punto final  y  token inicial = token final.
+    ///
+    /// OMEGA-8/M4 Fase 2: refactored to use slice pattern matching instead of
+    /// `.first().unwrap()` / `.last().unwrap()`. The size guard remains as a
+    /// fast-path, and the pattern match makes pre-dispatch panic-free
+    /// (RULE 9 — no `unwrap`/`expect` in pre-dispatch).
     pub fn is_closed(&self) -> bool {
         if self.manifolds.len() < Self::MIN_LOOP_SIZE {
             return false;
         }
-        let first_in = &self.manifolds.first().unwrap().token_pair.0;
-        let last_out = &self.manifolds.last().unwrap().token_pair.1;
-        first_in == last_out
+        match (self.manifolds.first(), self.manifolds.last()) {
+            (Some(first), Some(last)) => first.token_pair.0 == last.token_pair.1,
+            _ => false,
+        }
+    }
+
+    /// Result-based variant of [`Self::is_closed`] that surfaces the exact
+    /// reason a contour is not closed instead of collapsing to `bool`. Useful
+    /// for the invariant checker pre-dispatch path which already maps to a
+    /// typed `InvariantViolation`. RULE 8 (no silent errors).
+    pub fn closure_check(&self) -> Result<(), ClosureError> {
+        if self.manifolds.len() < Self::MIN_LOOP_SIZE {
+            return Err(ClosureError::LoopTooShort {
+                actual: self.manifolds.len(),
+                min: Self::MIN_LOOP_SIZE,
+            });
+        }
+        let first = self
+            .manifolds
+            .first()
+            .ok_or(ClosureError::EmptyManifoldLoop)?;
+        let last = self
+            .manifolds
+            .last()
+            .ok_or(ClosureError::EmptyManifoldLoop)?;
+        if first.token_pair.0 != last.token_pair.1 {
+            return Err(ClosureError::InvalidLoopBoundary {
+                first: first.token_pair.0.clone(),
+                last: last.token_pair.1.clone(),
+            });
+        }
+        Ok(())
     }
 
     /// Calcula la integral de contorno de log-precios relativos:
@@ -342,6 +376,19 @@ pub enum InvariantViolation {
     ExecutionTooSlow { execution_time_ms: u64, half_life_ms: u64 },
 }
 
+/// OMEGA-8/M4 Fase 2: typed errors for [`ClosedContourTrajectory::closure_check`].
+/// Each variant maps 1-to-1 to a precise topological violation, replacing the
+/// previous `.first().unwrap()` / `.last().unwrap()` pre-dispatch panic surface.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum ClosureError {
+    #[error("Manifold loop está vacío")]
+    EmptyManifoldLoop,
+    #[error("Loop demasiado corto: actual={actual} < min={min}")]
+    LoopTooShort { actual: usize, min: usize },
+    #[error("Frontera de loop inválida: first_in={first} != last_out={last}")]
+    InvalidLoopBoundary { first: String, last: String },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,6 +470,101 @@ mod tests {
         );
         let result = HolonomicInvariantChecker::verify(&contour, &yield_data, 100, 5000);
         assert!(result.is_ok());
+    }
+
+    /// OMEGA-8/M4 Fase 2: is_closed must NEVER panic, even on empty manifold
+    /// vec. Previously a `first().unwrap()` would panic if the MIN_LOOP_SIZE
+    /// guard was ever bypassed. The slice-pattern variant is panic-free.
+    #[test]
+    fn is_closed_returns_false_on_empty_manifold_vec() {
+        let contour = ClosedContourTrajectory {
+            manifolds: vec![],
+            transition_points: vec![],
+            relative_prices: vec![],
+            contour_length: 0.0,
+            loop_cardinality: 0,
+            start_token: "WETH".to_string(),
+        };
+        assert!(!contour.is_closed());
+    }
+
+    /// OMEGA-8/M4 Fase 2: closure_check surfaces a typed error per failure
+    /// mode (EmptyManifoldLoop, LoopTooShort, InvalidLoopBoundary). RULE 8
+    /// requires explicit errors over silent falses.
+    #[test]
+    fn closure_check_empty_vec_returns_loop_too_short() {
+        let contour = ClosedContourTrajectory {
+            manifolds: vec![],
+            transition_points: vec![],
+            relative_prices: vec![],
+            contour_length: 0.0,
+            loop_cardinality: 0,
+            start_token: "WETH".to_string(),
+        };
+        let err = contour.closure_check().expect_err("empty must error");
+        assert!(matches!(err, ClosureError::LoopTooShort { actual: 0, .. }));
+    }
+
+    #[test]
+    fn closure_check_too_short_returns_loop_too_short() {
+        let contour = ClosedContourTrajectory {
+            manifolds: vec![
+                pool("0xA", "WETH", "USDC", 1.0, 2000.0),
+                pool("0xB", "USDC", "WETH", 2000.0, 1.0),
+            ],
+            transition_points: vec![],
+            relative_prices: vec![],
+            contour_length: 0.0,
+            loop_cardinality: 2,
+            start_token: "WETH".to_string(),
+        };
+        let err = contour.closure_check().expect_err("len<3 must error");
+        assert!(matches!(
+            err,
+            ClosureError::LoopTooShort { actual: 2, min: 3 }
+        ));
+    }
+
+    #[test]
+    fn closure_check_invalid_boundary_returns_invalid_loop_boundary() {
+        let contour = ClosedContourTrajectory {
+            manifolds: vec![
+                pool("0xA", "WETH", "USDC", 1.0, 2000.0),
+                pool("0xB", "USDC", "DAI", 1000.0, 1000.0),
+                pool("0xC", "DAI", "USDT", 1.0, 1.0),
+            ],
+            transition_points: vec![],
+            relative_prices: vec![],
+            contour_length: 0.0,
+            loop_cardinality: 3,
+            start_token: "WETH".to_string(),
+        };
+        let err = contour
+            .closure_check()
+            .expect_err("non-closing must error");
+        assert!(matches!(err, ClosureError::InvalidLoopBoundary { .. }));
+    }
+
+    #[test]
+    fn closure_check_valid_loop_is_ok() {
+        let contour = ClosedContourTrajectory {
+            manifolds: vec![
+                pool("0xA", "WETH", "USDC", 1.0, 2000.0),
+                pool("0xB", "USDC", "DAI", 1000.0, 1000.0),
+                pool("0xC", "DAI", "WETH", 1900.0, 1.0),
+            ],
+            transition_points: vec![
+                Vector2::new(1.0, 2000.0),
+                Vector2::new(1000.0, 1000.0),
+                Vector2::new(1900.0, 1.0),
+            ],
+            relative_prices: vec![2000.0, 1.0, 1.0 / 1900.0],
+            contour_length: 0.0,
+            loop_cardinality: 3,
+            start_token: "WETH".to_string(),
+        };
+        assert!(contour.closure_check().is_ok());
+        assert!(contour.is_closed());
     }
 
     #[test]

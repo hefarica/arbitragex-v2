@@ -13,6 +13,7 @@ import {
   metricsHandler,
   metricsMiddleware,
   traceIdMiddleware,
+  securityHeadersMiddleware,
   requireEnv,
   requireAdminToken,
   requireEdgeToken,
@@ -104,6 +105,11 @@ import rateLimit from "express-rate-limit";
 // defi routes mounted later (after `pool` and `logger` are constructed). See mountDefi() below.
 
 app.disable("x-powered-by");
+// OMEGA-8/M4 Fase 7: institutional HTTP security headers. nosniff, frameguard,
+// no-referrer, CSP compatible with Socket.IO ws:/wss: upgrades. HSTS is gated
+// by ARBX_ENABLE_HSTS=true because the api-server runs behind plain HTTP
+// inside the VPS network — only the edge worker is TLS-terminated.
+app.use(securityHeadersMiddleware());
 app.use(express.json({ limit: "256kb" }));
 app.use(traceIdMiddleware());
 app.use(createHttpLogger(SERVICE, cfg.observability.log_level ?? "info"));
@@ -1012,7 +1018,13 @@ app.get("/api/v1/readiness", async (req, res) => {
   }
 });
 
-const PORT = Number(process.env["API_PORT"] ?? 3000); // 3000 to match frontend fetch
+// OMEGA-8/M4 Fase 8: align Dockerfile `EXPOSE 8080` with the runtime default.
+// docker/compose.{dev,prod}.yml already set `API_PORT: "8080"` explicitly,
+// so the fallback only fires for `npm run dev` / bare `node dist/index.js`
+// invocations. Standardising on 8080 eliminates the previous mismatch where
+// the container's exposed port could differ from the listener port if the
+// env var was absent.
+const PORT = Number(process.env["API_PORT"] ?? 8080);
 const httpServer = createServer(app);
 const io = setupWebSocketGateway(httpServer);
 
