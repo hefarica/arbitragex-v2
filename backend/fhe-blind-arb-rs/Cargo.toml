@@ -1,0 +1,15 @@
+[workspace]
+
+[package]
+name = "fhe-blind-arb-rs"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+# Activar SOLO cuando se enganche tfhe-rs real (Zama). Sin esta feature, se usa el backend stub.
+tfhe-real = []
+
+[dependencies]
+thiserror = "1.0"
+tracing = "0.1"
