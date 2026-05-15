@@ -524,4 +524,127 @@ mod tests {
         assert_eq!(parse_hex_u128(""), Some(0u128)); // empty hex = 0
         assert_eq!(parse_hex_u128("0xGG"), None); // invalid hex digits
     }
+
+    // ──────────────────────────────────────────────────────────────
+    // OMEGA-8/M4 Fase 4: wiremock-backed HTTP contract tests
+    // ──────────────────────────────────────────────────────────────
+    //
+    // These tests verify that FlashbotsClient never touches a real relay
+    // (no Flashbots endpoint, no mainnet RPC) and that backend errors are
+    // surfaced as typed Result errors rather than panics.
+
+    use ethers::signers::LocalWallet;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Same ephemeral key as signer.rs tests — anvil test account #0. Never
+    /// reused outside test fixtures.
+    const EPHEMERAL_TEST_KEY: &str =
+        "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+    fn ephemeral_signer(chain_id: u64) -> Signer {
+        let wallet: LocalWallet = EPHEMERAL_TEST_KEY
+            .parse()
+            .expect("ephemeral test key parses");
+        let wallet = wallet.with_chain_id(chain_id);
+        let address = wallet.address();
+        Signer { wallet, address, chain_id }
+    }
+
+    fn sample_bundle() -> SignedBundle {
+        use ethers::types::{Address, H256, U256};
+        SignedBundle {
+            opportunity_id: uuid::Uuid::nil(),
+            target_block: 18_000_000,
+            tx_raw_hex: "0xf86d80".to_string(),
+            tx_hash: H256::zero(),
+            from: Address::zero(),
+            nonce: 0,
+            value_wei: U256::zero(),
+        }
+    }
+
+    /// OMEGA-8/M4 Fase 4: a Flashbots relay returning HTTP 500 must be
+    /// reported as an Err to the caller — never panic, never silently
+    /// fall through. RULE 8 + RULE 9.
+    #[tokio::test]
+    async fn flashbots_500_backend_error_does_not_panic() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .and(header("content-type", "application/json"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("relay down"))
+            .mount(&mock)
+            .await;
+
+        let client = FlashbotsClient::new(mock.uri(), Duration::from_secs(2));
+        let signer = ephemeral_signer(1);
+        let bundle = sample_bundle();
+        let res = client.send_bundle(&signer, &bundle).await;
+        assert!(
+            res.is_err(),
+            "500 response must propagate as Err, not panic or silently succeed"
+        );
+        // Error must carry status code and not leak the signer's private key.
+        let err = format!("{:#}", res.unwrap_err());
+        assert!(err.contains("500"), "error must mention 500: {err}");
+        assert!(
+            !err.contains(EPHEMERAL_TEST_KEY),
+            "error message must NEVER include the signer's private key"
+        );
+    }
+
+    /// OMEGA-8/M4 Fase 4: a malformed JSON success from the relay must
+    /// surface as a parse Err — the engine relies on Result<BundleResponse>
+    /// to decide whether to retry / abort.
+    #[tokio::test]
+    async fn flashbots_malformed_success_payload_is_err() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not-json{"))
+            .mount(&mock)
+            .await;
+
+        let client = FlashbotsClient::new(mock.uri(), Duration::from_secs(2));
+        let signer = ephemeral_signer(1);
+        let res = client.send_bundle(&signer, &sample_bundle()).await;
+        assert!(
+            res.is_err(),
+            "malformed JSON must propagate as Err, not panic"
+        );
+    }
+
+    /// OMEGA-8/M4 Fase 4: the X-Flashbots-Signature header is present on
+    /// every outgoing POST. Verifies the auth contract holds.
+    #[tokio::test]
+    async fn flashbots_signature_header_is_present_on_post() {
+        let mock = MockServer::start().await;
+        // Build a minimally valid BundleResponse so parsing succeeds.
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "bundleHash": "0xabc"
+            }
+        })
+        .to_string();
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .and(wiremock::matchers::header_exists("X-Flashbots-Signature"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let client = FlashbotsClient::new(mock.uri(), Duration::from_secs(2));
+        let signer = ephemeral_signer(1);
+        // We don't care whether parsing succeeds; we care that the
+        // expectation on the X-Flashbots-Signature header fires (mock
+        // expects exactly 1 hit; missing header = unmatched = panic at
+        // drop). Call once and ignore the result.
+        let _ = client.send_bundle(&signer, &sample_bundle()).await;
+        // wiremock will panic on Drop if the .expect(1) was not met,
+        // making this test fail honestly if the header is ever dropped.
+    }
 }
