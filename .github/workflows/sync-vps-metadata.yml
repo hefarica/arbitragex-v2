@@ -80,6 +80,8 @@ jobs:
               lines = f.readlines()
           in_run = False
           run_indent = 0
+          in_heredoc = False
+          heredoc_marker = None
           violations = []
           for i, raw in enumerate(lines, 1):
               line = raw.rstrip('\n')
@@ -91,11 +93,19 @@ jobs:
                   continue
               if in_run:
                   if stripped == "" or len(line) - len(line.lstrip()) >= run_indent:
+                      if in_heredoc:
+                          if stripped == heredoc_marker:
+                              in_heredoc = False
+                              heredoc_marker = None
+                          continue
+                      hd = re.search(r"<<['\"]?([A-Z]+)['\"]?\s*$", line)
+                      if hd:
+                          in_heredoc = True
+                          heredoc_marker = hd.group(1)
+                          continue
                       if stripped.startswith('#'):
                           continue
                       if re.search(r'(echo|printf|cat)\s+.*(REPORT|rollback|smoke|services_touched|danger)', line, re.I):
-                          continue
-                      if re.search(r"<<['\"]?(EOF|EOM|MD|JSON)", line):
                           continue
                       for pat in banned:
                           if re.search(pat, line):
