@@ -993,3 +993,145 @@ export type AdminChainsList = z.infer<typeof AdminChainsListSchema>;
 export type AdminChainProbeResult = z.infer<typeof AdminChainProbeResultSchema>;
 export type AdminChainCreateBody = z.infer<typeof AdminChainCreateBodySchema>;
 export type AdminChainUpdateBody = z.infer<typeof AdminChainUpdateBodySchema>;
+
+// ─────── OMEGA-8 / M5 Capa 4 Frontend Hardening — frontier schemas ───────
+//
+// Goal: every HTTP frontier the frontend reads must parse with Zod and
+// surface a discriminated union upstream (OK / AUTH_REQUIRED / UNAVAILABLE /
+// INVALID_RESPONSE / ENDPOINT_NOT_IMPLEMENTED). Pages never silently turn a
+// caída into "lista vacía".
+
+// Generic fail-honest envelope used across pages.
+export type FrontierResult<T> =
+  | { kind: "ok"; data: T }
+  | { kind: "auth_required"; status: number }
+  | { kind: "unavailable"; detail: string }
+  | { kind: "invalid_response"; detail: string }
+  | { kind: "endpoint_not_implemented"; detail: string };
+
+// /api/credentials (settings/credentials SSR).
+export const CredentialItemSchema = z.object({
+  id: z.string(),
+  provider: z.string(),
+  scope: z.string(),
+  display_name: z.string(),
+  has_value: z.boolean(),
+  value_suffix: z.string(),
+  status: z.enum(["untested", "valid", "invalid", "expired"]),
+  last_validated_at: z.string().nullable(),
+  last_validation_error: z.string().nullable(),
+  metadata: z.record(z.string(), z.unknown()),
+  updated_at: z.string(),
+  updated_by: z.string().nullable(),
+});
+export const CredentialsResponseSchema = z.object({
+  items: z.array(CredentialItemSchema),
+  ts: z.string(),
+});
+export type CredentialsResponse = z.infer<typeof CredentialsResponseSchema>;
+
+// OMEGA-S5 — /api/contracts (used by adapters, core, factory, wallets pages).
+// Permissive .passthrough() because the contract registry shape evolves; we
+// only depend on the minimal fields rendered today.
+export const ContractEntitySchema = z
+  .object({
+    id: z.string(),
+    chain_id: z.number().int(),
+    contract_kind: z.string(),
+    address: z.string(),
+    status: z.string(),
+  })
+  .passthrough();
+export const ContractsResponseSchema = z.object({
+  rows: z.array(ContractEntitySchema),
+});
+export type ContractEntityRow = z.infer<typeof ContractEntitySchema>;
+export type ContractsResponse = z.infer<typeof ContractsResponseSchema>;
+
+// OMEGA-S5 — /api/system/feature_manifest
+export const FeatureManifestEntrySchema = z
+  .object({
+    name: z.string(),
+    enabled: z.boolean().optional(),
+    status: z.string().optional(),
+  })
+  .passthrough();
+export const FeatureManifestResponseSchema = z
+  .object({
+    features: z.array(FeatureManifestEntrySchema).optional(),
+    rows: z.array(FeatureManifestEntrySchema).optional(),
+  })
+  .passthrough();
+export type FeatureManifestResponse = z.infer<typeof FeatureManifestResponseSchema>;
+
+// OMEGA-S5 — /api/crucible/status
+export const CrucibleStatusRowSchema = z
+  .object({
+    chain_id: z.number().int().nullable().optional(),
+    name: z.string().optional(),
+    status: z.string().optional(),
+  })
+  .passthrough();
+export const CrucibleStatusResponseSchema = z
+  .object({
+    networks: z.array(CrucibleStatusRowSchema).optional(),
+  })
+  .passthrough();
+export type CrucibleStatusResponse = z.infer<typeof CrucibleStatusResponseSchema>;
+
+// OMEGA-S5 — /api/capital-gates
+export const CapitalGateEntitySchema = z
+  .object({
+    id: z.string(),
+    scope: z.string(),
+    scope_ref: z.string().nullable().optional(),
+    name: z.string(),
+    capital_cap_usd: z.number(),
+    max_drawdown_pct: z.number(),
+    status: z.string(),
+    config_hash: z.string(),
+  })
+  .passthrough();
+export const CapitalGatesResponseSchema = z.object({
+  rows: z.array(CapitalGateEntitySchema),
+});
+export type CapitalGateRow = z.infer<typeof CapitalGateEntitySchema>;
+export type CapitalGatesResponse = z.infer<typeof CapitalGatesResponseSchema>;
+
+// /api/wallets (wallets page SSR)
+export const WalletRowSchema = z
+  .object({
+    address: z.string(),
+    chain_id: z.number().int().optional(),
+    label: z.string().optional(),
+    enabled: z.boolean().optional(),
+  })
+  .passthrough();
+export const WalletsResponseSchema = z
+  .object({
+    wallets: z.array(WalletRowSchema).optional(),
+    items: z.array(WalletRowSchema).optional(),
+    rows: z.array(WalletRowSchema).optional(),
+  })
+  .passthrough();
+export type WalletRow = z.infer<typeof WalletRowSchema>;
+export type WalletsResponse = z.infer<typeof WalletsResponseSchema>;
+
+// /api/dex-registry (dex-registry page SSR)
+export const DexRegistryRowSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    chain_id: z.number().int().optional(),
+    enabled: z.boolean().optional(),
+  })
+  .passthrough();
+export const DexRegistryResponseSchema = z
+  .object({
+    dexes: z.array(DexRegistryRowSchema).optional(),
+    items: z.array(DexRegistryRowSchema).optional(),
+    rows: z.array(DexRegistryRowSchema).optional(),
+  })
+  .passthrough();
+export type DexRegistryRow = z.infer<typeof DexRegistryRowSchema>;
+export type DexRegistryResponse = z.infer<typeof DexRegistryResponseSchema>;

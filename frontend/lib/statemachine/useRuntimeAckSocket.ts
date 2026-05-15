@@ -171,12 +171,27 @@ export function createRuntimeAckSocket(
   };
 
   // C4 auth payload (same triple-channel pattern as opportunities socket).
-  const connectOpts: Record<string, unknown> = { ...CONNECT_OPTS };
+  //
+  // V-AT-1 / OMEGA-8 M5 Phase 1: When no explicit ephemeral token is provided,
+  // `withCredentials` makes Socket.IO send the httpOnly admin session cookie
+  // in the handshake (server-side gating in PR #73 accepts cookie OR header).
+  // The token NEVER comes from `NEXT_PUBLIC_*` env (would be baked into the
+  // public bundle).
+  const connectOpts: Record<string, unknown> = {
+    ...CONNECT_OPTS,
+    withCredentials: true,
+  };
   if (authToken && authToken.length > 0) {
     connectOpts["auth"] = { token: authToken };
     connectOpts["query"] = { token: authToken };
     connectOpts["extraHeaders"] = { "x-arbx-admin-token": authToken };
   }
+
+  // Surface server-side authz failure honestly (Fail-Honest R8) — when the
+  // backend emits `error { code:'unauthorized', room:'runtime_ack' }` the UI
+  // must NOT silently retry; it must transition to error so the operator can
+  // log in / refresh session.
+  // (Wiring deferred to socket.on("error") below.)
 
   onStatus("connecting");
   const socket = ioFactory(url, connectOpts);
@@ -197,6 +212,24 @@ export function createRuntimeAckSocket(
 
   socket.on("reconnect_attempt", () => {
     if (!settled) onStatus("reconnecting");
+  });
+
+  // M3 P0-2 / M5 Fase X: backend WSS room emits
+  //   error { code: 'unauthorized', room: 'runtime_ack' }
+  // when the session cookie/token does not pass server-side gating. Surface
+  // it fail-honest — no silent retry, no degraded "live" UI.
+  socket.on("error", (raw: unknown) => {
+    if (settled) return;
+    let reason = "unauthorized";
+    if (raw && typeof raw === "object") {
+      const obj = raw as Record<string, unknown>;
+      if (typeof obj["code"] === "string") reason = obj["code"] as string;
+      if (typeof obj["message"] === "string") reason = obj["message"] as string;
+    }
+    settled = true;
+    clearTimers();
+    onStatus("error");
+    onNack(reason);
   });
 
   socket.on("runtime_ack", (raw: unknown) => {
@@ -272,10 +305,23 @@ function resolveWssUrl(provided: string | undefined): string {
   return "";
 }
 
+/**
+ * Resolve the WSS auth token.
+ *
+ * SECURITY (V-AT-1 / OMEGA-8 M5 Phase 1): The admin token MUST NEVER be
+ * baked into the public bundle via `NEXT_PUBLIC_*` envs. This resolver
+ * accepts ONLY an explicit, ephemeral, caller-supplied token (e.g., a
+ * short-lived runtime token derived from the httpOnly admin session cookie).
+ *
+ * When no token is provided, return "" and let the socket connect with
+ * `withCredentials` so the httpOnly admin session cookie travels in the
+ * Socket.IO handshake. Backend gating (PR #73 `runtime_ack` room) accepts
+ * either header-bearer or cookie-session and emits
+ * `error { code:'unauthorized' }` on failure — the hook surfaces it to UI.
+ */
 function resolveAuthToken(provided: string | undefined): string {
   if (provided && provided.length > 0) return provided;
-  const envToken = process.env.NEXT_PUBLIC_ARBX_ADMIN_TOKEN;
-  return envToken && envToken.length > 0 ? envToken : "";
+  return "";
 }
 
 const defaultIoFactory: RuntimeAckIoFactory = (url, factoryOpts) => {

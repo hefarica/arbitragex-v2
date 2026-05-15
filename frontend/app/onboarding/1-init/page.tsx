@@ -1,4 +1,3 @@
-import { getApiBaseUrl } from "@/lib/api-client";
 "use client";
 
 import { useEffect, useState } from "react";
@@ -13,7 +12,12 @@ import { ClearAdminTokenButton } from "@/components/clear-admin-token";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/page-header";
-import { adminTokenExpiresInMs, fmtRemaining, getAdminToken, setAdminToken } from "@/lib/admin-token";
+import {
+  adminTokenExpiresInMs,
+  fmtRemaining,
+  hasAdminSession,
+  setAdminToken as establishAdminSession,
+} from "@/lib/admin-token";
 import {
   completeOnboardingPhase1,
   getOnboardingStatus,
@@ -25,6 +29,7 @@ export default function Phase1InitPage() {
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [adminToken, setAdminTokenState] = useState("");
   const [tokenExpiresIn, setTokenExpiresIn] = useState(0);
+  const [sessionActive, setSessionActive] = useState(false);
   const [confirmedBy, setConfirmedBy] = useState("");
   const [notes, setNotes] = useState("");
   const [ackAdminToken, setAckAdminToken] = useState(false);
@@ -42,7 +47,9 @@ export default function Phase1InitPage() {
       if (!r.ok) { setLoadErr(r.error); return; }
       setStatus(r.data);
     })();
-    setAdminTokenState(getAdminToken());
+    // V-AT-1: admin token lives in httpOnly cookie; we never read it back. We
+    // only check whether a session is active (companion TTL cookie present).
+    setSessionActive(hasAdminSession());
     setTokenExpiresIn(adminTokenExpiresInMs());
   }, []);
 
@@ -53,8 +60,27 @@ export default function Phase1InitPage() {
     setBusy(true);
     setResultOk(null);
     setResultErr(null);
-    setAdminToken(adminToken);
+
+    // OMEGA-8 / M5 Fase 2 P0: establish the admin session BEFORE recording
+    // phase 1. `establishAdminSession` (alias of setAdminToken) is async — it
+    // POSTs to /admin/session, the edge sets the httpOnly cookie, and only on
+    // server-side success do we proceed. If the session call fails, we MUST
+    // NOT call `completeOnboardingPhase1` (Fail-Honest R8) — otherwise the
+    // operator would record an admission of secrets that the platform cannot
+    // actually use.
+    const sessionOk = await establishAdminSession(adminToken);
+    if (!sessionOk) {
+      setBusy(false);
+      setResultErr(
+        "admin session establishment failed — token rejected by edge /admin/session. " +
+          "Verify ARBX_ADMIN_TOKEN value and edge availability.",
+      );
+      setSessionActive(false);
+      return;
+    }
+    setSessionActive(true);
     setTokenExpiresIn(adminTokenExpiresInMs());
+
     const r = await completeOnboardingPhase1(confirmedBy.trim(), true, notes.trim(), adminToken);
     setBusy(false);
     if (!r.ok) { setResultErr(r.error); return; }
@@ -176,12 +202,19 @@ export default function Phase1InitPage() {
             />
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs text-muted-foreground">
-                Stored locally in <code>localStorage</code> for this browser only. {tokenExpiresIn > 0
-                  ? <>Auto-clears in <strong>{fmtRemaining(tokenExpiresIn)}</strong>.</>
-                  : <>Never sent to a third party.</>}
+                Sent to <code>/admin/session</code>; the edge sets an httpOnly cookie that JavaScript cannot read.{" "}
+                {sessionActive && tokenExpiresIn > 0 ? (
+                  <>Session active — auto-clears in <strong>{fmtRemaining(tokenExpiresIn)}</strong>.</>
+                ) : (
+                  <>No session active in this browser.</>
+                )}
               </p>
               <ClearAdminTokenButton
-                onCleared={() => { setAdminTokenState(""); setTokenExpiresIn(0); }}
+                onCleared={() => {
+                  setAdminTokenState("");
+                  setTokenExpiresIn(0);
+                  setSessionActive(false);
+                }}
               />
             </div>
           </div>

@@ -205,6 +205,30 @@ describe("createRuntimeAckSocket — F-3 RG-3 stale watchdog", () => {
     expect(onStatus).toHaveBeenCalledWith("error");
   });
 
+  it("surfaces server 'error { code:unauthorized }' as fail-honest onNack (OMEGA-8 M5 Fase 1)", () => {
+    const fake = makeFakeSocket();
+    const onStatus = vi.fn();
+    const onNack = vi.fn();
+    const onAck = vi.fn();
+
+    createRuntimeAckSocket({
+      url: "wss://test.invalid",
+      eventId: TARGET_EVENT_ID,
+      ioFactory: () => fake,
+      onStatus,
+      onAck,
+      onNack,
+    });
+
+    fake.trigger("connect");
+    fake.trigger("error", { code: "unauthorized", room: "runtime_ack" });
+
+    expect(onAck).not.toHaveBeenCalled();
+    expect(onNack).toHaveBeenCalledTimes(1);
+    expect(onNack.mock.calls[0]?.[0]).toBe("unauthorized");
+    expect(onStatus).toHaveBeenCalledWith("error");
+  });
+
   it("fires onNack('timeout') after timeoutMs without an ack", () => {
     const fake = makeFakeSocket();
     const onNack = vi.fn();
