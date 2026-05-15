@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import type { ActionState } from "./types";
+import { useRuntimeAckSocket } from "./useRuntimeAckSocket";
 
 /**
  * Hook that implements the critical-action state machine.
@@ -105,6 +106,20 @@ export function useActionState() {
   const reset = useCallback(() => {
     setState({ kind: "IDLE" });
   }, []);
+
+  // OMEGA-7 Runtime ACK WSS bridge: when the machine is parked in
+  // WAITING_RUNTIME_ACK, subscribe to the backend WSS room `runtime_ack`
+  // (PR #73, broadcast post-INSERT). Strict event_id correlation enforces
+  // invariant I-1; safeParse enforces RG-1; heartbeat enforces RG-3.
+  useRuntimeAckSocket({
+    eventId: state.kind === "WAITING_RUNTIME_ACK" ? state.event_id : null,
+    onAck: (payload) => {
+      setState({ kind: "VERIFIED", config_hash_after: payload.config_hash_after });
+    },
+    onNack: (reason) => {
+      setState({ kind: "FAILED", error: reason, rollback_available: true });
+    },
+  });
 
   return {
     state,
