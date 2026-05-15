@@ -29,9 +29,3 @@ hex.workspace = true
 reqwest.workspace = true
 sqlx.workspace = true
 bigdecimal.workspace = true
-
-# OMEGA-8/M4 Fase 4: dev-only test scaffolding for relays-client. wiremock is
-# pinned to the same version searcher-rs already uses to keep workspace
-# resolver state stable. No production-path consumer.
-[dev-dependencies]
-wiremock = "0.6"

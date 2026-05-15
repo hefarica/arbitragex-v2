@@ -23,5 +23,3 @@ futures-util = { workspace = true }
 
 [dev-dependencies]
 hex = "0.4"
-# OMEGA-8/M4 Fase 5: property tests for BayesianAllocator + ConfigAwareEvaluator.
-proptest = "1.4"
