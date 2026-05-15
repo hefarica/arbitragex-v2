@@ -1,0 +1,95 @@
+name: Ω-S5++ APEX Verify admin session wiring (READ-ONLY)
+on:
+  workflow_dispatch: {}
+
+jobs:
+  verify:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    env:
+      ARBX_ADMIN_TOKEN: ${{ secrets.ARBX_ADMIN_TOKEN }}
+    steps:
+      - name: Container layout
+        run: |
+          set -u
+          echo "=== Containers ==="
+          docker ps --format '{{.Names}}\t{{.Ports}}\t{{.Status}}' | grep -E 'edge|frontend|api-server' || true
+          echo "=== Edge HEAD ==="
+          docker inspect arbitragex-v2-edge-1 --format '{{.Config.Cmd}}' 2>&1 | head -3 || true
+
+      - name: M1 verify — POST /admin/session
+        run: |
+          set -u
+          rm -f /tmp/c
+          echo "=== POST /admin/session ==="
+          HTTP=$(curl -sk -o /tmp/r1.json -w '%{http_code}' -c /tmp/c \
+            -X POST http://127.0.0.1:8787/admin/session \
+            -H 'content-type: application/json' \
+            -d "{\"token\":\"$ARBX_ADMIN_TOKEN\"}")
+          echo "status=$HTTP"
+          echo "--- response body ---"
+          cat /tmp/r1.json | head -c 500; echo
+          echo "--- cookies issued ---"
+          grep -E '^[^#]' /tmp/c | awk '{print $6"="substr($7,1,8)"..."}' || true
+          test "$HTTP" = "200" || { echo "❌ session endpoint not 200"; exit 1; }
+
+      - name: M1 verify — GET /api/admin/chains with cookie
+        run: |
+          set -u
+          echo "=== GET /api/admin/chains with cookie (the actual bug fix) ==="
+          HTTP=$(curl -sk -o /tmp/r2.json -w '%{http_code}' -b /tmp/c http://127.0.0.1:8787/api/admin/chains)
+          echo "status=$HTTP"
+          echo "--- response body (first 600 chars) ---"
+          cat /tmp/r2.json | head -c 600; echo
+          test "$HTTP" = "200" || { echo "❌ /api/admin/chains not 200 with cookie — wiring fix FAILED"; exit 1; }
+
+      - name: M1 verify — GET /api/admin/chains WITHOUT cookie (expect 401)
+        run: |
+          set -u
+          HTTP=$(curl -sk -o /tmp/r3.json -w '%{http_code}' http://127.0.0.1:8787/api/admin/chains)
+          echo "status without cookie=$HTTP"
+          test "$HTTP" = "401" || { echo "⚠ expected 401 without cookie, got $HTTP"; exit 1; }
+
+      - name: M3 verify — /omega-s5/registry/chain SSR anon (must be 200, not 500)
+        run: |
+          set -u
+          echo "=== GET /omega-s5/registry/chain (no cookie) — must be 200 AUTH_REQUIRED, not 500 ==="
+          HTTP=$(curl -sk -o /tmp/page-anon.html -w '%{http_code}' http://127.0.0.1:3000/omega-s5/registry/chain)
+          echo "status=$HTTP"
+          echo "--- AUTH_REQUIRED markers ---"
+          grep -c -E 'AUTH_REQUIRED|Admin session required|signin' /tmp/page-anon.html || echo "0 markers"
+          test "$HTTP" = "200" || { echo "❌ SSR anon returned $HTTP (expected 200 fail-honest)"; exit 1; }
+
+      - name: M3 verify — /omega-s5/registry/token SSR anon
+        run: |
+          set -u
+          HTTP=$(curl -sk -o /tmp/page-token.html -w '%{http_code}' http://127.0.0.1:3000/omega-s5/registry/token)
+          echo "status=$HTTP"
+          test "$HTTP" = "200" || { echo "❌ /omega-s5/registry/token returned $HTTP"; exit 1; }
+
+      - name: M3 verify — /omega-s5/registry/chain WITH cookie
+        run: |
+          set -u
+          HTTP=$(curl -sk -o /tmp/page-auth.html -w '%{http_code}' -b /tmp/c http://127.0.0.1:3000/omega-s5/registry/chain)
+          echo "status with cookie=$HTTP"
+          test "$HTTP" = "200" || { echo "❌ SSR with cookie returned $HTTP"; exit 1; }
+
+      - name: M4 verify — /admin/signin page renders
+        run: |
+          set -u
+          HTTP=$(curl -sk -o /tmp/signin.html -w '%{http_code}' http://127.0.0.1:3000/admin/signin)
+          echo "status=$HTTP"
+          grep -c -iE 'admin.token|sign.?in' /tmp/signin.html || echo "0 markers"
+          test "$HTTP" = "200" || { echo "❌ /admin/signin not 200"; exit 1; }
+
+      - name: Final summary
+        run: |
+          echo "════════════════════════════════════════════"
+          echo "  HOLONOMIC RESOLUTION CONFIRMED"
+          echo "════════════════════════════════════════════"
+          echo "  M1 edge cookie → header translation:  ✓"
+          echo "  M1 401 without cookie:                 ✓"
+          echo "  M3 SSR fail-honest anon:               ✓"
+          echo "  M3 SSR fail-honest authed:             ✓"
+          echo "  M4 /admin/signin reachable:            ✓"
+          echo "════════════════════════════════════════════"
