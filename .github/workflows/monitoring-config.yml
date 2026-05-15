@@ -41,6 +41,16 @@ jobs:
           sudo install -m 0755 "prometheus-${VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
           promtool --version
 
+      - name: Stage rule file at container path
+        # prometheus.yml + prometheus.prod.yml use the IN-CONTAINER absolute
+        # path `/etc/prometheus/alerts.rules.yml` (set by the volume mount
+        # in compose.prod.yml). promtool resolves rule_files against the
+        # filesystem at check time, so we make the path real on the CI
+        # runner by copying the repo-relative file there.
+        run: |
+          sudo mkdir -p /etc/prometheus
+          sudo cp monitoring/alerts.rules.yml /etc/prometheus/alerts.rules.yml
+
       - name: Check alert rules
         run: promtool check rules monitoring/alerts.rules.yml
 
