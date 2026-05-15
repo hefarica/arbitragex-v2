@@ -1,0 +1,17 @@
+[workspace]
+
+[package]
+name = "state-lock-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = "1.0"
+tracing = "0.1"
+async-trait = "0.1"
+tokio = { version = "1.41", features = ["sync", "time", "macros", "rt", "rt-multi-thread"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+tokio = { version = "1.41", features = ["full", "test-util"] }
