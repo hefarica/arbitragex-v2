@@ -116,13 +116,34 @@ const SESSION_COOKIE = "arbx_admin_session";
 const SESSION_TTL_COOKIE = "arbx_admin_session_ttl";
 const SESSION_TTL_S = 8 * 60 * 60; // 8 hours
 
+/**
+ * V-AT-1 cookie translation. Returns the admin token from either the
+ * x-arbx-admin-token header (CLI / programmatic callers) or the
+ * arbx_admin_session httpOnly cookie (browser flow). When the header carries
+ * the public sentinel "__session_active__" (which the frontend sends because
+ * it cannot read the real httpOnly cookie) we MUST defer to the cookie —
+ * otherwise upstream validates the sentinel literal against ARBX_ADMIN_TOKEN
+ * and rejects every browser write. Returns null when no usable token exists.
+ */
+function resolveAdminToken(c: import("hono").Context<{ Bindings: Env }>): string | null {
+  const headerToken = c.req.header("x-arbx-admin-token");
+  if (headerToken && headerToken !== "__session_active__") return headerToken;
+  const cookieToken = getCookie(c, SESSION_COOKIE);
+  return cookieToken ?? null;
+}
+
 app.use("*", async (c, next) => {
   const startMs = Date.now();
   const origin = c.req.header("origin") ?? "";
   const allowed = c.env.ALLOWED_ORIGINS === "*" ? "*" :
     c.env.ALLOWED_ORIGINS.split(",").map(s => s.trim()).includes(origin) ? origin : "";
   c.header("access-control-allow-origin", allowed);
-  c.header("access-control-allow-headers", "content-type,authorization,x-arbx-trace-id");
+  c.header("access-control-allow-headers", "content-type,authorization,x-arbx-trace-id,x-arbx-admin-token,x-arbx-actor");
+  // V-AT-1: must echo allow-credentials so the browser sends arbx_admin_session
+  // cookie on cross-origin admin calls. Allowed origin is already restricted
+  // (no "*"), so credentialed CORS is safe.
+  if (allowed && allowed !== "*") c.header("access-control-allow-credentials", "true");
+  c.header("access-control-allow-methods", "GET,POST,PUT,DELETE,OPTIONS");
   c.header("vary", "origin");
   if (c.req.method === "OPTIONS") return c.body(null, 204);
 
@@ -529,7 +550,7 @@ app.get("/api/risk/circuit-breakers/events", (c) => proxy(c, "/api/v1/risk/circu
 // GET list/single use short cache (5s) since runtime chain state changes
 // infrequently. POST/PUT/DELETE/probe are pass-through (mutations).
 app.get("/api/admin/chains", async (c) => {
-  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  const adminToken = resolveAdminToken(c);
   if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
   const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains${new URL(c.req.url).search}`, {
     headers: { "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN, "x-arbx-admin-token": adminToken },
@@ -539,7 +560,7 @@ app.get("/api/admin/chains", async (c) => {
   return c.body(t, upstream.status as 200 | 401 | 503);
 });
 app.get("/api/admin/chains/:chain_id", async (c) => {
-  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  const adminToken = resolveAdminToken(c);
   if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
   const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains/${encodeURIComponent(c.req.param("chain_id") ?? "")}`, {
     headers: { "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN, "x-arbx-admin-token": adminToken },
@@ -549,7 +570,7 @@ app.get("/api/admin/chains/:chain_id", async (c) => {
   return c.body(t, upstream.status as 200 | 404 | 503);
 });
 app.post("/api/admin/chains", async (c) => {
-  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  const adminToken = resolveAdminToken(c);
   if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
   const body = await c.req.text();
   const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains`, {
@@ -562,7 +583,7 @@ app.post("/api/admin/chains", async (c) => {
   return c.body(t, upstream.status as 200 | 201 | 400 | 409 | 503);
 });
 app.put("/api/admin/chains/:chain_id", async (c) => {
-  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  const adminToken = resolveAdminToken(c);
   if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
   const body = await c.req.text();
   const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains/${encodeURIComponent(c.req.param("chain_id") ?? "")}`, {
@@ -575,7 +596,7 @@ app.put("/api/admin/chains/:chain_id", async (c) => {
   return c.body(t, upstream.status as 200 | 400 | 404 | 503);
 });
 app.delete("/api/admin/chains/:chain_id", async (c) => {
-  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  const adminToken = resolveAdminToken(c);
   if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
   const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains/${encodeURIComponent(c.req.param("chain_id") ?? "")}`, {
     method: "DELETE",
@@ -586,7 +607,7 @@ app.delete("/api/admin/chains/:chain_id", async (c) => {
   return c.body(t, upstream.status as 200 | 404 | 503);
 });
 app.post("/api/admin/chains/:chain_id/probe", async (c) => {
-  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  const adminToken = resolveAdminToken(c);
   if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
   const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains/${encodeURIComponent(c.req.param("chain_id") ?? "")}/probe${new URL(c.req.url).search}`, {
     method: "POST",

@@ -29,6 +29,7 @@ import {
   recordAuthSuccess,
 } from "./admin-session-limits.js";
 import { emitAuditEvent, tokenFingerprint } from "./audit-emit.js";
+import { parseCookies as parseCookiesShared, resolveAdminToken } from "./admin-token-resolver.js";
 import { createProxyMiddleware } from "http-proxy-middleware";
 
 const SERVICE = "edge-dev-local";
@@ -87,6 +88,11 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// JSON body parser — registered early so all POST/PUT routes (including
+// /api/admin/chains and /admin/session, which arrive before the original
+// later-mounted express.json) receive a parsed req.body.
+app.use(express.json({ limit: "64kb" }));
 
 app.get("/health", healthHandler(SERVICE, VERSION, startedAt));
 app.get("/metrics", metricsHandler);
@@ -170,13 +176,30 @@ app.get("/api/scoring/status", (req, res) => proxy("/api/v1/scoring/status", req
 app.get("/api/risk/circuit-breakers/status", (req, res) => proxy("/api/v1/risk/circuit-breakers/status", req, res));
 app.get("/api/risk/circuit-breakers/events", (req, res) => proxy("/api/v1/risk/circuit-breakers/events", req, res));
 
-// B1 Chains Admin CRUD (admin-token gated; dev-local forwards header).
-app.get("/api/admin/chains", (req, res) => proxy("/api/v1/admin/chains" + (new URL(req.url, "http://x").search || ""), req, res));
-app.get("/api/admin/chains/:chain_id", (req, res) => proxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res));
-app.post("/api/admin/chains", (req, res) => proxy("/api/v1/admin/chains", req, res));
-app.put("/api/admin/chains/:chain_id", (req, res) => proxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res));
-app.delete("/api/admin/chains/:chain_id", (req, res) => proxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res));
-app.post("/api/admin/chains/:chain_id/probe", (req, res) => proxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}/probe${new URL(req.url, "http://x").search || ""}`, req, res));
+// Chains Admin registry — admin-token gated. Routed through adminProxy so the
+// V-AT-1 httpOnly cookie (arbx_admin_session) is translated to the upstream
+// x-arbx-admin-token header. adminProxy is defined later in the file; function
+// hoisting via `async function` keeps the reference valid here.
+app.get("/api/admin/chains", (req, res) => {
+  const search = new URL(req.url, "http://x").search || "";
+  adminProxy(`/api/v1/admin/chains${search}`, req, res, "GET");
+});
+app.get("/api/admin/chains/:chain_id", (req, res) => {
+  adminProxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res, "GET");
+});
+app.post("/api/admin/chains", (req, res) => {
+  adminProxy("/api/v1/admin/chains", req, res, "POST");
+});
+app.put("/api/admin/chains/:chain_id", (req, res) => {
+  adminProxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res, "PUT");
+});
+app.delete("/api/admin/chains/:chain_id", (req, res) => {
+  adminProxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res, "DELETE");
+});
+app.post("/api/admin/chains/:chain_id/probe", (req, res) => {
+  const search = new URL(req.url, "http://x").search || "";
+  adminProxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}/probe${search}`, req, res, "POST");
+});
 // Trading Config — operator-tunable strategy parameters per chain.
 app.get("/api/trading-config", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
@@ -262,7 +285,8 @@ app.get("/api/v1/wallets/:address/allowances", (req, res) => {
 
 // S7: admin POST proxies — forward caller's x-arbx-admin-token alongside the
 // edge token. Rejected by api-server if admin token is missing/wrong.
-app.use(express.json({ limit: "64kb" }));
+// express.json body parser is already registered above (moved earlier so
+// admin chains POST/PUT/probe also receive a parsed body).
 
 // ─── V-AT-1 hardening: httpOnly cookie session for admin token ───
 // The admin token (T1 per secrets.policy.md) is stored in an httpOnly cookie
@@ -271,16 +295,9 @@ const SESSION_COOKIE = "arbx_admin_session";
 const SESSION_TTL_COOKIE = "arbx_admin_session_ttl";
 const SESSION_TTL_S = 8 * 60 * 60; // 8 hours
 
-function parseCookies(header: string | undefined): Record<string, string> {
-  if (!header) return {};
-  const out: Record<string, string> = {};
-  for (const pair of header.split(";")) {
-    const idx = pair.indexOf("=");
-    if (idx < 0) continue;
-    out[pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim();
-  }
-  return out;
-}
+// Cookie parser re-exported from the V-AT-1 token resolver module so both
+// runtime and unit tests share the same implementation.
+const parseCookies = parseCookiesShared;
 
 // POST /admin/session — validate token, set httpOnly cookie.
 // Hardened: per-path rate-limit (5/min/IP) + 401 lockout (10 fails → 15min block).
@@ -386,18 +403,13 @@ app.post("/admin/session/logout", (req, res) => {
 });
 
 async function adminProxy(path: string, req: express.Request, res: express.Response, method: string = "POST"): Promise<void> {
-  // Accept admin token from: (1) header (CLI/programmatic), (2) httpOnly cookie (browser).
-  // The browser flow sends the literal sentinel "__session_active__" in the header
-  // (frontend's getAdminToken() never returns the real secret) — when we see the
-  // sentinel we MUST defer to the cookie, otherwise api-server validates the
-  // sentinel string against ARBX_ADMIN_TOKEN and 401s every browser-driven write.
-  const cookies = parseCookies(req.headers.cookie);
-  const headerToken = req.header("x-arbx-admin-token");
-  const cookieToken = cookies[SESSION_COOKIE];
-  const adminToken =
-    headerToken && headerToken !== "__session_active__"
-      ? headerToken
-      : cookieToken;
+  // V-AT-1 token translation: header for CLI/programmatic callers, cookie for
+  // the browser flow (where the real token is httpOnly and the header carries
+  // only the public sentinel). resolveAdminToken centralises this contract.
+  const adminToken = resolveAdminToken({
+    headerToken: req.header("x-arbx-admin-token"),
+    cookieHeader: req.headers.cookie,
+  });
   if (!adminToken) { res.status(401).json({ error: "missing_admin_token" }); return; }
   try {
     const upstream = await fetch(`${API_SERVER_URL}${path}`, {
