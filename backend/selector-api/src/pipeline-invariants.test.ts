@@ -63,16 +63,20 @@ describe("OMEGA-8/M4 Fase 11 — Redis Streams pipeline invariants", () => {
   it("transient errors do NOT XACK — next consumer pass retries", () => {
     // The catch block following the persist+publish path must log
     // `consumer.process_err` but must NOT call xack — that's how
-    // at-least-once is preserved.
+    // at-least-once is preserved. Locate the catch block that mentions
+    // `consumer.process_err` and verify NO xack appears between the
+    // opening `{` and the matching closing `}` immediately before the
+    // `finally` block.
     expect(CONSUMER_SRC).toMatch(/consumer\.process_err/);
-    // The ERROR catch should not directly call xack.
-    const errorBlockMatch = CONSUMER_SRC.match(
-      /} catch \(err\) \{[\s\S]*?consumer\.process_err[\s\S]*?\} finally/,
-    );
-    expect(errorBlockMatch).not.toBeNull();
-    if (errorBlockMatch) {
-      expect(errorBlockMatch[0]).not.toMatch(/xack\(/);
-    }
+
+    // Slice between `consumer.process_err` and the next `} finally` —
+    // that span is the body of the transient-error catch block exclusively.
+    const startIdx = CONSUMER_SRC.indexOf("consumer.process_err");
+    const finallyIdx = CONSUMER_SRC.indexOf("} finally", startIdx);
+    expect(startIdx).toBeGreaterThan(0);
+    expect(finallyIdx).toBeGreaterThan(startIdx);
+    const errorCatchBody = CONSUMER_SRC.slice(startIdx, finallyIdx);
+    expect(errorCatchBody).not.toMatch(/xack\(/);
   });
 
   it("trace_id is propagated into persistDecision", () => {
