@@ -38,7 +38,14 @@ initMetrics(SERVICE);
 const DATABASE_URL = requireEnv("DATABASE_URL");
 const REDIS_URL = requireEnv("REDIS_URL");
 
-const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 10, idleTimeoutMillis: 30_000 });
+// OMEGA-8/M3 P2-4: add `connectionTimeoutMillis` so pool.connect() cannot
+// hang forever when Postgres is unreachable; `max` becomes env-overridable.
+const pool = new pg.Pool({
+  connectionString: DATABASE_URL,
+  max: Number(process.env["SELECTOR_PG_POOL_MAX"] ?? 10),
+  idleTimeoutMillis: Number(process.env["SELECTOR_PG_IDLE_TIMEOUT_MS"] ?? 30_000),
+  connectionTimeoutMillis: Number(process.env["SELECTOR_PG_CONNECTION_TIMEOUT_MS"] ?? 5_000),
+});
 pool.query("SELECT 1").catch((e: Error) => {
   logger.error({ event: "db.check.fail", err: e.message }, "cannot reach postgres at boot");
   process.exit(1);
