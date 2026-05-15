@@ -55,8 +55,19 @@ jobs:
         # npm --workspaces --if-present skips packages without a typecheck script.
         run: npm run typecheck --workspaces --if-present
 
+      - name: Build @arbx/shared
+        # Dependent workspaces (selector-api, api-server, edge/*) resolve
+        # @arbx/shared from `shared-ts/dist/`. Tests fail with
+        # "Cannot find module '@arbx/shared'" if dist/ doesn't exist.
+        run: npm run -w @arbx/shared build
+
       - name: Unit tests (workspaces)
-        # Vitest + Jest tests for shared-ts, api-server, etc.
+        # Vitest tests for shared-ts, api-server, selector-api, edge/*, frontend.
+        # M2 Capa1 Fase 7 (P1-5): hard gate. The `continue-on-error: true`
+        # that was here was a TODO from spec audit re-run #2 ("tighten once
+        # CI is green 5x"). PR #76 (Capa 2 hardening) closed M3 with green
+        # CI, so the suite is now mature enough to block merges on test
+        # regressions. The sibling `unit-tests.yml` workflow has always
+        # gated on this same command — keeping them aligned removes the
+        # only remaining "advisory" TS check.
         run: npm test --workspaces --if-present
-        # TODO: track which workspace test suites are stable; tighten once CI is green 5x
-        continue-on-error: true
