@@ -36,7 +36,14 @@ jobs:
           # log levels, feature flags). NO contiene secretos reales. Compose.dev.yml
           # requiere env_file: ../.env por design — esto es materialización CI legítima.
           cp .env.example .env
-          echo "::notice::.env materialized from .env.example (T2 placeholders only)"
+          # ARBX-HARDENING (next.config.js): NEXT_PUBLIC_EDGE_URL/WS_URL must NOT
+          # point to localhost when NODE_ENV=production (forced by frontend/Dockerfile).
+          # Use Docker DNS service names — these are valid in both build and runtime.
+          {
+            echo "NEXT_PUBLIC_EDGE_URL=http://edge:8787"
+            echo "NEXT_PUBLIC_WS_URL=http://api-server:3000"
+          } >> .env
+          echo "::notice::.env materialized + Docker DNS endpoints injected for next.config.js hardening"
 
       - name: Bring up compose stack (dev — defaults OK for CI)
         run: |
