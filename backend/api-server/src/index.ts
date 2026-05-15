@@ -1018,7 +1018,13 @@ app.get("/api/v1/readiness", async (req, res) => {
   }
 });
 
-const PORT = Number(process.env["API_PORT"] ?? 3000); // 3000 to match frontend fetch
+// OMEGA-8/M4 Fase 8: align Dockerfile `EXPOSE 8080` with the runtime default.
+// docker/compose.{dev,prod}.yml already set `API_PORT: "8080"` explicitly,
+// so the fallback only fires for `npm run dev` / bare `node dist/index.js`
+// invocations. Standardising on 8080 eliminates the previous mismatch where
+// the container's exposed port could differ from the listener port if the
+// env var was absent.
+const PORT = Number(process.env["API_PORT"] ?? 8080);
 const httpServer = createServer(app);
 const io = setupWebSocketGateway(httpServer);
 
