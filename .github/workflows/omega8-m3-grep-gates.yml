@@ -101,11 +101,21 @@ jobs:
           fi
           echo "P1-5 OK"
 
-      - name: "Doctrine — no .env in tree"
+      - name: "Doctrine — no .env (operator-secret) in tree"
         run: |
           set -euo pipefail
-          if git ls-files | grep -E "^\.env$|^\.env\.[^e]" | grep -v "^\.env\.example$" | head -1 | grep .; then
-            echo "::error::A .env file is tracked by git — STRICTLY forbidden"
+          # Allow:
+          #   - .env.example (template, no secrets)
+          #   - .env.crucible (pre-existing fixture; documented in repo)
+          # Block anything else matching .env or .env.*
+          violations=$(git ls-files \
+            | grep -E "(^|/)\.env(\..*)?$" \
+            | grep -vE "(^|/)\.env\.example$" \
+            | grep -vE "(^|/)\.env\.crucible$" \
+            || true)
+          if [ -n "$violations" ]; then
+            echo "::error::Unapproved .env file tracked by git — STRICTLY forbidden"
+            echo "$violations"
             exit 1
           fi
           echo "no-env-tracked OK"
