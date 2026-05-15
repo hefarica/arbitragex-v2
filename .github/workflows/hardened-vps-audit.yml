@@ -412,7 +412,22 @@ jobs:
 
           # Drift detection: ¿está el VPS por detrás, al día, o por delante?
           if echo "${DIFF_RESULT}" | grep -q "target_sha_exists=true"; then
-            FILES_CHANGED=$(echo "${DIFF_RESULT}" | grep -E "^[AMDRT]\t" | wc -l || echo "0")
+            # M3 hotfix 3/3: con 'set -o pipefail' activo, si grep no encuentra
+            # matches retorna 1, el pipeline retorna 1, y '|| echo "0"' se EJECUTA
+            # pero APIla el output del 'wc -l' previo, produciendo un valor
+            # multiline (ej. "0\n0") que viola el formato de GITHUB_OUTPUT con
+            # 'Invalid format '0'' / 'Unable to process file command output'.
+            # Fix: capturar primero el grep (con || true para que pipefail no
+            # propague), luego contar y normalizar a entero único.
+            FILES_CHANGED_RAW=$(echo "${DIFF_RESULT}" | grep -cE "^[AMDRT]" || true)
+            # grep -c retorna número, pero si grep falla por SIGPIPE/no-match con
+            # pipefail puede salir como string vacío. Normalizamos.
+            FILES_CHANGED="${FILES_CHANGED_RAW:-0}"
+            # Asegurar que es un entero válido (single line, no whitespace).
+            FILES_CHANGED=$(echo "${FILES_CHANGED}" | tr -d '[:space:]')
+            case "${FILES_CHANGED}" in
+              ''|*[!0-9]*) FILES_CHANGED=0 ;;
+            esac
             echo "drift_files_count=${FILES_CHANGED}" >> "${GITHUB_OUTPUT}"
             if [ "${FILES_CHANGED}" -eq 0 ]; then
               echo "drift_status=IN_SYNC" >> "${GITHUB_OUTPUT}"
