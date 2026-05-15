@@ -102,7 +102,6 @@ use shared_rs::{
     rpc_failover::HttpRpcPool,
     trading_config::TradingConfigClient,
 };
-use sqlx::postgres::PgPoolOptions;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tracing::{info, warn};
 
@@ -245,13 +244,18 @@ async fn main() -> anyhow::Result<()> {
     // liquidation_worker, plus per-chain scanner). Was 4 historically; bumped
     // 2026-05-07 per cs-validator MAJOR finding when liquidation_worker landed.
     // Override via DATABASE_POOL_MAX env if needed.
+    // OMEGA-8/M3 P1-2: explicit timeouts so connection acquisition cannot
+    // block forever under pressure. `DATABASE_POOL_MAX` continues to override
+    // the default; the other timeout knobs (DATABASE_ACQUIRE_TIMEOUT_SECS,
+    // DATABASE_IDLE_TIMEOUT_SECS, DATABASE_MAX_LIFETIME_SECS,
+    // DATABASE_POOL_MIN) live inside `shared::PoolConfig::from_env`.
     let db_pool_max = std::env::var("DATABASE_POOL_MAX")
         .ok()
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(8);
+    let pool_cfg = shared_rs::db_pool::PoolConfig::from_env(db_pool_max);
     let db_pool = match std::env::var("DATABASE_URL") {
-        Ok(url) if !url.is_empty() => match PgPoolOptions::new()
-            .max_connections(db_pool_max)
+        Ok(url) if !url.is_empty() => match shared_rs::db_pool::options_with_timeouts(&pool_cfg)
             .connect(&url)
             .await
         {

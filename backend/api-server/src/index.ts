@@ -16,6 +16,7 @@ import {
   requireEnv,
   requireAdminToken,
   requireEdgeToken,
+  requireServiceToken,
   assertSecureBootTokens,
   KillSwitchClient,
   initMetrics,
@@ -36,6 +37,9 @@ assertSecureBootTokens(process.env);
 
 const ARBX_ADMIN_TOKEN = requireEnv("ARBX_ADMIN_TOKEN");
 const ARBX_EDGE_TOKEN = requireEnv("ARBX_EDGE_TOKEN");
+// OMEGA-8/M3 P0-1: dedicated service-token for inter-service POSTs
+// (searcher-rs, recon, relays-client → api-server). NEVER reuse admin token.
+const ARBX_SERVICE_TOKEN = requireEnv("ARBX_SERVICE_TOKEN");
 
 const killSwitch = new KillSwitchClient({
   redisUrl: REDIS_URL,
@@ -1018,7 +1022,37 @@ const io = setupWebSocketGateway(httpServer);
 // I-2). Requires `pool` to be non-null; if the DB is missing this is a
 // fail-fast condition because runtime_ack persistence is non-negotiable.
 if (pool) {
-  app.use("/api/system", mountSystemManifest(pool, redis, io));
+  // OMEGA-8/M3 P0-1: per-IP rate-limits on runtime_ack endpoints. Defaults are
+  // conservative but operator-overridable via env. POST is higher (legitimate
+  // searcher-rs reloads burst up to ~60/min in M5 reload tests); GET is lower
+  // (frontend fallback poll, bounded by useRuntimeAckSocket retry budget).
+  const postWindowMs = Number(process.env["RUNTIME_ACK_POST_RATE_WINDOW_MS"] ?? 60_000);
+  const postMax = Number(process.env["RUNTIME_ACK_POST_RATE_MAX"] ?? 120);
+  const getWindowMs = Number(process.env["RUNTIME_ACK_GET_RATE_WINDOW_MS"] ?? 60_000);
+  const getMax = Number(process.env["RUNTIME_ACK_GET_RATE_MAX"] ?? 30);
+  const runtimeAckPostLimiter = rateLimit({
+    windowMs: postWindowMs,
+    max: postMax,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "rate_limited", source: "runtime_ack_post" },
+  });
+  const runtimeAckGetLimiter = rateLimit({
+    windowMs: getWindowMs,
+    max: getMax,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "rate_limited", source: "runtime_ack_get" },
+  });
+  app.use(
+    "/api/system",
+    mountSystemManifest(pool, redis, io, {
+      requireServiceToken: requireServiceToken(ARBX_SERVICE_TOKEN),
+      requireAdminToken: requireAdminToken(ARBX_ADMIN_TOKEN),
+      runtimeAckPostLimiter,
+      runtimeAckGetLimiter,
+    }),
+  );
 } else {
   logger.error(
     { event: "system_manifest.disabled" },

@@ -189,12 +189,26 @@ export function setupWebSocketGateway(server: HttpServer) {
     // Boot validator `assertSecureBootTokens()` already guarantees
     // ARBX_ADMIN_TOKEN is non-empty, non-placeholder, and >=32 bytes — so we
     // can read it directly without re-validating the value here.
+    //
+    // OMEGA-8/M3 P0-2: defense-in-depth gating for the runtime_ack room.
+    // The handshake already requires admin token, so any connected socket is
+    // implicitly authorized. We additionally mark a per-socket capability
+    // flag at handshake time and re-check it on `subscribe:runtime_ack` to
+    // ensure no future refactor (e.g. relaxing the handshake gate to a
+    // tiered model) can silently expose the runtime_ack room to anonymous
+    // clients. Tested in `websocket.test.ts`.
     const expectedAdminToken = process.env['ARBX_ADMIN_TOKEN'] ?? '';
     io.use((socket, next) => {
         const got = extractHandshakeToken(socket.handshake);
         if (!got || !safeTokenEqual(got, expectedAdminToken)) {
             return next(new Error('unauthorized: invalid or missing admin token'));
         }
+        // Mark this socket as having operator/admin privilege. Used by
+        // sensitive rooms (currently `runtime_ack`) for defense-in-depth.
+        (socket as unknown as { data: Record<string, unknown> }).data = {
+            ...((socket as unknown as { data?: Record<string, unknown> }).data ?? {}),
+            runtimeAckAllowed: true,
+        };
         next();
     });
 
@@ -224,7 +238,21 @@ export function setupWebSocketGateway(server: HttpServer) {
         // INSERT. Frontend useActionState 12-states transitions
         // WAITING_RUNTIME_ACK → VERIFIED on receipt of an event with the
         // matching event_id.
+        //
+        // OMEGA-8/M3 P0-2 (defense-in-depth): verify the per-socket
+        // capability flag set during the handshake. If absent (which can only
+        // happen if someone bypasses io.use), refuse the join and emit a
+        // structured `error` event so the client surfaces the failure rather
+        // than silently waiting for a broadcast that will never arrive.
         socket.on('subscribe:runtime_ack', () => {
+            const allowed = socket?.data?.runtimeAckAllowed === true;
+            if (!allowed) {
+                console.warn(
+                    `[WebSocket] Cliente ${socket.id} INTENTÓ unirse a runtime_ack sin autorización — rechazado`,
+                );
+                socket.emit('error', { code: 'unauthorized', room: RUNTIME_ACK_ROOM });
+                return;
+            }
             console.log(`[WebSocket] Cliente ${socket.id} se suscribió a Runtime ACK`);
             socket.join(RUNTIME_ACK_ROOM);
         });
