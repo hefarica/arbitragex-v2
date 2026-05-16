@@ -43,7 +43,20 @@ jobs:
             echo "NEXT_PUBLIC_EDGE_URL=http://edge:8787"
             echo "NEXT_PUBLIC_WS_URL=http://api-server:3000"
           } >> .env
-          echo "::notice::.env materialized + Docker DNS endpoints injected for next.config.js hardening"
+          # OMEGA-102 hot-fix (SECURE_BOOT): api-server / edge / shared-ts run
+          # assertSecureBootTokens() at boot which REJECTS any token shorter than
+          # 32 bytes (shared-ts/src/middleware/index.ts:51). The .env.example file
+          # uses literal "<run: openssl rand -base64 48>" placeholders (30 chars)
+          # which fail this check and cause api-server to crash-loop, producing
+          # 502s on edge proxy → playwright timeouts. We generate ephemeral CI
+          # tokens here (48-byte base64 ≈ 64 chars) — these never leave the
+          # ephemeral CI runner and are NOT secrets.
+          {
+            echo "ARBX_ADMIN_TOKEN=$(openssl rand -base64 48 | tr -d '\n')"
+            echo "ARBX_EDGE_TOKEN=$(openssl rand -base64 48 | tr -d '\n')"
+            echo "ARBX_SERVICE_TOKEN=$(openssl rand -base64 48 | tr -d '\n')"
+          } >> .env
+          echo "::notice::.env materialized + Docker DNS endpoints + SECURE_BOOT tokens injected"
 
       - name: Bring up compose stack (dev — defaults OK for CI)
         run: |
