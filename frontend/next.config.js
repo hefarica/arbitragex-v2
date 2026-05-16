@@ -9,9 +9,18 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL;
 // ARBX-HARDENING: Prevent production builds from being generated with localhost endpoints.
 // This physically prevents the #425 / API Base URL mismatch cascade if the operator forgets
 // to pass --env-file .env during a docker build.
+//
+// Opt-out: ARBX_BUILD_FOR_LOCAL_E2E=1 explicitly permits localhost—only used by the
+// e2e/playwright CI workflow which runs Playwright on the same host as the docker
+// compose stack and needs the browser to reach edge via http://localhost:8787.
+// The opt-out is intentionally noisy (prints a warning) and never the default.
 if (process.env.NODE_ENV === "production") {
+  const allowLocalForE2E = process.env.ARBX_BUILD_FOR_LOCAL_E2E === "1";
   if (EDGE_URL && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(EDGE_URL)) {
-    throw new Error(`[CRITICAL] next build failed: NEXT_PUBLIC_EDGE_URL (${EDGE_URL}) cannot point to localhost in production.`);
+    if (!allowLocalForE2E) {
+      throw new Error(`[CRITICAL] next build failed: NEXT_PUBLIC_EDGE_URL (${EDGE_URL}) cannot point to localhost in production.`);
+    }
+    console.warn(`[ARBX-HARDENING] localhost NEXT_PUBLIC_EDGE_URL accepted under ARBX_BUILD_FOR_LOCAL_E2E=1 — this build is NOT suitable for staging/prod.`);
   }
 }
 // ─── CSP ───
