@@ -30,6 +30,17 @@ jobs:
           npm install
           npx playwright install --with-deps chromium
 
+      - name: Materialize .env for compose (CI dev defaults)
+        # docker/compose.dev.yml references `env_file: [../.env]` on every
+        # service. Without it, `docker compose up` aborts before any container
+        # starts. We copy .env.example verbatim — it ships only public
+        # endpoints and placeholder tokens, never real secrets (audit M12).
+        run: |
+          if [ ! -f .env ]; then
+            cp .env.example .env
+            echo ".env created from .env.example for CI (dev placeholders only)"
+          fi
+
       - name: Bring up compose stack (dev — defaults OK for CI)
         run: |
           docker compose -f docker/compose.dev.yml up -d --build \
