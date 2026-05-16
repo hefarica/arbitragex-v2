@@ -48,7 +48,7 @@ export default async function Home() {
           <span className="size-1.5 rounded-full bg-primary" />
           operator console
         </div>
-        <h1>Platform control plane.</h1>
+        <h1>ArbitrageX operator console</h1>
         <p className="max-w-2xl text-base text-muted-foreground">
           Every view below consumes live edge endpoints. When an upstream is unhealthy
           the page surfaces the error verbatim — it never synthesizes values.

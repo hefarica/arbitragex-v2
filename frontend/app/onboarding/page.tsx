@@ -1,10 +1,10 @@
 import Link from "next/link";
-import { AlertCircleIcon, CheckCircle2Icon, CircleIcon, LockIcon } from "lucide-react";
+import { CheckCircle2Icon, CircleIcon, LockIcon } from "lucide-react";
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
+import { EdgeHealthBanner } from "@/components/edge-health-banner";
 import { getOnboardingStatus, type OnboardingStatus } from "@/lib/api-client";
 import { PHASES } from "@/lib/onboarding-phases";
 
@@ -37,16 +37,7 @@ export default async function OnboardingIndexPage() {
           title="Onboarding"
           lede="Progressive setup in five phases. The app refuses to operate features whose phase isn't complete."
         />
-        <Alert variant="destructive">
-          <AlertCircleIcon />
-          <AlertTitle>edge error</AlertTitle>
-          <AlertDescription>
-            Could not read onboarding progress: <code className="font-mono text-xs">{res.error}</code>
-            <p className="mt-2 text-sm">
-              This usually means the DB is not reachable or migration 018 hasn't been applied.
-            </p>
-          </AlertDescription>
-        </Alert>
+        <EdgeHealthBanner result={res} subject="onboarding progress" focus={false} />
       </>
     );
   }
