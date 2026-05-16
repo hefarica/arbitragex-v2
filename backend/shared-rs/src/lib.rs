@@ -22,6 +22,7 @@ pub mod paper_mode;
 pub mod pre_execute_checklist;
 pub mod price_oracle;
 pub mod rpc_failover;
+pub mod tokens;
 pub mod trading_config;
 
 pub use config::{AppConfig, ConfigError};
