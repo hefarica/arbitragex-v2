@@ -1,0 +1,90 @@
+# Repo Policy Check
+#
+# OMEGA-102 Delta Pack · 2026-05-16
+# Hourly + on-push verification of three immutable repo policies:
+#
+#   1. Visibility is PRIVATE (docs/REPO_VISIBILITY_POLICY.md)
+#   2. Secret scanning + push protection are ENABLED
+#   3. CODEOWNERS file exists at .github/CODEOWNERS
+#
+# Failure of any check raises a workflow alert. The job is intentionally
+# read-only — it does not auto-remediate. Remediation is the operator's
+# decision per docs/INCIDENT_RUNBOOK.md (incident class INC-09).
+name: Policy Check
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Hourly — minute 17 to spread load away from common cron edges.
+    - cron: "17 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    name: repo policy invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Visibility must be private
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          visibility=$(gh api "repos/${{ github.repository }}" --jq '.visibility')
+          echo "current visibility: $visibility"
+          if [ "$visibility" != "private" ]; then
+            echo "::error::Repo is '$visibility'. Expected 'private'. See docs/REPO_VISIBILITY_POLICY.md"
+            exit 1
+          fi
+
+      - name: Secret scanning + push protection must be enabled
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          payload=$(gh api "repos/${{ github.repository }}" --jq '.security_and_analysis')
+          echo "$payload"
+          ss=$(echo "$payload"   | jq -r '.secret_scanning.status // "missing"')
+          ssp=$(echo "$payload"  | jq -r '.secret_scanning_push_protection.status // "missing"')
+          if [ "$ss" != "enabled" ] || [ "$ssp" != "enabled" ]; then
+            echo "::error::secret_scanning=$ss · push_protection=$ssp · both must be 'enabled'"
+            exit 1
+          fi
+
+      - name: CODEOWNERS file must exist
+        run: |
+          set -euo pipefail
+          if [ ! -f .github/CODEOWNERS ]; then
+            echo "::error::.github/CODEOWNERS is missing. Branch protection cannot enforce reviewer assignment without it."
+            exit 1
+          fi
+          # File must be non-trivial (at least one ownership rule beyond comments).
+          rules=$(grep -cE '^\s*[^#\s].*@' .github/CODEOWNERS || true)
+          if [ "$rules" -lt 1 ]; then
+            echo "::error::.github/CODEOWNERS has no ownership rules."
+            exit 1
+          fi
+          echo "ok · $rules ownership rule(s)"
+
+      - name: Branch protection on main must require status checks
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+        # NOTE: continue-on-error during bootstrap — once
+        # scripts/setup_branch_protection.sh has been run with
+        # --enforce-required-checks, flip this to fail-hard.
+        run: |
+          set -euo pipefail
+          protection=$(gh api "repos/${{ github.repository }}/branches/main/protection" 2>/dev/null || echo '{}')
+          required=$(echo "$protection" | jq -r '.required_status_checks.contexts | length // 0')
+          echo "required status checks on main: $required"
+          if [ "$required" -lt 1 ]; then
+            echo "::warning::main has no required status checks. Run scripts/setup_branch_protection.sh --enforce-required-checks after first green deploy."
+          fi

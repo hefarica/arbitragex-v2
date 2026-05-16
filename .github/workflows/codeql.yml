@@ -1,0 +1,72 @@
+# CodeQL SAST · Rust + TypeScript
+#
+# OMEGA-102 Delta Pack · 2026-05-16
+# Complements .github/workflows/security.yml (cargo-audit + npm audit + gitleaks)
+# by adding semantic SAST via CodeQL's security-extended query suite.
+#
+# Why both: cargo-audit / npm audit catch known-CVE dependencies;
+# gitleaks catches committed secrets; CodeQL catches semantic bugs
+# (injection, unsafe deserialization, taint flow) that don't show up
+# in advisory databases.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly deep scan — Thursday 04:00 UTC (off-peak, complements security.yml Mon 06:00)
+    - cron: "0 4 * * 4"
+
+# Read-only token; CodeQL needs security-events write to publish results.
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: javascript-typescript
+            build-mode: none
+          - language: rust
+            # CodeQL Rust support is experimental but operational since 2025.
+            # build-mode: manual lets us cargo-build only what we care about
+            # (workspace members) rather than third-party crates.
+            build-mode: manual
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
+
+      # Rust build path — only when language=rust.
+      - name: Install Rust toolchain
+        if: matrix.language == 'rust'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cargo build (workspace)
+        if: matrix.language == 'rust'
+        working-directory: backend
+        run: cargo build --workspace --all-targets --locked
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

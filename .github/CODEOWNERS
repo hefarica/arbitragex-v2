@@ -1,0 +1,54 @@
+# CODEOWNERS — arbitragex-v2
+#
+# OMEGA-102 Delta Pack · 2026-05-16
+# Routing for code review: every PR touching paths below requires explicit
+# approval from the designated owner before merge (enforced via branch
+# protection on `main`).
+#
+# Syntax reference: https://docs.github.com/repos/managing-your-repository/about-code-owners
+#
+# Default: any file not otherwise listed falls back to repository operator.
+*                                       @hefarica
+
+# ---- Backend (Rust workspace) -------------------------------------------
+/backend/                               @hefarica
+/backend/searcher-rs/                   @hefarica
+/backend/shared-rs/                     @hefarica
+/backend/sed-core/                      @hefarica
+/backend/simulator-v2/                  @hefarica
+/backend/relays-client/                 @hefarica
+/backend/recon/                         @hefarica
+/backend/math-engine/                   @hefarica
+/backend/prioritization-spine/          @hefarica
+/backend/token-enricher/                @hefarica
+/backend/sim-ctl/                       @hefarica
+
+# ---- Solidity contracts -------------------------------------------------
+/contracts/                             @hefarica
+
+# ---- Frontend (Next.js) -------------------------------------------------
+/frontend/                              @hefarica
+
+# ---- Edge (Cloudflare Worker / control plane) --------------------------
+/edge/                                  @hefarica
+
+# ---- Shared TypeScript --------------------------------------------------
+/shared-ts/                             @hefarica
+
+# ---- Critical CI/CD + policy --------------------------------------------
+/.github/                               @hefarica
+/.github/workflows/                     @hefarica
+/.github/CODEOWNERS                     @hefarica
+/.github/dependabot.yml                 @hefarica
+/.pre-commit-config.yaml                @hefarica
+
+# ---- Operational scripts (deploy / rollback / branch protection) -------
+/scripts/                               @hefarica
+
+# ---- Policy + runbooks (doctrine docs) ---------------------------------
+/docs/INCIDENT_RUNBOOK.md               @hefarica
+/docs/ROTATION_POLICY.md                @hefarica
+/docs/DEPLOY_PRODUCTION.md              @hefarica
+/docs/REPO_VISIBILITY_POLICY.md         @hefarica
+/CLAUDE.md                              @hefarica
+/AGENTS.md                              @hefarica
