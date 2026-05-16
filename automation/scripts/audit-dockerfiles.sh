@@ -68,7 +68,9 @@ check_dockerfile() {
   # (a) Builder stage must exist
   if ! grep -qE '^FROM .+ AS builder' "$dockerfile"; then
     warn "$service/Dockerfile: no 'FROM ... AS builder' multi-stage found (single-stage or base image)"
-    [[ "$STRICT" == "--strict" ]] && FAILURES=$((FAILURES + 1))
+    if [[ "$STRICT" == "--strict" ]]; then
+      FAILURES=$((FAILURES + 1))
+    fi
     return
   fi
 
@@ -107,7 +109,12 @@ check_dockerfile() {
       for m in "${missing[@]}"; do
         warn "$service/Dockerfile: no explicit COPY for workspace member '${m}' (may be OK if not a transitive dep)"
       done
-      [[ "$STRICT" == "--strict" ]] && FAILURES=$((FAILURES + ${#missing[@]}))
+      # Under `set -e`, a bare `[[ ... ]] && ...` statement aborts the
+      # script when the test is false. Wrap as an if-block so WARNs alone
+      # never turn into hard failures unless --strict is requested.
+      if [[ "$STRICT" == "--strict" ]]; then
+        FAILURES=$((FAILURES + ${#missing[@]}))
+      fi
     else
       log "$service/Dockerfile: OK"
     fi

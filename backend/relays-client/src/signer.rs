@@ -64,6 +64,14 @@ impl std::fmt::Debug for Signer {
 
 #[cfg(test)]
 mod tests {
+    // OMEGA-S5/OMEGA-100 (2026-05-16): Tests legitimately panic on setup
+    // failure (ephemeral key parsing, env-restore, header signing). Calling
+    // .expect() inside a #[test] is the idiomatic way to surface a setup bug
+    // as a test failure — production code paths in this module already use
+    // Result<_, RelayError> and are gated by `clippy::expect_used` at the
+    // crate level. Justification: doctrina-compliant scope-limited allowance.
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+
     use super::*;
     use ethers::signers::LocalWallet;
 

@@ -323,6 +323,11 @@ services:
     environment:
       NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:-http://localhost:8787}
       NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-http://localhost:3000}
+      # next.config.js is re-evaluated by `next start` at runtime, so the
+      # localhost guardrail will fire again unless the opt-in flag is also
+      # present in the runtime env. Unset (default) in dev — only e2e CI
+      # injects ARBX_BUILD_FOR_LOCAL_E2E=1 via the workflow env block.
+      ARBX_BUILD_FOR_LOCAL_E2E: ${ARBX_BUILD_FOR_LOCAL_E2E:-}
       # Server Components resolve edge via Docker DNS; browser uses NEXT_PUBLIC above.
       INTERNAL_EDGE_URL: http://edge:8787
     ports: ["5173:5173"]
