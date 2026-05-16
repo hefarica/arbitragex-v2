@@ -42,6 +42,17 @@ jobs:
           fi
 
       - name: Bring up compose stack (dev — defaults OK for CI)
+        env:
+          # frontend/next.config.js fails the build under NODE_ENV=production
+          # if NEXT_PUBLIC_EDGE_URL points at localhost. compose.dev.yml
+          # defaults to localhost:8787 for local-dev convenience; CI overrides
+          # with a non-routable sentinel so the build passes. The smoke tests
+          # call the in-cluster edge via http://localhost:5173 (frontend) which
+          # proxies to edge through INTERNAL_EDGE_URL=http://edge:8787 inside
+          # the docker network — the public NEXT_PUBLIC_EDGE_URL is only ever
+          # used by client-side fetches, which the smoke spec stubs.
+          NEXT_PUBLIC_EDGE_URL: https://edge.ci.invalid
+          NEXT_PUBLIC_WS_URL: https://ws.ci.invalid
         run: |
           docker compose -f docker/compose.dev.yml up -d --build \
             postgres redis frontend edge api-server
