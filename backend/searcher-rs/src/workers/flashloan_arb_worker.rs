@@ -68,6 +68,7 @@ use chrono::Utc;
 use ethers::types::U256;
 use redis::aio::ConnectionManager;
 use shared_rs::contracts::{Opportunity, StrategyKind};
+use shared_rs::tokens;
 use shared_rs::trading_config::TradingConfigClient;
 use sqlx::postgres::PgPool;
 use std::collections::HashSet;
@@ -685,18 +686,14 @@ pub fn evaluate_combo(input: &EvalInput) -> Option<EvalResult> {
 // TOKEN RESOLUTION — Redis cache + hardcoded blue-chip fallback
 // =============================================================================
 
-/// Lowercase hex address of well-known mainnet tokens. Same fallback table as
-/// `triangular_worker::known_token_address` (intentional duplication — we
-/// don't want a cross-module dependency on a hardcoded constant).
-fn known_token_address(symbol: &str) -> Option<&'static str> {
-    match symbol.to_ascii_uppercase().as_str() {
-        "WETH" => Some("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
-        "USDC" => Some("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
-        "USDT" => Some("0xdac17f958d2ee523a2206206994597c13d831ec7"),
-        "DAI" => Some("0x6b175474e89094c44da98b954eedeac495271d0f"),
-        "WBTC" => Some("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"),
-        _ => None,
-    }
+/// Lowercase hex address of well-known mainnet tokens. Delegates to the
+/// canonical token catalog in `shared_rs::tokens` so all workers share a
+/// single source of truth (no duplicated hardcoded match arms).
+///
+/// Returns `Option<String>` (instead of `&'static str`) because the catalog
+/// allocates the lowercase 0x-prefixed string on demand.
+fn known_token_address(symbol: &str) -> Option<String> {
+    tokens::token_address_str(1u64, &symbol.to_ascii_uppercase())
 }
 
 /// Resolve `(token_addr, decimals, is_stable)` for a symbol. Tries Redis cache
@@ -707,8 +704,8 @@ async fn resolve_token(
     symbol: &str,
 ) -> Option<(String, u8, bool)> {
     let addr = known_token_address(symbol)?;
-    if let Ok(Some(meta)) = get_token_meta(redis, chain_id, addr).await {
-        return Some((addr.to_string(), meta.decimals, meta.is_stablecoin));
+    if let Ok(Some(meta)) = get_token_meta(redis, chain_id, &addr).await {
+        return Some((addr, meta.decimals, meta.is_stablecoin));
     }
     let (decimals, is_stable) = match symbol.to_ascii_uppercase().as_str() {
         "WETH" => (18, false),
@@ -717,7 +714,7 @@ async fn resolve_token(
         "WBTC" => (8, false),
         _ => return None,
     };
-    Some((addr.to_string(), decimals, is_stable))
+    Some((addr, decimals, is_stable))
 }
 
 /// Fetch reserves for a single pool. Returns None on missing entry, missing
