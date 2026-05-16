@@ -19,7 +19,7 @@ import type {
   CredentialProvider,
   CredentialTestResult,
 } from "@arbx/shared";
-import { getExchangeEndpoints } from "../config/exchange-endpoints";
+import { getExchangeEndpoints } from "../config/exchange-endpoints.js";
 
 const DEFAULT_TIMEOUT_MS = 6000;
 const WS_TIMEOUT_MS = 4000;

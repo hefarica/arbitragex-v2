@@ -35,7 +35,7 @@
  *     RPC dependency; defer until we wire the multi-RPC fallback module.
  */
 
-import { getExchangeEndpoints } from "../../config/exchange-endpoints";
+import { getExchangeEndpoints } from "../../config/exchange-endpoints.js";
 
 /** Top-level DEX Screener API response. */
 interface DexScreenerResponse {
