@@ -73,7 +73,7 @@ fn load_env_url(var: &str) -> anyhow::Result<String> {
         Ok(v) if !v.trim().is_empty() => Ok(v.trim_end_matches('/').to_string()),
         Ok(_) => anyhow::bail!(
             "exchange endpoint config: env var `{var}` is set but empty. \
-             Set it to the CEX base URL (e.g. https://api.binance.com)."
+             Set it to the appropriate CEX base URL."
         ),
         Err(_) => anyhow::bail!(
             "exchange endpoint config: env var `{var}` is not set. \
