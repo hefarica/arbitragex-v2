@@ -38,10 +38,11 @@ jobs:
           - language: javascript-typescript
             build-mode: none
           - language: rust
-            # CodeQL Rust support is experimental but operational since 2025.
-            # build-mode: manual lets us cargo-build only what we care about
-            # (workspace members) rather than third-party crates.
-            build-mode: manual
+            # CodeQL Rust extractor (2025+) uses native parsing, not cargo build.
+            # The only supported build-mode for Rust is 'none' (verified 2026-05-16).
+            # Fix: previous 'manual' value caused fatal error
+            # "Rust does not support the manual build mode".
+            build-mode: none
 
     steps:
       - name: Checkout
@@ -53,18 +54,6 @@ jobs:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
           queries: security-extended
-
-      # Rust build path — only when language=rust.
-      - name: Install Rust toolchain
-        if: matrix.language == 'rust'
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      - name: Cargo build (workspace)
-        if: matrix.language == 'rust'
-        working-directory: backend
-        run: cargo build --workspace --all-targets --locked
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
