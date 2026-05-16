@@ -159,10 +159,7 @@ mod tests {
     /// expected and does not panic on identical token labels.
     #[test]
     fn repeated_tokens_compose_arithmetically() {
-        let legs = vec![
-            leg("A", "A", 1.001, 0.0),
-            leg("A", "A", 1.001, 0.0),
-        ];
+        let legs = vec![leg("A", "A", 1.001, 0.0), leg("A", "A", 1.001, 0.0)];
         let product = calc_route_rate_product(&legs);
         assert!((product - 1.001 * 1.001).abs() < 1e-12);
     }

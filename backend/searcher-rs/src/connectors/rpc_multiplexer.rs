@@ -1,4 +1,4 @@
-use ethers::providers::{Provider, Http, Ws};
+use ethers::providers::{Http, Provider, Ws};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -11,7 +11,10 @@ pub struct RPCMultiplexer {
 }
 
 impl RPCMultiplexer {
-    pub async fn from_urls(http_urls: Vec<&str>, ws_url: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn from_urls(
+        http_urls: Vec<&str>,
+        ws_url: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut http_endpoints = Vec::new();
         for url in http_urls {
             let provider = Provider::<Http>::try_from(url)?;
@@ -30,7 +33,8 @@ impl RPCMultiplexer {
 
     pub fn best_http(&self) -> Arc<Provider<Http>> {
         let idx = *self.current_best.blocking_read();
-        self.http_endpoints.get(idx)
+        self.http_endpoints
+            .get(idx)
             .or_else(|| self.http_endpoints.first())
             .cloned()
             .expect("At least one HTTP endpoint required")

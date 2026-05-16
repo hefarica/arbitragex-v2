@@ -251,7 +251,6 @@ impl CdcCalculator {
         let sigma_long = self.long_term.current_sigma();
         let elapsed_recent = self.recent.elapsed_seconds();
 
-
         if sigma_long <= 0.0 || elapsed_recent <= 0.0 {
             return StateDivergenceCoefficient {
                 value: f64::NAN,

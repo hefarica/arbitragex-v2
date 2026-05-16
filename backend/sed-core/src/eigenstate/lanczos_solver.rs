@@ -75,12 +75,8 @@ impl EigenstateDecomposition {
         let eigen = SymmetricEigen::new(hamiltonian.matrix().clone());
 
         // Extract eigenvalues and sort ascending.
-        let mut indexed_eigenvalues: Vec<(usize, f64)> = eigen
-            .eigenvalues
-            .iter()
-            .copied()
-            .enumerate()
-            .collect();
+        let mut indexed_eigenvalues: Vec<(usize, f64)> =
+            eigen.eigenvalues.iter().copied().enumerate().collect();
 
         // Validate all eigenvalues are finite before sorting.
         for &(idx, val) in &indexed_eigenvalues {
@@ -90,7 +86,8 @@ impl EigenstateDecomposition {
         }
 
         // Sort by eigenvalue ascending (ground state first).
-        indexed_eigenvalues.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        indexed_eigenvalues
+            .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
         let eigenvalues: Vec<f64> = indexed_eigenvalues.iter().map(|&(_, v)| v).collect();
 
@@ -178,8 +175,8 @@ impl EigenstateDecomposition {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::effective_hamiltonian::EffectiveHamiltonian;
+    use super::*;
 
     #[test]
     fn decompose_2x2_diagonal_matrix() {
@@ -207,7 +204,9 @@ mod tests {
         let d_base = EigenstateDecomposition::decompose(&h_base).unwrap();
         let d_perturbed = EigenstateDecomposition::decompose(&h_perturbed).unwrap();
         // Perturbation adds 0.5 to diagonal → shifts both eigenvalues by 0.5.
-        assert!((d_perturbed.ground_state_energy() - d_base.ground_state_energy() - 0.5).abs() < 1e-10);
+        assert!(
+            (d_perturbed.ground_state_energy() - d_base.ground_state_energy() - 0.5).abs() < 1e-10
+        );
     }
 
     #[test]
@@ -240,11 +239,7 @@ mod tests {
     #[test]
     fn decompose_3x3_system() {
         // 3 manifolds with distinct self-energies and small couplings.
-        let h = EffectiveHamiltonian::new(
-            &[1.0, 3.0, 5.0],
-            &[0.1, 0.2, 0.1],
-            0.0,
-        ).unwrap();
+        let h = EffectiveHamiltonian::new(&[1.0, 3.0, 5.0], &[0.1, 0.2, 0.1], 0.0).unwrap();
         let d = EigenstateDecomposition::decompose(&h).unwrap();
         assert_eq!(d.dimension(), 3);
         assert_eq!(d.eigenvalues().len(), 3);
@@ -261,7 +256,10 @@ mod tests {
         for i in 0..3 {
             let v = d.eigenvector(i);
             let norm = v.norm();
-            assert!((norm - 1.0).abs() < 1e-10, "eigenvector {i} has norm {norm}");
+            assert!(
+                (norm - 1.0).abs() < 1e-10,
+                "eigenvector {i} has norm {norm}"
+            );
         }
     }
 }

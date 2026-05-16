@@ -57,7 +57,9 @@ impl TemporalLiquiditySuperposition {
         }
 
         // Capital requerido = máximo de liquidez comprometida en el lazo
-        let borrowed = contour.manifolds.iter()
+        let borrowed = contour
+            .manifolds
+            .iter()
             .map(|m| m.token0_reserve.max(m.token1_reserve))
             .fold(0.0, f64::max);
 
@@ -67,7 +69,9 @@ impl TemporalLiquiditySuperposition {
         let slippage_buffer = borrowed * 0.001 * contour.loop_cardinality as f64; // 0.1% por hop
         let vacuum_cost = flash_fee + gas_cost + slippage_buffer;
 
-        let manifold_ids: Vec<String> = contour.manifolds.iter()
+        let manifold_ids: Vec<String> = contour
+            .manifolds
+            .iter()
             .map(|m| m.pool_address.clone())
             .collect();
 
@@ -83,11 +87,7 @@ impl TemporalLiquiditySuperposition {
 
     /// Colapsa la superposición al final del lazo holonómico.
     /// Devuelve el capital + deduce el VacuumDecoherenceCost.
-    pub fn collapse(
-        &mut self,
-        raw_yield: f64,
-        execution_time_ms: u64,
-    ) -> Result<f64, TlsError> {
+    pub fn collapse(&mut self, raw_yield: f64, execution_time_ms: u64) -> Result<f64, TlsError> {
         if !matches!(self.state, SuperpositionState::Coherent) {
             return Err(TlsError::AlreadyCollapsed);
         }
@@ -186,12 +186,17 @@ impl TemporalLiquidityEngine {
         // 1. Inicializar superposición
         let base_token = &contour.start_token;
         let mut tls = TemporalLiquiditySuperposition::for_contour(
-            contour, base_token, self.flash_loan_fee_bps,
+            contour,
+            base_token,
+            self.flash_loan_fee_bps,
         )?;
 
         // 2. Calcular VacuumDecoherenceCost detallado
         let vacuum = VacuumDecoherenceCost::for_contour(
-            contour, tls.borrowed_capital, self.flash_loan_fee_bps, self.gas_price_gwei,
+            contour,
+            tls.borrowed_capital,
+            self.flash_loan_fee_bps,
+            self.gas_price_gwei,
         );
 
         // 3. Calcular holonomía bruta del lazo
@@ -236,14 +241,23 @@ impl TemporalLiquidityEngine {
         &self,
         result: &TlsExecutionResult,
         contour: &ClosedContourTrajectory,
-    ) -> Result<crate::types::bundle_position::BundlePosition<crate::types::bundle_position::HolonomicLoopResolution>, crate::types::errors::TopologyValidationError> {
+    ) -> Result<
+        crate::types::bundle_position::BundlePosition<
+            crate::types::bundle_position::HolonomicLoopResolution,
+        >,
+        crate::types::errors::TopologyValidationError,
+    > {
         use nalgebra::DVector;
 
         // Build canonical ClosedContourTrajectory from hedger types
-        let manifolds = contour.manifolds.iter()
+        let manifolds = contour
+            .manifolds
+            .iter()
             .map(|m| crate::eigenstate::LiquidityManifold::new(&m.pool_address))
             .collect();
-        let mut transition_points: Vec<DVector<f64>> = contour.transition_points.iter()
+        let mut transition_points: Vec<DVector<f64>> = contour
+            .transition_points
+            .iter()
             .map(|v| DVector::from(vec![v.x, v.y]))
             .collect();
         // Append closing point (γ(0) = γ(1))
@@ -304,7 +318,11 @@ pub enum TlsError {
     #[error("Superposición ya colapsada")]
     AlreadyCollapsed,
     #[error("Decoherence loss: raw_yield={raw_yield}, vacuum_cost={vacuum_cost}, loss={loss}")]
-    DecoherenceLoss { raw_yield: f64, vacuum_cost: f64, loss: f64 },
+    DecoherenceLoss {
+        raw_yield: f64,
+        vacuum_cost: f64,
+        loss: f64,
+    },
     #[error("Expected yield too low: raw={raw_yield}, vacuum={vacuum_cost}")]
     ExpectedYieldTooLow { raw_yield: f64, vacuum_cost: f64 },
     #[error("Insufficient liquidity for borrow amount: {0}")]
@@ -317,8 +335,15 @@ mod tests {
     use crate::allocator::LiquidityManifold;
 
     fn pool(addr: &str, token0: &str, token1: &str, x: f64, y: f64) -> LiquidityManifold {
-        LiquidityManifold::new(x * y, x, y, addr.to_string(),
-            (token0.to_string(), token1.to_string()), 1).unwrap()
+        LiquidityManifold::new(
+            x * y,
+            x,
+            y,
+            addr.to_string(),
+            (token0.to_string(), token1.to_string()),
+            1,
+        )
+        .unwrap()
     }
 
     fn test_contour() -> ClosedContourTrajectory {
@@ -333,7 +358,7 @@ mod tests {
                 nalgebra::Vector2::new(1000.0, 1000.0),
                 nalgebra::Vector2::new(1900.0, 1.0),
             ],
-            relative_prices: vec![2000.0, 1.0, 1.0/1900.0],
+            relative_prices: vec![2000.0, 1.0, 1.0 / 1900.0],
             contour_length: 0.0,
             loop_cardinality: 3,
             start_token: "WETH".to_string(),
@@ -402,8 +427,10 @@ mod tests {
     fn vacuum_cost_breakdown_sums_correctly() {
         let contour = test_contour();
         let vacuum = VacuumDecoherenceCost::for_contour(&contour, 10000.0, 9, 20.0);
-        let expected_total = vacuum.flash_loan_fee + vacuum.gas_cost
-            + vacuum.slippage_cost + vacuum.opportunity_cost;
+        let expected_total = vacuum.flash_loan_fee
+            + vacuum.gas_cost
+            + vacuum.slippage_cost
+            + vacuum.opportunity_cost;
         assert!((vacuum.total_cost - expected_total).abs() < 1e-9);
     }
 

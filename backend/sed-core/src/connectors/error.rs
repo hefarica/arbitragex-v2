@@ -44,24 +44,41 @@ pub enum ConnectorError {
 impl fmt::Display for ConnectorError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::RpcConnectionFailed { endpoint, reason } =>
-                write!(f, "RPC connection failed: endpoint={endpoint}, reason={reason}"),
-            Self::WsSubscriptionFailed { topic, reason } =>
-                write!(f, "WS subscription failed: topic={topic}, reason={reason}"),
-            Self::ContractCallFailed { contract, method, reason } =>
-                write!(f, "Contract call failed: contract={contract}, method={method}, reason={reason}"),
-            Self::InvalidResponse { expected, got } =>
-                write!(f, "Invalid response: expected={expected}, got={got}"),
-            Self::ConfigMissing { parameter } =>
-                write!(f, "Configuration missing: parameter={parameter}"),
-            Self::Timeout { operation, timeout_ms } =>
-                write!(f, "Timeout: operation={operation}, timeout_ms={timeout_ms}"),
-            Self::SimulationReverted { reason } =>
-                write!(f, "Simulation reverted: reason={reason}"),
-            Self::SigningAttempted =>
-                write!(f, "Signing attempted in paper-shadow mode — CRITICAL VIOLATION"),
-            Self::DataQuality { source, issue } =>
-                write!(f, "Data quality: source={source}, issue={issue}"),
+            Self::RpcConnectionFailed { endpoint, reason } => write!(
+                f,
+                "RPC connection failed: endpoint={endpoint}, reason={reason}"
+            ),
+            Self::WsSubscriptionFailed { topic, reason } => {
+                write!(f, "WS subscription failed: topic={topic}, reason={reason}")
+            }
+            Self::ContractCallFailed {
+                contract,
+                method,
+                reason,
+            } => write!(
+                f,
+                "Contract call failed: contract={contract}, method={method}, reason={reason}"
+            ),
+            Self::InvalidResponse { expected, got } => {
+                write!(f, "Invalid response: expected={expected}, got={got}")
+            }
+            Self::ConfigMissing { parameter } => {
+                write!(f, "Configuration missing: parameter={parameter}")
+            }
+            Self::Timeout {
+                operation,
+                timeout_ms,
+            } => write!(f, "Timeout: operation={operation}, timeout_ms={timeout_ms}"),
+            Self::SimulationReverted { reason } => {
+                write!(f, "Simulation reverted: reason={reason}")
+            }
+            Self::SigningAttempted => write!(
+                f,
+                "Signing attempted in paper-shadow mode — CRITICAL VIOLATION"
+            ),
+            Self::DataQuality { source, issue } => {
+                write!(f, "Data quality: source={source}, issue={issue}")
+            }
         }
     }
 }

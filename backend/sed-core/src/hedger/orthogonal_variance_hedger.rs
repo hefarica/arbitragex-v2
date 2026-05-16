@@ -6,9 +6,9 @@
 //! para garantizar que la covarianza del sistema permanezca estrictamente
 //! nula: Cov(Δ_DEX, Δ_CEX) = 0.
 
-use nalgebra::{DVector, DMatrix};
-use num_complex::Complex64;
 use crate::allocator::{DiracImpulse, LiquidityManifold};
+use nalgebra::{DMatrix, DVector};
+use num_complex::Complex64;
 
 /// Estado entrelazado |Ψ_AB⟩ entre dos mercados (ej. DEX y CEX).
 /// La matriz de densidad reducida ρ_A = Tr_B(|Ψ⟩⟨Ψ|) cuantifica la
@@ -179,15 +179,16 @@ pub struct DirectionalVector {
 impl DirectionalVector {
     pub fn new(components: DVector<f64>, market_origin: String) -> Self {
         let norm = components.norm();
-        Self { components, market_origin, norm }
+        Self {
+            components,
+            market_origin,
+            norm,
+        }
     }
 
     /// Vector de riesgo inducido por un impulso de Dirac en un DEX.
     pub fn from_dirac_impulse(impulse: &DiracImpulse) -> Self {
-        let comp = DVector::from(vec![
-            impulse.injection_point.x,
-            impulse.injection_point.y,
-        ]);
+        let comp = DVector::from(vec![impulse.injection_point.x, impulse.injection_point.y]);
         Self::new(comp, impulse.manifold.pool_address.clone())
     }
 }
@@ -316,7 +317,9 @@ impl OrthogonalVarianceHedger {
         };
 
         let entangled = EntangledState::from_market_states(
-            &psi_a, &psi_b, correlation,
+            &psi_a,
+            &psi_b,
+            correlation,
             impulse.manifold.pool_address.clone(),
             orthogonal_market.pool_address.clone(),
         );
@@ -381,30 +384,39 @@ mod tests {
     fn test_impulse() -> DiracImpulse {
         DiracImpulse {
             manifold: crate::allocator::LiquidityManifold::new(
-                1_000_000.0, 1000.0, 1000.0,
+                1_000_000.0,
+                1000.0,
+                1000.0,
                 "0xDex".to_string(),
                 ("WETH".to_string(), "USDC".to_string()),
                 1,
-            ).unwrap(),
+            )
+            .unwrap(),
             injection_point: Vector2::new(1050.0, 1_000_000.0 / 1050.0),
             amplitude: 100.0,
             support_radius: 1.0,
             post_injection_manifold: crate::allocator::LiquidityManifold::new(
-                1_000_000.0, 1050.0, 1_000_000.0 / 1050.0,
+                1_000_000.0,
+                1050.0,
+                1_000_000.0 / 1050.0,
                 "0xDex".to_string(),
                 ("WETH".to_string(), "USDC".to_string()),
                 1,
-            ).unwrap(),
+            )
+            .unwrap(),
         }
     }
 
     fn test_cex() -> LiquidityManifold {
         crate::allocator::LiquidityManifold::new(
-            2_000_000.0, 2000.0, 1000.0,
+            2_000_000.0,
+            2000.0,
+            1000.0,
             "0xCex".to_string(),
             ("WETH".to_string(), "USDC".to_string()),
             1,
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     #[test]
@@ -433,8 +445,11 @@ mod tests {
         let psi_a = DVector::from(vec![Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)]);
         let psi_b = DVector::from(vec![Complex64::new(0.0, 0.0), Complex64::new(1.0, 0.0)]);
         let state = EntangledState::from_market_states(
-            &psi_a, &psi_b, 0.5,
-            "A".to_string(), "B".to_string(),
+            &psi_a,
+            &psi_b,
+            0.5,
+            "A".to_string(),
+            "B".to_string(),
         );
         assert!(state.entanglement_entropy >= 0.0);
     }
@@ -446,7 +461,11 @@ mod tests {
         let v = DVector::from(vec![2.0, 2.0]);
         let proj = plane.project(&v);
         // v es paralelo a n, así que la proyección sobre Π_⟂ debe ser ~0
-        assert!(proj.norm() < 1e-6, "Projection not orthogonal: norm={}", proj.norm());
+        assert!(
+            proj.norm() < 1e-6,
+            "Projection not orthogonal: norm={}",
+            proj.norm()
+        );
     }
 
     #[test]

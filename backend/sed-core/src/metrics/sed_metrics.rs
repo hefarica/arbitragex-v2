@@ -126,7 +126,11 @@ impl SedMetricsRecorder for InMemoryMetricsRecorder {
     }
 
     fn record_filtration_duration_ms(&self, duration_ms: u64) {
-        self.record("sed_filtration_duration_ms", HashMap::new(), duration_ms as f64);
+        self.record(
+            "sed_filtration_duration_ms",
+            HashMap::new(),
+            duration_ms as f64,
+        );
     }
 
     fn record_eigenstate_energy(&self, index: u32, energy: f64) {

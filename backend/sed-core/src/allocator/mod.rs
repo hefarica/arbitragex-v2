@@ -75,7 +75,7 @@ pub use hyperbolic_constraint::HyperbolicConstraint;
 pub use liquidity_manifold::{LiquidityManifold, ManifoldError};
 
 #[cfg(feature = "allocator")]
-pub use optimal_control::{OptimalControlSolution, OcpError, PontryaginSolver};
+pub use optimal_control::{OcpError, OptimalControlSolution, PontryaginSolver};
 
 #[cfg(feature = "allocator")]
 pub use dirac_manifold_allocator::{

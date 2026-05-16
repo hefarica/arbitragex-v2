@@ -67,7 +67,7 @@ impl LiquidityManifold {
         let dy = other.token1_reserve - self.token1_reserve;
         (dx * dx / (self.token0_reserve * self.token0_reserve)
             + dy * dy / (self.token1_reserve * self.token1_reserve))
-        .sqrt()
+            .sqrt()
     }
 
     /// Precio relativo implícito del pool: p = y/x
@@ -121,11 +121,7 @@ impl LiquidityManifold {
     }
 
     /// Genera una variedad actualizada con nuevas reservas, verificando x·y = k
-    pub fn with_reserves(
-        &self,
-        token0: f64,
-        token1: f64,
-    ) -> Result<Self, ManifoldError> {
+    pub fn with_reserves(&self, token0: f64, token1: f64) -> Result<Self, ManifoldError> {
         Self::new(
             self.constant_product,
             token0,
@@ -139,7 +135,9 @@ impl LiquidityManifold {
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum ManifoldError {
-    #[error("Hyperbolic violation: expected k={expected}, actual={actual}, rel_err={relative_error:e}")]
+    #[error(
+        "Hyperbolic violation: expected k={expected}, actual={actual}, rel_err={relative_error:e}"
+    )]
     HyperbolicViolation {
         expected: f64,
         actual: f64,

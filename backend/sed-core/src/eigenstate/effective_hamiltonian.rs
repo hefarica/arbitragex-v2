@@ -166,7 +166,10 @@ mod tests {
     fn rejects_coupling_count_mismatch() {
         // 3 manifolds → need 3 couplings, provide 2.
         let r = EffectiveHamiltonian::new(&[1.0, 2.0, 3.0], &[0.1, 0.2], 0.0);
-        assert!(matches!(r, Err(HamiltonianError::CouplingCountMismatch(2, 3))));
+        assert!(matches!(
+            r,
+            Err(HamiltonianError::CouplingCountMismatch(2, 3))
+        ));
     }
 
     #[test]

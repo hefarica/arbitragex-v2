@@ -22,4 +22,3 @@ pub use crate::types::gate_manager::{
 };
 pub use crate::types::infrastructure::{InfrastructurePrerequisite, NotImplementedResponse};
 pub use crate::types::kill_switch::{KillSwitchGate, KillSwitchState};
-

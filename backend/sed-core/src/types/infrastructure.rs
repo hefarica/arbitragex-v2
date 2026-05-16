@@ -88,7 +88,9 @@ mod tests {
             fallback_response: NotImplementedResponse {
                 requires,
                 sprint: sprint.clone(),
-                message: format!("SED module requires infrastructure not yet available in {sprint}"),
+                message: format!(
+                    "SED module requires infrastructure not yet available in {sprint}"
+                ),
             },
         }
     }
