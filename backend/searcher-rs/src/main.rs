@@ -54,6 +54,7 @@ mod sim_multistep;
 // B1.c (2026-05-13) — chain config hot-reload subscriber. Listens on Redis
 // pub/sub `arbx:config:chains:reload` for events from the api-server admin
 // endpoint.
+mod config;
 mod config_reload;
 // Phase 16: per-strategy Prometheus metrics for the event-driven orchestrator.
 mod metrics;
@@ -789,7 +790,16 @@ async fn main() -> anyhow::Result<()> {
     let cex_dex_chain = primary_chain;
     let cex_dex_rpc = primary_rpc_pool.clone();
     tokio::spawn(async move {
-        let cfg = workers::cex_dex_worker::CexDexWorkerConfig::new(cex_dex_chain, cex_dex_tick_ms);
+        // B. URL operativa: CexDexWorkerConfig::new now reads CEX_BINANCE_BASE_URL /
+        // CEX_OKX_BASE_URL from env — fail-fast on missing, no silent fallback.
+        let cfg = match workers::cex_dex_worker::CexDexWorkerConfig::new(cex_dex_chain, cex_dex_tick_ms) {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(event = "cex_dex_worker.boot_failed", chain_id = cex_dex_chain,
+                      reason = "config", error = %e);
+                return;
+            }
+        };
         match workers::cex_dex_worker::CexDexWorker::new(cfg, cex_dex_rpc) {
             Ok(worker) => worker.run().await,
             Err(e) => {

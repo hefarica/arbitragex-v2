@@ -35,6 +35,8 @@
  *     RPC dependency; defer until we wire the multi-RPC fallback module.
  */
 
+import { getExchangeEndpoints } from "../../config/exchange-endpoints";
+
 /** Top-level DEX Screener API response. */
 interface DexScreenerResponse {
   schemaVersion: string;
@@ -82,7 +84,8 @@ export interface LiquidityRealityResult {
   primary_pair_address: string | null;
 }
 
-const DEXSCREENER_BASE = "https://api.dexscreener.com/latest/dex/tokens";
+// B. URL operativa — resolved from ENDPOINT_DEXSCREENER env var at module load.
+const DEXSCREENER_BASE = `${getExchangeEndpoints().dexscreener}/latest/dex/tokens`;
 const HTTP_TIMEOUT_MS = 4000;
 
 /**
