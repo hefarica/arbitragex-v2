@@ -58,7 +58,14 @@ impl ExchangeEndpoints {
     ///
     /// In tests, inject a wiremock / httptest base URL instead of the real
     /// CEX endpoint to avoid live network calls in unit tests.
+    ///
+    /// OMEGA-S5/OMEGA-100 (2026-05-16): allow(dead_code) is scoped to this
+    /// test-only constructor. It is the documented test API for the upcoming
+    /// wiremock-based cex_dex_worker tests (see roadmap entry M12-Fase 7).
+    /// Removing it would force every future test to re-implement the same
+    /// builder. The fn is `#[cfg(test)]`-gated so it never reaches release.
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn for_test(binance_base_url: impl Into<String>, okx_base_url: impl Into<String>) -> Self {
         Self {
             binance_base_url: binance_base_url.into(),
