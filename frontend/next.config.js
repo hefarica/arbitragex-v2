@@ -54,12 +54,19 @@ const csp = (edgeUrl, wsUrl) => {
   ].join("; ");
 };
 
+// ARBX-HARDENING runtime opt-in: surface the E2E opt-out flag to the client
+// bundle so the runtime validators in lib/api-client.ts can mirror the build
+// gate. Only set to "1" when build was opted-in via ARBX_BUILD_FOR_LOCAL_E2E=1;
+// otherwise it stays undefined and runtime keeps refusing localhost in prod.
+const E2E_LOCAL_OK = process.env.ARBX_BUILD_FOR_LOCAL_E2E === "1" ? "1" : "";
+
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   env: {
     NEXT_PUBLIC_EDGE_URL: EDGE_URL,
     NEXT_PUBLIC_WS_URL: WS_URL,
+    NEXT_PUBLIC_ARBX_E2E_LOCAL_OK: E2E_LOCAL_OK,
   },
   async headers() {
     const resolvedEdge = EDGE_URL || "";
