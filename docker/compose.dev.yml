@@ -275,6 +275,7 @@ services:
       FRONTEND_INTERNAL_URL: http://frontend:5173
       PROMETHEUS_INTERNAL_URL: http://prometheus:9090
       GRAFANA_INTERNAL_URL: http://grafana:3000
+      ARBX_ASSUME_NO_RPC: ${ARBX_ASSUME_NO_RPC:-}
     ports: ["127.0.0.1:8080:8080"]
     volumes:
       # Read-only mount of repo source for static-source verifiers

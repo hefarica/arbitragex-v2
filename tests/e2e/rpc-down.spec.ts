@@ -20,12 +20,11 @@ import { test, expect } from "@playwright/test";
 const NO_RPC = process.env["ARBX_ASSUME_NO_RPC"] === "1";
 const testMaybe = NO_RPC ? test : test.skip;
 
-testMaybe("searcher-rs reports UP even with no RPC configured", async ({ page }) => {
+testMaybe("searcher-rs reports DEGRADED when no RPC is configured", async ({ page }) => {
   await page.goto("/status");
 
   // searcher-rs row exists and is DEGRADED (or UP depending on health, but we must target the status row, not the control panel row).
-  // The control panel row has a "Start" or "Stop" button. We filter it out to avoid strict mode violations.
-  const row = page.locator("tr").filter({ hasText: "searcher-rs" }).filter({ hasNotText: /Start|Stop/ });
+  const row = page.getByTestId("service-health-row-searcher-rs");
   await expect(row).toBeVisible();
   await expect(row.getByText(/DEGRADED|UP/i)).toBeVisible();
 });

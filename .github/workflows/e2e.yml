@@ -11,13 +11,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   playwright:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # Non-blocking for the first week (per spec §7 risk register). Flip to
-    # required on branch-protection once we have 5 consecutive greens.
-    continue-on-error: true
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
