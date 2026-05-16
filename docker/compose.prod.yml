@@ -289,6 +289,13 @@ services:
     ports: ["127.0.0.1:8080:8080"]
     depends_on:
       redis: { condition: service_healthy }
+      # api-server queries with arbx_rw on first request. If postgres is not
+      # yet healthy (init scripts + migrations not finished), every query
+      # returns 503 with `password authentication failed for user "arbx_rw"`.
+      # Waiting for healthy prevents that race on cold-start of the stack.
+      # Role passwords still require migrate.sh to have run; the operator
+      # runbook (database/migrations/README.md) covers that step in prod.
+      postgres: { condition: service_healthy }
     # M2 Capa1 Fase 2 — /api/health on API_PORT (8080). Node `http` built-in.
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8080/api/health',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))\""]

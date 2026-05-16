@@ -284,6 +284,14 @@ services:
       - ..:/repo:ro
     depends_on:
       redis: { condition: service_healthy }
+      # api-server queries with arbx_rw immediately on first request. If
+      # postgres is not yet healthy (init scripts + migrate.sh not finished),
+      # every query returns 503 with `password authentication failed for
+      # user "arbx_rw"`. Waiting for healthy prevents that race in CI and
+      # in local dev. Note: postgres `healthy` only confirms pg_isready —
+      # role passwords still depend on the `migrate` step running before
+      # api-server takes its first request (see .github/workflows/e2e.yml).
+      postgres: { condition: service_healthy }
     networks: [arbx-net]
     <<: *common-logging
 
