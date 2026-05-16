@@ -1,0 +1,156 @@
+name: OMEGA-8/CAPA5-F10 PII wireado gates (recursive)
+
+# Extension over OMEGA-8/M3 grep gates: enforces that ANY new INSERT into
+# audit_log or audit_event that references ip_address / user_agent MUST
+# wrap them with arbx_anonymize_ip() / arbx_hash_user_agent() respectively.
+#
+# Rationale: M3 wired registry-engine.ts (audit_event) + index.ts (audit_log).
+# This gate prevents future regressions where a new route persists raw PII
+# bypassing the helpers. It scans the entire backend tree recursively.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pii-recursive-gates:
+    name: PII wireado recursive gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: "F10-G1 — audit_log INSERTs touching ip_address must use arbx_anonymize_ip()"
+        run: |
+          set -euo pipefail
+          # Find files with audit_log INSERTs that reference ip_address.
+          # Each such file MUST also contain arbx_anonymize_ip in the SAME file
+          # (cheap heuristic — exact regex match over multiline INSERT block
+          # would require ripgrep -U; this guard is sufficient because the
+          # helpers and the INSERT live in the same writeAudit() function).
+          violations=""
+          while IFS= read -r f; do
+            if grep -Pq "INSERT\s+INTO\s+audit_log[\s\S]*?ip_address" "$f" 2>/dev/null \
+               || grep -q "INSERT INTO audit_log" "$f" && grep -q "ip_address" "$f"; then
+              if ! grep -q "arbx_anonymize_ip" "$f"; then
+                violations="$violations\n$f"
+              fi
+            fi
+          done < <(grep -rl "INSERT INTO audit_log" backend/ --include="*.ts" --include="*.rs" --include="*.sql" 2>/dev/null || true)
+          if [ -n "$violations" ]; then
+            echo "::error::F10-G1 regression: audit_log INSERT references ip_address WITHOUT arbx_anonymize_ip()"
+            printf '%b\n' "$violations"
+            exit 1
+          fi
+          echo "F10-G1 OK"
+
+      - name: "F10-G2 — audit_log INSERTs touching user_agent must use arbx_hash_user_agent()"
+        run: |
+          set -euo pipefail
+          violations=""
+          while IFS= read -r f; do
+            if grep -q "INSERT INTO audit_log" "$f" && grep -q "user_agent" "$f"; then
+              if ! grep -q "arbx_hash_user_agent" "$f"; then
+                violations="$violations\n$f"
+              fi
+            fi
+          done < <(grep -rl "INSERT INTO audit_log" backend/ --include="*.ts" --include="*.rs" --include="*.sql" 2>/dev/null || true)
+          if [ -n "$violations" ]; then
+            echo "::error::F10-G2 regression: audit_log INSERT references user_agent WITHOUT arbx_hash_user_agent()"
+            printf '%b\n' "$violations"
+            exit 1
+          fi
+          echo "F10-G2 OK"
+
+      - name: "F10-G3 — audit_event INSERTs touching ip_address must use arbx_anonymize_ip()"
+        run: |
+          set -euo pipefail
+          violations=""
+          while IFS= read -r f; do
+            if grep -q "INSERT INTO audit_event" "$f" && grep -q "ip_address" "$f"; then
+              if ! grep -q "arbx_anonymize_ip" "$f"; then
+                violations="$violations\n$f"
+              fi
+            fi
+          done < <(grep -rl "INSERT INTO audit_event" backend/ --include="*.ts" --include="*.rs" --include="*.sql" 2>/dev/null || true)
+          if [ -n "$violations" ]; then
+            echo "::error::F10-G3 regression: audit_event INSERT references ip_address WITHOUT arbx_anonymize_ip()"
+            printf '%b\n' "$violations"
+            exit 1
+          fi
+          echo "F10-G3 OK"
+
+      - name: "F10-G4 — audit_event INSERTs touching user_agent must use arbx_hash_user_agent()"
+        run: |
+          set -euo pipefail
+          violations=""
+          while IFS= read -r f; do
+            if grep -q "INSERT INTO audit_event" "$f" && grep -q "user_agent" "$f"; then
+              if ! grep -q "arbx_hash_user_agent" "$f"; then
+                violations="$violations\n$f"
+              fi
+            fi
+          done < <(grep -rl "INSERT INTO audit_event" backend/ --include="*.ts" --include="*.rs" --include="*.sql" 2>/dev/null || true)
+          if [ -n "$violations" ]; then
+            echo "::error::F10-G4 regression: audit_event INSERT references user_agent WITHOUT arbx_hash_user_agent()"
+            printf '%b\n' "$violations"
+            exit 1
+          fi
+          echo "F10-G4 OK"
+
+      - name: "F10-G5 — no NEW PII columns introduced in non-audit tables"
+        run: |
+          set -euo pipefail
+          # New migrations MUST NOT add ip_address/user_agent columns to
+          # tables other than audit_log / audit_event without explicit
+          # arbx_*-helper plumbing (which would require updating G1-G4 above).
+          BASE="${GITHUB_BASE_REF:-main}"
+          git fetch --depth=50 origin "$BASE" 2>/dev/null || true
+          MERGE_BASE=$(git merge-base "origin/$BASE" HEAD 2>/dev/null || echo "")
+          if [ -z "$MERGE_BASE" ]; then
+            echo "F10-G5 SKIP (no merge-base)"
+            exit 0
+          fi
+          new_mig=$(git diff --name-only --diff-filter=A "$MERGE_BASE" HEAD \
+            | grep -E "^database/migrations/.*\.sql$" || true)
+          if [ -z "$new_mig" ]; then
+            echo "F10-G5 OK (no new migrations)"
+            exit 0
+          fi
+          violations=""
+          for f in $new_mig; do
+            # Allow audit_* tables and pure helper migrations.
+            if grep -qE "(ip_address|user_agent)" "$f" 2>/dev/null; then
+              if ! grep -qE "audit_(log|event)|arbx_anonymize_ip|arbx_hash_user_agent" "$f"; then
+                violations="$violations\n$f"
+              fi
+            fi
+          done
+          if [ -n "$violations" ]; then
+            echo "::error::F10-G5 regression: new migration adds PII column outside audit_log/audit_event without helper wiring"
+            printf '%b\n' "$violations"
+            exit 1
+          fi
+          echo "F10-G5 OK"
+
+      - name: "F10-G6 — inventory CSV present"
+        run: |
+          set -euo pipefail
+          if [ ! -f .omega8/pii_audit_inventory.csv ]; then
+            echo "::error::F10-G6 regression: .omega8/pii_audit_inventory.csv missing (audit artifact deleted)"
+            exit 1
+          fi
+          # Sanity: must include at least the two wired-in INSERTs.
+          if ! grep -q "registry-engine.ts" .omega8/pii_audit_inventory.csv; then
+            echo "::error::F10-G6 regression: inventory missing registry-engine.ts (M3 P1-3 anchor)"
+            exit 1
+          fi
+          if ! grep -q "index.ts" .omega8/pii_audit_inventory.csv; then
+            echo "::error::F10-G6 regression: inventory missing index.ts (writeAudit anchor)"
+            exit 1
+          fi
+          echo "F10-G6 OK"

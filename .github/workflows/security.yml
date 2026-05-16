@@ -9,6 +9,12 @@ on:
     # Weekly scan Monday 06:00 UTC — catches new advisories between pushes
     - cron: '0 6 * * 1'
 
+# M2 Capa1 Fase 4 — read-only token. gitleaks-action@v2 only needs
+# contents:read for the scan; it does not comment on PRs in this config.
+# npm/cargo audit are purely local.
+permissions:
+  contents: read
+
 jobs:
   cargo-audit:
     name: cargo audit (Rust advisories)

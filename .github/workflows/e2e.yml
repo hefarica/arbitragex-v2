@@ -6,6 +6,11 @@ on:
   push:
     branches: [main]
 
+# M2 Capa1 Fase 4 — read-only token. upload-artifact uses GITHUB_TOKEN
+# implicitly but only requires contents:read in the v4+ artifact API.
+permissions:
+  contents: read
+
 jobs:
   playwright:
     runs-on: ubuntu-latest

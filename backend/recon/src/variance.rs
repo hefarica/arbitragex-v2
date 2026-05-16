@@ -81,4 +81,52 @@ mod tests {
     fn variance_null_returns_none() {
         assert!(check(&mk_report(None), 20.0).is_none());
     }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // OMEGA-8/M4 Fase 6: blinda recon variance checker
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// Negative variance (actual_out < expected_out) is just as actionable
+    /// as positive — the threshold is on |variance_pct|. -25% at threshold
+    /// 20% must surface as a warning.
+    #[test]
+    fn negative_variance_uses_abs_value() {
+        let e = check(&mk_report(Some(-25.0)), 20.0).expect("must emit");
+        assert_eq!(e.severity, "warning");
+        let payload = e.payload.to_string();
+        assert!(payload.contains("variance_exceeded"));
+        assert!(payload.contains("-25"));
+    }
+
+    /// Variance exactly at threshold is NOT flagged. Boundary inclusive
+    /// on the safe side.
+    #[test]
+    fn variance_exactly_at_threshold_is_not_flagged() {
+        assert!(check(&mk_report(Some(20.0)), 20.0).is_none());
+        assert!(check(&mk_report(Some(-20.0)), 20.0).is_none());
+    }
+
+    /// Trace_id and opportunity_id must propagate from the ReconReport
+    /// into the RiskEventOut so downstream alerting can correlate.
+    #[test]
+    fn risk_event_propagates_correlation_ids() {
+        let opp = Uuid::new_v4();
+        let trace = Uuid::new_v4();
+        let mut r = mk_report(Some(99.0));
+        r.opportunity_id = opp;
+        r.trace_id = trace;
+        let e = check(&r, 20.0).expect("flagged");
+        assert_eq!(e.trace_id, trace);
+        assert_eq!(e.opportunity_id, Some(opp));
+        assert_eq!(e.event_type, "degradation");
+    }
+
+    /// Threshold of 0 still uses |variance_pct|>threshold semantics (strict).
+    /// At threshold=0 with variance=0.0001, must flag — confirms no
+    /// divide-by-zero or off-by-one.
+    #[test]
+    fn tiny_variance_with_zero_threshold_is_flagged() {
+        let e = check(&mk_report(Some(0.0001)), 0.0).expect("must flag");
+        assert_eq!(e.severity, "warning");
+    }
 }

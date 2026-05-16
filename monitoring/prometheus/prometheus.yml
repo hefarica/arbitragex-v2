@@ -44,3 +44,8 @@ scrape_configs:
   - job_name: edge
     metrics_path: /metrics
     static_configs: [{ targets: ["edge:8787"], labels: { service: "edge" } }]
+
+  # M2 Capa1 Fase 10 — token-enricher /metrics on 9004 (parity with prod config).
+  - job_name: token-enricher
+    metrics_path: /metrics
+    static_configs: [{ targets: ["token-enricher:9004"], labels: { service: "token-enricher" } }]

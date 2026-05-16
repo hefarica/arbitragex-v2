@@ -105,3 +105,108 @@ describe("migration 034", () => {
       .rejects.toThrow(/duplicate key/);
   });
 });
+
+// =====================================================================
+// OMEGA-8 / M3 — Migration 069: runtime_ack idempotency UNIQUE + CHECKs
+// =====================================================================
+// Prereqs: migration 067 must be applied (creates the runtime_ack table).
+// This block applies 067 first (idempotent) and then 069.
+describe("migration 069 (OMEGA-8/M3 P1-1)", () => {
+  beforeAll(async () => {
+    // Apply 067 so runtime_ack exists. The file is large but idempotent.
+    const sql067 = readFileSync(
+      path.join(__dirname, "../../../database/migrations/067_config_hash_registry_drift_runtime_ack.sql"),
+      "utf8",
+    );
+    await pool.query(sql067);
+    const sql069 = readFileSync(
+      path.join(__dirname, "../../../database/migrations/069_runtime_ack_idempotency_unique.sql"),
+      "utf8",
+    );
+    await pool.query(sql069);
+  });
+
+  it("creates UNIQUE constraint on (event_id, layer)", async () => {
+    const r = await pool.query(`
+      SELECT conname FROM pg_constraint WHERE conname = 'runtime_ack_event_layer_unique'`);
+    expect(r.rowCount).toBe(1);
+  });
+
+  it("creates CHECK constraint runtime_ack_chain_id_positive", async () => {
+    const r = await pool.query(`
+      SELECT conname FROM pg_constraint WHERE conname = 'runtime_ack_chain_id_positive'`);
+    expect(r.rowCount).toBe(1);
+  });
+
+  it("creates idx_runtime_ack_failures partial index", async () => {
+    const r = await pool.query(`
+      SELECT indexname FROM pg_indexes WHERE indexname = 'idx_runtime_ack_failures'`);
+    expect(r.rowCount).toBe(1);
+  });
+
+  it("DB rejects duplicate INSERT on (event_id, layer)", async () => {
+    const eid = "44444444-4444-4444-4444-444444444444";
+    await pool.query(
+      `INSERT INTO runtime_ack
+       (event_id, resource, chain_id, idempotency_key, config_hash_after,
+        worker_id, layer, status)
+       VALUES ($1, 'trading_config', 1, 'k1', repeat('a', 64), 'w1',
+               'searcher_rs', 'applied')`,
+      [eid],
+    );
+    await expect(pool.query(
+      `INSERT INTO runtime_ack
+       (event_id, resource, chain_id, idempotency_key, config_hash_after,
+        worker_id, layer, status)
+       VALUES ($1, 'trading_config', 1, 'k2', repeat('b', 64), 'w2',
+               'searcher_rs', 'applied')`,
+      [eid],
+    )).rejects.toThrow(/runtime_ack_event_layer_unique|duplicate key/);
+  });
+
+  it("DB rejects negative chain_id", async () => {
+    const eid = "55555555-5555-5555-5555-555555555555";
+    await expect(pool.query(
+      `INSERT INTO runtime_ack
+       (event_id, resource, chain_id, idempotency_key, config_hash_after,
+        worker_id, layer, status)
+       VALUES ($1, 'trading_config', -1, 'k', repeat('c', 64), 'w',
+               'searcher_rs', 'applied')`,
+      [eid],
+    )).rejects.toThrow(/runtime_ack_chain_id_positive/);
+  });
+
+  it("ON CONFLICT (event_id, layer) DO NOTHING returns 0 rows on duplicate", async () => {
+    const eid = "66666666-6666-6666-6666-666666666666";
+    const first = await pool.query(
+      `INSERT INTO runtime_ack
+       (event_id, resource, chain_id, idempotency_key, config_hash_after,
+        worker_id, layer, status)
+       VALUES ($1, 'trading_config', 1, 'k1', repeat('a', 64), 'w1',
+               'searcher_rs', 'applied')
+       ON CONFLICT (event_id, layer) DO NOTHING
+       RETURNING id`,
+      [eid],
+    );
+    expect(first.rowCount).toBe(1);
+    const second = await pool.query(
+      `INSERT INTO runtime_ack
+       (event_id, resource, chain_id, idempotency_key, config_hash_after,
+        worker_id, layer, status)
+       VALUES ($1, 'trading_config', 1, 'k2', repeat('b', 64), 'w2',
+               'searcher_rs', 'applied')
+       ON CONFLICT (event_id, layer) DO NOTHING
+       RETURNING id`,
+      [eid],
+    );
+    expect(second.rowCount).toBe(0);
+  });
+
+  it("migration 069 is idempotent (re-running succeeds)", async () => {
+    const sql069 = readFileSync(
+      path.join(__dirname, "../../../database/migrations/069_runtime_ack_idempotency_unique.sql"),
+      "utf8",
+    );
+    await expect(pool.query(sql069)).resolves.toBeTruthy();
+  });
+});

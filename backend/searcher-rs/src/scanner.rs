@@ -1,9 +1,9 @@
-// M11 allow: two `Address::from_str(CONSTANT).unwrap()` calls that parse
-// well-known mainnet contract addresses (QuoterV2 + Multicall3). Both strings
-// are valid Ethereum addresses embedded as `const &str`; the `unwrap()` is
-// unreachable in any production or test environment. Follow-up: convert to
-// `Address::from(hex_literal::hex!(...))` consts to eliminate the runtime
-// parse entirely (M11-TODO-scanner-addr-const).
+// OMEGA-8/M4 Fase 1 (2026-05-15): the previous two `Address::from_str(CONSTANT).unwrap()`
+// calls in the V3 quoter dispatch path were replaced by `Lazy<Result<Address, _>>`
+// statics (see V3_QUOTER_V2_ADDRESS / V3_MULTICALL3_ADDRESS below) so the runtime
+// parse happens exactly once and a constant typo cannot panic the scanner hot path.
+// The previous file-wide `#![allow(clippy::unwrap_used, clippy::expect_used)]` was
+// kept while we audit the remaining call sites; Fase 3 will narrow this further.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Scanner loop — real mempool detection.
 //!
@@ -116,6 +116,22 @@ use ethers::types::Transaction;
 const V3_QUOTER_V2_MAINNET: &str = "0x61fFE014bA17989E743c5F6cB21bF9697530B21e";
 const V3_MULTICALL3_ADDR: &str = "0xcA11bde05977b3631167028862bE2a173976CA11";
 const V3_QUOTE_CACHE_TTL_SECS: u64 = 5;
+
+/// OMEGA-8/M4 Fase 1: parse the V3 hot-path mainnet constants exactly once at
+/// first use instead of on every quote request. Wrapped in `Result` so a typo in
+/// the constant produces an explicit error log and a skip of the V3 branch,
+/// never a panic in pre-dispatch. RULE 9 (no `unwrap` / `expect` in hot-path).
+static V3_QUOTER_V2_ADDRESS: once_cell::sync::Lazy<Result<Address, String>> =
+    once_cell::sync::Lazy::new(|| {
+        Address::from_str(V3_QUOTER_V2_MAINNET)
+            .map_err(|e| format!("invalid V3 quoter address constant: {e}"))
+    });
+
+static V3_MULTICALL3_ADDRESS: once_cell::sync::Lazy<Result<Address, String>> =
+    once_cell::sync::Lazy::new(|| {
+        Address::from_str(V3_MULTICALL3_ADDR)
+            .map_err(|e| format!("invalid V3 multicall3 address constant: {e}"))
+    });
 
 // ---------------------------------------------------------------------------
 // OrchestratorMode — feature flag for Phase 14 scanner integration
@@ -1400,45 +1416,64 @@ async fn decode_and_score_tx<'a>(
                 // breaker and EWMA failover are engaged transparently.
                 if !to_quote.is_empty() {
                     if let Some(rpc_pool) = v3_rpc_pool {
-                        let quoter = Address::from_str(V3_QUOTER_V2_MAINNET).unwrap();
-                        let multicall = Address::from_str(V3_MULTICALL3_ADDR).unwrap();
-                        let quotes_to_send = to_quote.clone();
-                        match rpc_pool
-                            .with_retry(|provider| {
-                                let reqs = quotes_to_send.clone();
-                                async move {
-                                    amm_math::v3_quote_exact_in_multicall(
-                                        provider, quoter, multicall, reqs,
-                                    )
-                                    .await
-                                }
-                            })
-                            .await
-                        {
-                            Ok(results) => {
-                                for r in &results {
-                                    if r.success && !r.amount_out.is_zero() {
-                                        // Cache + push.
-                                        let pool_lower = format!("0x{:040x}", r.pool_addr);
-                                        let amount_out_dec = r.amount_out.to_string();
-                                        let _ = reserves::set_v3_quote(
-                                            redis,
-                                            client.chain_id,
-                                            &pool_lower,
-                                            &amount_in_dec,
-                                            &amount_out_dec,
-                                            V3_QUOTE_CACHE_TTL_SECS,
+                        // OMEGA-8/M4 Fase 1: resolve once-parsed Lazy statics.
+                        // On constant typo (unreachable in production) we log
+                        // and skip the V3 RPC dispatch instead of panicking —
+                        // the V2 branch already populated `outs` so the chain
+                        // stays operational in degraded but honest mode.
+                        let v3_addrs = match (
+                            V3_QUOTER_V2_ADDRESS.as_ref(),
+                            V3_MULTICALL3_ADDRESS.as_ref(),
+                        ) {
+                            (Ok(q), Ok(m)) => Some((*q, *m)),
+                            (Err(e), _) | (_, Err(e)) => {
+                                error!(
+                                    event = "scanner.v3_constant_invalid",
+                                    error = %e,
+                                    "V3 mainnet constant failed to parse — skipping V3 RPC batch"
+                                );
+                                None
+                            }
+                        };
+                        if let Some((quoter, multicall)) = v3_addrs {
+                            let quotes_to_send = to_quote.clone();
+                            match rpc_pool
+                                .with_retry(|provider| {
+                                    let reqs = quotes_to_send.clone();
+                                    async move {
+                                        amm_math::v3_quote_exact_in_multicall(
+                                            provider, quoter, multicall, reqs,
                                         )
-                                        .await;
-                                        outs.push(r.amount_out);
-                                        v3_used += 1;
+                                        .await
+                                    }
+                                })
+                                .await
+                            {
+                                Ok(results) => {
+                                    for r in &results {
+                                        if r.success && !r.amount_out.is_zero() {
+                                            // Cache + push.
+                                            let pool_lower = format!("0x{:040x}", r.pool_addr);
+                                            let amount_out_dec = r.amount_out.to_string();
+                                            let _ = reserves::set_v3_quote(
+                                                redis,
+                                                client.chain_id,
+                                                &pool_lower,
+                                                &amount_in_dec,
+                                                &amount_out_dec,
+                                                V3_QUOTE_CACHE_TTL_SECS,
+                                            )
+                                            .await;
+                                            outs.push(r.amount_out);
+                                            v3_used += 1;
+                                        }
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                debug!(event = "scanner.v3_quote_rpc_failed",
-                                       pair = format!("{}-{}", m_in.symbol, m_out.symbol),
-                                       error = %e);
+                                Err(e) => {
+                                    debug!(event = "scanner.v3_quote_rpc_failed",
+                                           pair = format!("{}-{}", m_in.symbol, m_out.symbol),
+                                           error = %e);
+                                }
                             }
                         }
                     } else {
@@ -2450,5 +2485,39 @@ mod tests {
             Some(0.0),
             "zero spread in a priced token must yield Some(0.0), not None"
         );
+    }
+
+    /// OMEGA-8/M4 Fase 1: the V3 mainnet address constants must parse cleanly
+    /// at startup. A typo in the constant source would surface here as an
+    /// `Err`, never as a runtime panic on the V3 hot path.
+    #[test]
+    fn v3_mainnet_address_constants_parse_to_valid_addresses() {
+        let quoter = V3_QUOTER_V2_ADDRESS.as_ref();
+        assert!(
+            quoter.is_ok(),
+            "V3 quoter constant must parse: {:?}",
+            quoter.as_ref().err()
+        );
+        let multicall = V3_MULTICALL3_ADDRESS.as_ref();
+        assert!(
+            multicall.is_ok(),
+            "V3 multicall3 constant must parse: {:?}",
+            multicall.as_ref().err()
+        );
+        let q = quoter.expect("checked above");
+        let m = multicall.expect("checked above");
+        assert_ne!(*q, Address::zero(), "quoter cannot be the zero address");
+        assert_ne!(*m, Address::zero(), "multicall3 cannot be the zero address");
+    }
+
+    /// OMEGA-8/M4 Fase 1: confirm the parser used by the Lazy static rejects
+    /// malformed input the same way it would inside `Lazy::new`. We do not
+    /// inject a bad constant (the production constants are correct); we
+    /// exercise the same `Address::from_str` failure path the Lazy guards.
+    #[test]
+    fn invalid_address_string_returns_err_not_panic() {
+        let bad: &str = "0xNOT_AN_ADDRESS";
+        let parsed: Result<Address, _> = Address::from_str(bad);
+        assert!(parsed.is_err(), "parser must reject malformed address");
     }
 }
