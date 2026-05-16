@@ -47,7 +47,12 @@ jobs:
 
       - name: Bring up compose stack (dev — defaults OK for CI)
         run: |
-          docker compose -f docker/compose.dev.yml up -d --build \
+          # OMEGA-102 hot-fix: --env-file .env is REQUIRED so compose reads the
+          # root .env (NEXT_PUBLIC_EDGE_URL=http://edge:8787 injected at line 43
+          # above), instead of falling back to compose.dev.yml's literal default
+          # http://localhost:8787 which triggers the next.config.js R2 guard
+          # under NODE_ENV=production during the frontend builder stage.
+          docker compose --env-file .env -f docker/compose.dev.yml up -d --build \
             postgres redis frontend edge api-server
           echo "stack up; waiting for frontend"
           for i in $(seq 1 60); do
