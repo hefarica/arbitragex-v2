@@ -2001,11 +2001,7 @@ mod tests {
 
     /// Build a SizedCandidate with explicit gross/net/optimal_amount_in
     /// for direct `apply_kelly_constraints` testing.
-    fn make_sized(
-        optimal_amount_in_wei: U256,
-        gross_usd: f64,
-        net_usd: f64,
-    ) -> SizedCandidate {
+    fn make_sized(optimal_amount_in_wei: U256, gross_usd: f64, net_usd: f64) -> SizedCandidate {
         let pa = addr(1);
         let pb = addr(2);
         let ti = addr(3);
@@ -2084,11 +2080,10 @@ mod tests {
     fn kelly_caps_optimal_when_max_per_trade_binds() {
         // Tight max_per_trade forces the cap to bind. Profit must scale down.
         let cfg = make_cfg_kelly(
-            /* capital_usd */ 3_000.0,    // $3K cap
+            /* capital_usd */ 3_000.0, // $3K cap
             /* multiplier */ 0.5,
             /* max_per_trade */ 0.001, // 0.1% of NAV → max bet $3
-            /* gas_safety */ 1.0,
-            /* min_p */ 0.8,
+            /* gas_safety */ 1.0, /* min_p */ 0.8,
         );
         // Kernel says: 1 WETH ≈ $3000, gross=$100, net=$90 (cost=$10).
         let sized = make_sized(unit(1), 100.0, 90.0);
