@@ -1,8 +1,8 @@
-use ethers::providers::{Provider, Ws, Middleware, StreamExt};
-use ethers::types::{Transaction, U256};
-use tokio::sync::mpsc;
 use crate::normalization::u256_converter::u256_to_f64_normalized;
+use ethers::providers::{Middleware, Provider, StreamExt, Ws};
+use ethers::types::{Transaction, U256};
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
 
 /// mempool_listener — Conector Alloy Anti-Mock
 /// Se suscribe a un nodo RPC vía WebSocket y emite transacciones pendientes
@@ -18,15 +18,18 @@ pub struct NormalizedTx {
     pub hash: String,
     pub from: String,
     pub to: Option<String>,
-    pub value_normalized: f64,      // ← U256 → f64 (fase 1 de normalización)
-    pub gas_price_normalized: f64,  // ← U256 → f64
-    pub max_fee_normalized: f64,    // ← U256 → f64
+    pub value_normalized: f64,     // ← U256 → f64 (fase 1 de normalización)
+    pub gas_price_normalized: f64, // ← U256 → f64
+    pub max_fee_normalized: f64,   // ← U256 → f64
     pub data: Vec<u8>,
     pub detected_at: Instant,
 }
 
 impl MempoolListener {
-    pub async fn new(rpc_ws_url: &str, tx_out: mpsc::Sender<NormalizedTx>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(
+        rpc_ws_url: &str,
+        tx_out: mpsc::Sender<NormalizedTx>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let provider = Provider::<Ws>::connect(rpc_ws_url).await?;
         Ok(Self {
             provider,
@@ -72,11 +75,13 @@ impl MempoolListener {
             from: format!("{:?}", tx.from),
             to: tx.to.map(|a| format!("{:?}", a)),
             value_normalized: u256_to_f64_normalized(tx.value, 18)?,
-            gas_price_normalized: tx.gas_price
+            gas_price_normalized: tx
+                .gas_price
                 .map(|v| u256_to_f64_normalized(v, 18))
                 .transpose()?
                 .unwrap_or(0.0),
-            max_fee_normalized: tx.max_fee_per_gas
+            max_fee_normalized: tx
+                .max_fee_per_gas
                 .map(|v| u256_to_f64_normalized(v, 18))
                 .transpose()?
                 .unwrap_or(0.0),

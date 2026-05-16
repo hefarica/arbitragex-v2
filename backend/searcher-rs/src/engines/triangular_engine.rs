@@ -154,7 +154,8 @@ impl ReservesCache {
                     Err(_) => {
                         warn!(
                             event = "reserves_cache.hydrate_bad_addr",
-                            addr = addr_str, "skipping: cannot parse pool address"
+                            addr = addr_str,
+                            "skipping: cannot parse pool address"
                         );
                         continue;
                     }
@@ -284,10 +285,7 @@ impl TriangularEngine {
     /// For Phase 9, callers pass seeds directly (e.g. from test fixtures or
     /// the orchestrator boot sequence). Phase 12 will wire a live Redis
     /// resolution path.
-    pub fn new(
-        reserves_cache: Arc<ReservesCache>,
-        cycle_seeds: Vec<CycleSeed>,
-    ) -> Self {
+    pub fn new(reserves_cache: Arc<ReservesCache>, cycle_seeds: Vec<CycleSeed>) -> Self {
         let cycle_registry = build_registry_from_seeds(cycle_seeds);
         Self {
             reserves_cache,
@@ -1443,8 +1441,8 @@ mod tests {
     #[ignore = "requires live Redis (REDIS_URL env var); run on VPS with `cargo test -- --ignored`"]
     async fn hydrate_from_redis_populates_cache() {
         use crate::reserves::{key_pool_reserves, set_reserves, ReservesEntry};
-        let redis_url = std::env::var("REDIS_URL")
-            .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        let redis_url =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
         let client = redis::Client::open(redis_url).expect("redis client");
         let mut conn = redis::aio::ConnectionManager::new(client)
             .await
@@ -1517,8 +1515,8 @@ mod tests {
         use crate::reserves::{key_pool_reserves, set_reserves, ReservesEntry};
         use redis::AsyncCommands;
 
-        let redis_url = std::env::var("REDIS_URL")
-            .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        let redis_url =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
         let client = redis::Client::open(redis_url).expect("redis client");
         let mut conn = redis::aio::ConnectionManager::new(client)
             .await
@@ -1555,7 +1553,10 @@ mod tests {
             .await
             .expect("hydrate_from_redis must not error even with malformed entry");
 
-        assert_eq!(loaded, 1, "must load exactly 1 valid entry, skip 1 malformed");
+        assert_eq!(
+            loaded, 1,
+            "must load exactly 1 valid entry, skip 1 malformed"
+        );
 
         // Good pool in cache, bad pool not in cache.
         assert!(
@@ -1568,10 +1569,7 @@ mod tests {
         );
 
         // Cleanup.
-        for key in &[
-            key_pool_reserves(chain_id, &good_pool_addr_str),
-            bad_key,
-        ] {
+        for key in &[key_pool_reserves(chain_id, &good_pool_addr_str), bad_key] {
             let _: () = redis::cmd("DEL")
                 .arg(key)
                 .query_async(&mut conn)
@@ -1584,8 +1582,8 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires live Redis (REDIS_URL env var); run on VPS with `cargo test -- --ignored`"]
     async fn hydrate_returns_zero_on_empty_redis() {
-        let redis_url = std::env::var("REDIS_URL")
-            .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        let redis_url =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
         let client = redis::Client::open(redis_url).expect("redis client");
         let mut conn = redis::aio::ConnectionManager::new(client)
             .await

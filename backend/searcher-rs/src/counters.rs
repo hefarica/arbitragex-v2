@@ -412,7 +412,10 @@ mod tests {
         let _ = chain_counters(137);
         let ids = registered_chain_ids();
         assert!(ids.contains(&1), "chain 1 missing from registry: {ids:?}");
-        assert!(ids.contains(&137), "chain 137 missing from registry: {ids:?}");
+        assert!(
+            ids.contains(&137),
+            "chain 137 missing from registry: {ids:?}"
+        );
     }
 
     #[test]

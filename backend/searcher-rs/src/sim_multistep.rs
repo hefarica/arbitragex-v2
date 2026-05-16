@@ -578,22 +578,20 @@ pub fn execute_multistep_revm(
                 // step. NO PLACEHOLDER reaches REVM.
                 let amount_in_ethers: U256 = match amount_source {
                     AmountSource::Literal(a) => *a,
-                    AmountSource::FromReadLabel(lbl) => {
-                        match sctx.reads().get(*lbl) {
-                            Some(v) if !v.is_zero() => alloy_u256_to_ethers(*v),
-                            Some(_) => {
-                                return SimulationOutcome::failed(
-                                    "multistep_intermediate_amount_zero".to_string(),
-                                );
-                            }
-                            None => {
-                                return SimulationOutcome::failed(format!(
-                                    "multistep_missing_read_label:{}",
-                                    lbl
-                                ));
-                            }
+                    AmountSource::FromReadLabel(lbl) => match sctx.reads().get(*lbl) {
+                        Some(v) if !v.is_zero() => alloy_u256_to_ethers(*v),
+                        Some(_) => {
+                            return SimulationOutcome::failed(
+                                "multistep_intermediate_amount_zero".to_string(),
+                            );
                         }
-                    }
+                        None => {
+                            return SimulationOutcome::failed(format!(
+                                "multistep_missing_read_label:{}",
+                                lbl
+                            ));
+                        }
+                    },
                 };
                 // Build the swap calldata with the resolved amount (ethers
                 // domain — the encoder lives in prioritization-spine).
@@ -657,9 +655,7 @@ pub fn execute_multistep_revm(
     {
         Some(v) => *v,
         None => {
-            return SimulationOutcome::failed(
-                "multistep_missing_final_balance_read".to_string(),
-            );
+            return SimulationOutcome::failed("multistep_missing_final_balance_read".to_string());
         }
     };
 
@@ -797,7 +793,10 @@ mod tests {
     fn config_storage_cheats_required() {
         let mut c = valid_config();
         c.enable_storage_cheats = false;
-        assert_eq!(c.validate().unwrap_err(), MultiStepError::StorageCheatsDisabled);
+        assert_eq!(
+            c.validate().unwrap_err(),
+            MultiStepError::StorageCheatsDisabled
+        );
     }
 
     #[test]
@@ -841,21 +840,30 @@ mod tests {
     fn context_zero_caller_rejected() {
         let mut ctx = valid_ctx();
         ctx.caller = Address::zero();
-        assert_eq!(validate_context(&ctx).unwrap_err(), MultiStepError::InvalidCaller);
+        assert_eq!(
+            validate_context(&ctx).unwrap_err(),
+            MultiStepError::InvalidCaller
+        );
     }
 
     #[test]
     fn context_same_token_in_out_rejected() {
         let mut ctx = valid_ctx();
         ctx.token_out = ctx.token_in;
-        assert_eq!(validate_context(&ctx).unwrap_err(), MultiStepError::SameTokenInOut);
+        assert_eq!(
+            validate_context(&ctx).unwrap_err(),
+            MultiStepError::SameTokenInOut
+        );
     }
 
     #[test]
     fn context_zero_amount_in_rejected() {
         let mut ctx = valid_ctx();
         ctx.amount_in = U256::zero();
-        assert_eq!(validate_context(&ctx).unwrap_err(), MultiStepError::InvalidAmountIn);
+        assert_eq!(
+            validate_context(&ctx).unwrap_err(),
+            MultiStepError::InvalidAmountIn
+        );
     }
 
     #[test]
@@ -903,8 +911,8 @@ mod tests {
 
     #[test]
     fn build_plan_forward_swap_uses_literal_amount() {
-        let plan = build_multistep_plan(&valid_ctx(), &valid_config(), &provider_with_layouts())
-            .unwrap();
+        let plan =
+            build_multistep_plan(&valid_ctx(), &valid_config(), &provider_with_layouts()).unwrap();
         // The first ExecuteSwap entry is the forward swap; its amount source
         // must be a literal == ctx.amount_in.
         let forward_swap = plan
@@ -915,16 +923,13 @@ mod tests {
                 _ => None,
             })
             .unwrap();
-        assert_eq!(
-            *forward_swap,
-            AmountSource::Literal(valid_ctx().amount_in)
-        );
+        assert_eq!(*forward_swap, AmountSource::Literal(valid_ctx().amount_in));
     }
 
     #[test]
     fn build_plan_backward_swap_uses_read_label() {
-        let plan = build_multistep_plan(&valid_ctx(), &valid_config(), &provider_with_layouts())
-            .unwrap();
+        let plan =
+            build_multistep_plan(&valid_ctx(), &valid_config(), &provider_with_layouts()).unwrap();
         // The SECOND ExecuteSwap entry is the backward swap; its amount
         // source must reference the intermediate balance read label —
         // NEVER a placeholder literal.
@@ -945,8 +950,8 @@ mod tests {
 
     #[test]
     fn build_plan_includes_final_balance_read() {
-        let plan = build_multistep_plan(&valid_ctx(), &valid_config(), &provider_with_layouts())
-            .unwrap();
+        let plan =
+            build_multistep_plan(&valid_ctx(), &valid_config(), &provider_with_layouts()).unwrap();
         // The plan must end with a ReadBalance for the final token_in.
         let last = plan.steps.last().unwrap();
         matches!(
@@ -972,8 +977,8 @@ mod tests {
     fn build_plan_rejects_max_steps_too_low() {
         let mut config = valid_config();
         config.max_steps = 3; // Plan needs 7; reject.
-        let err = build_multistep_plan(&valid_ctx(), &config, &provider_with_layouts())
-            .unwrap_err();
+        let err =
+            build_multistep_plan(&valid_ctx(), &config, &provider_with_layouts()).unwrap_err();
         assert_eq!(err, MultiStepError::InvalidStepCount);
     }
 
@@ -981,8 +986,8 @@ mod tests {
     fn build_plan_propagates_paper_mode_failure() {
         let mut config = valid_config();
         config.paper_mode = false;
-        let err = build_multistep_plan(&valid_ctx(), &config, &provider_with_layouts())
-            .unwrap_err();
+        let err =
+            build_multistep_plan(&valid_ctx(), &config, &provider_with_layouts()).unwrap_err();
         assert_eq!(err, MultiStepError::PaperModeRequired);
     }
 
@@ -990,13 +995,22 @@ mod tests {
 
     #[test]
     fn error_reason_tags_are_stable() {
-        assert_eq!(MultiStepError::PaperModeRequired.reason_tag(), "paper_mode_required");
+        assert_eq!(
+            MultiStepError::PaperModeRequired.reason_tag(),
+            "paper_mode_required"
+        );
         assert_eq!(
             MultiStepError::StorageCheatsDisabled.reason_tag(),
             "storage_cheats_disabled"
         );
-        assert_eq!(MultiStepError::InvalidGasPrice.reason_tag(), "invalid_gas_price");
-        assert_eq!(MultiStepError::SameTokenInOut.reason_tag(), "same_token_in_out");
+        assert_eq!(
+            MultiStepError::InvalidGasPrice.reason_tag(),
+            "invalid_gas_price"
+        );
+        assert_eq!(
+            MultiStepError::SameTokenInOut.reason_tag(),
+            "same_token_in_out"
+        );
         assert_eq!(
             MultiStepError::RevmCacheDbPending.reason_tag(),
             "multistep_revm_cachedb_pending"

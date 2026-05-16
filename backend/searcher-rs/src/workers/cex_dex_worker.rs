@@ -148,7 +148,11 @@ impl CexDexWorkerConfig {
     /// explicitly configured per deployment environment.
     pub fn from_env(chain_id: u64, tick_ms: u64) -> anyhow::Result<Self> {
         let endpoints = ExchangeEndpoints::from_env()?;
-        Ok(Self { chain_id, tick_ms, endpoints })
+        Ok(Self {
+            chain_id,
+            tick_ms,
+            endpoints,
+        })
     }
 
     /// Kept for call-sites that pre-date this change; now delegates to `from_env`.

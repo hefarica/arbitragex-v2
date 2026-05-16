@@ -239,8 +239,11 @@ impl Orchestrator {
         if impact.impacted_pools.is_empty() && impact.impacted_cycles.is_empty() {
             // No pools impacted. This is an unmapped pair.
             // Dispatch synchronously to the PoolDiscoveryService.
-            self.ctx.pool_discovery.record_opportunity_observation(&intent, "discovery_started", None, None).await;
-            
+            self.ctx
+                .pool_discovery
+                .record_opportunity_observation(&intent, "discovery_started", None, None)
+                .await;
+
             match self.ctx.pool_discovery.discover_from_intent(&intent).await {
                 Ok(true) => {
                     // Retry impact resolution
@@ -257,11 +260,22 @@ impl Orchestrator {
                     );
                 }
                 Ok(false) => {
-                    self.ctx.pool_discovery.record_opportunity_observation(&intent, "discovery_no_pool_found", None, None).await;
+                    self.ctx
+                        .pool_discovery
+                        .record_opportunity_observation(
+                            &intent,
+                            "discovery_no_pool_found",
+                            None,
+                            None,
+                        )
+                        .await;
                 }
                 Err(e) => {
                     warn!("Pool discovery error: {}", e);
-                    self.ctx.pool_discovery.record_opportunity_observation(&intent, "discovery_failed", None, None).await;
+                    self.ctx
+                        .pool_discovery
+                        .record_opportunity_observation(&intent, "discovery_failed", None, None)
+                        .await;
                 }
             }
 
@@ -272,7 +286,10 @@ impl Orchestrator {
                     tx_hash = %intent.tx_hash,
                     "rejection_reason" = "impact_zero"
                 );
-                self.ctx.pool_discovery.record_opportunity_observation(&intent, "impact_zero", None, None).await;
+                self.ctx
+                    .pool_discovery
+                    .record_opportunity_observation(&intent, "impact_zero", None, None)
+                    .await;
                 return Ok(());
             }
         }
@@ -461,10 +478,11 @@ impl Orchestrator {
 
         // FlashloanEngine (Phase 10 — live): wrap net-positive base candidates.
         let flash_candidates = {
-            let wrapped = self
-                .ctx
-                .flashloan_engine
-                .wrap_profitable_routes(&base_candidates, chain_id, cfg_snapshot.as_ref());
+            let wrapped = self.ctx.flashloan_engine.wrap_profitable_routes(
+                &base_candidates,
+                chain_id,
+                cfg_snapshot.as_ref(),
+            );
             // Count flashloan candidates — label comes from the candidate itself.
             for c in &wrapped {
                 CANDIDATES_TOTAL

@@ -87,7 +87,11 @@ mod tests {
             .expect("ephemeral test key parses");
         let wallet = wallet.with_chain_id(chain_id);
         let address = wallet.address();
-        Signer { wallet, address, chain_id }
+        Signer {
+            wallet,
+            address,
+            chain_id,
+        }
     }
 
     /// OMEGA-8/M4 Fase 4: from_env returns Ok(None) when the env var is
@@ -140,8 +144,14 @@ mod tests {
             2,
             "auth header must be exactly <addr>:<sig>, got {header:?}"
         );
-        assert!(parts[0].starts_with("0x"), "address part must be hex-prefixed");
-        assert!(parts[1].starts_with("0x"), "signature part must be hex-prefixed");
+        assert!(
+            parts[0].starts_with("0x"),
+            "address part must be hex-prefixed"
+        );
+        assert!(
+            parts[1].starts_with("0x"),
+            "signature part must be hex-prefixed"
+        );
         assert_eq!(parts[0].len(), 42, "address must be 40-hex + 0x");
 
         // CRITICAL: the private key must NEVER leak into the header.
