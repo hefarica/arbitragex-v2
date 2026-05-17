@@ -90,6 +90,13 @@ jobs:
             echo "--- docker compose: pulling images ---"
             docker compose -f docker/compose.prod.yml pull
 
+            echo "--- docker compose: materializing runtime secrets ---"
+            if [ "$(whoami)" = "root" ]; then
+              python3 /usr/local/sbin/arbx-materialize-runtime-secrets.py
+            else
+              sudo /usr/bin/python3 /usr/local/sbin/arbx-materialize-runtime-secrets.py
+            fi
+
             echo "--- docker compose: starting services ---"
             docker compose -f docker/compose.prod.yml up -d --remove-orphans
 
