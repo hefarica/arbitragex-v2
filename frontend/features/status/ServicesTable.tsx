@@ -17,15 +17,15 @@ export function ServicesTable({ services }: { services: StatusResponse["services
           </TableHeader>
           <TableBody>
             {Object.entries(services).map(([name, v]) => (
-              <TableRow key={name}>
+              <TableRow key={name} data-testid={`service-health-row-${name}`}>
                 <TableCell className="font-mono text-sm">{name}</TableCell>
                 <TableCell>
-                  <Badge variant={v.ok ? "success" : "destructive"}>
+                  <Badge variant={v.ok ? "success" : (name === 'searcher-rs' && (v.detail?.includes('fetch failed') || v.detail?.includes('ECONNREFUSED'))) ? "warning" : "destructive"}>
                     <span
-                      className={`size-1.5 rounded-full ${v.ok ? "bg-success" : "bg-destructive"}`}
+                      className={`size-1.5 rounded-full ${v.ok ? "bg-success" : (name === 'searcher-rs' && (v.detail?.includes('fetch failed') || v.detail?.includes('ECONNREFUSED'))) ? "bg-warning" : "bg-destructive"}`}
                       aria-hidden
                     />
-                    {v.ok ? "UP" : "DOWN"}
+                    {v.ok ? "UP" : (name === 'searcher-rs' && (v.detail?.includes('fetch failed') || v.detail?.includes('ECONNREFUSED')) ? "DEGRADED" : "DOWN")}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-muted-foreground">

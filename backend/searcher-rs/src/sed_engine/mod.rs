@@ -1,8 +1,8 @@
-use tokio::sync::{mpsc, RwLock};
-use std::sync::Arc;
 use crate::connectors::mempool_listener::NormalizedTx;
 use crate::connectors::reserve_reader::ReserveReader;
 use sqlx::PgPool;
+use std::sync::Arc;
+use tokio::sync::{mpsc, RwLock};
 
 /// EdgeConfig — Configuration for the Edge Node SED Engine
 pub struct EdgeConfig {
@@ -11,14 +11,14 @@ pub struct EdgeConfig {
 }
 
 /// SED Engine — Bucle principal de 6 fases matemáticas
-/// 
+///
 /// FASE 1: DETECT    — Escucha mempool + filtra transacciones objetivo
 /// FASE 2: VALIDATE  — Verifica viabilidad preliminar (liquidez, slippage)
 /// FASE 3: SIMULATE  — Dry-run en fork local (paper-shadow)
 /// FASE 4: SELECT    — Scoring multi-factor + ranking
 /// FASE 5: FUND      — Verificación de balance y aprobaciones (solo lectura en paper-shadow)
 /// FASE 6: EXECUTE   — En paper-shadow: log + métricas. En live: transmisión a relays.
-/// 
+///
 /// GHOST PROTOCOL: En feature `paper-shadow`, la fase 6 NUNCA firma ni transmite.
 
 pub struct SedEngine {
@@ -44,11 +44,7 @@ pub struct SedOpportunity {
 }
 
 impl SedEngine {
-    pub fn new(
-        config: EdgeConfig,
-        pool: PgPool,
-        reserve_reader: ReserveReader,
-    ) -> Arc<Self> {
+    pub fn new(config: EdgeConfig, pool: PgPool, reserve_reader: ReserveReader) -> Arc<Self> {
         Arc::new(Self {
             config: Arc::new(config),
             pool,
@@ -154,7 +150,7 @@ impl SedEngine {
                 latency_detect_us, edge_node_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING id
-            "#
+            "#,
         )
         .bind(opp.block_number as i64)
         .bind(&opp.tx_trigger_hash)
@@ -172,7 +168,12 @@ impl SedEngine {
         Ok(row.get("id"))
     }
 
-    async fn update_phase(&self, id: uuid::Uuid, phase: u8, status: &str) -> Result<(), sqlx::Error> {
+    async fn update_phase(
+        &self,
+        id: uuid::Uuid,
+        phase: u8,
+        status: &str,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE sed_opportunities SET phase = $1, status = $2 WHERE id = $3")
             .bind(phase as i16)
             .bind(status)
@@ -197,7 +198,10 @@ impl SedEngine {
         unimplemented!("Fase 2: Implementar validación de viabilidad")
     }
 
-    async fn phase_3_simulate(&self, _opp: &SedOpportunity) -> Result<bool, Box<dyn std::error::Error>> {
+    async fn phase_3_simulate(
+        &self,
+        _opp: &SedOpportunity,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
         // Dry-run en fork local o vía sim-ctl service.
         // En paper-shadow, esto usa Anvil o similar sin costo de gas real.
         unimplemented!("Fase 3: Implementar simulación dry-run")

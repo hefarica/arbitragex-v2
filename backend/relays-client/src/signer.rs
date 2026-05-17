@@ -64,6 +64,14 @@ impl std::fmt::Debug for Signer {
 
 #[cfg(test)]
 mod tests {
+    // OMEGA-S5/OMEGA-100 (2026-05-16): Tests legitimately panic on setup
+    // failure (ephemeral key parsing, env-restore, header signing). Calling
+    // .expect() inside a #[test] is the idiomatic way to surface a setup bug
+    // as a test failure — production code paths in this module already use
+    // Result<_, RelayError> and are gated by `clippy::expect_used` at the
+    // crate level. Justification: doctrina-compliant scope-limited allowance.
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+
     use super::*;
     use ethers::signers::LocalWallet;
 
@@ -79,7 +87,11 @@ mod tests {
             .expect("ephemeral test key parses");
         let wallet = wallet.with_chain_id(chain_id);
         let address = wallet.address();
-        Signer { wallet, address, chain_id }
+        Signer {
+            wallet,
+            address,
+            chain_id,
+        }
     }
 
     /// OMEGA-8/M4 Fase 4: from_env returns Ok(None) when the env var is
@@ -132,8 +144,14 @@ mod tests {
             2,
             "auth header must be exactly <addr>:<sig>, got {header:?}"
         );
-        assert!(parts[0].starts_with("0x"), "address part must be hex-prefixed");
-        assert!(parts[1].starts_with("0x"), "signature part must be hex-prefixed");
+        assert!(
+            parts[0].starts_with("0x"),
+            "address part must be hex-prefixed"
+        );
+        assert!(
+            parts[1].starts_with("0x"),
+            "signature part must be hex-prefixed"
+        );
         assert_eq!(parts[0].len(), 42, "address must be 40-hex + 0x");
 
         // CRITICAL: the private key must NEVER leak into the header.

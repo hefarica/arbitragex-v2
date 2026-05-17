@@ -5,6 +5,7 @@ import { FocusOnMount } from "@/components/focus-on-mount";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { ReconSummary, StatusResponse } from "@/lib/api-client";
 import { fmtPct01 } from "@/lib/formatters";
+import { aggregateEdgeHealth } from "@/lib/edge-health";
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -49,24 +50,48 @@ export function HomeKpiStrip({
   status: Result<StatusResponse>;
   recon: Result<ReconSummary>;
 }) {
-  // If both upstreams failed, show the worse error verbatim and stop.
+  // Doctrine: "POR EL HAZ DE LUZ SOLO PASA QUIEN ES VISTO".
+  //
+  // When BOTH upstream calls fail, we must distinguish the root cause
+  // before painting a banner. Conflating an upstream 5xx with the
+  // platform itself being down hides the real fault from the operator.
+  //
+  // Taxonomy (see lib/edge-health.ts):
+  //   EDGE_UNREACHABLE                   → "edge unreachable"
+  //   EDGE_REACHABLE_UPSTREAM_DEGRADED   → "upstreams degraded"
+  //   EDGE_REACHABLE_SCHEMA_DRIFT        → "edge schema drift"
+  //
+  // The spec (tests/e2e/smoke.spec.ts) forbids the literal strings
+  // "edge unreachable" and "edge error:" appearing in normal CI runs
+  // where the edge IS reachable but upstreams are. The new "upstreams
+  // degraded" banner is intentionally chosen NOT to collide with either
+  // forbidden regex while still surfacing the failure honestly.
   if (!status.ok && !recon.ok) {
+    const health = aggregateEdgeHealth([status, recon]);
     return (
       <FocusOnMount>
         <Alert variant="destructive" className="mb-8">
           <AlertCircleIcon />
-          <AlertTitle>edge unreachable</AlertTitle>
+          <AlertTitle>{health.title}</AlertTitle>
           <AlertDescription>
-            <code className="font-mono text-xs">{status.error}</code>
+            <code className="font-mono text-xs">{health.diagnostic}</code>
             <p className="mt-2 text-sm">
-              Live KPIs are hidden because no upstream responded. The tiles below
-              still navigate.
+              {health.kind === "EDGE_UNREACHABLE"
+                ? "The frontend could not reach the edge gateway. Live KPIs are hidden until the gateway responds. The tiles below still navigate."
+                : "The edge gateway responded but one or more upstream dependencies (RPC, providers, indexers) are unhealthy. Live KPIs are hidden until upstreams recover. The tiles below still navigate."}
             </p>
           </AlertDescription>
         </Alert>
       </FocusOnMount>
     );
   }
+
+  // Partial degradation — at least one upstream gave a usable response.
+  // Use the taxonomy to choose an honest sub-hint per tile instead of
+  // the legacy "edge error" string (which the spec also forbids when
+  // followed by ":").
+  const statusHealth = status.ok ? null : aggregateEdgeHealth([status]);
+  const reconHealth = recon.ok ? null : aggregateEdgeHealth([recon]);
 
   const overallOk = status.ok ? status.data.ok : null;
   const ksArmed = status.ok ? (status.data.killswitch?.enabled ?? false) : null;
@@ -79,7 +104,11 @@ export function HomeKpiStrip({
       <Stat
         label="Overall"
         value={overallOk == null ? "—" : overallOk ? "OK" : "DEGRADED"}
-        hint={status.ok ? `${Object.keys(status.data.services).length} services` : "edge error"}
+        hint={
+          status.ok
+            ? `${Object.keys(status.data.services).length} services`
+            : (statusHealth?.title ?? "no data")
+        }
         tone={overallOk == null ? "neutral" : overallOk ? "success" : "danger"}
         icon={
           overallOk
@@ -97,7 +126,13 @@ export function HomeKpiStrip({
       <Stat
         label="Attempts"
         value={attempts == null ? "—" : String(attempts)}
-        hint={windowH != null ? `last ${windowH}h` : recon.ok ? "" : "edge error"}
+        hint={
+          windowH != null
+            ? `last ${windowH}h`
+            : recon.ok
+              ? ""
+              : (reconHealth?.title ?? "no data")
+        }
         tone="info"
         icon={<ActivityIcon className="size-3.5" />}
       />

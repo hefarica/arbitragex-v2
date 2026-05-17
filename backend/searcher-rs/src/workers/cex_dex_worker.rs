@@ -62,6 +62,7 @@
 //! 5. Add heartbeat counters `cex_dex_pairs_scanned` + `cex_dex_opps_emitted`
 //!    to `counters::ScannerCounters`.
 
+use crate::config::exchange_endpoints::ExchangeEndpoints;
 use crate::counters::counters;
 use shared_rs::rpc_failover::HttpRpcPool;
 use std::sync::atomic::Ordering;
@@ -133,21 +134,33 @@ impl CexDexPair {
 pub struct CexDexWorkerConfig {
     pub chain_id: u64,
     pub tick_ms: u64,
-    /// Override for Binance base URL (tests inject a wiremock URL here).
-    pub binance_base_url: Option<String>,
-    /// Override for OKX base URL (tests inject a wiremock URL here).
-    pub okx_base_url: Option<String>,
+    /// Resolved CEX base URLs, loaded from env at construction time.
+    /// Never carries a hardcoded default — fail-fast on missing env.
+    pub endpoints: ExchangeEndpoints,
 }
 
 #[allow(dead_code)]
 impl CexDexWorkerConfig {
-    pub fn new(chain_id: u64, tick_ms: u64) -> Self {
-        Self {
+    /// Load config, reading CEX base URLs from env vars.
+    ///
+    /// Fails if `CEX_BINANCE_BASE_URL` or `CEX_OKX_BASE_URL` are absent.
+    /// No silent fallback — doctrine §B: operational endpoints must be
+    /// explicitly configured per deployment environment.
+    pub fn from_env(chain_id: u64, tick_ms: u64) -> anyhow::Result<Self> {
+        let endpoints = ExchangeEndpoints::from_env()?;
+        Ok(Self {
             chain_id,
             tick_ms,
-            binance_base_url: None,
-            okx_base_url: None,
-        }
+            endpoints,
+        })
+    }
+
+    /// Kept for call-sites that pre-date this change; now delegates to `from_env`.
+    ///
+    /// Callers that previously used `new` and relied on the silent URL fallback
+    /// MUST now ensure `CEX_BINANCE_BASE_URL` / `CEX_OKX_BASE_URL` are set.
+    pub fn new(chain_id: u64, tick_ms: u64) -> anyhow::Result<Self> {
+        Self::from_env(chain_id, tick_ms)
     }
 }
 
@@ -316,11 +329,9 @@ impl CexDexWorker {
     }
 
     async fn fetch_binance_price(&self, pair: &CexDexPair) -> anyhow::Result<f64> {
-        let base = self
-            .cfg
-            .binance_base_url
-            .as_deref()
-            .unwrap_or("https://api.binance.com");
+        // B. URL operativa: base URL resolved from env at boot (CEX_BINANCE_BASE_URL).
+        // No hardcoded fallback — fail-fast on missing env is enforced in ExchangeEndpoints::from_env.
+        let base = &self.cfg.endpoints.binance_base_url;
         let url = format!("{}/api/v3/ticker/price?symbol={}", base, pair.symbol);
         let resp = self.http.get(&url).send().await?.error_for_status()?;
         let parsed: BinanceTickerPrice = resp.json().await?;
@@ -333,11 +344,9 @@ impl CexDexWorker {
     async fn fetch_okx_price(&self, pair: &CexDexPair) -> anyhow::Result<f64> {
         // OKX uses "ETH-USDT"; Binance uses "ETHUSDT". Normalise.
         let inst_id = to_okx_inst_id(&pair.symbol);
-        let base = self
-            .cfg
-            .okx_base_url
-            .as_deref()
-            .unwrap_or("https://www.okx.com");
+        // B. URL operativa: base URL resolved from env at boot (CEX_OKX_BASE_URL).
+        // No hardcoded fallback — fail-fast on missing env is enforced in ExchangeEndpoints::from_env.
+        let base = &self.cfg.endpoints.okx_base_url;
         let url = format!("{}/api/v5/market/ticker?instId={}", base, inst_id);
         let resp = self.http.get(&url).send().await?.error_for_status()?;
         let parsed: OkxTickerResponse = resp.json().await?;

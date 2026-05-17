@@ -19,9 +19,19 @@ import type {
   CredentialProvider,
   CredentialTestResult,
 } from "@arbx/shared";
+import { getExchangeEndpoints } from "../config/exchange-endpoints.js";
 
 const DEFAULT_TIMEOUT_MS = 6000;
 const WS_TIMEOUT_MS = 4000;
+
+/**
+ * D. dirección EVM de protocolo — WETH canonical Ethereum mainnet address.
+ * Used exclusively as a probe token for Alchemy Prices API validation.
+ * Immutable: Wrapped Ether contract is non-upgradeable and the address
+ * has not changed since deployment. Source: etherscan.io/token/0xc02a...
+ * Long-term: move to shared token catalog (H. deuda — tracked separately).
+ */
+const WETH_MAINNET_ADDR = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
 
 type Validator = (
   scope: string,
@@ -155,7 +165,8 @@ const validateRpcWs: Validator = async (scope, secret) => {
 // --- Coingecko Demo ---------------------------------------------------------
 const validateCoingeckoDemo: Validator = async () => {
   try {
-    const r = await fetchWithTimeout("https://api.coingecko.com/api/v3/ping");
+    // B. URL operativa — resolved from ENDPOINT_COINGECKO_FREE env var.
+    const r = await fetchWithTimeout(`${getExchangeEndpoints().coingeckoFree}/api/v3/ping`);
     if (!r.ok) return fail(`http ${r.status}`);
     const j = (await r.json()) as { gecko_says?: string };
     if (j.gecko_says) return ok("coingecko free-tier reachable", { gecko_says: j.gecko_says });
@@ -168,8 +179,9 @@ const validateCoingeckoDemo: Validator = async () => {
 // --- Coingecko Pro ----------------------------------------------------------
 const validateCoingeckoPro: Validator = async (_scope, secret) => {
   try {
+    // B. URL operativa — resolved from ENDPOINT_COINGECKO_PRO env var.
     const r = await fetchWithTimeout(
-      "https://pro-api.coingecko.com/api/v3/ping",
+      `${getExchangeEndpoints().coingeckoPro}/api/v3/ping`,
       { headers: { "x-cg-pro-api-key": secret } },
     );
     if (!r.ok) return fail(`http ${r.status}`);
@@ -187,13 +199,15 @@ const validateAlchemyPrices: Validator = async (_scope, secret) => {
     ? secret.split("/v2/")[1]!.split("/")[0]!
     : secret;
   try {
+    // B. URL operativa — resolved from ENDPOINT_ALCHEMY_PRICES env var.
+    // D. EVM address: WETH canonical mainnet address used as probe token; immutable.
     const r = await fetchWithTimeout(
-      `https://api.g.alchemy.com/prices/v1/${key}/tokens/by-address`,
+      `${getExchangeEndpoints().alchemyPrices}/prices/v1/${key}/tokens/by-address`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          addresses: [{ network: "eth-mainnet", address: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" }],
+          addresses: [{ network: "eth-mainnet", address: WETH_MAINNET_ADDR }],
         }),
       },
     );
@@ -225,7 +239,8 @@ const validateFlashbotsSigner: Validator = async (_scope, secret) => {
 // --- BloxRoute --------------------------------------------------------------
 const validateBloxroute: Validator = async (_scope, secret) => {
   try {
-    const r = await fetchWithTimeout("https://api.bloxroute.com/ping", {
+    // B. URL operativa — resolved from ENDPOINT_BLOXROUTE env var.
+    const r = await fetchWithTimeout(`${getExchangeEndpoints().bloxroute}/ping`, {
       headers: { authorization: secret },
     });
     if (r.status === 401 || r.status === 403) return fail(`auth rejected (${r.status})`);
@@ -264,7 +279,8 @@ const validateBinance: Validator = async (_scope, secret, metadata) => {
     const ts = Date.now();
     const query = `timestamp=${ts}&recvWindow=5000`;
     const sig = createHmac("sha256", secret).update(query).digest("hex");
-    const r = await fetchWithTimeout(`https://api.binance.com/api/v3/account?${query}&signature=${sig}`, {
+    // B. URL operativa — resolved from ENDPOINT_BINANCE env var.
+    const r = await fetchWithTimeout(`${getExchangeEndpoints().binance}/api/v3/account?${query}&signature=${sig}`, {
       headers: { "x-mbx-apikey": apiKey },
     });
     if (r.status === 401 || r.status === 403) return fail(`auth rejected (${r.status})`);
@@ -290,7 +306,8 @@ const validateOkx: Validator = async (_scope, secret, metadata) => {
     const path = "/api/v5/account/balance";
     const presign = ts + "GET" + path;
     const sig = createHmac("sha256", secret).update(presign).digest("base64");
-    const r = await fetchWithTimeout(`https://www.okx.com${path}`, {
+    // B. URL operativa — resolved from ENDPOINT_OKX env var.
+    const r = await fetchWithTimeout(`${getExchangeEndpoints().okx}${path}`, {
       headers: {
         "OK-ACCESS-KEY": apiKey,
         "OK-ACCESS-SIGN": sig,
@@ -317,8 +334,9 @@ const validateBybit: Validator = async (_scope, secret, metadata) => {
     const queryString = "accountType=UNIFIED";
     const presign = ts + apiKey + recvWindow + queryString;
     const sig = createHmac("sha256", secret).update(presign).digest("hex");
+    // B. URL operativa — resolved from ENDPOINT_BYBIT env var.
     const r = await fetchWithTimeout(
-      `https://api.bybit.com/v5/account/wallet-balance?${queryString}`,
+      `${getExchangeEndpoints().bybit}/v5/account/wallet-balance?${queryString}`,
       {
         headers: {
           "X-BAPI-API-KEY": apiKey,

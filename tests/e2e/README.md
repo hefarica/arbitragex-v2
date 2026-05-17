@@ -40,6 +40,23 @@ ARBX_ADMIN_TOKEN=$(docker compose -f docker/compose.dev.yml exec api-server prin
 - `killswitch.spec.ts` asserts the UI refuses a reasonless toggle — matches
   the audit-log requirement.
 
+### Edge health taxonomy (see `frontend/lib/edge-health.ts`)
+
+The `smoke.spec.ts` ban on "edge unreachable" is **doctrinal**, not cosmetic.
+The frontend distinguishes:
+
+| Kind | Trigger | Banner string |
+|------|---------|---------------|
+| `EDGE_UNREACHABLE` | Frontend cannot reach its edge gateway (network error, DNS, timeout, ECONNREFUSED) | `edge unreachable` |
+| `EDGE_REACHABLE_UPSTREAM_DEGRADED` | Edge responded with 4xx/5xx because an upstream (RPC, provider, indexer) is unhealthy or unconfigured | `upstreams degraded` |
+| `EDGE_REACHABLE_SCHEMA_DRIFT` | Edge responded with a body that violates the Zod contract | `edge schema drift` |
+| `EDGE_REACHABLE_LIVE` | Edge responded with valid data | (no banner) |
+
+CI without RPC keys is the canonical `EDGE_REACHABLE_UPSTREAM_DEGRADED` scenario
+and MUST surface "upstreams degraded", never "edge unreachable". Misclassifying
+the two hides the real root cause from the operator and is treated as a
+doctrine violation.
+
 ## Follow-ups
 
 - Add `relays.spec.ts` once `R3 part B` lands (DB-backed relay catalog).

@@ -120,14 +120,20 @@ impl OmniReloadCoordinator {
     pub async fn spawn(self: Arc<Self>, redis_url: String) -> Result<JoinHandle<()>> {
         let client = redis::Client::open(redis_url.clone())
             .context("OmniReloadCoordinator: redis client open")?;
-        let mut pubsub = client.get_async_pubsub().await
+        let mut pubsub = client
+            .get_async_pubsub()
+            .await
             .context("OmniReloadCoordinator: pubsub connection")?;
         for ch in Self::channels() {
-            pubsub.subscribe(ch).await
+            pubsub
+                .subscribe(ch)
+                .await
                 .with_context(|| format!("subscribe {ch}"))?;
         }
         // Per-chain patterns: use psubscribe wildcard
-        pubsub.psubscribe("arbx:config:*:*:reload").await
+        pubsub
+            .psubscribe("arbx:config:*:*:reload")
+            .await
             .context("psubscribe per-chain channels")?;
 
         let this = self.clone();
@@ -136,11 +142,17 @@ impl OmniReloadCoordinator {
             while let Some(msg) = futures_util::StreamExt::next(&mut stream).await {
                 let payload: String = match msg.get_payload() {
                     Ok(p) => p,
-                    Err(e) => { error!("omni_reload: bad payload: {e}"); continue; }
+                    Err(e) => {
+                        error!("omni_reload: bad payload: {e}");
+                        continue;
+                    }
                 };
                 let evt: ReloadEvent = match serde_json::from_str(&payload) {
                     Ok(e) => e,
-                    Err(e) => { error!("omni_reload: bad json: {e}"); continue; }
+                    Err(e) => {
+                        error!("omni_reload: bad json: {e}");
+                        continue;
+                    }
                 };
                 this.dispatch(evt).await;
             }
@@ -205,7 +217,10 @@ impl OmniReloadCoordinator {
             latency_ms: Some(latency_ms),
             error,
         };
-        let url = format!("{}/api/system/runtime-ack", self.api_base.trim_end_matches('/'));
+        let url = format!(
+            "{}/api/system/runtime-ack",
+            self.api_base.trim_end_matches('/')
+        );
         match self.http.post(&url).json(&ack).send().await {
             Ok(r) if r.status().is_success() => {}
             Ok(r) => warn!("omni_reload: ack non-2xx: {}", r.status()),

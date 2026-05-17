@@ -1,8 +1,5 @@
-import { AlertCircleIcon } from "lucide-react";
-
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { FocusOnMount } from "@/components/focus-on-mount";
 import { PageHeader } from "@/components/page-header";
+import { EdgeHealthBanner } from "@/components/edge-health-banner";
 import { ExecutionsClient } from "@/features/executions/ExecutionsClient";
 import { getExecutionsRecent } from "@/lib/api-client";
 import { fmtTime } from "@/lib/formatters";
@@ -27,13 +24,7 @@ export default async function ExecutionsPage() {
       />
 
       {!res.ok ? (
-        <FocusOnMount>
-          <Alert variant="destructive">
-            <AlertCircleIcon />
-            <AlertTitle>edge error</AlertTitle>
-            <AlertDescription><code className="font-mono text-xs">{res.error}</code></AlertDescription>
-          </Alert>
-        </FocusOnMount>
+        <EdgeHealthBanner result={res} subject="recent executions" />
       ) : (
         <ExecutionsClient
           initialItems={res.data.items}
