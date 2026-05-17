@@ -98,3 +98,16 @@ Fixing: CS → Build → Security → DevOps. Pre-mainnet: Math → Economics �
 
 *OMEGA CORTEX — 10 PhD/Nobel. Evidence over claims. Verificar antes de declarar éxito.*
 
+
+
+---
+
+## CI/CD DEFINITION OF DONE
+
+> **Doctrina permanente (2026-05-17)**: Todo cambio debe pasar por ruta CI/CD completa.
+>
+> **Estados permitidos**: `GREEN_FINAL`, `WAITING_CHECKS`, `FAILED_CHECKS`, `BLOCKED_BY_REVIEW_REQUIRED`, `BLOCKED_BY_BRANCH_PROTECTION`, `BLOCKED_BY_MISSING_AUTH`, `BLOCKED_BY_INFRA`, `BLOCKED_BY_SECRET`.
+>
+> Ver documento completo en [`docs/omega/CI_CD_DEFINITION_OF_DONE.md`](docs/omega/CI_CD_DEFINITION_OF_DONE.md).
+>
+> **Regla madre**: El remoto manda. Ningún cambio está terminado si no hay ruta CI/CD verificable y verde.
