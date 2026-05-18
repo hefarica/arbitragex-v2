@@ -93,7 +93,7 @@ contract ReentrantAttackerRouter {
     bool public attacked;
 
     constructor(address _target) {
-        target = ArbitrageExecutor(_target);
+        target = ArbitrageExecutor(payable(_target));
     }
 
     fallback() external {
