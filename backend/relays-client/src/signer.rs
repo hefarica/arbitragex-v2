@@ -63,7 +63,6 @@ impl std::fmt::Debug for Signer {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
 // R8 carve-out: `expect()` is permitted inside #[cfg(test)] modules where a
 // panic on assertion failure is the explicit, audited test behavior. The
 // `clippy::expect_used` gate remains -D for all non-test code paths.
