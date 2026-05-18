@@ -206,7 +206,11 @@ pub fn balance_of_slot(account: Address, balance_base_slot: U256) -> [u8; 32] {
 /// Solidity nested mapping:
 ///   inner_base = keccak256(abi.encode(owner, allowance_base_slot))
 ///   slot       = keccak256(abi.encode(spender, inner_base))
-pub fn allowance_slot(owner: Address, spender: Address, allowance_base_slot: U256) -> [u8; 32] {
+pub fn allowance_slot(
+    owner: Address,
+    spender: Address,
+    allowance_base_slot: U256,
+) -> [u8; 32] {
     // Step 1: inner_base = keccak256(owner || base)
     let mut step1 = [0u8; 64];
     step1[12..32].copy_from_slice(owner.as_bytes());
@@ -272,7 +276,8 @@ pub fn build_prefund_plan(
         return Err(PrefundError::BaseSlotOverflow(layout.allowance_base_slot));
     }
     let balance_slot = balance_of_slot(account, layout.balance_base_slot);
-    let allowance_slot_bytes = allowance_slot(account, spender, layout.allowance_base_slot);
+    let allowance_slot_bytes =
+        allowance_slot(account, spender, layout.allowance_base_slot);
     Ok(PrefundPlan {
         token,
         account,
@@ -563,18 +568,9 @@ mod tests {
 
     #[test]
     fn error_reason_tags_are_stable() {
-        assert_eq!(
-            PrefundError::PaperModeRequired.reason_tag(),
-            "paper_mode_required"
-        );
-        assert_eq!(
-            PrefundError::ZeroTokenAddress.reason_tag(),
-            "zero_token_address"
-        );
-        assert_eq!(
-            PrefundError::ZeroAccountAddress.reason_tag(),
-            "zero_account_address"
-        );
+        assert_eq!(PrefundError::PaperModeRequired.reason_tag(), "paper_mode_required");
+        assert_eq!(PrefundError::ZeroTokenAddress.reason_tag(), "zero_token_address");
+        assert_eq!(PrefundError::ZeroAccountAddress.reason_tag(), "zero_account_address");
         assert_eq!(PrefundError::ZeroAmount.reason_tag(), "zero_amount");
         assert_eq!(
             PrefundError::UnsupportedTokenLayout {

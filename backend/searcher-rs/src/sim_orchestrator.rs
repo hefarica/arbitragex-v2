@@ -492,40 +492,28 @@ mod tests {
     fn invalid_context_zero_caller_rejected() {
         let mut ctx = valid_ctx();
         ctx.caller = Address::zero();
-        assert_eq!(
-            validate_context(&ctx).unwrap_err(),
-            RoundTripExecutionError::InvalidCaller
-        );
+        assert_eq!(validate_context(&ctx).unwrap_err(), RoundTripExecutionError::InvalidCaller);
     }
 
     #[test]
     fn invalid_context_zero_token_in_rejected() {
         let mut ctx = valid_ctx();
         ctx.token_in = Address::zero();
-        assert_eq!(
-            validate_context(&ctx).unwrap_err(),
-            RoundTripExecutionError::InvalidTokenIn
-        );
+        assert_eq!(validate_context(&ctx).unwrap_err(), RoundTripExecutionError::InvalidTokenIn);
     }
 
     #[test]
     fn invalid_context_zero_token_out_rejected() {
         let mut ctx = valid_ctx();
         ctx.token_out = Address::zero();
-        assert_eq!(
-            validate_context(&ctx).unwrap_err(),
-            RoundTripExecutionError::InvalidTokenOut
-        );
+        assert_eq!(validate_context(&ctx).unwrap_err(), RoundTripExecutionError::InvalidTokenOut);
     }
 
     #[test]
     fn invalid_context_zero_amount_rejected() {
         let mut ctx = valid_ctx();
         ctx.amount_in = U256::zero();
-        assert_eq!(
-            validate_context(&ctx).unwrap_err(),
-            RoundTripExecutionError::InvalidAmountIn
-        );
+        assert_eq!(validate_context(&ctx).unwrap_err(), RoundTripExecutionError::InvalidAmountIn);
     }
 
     #[test]
@@ -577,10 +565,7 @@ mod tests {
     fn config_paper_mode_required() {
         let mut cfg = valid_config();
         cfg.paper_mode = false;
-        assert_eq!(
-            cfg.validate().unwrap_err(),
-            RoundTripExecutionError::PaperModeRequired
-        );
+        assert_eq!(cfg.validate().unwrap_err(), RoundTripExecutionError::PaperModeRequired);
     }
 
     #[test]
@@ -597,20 +582,14 @@ mod tests {
     fn config_zero_gas_limit_rejected() {
         let mut cfg = valid_config();
         cfg.gas_limit = 0;
-        assert_eq!(
-            cfg.validate().unwrap_err(),
-            RoundTripExecutionError::InvalidGasLimit
-        );
+        assert_eq!(cfg.validate().unwrap_err(), RoundTripExecutionError::InvalidGasLimit);
     }
 
     #[test]
     fn config_gas_price_overflow_rejected() {
         let mut cfg = valid_config();
         cfg.gas_price_wei = U256::from(u128::MAX) + U256::one();
-        assert_eq!(
-            cfg.validate().unwrap_err(),
-            RoundTripExecutionError::GasPriceOverflow
-        );
+        assert_eq!(cfg.validate().unwrap_err(), RoundTripExecutionError::GasPriceOverflow);
     }
 
     #[test]
@@ -623,8 +602,7 @@ mod tests {
     #[test]
     fn execute_arbitrage_selector_matches_known_hash() {
         use ethers::utils::keccak256;
-        let signature =
-            b"executeArbitrage(bytes32,address,address,uint256,uint256,address[],bytes[])";
+        let signature = b"executeArbitrage(bytes32,address,address,uint256,uint256,address[],bytes[])";
         let hash = keccak256(signature);
         assert_eq!(EXECUTE_ARBITRAGE_SELECTOR, hash[..4]);
     }
@@ -664,9 +642,7 @@ mod tests {
 
     #[test]
     fn net_profit_non_positive_error_has_tag() {
-        let e = RoundTripExecutionError::NetProfitNonPositive {
-            net_profit_wei: -100,
-        };
+        let e = RoundTripExecutionError::NetProfitNonPositive { net_profit_wei: -100 };
         assert_eq!(e.reason_tag(), "net_profit_non_positive");
     }
 

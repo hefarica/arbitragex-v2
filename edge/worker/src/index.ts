@@ -372,6 +372,54 @@ app.post("/admin/killswitch", async (c) => {
   return c.body(text, upstream.status as 200 | 400 | 401 | 403 | 500 | 502);
 });
 
+// GET /api/killswitch/status — public read of killswitch state.
+// Proxies to api-server's /admin/killswitch/status. 2s KV cache TTL.
+app.get("/api/killswitch/status", async (c) => {
+  const adminToken = resolveAdminToken(c);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/admin/killswitch/status`, {
+    headers: {
+      "accept": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": adminToken,
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    },
+    cf: { cacheTtl: 0, cacheEverything: false },
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 401 | 403 | 503);
+});
+
+// POST /api/killswitch/:action — activate/deactivate killswitch.
+// Maps semantic actions to the api-server's /admin/killswitch toggle.
+app.post("/api/killswitch/:action", async (c) => {
+  const action = c.req.param("action");
+  if (action !== "activate" && action !== "deactivate") {
+    return c.json({ error: "invalid_action", valid_actions: ["activate", "deactivate"] }, 400);
+  }
+  const adminToken = resolveAdminToken(c);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const body = JSON.stringify({
+    enabled: action === "activate",
+    reason: `operator_${action}`,
+    triggered_by: c.req.header("x-arbx-actor") ?? "operator",
+  });
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/admin/killswitch`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": adminToken,
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    },
+    body,
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 401 | 403 | 500 | 502);
+});
+
 // PR-2.b Audit Log proxy
 app.get("/admin/audit", async (c) => {
   const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : getCookie(c, SESSION_COOKIE);

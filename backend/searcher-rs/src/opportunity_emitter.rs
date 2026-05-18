@@ -171,7 +171,10 @@ impl OpportunityEmitter {
     /// Used by integration tests (TASK 4) to inspect the V2 pipeline's output.
     #[allow(dead_code)] // used in tests/v2_shadow_replay.rs
     pub fn recorded_emissions(&self) -> Vec<EmittedRecord> {
-        self.recorded.lock().map(|g| g.clone()).unwrap_or_default()
+        self.recorded
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default()
     }
 
     // -----------------------------------------------------------------------

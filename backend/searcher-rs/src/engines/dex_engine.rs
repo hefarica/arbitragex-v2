@@ -228,35 +228,38 @@ impl DexEngine {
                     }
 
                     // Compute spread using real reserves.
-                    let (gross_spread_units, can_price_v2) =
-                        if a_is_v2 && b_is_v2 && reserves_a.is_some() && reserves_b.is_some() {
-                            // Both V2: reserves guaranteed Some by the guard above.
-                            // Use if-let to satisfy clippy::unwrap_used.
-                            let Some(ra) = reserves_a else {
-                                // unreachable — guarded above, but required for exhaustiveness
-                                continue;
-                            };
-                            let Some(rb) = reserves_b else {
-                                continue;
-                            };
-                            let (r_in_a, r_out_a) = orient_reserves(ra, pool_a, intent);
-                            let (r_in_b, r_out_b) = orient_reserves(rb, pool_b, intent);
-                            let fee_a = pool_a.fee_bps.unwrap_or(30);
-                            let fee_b = pool_b.fee_bps.unwrap_or(30);
-                            let out_a =
-                                amm_math::v2_amount_out(probe_amount, r_in_a, r_out_a, fee_a);
-                            let out_b =
-                                amm_math::v2_amount_out(probe_amount, r_in_b, r_out_b, fee_b);
-                            let spread = if out_a >= out_b {
-                                out_a.saturating_sub(out_b)
-                            } else {
-                                out_b.saturating_sub(out_a)
-                            };
-                            (spread, true)
-                        } else {
-                            // At least one pool is V3 — cannot compute spread here without projector.
-                            (U256::zero(), false)
+                    let (gross_spread_units, can_price_v2) = if a_is_v2
+                        && b_is_v2
+                        && reserves_a.is_some()
+                        && reserves_b.is_some()
+                    {
+                        // Both V2: reserves guaranteed Some by the guard above.
+                        // Use if-let to satisfy clippy::unwrap_used.
+                        let Some(ra) = reserves_a else {
+                            // unreachable — guarded above, but required for exhaustiveness
+                            continue;
                         };
+                        let Some(rb) = reserves_b else {
+                            continue;
+                        };
+                        let (r_in_a, r_out_a) = orient_reserves(ra, pool_a, intent);
+                        let (r_in_b, r_out_b) = orient_reserves(rb, pool_b, intent);
+                        let fee_a = pool_a.fee_bps.unwrap_or(30);
+                        let fee_b = pool_b.fee_bps.unwrap_or(30);
+                        let out_a =
+                            amm_math::v2_amount_out(probe_amount, r_in_a, r_out_a, fee_a);
+                        let out_b =
+                            amm_math::v2_amount_out(probe_amount, r_in_b, r_out_b, fee_b);
+                        let spread = if out_a >= out_b {
+                            out_a.saturating_sub(out_b)
+                        } else {
+                            out_b.saturating_sub(out_a)
+                        };
+                        (spread, true)
+                    } else {
+                        // At least one pool is V3 — cannot compute spread here without projector.
+                        (U256::zero(), false)
+                    };
 
                     // For V3 paths: try to get a virtual quote via state_projector.
                     let v3_gross_usd: Option<f64> = if !can_price_v2 {
@@ -414,7 +417,8 @@ impl DexEngine {
         // Only called for V3 pools. V2 uses real reserves in the caller.
         if matches!(pool.protocol_type, ProtocolType::V3) {
             let intent_token_in = intent.legs.first().map(|l| l.token_in).unwrap_or_default();
-            let zero_for_one = intent_token_in == pool.token0 || intent_token_in == Address::zero();
+            let zero_for_one =
+                intent_token_in == pool.token0 || intent_token_in == Address::zero();
             let sp_pool = crate::state_projector::PoolRef {
                 address: pool.address,
                 token0: pool.token0,
@@ -467,7 +471,11 @@ pub fn classify_label(source: ProtocolType, other: ProtocolType) -> StrategyLabe
 /// If the intent swaps token1 → token0: `reserve_in = r1, reserve_out = r0`.
 /// When the intent's token_in is unknown (zero address or no legs): default to
 /// token0→token1 direction (conservative; SizeOptimizer will re-orient).
-fn orient_reserves(reserves: (U256, U256), pool: &PoolRef, intent: &RouteIntent) -> (U256, U256) {
+fn orient_reserves(
+    reserves: (U256, U256),
+    pool: &PoolRef,
+    intent: &RouteIntent,
+) -> (U256, U256) {
     let (r0, r1) = reserves;
     let intent_token_in = intent.legs.first().map(|l| l.token_in).unwrap_or_default();
     // If token_in matches token1 (i.e. swapping token1 in), swap the orientations.
@@ -788,9 +796,11 @@ mod tests {
 
         // Pre-load real (nonzero) reserves into the cache.
         let unit = U256::from(10u128).pow(U256::from(18u32)) * U256::from(1_000u32);
-        let engine =
-            make_engine_with_reserves(vec![(pool_addr1, unit, unit), (pool_addr2, unit, unit)])
-                .await;
+        let engine = make_engine_with_reserves(vec![
+            (pool_addr1, unit, unit),
+            (pool_addr2, unit, unit),
+        ])
+        .await;
 
         let candidates = engine
             .build_from_impacted_pairs(&intent, &impact, None)
@@ -798,10 +808,7 @@ mod tests {
             .expect("engine must not error");
 
         // Must emit at least one candidate — not rejected for reserves_cache_miss.
-        assert!(
-            !candidates.is_empty(),
-            "must produce at least one candidate"
-        );
+        assert!(!candidates.is_empty(), "must produce at least one candidate");
         // No reserves_cache_miss rejection.
         for c in &candidates {
             assert_ne!(
@@ -812,11 +819,7 @@ mod tests {
         }
         // All must be DexArbV2V2.
         for c in &candidates {
-            assert_eq!(
-                c.label,
-                StrategyLabel::DexArbV2V2,
-                "must classify as DexArbV2V2"
-            );
+            assert_eq!(c.label, StrategyLabel::DexArbV2V2, "must classify as DexArbV2V2");
         }
     }
 
@@ -863,9 +866,11 @@ mod tests {
         let impact = make_impact(vec![pool1, pool2]);
         // Pre-load reserves so the engine proceeds past the cache-miss gate.
         let unit = U256::from(10u128).pow(U256::from(18u32)) * U256::from(1_000u32);
-        let engine =
-            make_engine_with_reserves(vec![(pool_addr1, unit, unit), (pool_addr2, unit, unit)])
-                .await;
+        let engine = make_engine_with_reserves(vec![
+            (pool_addr1, unit, unit),
+            (pool_addr2, unit, unit),
+        ])
+        .await;
 
         let candidates = engine
             .build_from_impacted_pairs(&intent, &impact, None)
@@ -922,10 +927,7 @@ mod tests {
         // the oracle-gap check doesn't fire; instead the candidate falls through
         // to accepted path with gross=None). Either way: candidates is non-empty
         // and labels include V2V3 or V3V2.
-        assert!(
-            !candidates.is_empty(),
-            "must produce at least one candidate"
-        );
+        assert!(!candidates.is_empty(), "must produce at least one candidate");
         let labels: std::collections::HashSet<StrategyLabel> =
             candidates.iter().map(|c| c.label).collect();
         let has_v2v3_or_v3v2 = labels.contains(&StrategyLabel::DexArbV2V3)
@@ -1065,9 +1067,11 @@ mod tests {
         let impact = make_impact(vec![pool1, pool2_different_fee]);
         // Pre-load reserves so the engine gets past the cache-miss gate.
         let unit = U256::from(10u128).pow(U256::from(18u32)) * U256::from(1_000u32);
-        let engine =
-            make_engine_with_reserves(vec![(pool_addr1, unit, unit), (pool_addr2, unit, unit)])
-                .await;
+        let engine = make_engine_with_reserves(vec![
+            (pool_addr1, unit, unit),
+            (pool_addr2, unit, unit),
+        ])
+        .await;
 
         let candidates = engine
             .build_from_impacted_pairs(&intent, &impact, None) // config = None
@@ -1099,9 +1103,11 @@ mod tests {
         let intent = make_intent(tok_a, tok_b);
         let impact = make_impact(vec![pool1.clone(), pool2.clone()]);
         let unit = U256::from(10u128).pow(U256::from(18u32)) * U256::from(1_000u32);
-        let engine =
-            make_engine_with_reserves(vec![(pool_addr1, unit, unit), (pool_addr2, unit, unit)])
-                .await;
+        let engine = make_engine_with_reserves(vec![
+            (pool_addr1, unit, unit),
+            (pool_addr2, unit, unit),
+        ])
+        .await;
 
         let candidates = engine
             .build_from_impacted_pairs(&intent, &impact, None)
@@ -1193,9 +1199,11 @@ mod tests {
         let intent = make_intent(tok_a, tok_b);
         let impact = make_impact(vec![pool1, pool2]);
         let unit = U256::from(10u128).pow(U256::from(18u32)) * U256::from(1_000u32);
-        let engine =
-            make_engine_with_reserves(vec![(pool_addr1, unit, unit), (pool_addr2, unit, unit)])
-                .await;
+        let engine = make_engine_with_reserves(vec![
+            (pool_addr1, unit, unit),
+            (pool_addr2, unit, unit),
+        ])
+        .await;
 
         let candidates = engine
             .build_from_impacted_pairs(&intent, &impact, None)

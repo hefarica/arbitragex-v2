@@ -231,11 +231,9 @@ async fn main() -> anyhow::Result<()> {
     let db_pool_opt: Option<sqlx::postgres::PgPool> = match std::env::var("DATABASE_URL") {
         Ok(url) if !url.is_empty() => {
             // OMEGA-8/M3 P1-2: timeouts applied.
-            match shared_rs::db_pool::options_with_timeouts(
-                &shared_rs::db_pool::PoolConfig::from_env(4),
-            )
-            .connect(&url)
-            .await
+            match shared_rs::db_pool::options_with_timeouts(&shared_rs::db_pool::PoolConfig::from_env(4))
+                .connect(&url)
+                .await
             {
                 Ok(pool) => {
                     info!(event = "db.connected", "postgres pool up");

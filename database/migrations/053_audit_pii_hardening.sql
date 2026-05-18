@@ -35,13 +35,11 @@ BEGIN
     END;
 
     IF family(parsed) = 4 THEN
-        -- /24: keep first 3 octets. host(set_masklen(...)) returns the
-        -- original host bits (e.g. 192.168.1.42) — wrap in network() to
-        -- zero-out the host portion first, then host() to strip the mask.
-        RETURN host(network(set_masklen(parsed, 24))) || '/24';
+        -- /24: keep first 3 octets
+        RETURN host(set_masklen(parsed, 24)) || '/24';
     ELSE
-        -- /48: keep first 3 hextets. Same network() wrap as IPv4.
-        RETURN host(network(set_masklen(parsed, 48))) || '/48';
+        -- /48: keep first 3 hextets
+        RETURN host(set_masklen(parsed, 48)) || '/48';
     END IF;
 END;
 $$;

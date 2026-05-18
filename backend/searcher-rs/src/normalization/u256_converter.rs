@@ -4,10 +4,10 @@ use std::cmp;
 /// PUENTE ISOMÓRFICO U256 → f64
 /// Fase 1: Conversión a f64 con pérdida controlada de precisión
 /// Fase 2: Normalización por escala de token (decimals)
-///
+/// 
 /// INVARIANTE: El valor f64 resultante representa la cantidad HUMANA-LEÍBLE
 /// del token (ej: 1.5 ETH, no 1500000000000000000 wei).
-///
+/// 
 /// LÍMITE TÉRMICO: U256 max ≈ 1.15e77. f64 max ≈ 1.79e308.
 /// No hay overflow, pero sí pérdida de precisión en los 15 dígitos menos significativos.
 /// Para operaciones de convergencia estocástica, esto es ACEPTABLE porque operamos en rangos 1e-18 a 1e12.
@@ -24,9 +24,7 @@ impl std::fmt::Display for NormalizationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             NormalizationError::Overflow => write!(f, "U256 value exceeds f64 representable range"),
-            NormalizationError::InvalidDecimals => {
-                write!(f, "Token decimals out of valid range [0, 18]")
-            }
+            NormalizationError::InvalidDecimals => write!(f, "Token decimals out of valid range [0, 18]"),
         }
     }
 }

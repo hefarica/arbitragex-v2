@@ -46,7 +46,9 @@ use std::str::FromStr;
 
 use ethers::types::{Address, U256};
 use prioritization_spine::round_trip_executor::RoundTripContext;
-use searcher_rs::sim_multistep::{build_multistep_plan, MultiStepError, MultiStepExecutionConfig};
+use searcher_rs::sim_multistep::{
+    build_multistep_plan, MultiStepExecutionConfig, MultiStepError,
+};
 use searcher_rs::sim_prefund::{Erc20StorageLayout, Erc20StorageLayoutProvider};
 use std::collections::HashMap;
 
@@ -124,20 +126,10 @@ impl PrereqStatus {
 
     fn missing(&self) -> Vec<&'static str> {
         let mut m = Vec::new();
-        if self
-            .rpc_http_1
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .is_none()
-        {
+        if self.rpc_http_1.as_deref().filter(|s| !s.is_empty()).is_none() {
             m.push("RPC_HTTP_1");
         }
-        if self
-            .executor_1
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .is_none()
-        {
+        if self.executor_1.as_deref().filter(|s| !s.is_empty()).is_none() {
             m.push("EXECUTOR_1");
         }
         if self

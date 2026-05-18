@@ -64,13 +64,13 @@ jobs:
           echo ""
           echo "All required secrets are present. Proceeding with deploy."
 
-      - name: Deploy and Healthcheck via SSH
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_SSH_HOST }}
           username: ${{ secrets.VPS_SSH_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_SSH_PORT || '22' }}
+          port: 22
           # Strict: fail the step (and job) if any command in the script exits non-zero.
           script_stop: true
           script: |
@@ -88,33 +88,52 @@ jobs:
             git reset --hard origin/main
 
             echo "--- docker compose: pulling images ---"
-            docker compose -f docker/compose.prod.yml pull
-
-            echo "--- docker compose: materializing runtime secrets ---"
-            if [ "$(whoami)" = "root" ]; then
-              python3 /usr/local/sbin/arbx-materialize-runtime-secrets.py
-            else
-              sudo /usr/bin/python3 /usr/local/sbin/arbx-materialize-runtime-secrets.py
-            fi
+            docker compose -f docker-compose.edge.yml pull
 
             echo "--- docker compose: starting services ---"
-            docker compose -f docker/compose.prod.yml up -d --remove-orphans
+            docker compose -f docker-compose.edge.yml up -d --remove-orphans
 
             echo "--- docker compose: service status ---"
-            docker compose -f docker/compose.prod.yml ps
+            docker compose -f docker-compose.edge.yml ps
 
             echo "=== Deploy commands completed at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
-            
-            echo "--- Healthcheck post-deploy inside SSH via 127.0.0.1 ---"
-            echo "Waiting 10s for services to boot..."
-            sleep 10
-            
-            # Use internal 127.0.0.1 health endpoints to bypass Nginx Basic Auth
-            curl -fsS http://127.0.0.1:8080/health || (echo "API Server healthcheck failed" && exit 1)
-            curl -fsS http://127.0.0.1:8787/health || (echo "Edge Worker healthcheck failed" && exit 1)
-            curl -fsS --max-time 10 http://127.0.0.1:5173 > /dev/null || (echo "Frontend healthcheck failed" && exit 1)
-            
-            echo "All healthchecks passed."
+
+      - name: Healthcheck post-deploy
+        # Uses VPS_HEALTH_URL secret if set; falls back to http://localhost:8080/health.
+        # The curl runs from the GitHub runner — adjust VPS_HEALTH_URL to a publicly
+        # reachable endpoint (e.g. https://<vps-ip>/health or via nginx on port 80).
+        # If the VPS health endpoint is not publicly reachable, set VPS_HEALTH_URL to
+        # an empty string and this step will report a warning without failing the job.
+        run: |
+          HEALTH_URL="${{ secrets.VPS_HEALTH_URL }}"
+
+          if [ -z "$HEALTH_URL" ]; then
+            echo "WARNING: VPS_HEALTH_URL secret is not set."
+            echo "Skipping external healthcheck. Set VPS_HEALTH_URL to enable it."
+            echo "Example: http://<vps-public-ip>:8080/health"
+            exit 0
+          fi
+
+          echo "Running healthcheck against: $HEALTH_URL"
+
+          HTTP_CODE=$(curl \
+            --silent \
+            --output /dev/null \
+            --write-out "%{http_code}" \
+            --max-time 30 \
+            --retry 5 \
+            --retry-delay 5 \
+            --retry-connrefused \
+            "$HEALTH_URL")
+
+          echo "HTTP response code: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
+            echo "Healthcheck PASSED (HTTP $HTTP_CODE)"
+          else
+            echo "ERROR: Healthcheck FAILED (HTTP $HTTP_CODE)" >&2
+            exit 1
+          fi
 
       - name: Deploy summary
         if: always()

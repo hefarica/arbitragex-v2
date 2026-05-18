@@ -26,32 +26,13 @@ ALTER TABLE trading_config
   ADD COLUMN IF NOT EXISTS simulation_target_roi_pct         NUMERIC(8,4)  NULL;
 
 -- Sanity bounds: positive values only when present.
---
--- BUG-FIX iter 12: PostgreSQL does NOT support `ADD CONSTRAINT IF NOT EXISTS`
--- (unlike `ADD COLUMN IF NOT EXISTS` which IS supported). The previous form
--- raised `ERROR: syntax error at or near "NOT"` on first apply and silently
--- never ran in CI before iter 11 because no workflow invoked migrate.sh.
---
--- We use the same `DO $$ ... duplicate_object` pattern already adopted by
--- 001_roles.sql for idempotent role creation. This preserves the original
--- intent (re-runnable migration) using PostgreSQL-native syntax.
-DO $$ BEGIN
-  ALTER TABLE trading_config
-    ADD CONSTRAINT trading_config_simulation_capital_positive
-      CHECK (simulation_capital_usd IS NULL OR simulation_capital_usd > 0);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  ALTER TABLE trading_config
-    ADD CONSTRAINT trading_config_simulation_target_profit_nonneg
-      CHECK (simulation_target_profit_usd IS NULL OR simulation_target_profit_usd >= 0);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  ALTER TABLE trading_config
-    ADD CONSTRAINT trading_config_simulation_target_roi_nonneg
-      CHECK (simulation_target_roi_pct IS NULL OR simulation_target_roi_pct >= 0);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE trading_config
+  ADD CONSTRAINT IF NOT EXISTS trading_config_simulation_capital_positive
+    CHECK (simulation_capital_usd IS NULL OR simulation_capital_usd > 0),
+  ADD CONSTRAINT IF NOT EXISTS trading_config_simulation_target_profit_nonneg
+    CHECK (simulation_target_profit_usd IS NULL OR simulation_target_profit_usd >= 0),
+  ADD CONSTRAINT IF NOT EXISTS trading_config_simulation_target_roi_nonneg
+    CHECK (simulation_target_roi_pct IS NULL OR simulation_target_roi_pct >= 0);
 
 COMMENT ON COLUMN trading_config.token_prices_usd
   IS 'Per-token USD prices keyed by symbol (case-insensitive at lookup). Operator override of the price-oracle Tier 2; consumed by shared_rs::price_oracle::ConfigPriceOracle.';

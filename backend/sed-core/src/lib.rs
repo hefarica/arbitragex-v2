@@ -56,13 +56,7 @@
 pub mod allocator;
 
 // Phase 3 — Eigenstate Decomposition (Lanczos solver, transition projector).
-//
-// NOTE: The module itself is NOT feature-gated because it hosts the opaque
-// `LiquidityManifold` placeholder (eigenstate/mod.rs:57) that the V1.2 default
-// typestate surface (`types::holonomic::ClosedContourTrajectory`) names by
-// composition. The math-bearing submodules (effective_hamiltonian,
-// lanczos_solver, transition_projector) remain internally gated behind
-// `#[cfg(feature = "eigenstate")]` — see eigenstate/mod.rs lines 82-89.
+#[cfg(feature = "eigenstate")]
 pub mod eigenstate;
 
 // Phase 2 — Stochastic Filtration (CDC calculator, Markov jump, Poisson measure).

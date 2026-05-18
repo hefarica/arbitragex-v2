@@ -20,13 +20,13 @@ import { test, expect } from "@playwright/test";
 const NO_RPC = process.env["ARBX_ASSUME_NO_RPC"] === "1";
 const testMaybe = NO_RPC ? test : test.skip;
 
-testMaybe("searcher-rs reports DEGRADED when no RPC is configured", async ({ page }) => {
+testMaybe("searcher-rs reports UP even with no RPC configured", async ({ page }) => {
   await page.goto("/status");
 
-  // searcher-rs row exists and is DEGRADED (or UP depending on health, but we must target the status row, not the control panel row).
-  const row = page.getByTestId("service-health-row-searcher-rs");
+  // searcher-rs row exists and is UP.
+  const row = page.locator("tr", { has: page.getByText("searcher-rs", { exact: true }) });
   await expect(row).toBeVisible();
-  await expect(row.getByText(/DEGRADED|UP/i)).toBeVisible();
+  await expect(row.getByText(/UP/i)).toBeVisible();
 });
 
 testMaybe("opportunities page shows empty state, not an error", async ({ page }) => {
@@ -47,7 +47,8 @@ testMaybe("opportunities page shows empty state, not an error", async ({ page })
   ];
   let any = false;
   for (const re of honestMarkers) {
-    if (await page.getByText(re).first().isVisible().catch(() => false)) {
+    const matches = page.getByText(re);
+    if (await page.getByText(re).isVisible().catch(() => false)) {
       any = true;
       break;
     }
@@ -63,7 +64,7 @@ testMaybe("platform overview dashboard link (if exposed) does not fabricate", as
   await expect(page.locator("h1")).toBeVisible();
 
   // If the KPI cards exist, "Attempts" KPI should be 0 when there's no RPC.
-  const attemptsCard = page.locator('[class*="card"]', { hasText: /attempts/i }).first();
+  const attemptsCard = page.locator('[class*="card"]', { hasText: /attempts/i });
   if (await attemptsCard.count()) {
     await expect(attemptsCard.locator('text=/^0$/')).toBeVisible();
   }

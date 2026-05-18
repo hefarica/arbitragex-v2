@@ -308,7 +308,6 @@ impl GateManager {
 }
 
 #[cfg(test)]
-#[cfg(all(feature = "allocator", feature = "hedger"))]
 mod tests {
     use super::*;
     use crate::hedger::OrthogonalHedgeResult;

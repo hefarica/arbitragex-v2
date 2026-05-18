@@ -5,11 +5,8 @@ WORKDIR /build
 # when NODE_ENV=production. No default here on purpose.
 ARG NEXT_PUBLIC_EDGE_URL
 ARG NEXT_PUBLIC_WS_URL
-# Opt-in build flag for the e2e CI workflow only. See frontend/next.config.js.
-ARG ARBX_BUILD_FOR_LOCAL_E2E
 ENV NEXT_PUBLIC_EDGE_URL=$NEXT_PUBLIC_EDGE_URL
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
-ENV ARBX_BUILD_FOR_LOCAL_E2E=$ARBX_BUILD_FOR_LOCAL_E2E
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY package.json ./

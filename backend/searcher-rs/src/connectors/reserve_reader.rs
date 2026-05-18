@@ -1,8 +1,8 @@
-use crate::normalization::u256_converter::u256_to_f64_normalized;
-use ethers::contract::abigen;
-use ethers::providers::{Http, Middleware, Provider};
+use ethers::providers::{Provider, Http, Middleware};
 use ethers::types::{Address, U256};
+use ethers::contract::abigen;
 use std::sync::Arc;
+use crate::normalization::u256_converter::u256_to_f64_normalized;
 
 // ABI canónico de Uniswap V2 Pair — generado en build time vía ethers-rs
 abigen!(
@@ -21,7 +21,7 @@ pub struct NormalizedReserves {
     pub token1: String,
     pub reserve0_normalized: f64,
     pub reserve1_normalized: f64,
-    pub price_0_1: f64, // reserve1/reserve0 — precio relativo normalizado
+    pub price_0_1: f64,  // reserve1/reserve0 — precio relativo normalizado
     pub block_timestamp: u32,
     pub fetched_at: std::time::Instant,
 }
@@ -38,10 +38,7 @@ impl ReserveReader {
         })
     }
 
-    pub async fn fetch_reserves(
-        &self,
-        pair_address: Address,
-    ) -> Result<NormalizedReserves, Box<dyn std::error::Error>> {
+    pub async fn fetch_reserves(&self, pair_address: Address) -> Result<NormalizedReserves, Box<dyn std::error::Error>> {
         let start = std::time::Instant::now();
 
         let pair = IUniswapV2Pair::new(pair_address, self.provider.clone());

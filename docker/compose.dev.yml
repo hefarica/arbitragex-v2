@@ -275,7 +275,6 @@ services:
       FRONTEND_INTERNAL_URL: http://frontend:5173
       PROMETHEUS_INTERNAL_URL: http://prometheus:9090
       GRAFANA_INTERNAL_URL: http://grafana:3000
-      ARBX_ASSUME_NO_RPC: ${ARBX_ASSUME_NO_RPC:-}
     ports: ["127.0.0.1:8080:8080"]
     volumes:
       # Read-only mount of repo source for static-source verifiers
@@ -285,14 +284,6 @@ services:
       - ..:/repo:ro
     depends_on:
       redis: { condition: service_healthy }
-      # api-server queries with arbx_rw immediately on first request. If
-      # postgres is not yet healthy (init scripts + migrate.sh not finished),
-      # every query returns 503 with `password authentication failed for
-      # user "arbx_rw"`. Waiting for healthy prevents that race in CI and
-      # in local dev. Note: postgres `healthy` only confirms pg_isready —
-      # role passwords still depend on the `migrate` step running before
-      # api-server takes its first request (see .github/workflows/e2e.yml).
-      postgres: { condition: service_healthy }
     networks: [arbx-net]
     <<: *common-logging
 
@@ -324,19 +315,9 @@ services:
         # throws under NODE_ENV=production. Dev fallback matches the runtime env.
         NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:-http://localhost:8787}
         NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-http://localhost:3000}
-        # CI/local-e2e opt-in: permits localhost in NEXT_PUBLIC_EDGE_URL under
-        # the production guardrail. Unset (default) in dev so the assertion
-        # still trips if someone accidentally builds dev as prod. See
-        # frontend/next.config.js.
-        ARBX_BUILD_FOR_LOCAL_E2E: ${ARBX_BUILD_FOR_LOCAL_E2E:-}
     environment:
       NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:-http://localhost:8787}
       NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-http://localhost:3000}
-      # next.config.js is re-evaluated by `next start` at runtime, so the
-      # localhost guardrail will fire again unless the opt-in flag is also
-      # present in the runtime env. Unset (default) in dev — only e2e CI
-      # injects ARBX_BUILD_FOR_LOCAL_E2E=1 via the workflow env block.
-      ARBX_BUILD_FOR_LOCAL_E2E: ${ARBX_BUILD_FOR_LOCAL_E2E:-}
       # Server Components resolve edge via Docker DNS; browser uses NEXT_PUBLIC above.
       INTERNAL_EDGE_URL: http://edge:8787
     ports: ["5173:5173"]

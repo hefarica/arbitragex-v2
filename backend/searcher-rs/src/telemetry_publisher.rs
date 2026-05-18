@@ -23,7 +23,10 @@ impl ConvergencePublisher for RedisPublisher {
         let json = match json_result {
             Ok(j) => j,
             Err(e) => {
-                return Err(anyhow::anyhow!("serialize ConvergenceSignal: {}", e));
+                return Err(anyhow::anyhow!(
+                    "serialize ConvergenceSignal: {}",
+                    e
+                ));
             }
         };
 

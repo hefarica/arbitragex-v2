@@ -31,38 +31,13 @@ import {
 // resolves via the operator's SSH tunnel (http://localhost:8787).
 const isBrowser = typeof window !== "undefined";
 
-// ARBX-HARDENING runtime mirror of the build-time gate in next.config.js.
-// next.config.js exposes NEXT_PUBLIC_ARBX_E2E_LOCAL_OK="1" to the client bundle
-// ONLY when the build was opted-in via ARBX_BUILD_FOR_LOCAL_E2E=1. Without that
-// explicit opt-in, localhost endpoints remain forbidden in production — the
-// throw below still fires for any real prod build that accidentally ships with
-// NEXT_PUBLIC_EDGE_URL pointing at localhost.
-//
-// Doctrine:
-//  - Real production builds (no opt-in) → throw on localhost.
-//  - E2E/CI builds (opt-in present) → noisy console.warn, then accept.
-//  - This is NOT a global relaxation: the gate stays armed for the default path.
-function isLocalE2eOptIn(): boolean {
-  return process.env.NEXT_PUBLIC_ARBX_E2E_LOCAL_OK === "1";
-}
-
-const LOCALHOST_RE = /localhost|127\.0\.0\.1|0\.0\.0\.0/;
-
 export function getApiBaseUrl(): string {
   const envUrl = isBrowser ? process.env.NEXT_PUBLIC_EDGE_URL : process.env.INTERNAL_EDGE_URL;
-
+  
   const isProd = process.env.NODE_ENV === "production";
 
-  if (isProd && envUrl && LOCALHOST_RE.test(envUrl)) {
-    if (!isLocalE2eOptIn()) {
-      throw new Error("Production API base URL cannot point to localhost");
-    }
-    if (isBrowser && typeof console !== "undefined") {
-      console.warn(
-        "[ARBX-HARDENING] runtime: localhost API URL accepted under NEXT_PUBLIC_ARBX_E2E_LOCAL_OK=1 — " +
-          "this build is NOT suitable for staging/prod.",
-      );
-    }
+  if (isProd && envUrl && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(envUrl)) {
+    throw new Error("Production API base URL cannot point to localhost");
   }
 
   if (envUrl && envUrl.trim().length > 0) {
@@ -80,16 +55,8 @@ export function getWsBaseUrl(): string {
   const envUrl = process.env.NEXT_PUBLIC_WS_URL;
   const isProd = process.env.NODE_ENV === "production";
 
-  if (isProd && envUrl && LOCALHOST_RE.test(envUrl)) {
-    if (!isLocalE2eOptIn()) {
-      throw new Error("Production WS base URL cannot point to localhost");
-    }
-    if (isBrowser && typeof console !== "undefined") {
-      console.warn(
-        "[ARBX-HARDENING] runtime: localhost WS URL accepted under NEXT_PUBLIC_ARBX_E2E_LOCAL_OK=1 — " +
-          "this build is NOT suitable for staging/prod.",
-      );
-    }
+  if (isProd && envUrl && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(envUrl)) {
+    throw new Error("Production WS base URL cannot point to localhost");
   }
 
   if (envUrl && envUrl.trim().length > 0) {

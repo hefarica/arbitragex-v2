@@ -14,12 +14,12 @@
 
 import { Router } from 'express';
 import type { Pool } from 'pg';
-import type { Redis } from 'ioredis';
+import type Redis from 'ioredis';
 import { createHash } from 'crypto';
 import {
   requireOperatorRole,
   buildOperatorAuditPayload,
-} from '../middleware/operator-authz.js';
+} from '../middleware/operator-authz';
 
 const CRUCIBLE_REQUIRED_HOURS = 72;
 const CRUCIBLE_REQUIRED_SUCCESS_RATE = 0.95;

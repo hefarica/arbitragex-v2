@@ -65,79 +65,7 @@ ADDR_RE='0x[0-9a-fA-F]{40}'
 #   flashbots_simulator.rs: test blocks at lines 68 and 144
 #   reserve_reader.rs     : test block at line 144
 #   eigenstate/mod.rs     : test block at line 159
-# --- OMEGA audit 2026-05-16 (no-hardcode triage sprint) ---
-# Additional files audited: every address in each file resides inside a
-# `#[cfg(test)] mod tests` block; no productive (non-test) literal exists.
-# Evidence: file:line ranges verified against test-block start lines.
-#
-#   sim_prefund.rs        : test block starts line 306; all addr violations 325-549 (F. fixture)
-#   amm_math.rs           : test block starts line 301; all addr violations 453-564 (F. fixture)
-#   round_trip_executor.rs: test block starts line 212; all addr violations 222-350 (F. fixture)
-#   swap_encoder.rs       : test block starts line 201; all addr violations 218-396 (F. fixture)
-#   sim_encoder_pg.rs     : test block starts line  45; all addr violations 269-343 (F. fixture)
-#   sim_encoder.rs        : test block starts line  54; all addr violations 504-883 (F. fixture)
-#   sim_orchestrator.rs   : test block starts line 449; all addr violations 460-480 (F. fixture)
-#   sim_multistep.rs      : test block starts line 728; all addr violations 740-766 (F. fixture)
-#   chain_client.rs       : test block starts line 255; all addr violations 315-334 (F. fixture)
-#   price_worker.rs       : test block starts line 663; all addr violations 762-779 (F. fixture)
-#   reserves.rs           : test block starts line 293; all addr violations 323-407 (F. fixture)
-#   orchestrator.rs       : test block starts line 848; all addr violations 947-1224 (F. fixture)
-#   submit_engine.rs      : test block starts line 714; all addr violations 730-731 (F. fixture)
-#   size_optimizer.rs     : test block starts line 1055; addr violation at 1140 (F. fixture)
-#   CredentialsClient.tsx : secret_placeholder at line 142 is a 64-hex UX display-only
-#     value (32-byte zero private key hint); matches addr regex but is never a runtime
-#     address — classified G. falso positivo. Scoped to single file.
-#
-# D. dirección EVM de protocolo (immutable, on-chain verified, audited 2026-05-16):
-#   These files contain protocol-canonical address constants or pool identifiers
-#   that are immutable by protocol design. The correct long-term action is to
-#   consolidate into backend/shared-rs/src/chains.rs (tracked as H. deuda).
-#   Until that consolidation is done, each file is individually justified:
-#
-#   scanner.rs           : V3_QUOTER_V2_MAINNET, V3_MULTICALL3_ADDR
-#                          Uniswap V3 QuoterV2 and Multicall3 mainnet addresses.
-#                          Both are deterministic cross-chain deploys (fixed salt).
-#   liquidation_worker.rs: AAVE_V3_POOL_MAINNET (Aave V3 docs verified),
-#                          MULTICALL3_MAINNET (deterministic), test addr at line 1425
-#                          (inside #[cfg(test)] block starting at line 1098).
-#   pool_sync_worker.rs  : MULTICALL3_ADDR (same deterministic deploy as above).
-#   cex_dex_worker.rs    : dex_pool_addr in default_pairs() is the WETH/USDC 0.05%
-#                          UniV3 pool — well-known canonical pool. Phase 2 will
-#                          make this operator-configurable.
-#   jit_v3_worker.rs     : same WETH/USDC pool address in default config.
-#   recon/pnl_engine.rs  : address in a doc comment inside #[cfg(test)] block
-#                          (test block starts line 188; violation at line 199).
-#                          G. falso positivo — comment-only, no runtime value.
-#   route_plan.rs        : zero address sentinel in test fixture inside
-#                          #[cfg(test)] block (starts line 141; violation at 150).
-#                          F. fixture — zero address is a null-factory placeholder.
-#   shared-rs/price_oracle.rs: WETH address in test assertion inside
-#                          #[cfg(test)] block (starts line 300; violation at 402).
-#                          F. fixture.
-#   credentials/validators.ts : single address is WETH_MAINNET_ADDR constant,
-#                          declared with D. doctrine comment as canonical probe
-#                          token for the Alchemy Prices endpoint validation.
-#                          All exchange URLs removed in this sprint (refactored
-#                          to config/exchange-endpoints.ts). No A/B/C violations remain.
-#
-# D/E. Token catalog literals in protocol engines (H. deuda real — consolidation
-# into backend/shared-rs/src/tokens.rs is tracked in the backlog):
-#
-#   erc20_storage.rs       : balance_slot_for / allowance_slot_for — empirically
-#                            verified storage slot indices for WETH/USDC/USDT/DAI/WBTC/LINK/UNI/AAVE.
-#                            These match specific deployed contract storage layouts;
-#                            they are not arbitrary addresses. E. constante técnica
-#                            legítima. Consolidation into tokens.rs is H. deuda.
-#   flashloan_engine.rs    : AAVE_V3_SUPPORTED_ASSETS_MAINNET, DYDX_SUPPORTED_ASSETS
-#                            (named constants, D. dirección EVM, lines 80-94)
-#                            + inline weth_addr / stable_addrs (D/E, lines 287-300)
-#                            + test-block fixtures at line 383+ (F. fixture, already noted).
-#                            H. deuda: productive literals to consolidate into
-#                            shared-rs/src/tokens.rs in a follow-up PR.
-#   triangular_engine.rs   : known_token_address() lookup table — D. dirección EVM.
-#                            Same table as triangular_worker (already in allow-list).
-#                            H. deuda: both copies to be deduplicated into tokens.rs.
-ADDR_ALLOW='(^backend/shared-rs/src/(chains|tokens)\.rs|\.test\.(ts|js|tsx)|^docs/|\.env\.example|/README\.md|#\[cfg\(test\)\]|tests?/|\bcfg!\(test\)|_test\.rs|^automation/scripts/|backend/relays-client/src/bundle_builder\.rs|backend/sim-ctl/src/tx_builder\.rs|backend/sim-ctl/src/main\.rs|backend/selector-api/src/token_safety/internal_heuristic\.ts|backend/token-enricher/src/(main|multicall)\.rs|^replay\.sql|^database/.*\.sql|backend/searcher-rs/src/workers/triangular_worker\.rs|backend/sim-ctl/src/revm_backend\.rs|backend/sed-core/src/connectors/flashbots_simulator\.rs|backend/sed-core/src/connectors/reserve_reader\.rs|backend/sed-core/src/eigenstate/mod\.rs|backend/searcher-rs/src/sim_prefund\.rs|backend/searcher-rs/src/amm_math\.rs|backend/prioritization-spine/src/round_trip_executor\.rs|backend/prioritization-spine/src/swap_encoder\.rs|backend/searcher-rs/src/sim_encoder_pg\.rs|backend/searcher-rs/src/sim_encoder\.rs|backend/searcher-rs/src/sim_orchestrator\.rs|backend/searcher-rs/src/sim_multistep\.rs|backend/searcher-rs/src/chain_client\.rs|backend/searcher-rs/src/workers/price_worker\.rs|backend/searcher-rs/src/reserves\.rs|backend/searcher-rs/src/orchestrator\.rs|backend/relays-client/src/submit_engine\.rs|backend/searcher-rs/src/size_optimizer\.rs|frontend/app/settings/credentials/CredentialsClient\.tsx|backend/searcher-rs/src/scanner\.rs|backend/searcher-rs/src/workers/liquidation_worker\.rs|backend/searcher-rs/src/workers/pool_sync_worker\.rs|backend/searcher-rs/src/workers/cex_dex_worker\.rs|backend/searcher-rs/src/workers/jit_v3_worker\.rs|backend/recon/src/pnl_engine\.rs|backend/prioritization-spine/src/route_plan\.rs|backend/shared-rs/src/price_oracle\.rs|backend/api-server/src/credentials/validators\.ts|backend/prioritization-spine/src/erc20_storage\.rs|backend/searcher-rs/src/engines/flashloan_engine\.rs|backend/searcher-rs/src/engines/triangular_engine\.rs)'
+ADDR_ALLOW='(^backend/shared-rs/src/(chains|tokens)\.rs|\.test\.(ts|js|tsx)|^docs/|\.env\.example|/README\.md|#\[cfg\(test\)\]|tests?/|\bcfg!\(test\)|_test\.rs|^automation/scripts/|backend/relays-client/src/bundle_builder\.rs|backend/sim-ctl/src/tx_builder\.rs|backend/sim-ctl/src/main\.rs|backend/selector-api/src/token_safety/internal_heuristic\.ts|backend/token-enricher/src/(main|multicall)\.rs|^replay\.sql|^database/.*\.sql|backend/searcher-rs/src/workers/triangular_worker\.rs|backend/sim-ctl/src/revm_backend\.rs|backend/sed-core/src/connectors/flashbots_simulator\.rs|backend/sed-core/src/connectors/reserve_reader\.rs|backend/sed-core/src/eigenstate/mod\.rs)'
 while IFS= read -r hit; do
   [ -z "$hit" ] && continue
   file="${hit%%:*}"; rest="${hit#*:}"; line="${rest%%:*}"; content="${rest#*:}"
@@ -162,14 +90,8 @@ done < <(run_grep "$ADDR_RE" \
 #     (faucet_request.sh — informational print-only, no productive HTTP calls)
 #   contracts/foundry.toml : holesky etherscan verifier URL is a Foundry protocol
 #     constant required by `forge verify-contract`; not a runtime endpoint.
-# --- OMEGA audit 2026-05-16 (no-hardcode triage sprint) ---
-#   sed-core flashbots_simulator.rs : URL violations at lines 79 and 87 are inside
-#     `#[cfg(test)] mod tests` block (starts line 68). F. fixture — test-only assert.
-#     NOTE: sed-core is under separate cargo-check fix; we may not modify its source.
-#   sed-core reserve_reader.rs : URL violation at line 155 is inside `#[cfg(test)]`
-#     block (starts line 144). F. fixture — constructor test assertion with placeholder key.
 URL_RE='https?://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-URL_ALLOW='(^docs/|\.env\.example|\.md:|\.test\.(ts|js|tsx)|/tests?/|_test\.rs|(ghcr|docker|crates|npmjs|github|githubusercontent|actions)\.(io|com|org)|schema\.json|JSONSchema|w3\.org|prom-client|localhost:|127\.0\.0\.[0-9]+:|api-server:|anvil:|redis:|postgres:|edge:|selector-api:|sim-ctl:|recon:|relays-client:|grafana:|prometheus:|alertmanager:|loki:|<KEY>|<YOUR_KEY>|backend/searcher-rs/src/chain_client\.rs|backend/searcher-rs/src/workers/price_worker\.rs|backend/token-enricher/src/main\.rs|backend/relays-client/src/relay_bloxroute\.rs|^replay\.sql|^database/.*\.sql|frontend/features/onboarding/Phase[0-9]+Client\.tsx|^crucible/scripts/|^contracts/foundry\.toml|backend/sed-core/src/connectors/flashbots_simulator\.rs|backend/sed-core/src/connectors/reserve_reader\.rs)'
+URL_ALLOW='(^docs/|\.env\.example|\.md:|\.test\.(ts|js|tsx)|/tests?/|_test\.rs|(ghcr|docker|crates|npmjs|github|githubusercontent|actions)\.(io|com|org)|schema\.json|JSONSchema|w3\.org|prom-client|localhost:|127\.0\.0\.[0-9]+:|api-server:|anvil:|redis:|postgres:|edge:|selector-api:|sim-ctl:|recon:|relays-client:|grafana:|prometheus:|alertmanager:|loki:|<KEY>|<YOUR_KEY>|backend/searcher-rs/src/chain_client\.rs|backend/searcher-rs/src/workers/price_worker\.rs|backend/token-enricher/src/main\.rs|backend/relays-client/src/relay_bloxroute\.rs|^replay\.sql|^database/.*\.sql|frontend/features/onboarding/Phase[0-9]+Client\.tsx|^crucible/scripts/|^contracts/foundry\.toml)'
 while IFS= read -r hit; do
   [ -z "$hit" ] && continue
   file="${hit%%:*}"; rest="${hit#*:}"; line="${rest%%:*}"; content="${rest#*:}"

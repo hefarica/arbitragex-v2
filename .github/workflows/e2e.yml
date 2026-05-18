@@ -11,14 +11,13 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   playwright:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
+    # Non-blocking for the first week (per spec §7 risk register). Flip to
+    # required on branch-protection once we have 5 consecutive greens.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -31,138 +30,10 @@ jobs:
           npm install
           npx playwright install --with-deps chromium
 
-      - name: Materialize .env for compose (CI dev defaults)
-        # docker/compose.dev.yml references `env_file: [../.env]` on every
-        # service. Without it, `docker compose up` aborts before any container
-        # starts. We copy .env.example verbatim — it ships only public
-        # endpoints and placeholder tokens, never real secrets (audit M12).
-        #
-        # The shared-ts secure-boot middleware rejects ARBX_*_TOKEN / JWT_SECRET
-        # values shorter than 32 bytes (the .env.example ships human-readable
-        # `<run: openssl rand ...>` placeholders that fail this assertion).
-        # Generate ephemeral tokens here so api-server and edge boot cleanly
-        # in CI. These tokens never leave the runner and are torn down with
-        # the compose stack.
-        run: |
-          set -euo pipefail
-          if [ ! -f .env ]; then
-            cp .env.example .env
-            # Replace each <run: openssl rand ...> placeholder with a fresh
-            # ephemeral token. Use python with one assignment per call to
-            # avoid heredoc indentation pitfalls inside GitHub Actions YAML.
-            replace_token() {
-              local key="$1"
-              local val="$2"
-              KEY="$key" VAL="$val" python3 -c 'import os,re,pathlib; p=pathlib.Path(".env"); p.write_text(re.sub(r"^"+re.escape(os.environ["KEY"])+r"=.*$", os.environ["KEY"]+"="+os.environ["VAL"], p.read_text(), flags=re.M))'
-            }
-            replace_token ARBX_EDGE_TOKEN    "$(openssl rand -base64 48 | tr -d '\n')"
-            replace_token ARBX_ADMIN_TOKEN   "$(openssl rand -base64 48 | tr -d '\n')"
-            replace_token ARBX_SERVICE_TOKEN "$(openssl rand -base64 48 | tr -d '\n')"
-            replace_token JWT_SECRET         "$(openssl rand -base64 64 | tr -d '\n')"
-            echo ".env materialized with ephemeral CI-only tokens"
-          fi
-
       - name: Bring up compose stack (dev — defaults OK for CI)
-        env:
-          # Smoke tests assert no "edge error:" banner is rendered, which
-          # means the browser MUST be able to reach edge. Playwright runs on
-          # the runner host, and the edge container publishes 8787:8787, so
-          # http://localhost:8787 is reachable from the test browser.
-          # next.config.js production-build guardrail normally rejects
-          # localhost; ARBX_BUILD_FOR_LOCAL_E2E=1 unlocks it explicitly with
-          # a printed warning. Never set this in staging or prod.
-          NEXT_PUBLIC_EDGE_URL: http://localhost:8787
-          NEXT_PUBLIC_WS_URL: http://localhost:3000
-          ARBX_BUILD_FOR_LOCAL_E2E: "1"
         run: |
-          set -euo pipefail
-          # Phase 1 — bring up data plane FIRST and wait until postgres is
-          # healthy. The api-server cannot authenticate until role passwords
-          # are applied (migration 001b), so we must run migrations BEFORE
-          # any service that opens a connection with arbx_rw/arbx_ro/arbx_migrator.
-          docker compose -f docker/compose.dev.yml up -d postgres redis
-          echo "waiting for postgres healthy"
-          for i in $(seq 1 60); do
-            status=$(docker inspect --format='{{.State.Health.Status}}' arbitragex-v2-postgres-1 2>/dev/null || echo "starting")
-            if [ "$status" = "healthy" ]; then
-              echo "postgres healthy after ${i}s"
-              break
-            fi
-            if [ "$i" = "60" ]; then
-              echo "::error::postgres failed to become healthy within 60s (last status: $status)"
-              docker compose -f docker/compose.dev.yml logs postgres | tail -50
-              exit 1
-            fi
-            sleep 1
-          done
-
-      - name: Bootstrap database schema (roles + role passwords + migrations)
-        # Without this step, the api-server starts but every query fails with
-        # `password authentication failed for user "arbx_rw"` because the role
-        # is never created. migrate.sh is the single source of truth for
-        # bootstrapping the schema (see database/migrations/001_roles.sql and
-        # 001b_role_passwords.sql). We invoke it via psql inside the postgres
-        # container so the runner does not need psql installed.
-        #
-        # Doctrine: "POR EL HAZ DE LUZ SOLO PASA QUIEN ES VISTO" — we run the
-        # exact same SQL files an operator would run in production, no shortcuts.
-        env:
-          # Match the defaults declared in docker/compose.dev.yml so role
-          # passwords applied by migration 001b match what api-server uses.
-          POSTGRES_PASSWORD: postgres
-          ARBX_MIGRATOR_PASSWORD: arbx_migrator_dev_only
-          ARBX_RW_PASSWORD: arbx_rw_dev_only
-          ARBX_RO_PASSWORD: arbx_ro_dev_only
-        run: |
-          set -euo pipefail
-          PSQL="docker compose -f docker/compose.dev.yml exec -T -e PGPASSWORD=$POSTGRES_PASSWORD postgres psql -U postgres -d arbitragex -v ON_ERROR_STOP=1"
-          # 1. Create schema_migrations control table (idempotent).
-          $PSQL -c "CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), checksum TEXT, applied_by TEXT NOT NULL DEFAULT CURRENT_USER);" >/dev/null
-          # 2. Apply every database/migrations/NNN_*.sql in lexical order.
-          #    Skip versions already present in schema_migrations (idempotent).
-          for f in $(ls database/migrations/*.sql | sort); do
-            version=$(basename "$f" .sql)
-            already=$($PSQL -tA -c "SELECT 1 FROM schema_migrations WHERE version='$version' LIMIT 1;" 2>/dev/null || true)
-            if [ "$already" = "1" ]; then
-              echo "  SKIP  $version"
-              continue
-            fi
-            echo "  APPLY $version"
-            if [ "$version" = "001b_role_passwords" ]; then
-              # 001b reads role passwords via psql -v variables. Inject the
-              # dev defaults so api-server can later authenticate as arbx_rw.
-              cat "$f" | docker compose -f docker/compose.dev.yml exec -T \
-                -e PGPASSWORD=$POSTGRES_PASSWORD postgres \
-                psql -U postgres -d arbitragex -v ON_ERROR_STOP=1 \
-                  -v "arbx_migrator_pw=$ARBX_MIGRATOR_PASSWORD" \
-                  -v "arbx_rw_pw=$ARBX_RW_PASSWORD" \
-                  -v "arbx_ro_pw=$ARBX_RO_PASSWORD" >/dev/null
-            else
-              cat "$f" | docker compose -f docker/compose.dev.yml exec -T \
-                -e PGPASSWORD=$POSTGRES_PASSWORD postgres \
-                psql -U postgres -d arbitragex -v ON_ERROR_STOP=1 -f - >/dev/null
-            fi
-            $PSQL -c "INSERT INTO schema_migrations(version) VALUES ('$version');" >/dev/null
-          done
-          # 3. Sanity check: confirm arbx_rw can authenticate. Fail loudly if
-          #    role passwords did not apply correctly.
-          docker compose -f docker/compose.dev.yml exec -T \
-            -e PGPASSWORD=$ARBX_RW_PASSWORD postgres \
-            psql -U arbx_rw -d arbitragex -c "SELECT current_user;" >/dev/null
-          echo "  ✓ arbx_rw authenticates against arbitragex"
-
-      - name: Bring up application services (api-server, edge, frontend)
-        env:
-          NEXT_PUBLIC_EDGE_URL: http://localhost:8787
-          NEXT_PUBLIC_WS_URL: http://localhost:3000
-          ARBX_BUILD_FOR_LOCAL_E2E: "1"
-        run: |
-          set -euo pipefail
-          # Phase 2 — now that roles exist and migrations are applied,
-          # bring up the rest. --build forces fresh images so frontend
-          # picks up the NEXT_PUBLIC_* build args.
           docker compose -f docker/compose.dev.yml up -d --build \
-            api-server edge frontend
+            postgres redis frontend edge api-server
           echo "stack up; waiting for frontend"
           for i in $(seq 1 60); do
             if curl -sf http://localhost:5173 >/dev/null; then
@@ -207,3 +78,37 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose -f docker/compose.dev.yml down -v
+
+  lighthouse-budget:
+    name: Lighthouse Performance Budget (F-14)
+    needs: [playwright]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Install LHCI
+        run: npm install -g @lhci/cli@0.13.x
+
+      - name: Wait for frontend
+        run: |
+          LHCI_BASE_URL="${{ secrets.LHCI_BASE_URL }}"
+          if [ -z "$LHCI_BASE_URL" ]; then
+            echo "⚠️ LHCI_BASE_URL not set — skipping Lighthouse"
+            exit 0
+          fi
+          curl --retry 10 --retry-delay 5 -sf "$LHCI_BASE_URL/" > /dev/null
+          echo "✅ Frontend accessible"
+
+      - name: Run Lighthouse CI
+        run: |
+          LHCI_BASE_URL="${{ secrets.LHCI_BASE_URL }}"
+          [ -z "$LHCI_BASE_URL" ] && { echo "⚠️ LHCI_BASE_URL not set — skip"; exit 0; }
+          lhci autorun --config=lighthouserc.json
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+          LHCI_BASE_URL: ${{ secrets.LHCI_BASE_URL }}

@@ -186,6 +186,13 @@ app.post("/admin/killswitch", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, r
   res.status(200).json(out);
 });
 
+/** Admin: read killswitch state. */
+app.get("/admin/killswitch/status", requireAdminToken(ARBX_ADMIN_TOKEN), async (_req, res) => {
+  const state = await killSwitch.state().catch(() => null);
+  if (!state) return res.status(503).json({ error: "killswitch_unavailable" });
+  res.status(200).json(state);
+});
+
 /** Admin: read current effective config (secrets never included). */
 app.get("/admin/config", requireAdminToken(ARBX_ADMIN_TOKEN), (_req, res) => {
   res.status(200).json({

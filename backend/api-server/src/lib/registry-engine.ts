@@ -132,13 +132,10 @@ export async function writeAuditEvent(
     hashAfter: string;
     idempotencyKey: string;
     result: "success" | "partial" | "failed";
-    error?: string | undefined;
-    // Optional fields accept `undefined` explicitly so callsites can pass
-    // `req.ip` / `req.header(...)` directly without a conditional spread
-    // dance (exactOptionalPropertyTypes: true).
-    ip?: string | undefined;
-    userAgent?: string | undefined;
-    traceId?: string | undefined;
+    error?: string;
+    ip?: string;
+    userAgent?: string;
+    traceId?: string;
   },
 ): Promise<void> {
   // OMEGA-8/M3 P1-3: PII hardening wired-in. ip_address envuelta con
@@ -303,11 +300,7 @@ export function buildRegistryRouter<TSchema extends ZodTypeAny>(
 
   /** PATCH /:entity/:id — update with hash diff + audit + reload */
   router.patch(`${base}/:id`, async (req, res) => {
-    // .partial() only exists on ZodObject. All registry schemas are objects
-    // (see RpcDescriptor / ContractDescriptor below), so the cast is safe.
-    const parse = (descriptor.schema as unknown as z.ZodObject<z.ZodRawShape>)
-      .partial()
-      .safeParse(req.body);
+    const parse = (descriptor.schema as ZodTypeAny).partial().safeParse(req.body);
     if (!parse.success) {
       res.status(400).json({ error: "schema_violation", details: parse.error.format() });
       return;

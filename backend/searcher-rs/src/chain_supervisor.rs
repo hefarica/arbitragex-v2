@@ -174,7 +174,8 @@ impl ChainSupervisor {
         for (chain_id, token) in self.running_tasks.drain() {
             info!(
                 event = "chain_supervisor.shutdown_cancel",
-                chain_id, "cancelling chain task during supervisor shutdown"
+                chain_id,
+                "cancelling chain task during supervisor shutdown"
             );
             token.cancel();
         }
@@ -259,7 +260,8 @@ impl ChainSupervisor {
         tokio::spawn(async move {
             info!(
                 event = "chain_supervisor.spawning",
-                chain_id, "spawning chain scanner task"
+                chain_id,
+                "spawning chain scanner task"
             );
             if let Err(e) = scanner::run_chain(
                 chain_id,
@@ -322,7 +324,8 @@ impl ChainSupervisor {
                 Ok(None) => {
                     info!(
                         event = "chain_supervisor.pool_no_pg_row",
-                        chain_id, "no chains_runtime row; trying env fallback"
+                        chain_id,
+                        "no chains_runtime row; trying env fallback"
                     );
                 }
                 Err(e) => {
@@ -350,7 +353,8 @@ impl ChainSupervisor {
             Ok(None) => {
                 info!(
                     event = "chain_supervisor.pool_none",
-                    chain_id, "no RPC config in PG or env; scanner will run idle"
+                    chain_id,
+                    "no RPC config in PG or env; scanner will run idle"
                 );
                 None
             }
@@ -405,10 +409,7 @@ async fn fetch_all_enabled_chains(db: &PgPool) -> Result<Vec<u64>, sqlx::Error> 
         sqlx::query("SELECT chain_id FROM chains_runtime WHERE enabled = TRUE ORDER BY chain_id")
             .fetch_all(db)
             .await?;
-    Ok(rows
-        .into_iter()
-        .map(|r| r.get::<i64, _>("chain_id") as u64)
-        .collect())
+    Ok(rows.into_iter().map(|r| r.get::<i64, _>("chain_id") as u64).collect())
 }
 
 #[cfg(test)]
@@ -425,10 +426,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::broadcast::channel::<ChainReloadEvent>(4);
         drop(tx); // simulate Sender dropped → recv() returns Err(Closed)
         let err = rx.recv().await.unwrap_err();
-        assert!(matches!(
-            err,
-            tokio::sync::broadcast::error::RecvError::Closed
-        ));
+        assert!(matches!(err, tokio::sync::broadcast::error::RecvError::Closed));
         // The supervisor's loop sees this and breaks (covered by run() body).
     }
 

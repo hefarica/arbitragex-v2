@@ -7,8 +7,6 @@
 // carry their own allows where the pattern is demonstrably safe.
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
-// Configuration modules — fail-fast env-driven loaders (no hardcoded defaults).
-pub mod config;
 // Phase 1-3 modules re-exported so the library target compiles standalone.
 pub mod amm_math;
 pub mod calldata;
@@ -20,12 +18,12 @@ pub mod metrics;
 pub mod opportunity_emitter;
 pub mod patterns;
 pub mod persistence;
-pub mod pool_discovery;
 pub mod publisher;
 pub mod reserves;
 pub mod route_decoder;
 pub mod route_intent;
 pub mod strategy_label;
+pub mod pool_discovery;
 // Phase 7-8: orchestrator + engines exposed for integration tests.
 pub mod engines;
 pub mod orchestrator;

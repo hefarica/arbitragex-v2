@@ -202,7 +202,10 @@ impl PgTokenDecimalsProvider {
             loop {
                 ticker.tick().await;
                 match self.bootstrap_load().await {
-                    Ok(n) => debug!(event = "pg_decimals_provider.refresh_ok", loaded = n),
+                    Ok(n) => debug!(
+                        event = "pg_decimals_provider.refresh_ok",
+                        loaded = n
+                    ),
                     Err(e) => warn!(
                         event = "pg_decimals_provider.refresh_failed",
                         error = %e
@@ -336,11 +339,7 @@ mod tests {
             cache.put((1, c), 18);
         }
         let a_evicted = Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
-        assert_eq!(
-            provider.decimals(1, &a_evicted),
-            None,
-            "LRU should have evicted a"
-        );
+        assert_eq!(provider.decimals(1, &a_evicted), None, "LRU should have evicted a");
         let b_kept = Address::from_str("0x2222222222222222222222222222222222222222").unwrap();
         assert_eq!(provider.decimals(1, &b_kept), Some(18));
     }

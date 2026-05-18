@@ -258,7 +258,7 @@ pub fn calc_univ3_price_impact_with_distribution(
             .iter()
             .filter(|t| t.tick_idx <= dist.current_tick)
             .collect();
-        v.sort_unstable_by_key(|b| std::cmp::Reverse(b.tick_idx)); // descending
+        v.sort_unstable_by(|a, b| b.tick_idx.cmp(&a.tick_idx)); // descending
         v
     } else {
         dist.ticks

@@ -230,10 +230,7 @@ async fn build_orchestrator(
     // This ensures engines see real reserves on the first intents rather than cold-cache.
     // Best-effort: partial or empty hydration is R8 fail-honest (engines emit
     // reserves_cache_miss for pools not yet in cache rather than fabricating data).
-    match reserves_cache
-        .hydrate_from_redis(&mut redis, chain_id)
-        .await
-    {
+    match reserves_cache.hydrate_from_redis(&mut redis, chain_id).await {
         Ok(n) => {
             // TASK 1 log #5: renamed to v2.reserves.hydrated for Grafana event taxonomy.
             info!(
@@ -280,8 +277,7 @@ async fn build_orchestrator(
             for (s0, s1) in edges {
                 let (lo, hi) = if s0 <= s1 { (s0, s1) } else { (s1, s0) };
                 let key = format!("arbx:pool_index:{}:{}:{}", chain_id, lo, hi);
-                let raw: Result<Option<String>, _> =
-                    redis::AsyncCommands::get(&mut redis, &key).await;
+                let raw: Result<Option<String>, _> = redis::AsyncCommands::get(&mut redis, &key).await;
                 if let Ok(Some(json)) = raw {
                     if let Ok(addrs) = serde_json::from_str::<Vec<String>>(&json) {
                         if let Some(first) = addrs.first() {
@@ -429,16 +425,10 @@ async fn pool_sync_watcher(
         //   pools → factories → dexes (for protocol_type) → tokens×2 (for token addresses).
         // Column aliases are kept identical to the boot-time loader to share the same
         // row-parsing logic and ensure the impact index stays consistent.
-        type NewPoolRow = (
-            chrono::DateTime<chrono::Utc>,
-            String,
-            String,
-            String,
-            String,
-            Option<i32>,
-        );
-        let rows: Vec<NewPoolRow> = match sqlx::query_as::<_, NewPoolRow>(
-            r#"SELECT
+        type NewPoolRow = (chrono::DateTime<chrono::Utc>, String, String, String, String, Option<i32>);
+        let rows: Vec<NewPoolRow> =
+            match sqlx::query_as::<_, NewPoolRow>(
+                r#"SELECT
                      p.created_at,
                      p.address,
                      d.protocol_type,
@@ -454,23 +444,23 @@ async fn pool_sync_watcher(
                      AND p.created_at > $2
                    ORDER BY p.created_at ASC
                    LIMIT 500"#,
-        )
-        .bind(chain_id as i64)
-        .bind(last_created_at)
-        .fetch_all(&db)
-        .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                warn!(
-                    event = "pool_sync_watcher.query_failed",
-                    chain_id,
-                    error = %e,
-                    "failed to query new pools from PG; will retry next tick"
-                );
-                continue;
-            }
-        };
+            )
+            .bind(chain_id as i64)
+            .bind(last_created_at)
+            .fetch_all(&db)
+            .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(
+                        event = "pool_sync_watcher.query_failed",
+                        chain_id,
+                        error = %e,
+                        "failed to query new pools from PG; will retry next tick"
+                    );
+                    continue;
+                }
+            };
 
         if rows.is_empty() {
             continue;
@@ -698,11 +688,7 @@ pub async fn run_chain(
     Ok(ScannerHandle { chain_id })
 }
 
-async fn idle_chain_loop(
-    chain_id: u64,
-    killswitch: KillSwitchClient,
-    cancel: tokio_util::sync::CancellationToken,
-) {
+async fn idle_chain_loop(chain_id: u64, killswitch: KillSwitchClient, cancel: tokio_util::sync::CancellationToken) {
     let mut ticker = tokio::time::interval(Duration::from_secs(60));
     loop {
         tokio::select! {
@@ -779,10 +765,7 @@ async fn detection_loop(
     let mut idx: usize = 0;
     loop {
         if cancel.is_cancelled() {
-            info!(
-                event = "scanner.detection_loop.cancelled",
-                chain_id, "exiting detection loop gracefully"
-            );
+            info!(event = "scanner.detection_loop.cancelled", chain_id, "exiting detection loop gracefully");
             break;
         }
 
@@ -794,7 +777,7 @@ async fn detection_loop(
         // La inteligencia HFT exige latencia sub-milisegundo. Cualquier loop que tome >1ms es un fallo.
         // El scanner opera como un DEPREDADOR MATEMÁTICO. No pedimos permiso para interceptar transacciones.
         let loop_start = std::time::Instant::now();
-
+        
         // Pick the next endpoint round-robin. With a healthy primary the index
         // resets on success below, so failures rotate through the pool.
         let endpoint = &endpoints[idx % endpoints.len()];
@@ -1023,9 +1006,7 @@ async fn process_pending<'a>(
     if !dedup.check_and_mark(hash, redis).await {
         return Ok(());
     }
-    chain_counters(client.chain_id)
-        .pending_received
-        .fetch_add(1, Ordering::Relaxed);
+    chain_counters(client.chain_id).pending_received.fetch_add(1, Ordering::Relaxed);
     // Aggressive but realistic timeout for eth_getTransactionByHash.
     // 1ms (the previous value) drops 100% of healthy network RPCs and effectively
     // disables enrichment — auto-DDOS of our own pipeline. 50ms accepts healthy
@@ -1094,9 +1075,7 @@ async fn process_pending_tx<'a>(
     if !dedup.check_and_mark(tx.hash, redis).await {
         return Ok(());
     }
-    chain_counters(client.chain_id)
-        .pending_received
-        .fetch_add(1, Ordering::Relaxed);
+    chain_counters(client.chain_id).pending_received.fetch_add(1, Ordering::Relaxed);
     decode_and_score_tx(
         client,
         tx,
@@ -1218,9 +1197,7 @@ async fn decode_and_score_tx<'a>(
     if router.kind == RouterKind::Unknown {
         return Ok(());
     }
-    chain_counters(client.chain_id)
-        .decoded_ok
-        .fetch_add(1, Ordering::Relaxed);
+    chain_counters(client.chain_id).decoded_ok.fetch_add(1, Ordering::Relaxed);
 
     let ctx = patterns::TxContext {
         chain_id: client.chain_id,
@@ -1551,14 +1528,10 @@ async fn decode_and_score_tx<'a>(
                 // Distinguish V2-only enrichment from V2+V3 in the event name so
                 // dashboards can chart V3 reach growth without parsing fields.
                 let event_name = if v3_used > 0 {
-                    chain_counters(client.chain_id)
-                        .enriched_v3
-                        .fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).enriched_v3.fetch_add(1, Ordering::Relaxed);
                     "scanner.candidate_enriched_v3"
                 } else {
-                    chain_counters(client.chain_id)
-                        .enriched_v2
-                        .fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).enriched_v2.fetch_add(1, Ordering::Relaxed);
                     "scanner.candidate_enriched"
                 };
                 info!(event = event_name,
@@ -1631,21 +1604,15 @@ async fn decode_and_score_tx<'a>(
             hash = %hash,
             "configure /config/trading to enable scoring; persisting raw observation"
         );
-        chain_counters(client.chain_id)
-            .gate_no_config
-            .fetch_add(1, Ordering::Relaxed);
+        chain_counters(client.chain_id).gate_no_config.fetch_add(1, Ordering::Relaxed);
         opportunity.roi_pct = None;
         opportunity.risk_score = None;
         if let Some(pool) = db {
             if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-                chain_counters(client.chain_id)
-                    .db_errors
-                    .fetch_add(1, Ordering::Relaxed);
+                chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
                 error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
             } else {
-                chain_counters(client.chain_id)
-                    .db_persisted
-                    .fetch_add(1, Ordering::Relaxed);
+                chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
             }
         }
         publisher::publish(redis, &opportunity).await?;
@@ -1782,14 +1749,10 @@ async fn decode_and_score_tx<'a>(
                 .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
                 if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-                    chain_counters(client.chain_id)
-                        .db_errors
-                        .fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
                     error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
                 } else {
-                    chain_counters(client.chain_id)
-                        .db_persisted
-                        .fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
                 }
             }
             publisher::publish(redis, &opportunity).await?;
@@ -1819,14 +1782,10 @@ async fn decode_and_score_tx<'a>(
                 .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
                 if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-                    chain_counters(client.chain_id)
-                        .db_errors
-                        .fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
                     error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
                 } else {
-                    chain_counters(client.chain_id)
-                        .db_persisted
-                        .fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
                 }
             }
             publisher::publish(redis, &opportunity).await?;
@@ -1861,14 +1820,10 @@ async fn decode_and_score_tx<'a>(
                 .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
                 if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-                    chain_counters(client.chain_id)
-                        .db_errors
-                        .fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
                     error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
                 } else {
-                    chain_counters(client.chain_id)
-                        .db_persisted
-                        .fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
                 }
             }
             publisher::publish(redis, &opportunity).await?;
@@ -1926,8 +1881,12 @@ async fn decode_and_score_tx<'a>(
     // every value other than `PASS` or `SIM_SUCCESS` maps to
     // `RejectReason::SimulationFailed`. Zero paper opportunities survive
     // this PR — that is the truth of the system today (RULE 12 fail-honest).
-    let gate_outcome =
-        dispatch_encoder_gate(&candidate, client.chain_id, simulator_v2, decimals_provider);
+    let gate_outcome = dispatch_encoder_gate(
+        &candidate,
+        client.chain_id,
+        simulator_v2,
+        decimals_provider,
+    );
     bump_encoder_gate_counter(&gate_outcome);
 
     // Phase A.3.c — if the encoder produced a RoundTripContext AND we have a
@@ -2034,9 +1993,7 @@ async fn decode_and_score_tx<'a>(
             .expected_profit_usd
             .map(|gross| gross - cfg.gas_cost_usd());
     } else {
-        chain_counters(client.chain_id)
-            .passed_all_gates
-            .fetch_add(1, Ordering::Relaxed);
+        chain_counters(client.chain_id).passed_all_gates.fetch_add(1, Ordering::Relaxed);
         // Spine scoring on REAL evidence (no more hardcoded 0.95 / 0.9 / 1.0).
         let engine = PrioritizationEngine {
             min_profit_threshold: cfg.min_profit_usd,
@@ -2103,14 +2060,10 @@ async fn decode_and_score_tx<'a>(
     // Persist + publish. Both are best-effort with their own error paths.
     if let Some(pool) = db {
         if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-            chain_counters(client.chain_id)
-                .db_errors
-                .fetch_add(1, Ordering::Relaxed);
+            chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
             error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
         } else {
-            chain_counters(client.chain_id)
-                .db_persisted
-                .fetch_add(1, Ordering::Relaxed);
+            chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
         }
     }
     publisher::publish(redis, &opportunity).await?;
@@ -2220,7 +2173,10 @@ impl EncoderGateOutcome {
                 "encoder_ok_orchestrator_dispatched",
                 "fail_closed:orchestrator_in_flight",
             ),
-            Self::Rejected { reason_tag } => (reason_tag, "fail_closed:encoder_rejected"),
+            Self::Rejected { reason_tag } => (
+                reason_tag,
+                "fail_closed:encoder_rejected",
+            ),
         }
     }
 
@@ -2322,19 +2278,15 @@ fn bump_encoder_gate_counter(outcome: &EncoderGateOutcome) {
                 "missing_decimals" | "invalid_decimals" => {
                     c.encoder_missing_decimals_total.fetch_add(1, Relaxed);
                 }
-                "amount_nan"
-                | "amount_infinite"
-                | "amount_non_positive"
-                | "amount_overflow"
-                | "amount_too_small" => {
+                "amount_nan" | "amount_infinite" | "amount_non_positive"
+                | "amount_overflow" | "amount_too_small" => {
                     c.encoder_invalid_amount_total.fetch_add(1, Relaxed);
                 }
                 "unsupported_dex_kind" | "missing_router" => {
                     c.encoder_unsupported_dex_total.fetch_add(1, Relaxed);
                 }
                 "unsupported_route_shape" | "missing_route_legs" => {
-                    c.encoder_unsupported_route_shape_total
-                        .fetch_add(1, Relaxed);
+                    c.encoder_unsupported_route_shape_total.fetch_add(1, Relaxed);
                 }
                 "zero_token_address" => {
                     c.encoder_zero_token_address_total.fetch_add(1, Relaxed);
@@ -2382,8 +2334,7 @@ async fn dispatch_orchestrator_and_classify(
     let executor = match crate::sim_encoder::parse_executor_address(chain_id) {
         Ok(addr) => addr,
         Err(_) => {
-            c.round_trip_executor_rejected_pre_revm_total
-                .fetch_add(1, Relaxed);
+            c.round_trip_executor_rejected_pre_revm_total.fetch_add(1, Relaxed);
             return (
                 "missing_executor".to_string(),
                 "fail_closed:missing_executor".to_string(),
@@ -2424,8 +2375,7 @@ async fn dispatch_orchestrator_and_classify(
     {
         Ok(o) => o,
         Err(e) => {
-            c.round_trip_executor_spawn_blocking_failed_total
-                .fetch_add(1, Relaxed);
+            c.round_trip_executor_spawn_blocking_failed_total.fetch_add(1, Relaxed);
             return (
                 format!("spawn_blocking_failed:{e}"),
                 "fail_closed:spawn_blocking_failed".to_string(),
@@ -2464,8 +2414,7 @@ async fn dispatch_orchestrator_and_classify(
                 .fetch_add(1, Relaxed);
         }
         _ => {
-            c.round_trip_executor_rejected_pre_revm_total
-                .fetch_add(1, Relaxed);
+            c.round_trip_executor_rejected_pre_revm_total.fetch_add(1, Relaxed);
         }
     }
     (

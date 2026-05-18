@@ -433,6 +433,30 @@ async function adminProxy(path: string, req: express.Request, res: express.Respo
 }
 
 app.post("/admin/killswitch",                 (req, res) => adminProxy("/admin/killswitch", req, res, "POST"));
+
+// GET /api/killswitch/status — public read of killswitch state (admin-token gated).
+app.get("/api/killswitch/status", (req, res) => {
+  adminProxy("/admin/killswitch/status", req, res, "GET");
+});
+
+// POST /api/killswitch/:action — activate/deactivate killswitch.
+// Maps semantic actions to the api-server's /admin/killswitch toggle.
+app.post("/api/killswitch/:action", async (req, res) => {
+  const action = req.params["action"];
+  if (action !== "activate" && action !== "deactivate") {
+    res.status(400).json({ error: "invalid_action", valid_actions: ["activate", "deactivate"] });
+    return;
+  }
+  const body = {
+    enabled: action === "activate",
+    reason: `operator_${action}`,
+    triggered_by: req.header("x-arbx-actor") ?? "operator",
+  };
+  // Override req.body so adminProxy serialises the mapped payload.
+  (req as express.Request & { body?: unknown }).body = body;
+  adminProxy("/admin/killswitch", req, res, "POST");
+});
+
 app.post("/admin/config/paper-mode",          (req, res) => adminProxy("/admin/config/paper-mode", req, res, "POST"));
 app.post("/admin/onboarding/1/complete",      (req, res) => adminProxy("/admin/onboarding/1/complete", req, res, "POST"));
 // 2026-05-10 audit follow-up: DEX active toggle from /dex-registry. Mounted

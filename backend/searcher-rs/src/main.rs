@@ -54,7 +54,6 @@ mod sim_multistep;
 // B1.c (2026-05-13) — chain config hot-reload subscriber. Listens on Redis
 // pub/sub `arbx:config:chains:reload` for events from the api-server admin
 // endpoint.
-mod config;
 mod config_reload;
 // Phase 16: per-strategy Prometheus metrics for the event-driven orchestrator.
 mod metrics;
@@ -202,11 +201,13 @@ async fn main() -> anyhow::Result<()> {
     let chain_reload_cancel = tokio_util::sync::CancellationToken::new();
     let chain_reload_redis_url = redis_url.clone();
     let _chain_reload_cancel_handle = chain_reload_cancel.clone();
-
-    let reloader =
-        config_reload::ChainConfigReloader::new(chain_reload_redis_url, chain_reload_cancel);
+    
+    let reloader = config_reload::ChainConfigReloader::new(
+        chain_reload_redis_url,
+        chain_reload_cancel,
+    );
     let event_rx = reloader.event_tx.subscribe();
-
+    
     tokio::spawn(async move {
         if let Err(e) = reloader.run().await {
             warn!(
@@ -287,46 +288,49 @@ async fn main() -> anyhow::Result<()> {
     // Without a DB pool the encoder cannot resolve decimals — scanner stays
     // in the Phase A.2.5 fail-closed path (`no_simulator_for_chain` /
     // `encoder_not_ready`) for every candidate (RULE 12 fail-honest).
-    let token_decimals_provider: Option<Arc<dyn sim_encoder::TokenDecimalsProvider + Send + Sync>> =
-        match &db_pool {
-            Some(pool) => {
-                let provider = Arc::new(
-                    sim_encoder_pg::PgTokenDecimalsProvider::with_default_capacity(pool.clone()),
-                );
-                match provider.bootstrap_load().await {
-                    Ok(loaded) => info!(
-                        event = "sim_encoder.boot",
-                        provider = "pg",
-                        cache_max_entries = sim_encoder_pg::DEFAULT_CACHE_CAPACITY,
-                        bootstrap_loaded = loaded,
-                        refresh_interval_secs = sim_encoder_pg::DEFAULT_REFRESH_INTERVAL_SECS,
-                        runtime_enabled = true,
-                        "PG decimals provider bootstrapped"
-                    ),
-                    Err(e) => warn!(
-                        event = "sim_encoder.bootstrap_failed",
-                        error = %e,
-                        "PG decimals provider bootstrap failed; cache stays empty until first refresh"
-                    ),
-                };
-                // Refresh loop fills the cache from PG every N seconds. Handle
-                // intentionally dropped — task runs until process exit.
-                provider.clone().spawn_refresh_loop(Duration::from_secs(
+    let token_decimals_provider: Option<
+        Arc<dyn sim_encoder::TokenDecimalsProvider + Send + Sync>,
+    > = match &db_pool {
+        Some(pool) => {
+            let provider = Arc::new(sim_encoder_pg::PgTokenDecimalsProvider::with_default_capacity(
+                pool.clone(),
+            ));
+            match provider.bootstrap_load().await {
+                Ok(loaded) => info!(
+                    event = "sim_encoder.boot",
+                    provider = "pg",
+                    cache_max_entries = sim_encoder_pg::DEFAULT_CACHE_CAPACITY,
+                    bootstrap_loaded = loaded,
+                    refresh_interval_secs = sim_encoder_pg::DEFAULT_REFRESH_INTERVAL_SECS,
+                    runtime_enabled = true,
+                    "PG decimals provider bootstrapped"
+                ),
+                Err(e) => warn!(
+                    event = "sim_encoder.bootstrap_failed",
+                    error = %e,
+                    "PG decimals provider bootstrap failed; cache stays empty until first refresh"
+                ),
+            };
+            // Refresh loop fills the cache from PG every N seconds. Handle
+            // intentionally dropped — task runs until process exit.
+            provider
+                .clone()
+                .spawn_refresh_loop(Duration::from_secs(
                     sim_encoder_pg::DEFAULT_REFRESH_INTERVAL_SECS,
                 ));
-                Some(provider as Arc<dyn sim_encoder::TokenDecimalsProvider + Send + Sync>)
-            }
-            None => {
-                warn!(
-                    event = "sim_encoder.boot",
-                    provider = "none",
-                    runtime_enabled = false,
-                    reason = "no_db_pool",
-                    "no PG pool available — token decimals provider not constructed"
-                );
-                None
-            }
-        };
+            Some(provider as Arc<dyn sim_encoder::TokenDecimalsProvider + Send + Sync>)
+        }
+        None => {
+            warn!(
+                event = "sim_encoder.boot",
+                provider = "none",
+                runtime_enabled = false,
+                reason = "no_db_pool",
+                "no PG pool available — token decimals provider not constructed"
+            );
+            None
+        }
+    };
 
     let dedup = Arc::new(dedup::Dedup::new(50_000, Duration::from_secs(60)));
 
@@ -785,19 +789,7 @@ async fn main() -> anyhow::Result<()> {
     let cex_dex_chain = primary_chain;
     let cex_dex_rpc = primary_rpc_pool.clone();
     tokio::spawn(async move {
-        // B. URL operativa: CexDexWorkerConfig::new now reads CEX_BINANCE_BASE_URL /
-        // CEX_OKX_BASE_URL from env — fail-fast on missing, no silent fallback.
-        let cfg = match workers::cex_dex_worker::CexDexWorkerConfig::new(
-            cex_dex_chain,
-            cex_dex_tick_ms,
-        ) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(event = "cex_dex_worker.boot_failed", chain_id = cex_dex_chain,
-                      reason = "config", error = %e);
-                return;
-            }
-        };
+        let cfg = workers::cex_dex_worker::CexDexWorkerConfig::new(cex_dex_chain, cex_dex_tick_ms);
         match workers::cex_dex_worker::CexDexWorker::new(cfg, cex_dex_rpc) {
             Ok(worker) => worker.run().await,
             Err(e) => {
@@ -819,7 +811,7 @@ async fn main() -> anyhow::Result<()> {
         token_decimals_provider.clone(),
         event_rx,
     );
-
+    
     let initial_chains = enabled_chains.clone();
     tokio::spawn(async move {
         supervisor.run(initial_chains).await;

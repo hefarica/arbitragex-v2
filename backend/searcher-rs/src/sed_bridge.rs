@@ -180,7 +180,10 @@ impl SedBridge {
 
     /// Internal: run eigenstate decomposition and transition projection.
     #[cfg(feature = "paper-shadow")]
-    fn compute_eigenstate(&self, cdc_value: f64) -> Result<(bool, f64, f64, f64), String> {
+    fn compute_eigenstate(
+        &self,
+        cdc_value: f64,
+    ) -> Result<(bool, f64, f64, f64), String> {
         use sed_core::eigenstate::effective_hamiltonian::EffectiveHamiltonian;
         use sed_core::eigenstate::lanczos_solver::EigenstateDecomposition;
         use sed_core::eigenstate::transition_projector::TransitionProjector;
