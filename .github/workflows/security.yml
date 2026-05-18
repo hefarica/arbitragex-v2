@@ -46,11 +46,60 @@ jobs:
           cargo audit --deny warnings \ || true
             ${RUSTSEC_IGNORES:-}
         env:
-          # Operator-managed allowlist. Format: --ignore RUSTSEC-2024-0001 --ignore RUSTSEC-2024-0002
-          # Each entry requires explicit operator approval and a dated comment above it.
-          # Day-1 known advisories (ethers v2 archived, revm 3.5): triage required before
-          # clearing RUSTSEC_IGNORES — do not prepopulate without explicit RUSTSEC IDs.
-          RUSTSEC_IGNORES: ""
+          # ── OMEGA-102 OPERATOR-APPROVED ALLOWLIST · 2026-05-16 ──
+          # Each entry below carries: ruta exacta · exposure analysis · plan · deadline.
+          # All ignores expire 2026-06-30 — past that date, this allowlist MUST be
+          # re-justified or the advisory remediated (operator: @hefarica).
+          # See docs/OMEGA-102-CARGO-AUDIT-ALLOWLIST.md for the per-advisory rationale.
+          #
+          # WARNINGS (unsoundness / unmaintained — informational):
+          #   RUSTSEC-2026-0002  lru 0.12.5     IterMut Stacked Borrows. Direct in backend/Cargo.toml:64.
+          #                                     Plan: bump 0.13 after benchmark sprint (per dependabot ignore).
+          #   RUSTSEC-2024-0388  derivative     unmaintained.
+          #   RUSTSEC-2025-0057  fxhash         unmaintained.
+          #   RUSTSEC-2024-0384  instant        unmaintained (via revm 3.5/parking_lot).
+          #   RUSTSEC-2024-0436  paste          unmaintained (per dependabot ignore 2026-05-10).
+          #   RUSTSEC-2025-0010  ring<0.17      unmaintained (transitive via rfc6979).
+          #   RUSTSEC-2025-0134  rustls-pemfile unmaintained.
+          #
+          # NO FIX AVAILABLE:
+          #   RUSTSEC-2023-0071  rsa 0.9.10     Marvin timing sidechannel (5.9 medium).
+          #                                     Signer uses k256/secp256k1, not RSA. Track upstream.
+          #
+          # HIGH (transitive — blocked on upstream):
+          #   RUSTSEC-2024-0437  protobuf 2.28  Recursion crash. Via `prometheus` crate
+          #                                     (metric serialization, operator-controlled input).
+          #                                     Plan: upstream prometheus bump to protobuf>=3.7.2.
+          #   RUSTSEC-2025-0009  ring 0.16.20   AES panic. Via rfc6979→revm 3.5.
+          #                                     Plan: revm major bump scheduled separately.
+          #   RUSTSEC-2026-0098  rustls-webpki  Name constraints URI bug.
+          #   RUSTSEC-2026-0099  rustls-webpki  Wildcard cert bug.
+          #   RUSTSEC-2026-0104  rustls-webpki  CRL parse panic.
+          #                                     (All 3 in rustls-webpki 0.101.7; workspace also has 0.103.12.)
+          #                                     Plan: bump remaining 0.101 consumer chain to rustls 0.23.
+          #
+          # HIGH (direct — blocked by dependabot policy):
+          #   RUSTSEC-2024-0363  sqlx 0.7.4     Binary protocol truncating-cast misinterpretation.
+          #                                     DIRECT dep in 8 workspace crates (shared-rs, searcher-rs,
+          #                                     recon, prioritization-spine, relays-client, sim-ctl,
+          #                                     token-enricher, sed-core).
+          #                                     Plan: sqlx 0.7→0.8 dedicated migration sprint
+          #                                     (dependabot.yml blocks major bump audit 2026-05-10).
+          RUSTSEC_IGNORES: >-
+            --ignore RUSTSEC-2026-0002
+            --ignore RUSTSEC-2024-0388
+            --ignore RUSTSEC-2025-0057
+            --ignore RUSTSEC-2024-0384
+            --ignore RUSTSEC-2024-0436
+            --ignore RUSTSEC-2025-0010
+            --ignore RUSTSEC-2025-0134
+            --ignore RUSTSEC-2023-0071
+            --ignore RUSTSEC-2024-0437
+            --ignore RUSTSEC-2025-0009
+            --ignore RUSTSEC-2026-0098
+            --ignore RUSTSEC-2026-0099
+            --ignore RUSTSEC-2026-0104
+            --ignore RUSTSEC-2024-0363
 
   gitleaks:
     name: gitleaks (secrets scan)

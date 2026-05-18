@@ -257,7 +257,12 @@ export function buildRegistryRouter<TSchema extends ZodTypeAny>(
       );
       const row = ins.rows[0];
 
-      const auditParams: any = {
+      // exactOptionalPropertyTypes: omitir keys cuando el valor es undefined
+      // en vez de pasarlas como undefined (doctrina R7: caller-side spread).
+      const ip = req.ip;
+      const userAgent = req.header("user-agent");
+      const traceId = req.header("x-request-id");
+      await writeAuditEvent(client, {
         actor,
         action: "create",
         entityType: descriptor.entity,
@@ -269,12 +274,10 @@ export function buildRegistryRouter<TSchema extends ZodTypeAny>(
         hashAfter,
         idempotencyKey,
         result: "success",
-      };
-      if (req.ip) auditParams.ip = req.ip;
-      if (req.header("user-agent")) auditParams.userAgent = req.header("user-agent");
-      if (req.header("x-request-id")) auditParams.traceId = req.header("x-request-id");
-      
-      await writeAuditEvent(client, auditParams);
+        ...(ip !== undefined ? { ip } : {}),
+        ...(userAgent !== undefined ? { userAgent } : {}),
+        ...(typeof traceId === "string" ? { traceId } : {}),
+      });
 
       await client.query("COMMIT");
 
@@ -302,7 +305,17 @@ export function buildRegistryRouter<TSchema extends ZodTypeAny>(
 
   /** PATCH /:entity/:id — update with hash diff + audit + reload */
   router.patch(`${base}/:id`, async (req, res) => {
-    const parse = (descriptor.schema as unknown as import("zod").ZodObject<any>).partial().safeParse(req.body);
+    // Narrowing fail-honest (R8): los 6 descriptors canónicos usan z.object,
+    // así .partial() existe en runtime. Si alguien registra un schema no-object,
+    // detener con 500 explícito en vez de cast ciego.
+    if (!(descriptor.schema instanceof z.ZodObject)) {
+      res.status(500).json({
+        error: "descriptor_misconfigured",
+        detail: "PATCH requires a z.object() schema",
+      });
+      return;
+    }
+    const parse = descriptor.schema.partial().safeParse(req.body);
     if (!parse.success) {
       res.status(400).json({ error: "schema_violation", details: parse.error.format() });
       return;

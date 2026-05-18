@@ -14,7 +14,7 @@
 
 import { Router } from 'express';
 import type { Pool } from 'pg';
-import type Redis from 'ioredis';
+import type { Redis } from 'ioredis';
 import { createHash } from 'crypto';
 import {
   requireOperatorRole,
