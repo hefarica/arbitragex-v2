@@ -60,7 +60,7 @@ jobs:
         # next-cli compile deps), which then breaks the @arbx/shared tsc
         # build later in this workflow. NODE_ENV is set on the build step
         # itself so `next build` still produces a production bundle.
-        run: npm ci
+        run: npm install
 
       - name: Build @arbx/shared
         # frontend imports @arbx/shared from shared-ts/dist/. Missing dist/

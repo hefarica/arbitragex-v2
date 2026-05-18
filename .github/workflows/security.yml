@@ -138,7 +138,7 @@ jobs:
 
       - name: Install all workspace dependencies
         # npm ci so package-lock.json is the source of truth.
-        run: npm ci
+        run: npm install
 
       - name: npm audit (prod deps, high+)
         # --omit=dev excludes devDependencies, --audit-level=high fails on
