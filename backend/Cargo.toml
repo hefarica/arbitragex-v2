@@ -72,7 +72,7 @@ nalgebra      = "0.32"
 # (Markov jump intensity sampling, Poisson random measure). Only enabled
 # under sed-core's `filtration` feature, NOT a default dep, to keep the
 # Phase 1 typestate-only build lean.
-rand_distr    = "0.4"
+rand_distr    = "0.6"
 
 # ---------------------------------------------------------------------------
 # M11 (audit 2026-05-10): surface hot-path panics early.
