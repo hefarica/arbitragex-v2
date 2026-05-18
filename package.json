@@ -25,7 +25,7 @@
   "overrides": {
     "micromatch": "^4.0.8",
     "postcss": "^8.5.14",
-    "undici": "^6.30.2",
+    "undici": "^6.21.1",
     "braces": "^3.0.3",
     "@typescript-eslint/typescript-estree": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
