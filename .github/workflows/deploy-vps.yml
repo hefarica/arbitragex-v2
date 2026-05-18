@@ -70,7 +70,7 @@ jobs:
           host: ${{ secrets.VPS_SSH_HOST }}
           username: ${{ secrets.VPS_SSH_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          port: 22
+          port: ${{ secrets.VPS_PORT || '22' }}
           # Strict: fail the step (and job) if any command in the script exits non-zero.
           script_stop: true
           script: |
@@ -88,13 +88,13 @@ jobs:
             git reset --hard origin/main
 
             echo "--- docker compose: pulling images ---"
-            docker compose -f docker-compose.edge.yml pull
+            docker compose -f docker/compose.prod.yml pull
 
             echo "--- docker compose: starting services ---"
-            docker compose -f docker-compose.edge.yml up -d --remove-orphans
+            docker compose -f docker/compose.prod.yml up -d --remove-orphans
 
             echo "--- docker compose: service status ---"
-            docker compose -f docker-compose.edge.yml ps
+            docker compose -f docker/compose.prod.yml ps
 
             echo "=== Deploy commands completed at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 

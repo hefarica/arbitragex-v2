@@ -19,7 +19,7 @@ import { createHash } from 'crypto';
 import {
   requireOperatorRole,
   buildOperatorAuditPayload,
-} from '../middleware/operator-authz';
+} from '../middleware/operator-authz.js';
 
 const CRUCIBLE_REQUIRED_HOURS = 72;
 const CRUCIBLE_REQUIRED_SUCCESS_RATE = 0.95;
@@ -63,7 +63,7 @@ async function readCrucibleStatus(pool: Pool, chainId: number): Promise<Crucible
   };
 }
 
-export function buildAdminPromoteMainnetRouter(pool: Pool, redis: Redis): Router {
+export function buildAdminPromoteMainnetRouter(pool: Pool, redis: any): Router {
   const router = Router();
 
   router.post('/promote-mainnet', requireOperatorRole('sovereign'), async (req, res) => {

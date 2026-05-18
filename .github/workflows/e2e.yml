@@ -32,8 +32,16 @@ jobs:
 
       - name: Bring up compose stack (dev — defaults OK for CI)
         run: |
+          cp .env.example .env
+          docker compose -f docker/compose.dev.yml up -d postgres redis
+          echo "waiting for postgres"
+          for i in $(seq 1 30); do
+            if docker exec arbitragex-v2-postgres-1 pg_isready -U postgres >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          ./automation/scripts/migrate.sh
           docker compose -f docker/compose.dev.yml up -d --build \
-            postgres redis frontend edge api-server
+            frontend edge api-server
           echo "stack up; waiting for frontend"
           for i in $(seq 1 60); do
             if curl -sf http://localhost:5173 >/dev/null; then

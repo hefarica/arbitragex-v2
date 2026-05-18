@@ -257,7 +257,7 @@ export function buildRegistryRouter<TSchema extends ZodTypeAny>(
       );
       const row = ins.rows[0];
 
-      await writeAuditEvent(client, {
+      const auditParams: any = {
         actor,
         action: "create",
         entityType: descriptor.entity,
@@ -269,10 +269,12 @@ export function buildRegistryRouter<TSchema extends ZodTypeAny>(
         hashAfter,
         idempotencyKey,
         result: "success",
-        ip: req.ip,
-        userAgent: req.header("user-agent") ?? undefined,
-        traceId: (req.header("x-request-id") as string) ?? undefined,
-      });
+      };
+      if (req.ip) auditParams.ip = req.ip;
+      if (req.header("user-agent")) auditParams.userAgent = req.header("user-agent");
+      if (req.header("x-request-id")) auditParams.traceId = req.header("x-request-id");
+      
+      await writeAuditEvent(client, auditParams);
 
       await client.query("COMMIT");
 
@@ -300,7 +302,7 @@ export function buildRegistryRouter<TSchema extends ZodTypeAny>(
 
   /** PATCH /:entity/:id — update with hash diff + audit + reload */
   router.patch(`${base}/:id`, async (req, res) => {
-    const parse = (descriptor.schema as ZodTypeAny).partial().safeParse(req.body);
+    const parse = (descriptor.schema as unknown as import("zod").ZodObject<any>).partial().safeParse(req.body);
     if (!parse.success) {
       res.status(400).json({ error: "schema_violation", details: parse.error.format() });
       return;

@@ -19,5 +19,6 @@ export default defineConfig({
       "app/**/*.test.{ts,tsx}",
     ],
     exclude: ["node_modules", ".next", "dist"],
+    setupFiles: ["./vitest.setup.ts"],
   },
 });

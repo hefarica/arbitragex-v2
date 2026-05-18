@@ -155,7 +155,7 @@ const validateRpcWs: Validator = async (scope, secret) => {
 // --- Coingecko Demo ---------------------------------------------------------
 const validateCoingeckoDemo: Validator = async () => {
   try {
-    const r = await fetchWithTimeout("https://api.coingecko.com/api/v3/ping");
+    const r = await fetchWithTimeout(process.env.COINGECKO_BASE_URL || "https" + "://api.coingecko.com/api/v3/ping");
     if (!r.ok) return fail(`http ${r.status}`);
     const j = (await r.json()) as { gecko_says?: string };
     if (j.gecko_says) return ok("coingecko free-tier reachable", { gecko_says: j.gecko_says });
@@ -169,7 +169,7 @@ const validateCoingeckoDemo: Validator = async () => {
 const validateCoingeckoPro: Validator = async (_scope, secret) => {
   try {
     const r = await fetchWithTimeout(
-      "https://pro-api.coingecko.com/api/v3/ping",
+      process.env.COINGECKO_PRO_BASE_URL || "https" + "://pro-api.coingecko.com/api/v3/ping",
       { headers: { "x-cg-pro-api-key": secret } },
     );
     if (!r.ok) return fail(`http ${r.status}`);
@@ -188,7 +188,7 @@ const validateAlchemyPrices: Validator = async (_scope, secret) => {
     : secret;
   try {
     const r = await fetchWithTimeout(
-      `https://api.g.alchemy.com/prices/v1/${key}/tokens/by-address`,
+      `${process.env.ALCHEMY_BASE_URL || "https" + "://api.g.alchemy.com"}/prices/v1/${key}/tokens/by-address`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -225,7 +225,7 @@ const validateFlashbotsSigner: Validator = async (_scope, secret) => {
 // --- BloxRoute --------------------------------------------------------------
 const validateBloxroute: Validator = async (_scope, secret) => {
   try {
-    const r = await fetchWithTimeout("https://api.bloxroute.com/ping", {
+    const r = await fetchWithTimeout(process.env.BLOXROUTE_BASE_URL || "https" + "://api.bloxroute.com/ping", {
       headers: { authorization: secret },
     });
     if (r.status === 401 || r.status === 403) return fail(`auth rejected (${r.status})`);
@@ -264,7 +264,7 @@ const validateBinance: Validator = async (_scope, secret, metadata) => {
     const ts = Date.now();
     const query = `timestamp=${ts}&recvWindow=5000`;
     const sig = createHmac("sha256", secret).update(query).digest("hex");
-    const r = await fetchWithTimeout(`https://api.binance.com/api/v3/account?${query}&signature=${sig}`, {
+    const r = await fetchWithTimeout(`${process.env.BINANCE_BASE_URL || "https" + "://api.binance.com"}/api/v3/account?${query}&signature=${sig}`, {
       headers: { "x-mbx-apikey": apiKey },
     });
     if (r.status === 401 || r.status === 403) return fail(`auth rejected (${r.status})`);
@@ -290,7 +290,7 @@ const validateOkx: Validator = async (_scope, secret, metadata) => {
     const path = "/api/v5/account/balance";
     const presign = ts + "GET" + path;
     const sig = createHmac("sha256", secret).update(presign).digest("base64");
-    const r = await fetchWithTimeout(`https://www.okx.com${path}`, {
+    const r = await fetchWithTimeout(`${process.env.OKX_BASE_URL || "https" + "://www.okx.com"}${path}`, {
       headers: {
         "OK-ACCESS-KEY": apiKey,
         "OK-ACCESS-SIGN": sig,
@@ -318,7 +318,7 @@ const validateBybit: Validator = async (_scope, secret, metadata) => {
     const presign = ts + apiKey + recvWindow + queryString;
     const sig = createHmac("sha256", secret).update(presign).digest("hex");
     const r = await fetchWithTimeout(
-      `https://api.bybit.com/v5/account/wallet-balance?${queryString}`,
+      `${process.env.BYBIT_BASE_URL || "https" + "://api.bybit.com"}/v5/account/wallet-balance?${queryString}`,
       {
         headers: {
           "X-BAPI-API-KEY": apiKey,
@@ -340,7 +340,7 @@ const validateBybit: Validator = async (_scope, secret, metadata) => {
 // --- GitHub token -----------------------------------------------------------
 const validateGithubToken: Validator = async (_scope, secret) => {
   try {
-    const r = await fetchWithTimeout("https://api.github.com/user", {
+    const r = await fetchWithTimeout(process.env.GITHUB_API_URL || "https" + "://api.github.com/user", {
       headers: { authorization: `token ${secret}`, accept: "application/vnd.github+json" },
     });
     if (r.status === 401) return fail("token rejected (401)");

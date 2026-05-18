@@ -13,6 +13,16 @@ concurrency:
 jobs:
   lint-and-test-node:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
     strategy:
       matrix:
         node-version: [20, 22]
@@ -23,22 +33,27 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci
-      - run: npm run lint
-      - run: npm run build
-      - run: npm run typecheck
-      - run: npm test
+      - run: npm run lint:all
+      - run: npm run build:all
+      - run: npm run typecheck:all
+      - run: npm run test:all
+        env:
+          REDIS_URL: redis://localhost:6379
 
   lint-and-test-rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.78
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cd backend && cargo fmt -- --check
-      - run: cd backend && cargo clippy --all-targets --all-features -- -D warnings
-      - run: cd backend && cargo test --all
+      - run: cargo fmt -- --check
+        working-directory: backend
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: backend
+      - run: cargo test --all
+        working-directory: backend
 
   lint-and-test-frontend:
     runs-on: ubuntu-latest
@@ -61,9 +76,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - run: cd contracts && forge fmt --check || true
-      - run: cd contracts && forge build || true
-      - run: cd contracts && forge test || true
+      - uses: foundry-rs/foundry-toolchain@v1
+      - run: forge test
+        working-directory: contracts
+      - run: forge fmt --check
+        working-directory: contracts
 
   ci-gate:
     runs-on: ubuntu-latest
