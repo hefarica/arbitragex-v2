@@ -432,23 +432,19 @@ impl SizeOptimizer {
         // fractional-Kelly bound on small NAVs frequently yields amounts
         // smaller than one token (e.g., 0.001 WETH = 10^15 wei is valid).
         let kelly_cap_usd = cap_usd * f_capped;
-        let kelly_cap_wei = if kelly_cap_usd > 0.0
-            && token_price_usd.is_finite()
-            && token_price_usd > 0.0
-        {
-            let tokens_capped = kelly_cap_usd / token_price_usd;
-            let wei_f = tokens_capped * 10f64.powi(i32::from(decimals));
-            if !wei_f.is_finite() || wei_f <= 0.0 {
-                // Kelly cap rounds to zero wei — too small to bet at all.
-                return OptimizeOutcome::Rejected(
-                    OptimizeRejectReason::ZeroCapitalCap,
-                );
-            }
-            f64_to_u256_clamped(wei_f.floor())
-        } else {
-            // Numerical edge — keep kernel result (conservative fall-back).
-            return OptimizeOutcome::Sized(Box::new(sized));
-        };
+        let kelly_cap_wei =
+            if kelly_cap_usd > 0.0 && token_price_usd.is_finite() && token_price_usd > 0.0 {
+                let tokens_capped = kelly_cap_usd / token_price_usd;
+                let wei_f = tokens_capped * 10f64.powi(i32::from(decimals));
+                if !wei_f.is_finite() || wei_f <= 0.0 {
+                    // Kelly cap rounds to zero wei — too small to bet at all.
+                    return OptimizeOutcome::Rejected(OptimizeRejectReason::ZeroCapitalCap);
+                }
+                f64_to_u256_clamped(wei_f.floor())
+            } else {
+                // Numerical edge — keep kernel result (conservative fall-back).
+                return OptimizeOutcome::Sized(Box::new(sized));
+            };
 
         if sized.optimal_amount_in <= kelly_cap_wei {
             // Kelly cap not binding — kernel's optimum is already inside Kelly's
@@ -536,9 +532,7 @@ impl SizeOptimizer {
         for (leg_idx, leg) in legs.iter().take(3).enumerate() {
             let pool_addr_str = match leg.pool_address.as_deref() {
                 Some(s) => s,
-                None => {
-                    return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress)
-                }
+                None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress),
             };
             let pool_addr: ethers::types::Address = match pool_addr_str.parse().ok() {
                 Some(a) => a,
@@ -659,12 +653,7 @@ impl SizeOptimizer {
             Some(a) => a,
             None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress),
         };
-        let (r0_a, r1_a) = match self
-            .state_projector
-            .reserves_cache
-            .get(&pool_a_addr)
-            .await
-        {
+        let (r0_a, r1_a) = match self.state_projector.reserves_cache.get(&pool_a_addr).await {
             Some(pair) => pair,
             None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingReservesPoolA),
         };
@@ -678,12 +667,7 @@ impl SizeOptimizer {
             Some(a) => a,
             None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress),
         };
-        let (r0_b, r1_b) = match self
-            .state_projector
-            .reserves_cache
-            .get(&pool_b_addr)
-            .await
-        {
+        let (r0_b, r1_b) = match self.state_projector.reserves_cache.get(&pool_b_addr).await {
             Some(pair) => pair,
             None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingReservesPoolB),
         };
@@ -713,7 +697,11 @@ impl SizeOptimizer {
             } else {
                 reserve_in_a
             };
-            if ceiling > x_lo { ceiling } else { x_lo }
+            if ceiling > x_lo {
+                ceiling
+            } else {
+                x_lo
+            }
         };
 
         let hop_reserves_a = vec![(reserve_in_a, reserve_out_a)];
@@ -760,9 +748,8 @@ impl SizeOptimizer {
         }
 
         let flashloan_fee_usd = if candidate.base_strategy.is_some() {
-            let borrow_usd = (clamped_to_i128(amount_in) as f64)
-                / 10f64.powi(decimals as i32)
-                * token_price_usd;
+            let borrow_usd =
+                (clamped_to_i128(amount_in) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
             borrow_usd * 0.0005
         } else {
             0.0
@@ -1713,7 +1700,10 @@ mod tests {
             .expect("optimize_with_reason must not return Err");
 
         assert!(
-            matches!(outcome, OptimizeOutcome::Rejected(OptimizeRejectReason::NoConfig)),
+            matches!(
+                outcome,
+                OptimizeOutcome::Rejected(OptimizeRejectReason::NoConfig)
+            ),
             "cfg=None must produce Rejected(NoConfig)"
         );
     }
@@ -1822,10 +1812,18 @@ mod tests {
         // The profit on 0.001 WETH at $3000/WETH ≈ $0.003. So net = 0.003 - 30 < 0.
         let tiny = U256::from(10u128).pow(U256::from(15u32)); // 0.001 ETH in wei units
         cache
-            .insert(pool_a, tiny * U256::from(1001u32), tiny * U256::from(1000u32))
+            .insert(
+                pool_a,
+                tiny * U256::from(1001u32),
+                tiny * U256::from(1000u32),
+            )
             .await;
         cache
-            .insert(pool_b, tiny * U256::from(1000u32), tiny * U256::from(1001u32))
+            .insert(
+                pool_b,
+                tiny * U256::from(1000u32),
+                tiny * U256::from(1001u32),
+            )
             .await;
 
         let projector = Arc::new(StateProjector::new(cache, None));
@@ -1942,10 +1940,7 @@ mod tests {
                 outcome2.net_profit_usd(),
                 Some(sized.estimated_net_profit_usd)
             );
-            assert_eq!(
-                outcome2.optimal_amount_in(),
-                Some(sized.optimal_amount_in)
-            );
+            assert_eq!(outcome2.optimal_amount_in(), Some(sized.optimal_amount_in));
         }
         // Ok(Rejected(...)) is also valid if orientation doesn't produce profit.
     }
@@ -2001,11 +1996,7 @@ mod tests {
 
     /// Build a SizedCandidate with explicit gross/net/optimal_amount_in
     /// for direct `apply_kelly_constraints` testing.
-    fn make_sized(
-        optimal_amount_in_wei: U256,
-        gross_usd: f64,
-        net_usd: f64,
-    ) -> SizedCandidate {
+    fn make_sized(optimal_amount_in_wei: U256, gross_usd: f64, net_usd: f64) -> SizedCandidate {
         let pa = addr(1);
         let pb = addr(2);
         let ti = addr(3);
@@ -2084,11 +2075,10 @@ mod tests {
     fn kelly_caps_optimal_when_max_per_trade_binds() {
         // Tight max_per_trade forces the cap to bind. Profit must scale down.
         let cfg = make_cfg_kelly(
-            /* capital_usd */ 3_000.0,    // $3K cap
+            /* capital_usd */ 3_000.0, // $3K cap
             /* multiplier */ 0.5,
             /* max_per_trade */ 0.001, // 0.1% of NAV → max bet $3
-            /* gas_safety */ 1.0,
-            /* min_p */ 0.8,
+            /* gas_safety */ 1.0, /* min_p */ 0.8,
         );
         // Kernel says: 1 WETH ≈ $3000, gross=$100, net=$90 (cost=$10).
         let sized = make_sized(unit(1), 100.0, 90.0);

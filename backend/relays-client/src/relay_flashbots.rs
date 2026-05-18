@@ -524,5 +524,4 @@ mod tests {
         assert_eq!(parse_hex_u128(""), Some(0u128)); // empty hex = 0
         assert_eq!(parse_hex_u128("0xGG"), None); // invalid hex digits
     }
-
 }

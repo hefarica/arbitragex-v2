@@ -73,15 +73,19 @@ impl MempoolIngestor {
                 parameter: "ARBX_MEMPOOL_WS_URL".into(),
             });
         }
-        Ok(Self { ws_url, channel_capacity })
+        Ok(Self {
+            ws_url,
+            channel_capacity,
+        })
     }
 
     /// Create from environment variable.
     pub fn from_env(channel_capacity: usize) -> Result<Self, ConnectorError> {
-        let url = shared_rs::config::require_env("ARBX_MEMPOOL_WS_URL")
-            .map_err(|e| ConnectorError::ConfigMissing {
+        let url = shared_rs::config::require_env("ARBX_MEMPOOL_WS_URL").map_err(|e| {
+            ConnectorError::ConfigMissing {
                 parameter: format!("ARBX_MEMPOOL_WS_URL: {e}"),
-            })?;
+            }
+        })?;
         Self::new(url, channel_capacity)
     }
 

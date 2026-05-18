@@ -451,12 +451,11 @@ async fn main() -> Result<()> {
 
     // --- 4. PostgreSQL ---
     // OMEGA-8/M3 P1-2: full timeouts (acquire + idle + max_lifetime + min).
-    let pool = shared_rs::db_pool::options_with_timeouts(
-        &shared_rs::db_pool::PoolConfig::from_env(5),
-    )
-    .connect(&database_url)
-    .await
-    .context("PgPoolOptions::connect")?;
+    let pool =
+        shared_rs::db_pool::options_with_timeouts(&shared_rs::db_pool::PoolConfig::from_env(5))
+            .connect(&database_url)
+            .await
+            .context("PgPoolOptions::connect")?;
     info!(event = "enricher.db_connected");
 
     // --- 4b. Parse enabled chains + build HttpRpcPool per chain ---

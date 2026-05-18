@@ -272,8 +272,7 @@ impl ChainConfigReloader {
             ReloadDecision::Malformed => {
                 warn!(
                     event = "chain_reload.malformed",
-                    payload,
-                    "config_hash empty; payload ignored"
+                    payload, "config_hash empty; payload ignored"
                 );
             }
         }
@@ -299,7 +298,10 @@ mod tests {
     #[tokio::test]
     async fn first_event_per_chain_accepted() {
         let r = ChainConfigReloader::new("redis://_test".into(), CancellationToken::new());
-        assert_eq!(r.classify(&ev(1, "h1", "created")).await, ReloadDecision::Accepted);
+        assert_eq!(
+            r.classify(&ev(1, "h1", "created")).await,
+            ReloadDecision::Accepted
+        );
     }
 
     #[tokio::test]
@@ -342,9 +344,15 @@ mod tests {
     #[tokio::test]
     async fn empty_hash_is_malformed_and_state_unchanged() {
         let r = ChainConfigReloader::new("redis://_test".into(), CancellationToken::new());
-        assert_eq!(r.classify(&ev(1, "", "created")).await, ReloadDecision::Malformed);
+        assert_eq!(
+            r.classify(&ev(1, "", "created")).await,
+            ReloadDecision::Malformed
+        );
         let map = r.seen.read().await;
-        assert!(!map.contains_key(&1), "Malformed must NOT update dedup state");
+        assert!(
+            !map.contains_key(&1),
+            "Malformed must NOT update dedup state"
+        );
     }
 
     #[tokio::test]
@@ -388,7 +396,10 @@ mod tests {
     fn payload_garbage_rejected() {
         assert!(serde_json::from_str::<ChainReloadEvent>("not json").is_err());
         // Missing chain_id — required field.
-        assert!(serde_json::from_str::<ChainReloadEvent>("{\"action\":\"x\",\"config_hash\":\"h\"}").is_err());
+        assert!(serde_json::from_str::<ChainReloadEvent>(
+            "{\"action\":\"x\",\"config_hash\":\"h\"}"
+        )
+        .is_err());
     }
 
     // ── Cancellation behaviour ─────────────────────────────────────────

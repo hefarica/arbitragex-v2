@@ -97,9 +97,7 @@ pub use effective_hamiltonian::{EffectiveHamiltonian, HamiltonianError};
 pub use lanczos_solver::{EigenstateDecomposition, LanczosError, LANCZOS_THRESHOLD};
 
 #[cfg(feature = "eigenstate")]
-pub use transition_projector::{
-    ProjectionError, TransitionProjection, TransitionProjector,
-};
+pub use transition_projector::{ProjectionError, TransitionProjection, TransitionProjector};
 
 // ── Phase 5 bridge types (allocator consumes these from eigenstate) ───
 
@@ -199,4 +197,3 @@ mod tests {
         assert!(boundary.contains(&far));
     }
 }
-
