@@ -726,7 +726,7 @@ jobs:
       # ──────────────────────────────────────────────────────────────
       - name: Step 20 — Upload artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.mode }}-${{ inputs.target_sha }}-${{ github.run_id }}
           path: /tmp/audit/

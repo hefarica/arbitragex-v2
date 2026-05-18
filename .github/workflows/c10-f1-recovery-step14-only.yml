@@ -238,7 +238,7 @@ jobs:
 
       - name: Step 14 — Upload artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: c10-f1-recovery-step14-only-${{ github.run_id }}
           path: /tmp/audit/
