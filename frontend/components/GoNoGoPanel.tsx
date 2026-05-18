@@ -72,7 +72,7 @@ async function fetchGoNoGoData(): Promise<LoadState> {
   } else if (decisionRes.status === "fulfilled" && !decisionRes.value.ok) {
     return { kind: "error", detail: `Decision API: ${decisionRes.value.error}` };
   } else {
-    return { kind: "error", detail: `Decision API failed: ${(decisionRes.reason as Error).message}` };
+    return { kind: "error", detail: `Decision API failed: ${((decisionRes as PromiseRejectedResult).reason as Error)?.message ?? "Unknown error"}` };
   }
 
   // Check 1: Paper Shadow 14d — inferred from decision (go_a5 implies A.5 PASS)
@@ -92,7 +92,7 @@ async function fetchGoNoGoData(): Promise<LoadState> {
   } else if (onboardingRes.status === "fulfilled" && !onboardingRes.value.ok) {
     vaultDetail = `Error: ${onboardingRes.value.error}`;
   } else {
-    vaultDetail = `Error: ${(onboardingRes.reason as Error).message}`;
+    vaultDetail = `Error: ${((onboardingRes as PromiseRejectedResult).reason as Error)?.message ?? "Unknown error"}`;
   }
 
   // Check 3: Kill-switch is OFF
@@ -107,7 +107,7 @@ async function fetchGoNoGoData(): Promise<LoadState> {
   } else if (statusRes.status === "fulfilled" && !statusRes.value.ok) {
     ksDetail = `Error: ${statusRes.value.error}`;
   } else {
-    ksDetail = `Error: ${(statusRes.reason as Error).message}`;
+    ksDetail = `Error: ${((statusRes as PromiseRejectedResult).reason as Error)?.message ?? "Unknown error"}`;
   }
 
   // Check 4: All services UP
@@ -124,7 +124,7 @@ async function fetchGoNoGoData(): Promise<LoadState> {
   } else if (statusRes.status === "fulfilled" && !statusRes.value.ok) {
     svcDetail = `Error: ${statusRes.value.error}`;
   } else {
-    svcDetail = `Error: ${(statusRes.reason as Error).message}`;
+    svcDetail = `Error: ${((statusRes as PromiseRejectedResult).reason as Error)?.message ?? "Unknown error"}`;
   }
 
   const checks: CheckItem[] = [
