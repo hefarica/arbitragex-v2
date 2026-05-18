@@ -14,7 +14,7 @@ import { createHash } from 'crypto';
 import {
   requireOperatorRole,
   buildOperatorAuditPayload,
-} from '../middleware/operator-authz.js';
+} from '../middleware/operator-authz';
 
 export function buildOperatorRouter(pool: Pool): Router {
   const router = Router();
