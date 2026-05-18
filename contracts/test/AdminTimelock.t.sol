@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+﻿// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
 // =============================================================================
@@ -137,7 +137,7 @@ contract AdminTimelockTest is Test {
         tl.execute(address(target), 0, callData, predecessor, salt);
 
         // Counter must remain 0 — no execution happened
-        assertEq(target.counter(), 0, "target.counter must be 0 — execution must not have happened");
+        assertEq(target.counter(), 0, unicode"target.counter must be 0 — execution must not have happened");
     }
 
     // =========================================================================

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+﻿// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
 // =============================================================================
@@ -105,7 +105,7 @@ contract ReentrantAttackerRouter {
             try target.executeArbitrage(
                 bytes32(0), address(0), address(0), 0, 0, routers, payloads
             ) {
-                revert("REENTRANCY SUCCESS — INVARIANT VIOLATED");
+                revert(unicode"REENTRANCY SUCCESS — INVARIANT VIOLATED");
             } catch {
                 // Reentrance bloqueado correctamente
             }
