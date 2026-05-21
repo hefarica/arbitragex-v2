@@ -20,8 +20,10 @@ beforeAll(async () => {
     port: container.getMappedPort(5432),
     user: "postgres", password: "test", database: "arbitragex",
   });
-  // Apply prereqs (003_opportunities + role 001_roles).
-  for (const f of ["001_roles.sql", "003_opportunities.sql"]) {
+  // Apply prereqs in numeric order. 021 creates the tokens table (+ chains/
+  // dexes/etc.); migration 034 (applied below) only ALTERs tokens, so 021 must
+  // run first or 034 fails with "relation tokens does not exist".
+  for (const f of ["001_roles.sql", "003_opportunities.sql", "021_defi_registries.sql"]) {
     const sql = readFileSync(path.join(__dirname, "../../../database/migrations", f), "utf8");
     await pool.query(sql);
   }

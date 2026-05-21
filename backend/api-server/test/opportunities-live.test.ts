@@ -69,6 +69,9 @@ beforeAll(async () => {
   for (const f of [
     "001_roles.sql",
     "003_opportunities.sql",
+    // 021 creates the tokens table (+ chains/dexes/etc.); 034 only ALTERs it,
+    // so 021 must be applied first or 034 fails with "relation tokens does not exist".
+    "021_defi_registries.sql",
     "033_opportunities_fail_honest_and_cross_chain_slots.sql",
     "034_tokens_table.sql",
   ]) {
