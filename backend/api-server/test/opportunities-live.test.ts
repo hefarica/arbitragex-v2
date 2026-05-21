@@ -82,6 +82,12 @@ beforeAll(async () => {
   ]) {
     await pool.query(loadMigration(f));
   }
+  // tokens.chain_id has a FK to chains(chain_id) (migration 021). The token
+  // enrichment rows below use chain_id=1, so seed the chain registry row.
+  await pool.query(
+    `INSERT INTO chains (chain_id, name, native_currency)
+     VALUES (1, 'Ethereum', 'ETH') ON CONFLICT (chain_id) DO NOTHING`,
+  );
 }, 60_000);
 
 afterAll(async () => {

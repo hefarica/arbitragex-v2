@@ -27,6 +27,12 @@ beforeAll(async () => {
     const sql = readFileSync(path.join(__dirname, "../../../database/migrations", f), "utf8");
     await pool.query(sql);
   }
+  // tokens.chain_id has a FK to chains(chain_id) (migration 021). Token inserts
+  // below use chain_id=1, so the referenced chain registry row must exist.
+  await pool.query(
+    `INSERT INTO chains (chain_id, name, native_currency)
+     VALUES (1, 'Ethereum', 'ETH') ON CONFLICT (chain_id) DO NOTHING`,
+  );
 }, 60_000);
 
 afterAll(async () => {
