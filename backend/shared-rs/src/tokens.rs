@@ -226,8 +226,8 @@ mod tests {
     #[test]
     fn weth_mainnet_address_full_vector() {
         let expected: [u8; 20] = [
-            0xc0, 0x2a, 0xaa, 0x39, 0xb2, 0x23, 0xfe, 0x8d, 0x0a, 0x0e,
-            0x5c, 0x4f, 0x27, 0xea, 0xd9, 0x08, 0x3c, 0x75, 0x6c, 0xc2,
+            0xc0, 0x2a, 0xaa, 0x39, 0xb2, 0x23, 0xfe, 0x8d, 0x0a, 0x0e, 0x5c, 0x4f, 0x27, 0xea,
+            0xd9, 0x08, 0x3c, 0x75, 0x6c, 0xc2,
         ];
         assert_eq!(WETH_MAINNET.address, expected);
     }
@@ -345,7 +345,9 @@ mod tests {
         assert!(addr.starts_with("0x"), "address must be 0x-prefixed");
         // All hex chars after 0x must be lowercase.
         assert!(
-            addr[2..].chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            addr[2..]
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
             "address must be lowercase hex: {addr}",
         );
         assert_eq!(addr, "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");

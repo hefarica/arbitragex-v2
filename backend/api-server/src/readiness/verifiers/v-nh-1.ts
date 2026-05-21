@@ -19,10 +19,12 @@ export async function verifyVNH1(opts?: {
   cwd?: string;
   timeoutMs?: number;
   now?: () => Date;
+  execFn?: (cmd: string, options: any) => Promise<any>;
 }): Promise<ReadinessItem> {
   const script = opts?.script ?? DEFAULT_SCRIPT;
   const cwd = opts?.cwd ?? DEFAULT_CWD;
   const timeout = opts?.timeoutMs ?? 10_000;
+  const runner = opts?.execFn ?? execp;
   const verified_at = (opts?.now ?? (() => new Date()))().toISOString();
   const base = {
     id: "V-NH-1",
@@ -43,7 +45,7 @@ export async function verifyVNH1(opts?: {
   }
 
   try {
-    await execp(`bash ${script}`, { cwd, timeout, maxBuffer: 1024 * 1024 });
+    await runner(`bash ${script}`, { cwd, timeout, maxBuffer: 1024 * 1024 });
     return {
       ...base,
       status: "green",

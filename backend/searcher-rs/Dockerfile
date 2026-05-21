@@ -29,6 +29,7 @@ COPY simulator-v2 ./simulator-v2
 # to have a readable manifest, otherwise `cargo build -p searcher-rs` errors
 # with "failed to load manifest for workspace member /build/token-enricher".
 COPY token-enricher ./token-enricher
+COPY sed-core ./sed-core
 # --locked enforces reproducibility (Cargo.lock must match Cargo.toml).
 # --frozen would also enable --offline, which requires a pre-populated
 # ~/.cargo/registry index — not available in this fresh build context.

@@ -3,7 +3,7 @@
 //! Reads prices from REAL pool reserves. Never hardcoded.
 
 use super::error::ConnectorError;
-use super::reserve_reader::{ReserveReader, OnChainReserves, PoolType};
+use super::reserve_reader::{OnChainReserves, PoolType, ReserveReader};
 
 /// A price observation from a real on-chain source.
 #[derive(Debug, Clone)]
@@ -41,7 +41,9 @@ impl PriceFeed {
 
     /// Get spot price from a V2 pool's reserves.
     /// price = reserve1 / reserve0
-    pub fn spot_from_reserves(reserves: &OnChainReserves) -> Result<PriceObservation, ConnectorError> {
+    pub fn spot_from_reserves(
+        reserves: &OnChainReserves,
+    ) -> Result<PriceObservation, ConnectorError> {
         if reserves.reserve0 <= 0.0 {
             return Err(ConnectorError::DataQuality {
                 source: reserves.pool_address.clone(),

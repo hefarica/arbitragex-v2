@@ -197,7 +197,6 @@ impl<T> BundlePosition<T> {
     }
 }
 
-
 #[cfg(feature = "hedger")]
 impl BundlePosition<OrthogonalEquilibrium> {
     /// Construct an `OrthogonalEquilibrium` bundle. Requires a proof
@@ -357,8 +356,7 @@ impl BundlePosition<HolonomicLoopResolution> {
         }
 
         // Validación 6: Fricción de red deducida correctamente.
-        let expected_net =
-            topological_yield.raw_holonomy - topological_yield.network_friction;
+        let expected_net = topological_yield.raw_holonomy - topological_yield.network_friction;
         if (expected_net - topological_yield.net_yield).abs() > 1e-9 {
             return Err(TopologyValidationError::FrictionDeductionInvalid);
         }
@@ -390,7 +388,10 @@ mod tests {
             0.0,
             &proof,
         );
-        assert!(matches!(r, Err(TopologyValidationError::NonOrthogonalCovariance)));
+        assert!(matches!(
+            r,
+            Err(TopologyValidationError::NonOrthogonalCovariance)
+        ));
     }
 
     #[test]
@@ -416,7 +417,10 @@ mod tests {
             0.0,
             &proof,
         );
-        assert!(matches!(r, Err(TopologyValidationError::HyperbolicViolation)));
+        assert!(matches!(
+            r,
+            Err(TopologyValidationError::HyperbolicViolation)
+        ));
     }
 
     #[test]

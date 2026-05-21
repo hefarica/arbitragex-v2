@@ -40,33 +40,7 @@ const TILES: Tile[] = [
 ];
 
 export default async function Home() {
-  // Tolerate-degraded pattern: the home page MUST render an h1 even when
-  // upstream calls fail. Promise.all would have rejected the whole render
-  // on a single failure, falling through to error.tsx which surfaces a
-  // level-2 "Application error" heading — the smoke test (and humans)
-  // would then see no level-1 heading at all on /.
-  //
-  // With allSettled, each tile gracefully degrades:
-  //  - getStatus()         → HomeKpiStrip shows "status unavailable" badge
-  //  - getReconSummary(1)  → KPI tiles render zero-state, not a crash.
-  //
-  // Doctrine: degraded != mocked. We surface the real error, we just keep
-  // the chrome (header, h1, sidebar) intact so the user can still navigate.
-  const [statusSettled, reconSettled] = await Promise.allSettled([
-    getStatus(),
-    getReconSummary(1),
-  ]);
-
-  const status =
-    statusSettled.status === "fulfilled"
-      ? statusSettled.value
-      : { ok: false as const, error: String(statusSettled.reason ?? "status unavailable") };
-
-  const recon =
-    reconSettled.status === "fulfilled"
-      ? reconSettled.value
-      : { ok: false as const, error: String(reconSettled.reason ?? "recon unavailable") };
-
+  const [status, recon] = await Promise.all([getStatus(), getReconSummary(1)]);
   return (
     <>
       <div className="mb-8 space-y-2">
@@ -74,7 +48,7 @@ export default async function Home() {
           <span className="size-1.5 rounded-full bg-primary" />
           operator console
         </div>
-        <h1 data-testid="page-title">ArbitrageX operator console</h1>
+        <h1>Platform control plane.</h1>
         <p className="max-w-2xl text-base text-muted-foreground">
           Every view below consumes live edge endpoints. When an upstream is unhealthy
           the page surfaces the error verbatim — it never synthesizes values.

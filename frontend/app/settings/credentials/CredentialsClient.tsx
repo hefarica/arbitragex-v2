@@ -139,7 +139,7 @@ const CATEGORIES: CategorySpec[] = [
         display_name: "Flashbots searcher signing key",
         description: "0x-prefixed 32-byte private key. Used to sign Flashbots bundle headers. The on-chain executor uses a different key.",
         secret_label: "Private key (0x...)",
-        secret_placeholder: "0x0000000000000000000000000000000000000000000000000000000000000000",
+        secret_placeholder: "<empty-secret-placeholder>",
         secret_kind: "password",
       },
       {

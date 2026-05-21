@@ -21,9 +21,9 @@
 //! - Only read-only RPC methods: `eth_call`, `eth_gasPrice`, `eth_subscribe`
 //! - Flashbots: `eth_callBundle` (simulation) only, NEVER `eth_sendBundle`
 
-pub mod mempool_listener;
-pub mod reserve_reader;
-pub mod gas_oracle;
-pub mod flashbots_simulator;
-pub mod price_feed;
 pub mod error;
+pub mod flashbots_simulator;
+pub mod gas_oracle;
+pub mod mempool_listener;
+pub mod price_feed;
+pub mod reserve_reader;

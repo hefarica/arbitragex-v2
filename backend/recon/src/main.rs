@@ -187,9 +187,10 @@ async fn main() -> anyhow::Result<()> {
 
     let db_url = require_env("DATABASE_URL")?;
     // OMEGA-8/M3 P1-2: timeouts applied (acquire/idle/max_lifetime/min).
-    let db = shared_rs::db_pool::options_with_timeouts(&shared_rs::db_pool::PoolConfig::from_env(5))
-        .connect(&db_url)
-        .await?;
+    let db =
+        shared_rs::db_pool::options_with_timeouts(&shared_rs::db_pool::PoolConfig::from_env(5))
+            .connect(&db_url)
+            .await?;
     let state = Arc::new(AppState { db });
 
     let port: u16 = std::env::var("RECON_PORT")

@@ -47,10 +47,8 @@ EXCEPTION
         RAISE NOTICE 'Section 1: audit_log or arbx_rw role not found — REVOKE skipped';
 END $$;
 
--- BUG-FIX iter 15 (OMEGA-S5): RAISE NOTICE is plpgsql-only; cannot appear
--- at the top level. Wrapped in a DO block so the audit message still
--- surfaces during migration apply without raising a SQL syntax error.
-DO $$ BEGIN
+DO $$
+BEGIN
     RAISE NOTICE 'Migration 054 Section 1: GRANT hardening applied to audit_log';
 END $$;
 

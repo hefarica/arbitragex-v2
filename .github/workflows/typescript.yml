@@ -49,7 +49,7 @@ jobs:
         # Single npm ci at root resolves all workspaces:
         #   shared-ts, backend/api-server, backend/selector-api,
         #   edge/worker, edge/dev-local, frontend
-        run: npm ci
+        run: npm install
 
       - name: Build @arbx/shared
         # M2 Capa1 Fase 7 — order fix. Dependent workspaces

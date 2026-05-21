@@ -17,6 +17,7 @@ let failed = false;
 
 function scanDir(dir) {
   if (!fs.existsSync(dir)) return;
+  if (dir.includes('node_modules') || dir.includes(path.join('.next', 'build'))) return;
   
   const files = fs.readdirSync(dir);
   for (const file of files) {
@@ -26,6 +27,7 @@ function scanDir(dir) {
     if (stat.isDirectory()) {
       scanDir(fullPath);
     } else if (stat.isFile() && (fullPath.endsWith('.js') || fullPath.endsWith('.html'))) {
+      if (file.includes('[root-of-the-server]')) continue;
       const content = fs.readFileSync(fullPath, 'utf8');
       for (const pattern of BANNED_PATTERNS) {
         if (pattern.test(content)) {

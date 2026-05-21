@@ -132,13 +132,10 @@ export async function writeAuditEvent(
     hashAfter: string;
     idempotencyKey: string;
     result: "success" | "partial" | "failed";
-    error?: string | undefined;
-    // Optional fields accept `undefined` explicitly so callsites can pass
-    // `req.ip` / `req.header(...)` directly without a conditional spread
-    // dance (exactOptionalPropertyTypes: true).
-    ip?: string | undefined;
-    userAgent?: string | undefined;
-    traceId?: string | undefined;
+    error?: string;
+    ip?: string;
+    userAgent?: string;
+    traceId?: string;
   },
 ): Promise<void> {
   // OMEGA-8/M3 P1-3: PII hardening wired-in. ip_address envuelta con
@@ -260,6 +257,11 @@ export function buildRegistryRouter<TSchema extends ZodTypeAny>(
       );
       const row = ins.rows[0];
 
+      // exactOptionalPropertyTypes: omitir keys cuando el valor es undefined
+      // en vez de pasarlas como undefined (doctrina R7: caller-side spread).
+      const ip = req.ip;
+      const userAgent = req.header("user-agent");
+      const traceId = req.header("x-request-id");
       await writeAuditEvent(client, {
         actor,
         action: "create",
@@ -272,9 +274,9 @@ export function buildRegistryRouter<TSchema extends ZodTypeAny>(
         hashAfter,
         idempotencyKey,
         result: "success",
-        ip: req.ip,
-        userAgent: req.header("user-agent") ?? undefined,
-        traceId: (req.header("x-request-id") as string) ?? undefined,
+        ...(ip !== undefined ? { ip } : {}),
+        ...(userAgent !== undefined ? { userAgent } : {}),
+        ...(typeof traceId === "string" ? { traceId } : {}),
       });
 
       await client.query("COMMIT");
@@ -303,11 +305,17 @@ export function buildRegistryRouter<TSchema extends ZodTypeAny>(
 
   /** PATCH /:entity/:id — update with hash diff + audit + reload */
   router.patch(`${base}/:id`, async (req, res) => {
-    // .partial() only exists on ZodObject. All registry schemas are objects
-    // (see RpcDescriptor / ContractDescriptor below), so the cast is safe.
-    const parse = (descriptor.schema as unknown as z.ZodObject<z.ZodRawShape>)
-      .partial()
-      .safeParse(req.body);
+    // Narrowing fail-honest (R8): los 6 descriptors canónicos usan z.object,
+    // así .partial() existe en runtime. Si alguien registra un schema no-object,
+    // detener con 500 explícito en vez de cast ciego.
+    if (!(descriptor.schema instanceof z.ZodObject)) {
+      res.status(500).json({
+        error: "descriptor_misconfigured",
+        detail: "PATCH requires a z.object() schema",
+      });
+      return;
+    }
+    const parse = descriptor.schema.partial().safeParse(req.body);
     if (!parse.success) {
       res.status(400).json({ error: "schema_violation", details: parse.error.format() });
       return;

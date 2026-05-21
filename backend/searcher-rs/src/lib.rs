@@ -7,8 +7,6 @@
 // carry their own allows where the pattern is demonstrably safe.
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
-// Configuration modules — fail-fast env-driven loaders (no hardcoded defaults).
-pub mod config;
 // Phase 1-3 modules re-exported so the library target compiles standalone.
 pub mod amm_math;
 pub mod calldata;

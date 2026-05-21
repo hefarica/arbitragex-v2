@@ -1,0 +1,42 @@
+stateDiagram-v2
+  [*] --> MONITORING: System starts
+
+  MONITORING --> CALCULATING: New block detected
+  CALCULATING --> SIMULATING: Profitable path found
+  CALCULATING --> MONITORING: No opportunity
+
+  SIMULATING --> SUBMITTING: Simulation passes
+  SIMULATING --> MONITORING: Simulation fails
+
+  SUBMITTING --> CONFIRMING: Bundle submitted
+  SUBMITTING --> MONITORING: Submission rejected
+
+  CONFIRMING --> RECONCILING: Block confirmed
+  CONFIRMING --> MONITORING: Bundle not included
+
+  RECONCILING --> PROFIT: P&L > 0
+  RECONCILING --> LOSS: P&L < 0
+  RECONCILING --> REVERTED: Tx reverted
+
+  PROFIT --> MONITORING: Continue
+  LOSS --> MONITORING: Continue
+  REVERTED --> MONITORING: Continue
+
+  note right of MONITORING
+    Kill-switch can trigger
+    from ANY non-terminal state
+  end note
+
+  MONITORING --> ABORTED: Kill-switch ARMED
+  CALCULATING --> ABORTED: Kill-switch ARMED
+  SIMULATING --> ABORTED: Kill-switch ARMED
+  SUBMITTING --> ABORTED: Kill-switch ARMED
+  CONFIRMING --> ABORTED: Kill-switch ARMED
+
+  ABORTED --> [*]: System shutdown
+
+  note left of ABORTED
+    Paper mode: no capital lost
+    Audit log: reason + timestamp
+    Operator notified
+  end note

@@ -21,11 +21,11 @@ testMaybe("kill-switch arms and disarms, /status reflects within seconds", async
   await page.getByRole("button", { name: /arm/i }).click();
 
   // The page should show ARMED state within a couple of seconds.
-  await expect(page.getByText(/armed/i).first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/armed/i)).toBeVisible({ timeout: 10_000 });
 
   // Check /status reflects the same state.
   await page.goto("/status");
-  await expect(page.getByText(/armed/i).first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/armed/i)).toBeVisible({ timeout: 10_000 });
 
   // Disarm.
   await page.goto("/killswitch");
@@ -33,11 +33,11 @@ testMaybe("kill-switch arms and disarms, /status reflects within seconds", async
   await page.getByLabel(/reason/i).fill("e2e: disarm from test");
   await page.getByRole("button", { name: /^disable$/i }).click();
 
-  await expect(page.getByText(/disabled/i).first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/disabled/i)).toBeVisible({ timeout: 10_000 });
 
   // Status page also reflects disarm.
   await page.goto("/status");
-  await expect(page.getByText(/disabled/i).first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/disabled/i)).toBeVisible({ timeout: 10_000 });
 });
 
 testMaybe("kill-switch form refuses to arm without a reason (audit guard)", async ({ page }) => {

@@ -3,7 +3,7 @@
 //! Implementa la exportación de logs estructurados (JSON),
 //! exposición de métricas (Prometheus) y envíos de alertas a Discord/Telegram.
 
-use tracing::{error, info, Level};
+use tracing::{info, error, Level};
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
 

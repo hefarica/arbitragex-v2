@@ -90,56 +90,24 @@ ON CONFLICT (operator_id) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
 -- feature_manifest: registra la propia capacidad de soberanía como feature
---
--- BUG-FIX iter 16 (OMEGA-S5): migration 067 creates feature_manifest with
--- columns (feature_key, description, layer, state_hash, panel_path,
--- required), but this migration's INSERT and backend/api-server/src/
--- routes/operator.ts read/write a different (broader) contract:
--- (feature_key, ui_path, backend_route, requires_layers, enabled,
--- description). Both consumers coexist (system-manifest.ts uses the 067
--- shape; operator.ts uses the 068 shape). Doctrinal fix forward: extend
--- the table additively so BOTH contracts work simultaneously.
 -- ---------------------------------------------------------------------------
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='feature_manifest') THEN
-    -- Add the columns that operator.ts expects but 067 did not provide.
-    -- All nullable on add; we backfill from the 067 columns immediately
-    -- below so legacy rows are coherent under both contracts.
-    ALTER TABLE feature_manifest
-      ADD COLUMN IF NOT EXISTS ui_path         TEXT  NULL,
-      ADD COLUMN IF NOT EXISTS backend_route   TEXT  NULL,
-      ADD COLUMN IF NOT EXISTS requires_layers JSONB NULL,
-      ADD COLUMN IF NOT EXISTS enabled         BOOLEAN NULL;
+    ALTER TABLE feature_manifest 
+      ADD COLUMN IF NOT EXISTS ui_path TEXT,
+      ADD COLUMN IF NOT EXISTS backend_route TEXT,
+      ADD COLUMN IF NOT EXISTS requires_layers JSONB DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS enabled BOOLEAN DEFAULT TRUE;
 
-    -- Backfill from the 067 contract:
-    --   panel_path → ui_path (same semantics: UI route for the feature)
-    --   required   → enabled (semantic alias; both gate visibility)
-    --   layer      → requires_layers as a single-element JSON array
-    UPDATE feature_manifest
-       SET ui_path         = COALESCE(ui_path, panel_path),
-           enabled         = COALESCE(enabled, required),
-           requires_layers = COALESCE(requires_layers, jsonb_build_array(layer))
-     WHERE ui_path IS NULL OR enabled IS NULL OR requires_layers IS NULL;
-
-    -- Lock the new columns to NOT NULL once backfill is complete so the
-    -- operator.ts SELECT never sees NULL where it expects a value.
-    ALTER TABLE feature_manifest
-      ALTER COLUMN ui_path         SET NOT NULL,
-      ALTER COLUMN requires_layers SET NOT NULL,
-      ALTER COLUMN enabled         SET DEFAULT TRUE,
-      ALTER COLUMN enabled         SET NOT NULL;
-
-    INSERT INTO feature_manifest (feature_key, ui_path, backend_route, requires_layers, enabled, description, layer, state_hash, panel_path, required)
+    INSERT INTO feature_manifest (feature_key, ui_path, backend_route, requires_layers, enabled, description)
     VALUES
       ('operator_parametrization', '/omega-s5/operator', '/api/operator/me',
        '["api","handler","pg","authz","audit"]'::jsonb, TRUE,
-       'Operator Parametrization Sovereignty (C9.4)',
-       'backend', repeat('0',64), '/omega-s5/operator', TRUE),
+       'Operator Parametrization Sovereignty (C9.4)'),
       ('operator_gate_authz', '/omega-s5/registry', '/api/operator/authorize',
        '["api","handler","authz","audit"]'::jsonb, TRUE,
-       '9-Layer Coherence — L8 Operator Authz / L9 Operator Audit',
-       'backend', repeat('0',64), '/omega-s5/registry', TRUE)
+       '9-Layer Coherence — L8 Operator Authz / L9 Operator Audit')
     ON CONFLICT (feature_key) DO NOTHING;
   END IF;
 END $$;

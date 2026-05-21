@@ -1,8 +1,8 @@
-import { InfoIcon } from "lucide-react";
+import { AlertCircleIcon, InfoIcon } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { FocusOnMount } from "@/components/focus-on-mount";
 import { PageHeader } from "@/components/page-header";
-import { EdgeHealthBanner } from "@/components/edge-health-banner";
 import { TradingConfigForm } from "@/components/trading-config-form";
 import { getTradingConfig } from "@/lib/api-client";
 
@@ -25,7 +25,15 @@ export default async function TradingConfigPage() {
           lede="Per-chain operator-tunable strategy parameters. Live in Redis with <1s hot-reload to searcher-rs."
           showRefresh
         />
-        <EdgeHealthBanner result={res} subject="trading config" />
+        <FocusOnMount>
+          <Alert variant="destructive">
+            <AlertCircleIcon />
+            <AlertTitle>edge error</AlertTitle>
+            <AlertDescription>
+              <code className="font-mono text-xs">{res.error}</code>
+            </AlertDescription>
+          </Alert>
+        </FocusOnMount>
       </>
     );
   }

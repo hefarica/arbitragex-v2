@@ -121,18 +121,9 @@ pub struct SequenceCall {
 /// Outcome of a single `call()`.
 #[derive(Debug, Clone)]
 pub enum CallOutcome {
-    Success {
-        gas_used: u64,
-        output: Vec<u8>,
-    },
-    Reverted {
-        gas_used: u64,
-        reason: String,
-    },
-    Halted {
-        gas_used: u64,
-        reason: String,
-    },
+    Success { gas_used: u64, output: Vec<u8> },
+    Reverted { gas_used: u64, reason: String },
+    Halted { gas_used: u64, reason: String },
 }
 
 impl CallOutcome {
@@ -501,10 +492,7 @@ mod tests {
     fn build_balance_of_calldata_differs_per_account() {
         let a = Address::from([0x11u8; 20]);
         let b = Address::from([0x22u8; 20]);
-        assert_ne!(
-            build_balance_of_calldata(a),
-            build_balance_of_calldata(b),
-        );
+        assert_ne!(build_balance_of_calldata(a), build_balance_of_calldata(b),);
     }
 
     /// `decode_revert_reason` parses an ABI-encoded `Error(string)`.
@@ -543,7 +531,10 @@ mod tests {
             SequenceError::StorageOverrideFailed("x".into()).reason_tag(),
             "storage_override_failed"
         );
-        assert_eq!(SequenceError::TransactInfra("x".into()).reason_tag(), "transact_infra");
+        assert_eq!(
+            SequenceError::TransactInfra("x".into()).reason_tag(),
+            "transact_infra"
+        );
         assert_eq!(
             SequenceError::BalanceDecodeFailed { len: 0 }.reason_tag(),
             "balance_decode_failed"

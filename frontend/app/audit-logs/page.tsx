@@ -1,5 +1,8 @@
+import { AlertCircleIcon } from "lucide-react";
+
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { FocusOnMount } from "@/components/focus-on-mount";
 import { PageHeader } from "@/components/page-header";
-import { EdgeHealthBanner } from "@/components/edge-health-banner";
 import { AuditLogsTable } from "@/features/audit-logs/AuditLogsTable";
 import { AuditLogsEmpty } from "@/features/audit-logs/AuditLogsEmpty";
 import { getAuditLogs } from "@/lib/api-client";
@@ -33,7 +36,15 @@ export default async function AuditLogsPage({
       />
 
       {!res.ok ? (
-        <EdgeHealthBanner result={res} subject="audit logs" />
+        <FocusOnMount>
+          <Alert variant="destructive">
+            <AlertCircleIcon />
+            <AlertTitle>edge error</AlertTitle>
+            <AlertDescription>
+              <code className="font-mono text-xs">{res.error}</code>
+            </AlertDescription>
+          </Alert>
+        </FocusOnMount>
       ) : res.data.items.length === 0 ? (
         <AuditLogsEmpty />
       ) : (

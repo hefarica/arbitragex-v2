@@ -38,8 +38,8 @@ test("opportunities page shows enriched tokens or honest fallback", async ({ pag
   const detectedRows = page.locator('tr:has(td[data-status="detected"])');
   const count = await detectedRows.count();
 
-  for (let i = 0; i < count; i++) {
-    const row = detectedRows.nth(i);
+  const allRows = await detectedRows.all();
+  for (const row of allRows) {
     const yieldCell = await row.locator('[data-col="yield"]').textContent();
     expect(yieldCell?.trim()).toBe("—");
   }

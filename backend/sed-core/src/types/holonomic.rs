@@ -202,7 +202,12 @@ mod tests {
     fn three_manifold_loop_with_matching_endpoints_is_closed() {
         let c = ClosedContourTrajectory {
             manifolds: vec![manifold("0xA"), manifold("0xB"), manifold("0xC")],
-            transition_points: vec![dvec(&[1.0, 0.0]), dvec(&[0.0, 1.0]), dvec(&[1.0, 1.0]), dvec(&[1.0, 0.0])],
+            transition_points: vec![
+                dvec(&[1.0, 0.0]),
+                dvec(&[0.0, 1.0]),
+                dvec(&[1.0, 1.0]),
+                dvec(&[1.0, 0.0]),
+            ],
             relative_prices: vec![1.01, 1.02, 0.97],
             contour_length: 3.0,
             loop_cardinality: 3,
@@ -219,26 +224,42 @@ mod tests {
             contour_length: 2.0,
             loop_cardinality: 2,
         };
-        assert!(!c.is_closed(), "MIN_LOOP_SIZE=3 must reject 2-pool round trip");
+        assert!(
+            !c.is_closed(),
+            "MIN_LOOP_SIZE=3 must reject 2-pool round trip"
+        );
     }
 
     #[test]
     fn endpoint_mismatch_above_tolerance_is_not_closed() {
         let c = ClosedContourTrajectory {
             manifolds: vec![manifold("0xA"), manifold("0xB"), manifold("0xC")],
-            transition_points: vec![dvec(&[0.0, 0.0]), dvec(&[1.0, 0.0]), dvec(&[1.0, 1.0]), dvec(&[1e-3, 0.0])],
+            transition_points: vec![
+                dvec(&[0.0, 0.0]),
+                dvec(&[1.0, 0.0]),
+                dvec(&[1.0, 1.0]),
+                dvec(&[1e-3, 0.0]),
+            ],
             relative_prices: vec![1.01, 1.02, 0.97],
             contour_length: 3.0,
             loop_cardinality: 3,
         };
-        assert!(!c.is_closed(), "1e-3 separation is above the 1e-9 tolerance");
+        assert!(
+            !c.is_closed(),
+            "1e-3 separation is above the 1e-9 tolerance"
+        );
     }
 
     #[test]
     fn mismatched_dim_endpoints_are_not_closed() {
         let c = ClosedContourTrajectory {
             manifolds: vec![manifold("0xA"), manifold("0xB"), manifold("0xC")],
-            transition_points: vec![dvec(&[0.0, 0.0]), dvec(&[1.0]), dvec(&[1.0, 1.0]), dvec(&[0.0, 0.0, 0.0])],
+            transition_points: vec![
+                dvec(&[0.0, 0.0]),
+                dvec(&[1.0]),
+                dvec(&[1.0, 1.0]),
+                dvec(&[0.0, 0.0, 0.0]),
+            ],
             relative_prices: vec![1.01, 1.02, 0.97],
             contour_length: 3.0,
             loop_cardinality: 3,
@@ -299,7 +320,10 @@ mod tests {
             manifold_ids: vec!["0xa".into()],
             resolved_at: 0,
         };
-        assert!(!y.is_economically_viable(), "NaN > x is false — fail-honest");
+        assert!(
+            !y.is_economically_viable(),
+            "NaN > x is false — fail-honest"
+        );
     }
 
     #[test]

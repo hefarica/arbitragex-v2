@@ -20,10 +20,7 @@ export function PageHeader({
     <div className="mb-8 flex flex-col gap-3 border-b pb-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          {/* data-testid: stable hook for Playwright smoke. The h1 stays a
-              real h1 (level-1, accessible) — the testid is additive, not a
-              substitute for semantic markup. */}
-          <h1 data-testid="page-title">{title}</h1>
+          <h1>{title}</h1>
           {lede && (
             <p className="mt-2 max-w-3xl text-base text-muted-foreground">{lede}</p>
           )}

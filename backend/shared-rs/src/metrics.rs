@@ -278,6 +278,16 @@ pub static BUNDLE_INCLUDED_NO_PROFIT_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     c
 });
 
+pub static GAS_PRICE_TS_SECONDS: Lazy<prometheus::IntGauge> = Lazy::new(|| {
+    let g = prometheus::IntGauge::new(
+        "arbx_gas_price_ts_seconds",
+        "Timestamp in seconds of the last updated gas price"
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(g.clone())).expect("register");
+    g
+});
+
 /// Record a bundle inclusion event.
 ///
 /// `profitable` is `true` when the opportunity carried a positive
@@ -297,28 +307,6 @@ pub fn record_inclusion(chain_id: u64, relay: &str, profitable: bool) {
             .inc();
     }
 }
-
-/// Gas oracle freshness gauge: unix-seconds timestamp of the most recent
-/// `arbx:gas_price_ts:{chain_id}` Redis write performed by the gas oracle
-/// worker. Grafana panel `Gas Oracle Freshness` computes `time() - max(gauge)`
-/// to derive seconds-since-last-update. SLI: < 60s stale.
-///
-/// Mirrors the Redis key `arbx:gas_price_ts:{chain_id}` written by
-/// `shared-rs::pre_execute_checklist::gas_price_ts_key`. The worker that
-/// refreshes the key MUST also call:
-///   GAS_PRICE_TS_SECONDS.with_label_values(&[chain_id_str]).set(unix_ts as i64);
-pub static GAS_PRICE_TS_SECONDS: Lazy<prometheus::IntGaugeVec> = Lazy::new(|| {
-    let g = prometheus::IntGaugeVec::new(
-        prometheus::opts!(
-            "arbx_gas_price_ts_seconds",
-            "Unix-seconds timestamp of the most recent gas oracle refresh, per chain"
-        ),
-        &["chain_id"],
-    )
-    .expect("metric");
-    REGISTRY.register(Box::new(g.clone())).expect("register");
-    g
-});
 
 pub fn init_metrics() {
     // Force Lazy init so all collectors are registered.

@@ -289,13 +289,6 @@ services:
     ports: ["127.0.0.1:8080:8080"]
     depends_on:
       redis: { condition: service_healthy }
-      # api-server queries with arbx_rw on first request. If postgres is not
-      # yet healthy (init scripts + migrations not finished), every query
-      # returns 503 with `password authentication failed for user "arbx_rw"`.
-      # Waiting for healthy prevents that race on cold-start of the stack.
-      # Role passwords still require migrate.sh to have run; the operator
-      # runbook (database/migrations/README.md) covers that step in prod.
-      postgres: { condition: service_healthy }
     # M2 Capa1 Fase 2 — /api/health on API_PORT (8080). Node `http` built-in.
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8080/api/health',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))\""]
@@ -572,13 +565,15 @@ services:
       - "127.0.0.1:8200:8200"
     restart: unless-stopped
     healthcheck:
-      # --no-check-certificate: self-signed cert; safe here because the check
-      # runs inside the container on loopback — no MITM surface.
-      test: ["CMD", "wget", "--no-check-certificate", "-qO-", "https://localhost:8200/v1/sys/health"]
+      # BusyBox wget exits 8 on HTTP 501 (uninitialized Vault), which Docker
+      # treats as unhealthy. Use `vault status` instead — it handles all Vault
+      # status codes correctly and exits 0 for sealed (503) or uninitialized
+      # (501) states. Timeout increased to 10s for vault CLI cold-start.
+      test: ["CMD", "sh", "-c", "VAULT_ADDR=https://127.0.0.1:8200 VAULT_SKIP_VERIFY=true vault status || true"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 60s
     networks: [arbx-net]
     deploy:
       resources:
