@@ -74,6 +74,9 @@ beforeAll(async () => {
     "021_defi_registries.sql",
     "033_opportunities_fail_honest_and_cross_chain_slots.sql",
     "034_tokens_table.sql",
+    // 049 adds opportunities.net_expected_profit_usd, which the live route
+    // SELECTs; without it the endpoint query errors and returns 503.
+    "049_h2_net_expected_profit.sql",
     // 072 reconciles tokens to the discovery-first model: symbol/decimals
     // nullable, chain_id required, lowercase-address check. Without it, a
     // discovered-token insert (address + resolved_via only) fails on the
