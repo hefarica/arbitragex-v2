@@ -15,11 +15,10 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-// Mock lucide-react to prevent React child errors in SSR
-vi.mock("lucide-react", () => {
-  return new Proxy({}, {
-    get: () => {
-      return (props: any) => React.createElement("svg", props, React.createElement("path"));
-    }
-  });
-});
+// NOTE: lucide-react is intentionally NOT vi.mock()'d here. Its ~1.5k-module
+// ESM barrel stalls vitest's node/SSR transform indefinitely (6h CI hang) for
+// any test importing an icon, and a runtime vi.mock makes it worse — vi.mock
+// resolves the bare specifier to the real package and crawls the barrel before
+// the mock can apply. Instead it is pre-bundled by esbuild via
+// `test.deps.optimizer.ssr` in vitest.config.ts, which resolves the barrel in
+// one fast pass and lets the real icons render.
