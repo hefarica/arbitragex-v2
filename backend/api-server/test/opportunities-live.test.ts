@@ -74,6 +74,11 @@ beforeAll(async () => {
     "021_defi_registries.sql",
     "033_opportunities_fail_honest_and_cross_chain_slots.sql",
     "034_tokens_table.sql",
+    // 072 reconciles tokens to the discovery-first model: symbol/decimals
+    // nullable, chain_id required, lowercase-address check. Without it, a
+    // discovered-token insert (address + resolved_via only) fails on the
+    // legacy symbol NOT NULL from 021.
+    "072_reconcile_tokens_schema.sql",
   ]) {
     await pool.query(loadMigration(f));
   }

@@ -72,6 +72,12 @@ describe("migration 034", () => {
   it("creates tokens table with correct schema", async () => {
     const sql = readFileSync(path.join(__dirname, "../../../database/migrations/034_tokens_table.sql"), "utf8");
     await pool.query(sql);
+    // 072 reconciles the tokens schema to the discovery-first model (symbol/
+    // decimals nullable, chain_id NOT NULL, resolved_via NOT NULL, lowercase
+    // chk_address_format). Applied here so the schema assertions below reflect
+    // the full, canonical tokens migration chain — not an artificial state.
+    const reconcile = readFileSync(path.join(__dirname, "../../../database/migrations/072_reconcile_tokens_schema.sql"), "utf8");
+    await pool.query(reconcile);
     const r = await pool.query(`
       SELECT column_name, data_type, is_nullable FROM information_schema.columns
       WHERE table_name = 'tokens'
