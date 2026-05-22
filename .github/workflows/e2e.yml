@@ -82,8 +82,22 @@ jobs:
             sleep 1
           done
           # Step 2: apply migrations (001_roles + 001b role passwords + schema).
-          # migrate.sh reads .env, connects as postgres@localhost:5432, idempotent.
-          bash automation/scripts/migrate.sh
+          # migrate.sh idempotently applies database/migrations/*.sql. It must reach
+          # the HOST-mapped port (127.0.0.1:5432); the compose .env targets the
+          # docker-DNS host "postgres" (unreachable from the runner) and contains
+          # CI-only token placeholders that break `source`. So we read the role
+          # passwords from .env safely (grep, not source), move .env aside so
+          # migrate.sh does not re-source it, and pass localhost creds explicitly.
+          _val() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2- ; }
+          PGPW="$(_val POSTGRES_PASSWORD)"; PGPW="${PGPW:-postgres}"
+          RWPW="$(_val ARBX_RW_PASSWORD)"; RWPW="${RWPW:-arbx_rw_dev_only}"
+          ROPW="$(_val ARBX_RO_PASSWORD)"; ROPW="${ROPW:-arbx_ro_dev_only}"
+          MIGPW="$(_val ARBX_MIGRATOR_PASSWORD)"; MIGPW="${MIGPW:-arbx_migrator_dev_only}"
+          mv .env .env.compose
+          DATABASE_MIGRATOR_URL="postgres://postgres:${PGPW}@localhost:5432/arbitragex" \
+          ARBX_RW_PASSWORD="${RWPW}" ARBX_RO_PASSWORD="${ROPW}" ARBX_MIGRATOR_PASSWORD="${MIGPW}" \
+            bash automation/scripts/migrate.sh
+          mv .env.compose .env
           # Step 3: app services now that the DB is migrated and roles have passwords.
           docker compose --env-file .env -f docker/compose.dev.yml up -d --build \
             frontend edge api-server
