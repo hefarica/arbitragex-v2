@@ -20,11 +20,26 @@ import { test, expect } from "@playwright/test";
 const NO_RPC = process.env["ARBX_ASSUME_NO_RPC"] === "1";
 const testMaybe = NO_RPC ? test : test.skip;
 
-testMaybe("searcher-rs reports UP even with no RPC configured", async ({ page }) => {
+testMaybe("searcher-rs reports UP even with no RPC configured", async ({ page, request }) => {
+  // Kill-switch arm/disarm in a prior test causes a 30-90 s recovery window
+  // before the api-server's probes succeed.  Poll the api-server directly
+  // (bypassing the UI) so we only navigate to /status once we know the probe
+  // is UP.  Cap at 120 s; extend per-test timeout accordingly.
+  test.setTimeout(120_000);
+  for (let i = 0; i < 60; i++) {
+    const r = await request.get("http://localhost:8080/status").catch(() => null);
+    const data: { services?: Record<string, { ok: boolean }> } | null =
+      r ? await r.json().catch(() => null) : null;
+    if (data?.services?.["searcher-rs"]?.ok === true) break;
+    await page.waitForTimeout(2_000);
+  }
+
   await page.goto("/status");
 
-  // searcher-rs row exists and is UP.
-  const row = page.locator("tr", { has: page.getByText("searcher-rs", { exact: true }) });
+  // searcher-rs row exists and is UP. The status page may list searcher-rs in
+  // more than one panel (service health + upstream table), so scope to the
+  // first matching row to avoid a strict-mode violation.
+  const row = page.locator("tr", { has: page.getByText("searcher-rs", { exact: true }) }).first();
   await expect(row).toBeVisible();
   await expect(row.getByText(/UP/i)).toBeVisible();
 });

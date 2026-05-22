@@ -5,8 +5,10 @@ WORKDIR /build
 # when NODE_ENV=production. No default here on purpose.
 ARG NEXT_PUBLIC_EDGE_URL
 ARG NEXT_PUBLIC_WS_URL
+ARG ARBX_ALLOW_LOCALHOST_PROD
 ENV NEXT_PUBLIC_EDGE_URL=$NEXT_PUBLIC_EDGE_URL
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
+ENV ARBX_ALLOW_LOCALHOST_PROD=$ARBX_ALLOW_LOCALHOST_PROD
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY package.json ./

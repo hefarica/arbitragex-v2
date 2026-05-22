@@ -30,7 +30,9 @@ psql_cmd -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS schema_migrations (ve
 applied=()
 while IFS= read -r -d '' f; do
   version="$(basename "$f" .sql)"
-  exists=$(psql_cmd -tA -c "SELECT 1 FROM schema_migrations WHERE version='$version' LIMIT 1;" 2>/dev/null || echo "")
+  # SQL-escape single quotes so a filename containing one can't break the literal.
+  version_sql="${version//\'/\'\'}"
+  exists=$(psql_cmd -tA -c "SELECT 1 FROM schema_migrations WHERE version='$version_sql' LIMIT 1;" 2>/dev/null || echo "")
   if [[ "$exists" == "1" ]]; then
     echo "  SKIP  $version (already applied)"
     continue
@@ -49,7 +51,7 @@ while IFS= read -r -d '' f; do
   else
     psql_cmd -v ON_ERROR_STOP=1 -f "$f" >/dev/null
   fi
-  psql_cmd -v ON_ERROR_STOP=1 -c "INSERT INTO schema_migrations(version) VALUES ('$version');" >/dev/null
+  psql_cmd -v ON_ERROR_STOP=1 -c "INSERT INTO schema_migrations(version) VALUES ('$version_sql');" >/dev/null
   applied+=("$version")
 # LC_ALL=C forces deterministic byte-order sort across locales. Under an
 # en_US.utf8 collation, sort is punctuation-insensitive and places 001b_* BEFORE

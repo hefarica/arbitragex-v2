@@ -68,7 +68,17 @@ export class KillSwitchClient {
 
   /** Optional subscription to invalidate cache immediately on change. */
   async subscribeChanges(onChange?: (s: KillSwitchState) => void): Promise<void> {
-    const sub = new IORedis(this.opts.redisUrl, { lazyConnect: false });
+    const sub = new IORedis(this.opts.redisUrl, {
+      lazyConnect: false,
+      // One-shot subscriber: if the connection drops for any reason, give up
+      // immediately rather than retrying forever.  The KillSwitchClient falls
+      // back to its 1-second TTL poll automatically.
+      retryStrategy: () => null,
+      // Shorter connect timeout so a stale connection fails fast.
+      connectTimeout: 2_000,
+    });
+    // Prevent Node.js from treating connection errors as unhandled exceptions.
+    sub.on("error", () => {});
     this.sub = sub;
     await sub.subscribe(KILLSWITCH_CHANNEL);
     sub.on("message", (_channel: string, message: string) => {
