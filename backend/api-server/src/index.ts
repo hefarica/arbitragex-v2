@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import pg from "pg";
 import { Redis } from "ioredis";
 import { z } from "zod";
@@ -110,6 +111,17 @@ app.disable("x-powered-by");
 // by ARBX_ENABLE_HSTS=true because the api-server runs behind plain HTTP
 // inside the VPS network — only the edge worker is TLS-terminated.
 app.use(securityHeadersMiddleware());
+// CORS configuration for cross-origin requests from frontend/edge worker.
+// In production, the edge worker handles CORS at the boundary, but this provides
+// defense-in-depth for direct API access (dev, intra-VPS, debugging).
+const CORS_ORIGIN = process.env["CORS_ORIGIN"] ?? "*";
+app.use(cors({
+  origin: CORS_ORIGIN,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "x-arbx-admin-token", "x-arbx-edge-token", "x-arbx-service-token", "x-arbx-actor", "x-trace-id"],
+  credentials: true,
+  maxAge: 86400, // 24 hours preflight cache
+}));
 app.use(express.json({ limit: "256kb" }));
 app.use(traceIdMiddleware());
 app.use(createHttpLogger(SERVICE, cfg.observability.log_level ?? "info"));

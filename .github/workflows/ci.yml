@@ -52,14 +52,12 @@ jobs:
         run: cargo fmt -- --check
         working-directory: backend
         continue-on-error: true
-      - name: cargo clippy (advisory — dedicated rust.yml gates critical crates)
+      - name: cargo clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
         working-directory: backend
-        continue-on-error: true
-      - name: cargo test (advisory — dedicated rust.yml is the gating check)
+      - name: cargo test
         run: cargo test --all
         working-directory: backend
-        continue-on-error: true
 
   lint-and-test-frontend:
     runs-on: ubuntu-latest
@@ -85,7 +83,6 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
       - run: forge test
         working-directory: contracts
-        continue-on-error: true
       - run: forge fmt --check
         working-directory: contracts
         continue-on-error: true
