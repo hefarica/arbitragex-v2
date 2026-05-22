@@ -29,3 +29,8 @@ pub mod triangular_engine;
 pub mod backrun_engine;
 pub mod spatial_engine;
 pub mod cex_dex_engine;
+// APEX Phase 1.5 — Thermodynamic engines (server-side only)
+pub mod svs_engine;
+pub mod dlp_engine;
+pub mod triangular_atomic_engine;
+pub mod funding_rate_engine;

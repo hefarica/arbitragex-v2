@@ -17,6 +17,11 @@ pub mod rpc_health_worker;
 pub mod triangular_worker;
 pub mod backrun_worker;
 pub mod spatial_worker;
+// APEX Phase 1.5 — Thermodynamic workers (server-side only)
+pub mod svs_worker;
+pub mod dlp_worker;
+pub mod triangular_atomic_worker;
+pub mod funding_rate_worker;
 
 use shared_rs::rpc_failover::HttpRpcPool;
 use sqlx::PgPool;
