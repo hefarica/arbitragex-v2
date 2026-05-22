@@ -33,10 +33,13 @@ const isBrowser = typeof window !== "undefined";
 
 export function getApiBaseUrl(): string {
   const envUrl = isBrowser ? process.env.NEXT_PUBLIC_EDGE_URL : process.env.INTERNAL_EDGE_URL;
-  
+
   const isProd = process.env.NODE_ENV === "production";
 
-  if (isProd && envUrl && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(envUrl)) {
+  // Guard SSR only: INTERNAL_EDGE_URL must not point to localhost in production.
+  // Browser URLs (NEXT_PUBLIC_EDGE_URL) are validated at build time by next.config.js;
+  // localhost is legitimate for local E2E when ARBX_ALLOW_LOCALHOST_PROD=true.
+  if (!isBrowser && isProd && envUrl && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(envUrl)) {
     throw new Error("Production API base URL cannot point to localhost");
   }
 
@@ -53,11 +56,7 @@ export function getApiBaseUrl(): string {
 
 export function getWsBaseUrl(): string {
   const envUrl = process.env.NEXT_PUBLIC_WS_URL;
-  const isProd = process.env.NODE_ENV === "production";
-
-  if (isProd && envUrl && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(envUrl)) {
-    throw new Error("Production WS base URL cannot point to localhost");
-  }
+  // NEXT_PUBLIC_WS_URL is browser-only; validated at build time by next.config.js.
 
   if (envUrl && envUrl.trim().length > 0) {
     return envUrl.replace(/\/$/, "");

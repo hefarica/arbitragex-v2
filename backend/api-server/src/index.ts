@@ -1,3 +1,5 @@
+import * as http from "node:http";
+import * as dns from "node:dns/promises";
 import express from "express";
 import pg from "pg";
 import { Redis } from "ioredis";
@@ -58,16 +60,51 @@ const UPSTREAMS = {
   "searcher-rs":  process.env["SEARCHER_URL"]  ?? "http://searcher-rs:9001",
 } as const;
 
-async function pingUpstream(name: string, url: string): Promise<{ ok: boolean; status?: number; detail?: string }> {
-  try {
-    const controller = new AbortController();
-    const to = setTimeout(() => controller.abort(), 1500);
-    const r = await fetch(`${url}/health`, { signal: controller.signal });
-    clearTimeout(to);
-    return { ok: r.ok, status: r.status };
-  } catch (e) {
-    return { ok: false, detail: (e as Error).message };
+async function pingUpstream(_name: string, url: string): Promise<{ ok: boolean; status?: number; detail?: string }> {
+  const target = new URL(`${url}/health`);
+  let hostname = target.hostname;
+
+  // Resolve hostname first if it is not already an IP address.
+  // dns.resolve4() uses c-ares (truly async, no libuv thread pool), so
+  // slow NXDOMAIN responses from Docker's external DNS fallback do not
+  // starve the thread pool and delay other concurrent probes.
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) {
+    try {
+      const addrs = await Promise.race([
+        dns.resolve4(hostname),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("dns-timeout")), 500),
+        ),
+      ]);
+      if (!addrs[0]) return { ok: false, detail: "dns-no-records" };
+      hostname = addrs[0];
+    } catch {
+      return { ok: false, detail: "dns-failure" };
+    }
   }
+
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        hostname,
+        port: Number(target.port) || 80,
+        path: target.pathname,
+        method: "GET",
+        agent: false,
+      },
+      (res) => {
+        res.resume();
+        const code = res.statusCode;
+        resolve({ ok: code === 200, ...(code !== undefined && { status: code }) });
+      },
+    );
+    req.on("socket", (sock) => {
+      sock.setTimeout(1500);
+      sock.on("timeout", () => req.destroy(new Error("timeout")));
+    });
+    req.on("error", (e) => resolve({ ok: false, detail: e.message }));
+    req.end();
+  });
 }
 
 const startedAt = new Date();
