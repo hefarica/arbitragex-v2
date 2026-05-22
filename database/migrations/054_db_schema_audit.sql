@@ -47,7 +47,10 @@ EXCEPTION
         RAISE NOTICE 'Section 1: audit_log or arbx_rw role not found — REVOKE skipped';
 END $$;
 
-RAISE NOTICE 'Migration 054 Section 1: GRANT hardening applied to audit_log';
+DO $$
+BEGIN
+    RAISE NOTICE 'Migration 054 Section 1: GRANT hardening applied to audit_log';
+END $$;
 
 -- =======================
 -- Section 2: Foreign key ON DELETE clauses

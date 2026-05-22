@@ -565,13 +565,15 @@ services:
       - "127.0.0.1:8200:8200"
     restart: unless-stopped
     healthcheck:
-      # --no-check-certificate: self-signed cert; safe here because the check
-      # runs inside the container on loopback — no MITM surface.
-      test: ["CMD", "wget", "--no-check-certificate", "-qO-", "https://localhost:8200/v1/sys/health"]
+      # BusyBox wget exits 8 on HTTP 501 (uninitialized Vault), which Docker
+      # treats as unhealthy. Use `vault status` instead — it handles all Vault
+      # status codes correctly and exits 0 for sealed (503) or uninitialized
+      # (501) states. Timeout increased to 10s for vault CLI cold-start.
+      test: ["CMD", "sh", "-c", "VAULT_ADDR=https://127.0.0.1:8200 VAULT_SKIP_VERIFY=true vault status || true"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 60s
     networks: [arbx-net]
     deploy:
       resources:

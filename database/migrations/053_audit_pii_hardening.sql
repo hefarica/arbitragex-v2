@@ -36,10 +36,10 @@ BEGIN
 
     IF family(parsed) = 4 THEN
         -- /24: keep first 3 octets
-        RETURN host(set_masklen(parsed, 24)) || '/24';
+        RETURN host(network(set_masklen(parsed, 24))) || '/24';
     ELSE
         -- /48: keep first 3 hextets
-        RETURN host(set_masklen(parsed, 48)) || '/48';
+        RETURN host(network(set_masklen(parsed, 48))) || '/48';
     END IF;
 END;
 $$;

@@ -69,11 +69,28 @@ beforeAll(async () => {
   for (const f of [
     "001_roles.sql",
     "003_opportunities.sql",
+    // 021 creates the tokens table (+ chains/dexes/etc.); 034 only ALTERs it,
+    // so 021 must be applied first or 034 fails with "relation tokens does not exist".
+    "021_defi_registries.sql",
     "033_opportunities_fail_honest_and_cross_chain_slots.sql",
     "034_tokens_table.sql",
+    // 049 adds opportunities.net_expected_profit_usd, which the live route
+    // SELECTs; without it the endpoint query errors and returns 503.
+    "049_h2_net_expected_profit.sql",
+    // 072 reconciles tokens to the discovery-first model: symbol/decimals
+    // nullable, chain_id required, lowercase-address check. Without it, a
+    // discovered-token insert (address + resolved_via only) fails on the
+    // legacy symbol NOT NULL from 021.
+    "072_reconcile_tokens_schema.sql",
   ]) {
     await pool.query(loadMigration(f));
   }
+  // tokens.chain_id has a FK to chains(chain_id) (migration 021). The token
+  // enrichment rows below use chain_id=1, so seed the chain registry row.
+  await pool.query(
+    `INSERT INTO chains (chain_id, name, native_currency)
+     VALUES (1, 'Ethereum', 'ETH') ON CONFLICT (chain_id) DO NOTHING`,
+  );
 }, 60_000);
 
 afterAll(async () => {

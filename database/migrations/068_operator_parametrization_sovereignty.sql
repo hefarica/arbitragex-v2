@@ -94,6 +94,12 @@ ON CONFLICT (operator_id) DO NOTHING;
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='feature_manifest') THEN
+    ALTER TABLE feature_manifest 
+      ADD COLUMN IF NOT EXISTS ui_path TEXT,
+      ADD COLUMN IF NOT EXISTS backend_route TEXT,
+      ADD COLUMN IF NOT EXISTS requires_layers JSONB DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS enabled BOOLEAN DEFAULT TRUE;
+
     INSERT INTO feature_manifest (feature_key, ui_path, backend_route, requires_layers, enabled, description)
     VALUES
       ('operator_parametrization', '/omega-s5/operator', '/api/operator/me',

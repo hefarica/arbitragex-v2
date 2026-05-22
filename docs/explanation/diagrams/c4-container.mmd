@@ -1,0 +1,49 @@
+C4Container
+  title arbitragex-v2 — Container Diagram (C4 Level 2)
+  Person(operator, "Operator", "Quant operator")
+  System_Boundary(edge_layer, "Edge Layer") {
+    Container(nginx, "Nginx", "Reverse Proxy", "Rate limit, security headers, gzip, TLS")
+  }
+  System_Boundary(frontend_layer, "Frontend Layer") {
+    Container(frontend, "Next.js App", "React/Next.js", "QuantumX Control Plane")
+  }
+  System_Boundary(api_layer, "API Layer") {
+    Container(edge, "Edge Worker", "Node.js/Hono", "API proxy, auth, WS")
+    Container(api, "API Server", "Node.js/Express", "Business logic, CRUD")
+    Container(selector, "Selector API", "Node.js", "Strategy selection, scoring")
+    Container(enricher, "Token Enricher", "Node.js", "Token metadata, prices")
+  }
+  System_Boundary(core_layer, "Core Layer") {
+    Container(searcher, "searcher-rs", "Rust", "MEV searcher, bundle builder")
+    Container(sim, "sim-ctl", "Node.js", "Transaction simulation (REVM)")
+    Container(recon, "recon", "Node.js", "P&L reconciliation, reporting")
+    Container(relays, "relays-client", "Node.js", "MEV relay communication")
+  }
+  System_Boundary(data_layer, "Data Layer") {
+    ContainerDb(postgres, "PostgreSQL", "PostgreSQL 16", "Strategies, executions, config")
+    ContainerDb(redis, "Redis", "Redis 7", "State, kill-switch, cache")
+    ContainerDb(minio, "MinIO", "S3-compatible", "Object storage, snapshots")
+    Container(vault_svc, "HashiCorp Vault", "Vault", "Secrets, TLS certs")
+  }
+  System_Boundary(obs_layer, "Observability") {
+    Container(prom, "Prometheus", "Prometheus", "Metrics collection")
+    Container(grafana, "Grafana", "Grafana", "RED + business dashboards")
+    Container(loki, "Loki", "Loki", "Log aggregation")
+    Container(alertmgr, "Alertmanager", "Alertmanager", "Alert routing")
+    Container(thanos, "Thanos", "Thanos", "Long-term metrics storage")
+  }
+  Rel(operator, nginx, "HTTPS :80")
+  Rel(nginx, frontend, "proxy_pass :5173")
+  Rel(nginx, edge, "proxy_pass :8787")
+  Rel(frontend, edge, "REST + WS")
+  Rel(edge, api, "REST")
+  Rel(edge, selector, "REST")
+  Rel(api, postgres, "SQL :5432")
+  Rel(api, redis, "Redis :6379")
+  Rel(api, minio, "S3 :9000")
+  Rel(api, vault_svc, "TLS :8200")
+  Rel(searcher, edge, "gRPC/REST")
+  Rel(searcher, relays, "Bundle submission")
+  Rel(searcher, sim, "Simulation")
+  Rel(api, prom, "Metrics :9090")
+  UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="2")

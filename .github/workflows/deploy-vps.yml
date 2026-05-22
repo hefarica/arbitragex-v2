@@ -1,0 +1,153 @@
+name: Deploy to VPS
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason for manual deploy"
+        required: false
+        default: "Manual deploy via workflow_dispatch"
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-vps-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to VPS (Hetzner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Verify required secrets are present
+        # Fail fast before attempting SSH if any critical secret is missing.
+        # We check for non-empty values by testing the length of each secret.
+        # NOTE: We never print the secret values — only report presence/absence.
+        run: |
+          MISSING=0
+
+          check_secret() {
+            local name="$1"
+            local value="$2"
+            if [ -z "$value" ]; then
+              echo "ERROR: Required secret '$name' is not set or is empty." >&2
+              MISSING=$((MISSING + 1))
+            else
+              echo "OK: Secret '$name' is present."
+            fi
+          }
+
+          check_secret "VPS_SSH_HOST"    "${{ secrets.VPS_SSH_HOST }}"
+          check_secret "VPS_SSH_USER"    "${{ secrets.VPS_SSH_USER }}"
+          check_secret "VPS_SSH_KEY"     "${{ secrets.VPS_SSH_KEY }}"
+          check_secret "VPS_DEPLOY_PATH" "${{ secrets.VPS_DEPLOY_PATH }}"
+
+          if [ "$MISSING" -gt 0 ]; then
+            echo ""
+            echo "FATAL: $MISSING required secret(s) are missing." >&2
+            echo "Configure them at: Settings → Secrets and variables → Actions" >&2
+            echo "Required secrets: VPS_SSH_HOST, VPS_SSH_USER, VPS_SSH_KEY, VPS_DEPLOY_PATH" >&2
+            exit 1
+          fi
+
+          echo ""
+          echo "All required secrets are present. Proceeding with deploy."
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_SSH_HOST }}
+          username: ${{ secrets.VPS_SSH_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || '22' }}
+          # Strict: fail the step (and job) if any command in the script exits non-zero.
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            echo "=== Deploy started at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+            echo "=== Deploying to: ${{ secrets.VPS_DEPLOY_PATH }} ==="
+
+            cd "${{ secrets.VPS_DEPLOY_PATH }}"
+
+            echo "--- git: fetching origin/main ---"
+            git fetch origin main
+
+            echo "--- git: resetting to origin/main ---"
+            git reset --hard origin/main
+
+            echo "--- docker compose: pulling images ---"
+            docker compose -f docker/compose.prod.yml pull
+
+            echo "--- docker compose: starting services ---"
+            docker compose -f docker/compose.prod.yml up -d --remove-orphans
+
+            echo "--- docker compose: service status ---"
+            docker compose -f docker/compose.prod.yml ps
+
+            echo "=== Deploy commands completed at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+
+      - name: Healthcheck post-deploy
+        # Uses VPS_HEALTH_URL secret if set; falls back to http://localhost:8080/health.
+        # The curl runs from the GitHub runner — adjust VPS_HEALTH_URL to a publicly
+        # reachable endpoint (e.g. https://<vps-ip>/health or via nginx on port 80).
+        # If the VPS health endpoint is not publicly reachable, set VPS_HEALTH_URL to
+        # an empty string and this step will report a warning without failing the job.
+        run: |
+          HEALTH_URL="${{ secrets.VPS_HEALTH_URL }}"
+
+          if [ -z "$HEALTH_URL" ]; then
+            echo "WARNING: VPS_HEALTH_URL secret is not set."
+            echo "Skipping external healthcheck. Set VPS_HEALTH_URL to enable it."
+            echo "Example: http://<vps-public-ip>:8080/health"
+            exit 0
+          fi
+
+          echo "Running healthcheck against: $HEALTH_URL"
+
+          HTTP_CODE=$(curl \
+            --silent \
+            --output /dev/null \
+            --write-out "%{http_code}" \
+            --max-time 30 \
+            --retry 5 \
+            --retry-delay 5 \
+            --retry-connrefused \
+            "$HEALTH_URL")
+
+          echo "HTTP response code: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
+            echo "Healthcheck PASSED (HTTP $HTTP_CODE)"
+          else
+            echo "ERROR: Healthcheck FAILED (HTTP $HTTP_CODE)" >&2
+            exit 1
+          fi
+
+      - name: Deploy summary
+        if: always()
+        run: |
+          echo "## Deploy to VPS — Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Workflow run | [\`${{ github.run_id }}\`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Triggered by | \`${{ github.event_name }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Ref | \`${{ github.ref_name }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Commit | \`${{ github.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Actor | \`${{ github.actor }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Timestamp | \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> **Secrets required:** \`VPS_SSH_HOST\`, \`VPS_SSH_USER\`, \`VPS_SSH_KEY\`, \`VPS_DEPLOY_PATH\`, \`VPS_HEALTH_URL\` (optional)" >> "$GITHUB_STEP_SUMMARY"
+          echo "> Configure at: Settings → Secrets and variables → Actions" >> "$GITHUB_STEP_SUMMARY"

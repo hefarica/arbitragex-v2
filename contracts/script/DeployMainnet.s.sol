@@ -103,7 +103,7 @@ contract DeployMainnet is Script {
         // ----------------------------------------------------------------
         require(
             deployer.balance >= 0.5 ether,
-            "DeployMainnet: deployer balance < 0.5 ETH — top up before deploying"
+            "DeployMainnet: deployer balance < 0.5 ETH -- top up before deploying"
         );
 
         console2.log("=== ArbitrageX v2 Mainnet Deploy ===");

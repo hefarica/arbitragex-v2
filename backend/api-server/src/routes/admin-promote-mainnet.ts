@@ -63,7 +63,7 @@ async function readCrucibleStatus(pool: Pool, chainId: number): Promise<Crucible
   };
 }
 
-export function buildAdminPromoteMainnetRouter(pool: Pool, redis: Redis): Router {
+export function buildAdminPromoteMainnetRouter(pool: Pool, redis: any): Router {
   const router = Router();
 
   router.post('/promote-mainnet', requireOperatorRole('sovereign'), async (req, res) => {

@@ -1,5 +1,5 @@
-import { getApiBaseUrl } from "@/lib/api-client";
 "use client";
+import { getApiBaseUrl } from "@/lib/api-client";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";

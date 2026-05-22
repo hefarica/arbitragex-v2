@@ -24,7 +24,7 @@ export default async function StatusPage() {
         <FocusOnMount>
           <Alert variant="destructive">
             <AlertCircleIcon />
-            <AlertTitle>edge unreachable</AlertTitle>
+            <AlertTitle>edge / upstream failure</AlertTitle>
             <AlertDescription>
               <code className="rounded bg-destructive/10 px-1.5 py-0.5 font-mono text-xs">{res.error}</code>
               <p className="mt-2">

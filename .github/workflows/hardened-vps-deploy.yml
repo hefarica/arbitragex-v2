@@ -168,7 +168,7 @@ jobs:
       - name: "Setup: SSH key"
         # B3: Inyección SSH segura. Mismo patrón que audit.yml. Ver explicación allí.
         env:
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh

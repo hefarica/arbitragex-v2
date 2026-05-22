@@ -21,11 +21,7 @@ import "../src/ArbitrageExecutor.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
-interface IERC20Metadata {
-    function totalSupply() external view returns (uint256);
-    function decimals() external view returns (uint8);
-    function name() external view returns (string memory);
-}
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 contract ForkExampleTest is Test {
     // Well-known mainnet addresses (all verified on Etherscan 2026-05-08).

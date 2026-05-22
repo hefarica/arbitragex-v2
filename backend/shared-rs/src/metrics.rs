@@ -278,6 +278,16 @@ pub static BUNDLE_INCLUDED_NO_PROFIT_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     c
 });
 
+pub static GAS_PRICE_TS_SECONDS: Lazy<prometheus::IntGauge> = Lazy::new(|| {
+    let g = prometheus::IntGauge::new(
+        "arbx_gas_price_ts_seconds",
+        "Timestamp in seconds of the last updated gas price"
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(g.clone())).expect("register");
+    g
+});
+
 /// Record a bundle inclusion event.
 ///
 /// `profitable` is `true` when the opportunity carried a positive
@@ -321,6 +331,7 @@ pub fn init_metrics() {
     let _ = &*RPC_POOL_DRIFT_DETECTED_TOTAL;
     let _ = &*BUNDLE_INCLUDED_TOTAL;
     let _ = &*BUNDLE_INCLUDED_NO_PROFIT_TOTAL;
+    let _ = &*GAS_PRICE_TS_SECONDS;
     SERVICE_UP.set(1);
 }
 

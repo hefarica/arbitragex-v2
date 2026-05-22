@@ -78,3 +78,10 @@ docker-compose.override.yml
 
 # Vault TLS certs (N4 audit 2026-05-10) — generated at boot, never committed.
 monitoring/vault/tls/
+
+# OMEGA-S5/audit-fixes-20260516: exclude delivery zips from repo
+# (existing committed zips will be removed in a separate cleanup PR)
+*.zip
+!docs/**/*.zip
+!tests/**/*.zip
+OMEGA_S5_*_DELIVERY*.zip

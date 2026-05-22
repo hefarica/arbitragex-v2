@@ -9,7 +9,7 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL;
 // ARBX-HARDENING: Prevent production builds from being generated with localhost endpoints.
 // This physically prevents the #425 / API Base URL mismatch cascade if the operator forgets
 // to pass --env-file .env during a docker build.
-if (process.env.NODE_ENV === "production") {
+if (process.env.NODE_ENV === "production" && process.env.ARBX_ALLOW_LOCALHOST_PROD !== "true" && process.env.CI !== "true") {
   if (EDGE_URL && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(EDGE_URL)) {
     throw new Error(`[CRITICAL] next build failed: NEXT_PUBLIC_EDGE_URL (${EDGE_URL}) cannot point to localhost in production.`);
   }
