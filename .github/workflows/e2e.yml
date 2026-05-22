@@ -65,8 +65,28 @@ jobs:
           # above), instead of falling back to compose.dev.yml's literal default
           # http://localhost:8787 which triggers the next.config.js R2 guard
           # under NODE_ENV=production during the frontend builder stage.
+          # Step 1: data plane first. Postgres init (001_init.sql) only creates the
+          # pgcrypto extension — roles + role passwords + schema live in
+          # database/migrations/*.sql and are applied by automation/scripts/migrate.sh,
+          # NOT by docker-entrypoint-initdb. Bring up postgres + redis and migrate
+          # BEFORE the app services, otherwise arbx_rw has no password and api-server
+          # fails PG auth ("password authentication failed for user arbx_rw") → 502/503
+          # on edge → playwright failures.
+          docker compose --env-file .env -f docker/compose.dev.yml up -d postgres redis
+          echo "waiting for postgres healthy"
+          for i in $(seq 1 60); do
+            if docker compose -f docker/compose.dev.yml exec -T postgres pg_isready -U postgres -d arbitragex >/dev/null 2>&1; then
+              echo "postgres ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          # Step 2: apply migrations (001_roles + 001b role passwords + schema).
+          # migrate.sh reads .env, connects as postgres@localhost:5432, idempotent.
+          bash automation/scripts/migrate.sh
+          # Step 3: app services now that the DB is migrated and roles have passwords.
           docker compose --env-file .env -f docker/compose.dev.yml up -d --build \
-            postgres redis frontend edge api-server
+            frontend edge api-server
           echo "stack up; waiting for frontend"
           for i in $(seq 1 60); do
             if curl -sf http://localhost:5173 >/dev/null; then
