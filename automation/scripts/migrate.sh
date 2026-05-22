@@ -53,7 +53,11 @@ while IFS= read -r -d '' f; do
   fi
   psql_cmd -v ON_ERROR_STOP=1 -c "INSERT INTO schema_migrations(version) VALUES ('$version_sql');" >/dev/null
   applied+=("$version")
-done < <(find "$MIG_DIR" -maxdepth 1 -type f -name '*.sql' -print0 | sort -z)
+# LC_ALL=C forces deterministic byte-order sort across locales. Under an
+# en_US.utf8 collation, sort is punctuation-insensitive and places 001b_* BEFORE
+# 001_roles (compares 'b' vs 'r'), applying role-passwords before the roles exist.
+# Byte order keeps NNN_* before NNNb_* since '_'(0x5F) < 'b'(0x62).
+done < <(find "$MIG_DIR" -maxdepth 1 -type f -name '*.sql' -print0 | LC_ALL=C sort -z)
 
 if [[ ${#applied[@]} -eq 0 ]]; then
   echo "migrations: no new migrations"

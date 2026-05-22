@@ -100,12 +100,19 @@ BEGIN
       ADD COLUMN IF NOT EXISTS requires_layers JSONB DEFAULT '[]'::jsonb,
       ADD COLUMN IF NOT EXISTS enabled BOOLEAN DEFAULT TRUE;
 
-    INSERT INTO feature_manifest (feature_key, ui_path, backend_route, requires_layers, enabled, description)
+    -- 067 created feature_manifest with NOT-NULL layer/state_hash/panel_path
+    -- (no defaults). The original 068 INSERT omitted them → null-violation that
+    -- aborted the whole chain. Supply them: layer='backend' (these are backend
+    -- features), state_hash placeholder like 067's seeds (recomputed at runtime),
+    -- panel_path mirrors ui_path. Preserves 067's schema; no constraint weakening.
+    INSERT INTO feature_manifest (feature_key, layer, state_hash, panel_path, ui_path, backend_route, requires_layers, enabled, description)
     VALUES
-      ('operator_parametrization', '/omega-s5/operator', '/api/operator/me',
+      ('operator_parametrization', 'backend', repeat('0',64), '/omega-s5/operator',
+       '/omega-s5/operator', '/api/operator/me',
        '["api","handler","pg","authz","audit"]'::jsonb, TRUE,
        'Operator Parametrization Sovereignty (C9.4)'),
-      ('operator_gate_authz', '/omega-s5/registry', '/api/operator/authorize',
+      ('operator_gate_authz', 'backend', repeat('0',64), '/omega-s5/registry',
+       '/omega-s5/registry', '/api/operator/authorize',
        '["api","handler","authz","audit"]'::jsonb, TRUE,
        '9-Layer Coherence — L8 Operator Authz / L9 Operator Audit')
     ON CONFLICT (feature_key) DO NOTHING;
