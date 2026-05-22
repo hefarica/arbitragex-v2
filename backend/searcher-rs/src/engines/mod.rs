@@ -26,3 +26,6 @@ pub mod dex_engine;
 pub mod flashloan_engine;
 pub mod liquidation_engine;
 pub mod triangular_engine;
+pub mod backrun_engine;
+pub mod spatial_engine;
+pub mod cex_dex_engine;

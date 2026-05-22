@@ -15,6 +15,8 @@ pub mod pool_sync_worker;
 pub mod price_worker;
 pub mod rpc_health_worker;
 pub mod triangular_worker;
+pub mod backrun_worker;
+pub mod spatial_worker;
 
 use shared_rs::rpc_failover::HttpRpcPool;
 use sqlx::PgPool;
