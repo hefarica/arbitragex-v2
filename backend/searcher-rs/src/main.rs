@@ -55,6 +55,9 @@ mod sim_multistep;
 // pub/sub `arbx:config:chains:reload` for events from the api-server admin
 // endpoint.
 mod config_reload;
+// Phase 2: Topology Vault hot-reload subscriber. Listens on `arbx:topology:mutation`,
+// applies durable HTTP fallback at cold boot, and swaps RPC/WS clients atomically.
+mod topology_reload;
 // Phase 16: per-strategy Prometheus metrics for the event-driven orchestrator.
 mod metrics;
 mod patterns;
@@ -164,6 +167,8 @@ async fn main() -> anyhow::Result<()> {
     init_metrics();
     // Phase 16: register per-strategy orchestrator metrics into the shared registry.
     init_orchestrator_metrics();
+    // Phase 2: expose applied topology version/client-readiness gauges for clean UI surfaces.
+    topology_reload::init_topology_metrics();
 
     let port: u16 = std::env::var("SEARCHER_HEALTH_PORT")
         .ok()
@@ -178,6 +183,30 @@ async fn main() -> anyhow::Result<()> {
     // Shared redis connection manager for scanners.
     let redis_client = redis::Client::open(redis_url.clone())?;
     let redis_conn = redis_client.get_connection_manager().await?;
+
+    // Phase 2 — Topology Vault runtime (durable fallback + Redis Pub/Sub).
+    // Full RPC/WS URLs stay inside this process. Operators may set
+    // TOPOLOGY_SNAPSHOT_URL to the internal api-server snapshot endpoint for cold boot;
+    // Redis mutations on `arbx:topology:mutation` remain the live update path.
+    let topology_runtime = topology_reload::TopologyRuntime::new();
+    let topology_cancel = tokio_util::sync::CancellationToken::new();
+    let topology_subscriber = topology_reload::TopologySubscriber::new(
+        redis_url.clone(),
+        std::env::var("TOPOLOGY_SNAPSHOT_URL").ok(),
+        std::env::var("TOPOLOGY_ADMIN_TOKEN").ok(),
+        topology_runtime.clone(),
+        Arc::new(topology_reload::LiveTopologyClientFactory),
+        topology_cancel,
+    );
+    tokio::spawn(async move {
+        if let Err(e) = topology_subscriber.run().await {
+            warn!(
+                event = "topology.subscriber_failed",
+                error = %e,
+                "topology subscriber exited; restart pod to recover Redis hot-reload"
+            );
+        }
+    });
 
     // Trading-config client (Redis-backed, hot-reload <1s) — re-uses the manager
     // above so we don't double the open-fd count per pod. Each scanner per-chain

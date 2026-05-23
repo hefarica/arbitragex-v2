@@ -10,11 +10,13 @@
 // Phase 1-3 modules re-exported so the library target compiles standalone.
 pub mod amm_math;
 pub mod calldata;
+pub mod chain_client;
 pub mod counters;
 pub mod dedup;
 // Phase 16: per-strategy Prometheus metrics for the orchestrator.
 pub mod impact_index;
 pub mod metrics;
+pub mod models;
 pub mod opportunity_emitter;
 pub mod patterns;
 pub mod persistence;
@@ -71,6 +73,8 @@ pub mod sim_multistep;
 // config_hash per chain to skip no-op reloads. Public so the future
 // B1.d chain-task supervisor can consume the dedup map.
 pub mod config_reload;
+// Phase 2 Topology Vault runtime: durable fallback + Redis Pub/Sub + atomic RPC/WS hot-swap.
+pub mod topology_reload;
 
 // -- SOP-EDGE-001: Edge Node modules (paper-shadow feature gate) -------
 // These modules implement the Alloy anti-mock layer, U256<->f64 normalization,

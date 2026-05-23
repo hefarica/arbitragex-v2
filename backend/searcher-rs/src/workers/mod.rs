@@ -15,12 +15,18 @@ pub mod pool_sync_worker;
 pub mod price_worker;
 pub mod rpc_health_worker;
 pub mod triangular_worker;
+#[cfg(feature = "experimental-engines")]
 pub mod backrun_worker;
+#[cfg(feature = "experimental-engines")]
 pub mod spatial_worker;
 // APEX Phase 1.5 — Thermodynamic workers (server-side only)
+#[cfg(feature = "experimental-engines")]
 pub mod svs_worker;
+#[cfg(feature = "experimental-engines")]
 pub mod dlp_worker;
+#[cfg(feature = "experimental-engines")]
 pub mod triangular_atomic_worker;
+#[cfg(feature = "experimental-engines")]
 pub mod funding_rate_worker;
 
 use shared_rs::rpc_failover::HttpRpcPool;

@@ -36,6 +36,8 @@ bigdecimal.workspace = true
 rand.workspace = true
 prioritization-spine = { workspace = true }
 math-engine = { workspace = true }
+async-trait.workspace = true
+arc-swap = "1"
 
 # Sprint 4 — REVM-backed simulator (Phase A.1+A.2 fail-closed wire).
 # Enabled by default at compile time; runtime is gated by RPC_HTTP_<chain>
@@ -55,6 +57,7 @@ sed-core = { path = "../sed-core", optional = true }
 default = ["v2-simulator"]
 v2-simulator = ["dep:simulator-v2"]
 paper-shadow = ["dep:lazy_static", "dep:sed-core", "sed-core?/filtration", "sed-core?/eigenstate", "sed-core?/metrics"]
+experimental-engines = []
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros","rt-multi-thread","test-util"] }

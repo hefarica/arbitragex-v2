@@ -5882,6 +5882,8 @@ dependencies = [
  "alloy",
  "alloy-sol-types",
  "anyhow",
+ "arc-swap",
+ "async-trait",
  "axum",
  "bigdecimal 0.4.10",
  "chrono",
