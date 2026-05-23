@@ -1,0 +1,67 @@
+# ArbitrageX V2 — Docker Compose staging override
+# Uso previsto:
+#   COMPOSE_PROJECT_NAME=arbxv2-staging docker compose \
+#     --env-file config/topology/staging.env \
+#     -f docker/compose.prod.yml \
+#     -f docker/compose.staging.override.yml \
+#     config
+#
+# Este archivo no debe contener secretos. Solo define aislamiento lógico y flags de staging.
+
+services:
+  api-server:
+    environment:
+      ARBX_ENV: staging
+      ARBX_HOT_RELOAD_ENABLED: "true"
+      ARBX_TOPOLOGY_CHANNEL: arbx:topology:mutation
+      ARBX_TOPOLOGY_ACK_STREAM: arbx:topology:acks
+      REDIS_URL: redis://redis:6379
+    labels:
+      arbx.environment: staging
+      arbx.component: control-plane
+
+  searcher-rs:
+    environment:
+      ARBX_ENV: staging
+      ARBX_EXECUTION_ENABLED: "false"
+      ARBX_HOT_RELOAD_ENABLED: "true"
+      ARBX_TOPOLOGY_CHANNEL: arbx:topology:mutation
+      ARBX_TOPOLOGY_SNAPSHOT_URL: http://api-server:8080/admin/topology/snapshot
+      ARBX_TOPOLOGY_ACK_STREAM: arbx:topology:acks
+      REDIS_URL: redis://redis:6379
+    labels:
+      arbx.environment: staging
+      arbx.component: searcher
+
+  sim-ctl:
+    environment:
+      ARBX_ENV: staging
+      ARBX_HOT_RELOAD_ENABLED: "true"
+      ARBX_TOPOLOGY_CHANNEL: arbx:topology:mutation
+      REDIS_URL: redis://redis:6379
+    labels:
+      arbx.environment: staging
+      arbx.component: simulator
+
+  token-enricher:
+    environment:
+      ARBX_ENV: staging
+      ARBX_HOT_RELOAD_ENABLED: "true"
+      ARBX_TOPOLOGY_CHANNEL: arbx:topology:mutation
+      REDIS_URL: redis://redis:6379
+    labels:
+      arbx.environment: staging
+      arbx.component: token-enricher
+
+  frontend:
+    environment:
+      ARBX_ENV: staging
+      NEXT_PUBLIC_ARB_ENV: staging
+    labels:
+      arbx.environment: staging
+      arbx.component: frontend
+
+  redis:
+    labels:
+      arbx.environment: staging
+      arbx.component: redis
