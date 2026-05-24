@@ -10,7 +10,8 @@
     "lint": "eslint . --ext .ts,.tsx",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "validate:prod-api": "node scripts/assert-no-localhost-production.js"
+    "validate:prod-api": "node scripts/assert-no-localhost-production.js",
+    "dev:container": "next dev -H 0.0.0.0 -p 5173"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
