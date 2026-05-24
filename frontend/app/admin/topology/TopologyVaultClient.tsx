@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { ReadinessStepper } from "@/components/ReadinessStepper";
 import { emitSystemReadinessRefresh, useSystemReadiness } from "@/hooks/useSystemReadiness";
 import { hasAdminSession } from "@/lib/admin-token";
+import { useSystemStore, type ActiveChain } from "@/store/useSystemStore";
 
 export type MempoolMode = "auto" | "filtered" | "firehose";
 
@@ -58,6 +59,20 @@ interface ClientProps {
 
 const HTTP_EXAMPLE = "alchemy=https://eth-mainnet.g.alchemy.com/v2/TU_API_KEY,publicnode=https://ethereum-rpc.publicnode.com";
 const WS_EXAMPLE = "alchemy=wss://eth-mainnet.g.alchemy.com/v2/TU_API_KEY,publicnode=wss://ethereum-rpc.publicnode.com";
+
+function snapshotToActiveChains(topology: TopologySnapshot | null | undefined, fallbackVersion?: number): ActiveChain[] {
+  if (!topology) return [];
+  const versionId = fallbackVersion ?? topology.version_id;
+  const validatedAt = topology.updated_at ?? new Date().toISOString();
+  return [{
+    chainId: topology.chain_id,
+    name: `Chain ${topology.chain_id}`,
+    rpcHttpHost: topology.rpc_http_1?.[0]?.host ?? "",
+    rpcWsHost: topology.rpc_ws_1?.[0]?.host ?? "",
+    versionId,
+    validatedAt,
+  }];
+}
 
 function formatErrorCode(code: string): string {
   const labels: Record<string, string> = {
@@ -129,6 +144,8 @@ export function TopologyVaultClient({ initialSnapshot, edgeUrl }: ClientProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const readiness = useSystemReadiness();
+  const setTopologyReady = useSystemStore((state) => state.setTopologyReady);
+  const clearTopology = useSystemStore((state) => state.clearTopology);
 
   useEffect(() => {
     setIsMounted(true);
@@ -155,18 +172,22 @@ export function TopologyVaultClient({ initialSnapshot, edgeUrl }: ClientProps) {
         setSnapshot((prev) => ({ ...prev, error: data.error ?? `HTTP ${res.status}` }));
         return;
       }
-      setSnapshot({ topology: data.topology ?? null, source: data.source ?? "vault", error: null });
-      if (data.topology) {
-        setScope(data.topology.scope);
-        setChainId(String(data.topology.chain_id));
-        setMempoolMode(data.topology.mempool_mode);
+      const nextTopology = data.topology ?? null;
+      setSnapshot({ topology: nextTopology, source: data.source ?? "vault", error: null });
+      if (nextTopology) {
+        setScope(nextTopology.scope);
+        setChainId(String(nextTopology.chain_id));
+        setMempoolMode(nextTopology.mempool_mode);
+        setTopologyReady(snapshotToActiveChains(nextTopology), nextTopology.version_id, nextTopology.updated_at);
+      } else if ((data.source ?? "") === "empty_vault") {
+        clearTopology();
       }
     } catch (e) {
       setSnapshot((prev) => ({ ...prev, error: (e as Error).message }));
     } finally {
       setIsLoading(false);
     }
-  }, [edgeUrl]);
+  }, [clearTopology, edgeUrl, setTopologyReady]);
 
   const applyMutation = useCallback(async () => {
     if (!canSubmit) {
@@ -203,6 +224,11 @@ export function TopologyVaultClient({ initialSnapshot, edgeUrl }: ClientProps) {
       setMempoolMode(data.topology.mempool_mode);
       setRpcHttp("");
       setRpcWs("");
+      setTopologyReady(
+        snapshotToActiveChains(data.topology, data.version_id),
+        data.version_id ?? data.topology.version_id,
+        data.topology.updated_at,
+      );
       toast.success("Topology Vault actualizado", {
         description: `Versión ${data.version_id}; subscribers notificados: ${data.subscribers_notified ?? 0}`,
       });
@@ -215,7 +241,7 @@ export function TopologyVaultClient({ initialSnapshot, edgeUrl }: ClientProps) {
     } finally {
       setIsSaving(false);
     }
-  }, [actor, canSubmit, chainId, edgeUrl, mempoolMode, readiness, rpcHttp, rpcWs, scope]);
+  }, [actor, canSubmit, chainId, edgeUrl, mempoolMode, readiness, rpcHttp, rpcWs, scope, setTopologyReady]);
 
   if (isMounted && !hasSession) {
     return (
