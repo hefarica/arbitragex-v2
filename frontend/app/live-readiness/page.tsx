@@ -16,6 +16,7 @@ import { GoNoGoPanel } from "@/features/readiness/GoNoGoPanel";
 import { AgentTeamsPanel } from "@/features/readiness/AgentTeamsPanel";
 import { ConfidenceScoringPanel } from "@/features/readiness/ConfidenceScoringPanel";
 import { RiskCircuitPanel } from "@/features/risk/RiskCircuitPanel";
+import { LiveReadinessStepper } from "@/components/ReadinessStepper";
 
 // ─── Aesthetic helpers ───────────────────────────────────────────────────
 
@@ -282,6 +283,8 @@ export default function LiveReadinessPage() {
           </Button>
         }
       />
+
+      <LiveReadinessStepper className="mb-6" />
 
       {error && (
         <div className="mb-6 rounded-md border border-[oklch(65%_0.22_25)]/40 bg-[oklch(65%_0.22_25)]/5 px-4 py-3">
