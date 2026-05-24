@@ -92,18 +92,16 @@ export function DriftPanel() {
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="flex items-center gap-2 text-base font-semibold">
           <span
-            className="inline-block h-2.5 w-2.5 rounded-full"
+            className={`inline-block h-2.5 w-2.5 rounded-full ${
+              status === "consistent"
+                ? "bg-success"
+                : status === "drift_detected"
+                  ? "bg-destructive"
+                  : status === "partial"
+                    ? "bg-warning"
+                    : "bg-muted-foreground"
+            }`}
             aria-hidden="true"
-            style={{
-              backgroundColor:
-                status === "consistent"
-                  ? "#22c55e"
-                  : status === "drift_detected"
-                    ? "#ef4444"
-                    : status === "partial"
-                      ? "#f59e0b"
-                      : "#6b7280",
-            }}
           />
           Drift Detection
           <Badge variant={driftStatusVariant(status)}>{driftStatusLabel(status)}</Badge>
