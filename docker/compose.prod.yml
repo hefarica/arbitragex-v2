@@ -1,720 +1,684 @@
-# ArbitrageX v2 — PRODUCTION stack.
-#
-# Every secret is required — compose will refuse to start if any env var below
-# is unset. This is enforced by the `${VAR:?message}` syntax which makes `docker
-# compose up` fail immediately when the variable is absent.
-#
-# Expected boot sequence in production:
-#   1. Operator unseals Vault.
-#   2. vault-agent renders /run/secrets/arbx.env from its template.
-#   3. `docker compose -f docker/compose.prod.yml --env-file /run/secrets/arbx.env up -d`
-#
-# Paths exposed to the Internet:
-#   - Only the Cloudflare Tunnel reaches this stack. No port is bound to 0.0.0.0.
-#   - Postgres, Redis, Grafana, Prometheus, Loki bound to 127.0.0.1 only.
-#   - edge service is the public entry point (behind CF Worker + Tunnel).
-#
-# Production compose — key differences from compose.dev.yml (Audit M12, 2026-05-10):
-#   - All secrets use ${VAR:?message} (hard fail on missing) — no ${VAR:-default} fallbacks.
-#   - T0 secrets (FLASHBOTS_SIGNER_KEY, ARBX_ADMIN_TOKEN, ARBX_EDGE_TOKEN, JWT_SECRET,
-#     POSTGRES_PASSWORD, ARBX_RW_PASSWORD, ARBX_MINIO_ROOT_PASSWORD, etc.) come exclusively
-#     from Vault via vault-agent → /run/secrets/arbx.env.
-#   - Grafana reads GF_SECURITY_ADMIN_PASSWORD__FILE from /run/secrets/ (Docker secret mount).
-#   - Alertmanager and Thanos require SLACK_WEBHOOK_URL, PAGERDUTY_INTEGRATION_KEY, and
-#     MINIO credentials to be Vault-sourced before container start.
-#   - Resource limits enforced on every service (memory/cpu caps).
-#   - restart: unless-stopped on all services.
-#   - No default credentials anywhere.
-#
-# Bootstrap procedure: docs/operations/PRODUCTION_DEPLOY.md
-# Secrets classification: docs/operations/SECRETS_POLICY.md
-
 name: arbitragex-v2
-
 networks:
   arbx-net:
     driver: bridge
-
 volumes:
-  postgres_data:
-  redis_data:
-  grafana_data:
-  loki_data:
-  prometheus_data:
-  vault_data:
-  vault_logs:
-  minio_data:
-  thanos_store_data:
-
-x-common-logging: &common-logging
-  logging:
+  postgres_data: null
+  redis_data: null
+  grafana_data: null
+  loki_data: null
+  prometheus_data: null
+  vault_data: null
+  vault_logs: null
+  minio_data: null
+  thanos_store_data: null
+  arbx_vault_data: null
+x-common-logging:
+  logging: &id001
     driver: json-file
-    options: { max-size: "10m", max-file: "5" }
-
+    options:
+      max-size: 10m
+      max-file: '5'
 services:
-
-  # ───────── Data plane ─────────
-
   postgres:
+    logging: *id001
     image: postgres:15
     environment:
       POSTGRES_DB: arbitragex
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required for prod stack}
-      ARBX_MIGRATOR_PASSWORD: ${ARBX_MIGRATOR_PASSWORD:?ARBX_MIGRATOR_PASSWORD required for prod}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required for prod
+        stack}
+      ARBX_MIGRATOR_PASSWORD: ${ARBX_MIGRATOR_PASSWORD:?ARBX_MIGRATOR_PASSWORD required
+        for prod}
       ARBX_RW_PASSWORD: ${ARBX_RW_PASSWORD:?ARBX_RW_PASSWORD required for prod}
       ARBX_RO_PASSWORD: ${ARBX_RO_PASSWORD:?ARBX_RO_PASSWORD required for prod}
-    ports: ["127.0.0.1:5432:5432"]
+    ports:
+    - 127.0.0.1:5432:5432
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ../database/init:/docker-entrypoint-initdb.d:ro
+    - postgres_data:/var/lib/postgresql/data
+    - ../database/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL","pg_isready -U postgres -d arbitragex"]
+      test:
+      - CMD-SHELL
+      - pg_isready -U postgres -d arbitragex
       interval: 5s
       timeout: 3s
       retries: 20
     restart: unless-stopped
-    networks: [arbx-net]
-    <<: *common-logging
-
+    networks:
+    - arbx-net
   redis:
+    logging: *id001
     image: redis:7.2
-    command: ["redis-server","--save","","--appendonly","no"]
-    ports: ["127.0.0.1:6379:6379"]
-    volumes: [redis_data:/data]
+    command:
+    - redis-server
+    - --save
+    - ''
+    - --appendonly
+    - 'no'
+    ports:
+    - 127.0.0.1:6379:6379
+    volumes:
+    - redis_data:/data
     healthcheck:
-      test: ["CMD","redis-cli","PING"]
+      test:
+      - CMD
+      - redis-cli
+      - PING
       interval: 5s
       timeout: 3s
       retries: 20
     restart: unless-stopped
-    networks: [arbx-net]
-    <<: *common-logging
-
-  # geth and anvil are dev profiles; not started in prod.
-
-  # ───────── Backend services ─────────
-
+    networks:
+    - arbx-net
   searcher-rs:
+    logging: *id001
     build:
       context: ../backend
       dockerfile: searcher-rs/Dockerfile
-    env_file: ["../.env"]
+    env_file:
+    - ../.env
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
       REDIS_URL: redis://redis:6379
-      SEARCHER_HEALTH_PORT: "9001"
+      SEARCHER_HEALTH_PORT: '9001'
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
       RPC_WS_1: ${RPC_WS_1:?RPC_WS_1 required for mainnet detection}
       RPC_HTTP_1: ${RPC_HTTP_1:?RPC_HTTP_1 required for mainnet receipts}
     volumes:
-      - ../configs:/app/configs:ro
+    - ../configs:/app/configs:ro
     depends_on:
-      redis: { condition: service_healthy }
-      postgres: { condition: service_healthy }
-    # M2 Capa1 Fase 2 — /health served on SEARCHER_HEALTH_PORT (9001).
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:9001/health >/dev/null 2>&1 || exit 1"]
+      test:
+      - CMD-SHELL
+      - wget -q -O- http://localhost:9001/health >/dev/null 2>&1 || exit 1
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 30s
     restart: unless-stopped
-    networks: [arbx-net]
-    # INF-1: searcher-rs is the heaviest Rust service (REVM + WS fan-out).
+    networks:
+    - arbx-net
     deploy:
       resources:
         limits:
-          memory: "4G"
-          cpus: "2.0"
+          memory: 4G
+          cpus: '2.0'
         reservations:
-          memory: "512M"
-    <<: *common-logging
-
+          memory: 512M
   sim-ctl:
+    logging: *id001
     build:
       context: ../backend
       dockerfile: sim-ctl/Dockerfile
-    env_file: ["../.env"]
+    env_file:
+    - ../.env
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
-      SIM_PORT: "3003"
+      SIM_PORT: '3003'
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
       REDIS_URL: redis://redis:6379
       ANVIL_URL: http://anvil:8545
     volumes:
-      - ../configs:/app/configs:ro
-    ports: ["127.0.0.1:3003:3003"]
+    - ../configs:/app/configs:ro
+    ports:
+    - 127.0.0.1:3003:3003
     depends_on:
-      postgres: { condition: service_healthy }
-      redis: { condition: service_healthy }
-    # M2 Capa1 Fase 2 — /health on SIM_PORT (3003).
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:3003/health >/dev/null 2>&1 || exit 1"]
+      test:
+      - CMD-SHELL
+      - wget -q -O- http://localhost:3003/health >/dev/null 2>&1 || exit 1
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 30s
     restart: unless-stopped
-    networks: [arbx-net]
-    # INF-1: sim-ctl runs REVM simulations; 2G prevents OOM during burst.
+    networks:
+    - arbx-net
     deploy:
       resources:
         limits:
-          memory: "2G"
-          cpus: "1.5"
+          memory: 2G
+          cpus: '1.5'
         reservations:
-          memory: "256M"
-    <<: *common-logging
-
+          memory: 256M
   relays-client:
+    logging: *id001
     build:
       context: ../backend
       dockerfile: relays-client/Dockerfile
-    env_file: ["../.env"]
+    env_file:
+    - ../.env
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
       REDIS_URL: redis://redis:6379
-      RELAYS_PORT: "3005"
+      RELAYS_PORT: '3005'
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
-      # FLASHBOTS_SIGNER_KEY, BLOXROUTE_AUTH, EDEN_AUTH come from vault-agent
-      # via env_file above. Relay itself is disabled until the matching secret exists.
     volumes:
-      - ../configs:/app/configs:ro
-    ports: ["127.0.0.1:3005:3005"]
+    - ../configs:/app/configs:ro
+    ports:
+    - 127.0.0.1:3005:3005
     depends_on:
-      redis: { condition: service_healthy }
-    # M2 Capa1 Fase 2 — /health on RELAYS_PORT (3005).
+      redis:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:3005/health >/dev/null 2>&1 || exit 1"]
+      test:
+      - CMD-SHELL
+      - wget -q -O- http://localhost:3005/health >/dev/null 2>&1 || exit 1
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 30s
     restart: unless-stopped
-    networks: [arbx-net]
-    # INF-1: relays-client manages Flashbots/BloxRoute HTTP connections.
+    networks:
+    - arbx-net
     deploy:
       resources:
         limits:
-          memory: "1G"
-          cpus: "1.0"
+          memory: 1G
+          cpus: '1.0'
         reservations:
-          memory: "128M"
-    <<: *common-logging
-
+          memory: 128M
   recon:
+    logging: *id001
     build:
       context: ../backend
       dockerfile: recon/Dockerfile
-    env_file: ["../.env"]
+    env_file:
+    - ../.env
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
-      RECON_PORT: "3004"
+      RECON_PORT: '3004'
     volumes:
-      - ../configs:/app/configs:ro
-    ports: ["127.0.0.1:3004:3004"]
+    - ../configs:/app/configs:ro
+    ports:
+    - 127.0.0.1:3004:3004
     depends_on:
-      postgres: { condition: service_healthy }
-    # M2 Capa1 Fase 2 — /health on RECON_PORT (3004).
+      postgres:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:3004/health >/dev/null 2>&1 || exit 1"]
+      test:
+      - CMD-SHELL
+      - wget -q -O- http://localhost:3004/health >/dev/null 2>&1 || exit 1
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 30s
     restart: unless-stopped
-    networks: [arbx-net]
-    # INF-1: recon does reconciliation queries; 1G is sufficient.
+    networks:
+    - arbx-net
     deploy:
       resources:
         limits:
-          memory: "1G"
-          cpus: "1.0"
+          memory: 1G
+          cpus: '1.0'
         reservations:
-          memory: "128M"
-    <<: *common-logging
-
+          memory: 128M
   selector-api:
+    logging: *id001
     build:
       context: ..
       dockerfile: backend/selector-api/Dockerfile
-    env_file: ["../.env"]
+    env_file:
+    - ../.env
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
       REDIS_URL: redis://redis:6379
-      SELECTOR_PORT: "3002"
-    ports: ["127.0.0.1:3002:3002"]
+      SELECTOR_PORT: '3002'
+    ports:
+    - 127.0.0.1:3002:3002
     depends_on:
-      postgres: { condition: service_healthy }
-      redis: { condition: service_healthy }
-    # M2 Capa1 Fase 2 — /health on SELECTOR_PORT (3002). Node `http` built-in,
-    # no wget/curl required on the slim image.
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3002/health',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))\""]
+      test:
+      - CMD-SHELL
+      - node -e "require('http').get('http://localhost:3002/health',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))"
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 30s
     restart: unless-stopped
-    networks: [arbx-net]
-    # INF-1: selector-api is a lightweight TS service; 512M is generous.
+    networks:
+    - arbx-net
     deploy:
       resources:
         limits:
-          memory: "512M"
-          cpus: "0.5"
+          memory: 512M
+          cpus: '0.5'
         reservations:
-          memory: "64M"
-    <<: *common-logging
-
+          memory: 64M
   api-server:
+    logging: *id001
     build:
       context: ..
       dockerfile: backend/api-server/Dockerfile
-    env_file: ["../.env"]
+    env_file:
+    - ../.env
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
       REDIS_URL: redis://redis:6379
       ARBX_ADMIN_TOKEN: ${ARBX_ADMIN_TOKEN:?ARBX_ADMIN_TOKEN required}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
-      API_PORT: "8080"
+      API_PORT: '8080'
       SELECTOR_URL: http://selector-api:3002
       SIM_URL: http://sim-ctl:3003
       RECON_URL: http://recon:3004
       RELAYS_URL: http://relays-client:3005
       SEARCHER_URL: http://searcher-rs:9001
-    ports: ["127.0.0.1:8080:8080"]
+    ports:
+    - 127.0.0.1:8080:8080
     depends_on:
-      redis: { condition: service_healthy }
-    # M2 Capa1 Fase 2 — /api/health on API_PORT (8080). Node `http` built-in.
+      redis:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8080/api/health',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))\""]
+      test:
+      - CMD-SHELL
+      - node -e "require('http').get('http://localhost:8080/api/health',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))"
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 30s
     restart: unless-stopped
-    networks: [arbx-net]
-    # INF-1: api-server handles REST + WS fan-out to all backend services.
+    networks:
+    - arbx-net
     deploy:
       resources:
         limits:
-          memory: "1G"
-          cpus: "1.0"
+          memory: 1G
+          cpus: '1.0'
         reservations:
-          memory: "128M"
-    <<: *common-logging
-
-  # ───────── Edge ─────────
-  # In production the public Cloudflare Worker (deployed separately via wrangler)
-  # fronts this stack. This `edge` service is the internal Express shim used by
-  # the Cloudflare Tunnel for admin-only traffic (ops.<domain>).
-
+          memory: 128M
+    volumes:
+    - type: bind
+      source: /var/lib/arbx
+      target: /var/lib/arbx
   edge:
+    logging: *id001
     build:
       context: ..
       dockerfile: edge/dev-local/Dockerfile
-    env_file: ["../.env"]
+    env_file:
+    - ../.env
     environment:
       API_SERVER_URL: http://api-server:8080
       ARBX_EDGE_TOKEN: ${ARBX_EDGE_TOKEN:?ARBX_EDGE_TOKEN required}
-      EDGE_PORT: "8787"
-    ports: ["127.0.0.1:8787:8787"]
-    depends_on: [api-server]
-    # M2 Capa1 Fase 2 — /health on EDGE_PORT (8787). Node `http` built-in.
+      EDGE_PORT: '8787'
+    ports:
+    - 0.0.0.0:8787:8787
+    depends_on:
+    - api-server
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8787/health',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))\""]
+      test:
+      - CMD-SHELL
+      - node -e "require('http').get('http://localhost:8787/health',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))"
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 30s
     restart: unless-stopped
-    networks: [arbx-net]
-    <<: *common-logging
-
-  # ───────── Frontend ─────────
-
+    networks:
+    - arbx-net
   frontend:
+    logging: *id001
     build:
       context: ..
       dockerfile: frontend/Dockerfile
     environment:
-      NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:?NEXT_PUBLIC_EDGE_URL required (public edge URL)}
-      # Server-side fetches from Next.js Server Components / Route Handlers must
-      # reach the edge worker via Docker DNS. Without this, getApiBaseUrl()
-      # returns "" server-side, so `new URL("/admin/audit")` in api-client.ts
-      # throws TypeError: Invalid URL and pages like /audit-logs return HTTP 500.
+      NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:?NEXT_PUBLIC_EDGE_URL required
+        (public edge URL)}
       INTERNAL_EDGE_URL: http://edge:8787
-    ports: ["127.0.0.1:5173:5173"]
-    depends_on: [edge]
-    # M2 Capa1 Fase 2 — root path on Next.js port 5173. Node `http` built-in.
-    # No /health endpoint in App Router yet; root URL ready = SSR pipeline up.
+    ports:
+    - 0.0.0.0:5173:5173
+    depends_on:
+    - edge
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:5173/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))\""]
+      test:
+      - CMD-SHELL
+      - node -e "require('http').get('http://localhost:5173/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 60s
     restart: unless-stopped
-    networks: [arbx-net]
-    # INF-1: frontend serves static Next.js output; 1G covers SSR memory overhead.
+    networks:
+    - arbx-net
     deploy:
       resources:
         limits:
-          memory: "1G"
-          cpus: "1.0"
+          memory: 1G
+          cpus: '1.0'
         reservations:
-          memory: "128M"
-    <<: *common-logging
-
-  # ───────── Observability ─────────
-
+          memory: 128M
   prometheus:
-    # INF-7: bumped from v2.52.0 to v2.55.1 (latest stable as of 2026-05-07).
+    logging: *id001
     image: prom/prometheus:v2.55.1
-    # MON-7: 2h block rotation so Thanos sidecar can pick up completed blocks
-    # promptly. --web.enable-lifecycle allows /-/reload for config hot-reload.
     command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-      - --storage.tsdb.min-block-duration=2h
-      - --storage.tsdb.max-block-duration=2h
-      - --web.enable-lifecycle
-    ports: ["127.0.0.1:9090:9090"]
+    - --config.file=/etc/prometheus/prometheus.yml
+    - --storage.tsdb.path=/prometheus
+    - --storage.tsdb.min-block-duration=2h
+    - --storage.tsdb.max-block-duration=2h
+    - --web.enable-lifecycle
+    ports:
+    - 127.0.0.1:9090:9090
     volumes:
-      # M2 Capa1 Fase 10 — prod-specific config (env: prod, scrape token-enricher).
-      # See monitoring/prometheus/prometheus.prod.yml.
-      - ../monitoring/prometheus/prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
-      - ../monitoring/alerts.rules.yml:/etc/prometheus/alerts.rules.yml:ro
-      - prometheus_data:/prometheus
-    # INF-3: healthcheck via /-/healthy endpoint.
+    - ../monitoring/prometheus/prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
+    - ../monitoring/alerts.rules.yml:/etc/prometheus/alerts.rules.yml:ro
+    - prometheus_data:/prometheus
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:9090/-/healthy 2>/dev/null || exit 1"]
+      test:
+      - CMD-SHELL
+      - wget -q -O- http://localhost:9090/-/healthy 2>/dev/null || exit 1
       interval: 30s
       timeout: 5s
       retries: 3
     restart: unless-stopped
-    networks: [arbx-net]
-    <<: *common-logging
-
+    networks:
+    - arbx-net
   grafana:
-    # INF-7: bumped from 10.4.2 to 11.4.0 (latest stable as of 2026-05-07).
+    logging: *id001
     image: grafana/grafana:11.4.0
-    ports: ["127.0.0.1:3000:3000"]
+    ports:
+    - 127.0.0.1:3000:3000
     environment:
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
-      GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_AUTH_ANONYMOUS_ENABLED: 'false'
     secrets:
-      - grafana_admin_password
+    - grafana_admin_password
     volumes:
-      - ../monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
-      - ../monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - grafana_data:/var/lib/grafana
-    depends_on: [prometheus]
-    # INF-3: healthcheck via /api/health endpoint.
+    - ../monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    - ../monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    - grafana_data:/var/lib/grafana
+    depends_on:
+    - prometheus
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:3000/api/health 2>/dev/null || exit 1"]
+      test:
+      - CMD-SHELL
+      - wget -q -O- http://localhost:3000/api/health 2>/dev/null || exit 1
       interval: 30s
       timeout: 5s
       retries: 3
     restart: unless-stopped
-    networks: [arbx-net]
-    <<: *common-logging
-
+    networks:
+    - arbx-net
   alertmanager:
+    logging: *id001
     image: prom/alertmanager:v0.27.0
-    ports: ["127.0.0.1:9093:9093"]
+    ports:
+    - 127.0.0.1:9093:9093
     volumes:
-      - ../monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-    # INF-3: healthcheck via /-/healthy endpoint.
+    - ../monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:9093/-/healthy 2>/dev/null || exit 1"]
+      test:
+      - CMD-SHELL
+      - wget -q -O- http://localhost:9093/-/healthy 2>/dev/null || exit 1
       interval: 30s
       timeout: 5s
       retries: 3
     restart: unless-stopped
-    networks: [arbx-net]
-    <<: *common-logging
-
+    networks:
+    - arbx-net
   loki:
+    logging: *id001
     image: grafana/loki:2.9.7
-    ports: ["127.0.0.1:3100:3100"]
-    command: ["-config.file=/etc/loki/config.yml"]
+    ports:
+    - 127.0.0.1:3100:3100
+    command:
+    - -config.file=/etc/loki/config.yml
     volumes:
-      - ../monitoring/loki/loki-config.yml:/etc/loki/config.yml:ro
-      - loki_data:/loki
-    # INF-3: healthcheck via /ready endpoint.
+    - ../monitoring/loki/loki-config.yml:/etc/loki/config.yml:ro
+    - loki_data:/loki
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:3100/ready 2>/dev/null || exit 1"]
+      test:
+      - CMD-SHELL
+      - wget -q -O- http://localhost:3100/ready 2>/dev/null || exit 1
       interval: 30s
       timeout: 5s
       retries: 3
     restart: unless-stopped
-    networks: [arbx-net]
-    <<: *common-logging
-
+    networks:
+    - arbx-net
   token-enricher:
+    logging: *id001
     build:
       context: ../backend
       dockerfile: token-enricher/Dockerfile
-    env_file: ["../.env"]
+    env_file:
+    - ../.env
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
       REDIS_URL: redis://redis:6379
-      # Required (fail-fast): comma-separated chain IDs to enrich. Each chain
-      # listed here must also have RPC_HTTP_<chain_id> set in .env (passed via
-      # env_file). Format: "1,137,42161". The enricher loops over this list and
-      # builds one HttpRpcPool per chain.
       ENRICHER_CHAINS: ${ENRICHER_CHAINS:?ENRICHER_CHAINS required (e.g. 1,137,42161)}
-      ENRICHER_METRICS_PORT: "9004"
+      ENRICHER_METRICS_PORT: '9004'
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       RUST_LOG: ${RUST_LOG}
-    ports: ["127.0.0.1:9004:9004"]
-    # M2 Capa1 Fase 2 — /metrics on ENRICHER_METRICS_PORT (9004); fallback only,
-    # service has no /health endpoint. Dockerfile already declares a wget-based
-    # HEALTHCHECK; restate at compose level for explicit `service_healthy` deps.
+    ports:
+    - 127.0.0.1:9004:9004
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:9004/metrics 2>/dev/null | grep -q 'arbx_enricher_up 1' || exit 1"]
+      test:
+      - CMD-SHELL
+      - wget -q -O- http://localhost:9004/metrics 2>/dev/null | grep -q 'arbx_enricher_up
+        1' || exit 1
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 30s
     restart: unless-stopped
     depends_on:
-      postgres: { condition: service_healthy }
-      redis: { condition: service_healthy }
-    networks: [arbx-net]
-    # F-3/F-7: resource limits prevent unbounded memory growth.
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+    - arbx-net
     deploy:
       resources:
         limits:
-          memory: "512M"
-          cpus: "0.5"
-    <<: *common-logging
-
+          memory: 512M
+          cpus: '0.5'
   promtail:
+    logging: *id001
     image: grafana/promtail:2.9.7
-    command: ["-config.file=/etc/promtail/config.yml"]
+    command:
+    - -config.file=/etc/promtail/config.yml
     volumes:
-      - ../monitoring/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    depends_on: [loki]
-    # INF-3: promtail exposes /ready on port 9080.
+    - ../monitoring/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+    - loki
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:9080/ready 2>/dev/null || exit 1"]
+      test:
+      - CMD-SHELL
+      - wget -q -O- http://localhost:9080/ready 2>/dev/null || exit 1
       interval: 30s
       timeout: 5s
       retries: 3
     restart: unless-stopped
-    networks: [arbx-net]
-    <<: *common-logging
-
-  # ───────── INF-9: HashiCorp Vault — secret rotation ─────────
-  #
-  # SECURITY: Vault starts SEALED. Operator MUST run `vault operator init` and
-  # `vault operator unseal` (3× threshold) after first boot. This is deliberate
-  # — auto-unseal is not configured here. Unsealing requires physical/SSH access
-  # to the VPS and the operator-held unseal key shards.
-  #
-  # Healthcheck returns unhealthy until unsealed. This is CORRECT — do not
-  # change the healthcheck to accept 5xx codes.
-  #
-  # prod: MINIO_ROOT_USER and MINIO_ROOT_PASSWORD MUST be set in .env.
-  # vault serves on loopback only. Access via SSH tunnel from operator workstation.
-  #
-  # N4 (audit 2026-05-10): TLS is now REQUIRED in prod. tls_disable has been
-  # removed. Self-signed cert must be generated by running:
-  #   bash monitoring/vault/generate-tls.sh
-  # before the first `docker compose up`. See docs/operations/VAULT_SETUP.md.
-  # Network isolation alone is insufficient — a RCE in any sibling container
-  # on the same Docker bridge can sniff plaintext secrets.
+    networks:
+    - arbx-net
   vault:
+    logging: *id001
     image: hashicorp/vault:1.18.1
     container_name: arbitragex-v2-vault-1
     cap_add:
-      - IPC_LOCK
+    - IPC_LOCK
     environment:
-      VAULT_LOCAL_CONFIG: |
-        {
-          "storage": {"file": {"path": "/vault/data"}},
-          "listener": {
-            "tcp": {
-              "address": "0.0.0.0:8200",
-              "tls_cert_file": "/vault/tls/vault-cert.pem",
-              "tls_key_file": "/vault/tls/vault-key.pem",
-              "tls_min_version": "tls12"
-            }
-          },
-          "ui": true,
-          "default_lease_ttl": "168h",
-          "max_lease_ttl": "720h",
-          "api_addr": "https://vault:8200"
-        }
+      VAULT_LOCAL_CONFIG: "{\n  \"storage\": {\"file\": {\"path\": \"/vault/data\"\
+        }},\n  \"listener\": {\n    \"tcp\": {\n      \"address\": \"0.0.0.0:8200\"\
+        ,\n      \"tls_cert_file\": \"/vault/tls/vault-cert.pem\",\n      \"tls_key_file\"\
+        : \"/vault/tls/vault-key.pem\",\n      \"tls_min_version\": \"tls12\"\n  \
+        \  }\n  },\n  \"ui\": true,\n  \"default_lease_ttl\": \"168h\",\n  \"max_lease_ttl\"\
+        : \"720h\",\n  \"api_addr\": \"https://vault:8200\"\n}\n"
       VAULT_ADDR: https://vault:8200
       VAULT_CACERT: /vault/tls/vault-ca.pem
     command: server
     volumes:
-      - vault_data:/vault/data
-      - vault_logs:/vault/logs
-      - ../monitoring/vault/tls:/vault/tls:ro
+    - vault_data:/vault/data
+    - vault_logs:/vault/logs
+    - ../monitoring/vault/tls:/vault/tls:ro
     ports:
-      - "127.0.0.1:8200:8200"
+    - 127.0.0.1:8200:8200
     restart: unless-stopped
     healthcheck:
-      # BusyBox wget exits 8 on HTTP 501 (uninitialized Vault), which Docker
-      # treats as unhealthy. Use `vault status` instead — it handles all Vault
-      # status codes correctly and exits 0 for sealed (503) or uninitialized
-      # (501) states. Timeout increased to 10s for vault CLI cold-start.
-      test: ["CMD", "sh", "-c", "VAULT_ADDR=https://127.0.0.1:8200 VAULT_SKIP_VERIFY=true vault status || true"]
+      test:
+      - CMD
+      - sh
+      - -c
+      - VAULT_ADDR=https://127.0.0.1:8200 VAULT_SKIP_VERIFY=true vault status || true
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
-    networks: [arbx-net]
+    networks:
+    - arbx-net
     deploy:
       resources:
         limits:
-          memory: "512M"
-          cpus: "0.5"
-    <<: *common-logging
-
-  # ───────── MON-7: Minio — object storage for Thanos blocks ─────────
+          memory: 512M
+          cpus: '0.5'
   minio:
+    logging: *id001
     image: minio/minio:RELEASE.2024-11-07T00-52-20Z
     container_name: arbitragex-v2-minio-1
     command: server /data --console-address :9001
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER required for prod}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD required for prod}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD required for
+        prod}
     volumes:
-      - minio_data:/data
+    - minio_data:/data
     ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
+    - 127.0.0.1:9000:9000
+    - 127.0.0.1:9001:9001
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:9000/minio/health/live
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 20s
-    networks: [arbx-net]
+    networks:
+    - arbx-net
     deploy:
       resources:
         limits:
-          memory: "512M"
-          cpus: "0.5"
-    <<: *common-logging
-
-  # ───────── MON-7: Thanos sidecar ─────────
+          memory: 512M
+          cpus: '0.5'
   thanos-sidecar:
+    logging: *id001
     image: quay.io/thanos/thanos:v0.36.1
     container_name: arbitragex-v2-thanos-sidecar-1
     command:
-      - sidecar
-      - --tsdb.path=/prometheus
-      - --prometheus.url=http://prometheus:9090
-      - --objstore.config-file=/etc/thanos/objstore.yml
-      - --grpc-address=0.0.0.0:10901
-      - --http-address=0.0.0.0:10902
+    - sidecar
+    - --tsdb.path=/prometheus
+    - --prometheus.url=http://prometheus:9090
+    - --objstore.config-file=/etc/thanos/objstore.yml
+    - --grpc-address=0.0.0.0:10901
+    - --http-address=0.0.0.0:10902
     volumes:
-      - prometheus_data:/prometheus:ro
-      - ../monitoring/thanos/objstore.yml:/etc/thanos/objstore.yml:ro
+    - prometheus_data:/prometheus:ro
+    - ../monitoring/thanos/objstore.yml:/etc/thanos/objstore.yml:ro
     depends_on:
       prometheus:
         condition: service_healthy
       minio:
         condition: service_healthy
-    # M2 Capa1 Fase 2/10 — /-/healthy on --http-address (10902).
-    # alpine base => BusyBox wget available.
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:10902/-/healthy >/dev/null 2>&1 || exit 1"]
+      test:
+      - CMD-SHELL
+      - wget -q -O- http://localhost:10902/-/healthy >/dev/null 2>&1 || exit 1
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 30s
     restart: unless-stopped
-    networks: [arbx-net]
+    networks:
+    - arbx-net
     deploy:
       resources:
         limits:
-          memory: "256M"
-          cpus: "0.5"
-    <<: *common-logging
-
-  # ───────── MON-7: Thanos Store ─────────
+          memory: 256M
+          cpus: '0.5'
   thanos-store:
+    logging: *id001
     image: quay.io/thanos/thanos:v0.36.1
     container_name: arbitragex-v2-thanos-store-1
     command:
-      - store
-      - --data-dir=/data
-      - --objstore.config-file=/etc/thanos/objstore.yml
-      - --grpc-address=0.0.0.0:10901
-      - --http-address=0.0.0.0:10902
+    - store
+    - --data-dir=/data
+    - --objstore.config-file=/etc/thanos/objstore.yml
+    - --grpc-address=0.0.0.0:10901
+    - --http-address=0.0.0.0:10902
     volumes:
-      - thanos_store_data:/data
-      - ../monitoring/thanos/objstore.yml:/etc/thanos/objstore.yml:ro
+    - thanos_store_data:/data
+    - ../monitoring/thanos/objstore.yml:/etc/thanos/objstore.yml:ro
     depends_on:
       minio:
         condition: service_healthy
-    # M2 Capa1 Fase 2/10 — /-/healthy on --http-address (10902).
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:10902/-/healthy >/dev/null 2>&1 || exit 1"]
+      test:
+      - CMD-SHELL
+      - wget -q -O- http://localhost:10902/-/healthy >/dev/null 2>&1 || exit 1
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 30s
     restart: unless-stopped
-    networks: [arbx-net]
+    networks:
+    - arbx-net
     deploy:
       resources:
         limits:
-          memory: "512M"
-          cpus: "0.5"
-    <<: *common-logging
-
-  # ───────── MON-7: Thanos Query ─────────
+          memory: 512M
+          cpus: '0.5'
   thanos-query:
+    logging: *id001
     image: quay.io/thanos/thanos:v0.36.1
     container_name: arbitragex-v2-thanos-query-1
     command:
-      - query
-      - --http-address=0.0.0.0:10904
-      - --grpc-address=0.0.0.0:10905
-      - --store=thanos-sidecar:10901
-      - --store=thanos-store:10901
+    - query
+    - --http-address=0.0.0.0:10904
+    - --grpc-address=0.0.0.0:10905
+    - --store=thanos-sidecar:10901
+    - --store=thanos-store:10901
     ports:
-      - "127.0.0.1:10904:10904"
+    - 127.0.0.1:10904:10904
     depends_on:
-      - thanos-sidecar
-      - thanos-store
-    # M2 Capa1 Fase 2/10 — /-/healthy on --http-address (10904).
+    - thanos-sidecar
+    - thanos-store
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:10904/-/healthy >/dev/null 2>&1 || exit 1"]
+      test:
+      - CMD-SHELL
+      - wget -q -O- http://localhost:10904/-/healthy >/dev/null 2>&1 || exit 1
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 30s
     restart: unless-stopped
-    networks: [arbx-net]
+    networks:
+    - arbx-net
     deploy:
       resources:
         limits:
-          memory: "256M"
-          cpus: "0.5"
-    <<: *common-logging
-
-# ─────────── Secrets (rendered by vault-agent into host-side files) ───────────
-#
-# The files below are NOT committed. They are rendered at boot by vault-agent
-# reading from Vault and writing to /run/secrets/ on the host. See
-# `infra/vault-agent/templates/` for the rendering templates.
-
+          memory: 256M
+          cpus: '0.5'
 secrets:
   grafana_admin_password:
     file: /run/secrets/arbx/grafana_admin_password

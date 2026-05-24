@@ -8,7 +8,6 @@ import { ReadinessStepper } from "@/components/ReadinessStepper";
 import { emitSystemReadinessRefresh, useSystemReadiness } from "@/hooks/useSystemReadiness";
 import { hasAdminSession } from "@/lib/admin-token";
 import { useSystemStore, type ActiveChain } from "@/store/useSystemStore";
-import { parseRpcUrls12Providers } from "@/lib/utils/rpc-parser-12-providers";
 
 export type MempoolMode = "auto" | "filtered" | "firehose";
 
@@ -60,6 +59,165 @@ interface ClientProps {
 
 const HTTP_EXAMPLE = "alchemy=https://eth-mainnet.g.alchemy.com/v2/TU_API_KEY,publicnode=https://ethereum-rpc.publicnode.com";
 const WS_EXAMPLE = "alchemy=wss://eth-mainnet.g.alchemy.com/v2/TU_API_KEY,publicnode=wss://ethereum-rpc.publicnode.com";
+
+
+// Parser ultra-inteligente que detecta protocolo, separa HTTP/WSS, valida y auto-corrige
+interface ParsedRpcProvider {
+  name: string;
+  url: string;
+  protocol: 'http' | 'https' | 'ws' | 'wss';
+}
+
+function parseRpcUrlsIntelligent(input: string, mempoolMode: MempoolMode): { httpString: string; wssString: string } {
+  if (!input || input.trim() === '') return { httpString: '', wssString: '' };
+  
+  // 1. Extraer URLs (separadas por coma, espacio, salto de línea)
+  const rawUrls = input.split(/[,\s\n]+/).filter(u => u.trim() !== '');
+  
+  // 2. Procesar cada URL: extraer nombre, protocolo, URL normalizada
+  const providers: ParsedRpcProvider[] = [];
+  const seenProviders = new Set<string>();
+  
+  for (const raw of rawUrls) {
+    try {
+      let urlString = raw;
+      let explicitName = '';
+      
+      // Si tiene formato "nombre=url", extraer ambos
+      if (raw.includes('=')) {
+        const [name, ...urlParts] = raw.split('=');
+        explicitName = name ? name.trim().toLowerCase() : '';
+        urlString = urlParts.join('=').trim();
+      }
+      
+      // Validar que sea URL válida
+      if (!urlString.startsWith('http') && !urlString.startsWith('ws')) {
+        continue;
+      }
+      
+      const urlObj = new URL(urlString);
+      let protocol = urlObj.protocol as 'http:' | 'https:' | 'ws:' | 'wss:' | string;
+      
+      // Detectar nombre del proveedor si no fue explícito
+      let providerName = explicitName;
+      let chainSuffix = '';
+      
+      if (!providerName) {
+        const host = urlObj.hostname.toLowerCase();
+        const fullPath = (host + urlObj.pathname).toLowerCase();
+        
+        // Detectar chain desde el host o path
+        if (fullPath.includes('mainnet') && !fullPath.includes('bsc') && !fullPath.includes('polygon') && !fullPath.includes('arb') && !fullPath.includes('opt') && !fullPath.includes('base')) chainSuffix = '-mainnet';
+        else if (fullPath.includes('sepolia')) chainSuffix = '-sepolia';
+        else if (fullPath.includes('goerli')) chainSuffix = '-goerli';
+        else if (fullPath.includes('holesky')) chainSuffix = '-holesky';
+        else if (fullPath.includes('hoodi')) chainSuffix = '-hoodi';
+        else if (fullPath.includes('bsc-mainnet') || fullPath.includes('bsc-dataseed')) chainSuffix = '-bsc';
+        else if (fullPath.includes('bsc-testnet')) chainSuffix = '-bsc-testnet';
+        else if (fullPath.includes('polygon-mainnet') || fullPath.includes('polygon-rpc')) chainSuffix = '-polygon';
+        else if (fullPath.includes('polygon-mumbai')) chainSuffix = '-mumbai';
+        else if (fullPath.includes('arb-mainnet') || fullPath.includes('arbitrum-mainnet') || fullPath.includes('arb1')) chainSuffix = '-arbitrum';
+        else if (fullPath.includes('arb-sepolia')) chainSuffix = '-arb-sepolia';
+        else if (fullPath.includes('opt-mainnet') || fullPath.includes('optimism-mainnet')) chainSuffix = '-optimism';
+        else if (fullPath.includes('base-mainnet')) chainSuffix = '-base';
+        
+        // Detectar proveedor (12 soportados)
+        if (host.includes('alchemy')) providerName = 'alchemy';
+        else if (host.includes('publicnode')) providerName = 'publicnode';
+        else if (host.includes('drpc')) providerName = 'drpc';
+        else if (host.includes('infura')) providerName = 'infura';
+        else if (host.includes('lava')) providerName = 'lava';
+        else if (host.includes('quicknode') || host.includes('quiknode')) providerName = 'quicknode';
+        else if (host.includes('llama')) providerName = 'llamarpc';
+        else if (host.includes('cloudflare')) providerName = 'cloudflare';
+        else if (host.includes('flashbots')) providerName = 'flashbots';
+        else if (host.includes('mevblocker') || host.includes('mev-blocker')) providerName = 'mevblocker';
+        else if (host.includes('0xrpc')) providerName = '0xrpc';
+        else if (host.includes('1rpc')) providerName = '1rpc';
+        else if (host.includes('blockpi')) providerName = 'blockpi';
+        else if (host.includes('tenderly')) providerName = 'tenderly';
+        else if (host.includes('blockreq')) providerName = 'blockreq';
+        else if (host.includes('ankr')) providerName = 'ankr';
+        else if (host.includes('blast')) providerName = 'blast';
+        else if (host.includes('chainstack')) providerName = 'chainstack';
+        else {
+          const parts = host.split('.');
+          providerName = parts.length > 2 ? parts[parts.length - 2] : parts[0];
+        }
+      }
+      
+      providerName = providerName.toLowerCase();
+      
+      // Clave única: proveedor + chain (ej: alchemy-mainnet, drpc-sepolia)
+      const uniqueKey = providerName.includes(chainSuffix.replace('-', '')) ? providerName : `${providerName}${chainSuffix}`;
+      
+      // Deduplicación: mantener solo el primero de cada proveedor+chain
+      if (seenProviders.has(uniqueKey)) continue;
+      seenProviders.add(uniqueKey);
+      
+      // Normalizar protocolo (remover ':' si existe)
+      const cleanProtocol = (protocol.endsWith(':') ? protocol.slice(0, -1) : protocol) as 'http' | 'https' | 'ws' | 'wss';
+      
+      // Reconstruir URL con protocolo normalizado
+      const normalizedUrl = `${cleanProtocol}://${urlObj.host}${urlObj.pathname}${urlObj.search}${urlObj.hash}`;
+      
+      // Usar uniqueKey como nombre si tiene chain suffix
+      const displayName = uniqueKey || providerName;
+      providers.push({
+        name: displayName,
+        url: normalizedUrl,
+        protocol: cleanProtocol
+      });
+    } catch (e) {
+      // Ignorar URLs inválidas
+      continue;
+    }
+  }
+  
+  // 3. Ordenar por prioridad
+  const priority = ['alchemy', 'drpc', 'publicnode', 'infura', 'quicknode', 'lava', 'llamarpc', 'cloudflare', 'flashbots', 'mevblocker', '0xrpc', '1rpc', 'blockpi', 'tenderly', 'blockreq'];
+  
+  providers.sort((a, b) => {
+    // Si es filtered mode, Alchemy va primero
+    if (mempoolMode === 'filtered') {
+      const aIsAlchemy = a.name.startsWith('alchemy');
+      const bIsAlchemy = b.name.startsWith('alchemy');
+      if (aIsAlchemy && !bIsAlchemy) return -1;
+      if (!aIsAlchemy && bIsAlchemy) return 1;
+    }
+    
+    // Extraer proveedor base (sin chain suffix)
+    const getBaseProvider = (name: string) => name.split('-')[0];
+    const baseA = getBaseProvider(a.name);
+    const baseB = getBaseProvider(b.name);
+    
+    const indexA = priority.indexOf(baseA);
+    const indexB = priority.indexOf(baseB);
+    
+    if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+    if (indexA !== -1) return -1;
+    if (indexB !== -1) return 1;
+    return a.name.localeCompare(b.name);
+  });
+  
+  // 4. Separar en HTTP y WSS
+  const httpProviders = providers.filter(p => p.protocol === 'http' || p.protocol === 'https');
+  const wssProviders = providers.filter(p => p.protocol === 'ws' || p.protocol === 'wss');
+  
+  // 5. Generar strings de salida
+  const httpString = httpProviders.map(p => `${p.name}=${p.url}`).join(',');
+  const wssString = wssProviders.map(p => `${p.name}=${p.url}`).join(',');
+  
+  return { httpString, wssString };
+}
+
+// Parser inteligente e idempotente para URLs RPC (mantener para compatibilidad)
+function parseRpcUrls(input: string, mempoolMode: MempoolMode): string {
+  const { httpString, wssString } = parseRpcUrlsIntelligent(input, mempoolMode);
+  // Retornar HTTP por defecto (para compatibilidad con código existente)
+  return httpString || wssString;
+}
+
 
 function snapshotToActiveChains(topology: TopologySnapshot | null | undefined, fallbackVersion?: number): ActiveChain[] {
   if (!topology) return [];
@@ -197,10 +355,6 @@ export function TopologyVaultClient({ initialSnapshot, edgeUrl }: ClientProps) {
     }
     setIsSaving(true);
     try {
-      const cleanedRpc = parseRpcUrls12Providers(rpcHttp.trim() + "," + rpcWs.trim());
-      const cleanedHttpProviders = cleanedRpc.httpUrls || rpcHttp.trim();
-      const cleanedWssProviders = cleanedRpc.wssUrls || rpcWs.trim();
-      
       const res = await fetch(`${edgeUrl}/api/admin/topology/mutations`, {
         method: "POST",
         credentials: "include",
@@ -212,8 +366,8 @@ export function TopologyVaultClient({ initialSnapshot, edgeUrl }: ClientProps) {
           scope: scope.trim(),
           chain_id: Number(chainId),
           mempool_mode: mempoolMode,
-          rpc_http_1: cleanedHttpProviders,
-          rpc_ws_1: cleanedWssProviders,
+          rpc_http_1: rpcHttp.trim(),
+          rpc_ws_1: rpcWs.trim(),
         }),
       });
       const data = (await res.json().catch(() => ({}))) as MutationEnvelope;
@@ -339,6 +493,9 @@ export function TopologyVaultClient({ initialSnapshot, edgeUrl }: ClientProps) {
             <textarea
               value={rpcHttp}
               onChange={(e) => setRpcHttp(e.target.value)}
+
+              onBlur={(e) => setRpcHttp(parseRpcUrls(e.target.value, mempoolMode))}
+
               placeholder={HTTP_EXAMPLE}
               rows={4}
               spellCheck={false}
@@ -351,6 +508,9 @@ export function TopologyVaultClient({ initialSnapshot, edgeUrl }: ClientProps) {
             <textarea
               value={rpcWs}
               onChange={(e) => setRpcWs(e.target.value)}
+
+              onBlur={(e) => setRpcWs(parseRpcUrls(e.target.value, mempoolMode))}
+
               placeholder={WS_EXAMPLE}
               rows={4}
               spellCheck={false}

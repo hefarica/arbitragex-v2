@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use futures_util::{future::join_all, StreamExt};
 use once_cell::sync::Lazy;
 use prometheus::{register_int_gauge_vec_with_registry, IntGaugeVec};
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use shared_rs::rpc_failover::{HttpRpcPool, WsEndpoint};
 use std::sync::Arc;
@@ -362,9 +362,9 @@ where
 pub async fn fetch_snapshot(url: &str, admin_token: Option<&str>) -> Result<Option<TopologyMutationCommitted>> {
     let mut headers = HeaderMap::new();
     if let Some(token) = admin_token {
-        let value = HeaderValue::from_str(&format!("Bearer {token}"))
+        let value = HeaderValue::from_str(token)
             .context("invalid topology admin token header")?;
-        headers.insert(AUTHORIZATION, value);
+        headers.insert(HeaderName::from_static("x-arbx-admin-token"), value);
     }
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))

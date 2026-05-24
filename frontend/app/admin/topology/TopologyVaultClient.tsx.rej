@@ -1,0 +1,24 @@
+--- TopologyVaultClient.tsx
++++ TopologyVaultClient.tsx
+@@ -4,6 +4,7 @@
+ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+ import { Input } from '@/components/ui/input';
+ import { Label } from '@/components/ui/label';
++import { parseRpcUrls12Providers } from '@/lib/utils/rpc-parser-12-providers';
+ import { Server, ShieldAlert, ShieldCheck, Activity, Globe, Lock, Cpu, Database, Network } from 'lucide-react';
+ import { toast } from 'sonner';
+ import { TopologySnapshot, MempoolMode } from '@/lib/api/types';
+@@ -213,8 +214,11 @@
+     }
+ 
+     // Procesar URLs inteligentemente
+-    const { httpString, wssString } = parseRpcUrlsIntelligent(input, mempoolMode);
+-    
++    const rawInput = ;
++    const parsedResult = parseRpcUrls12Providers(rawInput);
++    const httpString = parsedResult.httpUrls;
++    const wssString = parsedResult.wssUrls;
++
+     const payload = {
+       httpProviders: httpString,
+       wssProviders: wssString,
