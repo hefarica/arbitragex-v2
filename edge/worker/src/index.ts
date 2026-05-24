@@ -131,6 +131,16 @@ function resolveAdminToken(c: import("hono").Context<{ Bindings: Env }>): string
   const cookieToken = getCookie(c, SESSION_COOKIE);
   return cookieToken ?? null;
 }
+function isHttpsRequest(c: import("hono").Context<{ Bindings: Env }>): boolean {
+  const forwardedProto = c.req.header("x-forwarded-proto")?.toLowerCase();
+  if (forwardedProto === "https") return true;
+  if (forwardedProto === "http") return false;
+  try {
+    return new URL(c.req.url).protocol === "https:";
+  } catch {
+    return true;
+  }
+}
 
 app.use("*", async (c, next) => {
   const startMs = Date.now();
@@ -327,15 +337,16 @@ app.post("/admin/session", async (c) => {
 
   await recordAuthSuccess(c.env, ip);
   const expiresAtMs = now + SESSION_TTL_S * 1000;
+  const secureCookie = isHttpsRequest(c);
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: true,
+    secure: secureCookie,
     sameSite: "Strict",
     path: "/",
     maxAge: SESSION_TTL_S,
   });
   setCookie(c, SESSION_TTL_COOKIE, String(expiresAtMs), {
-    secure: true,
+    secure: secureCookie,
     sameSite: "Strict",
     path: "/",
     maxAge: SESSION_TTL_S,

@@ -200,6 +200,16 @@ app.post("/api/admin/chains/:chain_id/probe", (req, res) => {
   const search = new URL(req.url, "http://x").search || "";
   adminProxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}/probe${search}`, req, res, "POST");
 });
+// Topology Vault — admin-token gated RPC/WSS hot-swap control plane.
+// Uses the same V-AT-1 httpOnly cookie translation as Chains Admin; the
+// upstream API Server stores full URLs in Vault/Redis and returns only masked
+// provider snapshots to the browser.
+app.get("/api/admin/topology/snapshot", (req, res) => {
+  adminProxy("/api/admin/topology/snapshot", req, res, "GET");
+});
+app.post("/api/admin/topology/mutations", (req, res) => {
+  adminProxy("/api/admin/topology/mutations", req, res, "POST");
+});
 // Trading Config — operator-tunable strategy parameters per chain.
 app.get("/api/trading-config", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
@@ -369,8 +379,8 @@ app.post("/admin/session", async (req, res) => {
   const expiresAtMs = Date.now() + SESSION_TTL_S * 1000;
   // Set the actual token in an httpOnly cookie (JS cannot read it).
   res.setHeader("set-cookie", [
-    `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_S}`,
-    `${SESSION_TTL_COOKIE}=${expiresAtMs}; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_S}`,
+    `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_S}`,
+    `${SESSION_TTL_COOKIE}=${expiresAtMs}; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_S}`,
   ]);
   // ── Event 3: login_ok ──
   const fp = tokenFingerprint(token);
@@ -391,8 +401,8 @@ app.post("/admin/session/logout", (req, res) => {
   const sessionToken = cookies[SESSION_COOKIE];
   const actor = sessionToken ? tokenFingerprint(sessionToken) : "anonymous";
   res.setHeader("set-cookie", [
-    `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`,
-    `${SESSION_TTL_COOKIE}=; SameSite=Strict; Path=/; Max-Age=0`,
+    `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`,
+    `${SESSION_TTL_COOKIE}=; SameSite=Lax; Path=/; Max-Age=0`,
   ]);
   // ── Event 5: logout ──
   emitAuditEvent(API_SERVER_URL, ARBX_EDGE_TOKEN, {

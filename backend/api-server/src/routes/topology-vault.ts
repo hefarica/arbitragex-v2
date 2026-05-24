@@ -348,7 +348,7 @@ export function buildTopologyVaultRouter(deps: TopologyVaultDeps): express.Route
     } catch (e) {
       const code = safeErrorCode(e);
       const status = code === "filtered_requires_first_ws_alchemy" || code.startsWith("invalid_") || code === "proxy_forbidden" || code === "userinfo_forbidden" ? 400 : 500;
-      deps.logger.warn({ event: "topology.mutation.rejected", reason: code });
+      deps.logger.warn({ event: "topology.mutation.rejected", reason: code, error_message: e instanceof Error ? e.message : String(e), payload: req.body });
       res.status(status).json({ error: code });
     }
   });

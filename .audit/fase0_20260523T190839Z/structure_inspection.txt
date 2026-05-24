@@ -1,0 +1,636 @@
+=== BRANCH ===
+feature/topology-vault-rpc-mux
+f5f03462f070108472b91a7606a9670be9dafe93
+=== TOP LEVEL ===
+.
+.agent
+.agents
+.agent/skills
+.agents/memory
+.agents/rules
+.agents/skills
+.agents/workflows
+.agent/workflows
+apis
+apps
+apps/frontend
+.audit
+.audit/fase0_20260523T190839Z
+audits
+automation
+automation/scripts
+automation/systemd
+automation/tools
+backend
+backend/api-server
+backend/math-engine
+backend/prioritization-spine
+backend/recon
+backend/relays-client
+backend/searcher-rs
+backend/sed-core
+backend/selector-api
+backend/shared-rs
+backend/sim-ctl
+backend/simulator-v2
+backend/target
+backend/token-enricher
+.claude
+.claude/agents
+.claude/commands
+.claude/hooks
+.claude/skills
+config
+configs
+configs/nginx
+configs/schemas
+contracts
+contracts/lib
+contracts/script
+contracts/src
+contracts/test
+crates
+crucible
+crucible/scripts
+.cursor
+.cursor/rules
+database
+database/init
+database/migrations
+database/scripts
+database/seed
+docker
+docs
+docs/adr
+docs/adrs
+docs/architecture
+docs/auditoria
+docs/blueprints
+docs/contracts
+docs/core
+docs/crucible
+docs/diagnostics
+docs/explanation
+docs/frontend
+docs/governance
+docs/how-to
+docs/omega_s5_plus
+docs/operations
+docs/policies
+docs/reference
+docs/runbooks
+docs/superpowers
+docs/tutorials
+edge
+edge/dev-local
+edge/worker
+frontend
+frontend/app
+frontend/components
+frontend/e2e
+frontend/features
+frontend/lib
+frontend/public
+frontend/scripts
+.git
+.git/branches
+.git/hooks
+.github
+.github/workflows
+.git/info
+.git/logs
+.git/objects
+.git/refs
+infra
+infra/docker
+infra/grafana
+infra/nginx
+infra/prometheus
+infra/vps
+monitoring
+monitoring/alertmanager
+monitoring/grafana
+monitoring/loki
+monitoring/prometheus
+monitoring/promtail
+monitoring/thanos
+monitoring/vault
+.omega8
+pipelines
+runbooks
+schemas
+scripts
+services
+shared-ts
+shared-ts/src
+tests
+tests/e2e
+=== COMPOSE SERVICE NAMES ===
+--- docker-compose.edge.yml ---
+--- docker/compose.prod.yml ---
+--- docker/compose.dev.yml ---
+--- docker/compose.loopback.override.yml ---
+--- docker/compose.noports.override.yml ---
+=== REDIS REFERENCES ===
+./docker/compose.prod.yml:40:  redis_data:
+./docker/compose.prod.yml:80:  redis:
+./docker/compose.prod.yml:81:    image: redis:7.2
+./docker/compose.prod.yml:82:    command: ["redis-server","--save","","--appendonly","no"]
+./docker/compose.prod.yml:84:    volumes: [redis_data:/data]
+./docker/compose.prod.yml:86:      test: ["CMD","redis-cli","PING"]
+./docker/compose.prod.yml:105:      REDIS_URL: redis://redis:6379
+./docker/compose.prod.yml:113:      redis: { condition: service_healthy }
+./docker/compose.prod.yml:143:      REDIS_URL: redis://redis:6379
+./docker/compose.prod.yml:150:      redis: { condition: service_healthy }
+./docker/compose.prod.yml:177:      REDIS_URL: redis://redis:6379
+./docker/compose.prod.yml:186:      redis: { condition: service_healthy }
+./docker/compose.prod.yml:247:      REDIS_URL: redis://redis:6379
+./docker/compose.prod.yml:252:      redis: { condition: service_healthy }
+./docker/compose.prod.yml:280:      REDIS_URL: redis://redis:6379
+./docker/compose.prod.yml:291:      redis: { condition: service_healthy }
+./docker/compose.prod.yml:467:      REDIS_URL: redis://redis:6379
+./docker/compose.prod.yml:489:      redis: { condition: service_healthy }
+./docker/compose.dev.yml:36:  redis_data:
+./docker/compose.dev.yml:81:  redis:
+./docker/compose.dev.yml:82:    image: redis:7.2
+./docker/compose.dev.yml:83:    command: ["redis-server","--save","","--appendonly","no"]
+./docker/compose.dev.yml:86:    volumes: [redis_data:/data]
+./docker/compose.dev.yml:88:      test: ["CMD","redis-cli","PING"]
+./docker/compose.dev.yml:140:      REDIS_URL: redis://redis:6379
+./docker/compose.dev.yml:149:      redis: { condition: service_healthy }
+./docker/compose.dev.yml:171:      REDIS_URL: redis://redis:6379
+./docker/compose.dev.yml:178:      redis: { condition: service_healthy }
+./docker/compose.dev.yml:197:      REDIS_URL: redis://redis:6379
+./docker/compose.dev.yml:203:      redis: { condition: service_healthy }
+./docker/compose.dev.yml:248:      REDIS_URL: redis://redis:6379
+./docker/compose.dev.yml:253:      redis: { condition: service_healthy }
+./docker/compose.dev.yml:266:      REDIS_URL: redis://redis:6379
+./docker/compose.dev.yml:286:      redis: { condition: service_healthy }
+./docker/compose.dev.yml:417:      REDIS_URL: redis://redis:6379
+./docker/compose.dev.yml:431:      redis: { condition: service_healthy }
+./docker/compose.noports.override.yml:6:# goes over the docker bridge network via hostname DNS (postgres, redis,
+./docker/compose.noports.override.yml:44:  redis:         { ports: [] }
+./runbooks/dr-drill.md:80:- [ ] `redis` — memory usage, replication lag
+./docs/dr-runbook.md:41:  └─ redis ............................. Caching, session state, job queues
+./docs/dr-runbook.md:214:# 0 */6 * * * /opt/arbitragex-v2/scripts/backup-redis.sh
+./docs/dr-runbook.md:219:- Redis: `/backups/arbitragex/redis/YYYY-MM-DD_HH-MM.rdb`
+./docs/dr-runbook.md:280:docker compose -f docker/compose.prod.yml stop redis
+./docs/dr-runbook.md:281:docker volume rm arbitragex-v2_redis_data
+./docs/dr-runbook.md:282:docker compose -f docker/compose.prod.yml up -d redis
+./docs/dr-runbook.md:286:  -v /backups/arbitragex/redis/TARGET.rdb:/data/dump.rdb:ro \
+./docs/dr-runbook.md:287:  -v arbitragex-v2_redis_data:/data \
+./docs/dr-runbook.md:288:  redis:7.2 redis-server --save "" --appendonly no
+./docs/runbooks/killswitch-activated.md:20:   `POST /admin/killswitch` or `redis-cli SET arbx:killswitch:enabled 1`.
+./docs/runbooks/redis-governance.md:15:URLs use `redis://` (no TLS). This is acceptable because:
+./docs/runbooks/redis-governance.md:21:  config | grep -A2 redis`).
+./docs/runbooks/redis-governance.md:24:- Switch to `rediss://`.
+./docs/runbooks/redis-governance.md:27:- Enable AUTH (`requirepass`) in `redis.conf`.
+./docs/runbooks/redis-governance.md:104:enforce the `arbx:` prefix on string literals matching `redis://`-like
+./docs/runbooks/kill-switch-activation.md:67:redis-cli -h 195.201.235.70 -p 6379
+./docs/omega_s5_plus/OMEGA_S5_PLUS_IMPLEMENTATION_PLAN.md:103:app.use("/api", mountAdminRegistries(db, redis));
+./docs/omega_s5_plus/OMEGA_S5_PLUS_IMPLEMENTATION_PLAN.md:104:app.use("/api/system", mountSystemManifest(db, redis));
+./docs/omega_s5_plus/OMEGA_S5_PLUS_IMPLEMENTATION_PLAN.md:119:let _h = coord.spawn(std::env::var("REDIS_URL").unwrap()).await?;
+./docs/omega_s5_plus/OMEGA_S5_PLUS_IMPLEMENTATION_PLAN.md:152:| 6 | Redis | 12 reload channels subscribed by searcher-rs | `redis-cli pubsub channels arbx:config:*` |
+./docs/OPERATOR_RUNBOOK.md:166:ssh arbx 'docker exec arbitragex-v2-redis-1 redis-cli SET arbx:trading_config:1 \
+./docs/OPERATOR_RUNBOOK.md:167:  "$(docker exec arbitragex-v2-redis-1 redis-cli GET arbx:trading_config:1 | \
+./docs/OPERATOR_RUNBOOK.md:189:Servicios: `searcher-rs Â· api-server Â· edge Â· frontend Â· postgres Â· redis Â· ...`
+./docs/superpowers/pdf_extracts/sop_body.md:1050:redis = { version = "0.25", features = ["tokio-comp"] }
+./docs/superpowers/pdf_extracts/EVM_Arbitrage_Toolkit_Guia (1).md:342:redisPublisher.publish("price_update", JSON.stringify({
+./docs/superpowers/pdf_extracts/SOP_Arbitraje_EVM_Completo.md:1067:redis = { version = "0.25", features = ["tokio-comp"] }
+./docs/superpowers/pdf_extracts/evm_arbitrage_body.md:326:redisPublisher.publish("price_update", JSON.stringify({
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:17:**Tech Stack:** Rust + tokio + ethers v2 (contract+abigen feature) + redis (workspace) + sqlx Postgres + tracing JSON. Spec: `docs/superpowers/specs/2026-05-04-real-profit-signal-design.md`.
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:40:| `backend/searcher-rs/src/workers/mod.rs` | MODIFY | Remove deleted modules, change `WorkerOrchestrator::start_all` signature to take `PgPool` + `redis::aio::ConnectionManager`, pass to PoolSyncWorker |
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:356:use redis::aio::ConnectionManager;
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:357:use redis::AsyncCommands;
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:392:    redis: &mut ConnectionManager,
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:397:) -> redis::RedisResult<()> {
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:399:        redis::RedisError::from((redis::ErrorKind::TypeError, "serde", e.to_string()))
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:401:    let _: () = redis
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:408:    redis: &mut ConnectionManager,
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:411:) -> redis::RedisResult<Option<ReservesEntry>> {
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:412:    let raw: Option<String> = redis.get(key_pool_reserves(chain_id, pool_addr_lower)).await?;
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:417:    redis: &mut ConnectionManager,
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:422:) -> redis::RedisResult<()> {
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:424:        redis::RedisError::from((redis::ErrorKind::TypeError, "serde", e.to_string()))
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:426:    let _: () = redis
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:433:    redis: &mut ConnectionManager,
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:437:) -> redis::RedisResult<Vec<String>> {
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:438:    let raw: Option<String> = redis.get(key_pool_index(chain_id, sym_a, sym_b)).await?;
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:443:    redis: &mut ConnectionManager,
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:447:) -> redis::RedisResult<()> {
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:449:        redis::RedisError::from((redis::ErrorKind::TypeError, "serde", e.to_string()))
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:451:    let _: () = redis.set(key_token(chain_id, addr_lower), json).await?;
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:456:    redis: &mut ConnectionManager,
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:459:) -> redis::RedisResult<Option<TokenMeta>> {
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:460:    let raw: Option<String> = redis.get(key_token(chain_id, addr_lower)).await?;
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:622:        mut redis: redis::aio::ConnectionManager,
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:633:        self.bootstrap_token_cache(&db, &mut redis).await?;
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:634:        self.bootstrap_pool_index_cache(&pools, &mut redis).await?;
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:701:                    &mut redis,
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:709:                    warn!(event = "pool_sync.redis_set_failed", pool = %pool.address_lower, error = %e);
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:778:        redis: &mut redis::aio::ConnectionManager,
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:795:                set_token_meta(redis, self.chain_id, &addr.to_lowercase(), &meta).await
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:806:        redis: &mut redis::aio::ConnectionManager,
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:820:            if let Err(e) = set_pool_index(redis, self.chain_id, &sym_a, &sym_b, &addrs).await {
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:909:        redis: redis::aio::ConnectionManager,
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:920:            let redis_clone = redis.clone();
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:922:                if let Err(e) = pool_worker.run(rpc_http_url, db_pool, redis_clone).await {
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:934:- [ ] **Step 3: Update main.rs to pass DB + redis + chain_id + RPC URL into orchestrator**
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:965:    let orchestrator_redis = redis_conn.clone();
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:967:        orchestrator.start_all(primary_chain, primary_rpc_http, orchestrator_db, orchestrator_redis).await;
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:1029:    let meta_in = reserves::get_token_meta(redis, client.chain_id, &token_in_lower).await.ok().flatten();
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:1030:    let meta_out = reserves::get_token_meta(redis, client.chain_id, &token_out_lower).await.ok().flatten();
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:1036:        let pools = reserves::get_pools_for_pair(redis, client.chain_id, &m_in.symbol, &m_out.symbol)
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:1048:                let entry = match reserves::get_reserves(redis, client.chain_id, pool_addr).await.ok().flatten() {
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:1273:ssh arbx 'docker exec arbitragex-v2-redis-1 redis-cli --scan --pattern "arbx:pool_reserves:*" | head -3
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:1275:  docker exec arbitragex-v2-redis-1 redis-cli --scan --pattern "arbx:pool_index:*" | head -5
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:1277:  docker exec arbitragex-v2-redis-1 redis-cli --scan --pattern "arbx:tokens:*" | head -5'
+./docs/superpowers/plans/2026-05-06-honest-display-plan.md:17:**Tech Stack:** Rust (alloy, sqlx, tokio, redis-rs), TypeScript (Next 14, React 18, Zod, Vitest, Playwright), PostgreSQL 15, Redis 7.
+./docs/superpowers/plans/2026-05-06-honest-display-plan.md:577:redis = { version = "0.24", features = ["tokio-comp","streams"] }
+./docs/superpowers/plans/2026-05-06-honest-display-plan.md:1124:use redis::aio::ConnectionManager;
+./docs/superpowers/plans/2026-05-06-honest-display-plan.md:1125:use redis::streams::{StreamReadOptions, StreamReadReply};
+./docs/superpowers/plans/2026-05-06-honest-display-plan.md:1126:use redis::AsyncCommands;
+./docs/superpowers/plans/2026-05-06-honest-display-plan.md:1138:        let client = redis::Client::open(url)?;
+./docs/superpowers/plans/2026-05-06-honest-display-plan.md:1139:        let conn = ConnectionManager::new(client).await.context("redis connect")?;
+=== MEMPOOL HOT PATH REFERENCES ===
+./docker/compose.prod.yml:108:      RPC_WS_1: ${RPC_WS_1:?RPC_WS_1 required for mainnet detection}
+./docker/compose.prod.yml:109:      RPC_HTTP_1: ${RPC_HTTP_1:?RPC_HTTP_1 required for mainnet receipts}
+./docker/compose.dev.yml:25:# T1 secrets: SLACK_WEBHOOK_URL, PAGERDUTY_INTEGRATION_KEY, RPC_WS_1, RPC_HTTP_1.
+./tests/e2e/rpc-down.spec.ts:6: * When RPC_WS_1 is empty (the compose default — operator hasn't completed
+./tests/primitives.test.ts:111:      blocker_codes: ['RPC_HTTP_1'],
+./docs/runbooks/rpc-down.md:9:# Runbook â€” RPC down (mempool detection idle)
+./docs/runbooks/rpc-down.md:54:     sh -c 'wget -qO- --timeout=5 "$RPC_HTTP_1" \
+./docs/runbooks/rpc-down.md:80:2. If they deprecated `newPendingTransactions`, this is a bigger fix â€” open
+./docs/OPERATOR_RUNBOOK.md:223:| Strategy CEX-DEX | Binance/Coinbase WS + cross-correlation + private mempool | 1-2 sem | Diferenciador competitivo (la EXTREMA #7 de Â§17) |
+./docs/superpowers/pdf_extracts/sop_body.md:956:Private mempool
+./docs/superpowers/pdf_extracts/sop_body.md:1022:zero-copy (critica al procesar miles de transacciones del mempool por segundo),
+./docs/superpowers/pdf_extracts/sop_body.md:1394:Evict LRU
+./docs/superpowers/pdf_extracts/EVM_Arbitrage_Toolkit_Guia (1).md:198:el mempool de Ethereum en busca de transacciones pendientes que puedan indicar movimientos
+./docs/superpowers/pdf_extracts/EVM_Arbitrage_Toolkit_Guia (1).md:216:WebSocket + mempool
+./docs/superpowers/pdf_extracts/EVM_Arbitrage_Toolkit_Guia (1).md:242:pre-asignado indexado por address del pool). Simultaneamente, el mempool scanner analiza
+./docs/superpowers/pdf_extracts/EVM_Arbitrage_Toolkit_Guia (1).md:245:mempool, el Opportunity Engine la evalua ejecutando un algoritmo de path-finding (Dijkstra o
+./docs/superpowers/pdf_extracts/EVM_Arbitrage_Toolkit_Guia (1).md:264:como Chainlink y Pyth Network, y analisis del mempool para anticipar movimientos de precio antes
+./docs/superpowers/pdf_extracts/EVM_Arbitrage_Toolkit_Guia (1).md:352:El mempool de Ethereum es un componente estrategico que muchos bots ignoran. Cada
+./docs/superpowers/pdf_extracts/EVM_Arbitrage_Toolkit_Guia (1).md:355:mempool movera el precio del pool una vez que se confirme. Un bot que escanee el mempool
+./docs/superpowers/pdf_extracts/EVM_Arbitrage_Toolkit_Guia (1).md:358:capturando el diferencial de precio. Esta tecnica, conocida como "mempool-aware arbitrage", es
+./docs/superpowers/pdf_extracts/EVM_Arbitrage_Toolkit_Guia (1).md:362:BloxRoute que ofrecen streaming de transacciones del mempool en tiempo real. El scanner debe
+./docs/superpowers/pdf_extracts/EVM_Arbitrage_Toolkit_Guia (1).md:613:Enviar transacciones directamente al mempool publico es una invitacion a que otros bots copien
+./docs/superpowers/pdf_extracts/EVM_Arbitrage_Toolkit_Guia (1).md:618:los validadores sin pasar por el mempool publico, eliminando la visibilidad de la transaccion ante
+./docs/superpowers/pdf_extracts/EVM_Arbitrage_Toolkit_Guia (1).md:701:suficiente. Para arbitraje mempool-aware donde la oportunidad esta condicionada a una
+./docs/superpowers/pdf_extracts/SOP_Arbitraje_EVM_Completo.md:973:Private mempool
+./docs/superpowers/pdf_extracts/SOP_Arbitraje_EVM_Completo.md:1039:zero-copy (critica al procesar miles de transacciones del mempool por segundo),
+./docs/superpowers/pdf_extracts/SOP_Arbitraje_EVM_Completo.md:1411:Evict LRU
+./docs/superpowers/pdf_extracts/evm_arbitrage_body.md:182:el mempool de Ethereum en busca de transacciones pendientes que puedan indicar movimientos
+./docs/superpowers/pdf_extracts/evm_arbitrage_body.md:200:WebSocket + mempool
+./docs/superpowers/pdf_extracts/evm_arbitrage_body.md:226:pre-asignado indexado por address del pool). Simultaneamente, el mempool scanner analiza
+./docs/superpowers/pdf_extracts/evm_arbitrage_body.md:229:mempool, el Opportunity Engine la evalua ejecutando un algoritmo de path-finding (Dijkstra o
+./docs/superpowers/pdf_extracts/evm_arbitrage_body.md:248:como Chainlink y Pyth Network, y analisis del mempool para anticipar movimientos de precio antes
+./docs/superpowers/pdf_extracts/evm_arbitrage_body.md:336:El mempool de Ethereum es un componente estrategico que muchos bots ignoran. Cada
+./docs/superpowers/pdf_extracts/evm_arbitrage_body.md:339:mempool movera el precio del pool una vez que se confirme. Un bot que escanee el mempool
+./docs/superpowers/pdf_extracts/evm_arbitrage_body.md:342:capturando el diferencial de precio. Esta tecnica, conocida como "mempool-aware arbitrage", es
+./docs/superpowers/pdf_extracts/evm_arbitrage_body.md:346:BloxRoute que ofrecen streaming de transacciones del mempool en tiempo real. El scanner debe
+./docs/superpowers/pdf_extracts/evm_arbitrage_body.md:597:Enviar transacciones directamente al mempool publico es una invitacion a que otros bots copien
+./docs/superpowers/pdf_extracts/evm_arbitrage_body.md:602:los validadores sin pasar por el mempool publico, eliminando la visibilidad de la transaccion ante
+./docs/superpowers/pdf_extracts/evm_arbitrage_body.md:685:suficiente. Para arbitraje mempool-aware donde la oportunidad esta condicionada a una
+./docs/superpowers/pdf_extracts/SOP_ArbitrageX_2026.md:52:escaneo sub-milisegundo del mempool y del estado on-chain mediante suscripciones WebSocket con Alloy;
+./docs/superpowers/pdf_extracts/SOP_ArbitrageX_2026.md:152:Loop principal: suscripciÃ³n a mempool, detecciÃ³n de
+./docs/superpowers/pdf_extracts/SOP_ArbitrageX_2026.md:582:Gueras de gas: Usar private mempools (Flashbots) para evitar subastas de prioridad.
+./docs/superpowers/pdf_extracts/SOP_ArbitrageX_2026.md:592:El mecanismo funciona asÃ­: cuando un swap grande aparece en el mempool, el searcher analiza el impacto
+./docs/superpowers/pdf_extracts/SOP_ArbitrageX_2026.md:604:alta volatilidad del precio del token subyacente, y un mempool con suficiente tiempo de propagaciÃ³n para
+./docs/superpowers/pdf_extracts/SOP_ArbitrageX_2026.md:629:que las excluye del mempool pÃºblico y las hace invisibles para los sandwich bots.
+./docs/superpowers/pdf_extracts/SOP_ArbitrageX_2026.md:637:Private mempool alternatives: AdemÃ¡s de Flashbots, utilizamos MEV Blocker y Titan Builder como
+./docs/superpowers/pdf_extracts/SOP_ArbitrageX_2026.md:648:aparecen en el mempool pÃºblico, lo que elimina la posibilidad de front-running y sandwich attacks.
+./docs/superpowers/pdf_extracts/SOP_ArbitrageX_2026.md:1200:Todas las transacciones de ArbitrageX se envÃ­an exclusivamente a travÃ©s de mempools privados: Flashbots
+./docs/superpowers/plans/2026-05-06-cex-dex-strategy.md:212:| Submit to private mempool (Flashbots Protect) | 25 | 80 | Builder ack required |
+./docs/superpowers/plans/2026-05-06-cex-dex-strategy.md:214:| **Submit-to-inclusion subtotal (excluding mempool wait)** | **48** | **169** | All synchronous searcher work |
+./docs/superpowers/plans/2026-05-06-cex-dex-strategy.md:240:- `cex_dex_executed_total{chain, pair, outcome}` â€” Counter (`outcome` âˆˆ {filled, partial, reverted, mempool_dropped, cex_rejected}).
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:24:- The searcher already ingests Ethereum mempool via WebSocket and decodes Uniswap V2/V3 calldata. It builds an `Opportunity` per pending tx, runs it through a config-aware spine evaluator, persists to Postgres `opportunities`, and publishes to Redis stream `arbx:opps:detected`.
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:883:pub mod hft_mempool_listener;
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:1253:- `"event":"scanner.candidate_enriched"` (variable, depends on mempool tx volume)
+./docs/superpowers/plans/2026-05-04-real-profit-signal.md:1293:Expected: `with_profit > 0` AT LEAST after a few minutes of mempool volume + matching pairs. If 0 with_profit after 10 min, **STOP and diagnose**: check operator's allowlist (must include WETH/USDC/USDT/DAI/WBTC at minimum) and `enabled` flag on trading_config.
+./docs/superpowers/plans/2026-05-06-honest-display-plan.md:1988:  detected:    { label: "DETECTED",    cls: "bg-slate-500/15   text-slate-300   border-slate-500/40",    tip: "Captured from mempool â€” pending simulation" },
+./docs/superpowers/plans/2026-05-04-v3-enrichment.md:23:Sub-proyecto 1 closed: V2 enrichment math, Multicall3 ingestion, Redis cache, scanner branch all working (576 reserves/2min, 24 pools, 30 tokens). But **0 opportunities with profit > 0** because V2 mempool in 2026 is dominated by shitcoin/memecoin trades; blue-chip V2 pools have near-zero retail volume (volume migrated to V3 long ago). Diagnostic: 51 candidates in 15 min, 0 with both tokens recognized, top 5 unknown counterparties are scam-pattern (`WTD`, empty symbol, `$WBD`, `BabyAsteroid2`, `GBM`). V3 is where the volume is â€” this sub-proyecto pivots there.
+./docs/superpowers/specs/OMEGA_MODULES_INTEGRATION.md:29:1. El orquestador detecta el cambio de estado confirmado en el mempool/bloque.
+./docs/superpowers/specs/OMEGA_MODULES_INTEGRATION.md:116:mempool_listener
+./docs/superpowers/specs/SCAFFOLD_STATUS_GAP_ANALYSIS.md:53:**Objetivo del Paper Mode:** El sistema lee el mempool real, evalúa oportunidades con datos en vivo, simula la ejecución (sin gastar gas) y guarda los resultados en la base de datos para análisis de PnL teórico.
+./docs/superpowers/specs/SCAFFOLD_STATUS_GAP_ANALYSIS.md:65:| **Conectividad RPC** | Añadir URLs reales de Alchemy/Infura (HTTP y WSS) en el archivo `.env` del VPS (`RPC_HTTP_1`, `RPC_WS_1`). | 🔴 Bloqueante |
+./docs/superpowers/specs/2026-05-08-multichain-route-finder-design.md:66:    â”‚    4. dedup (cycle_hash, block_number) HashSet               â”‚
+./docs/superpowers/specs/2026-05-08-multichain-route-finder-design.md:352:  6. Canonical dedup: normalize cycle by rotating to start at lowest Address.
+./docs/superpowers/specs/2026-05-08-multichain-route-finder-design.md:570:Check 4: No signing, no gas spend, no mempool exposure:
+./docs/superpowers/specs/2026-05-08-multichain-route-finder-design.md:604:| 11 | multi_hop_arb_worker.rs: B-F engine + cycle materializer + Decimal profit + dedup | Rust | 4-5 |
+./docs/superpowers/specs/2026-05-08-multichain-route-finder-design.md:721:cs-validator must confirm this implementation before dedup logic is merged.
+./docs/superpowers/specs/2026-05-08-multichain-route-finder-design.md:806:   Off-by-one in rotation normalization produces incorrect dedup.
+./docs/superpowers/specs/2026-05-13-sequential-equilibrium-dispatcher-v1.1.md:79:CDC(t) = D_KL( ℙ_{mempool} || ℙ_{equilibrio} | ℱₜ )
+./docs/superpowers/specs/2026-05-13-sequential-equilibrium-dispatcher-v1.1.md:551:│  • Requiere: mempool-node, websocket-conn                            │
+./docs/superpowers/specs/2026-05-13-sequential-equilibrium-dispatcher-v1.1.md:553:│  • Si falla → 501 {requires:["mempool-node"], sprint:"S2"}         │
+./docs/superpowers/specs/2026-05-13-sequential-equilibrium-dispatcher-v1.1.md:939:| G1 | `stochastic_wave_filtration` | `mempool-node`, `ws-conn` | S2 | `{requires:["mempool-node"], sprint:"S2"}` |
+./docs/superpowers/specs/2026-05-13-sequential-equilibrium-dispatcher-v1.1.md:1280:| `stochastic_wave_filtration` | **S2: Detection** | mempool-node (WebSocket/HTTP), block-stream | RPC endpoint (Alchemy/Infura), WS subscription | `[PARCIAL]` — Filtración básica con CDC. Sin salto real hasta S3. |
+./docs/superpowers/specs/2026-05-13-sequential-equilibrium-dispatcher-v1.1.md:1296:│   └── CDC calculado sobre mempool real
+./docs/superpowers/specs/2026-05-13-sequential-equilibrium-dispatcher-v1.1.md:1352:- [ ] `stochastic_wave_filtration` consume mempool real vía WebSocket
+./docs/superpowers/specs/2026-05-13-backrun-anticipation-engine.md:122:mempool trigger tx and simulate its execution against current pool reserves.
+./docs/superpowers/specs/2026-05-13-backrun-anticipation-engine.md:231:mempool tx                                     canonical chain
+./docs/superpowers/specs/2026-05-13-backrun-anticipation-engine.md:282:5. **Stealth mempool**: All txs through Flashbots Protect / MEV Blocker / Titan.
+./docs/superpowers/specs/2026-05-13-backrun-anticipation-engine.md:354:- Public mempool submission.
+./docs/superpowers/specs/2026-05-13-option5-rpc-migration.md:12:Alchemy multi-chain projection at current usage: **$900-1,800/mo for 6 chains**. Current burn (1 chain heavy): $300/mo. The platform is in paper-mode pre-A.4, so we don't need premium provider features (private mempool, dedicated nodes). Migration goal: zero waste, full capability preserved.
+./docs/superpowers/specs/2026-05-13-option5-rpc-migration.md:43:**Mempool**: `ARBX_MEMPOOL_MODE=filtered` with 12-router allowlist (UniV2/V3/V4 Universal/Permit2 + Sushi + Curve + 1inch + 0x + Balancer V2 + Pancake V3).
+./docs/superpowers/specs/2026-05-13-option5-rpc-migration.md:59:- ✅ `chain_client.subscribed_filtered allowlist_size=12` (filtered mempool active)
+./docs/superpowers/specs/2026-05-13-option5-rpc-migration.md:81:- **Private mempool L2**: Flashbots Protect is Ethereum-only. L2 MEV requires MEV-share/Eden/per-chain solutions.
+./docs/superpowers/specs/2026-05-13-option5-rpc-migration.md:87:**Action**: provision Hetzner CX52 (~$50/mo) with Reth + Lighthouse for Ethereum mainnet. Switch `RPC_HTTP_1` first provider to local Reth (`http://<reth-private-ip>:8545`). Public RPCs remain as failover.
+./docs/superpowers/specs/2026-05-13-option5-rpc-migration.md:91:**Gain**: sub-10ms latency Ethereum, zero rate limits, full archive, p2p mempool subscription option.
+./docs/superpowers/specs/2026-05-13-option5-rpc-migration.md:101:#   RPC_HTTP_1=local=http://<reth-ip>:8545,publicnode=https://...,drpc=https://...
+./docs/superpowers/specs/2026-05-13-option5-rpc-migration.md:102:#   RPC_WS_1=local=ws://<reth-ip>:8546,publicnode=wss://...
+./docs/superpowers/specs/2026-04-20-sprint2-detection-design.md:19:Reemplazar el scanner idle de S1 por detecciÃ³n real de oportunidades MEV a partir del **mempool pÃºblico** (y eventualmente feeds privados en S3). El servicio debe:
+./docs/superpowers/specs/2026-04-20-sprint2-detection-design.md:21:1. Conectarse a un RPC WebSocket real y suscribirse a `newPendingTransactions`.
+./docs/superpowers/specs/2026-04-20-sprint2-detection-design.md:35:| 4 | **Idempotencia por `tx_hash`**: el mismo pending tx no genera dos filas. UNIQUE sobre `(tx_hash)` a nivel de fila lÃ³gica (no DB column â€” `opportunities` no tiene tx_hash; usamos dedup en memoria con TTL + Redis SETNX). | Mempool repite hashes entre suscripciÃ³n y replay. |
+./docs/superpowers/specs/2026-04-20-sprint2-detection-design.md:46:[RPC WS] â”€â”€ newPendingTransactions â”€â”€â–¶ [subscribe loop]
+./docs/superpowers/specs/2026-04-20-sprint2-detection-design.md:68:  scanner.rs               â† rewritten: mempool loop (replaces idle)
+./docs/superpowers/specs/2026-04-20-sprint2-detection-design.md:77:  dedup.rs                 â† NEW: in-memory LRU + Redis SETNX
+./docs/superpowers/specs/2026-04-20-sprint2-detection-design.md:118:dedup_ttl_seconds = 60
+./docs/superpowers/specs/2026-04-20-sprint2-detection-design.md:137:- `RPC_WS_1` (per-chain WebSocket URL). Required to actually detect; absent â†’ service stays healthy but no detection.
+./docs/superpowers/specs/2026-04-20-sprint2-detection-design.md:149:| `arbx_searcher_dropped_total` | counter | `chain_id`, `reason` | reason âˆˆ `{buffer_full, dedup_hit, killswitch}` |
+./docs/superpowers/specs/2026-04-20-sprint2-detection-design.md:156:| `RPC_WS_1` ausente | Log warn, set gauge `state=no_rpc`, no detectar, **no hacer 501** (el servicio es worker, no HTTP). `/health` = 200. |
+./docs/superpowers/specs/2026-04-20-sprint2-detection-design.md:166:- **Unit**: dedup LRU (mismo tx_hash dos veces â†’ segunda rechaza).
+./docs/superpowers/specs/2026-04-20-sprint2-detection-design.md:172:- [ ] Con `RPC_WS_1` no configurado: servicio sube, health 200, logs `state=no_rpc`, gauge correcta, **cero filas insertadas**.
+./docs/superpowers/specs/2026-04-20-sprint2-detection-design.md:173:- [ ] Con `RPC_WS_1` real (Alchemy free tier): â‰¥ 1 oportunidad persistida por minuto (dependiente del chain activity), logs estructurados con trace_id, mÃ©trica `arbx_searcher_candidates_total > 0`.
+./docs/superpowers/specs/2026-05-06-honest-display-design.md:26:- 50 opportunities reales detectadas por `searcher-rs` desde mempool de Ethereum mainnet (datos verificables: WETH `0xc02aaaâ€¦`, UUIDs, timestamps actuales).
+./docs/superpowers/specs/2026-05-06-honest-display-design.md:151:- `searcher-rs` hot path: NO toca `scanner.rs`, `detector.rs`, `dedup.rs`, `publisher.rs`, `chain_client.rs`, `models.rs`, `amm_math.rs`, `reserves.rs`, `telemetry.rs`, `counters.rs`, `main.rs` (sÃ³lo se toca `patterns.rs` y `persistence.rs`, vÃ­a cambio de tipo en struct compartida)
+./docs/superpowers/specs/2026-05-06-honest-display-design.md:536:| `detected` | slate-500 | "Captured from mempool â€” pending simulation" |
+./docs/superpowers/specs/2026-04-21-sprint7-8-runtime-plan.md:34:- `.env` on VPS only (not repo): `RPC_WS_1`, `RPC_HTTP_1` filled.
+./docs/superpowers/specs/2026-04-21-sprint7-8-runtime-plan.md:36:- `docker/docker-compose.prod-like.yml`: pass `RPC_WS_1` and `RPC_HTTP_1` env to `searcher-rs`, `sim-ctl`, `relays-client` explicitly (currently via `env_file` only).
+./docs/superpowers/specs/2026-04-21-sprint5-execution-design.md:16:- `RPC_HTTP_1` â€” RPC HTTP mainnet para lectura de nonce + broadcast eth_sendRawTransaction como backup.
+./docs/superpowers/specs/2026-04-21-sprint5-execution-design.md:143:- `RPC_HTTP_1` â€” for nonce fetching + inclusion tracking.
+./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:1:# Diagnóstico e Implementación End-to-End: RPC_HTTP_1 y RPC_WS_1
+./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:11:1. **La Validación R8 Fail-Honest:** En `backend/searcher-rs/src/main.rs:370`, el orquestador intenta leer `RPC_HTTP_1`. Al no encontrarlo, emite un log de advertencia y **se niega a iniciar los workers** para la cadena 1 (Ethereum Mainnet).
+./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:13:3. **El Silencio del Mempool:** En `backend/searcher-rs/src/chain_client.rs:116`, el sistema espera `RPC_WS_1` para suscribirse al evento `alchemy_pendingTransactions`. Sin WS, no hay ingesta de datos.
+./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:20:   RPC_WS_1: ${RPC_WS_1:?RPC_WS_1 required for mainnet detection}
+./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:21:   RPC_HTTP_1: ${RPC_HTTP_1:?RPC_HTTP_1 required for mainnet receipts}
+./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:31:**Para RPC_HTTP_1:**
+./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:33:RPC_HTTP_1=alchemy=https://eth-mainnet.g.alchemy.com/v2/<TU_API_KEY>,infura=https://mainnet.infura.io/v3/<TU_API_KEY>
+./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:37:**Para RPC_WS_1:**
+./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:39:RPC_WS_1=alchemy=wss://eth-mainnet.g.alchemy.com/v2/<TU_API_KEY>,infura=wss://mainnet.infura.io/ws/v3/<TU_API_KEY>
+./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:58:Buscar las líneas `RPC_HTTP_1=` y `RPC_WS_1=` y reemplazarlas con tus URLs reales.
+./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:70:Inmediatamente después del reinicio, debemos verificar que el orquestador reconoció el RPC y que el mempool está fluyendo.
+./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:76:# 2. Verificar que la suscripción al mempool está activa
+./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:77:docker logs arbitragex-v2-searcher-rs-1 | grep "filtered mempool subscription active"
+./docs/superpowers/specs/2026-04-21-sprint6-recon-learning-design.md:36:                                          â”œâ”€ fetch tx receipt via RPC_HTTP_1
+./docs/superpowers/specs/2026-04-21-sprint6-recon-learning-design.md:234:| RPC_HTTP_1 unreachable | Fetch receipt fails with timeout â†’ recon fails fast. `risk_event` severity=warning. NO persiste ReconReport inexacto. |
+./docs/superpowers/specs/2026-04-20-sprint2-detection-plan.md:25:- `backend/searcher-rs/Cargo.toml`: aÃ±adir `ethers = "2"`, `sqlx = { workspace = true }`, `futures-util`, `lru`, `hex`.
+./docs/superpowers/specs/2026-04-20-sprint2-detection-plan.md:58:## Paso 7 â€” `scanner.rs` + `publisher.rs` + `main.rs` + `dedup.rs`
+./docs/superpowers/specs/2026-04-20-sprint2-detection-plan.md:60:- `dedup.rs`: LRU<H256, ()> con capacidad configurable + Redis SETNX con TTL.
+./docs/superpowers/specs/2026-04-20-sprint2-detection-plan.md:65:  - Si presente: conectar `chain_client`, subscribe pending, consumir stream, filtrar por `tx.to âˆˆ routers`, decode, match pattern, dedup, publish + persist.
+./docs/superpowers/specs/2026-04-21-sprint7-8-runtime-design.md:13:**Scope:** Three parallel streams that move ArbitrageX v2 from "built & green in CI" to "running productively on the Hetzner VPS with real mempool data and operator-ready UX".
+./docs/superpowers/specs/2026-04-21-sprint7-8-runtime-design.md:52:- **Decision:** Alchemy free tier for both WS and HTTP. 300M compute units/mo is enough to observe mempool at mainnet rates. Fallback: Infura or QuickNode. Keys are injected via Vault â†’ `.env` at container boot, never checked in.
+./docs/superpowers/specs/2026-04-21-sprint7-8-runtime-design.md:58:RPC_WS_1=wss://eth-mainnet.g.alchemy.com/v2/<KEY>
+./docs/superpowers/specs/2026-04-21-sprint7-8-runtime-design.md:59:RPC_HTTP_1=https://eth-mainnet.g.alchemy.com/v2/<KEY>
+./docs/superpowers/specs/2026-04-21-sprint7-8-runtime-design.md:62:`sim-ctl` additionally consumes `RPC_HTTP_1` for Anvil fork URL when `ANVIL_FORK_URL` is empty (lazy default). `relays-client` uses `RPC_HTTP_1` only for tx status lookups (optional).
+./docs/superpowers/specs/2026-04-21-sprint7-8-runtime-design.md:104:| 3 | `/opportunities` | Live feed (SSE) from mempool | `GET /api/opportunities/live` (exists) |
+./docs/superpowers/specs/2026-04-21-sprint7-8-runtime-design.md:151:2. **Detection pipeline** â€” `arbx_opportunity_total{status}` rate, dedup hit/miss ratio, scanner reconnect count, decode-failed rate.
+./docs/superpowers/specs/2026-04-21-sprint7-8-runtime-design.md:168:- `rpc-down.spec.ts` â€” unset `RPC_WS_1`, restart searcher-rs, verify `/status` shows the chain as "idle" without lying about it.
+./docs/superpowers/specs/2026-05-04-real-profit-signal-design.md:83:### Detection path â€” scanner-pull (mantiene event-driven mempool)
+./docs/superpowers/specs/2026-05-04-real-profit-signal-design.md:160:-- Esperado: > 0 (depende del trÃ¡fico mempool y allowlist del operador)
+./docs/superpowers/specs/2026-04-20-sprint1-foundations-design.md:38:| Cliente ethers-rs real, mempool WS, calldata decode, detecciÃ³n de patrones | S2 |
+./docs/superpowers/specs/2026-05-13-backrun-anticipation-engine-tech-spec.md:22:transaction is observed in the mempool and treated as a public market
+./docs/superpowers/specs/2026-05-13-backrun-anticipation-engine-tech-spec.md:34:Process the mempool stream and emit per-trigger scores: toxicity
+./docs/superpowers/specs/2026-05-13-backrun-anticipation-engine-tech-spec.md:171:WebSocket mempool subscription (scanner.rs existing path)
+./docs/superpowers/specs/2026-05-13-backrun-anticipation-engine-tech-spec.md:200:- **Public-state only**: All inputs are public mempool data + public on-chain history.
+./docs/superpowers/specs/2026-05-13-backrun-anticipation-engine-tech-spec.md:212:- 24h replay of historical mempool from EigenPhi traces; assert that addresses *labeled* as whales by EigenPhi receive `WhaleScore.value > 0.6` in ≥80% of cases.
+./docs/superpowers/specs/2026-05-13-backrun-anticipation-engine-tech-spec.md:224:Given a pending trigger transaction observed in the mempool, fork
+./docs/superpowers/specs/2026-05-13-backrun-anticipation-engine-tech-spec.md:374:trigger's window between mempool observation and inclusion (typical
+./docs/superpowers/specs/2026-05-13-backrun-anticipation-engine-tech-spec.md:375:mempool dwell time 200ms-2s for non-instant trades).
+./docs/superpowers/specs/2026-05-13-backrun-anticipation-engine-tech-spec.md:517:This uses the existing `kelly_sizing::fractional_kelly` primitive (deduplicates with `size_optimizer.rs` once Kelly is properly wired there per fix-1).
+./docs/superpowers/specs/2026-05-13-backrun-anticipation-engine-tech-spec.md:581:End-to-end mempool → JIT mint submitted: P95 < 20ms (dominated by forecaster).
+./docs/superpowers/specs/2026-05-13-backrun-anticipation-engine-tech-spec.md:909:End-to-end from mempool observation to backrun bundle submitted:
+./docs/superpowers/specs/2026-05-11-event-driven-orchestrator.md:35:`scanner.rs:812` assigns `strategy_kind = "dex_arb_v2v2"` to every mempool-detected
+./docs/superpowers/specs/2026-05-11-event-driven-orchestrator.md:387:    pub opp_dedup: Arc<OppDedup>,
+./docs/superpowers/specs/2026-05-11-event-driven-orchestrator.md:436:        if self.ctx.opp_dedup.check_and_record(&scored.fingerprint).await {
+./docs/superpowers/specs/2026-05-11-event-driven-orchestrator.md:437:            metrics::dedup_hit(&scored).inc(); continue;
+./docs/superpowers/specs/2026-05-11-event-driven-orchestrator.md:715:For mempool-detected swap that today produces a `dex_arb_v2v2` opp at
+./docs/superpowers/specs/2026-05-11-event-driven-orchestrator.md:726:This is verified by parallel-run testing in Phase 12: feed the same 100 mempool
+./docs/superpowers/specs/2026-05-11-event-driven-orchestrator.md:766:| `state_projector` V3 quotes hammer RPC, repeat of 2026-05-11 Validation Engine incident | High | Per-pool 200ms cache + circuit breaker + use of `v3_rpc_pool` (separate provider from mempool WS) |
+./docs/superpowers/specs/2026-05-11-event-driven-orchestrator.md:830:4. The dashboard's `/opportunities` route surfaces non-zero counts for at least 2 strategies (assuming sufficient mempool activity + functional indexers).
+./docs/superpowers/specs/2026-05-03-sop-evm-integration-design.md:110:- **Tab 6 (Security/Anti-Theft)** (NUEVO): Tabla 9 del SOP â€” mapeo riesgoâ†’protecciÃ³n con toggles (Honeypot check, Sandwich protection via Flashbots, Frontrun via private mempool, Rug pull liquidez-bloqueada check).
+./docs/operations/SECRETS_POLICY.md:46:| `RPC_WS_1`, `RPC_HTTP_1` | Alchemy/QuickNode authenticated WebSocket + HTTP RPC |
+./docs/operations/SECRETS_POLICY.md:128:RPC_WS_1=wss://eth-mainnet.g.alchemy.com/v2/REPLACE_ME
+./docs/operations/THANOS_SETUP.md:143:historical window. Thanos Query deduplicates data across the sidecar (live) and
+./docs/GLOSSARY_QUANT.md:56:**Definición:** Divergencia de Kullback-Leibler entre la medida real del mempool y la medida de equilibrio local. CDC > 2.706 indica ineficiencia transitoria explotable.  
+./docs/GLOSSARY_QUANT.md:170:**Definición:** Desviación temporalmente localizada entre la estructura de precios del mempool y el equilibrio teórico. Ventana de oportunidad para arbitraje.  
+./docs/GLOSSARY_QUANT.md:228:**Definición:** Proceso estocástico híbrido con evolución determinista entre saltos aleatorios. Modela la microestructura del mempool.  
+./docs/GLOSSARY_QUANT.md:272:**Definición:** Función que describe el cambio discontinuo en el estado del mercado cuando ocurre un evento de mempool (transacción insertada/atada).  
+./docs/GLOSSARY_QUANT.md:349:**Definición:** Proceso estocástico continuo con incrementos independientes y distribución normal. Modela la difusión de reservas en el mempool.  
+./docs/tutorials/01-getting-started.md:112:│   ├── ax-mempool-watcher/
+./docs/tutorials/01-getting-started.md:299:| Mempool | `/mempool` | Live mempool visualization |
+./docs/governance/AUDIT-2026-04-22.md:169:| PD key | POST test event with `action: trigger` + `dedup_key` then resolve |
+./docs/governance/AUDIT-2026-04-22.md:187:| Redis | ephemeral state: kill-switch, CB state, rate-limits, dedup |
+./docs/governance/DATA-MATRIX.md:29:## M1 â€” searcher-rs (mempool detection)
+./docs/governance/DATA-MATRIX.md:42:| `ANVIL_FORK_URL` | url | Env â† Vault (may alias `RPC_HTTP_1`) | 3 | `eth_blockNumber` probe | Vault | sim provider = `anvil` | sim-ctl returns `501 {error:"not_implemented", requires:["ANVIL_FORK_URL"]}` |
+./docs/governance/NO-HARDCODE-DOCTRINE.md:88:| **2. Connect primary services** | Read-only observability + mempool detection | RPC HTTP + WS per enabled chain, Grafana admin password, Slack webhook (optional) |
+./docs/architecture/REFERENCE_REPOS_BLUEPRINT.md:73:- Normalize mempool/block/oracle/private-hint events into one internal contract.
+./docs/ROADMAP_FASES.md:21:Cliente de chain real (`ethers-rs`), mempool WS, parseo calldata (4byte + ABI), patrones swap / arb triangular / liquidaciÃ³n, publisher Redis Streams (`XADD arbx:opps:detected`), persistencia `opportunities`.
+./docs/how-to/deploy-to-vps.md:147:RPC_HTTP_1="alchemy=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
+./docs/how-to/deploy-to-vps.md:148:RPC_WS_1="alchemy=wss://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
+./docs/how-to/deploy-to-vps.md:181:| `RPC_HTTP_1` | Primary RPC HTTP endpoint |
+./docs/how-to/deploy-to-vps.md:182:| `RPC_WS_1` | Primary RPC WebSocket endpoint |
+./docs/how-to/deploy-to-vps.md:389:  "http://<RPC_HTTP_1>/" -O /dev/null
+./docs/crucible/CRUCIBLE_CHECKLIST.md:50:cast balance $GAS_SPONSOR_ADDRESS --rpc-url $RPC_HTTP_17000
+./docs/crucible/CRUCIBLE_CHECKLIST.md:113:cast code <FACTORY_ADDRESS> --rpc-url $RPC_HTTP_17000
+=== FRONTEND ADMIN/API REFERENCES ===
+./edge/dev-local/src/index.ts
+./edge/dev-local/src/admin-session-limits.ts
+./edge/dev-local/src/audit-emit.ts
+./edge/dev-local/src/audit-emit.test.ts
+./edge/dev-local/src/admin-token-resolver.test.ts
+./edge/dev-local/src/admin-session.test.ts
+./edge/dev-local/src/admin-token-resolver.ts
+./edge/worker/src/index.ts
+./edge/worker/src/audit-emit.ts
+./docs/blueprints/enterprise_package/api.js
+./backend/selector-api/src/persistence.ts
+./backend/selector-api/src/index.ts
+./backend/selector-api/src/consumer.ts
+./backend/selector-api/src/pipeline-invariants.test.ts
+./backend/selector-api/src/score.ts
+./backend/selector-api/src/score.test.ts
+./backend/api-server/test/opportunities-live.test.ts
+./backend/api-server/test/migrations.test.ts
+./backend/api-server/src/audit-events.test.ts
+./backend/api-server/src/index.ts
+./backend/api-server/src/websocket-rooms.test.ts
+./backend/api-server/src/contract-isomorphism.test.ts
+./backend/api-server/src/recon-timeseries.ts
+./backend/api-server/src/websocket.test.ts
+./backend/api-server/src/websocket.ts
+./backend/api-server/src/recon-timeseries.test.ts
+./frontend/e2e/operator_sovereignty.spec.ts
+./frontend/e2e/page_by_page_audit.spec.ts
+./frontend/e2e/opportunities-honest-display.spec.ts
+./frontend/e2e/mirror_fidelity.spec.ts
+./frontend/e2e/style_invariance.spec.ts
+./frontend/vitest.config.ts
+./frontend/next-env.d.ts
+./frontend/components/AdminSessionBadge.tsx
+./frontend/components/CrossChainSlot.tsx
+./frontend/components/animated-bg.tsx
+./frontend/components/refresh-button.tsx
+./frontend/components/StatusPill.tsx
+./frontend/components/OpportunityDetailDialog.tsx
+./frontend/components/__tests__/SystemGuardBanner.test.tsx
+./frontend/components/__tests__/CrossChainSlot.test.tsx
+./frontend/components/__tests__/TokenChip.test.tsx
+./frontend/components/__tests__/DeterministicAvatar.test.tsx
+./frontend/components/__tests__/AdminSessionBadge.test.tsx
+./frontend/components/__tests__/StatusPill.test.tsx
+./frontend/components/PaperShadowPanel.tsx
+./frontend/components/page-header.tsx
+./frontend/components/GoNoGoPanel.tsx
+./frontend/components/ui/sheet.tsx
+./frontend/components/ui/separator.tsx
+./frontend/components/ui/table.tsx
+./frontend/components/ui/popover.tsx
+./frontend/components/ui/label.tsx
+./frontend/components/ui/switch.tsx
+./frontend/components/ui/button.tsx
+./frontend/components/ui/select.tsx
+./frontend/components/ui/card.tsx
+./frontend/components/ui/dialog.tsx
+./frontend/components/ui/slider.tsx
+./frontend/components/ui/tabs.tsx
+./frontend/components/ui/input.tsx
+./frontend/components/ui/alert.tsx
+./frontend/components/ui/accordion.tsx
+./frontend/components/ui/skeleton.tsx
+./frontend/components/ui/progress.tsx
+./frontend/components/ui/badge.tsx
+./frontend/components/ui/tooltip.tsx
+./frontend/components/paper-mode-toggle.tsx
+./frontend/components/skeletons.tsx
+./frontend/components/AgentTeamsPanel.tsx
+./frontend/components/ForkValidationPanel.tsx
+./frontend/components/clear-admin-token.tsx
+./frontend/components/theme-toggle.tsx
+./frontend/components/operator/OperatorGate.tsx
+./frontend/components/trading-config-form.tsx
+./frontend/components/ServiceControlPanel.tsx
+./frontend/components/site-header.tsx
+./frontend/components/ChainBadge.tsx
+./frontend/components/SystemGuardBanner.tsx
+./frontend/components/app-sidebar.tsx
+./frontend/components/motion.tsx
+./frontend/components/DeterministicAvatar.tsx
+./frontend/components/DexDetailDialog.tsx
+./frontend/components/focus-on-mount.tsx
+./frontend/components/nav-items.ts
+./frontend/components/StrategyBadge.tsx
+./frontend/components/BlockersPanel.tsx
+./frontend/components/TokenChip.tsx
+./frontend/components/WalletDetailDialog.tsx
+./frontend/components/DexPath.tsx
+./frontend/scripts/assert-no-localhost-production.js
+./frontend/next.config.js
+./frontend/features/table/keyboard.ts
+./frontend/features/table/keyboard.test.ts
+./frontend/features/table/DataTable.tsx
+./frontend/features/drift/DriftPanel.tsx
+./frontend/features/charts/AttemptsBreakdown.tsx
+./frontend/features/charts/ReconPnLChart.tsx
+./frontend/features/charts/StrategyScoreBarChart.tsx
+./frontend/features/charts/RevertRateGauge.tsx
+./frontend/features/status/SystemKpiGrid.tsx
+./frontend/features/status/ServicesTable.tsx
+./frontend/features/readiness/GoNoGoPanel.tsx
+./frontend/features/readiness/AgentTeamsPanel.tsx
+./frontend/features/readiness/ConfidenceScoringPanel.tsx
+./frontend/features/readiness/BlockersPanel.tsx
+./frontend/features/onboarding/Phase3Client.tsx
+./frontend/features/onboarding/Phase5Client.tsx
+./frontend/features/onboarding/Phase2Client.tsx
+./frontend/features/onboarding/OnboardingPhaseStub.tsx
+./frontend/features/onboarding/Phase4Client.tsx
+./frontend/features/audit-logs/AuditLogsEmpty.tsx
+./frontend/features/audit-logs/AuditLogsTable.tsx
+./frontend/features/recon/TopStrategiesTable.tsx
+./frontend/features/recon/ReconKpiGrid.tsx
+./frontend/features/recon/CriticalAnomalies.tsx
+./frontend/features/risk/RiskCircuitPanel.tsx
+./frontend/features/risk/KillswitchBanner.tsx
+./frontend/features/risk/RiskAlertsTable.tsx
+./frontend/features/opportunities/OpportunityEvidenceCell.tsx
+./frontend/features/opportunities/socket-lifecycle.test.ts
+./frontend/features/opportunities/OpportunitiesTable.tsx
+./frontend/features/opportunities/socket-lifecycle.ts
+./frontend/features/opportunities/OpportunitiesEmpty.tsx
+./frontend/features/sed/SedConvergencePanel.tsx
+./frontend/features/executions/ExecutionsTable.tsx
+./frontend/features/executions/ExecutionsEmpty.tsx
+./frontend/features/executions/ExecutionsClient.tsx
+./frontend/features/home/ProgressRealCard.tsx
+./frontend/features/home/HomeKpiStrip.tsx
+./frontend/vitest.setup.ts
+./frontend/app/strategies/StrategiesClient.tsx
+./frontend/app/strategies/page.tsx
+./frontend/app/wallets/WalletsClient.tsx
+./frontend/app/wallets/page.tsx
+./frontend/app/rpcs/page.tsx
+./frontend/app/dex-registry/DexRegistryClient.tsx
+./frontend/app/dex-registry/page.tsx
+./frontend/app/operations/OperationsClient.tsx
+./frontend/app/operations/page.tsx
+./frontend/app/status/StatusClient.tsx
+./frontend/app/status/loading.tsx
+./frontend/app/status/page.tsx
+./frontend/app/config/loading.tsx
+./frontend/app/config/page.tsx
+./frontend/app/not-found.tsx
+./frontend/app/pools/page.tsx
+./frontend/app/onboarding/page.tsx
+./frontend/app/audit-logs/page.tsx
+./frontend/app/worker-health/page.tsx
+./frontend/app/live-readiness/page.tsx
+./frontend/app/recon/ReconClient.tsx
+./frontend/app/recon/loading.tsx
+./frontend/app/recon/page.tsx
+./frontend/app/risk/loading.tsx
+./frontend/app/risk/page.tsx
+./frontend/app/opportunities/loading.tsx
+./frontend/app/opportunities/page.tsx
+./frontend/app/opportunities/OpportunitiesClient.tsx
+./frontend/app/chains/page.tsx
+./frontend/app/omega-s5/layout.tsx
+./frontend/app/sed/page.tsx
+./frontend/app/settings/SettingsClient.tsx
+./frontend/app/settings/page.tsx
+./frontend/app/executions/loading.tsx
+./frontend/app/executions/page.tsx
+./frontend/app/error.tsx
+./frontend/app/page.tsx
+./frontend/app/layout.tsx
+./frontend/app/killswitch/page.tsx
+./frontend/lib/user-prefs.ts
+./frontend/lib/utils.ts
+./frontend/lib/onboarding-phases.ts
+./frontend/lib/apex/page_inventory.ts
+./frontend/lib/__tests__/format.test.ts
+./frontend/lib/drift/useOmniDrift.ts
+./frontend/lib/drift/useDriftDetection.ts
+./frontend/lib/drift/types.ts
+./frontend/lib/api/dexes.ts
+./frontend/lib/api/wallets.ts
+./frontend/lib/operations-schemas.ts
+./frontend/lib/omega-lexicon.ts
+./frontend/lib/admin-token.ts
+./frontend/lib/schemas.ts
+./frontend/lib/hooks/useConvergenceStream.ts
+./frontend/lib/hooks/useOpportunitiesStream.ts
+./frontend/lib/format.ts
+./frontend/lib/chains.ts
+./frontend/lib/api-client.test.ts
+./frontend/lib/api-client-credentials.test.ts
+./frontend/lib/operator/useOperator.ts
+./frontend/lib/operator/types.ts
+./frontend/lib/registries/index.ts
+./frontend/lib/registries/types-omni.ts
+./frontend/lib/registries/schemas.ts
+./frontend/lib/registries/types.ts
+./frontend/lib/registries/useRegistry.ts
+./frontend/lib/audit/types.ts
+./frontend/lib/useWebSocket.ts
+./frontend/lib/formatters.ts

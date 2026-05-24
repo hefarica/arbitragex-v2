@@ -41,7 +41,9 @@ export default function AdminSigninPage(): JSX.Element {
     const result = await submitAdminToken(input, { setAdminToken });
     setSubmitting(false);
     if (result.ok) {
-      router.push('/admin/chains');
+      const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+      const next = params.get('next');
+      router.push(next && next.startsWith('/') ? next : '/admin/topology');
       router.refresh();
       return;
     }
