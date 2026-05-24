@@ -1,150 +1,26 @@
 "use client";
-import React, { useEffect, useState, useCallback, startTransition, useRef } from "react";
-import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, Clock, AlertTriangle, EyeOff, Eye } from "lucide-react";
-import { useOpportunitiesStream } from "@/lib/hooks/useOpportunitiesStream";
+import React, { useEffect, useState, useCallback, useRef } from "react";
+import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, EyeOff, Eye, AlertTriangle, Clock } from "lucide-react";
 import { sanitizeForDisplay } from "@/lib/omega-lexicon";
 import { toast } from "sonner";
 import { OpportunityDetailDialog, type OpportunityDetail } from "@/components/OpportunityDetailDialog";
 import { motion, AnimatePresence } from "framer-motion";
 
-// ─── Local type mirrors ───────────────────────────────────────────────────────
-// @arbx/shared is a VPS-only package (not installed in local/CI node_modules).
-// We mirror the exact subset of OpportunityListItem needed here, matching
-// shared-ts/src/api-contracts.ts exactly. No cross-package import needed.
+// ─── Omni-Store Integration ───────────────────────────────────────────────────
+import { useOmniOpportunities } from "@/lib/store/useOmniOpportunities";
+import { useOmniStore } from "@/lib/store/omni-store";
+import { mapToOmniOpportunity, type OmniOpportunity } from "@/lib/store/types";
 
-/** Phase 1 Token Validation Engine block (mirrors shared-ts schema). */
-interface TokenValidationBlock {
-  status:
-    | "VERIFIED" | "VIABLE" | "LOW_LIQUIDITY"
-    | "ILLIQUID" | "NO_DATA" | "INVALID" | "PENDING";
-  score: number;
-  liquidity_usd: number | null;
-  volume_24h_usd: number | null;
-  pair_count: number | null;
-  primary_dex: string | null;
-  registry_source: string | null;
-  validated_at: string;
-  reasons: Array<{ key: string; delta: number; note: string }> | null;
-}
-
-/** Mirrors TokenInfoSchema from shared-ts/src/api-contracts.ts. */
-interface TokenInfo {
-  symbol: string | null;
-  decimals: number | null;
-  logo_url: string | null;
-  resolved_via: "onchain_full" | "onchain_partial" | "trustwallet_only" | "failed";
-  verified?: boolean;
-  registry_symbol?: string | null;
-  registry_name?: string | null;
-  verified_notes?: string[] | null;
-  validation?: TokenValidationBlock | null;
-}
-
-/** Mirrors StrategyKind from shared-ts/src/contracts/index.ts. */
-type StrategyKind =
-  | "dex_arb"
-  | "triangular"
-  | "backrun"
-  | "liquidation"
-  | "flashloan_arb";
-
-/** Mirrors StatusSchema from shared-ts/src/api-contracts.ts. */
-type OpportunityStatus =
-  | "detected"
-  | "validated"
-  | "simulated"
-  | "scored"
-  | "executing"
-  | "executed"
-  | "reconciled"
-  | "rejected"
-  | "failed";
-
-/** Mirrors SimulatedCostBreakdownSchema from shared-ts/src/api-contracts.ts. */
-interface SimulatedCostBreakdown {
-  gas_usd: number;
-  lp_fees_usd: number;
-  slippage_usd: number;
-  failure_buffer_usd: number;
-  copied_buffer_usd: number;
-  capital_cost_usd: number;
-  ops_overhead_usd: number;
-  flashloan_fee_usd: number;
-  relay_fee_usd: number;
-}
-
-/** Mirrors SimulatedTargetSchema from shared-ts/src/api-contracts.ts. */
-interface SimulatedTarget {
-  /** USD floor (min_profit_usd). Null when only a Convergence Ratio floor was configured. */
-  target_net_usd: number | null;
-  /** Convergence Ratio floor in percent (min_roi_pct). Null when only a USD floor was configured. */
-  target_roi_pct: number | null;
-  target_source: "strategy_config" | "simulation_tab";
-  binding_floor:
-    | "usd-floor"
-    | "roi-floor"
-    | "roi-unreachable"
-    | "net-per-usd-nonpositive"
-    | "tie";
-  estimation_basis: "observed-gross" | "roi-assumed";
-  required_amount_in_usd: number;
-  cap_amount_in_usd: number;
-  suggested_amount_in_usd: number;
-  suggested_net_usd: number;
-  suggested_roi_pct: number;
-  meets_target_at_cap: boolean;
-  notes: string[];
-}
-
-/**
- * Mirrors OpportunityListItemSchema from shared-ts/src/api-contracts.ts.
- * All nullable fields per R8 fail-honest semantics.
- */
-interface OpportunityListItem {
-  id: string;
-  chain_id: number;
-  /** Operator-managed base token for the row's chain (WETH, USDC, ...). */
-  chain_base_token_symbol?: string | null;
-  strategy_kind: StrategyKind;
-  dex_a: string;
-  dex_b: string | null;
-  pair_symbol: string | null;
-  token_in: string;
-  token_in_info: TokenInfo | null;
-  token_out: string;
-  token_out_info: TokenInfo | null;
-  amount_in_wei: string;
-  expected_profit_usd: number | null;
-  // C5 fix (audit 2026-05-10): NET yield (gross minus gas, slippage, relay
-  // fee, flash convergence fee, failure buffer). The "Net Yield" column displays
-  // this when present; falls back to expected_profit_usd labeled "Gross"
-  // when the spine has not yet computed net (cold-start, gate-rejected
-  // before math). R8 fail-honest: null means "not yet computed", never zero.
-  net_expected_profit_usd?: number | null;
-  paper_status?: "paper_viable" | "paper_rejected";
-  chains_used?: number[];
-  dexes_used?: string[];
-  roi_pct: number | null;
-  risk_score: number | null;
-  block_number: number | null;
-  rejection_reason: string | null;
-  status: OpportunityStatus;
-  detected_at: string;
-  trace_id: string;
-  chain_id_out: number | null;
-  bridge: string | null;
-  bridge_fee_usd: number | null;
-  // Target-driven simulation. Set when canonical Rust spine net is null AND
-  // the row's chain has an `arbx:trading_config:<chain>` snapshot in Redis
-  // AND the token can be priced. R8: every field can be null.
-  simulated_net_profit_usd?: number | null;
-  simulated_amount_in_usd?: number | null;
-  simulated_roi_pct?: number | null;
-  simulated_cost_breakdown?: SimulatedCostBreakdown | null;
-  simulated_target?: SimulatedTarget | null;
-  simulated_at?: string | null;
-  simulated_notes?: string[] | null;
-}
+// Re-export types for backward compatibility with OpportunityDetailDialog
+export type {
+  OmniOpportunity,
+  TokenInfo,
+  TokenValidationBlock,
+  StrategyKind,
+  OpportunityStatus,
+  SimulatedCostBreakdown,
+  SimulatedTarget,
+} from "@/lib/store/types";
 
 // ─── Component imports (Tasks 10 / 11) ───────────────────────────────────────
 import { TokenChip } from "@/components/TokenChip";
@@ -191,7 +67,7 @@ type FeedStatus = "POLLING" | "LIVE" | "STALE" | "CONNECTING";
 const POLL_INTERVAL_MS = 4_000;
 
 export type OpportunitiesSnapshot = {
-  opportunities: OpportunityListItem[];
+  opportunities: OmniOpportunity[];
   serverTime: string | null;
   source: string;
 };
@@ -201,20 +77,32 @@ export default function OpportunitiesClient({
 }: {
   initialSnapshot: OpportunitiesSnapshot;
 }) {
-  const [snapshot, setSnapshot] = useState<OpportunitiesSnapshot>(initialSnapshot);
+  // ─── Omni-Store Integration ───────────────────────────────────────────────
+  // Connect WebSocket stream to the store (replaces useOpportunitiesStream)
+  const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
+  const [viableOnly, setViableOnly] = useState(false);
+  
+  useOmniOpportunities({
+    edgeUrl: EDGE_URL,
+    viableOnly,
+    initialOpportunities: initialSnapshot.opportunities,
+  });
+
+  // Selectors from Omni-Store (SSOT)
+  const opportunities = useOmniStore((state) => state.opportunities);
+  const wsStatus = useOmniStore((state) => state.wsStatus);
+  const clearOpportunities = useOmniStore((state) => state.clearOpportunities);
+  const addOpportunity = useOmniStore((state) => state.addOpportunity);
+
+  // ─── UI State (local, not in store) ───────────────────────────────────────
   const [isMounted, setIsMounted] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [now, setNow] = useState<number>(0);
-  // R1: viableOnly initialises to false (deterministic SSR-safe value) so the
-  // operator sees ALL recent pipeline activity by default — including
-  // rejections with rejection_reason visible — rather than only historical
-  // viable opps. Operator can toggle to "Viable only" to filter the noise
-  // when reviewing actionable detections.
-  // 2026-05-10 fix: was `true` which hid all current pipeline traffic when
-  // the safety screen rejects every mempool detection (typical state).
-  const [viableOnly, setViableOnly] = useState(false);
   const [simLoading, setSimLoading] = useState<string | null>(null);
   const [selectedOpp, setSelectedOpp] = useState<OpportunityDetail | null>(null);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(
+    initialSnapshot.serverTime ? new Date(initialSnapshot.serverTime) : null
+  );
 
   // FE-6: Track IDs already notified to avoid duplicate toasts across polls.
   // R1: useRef is SSR-safe — no access to window or localStorage.
@@ -222,19 +110,6 @@ export default function OpportunitiesClient({
 
   // FE-13: Read notification threshold from user prefs (localStorage, R1 compliant).
   const { prefs } = useUserPrefs();
-
-  const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
-
-  // FE-1: WebSocket stream. R1 compliant — hook runs WS inside useEffect only.
-  // When WS fails 3×, hook auto-degrades to HTTP polling at 4s.
-  // 2026-05-10 realtime fix: pass viableOnly so the polling fallback respects
-  // the operator's UI toggle. When false (default), the API returns rejected
-  // opps too so the live feed surfaces actual pipeline activity.
-  const { opportunities: streamOpportunities, wsStatus } = useOpportunitiesStream(
-    initialSnapshot.opportunities,
-    EDGE_URL,
-    viableOnly,
-  );
 
   // Derive feedStatus from wsStatus for display. "POLLING" is the degraded
   // HTTP-fallback state emitted by the hook after 3 WS failures.
@@ -281,9 +156,7 @@ export default function OpportunitiesClient({
   }, [EDGE_URL]);
 
   // FE-1: fetchOpportunities is now ONLY used by the manual "Force refresh" button.
-  // Automatic data flow comes from the WS stream (useOpportunitiesStream).
-  // On fetch error, we set errorMsg for the error banner — feedStatus is derived
-  // from wsStatus, not from this fetch path.
+  // It clears the store and repopulates via HTTP, then the WS stream continues.
   const fetchOpportunities = useCallback(async () => {
     try {
       const url = `${EDGE_URL}/api/opportunities/live?viable_only=${viableOnly}&limit=50`;
@@ -297,18 +170,18 @@ export default function OpportunitiesClient({
         return;
       }
       const data = await res.json();
-      startTransition(() => {
-        setSnapshot({
-          opportunities: Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [],
-          serverTime: new Date().toISOString(),
-          source: "client-rest-manual",
-        });
+      const items = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
+      // Clear and repopulate store via mapper
+      clearOpportunities();
+      items.forEach((raw: Record<string, unknown>) => {
+        addOpportunity(mapToOmniOpportunity(raw));
       });
+      setLastRefresh(new Date());
       setErrorMsg(null);
     } catch (e) {
       setErrorMsg((e as Error).message);
     }
-  }, [EDGE_URL, viableOnly]);
+  }, [EDGE_URL, viableOnly, clearOpportunities, addOpportunity]);
 
   // R1: localStorage read happens here — never during render (SSR has no localStorage).
   // 2026-05-10: bumped the storage key from "arbx-opps-viable-only" to "-v2" so
@@ -329,12 +202,12 @@ export default function OpportunitiesClient({
   }, []);
 
   // FE-6: Fire a toast for every new opportunity that clears the threshold.
-  // R1: streamOpportunities is populated only after mount (WS or polling).
+  // R1: opportunities come from Omni-Store (SSOT).
   // seenNotifiedIds persists across re-renders via useRef so we never
   // re-toast the same opportunity across WS reconnects or poll cycles.
   useEffect(() => {
     if (!isMounted) return;
-    for (const opp of streamOpportunities) {
+    for (const opp of opportunities) {
       if (seenNotifiedIds.current.has(opp.id)) continue;
       seenNotifiedIds.current.add(opp.id);
       const yieldVal = opp.expected_profit_usd ?? 0;
@@ -345,10 +218,9 @@ export default function OpportunitiesClient({
         });
       }
     }
-  }, [streamOpportunities, isMounted, prefs.notification_threshold_usd]);
+  }, [opportunities, isMounted, prefs.notification_threshold_usd]);
 
   // R1: setIsMounted + setNow are the only non-WS side effects needed here.
-  // Polling interval is now managed inside useOpportunitiesStream.
   useEffect(() => {
     setIsMounted(true);
     setNow(Date.now());
@@ -359,10 +231,7 @@ export default function OpportunitiesClient({
     return () => clearInterval(ticker);
   }, []);
 
-  // FE-1: Opportunities come from the WS stream (streamOpportunities).
-  // snapshot is kept only for the manual Force Refresh button fallback path.
-  const opportunities = streamOpportunities;
-  const lastRefresh = snapshot.serverTime ? new Date(snapshot.serverTime) : null;
+  // FE-1: Opportunities come from Omni-Store (SSOT).
   const viableCount = opportunities.filter((o) => o.status !== "rejected" && o.status !== "failed").length;
   const rejectedCount = opportunities.filter((o) => o.status === "rejected").length;
 

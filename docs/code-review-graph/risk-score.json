@@ -1,0 +1,32 @@
+{
+  "iteration": 1,
+  "date": "2026-05-21",
+  "branch": "feat/omega-scaffold-v2",
+  "target": "main@d9bea59",
+  "score": 70,
+  "score_basis": "provisional — partial coverage (Slither/Joern/Syft/CodeQL-local BLOCKED on Windows w/o Docker)",
+  "global_status": "WARN",
+  "decision": "GO_WITH_DOCUMENTED_DEBT",
+  "deductions": [
+    {"reason": "RUSTSEC advisories (8, mostly medium/transitive DoS/panic/sidechannel via deprecated ethers 2.0.14)", "points": -28},
+    {"reason": "incomplete coverage (Slither/Joern/Syft not run on Windows)", "points": -2}
+  ],
+  "credits": [
+    {"reason": "0 secrets (semgrep p/secrets, 279 files)", "points": 0},
+    {"reason": "CodeQL green in CI", "points": 0}
+  ],
+  "tools": {
+    "CodeQL": "PASS_CI",
+    "Semgrep": "PASS",
+    "RustSec": "FAIL",
+    "dependency-cruiser": "WARN_NO_CONFIG",
+    "Foundry": "PASS_CI",
+    "Slither": "BLOCKED",
+    "Joern": "BLOCKED",
+    "Syft": "BLOCKED"
+  },
+  "blocking_findings": 0,
+  "secrets_found": 0,
+  "rustsec_vulnerabilities": 8,
+  "rustsec_warnings": 7
+}
