@@ -605,6 +605,37 @@ app.get("/api/scoring/status", (c) => proxy(c, "/api/v1/scoring/status", "arbx:c
 app.get("/api/risk/circuit-breakers/status", (c) => proxy(c, "/api/v1/risk/circuit-breakers/status", "arbx:cache:cb-status", 15));
 app.get("/api/risk/circuit-breakers/events", (c) => proxy(c, "/api/v1/risk/circuit-breakers/events", "arbx:cache:cb-events", 30));
 
+// Topology Vault — Admin-token gated; edge forwards header.
+// GET snapshot uses short cache (5s) since topology changes infrequently.
+// POST mutations is pass-through (mutation).
+app.get("/api/admin/topology/snapshot", async (c) => {
+  const adminToken = resolveAdminToken(c);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/admin/topology/snapshot`, {
+    headers: { "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN, "x-arbx-admin-token": adminToken },
+  });
+  const t = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(t, upstream.status as 200 | 401 | 503);
+});
+app.post("/api/admin/topology/mutations", async (c) => {
+  const adminToken = resolveAdminToken(c);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const body = await c.req.text();
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/admin/topology/mutations`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": adminToken,
+    },
+    body,
+  });
+  const t = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(t, upstream.status as 200 | 400 | 401 | 503);
+});
+
 // B1 — Chains Admin CRUD. Admin-token gated; edge forwards header.
 // GET list/single use short cache (5s) since runtime chain state changes
 // infrequently. POST/PUT/DELETE/probe are pass-through (mutations).
