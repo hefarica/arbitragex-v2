@@ -336,6 +336,9 @@ services:
     build:
       context: ..
       dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:?NEXT_PUBLIC_EDGE_URL required (public edge URL)}
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-${NEXT_PUBLIC_EDGE_URL/http/ws}}
     environment:
       NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:?NEXT_PUBLIC_EDGE_URL required
         (public edge URL)}
