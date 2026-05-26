@@ -53,7 +53,18 @@ export async function verifyGPAP1(opts?: {
   let paper_mode_enabled = false;
   try {
     await redis.connect();
-    const raw = await redis.get("arbx:papermode");
+    
+    // QUANTUM_IGNITION_PHASE_3: Check per-chain key first (arbx:papermode:1 for mainnet)
+    // Then fall back to legacy key for backwards compatibility
+    let raw = await redis.get("arbx:papermode:1"); // Chain ID 1 = Ethereum mainnet
+    let source = "per_chain";
+    
+    if (!raw) {
+      // Legacy fallback (read-only; 30 days from 2026-05-13)
+      raw = await redis.get("arbx:papermode");
+      source = raw ? "legacy_fallback" : "none";
+    }
+    
     if (raw) {
       try {
         const j = JSON.parse(raw) as { enabled?: boolean };

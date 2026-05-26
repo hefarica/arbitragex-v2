@@ -2,7 +2,7 @@
 
 **Doctrine:** `arbx-mev-ethics-gate`
 **Gate:** G-MEV-1
-**Version:** 1.0.0
+**Version:** 1.0.1
 **Last Updated:** 2026-05-26
 
 ---
@@ -10,6 +10,8 @@
 ## Purpose
 
 This document establishes the ethical boundaries for MEV extraction operations conducted by ArbitrageX v2. All strategies, algorithms, and execution paths MUST comply with these rules.
+
+**Flashbots Relay Integration:** ArbitrageX v2 integrates with Flashbots relay for private transaction submission, ensuring MEV extraction is conducted ethically and transparently.
 
 ---
 

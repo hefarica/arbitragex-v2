@@ -2,7 +2,7 @@
 
 **Doctrine:** `arbx-pre-execute-checklist`
 **Gate:** G-PEC-1
-**Version:** 1.0.0
+**Version:** 1.0.1
 **Last Updated:** 2026-05-26
 
 ---
@@ -14,6 +14,15 @@ This document defines the7 mandatory gates that MUST pass before any capital-fli
 ---
 
 ## The 7 Pre-Execute Gates
+
+The following gates are checked in series before any execution:
+- **G-RPC-1**: RPC Connectivity Verified
+- **G-SIM-1**: Simulation Passed
+- **G-NET-1**: Net Profit Gate
+- **G-TOK-1**: Token Safety Screen
+- **G-FL-1**: Flash Loan Discipline
+- **G-RIS-1**: Risk Limits Enforced
+- **G-PAP-1**: Paper Mode Duration Met
 
 ### Gate 1: RPC Connectivity Verified
 
