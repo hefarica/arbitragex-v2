@@ -94,6 +94,7 @@ import { mountRiskCircuitBreakers } from "./routes/risk-circuit-breakers.js";
 import { mountAdminChains } from "./routes/admin-chains.js";
 import { mountSedStatus } from "./routes/sed-status.js";
 import { mountSystemManifest } from "./routes/system-manifest.js";
+import { buildTopologyVaultRouter } from "./routes/topology-vault.js";
 import {
   setupWebSocketGateway,
   broadcastOpportunity,
@@ -466,6 +467,14 @@ mountAdminChains(app, {
   writeAudit,
   logger,
 });
+
+app.use(buildTopologyVaultRouter({
+  redis,
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
+  writeAudit,
+  logger,
+}));
 
 mountSedStatus(app, { pool, logger });
 

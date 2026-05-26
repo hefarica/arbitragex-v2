@@ -7,7 +7,7 @@ import { getApiBaseUrl } from "@/lib/api-client";
  *
  *   setAdminToken(token) → POSTs to edge /admin/session which:
  *     - validates the token against api-server
- *     - sets an httpOnly; Secure; SameSite=Strict cookie (JS cannot read it)
+ *     - sets an httpOnly; SameSite=Strict cookie; Secure is enabled on HTTPS requests (JS cannot read it)
  *     - sets a companion non-httpOnly cookie `arbx_admin_session_ttl` with
  *       only the expiry timestamp (no secret) for UI display
  *

@@ -16,14 +16,15 @@ import { GoNoGoPanel } from "@/features/readiness/GoNoGoPanel";
 import { AgentTeamsPanel } from "@/features/readiness/AgentTeamsPanel";
 import { ConfidenceScoringPanel } from "@/features/readiness/ConfidenceScoringPanel";
 import { RiskCircuitPanel } from "@/features/risk/RiskCircuitPanel";
+import { LiveReadinessStepper } from "@/components/ReadinessStepper";
 
 // ─── Aesthetic helpers ───────────────────────────────────────────────────
 
 const STATUS_DOT_CLASS: Record<ReadinessStatus, string> = {
-  green: "bg-[oklch(75%_0.18_145)]",
-  yellow: "bg-[oklch(78%_0.15_80)]",
-  red: "bg-[oklch(65%_0.22_25)]",
-  pending: "bg-[oklch(50%_0_0)]",
+  green: "bg-success",
+  yellow: "bg-warning",
+  red: "bg-destructive",
+  pending: "bg-muted-foreground",
 };
 
 const STATUS_LABEL: Record<ReadinessStatus, string> = {
@@ -141,10 +142,10 @@ function StatusBanner({ report }: { report: ReadinessReport }) {
             paper_mode
           </span>
           <span
-            className={`font-mono text-[11px] font-medium uppercase tracking-wider ${
+            className={`font-mono text-xs font-medium uppercase tracking-wider ${
               flip_blocked
-                ? "text-[oklch(78%_0.15_80)]"
-                : "text-[oklch(75%_0.18_145)]"
+                ? "text-warning"
+                : "text-success"
             }`}
           >
             {flip_blocked ? "flip blocked" : "ready to flip"}
@@ -283,9 +284,11 @@ export default function LiveReadinessPage() {
         }
       />
 
+      <LiveReadinessStepper className="mb-6" />
+
       {error && (
-        <div className="mb-6 rounded-md border border-[oklch(65%_0.22_25)]/40 bg-[oklch(65%_0.22_25)]/5 px-4 py-3">
-          <div className="font-mono text-[10px] uppercase tracking-widest text-[oklch(65%_0.22_25)]">
+        <div className="mb-6 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3">
+          <div className="font-mono text-[10px] uppercase tracking-widest text-destructive">
             verifier error
           </div>
           <div className="mt-1 font-mono text-xs text-foreground/80">

@@ -131,6 +131,16 @@ function resolveAdminToken(c: import("hono").Context<{ Bindings: Env }>): string
   const cookieToken = getCookie(c, SESSION_COOKIE);
   return cookieToken ?? null;
 }
+function isHttpsRequest(c: import("hono").Context<{ Bindings: Env }>): boolean {
+  const forwardedProto = c.req.header("x-forwarded-proto")?.toLowerCase();
+  if (forwardedProto === "https") return true;
+  if (forwardedProto === "http") return false;
+  try {
+    return new URL(c.req.url).protocol === "https:";
+  } catch {
+    return true;
+  }
+}
 
 app.use("*", async (c, next) => {
   const startMs = Date.now();
@@ -327,15 +337,16 @@ app.post("/admin/session", async (c) => {
 
   await recordAuthSuccess(c.env, ip);
   const expiresAtMs = now + SESSION_TTL_S * 1000;
+  const secureCookie = isHttpsRequest(c);
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: true,
+    secure: secureCookie,
     sameSite: "Strict",
     path: "/",
     maxAge: SESSION_TTL_S,
   });
   setCookie(c, SESSION_TTL_COOKIE, String(expiresAtMs), {
-    secure: true,
+    secure: secureCookie,
     sameSite: "Strict",
     path: "/",
     maxAge: SESSION_TTL_S,
@@ -593,6 +604,37 @@ app.get("/api/scoring/status", (c) => proxy(c, "/api/v1/scoring/status", "arbx:c
 // 5s on api-server, so 15s edge cache is a safe ceiling.
 app.get("/api/risk/circuit-breakers/status", (c) => proxy(c, "/api/v1/risk/circuit-breakers/status", "arbx:cache:cb-status", 15));
 app.get("/api/risk/circuit-breakers/events", (c) => proxy(c, "/api/v1/risk/circuit-breakers/events", "arbx:cache:cb-events", 30));
+
+// Topology Vault — Admin-token gated; edge forwards header.
+// GET snapshot uses short cache (5s) since topology changes infrequently.
+// POST mutations is pass-through (mutation).
+app.get("/api/admin/topology/snapshot", async (c) => {
+  const adminToken = resolveAdminToken(c);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/admin/topology/snapshot`, {
+    headers: { "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN, "x-arbx-admin-token": adminToken },
+  });
+  const t = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(t, upstream.status as 200 | 401 | 503);
+});
+app.post("/api/admin/topology/mutations", async (c) => {
+  const adminToken = resolveAdminToken(c);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const body = await c.req.text();
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/admin/topology/mutations`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": adminToken,
+    },
+    body,
+  });
+  const t = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(t, upstream.status as 200 | 400 | 401 | 503);
+});
 
 // B1 — Chains Admin CRUD. Admin-token gated; edge forwards header.
 // GET list/single use short cache (5s) since runtime chain state changes

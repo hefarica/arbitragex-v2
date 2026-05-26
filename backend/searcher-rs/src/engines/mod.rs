@@ -26,11 +26,21 @@ pub mod dex_engine;
 pub mod flashloan_engine;
 pub mod liquidation_engine;
 pub mod triangular_engine;
+// Experimental/legacy engines are kept behind an explicit feature because
+// their candidate/route DTOs currently target an older prioritization-spine
+// shape. The production orchestrator uses the four stable engines above.
+#[cfg(feature = "experimental-engines")]
 pub mod backrun_engine;
+#[cfg(feature = "experimental-engines")]
 pub mod spatial_engine;
+#[cfg(feature = "experimental-engines")]
 pub mod cex_dex_engine;
 // APEX Phase 1.5 — Thermodynamic engines (server-side only)
+#[cfg(feature = "experimental-engines")]
 pub mod svs_engine;
+#[cfg(feature = "experimental-engines")]
 pub mod dlp_engine;
+#[cfg(feature = "experimental-engines")]
 pub mod triangular_atomic_engine;
+#[cfg(feature = "experimental-engines")]
 pub mod funding_rate_engine;

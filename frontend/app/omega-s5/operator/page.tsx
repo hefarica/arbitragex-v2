@@ -1,13 +1,29 @@
 "use client";
-import { useEffect, useState } from "react";
-import type { CapitalGateEntity } from "@/lib/registries/types-omni";
+import { useCapitalGates } from "@/lib/hooks/useCapitalGates";
 
 export default function OperatorPage() {
-  const [gates, setGates] = useState<CapitalGateEntity[]>([]);
-  useEffect(() => {
-    fetch("/api/capital-gates").then((r) => r.json()).then((d) => setGates(d.rows ?? []));
-  }, []);
+  const { data: gates, isLoading, error } = useCapitalGates();
+
+  if (isLoading) {
+    return (
+      <div>
+        <h1 className="text-xl font-semibold">Operator Parametrization</h1>
+        <p className="text-sm text-muted-foreground">Loading...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div>
+        <h1 className="text-xl font-semibold">Operator Parametrization</h1>
+        <p className="text-sm text-destructive">Error: {error}</p>
+      </div>
+    );
+  }
+
   const global = gates.find((g) => g.scope === "global");
+
   return (
     <div>
       <h1 className="text-xl font-semibold">Operator Parametrization</h1>

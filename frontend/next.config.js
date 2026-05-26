@@ -26,7 +26,7 @@ if (process.env.NODE_ENV === "production" && process.env.ARBX_ALLOW_LOCALHOST_PR
 // "connect-src 'self'  " (trailing spaces) when either var was undefined,
 // which some CSP parsers reject as malformed.
 const csp = (edgeUrl, wsUrl) => {
-  const connectSrcParts = ["'self'", edgeUrl, wsUrl].filter(Boolean);
+  const connectSrcParts = ["'self'", "ws:", "wss:", edgeUrl, wsUrl].filter(Boolean);
   const connectSrc = connectSrcParts.join(" ");
   return [
     "default-src 'self'",

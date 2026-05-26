@@ -42,6 +42,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/wallets",        label: "Observers",             icon: WalletIcon,        group: "setup" },
   { href: "/dex-registry",  label: "Exchange registry",      icon: DatabaseIcon,      group: "setup" },
   { href: "/onboarding",    label: "Onboarding",             icon: ListChecksIcon,    group: "setup" },
+  { href: "/admin/topology", label: "Topology Vault", icon: SatelliteDishIcon, group: "setup" },
   { href: "/settings/credentials", label: "Credentials",     icon: KeyRoundIcon,      group: "setup" },
   { href: "/settings",      label: "Settings",               icon: SettingsIcon,      group: "setup" },
 ];
