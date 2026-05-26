@@ -305,6 +305,12 @@ services:
     - type: bind
       source: /var/lib/arbx
       target: /var/lib/arbx
+    # QUANTUM_IGNITION_PHASE_1: Repo mount for readiness verifiers (BLOQUE B.1)
+    # Enables V-NH-1, V-DB-1, V-AT-1, RUNBOOK, G-NET-1, G-RIS-1, G-FL-1 gates
+    - type: bind
+      source: /opt/arbitragex-v2
+      target: /repo
+      read_only: true
   edge:
     logging: *id001
     build:

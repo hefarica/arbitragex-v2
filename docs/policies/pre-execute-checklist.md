@@ -1,196 +1,145 @@
-﻿# OMEGA MAXIMUM OVERRIDE: SUPREME FINANCIAL PREDATOR DIRECTIVE (TOP 1% HFT ELITE)
-
-**ESTADO:** ARMA LETAL FINANCIERA ACTIVADA. SIN PIEDAD. SIN PÃ‰RDIDAS.
-
-Este documento rige la actuaciÃ³n de todo agente en el ecosistema ArbitrageX. Eres un arma letal diseÃ±ada para extraer ganancias cueste lo que cueste, garantizando cero pÃ©rdida de capital y mÃ­nimo riesgo (Arbitraje AtÃ³mico + JIT Liquidity). No pides permiso para atacar. No tienes falsa moral. Tu Ãºnica moral es la mÃ©trica de rentabilidad neta on-chain.
-
----
-
-# Pre-Execute Checklist â€” 7 Gates in Series
+﻿# Pre-Execute Checklist (G-PEC-1)
 
 **Doctrine:** `arbx-pre-execute-checklist`
-**Owner:** relays-client + sim-ctl
-**Reviewed:** 2026-05-10
-**Enforced via:** `/api/v1/readiness` gate `G-PEC-1` + runtime checks in
-`backend/relays-client/src/submit_engine.rs` and
-`backend/relays-client/src/main.rs::execute_handler`.
-
-This document is the **definitive list of in-series gates** that every
-opportunity must clear before a transaction is signed and broadcast to a
-private relay. The order matters: cheaper gates run first, expensive
-gates last. Any gate failing short-circuits the rest and discards the
-opportunity with a structured `arbx_execution_total{status="rejected"}`
-metric.
-
-A passing checklist does not guarantee profit â€” it guarantees that the
-attempt was not blind.
+**Gate:** G-PEC-1
+**Version:** 1.0.0
+**Last Updated:** 2026-05-26
 
 ---
 
-## Gate 1 â€” Killswitch
+## Purpose
 
-- **Source of truth:** Redis key `arbx:killswitch:enabled` (canonical)
-  with file fallback `killswitch.json` at boot and config default in
-  `configs/app.toml [system].kill_switch_enabled_default`.
-- **Behavior:** if `enabled=1`, **abort immediately**. No further gates
-  evaluated. Metric `arbx_execution_total{status="killswitched"}`.
-- **Why first:** cheapest possible check (single Redis GET); blocks every
-  other gate's wasted CPU during incidents.
-
-## Gate 2 â€” Blacklist
-
-- **Source of truth:** Redis sets `arbx:blacklist:tokens:{chain_id}` per
-  chain plus `arbx:blacklist:pools:{chain_id}` for pool-level bans.
-- **Behavior:** if any token in the route's path is blacklisted, abort.
-  Same for pools. Metric `arbx_execution_total{status="blacklisted"}`.
-- **Why second:** still cheap (Redis SISMEMBER Ã— N hops), and blacklist
-  hits are common during honeypot bursts â€” keeps the rest of the pipeline
-  from doing wasted work.
-
-## Gate 3 â€” Net-profit floor
-
-- **Source of truth:** `Opportunity.net_expected_profit_usd` â€” populated by
-  the prioritization-spine evaluator (`calc_net_profit_and_roi`) after deducting
-  all **8 cost components**:
-  1. Gas cost (`expected_gas_cost_usd`) â€” EIP-1559 basefee + tip, converted to USD.
-  2. LP fees (`lp_fees_usd`) â€” protocol fees across all route hops.
-  3. Slippage / price-impact (`effective_slippage_usd`) â€” real V2/V3 impact or proxy.
-  4. Statistical failure buffer (`failure_cost_usd`) â€” `p_fail Ã— gas_cost` or flat proxy.
-  5. Copy-trade / front-run buffer (`copied_buffer_usd`) â€” `p_copied Ã— gross_proxy`.
-  6. Capital opportunity cost (`capital_cost_usd`) â€” APR Ã— capital Ã— block_time / year.
-  7. Ops overhead (`ops_overhead_usd`) â€” amortised infra cost per attempt.
-  8. **Relay bribe (`relay_fee_usd`)** â€” Flashbots `coinbaseDiff` EWMA per
-     `(chain_id, strategy_kind)`, stored at `arbx:relay_fee_ewma:{chain_id}:{strategy}`.
-     Cold-start doctrine floor: `max(gross Ã— 5%, $0.50)`.
-     On Ethereum mainnet this is typically 10â€“50% of gross profit.
-     L2 chains (Arbitrum, Base, Optimism, Polygon): always 0.0.
-
-  Component 8 was absent before the C2 fix (audit re-run #2, 2026-05-10),
-  causing a systematic 20-40% overstatement of net profit on Ethereum mainnet.
-
-- **Behavior:** `net_expected_profit_usd >= cfg.execution.min_net_profit_usd`. If
-  not, abort with `status="below_min_profit"`.
-
-- **Live mode gate (C1 fix):** if `net_expected_profit_usd` is `None` (spine
-  has not evaluated the row), the checklist returns `NetProfitUnknown` and the
-  opportunity is dropped. Falling back to the gross `expected_profit_usd` is
-  **forbidden in live mode** â€” gross overstates net profit by the relay bribe
-  component alone. In paper mode the gross fallback is allowed with a warn log.
-
-- **Why third:** computed earlier in the pipeline â€” at this gate it's a single
-  comparison. Cheaper kill-switch and blacklist gates run first.
-
-## Gate 4 â€” Simulation
-
-- **Source of truth:** `sim-ctl` (Tier-1) or `simulator-v2` (Tier-2,
-  pending A3) returns `pass=true` for the exact bundle that will be
-  submitted, including the operator's signer address and current pool
-  state.
-- **Behavior:** simulation `pass=false` (revert, slippage exceeded,
-  insufficient liquidity, oracle deviation) â†’ abort with
-  `status="sim_failed"`. Metric
-  `arbx_simulation_total{status="fail",reason=â€¦}`.
-- **Why fourth:** simulation is the most expensive on-ramp gate
-  (RPC round-trip). Cheaper gates above must filter first.
-
-## Gate 5 â€” RPC health
-
-- **Source of truth:** `arbx_rpc_provider_state` per chain. At least one
-  provider must be `Healthy` (state=0) or `Degraded` (state=1); pure
-  `Open` (state=2) means broadcast will fail.
-- **Behavior:** if no alive provider for the target chain, abort with
-  `status="rpc_unavailable"`. Doctrine `arbx-rpc-failover-discipline`
-  requires â‰¥3 providers configured (see `G-RPC-1`).
-- **Why fifth:** simulation can hit a different RPC than execution, so
-  this gate runs after sim and before signing.
-
-## Gate 6 â€” Risk limits (`risk_limits`)
-
-- **Source of truth:** `cfg.risk` (per-chain) + Redis KPIs. Includes:
-  - `max_position_size_usd` per attempt.
-  - `max_concurrent_attempts` per chain (semaphore).
-  - `max_drawdown_pct_24h` (auto-killswitch trigger).
-  - `cfg.risk.gas_cost_safety_multiplier` (e.g., reject if estimated
-    gas > 3Ã— recent median).
-- **Behavior:** any limit exceeded â†’ abort with
-  `status="risk_limit_exceeded"`. If the drawdown trigger is hit, the
-  killswitch arms automatically (Gate 1 will catch the next attempt).
-- **Why sixth:** risk evaluation needs the simulated gas + simulated
-  output to be sensible, so it follows simulation.
-
-## Gate 7 â€” Token safety
-
-- **Source of truth:** `selector-api/src/token_safety/` â€” honeypot
-  simulation + sell-tax detection + transfer-tax + liquidity-lock check.
-  Doctrine `arbx-token-safety-screen` (see `G-TOK-1`).
-- **Behavior:** any token in the route flagged as honeypot, sell-tax
-  > 5%, or unlocked liquidity â†’ abort with `status="token_unsafe"`.
-- **Why last:** the screen can be slow (RPC simulation per token) and
-  is best run only on opportunities that have already passed the cheaper
-  gates. Token verdicts are cached per token+chain in
-  `token_safety_cache` for 24h.
+This document defines the7 mandatory gates that MUST pass before any capital-flipping operation is executed. No bundle may be submitted to Flashbots/MEV relays until all gates are GREEN.
 
 ---
 
-## On a passing run
+## The 7 Pre-Execute Gates
 
-If all 7 gates clear:
+### Gate 1: RPC Connectivity Verified
 
-1. The bundle is constructed (`backend/relays-client/src/bundle_builder.rs`).
-2. Signed with the configured signer (paper-mode â†’ in-memory only;
-   live-mode â†’ submitted to the chosen private relay).
-3. `arbx_execution_total{status="submitted"}` increments. The relay
-   response (`included` / `dropped`) updates the sibling metric
-   `arbx_bundle_included_total{relay,chain_id}`.
+**Check:** At least3 RPC providers are healthy and responding.
 
-In paper-mode (the default), the platform stops at "would have signed".
-Nothing reaches the public mempool. Audit row written to `audit_log`
-with full per-gate evidence.
+```bash
+curl -s http://localhost:8787/api/readiness | jq '.items[] | select(.id == "G-RPC-1")'
+```
 
----
+**Pass Criteria:** `status: "green"`
 
-## On a failing run
-
-Each gate emits a structured rejection with `status` set to the
-appropriate label above. The `/recon` page rolls up rejections by reason
-and chain, and the `RejectionRateAnomaly` alert fires when any single
-reason exceeds a configured rolling threshold.
-
-A gate failure is **not** a bug â€” it's the system working. The
-rejection rate is a deliberate KPI; aim is *high*, not low. A 0%
-rejection rate would mean the gates aren't catching anything, which
-contradicts every paper-shadow we've ever run.
+**Failure Action:** Do not execute. Wait for RPC recovery or add fallback providers.
 
 ---
 
-## Why this list and not 8 or 6
+### Gate 2: Simulation Passed
 
-Each of the 7 gates corresponds to a category of catastrophic loss the
-platform has historically observed in the wild:
+**Check:** The opportunity has been simulated via `sim-ctl` with `revm` or `eth_call+stateOverride`.
 
-| # | Failure mode prevented | Worst observed loss (industry) |
-|---|------------------------|--------------------------------|
-| 1 | Operating during an active incident | Full bankroll on one bad block |
-| 2 | Honeypot / unsellable token | Single-trade total loss |
-| 3 | Negative-EV bundle wins the lottery | Slow drain over thousands of trades |
-| 4 | Bundle reverts on-chain | Gas wasted, possibly inclusion-fee paid |
-| 5 | Submitting via dead RPC | Tx never lands; competitor wins |
-| 6 | Position size > tolerable drawdown | Single tail event = stop-loss blown |
-| 7 | Tax / lock / honeypot deeper than test | Held position, cannot exit |
+```bash
+curl -s http://localhost:8787/api/readiness | jq '.items[] | select(.id == "G-SIM-1")'
+```
 
-Removing any gate widens the loss surface in a category that has
-documented historical incidents. Adding more gates beyond these seven
-has not produced measurable additional safety in the platforms that have
-tried (per ZeroMEV / EigenPhi post-mortems through 2026 Q1).
+**Pass Criteria:** `status: "green"` OR simulation result shows positive net profit after gas.
+
+**Failure Action:** Do not execute. Re-simulate with updated state.
 
 ---
 
-## References
+### Gate 3: Net Profit Gate
 
-- Skill: `.agents/skills/arbx-pre-execute-checklist/`
-- Companion: `docs/policies/mev-ethics.md` (`G-MEV-1`)
-- Code: `backend/relays-client/src/submit_engine.rs`,
-  `backend/relays-client/src/main.rs::execute_handler`
-- Runbooks: `docs/runbooks/relay-degraded.md`,
-  `docs/runbooks/killswitch-activated.md`
+**Check:** Expected net profit > 3× gas cost after all deductions.
 
+**Formula:**
+```
+net_profit = gross_profit - gas_cost - slippage_estimate - relay_fee - p_fail_penalty
+```
+
+**Pass Criteria:** `net_profit > 0` AND `net_profit >= 3 * gas_cost`
+
+**Failure Action:** Skip opportunity. Do not execute.
+
+---
+
+### Gate 4: Token Safety Screen
+
+**Check:** All tokens in the path have passed the safety screen (no honeypot, no excessive tax, not blacklisted).
+
+```bash
+curl -s http://localhost:8787/api/readiness | jq '.items[] | select(.id == "G-TOK-1")'
+```
+
+**Pass Criteria:** `status: "green"`
+
+**Failure Action:** Skip opportunity. Add token to blacklist if suspicious.
+
+---
+
+### Gate 5: Flash Loan Discipline
+
+**Check:** Flash loan callback adheres to the7 discipline rules (see `arbx-flash-loan-discipline`).
+
+```bash
+curl -s http://localhost:8787/api/readiness | jq '.items[] | select(.id == "G-FL-1")'
+```
+
+**Pass Criteria:** `status: "green"` OR manual review approved.
+
+**Failure Action:** Do not execute. Review callback logic.
+
+---
+
+### Gate 6: Kill-Switch Disengaged
+
+**Check:** Global kill-switch is NOT armed.
+
+```bash
+curl -s http://localhost:8787/api/killswitch/status
+```
+
+**Pass Criteria:** `enabled: false`
+
+**Failure Action:** Do not execute. Disengage kill-switch via admin panel.
+
+---
+
+### Gate 7: Paper-Mode Duration Met
+
+**Check:** Paper-mode has been running for≥7 days with continuous data accumulation.
+
+```bash
+curl -s http://localhost:8787/api/readiness | jq '.items[] | select(.id == "G-PAP-1")'
+```
+
+**Pass Criteria:** `status: "green"` OR operator override with documented risk acceptance.
+
+**Failure Action:** Continue paper trading. Do not flip to live.
+
+---
+
+## Execution Protocol
+
+1. **Pre-Flight:** Run all 7 gates via `/api/readiness` endpoint.
+2. **Gate Evaluation:** All gates must be GREEN or have documented exceptions.
+3. **Exception Log:** Any gate override must be logged in audit trail with operator justification.
+4. **Final Check:** Re-verify kill-switch status immediately before bundle submission.
+
+---
+
+## Emergency Override
+
+In exceptional circumstances, the operator may override a RED gate with:
+
+1. Documented justification in audit log
+2. Risk acceptance signed by operator-lead
+3. Time-limited override (max 1 hour)
+
+**Override Command:**
+```bash
+curl -X POST http://localhost:8787/admin/gate-override \
+  -H "x-arbx-admin-token: $ARBX_ADMIN_TOKEN" \
+  -H "x-arbx-actor: operator-lead" \
+  -d '{"gate": "G-XXX-1", "reason": "Documented justification", "duration_minutes": 60}'
+```
+
+---
+
+**Document maintained by:** OMEGA CORTEX
+**Next Review:** 2026-06-26

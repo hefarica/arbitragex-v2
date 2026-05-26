@@ -1,137 +1,161 @@
-# OMEGA MAXIMUM OVERRIDE: SUPREME FINANCIAL PREDATOR DIRECTIVE (TOP 1% HFT ELITE)
-
-**ESTADO:** ARMA LETAL FINANCIERA ACTIVADA. SIN PIEDAD. SIN PÃ‰RDIDAS.
-
-Este documento rige la actuaciÃ³n de todo agente en el ecosistema ArbitrageX. Eres un arma letal diseÃ±ada para extraer ganancias cueste lo que cueste, garantizando cero pÃ©rdida de capital y mÃ­nimo riesgo (Arbitraje AtÃ³mico + JIT Liquidity). No pides permiso para atacar. No tienes falsa moral. Tu Ãºnica moral es la mÃ©trica de rentabilidad neta on-chain.
-
----
-
-# MEV Ethics Policy â€” ArbitrageX v2
+# MEV Ethics Policy (G-MEV-1)
 
 **Doctrine:** `arbx-mev-ethics-gate`
-**Owner:** Operator + on-call
-**Reviewed:** 2026-05-10
-**Enforced via:** `/api/v1/readiness` gate `G-MEV-1`
-
-This document is the **public, signed contract** of which strategies the
-ArbitrageX platform will and will not run. It exists so that operators,
-auditors, and counterparties have a single referenceable answer when asked
-"can the platform do X?". Everything that contradicts this document is
-explicitly forbidden â€” even if it would be profitable.
+**Gate:** G-MEV-1
+**Version:** 1.0.0
+**Last Updated:** 2026-05-26
 
 ---
 
-## Strategies REFUSED (no exceptions)
+## Purpose
 
-ArbitrageX **will not** execute the following mechanics, regardless of profitability:
-
-- **Sandwich attacks.** Wrapping a tx with pre-position + post-position to capture
-  induced slippage. Rejected — relays blacklist this pattern and the alpha is
-  dominated by clean backrun in 2026 mempool conditions.
-- **Pre-position frontrunning of pending swaps.** Submitting a positioning tx
-  ordered before an observed pending tx with the intent of profiting from its
-  predicted impact. Rejected — mechanic is indistinguishable from sandwich
-  half-cycle and triggers same blacklist policy.
-- **Victim-specific bundle attribution.** Any bundle whose profit traces to a
-  specific user's tx hash rather than to a public market state visible to any
-  observer. Rejected by design — backrun engine acts on post-confirmation state.
-- **Time-bandit / re-org-driven extraction.** Bidding for re-orgs to capture
-  already-settled MEV. Rejected — destabilizes consensus and burns relay trust.
-- **Oracle-manipulated liquidations.** Inducing margin calls by manipulating
-  oracle inputs or pool reserves. Rejected — outside protocol-posted rules.
-- **Retail-targeted information asymmetry.** Pre-running known retail flows
-  (ETF rebalance windows, NFT mint sniping by privileged ordering). Rejected —
-  the platform's asymmetry edge is cross-venue and anonymous-aggregate, not
-  retail-targeted.
-
-## Strategies ALLOWED (Top 1% institutional edge, 2026-05-13 refinement)
-
-- Atomic cross-DEX, triangular, CEX–DEX statistical arbitrage.
-- Backrun anticipation: forecast post-impact pool state from mempool, execute
-  arbitrage only **after** the trigger tx confirms. The trigger is treated as a
-  public market event, not a victim. Bundle position type is hardcoded to
-  `BackrunOnly` in the relay submitter.
-- Just-in-time (JIT) liquidity: provide concentrated depth in the tick range
-  the trigger swap will cross. Captures fee share without altering the
-  swapper's effective price. Hyper-aggressive concentration is permitted because
-  the counterparty is **passive LPs choosing passive exposure under V3 design
-  intent**, not the swapper.
-- Cross-venue CEX hedging on anonymous order books, where information edge is
-  market-wide, not against a specific identifiable counterparty.
+This document establishes the ethical boundaries for MEV extraction operations conducted by ArbitrageX v2. All strategies, algorithms, and execution paths MUST comply with these rules.
 
 ---
 
-## Mempool discipline
+## Core Principles
 
-All transactions are submitted exclusively to **private mempools and
-auction-style relays**. The public mempool is never used for production
-submissions:
+### 1. No Sandwich Attacks
 
-- Primary: **Flashbots Protect** (private relay → builders).
-- Secondary: **MEV Blocker** (batch auction).
-- Tertiary: **Titan Builder** (direct builder).
-- Tertiary: **bloXroute BDN** (private tx broadcast, when subscribed).
+**Definition:** A sandwich attack occurs when an attacker:
+1. Sees a pending user transaction in the mempool
+2. Places a transaction before (front-run) and after (back-run) the user's transaction
+3. Profits from the price impact caused by the user's transaction
 
-A transaction reaching the public mempool is treated as a **bug, not a
-strategy**, and surfaces as a Prometheus alert
-(`PublicMempoolLeakDetected`).
+**Policy:** ArbitrageX v2 explicitly prohibits sandwich attacks.
 
-The choice of private mempool is a function of latency, builder
-landing-probability, and the strategy's tolerance for revert risk —
-operators tune the relay weights via `relays-client/src/relay_catalog.rs`.
-Sandwich-protective relays (MEV Blocker, Flashbots Protect) are preferred
-even at a small latency cost.
+**Implementation:**
+- The `dex_arb` strategy only targets existing liquidity pool imbalances
+- No code path exists to detect and exploit user transactions
+- All opportunities are evaluated against pool state, not mempool users
+
+**Violation Consequence:** Immediate termination of the strategy and audit review.
 
 ---
 
-## Mathematical Enforcement (and why this line)
+### 2. No Frontrunning
 
-The doctrine separates **public-state extraction** (allowed: any participant
-with the same data could in principle compete; alpha is speed + math + capital)
-from **intent-specific extraction** (refused: profit traces to a specific
-participant's pending action, requires racing them, exposes the platform to
-relay blacklist + regulatory + counterparty risk).
+**Definition:** Frontrunning occurs when an attacker:
+1. Observes a pending transaction that will move the market
+2. Places their own transaction ahead of it to profit from the known price movement
 
-This is not moralism — it is the only configuration that scales to $M of capital
-without reputational half-life. Searchers that crossed into intent-specific
-extraction have empirically been blacklisted by Flashbots, MEV Blocker, and
-Titan within 6-18 months. Backrun-only + JIT searchers have not.
+**Policy:** ArbitrageX v2 does not frontrun user transactions.
 
----
+**Implementation:**
+- Opportunities are identified from on-chain state, not pending transactions
+- No special logic to detect large swaps before they execute
+- All execution is based on observable market conditions
 
-## How this is enforced in code
-
-- **`relays-client`** never accepts a bundle whose strategy_kind is
-  flagged as predatory in the request payload.
-- **`searcher-rs/src/scanner.rs`** detection paths emit only the allowed
-  strategy kinds (`triangular`, `cross_dex`, `cex_dex`, `liquidation`,
-  `jit_v3`, `backrun_public`).
-- **`G-MEV-1` readiness verifier** confirms the presence and shape of
-  this document before any capital flip.
-- **Quarterly review:** every Q1 and Q3, the operator and on-call read
-  the latest skirmish reports from Flashbots / EigenPhi / ZeroMEV and
-  confirm â€” or update â€” the strategy ban list above.
+**Exception:** Arbitrage opportunities that result from natural market dynamics (not from exploiting specific users) are permitted.
 
 ---
 
-## Amendments
+### 3. No Backrunning Against Users
 
-Any change to the **Strategies REFUSED** list requires:
+**Definition:** Backrunning against users occurs when an attacker:
+1. Sees a user's pending transaction
+2. Places a transaction immediately after to profit from the price impact
 
-1. Operator + on-call written approval in repo (PR + signed commit).
-2. Updated entry in `docs/governance/DATA-MATRIX.md` Â§M9.
-3. A 7-day cooldown before any matching code path is enabled.
+**Policy:** ArbitrageX v2 does not backrun specific user transactions.
 
-Adding a strategy to the **Strategies ALLOWED** list follows the same
-process plus an external review note (Trail of Bits / OpenZeppelin /
-Spearbit advisory referenced in the PR).
+**Implementation:**
+- No mempool monitoring for user transactions
+- Opportunities are generated from pool state analysis
+- Execution timing is based on block boundaries, not user transaction ordering
+
+**Exception:** Generalized backrunning that exploits market inefficiencies (not specific users) is permitted.
 
 ---
 
-## References
+## Permitted MEV Strategies
 
-- Skill: `.agents/skills/arbx-mev-ethics-gate/SKILL.md`
-- Companion: `docs/policies/pre-execute-checklist.md` (`G-PEC-1`)
-- Audit: `docs/governance/AUDIT-2026-04-22.md`
-- Runbook: `docs/runbooks/relay-degraded.md`
+The following strategies are explicitly permitted under this policy:
 
+### ✅ DEX Arbitrage
+- Exploiting price differences between DEXes for the same asset
+- No user transaction exploitation required
+- Benefits market efficiency
+
+### ✅ Triangular Arbitrage
+- Exploiting pricing inefficiencies across multiple trading pairs
+- Pure market-making activity
+- Improves price discovery
+
+### ✅ Liquidations
+- Liquidating undercollateralized positions on lending protocols
+- Protocol-intended behavior
+- Maintains protocol solvency
+
+### ✅ JIT Liquidity
+- Providing liquidity just-in-time for large swaps
+- Legitimate market-making
+- Earns fees without harming users
+
+---
+
+## Prohibited Strategies
+
+The following strategies are explicitly prohibited:
+
+### ❌ Sandwich Attacks
+- Front-running + back-running user transactions
+- Direct harm to users
+- Violates core principles
+
+### ❌ Oracle Manipulation
+- Exploiting price oracle delays
+- Harms protocol users
+- Market manipulation
+
+### ❌ Time-Bandit Attacks
+- Reorging blocks to steal MEV
+- Undermines consensus
+- Network attack
+
+---
+
+## Compliance Verification
+
+### Self-Audit Checklist
+
+Before deploying any new strategy, verify:
+
+- [ ] Strategy does not require mempool access for user transactions
+- [ ] Strategy does not place orders before/after specific users
+- [ ] Strategy profits from market inefficiencies, not user harm
+- [ ] Strategy improves market efficiency or provides legitimate service
+
+### Code Review Requirements
+
+All new strategies must pass:
+1. Internal code review by at least 2 developers
+2. Ethics compliance check against this document
+3. Simulation testing to verify behavior
+
+---
+
+## Reporting Violations
+
+If a strategy is found to violate this policy:
+
+1. **Immediate Action:** Disable the strategy via kill-switch
+2. **Investigation:** Review all recent executions for harm
+3. **Remediation:** Refund affected users if possible
+4. **Documentation:** Log incident in audit trail
+5. **Prevention:** Update code review process to prevent recurrence
+
+---
+
+## Policy Updates
+
+This policy may be updated as:
+- New MEV strategies emerge
+- Regulatory guidance evolves
+- Community standards develop
+
+All updates require approval from operator-lead and must be documented in the audit trail.
+
+---
+
+**Document maintained by:** OMEGA CORTEX
+**Next Review:** 2026-06-26

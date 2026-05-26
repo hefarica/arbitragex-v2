@@ -1,76 +1,110 @@
 /**
- * Token safety cache — Postgres-backed TTL cache over `token_safety_cache` table.
- *
- * Contract:
- *   PK: (chain_id, token_address).
- *   `safety_score`: 0..100 integer.
- *   `flags`: JSONB freeform.
- *   `source`: "goplus" | "honeypot_is" | "internal" | "unknown".
- *   `ttl_expires_at`: absolute expiry (TIMESTAMPTZ).
- *
- * Normalize addresses to lowercase hex at the boundary.
+ * Token Safety Cache (G-TOK-1)
+ * 
+ * In-memory cache for token safety screening results.
+ * Reduces API calls to external safety services.
  */
 
-import type pg from "pg";
+import type { TokenSafetyResult } from "./client.js";
 
-export type SafetySource = "goplus" | "honeypot_is" | "internal" | "unknown";
+export interface CacheEntry {
+  result: TokenSafetyResult;
+  expiresAt: number;
+}
 
-export type TokenSafetyRecord = {
-  chain_id: number;
-  token_address: string;          // lowercase hex
-  safety_score: number;           // 0..100
-  flags: Record<string, unknown>;
-  source: SafetySource;
-  ttl_expires_at: Date;
-  updated_at: Date;
-};
+/**
+ * Token Safety Cache
+ * 
+ * Provides caching for token safety screening results.
+ */
+export class TokenSafetyCache {
+  private cache: Map<string, CacheEntry> = new Map();
+  private ttlMs: number;
 
-export function normalizeAddress(addr: string): string {
-  const s = addr.trim().toLowerCase();
-  if (!/^0x[0-9a-f]{40}$/.test(s)) {
-    throw new Error(`invalid eth address: ${addr}`);
+  constructor(ttlMs: number = 3600000) {
+    this.ttlMs = ttlMs;
   }
-  return s;
+
+  /**
+   * Get a cached result
+   */
+  get(address: string, chainId: number): TokenSafetyResult | null {
+    const key = this.getKey(address, chainId);
+    const entry = this.cache.get(key);
+    
+    if (!entry) {
+      return null;
+    }
+    
+    // Check if expired
+    if (Date.now() > entry.expiresAt) {
+      this.cache.delete(key);
+      return null;
+    }
+    
+    return entry.result;
+  }
+
+  /**
+   * Set a cached result
+   */
+  set(result: TokenSafetyResult): void {
+    const key = this.getKey(result.address, result.chainId);
+    const entry: CacheEntry = {
+      result,
+      expiresAt: Date.now() + this.ttlMs,
+    };
+    this.cache.set(key, entry);
+  }
+
+  /**
+   * Delete a cached result
+   */
+  delete(address: string, chainId: number): boolean {
+    const key = this.getKey(address, chainId);
+    return this.cache.delete(key);
+  }
+
+  /**
+   * Clear all cached results
+   */
+  clear(): void {
+    this.cache.clear();
+  }
+
+  /**
+   * Get cache statistics
+   */
+  getStats(): { size: number; ttlMs: number } {
+    return {
+      size: this.cache.size,
+      ttlMs: this.ttlMs,
+    };
+  }
+
+  /**
+   * Prune expired entries
+   */
+  prune(): number {
+    const now = Date.now();
+    let pruned = 0;
+    
+    for (const [key, entry] of this.cache.entries()) {
+      if (now > entry.expiresAt) {
+        this.cache.delete(key);
+        pruned++;
+      }
+    }
+    
+    return pruned;
+  }
+
+  private getKey(address: string, chainId: number): string {
+    return `${chainId}:${address.toLowerCase()}`;
+  }
 }
 
-export async function getCached(
-  pool: pg.Pool, chainId: number, addr: string, now: Date = new Date(),
-): Promise<TokenSafetyRecord | null> {
-  const a = normalizeAddress(addr);
-  const r = await pool.query(
-    `SELECT chain_id, token_address, safety_score, flags, source, ttl_expires_at, updated_at
-       FROM token_safety_cache
-      WHERE chain_id = $1 AND token_address = $2 AND ttl_expires_at > $3
-      LIMIT 1`,
-    [chainId, a, now],
-  );
-  if (r.rowCount === 0) return null;
-  const row = r.rows[0]!;
-  return {
-    chain_id: row.chain_id,
-    token_address: row.token_address,
-    safety_score: row.safety_score,
-    flags: row.flags ?? {},
-    source: row.source as SafetySource,
-    ttl_expires_at: row.ttl_expires_at,
-    updated_at: row.updated_at,
-  };
-}
+// Singleton instance
+export const tokenSafetyCache = new TokenSafetyCache();
 
-export async function upsertCached(
-  pool: pg.Pool, rec: Omit<TokenSafetyRecord, "updated_at">,
-): Promise<void> {
-  const a = normalizeAddress(rec.token_address);
-  await pool.query(
-    `INSERT INTO token_safety_cache
-       (chain_id, token_address, safety_score, flags, source, ttl_expires_at, updated_at)
-     VALUES ($1, $2, $3, $4::jsonb, $5, $6, NOW())
-     ON CONFLICT (chain_id, token_address) DO UPDATE
-       SET safety_score = EXCLUDED.safety_score,
-           flags        = EXCLUDED.flags,
-           source       = EXCLUDED.source,
-           ttl_expires_at = EXCLUDED.ttl_expires_at,
-           updated_at   = NOW()`,
-    [rec.chain_id, a, rec.safety_score, JSON.stringify(rec.flags), rec.source, rec.ttl_expires_at],
-  );
-}
+export default TokenSafetyCache;

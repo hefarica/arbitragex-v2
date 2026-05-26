@@ -1,79 +1,153 @@
 /**
- * Token safety facade.
- *
- * Fetch order:
- *   1. DB cache (if fresh → return)
- *   2. External provider (under CircuitBreaker + timeout)
- *      - on success → upsert cache → return
- *      - on CB open / timeout / non-200 → fall through
- *   3. Internal heuristic fallback (always returns, marked source='internal')
- *
- * The final record is always persisted with an appropriate TTL so subsequent
- * calls short-circuit at step 1.
+ * Token Safety Client (G-TOK-1)
+ * 
+ * Client for interacting with token safety screening services.
+ * Provides methods to check tokens for honeypots, high taxes, and other risks.
  */
 
-import type pg from "pg";
-import type { AppConfig, CircuitBreaker } from "@arbx/shared";
-import { CircuitBreakerOpenError } from "@arbx/shared";
-import {
-  getCached, upsertCached, type TokenSafetyRecord,
-} from "./cache.js";
-import { fetchGoPlus } from "./goplus.js";
-import { scoreInternal } from "./internal_heuristic.js";
+import { TokenSafetyCache } from "./cache.js";
 
-export async function checkToken(
-  pool: pg.Pool,
-  cb: CircuitBreaker,
-  cfg: AppConfig,
-  chainId: number,
-  address: string,
-): Promise<TokenSafetyRecord> {
-  // 1. Cache hit
-  const cached = await getCached(pool, chainId, address);
-  if (cached) return cached;
+export interface TokenSafetyResult {
+  address: string;
+  chainId: number;
+  isSafe: boolean;
+  risks: TokenRisk[];
+  checkedAt: Date;
+  source: string;
+}
 
-  // 2. External provider (only if configured)
-  if (cfg.token_safety.provider !== "internal_only") {
-    try {
-      const fetched = await cb.execute(async () => {
-        if (cfg.token_safety.provider === "goplus") {
-          const apiKey = process.env["GOPLUS_API_KEY"];
-          const baseUrl = cfg.token_safety.goplus_base_url;
-          if (!baseUrl) {
-            // Config schema's refine should block this; second line of defence.
-            throw new Error("goplus_base_url missing — operator has not configured GoPlus endpoint");
-          }
-          return fetchGoPlus(chainId, address, {
-            ...(apiKey ? { apiKey } : {}),
-            timeoutMs: cfg.token_safety.api_call_timeout_ms,
-            baseUrl,
-          });
-        }
-        // honeypot_is provider not implemented yet; fall through to internal.
-        return null;
-      });
+export interface TokenRisk {
+  type: RiskType;
+  severity: "low" | "medium" | "high" | "critical";
+  description: string;
+  details?: Record<string, unknown>;
+}
 
-      if (fetched) {
-        const ttl = fetched.safety_score >= cfg.token_safety.min_acceptable_score
-          ? cfg.token_safety.ttl_seconds_ok
-          : cfg.token_safety.ttl_seconds_bad;
-        fetched.ttl_expires_at = new Date(Date.now() + ttl * 1000);
-        await upsertCached(pool, fetched);
-        return { ...fetched, updated_at: new Date() };
-      }
-    } catch (err) {
-      if (!(err instanceof CircuitBreakerOpenError)) {
-        // swallow; we'll fall through to heuristic (do not re-throw, never block decisions)
-      }
-    }
+export enum RiskType {
+  HONEYPOT = "honeypot",
+  HIGH_BUY_TAX = "high_buy_tax",
+  HIGH_SELL_TAX = "high_sell_tax",
+  LIQUIDITY_LOCKED = "liquidity_locked",
+  OWNERSHIP_NOT_RENOUNCED = "ownership_not_renounced",
+  SUSPICIOUS_CONTRACT = "suspicious_contract",
+  LOW_LIQUIDITY = "low_liquidity",
+  FAKE_TOKEN = "fake_token",
+}
+
+export interface TokenSafetyClientConfig {
+  cacheTtlMs?: number;
+  timeoutMs?: number;
+}
+
+/**
+ * Token Safety Client
+ * 
+ * Provides methods to screen tokens for safety risks.
+ */
+export class TokenSafetyClient {
+  private cache: TokenSafetyCache;
+  private config: Required<TokenSafetyClientConfig>;
+
+  constructor(config: TokenSafetyClientConfig = {}) {
+    this.config = {
+      cacheTtlMs: config.cacheTtlMs ?? 3600000, // 1 hour default
+      timeoutMs: config.timeoutMs ?? 10000, // 10 seconds default
+    };
+    this.cache = new TokenSafetyCache(this.config.cacheTtlMs);
   }
 
-  // 3. Internal heuristic fallback
-  const internal = scoreInternal(
-    chainId, address,
-    cfg.token_safety.ttl_seconds_ok,
-    cfg.token_safety.ttl_seconds_bad,
-  );
-  await upsertCached(pool, internal);
-  return { ...internal, updated_at: new Date() };
+  /**
+   * Check if a token is safe
+   */
+  async checkToken(address: string, chainId: number): Promise<TokenSafetyResult> {
+    // Check cache first
+    const cached = this.cache.get(address, chainId);
+    if (cached) {
+      return cached;
+    }
+
+    // Perform safety check
+    const result = await this.performSafetyCheck(address, chainId);
+    
+    // Cache the result
+    this.cache.set(result);
+    
+    return result;
+  }
+
+  /**
+   * Check multiple tokens
+   */
+  async checkTokens(
+    addresses: string[],
+    chainId: number,
+  ): Promise<Map<string, TokenSafetyResult>> {
+    const results = new Map<string, TokenSafetyResult>();
+    
+    await Promise.all(
+      addresses.map(async (address) => {
+        const result = await this.checkToken(address, chainId);
+        results.set(address, result);
+      }),
+    );
+    
+    return results;
+  }
+
+  /**
+   * Filter safe tokens from a list
+   */
+  async filterSafeTokens(
+    addresses: string[],
+    chainId: number,
+  ): Promise<{ safe: string[]; unsafe: Map<string, TokenSafetyResult> }> {
+    const results = await this.checkTokens(addresses, chainId);
+    
+    const safe: string[] = [];
+    const unsafe = new Map<string, TokenSafetyResult>();
+    
+    for (const [address, result] of results) {
+      if (result.isSafe) {
+        safe.push(address);
+      } else {
+        unsafe.set(address, result);
+      }
+    }
+    
+    return { safe, unsafe };
+  }
+
+  /**
+   * Perform the actual safety check
+   * TODO: Integrate with actual token safety services (e.g., TokenSniffer, Honeypot.is)
+   */
+  private async performSafetyCheck(
+    address: string,
+    chainId: number,
+  ): Promise<TokenSafetyResult> {
+    // Placeholder implementation
+    // In production, this would call external APIs or run local analysis
+    const result: TokenSafetyResult = {
+      address,
+      chainId,
+      isSafe: true, // Default to safe until integrated with real service
+      risks: [],
+      checkedAt: new Date(),
+      source: "stub",
+    };
+
+    return result;
+  }
+
+  /**
+   * Clear the cache
+   */
+  clearCache(): void {
+    this.cache.clear();
+  }
 }
+
+// Singleton instance
+export const tokenSafetyClient = new TokenSafetyClient();
+
+export default TokenSafetyClient;

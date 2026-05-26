@@ -1,58 +1,119 @@
 /**
- * Dynamic blacklist / whitelist over Redis SETs.
- *
- * Keys:
- *   arbx:blacklist:tokens:<chain_id>    — SET of lowercase addresses
- *   arbx:whitelist:tokens:<chain_id>    — SET of lowercase addresses
- *
- * Per-entry TTL is not natively supported by Redis SETs, so entries added with
- * TTL also get a mirror key `arbx:blacklist:tokens:<chain_id>:<addr>:ttl` that
- * expires; a background sweeper (S6) removes members whose mirror key vanished.
- * For S3, we support immediate add/remove and list; TTL sweeper is deferred.
+ * Token Blacklist Policy (G-TOK-1)
+ * 
+ * Maintains a list of blacklisted tokens that should be excluded from
+ * arbitrage operations due to security concerns (honeypots, scams, etc.)
  */
 
-import type { Redis } from "ioredis";
-
-function keyBlack(chainId: number): string { return `arbx:blacklist:tokens:${chainId}`; }
-function keyWhite(chainId: number): string { return `arbx:whitelist:tokens:${chainId}`; }
-
-function normalize(addr: string): string {
-  const s = addr.trim().toLowerCase();
-  if (!/^0x[0-9a-f]{40}$/.test(s)) throw new Error("invalid address");
-  return s;
+export interface BlacklistEntry {
+  address: string;
+  chainId: number;
+  reason: BlacklistReason;
+  addedAt: Date;
+  addedBy: string;
+  evidence?: string;
 }
 
-export async function addToBlacklist(redis: Redis, chainId: number, addr: string, _reason?: string): Promise<void> {
-  await redis.sadd(keyBlack(chainId), normalize(addr));
-}
-export async function removeFromBlacklist(redis: Redis, chainId: number, addr: string): Promise<number> {
-  return redis.srem(keyBlack(chainId), normalize(addr));
-}
-export async function isBlacklisted(redis: Redis, chainId: number, addr: string): Promise<boolean> {
-  const r = await redis.sismember(keyBlack(chainId), normalize(addr));
-  return r === 1;
-}
-export async function listBlacklist(redis: Redis, chainId: number): Promise<string[]> {
-  return redis.smembers(keyBlack(chainId));
+export enum BlacklistReason {
+  HONEYPOT = "honeypot",
+  HIGH_TAX = "high_tax",
+  SCAM = "scam",
+  FAKE_TOKEN = "fake_token",
+  EXPLOIT = "exploit",
+  MANUAL = "manual",
 }
 
-export async function addToWhitelist(redis: Redis, chainId: number, addr: string): Promise<void> {
-  await redis.sadd(keyWhite(chainId), normalize(addr));
-}
-export async function isWhitelisted(redis: Redis, chainId: number, addr: string): Promise<boolean> {
-  const r = await redis.sismember(keyWhite(chainId), normalize(addr));
-  return r === 1;
+export interface BlacklistFilterResult {
+  isBlacklisted: boolean;
+  reason?: BlacklistReason;
+  entry?: BlacklistEntry;
 }
 
-/** True if the opportunity's tokens are safe against both blacklists. */
-export async function pairAllowed(
-  redis: Redis, chainId: number, tokenIn: string, tokenOut: string,
-): Promise<{ allowed: boolean; reason?: string; blocked_token?: string }> {
-  if (await isBlacklisted(redis, chainId, tokenIn)) {
-    return { allowed: false, reason: "blacklist_hit", blocked_token: normalize(tokenIn) };
+/**
+ * Token Blacklist Manager
+ * 
+ * Provides methods to check and manage the token blacklist.
+ */
+export class TokenBlacklist {
+  private blacklist: Map<string, BlacklistEntry> = new Map();
+
+  /**
+   * Check if a token is blacklisted
+   */
+  isBlacklisted(address: string, chainId: number): BlacklistFilterResult {
+    const key = this.getKey(address, chainId);
+    const entry = this.blacklist.get(key);
+    
+    if (entry) {
+      return {
+        isBlacklisted: true,
+        reason: entry.reason,
+        entry,
+      };
+    }
+    
+    return { isBlacklisted: false };
   }
-  if (await isBlacklisted(redis, chainId, tokenOut)) {
-    return { allowed: false, reason: "blacklist_hit", blocked_token: normalize(tokenOut) };
+
+  /**
+   * Add a token to the blacklist
+   */
+  add(entry: BlacklistEntry): void {
+    const key = this.getKey(entry.address, entry.chainId);
+    this.blacklist.set(key, entry);
   }
-  return { allowed: true };
+
+  /**
+   * Remove a token from the blacklist
+   */
+  remove(address: string, chainId: number): boolean {
+    const key = this.getKey(address, chainId);
+    return this.blacklist.delete(key);
+  }
+
+  /**
+   * Get all blacklisted tokens for a chain
+   */
+  getByChain(chainId: number): BlacklistEntry[] {
+    return Array.from(this.blacklist.values())
+      .filter(entry => entry.chainId === chainId);
+  }
+
+  /**
+   * Get total count of blacklisted tokens
+   */
+  get size(): number {
+    return this.blacklist.size;
+  }
+
+  private getKey(address: string, chainId: number): string {
+    return `${chainId}:${address.toLowerCase()}`;
+  }
 }
+
+// Singleton instance
+export const tokenBlacklist = new TokenBlacklist();
+
+/**
+ * Filter tokens against the blacklist
+ */
+export function filterBlacklistedTokens(
+  addresses: string[],
+  chainId: number,
+): { allowed: string[]; blocked: BlacklistFilterResult[] } {
+  const allowed: string[] = [];
+  const blocked: BlacklistFilterResult[] = [];
+
+  for (const address of addresses) {
+    const result = tokenBlacklist.isBlacklisted(address, chainId);
+    if (result.isBlacklisted) {
+      blocked.push(result);
+    } else {
+      allowed.push(address);
+    }
+  }
+
+  return { allowed, blocked };
+}
+
+export default TokenBlacklist;
