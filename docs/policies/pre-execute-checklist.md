@@ -19,9 +19,9 @@ The following gates are checked in series before any execution:
 - **G-RPC-1**: RPC Connectivity Verified
 - **G-SIM-1**: Simulation Passed
 - **G-NET-1**: Net Profit Gate
-- **G-TOK-1**: Token Safety Screen
+- **G-TOK-1**: Token Safety Screen (risk_limits, token_safety)
 - **G-FL-1**: Flash Loan Discipline
-- **G-RIS-1**: Risk Limits Enforced
+- **G-RIS-1**: Risk Limits Enforced (risk_limits)
 - **G-PAP-1**: Paper Mode Duration Met
 
 ### Gate 1: RPC Connectivity Verified
