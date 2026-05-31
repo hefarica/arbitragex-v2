@@ -67,7 +67,7 @@ hex           = "0.4"
 # Required by sed-core ClosedContourTrajectory (DVector<f64> transition points
 # + norm computation). Pinned at 0.32; downstream crates that need it should
 # enable via their own feature flag rather than taking the full dep transitively.
-nalgebra      = "0.32"
+nalgebra      = "0.35"
 # B1.e V1.2 Phase 2 — Stochastic distributions for filtration kernels
 # (Markov jump intensity sampling, Poisson random measure). Only enabled
 # under sed-core's `filtration` feature, NOT a default dep, to keep the
