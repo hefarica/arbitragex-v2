@@ -14,7 +14,7 @@
     "lint": "echo 'lint placeholder'"
   },
   "dependencies": {
-    "@arbx/shared": "*",
+    "@arbx/shared": "workspace:*",
     "express": "^4.19.2",
     "ioredis": "^5.3.2",
     "pg": "^8.11.5",

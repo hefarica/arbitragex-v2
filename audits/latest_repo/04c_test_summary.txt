@@ -1,0 +1,41 @@
+# Pruebas frontend
+Fecha UTC: 2026-05-31T06:05:12Z
+frontend_vitest exit_code=0 duration_s=4 log=validation_logs/frontend_vitest.log
+--- tail ---
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+
+ RUN  v1.6.1 /home/ubuntu/arbitragex-v2-latest-audit/frontend
+
+ ✓ lib/schemas.test.ts  (13 tests) 11ms
+ ✓ lib/statemachine/__tests__/useRuntimeAckSocket.test.ts  (5 tests) 19ms
+ ✓ lib/api-client.test.ts  (10 tests) 54ms
+ ✓ features/opportunities/__tests__/OpportunityEvidenceCell.test.tsx  (21 tests) 54ms
+ ✓ features/opportunities/socket-lifecycle.test.ts  (8 tests) 11ms
+ ✓ app/admin/chains/__tests__/ChainsAdmin.test.tsx  (10 tests) 79ms
+ ✓ lib/__tests__/format.test.ts  (26 tests) 8ms
+ ✓ lib/admin-token.test.ts  (13 tests) 13ms
+ ✓ app/omega-s5/registry/[entity]/snapshot.test.ts  (7 tests) 47ms
+ ✓ lib/formatters.test.ts  (18 tests) 18ms
+ ✓ features/opportunities/__tests__/OpportunityEvidenceCellScoring.test.tsx  (10 tests) 30ms
+ ✓ components/__tests__/TokenChip.test.tsx  (4 tests) 16ms
+ ✓ app/admin/signin/submitHandler.test.ts  (6 tests) 8ms
+ ✓ components/__tests__/SystemGuardBanner.test.tsx  (8 tests) 8ms
+ ✓ features/home/__tests__/ProgressRealCard.test.tsx  (11 tests) 10ms
+ ✓ app/admin/__tests__/v-at-1-invariants.test.ts  (2 tests) 6ms
+ ✓ components/__tests__/DeterministicAvatar.test.tsx  (5 tests) 17ms
+ ✓ features/table/keyboard.test.ts  (8 tests) 6ms
+ ✓ components/__tests__/StatusPill.test.tsx  (10 tests) 18ms
+ ✓ components/__tests__/CrossChainSlot.test.tsx  (2 tests) 11ms
+ ✓ features/readiness/__tests__/AgentTeamsPanel.test.tsx  (5 tests) 5ms
+ ✓ features/readiness/__tests__/GoNoGoPanel.test.tsx  (6 tests) 6ms
+ ✓ features/readiness/__tests__/BlockersPanel.test.tsx  (4 tests) 4ms
+ ✓ lib/api-client-credentials.test.ts  (1 test) 50ms
+ ✓ features/readiness/__tests__/ConfidenceScoringPanel.test.tsx  (4 tests) 4ms
+ ✓ components/__tests__/AdminSessionBadge.test.tsx  (1 test) 21ms
+ ✓ features/risk/__tests__/RiskCircuitPanel.test.tsx  (5 tests) 5ms
+
+ Test Files  27 passed (27)
+      Tests  223 passed (223)
+   Start at  06:05:12
+   Duration  3.32s (transform 1.15s, setup 575ms, collect 3.96s, tests 539ms, environment 10ms, prepare 5.15s)
+

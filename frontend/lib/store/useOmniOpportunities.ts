@@ -138,7 +138,15 @@ export function useOmniOpportunities({
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "http://localhost:3000";
+    // R8 Fail-Honest: No hardcoded fallback to localhost. 
+    // Must be provided via NEXT_PUBLIC_WS_URL.
+    const wsUrl = process.env.NEXT_PUBLIC_WS_URL;
+    if (!wsUrl) {
+      console.warn("[WS] NEXT_PUBLIC_WS_URL is undefined. WebSocket disabled.");
+      setWsStatus("STALE");
+      startPolling();
+      return;
+    }
 
     // C4 fix: admin token required for WS handshake
     const adminToken = getAdminToken();

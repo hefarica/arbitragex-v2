@@ -1,0 +1,715 @@
+# Scripts y workspaces
+
+## package.json raíz
+{
+  "name": "arbitragex-v2-workspace",
+  "scripts": {
+    "build:all": "npm run build --workspaces --if-present",
+    "test:all": "npm run test --workspaces --if-present",
+    "lint:all": "npm run lint --workspaces --if-present",
+    "typecheck:all": "npm run typecheck --workspaces --if-present",
+    "e2e": "cd tests/e2e && npm install && npm run install-browsers && npm test",
+    "e2e:smoke": "cd tests/e2e && npm install && npm run install-browsers && npm run test:smoke"
+  },
+  "workspaces": [
+    "shared-ts",
+    "backend/selector-api",
+    "backend/api-server",
+    "edge/worker",
+    "edge/dev-local",
+    "frontend"
+  ]
+}
+
+## frontend/package.json
+{
+  "name": "@arbx/frontend",
+  "scripts": {
+    "dev": "next dev -p 5173",
+    "build": "next build",
+    "start": "next start -p 5173",
+    "lint": "eslint . --ext .ts,.tsx",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "validate:prod-api": "node scripts/assert-no-localhost-production.js",
+    "dev:container": "next dev -H 0.0.0.0 -p 5173"
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-label": "^2.1.8",
+    "@radix-ui/react-separator": "^1.1.8",
+    "@radix-ui/react-slot": "^1.2.4",
+    "@radix-ui/react-switch": "^1.2.6",
+    "@tailwindcss/postcss": "^4.3.0",
+    "@tanstack/react-table": "^8.21.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "framer-motion": "^11.18.2",
+    "geist": "^1.7.0",
+    "lucide-react": "^1.14.0",
+    "next": "^16.2.6",
+    "next-themes": "^0.4.6",
+    "radix-ui": "^1.4.3",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "recharts": "^2.15.4",
+    "socket.io-client": "^4.8.3",
+    "sonner": "^2.0.7",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss": "^4.3.0",
+    "tw-animate-css": "^1.4.0",
+    "zod": "^3.25.76",
+    "zustand": "^5.0.13"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^14.2.3",
+    "typescript": "^5.4.5",
+    "vitest": "^1.5.0"
+  }
+}
+
+## edge/dev-local/package.json
+{
+  "name": "@arbx/edge-dev-local",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@arbx/shared": "*",
+    "express": "^4.19.2",
+    "http-proxy-middleware": "^3.0.5"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.30",
+    "tsx": "^4.7.2",
+    "typescript": "^5.4.5",
+    "vitest": "^1.5.0"
+  }
+}
+
+## Cargo workspaces
+--- backend/Cargo.toml
+[workspace]
+resolver = "2"
+members = [
+    "shared-rs",
+    "searcher-rs",
+    "sim-ctl",
+    "relays-client",
+    "recon", "math-engine",
+    "prioritization-spine",
+    "simulator-v2",
+    "token-enricher",
+    # B1.e (2026-05-13) — Sequential Equilibrium Dispatcher quantitative
+    # orchestration layer. Phase 1 scaffold ships only types/ (typestate
+    # + kill-switch + 501 prereq); math bodies (filtration, eigenstate,
+    # allocator, hedger) defer to Phase 2.
+    "sed-core",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "Proprietary"
+
+[workspace.dependencies]
+revm          = { version = "3.5.0", default-features = false, features = ["std"] }
+alloy-primitives = { version = "0.7" }
+tokio         = { version = "1", features = ["full"] }
+tokio-util    = { version = "0.7", features = ["rt"] }
+anyhow        = "1"
+thiserror     = "1"
+serde         = { version = "1", features = ["derive"] }
+serde_json    = "1"
+toml          = "0.8"
+uuid          = { version = "1", features = ["v4", "serde"] }
+chrono        = { version = "0.4", features = ["serde"] }
+tracing       = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json","env-filter"] }
+axum          = "0.7"
+tower         = "0.4"
+tower-http    = { version = "0.5", features = ["trace"] }
+hyper         = "1"
+reqwest       = { version = "0.12", default-features = false, features = ["json","rustls-tls"] }
+redis         = { version = "0.25", features = ["tokio-comp","connection-manager"] }
+sqlx          = { version = "0.7",  default-features = false, features = ["runtime-tokio","tls-rustls","postgres","uuid","chrono","json","macros","bigdecimal"] }
+bigdecimal    = "0.4"
+rand          = "0.8"
+prometheus    = "0.13"  # Pinned at 0.13 audit re-run #2 2026-05-10: 0.14 changed
+                        # with_label_values signature breaking 12 call sites in
+                        # shared-rs. Bump to 0.14 deferred to a dedicated migration sprint.
+once_cell     = "1"
+jsonschema    = { version = "0.17", default-features = false }
+config        = { version = "0.14", default-features = false, features = ["toml"] }
+validator     = { version = "0.18", features = ["derive"] }
+shared-rs     = { path = "shared-rs" }
+prioritization-spine = { path = "prioritization-spine" }
+math-engine   = { path = "math-engine" }
+ethers        = { version = "2", default-features = false, features = ["ws","rustls"] }
+# alloy 1.0 — workspace canonical (token-enricher pins this already, lock is stable)
+alloy         = { version = "1", features = ["providers", "transport-http", "rpc-types-eth", "network", "sol-types", "rlp"] }
+alloy-sol-types = { version = "1" }
+futures-util  = "0.3"
+async-trait   = "0.1"
+lru           = "0.12"
+hex           = "0.4"
+# B1.e V1.2 (2026-05-13) — Linear algebra for SED closed-contour typestate.
+# Required by sed-core ClosedContourTrajectory (DVector<f64> transition points
+# + norm computation). Pinned at 0.32; downstream crates that need it should
+# enable via their own feature flag rather than taking the full dep transitively.
+nalgebra      = "0.32"
+# B1.e V1.2 Phase 2 — Stochastic distributions for filtration kernels
+# (Markov jump intensity sampling, Poisson random measure). Only enabled
+# under sed-core's `filtration` feature, NOT a default dep, to keep the
+# Phase 1 typestate-only build lean.
+rand_distr    = "0.4"
+
+# ---------------------------------------------------------------------------
+# M11 (audit 2026-05-10): surface hot-path panics early.
+# unwrap_used + expect_used are WARNINGS (not denied) — too many to fix in
+# one pass.  Promotion path: per-file #[deny] -> workspace deny in CI once
+# all callers are cleaned up.  Individual modules may #[allow] temporarily.
+# ---------------------------------------------------------------------------
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+--- backend/math-engine/Cargo.toml
+[package]
+name = "math-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+reqwest = { workspace = true }
+tokio = { workspace = true }
+--- backend/prioritization-spine/Cargo.toml
+[package]
+name = "prioritization-spine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+shared-rs = { workspace = true }
+math-engine = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+config = { workspace = true }
+chrono = { workspace = true }
+revm = { workspace = true }
+ethers = { workspace = true }
+tokio = { workspace = true }
+sqlx = { workspace = true }
+lru = { workspace = true }
+redis = { workspace = true }
+futures-util = { workspace = true }
+
+[dev-dependencies]
+hex = "0.4"
+--- backend/recon/Cargo.toml
+[package]
+name = "recon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ArbitrageX v2 — recon / PnL reconciliation. S6: consumer + aggregator + anomaly detector."
+
+[dependencies]
+shared-rs.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+sqlx.workspace = true
+bigdecimal.workspace = true
+redis.workspace = true
+ethers.workspace = true
+alloy.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+--- backend/relays-client/Cargo.toml
+[package]
+name = "relays-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ArbitrageX v2 — private execution via Flashbots/builders. S1: /execute returns 501 by design."
+
+[dependencies]
+shared-rs.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+redis.workspace = true
+ethers.workspace = true
+alloy.workspace = true
+futures-util.workspace = true
+async-trait.workspace = true
+hex.workspace = true
+reqwest.workspace = true
+sqlx.workspace = true
+bigdecimal.workspace = true
+--- backend/searcher-rs/Cargo.toml
+[package]
+name = "searcher-rs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ArbitrageX v2 — MEV opportunity searcher. S2: real mempool ingestion + calldata decode + DEX candidate detection."
+
+[dependencies]
+shared-rs.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+redis.workspace = true
+reqwest.workspace = true
+prometheus.workspace = true
+once_cell.workspace = true
+sqlx.workspace = true
+ethers = { workspace = true, features = ["abigen", "rustls"] }
+alloy.workspace = true
+alloy-sol-types.workspace = true
+futures-util.workspace = true
+lru.workspace = true
+hex.workspace = true
+bigdecimal.workspace = true
+rand.workspace = true
+prioritization-spine = { workspace = true }
+math-engine = { workspace = true }
+async-trait.workspace = true
+arc-swap = "1"
+
+# Sprint 4 — REVM-backed simulator (Phase A.1+A.2 fail-closed wire).
+# Enabled by default at compile time; runtime is gated by RPC_HTTP_<chain>
+# being present per chain. When the feature is OFF, the scanner fails closed
+# (RULE 00 — no fabricated PASS). The legacy v1 stub in prioritization-spine
+# is deprecated; see `feat/wire-simulator-v2-revm` for context.
+simulator-v2 = { path = "../simulator-v2", optional = true }
+
+# SOP-EDGE-001: lazy_static for SedMetrics singleton (paper-shadow feature)
+lazy_static = { version = "1", optional = true }
+
+# sed-core: quantitative orchestration layer (paper-shadow mode)
+# Provides CDC filtration, eigenstate decomposition, Pontryagin allocator.
+sed-core = { path = "../sed-core", optional = true }
+
+[features]
+default = ["v2-simulator"]
+v2-simulator = ["dep:simulator-v2"]
+paper-shadow = ["dep:lazy_static", "dep:sed-core", "sed-core?/filtration", "sed-core?/eigenstate", "sed-core?/metrics"]
+experimental-engines = []
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros","rt-multi-thread","test-util"] }
+# Used by `workers::price_worker` tests to mock Alchemy + Coingecko HTTP
+# responses without hitting real endpoints (RULE 00 — no external calls in
+# unit tests). Production code path uses `reqwest` directly; wiremock spawns
+# a localhost server the worker treats as the configured base URL.
+wiremock = "0.6"
+--- backend/sed-core/Cargo.toml
+[package]
+name = "sed-core"
+version = "1.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Sequential Equilibrium Dispatcher — quantitative mathematical orchestration layer"
+
+# Doctrine note (2026-05-13 — amended for V1.2 Holonomic Loop Resolution):
+#
+# Phase 1 scaffold shipped only types/ (typestate + kill-switch + 501
+# prereq). V1.2 amendment (ANEXOS_V1.2.md, 2026-05-13) introduces
+# `HolonomicLoopResolution` as a third sealed variant of
+# `PostResolutionTopology`. The constructor + supporting types
+# (`ClosedContourTrajectory`, `TopologicalYield`) carry math directly on
+# the typestate surface (closed-contour integral, vector norms over
+# transition points), so `nalgebra` is now a required dep — not feature-
+# gated. Phase 2 (filtration math kernels) layers `rand_distr` on top
+# behind the `filtration` feature.
+#
+# REVM 14.0 collision with workspace pin (3.5.0) remains deferred to a
+# future migration sprint; allocator/hedger phases will reintroduce it
+# per-feature when they land.
+
+[dependencies]
+# Workspace dependencies — match existing crates' style.
+serde = { workspace = true }
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+
+# B1.e V1.2 (2026-05-13) — Linear algebra required by the
+# HolonomicLoopResolution typestate (DVector<f64> for transition points
+# of closed-contour trajectories on liquidity manifolds). Not feature-
+# gated because the constructor lives in the default surface.
+nalgebra = { workspace = true }
+
+# B1.e V1.2 Phase 2 — Stochastic distributions for filtration kernels.
+# Optional because only the Markov jump / Poisson random measure path
+# under the `filtration` feature consumes it; default builds stay slim.
+rand_distr = { workspace = true, optional = true }
+
+# Phase 5 — Complex-valued eigenstates in the allocator.
+num-complex = { version = "0.4", optional = true }
+
+# Production Prometheus metrics recorder (optional — only needed in prod).
+prometheus = { workspace = true, optional = true }
+
+# Internal path dependency. shared-rs hosts KillSwitchClient + health
+# checking primitives that the SED gates integrate with.
+shared-rs = { workspace = true }
+
+[features]
+# Default ships the V1.1 + V1.2 typestate surface — bundle position
+# typestate (3 sealed variants now), kill-switch gate, 501 infra prereq,
+# closed-contour trajectory + topological yield. The math-bearing
+# modules (filtration, eigenstate, allocator, hedger) remain stub-only
+# in the default profile and graduate behind opt-in features.
+default = []
+
+# Phase 2 — stochastic wave filtration kernels (Markov jump process,
+# Poisson random measure, State Divergence Coefficient). Enables the
+# rand_distr dep + activates the filtration::markov_jump and
+# filtration::cdc_calculator submodules. See spec §3.1.
+filtration = ["dep:rand_distr"]
+
+# Phase 3 — eigenstate decomposition (effective Hamiltonian, Lanczos solver,
+# transition projector). Uses nalgebra (already a required dep) for
+# SymmetricEigen. The transition_projector::project_from_cdc() bridge to
+# Phase 2 is conditionally compiled under `filtration` — both features
+# must be active for the full pipeline.
+eigenstate = []
+
+# Combined feature for the full Phase 2 + Phase 3 pipeline:
+# PdmpEstimator → CdcCalculator → TransitionProjector → should_dispatch().
+eigenstate-full = ["filtration", "eigenstate"]
+
+# Phase 5 — Dirac Manifold Allocator (Pontryagin OCP, hyperbolic constraint,
+# DiracImpulse regularization). Requires num-complex for EigenState amplitudes.
+allocator = ["dep:num-complex"]
+
+# Phase 6 — Orthogonal Variance Hedger + Holonomic Loop Resolution +
+# Temporal Liquidity Superposition. Depends on allocator (Phase 5) for
+# LiquidityManifold, DiracImpulse, HyperbolicConstraint.
+hedger = ["allocator"]
+
+# Full pipeline: Phases 2 + 3 + 5 + 6.
+pipeline-full = ["filtration", "eigenstate", "allocator", "hedger"]
+
+# Metrics — trait-based observability (no external deps, just the API surface).
+metrics = []
+
+# Prometheus-backed metrics recorder for production.
+# Requires `metrics` (trait surface) + the `prometheus` crate dep.
+prometheus-metrics = ["metrics", "dep:prometheus"]
+
+# Persistence — DAO types for PostgreSQL (SQL templates only, no sqlx runtime).
+persistence = []
+
+# Paper-Shadow Mode — real data connectors (mempool WS, reserves, gas, Flashbots dry-run).
+# Requires shared-rs for config + RPC pool access. Capital exposed: STRICTLY 0.
+paper-shadow = ["allocator"]
+
+
+[lints.rust]
+# Future-proof: the math modules will contain todo!() bodies during
+# Phase 1-3 development. We allow them at crate level until each module
+# graduates to a real implementation. This matches the workspace's
+# overall "fail-honest no-fabrication" stance — todo!() panics at
+# runtime if a Phase-2+ caller reaches it, which is the desired
+# behavior (loudly surface incomplete paths) versus silently returning
+# stub data.
+unexpected_cfgs = "warn"
+
+[lints.clippy]
+# The lib.rs ships with stricter denies (unwrap_used, expect_used) per
+# the workspace doctrine; see src/lib.rs.
+--- backend/shared-rs/Cargo.toml
+[package]
+name = "shared-rs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ArbitrageX shared Rust library: config loader, kill-switch client, metrics, tracing, health."
+
+[dependencies]
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+prometheus.workspace = true
+once_cell.workspace = true
+redis.workspace = true
+reqwest.workspace = true
+sqlx.workspace = true
+jsonschema.workspace = true
+ethers.workspace = true
+alloy.workspace = true
+alloy-sol-types.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros","rt-multi-thread","test-util","time"] }
+tempfile = "3"
+--- backend/sim-ctl/Cargo.toml
+[package]
+name = "sim-ctl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ArbitrageX v2 — simulation controller. S1: /simulate returns 501 by design."
+
+[dependencies]
+shared-rs.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+redis.workspace = true
+ethers.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+sqlx.workspace = true
+bigdecimal.workspace = true
+async-trait.workspace = true
+simulator-v2 = { path = "../simulator-v2" }
+--- backend/simulator-v2/Cargo.toml
+[package]
+name = "simulator-v2"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ArbitrageX v2 — opt-in REVM simulator with Bellman-Ford negative-cycle detection. Activated by ARBX_USE_SIMULATOR_V2=true."
+
+[dependencies]
+# Workspace deps (consistent with revm 3.5 / alloy-primitives 0.7 / ethers 2 in use today).
+revm.workspace = true
+alloy-primitives.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+ethers.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+
+# Crate-specific deps (not in workspace).
+petgraph = "0.6"
+rayon    = "1.10"
+dashmap  = "5.5"
+sha2     = "0.10"
+# reqwest 0.11 matches the version ethers-providers 2.x uses internally;
+# needed to build Http::new_with_client with a timeout-configured client.
+reqwest  = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+url      = "2"
+--- backend/token-enricher/Cargo.toml
+[package]
+name = "token-enricher"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "token-enricher"
+path = "src/main.rs"
+
+[dependencies]
+shared-rs = { path = "../shared-rs" }
+alloy = { version = "1.0", features = ["full"] }
+alloy-primitives = "1.0"
+alloy-sol-types = "1.0"
+alloy-provider = { version = "1.0", features = ["ws"] }
+alloy-rpc-types = "1.0"
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.7", features = ["postgres","runtime-tokio-rustls","chrono","macros","migrate"] }
+redis = { version = "0.24", features = ["tokio-comp","streams"] }
+reqwest = { version = "0.11", features = ["rustls-tls","json"], default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter","json"] }
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+prometheus = "0.13"  # Pinned to match workspace: 0.14 broke shared-rs (audit re-run #2)
+hex = "0.4"
+# Added for Task 8: parallel TrustWallet HEAD requests (Defect #2 fix).
+futures-util = "0.3"
+# Added for Task 8: Lazy static metrics registry.
+once_cell = "1"
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockito = "1"
+
+## Foundry
+--- ./contracts/foundry.toml
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+remappings = [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/",
+    "forge-std/=lib/forge-std/src/",
+]
+solc_version = "0.8.24"
+optimizer = true
+optimizer_runs = 200
+via_ir = false
+
+# M2 Capa1 Fase 9 (P1-7): fuzz/invariant budget for contract coverage.
+# Forge's default fuzz runs (256) and invariant runs (32) are too low to
+# surface subtle invariants in pre-execution simulation guards. The
+# Capa 1 audit flagged this as P1-7 ("contracts cubiertos only with
+# basic forge test"). Bumping to 1000/256 keeps CI under the 15-min
+# job timeout while giving the fuzzer enough budget to surface integer-
+# arithmetic and call-graph regressions.
+[fuzz]
+runs = 1000
+
+[invariant]
+runs = 256
+depth = 32
+
+[rpc_endpoints]
+mainnet = "${MAINNET_RPC_URL}"
+sepolia = "${SEPOLIA_RPC_URL}"
+holesky = "${HOLESKY_RPC_URL}"
+
+[etherscan]
+mainnet = { key = "${ETHERSCAN_API_KEY}" }
+sepolia = { key = "${ETHERSCAN_API_KEY}" }
+holesky = { key = "${ETHERSCAN_API_KEY}", url = "https://api-holesky.etherscan.io/api" }
+--- ./docs/contracts/foundry.toml
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+cache_path = "cache"
+
+# Solidity
+solc = "0.8.19"
+optimizer = true
+optimizer_runs = 200
+via_ir = false
+
+# Testing
+fuzz_runs = 1000
+fuzz_max_local_rejects = 1024
+fuzz_max_global_rejects = 65536
+fuzz_seed = '0x3e8'
+
+# Invariant testing
+invariant_runs = 256
+invariant_depth = 32
+invariant_fail_on_revert = false
+invariant_call_override = false
+
+# Gas reporting
+gas_reports = ["*"]
+gas_reports_ignore = []
+
+# ETH-RPC
+eth_rpc_url = "${RPC_URL}"
+
+# Etherscan for verification (optional)
+etherscan_api_key = "${ETHERSCAN_API_KEY}"
+
+[profile.ci]
+fuzz_runs = 10000
+invariant_runs = 1024
+verbosity = 4
+
+[profile.gas]
+gas_reports = ["Executor", "UniswapV2Adapter", "UniswapV3Adapter", "FlashloanProvider", "SignatureValidator"]
+optimizer = true
+optimizer_runs = 200
+
+[fmt]
+line_length = 100
+tab_width = 4
+bracket_spacing = false
+int_types = "long"
+multiline_func_header = "params_first"
+quote_style = "double"
+number_underscore = "thousands"
+
+[rpc_endpoints]
+mainnet = "${RPC_URL}"
+arbitrum = "${ARBITRUM_RPC_URL}"
+optimism = "${OPTIMISM_RPC_URL}"
+base = "${BASE_RPC_URL}"

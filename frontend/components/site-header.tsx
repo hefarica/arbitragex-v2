@@ -54,11 +54,7 @@ export function SiteHeader() {
         <Link href="/" className="flex items-center gap-2.5">
           <span
             aria-hidden
-            className="size-7 rounded-md shadow-sm ring-1 ring-border"
-            style={{
-              background:
-                "conic-gradient(from 210deg, var(--primary), var(--info) 55%, var(--success) 85%, var(--primary))",
-            }}
+            className="size-7 rounded-md shadow-sm ring-1 ring-border bg-primary"
           />
           <div className="flex flex-col -space-y-0.5 leading-none">
             <span className="text-sm font-semibold">QuantumX</span>

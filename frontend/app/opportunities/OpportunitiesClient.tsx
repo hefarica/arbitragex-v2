@@ -62,7 +62,7 @@ function formatUsdShort(value: number): string {
 // FE-1: WS statuses. "LIVE" = WS connected. "STALE" = WS disconnected.
 // "POLLING" = WS failed 3×, degraded to HTTP polling. "CONNECTING" = initial.
 // HTTP fetch errors (manual refresh) surface via errorMsg, not feedStatus.
-type FeedStatus = "POLLING" | "LIVE" | "STALE" | "CONNECTING";
+
 
 const POLL_INTERVAL_MS = 4_000;
 
@@ -113,7 +113,7 @@ export default function OpportunitiesClient({
 
   // Derive feedStatus from wsStatus for display. "POLLING" is the degraded
   // HTTP-fallback state emitted by the hook after 3 WS failures.
-  const feedStatus: FeedStatus = wsStatus;
+  const feedStatus = wsStatus;
 
   // FE-4: SIMULATE handler.
   // NOTE: The api-server does not yet expose POST /api/opportunities/:id/simulate.

@@ -12,6 +12,10 @@
     "frontend"
   ],
   "scripts": {
+    "build": "npm run build:all",
+    "test": "npm run test:all",
+    "lint": "npm run lint:all",
+    "typecheck": "npm run typecheck:all",
     "build:all": "npm run build --workspaces --if-present",
     "test:all": "npm run test --workspaces --if-present",
     "lint:all": "npm run lint --workspaces --if-present",

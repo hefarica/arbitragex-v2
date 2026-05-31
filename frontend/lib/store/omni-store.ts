@@ -25,12 +25,13 @@ import { devtools } from "zustand/middleware";
 
 import type { Chain, DEX, Pool } from "@/lib/registries/types";
 import type { OmniOpportunity } from "./types";
+import { getApiBaseUrl } from "@/lib/api-client";
 
 // Re-export OmniOpportunity as the canonical opportunity type
 export type { OmniOpportunity } from "./types";
 
 /** WebSocket connection status (extends socket-lifecycle.ts with POLLING fallback) */
-export type WsStatus = "CONNECTING" | "LIVE" | "STALE" | "POLLING";
+export type WsStatus = "CONNECTING" | "LIVE" | "STALE" | "POLLING" | "DISCONNECTED";
 
 /** Registry loading status */
 export type RegistryStatus = "idle" | "loading" | "ready" | "error";
@@ -50,8 +51,8 @@ interface RegistrySlice {
   registryStatus: RegistryStatus;
   /** Error message if registry fetch failed */
   registryError: string | null;
-  /** Fetch all registry data from API (single call) */
-  fetchRegistry: () => Promise<void>;
+  /** Fetch all registry data from API (parallel calls) */
+  fetchRegistry: (chainId?: number) => Promise<void>;
   /** Get a specific chain by ID */
   getChain: (chainId: number) => Chain | undefined;
   /** Get a specific DEX by ID */
@@ -102,6 +103,10 @@ interface WalletSlice {
   setBalance: (balance: bigint) => void;
   /** Disconnect wallet */
   disconnect: () => void;
+  /** Map of all known wallets indexed by address */
+  wallets: Map<string, WalletRow>;
+  /** Fetch all wallets from API */
+  fetchWallets: () => Promise<void>;
 }
 
 // =============================================================================
@@ -133,20 +138,43 @@ export const useOmniStore = create<OmniStoreState>()(
       registryStatus: "idle",
       registryError: null,
 
-      fetchRegistry: async () => {
+      fetchRegistry: async (chainId = 1) => {
         const currentStatus = get().registryStatus;
-        if (currentStatus === "loading") return; // Prevent duplicate calls
+        if (currentStatus === "loading") return;
 
         set({ registryStatus: "loading", registryError: null });
 
         try {
-          // TODO: Replace with actual API call
-          // const response = await fetch("/api/dexes");
-          // const data = await response.json();
-          // Transform into Maps...
+          const baseUrl = getApiBaseUrl();
+          
+          // Fetch chains and dexes in parallel
+          const [chainsRes, dexesRes] = await Promise.all([
+            fetch(`${baseUrl}/api/chains`, { credentials: "include" }),
+            fetch(`${baseUrl}/api/dexes?chain_id=${chainId}`, { credentials: "include" })
+          ]);
 
-          // Placeholder: Mark as ready
-          set({ registryStatus: "ready" });
+          if (!chainsRes.ok) throw new Error(`Chains fetch failed: ${chainsRes.status}`);
+          if (!dexesRes.ok) throw new Error(`DEXes fetch failed: ${dexesRes.status}`);
+
+          const chainsData = await chainsRes.json();
+          const dexesData = await dexesRes.json();
+
+          const chainsMap = new Map<number, Chain>();
+          (chainsData.items || chainsData).forEach((c: any) => {
+            const id = c.id || c.chain_id;
+            chainsMap.set(id, c);
+          });
+
+          const dexesMap = new Map<string, DEX>();
+          (dexesData.items || dexesData).forEach((d: any) => {
+            dexesMap.set(d.id, d);
+          });
+
+          set({ 
+            chains: chainsMap, 
+            dexes: dexesMap, 
+            registryStatus: "ready" 
+          });
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unknown error";
           set({ registryStatus: "error", registryError: message });
@@ -166,12 +194,11 @@ export const useOmniStore = create<OmniStoreState>()(
 
       connectStream: () => {
         set({ wsStatus: "CONNECTING" });
-        // TODO: WebSocket connection logic will be migrated from useOpportunitiesStream
+        // WebSocket connection logic is handled by useOpportunitiesStream and calls addOpportunity/setWsStatus
       },
 
       disconnectStream: () => {
-        set({ wsStatus: "STALE" });
-        // TODO: Cleanup WebSocket
+        set({ wsStatus: "DISCONNECTED" });
       },
 
       addOpportunity: (opp: OmniOpportunity) =>
@@ -191,6 +218,7 @@ export const useOmniStore = create<OmniStoreState>()(
       balance: null,
       isConnected: false,
       chainId: null,
+      wallets: new Map(),
 
       setWallet: (address, balance, chainId) =>
         set({
@@ -202,13 +230,29 @@ export const useOmniStore = create<OmniStoreState>()(
 
       setBalance: (balance) => set({ balance }),
 
-      disconnect: () =>
-        set({
-          address: null,
-          balance: null,
-          chainId: null,
-          isConnected: false,
-        }),
+      disconnect:
+        () =>
+          set({
+            address: null,
+            balance: null,
+            chainId: null,
+            isConnected: false,
+          }),
+      fetchWallets: async () => {
+        try {
+          const baseUrl = getApiBaseUrl();
+          const res = await fetch(`${baseUrl}/api/v1/wallets`, { credentials: "include" });
+          if (!res.ok) throw new Error(`Wallets fetch failed: ${res.status}`);
+          const data = await res.json();
+          const walletsMap = new Map<string, WalletRow>();
+          (data.wallets || []).forEach((w: WalletRow) => {
+            walletsMap.set(w.address, w);
+          });
+          set({ wallets: walletsMap });
+        } catch (error) {
+          console.error("Failed to fetch wallets:", error);
+        }
+      },
     }),
     { name: "arbx-omni-store" }
   )
@@ -218,16 +262,12 @@ export const useOmniStore = create<OmniStoreState>()(
 // Selector Hooks (Performance-optimized)
 // =============================================================================
 
-/** Hook to get only opportunities (prevents re-renders from other state changes) */
 export const useOpportunities = () => useOmniStore((state) => state.opportunities);
-
-/** Hook to get only WS status */
 export const useWsStatus = () => useOmniStore((state) => state.wsStatus);
-
-/** Hook to get only registry status */
 export const useRegistryStatus = () => useOmniStore((state) => state.registryStatus);
+export const useChainsMap = () => useOmniStore((state) => state.chains);
+export const useDexesMap = () => useOmniStore((state) => state.dexes);
 
-/** Hook to get only wallet state */
 export const useWallet = () =>
   useOmniStore((state) => ({
     address: state.address,

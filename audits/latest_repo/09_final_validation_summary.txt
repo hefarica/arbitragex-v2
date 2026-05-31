@@ -1,0 +1,5 @@
+## Resumen de Validación Final
+- Build: FAILED
+- Lint: PASSED
+- Typecheck: FAILED
+- Tests: FAILED
