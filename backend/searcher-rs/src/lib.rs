@@ -75,6 +75,16 @@ pub mod sim_multistep;
 pub mod config_reload;
 // Phase 2 Topology Vault runtime: durable fallback + Redis Pub/Sub + atomic RPC/WS hot-swap.
 pub mod topology_reload;
+// FASE OMEGA — Dynamic strategy cartridge runtime (Rhai scripting engine).
+// Implements the "PlayStation MEV" architecture: sandboxed Rhai scripts that
+// can be hot-loaded at runtime via Redis PubSub without recompiling the binary.
+// Each cartridge exports `init_strategy`, `evaluate_opportunity`, `build_payload`
+// and communicates with infrastructure through registered host bindings.
+pub mod cartridge;
+// FASE OMEGA — Filesystem-based cartridge loader for dev/bootstrap.
+// Scans `cartridges/` directory at boot and loads all `.rhai` files.
+// In production, hot-reload is handled by `cartridge::subscriber`.
+pub mod cartridge_loader;
 
 // -- SOP-EDGE-001: Edge Node modules (paper-shadow feature gate) -------
 // These modules implement the Alloy anti-mock layer, U256<->f64 normalization,

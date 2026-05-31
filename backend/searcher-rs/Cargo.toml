@@ -39,6 +39,10 @@ math-engine = { workspace = true }
 async-trait.workspace = true
 arc-swap = "1"
 
+# FASE OMEGA — Dynamic strategy cartridge runtime (Rhai scripting engine).
+rhai.workspace = true
+sha2.workspace = true
+
 # Sprint 4 — REVM-backed simulator (Phase A.1+A.2 fail-closed wire).
 # Enabled by default at compile time; runtime is gated by RPC_HTTP_<chain>
 # being present per chain. When the feature is OFF, the scanner fails closed
