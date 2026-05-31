@@ -65,6 +65,14 @@ mod persistence;
 mod publisher;
 mod reserves;
 mod scanner;
+// FASE OMEGA — cartridge runtime (Rhai). `cartridge` + `cartridge_loader` are API-heavy
+// and mostly exercised via lib/integration tests; the binary only drives them through
+// `cartridge_boot` (called from the scanner boot path), so allow dead_code on the two.
+#[allow(dead_code, unused_imports, unused_variables)]
+mod cartridge;
+#[allow(dead_code)]
+mod cartridge_loader;
+mod cartridge_boot;
 // Phase 1-3: orchestrator modules — fully wired in Phase 14.
 // `impact_index` still has Phase-15 functions (from_registry, add_pool,
 // seed_cycles_from_mvp) that are public API but not yet called by the binary.

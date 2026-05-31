@@ -85,6 +85,10 @@ pub mod cartridge;
 // Scans `cartridges/` directory at boot and loads all `.rhai` files.
 // In production, hot-reload is handled by `cartridge::subscriber`.
 pub mod cartridge_loader;
+// FASE OMEGA — Cartridge runtime boot wiring (gated by ARBX_CARTRIDGE_MODE; default off).
+// Spawns the per-chain runner + hot-reload subscriber so the (previously unspawned)
+// cartridge subsystem actually loads. Dormant unless the mode flag is enabled.
+pub mod cartridge_boot;
 
 // -- SOP-EDGE-001: Edge Node modules (paper-shadow feature gate) -------
 // These modules implement the Alloy anti-mock layer, U256<->f64 normalization,

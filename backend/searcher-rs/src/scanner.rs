@@ -18,6 +18,7 @@
 //! corresponds to a real pending tx observed on the wire.
 
 use crate::amm_math;
+use crate::cartridge_boot::CartridgeMode;
 use crate::counters::{chain_counters, counters};
 use crate::reserves;
 use crate::{
@@ -616,6 +617,28 @@ pub async fn run_chain(
         mode = orch_mode.as_str(),
         "orchestrator mode resolved from ARBX_ORCHESTRATOR_MODE"
     );
+
+    // FASE OMEGA — Cartridge runtime boot (gated by ARBX_CARTRIDGE_MODE; default `off` = dormant).
+    // When `off` (the default) nothing is constructed and scanner behavior is byte-for-byte
+    // unchanged. When enabled, a per-chain cartridge runtime loads filesystem cartridges and
+    // runs the Redis hot-reload subscriber. The orchestrator evaluation hook (calling
+    // `runner.evaluate()` and routing candidates through the existing gate pipeline) is a
+    // follow-up iteration gated by paper-trade evidence.
+    let cartridge_mode = CartridgeMode::from_env();
+    info!(
+        event = "scanner.cartridge_mode",
+        chain_id,
+        mode = cartridge_mode.as_str(),
+        "cartridge mode resolved from ARBX_CARTRIDGE_MODE"
+    );
+    if cartridge_mode.is_enabled() {
+        crate::cartridge_boot::spawn_cartridge_runtime(
+            chain_id,
+            redis.clone(),
+            cancel.clone(),
+            cartridge_mode,
+        );
+    }
 
     // Build the orchestrator (or None for V1/Off).
     // For Shadow: takes a clone of redis + opp_dedup; legacy path still owns the originals.
