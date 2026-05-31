@@ -168,6 +168,7 @@ async fn build_orchestrator_with_emitter(
         config_provider,
         pool_discovery,
         chain_id: CHAIN_ID,
+        cartridge_runner: None,
     };
 
     (Arc::new(Orchestrator::new(ctx)), emitter)

@@ -18,6 +18,7 @@
 //! corresponds to a real pending tx observed on the wire.
 
 use crate::amm_math;
+use crate::cartridge::runner::CartridgeRunner;
 use crate::cartridge_boot::CartridgeMode;
 use crate::counters::{chain_counters, counters};
 use crate::reserves;
@@ -220,6 +221,7 @@ async fn build_orchestrator(
     opp_dedup: Arc<OppDedup>,
     trading_config: TradingConfigClient,
     rpc_pool: Option<Arc<shared_rs::rpc_failover::HttpRpcPool>>,
+    cartridge_runner: Option<Arc<CartridgeRunner>>,
 ) -> Option<(Arc<Orchestrator>, Arc<tokio::sync::RwLock<ImpactIndex>>)> {
     if mode == OrchestratorMode::V1 || mode == OrchestratorMode::Off {
         return None;
@@ -383,6 +385,7 @@ async fn build_orchestrator(
         emitter,
         config_provider,
         chain_id,
+        cartridge_runner,
     };
 
     Some((Arc::new(Orchestrator::new(ctx)), impact_index))
@@ -631,14 +634,19 @@ pub async fn run_chain(
         mode = cartridge_mode.as_str(),
         "cartridge mode resolved from ARBX_CARTRIDGE_MODE"
     );
-    if cartridge_mode.is_enabled() {
+    // Boot the cartridge runtime when enabled; capture the shared runner so the
+    // orchestrator can shadow-evaluate cartridges against live intents. `None`
+    // when off (the default) -> the orchestrator's shadow block is skipped entirely.
+    let cartridge_runner: Option<Arc<CartridgeRunner>> = if cartridge_mode.is_enabled() {
         crate::cartridge_boot::spawn_cartridge_runtime(
             chain_id,
             redis.clone(),
             cancel.clone(),
             cartridge_mode,
-        );
-    }
+        )
+    } else {
+        None
+    };
 
     // Build the orchestrator (or None for V1/Off).
     // For Shadow: takes a clone of redis + opp_dedup; legacy path still owns the originals.
@@ -659,6 +667,7 @@ pub async fn run_chain(
                 opp_dedup.clone(),
                 trading_config.clone(),
                 rpc_http_pool.clone(),
+                cartridge_runner.clone(),
             )
             .await
             {
@@ -675,6 +684,7 @@ pub async fn run_chain(
                 opp_dedup.clone(),
                 trading_config.clone(),
                 rpc_http_pool.clone(),
+                cartridge_runner.clone(),
             )
             .await
             {

@@ -20,19 +20,32 @@
 //! iteration — this module only makes the subsystem boot and hot-reload.
 
 use std::sync::atomic::AtomicU64;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::{Arc, OnceLock};
+use tokio::sync::{RwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::cartridge::host_bindings::HostContext;
 use crate::cartridge::runner::CartridgeRunner;
 use crate::cartridge::subscriber::CartridgeSubscriber;
+use crate::cartridge::types::CartridgeState;
 use crate::cartridge_loader::{self, CARTRIDGE_DIR};
+use crate::route_intent::{ProtocolType, RouteIntent};
 
 /// Telemetry channel the host bindings publish `log_quantum` messages to.
 /// Matches `cartridge::host_bindings` / `cartridge::runner` defaults.
 const CARTRIDGE_TELEMETRY_CHANNEL: &str = "arbx:cartridge:telemetry";
+
+/// Global cap on concurrent shadow evaluations across all chains. Shadow tasks are
+/// detached per intent; this bounds the CPU-bound Rhai work so a mempool burst cannot
+/// saturate the Tokio worker pool and starve the main pipeline. Excess tasks acquire-fail
+/// and return immediately — observe-only, so dropping an evaluation is acceptable.
+const SHADOW_MAX_CONCURRENCY: usize = 16;
+static SHADOW_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
+
+fn shadow_semaphore() -> &'static Arc<Semaphore> {
+    SHADOW_SEMAPHORE.get_or_init(|| Arc::new(Semaphore::new(SHADOW_MAX_CONCURRENCY)))
+}
 
 /// Runtime mode for the cartridge subsystem, resolved from `ARBX_CARTRIDGE_MODE`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,18 +88,28 @@ impl CartridgeMode {
     }
 }
 
-/// Spawns the per-chain cartridge runtime on a dedicated tokio task: builds the
-/// runner, loads filesystem cartridges from the `cartridges/` directory, then
-/// runs the Redis hot-reload subscriber until `cancel` fires.
+/// Spawns the per-chain cartridge runtime: builds the runner, then on a dedicated
+/// tokio task loads filesystem cartridges from the `cartridges/` directory and runs
+/// the Redis hot-reload subscriber until `cancel` fires.
 ///
-/// Callers MUST only invoke this when `mode.is_enabled()`. The task is
+/// Returns the shared `Arc<CartridgeRunner>` so the orchestrator can also evaluate
+/// cartridges in shadow mode (the registry is shared via `Arc<RwLock<…>>`, so
+/// cartridges loaded by the subscriber are visible to the orchestrator). Returns
+/// `None` only when `REDIS_URL` is absent (fail-honest, no boot).
+///
+/// Callers MUST only invoke this when `mode.is_enabled()`. The subscriber task is
 /// fire-and-forget; any failure is logged and never fatal to the scanner.
+///
+/// # Panics
+/// Must be called from within a Tokio runtime — it uses `Handle::current()` and
+/// `tokio::spawn`. The sole call site is `scanner::run_chain`, which always runs
+/// inside the runtime.
 pub fn spawn_cartridge_runtime(
     chain_id: u64,
     redis: redis::aio::ConnectionManager,
     cancel: CancellationToken,
     mode: CartridgeMode,
-) {
+) -> Option<Arc<CartridgeRunner>> {
     // The hot-reload subscriber opens its OWN Redis client from a URL (see
     // `subscriber.rs`). Fail-honest: if `REDIS_URL` is absent we skip cartridge
     // boot rather than hardcode a localhost default (arbx-no-hardcode-doctrine).
@@ -100,29 +123,31 @@ pub fn spawn_cartridge_runtime(
                 reason = "REDIS_URL not set",
                 "cartridge runtime not started — no Redis URL for hot-reload subscriber"
             );
-            return;
+            return None;
         }
     };
 
+    let host_ctx = HostContext {
+        redis: Arc::new(RwLock::new(redis)),
+        chain_id,
+        cartridge_id: Arc::new(RwLock::new(String::new())),
+        rt_handle: tokio::runtime::Handle::current(),
+        // Updated by the scanner/gas-oracle later; start at 0 (host bindings read these atomics).
+        block_number: Arc::new(AtomicU64::new(0)),
+        base_fee_gwei: Arc::new(AtomicU64::new(0)),
+        telemetry_channel: CARTRIDGE_TELEMETRY_CHANNEL.to_owned(),
+    };
+
+    // Build the runner BEFORE spawning so we can share the Arc with both the
+    // subscriber task and the orchestrator (shadow evaluation).
+    let runner = Arc::new(CartridgeRunner::new(host_ctx));
+    let runner_for_task = runner.clone();
+
     tokio::spawn(async move {
-        let host_ctx = HostContext {
-            redis: Arc::new(RwLock::new(redis)),
-            chain_id,
-            cartridge_id: Arc::new(RwLock::new(String::new())),
-            rt_handle: tokio::runtime::Handle::current(),
-            // Updated by the scanner/gas-oracle once the evaluation hook lands;
-            // start at 0 (host bindings read these atomics).
-            block_number: Arc::new(AtomicU64::new(0)),
-            base_fee_gwei: Arc::new(AtomicU64::new(0)),
-            telemetry_channel: CARTRIDGE_TELEMETRY_CHANNEL.to_owned(),
-        };
-
-        let runner = Arc::new(CartridgeRunner::new(host_ctx));
-
         // Boot-load cartridges from the filesystem directory (dev/bootstrap path).
         // Redis-injected cartridges arrive later via the subscriber.
         let dir = std::path::Path::new(CARTRIDGE_DIR);
-        let results = cartridge_loader::load_cartridges_from_dir(&runner, dir, chain_id).await;
+        let results = cartridge_loader::load_cartridges_from_dir(&runner_for_task, dir, chain_id).await;
         let loaded = results.iter().filter(|r| r.success).count();
         info!(
             event = "cartridge.boot_loaded",
@@ -134,7 +159,7 @@ pub fn spawn_cartridge_runtime(
         );
 
         // Run the hot-reload subscriber (long-running; returns on cancellation).
-        let subscriber = CartridgeSubscriber::new(redis_url, runner.clone(), cancel);
+        let subscriber = CartridgeSubscriber::new(redis_url, runner_for_task, cancel);
         subscriber.run().await;
 
         info!(
@@ -143,6 +168,120 @@ pub fn spawn_cartridge_runtime(
             "cartridge subscriber task exited"
         );
     });
+
+    Some(runner)
+}
+
+/// Maps a `ProtocolType` to the lowercase string cartridges expect in `pool_data`.
+fn protocol_type_str(pt: ProtocolType) -> &'static str {
+    match pt {
+        ProtocolType::V2 => "v2",
+        ProtocolType::V3 => "v3",
+        ProtocolType::Curve => "curve",
+        ProtocolType::Balancer => "balancer",
+        ProtocolType::Unknown => "unknown",
+    }
+}
+
+/// Builds the `pool_data` Rhai `Map` passed to a cartridge's `evaluate_opportunity`.
+///
+/// Pure function (no I/O), built from the first leg of the route intent. Reserves,
+/// gas, and block number are intentionally omitted — cartridges fetch those live via
+/// host bindings (`get_reserves`, `get_base_fee`, `get_block_number`). R8 fail-honest:
+/// when the decoder did not extract a pool address (`pool_hint = None`), `source_pool`
+/// is empty and the cartridge is expected to return `is_opportunity: false`.
+pub fn build_cartridge_pool_data(intent: &RouteIntent) -> rhai::Map {
+    use rhai::Dynamic;
+    let mut m = rhai::Map::new();
+    m.insert("chain_id".into(), Dynamic::from(intent.chain_id as i64));
+    m.insert("amount_in".into(), Dynamic::from(intent.amount_in.to_string()));
+    if let Some(leg) = intent.legs.first() {
+        m.insert("token_in".into(), Dynamic::from(format!("{:#x}", leg.token_in)));
+        m.insert("token_out".into(), Dynamic::from(format!("{:#x}", leg.token_out)));
+        m.insert(
+            "protocol_type".into(),
+            Dynamic::from(protocol_type_str(leg.protocol_type).to_string()),
+        );
+        let pool = leg
+            .pool_hint
+            .map(|p| format!("{:#x}", p))
+            .unwrap_or_default();
+        m.insert("source_pool".into(), Dynamic::from(pool));
+    }
+    m
+}
+
+/// Shadow-evaluates every ACTIVE cartridge against one live route intent and emits
+/// the result to logs/telemetry. **Read-only / observe-only**: it never constructs a
+/// `StrategyCandidate`, never touches `process_candidate`, and never reaches the
+/// execution pipeline. Designed to be `tokio::spawn`-ed off the orchestrator hot
+/// path so it adds no latency to intent processing. Per-cartridge errors are logged,
+/// never propagated (one bad cartridge cannot affect the others or the scanner).
+///
+/// Concurrency is globally bounded by [`SHADOW_MAX_CONCURRENCY`]; at capacity an
+/// evaluation is dropped rather than queued (observe-only). NOTE: a cartridge's own
+/// `log_quantum`/`emit_signal` telemetry is tagged via the runner-shared
+/// `host_ctx.cartridge_id`, so under concurrent shadow tasks that tag is best-effort —
+/// the authoritative attribution is the `cartridge.shadow_eval` event below, which
+/// always carries the correct `cartridge_id`. A per-call host context is a follow-up.
+pub async fn shadow_evaluate_intent(
+    runner: Arc<CartridgeRunner>,
+    intent: RouteIntent,
+    chain_id: u64,
+) {
+    // Bound global shadow-eval concurrency; drop (don't queue) when at capacity.
+    let _permit = match shadow_semaphore().clone().try_acquire_owned() {
+        Ok(p) => p,
+        Err(_) => {
+            debug!(
+                event = "cartridge.shadow_eval_skipped",
+                chain_id,
+                tx_hash = %intent.tx_hash,
+                "shadow eval at capacity; dropping (observe-only)"
+            );
+            return;
+        }
+    };
+
+    let actives: Vec<String> = runner
+        .list_cartridges()
+        .await
+        .into_iter()
+        .filter(|(_, _, state)| *state == CartridgeState::Active)
+        .map(|(id, _, _)| id)
+        .collect();
+    if actives.is_empty() {
+        return;
+    }
+
+    let pool_data = build_cartridge_pool_data(&intent);
+    for id in actives {
+        match runner.evaluate(&id, pool_data.clone()).await {
+            Ok(res) => {
+                info!(
+                    event = "cartridge.shadow_eval",
+                    chain_id,
+                    tx_hash = %intent.tx_hash,
+                    cartridge_id = %id,
+                    is_opportunity = res.is_opportunity,
+                    estimated_profit = res.estimated_profit,
+                    confidence = res.confidence,
+                    urgency = %res.urgency,
+                    "cartridge shadow evaluation (observe-only, no execution)"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    event = "cartridge.shadow_eval_error",
+                    chain_id,
+                    tx_hash = %intent.tx_hash,
+                    cartridge_id = %id,
+                    error = %e,
+                    "cartridge shadow evaluation failed; skipping"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -171,5 +310,67 @@ mod tests {
         assert_eq!(CartridgeMode::Off.as_str(), "off");
         assert_eq!(CartridgeMode::Shadow.as_str(), "shadow");
         assert_eq!(CartridgeMode::Active.as_str(), "active");
+    }
+
+    #[test]
+    fn pool_data_adapter_extracts_first_leg() {
+        use crate::route_intent::{DetectionSource, RouteIntentLeg, RouterKind, SwapExactMode};
+        use ethers::types::{Address, H256, U256};
+        let leg = RouteIntentLeg {
+            token_in: Address::from_low_u64_be(0xAAAA),
+            token_out: Address::from_low_u64_be(0xBBBB),
+            pool_hint: Some(Address::from_low_u64_be(0xCCCC)),
+            dex_hint: None,
+            fee_bps: None,
+            protocol_type: ProtocolType::V2,
+        };
+        let intent = RouteIntent::new(
+            1,
+            H256::zero(),
+            Address::zero(),
+            RouterKind::UniswapV2,
+            Address::zero(),
+            vec![leg],
+            U256::from(1234u64),
+            None,
+            SwapExactMode::ExactIn,
+            DetectionSource::PublicMempool,
+        )
+        .expect("valid intent");
+        let m = build_cartridge_pool_data(&intent);
+        assert_eq!(m.get("chain_id").unwrap().to_string(), "1");
+        assert_eq!(m.get("amount_in").unwrap().to_string(), "1234");
+        assert_eq!(m.get("protocol_type").unwrap().to_string(), "v2");
+        assert!(!m.get("source_pool").unwrap().to_string().is_empty());
+    }
+
+    #[test]
+    fn pool_data_empty_source_pool_when_pool_hint_none() {
+        use crate::route_intent::{DetectionSource, RouteIntentLeg, RouterKind, SwapExactMode};
+        use ethers::types::{Address, H256, U256};
+        let leg = RouteIntentLeg {
+            token_in: Address::from_low_u64_be(0x1),
+            token_out: Address::from_low_u64_be(0x2),
+            pool_hint: None,
+            dex_hint: None,
+            fee_bps: None,
+            protocol_type: ProtocolType::Unknown,
+        };
+        let intent = RouteIntent::new(
+            1,
+            H256::zero(),
+            Address::zero(),
+            RouterKind::Unknown,
+            Address::zero(),
+            vec![leg],
+            U256::zero(),
+            None,
+            SwapExactMode::Unknown,
+            DetectionSource::PublicMempool,
+        )
+        .expect("valid intent");
+        let m = build_cartridge_pool_data(&intent);
+        assert_eq!(m.get("source_pool").unwrap().to_string(), "");
+        assert_eq!(m.get("protocol_type").unwrap().to_string(), "unknown");
     }
 }

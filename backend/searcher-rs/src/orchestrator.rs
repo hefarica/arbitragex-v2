@@ -51,6 +51,7 @@ use crate::metrics::{
     OPPORTUNITIES_PUBLISHED_TOTAL, REJECTED_CONFIG_TOTAL, REJECTED_NO_PROFIT_TOTAL,
     SIMULATION_FAILED_TOTAL,
 };
+use crate::cartridge::runner::CartridgeRunner;
 use crate::opportunity_emitter::OpportunityEmitter;
 use crate::route_intent::RouteIntent;
 use crate::size_optimizer::{OptimizeOutcome, OptimizeRejectReason, SizeOptimizer};
@@ -100,6 +101,11 @@ pub struct OrchestratorContext {
     pub pool_discovery: Arc<crate::pool_discovery::PoolDiscoveryService>,
     /// EVM chain ID for this orchestrator instance.
     pub chain_id: u64,
+    /// FASE OMEGA — cartridge runtime for shadow evaluation. `Some` only when
+    /// `ARBX_CARTRIDGE_MODE` is enabled AND the runtime booted. When present, each
+    /// route intent is shadow-evaluated against active cartridges OFF the hot path
+    /// (observe-only: logs/telemetry, never a StrategyCandidate, never execution).
+    pub cartridge_runner: Option<Arc<CartridgeRunner>>,
     /// SED Bridge — connects to sed-core math pipeline (paper-shadow only).
     /// When `Some`, feeds gas observations and enriches candidates with
     /// stochastic convergence metrics. When `None`, orchestrator runs
@@ -234,6 +240,22 @@ impl Orchestrator {
             impacted_lending_positions = impact.impacted_lending_positions.len(),
             impacted_protocols = impact.impacted_protocols.len(),
         );
+
+        // ── FASE OMEGA — cartridge shadow evaluation (observe-only) ──────────
+        // When the cartridge runtime is present (ARBX_CARTRIDGE_MODE enabled),
+        // shadow-evaluate active cartridges against this live intent on a DETACHED
+        // task — zero added latency to the hot path. Results go to logs/telemetry
+        // only: this never builds a StrategyCandidate, never calls process_candidate,
+        // and never reaches the execution pipeline. The evaluation→execution wiring
+        // (active mode) is a follow-up gated by paper-trade evidence.
+        if let Some(runner) = &self.ctx.cartridge_runner {
+            let runner = runner.clone();
+            let intent_for_shadow = intent.clone();
+            tokio::spawn(async move {
+                crate::cartridge_boot::shadow_evaluate_intent(runner, intent_for_shadow, chain_id)
+                    .await;
+            });
+        }
 
         let mut impact = impact;
         if impact.impacted_pools.is_empty() && impact.impacted_cycles.is_empty() {
