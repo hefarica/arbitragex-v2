@@ -133,10 +133,10 @@ fn test_init_strategy_returns_valid_metadata() {
 
     // Verify values
     let name = map.get("name").unwrap().clone().into_immutable_string().unwrap();
-    assert_eq!(name.as_str(), "DEX Arbitrage Universal");
+    assert_eq!(&*name, "DEX Arbitrage Universal");
 
     let version = map.get("version").unwrap().clone().into_immutable_string().unwrap();
-    assert_eq!(version.as_str(), "2.0.0");
+    assert_eq!(&*version, "2.0.0");
 
     // Verify target_chains is empty (supports all chains)
     let target_chains = map.get("target_chains").unwrap().clone().into_typed_array::<Dynamic>().unwrap();
@@ -218,7 +218,7 @@ fn test_evaluate_opportunity_no_pools() {
     assert!(!is_opp, "should not find opportunity with < 2 pools");
 
     let reason = map.get("reason").unwrap().clone().into_immutable_string().unwrap();
-    assert_eq!(reason.as_str(), "insufficient_pools");
+    assert_eq!(&*reason, "insufficient_pools");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

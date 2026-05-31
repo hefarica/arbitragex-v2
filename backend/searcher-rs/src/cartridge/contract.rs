@@ -86,9 +86,9 @@ pub fn validate_contract(ast: &AST) -> Result<(), Vec<ContractViolation>> {
     let mut violations = Vec::new();
 
     // Collect all function names defined in the AST.
-    let defined_functions: HashSet<&str> = ast
+    let defined_functions: HashSet<String> = ast
         .iter_functions()
-        .map(|f| f.name.as_str())
+        .map(|f| f.name.to_string())
         .collect();
 
     // Check required functions exist.
@@ -100,7 +100,7 @@ pub fn validate_contract(ast: &AST) -> Result<(), Vec<ContractViolation>> {
 
     // Check arity of required functions.
     for func_def in ast.iter_functions() {
-        let expected_arity = match func_def.name.as_str() {
+        let expected_arity = match func_def.name.to_string().as_str() {
             "init_strategy" => Some(0),
             "evaluate_opportunity" => Some(1),
             "build_payload" => Some(1),

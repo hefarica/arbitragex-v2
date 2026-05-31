@@ -465,7 +465,7 @@ impl CartridgeRunner {
     fn parse_eval_result(
         &self,
         result: Dynamic,
-        cartridge_id: &str,
+        _cartridge_id: &str,
     ) -> Result<CartridgeEvalResult, CartridgeError> {
         let map = result.try_cast::<Map>().ok_or_else(|| {
             CartridgeError::RuntimeError("evaluate_opportunity must return a Map".into())
