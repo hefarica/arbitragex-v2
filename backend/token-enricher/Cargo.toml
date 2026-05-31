@@ -11,7 +11,7 @@ path = "src/main.rs"
 shared-rs = { path = "../shared-rs" }
 alloy = { version = "1.0", features = ["full"] }
 alloy-primitives = "1.0"
-alloy-sol-types = "1.0"
+alloy-sol-types = "1.6"
 alloy-provider = { version = "1.0", features = ["ws"] }
 alloy-rpc-types = "1.0"
 tokio = { version = "1", features = ["full"] }
