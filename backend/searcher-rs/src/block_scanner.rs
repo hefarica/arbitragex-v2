@@ -39,9 +39,6 @@ use crate::route_intent::{
 /// Uniswap-V2 `Swap` event signature. `Filter::event()` derives topic0 = keccak256(sig).
 const V2_SWAP_SIG: &str = "Swap(address,uint256,uint256,uint256,uint256,address)";
 
-/// Max pool addresses per `eth_getLogs` call (free RPCs cap filter/response size).
-const GETLOGS_ADDR_CHUNK: usize = 100;
-
 /// Backrunning detection loop: subscribe to new blocks and turn confirmed V2 swaps on
 /// watched pools into `RouteIntent`s fed to the orchestrator. Long-running; honors
 /// `cancel`. Reconnects on WS error with exponential backoff. Never panics.
@@ -157,86 +154,89 @@ async fn process_block(
         return;
     }
 
-    let addrs: Vec<Address> = v2_pools.keys().copied().collect();
     let mut intents = 0u32;
-    let mut logs_seen = 0u32;
+    let mut watched_swaps = 0u32;
 
-    for chunk in addrs.chunks(GETLOGS_ADDR_CHUNK) {
-        let filter = Filter::new()
-            .from_block(block_num)
-            .to_block(block_num)
-            .address(chunk.to_vec())
-            .event(V2_SWAP_SIG);
+    // Many free RPCs BLOCK address-filtered eth_getLogs ("blocked parameter:
+    // params.0.address"). Query topic-only (all V2 Swaps in this single block) and
+    // filter to watched pools client-side. The single-block range bounds the response.
+    let filter = Filter::new()
+        .from_block(block_num)
+        .to_block(block_num)
+        .event(V2_SWAP_SIG);
 
-        let logs = match provider.get_logs(&filter).await {
-            Ok(l) => l,
-            Err(e) => {
-                warn!(
-                    event = "block_scanner.getlogs_failed",
-                    chain_id,
-                    block_num,
-                    error = %e,
-                    "eth_getLogs failed for this chunk; skipping"
-                );
-                continue;
-            }
+    let logs = match provider.get_logs(&filter).await {
+        Ok(l) => l,
+        Err(e) => {
+            warn!(
+                event = "block_scanner.getlogs_failed",
+                chain_id,
+                block_num,
+                error = %e,
+                "eth_getLogs failed; skipping block"
+            );
+            return;
+        }
+    };
+    let total_swaps = logs.len();
+
+    for log in logs {
+        let pool = log.address;
+        let Some(&(token0, token1)) = v2_pools.get(&pool) else {
+            continue; // swap on a pool we don't watch
+        };
+        watched_swaps += 1;
+        let Some((token_in, token_out, amount_in)) =
+            decode_v2_swap(log.data.as_ref(), token0, token1)
+        else {
+            continue;
         };
 
-        for log in logs {
-            logs_seen += 1;
-            let pool = log.address;
-            let Some(&(token0, token1)) = v2_pools.get(&pool) else { continue };
-            let Some((token_in, token_out, amount_in)) =
-                decode_v2_swap(log.data.as_ref(), token0, token1)
-            else {
-                continue;
-            };
+        let tx_hash = log.transaction_hash.unwrap_or_default();
+        let intent = match RouteIntent::new(
+            chain_id,
+            tx_hash,
+            pool, // router slot carries the source pool for backrun intents
+            RouterKind::UniswapV2,
+            Address::zero(),
+            vec![RouteIntentLeg {
+                token_in,
+                token_out,
+                pool_hint: Some(pool),
+                dex_hint: None,
+                fee_bps: None,
+                protocol_type: ProtocolType::V2,
+            }],
+            amount_in,
+            None,
+            SwapExactMode::ExactIn,
+            DetectionSource::NewBlock,
+        ) {
+            Some(i) => i,
+            None => continue,
+        };
 
-            let tx_hash = log.transaction_hash.unwrap_or_default();
-            let intent = match RouteIntent::new(
+        if let Err(e) = orch.on_route_intent(intent).await {
+            warn!(
+                event = "block_scanner.on_route_intent_err",
                 chain_id,
-                tx_hash,
-                pool, // router slot carries the source pool for backrun intents
-                RouterKind::UniswapV2,
-                Address::zero(),
-                vec![RouteIntentLeg {
-                    token_in,
-                    token_out,
-                    pool_hint: Some(pool),
-                    dex_hint: None,
-                    fee_bps: None,
-                    protocol_type: ProtocolType::V2,
-                }],
-                amount_in,
-                None,
-                SwapExactMode::ExactIn,
-                DetectionSource::NewBlock,
-            ) {
-                Some(i) => i,
-                None => continue,
-            };
-
-            if let Err(e) = orch.on_route_intent(intent).await {
-                warn!(
-                    event = "block_scanner.on_route_intent_err",
-                    chain_id,
-                    block_num,
-                    error = %e,
-                );
-            }
-            intents += 1;
+                block_num,
+                error = %e,
+            );
         }
+        intents += 1;
     }
 
-    if logs_seen > 0 {
+    if watched_swaps > 0 {
         info!(
             event = "block_scanner.block_processed",
             chain_id,
             block_num,
             watched_pools = v2_pools.len(),
-            swaps = logs_seen,
+            total_swaps,
+            watched_swaps,
             intents,
-            "confirmed V2 swaps decoded into route intents"
+            "confirmed V2 swaps on watched pools decoded into route intents"
         );
     } else {
         debug!(
@@ -244,6 +244,7 @@ async fn process_block(
             chain_id,
             block_num,
             watched_pools = v2_pools.len(),
+            total_swaps,
         );
     }
 }
