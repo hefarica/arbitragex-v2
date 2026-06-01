@@ -30,7 +30,7 @@ use crate::cartridge::runner::CartridgeRunner;
 use crate::cartridge::subscriber::CartridgeSubscriber;
 use crate::cartridge::types::CartridgeState;
 use crate::cartridge_loader::{self, CARTRIDGE_DIR};
-use crate::route_intent::{ProtocolType, RouteIntent};
+use crate::route_intent::{DetectionSource, ProtocolType, RouteIntent};
 
 /// Telemetry channel the host bindings publish `log_quantum` messages to.
 /// Matches `cartridge::host_bindings` / `cartridge::runner` defaults.
@@ -227,6 +227,49 @@ pub fn build_cartridge_pool_data(
     m
 }
 
+/// Smart intent routing — returns `true` iff a cartridge of the given `category` can
+/// MEANINGFULLY evaluate this intent's shape. Without this filter, every active cartridge
+/// is fed every intent, so a single-leg V2 swap (the block scanner's output) is handed to
+/// `liquidation` (which reads `pool_data.debt_token` / `collateral_token`) and
+/// `triangular_arb` (which reads `pool_data.token_a` / `token_b` / `token_c`). Those keys
+/// are absent on a swap, so the cartridge calls `get_token_meta(())` → "Function not found"
+/// and floods `cartridge.shadow_eval_error` while wasting Rhai cycles.
+///
+/// Pertinence keys on `RouteIntent::source_event` (the intent's origin SHAPE):
+///   - swap observations (`public_mempool`, `filtered_mempool`, `private_hint`,
+///     `new_block`) carry one observed swap leg → only `dex_arb` (cross-DEX spread on the
+///     observed pair) consumes that shape today.
+///   - lending / oracle events (`lending_position_update`, `oracle_update`) carry a
+///     debt/collateral position → `liquidation`.
+///   - `triangular_arb` needs a `token_a/b/c` triangle that NO current detection source
+///     emits; it stays loaded but dormant (skipped, not silently dropped) until a
+///     triangle-scan source exists — re-enable its arm here when that lands.
+///   - Unknown / custom categories are always evaluated: the operator who installed the
+///     cartridge owns its input-shape contract, so we never silently drop it.
+fn cartridge_matches_intent(category: &str, intent: &RouteIntent) -> bool {
+    let is_swap_observation = matches!(
+        intent.source_event,
+        DetectionSource::PublicMempool
+            | DetectionSource::FilteredMempool
+            | DetectionSource::PrivateHint
+            | DetectionSource::NewBlock
+    );
+    let is_position_event = matches!(
+        intent.source_event,
+        DetectionSource::LendingPositionUpdate | DetectionSource::OracleUpdate
+    );
+    match category {
+        // Consumes one observed swap leg (token_in/out + reserves_source).
+        "dex_arb" => is_swap_observation,
+        // Needs a debt/collateral position; only lending/oracle events carry it.
+        "liquidation" => is_position_event,
+        // Needs a token_a/b/c triangle; no current source emits that shape.
+        "triangular_arb" => false,
+        // Custom / unknown cartridge: don't gate it — evaluate against everything.
+        _ => true,
+    }
+}
+
 /// Shadow-evaluates every ACTIVE cartridge against one live route intent and emits
 /// the result to logs/telemetry. **Read-only / observe-only**: it never constructs a
 /// `StrategyCandidate`, never touches `process_candidate`, and never reaches the
@@ -259,12 +302,13 @@ pub async fn shadow_evaluate_intent(
         }
     };
 
-    let actives: Vec<String> = runner
+    // (id, category) for every Active cartridge — category drives smart routing below.
+    let actives: Vec<(String, String)> = runner
         .list_cartridges()
         .await
         .into_iter()
         .filter(|(_, _, state)| *state == CartridgeState::Active)
-        .map(|(id, _, _)| id)
+        .map(|(id, meta, _)| (id, meta.category))
         .collect();
     // Probe (debug-level): fires IFF this task ran; `active_count` reveals whether the
     // orchestrator's shared runner sees the loaded cartridges. Demoted from info! so the
@@ -280,6 +324,24 @@ pub async fn shadow_evaluate_intent(
         return;
     }
 
+    // Smart intent routing: keep only cartridges pertinent to THIS intent's shape, so a
+    // single-leg swap is never handed to `liquidation`/`triangular_arb` (which would just
+    // error on the missing position/triangle fields). See `cartridge_matches_intent`.
+    let pertinent: Vec<(String, String)> = actives
+        .into_iter()
+        .filter(|(_, category)| cartridge_matches_intent(category, &intent))
+        .collect();
+    if pertinent.is_empty() {
+        debug!(
+            event = "cartridge.shadow_eval_no_pertinent",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            source_event = %intent.source_event.as_str(),
+            "no active cartridge is pertinent to this intent source; skipping (observe-only)"
+        );
+        return;
+    }
+
     // Enrich pool_data with the source pool's reserves so reserve-dependent cartridges
     // (e.g. dex_arb) can evaluate. Best-effort: None when the pool has no fresh reserves
     // in Redis (R8 fail-honest — the cartridge then returns no opportunity).
@@ -289,7 +351,7 @@ pub async fn shadow_evaluate_intent(
     };
     let pool_data = build_cartridge_pool_data(&intent, reserves_source.as_ref());
 
-    for id in actives {
+    for (id, _category) in pertinent {
         match runner.evaluate(&id, pool_data.clone()).await {
             Ok(res) => {
                 // Only POSITIVE detections are logged at info!; negatives are the
@@ -464,5 +526,69 @@ mod tests {
         assert_eq!(rmap.get("r1").unwrap().to_string(), "4800000000000");
         assert_eq!(rmap.get("block").unwrap().to_string(), "18500000");
         assert_eq!(rmap.get("ts").unwrap().to_string(), "1714857600");
+    }
+
+    /// Build a minimal single-leg intent with the given detection source, for routing tests.
+    fn intent_with_source(source: crate::route_intent::DetectionSource) -> RouteIntent {
+        use crate::route_intent::{RouteIntentLeg, RouterKind, SwapExactMode};
+        use ethers::types::{Address, H256, U256};
+        let leg = RouteIntentLeg {
+            token_in: Address::from_low_u64_be(0xAAAA),
+            token_out: Address::from_low_u64_be(0xBBBB),
+            pool_hint: Some(Address::from_low_u64_be(0xCCCC)),
+            dex_hint: None,
+            fee_bps: None,
+            protocol_type: ProtocolType::V2,
+        };
+        RouteIntent::new(
+            1,
+            H256::zero(),
+            Address::zero(),
+            RouterKind::UniswapV2,
+            Address::zero(),
+            vec![leg],
+            U256::from(1234u64),
+            None,
+            SwapExactMode::ExactIn,
+            source,
+        )
+        .expect("valid intent")
+    }
+
+    #[test]
+    fn routing_swap_intent_goes_only_to_dex_arb() {
+        // A confirmed V2 swap from the block scanner (NewBlock) must reach dex_arb and
+        // NOT liquidation / triangular_arb (they would error on the missing position /
+        // triangle fields — this is the get_token_meta(()) flood we are eliminating).
+        let swap = intent_with_source(DetectionSource::NewBlock);
+        assert!(cartridge_matches_intent("dex_arb", &swap));
+        assert!(!cartridge_matches_intent("liquidation", &swap));
+        assert!(!cartridge_matches_intent("triangular_arb", &swap));
+        // Same routing for pending-mempool swap observations.
+        let pending = intent_with_source(DetectionSource::PublicMempool);
+        assert!(cartridge_matches_intent("dex_arb", &pending));
+        assert!(!cartridge_matches_intent("liquidation", &pending));
+    }
+
+    #[test]
+    fn routing_lending_intent_goes_only_to_liquidation() {
+        let lending = intent_with_source(DetectionSource::LendingPositionUpdate);
+        assert!(cartridge_matches_intent("liquidation", &lending));
+        assert!(!cartridge_matches_intent("dex_arb", &lending));
+        assert!(!cartridge_matches_intent("triangular_arb", &lending));
+        // Oracle updates also route to liquidation (price moves trigger liquidations).
+        let oracle = intent_with_source(DetectionSource::OracleUpdate);
+        assert!(cartridge_matches_intent("liquidation", &oracle));
+        assert!(!cartridge_matches_intent("dex_arb", &oracle));
+    }
+
+    #[test]
+    fn routing_unknown_category_is_never_dropped() {
+        // Operator-installed custom cartridges own their input contract — evaluate them
+        // against every intent rather than silently skipping.
+        let swap = intent_with_source(DetectionSource::NewBlock);
+        let lending = intent_with_source(DetectionSource::LendingPositionUpdate);
+        assert!(cartridge_matches_intent("my_custom_strategy", &swap));
+        assert!(cartridge_matches_intent("my_custom_strategy", &lending));
     }
 }

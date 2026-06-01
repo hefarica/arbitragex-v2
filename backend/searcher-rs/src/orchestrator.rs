@@ -357,9 +357,15 @@ impl Orchestrator {
         );
 
         // Emit metric if no config (operator visibility, not a crash).
+        // ENGINE_ERRORS_TOTAL is defined with EXACTLY two labels [chain_id, strategy]
+        // (see metrics.rs). The config-absence signal occupies the `strategy` slot with
+        // the sentinel pseudo-strategy "no_trading_config" — distinguishable in Grafana
+        // from the real StrategyLabel values. Passing a 3rd value here previously panicked
+        // the worker with `InconsistentCardinality { expect: 2, got: 3 }` once per intent
+        // whenever no trading config was loaded (the common case under block mode).
         if cfg_snapshot.is_none() {
             ENGINE_ERRORS_TOTAL
-                .with_label_values(&[&chain_str, "all", "no_trading_config"])
+                .with_label_values(&[&chain_str, "no_trading_config"])
                 .inc();
         }
 
