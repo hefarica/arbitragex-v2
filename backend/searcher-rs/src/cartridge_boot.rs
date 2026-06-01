@@ -250,6 +250,15 @@ pub async fn shadow_evaluate_intent(
         .filter(|(_, _, state)| *state == CartridgeState::Active)
         .map(|(id, _, _)| id)
         .collect();
+    // Probe: fires IFF this task ran (cartridge_runner was Some); `active_count` reveals
+    // whether the orchestrator's shared runner sees the loaded cartridges.
+    info!(
+        event = "cartridge.shadow_enter",
+        chain_id,
+        tx_hash = %intent.tx_hash,
+        active_count = actives.len(),
+        "shadow eval task entered"
+    );
     if actives.is_empty() {
         return;
     }
