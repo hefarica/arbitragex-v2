@@ -301,19 +301,25 @@ impl CartridgeRunner {
             *cid = cartridge_id.to_owned();
         }
 
-        // Execute evaluate_opportunity(pool_data)
+        // Execute evaluate_opportunity(pool_data). Host bindings (get_reserves,
+        // get_token_meta, get_pool_index, …) call `rt_handle.block_on` internally, which
+        // PANICS if run directly on an async runtime worker (as the orchestrator shadow
+        // task does). `block_in_place` flips the current worker into a blocking section so
+        // the nested `block_on` is permitted. Requires the multi-threaded runtime (the
+        // searcher uses `rt-multi-thread`; tests that call this must use a multi_thread RT).
         let mut scope = Scope::new();
-        let result = self
-            .engine
-            .call_fn::<Dynamic>(&mut scope, &ast, "evaluate_opportunity", (pool_data,))
-            .map_err(|e| {
-                let err_msg = e.to_string();
-                if err_msg.contains("Number of operations over limit") {
-                    CartridgeError::OperationLimitExceeded
-                } else {
-                    CartridgeError::RuntimeError(err_msg)
-                }
-            })?;
+        let result = tokio::task::block_in_place(|| {
+            self.engine
+                .call_fn::<Dynamic>(&mut scope, &ast, "evaluate_opportunity", (pool_data,))
+        })
+        .map_err(|e| {
+            let err_msg = e.to_string();
+            if err_msg.contains("Number of operations over limit") {
+                CartridgeError::OperationLimitExceeded
+            } else {
+                CartridgeError::RuntimeError(err_msg)
+            }
+        })?;
 
         // Parse the result map
         let eval_result = self.parse_eval_result(result, cartridge_id)?;
@@ -343,11 +349,13 @@ impl CartridgeRunner {
             cartridge.ast.clone()
         };
 
+        // See `evaluate` re block_in_place: host bindings may block_on inside call_fn.
         let mut scope = Scope::new();
-        let result = self
-            .engine
-            .call_fn::<Dynamic>(&mut scope, &ast, "build_payload", (opportunity,))
-            .map_err(|e| CartridgeError::RuntimeError(e.to_string()))?;
+        let result = tokio::task::block_in_place(|| {
+            self.engine
+                .call_fn::<Dynamic>(&mut scope, &ast, "build_payload", (opportunity,))
+        })
+        .map_err(|e| CartridgeError::RuntimeError(e.to_string()))?;
 
         result
             .try_cast::<Map>()

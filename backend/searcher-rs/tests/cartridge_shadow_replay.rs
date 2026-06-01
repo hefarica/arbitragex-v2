@@ -222,7 +222,7 @@ async fn build_ctx(
 // cartridge's evaluate_opportunity computes the expected result from it. The cartridge's
 // result DEPENDS on chain_id==1 && source_pool!="", so the assertions prove the data flow.
 // ---------------------------------------------------------------------------
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires Redis (REDIS_URL or 127.0.0.1:6379) — run with: cargo test --test cartridge_shadow_replay -- --ignored"]
 async fn cartridge_evaluates_deterministically_from_adapter_pool_data() {
     let Some(conn) = try_redis().await else {
@@ -268,7 +268,7 @@ async fn cartridge_evaluates_deterministically_from_adapter_pool_data() {
 // the execution pipeline (no StrategyCandidate, no process_candidate, no emitter write).
 // This is the no-capital-path guarantee, exercised end-to-end through the real orchestrator.
 // ---------------------------------------------------------------------------
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires Redis (REDIS_URL or 127.0.0.1:6379) — run with: cargo test --test cartridge_shadow_replay -- --ignored"]
 async fn on_route_intent_with_cartridge_runner_does_not_emit() {
     let Some(conn) = try_redis().await else {
@@ -298,4 +298,64 @@ async fn on_route_intent_with_cartridge_runner_does_not_emit() {
         emissions.len(),
         emissions.iter().map(|e| e.strategy).collect::<Vec<_>>()
     );
+}
+
+// A cartridge that CALLS a host binding (get_reserves), which internally does
+// `rt_handle.block_on`. This is what dex_arb does and what panicked live.
+const HOST_BINDING_CARTRIDGE: &str = r#"
+fn init_strategy() {
+    #{ name: "HB Probe", version: "1.0.0", author: "omega-test",
+       description: "calls a host binding to exercise block_on", category: "test",
+       target_chains: [], min_eval_interval_ms: 0 }
+}
+fn evaluate_opportunity(pool_data) {
+    // Triggers rt_handle.block_on inside the get_reserves binding. We don't care about
+    // the value (Redis may be empty -> ()), only that the call does not panic.
+    let r = get_reserves(pool_data.source_pool);
+    #{ is_opportunity: false, estimated_profit: 0.0, confidence: 0.0, urgency: "none" }
+}
+fn build_payload(opportunity) {
+    #{ target_contract: "T", calldata: "0x", value_wei: "0", gas_limit: 1, max_priority_fee_gwei: 0.0, deadline_ts: 0 }
+}
+"#;
+
+// ---------------------------------------------------------------------------
+// Test C — host binding eval must not panic in an async runtime worker.
+//
+// Regression guard for the live block_on panic: a cartridge that calls get_reserves
+// (which does rt_handle.block_on internally) must evaluate cleanly when run from an
+// async context (the orchestrator shadow path). The fix is `block_in_place` around
+// `call_fn` in CartridgeRunner::evaluate — which REQUIRES the multi-threaded runtime.
+// ---------------------------------------------------------------------------
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires Redis (REDIS_URL or 127.0.0.1:6379) — run with: cargo test --test cartridge_shadow_replay -- --ignored"]
+async fn host_binding_eval_does_not_panic_in_async_context() {
+    let Some(conn) = try_redis().await else {
+        eprintln!("SKIP: Redis unreachable");
+        return;
+    };
+    let host_ctx = HostContext {
+        redis: Arc::new(RwLock::new(conn)),
+        chain_id: CHAIN_ID,
+        cartridge_id: Arc::new(RwLock::new(String::new())),
+        rt_handle: tokio::runtime::Handle::current(),
+        block_number: Arc::new(AtomicU64::new(0)),
+        base_fee_gwei: Arc::new(AtomicU64::new(0)),
+        telemetry_channel: "arbx:cartridge:telemetry".to_owned(),
+    };
+    let runner = Arc::new(CartridgeRunner::new(host_ctx));
+    runner
+        .load_cartridge("hb_probe", HOST_BINDING_CARTRIDGE, "hb-hash-1")
+        .await
+        .expect("host-binding cartridge must compile + validate");
+
+    let intent = make_intent(Some(addr(0x100)));
+    let pool_data = build_cartridge_pool_data(&intent, None);
+    // This drives get_reserves -> rt_handle.block_on from an async worker. Without
+    // block_in_place it panics ("Cannot block the current thread from within a runtime").
+    let res = runner
+        .evaluate("hb_probe", pool_data)
+        .await
+        .expect("evaluate calling a host binding must not panic/err");
+    assert!(!res.is_opportunity);
 }

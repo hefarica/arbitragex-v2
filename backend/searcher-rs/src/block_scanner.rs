@@ -157,12 +157,17 @@ async fn process_block(
     let mut intents = 0u32;
     let mut watched_swaps = 0u32;
 
-    // Many free RPCs BLOCK address-filtered eth_getLogs ("blocked parameter:
-    // params.0.address"). Query topic-only (all V2 Swaps in this single block) and
-    // filter to watched pools client-side. The single-block range bounds the response.
+    // Scan the PREVIOUS block (N-1): free RPCs' getLogs node can lag behind the newHeads
+    // announcement, returning -32602 "block range extends beyond current head block". N-1
+    // is guaranteed available. The 1-block lag is fine for confirmed-state backrunning.
+    //
+    // Also: many free RPCs BLOCK address-filtered eth_getLogs ("blocked parameter:
+    // params.0.address"), so we query topic-only (all V2 Swaps in the block) and filter to
+    // watched pools client-side. The single-block range bounds the response.
+    let scan_block = block_num.saturating_sub(1);
     let filter = Filter::new()
-        .from_block(block_num)
-        .to_block(block_num)
+        .from_block(scan_block)
+        .to_block(scan_block)
         .event(V2_SWAP_SIG);
 
     let logs = match provider.get_logs(&filter).await {
