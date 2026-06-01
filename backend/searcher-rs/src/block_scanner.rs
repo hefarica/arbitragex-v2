@@ -221,14 +221,16 @@ async fn process_block(
             None => continue,
         };
 
-        if let Err(e) = orch.on_route_intent(intent).await {
-            warn!(
-                event = "block_scanner.on_route_intent_err",
-                chain_id,
-                block_num,
-                error = %e,
-            );
-        }
+        // Isolate the orchestrator call in its own task: a panic on a single intent
+        // (e.g. a pre-existing metrics-cardinality bug in the native engine candidate
+        // path) must NOT kill the block scanner loop. The cartridge shadow eval is itself
+        // spawned early inside on_route_intent, so it still runs even if a later stage panics.
+        let orch_task = orch.clone();
+        tokio::spawn(async move {
+            if let Err(e) = orch_task.on_route_intent(intent).await {
+                warn!(event = "block_scanner.on_route_intent_err", error = %e);
+            }
+        });
         intents += 1;
     }
 
