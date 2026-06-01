@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@arbx/shared": "workspace:*",
+    "@arbx/shared": "*",
     "express": "^4.19.2",
     "http-proxy-middleware": "^3.0.5"
   },

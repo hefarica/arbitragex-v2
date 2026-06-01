@@ -63,7 +63,7 @@ mod multicall_abi {
         }
     }
 
-    pub use IMulticall3::{aggregate3Call, Call3};
+    pub use IMulticall3::{aggregate3Call, Call3, Result};
 }
 
 // The getReserves / slot0 / liquidity keccak selectors are computed at runtime
@@ -81,6 +81,106 @@ const V3_SLOT0_TTL_SECS: u64 = 30;
 const SLOT0_RETURN_LEN: usize = 7 * 32;
 /// Minimum returnData length for a valid liquidity() response: 1 x uint128 = 32 bytes.
 const LIQUIDITY_RETURN_LEN: usize = 32;
+
+/// Default sub-calls per aggregate3. Public RPCs (publicnode/drpc/lava) hang or
+/// reject oversized eth_call payloads, so we chunk. Override: `POOL_SYNC_BATCH_SIZE`.
+const DEFAULT_MULTICALL_BATCH: usize = 25;
+/// Hard per-multicall wall-clock timeout. `HttpRpcPool::with_retry` has NO timeout
+/// of its own, so without this an unresponsive provider hangs the ENTIRE worker
+/// (observed: a 60-call aggregate3 to a public RPC stalled the loop forever, leaving
+/// `arbx:pool_reserves`/`arbx:v3_slot0` empty). Override: `POOL_SYNC_CALL_TIMEOUT_MS`.
+const DEFAULT_MULTICALL_TIMEOUT_MS: u64 = 4_000;
+
+/// Execute ONE aggregate3 over `chunk`, wrapped in a hard timeout + the pool's
+/// failover/circuit-breaker. Returns the decoded per-call results (owned, aligned to
+/// `chunk`) or an error (timeout / RPC / decode / short-result). Never hangs.
+async fn exec_aggregate3(
+    rpc_pool: &shared_rs::rpc_failover::HttpRpcPool,
+    multicall_alloy: AlloyAddress,
+    chunk: &[multicall_abi::Call3],
+    call_timeout: Duration,
+) -> anyhow::Result<Vec<multicall_abi::Result>> {
+    let calldata = multicall_abi::aggregate3Call { calls: chunk.to_vec() }.abi_encode();
+    let raw = match tokio::time::timeout(
+        call_timeout,
+        rpc_pool.with_retry(|provider| {
+            let tx = TransactionRequest::default()
+                .to(multicall_alloy)
+                .input(TransactionInput::new(calldata.clone().into()));
+            async move { provider.call(tx).await.map_err(|e| anyhow::anyhow!("{e}")) }
+        }),
+    )
+    .await
+    {
+        Ok(Ok(b)) => b,
+        Ok(Err(e)) => return Err(anyhow::anyhow!("rpc: {e}")),
+        Err(_) => return Err(anyhow::anyhow!("timeout_{}ms", call_timeout.as_millis())),
+    };
+    let results = multicall_abi::aggregate3Call::abi_decode_returns(&raw)?;
+    if results.len() != chunk.len() {
+        return Err(anyhow::anyhow!(
+            "short_result_{}_of_{}",
+            results.len(),
+            chunk.len()
+        ));
+    }
+    Ok(results)
+}
+
+/// Resilient multicall: split `calls` into `batch_size` chunks, each timeout-bounded.
+/// A chunk that fails/times out is retried CALL-BY-CALL (individual fallback) so one
+/// unresponsive pool can't sink its whole batch and NOTHING can hang the worker.
+/// Returns results aligned 1:1 to `calls` (`None` where the call ultimately failed),
+/// so caller decode loops can index by position regardless of chunk boundaries.
+async fn multicall_resilient(
+    rpc_pool: &shared_rs::rpc_failover::HttpRpcPool,
+    multicall_alloy: AlloyAddress,
+    calls: &[multicall_abi::Call3],
+    batch_size: usize,
+    call_timeout: Duration,
+    chain_id: u64,
+    label: &str,
+) -> Vec<Option<multicall_abi::Result>> {
+    let mut out: Vec<Option<multicall_abi::Result>> = Vec::with_capacity(calls.len());
+    let bs = batch_size.max(1);
+    let mut start = 0usize;
+    while start < calls.len() {
+        let end = (start + bs).min(calls.len());
+        let chunk = &calls[start..end];
+        match exec_aggregate3(rpc_pool, multicall_alloy, chunk, call_timeout).await {
+            Ok(results) => out.extend(results.into_iter().map(Some)),
+            Err(e) => {
+                // Degrade: the whole chunk failed/timed out — retry each call alone so a
+                // single bad pool only loses itself, not the batch. Loud (R7 traceable).
+                warn!(
+                    event = "pool_sync.batch_fallback",
+                    chain_id,
+                    label,
+                    batch = chunk.len(),
+                    error = %e,
+                    "multicall chunk failed; retrying call-by-call"
+                );
+                for call in chunk {
+                    match exec_aggregate3(
+                        rpc_pool,
+                        multicall_alloy,
+                        std::slice::from_ref(call),
+                        call_timeout,
+                    )
+                    .await
+                    {
+                        Ok(mut r) => out.push(r.pop()),
+                        Err(e2) => {
+                            debug!(event = "pool_sync.single_call_failed", chain_id, label, error = %e2);
+                            out.push(None);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
 
 struct PoolRow {
     address: H160,
@@ -170,6 +270,28 @@ impl PoolSyncWorker {
         // alloy address of the multicall contract -- computed once.
         let multicall_alloy = AlloyAddress::from_slice(multicall_addr.as_bytes());
 
+        // Resilient-batching config: chunk size + hard per-call timeout. Both env-tunable
+        // (no hardcoded productive values; defaults are conservative for public RPCs).
+        let batch_size: usize = std::env::var("POOL_SYNC_BATCH_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(DEFAULT_MULTICALL_BATCH);
+        let call_timeout = Duration::from_millis(
+            std::env::var("POOL_SYNC_CALL_TIMEOUT_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|&n| n > 0)
+                .unwrap_or(DEFAULT_MULTICALL_TIMEOUT_MS),
+        );
+        info!(
+            event = "pool_sync.batch_config",
+            chain_id = self.chain_id,
+            batch_size,
+            call_timeout_ms = call_timeout.as_millis() as u64,
+            "resilient multicall batching active (chunk + timeout + call-by-call fallback)"
+        );
+
         loop {
             let tick_start = Instant::now();
 
@@ -182,49 +304,33 @@ impl PoolSyncWorker {
                     callData: get_reserves_calldata_bytes.clone().into(),
                 })
                 .collect();
-            let calldata = multicall_abi::aggregate3Call { calls }.abi_encode();
+            // Chunked, timeout-bounded, fallback-per-call. `results[i]` aligns to `pools[i]`;
+            // `None` = that pool's getReserves ultimately failed. NEVER hangs the worker.
+            let results = multicall_resilient(
+                &rpc_pool,
+                multicall_alloy,
+                &calls,
+                batch_size,
+                call_timeout,
+                self.chain_id,
+                "v2_reserves",
+            )
+            .await;
 
-            // Per-tick multicall via with_retry -- circuit breaker + failover fire on RPC error.
-            // Alloy 1.0: provider.call(TransactionRequest) -> Bytes (raw return data).
-            let raw_bytes = match rpc_pool
-                .with_retry(|provider| {
-                    let tx = TransactionRequest::default()
-                        .to(multicall_alloy)
-                        .input(TransactionInput::new(calldata.clone().into()));
-                    async move { provider.call(tx).await.map_err(|e| anyhow::anyhow!("{e}")) }
-                })
-                .await
-            {
-                Ok(b) => b,
-                Err(e) => {
-                    warn!(event = "pool_sync.multicall_failed", error = %e);
-                    sleep(self.poll_interval).await;
-                    continue;
-                }
-            };
-
-            // Decode the aggregate3 return bytes.
-            // alloy-sol-types 1.0: single return value -> Vec<Result> returned directly.
-            let results = match multicall_abi::aggregate3Call::abi_decode_returns(&raw_bytes) {
-                Ok(r) => r,
-                Err(e) => {
-                    warn!(event = "pool_sync.multicall_decode_failed", error = %e);
-                    sleep(self.poll_interval).await;
-                    continue;
-                }
-            };
-
-            // Get current block once per tick via with_retry.
-            // alloy 1.0: get_block_number() returns u64 directly (no .as_u64()).
-            let block_number: u64 = rpc_pool
-                .with_retry(|provider| async move {
+            // Get current block once per tick — timeout-bounded so it can't hang either.
+            let block_number: u64 = tokio::time::timeout(
+                call_timeout,
+                rpc_pool.with_retry(|provider| async move {
                     provider
                         .get_block_number()
                         .await
                         .map_err(|e| anyhow::anyhow!("{e}"))
-                })
-                .await
-                .unwrap_or(0);
+                }),
+            )
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or(0);
             let now_ts = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -233,17 +339,18 @@ impl PoolSyncWorker {
             let mut ok_count = 0usize;
             let mut fail_count = 0usize;
 
-            // Persist each result.
+            // Persist each result. `results[i]` aligns 1:1 to `pools[i]`.
             for (pool, result) in pools.iter().zip(results.iter()) {
                 // alloy sol! Result fields: `.success` (bool), `.returnData` (alloy Bytes).
-                if !result.success || result.returnData.len() < 64 {
-                    fail_count += 1;
-                    debug!(
-                        event = "pool_sync.pool_failed",
-                        pool = %pool.address_lower
-                    );
-                    continue;
-                }
+                // None = the call (or its fallback) failed; Some-but-unsuccessful = on-chain revert.
+                let result = match result {
+                    Some(r) if r.success && r.returnData.len() >= 64 => r,
+                    _ => {
+                        fail_count += 1;
+                        debug!(event = "pool_sync.pool_failed", pool = %pool.address_lower);
+                        continue;
+                    }
+                };
                 // ABI-decode (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)
                 // Each value is left-padded to 32 bytes in returndata.
                 let bytes = &result.returnData;
@@ -337,38 +444,19 @@ impl PoolSyncWorker {
                     })
                     .collect();
 
-                let v3_calldata = multicall_abi::aggregate3Call { calls: v3_calls }.abi_encode();
-
-                let v3_raw = match rpc_pool
-                    .with_retry(|provider| {
-                        let tx = TransactionRequest::default()
-                            .to(multicall_alloy)
-                            .input(TransactionInput::new(v3_calldata.clone().into()));
-                        async move { provider.call(tx).await.map_err(|e| anyhow::anyhow!("{e}")) }
-                    })
-                    .await
-                {
-                    Ok(b) => b,
-                    Err(e) => {
-                        // R8 fail-honest: log and skip this tick's V3 update.
-                        // Existing keys expire naturally (TTL=30s).
-                        warn!(event = "pool_sync.v3_multicall_failed", error = %e);
-                        sleep(self.poll_interval).await;
-                        continue;
-                    }
-                };
-
-                let v3_results = match multicall_abi::aggregate3Call::abi_decode_returns(&v3_raw) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        warn!(
-                            event = "pool_sync.v3_multicall_decode_failed",
-                            error = %e
-                        );
-                        sleep(self.poll_interval).await;
-                        continue;
-                    }
-                };
+                // Chunked + timeout-bounded + per-call fallback. `v3_results[2i]` = slot0 and
+                // `v3_results[2i+1]` = liquidity for `v3_pools[i]`; `None` = that call failed.
+                // Chunk boundaries do NOT break this alignment (results stay positional).
+                let v3_results = multicall_resilient(
+                    &rpc_pool,
+                    multicall_alloy,
+                    &v3_calls,
+                    batch_size,
+                    call_timeout,
+                    self.chain_id,
+                    "v3_slot0",
+                )
+                .await;
 
                 let mut v3_ok = 0usize;
                 let mut v3_fail = 0usize;
@@ -390,8 +478,20 @@ impl PoolSyncWorker {
                         continue;
                     }
 
-                    let slot0_res = &v3_results[slot0_idx];
-                    let liq_res = &v3_results[liq_idx];
+                    let slot0_res = match &v3_results[slot0_idx] {
+                        Some(r) => r,
+                        None => {
+                            v3_fail += 1;
+                            continue;
+                        }
+                    };
+                    let liq_res = match &v3_results[liq_idx] {
+                        Some(r) => r,
+                        None => {
+                            v3_fail += 1;
+                            continue;
+                        }
+                    };
 
                     // R8 fail-honest: if either call failed or returned too few bytes,
                     // skip this pool. Log at warn so the gap is traceable (R7).

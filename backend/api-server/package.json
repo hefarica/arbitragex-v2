@@ -14,7 +14,7 @@
     "lint": "echo 'lint placeholder'"
   },
   "dependencies": {
-    "@arbx/shared": "workspace:*",
+    "@arbx/shared": "*",
     "@types/cors": "^2.8.19",
     "cors": "^2.8.6",
     "ethers": "^6.13.0",

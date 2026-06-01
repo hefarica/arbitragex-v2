@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY package.json ./
 COPY shared-ts ./shared-ts
 COPY backend/api-server ./backend/api-server
-RUN npm install --workspaces --include-workspace-root --silent
+RUN npm install --workspaces --include-workspace-root
 RUN npm run -w @arbx/shared build \
  && npm run -w @arbx/api-server build
 
