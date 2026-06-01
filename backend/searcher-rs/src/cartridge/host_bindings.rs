@@ -61,6 +61,29 @@ pub struct HostContext {
     pub telemetry_channel: String,
 }
 
+/// Pure Uniswap-V3 spot-price math, extracted from the `calc_v3_spot_price` binding so it is
+/// unit-testable in isolation.
+///
+/// `price = (sqrtPriceX96 / 2^96)^2 * 10^(dec_in - dec_out)`. The `(sqrtPriceX96/2^96)^2` term is
+/// the raw token1-per-token0 ratio; the decimal factor converts to human units in the SAME
+/// convention as `calculate_price_v2` (token_out per token_in), so V2 and V3 prices compare
+/// directly. The uint160 `sqrtPriceX96` is parsed from its decimal string straight into `f64`
+/// (lossy in low bits, ample for a price ratio) — never through a fixed-width int, so no
+/// shift/overflow can occur. Returns `0.0` for malformed / non-positive input.
+pub(crate) fn v3_spot_price_from_sqrt(sqrt_price_x96: &str, dec_in: i64, dec_out: i64) -> f64 {
+    let sqrt: f64 = match sqrt_price_x96.trim().parse() {
+        Ok(v) => v,
+        Err(_) => return 0.0,
+    };
+    if !(sqrt > 0.0) {
+        return 0.0;
+    }
+    let q96 = 2f64.powi(96);
+    let ratio = sqrt / q96; // = sqrt(price); price = token1/token0 in raw units
+    let raw_price = ratio * ratio;
+    raw_price * 10f64.powi((dec_in - dec_out) as i32)
+}
+
 /// Registers all host bindings into the Rhai engine.
 ///
 /// This function is called once during `CartridgeRunner` initialization.
@@ -148,6 +171,44 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
             None => Dynamic::from_array(vec![]),
         }
     });
+
+    // get_v3_slot0(pool_addr: String) -> Map
+    // Returns: #{ sqrt_price_x96: "...", liquidity: "...", ts: N }  (() on cache miss).
+    // Reads arbx:v3_slot0:<chain>:<pool> — populated by PoolSyncWorker every tick. This is the
+    // V3 analogue of get_reserves: V3 pools have no constant-product r0/r1, their price lives
+    // in slot0's sqrtPriceX96.
+    let ctx_slot0 = ctx.clone();
+    engine.register_fn("get_v3_slot0", move |pool_addr: &str| -> Dynamic {
+        let ctx = ctx_slot0.clone();
+        let pool_addr = pool_addr.to_lowercase();
+        let result = ctx.rt_handle.block_on(async {
+            let mut redis = ctx.redis.write().await;
+            let key = format!("arbx:v3_slot0:{}:{}", ctx.chain_id, pool_addr);
+            let raw: Option<String> = redis::AsyncCommands::get(&mut *redis, &key).await.ok()?;
+            raw
+        });
+        match result {
+            Some(json_str) => match serde_json::from_str::<serde_json::Value>(&json_str) {
+                Ok(val) => json_value_to_dynamic(&val),
+                Err(_) => Dynamic::UNIT,
+            },
+            None => Dynamic::UNIT,
+        }
+    });
+
+    // calc_v3_spot_price(sqrt_price_x96: String, dec_in: i64, dec_out: i64) -> f64
+    // Uniswap V3 spot price from slot0's sqrtPriceX96. The raw ratio (token1 per token0, in
+    // smallest units) is (sqrtPriceX96 / 2^96)^2; multiplying by 10^(dec_in - dec_out) yields the
+    // SAME convention as calculate_price_v2 (token_out per token_in, human units) so V2 and V3
+    // prices are directly comparable. Overflow-safe: the uint160 sqrtPriceX96 is parsed from its
+    // decimal string straight into f64 (lossy in low bits but ample for a price ratio) — never
+    // through a fixed-width int, so no shift/overflow is possible.
+    engine.register_fn(
+        "calc_v3_spot_price",
+        move |sqrt_price_x96: &str, dec_in: i64, dec_out: i64| -> f64 {
+            v3_spot_price_from_sqrt(sqrt_price_x96, dec_in, dec_out)
+        },
+    );
 
     // simulate_swap(amount_in: String, path: Array) -> Map
     // Simulates a swap through the given path. Returns estimated output.
@@ -414,5 +475,39 @@ mod tests {
         let d = json_value_to_dynamic(&val);
         let map = d.cast::<Map>();
         assert_eq!(map.get("r0").unwrap().clone().into_string().unwrap(), "1000");
+    }
+
+    // 2^96 exactly = 79228162514264337593543950336 (exactly representable as f64).
+    const Q96_STR: &str = "79228162514264337593543950336";
+    // 2 * 2^96 = 2^97.
+    const TWO_Q96_STR: &str = "158456325028528675187087900672";
+
+    #[test]
+    fn v3_spot_price_unit_ratio_at_q96() {
+        // sqrtPriceX96 == 2^96 ⇒ sqrt(price)=1 ⇒ price=1.0 (equal decimals).
+        let p = v3_spot_price_from_sqrt(Q96_STR, 18, 18);
+        assert!((p - 1.0).abs() < 1e-9, "expected ~1.0, got {p}");
+    }
+
+    #[test]
+    fn v3_spot_price_squares_the_ratio() {
+        // sqrtPriceX96 == 2*2^96 ⇒ sqrt(price)=2 ⇒ price=4.0.
+        let p = v3_spot_price_from_sqrt(TWO_Q96_STR, 18, 18);
+        assert!((p - 4.0).abs() < 1e-6, "expected ~4.0, got {p}");
+    }
+
+    #[test]
+    fn v3_spot_price_applies_decimal_delta() {
+        // ratio 1.0, dec_in=6 dec_out=18 ⇒ 1.0 * 10^(6-18) = 1e-12 (USDC/WETH-style scaling).
+        let p = v3_spot_price_from_sqrt(Q96_STR, 6, 18);
+        let expected = 1e-12;
+        assert!((p - expected).abs() < expected * 1e-6, "expected ~1e-12, got {p}");
+    }
+
+    #[test]
+    fn v3_spot_price_rejects_bad_input() {
+        assert_eq!(v3_spot_price_from_sqrt("", 18, 18), 0.0);
+        assert_eq!(v3_spot_price_from_sqrt("not_a_number", 18, 18), 0.0);
+        assert_eq!(v3_spot_price_from_sqrt("0", 18, 18), 0.0);
     }
 }

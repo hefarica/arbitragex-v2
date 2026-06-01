@@ -32,7 +32,7 @@
 import { Router, Request, Response } from 'express';
 import { Pool } from 'pg';
 import { createHash } from 'crypto';
-import Redis from 'ioredis';
+import { Redis } from 'ioredis';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types

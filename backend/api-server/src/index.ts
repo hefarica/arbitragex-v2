@@ -99,6 +99,7 @@ import {
   setupWebSocketGateway,
   broadcastOpportunity,
   subscribeToConvergenceSignals,
+  subscribeToCartridgeTelemetry,
 } from "./websocket.js";
 import { createServer } from "http";
 import rateLimit from "express-rate-limit";
@@ -1095,6 +1096,10 @@ if (pool) {
 // siguen funcionando; la conexión se auto-reconecta.
 const convergenceSubscriber = subscribeToConvergenceSignals(io, REDIS_URL);
 
+// FASE OMEGA — puente Redis Pub/Sub → WebSocket para la telemetría de cartuchos
+// (`log_quantum` del motor Rhai en Rust). Misma postura fail-honest que convergencia.
+const cartridgeTelemetrySubscriber = subscribeToCartridgeTelemetry(io, REDIS_URL);
+
 if (pool) {
   pool.connect().then(client => {
     client.query('LISTEN opportunities_channel');
@@ -1125,6 +1130,7 @@ const shutdown = async (sig: string) => {
   // Arteria WSS: cerrar el subscriber de convergencia antes que el redis
   // principal para evitar errores de "Connection is closed" en handlers.
   await convergenceSubscriber.quit().catch(() => {});
+  await cartridgeTelemetrySubscriber.quit().catch(() => {});
   await redis.quit().catch(() => {});
   if (pool) await pool.end().catch(() => {});
   process.exit(0);

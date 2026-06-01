@@ -20,6 +20,26 @@ import {
  */
 export const RUNTIME_ACK_ROOM = 'runtime_ack' as const;
 
+/**
+ * FASE OMEGA — Cartridge telemetry room. Clients subscribe via
+ * `socket.emit('subscribe:telemetry')` and receive a `telemetry` event for every
+ * `log_quantum` message the Rust cartridges publish to `arbx:cartridge:telemetry`.
+ */
+export const CARTRIDGE_TELEMETRY_ROOM = 'telemetry' as const;
+
+/**
+ * FASE OMEGA — shape of a cartridge telemetry message. The Rust `log_quantum`
+ * host binding publishes `{ cartridge_id, level, message, ts }`; the payload is
+ * intentionally open (`[k: string]: unknown`) because cartridge authors may add
+ * arbitrary structured fields — telemetry is observational, not a strict contract.
+ */
+export interface CartridgeTelemetry {
+    cartridge_id?: string;
+    level?: string;
+    message?: string;
+    [k: string]: unknown;
+}
+
 /** Layers accepted by the runtime_ack handler. Isomorphic 1:1 to the Zod enum
  *  in routes/system-manifest.ts:28-31 — DO NOT drift these without updating
  *  both the server schema and the frontend schema together (invariant I-3). */
@@ -231,6 +251,14 @@ export function setupWebSocketGateway(server: HttpServer) {
         socket.on('subscribe:convergence', () => {
             console.log(`[WebSocket] Cliente ${socket.id} se suscribió a Convergencia`);
             socket.join('convergence');
+        });
+
+        // FASE OMEGA — Cartridge telemetry. Clients (Strategy Forge UI) subscribe to
+        // receive the live `log_quantum` stream the Rust cartridges publish to
+        // `arbx:cartridge:telemetry`. Same handshake auth gate as every other room.
+        socket.on('subscribe:telemetry', () => {
+            console.log(`[WebSocket] Cliente ${socket.id} se suscribió a Telemetría de Cartuchos`);
+            socket.join(CARTRIDGE_TELEMETRY_ROOM);
         });
 
         // OMEGA-7 PR-1: runtime_ack room. Receives the ack broadcast emitted by
@@ -501,6 +529,93 @@ export function subscribeToConvergenceSignals(io: Server, redisUrl: string): Red
 
         // 3. Retransmisión al room `convergence` de Socket.IO.
         broadcastConvergenceSignal(io, payload);
+    });
+
+    return subscriber;
+}
+
+// ---------------------------------------------------------------------------
+// Redis Pub/Sub bridge — Cartridge telemetry (FASE OMEGA)
+// ---------------------------------------------------------------------------
+
+const CARTRIDGE_TELEMETRY_CHANNEL = 'arbx:cartridge:telemetry';
+
+/**
+ * Emite un mensaje de telemetría de cartucho a los clientes suscritos al room
+ * `telemetry`. Path principal: el puente Redis Pub/Sub en
+ * {@link subscribeToCartridgeTelemetry}.
+ */
+export function broadcastCartridgeTelemetry(io: Server, msg: CartridgeTelemetry): void {
+    io.to(CARTRIDGE_TELEMETRY_ROOM).emit('telemetry', msg);
+}
+
+/**
+ * Inicia el puente Redis → WebSocket para la telemetría de cartuchos. Estructura
+ * idéntica a {@link subscribeToConvergenceSignals}: instancia Redis DEDICADA
+ * (modo SUBSCRIBE), suscripción a `arbx:cartridge:telemetry`, parseo JSON
+ * tolerante a fallos, y re-emisión al room `telemetry`.
+ *
+ * **Fail-honest**: payload malformado se loguea y se descarta (skip), nunca
+ * crashea. La telemetría es observacional: a diferencia de convergence (shape
+ * estricto), aquí solo exigimos que el mensaje sea un objeto JSON — los cartuchos
+ * pueden añadir campos arbitrarios.
+ *
+ * **Debe invocarse UNA SOLA VEZ** desde `index.ts`, tras `setupWebSocketGateway()`.
+ *
+ * @param io       — instancia de Socket.IO Server
+ * @param redisUrl — URL de conexión Redis (REDIS_URL)
+ * @returns        — instancia Redis subscriber (para cleanup en shutdown)
+ */
+export function subscribeToCartridgeTelemetry(io: Server, redisUrl: string): Redis {
+    const subscriber = new Redis(redisUrl, {
+        lazyConnect: false,
+        maxRetriesPerRequest: 1,
+        retryStrategy(times: number) {
+            const delay = Math.min(times * 50, 2000);
+            console.log(`[CartridgeTelemetry] Redis subscriber reconnect attempt ${times}, retrying in ${delay}ms`);
+            return delay;
+        },
+        reconnectOnError(err) {
+            const targetErrors = ['ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET', 'EHOSTUNREACH'];
+            const shouldReconnect = targetErrors.some((code) => err.message.includes(code));
+            return shouldReconnect ? 2 : false;
+        },
+    });
+
+    subscriber.on('ready', () => {
+        console.log('[CartridgeTelemetry] Redis subscriber ready');
+    });
+    subscriber.on('error', (err: Error) => {
+        // Non-fatal — the rest of the WSS gateway keeps working.
+        console.error('[CartridgeTelemetry] Redis subscriber error (non-fatal):', err.message);
+    });
+
+    subscriber.subscribe(CARTRIDGE_TELEMETRY_CHANNEL).then(() => {
+        console.log(`[CartridgeTelemetry] Subscribed to Redis channel: ${CARTRIDGE_TELEMETRY_CHANNEL}`);
+    }).catch((err: Error) => {
+        console.error(`[CartridgeTelemetry] Failed to subscribe to ${CARTRIDGE_TELEMETRY_CHANNEL}:`, err.message);
+    });
+
+    subscriber.on('message', (channel: string, message: string) => {
+        if (channel !== CARTRIDGE_TELEMETRY_CHANNEL) {
+            return;
+        }
+        let payload: unknown;
+        try {
+            payload = JSON.parse(message);
+        } catch {
+            console.warn(
+                '[CartridgeTelemetry] Invalid JSON, skipping. Raw (first 200 chars):',
+                message.slice(0, 200),
+            );
+            return;
+        }
+        // Loose validation: telemetry is observational — only require a JSON object.
+        if (typeof payload !== 'object' || payload === null) {
+            console.warn('[CartridgeTelemetry] Non-object telemetry payload, skipping');
+            return;
+        }
+        broadcastCartridgeTelemetry(io, payload as CartridgeTelemetry);
     });
 
     return subscriber;

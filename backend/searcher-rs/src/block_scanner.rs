@@ -52,6 +52,18 @@ static V2_SWAP_TOPIC0: Lazy<H256> =
 static V3_SWAP_TOPIC0: Lazy<H256> =
     Lazy::new(|| H256::from(ethers::utils::keccak256(V3_SWAP_SIG.as_bytes())));
 
+/// Handles into the cartridge `HostContext` atomics so the block scanner can publish chain
+/// context (block height + base fee) on every `newHeads`. Without this the atomics stay 0,
+/// `get_base_fee()`/`get_block_number()` return 0, and the cartridge net-profit gate is
+/// unsatisfiable (gas reads as free). Cheap `Arc<AtomicU64>` clones; `None` when the cartridge
+/// runtime is disabled.
+#[derive(Clone)]
+pub struct GasBlockSink {
+    pub block_number: Arc<std::sync::atomic::AtomicU64>,
+    /// Base fee stored as gwei×1000 (milli-gwei) to match `get_base_fee()`'s 3-decimal decoding.
+    pub base_fee_milligwei: Arc<std::sync::atomic::AtomicU64>,
+}
+
 /// Backrunning detection loop: subscribe to new blocks and turn confirmed V2 swaps on
 /// watched pools into `RouteIntent`s fed to the orchestrator. Long-running; honors
 /// `cancel`. Reconnects on WS error with exponential backoff. Never panics.
@@ -60,6 +72,7 @@ pub async fn block_detection_loop(
     ws_urls: Vec<String>,
     orchestrator: Option<Arc<Orchestrator>>,
     impact_index: Option<Arc<RwLock<ImpactIndex>>>,
+    gas_sink: Option<GasBlockSink>,
     cancel: CancellationToken,
 ) {
     let (orch, idx) = match (orchestrator, impact_index) {
@@ -96,7 +109,7 @@ pub async fn block_detection_loop(
             return;
         }
         let url = &ws_urls[url_idx % ws_urls.len()];
-        match run_block_subscription(chain_id, url, &orch, &idx, &cancel).await {
+        match run_block_subscription(chain_id, url, &orch, &idx, gas_sink.as_ref(), &cancel).await {
             Ok(()) => return, // clean exit (cancelled)
             Err(e) => {
                 warn!(
@@ -122,6 +135,7 @@ async fn run_block_subscription(
     url: &str,
     orch: &Arc<Orchestrator>,
     idx: &Arc<RwLock<ImpactIndex>>,
+    gas_sink: Option<&GasBlockSink>,
     cancel: &CancellationToken,
 ) -> anyhow::Result<()> {
     let client = WsChainClient::connect(chain_id, url).await?;
@@ -137,6 +151,23 @@ async fn run_block_subscription(
                     return Err(anyhow::anyhow!("newHeads stream ended"));
                 };
                 let Some(block_num) = block.number else { continue };
+
+                // Publish chain context to the cartridge HostContext atomics on EVERY head, so
+                // get_block_number()/get_base_fee() return real values. Without this the cartridge
+                // net-profit gate is unsatisfiable (gas reads as 0). Ordering::Release pairs with
+                // the cartridge's Relaxed loads — the values are advisory, not a lock.
+                if let Some(sink) = gas_sink {
+                    sink.block_number
+                        .store(block_num.as_u64(), std::sync::atomic::Ordering::Release);
+                    if let Some(base_fee_wei) = block.base_fee_per_gas {
+                        // get_base_fee() decodes the atomic as gwei×1000 (milli-gwei); wei / 1e6
+                        // = milli-gwei. Saturating: pre-EIP-1559 chains have no base fee → skipped.
+                        let milligwei = (base_fee_wei / U256::from(1_000_000u64)).as_u64();
+                        sink.base_fee_milligwei
+                            .store(milligwei, std::sync::atomic::Ordering::Release);
+                    }
+                }
+
                 process_block(chain_id, block_num.as_u64(), &provider, orch, idx).await;
             }
         }

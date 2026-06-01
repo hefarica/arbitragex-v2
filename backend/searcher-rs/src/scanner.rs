@@ -713,11 +713,19 @@ pub async fn run_chain(
                 pool_sync_watcher(chain_id, db_pool, idx_arc, watcher_cancel).await;
             });
         }
+        // Publish block height + base fee into the cartridge HostContext atomics each block
+        // (only when the cartridge runtime is live) so get_base_fee()/get_block_number() are
+        // real — the cartridge net-profit gate is otherwise unsatisfiable (gas reads as 0).
+        let gas_sink = cartridge_runner.as_ref().map(|r| crate::block_scanner::GasBlockSink {
+            block_number: r.host_block_number_handle(),
+            base_fee_milligwei: r.host_base_fee_handle(),
+        });
         tokio::spawn(crate::block_scanner::block_detection_loop(
             chain_id,
             ws_urls,
             orchestrator,
             impact_index_opt,
+            gas_sink,
             cancel,
         ));
         return Ok(ScannerHandle { chain_id });

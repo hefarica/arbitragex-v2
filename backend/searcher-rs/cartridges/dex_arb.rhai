@@ -94,8 +94,40 @@ fn evaluate_opportunity(pool_data) {
         };
     }
 
-    // ── Calcular precio en pool fuente ──────────────────────────────────
+    // ── Precio del pool fuente (branch por protocolo) ───────────────────
     let source_reserves = pool_data.reserves_source;
+    let source_price = 0.0;
+
+    if protocol_type == "v3" {
+        // V3 concentrated liquidity: el precio vive en slot0 (sqrtPriceX96), no en r0/r1.
+        let slot0 = get_v3_slot0(source_pool);
+        if slot0 == () {
+            return #{
+                is_opportunity: false,
+                estimated_profit: 0.0,
+                confidence: 0.0,
+                urgency: "none",
+                reason: "v3_slot0_unavailable"
+            };
+        }
+        source_price = calc_v3_spot_price(slot0.sqrt_price_x96, decimals_in, decimals_out);
+        // El precio V3 ya se computa con el binding de liquidez concentrada. El SIZING completo
+        // de oportunidades V3 (amount_out vía QuoterV2 / liquidez por tick) es la siguiente capa;
+        // hasta entonces emitimos la observación priceada SIN fabricar profit (RULE 00 / R8).
+        log_quantum("debug", `[chain:${chain_id}] V3 source priced=${source_price} (sizing pending)`);
+        return #{
+            is_opportunity: false,
+            estimated_profit: 0.0,
+            confidence: 0.0,
+            urgency: "none",
+            reason: "v3_sizing_pending",
+            source_price: source_price,
+            protocol_type: "v3",
+            source_pool: source_pool
+        };
+    }
+
+    // ── V2 constant-product: requiere reservas r0/r1 para el sizing ─────
     if source_reserves == () {
         return #{
             is_opportunity: false,
@@ -105,8 +137,7 @@ fn evaluate_opportunity(pool_data) {
             reason: "source_reserves_unavailable"
         };
     }
-
-    let source_price = calculate_price_v2(
+    source_price = calculate_price_v2(
         source_reserves.r0,
         source_reserves.r1,
         decimals_in,

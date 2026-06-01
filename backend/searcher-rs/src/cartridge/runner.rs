@@ -392,6 +392,19 @@ impl CartridgeRunner {
         self.cartridges.clone()
     }
 
+    /// Shared handle to the `block_number` atomic in the cartridge `HostContext`. The block
+    /// scanner stores the latest head here each block so `get_block_number()` is real.
+    pub fn host_block_number_handle(&self) -> Arc<std::sync::atomic::AtomicU64> {
+        self.host_ctx.block_number.clone()
+    }
+
+    /// Shared handle to the `base_fee_gwei` atomic (stored as gwei×1000 / milli-gwei). The
+    /// block scanner stores the head's base fee here so `get_base_fee()` is real — which is
+    /// what makes the cartridge net-profit gate computable instead of always-zero gas.
+    pub fn host_base_fee_handle(&self) -> Arc<std::sync::atomic::AtomicU64> {
+        self.host_ctx.base_fee_gwei.clone()
+    }
+
     /// Reads a pool's reserves from Redis using the SAME key + shape as the
     /// `get_reserves` host binding (`arbx:pool_reserves:{chain}:{pool_lower}`).
     /// Used by the orchestrator shadow path to enrich `pool_data.reserves_source`
@@ -633,6 +646,24 @@ mod tests {
         "#).unwrap();
 
         assert!(validate_contract(&ast).is_ok());
+    }
+
+    #[test]
+    fn dex_arb_cartridge_compiles_and_validates() {
+        // Guards the V3 branch edit (and the whole master cartridge) against syntax/contract
+        // regressions. Compile-only: host bindings (get_v3_slot0, calc_v3_spot_price, …) resolve
+        // at EVAL time, not compile time, so a bare engine validates the structure here.
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/cartridges/dex_arb.rhai"
+        ))
+        .expect("read dex_arb.rhai");
+        let engine = Engine::new();
+        let ast = engine.compile(&src).expect("dex_arb.rhai must compile");
+        assert!(
+            validate_contract(&ast).is_ok(),
+            "dex_arb.rhai must satisfy the universal contract"
+        );
     }
 
     #[test]
