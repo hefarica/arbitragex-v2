@@ -185,12 +185,17 @@ fn protocol_type_str(pt: ProtocolType) -> &'static str {
 
 /// Builds the `pool_data` Rhai `Map` passed to a cartridge's `evaluate_opportunity`.
 ///
-/// Pure function (no I/O), built from the first leg of the route intent. Reserves,
-/// gas, and block number are intentionally omitted — cartridges fetch those live via
-/// host bindings (`get_reserves`, `get_base_fee`, `get_block_number`). R8 fail-honest:
-/// when the decoder did not extract a pool address (`pool_hint = None`), `source_pool`
-/// is empty and the cartridge is expected to return `is_opportunity: false`.
-pub fn build_cartridge_pool_data(intent: &RouteIntent) -> rhai::Map {
+/// Pure function (no I/O), built from the first leg of the route intent plus the
+/// pre-fetched source-pool reserves. `reserves_source` is injected as a nested Rhai
+/// Map `#{ r0, r1, block, ts, token0_addr }` (the field names dex_arb.rhai reads —
+/// note `block`, not the Rust `blk`). When `None` (no fresh reserves in Redis), the
+/// key is omitted → `pool_data.reserves_source == ()` → reserve-dependent cartridges
+/// fail-honest (R8). Likewise `source_pool` is empty when `pool_hint` is None.
+/// Gas / block number stay host-binding-sourced (`get_base_fee`, `get_block_number`).
+pub fn build_cartridge_pool_data(
+    intent: &RouteIntent,
+    reserves_source: Option<&crate::reserves::ReservesEntry>,
+) -> rhai::Map {
     use rhai::Dynamic;
     let mut m = rhai::Map::new();
     m.insert("chain_id".into(), Dynamic::from(intent.chain_id as i64));
@@ -207,6 +212,17 @@ pub fn build_cartridge_pool_data(intent: &RouteIntent) -> rhai::Map {
             .map(|p| format!("{:#x}", p))
             .unwrap_or_default();
         m.insert("source_pool".into(), Dynamic::from(pool));
+    }
+    if let Some(rs) = reserves_source {
+        let mut rmap = rhai::Map::new();
+        rmap.insert("r0".into(), Dynamic::from(rs.r0.clone()));
+        rmap.insert("r1".into(), Dynamic::from(rs.r1.clone()));
+        rmap.insert("block".into(), Dynamic::from(rs.blk as i64));
+        rmap.insert("ts".into(), Dynamic::from(rs.ts as i64));
+        if let Some(t0) = &rs.token0_addr {
+            rmap.insert("token0_addr".into(), Dynamic::from(t0.clone()));
+        }
+        m.insert("reserves_source".into(), Dynamic::from(rmap));
     }
     m
 }
@@ -250,9 +266,10 @@ pub async fn shadow_evaluate_intent(
         .filter(|(_, _, state)| *state == CartridgeState::Active)
         .map(|(id, _, _)| id)
         .collect();
-    // Probe: fires IFF this task ran (cartridge_runner was Some); `active_count` reveals
-    // whether the orchestrator's shared runner sees the loaded cartridges.
-    info!(
+    // Probe (debug-level): fires IFF this task ran; `active_count` reveals whether the
+    // orchestrator's shared runner sees the loaded cartridges. Demoted from info! so the
+    // block scanner's per-block intent volume does not flood the logs.
+    debug!(
         event = "cartridge.shadow_enter",
         chain_id,
         tx_hash = %intent.tx_hash,
@@ -263,21 +280,40 @@ pub async fn shadow_evaluate_intent(
         return;
     }
 
-    let pool_data = build_cartridge_pool_data(&intent);
+    // Enrich pool_data with the source pool's reserves so reserve-dependent cartridges
+    // (e.g. dex_arb) can evaluate. Best-effort: None when the pool has no fresh reserves
+    // in Redis (R8 fail-honest — the cartridge then returns no opportunity).
+    let reserves_source = match intent.legs.first().and_then(|l| l.pool_hint) {
+        Some(p) => runner.read_pool_reserves(&format!("{:#x}", p)).await,
+        None => None,
+    };
+    let pool_data = build_cartridge_pool_data(&intent, reserves_source.as_ref());
+
     for id in actives {
         match runner.evaluate(&id, pool_data.clone()).await {
             Ok(res) => {
-                info!(
-                    event = "cartridge.shadow_eval",
-                    chain_id,
-                    tx_hash = %intent.tx_hash,
-                    cartridge_id = %id,
-                    is_opportunity = res.is_opportunity,
-                    estimated_profit = res.estimated_profit,
-                    confidence = res.confidence,
-                    urgency = %res.urgency,
-                    "cartridge shadow evaluation (observe-only, no execution)"
-                );
+                // Only POSITIVE detections are logged at info!; negatives are the
+                // overwhelming majority under the block scanner and stay at debug!.
+                if res.is_opportunity {
+                    info!(
+                        event = "cartridge.shadow_eval",
+                        chain_id,
+                        tx_hash = %intent.tx_hash,
+                        cartridge_id = %id,
+                        is_opportunity = true,
+                        estimated_profit = res.estimated_profit,
+                        confidence = res.confidence,
+                        urgency = %res.urgency,
+                        "cartridge shadow OPPORTUNITY detected (observe-only, no execution)"
+                    );
+                } else {
+                    debug!(
+                        event = "cartridge.shadow_eval_negative",
+                        chain_id,
+                        cartridge_id = %id,
+                        "cartridge shadow eval: no opportunity"
+                    );
+                }
             }
             Err(e) => {
                 warn!(
@@ -346,7 +382,7 @@ mod tests {
             DetectionSource::PublicMempool,
         )
         .expect("valid intent");
-        let m = build_cartridge_pool_data(&intent);
+        let m = build_cartridge_pool_data(&intent, None);
         assert_eq!(m.get("chain_id").unwrap().to_string(), "1");
         assert_eq!(m.get("amount_in").unwrap().to_string(), "1234");
         assert_eq!(m.get("protocol_type").unwrap().to_string(), "v2");
@@ -378,8 +414,55 @@ mod tests {
             DetectionSource::PublicMempool,
         )
         .expect("valid intent");
-        let m = build_cartridge_pool_data(&intent);
+        let m = build_cartridge_pool_data(&intent, None);
         assert_eq!(m.get("source_pool").unwrap().to_string(), "");
         assert_eq!(m.get("protocol_type").unwrap().to_string(), "unknown");
+        // No reserves provided -> key absent -> Rhai sees () -> reserve-dependent cartridges fail-honest.
+        assert!(m.get("reserves_source").is_none());
+    }
+
+    #[test]
+    fn pool_data_injects_reserves_source_when_provided() {
+        use crate::reserves::ReservesEntry;
+        use crate::route_intent::{DetectionSource, RouteIntentLeg, RouterKind, SwapExactMode};
+        use ethers::types::{Address, H256, U256};
+        let leg = RouteIntentLeg {
+            token_in: Address::from_low_u64_be(0xAAAA),
+            token_out: Address::from_low_u64_be(0xBBBB),
+            pool_hint: Some(Address::from_low_u64_be(0xCCCC)),
+            dex_hint: None,
+            fee_bps: None,
+            protocol_type: ProtocolType::V2,
+        };
+        let intent = RouteIntent::new(
+            1,
+            H256::zero(),
+            Address::zero(),
+            RouterKind::UniswapV2,
+            Address::zero(),
+            vec![leg],
+            U256::from(1234u64),
+            None,
+            SwapExactMode::ExactIn,
+            DetectionSource::NewBlock,
+        )
+        .expect("valid intent");
+        let rs = ReservesEntry {
+            r0: "1500000000000000000000".to_string(),
+            r1: "4800000000000".to_string(),
+            token0_addr: Some("0xc02aaa39".to_string()),
+            blk: 18_500_000,
+            ts: 1_714_857_600,
+        };
+        let m = build_cartridge_pool_data(&intent, Some(&rs));
+        let rsrc = m
+            .get("reserves_source")
+            .expect("reserves_source must be present when provided")
+            .clone();
+        let rmap = rsrc.cast::<rhai::Map>();
+        assert_eq!(rmap.get("r0").unwrap().to_string(), "1500000000000000000000");
+        assert_eq!(rmap.get("r1").unwrap().to_string(), "4800000000000");
+        assert_eq!(rmap.get("block").unwrap().to_string(), "18500000");
+        assert_eq!(rmap.get("ts").unwrap().to_string(), "1714857600");
     }
 }

@@ -89,6 +89,8 @@ pub mod cartridge_loader;
 // Spawns the per-chain runner + hot-reload subscriber so the (previously unspawned)
 // cartridge subsystem actually loads. Dormant unless the mode flag is enabled.
 pub mod cartridge_boot;
+// FASE OMEGA — Block/log backrunning scanner (ARBX_MEMPOOL_MODE=block).
+pub mod block_scanner;
 
 // -- SOP-EDGE-001: Edge Node modules (paper-shadow feature gate) -------
 // These modules implement the Alloy anti-mock layer, U256<->f64 normalization,

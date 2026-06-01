@@ -384,6 +384,25 @@ impl CartridgeRunner {
         self.cartridges.clone()
     }
 
+    /// Reads a pool's reserves from Redis using the SAME key + shape as the
+    /// `get_reserves` host binding (`arbx:pool_reserves:{chain}:{pool_lower}`).
+    /// Used by the orchestrator shadow path to enrich `pool_data.reserves_source`
+    /// for reserve-dependent cartridges (e.g. dex_arb). `None` on miss/parse error
+    /// (R8 fail-honest — the cartridge then returns no opportunity).
+    pub async fn read_pool_reserves(
+        &self,
+        pool_addr: &str,
+    ) -> Option<crate::reserves::ReservesEntry> {
+        let key = format!(
+            "arbx:pool_reserves:{}:{}",
+            self.host_ctx.chain_id,
+            pool_addr.to_lowercase()
+        );
+        let mut redis = self.host_ctx.redis.write().await;
+        let raw: Option<String> = redis::AsyncCommands::get(&mut *redis, &key).await.ok()?;
+        raw.and_then(|s| serde_json::from_str(&s).ok())
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // Private helpers
     // ─────────────────────────────────────────────────────────────────────

@@ -233,7 +233,7 @@ async fn cartridge_evaluates_deterministically_from_adapter_pool_data() {
 
     // Positive: pool_hint set → adapter emits non-empty source_pool + chain_id=1 → opportunity.
     let intent = make_intent(Some(addr(0x100)));
-    let pool_data = build_cartridge_pool_data(&intent);
+    let pool_data = build_cartridge_pool_data(&intent, None);
     let result = runner
         .evaluate("test_arb", pool_data)
         .await
@@ -249,7 +249,7 @@ async fn cartridge_evaluates_deterministically_from_adapter_pool_data() {
 
     // Negative: pool_hint None → adapter emits empty source_pool (R8 fail-honest) → no opp.
     let intent_no_pool = make_intent(None);
-    let pd2 = build_cartridge_pool_data(&intent_no_pool);
+    let pd2 = build_cartridge_pool_data(&intent_no_pool, None);
     let r2 = runner
         .evaluate("test_arb", pd2)
         .await

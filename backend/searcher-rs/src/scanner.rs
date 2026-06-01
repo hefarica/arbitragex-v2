@@ -695,6 +695,34 @@ pub async fn run_chain(
         OrchestratorMode::V1 | OrchestratorMode::Off => (None, None),
     };
 
+    // FASE OMEGA — Block/log backrun mode: subscribe to `newHeads` + `eth_getLogs`(Swap)
+    // instead of the pending-tx firehose (free-RPC friendly). Spawns the block scanner and
+    // SKIPS the pending-tx detection_loop entirely. Requires orch_mode v2/shadow so an
+    // orchestrator exists to consume the `DetectionSource::NewBlock` intents.
+    let mempool_mode_top = crate::chain_client::MempoolMode::from_env();
+    if mempool_mode_top == crate::chain_client::MempoolMode::Block {
+        info!(
+            event = "scanner.block_mode",
+            chain_id, "ARBX_MEMPOOL_MODE=block — confirmed-state backrunning scanner active"
+        );
+        let ws_urls: Vec<String> = pool.endpoints.iter().map(|e| e.url.clone()).collect();
+        // Keep the impact index fresh (pool registry feeds the getLogs address filter).
+        if let (Some(idx_arc), Some(db_pool)) = (impact_index_opt.clone(), db.clone()) {
+            let watcher_cancel = cancel.clone();
+            tokio::spawn(async move {
+                pool_sync_watcher(chain_id, db_pool, idx_arc, watcher_cancel).await;
+            });
+        }
+        tokio::spawn(crate::block_scanner::block_detection_loop(
+            chain_id,
+            ws_urls,
+            orchestrator,
+            impact_index_opt,
+            cancel,
+        ));
+        return Ok(ScannerHandle { chain_id });
+    }
+
     // Phase 16: spawn the pool_sync_watcher if we have a DB + impact_index handle.
     // The watcher polls PG every 60s for new pools and calls add_pool() with a write lock.
     // Rule: DO NOT modify pool_sync_worker internals — this task is independent.
@@ -956,6 +984,17 @@ async fn run_subscription<'a>(
                 event = "scanner.mempool_disabled_unexpected",
                 chain_id = client.chain_id,
                 "Disabled mode reached run_subscription; sleeping idle"
+            );
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            return Ok(());
+        }
+        MempoolMode::Block => {
+            // Block/log mode never spawns the pending-tx detection_loop — run_chain
+            // routes it to block_scanner. Defensive idle if somehow reached here.
+            warn!(
+                event = "scanner.block_mode_unexpected",
+                chain_id = client.chain_id,
+                "Block mode reached run_subscription; idling (should route to block_scanner)"
             );
             tokio::time::sleep(Duration::from_secs(60)).await;
             return Ok(());

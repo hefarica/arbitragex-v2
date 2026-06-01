@@ -73,6 +73,8 @@ mod cartridge;
 #[allow(dead_code)]
 mod cartridge_loader;
 mod cartridge_boot;
+// FASE OMEGA — Block/log backrunning scanner (ARBX_MEMPOOL_MODE=block).
+mod block_scanner;
 // Phase 1-3: orchestrator modules — fully wired in Phase 14.
 // `impact_index` still has Phase-15 functions (from_registry, add_pool,
 // seed_cycles_from_mvp) that are public API but not yet called by the binary.

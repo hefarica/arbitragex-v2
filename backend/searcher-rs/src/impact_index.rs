@@ -295,6 +295,16 @@ impl ImpactIndex {
         self.token_pair_to_pools.contains_key(&key)
     }
 
+    /// Returns a clone of every known pool reference across all token pairs. Used by
+    /// the block/log backrun scanner to build the `eth_getLogs` address filter and to
+    /// map a pool's Swap event back to its `(token0, token1)`.
+    pub fn all_pools(&self) -> Vec<PoolRef> {
+        self.token_pair_to_pools
+            .values()
+            .flat_map(|v| v.iter().cloned())
+            .collect()
+    }
+
     /// Seeds `pool_to_cycles` from the `MVP_CYCLES` constant.
     ///
     /// Each `MvpCycleSeed` maps one pool address to the cycle it belongs to.
