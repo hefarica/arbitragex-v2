@@ -611,7 +611,9 @@ impl PoolSyncWorker {
         // in `load_v3_pools` + the slot0 polling path.
         // Selects t0.address so the scanner can resolve swap orientation
         // without computing both V2 directions (closes scanner.rs:350 TODO).
-        let rows = sqlx::query_as::<_, (String, String, String, String)>(
+        // Nullable symbols: a V2 pool referencing a token with a NULL symbol must not crash
+        // the worker (it just can't be pair-indexed) — skip it fail-honestly.
+        let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>, String)>(
             r#"SELECT p.address, t0.symbol, t1.symbol, t0.address
                FROM pools p
                JOIN tokens t0 ON p.token0_id = t0.id
@@ -629,6 +631,10 @@ impl PoolSyncWorker {
         Ok(rows
             .into_iter()
             .filter_map(|(addr, sym0, sym1, token0_addr)| {
+                let (sym0, sym1) = match (sym0, sym1) {
+                    (Some(a), Some(b)) if !a.is_empty() && !b.is_empty() => (a, b),
+                    _ => return None, // null/empty symbol → not pair-indexable; skip
+                };
                 let lower = addr.to_lowercase();
                 Address::from_str(&lower).ok().map(|h| PoolRow {
                     address: h,
@@ -674,7 +680,11 @@ impl PoolSyncWorker {
         db: &PgPool,
         redis: &mut redis::aio::ConnectionManager,
     ) -> anyhow::Result<()> {
-        let rows = sqlx::query_as::<_, (String, String, i32, bool)>(
+        // Decode symbol/decimals as Option: a single token row with a NULL symbol or
+        // decimals must NOT crash the whole worker at boot (that bug left every reserves/
+        // slot0 cache empty). Fail-honest: skip the unusable token + count it, never
+        // fabricate a symbol/decimals for a token that can't be priced or matched.
+        let rows = sqlx::query_as::<_, (String, Option<String>, Option<i32>, Option<bool>)>(
             r#"SELECT address, symbol, decimals, is_stablecoin
                FROM tokens WHERE chain_id = $1 AND is_active = TRUE"#,
         )
@@ -682,16 +692,34 @@ impl PoolSyncWorker {
         .fetch_all(db)
         .await?;
 
+        let mut skipped = 0usize;
         for (addr, symbol, decimals, is_stable) in rows {
+            let (symbol, decimals) = match (symbol, decimals) {
+                (Some(s), Some(d)) if !s.is_empty() => (s, d),
+                _ => {
+                    skipped += 1;
+                    debug!(event = "pool_sync.token_skipped_null", chain_id = self.chain_id, addr = %addr);
+                    continue;
+                }
+            };
             let meta = TokenMeta {
                 symbol,
                 decimals: decimals as u8,
-                is_stablecoin: is_stable,
+                // is_stablecoin is a hint, not a hard requirement — default missing to false.
+                is_stablecoin: is_stable.unwrap_or(false),
             };
             if let Err(e) = set_token_meta(redis, self.chain_id, &addr.to_lowercase(), &meta).await
             {
                 warn!(event = "pool_sync.token_cache_set_failed", error = %e);
             }
+        }
+        if skipped > 0 {
+            warn!(
+                event = "pool_sync.tokens_skipped_null",
+                chain_id = self.chain_id,
+                skipped,
+                "tokens skipped — NULL/empty symbol or NULL decimals (data gap, not fatal)"
+            );
         }
         Ok(())
     }
@@ -737,7 +765,9 @@ impl PoolSyncWorker {
         db: &PgPool,
         redis: &mut redis::aio::ConnectionManager,
     ) -> anyhow::Result<usize> {
-        let rows = sqlx::query_as::<_, (String, String, String, i32)>(
+        // Nullable symbol/fee_tier decode: one V3 pool whose token has a NULL symbol (or a
+        // NULL fee_tier) must not crash the worker. Fail-honest: skip the unindexable pool.
+        let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>, Option<i32>)>(
             r#"SELECT p.address, t0.symbol, t1.symbol, p.fee_tier
                FROM pools p
                JOIN tokens t0 ON p.token0_id = t0.id
@@ -755,8 +785,16 @@ impl PoolSyncWorker {
         // Group by sorted-symbol pair.
         use std::collections::HashMap;
         let mut by_pair: HashMap<(String, String), Vec<V3PoolInfo>> = HashMap::new();
-        let total = rows.len();
+        let mut skipped = 0usize;
         for (addr, sym0, sym1, fee_tier) in rows {
+            let (sym0, sym1, fee_tier) = match (sym0, sym1, fee_tier) {
+                (Some(a), Some(b), Some(f)) if !a.is_empty() && !b.is_empty() => (a, b, f),
+                _ => {
+                    skipped += 1;
+                    debug!(event = "pool_sync.v3_pool_skipped_null", chain_id = self.chain_id, addr = %addr);
+                    continue;
+                }
+            };
             let (lo, hi) = if sym0 <= sym1 {
                 (sym0.clone(), sym1.clone())
             } else {
@@ -766,6 +804,15 @@ impl PoolSyncWorker {
                 pool_addr: addr.to_lowercase(),
                 fee_bps: fee_tier as u32,
             });
+        }
+        let total = by_pair.values().map(|v| v.len()).sum::<usize>();
+        if skipped > 0 {
+            warn!(
+                event = "pool_sync.v3_pools_skipped_null",
+                chain_id = self.chain_id,
+                skipped,
+                "V3 pools skipped from index — NULL symbol/fee_tier (data gap, not fatal)"
+            );
         }
 
         for ((sym_a, sym_b), pools) in &by_pair {
