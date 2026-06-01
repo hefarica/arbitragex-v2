@@ -82,9 +82,12 @@ const SLOT0_RETURN_LEN: usize = 7 * 32;
 /// Minimum returnData length for a valid liquidity() response: 1 x uint128 = 32 bytes.
 const LIQUIDITY_RETURN_LEN: usize = 32;
 
-/// Default sub-calls per aggregate3. Public RPCs (publicnode/drpc/lava) hang or
-/// reject oversized eth_call payloads, so we chunk. Override: `POOL_SYNC_BATCH_SIZE`.
-const DEFAULT_MULTICALL_BATCH: usize = 25;
+/// Default sub-calls per aggregate3. We send ONE request per protocol by default
+/// (V2 ~26, V3 ~68 sub-calls) because the bottleneck on public RPCs is REQUEST RATE
+/// (HTTP 429), not payload size — `allowFailure=true` already tolerates per-pool reverts
+/// within a single request, so splitting just multiplies requests and worsens throttling.
+/// Lower this via `POOL_SYNC_BATCH_SIZE` only if a specific provider caps batch size.
+const DEFAULT_MULTICALL_BATCH: usize = 200;
 /// Hard per-multicall wall-clock timeout. `HttpRpcPool::with_retry` has NO timeout
 /// of its own, so without this an unresponsive provider hangs the ENTIRE worker
 /// (observed: a 60-call aggregate3 to a public RPC stalled the loop forever, leaving
@@ -127,11 +130,14 @@ async fn exec_aggregate3(
     Ok(results)
 }
 
-/// Resilient multicall: split `calls` into `batch_size` chunks, each timeout-bounded.
-/// A chunk that fails/times out is retried CALL-BY-CALL (individual fallback) so one
-/// unresponsive pool can't sink its whole batch and NOTHING can hang the worker.
-/// Returns results aligned 1:1 to `calls` (`None` where the call ultimately failed),
-/// so caller decode loops can index by position regardless of chunk boundaries.
+/// Resilient multicall: send `calls` in `batch_size` chunks, each TIMEOUT-bounded (the fix
+/// for the no-timeout hang that stalled the worker forever). A chunk whose REQUEST fails
+/// (timeout / HTTP 429 / circuit-open) is SKIPPED this tick — its pools resolve to `None` and
+/// recover on the next tick (reserves/slot0 carry a TTL). We deliberately do NOT retry
+/// call-by-call: `allowFailure=true` already tolerates per-pool reverts within one request, so
+/// a request-level failure means the PROVIDER is throttling — firing N more individual requests
+/// would amplify the 429s and grind the tick for minutes. Returns results aligned 1:1 to
+/// `calls` so caller decode loops index by position regardless of chunk boundaries.
 async fn multicall_resilient(
     rpc_pool: &shared_rs::rpc_failover::HttpRpcPool,
     multicall_alloy: AlloyAddress,
@@ -150,32 +156,17 @@ async fn multicall_resilient(
         match exec_aggregate3(rpc_pool, multicall_alloy, chunk, call_timeout).await {
             Ok(results) => out.extend(results.into_iter().map(Some)),
             Err(e) => {
-                // Degrade: the whole chunk failed/timed out — retry each call alone so a
-                // single bad pool only loses itself, not the batch. Loud (R7 traceable).
+                // Request-level failure (timeout / 429 / circuit-open). Skip these pools THIS
+                // tick — TTL + next tick recover. Loud (R7 traceable), but no request amplification.
                 warn!(
-                    event = "pool_sync.batch_fallback",
+                    event = "pool_sync.chunk_skipped",
                     chain_id,
                     label,
                     batch = chunk.len(),
                     error = %e,
-                    "multicall chunk failed; retrying call-by-call"
+                    "multicall request failed; skipping this tick (provider throttled — no fallback)"
                 );
-                for call in chunk {
-                    match exec_aggregate3(
-                        rpc_pool,
-                        multicall_alloy,
-                        std::slice::from_ref(call),
-                        call_timeout,
-                    )
-                    .await
-                    {
-                        Ok(mut r) => out.push(r.pop()),
-                        Err(e2) => {
-                            debug!(event = "pool_sync.single_call_failed", chain_id, label, error = %e2);
-                            out.push(None);
-                        }
-                    }
-                }
+                out.extend(std::iter::repeat_with(|| None).take(chunk.len()));
             }
         }
     }
