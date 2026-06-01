@@ -285,6 +285,14 @@ impl PoolSyncWorker {
 
         loop {
             let tick_start = Instant::now();
+            // Bracketing diagnostics: pinpoint exactly which await wedges (the tick never
+            // completed pre-fix despite a timeout). Demote to debug once flow is confirmed.
+            info!(
+                event = "pool_sync.tick_begin",
+                chain_id = self.chain_id,
+                v2_pools = pools.len(),
+                v3_pools = v3_pools.len()
+            );
 
             // -- V2 reserves multicall -------------------------------------------
             let calls: Vec<multicall_abi::Call3> = pools
@@ -307,6 +315,12 @@ impl PoolSyncWorker {
                 "v2_reserves",
             )
             .await;
+            info!(
+                event = "pool_sync.v2_multicall_returned",
+                chain_id = self.chain_id,
+                n = results.len(),
+                some = results.iter().filter(|r| r.is_some()).count()
+            );
 
             // Get current block once per tick — timeout-bounded so it can't hang either.
             let block_number: u64 = tokio::time::timeout(
