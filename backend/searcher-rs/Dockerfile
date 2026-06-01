@@ -44,6 +44,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && groupadd -r arbx && useradd -r -g arbx arbx
 WORKDIR /app
 COPY --from=builder /build/target/release/searcher-rs /usr/local/bin/searcher-rs
+# FASE OMEGA fix: ship the master cartridges so the filesystem auto-loader
+# (cartridge_loader::load_cartridges_from_dir, CWD-relative "cartridges") finds
+# them on a cold boot. Without this the dir is absent and boot-load returns 0
+# (cartridge_loader.dir_not_found); hot-reload via Redis still works regardless.
+COPY --from=builder /build/searcher-rs/cartridges /app/cartridges
 USER arbx
 ENV ARBX_CONFIG_PATH=/app/configs/app.toml
 EXPOSE 9001
