@@ -100,7 +100,13 @@ import {
   broadcastOpportunity,
   subscribeToConvergenceSignals,
   subscribeToCartridgeTelemetry,
+  subscribeToRouteDiscoveryTelemetry,
 } from "./websocket.js";
+import {
+  TelemetryCache,
+  buildRouteDiscoveryRouter,
+  buildCartridgesRouter,
+} from "./routes/route-discovery.js";
 import { createServer } from "http";
 import rateLimit from "express-rate-limit";
 
@@ -476,6 +482,17 @@ app.use(buildTopologyVaultRouter({
   writeAudit,
   logger,
 }));
+
+// QUANTUM FULLSTACK SYMMETRY — read-only telemetry snapshot caches + REST
+// routers for the OMEGA Route Discovery radar and cartridge telemetry. The
+// caches are populated at runtime by the WS Redis bridges (instantiated near the
+// bottom of this file); these routers serve the last known state without
+// fabricating data (R8 fail-honest: ok=false when empty). RULE 00 / NO-ACTIVE:
+// strictly observational — never touch arbx:opps:detected, never execute.
+const routeDiscoveryCache = new TelemetryCache(200);
+const cartridgeTelemetryCache = new TelemetryCache(200);
+app.use(buildRouteDiscoveryRouter(routeDiscoveryCache));
+app.use(buildCartridgesRouter(cartridgeTelemetryCache));
 
 mountSedStatus(app, { pool, logger });
 
@@ -1098,7 +1115,21 @@ const convergenceSubscriber = subscribeToConvergenceSignals(io, REDIS_URL);
 
 // FASE OMEGA — puente Redis Pub/Sub → WebSocket para la telemetría de cartuchos
 // (`log_quantum` del motor Rhai en Rust). Misma postura fail-honest que convergencia.
-const cartridgeTelemetrySubscriber = subscribeToCartridgeTelemetry(io, REDIS_URL);
+const cartridgeTelemetrySubscriber = subscribeToCartridgeTelemetry(
+  io,
+  REDIS_URL,
+  (m) => cartridgeTelemetryCache.record(m),
+);
+
+// QUANTUM FULLSTACK SYMMETRY — puente Redis Pub/Sub → WebSocket para la
+// telemetría del radar Route Discovery (`arbx:route_discovery:telemetry`).
+// Espejo 1:1 del puente de cartuchos; alimenta el cache REST de solo-lectura.
+// Fail-honest; NUNCA escribe arbx:opps:detected (observe-only).
+const routeDiscoveryTelemetrySubscriber = subscribeToRouteDiscoveryTelemetry(
+  io,
+  REDIS_URL,
+  (m) => routeDiscoveryCache.record(m),
+);
 
 if (pool) {
   pool.connect().then(client => {
@@ -1131,6 +1162,7 @@ const shutdown = async (sig: string) => {
   // principal para evitar errores de "Connection is closed" en handlers.
   await convergenceSubscriber.quit().catch(() => {});
   await cartridgeTelemetrySubscriber.quit().catch(() => {});
+  await routeDiscoveryTelemetrySubscriber.quit().catch(() => {});
   await redis.quit().catch(() => {});
   if (pool) await pool.end().catch(() => {});
   process.exit(0);

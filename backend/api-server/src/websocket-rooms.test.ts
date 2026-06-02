@@ -57,6 +57,12 @@ function startServer(): Promise<{ httpServer: HttpServer; io: IoServer; port: nu
       socket.on("subscribe:convergence", () => {
         socket.join("convergence");
       });
+      socket.on("subscribe:telemetry", () => {
+        socket.join("telemetry");
+      });
+      socket.on("subscribe:route_discovery", () => {
+        socket.join("route_discovery");
+      });
       socket.on("subscribe:runtime_ack", () => {
         socket.join("runtime_ack");
       });
@@ -115,6 +121,8 @@ describe("OMEGA-8/M4 Fase 10 — WSS rooms admin-gate regression", () => {
     client.emit("subscribe:opportunities");
     client.emit("subscribe:metrics");
     client.emit("subscribe:convergence");
+    client.emit("subscribe:telemetry");
+    client.emit("subscribe:route_discovery");
     client.emit("subscribe:runtime_ack");
 
     const err = await sawError;

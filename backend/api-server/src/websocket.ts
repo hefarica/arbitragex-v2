@@ -40,6 +40,25 @@ export interface CartridgeTelemetry {
     [k: string]: unknown;
 }
 
+/**
+ * QUANTUM FULLSTACK SYMMETRY — Route Discovery telemetry room. Clients subscribe
+ * via `socket.emit('subscribe:route_discovery')` and receive a
+ * `route_discovery_telemetry` event for every message the Rust radar publishes
+ * to `arbx:route_discovery:telemetry` (tick / route_candidate /
+ * strategy_applicability / rejected / route_intent.emitted).
+ */
+export const ROUTE_DISCOVERY_TELEMETRY_ROOM = 'route_discovery' as const;
+
+/**
+ * Shape of a route-discovery telemetry message. Open (`[k: string]: unknown`)
+ * because the 5 event types share only the `event` discriminator — telemetry is
+ * observational, not a strict contract (mirrors {@link CartridgeTelemetry}).
+ */
+export interface RouteDiscoveryTelemetry {
+    event?: string;
+    [k: string]: unknown;
+}
+
 /** Layers accepted by the runtime_ack handler. Isomorphic 1:1 to the Zod enum
  *  in routes/system-manifest.ts:28-31 — DO NOT drift these without updating
  *  both the server schema and the frontend schema together (invariant I-3). */
@@ -259,6 +278,15 @@ export function setupWebSocketGateway(server: HttpServer) {
         socket.on('subscribe:telemetry', () => {
             console.log(`[WebSocket] Cliente ${socket.id} se suscribió a Telemetría de Cartuchos`);
             socket.join(CARTRIDGE_TELEMETRY_ROOM);
+        });
+
+        // QUANTUM FULLSTACK SYMMETRY — Route Discovery telemetry. Clients (Route
+        // Discovery panel) subscribe to receive the live radar stream the Rust
+        // searcher publishes to `arbx:route_discovery:telemetry`. Same handshake
+        // auth gate as every other room; observe-only.
+        socket.on('subscribe:route_discovery', () => {
+            console.log(`[WebSocket] Cliente ${socket.id} se suscribió a Telemetría de Route Discovery`);
+            socket.join(ROUTE_DISCOVERY_TELEMETRY_ROOM);
         });
 
         // OMEGA-7 PR-1: runtime_ack room. Receives the ack broadcast emitted by
@@ -566,7 +594,11 @@ export function broadcastCartridgeTelemetry(io: Server, msg: CartridgeTelemetry)
  * @param redisUrl — URL de conexión Redis (REDIS_URL)
  * @returns        — instancia Redis subscriber (para cleanup en shutdown)
  */
-export function subscribeToCartridgeTelemetry(io: Server, redisUrl: string): Redis {
+export function subscribeToCartridgeTelemetry(
+    io: Server,
+    redisUrl: string,
+    onMessage?: (msg: CartridgeTelemetry) => void,
+): Redis {
     const subscriber = new Redis(redisUrl, {
         lazyConnect: false,
         maxRetriesPerRequest: 1,
@@ -615,7 +647,111 @@ export function subscribeToCartridgeTelemetry(io: Server, redisUrl: string): Red
             console.warn('[CartridgeTelemetry] Non-object telemetry payload, skipping');
             return;
         }
+        if (onMessage) {
+            try { onMessage(payload as CartridgeTelemetry); } catch { /* cache feed is best-effort, never fatal */ }
+        }
         broadcastCartridgeTelemetry(io, payload as CartridgeTelemetry);
+    });
+
+    return subscriber;
+}
+
+// ---------------------------------------------------------------------------
+// Redis Pub/Sub bridge — Route Discovery telemetry (QUANTUM FULLSTACK SYMMETRY)
+// ---------------------------------------------------------------------------
+
+const ROUTE_DISCOVERY_TELEMETRY_CHANNEL = 'arbx:route_discovery:telemetry';
+
+/**
+ * Emite un mensaje de telemetría del radar a los clientes suscritos al room
+ * `route_discovery`. Path principal: el puente Redis Pub/Sub en
+ * {@link subscribeToRouteDiscoveryTelemetry}.
+ *
+ * NOTE: el nombre de evento (`route_discovery_telemetry`) es DISTINTO de
+ * `telemetry` (cartuchos) a propósito — rooms y eventos separados evitan
+ * cross-talk entre los dos streams.
+ */
+export function broadcastRouteDiscoveryTelemetry(io: Server, msg: RouteDiscoveryTelemetry): void {
+    io.to(ROUTE_DISCOVERY_TELEMETRY_ROOM).emit('route_discovery_telemetry', msg);
+}
+
+/**
+ * Inicia el puente Redis → WebSocket para la telemetría del radar Route
+ * Discovery. Espejo 1:1 de {@link subscribeToCartridgeTelemetry}: instancia
+ * Redis DEDICADA (modo SUBSCRIBE), suscripción a `arbx:route_discovery:telemetry`
+ * (DEBE coincidir byte-a-byte con `telemetry.rs`), parseo JSON tolerante a
+ * fallos, y re-emisión al room `route_discovery`.
+ *
+ * **Fail-honest**: payload malformado se loguea y se descarta; nunca crashea.
+ * Validación LOOSE (objeto JSON) porque los 5 tipos de evento comparten solo el
+ * discriminador `event`. El callback opcional `onMessage` alimenta el
+ * `TelemetryCache` que sirve los endpoints REST de solo-lectura.
+ *
+ * **Debe invocarse UNA SOLA VEZ** desde `index.ts`, tras `setupWebSocketGateway()`.
+ *
+ * RULE 00 / NO-ACTIVE: solo observa y re-emite; jamás toca `arbx:opps:detected`
+ * ni dispara ejecución.
+ *
+ * @param io       — instancia de Socket.IO Server
+ * @param redisUrl — URL de conexión Redis (REDIS_URL)
+ * @param onMessage — callback opcional para cachear cada evento (REST snapshot)
+ * @returns        — instancia Redis subscriber (para cleanup en shutdown)
+ */
+export function subscribeToRouteDiscoveryTelemetry(
+    io: Server,
+    redisUrl: string,
+    onMessage?: (msg: RouteDiscoveryTelemetry) => void,
+): Redis {
+    const subscriber = new Redis(redisUrl, {
+        lazyConnect: false,
+        maxRetriesPerRequest: 1,
+        retryStrategy(times: number) {
+            const delay = Math.min(times * 50, 2000);
+            console.log(`[RouteDiscoveryTelemetry] Redis subscriber reconnect attempt ${times}, retrying in ${delay}ms`);
+            return delay;
+        },
+        reconnectOnError(err) {
+            const targetErrors = ['ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET', 'EHOSTUNREACH'];
+            const shouldReconnect = targetErrors.some((code) => err.message.includes(code));
+            return shouldReconnect ? 2 : false;
+        },
+    });
+
+    subscriber.on('ready', () => {
+        console.log('[RouteDiscoveryTelemetry] Redis subscriber ready');
+    });
+    subscriber.on('error', (err: Error) => {
+        console.error('[RouteDiscoveryTelemetry] Redis subscriber error (non-fatal):', err.message);
+    });
+
+    subscriber.subscribe(ROUTE_DISCOVERY_TELEMETRY_CHANNEL).then(() => {
+        console.log(`[RouteDiscoveryTelemetry] Subscribed to Redis channel: ${ROUTE_DISCOVERY_TELEMETRY_CHANNEL}`);
+    }).catch((err: Error) => {
+        console.error(`[RouteDiscoveryTelemetry] Failed to subscribe to ${ROUTE_DISCOVERY_TELEMETRY_CHANNEL}:`, err.message);
+    });
+
+    subscriber.on('message', (channel: string, message: string) => {
+        if (channel !== ROUTE_DISCOVERY_TELEMETRY_CHANNEL) {
+            return;
+        }
+        let payload: unknown;
+        try {
+            payload = JSON.parse(message);
+        } catch {
+            console.warn(
+                '[RouteDiscoveryTelemetry] Invalid JSON, skipping. Raw (first 200 chars):',
+                message.slice(0, 200),
+            );
+            return;
+        }
+        if (typeof payload !== 'object' || payload === null) {
+            console.warn('[RouteDiscoveryTelemetry] Non-object telemetry payload, skipping');
+            return;
+        }
+        if (onMessage) {
+            try { onMessage(payload as RouteDiscoveryTelemetry); } catch { /* cache feed is best-effort, never fatal */ }
+        }
+        broadcastRouteDiscoveryTelemetry(io, payload as RouteDiscoveryTelemetry);
     });
 
     return subscriber;
