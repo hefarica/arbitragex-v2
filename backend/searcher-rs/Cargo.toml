@@ -38,6 +38,9 @@ prioritization-spine = { workspace = true }
 math-engine = { workspace = true }
 async-trait.workspace = true
 arc-swap = "1"
+# Phase 1 route-discovery: parse config/strategies/route_applicability.yaml at
+# boot (fail-safe to embedded safe defaults when absent/invalid).
+serde_yaml = "0.9"
 
 # FASE OMEGA — Dynamic strategy cartridge runtime (Rhai scripting engine).
 rhai.workspace = true

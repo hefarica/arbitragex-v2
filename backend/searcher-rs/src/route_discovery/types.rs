@@ -164,9 +164,14 @@ pub struct RouteEdge {
 
 /// A strategy that was considered for a route but does not apply, with the
 /// machine-readable reason (e.g. `requires_3_legs`, `strategy_not_route_based`).
+///
+/// `strategy` is the **coarse** config name (`dex_arb` / `triangular_arb` /
+/// `flashloan_arb` / `stable_arb` / `liquidation`) rather than a granular
+/// `StrategyLabel`, because a rejection like "dex_arb does not do triangular"
+/// has no single granular label, and the telemetry format uses coarse names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RejectedStrategy {
-    pub strategy: StrategyLabel,
+    pub strategy: String,
     pub reason: String,
 }
 
