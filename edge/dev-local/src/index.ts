@@ -40,6 +40,12 @@ initMetrics(SERVICE);
 
 const API_SERVER_URL = process.env["API_SERVER_URL"] ?? "http://api-server:8080";
 const ARBX_EDGE_TOKEN = requireEnv("ARBX_EDGE_TOKEN");
+// QUANTUM FULLSTACK SYMMETRY — frontend (Next.js) upstream for the SPA-fallback
+// catch-all. Default resolves via Docker DNS on arbx-net. PUBLIC_EDGE_HOST is the
+// externally-visible https host, forwarded so Next builds https-correct absolute
+// URLs (no Mixed Content).
+const FRONTEND_URL = process.env["FRONTEND_URL"] ?? "http://frontend:5173";
+const PUBLIC_EDGE_HOST = process.env["PUBLIC_EDGE_HOST"] ?? "edge-arbx.ape-tv.net";
 
 // Very naive in-memory rate-limit (per-IP, 60s window, 120 req).
 const WINDOW_MS = 60_000;
@@ -175,6 +181,16 @@ app.get("/api/scoring/status", (req, res) => proxy("/api/v1/scoring/status", req
 // A.6 comprehensive circuit breakers.
 app.get("/api/risk/circuit-breakers/status", (req, res) => proxy("/api/v1/risk/circuit-breakers/status", req, res));
 app.get("/api/risk/circuit-breakers/events", (req, res) => proxy("/api/v1/risk/circuit-breakers/events", req, res));
+
+// QUANTUM FULLSTACK SYMMETRY — OMEGA Route Discovery radar + cartridge telemetry
+// read-only snapshots. api-server mounts these at the SAME paths (no /v1/ prefix),
+// fed by its Redis pub/sub cache. Observe-only; never touches opportunities.
+app.get("/api/route-discovery/status", (req, res) => proxy("/api/route-discovery/status", req, res));
+app.get("/api/route-discovery/latest", (req, res) => proxy("/api/route-discovery/latest", req, res));
+app.get("/api/route-discovery/metrics", (req, res) => proxy("/api/route-discovery/metrics", req, res));
+app.get("/api/route-discovery/routes", (req, res) => proxy("/api/route-discovery/routes", req, res));
+app.get("/api/cartridges/status", (req, res) => proxy("/api/cartridges/status", req, res));
+app.get("/api/cartridges/telemetry/latest", (req, res) => proxy("/api/cartridges/telemetry/latest", req, res));
 
 // Chains Admin registry — admin-token gated. Routed through adminProxy so the
 // V-AT-1 httpOnly cookie (arbx_admin_session) is translated to the upstream
@@ -518,9 +534,38 @@ app.get("/admin/audit", (req, res) => {
   adminProxy(url.pathname + url.search, req, res, "GET");
 });
 
+// ─── QUANTUM FULLSTACK SYMMETRY — SPA fallback to the Next.js frontend ────────
+// Everything NOT matched by an explicit /api, /admin, /status, /health, /metrics
+// route above and NOT /socket.io is a frontend route or static asset (/,
+// /config, /strategies/forge, /_next/static/*, /favicon.ico, fonts, …). Stream
+// it to the frontend with http-proxy-middleware: it PIPES the upstream response
+// (no full-body buffering, no http->https text rewrite), so JS/CSS/font chunks
+// are delivered byte-exact — avoiding the corruption + Mixed-Content + memory
+// hazards of a manual fetch()+replace(). Next serves https-correct relative asset
+// URLs; x-forwarded-proto/host tell it the public origin for any absolute URL.
+//
+// Registered LAST so it only catches requests no explicit route handled.
+const frontendProxy = createProxyMiddleware({
+  target: FRONTEND_URL,
+  changeOrigin: true,
+  ws: false,
+  headers: {
+    "x-forwarded-proto": "https",
+    "x-forwarded-host": PUBLIC_EDGE_HOST,
+  },
+});
+app.use((req, res, next) => {
+  // /api and /socket.io are owned by the explicit routes above (or 404 if an
+  // unknown /api path) — never fall through to the frontend.
+  if (req.path.startsWith("/api/") || req.path.startsWith("/socket.io")) {
+    return next();
+  }
+  return frontendProxy(req, res, next);
+});
+
 const PORT = Number(process.env["EDGE_PORT"] ?? 8787);
 const server = app.listen(PORT, () => {
-  logger.info({ event: "service.boot", port: PORT, api_server: API_SERVER_URL, env: cfg.system.env }, "edge-dev-local listening");
+  logger.info({ event: "service.boot", port: PORT, api_server: API_SERVER_URL, frontend: FRONTEND_URL, env: cfg.system.env }, "edge-dev-local listening");
 });
 
 // IMPORTANT: Bind the upgrade event to the proxy so WebSockets correctly upgrade.
