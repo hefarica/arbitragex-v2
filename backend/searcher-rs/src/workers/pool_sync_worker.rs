@@ -189,6 +189,10 @@ async fn multicall_resilient(
                 out.extend(std::iter::repeat_with(|| None).take(chunk.len()));
             }
         }
+        // Advance the chunk cursor. Its accidental omission in the unblock-III rewrite made
+        // this `while` spin forever on chunk [0..N] (3402 successful 28ms multicalls/2min that
+        // never returned), so the tick never reached the reserve-writing loop → caches empty.
+        start = end;
     }
     out
 }
