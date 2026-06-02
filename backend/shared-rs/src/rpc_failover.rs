@@ -319,15 +319,27 @@ impl HttpRpcPool {
         F: Fn(Arc<AlloyHttpProvider>) -> Fut,
         Fut: std::future::Future<Output = anyhow::Result<R>>,
     {
+        // === TEMP diagnostic instrumentation (OMEGA pinpoint) — demote/remove after ===
+        let chain_id = self.chain_id;
+        info!(event = "rpc_pool.with_retry.before_pick", chain_id, attempt = 1u8);
         // Try 1: best provider.
         let first = self.pick()?;
+        info!(
+            event = "rpc_pool.with_retry.after_pick",
+            chain_id, attempt = 1u8,
+            provider = %first.name,
+            state = ?first.snapshot_state()
+        );
         let started = Instant::now();
+        info!(event = "rpc_pool.with_retry.before_op", chain_id, attempt = 1u8, provider = %first.name);
         match op(first.provider.clone()).await {
             Ok(v) => {
+                info!(event = "rpc_pool.with_retry.after_op_ok", chain_id, attempt = 1u8, provider = %first.name, elapsed_ms = started.elapsed().as_millis() as u64);
                 self.report_success(&first, started.elapsed()).await;
                 return Ok(v);
             }
             Err(e) => {
+                info!(event = "rpc_pool.with_retry.after_op_err", chain_id, attempt = 1u8, provider = %first.name, elapsed_ms = started.elapsed().as_millis() as u64, error = %e);
                 self.report_failure(&first, &format!("{e}")).await;
             }
         }
@@ -341,17 +353,21 @@ impl HttpRpcPool {
                 .with_label_values(&[&self.chain_id.to_string()])
                 .inc();
             let started = Instant::now();
+            info!(event = "rpc_pool.with_retry.before_op", chain_id, attempt = 2u8, provider = %bk.name);
             match op(bk.provider.clone()).await {
                 Ok(v) => {
+                    info!(event = "rpc_pool.with_retry.after_op_ok", chain_id, attempt = 2u8, provider = %bk.name, elapsed_ms = started.elapsed().as_millis() as u64);
                     self.report_success(bk, started.elapsed()).await;
                     return Ok(v);
                 }
                 Err(e) => {
+                    info!(event = "rpc_pool.with_retry.after_op_err", chain_id, attempt = 2u8, provider = %bk.name, elapsed_ms = started.elapsed().as_millis() as u64, error = %e);
                     self.report_failure(bk, &format!("{e}")).await;
                 }
             }
         }
 
+        info!(event = "rpc_pool.with_retry.all_unhealthy", chain_id);
         Err(PoolError::AllUnhealthy(self.chain_id))
     }
 
@@ -392,7 +408,10 @@ impl HttpRpcPool {
             .with_label_values(&[entry.name.as_str(), "http", classify_cause(cause)])
             .inc();
 
+        // TEMP diagnostic: detect a wedge on the circuit-breaker write lock.
+        info!(event = "rpc_pool.circuit_lock.before_write", provider = %entry.name);
         let mut cb = entry.circuit.write().await;
+        info!(event = "rpc_pool.circuit_lock.after_write", provider = %entry.name);
         let now = Instant::now();
         cb.failures_window
             .retain(|t| now.duration_since(*t) < CB_WINDOW);

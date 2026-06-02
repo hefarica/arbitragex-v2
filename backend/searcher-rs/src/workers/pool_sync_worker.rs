@@ -102,8 +102,19 @@ async fn exec_aggregate3(
     multicall_alloy: AlloyAddress,
     chunk: &[multicall_abi::Call3],
     call_timeout: Duration,
+    chain_id: u64,
+    label: &str,
 ) -> anyhow::Result<Vec<multicall_abi::Result>> {
     let calldata = multicall_abi::aggregate3Call { calls: chunk.to_vec() }.abi_encode();
+    let started = Instant::now();
+    // TEMP diagnostic (OMEGA pinpoint): brackets the with_retry call so we can see if the
+    // multicall await returns. Pairs with rpc_pool.with_retry.* internal events.
+    info!(
+        event = "pool_sync.multicall.before_with_retry",
+        chain_id, label,
+        call_count = chunk.len(),
+        timeout_ms = call_timeout.as_millis() as u64
+    );
     let raw = match tokio::time::timeout(
         call_timeout,
         rpc_pool.with_retry(|provider| {
@@ -115,9 +126,18 @@ async fn exec_aggregate3(
     )
     .await
     {
-        Ok(Ok(b)) => b,
-        Ok(Err(e)) => return Err(anyhow::anyhow!("rpc: {e}")),
-        Err(_) => return Err(anyhow::anyhow!("timeout_{}ms", call_timeout.as_millis())),
+        Ok(Ok(b)) => {
+            info!(event = "pool_sync.multicall.after_with_retry", chain_id, label, status = "ok", elapsed_ms = started.elapsed().as_millis() as u64);
+            b
+        }
+        Ok(Err(e)) => {
+            info!(event = "pool_sync.multicall.after_with_retry", chain_id, label, status = "rpc_err", elapsed_ms = started.elapsed().as_millis() as u64, error = %e);
+            return Err(anyhow::anyhow!("rpc: {e}"));
+        }
+        Err(_) => {
+            info!(event = "pool_sync.multicall.after_with_retry", chain_id, label, status = "outer_timeout", elapsed_ms = started.elapsed().as_millis() as u64);
+            return Err(anyhow::anyhow!("timeout_{}ms", call_timeout.as_millis()));
+        }
     };
     let results = multicall_abi::aggregate3Call::abi_decode_returns(&raw)?;
     if results.len() != chunk.len() {
@@ -153,7 +173,7 @@ async fn multicall_resilient(
     while start < calls.len() {
         let end = (start + bs).min(calls.len());
         let chunk = &calls[start..end];
-        match exec_aggregate3(rpc_pool, multicall_alloy, chunk, call_timeout).await {
+        match exec_aggregate3(rpc_pool, multicall_alloy, chunk, call_timeout, chain_id, label).await {
             Ok(results) => out.extend(results.into_iter().map(Some)),
             Err(e) => {
                 // Request-level failure (timeout / 429 / circuit-open). Skip these pools THIS
