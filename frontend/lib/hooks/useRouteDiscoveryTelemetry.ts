@@ -138,8 +138,15 @@ export function useRouteDiscoveryTelemetry(): UseRouteDiscoveryTelemetryResult {
       return;
     }
 
+    // `query.token` (in addition to `auth.token`) is REQUIRED for the WS to pass
+    // the edge's /socket.io upgrade gate: the browser cannot set custom headers
+    // on a WebSocket, and socket.io's auth.token lives in the engine.io handshake
+    // (not the raw upgrade), so the edge extractUpgradeToken reads ?token. The
+    // api-server io.use accepts either auth.token or query.token. wss → encrypted;
+    // the upgrade bypasses the edge's Express request logger.
     const socket: Socket = io(wsUrl, {
       auth: { token: adminToken },
+      query: { token: adminToken },
       transports: ["websocket", "polling"],
     });
 

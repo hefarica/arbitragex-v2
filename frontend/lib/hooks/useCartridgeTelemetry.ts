@@ -67,8 +67,13 @@ export function useCartridgeTelemetry(): UseCartridgeTelemetryResult {
       return;
     }
 
+    // query.token (alongside auth.token) lets the WS pass the edge /socket.io
+    // upgrade gate (browsers can't set WS headers; auth.token is in the engine.io
+    // handshake, not the raw upgrade — the edge reads ?token). See
+    // useRouteDiscoveryTelemetry for the full rationale.
     const socket: Socket = io(wsUrl, {
       auth: { token: adminToken },
+      query: { token: adminToken },
       transports: ["websocket", "polling"],
     });
 
