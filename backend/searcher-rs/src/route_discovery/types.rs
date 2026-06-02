@@ -77,6 +77,21 @@ impl RouteKind {
         }
     }
 
+    /// Classify a cycle from its **canonical** protocol sequence (post-rotation).
+    ///
+    /// Deriving the kind from the canonical order (rather than the discovery
+    /// order) is what lets the same physical cycle dedup across start tokens.
+    /// 2 hops → the V2/V3 matrix; 3 hops → `Triangular`; ≥4 → `MultiHop`
+    /// (Phase 2). Returns `None` for a 2-hop mix outside V2/V3 or empty input.
+    pub fn classify(protocols: &[ProtocolType]) -> Option<Self> {
+        match protocols.len() {
+            2 => RouteKind::from_two_protocols(protocols[0], protocols[1]),
+            3 => Some(RouteKind::Triangular),
+            n if n >= 4 => Some(RouteKind::MultiHop),
+            _ => None,
+        }
+    }
+
     /// `true` when this is a two-leg DEX cross-arb shape.
     pub fn is_two_cycle(self) -> bool {
         matches!(

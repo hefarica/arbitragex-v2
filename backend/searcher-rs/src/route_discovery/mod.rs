@@ -25,6 +25,7 @@
 pub mod canonicalizer;
 pub mod graph_builder;
 pub mod types;
+pub mod unique_route_finder;
 
 use std::env;
 

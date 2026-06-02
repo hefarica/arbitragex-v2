@@ -19,7 +19,7 @@
 //! directions). No floats, no timestamps, no liquidity — so the same topology
 //! always yields the same hash, on any host, across restarts.
 
-use crate::route_discovery::types::{RouteDirection, RouteKind};
+use crate::route_discovery::types::RouteDirection;
 use crate::route_intent::ProtocolType;
 use ethers::types::Address;
 use ethers::utils::keccak256;
@@ -57,9 +57,13 @@ fn rotate<T: Clone>(v: &[T], k: usize) -> Vec<T> {
 }
 
 /// Render the `|`-joined canonical input string for one (already-rotated) cycle.
+///
+/// `route_kind` is deliberately NOT part of the input: the protocol sequence
+/// already disambiguates V2/V3 mixes, and including a kind derived from the
+/// pre-rotation order would break cross-start dedup. Callers derive the kind
+/// from the canonical protocol order *after* canonicalization.
 fn render(
     chain_id: u64,
-    route_kind: RouteKind,
     tokens: &[Address],
     pools: &[Address],
     protocols: &[ProtocolType],
@@ -91,10 +95,7 @@ fn render(
         .map(|d| d.as_str())
         .collect::<Vec<_>>()
         .join(",");
-    format!(
-        "{chain_id}|{}|{token_seq}|{pool_seq}|{protocol_seq}|{fee_seq}|{dir_seq}",
-        route_kind.as_str()
-    )
+    format!("{chain_id}|{token_seq}|{pool_seq}|{protocol_seq}|{fee_seq}|{dir_seq}")
 }
 
 /// Hex-encode a keccak256 digest as a `0x`-prefixed lowercase string.
@@ -110,10 +111,13 @@ fn hash_input(input: &str) -> String {
 /// input; reverse orderings are never generated, so opposite-direction cycles
 /// keep distinct hashes.
 ///
+/// The returned `Canonical` carries the rotated arrays; callers derive
+/// `RouteKind` from `Canonical::protocols` so the kind matches the hash's
+/// canonical orientation (see `RouteKind::classify`).
+///
 /// Returns `None` if the vectors are empty or length-mismatched (caller bug).
 pub fn canonicalize(
     chain_id: u64,
-    route_kind: RouteKind,
     tokens: &[Address],
     pools: &[Address],
     protocols: &[ProtocolType],
@@ -134,13 +138,10 @@ pub fn canonicalize(
     // smallest. Because addresses render to fixed-width `0x…` hex and the start
     // token differs per rotation in a simple cycle, this is a stable choice.
     let mut best_k = 0usize;
-    let mut best_input = render(
-        chain_id, route_kind, tokens, pools, protocols, fee_tiers, directions,
-    );
+    let mut best_input = render(chain_id, tokens, pools, protocols, fee_tiers, directions);
     for k in 1..n {
         let candidate = render(
             chain_id,
-            route_kind,
             &rotate(tokens, k),
             &rotate(pools, k),
             &rotate(protocols, k),
@@ -198,8 +199,8 @@ mod tests {
     #[test]
     fn hash_is_deterministic() {
         let (t, p, pr, f, d) = tri_cycle();
-        let a = canonicalize(1, RouteKind::Triangular, &t, &p, &pr, &f, &d).unwrap();
-        let b = canonicalize(1, RouteKind::Triangular, &t, &p, &pr, &f, &d).unwrap();
+        let a = canonicalize(1, &t, &p, &pr, &f, &d).unwrap();
+        let b = canonicalize(1, &t, &p, &pr, &f, &d).unwrap();
         assert_eq!(a.route_hash, b.route_hash);
         assert!(a.route_hash.starts_with("0x"));
         assert_eq!(a.route_hash.len(), 2 + 64);
@@ -216,9 +217,9 @@ mod tests {
         let rf = rotate(&f, 1);
         let rd = rotate(&d, 1);
 
-        let base = canonicalize(1, RouteKind::Triangular, &t, &p, &pr, &f, &d).unwrap();
+        let base = canonicalize(1, &t, &p, &pr, &f, &d).unwrap();
         let rotated =
-            canonicalize(1, RouteKind::Triangular, &rt, &rp, &rpr, &rf, &rd).unwrap();
+            canonicalize(1, &rt, &rp, &rpr, &rf, &rd).unwrap();
         assert_eq!(base.route_hash, rotated.route_hash);
         // Canonical rotation must also pin the same start token for both.
         assert_eq!(base.tokens, rotated.tokens);
@@ -227,7 +228,7 @@ mod tests {
     #[test]
     fn reverse_direction_is_preserved_as_distinct_hash() {
         let (t, p, pr, f, d) = tri_cycle();
-        let forward = canonicalize(1, RouteKind::Triangular, &t, &p, &pr, &f, &d).unwrap();
+        let forward = canonicalize(1, &t, &p, &pr, &f, &d).unwrap();
 
         // Counter-clockwise traversal A→C→B→A: reverse the node order and the
         // per-hop arrays, and flip each direction. Economically distinct route.
@@ -240,35 +241,35 @@ mod tests {
             RouteDirection::OneForZero,
             RouteDirection::ZeroForOne,
         ];
-        let reverse = canonicalize(1, RouteKind::Triangular, &rt, &rp, &rpr, &rf, &rd).unwrap();
+        let reverse = canonicalize(1, &rt, &rp, &rpr, &rf, &rd).unwrap();
         assert_ne!(forward.route_hash, reverse.route_hash);
     }
 
     #[test]
     fn flipping_a_single_direction_changes_the_hash() {
         let (t, p, pr, f, mut d) = tri_cycle();
-        let base = canonicalize(1, RouteKind::Triangular, &t, &p, &pr, &f, &d).unwrap();
+        let base = canonicalize(1, &t, &p, &pr, &f, &d).unwrap();
         d[0] = match d[0] {
             RouteDirection::ZeroForOne => RouteDirection::OneForZero,
             RouteDirection::OneForZero => RouteDirection::ZeroForOne,
         };
-        let flipped = canonicalize(1, RouteKind::Triangular, &t, &p, &pr, &f, &d).unwrap();
+        let flipped = canonicalize(1, &t, &p, &pr, &f, &d).unwrap();
         assert_ne!(base.route_hash, flipped.route_hash);
     }
 
     #[test]
     fn different_pool_or_fee_changes_the_hash() {
         let (t, p, pr, f, d) = tri_cycle();
-        let base = canonicalize(1, RouteKind::Triangular, &t, &p, &pr, &f, &d).unwrap();
+        let base = canonicalize(1, &t, &p, &pr, &f, &d).unwrap();
 
         let mut p2 = p.clone();
         p2[1] = addr(0x99);
-        let other_pool = canonicalize(1, RouteKind::Triangular, &t, &p2, &pr, &f, &d).unwrap();
+        let other_pool = canonicalize(1, &t, &p2, &pr, &f, &d).unwrap();
         assert_ne!(base.route_hash, other_pool.route_hash);
 
         let mut f2 = f.clone();
         f2[1] = Some(100);
-        let other_fee = canonicalize(1, RouteKind::Triangular, &t, &p, &pr, &f2, &d).unwrap();
+        let other_fee = canonicalize(1, &t, &p, &pr, &f2, &d).unwrap();
         assert_ne!(base.route_hash, other_fee.route_hash);
     }
 
@@ -281,13 +282,13 @@ mod tests {
         let pr = vec![ProtocolType::V2, ProtocolType::V3];
         let f = vec![Some(30), Some(500)];
         let d = vec![RouteDirection::ZeroForOne, RouteDirection::OneForZero];
-        let base = canonicalize(1, RouteKind::V2V3, &t, &pools_ab, &pr, &f, &d).unwrap();
+        let base = canonicalize(1, &t, &pools_ab, &pr, &f, &d).unwrap();
 
         // Buy on b2 first, sell on a1: distinct economic route.
         let pools_ba = vec![addr(0xb2), addr(0xa1)];
         let pr2 = vec![ProtocolType::V3, ProtocolType::V2];
         let f2 = vec![Some(500), Some(30)];
-        let swapped = canonicalize(1, RouteKind::V3V2, &t, &pools_ba, &pr2, &f2, &d).unwrap();
+        let swapped = canonicalize(1, &t, &pools_ba, &pr2, &f2, &d).unwrap();
         assert_ne!(base.route_hash, swapped.route_hash);
 
         assert!(base.route_hash.starts_with("0x"));
@@ -299,7 +300,6 @@ mod tests {
         let p = vec![addr(0x10)]; // mismatched length
         assert!(canonicalize(
             1,
-            RouteKind::V2V2,
             &t,
             &p,
             &[ProtocolType::V2, ProtocolType::V2],
@@ -309,7 +309,6 @@ mod tests {
         .is_none());
         assert!(canonicalize(
             1,
-            RouteKind::V2V2,
             &[addr(1)],
             &[addr(0x10)],
             &[ProtocolType::V2],
