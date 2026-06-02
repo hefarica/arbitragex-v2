@@ -84,6 +84,11 @@ mod impact_index;
 mod opportunity_emitter;
 mod pool_discovery;
 mod route_decoder;
+// Phase 1 radar — declared in the bin crate so `scanner::run_chain` can spawn
+// the worker. The lib crate also declares it (`pub mod route_discovery`) so the
+// pure submodules are unit-tested under `cargo test --lib`.
+#[allow(dead_code)]
+mod route_discovery;
 mod route_intent;
 mod strategy_label;
 // Phase 7-8: orchestrator + engines — fully wired in Phase 14.
