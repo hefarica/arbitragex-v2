@@ -552,6 +552,14 @@ const frontendProxy = createProxyMiddleware({
   headers: {
     "x-forwarded-proto": "https",
     "x-forwarded-host": PUBLIC_EDGE_HOST,
+    // CRITICAL: force the edge->frontend hop to identity so the frontend never
+    // compresses. Otherwise a Content-Encoding: gzip header can end up on an
+    // uncompressed body through the proxy path -> browser ERR_CONTENT_DECODING_
+    // FAILED on /_next/static chunks (the webpack runtime), which kills the JS
+    // bootstrap on every page. The edge then serves uncompressed; Cloudflare
+    // re-compresses for the public client. The edge->frontend hop is on the
+    // local Docker network, so the uncompressed bytes cost nothing public-facing.
+    "accept-encoding": "identity",
   },
 });
 app.use((req, res, next) => {
