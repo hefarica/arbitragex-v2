@@ -13,8 +13,13 @@
 //! - Opposite traversal directions are **distinct** routes (canonical hash
 //!   preserves direction); same-direction rotations **dedup** to one route.
 //! - **Bounded**: depth ∈ {2, `max_depth`}, `max_pools_per_pair` caps parallel
-//!   pools between two tokens, `max_routes_per_tick` caps total output. Overflow
-//!   is counted (`dropped_for_cap`) — never silently truncated.
+//!   pools between two tokens, `max_routes_per_tick` caps total output. When the
+//!   route cap is hit, enumeration stops early and `capped` is set so consumers
+//!   know the result set is **incomplete** (R8 fail-honest — we signal
+//!   truncation rather than implying completeness). `dropped_for_cap` is a
+//!   *lower bound* on suppressed cycles: it counts only cycles dropped at the
+//!   emission point, not the whole unexplored subtrees/start-tokens abandoned
+//!   once the cap is reached.
 //!
 //! Phase 1 is topology-only: candidates carry no sizing/profit, and
 //! `applicable_strategies`/`rejected_strategies` are filled later by the
@@ -58,9 +63,13 @@ impl Default for RouteFinderConfig {
 #[derive(Debug, Clone, Default)]
 pub struct RouteFinderOutcome {
     pub routes: Vec<RouteCandidate>,
-    /// Cycles that would have been emitted past `max_routes_per_tick` (honest
-    /// overflow count for telemetry — no silent truncation).
+    /// Lower bound on cycles suppressed by `max_routes_per_tick` — counts only
+    /// cycles dropped at the emission point. NOT a complete total: whole
+    /// subtrees/start-tokens abandoned once the cap is hit are not counted.
     pub dropped_for_cap: usize,
+    /// `true` when the route cap stopped enumeration early ⇒ the route set is
+    /// **incomplete** (R8 fail-honest: signal truncation, don't imply completeness).
+    pub capped: bool,
 }
 
 struct FinderState<'g> {
@@ -70,6 +79,7 @@ struct FinderState<'g> {
     seen: HashSet<String>,
     results: Vec<RouteCandidate>,
     dropped_for_cap: usize,
+    capped: bool,
 }
 
 impl<'g> FinderState<'g> {
@@ -97,6 +107,7 @@ impl<'g> FinderState<'g> {
         visited_tokens: &mut HashSet<Address>,
     ) {
         if self.results.len() >= self.cfg.max_routes_per_tick {
+            self.capped = true; // stopped exploring this subtree because the cap is full
             return;
         }
         let depth = path.len();
@@ -144,6 +155,7 @@ impl<'g> FinderState<'g> {
     fn try_emit(&mut self, path: &[RouteEdge]) {
         if self.results.len() >= self.cfg.max_routes_per_tick {
             self.dropped_for_cap += 1;
+            self.capped = true;
             return;
         }
         let l = path.len();
@@ -209,6 +221,7 @@ pub fn find_routes(
         seen: HashSet::new(),
         results: Vec::new(),
         dropped_for_cap: 0,
+        capped: false,
     };
 
     let starts: Vec<Address> = if cfg.base_tokens.is_empty() {
@@ -223,6 +236,7 @@ pub fn find_routes(
 
     for start in starts {
         if state.results.len() >= cfg.max_routes_per_tick {
+            state.capped = true; // remaining start tokens abandoned — set truncated
             break;
         }
         let mut path: Vec<RouteEdge> = Vec::new();
@@ -235,6 +249,7 @@ pub fn find_routes(
     RouteFinderOutcome {
         routes: state.results,
         dropped_for_cap: state.dropped_for_cap,
+        capped: state.capped,
     }
 }
 
@@ -384,6 +399,16 @@ mod tests {
         let o = find_routes(&g, 1, &cfg);
         assert_eq!(o.routes.len(), 1);
         assert!(o.dropped_for_cap >= 1, "overflow counted, not silently dropped");
+        assert!(o.capped, "cap hit → result set flagged incomplete (R8 fail-honest)");
+    }
+
+    #[test]
+    fn uncapped_run_is_not_flagged() {
+        use ProtocolType::V2;
+        let g = graph_from(&[(0x10, 1, 2, V2), (0x20, 1, 2, V2)]);
+        let o = find_routes(&g, 1, &RouteFinderConfig::default());
+        assert!(!o.capped, "ample cap → complete result set, not flagged");
+        assert_eq!(o.dropped_for_cap, 0);
     }
 
     #[test]

@@ -86,7 +86,7 @@ cartridge → applicable in telemetry only), `stable_arb` (disabled tag), `liqui
 
 | event | key fields |
 |-------|-----------|
-| `route_discovery.tick` | `algorithm, pools_total, edges_built, edges_rejected, routes_found, routes_dispatched, telemetry_emitted, routes_dropped_for_cap, latency_ms, mode` |
+| `route_discovery.tick` | `algorithm, pools_total, edges_built, edges_rejected, routes_found, routes_dispatched, telemetry_emitted, routes_dropped_for_cap, routes_capped, latency_ms, mode` (`routes_capped: true` ⇒ enumeration hit the cap and `routes_found` is incomplete; `routes_dropped_for_cap` is a lower bound — R8 fail-honest) |
 | `route_discovery.route_candidate` | `algorithm, route_hash, route_kind, hops, tokens[], pools[], protocols[], fee_tiers[], directions[]` |
 | `route_discovery.strategy_applicability` | `route_hash, route_kind, applicable_strategies[], rejected_strategies[{strategy,reason}]` |
 | `route_discovery.rejected` | `pool, reason` (missing_reserves / missing_slot0 / stale_* / missing_token_metadata / unsupported_protocol / invalid_pool_shape / low_liquidity) |

@@ -223,6 +223,7 @@ pub fn evaluate_tick(
         routes_dispatched,
         telemetry_emitted,
         found.dropped_for_cap,
+        found.capped,
         latency_ms,
         mode,
     );

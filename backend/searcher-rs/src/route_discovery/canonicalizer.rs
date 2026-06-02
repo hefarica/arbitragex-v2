@@ -134,9 +134,11 @@ pub fn canonicalize(
         return None;
     }
 
-    // Pick the rotation whose rendered canonical input is lexicographically
-    // smallest. Because addresses render to fixed-width `0x…` hex and the start
-    // token differs per rotation in a simple cycle, this is a stable choice.
+    // Canonicalize over the FULL rotation orbit: render all `n` left-rotations
+    // of the joint (tokens,pools,protocols,fees,directions) tuple and pick the
+    // byte-lexicographic minimum. This is invariant over the entire orbit
+    // regardless of which start token discovery fed in (do NOT weaken this to a
+    // start-token-only heuristic — that would break cross-start dedup).
     let mut best_k = 0usize;
     let mut best_input = render(chain_id, tokens, pools, protocols, fee_tiers, directions);
     for k in 1..n {

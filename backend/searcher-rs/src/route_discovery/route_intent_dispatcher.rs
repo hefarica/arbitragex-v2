@@ -63,7 +63,12 @@ pub struct DispatchPlan {
 ///   `dex_arb` (and only `dex_arb`).
 /// - `amount_in = 0`: Phase 1 has no sizing.
 pub fn build_intent(c: &RouteCandidate) -> Option<RouteIntent> {
-    if c.tokens.is_empty() || c.pools.len() != c.tokens.len() {
+    // Guard every vector this function indexes by position (tokens/pools/
+    // protocols). fee_tiers is read via .get(i) so a short fee_tiers is safe.
+    if c.tokens.is_empty()
+        || c.pools.len() != c.tokens.len()
+        || c.protocols.len() != c.tokens.len()
+    {
         return None;
     }
     let n = c.tokens.len();
