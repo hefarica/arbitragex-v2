@@ -31,6 +31,10 @@ pub mod telemetry;
 pub mod types;
 pub mod unique_route_finder;
 
+/// Cross-module safety guarantees (NO-ACTIVE / opps-untouched). Test-only.
+#[cfg(test)]
+mod guarantees;
+
 use std::env;
 
 /// Runtime mode for the route-discovery subsystem, resolved from
