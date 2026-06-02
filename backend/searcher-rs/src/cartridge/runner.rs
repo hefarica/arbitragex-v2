@@ -666,6 +666,113 @@ mod tests {
         );
     }
 
+    /// Evaluate dex_arb.rhai with STUBBED host bindings (no Redis). Returns the result map
+    /// plus two tripwires: whether `log_quantum` fired and whether `get_pool_index` was reached.
+    /// `slot0_present` controls get_v3_slot0; `pool_index_len` controls the alt-pool count.
+    fn eval_dex_arb_stub(
+        protocol: &str,
+        slot0_present: bool,
+        pool_index_len: usize,
+    ) -> (Map, bool, bool) {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/cartridges/dex_arb.rhai"
+        ))
+        .expect("read dex_arb.rhai");
+        let mut engine = Engine::new();
+        let log_fired = Arc::new(AtomicBool::new(false));
+        let pool_index_hit = Arc::new(AtomicBool::new(false));
+
+        engine.register_fn("get_chain_id", || -> i64 { 1 });
+        engine.register_fn("get_token_meta", |_addr: &str| -> Dynamic {
+            let mut m = Map::new();
+            m.insert("symbol".into(), Dynamic::from("WETH".to_string()));
+            m.insert("decimals".into(), Dynamic::from(18i64));
+            Dynamic::from_map(m)
+        });
+        engine.register_fn("get_v3_slot0", move |_pool: &str| -> Dynamic {
+            if slot0_present {
+                let mut m = Map::new();
+                m.insert("sqrt_price_x96".into(), Dynamic::from("4339505179874779672736".to_string()));
+                m.insert("liquidity".into(), Dynamic::from("57737784664".to_string()));
+                Dynamic::from_map(m)
+            } else {
+                Dynamic::UNIT
+            }
+        });
+        engine.register_fn("calc_v3_spot_price", |_s: &str, _di: i64, _do: i64| -> f64 { 3000.0 });
+        {
+            let lf = log_fired.clone();
+            engine.register_fn("log_quantum", move |_lvl: &str, _msg: &str| {
+                lf.store(true, Ordering::SeqCst);
+            });
+        }
+        {
+            let pih = pool_index_hit.clone();
+            engine.register_fn("get_pool_index", move |_a: &str, _b: &str| -> Dynamic {
+                pih.store(true, Ordering::SeqCst);
+                let arr: Vec<Dynamic> = (0..pool_index_len)
+                    .map(|i| Dynamic::from(format!("0xpool{i}")))
+                    .collect();
+                Dynamic::from_array(arr)
+            });
+        }
+
+        let ast = engine.compile(&src).expect("compile dex_arb.rhai");
+        let mut scope = Scope::new();
+        let mut pd = Map::new();
+        pd.insert("chain_id".into(), Dynamic::from(1i64));
+        pd.insert("token_in".into(), Dynamic::from("0x00000000000000000000000000000000000000aa".to_string()));
+        pd.insert("token_out".into(), Dynamic::from("0x00000000000000000000000000000000000000bb".to_string()));
+        pd.insert("source_pool".into(), Dynamic::from("0x00000000000000000000000000000000000000cc".to_string()));
+        pd.insert("amount_in".into(), Dynamic::from("1000000".to_string()));
+        pd.insert("protocol_type".into(), Dynamic::from(protocol.to_string()));
+
+        let res: Dynamic = engine
+            .call_fn(&mut scope, &ast, "evaluate_opportunity", (pd,))
+            .expect("evaluate_opportunity");
+        (
+            res.cast::<Map>(),
+            log_fired.load(Ordering::SeqCst),
+            pool_index_hit.load(Ordering::SeqCst),
+        )
+    }
+
+    fn reason_of(m: &Map) -> String {
+        m.get("reason").unwrap().clone().into_string().unwrap()
+    }
+
+    #[test]
+    fn dex_arb_v3_prices_before_insufficient_pools_gate() {
+        // V3 source with slot0 available: must reach the V3 branch (emit telemetry, return
+        // v3_sizing_pending) WITHOUT being blocked by the V2 get_pool_index >= 2 gate.
+        let (res, log_fired, pool_index_hit) = eval_dex_arb_stub("v3", true, 0);
+        assert_eq!(reason_of(&res), "v3_sizing_pending");
+        assert_eq!(res.get("is_opportunity").unwrap().as_bool().unwrap(), false);
+        assert!(log_fired, "log_quantum (v3_source_priced) must fire — shadow telemetry");
+        assert!(
+            !pool_index_hit,
+            "V3 must NOT reach the get_pool_index insufficient_pools gate"
+        );
+    }
+
+    #[test]
+    fn dex_arb_v3_without_slot0_is_unavailable_not_panic() {
+        let (res, log_fired, _pih) = eval_dex_arb_stub("v3", false, 0);
+        assert_eq!(reason_of(&res), "v3_slot0_unavailable");
+        assert!(!log_fired, "no price telemetry when slot0 is absent");
+    }
+
+    #[test]
+    fn dex_arb_v2_insufficient_pools_gate_still_enforced() {
+        // V2 path with < 2 alt pools must STILL be gated (no relaxation of the V2 cross-DEX rule).
+        let (res, _lf, pool_index_hit) = eval_dex_arb_stub("v2", true, 1);
+        assert_eq!(reason_of(&res), "insufficient_pools");
+        assert!(pool_index_hit, "V2 path must consult get_pool_index");
+    }
+
     #[test]
     fn test_infinite_loop_protection() {
         let mut engine = Engine::new();

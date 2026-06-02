@@ -80,7 +80,40 @@ fn evaluate_opportunity(pool_data) {
     let decimals_in = meta_in.decimals;
     let decimals_out = meta_out.decimals;
 
-    // ── Buscar pools alternativos para el mismo par ─────────────────────
+    // ── BRANCH V3 (ANTES del gate insufficient_pools) ───────────────────
+    // V3 no usa el índice de pools V2 ni reservas r0/r1: su precio vive en slot0
+    // (sqrtPriceX96). Se evalúa aquí para emitir telemetría shadow honesta del precio
+    // V3 SIN pasar por el gate `insufficient_pools` (que es para arb V2 cross-DEX y
+    // bloqueaba esta rama). NO ejecuta sizing V2, NO fabrica profit, NO emite oportunidad.
+    if protocol_type == "v3" {
+        let slot0 = get_v3_slot0(source_pool);
+        if slot0 == () {
+            return #{
+                is_opportunity: false,
+                estimated_profit: 0.0,
+                confidence: 0.0,
+                urgency: "none",
+                reason: "v3_slot0_unavailable"
+            };
+        }
+        let source_price = calc_v3_spot_price(slot0.sqrt_price_x96, decimals_in, decimals_out);
+        // Telemetría shadow REAL → arbx:cartridge:telemetry (log_quantum) → api-server WS → UI.
+        // El sizing V3 (amount_out vía QuoterV2 / liquidez por tick) es la siguiente capa.
+        log_quantum("info", `v3_source_priced cartridge=dex_arb chain=${chain_id} source_pool=${source_pool} sqrt_price_x96=${slot0.sqrt_price_x96} liquidity=${slot0.liquidity} source_price=${source_price} mode=shadow`);
+        return #{
+            is_opportunity: false,
+            estimated_profit: 0.0,
+            confidence: 0.0,
+            urgency: "none",
+            reason: "v3_sizing_pending",
+            source_price: source_price,
+            source_pool: source_pool,
+            protocol_type: "v3",
+            mode: "shadow"
+        };
+    }
+
+    // ── Buscar pools alternativos para el mismo par (path V2 cross-DEX) ──
     // get_pool_index resuelve automáticamente por chain_id del host
     let alt_pools = get_pool_index(meta_in.symbol, meta_out.symbol);
 
@@ -94,40 +127,8 @@ fn evaluate_opportunity(pool_data) {
         };
     }
 
-    // ── Precio del pool fuente (branch por protocolo) ───────────────────
+    // ── Precio del pool fuente — V2 constant-product (V3 ya retornó arriba) ──
     let source_reserves = pool_data.reserves_source;
-    let source_price = 0.0;
-
-    if protocol_type == "v3" {
-        // V3 concentrated liquidity: el precio vive en slot0 (sqrtPriceX96), no en r0/r1.
-        let slot0 = get_v3_slot0(source_pool);
-        if slot0 == () {
-            return #{
-                is_opportunity: false,
-                estimated_profit: 0.0,
-                confidence: 0.0,
-                urgency: "none",
-                reason: "v3_slot0_unavailable"
-            };
-        }
-        source_price = calc_v3_spot_price(slot0.sqrt_price_x96, decimals_in, decimals_out);
-        // El precio V3 ya se computa con el binding de liquidez concentrada. El SIZING completo
-        // de oportunidades V3 (amount_out vía QuoterV2 / liquidez por tick) es la siguiente capa;
-        // hasta entonces emitimos la observación priceada SIN fabricar profit (RULE 00 / R8).
-        log_quantum("debug", `[chain:${chain_id}] V3 source priced=${source_price} (sizing pending)`);
-        return #{
-            is_opportunity: false,
-            estimated_profit: 0.0,
-            confidence: 0.0,
-            urgency: "none",
-            reason: "v3_sizing_pending",
-            source_price: source_price,
-            protocol_type: "v3",
-            source_pool: source_pool
-        };
-    }
-
-    // ── V2 constant-product: requiere reservas r0/r1 para el sizing ─────
     if source_reserves == () {
         return #{
             is_opportunity: false,
@@ -137,7 +138,7 @@ fn evaluate_opportunity(pool_data) {
             reason: "source_reserves_unavailable"
         };
     }
-    source_price = calculate_price_v2(
+    let source_price = calculate_price_v2(
         source_reserves.r0,
         source_reserves.r1,
         decimals_in,
