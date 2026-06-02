@@ -695,6 +695,19 @@ pub async fn run_chain(
         OrchestratorMode::V1 | OrchestratorMode::Off => (None, None),
     };
 
+    // Phase 1 OMEGA Route Discovery — spawn the shadow radar (gated by
+    // ARBX_ROUTE_DISCOVERY_MODE; default off → not spawned, zero overhead). It
+    // reuses the orchestrator's ImpactIndex as the live pool source, runs purely
+    // in shadow, and NEVER writes arbx:opps:detected. Cloned handles so the
+    // mempool-mode branches below are unaffected. When the orchestrator is off
+    // (impact_index_opt = None) the worker logs an honest skip.
+    crate::route_discovery::route_discovery_worker::spawn_route_discovery(
+        chain_id,
+        redis.clone(),
+        impact_index_opt.clone(),
+        cancel.clone(),
+    );
+
     // FASE OMEGA — Block/log backrun mode: subscribe to `newHeads` + `eth_getLogs`(Swap)
     // instead of the pending-tx firehose (free-RPC friendly). Spawns the block scanner and
     // SKIPS the pending-tx detection_loop entirely. Requires orch_mode v2/shadow so an
