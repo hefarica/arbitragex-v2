@@ -237,7 +237,15 @@ impl StrategyApplicabilityEngine {
     /// Load from a path; missing/unreadable file ⇒ safe defaults (logged).
     pub fn load_or_default(path: &Path) -> Self {
         match std::fs::read_to_string(path) {
-            Ok(s) => Self::from_yaml_str(&s),
+            Ok(s) => {
+                info!(
+                    event = "route_discovery.config_loaded",
+                    path = %path.display(),
+                    bytes = s.len(),
+                    "route_applicability config file read; parsing"
+                );
+                Self::from_yaml_str(&s)
+            }
             Err(_) => {
                 info!(
                     event = "route_discovery.config_default",

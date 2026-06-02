@@ -49,8 +49,16 @@ COPY --from=builder /build/target/release/searcher-rs /usr/local/bin/searcher-rs
 # them on a cold boot. Without this the dir is absent and boot-load returns 0
 # (cartridge_loader.dir_not_found); hot-reload via Redis still works regardless.
 COPY --from=builder /build/searcher-rs/cartridges /app/cartridges
+# Hardening (Phase 1 route-discovery): ship the strategy applicability config so
+# the engine loads the declared matrix instead of only the embedded safe
+# defaults. If absent/invalid the engine still falls back to safe defaults
+# (route_discovery.config_default). Read-only at runtime.
+COPY --from=builder /build/searcher-rs/config /app/config
 USER arbx
 ENV ARBX_CONFIG_PATH=/app/configs/app.toml
+# Absolute path so the route-discovery worker is independent of CWD. The worker
+# honors ARBX_ROUTE_APPLICABILITY_CONFIG over its relative default.
+ENV ARBX_ROUTE_APPLICABILITY_CONFIG=/app/config/strategies/route_applicability.yaml
 EXPOSE 9001
 ENTRYPOINT ["/usr/bin/tini","--"]
 CMD ["/usr/local/bin/searcher-rs"]
