@@ -705,6 +705,7 @@ pub async fn run_chain(
         chain_id,
         redis.clone(),
         impact_index_opt.clone(),
+        cartridge_runner.clone(),
         cancel.clone(),
     );
 

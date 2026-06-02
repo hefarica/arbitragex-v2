@@ -11,13 +11,17 @@
 //! The per-tick work is split into a **pure** [`evaluate_tick`] (graph → events,
 //! no Redis/time) and the thin async loop, so the logic unit-tests in memory.
 
+use crate::cartridge::runner::CartridgeRunner;
+use crate::cartridge_boot::shadow_evaluate_intent;
 use crate::impact_index::ImpactIndex;
 use crate::route_discovery::graph_builder::{build_graph, GraphBuildConfig, GraphBuildOutcome};
+use crate::route_discovery::route_intent_dispatcher::plan_dispatch;
 use crate::route_discovery::strategy_applicability::StrategyApplicabilityEngine;
 use crate::route_discovery::telemetry;
 use crate::route_discovery::types::RouteCandidate;
 use crate::route_discovery::unique_route_finder::{find_routes, RouteFinderConfig};
 use crate::route_discovery::RouteDiscoveryMode;
+use crate::route_intent::RouteIntent;
 use ethers::types::Address;
 use redis::aio::ConnectionManager;
 use serde_json::Value;
@@ -114,25 +118,38 @@ impl WorkerConfig {
     }
 }
 
-/// Pure per-tick output: annotated routes + telemetry events + tick summary.
+/// Pure per-tick output: annotated routes + telemetry events + tick summary +
+/// the intents to shadow-evaluate (executed by the async loop when a cartridge
+/// runner is available).
 #[derive(Debug, Default)]
 pub struct TickOutput {
     pub routes: Vec<RouteCandidate>,
     pub events: Vec<Value>,
     pub tick_summary: Value,
+    /// Intents to hand to `shadow_evaluate_intent` (only when dispatch enabled).
+    pub dispatch_intents: Vec<RouteIntent>,
     pub routes_found: usize,
+    pub routes_dispatched: usize,
     pub telemetry_emitted: usize,
 }
 
 /// Pure tick evaluation: run the finder over `outcome.graph`, annotate each
-/// candidate with applicability, and build (capped) telemetry events + the tick
-/// summary. No Redis, no clock — `latency_ms` is injected by the caller.
+/// candidate with applicability, plan dispatches, and build (capped) telemetry
+/// events + the tick summary. No Redis, no clock, no cartridge call —
+/// `latency_ms` is injected and the actual `shadow_evaluate_intent` is done by
+/// the caller using `dispatch_intents`.
+///
+/// `dispatch_enabled` is `true` only when a cartridge runner exists; when
+/// `false`, no `route_intent.emitted` events and no `dispatch_intents` are
+/// produced (R8: the worker then only emits discovery telemetry).
+#[allow(clippy::too_many_arguments)]
 pub fn evaluate_tick(
     outcome: &GraphBuildOutcome,
     chain_id: u64,
     engine: &StrategyApplicabilityEngine,
     finder: &RouteFinderConfig,
     max_telemetry_per_tick: usize,
+    dispatch_enabled: bool,
     latency_ms: u64,
     mode: &str,
 ) -> TickOutput {
@@ -168,6 +185,34 @@ pub fn evaluate_tick(
         rejected_emitted += 1;
     }
 
+    // Dispatch planning (only when a cartridge runner is available). Capped at
+    // max_telemetry_per_tick so neither shadow-eval spawns nor route_intent.
+    // emitted events explode under a large graph.
+    let mut dispatch_intents: Vec<RouteIntent> = Vec::new();
+    let mut routes_dispatched = 0usize;
+    if dispatch_enabled {
+        let mut dispatch_budget = 0usize;
+        'routes: for c in routes.iter() {
+            for plan in plan_dispatch(c, engine) {
+                if dispatch_budget >= max_telemetry_per_tick {
+                    break 'routes;
+                }
+                events.push(telemetry::route_intent_emitted_event(
+                    chain_id,
+                    &plan.route_hash,
+                    plan.strategy_label.as_str(),
+                    mode,
+                    plan.dispatch_deferred.as_deref(),
+                ));
+                if let Some(intent) = plan.intent {
+                    dispatch_intents.push(intent);
+                    routes_dispatched += 1;
+                }
+                dispatch_budget += 1;
+            }
+        }
+    }
+
     let tick_summary = telemetry::tick_event(
         chain_id,
         ALGORITHM,
@@ -175,7 +220,7 @@ pub fn evaluate_tick(
         outcome.graph.edges.len(),
         outcome.rejected.len(),
         routes.len(),
-        0, // routes_dispatched — filled when the dispatcher lands (later commit)
+        routes_dispatched,
         telemetry_emitted,
         found.dropped_for_cap,
         latency_ms,
@@ -187,6 +232,8 @@ pub fn evaluate_tick(
         routes,
         events,
         tick_summary,
+        dispatch_intents,
+        routes_dispatched,
         telemetry_emitted,
     }
 }
@@ -198,8 +245,10 @@ async fn run_loop(
     impact_index: Arc<RwLock<ImpactIndex>>,
     engine: StrategyApplicabilityEngine,
     cfg: WorkerConfig,
+    runner: Option<Arc<CartridgeRunner>>,
     cancel: CancellationToken,
 ) {
+    let dispatch_enabled = runner.is_some();
     let mut ticker = tokio::time::interval(Duration::from_millis(cfg.interval_ms.max(1_000)));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     info!(
@@ -239,6 +288,7 @@ async fn run_loop(
             &engine,
             &cfg.finder,
             cfg.max_telemetry_per_tick,
+            dispatch_enabled,
             latency_ms,
             "shadow",
         );
@@ -248,14 +298,28 @@ async fn run_loop(
         }
         telemetry::publish(&mut redis, &tick.tick_summary).await;
 
+        let routes_found = tick.routes_found;
+        let routes_dispatched = tick.routes_dispatched;
+        let telemetry_emitted = tick.telemetry_emitted;
+
+        // Execute the planned shadow evaluations. THE ONLY downstream is
+        // shadow_evaluate_intent (observe-only); spawned fire-and-forget exactly
+        // like the orchestrator's shadow fan-out. It never writes opps:detected.
+        if let Some(r) = &runner {
+            for intent in tick.dispatch_intents {
+                tokio::spawn(shadow_evaluate_intent(r.clone(), intent, chain_id));
+            }
+        }
+
         info!(
             event = "route_discovery.tick",
             chain_id,
             pools_total = outcome.pools_total,
             edges_built = outcome.graph.edges.len(),
             edges_rejected = outcome.rejected.len(),
-            routes_found = tick.routes_found,
-            telemetry_emitted = tick.telemetry_emitted,
+            routes_found,
+            routes_dispatched,
+            telemetry_emitted,
             latency_ms,
         );
     }
@@ -270,10 +334,16 @@ pub fn spawn_route_discovery(
     chain_id: u64,
     redis: ConnectionManager,
     impact_index: Option<Arc<RwLock<ImpactIndex>>>,
+    runner: Option<Arc<CartridgeRunner>>,
     cancel: CancellationToken,
 ) {
     let mode = RouteDiscoveryMode::from_env();
-    info!(event = "route_discovery.mode", chain_id, mode = mode.as_str());
+    info!(
+        event = "route_discovery.mode",
+        chain_id,
+        mode = mode.as_str(),
+        dispatch_enabled = runner.is_some()
+    );
     if !mode.is_enabled() {
         return; // off → dormant, nothing spawned
     }
@@ -305,7 +375,7 @@ pub fn spawn_route_discovery(
     );
 
     tokio::spawn(async move {
-        run_loop(redis, chain_id, impact_index, engine, cfg, cancel).await;
+        run_loop(redis, chain_id, impact_index, engine, cfg, runner, cancel).await;
     });
 }
 
@@ -367,7 +437,7 @@ mod tests {
         let outcome = outcome_two_v2();
         let engine = StrategyApplicabilityEngine::default();
         let finder = RouteFinderConfig::default();
-        let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, 42, "shadow");
+        let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, false, 42, "shadow");
 
         // Two opposite-order 2-cycles found.
         assert_eq!(tick.routes_found, 2);
@@ -404,7 +474,7 @@ mod tests {
         let engine = StrategyApplicabilityEngine::default();
         let finder = RouteFinderConfig::default();
         // Cap at 1 candidate worth of telemetry.
-        let tick = evaluate_tick(&outcome, 1, &engine, &finder, 1, 0, "shadow");
+        let tick = evaluate_tick(&outcome, 1, &engine, &finder, 1, false, 0, "shadow");
         assert_eq!(tick.telemetry_emitted, 1);
         // 1 candidate (2 events) + 1 rejected (rejected uses its own budget) = 3.
         let candidate_events = tick
@@ -419,15 +489,43 @@ mod tests {
     fn no_event_targets_opps_detected() {
         // Static guarantee: the worker's tick produces ONLY route_discovery.* /
         // route_intent.emitted events — never anything aimed at opps:detected.
+        // Exercised with dispatch ENABLED so route_intent.emitted is covered too.
         let outcome = outcome_two_v2();
         let engine = StrategyApplicabilityEngine::default();
         let finder = RouteFinderConfig::default();
-        let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, 0, "shadow");
+        let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, true, 0, "shadow");
         for e in tick.events.iter().chain(std::iter::once(&tick.tick_summary)) {
             let name = e["event"].as_str().unwrap_or_default();
-            assert!(name.starts_with("route_discovery."), "unexpected event {name}");
+            assert!(
+                name.starts_with("route_discovery.") || name == "route_intent.emitted",
+                "unexpected event {name}"
+            );
             let serialized = serde_json::to_string(e).unwrap();
             assert!(!serialized.contains("opps:detected"));
+        }
+    }
+
+    #[test]
+    fn dispatch_enabled_plans_dex_arb_and_counts() {
+        let outcome = outcome_two_v2();
+        let engine = StrategyApplicabilityEngine::default();
+        let finder = RouteFinderConfig::default();
+        let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, true, 7, "shadow");
+        // Two V2V2 routes → dex_arb dispatched for each (flashloan has no cartridge).
+        assert_eq!(tick.routes_dispatched, 2);
+        assert_eq!(tick.dispatch_intents.len(), 2);
+        assert_eq!(tick.tick_summary["routes_dispatched"], 2);
+        // route_intent.emitted events present, all shadow, none deferred (dex_arb).
+        let emitted: Vec<_> = tick
+            .events
+            .iter()
+            .filter(|e| e["event"] == "route_intent.emitted")
+            .collect();
+        assert_eq!(emitted.len(), 2);
+        for e in emitted {
+            assert_eq!(e["mode"], "shadow");
+            assert!(e["dispatch_deferred"].is_null());
+            assert_eq!(e["strategy"], "dex_arb_v2v2");
         }
     }
 

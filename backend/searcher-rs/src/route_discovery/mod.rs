@@ -25,6 +25,7 @@
 pub mod canonicalizer;
 pub mod graph_builder;
 pub mod route_discovery_worker;
+pub mod route_intent_dispatcher;
 pub mod strategy_applicability;
 pub mod telemetry;
 pub mod types;
