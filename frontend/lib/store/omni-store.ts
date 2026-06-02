@@ -25,6 +25,7 @@ import { devtools } from "zustand/middleware";
 
 import type { Chain, DEX, Pool } from "@/lib/registries/types";
 import type { OmniOpportunity } from "./types";
+import type { WalletRow } from "@/lib/api/wallets";
 import { getApiBaseUrl } from "@/lib/api-client";
 
 // Re-export OmniOpportunity as the canonical opportunity type
