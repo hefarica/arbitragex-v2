@@ -17,11 +17,8 @@ import { CpuIcon, ActivityIcon, ClockIcon, AlertCircleIcon, ShieldCheckIcon } fr
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import {
-  useCartridgeTelemetry,
-  type CartridgeTelemetry,
-  type TelemetryStatus,
-} from "@/lib/hooks/useCartridgeTelemetry";
+import type { CartridgeTelemetry, TelemetryStatus } from "@/lib/hooks/useCartridgeTelemetry";
+import { useCartridgeRest } from "@/lib/hooks/useRouteDiscoveryRest";
 
 function StatusBadge({ status }: { status: TelemetryStatus }) {
   if (status === "LIVE")
@@ -69,7 +66,7 @@ function MsgRow({ m }: { m: CartridgeTelemetry }) {
 }
 
 export function CartridgeTelemetryPanel() {
-  const { messages, status } = useCartridgeTelemetry();
+  const { messages, status } = useCartridgeRest();
   const recent = messages.slice(-40).reverse();
 
   return (
@@ -89,10 +86,11 @@ export function CartridgeTelemetryPanel() {
         {status === "STALE" && messages.length === 0 && (
           <Alert variant="destructive">
             <AlertCircleIcon className="w-4 h-4" />
-            <AlertTitle>WebSocket disconnected</AlertTitle>
+            <AlertTitle>No telemetry snapshot</AlertTitle>
             <AlertDescription className="text-sm">
-              Waiting for cartridge telemetry. Admin session required; cartridges must run
-              in shadow (ARBX_CARTRIDGE_MODE=shadow).
+              The cartridge telemetry snapshot is unavailable — the api-server/edge may be
+              unreachable, or cartridges are not running in shadow
+              (ARBX_CARTRIDGE_MODE=shadow). Polling /api/cartridges every 5s.
             </AlertDescription>
           </Alert>
         )}

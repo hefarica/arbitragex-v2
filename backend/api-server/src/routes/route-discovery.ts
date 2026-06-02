@@ -176,7 +176,9 @@ export function buildRouteDiscoveryRouter(cache: TelemetryCache): Router {
     );
   });
 
-  // GET /api/route-discovery/routes?limit=100 — recent discovered candidates.
+  // GET /api/route-discovery/routes?limit=100 — recent discovered routes, with
+  // candidate topology MERGED with strategy applicability + dispatch by
+  // route_hash (server-side, so REST consumers get the full row without the WS).
   router.get("/api/route-discovery/routes", (req, res) => {
     if (cache.isEmpty()) {
       res.json(empty("no_telemetry_yet"));
@@ -184,11 +186,42 @@ export function buildRouteDiscoveryRouter(cache: TelemetryCache): Router {
     }
     const raw = Number(req.query["limit"] ?? 100);
     const limit = Number.isFinite(raw) ? Math.min(Math.max(raw, 1), 200) : 100;
-    res.json(
-      ok({
-        routes: cache.recent("route_discovery.route_candidate", limit),
-      }),
-    );
+
+    const candidates = cache.recent("route_discovery.route_candidate", limit);
+    const appls = cache.recent("route_discovery.strategy_applicability", 200);
+    const intents = cache.recent("route_intent.emitted", 200);
+    const applByHash = new Map<string, TelemetryEvent>();
+    for (const a of appls) {
+      const h = a["route_hash"];
+      if (typeof h === "string" && !applByHash.has(h)) applByHash.set(h, a);
+    }
+    const intentByHash = new Map<string, TelemetryEvent>();
+    for (const i of intents) {
+      const h = i["route_hash"];
+      if (typeof h === "string" && !intentByHash.has(h)) intentByHash.set(h, i);
+    }
+
+    const routes = candidates.map((c) => {
+      const h = typeof c["route_hash"] === "string" ? (c["route_hash"] as string) : "";
+      const a = applByHash.get(h);
+      const i = intentByHash.get(h);
+      return {
+        route_hash: h,
+        route_kind: c["route_kind"] ?? null,
+        hops: c["hops"] ?? null,
+        tokens: c["tokens"] ?? [],
+        pools: c["pools"] ?? [],
+        protocols: c["protocols"] ?? [],
+        fee_tiers: c["fee_tiers"] ?? [],
+        directions: c["directions"] ?? [],
+        applicable_strategies: a?.["applicable_strategies"] ?? [],
+        rejected_strategies: a?.["rejected_strategies"] ?? [],
+        dispatch_strategy: i?.["strategy"] ?? null,
+        dispatch_deferred: i?.["dispatch_deferred"] ?? null,
+      };
+    });
+
+    res.json(ok({ routes }));
   });
 
   return router;

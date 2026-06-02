@@ -25,12 +25,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import {
-  useRouteDiscoveryTelemetry,
-  type MergedRoute,
-  type RouteDiscoveryTick,
-  type TelemetryStatus,
+import type {
+  MergedRoute,
+  RouteDiscoveryTick,
+  TelemetryStatus,
 } from "@/lib/hooks/useRouteDiscoveryTelemetry";
+import { useRouteDiscoveryRest } from "@/lib/hooks/useRouteDiscoveryRest";
 
 function num(v: unknown): string {
   return typeof v === "number" && Number.isFinite(v) ? String(v) : "—";
@@ -143,7 +143,7 @@ function LoadingRows() {
 }
 
 export function RouteDiscoveryPanel() {
-  const { lastTick, routes, messages, status } = useRouteDiscoveryTelemetry();
+  const { lastTick, routes, recent, status } = useRouteDiscoveryRest();
   const hasData = lastTick !== null || routes.length > 0;
 
   return (
@@ -164,11 +164,11 @@ export function RouteDiscoveryPanel() {
         {status === "STALE" && !hasData && (
           <Alert variant="destructive">
             <AlertCircleIcon className="w-4 h-4" />
-            <AlertTitle>WebSocket disconnected</AlertTitle>
+            <AlertTitle>No telemetry snapshot</AlertTitle>
             <AlertDescription className="text-sm">
-              Waiting for route-discovery telemetry. Admin session required for WebSocket
-              access, and the radar must be running in shadow
-              (ARBX_ROUTE_DISCOVERY_MODE=shadow).
+              The route-discovery snapshot is unavailable — the api-server/edge may be
+              unreachable, or the radar is not running in shadow
+              (ARBX_ROUTE_DISCOVERY_MODE=shadow). Polling /api/route-discovery every 5s.
             </AlertDescription>
           </Alert>
         )}
@@ -207,12 +207,11 @@ export function RouteDiscoveryPanel() {
         {hasData && (
           <div>
             <h4 className="text-sm font-semibold mb-2">
-              Live event feed (last {Math.min(messages.length, 12)})
+              Live event feed (last {Math.min(recent.length, 12)})
             </h4>
             <div className="font-mono text-[11px] bg-muted/30 rounded p-2 max-h-48 overflow-y-auto space-y-0.5">
-              {messages
-                .slice(-12)
-                .reverse()
+              {recent
+                .slice(0, 12)
                 .map((m, i) => (
                   <div key={i} className="truncate text-muted-foreground">
                     <span className="text-foreground">{str(m.event)}</span>{" "}
