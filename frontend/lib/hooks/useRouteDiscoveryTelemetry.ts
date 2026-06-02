@@ -109,7 +109,11 @@ export interface UseRouteDiscoveryTelemetryResult {
 }
 
 const MAX_WS_ERRORS = 3;
-const MAX_BUFFER = 200;
+// One radar tick floods ~400+ events (candidate+applicability per route, then
+// rejected + dispatch intents). The buffer must hold MORE than one tick so a
+// route's candidate (emitted first) is still present to merge with its later
+// applicability/intent events — otherwise the routes table loses topology.
+const MAX_BUFFER = 1500;
 const MAX_ROUTES = 100;
 
 function asString(v: unknown): string | undefined {

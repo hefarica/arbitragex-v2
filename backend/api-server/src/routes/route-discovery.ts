@@ -30,7 +30,12 @@ export interface TelemetryEvent {
  */
 export class TelemetryCache {
   private lastByEvent = new Map<string, TelemetryEvent>();
+  // Global ring across ALL event types — backs the unfiltered live feed.
   private ring: TelemetryEvent[] = [];
+  // Per-type rings — so e.g. route_candidate events are retained even though a
+  // single tick floods ~hundreds of events of other types right after them. A
+  // single global ring would rotate past the candidates within the same tick.
+  private byType = new Map<string, TelemetryEvent[]>();
   private counts = new Map<string, number>();
   private lastAnyAt: number | null = null;
   private readonly maxRing: number;
@@ -45,6 +50,13 @@ export class TelemetryCache {
     this.counts.set(type, (this.counts.get(type) ?? 0) + 1);
     this.ring.push(ev);
     if (this.ring.length > this.maxRing) this.ring.shift();
+    let arr = this.byType.get(type);
+    if (!arr) {
+      arr = [];
+      this.byType.set(type, arr);
+    }
+    arr.push(ev);
+    if (arr.length > this.maxRing) arr.shift();
     this.lastAnyAt = Date.now();
   }
 
@@ -52,9 +64,11 @@ export class TelemetryCache {
     return this.lastByEvent.get(type) ?? null;
   }
 
-  /** Most recent events (newest first), optionally filtered by `event` type. */
+  /** Most recent events (newest first). With `type`, reads that type's
+   *  dedicated ring (retains the last N of THAT type regardless of how many
+   *  other-type events flooded in between). Without, the global ring. */
   recent(type: string | undefined, limit: number): TelemetryEvent[] {
-    const items = type ? this.ring.filter((e) => e.event === type) : this.ring;
+    const items = type ? (this.byType.get(type) ?? []) : this.ring;
     return items.slice(-limit).reverse();
   }
 
