@@ -23,6 +23,7 @@
 //! (the default) nothing is spawned — zero overhead, binary behavior unchanged.
 
 pub mod canonicalizer;
+pub mod graph_builder;
 pub mod types;
 
 use std::env;
