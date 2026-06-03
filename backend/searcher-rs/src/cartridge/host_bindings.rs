@@ -99,6 +99,7 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
     engine.register_fn("get_reserves", move |pool_addr: &str| -> Dynamic {
         let ctx = ctx_reserves.clone();
         let pool_addr = pool_addr.to_lowercase();
+        let chain_id = ctx.chain_id;
         let result = ctx.rt_handle.block_on(async {
             let mut redis = ctx.redis.write().await;
             let key = format!("arbx:pool_reserves:{}:{}", ctx.chain_id, pool_addr);
@@ -106,14 +107,24 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
             raw
         });
 
+        // FASE 4 — cartridge cache observability: log hit/miss so a starved cartridge run is
+        // traceable to "Redis had no reserves for this pool" vs "cartridge never asked".
         match result {
-            Some(json_str) => {
-                match serde_json::from_str::<serde_json::Value>(&json_str) {
-                    Ok(val) => json_value_to_dynamic(&val),
-                    Err(_) => Dynamic::UNIT,
+            Some(json_str) => match serde_json::from_str::<serde_json::Value>(&json_str) {
+                Ok(val) => {
+                    debug!(event = "cartridge.redis_lookup", chain_id, pool = %pool_addr, hit = true);
+                    json_value_to_dynamic(&val)
                 }
+                // Redis HAD a value but it did not parse — a real corruption signal, not a miss.
+                Err(e) => {
+                    warn!(event = "cartridge.redis_decode_failed", chain_id, pool = %pool_addr, kind = "pool_reserves", error = %e);
+                    Dynamic::UNIT
+                }
+            },
+            None => {
+                debug!(event = "cartridge.redis_lookup", chain_id, pool = %pool_addr, hit = false);
+                Dynamic::UNIT
             }
-            None => Dynamic::UNIT,
         }
     });
 
@@ -181,18 +192,29 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
     engine.register_fn("get_v3_slot0", move |pool_addr: &str| -> Dynamic {
         let ctx = ctx_slot0.clone();
         let pool_addr = pool_addr.to_lowercase();
+        let chain_id = ctx.chain_id;
         let result = ctx.rt_handle.block_on(async {
             let mut redis = ctx.redis.write().await;
             let key = format!("arbx:v3_slot0:{}:{}", ctx.chain_id, pool_addr);
             let raw: Option<String> = redis::AsyncCommands::get(&mut *redis, &key).await.ok()?;
             raw
         });
+        // FASE 4 — same hit/miss + decode-failure observability as get_reserves, for the V3 path.
         match result {
             Some(json_str) => match serde_json::from_str::<serde_json::Value>(&json_str) {
-                Ok(val) => json_value_to_dynamic(&val),
-                Err(_) => Dynamic::UNIT,
+                Ok(val) => {
+                    debug!(event = "cartridge.redis_lookup", chain_id, pool = %pool_addr, hit = true);
+                    json_value_to_dynamic(&val)
+                }
+                Err(e) => {
+                    warn!(event = "cartridge.redis_decode_failed", chain_id, pool = %pool_addr, kind = "v3_slot0", error = %e);
+                    Dynamic::UNIT
+                }
             },
-            None => Dynamic::UNIT,
+            None => {
+                debug!(event = "cartridge.redis_lookup", chain_id, pool = %pool_addr, hit = false);
+                Dynamic::UNIT
+            }
         }
     });
 
