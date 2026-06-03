@@ -1,0 +1,28 @@
+[package]
+name = "mcp-sim-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ArbitrageX v2 — local MCP (stdio) server exposing the REAL searcher-rs discovery/sizing kernels to Claude. Shadow/read-only: no capital, no broadcast, no executor, no wallets."
+
+[[bin]]
+name = "arbx-sim-engine"
+path = "src/main.rs"
+
+[dependencies]
+# Reuse the real, already-built kernels — NO re-implementation (Zero-Mocks):
+#   route_discovery::find_routes (DFS 2–3 hop), amm_math::v2_amount_out (V2 CPMM).
+searcher-rs = { path = "../searcher-rs" }
+
+# Official Rust MCP SDK (Model Context Protocol). stdio transport + tool macros.
+rmcp = { version = "0.3", features = ["server", "transport-io", "macros"] }
+
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = "1"
+ethers = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
