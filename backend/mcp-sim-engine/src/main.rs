@@ -19,8 +19,9 @@
 
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::Arc;
 
-use ethers::types::{Address, U256};
+use ethers::types::{Address, H256, U256};
 use rmcp::{
     handler::server::{router::tool::ToolRouter, tool::Parameters, wrapper::Json},
     tool, tool_handler, tool_router,
@@ -30,11 +31,13 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use prioritization_spine::round_trip_executor::RoundTripContext;
 use searcher_rs::amm_math::v2_amount_out;
 use searcher_rs::route_discovery::graph_builder::TokenGraph;
 use searcher_rs::route_discovery::types::{RouteDirection, RouteEdge};
 use searcher_rs::route_discovery::unique_route_finder::{find_routes, RouteFinderConfig};
 use searcher_rs::route_intent::ProtocolType;
+use searcher_rs::sim_orchestrator::{execute_round_trip_revm, RoundTripExecutionConfig};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helpers
@@ -76,6 +79,47 @@ struct StatusOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     reference: Option<String>,
     detail: String,
+}
+
+/// Result of `simulate_bundle` (REAL REVM round-trip via searcher_rs::sim_orchestrator).
+#[derive(Debug, Serialize, JsonSchema)]
+struct SimOutput {
+    engine: String,
+    chain_id: u64,
+    /// Always `true` — the orchestrator structurally rejects live execution
+    /// (`RoundTripExecutionConfig.paper_mode` must be true). NO-ACTIVE by design.
+    paper_mode: bool,
+    /// `true` only when the simulated executeArbitrage met the min-profit floor.
+    passed: bool,
+    simulated_profit_token_in_wei: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    intermediate_amount_out_wei: Option<String>,
+    gas_used_total: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fail_reason: Option<String>,
+    /// Set when the call could not run (bad input or missing operator infra) —
+    /// fail-honest, never a fabricated profit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    /// The exact env var that must be set to enable the REVM sim, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    needs_env: Option<String>,
+}
+
+/// Build a fail-honest `SimOutput` (no fabricated profit) for input/infra errors.
+fn sim_err(chain_id: u64, error: &str, needs_env: Option<&str>, detail: &str) -> Json<SimOutput> {
+    Json(SimOutput {
+        engine: "execute_round_trip_revm (REAL, paper_mode=true)".to_string(),
+        chain_id,
+        paper_mode: true,
+        passed: false,
+        simulated_profit_token_in_wei: "0".to_string(),
+        intermediate_amount_out_wei: None,
+        gas_used_total: 0,
+        fail_reason: Some(detail.to_string()),
+        error: Some(error.to_string()),
+        needs_env: needs_env.map(|s| s.to_string()),
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -199,10 +243,32 @@ struct SizingOutput {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct SimulateBundleParams {
+    /// EVM chain ID. The fork RPC is read from env `RPC_HTTP_<chain_id>` and the
+    /// deployed ArbitrageExecutor from env `EXECUTOR_<chain_id>` (no-hardcode).
+    chain_id: u64,
+    /// token_in address (0x); amount_in is denominated in this token's wei.
+    token_in: String,
+    /// token_out address (0x).
+    token_out: String,
+    /// amount_in in wei (decimal string, > 0).
+    amount_in_wei: String,
+    /// Forward-leg router (0x): token_in → token_out.
+    forward_router: String,
+    /// Forward-leg path: ≥2 token addresses (e.g. [token_in, token_out]).
+    forward_path: Vec<String>,
+    /// Backward-leg router (0x): token_out → token_in.
+    backward_router: String,
+    /// Backward-leg path: ≥2 token addresses (e.g. [token_out, token_in]).
+    backward_path: Vec<String>,
+    /// Gas limit for the simulated executeArbitrage. Default 30_000_000.
     #[serde(default)]
-    amount_in: Option<String>,
+    gas_limit: Option<u64>,
+    /// Effective gas price (wei) for net accounting. Default 0 (profit is gross of gas).
     #[serde(default)]
-    block_number: Option<u64>,
+    gas_price_wei: Option<String>,
+    /// Optional route_hash (0x + 64 hex) passed through to calldata for byte-stability.
+    #[serde(default)]
+    route_hash: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -448,18 +514,120 @@ impl SimEngine {
         })
     }
 
-    /// HONEST stub: REVM bundle simulation needs a fork RPC + encoded round-trip.
+    /// REAL in-process REVM round-trip simulation of a 2-leg arbitrage against
+    /// the deployed ArbitrageExecutor, via `searcher_rs::sim_orchestrator::execute_round_trip_revm`.
+    /// Gated on operator infra (fork RPC + executor address, both from env, no-hardcode);
+    /// runs ONLY in `paper_mode=true` (the orchestrator structurally rejects live exec).
+    /// Fails honestly (never fabricates a profit) when infra/inputs are missing.
     #[tool(
         name = "simulate_bundle",
-        description = "In-process REVM bundle simulation. Requires a fork RPC + an encoded RoundTripContext (searcher_rs::sim_orchestrator); this local stdio scaffold runs no RPC, so it fails honestly with requires_infra instead of fabricating a profit."
+        description = "REAL REVM round-trip sim of a 2-leg arbitrage (token_in -> token_out -> token_in) against the deployed ArbitrageExecutor, via searcher_rs::sim_orchestrator::execute_round_trip_revm. Requires env RPC_HTTP_<chain_id> (fork RPC) + EXECUTOR_<chain_id> (executor address); paper_mode-only, never broadcasts. Returns simulated profit/gas or a fail-honest reason."
     )]
-    fn simulate_bundle(&self, Parameters(_p): Parameters<SimulateBundleParams>) -> Json<StatusOutput> {
-        Json(StatusOutput {
-            status: "requires_infra".to_string(),
-            error: "fork_rpc_unavailable".to_string(),
-            phase: None,
-            reference: None,
-            detail: "REVM bundle sim needs a fork RPC + encoded RoundTripContext (searcher_rs::sim_orchestrator / sim_multistep). Wire pending: this stdio scaffold performs no network/RPC. No fabricated profit (RULE 00).".to_string(),
+    fn simulate_bundle(&self, Parameters(p): Parameters<SimulateBundleParams>) -> Json<SimOutput> {
+        // ── operator infra from env (no-hardcode; same convention as searcher-rs) ──
+        let rpc_key = format!("RPC_HTTP_{}", p.chain_id);
+        let rpc_url = match std::env::var(&rpc_key) {
+            Ok(u) if !u.trim().is_empty() => u,
+            _ => {
+                return sim_err(
+                    p.chain_id,
+                    "rpc_http_unset",
+                    Some(&rpc_key),
+                    "REVM round-trip sim needs a fork RPC for real chain state; set this env to enable. Nothing fabricated (RULE 00).",
+                )
+            }
+        };
+        let exec_key = format!("EXECUTOR_{}", p.chain_id);
+        let executor = match std::env::var(&exec_key).ok().and_then(|s| parse_addr(&s).ok()) {
+            Some(a) => a,
+            None => {
+                return sim_err(
+                    p.chain_id,
+                    "executor_unset",
+                    Some(&exec_key),
+                    "REVM round-trip sim simulates a DEPLOYED ArbitrageExecutor; set its address env to enable.",
+                )
+            }
+        };
+
+        // ── parse route inputs ──
+        let (token_in, token_out) = match (parse_addr(&p.token_in), parse_addr(&p.token_out)) {
+            (Ok(a), Ok(b)) => (a, b),
+            _ => return sim_err(p.chain_id, "invalid_token_address", None, "token_in/token_out must be 0x addresses"),
+        };
+        let (fwd_router, bwd_router) = match (parse_addr(&p.forward_router), parse_addr(&p.backward_router)) {
+            (Ok(a), Ok(b)) => (a, b),
+            _ => return sim_err(p.chain_id, "invalid_router_address", None, "forward_router/backward_router must be 0x addresses"),
+        };
+        let parse_path = |v: &[String]| -> Option<Vec<Address>> { v.iter().map(|s| parse_addr(s).ok()).collect() };
+        let fwd_path = match parse_path(&p.forward_path) {
+            Some(x) if x.len() >= 2 => x,
+            _ => return sim_err(p.chain_id, "invalid_forward_path", None, "forward_path needs >=2 valid 0x addresses"),
+        };
+        let bwd_path = match parse_path(&p.backward_path) {
+            Some(x) if x.len() >= 2 => x,
+            _ => return sim_err(p.chain_id, "invalid_backward_path", None, "backward_path needs >=2 valid 0x addresses"),
+        };
+        let amount_in = match U256::from_dec_str(p.amount_in_wei.trim()) {
+            Ok(a) if !a.is_zero() => a,
+            _ => return sim_err(p.chain_id, "invalid_amount_in", None, "amount_in_wei must be a positive decimal wei string"),
+        };
+        let gas_price_wei = match p.gas_price_wei.as_deref().map(|s| U256::from_dec_str(s.trim())) {
+            None => U256::zero(),
+            Some(Ok(g)) => g,
+            Some(Err(_)) => return sim_err(p.chain_id, "invalid_gas_price_wei", None, "gas_price_wei must be a decimal wei string"),
+        };
+        let route_hash: [u8; 32] = match p.route_hash.as_deref() {
+            None => [0u8; 32],
+            Some(h) => match H256::from_str(h) {
+                Ok(x) => x.0,
+                Err(_) => return sim_err(p.chain_id, "invalid_route_hash", None, "route_hash must be 0x + 64 hex"),
+            },
+        };
+        let deadline = U256::from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+                .saturating_add(300),
+        );
+
+        let ctx = RoundTripContext {
+            caller: executor,
+            token_in,
+            token_out,
+            amount_in,
+            forward_router: fwd_router,
+            forward_path: fwd_path,
+            backward_router: bwd_router,
+            backward_path: bwd_path,
+            deadline,
+        };
+        let config = RoundTripExecutionConfig {
+            chain_id: p.chain_id,
+            executor_address: executor,
+            gas_limit: p.gas_limit.unwrap_or(30_000_000),
+            gas_price_wei,
+            route_hash,
+            min_profit_wei: U256::from(1u8), // bare contract minimum (>0); economic floor is the caller's gate
+            paper_mode: true,                // structural NO-ACTIVE gate; orchestrator rejects false
+        };
+
+        // SimulatorV2::new is a cheap sync ctor; the RPC state fetch is lazy (LazyDb) inside simulate().
+        let simulator = Arc::new(simulator_v2::SimulatorV2::new(rpc_url));
+        let outcome = execute_round_trip_revm(&ctx, simulator, &config);
+
+        Json(SimOutput {
+            engine: "execute_round_trip_revm (REAL searcher_rs::sim_orchestrator + simulator-v2 REVM, paper_mode=true)".to_string(),
+            chain_id: p.chain_id,
+            paper_mode: true,
+            passed: outcome.passed,
+            simulated_profit_token_in_wei: outcome.simulated_profit_token_in.to_string(),
+            intermediate_amount_out_wei: outcome.intermediate_amount_out.map(|x| x.to_string()),
+            gas_used_total: outcome.gas_used_total,
+            fail_reason: outcome.fail_reason,
+            error: None,
+            needs_env: None,
         })
     }
 

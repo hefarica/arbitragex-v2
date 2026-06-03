@@ -12,8 +12,12 @@ path = "src/main.rs"
 
 [dependencies]
 # Reuse the real, already-built kernels — NO re-implementation (Zero-Mocks):
-#   route_discovery::find_routes (DFS 2–3 hop), amm_math::v2_amount_out (V2 CPMM).
+#   route_discovery::find_routes (DFS 2–3 hop), amm_math::v2_amount_out (V2 CPMM),
+#   sim_orchestrator::execute_round_trip_revm (REVM round-trip, paper_mode-only).
 searcher-rs = { path = "../searcher-rs" }
+# RoundTripContext type + the REVM SimulatorV2 used by simulate_bundle.
+prioritization-spine = { workspace = true }
+simulator-v2 = { path = "../simulator-v2" }
 
 # Official Rust MCP SDK (Model Context Protocol). stdio transport + tool macros.
 rmcp = { version = "0.3", features = ["server", "transport-io", "macros"] }

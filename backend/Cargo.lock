@@ -4248,11 +4248,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ethers",
+ "prioritization-spine",
  "rmcp",
  "schemars 1.2.1",
  "searcher-rs",
  "serde",
  "serde_json",
+ "simulator-v2",
  "tokio",
  "tracing",
  "tracing-subscriber",
