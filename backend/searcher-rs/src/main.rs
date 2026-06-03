@@ -185,6 +185,35 @@ async fn main() -> anyhow::Result<()> {
     // Phase 2: expose applied topology version/client-readiness gauges for clean UI surfaces.
     topology_reload::init_topology_metrics();
 
+    // ── OMEGA SEAL — Shadow capital-key lockout (defense-in-depth) ─────────────
+    // searcher-rs is a DETECTION/EMIT service and must NEVER hold a capital-
+    // bearing signing key (those live only in relays-client / sim-ctl). When
+    // ARBX_ORCHESTRATOR_MODE=shadow, enforce capital_exposed == 0 as a hard boot
+    // invariant: if a private key / mnemonic is present in THIS process's env,
+    // panic before any work. Canonical capital key: FLASHBOTS_SIGNER_KEY
+    // (see backend/relays-client/src/signer.rs).
+    if scanner::OrchestratorMode::from_env() == scanner::OrchestratorMode::Shadow {
+        const CAPITAL_KEY_ENV: [&str; 4] = [
+            "FLASHBOTS_SIGNER_KEY",
+            "EXECUTOR_PRIVATE_KEY",
+            "ARBX_SIGNER_PRIVATE_KEY",
+            "MNEMONIC",
+        ];
+        for key in CAPITAL_KEY_ENV {
+            if matches!(std::env::var(key), Ok(v) if !v.trim().is_empty()) {
+                panic!(
+                    "FATAL: capital-bearing key `{key}` present while \
+                     ARBX_ORCHESTRATOR_MODE=shadow — searcher-rs must run with \
+                     capital_exposed == 0 in shadow mode"
+                );
+            }
+        }
+        tracing::info!(
+            event = "searcher.shadow_capital_lock",
+            "shadow mode verified: no capital-bearing signer keys in env (capital_exposed=0)"
+        );
+    }
+
     let port: u16 = std::env::var("SEARCHER_HEALTH_PORT")
         .ok()
         .and_then(|v| v.parse().ok())

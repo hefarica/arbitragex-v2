@@ -327,6 +327,20 @@ async fn build_orchestrator(
         OpportunityEmitter::new(db.clone(), redis.clone(), opp_dedup)
     });
 
+    // ── OMEGA SEAL — Shadow "capital_exposed == 0" invariant ───────────────────
+    // In Shadow mode the orchestrator is observe-only: the emitter MUST be
+    // dry-run so it writes NOTHING to PG/Redis and can therefore never feed the
+    // downstream execution path (relays-client). This is searcher-rs's honest
+    // analog of `executor.capital_exposed() == 0` (searcher-rs holds no executor
+    // or capital). Asserted as a hard, always-on invariant so any future edit
+    // that swaps in a writing emitter under Shadow fails loudly at boot.
+    if mode == OrchestratorMode::Shadow {
+        assert!(
+            emitter.is_dry_run(),
+            "FATAL: Capital exposure detected in SHADOW mode — orchestrator emitter is not dry_run"
+        );
+    }
+
     let config_provider = Arc::new(ConfigProvider { trading_config });
 
     // ── Phase 16: populate ImpactIndex from PG + Redis at boot ─────────────
