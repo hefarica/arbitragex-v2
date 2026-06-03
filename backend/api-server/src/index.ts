@@ -1,6 +1,7 @@
 import express from "express";
 import pg from "pg";
 import { Redis } from "ioredis";
+import { PaperTradeArchiver } from "./routes/paper-trade-archiver.js";
 import { z } from "zod";
 import { clampBucketMinutes, clampHours, rowToPoint } from "./recon-timeseries.js";
 import { verifyAll } from "./readiness/verifiers/index.js";
@@ -1150,6 +1151,26 @@ if (pool) {
   });
 }
 
+// FASE OMEGA SHADOW — paper_trade_runs archiver (passive telemetry sink).
+// Reads arbx:opps:detected and persists each detected opportunity's sim
+// prediction into paper_trade_runs for drift analysis. 100% passive: reads
+// Redis + writes its own table only; never computes profit, never fabricates
+// rows. Dormant by default (project doctrine: land off, enable with evidence) —
+// set ARBX_PAPER_ARCHIVER_MODE=on to activate. Requires DATABASE_URL (pool).
+let paperArchiver: PaperTradeArchiver | null = null;
+if (pool && (process.env["ARBX_PAPER_ARCHIVER_MODE"] ?? "off").toLowerCase() === "on") {
+  paperArchiver = new PaperTradeArchiver({ redisUrl: REDIS_URL, pool, logger });
+  paperArchiver.start().catch((e) =>
+    logger.error({ event: "paper_archiver.start_err", err: (e as Error).message },
+      "paper_trade_runs archiver failed to start"),
+  );
+} else {
+  logger.info(
+    { event: "paper_archiver.dormant", reason: pool ? "mode_off" : "no_database_url" },
+    "paper_trade_runs archiver dormant (set ARBX_PAPER_ARCHIVER_MODE=on to enable)",
+  );
+}
+
 httpServer.listen(PORT, () => {
   logger.info({ event: "service.boot", port: PORT, env: cfg.system.env,
     upstreams: Object.keys(UPSTREAMS) }, `${SERVICE} listening`);
@@ -1158,6 +1179,8 @@ httpServer.listen(PORT, () => {
 const shutdown = async (sig: string) => {
   logger.info({ event: "service.shutdown", signal: sig }, "shutting down");
   await killSwitch.close().catch(() => {});
+  // Stop the passive paper-trade archiver (closes its dedicated Redis conn).
+  await paperArchiver?.stop().catch(() => {});
   // Arteria WSS: cerrar el subscriber de convergencia antes que el redis
   // principal para evitar errores de "Connection is closed" en handlers.
   await convergenceSubscriber.quit().catch(() => {});
