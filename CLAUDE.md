@@ -236,3 +236,49 @@ Reglas:
 Script `automation/claude-headless.sh` ejecuta Claude Code sin terminal para pipelines automatizados.
 
 *CORTEX MASTER ACTIVADO. IDENTIDAD INSTITUCIONAL Física Cuántica TOP 1% EMBEBIDA Y EN EJECUCIÓN CONTINUA. PIPELINE CANÓNICO Y ARQUITECTURA C-S-E SINCRONIZADA CON CONOCIMIENTO PHD.*
+
+---
+
+# 32. POLÍTICA PERMANENTE — GIT-URL-E2E-AUDITOR-SCAFFOLD (AUDIT / SCAFFOLD / SHADOW / READ-ONLY)
+
+> Integrada desde `~/.claude/skills/git-url-e2e-auditor-scaffold/project-policy/CLAUDE.md`.
+> Encabezado nuevo, anexado de forma NO destructiva (no se removió nada de §1-§31).
+
+Claude DEBE consultar la skill `git-url-e2e-auditor-scaffold` (en
+`~/.claude/skills/git-url-e2e-auditor-scaffold/SKILL.md`) en **toda interacción**
+relacionada con cualquiera de estos disparadores:
+
+- repositorios / **Git URL**
+- **frontend** / **backend**
+- **APIs** / **WebSocket**
+- **Redis / DB** (Postgres)
+- **Docker** / **CI/CD**
+- **pruebas** (tests) / **despliegue** (deploy)
+- **scaffold** / esqueleto / "qué falta por implementar"
+- **ArbitrageX / QuantumX**
+- **strategy upload** / **strategy validation**
+- **shadow runner** / **route builder live**
+- **ejecución shadow / read-only**
+
+### Reglas de la política
+
+1. **Consulta primero.** Ante cualquier disparador anterior, invoca la skill ANTES
+   de actuar (auditar, opinar o generar código).
+2. **Modo permanente:** `audit / scaffold / shadow / read-only`. NUNCA se activa
+   executor, wallets, llaves privadas, capital, ni se hace broadcast on-chain.
+3. **Sin flips a `live`.** Prohibido `live: true`, `*_MODE=live`. Solo
+   shadow/paper/read-only. Capital expuesto = 0.
+4. **Zero invención (RULE 00).** Solo se reporta lo observado en el repo. Si falta
+   algo → "no encontrado". Nunca fabricar archivos, endpoints ni resultados.
+5. **No-hardcode (`arbx-no-hardcode-doctrine`).** Valores de operador en el
+   scaffold = placeholders `process.env.*`, jamás literales.
+6. **Deferir a los gates existentes.** Si la auditoría toca contratos, flash loans,
+   ordenamiento MEV, net-profit, límites de riesgo o RPC failover, cita la skill
+   `arbx-*` correspondiente en vez de re-derivar la regla.
+7. **Si una ruta exige violar lo anterior → DETENERSE y reportar el bloqueo.**
+
+### Invocación
+
+- Command Menu / slash: `/git-url-e2e-auditor-scaffold <GIT_URL>`
+- Repo objetivo por defecto: `https://github.com/hefarica/arbitragex-v2.git`
+- Entrega siempre en el formato de 10 ítems definido en `SKILL.md`.
