@@ -93,7 +93,7 @@ export function MetricCard({
           : "no"
         : value;
   return (
-    <div className="rounded-lg border bg-card p-3">
+    <div className="glass-surface rounded-lg border p-3">
       <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </div>

@@ -185,7 +185,50 @@
   }
 }
 
-/* Glassmorphism Phase 8 - GPU Optimized */
+/* ── TradePro premium glassmorphism (dark theme) ───────────────────────────
+   Layered navy gradient backdrop + frosted-glass surfaces that let the
+   gradient bleed through. Dark-scoped; the light theme stays flat/solid.
+   This deliberately replicates the TradePro reference design at the operator's
+   explicit request — a controlled gradient+glass system, not noise. */
+
+/* Gradient backdrop — electric-blue glow over deep navy, pinned to viewport so
+   panels float over it (the glass blur samples this fixed layer). */
+.dark body {
+  background-color: oklch(0.13 0.035 266);
+  background-image:
+    radial-gradient(58% 48% at 50% -8%, oklch(0.55 0.20 263 / 0.22), transparent 62%),
+    radial-gradient(40% 34% at 93% 3%, oklch(0.50 0.18 296 / 0.14), transparent 58%),
+    radial-gradient(42% 38% at 5% 8%, oklch(0.52 0.15 232 / 0.12), transparent 58%),
+    linear-gradient(180deg, oklch(0.155 0.045 266) 0%, oklch(0.125 0.032 267) 52%, oklch(0.11 0.028 268) 100%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+/* Frosted-glass cards — translucent navy + blur so the gradient shows through,
+   with a hairline top highlight + soft drop shadow for the glass edge. */
+.dark [data-slot="card"] {
+  background-color: oklch(0.205 0.042 265 / 0.55);
+  backdrop-filter: blur(14px) saturate(1.35);
+  -webkit-backdrop-filter: blur(14px) saturate(1.35);
+  border-color: oklch(0.55 0.06 264 / 0.22);
+  box-shadow:
+    inset 0 1px 0 0 oklch(0.92 0.04 260 / 0.07),
+    0 10px 34px -16px oklch(0.02 0.02 266 / 0.85);
+}
+
+/* Opt-in glass surface for non-Card panels (metric tiles, etc.).
+   Solid in light theme, frosted in dark. */
+.glass-surface {
+  @apply bg-card;
+}
+.dark .glass-surface {
+  background-color: oklch(0.21 0.042 265 / 0.50);
+  backdrop-filter: blur(11px) saturate(1.3);
+  -webkit-backdrop-filter: blur(11px) saturate(1.3);
+  border-color: oklch(0.55 0.06 264 / 0.18);
+}
+
+/* Glassmorphism Phase 8 - GPU Optimized (legacy utilities, retained) */
 .glass-panel {
   @apply bg-background/60 backdrop-blur-md border border-white/20 shadow-sm;
   transform: translateZ(0);

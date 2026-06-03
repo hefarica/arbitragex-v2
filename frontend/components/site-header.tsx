@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { SidebarContents } from "@/components/app-sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { QuantumLogo } from "@/components/quantum-logo";
 import { cn } from "@/lib/utils";
 
 export function SiteHeader() {
@@ -43,7 +44,10 @@ export function SiteHeader() {
           </SheetTrigger>
           <SheetContent side="left" className="p-0">
             <SheetHeader>
-              <SheetTitle>QuantumX</SheetTitle>
+              <SheetTitle className="flex items-center gap-2">
+                <QuantumLogo className="size-5" />
+                Quantum<span className="text-primary">X</span>
+              </SheetTitle>
             </SheetHeader>
             <div className="flex flex-col gap-6 px-3 pb-6">
               <SidebarContents onNavigate={() => setMobileOpen(false)} />
@@ -54,10 +58,14 @@ export function SiteHeader() {
         <Link href="/" className="flex items-center gap-2.5">
           <span
             aria-hidden
-            className="size-7 rounded-md shadow-sm ring-1 ring-border bg-primary"
-          />
+            className="grid size-9 place-items-center rounded-lg bg-primary/10 shadow-sm ring-1 ring-primary/25"
+          >
+            <QuantumLogo className="size-7" />
+          </span>
           <div className="flex flex-col -space-y-0.5 leading-none">
-            <span className="text-sm font-semibold">QuantumX</span>
+            <span className="text-sm font-semibold tracking-tight">
+              Quantum<span className="text-primary">X</span>
+            </span>
             <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
               control plane
             </span>

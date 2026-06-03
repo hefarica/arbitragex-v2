@@ -1,20 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="ArbitrageX">
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="QuantumX">
+  <rect width="48" height="48" rx="11" fill="#0C1230"/>
   <defs>
-    <!--
-      Matches the site-header brand tile:
-      conic-gradient(from 210deg, primary, info 55%, success 85%, primary)
-      Approximated as a linear gradient for broad favicon support.
-      Brand palette: orange #d97757, blue #6a9bcc, green #788c5d.
-    -->
-    <linearGradient id="arbx-brand" x1="10%" y1="10%" x2="95%" y2="95%">
-      <stop offset="0%"   stop-color="#d97757"/>
-      <stop offset="55%"  stop-color="#6a9bcc"/>
-      <stop offset="90%"  stop-color="#788c5d"/>
-      <stop offset="100%" stop-color="#d97757"/>
+    <linearGradient id="qx-o" x1="10" y1="10" x2="38" y2="38" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9BC0FF"/>
+      <stop offset="0.52" stop-color="#4F7BF7"/>
+      <stop offset="1" stop-color="#2742E0"/>
     </linearGradient>
+    <radialGradient id="qx-n" cx="0.5" cy="0.45" r="0.6">
+      <stop stop-color="#EAF2FF"/>
+      <stop offset="0.55" stop-color="#6E9CFF"/>
+      <stop offset="1" stop-color="#2C54EE"/>
+    </radialGradient>
   </defs>
-  <rect x="1" y="1" width="30" height="30" rx="7" fill="url(#arbx-brand)"/>
-  <!-- Inner stroke ring to keep edge crisp on light/dark browser chrome. -->
-  <rect x="1.5" y="1.5" width="29" height="29" rx="6.5" fill="none"
-        stroke="rgba(20,20,19,0.25)" stroke-width="1"/>
+  <ellipse cx="24" cy="24" rx="15.5" ry="5.6" transform="rotate(45 24 24)" stroke="url(#qx-o)" stroke-width="2.4"/>
+  <ellipse cx="24" cy="24" rx="15.5" ry="5.6" transform="rotate(-45 24 24)" stroke="url(#qx-o)" stroke-width="2.4"/>
+  <circle cx="24" cy="24" r="3.8" fill="url(#qx-n)"/>
+  <circle cx="34.9" cy="13.1" r="1.8" fill="#9BC0FF"/>
+  <circle cx="13.1" cy="34.9" r="1.8" fill="#5B86F7"/>
 </svg>
