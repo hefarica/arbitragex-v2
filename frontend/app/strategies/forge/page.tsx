@@ -26,7 +26,7 @@ export default function StrategyForgePage() {
         <div className="space-y-1">
           <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
             <RadarIcon className="h-7 w-7 text-primary" />
-            Strategy Forge
+            <span className="text-gradient-primary">Strategy Forge</span>
           </h1>
           <p className="max-w-2xl text-sm text-muted-foreground">
             Live shadow telemetry — Route Discovery radar + cartridge evaluation. Observe-only:

@@ -111,44 +111,64 @@
   --sidebar-ring: oklch(0.25 0.05 260);
 }
 
-/* Dark mode - High contrast background */
+/* Dark mode — "TradePro" premium fintech theme:
+   deep navy/indigo background + electric royal-blue primary + blue accents.
+   Green = success/buy, red = destructive/sell, amber = warning. */
 .dark {
-  --background: oklch(0.12 0.03 260);
-  --foreground: oklch(0.98 0.01 220);
+  --background: oklch(0.14 0.035 265);
+  --foreground: oklch(0.98 0.012 250);
 
-  --card: oklch(0.15 0.04 260);
-  --card-foreground: oklch(0.98 0.01 220);
+  --card: oklch(0.18 0.04 265);
+  --card-foreground: oklch(0.98 0.012 250);
 
-  --popover: oklch(0.15 0.04 260 / 95%);
-  --popover-foreground: oklch(0.98 0.01 220);
+  --popover: oklch(0.17 0.04 265 / 96%);
+  --popover-foreground: oklch(0.98 0.012 250);
 
-  --primary: oklch(0.98 0.01 220);
-  --primary-foreground: oklch(0.12 0.03 260);
+  /* Electric royal blue — the TradePro accent. */
+  --primary: oklch(0.62 0.20 263);
+  --primary-foreground: oklch(0.99 0.008 250);
 
-  --secondary: oklch(0.20 0.04 260);
-  --secondary-foreground: oklch(0.98 0.01 220);
+  --secondary: oklch(0.23 0.04 265);
+  --secondary-foreground: oklch(0.96 0.012 250);
 
-  --muted: oklch(0.20 0.04 260);
-  --muted-foreground: oklch(0.70 0.03 220);
+  --muted: oklch(0.22 0.04 265);
+  --muted-foreground: oklch(0.69 0.035 258);
 
-  --accent: oklch(0.25 0.05 260);
-  --accent-foreground: oklch(0.98 0.01 220);
+  --accent: oklch(0.32 0.075 263);
+  --accent-foreground: oklch(0.98 0.012 250);
 
-  --destructive: oklch(0.55 0.13 180);
-  --destructive-foreground: oklch(0.98 0.01 220);
+  /* Red for destructive / sell-side. */
+  --destructive: oklch(0.62 0.20 18);
+  --destructive-foreground: oklch(0.99 0.008 250);
 
-  --success: oklch(0.62 0.17 145);
-  --success-foreground: oklch(0.12 0.03 260);
+  /* Green for success / buy-side. */
+  --success: oklch(0.70 0.17 152);
+  --success-foreground: oklch(0.14 0.035 265);
 
-  --warning: oklch(0.75 0.18 85);
-  --warning-foreground: oklch(0.12 0.03 260);
+  --warning: oklch(0.80 0.16 80);
+  --warning-foreground: oklch(0.14 0.035 265);
 
-  --info: oklch(0.60 0.15 220);
-  --info-foreground: oklch(0.12 0.03 260);
+  --info: oklch(0.66 0.16 256);
+  --info-foreground: oklch(0.14 0.035 265);
 
-  --border: oklch(0.25 0.03 260);
-  --input: oklch(0.25 0.03 260);
-  --ring: oklch(0.98 0.01 220);
+  --border: oklch(0.29 0.035 264);
+  --input: oklch(0.27 0.035 264);
+  --ring: oklch(0.62 0.20 263);
+
+  --chart-1: oklch(0.62 0.20 263);
+  --chart-2: oklch(0.70 0.17 152);
+  --chart-3: oklch(0.70 0.15 258);
+  --chart-4: oklch(0.80 0.16 80);
+  --chart-5: oklch(0.66 0.20 330);
+
+  --sidebar: oklch(0.16 0.04 266);
+  --sidebar-foreground: oklch(0.98 0.012 250);
+  --sidebar-primary: oklch(0.62 0.20 263);
+  --sidebar-primary-foreground: oklch(0.99 0.008 250);
+  --sidebar-accent: oklch(0.26 0.05 265);
+  --sidebar-accent-foreground: oklch(0.98 0.012 250);
+  --sidebar-border: oklch(0.29 0.035 264);
+  --sidebar-ring: oklch(0.62 0.20 263);
 }
 
 @layer base {
@@ -174,6 +194,19 @@
 .glass-card {
   @apply bg-background/40 backdrop-blur-xl border border-white/10 shadow-lg transition-all duration-300;
   transform: translateZ(0);
+}
+
+/* TradePro premium gradient heading (white -> electric blue). */
+.text-gradient-primary {
+  background-image: linear-gradient(
+    96deg,
+    oklch(0.98 0.012 250) 0%,
+    oklch(0.72 0.16 258) 52%,
+    oklch(0.62 0.20 263) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 /* Remove all auroras, gradients and visual noise */
