@@ -45,6 +45,7 @@ export interface UseRouteDiscoveryRestResult {
   routes: MergedRoute[];
   recent: RouteDiscoveryEvent[];
   status: TelemetryStatus;
+  updatedAt: number | null;
 }
 
 export function useRouteDiscoveryRest(): UseRouteDiscoveryRestResult {
@@ -52,6 +53,7 @@ export function useRouteDiscoveryRest(): UseRouteDiscoveryRestResult {
   const [routes, setRoutes] = useState<MergedRoute[]>([]);
   const [recent, setRecent] = useState<RouteDiscoveryEvent[]>([]);
   const [status, setStatus] = useState<TelemetryStatus>("CONNECTING");
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -70,6 +72,7 @@ export function useRouteDiscoveryRest(): UseRouteDiscoveryRestResult {
         setLastTick(l.data.tick ?? null);
         setRecent(Array.isArray(l.data.recent) ? l.data.recent : []);
         setStatus("LIVE");
+        setUpdatedAt(Date.now());
       } else {
         setStatus("STALE");
       }
@@ -88,17 +91,19 @@ export function useRouteDiscoveryRest(): UseRouteDiscoveryRestResult {
     };
   }, []);
 
-  return { lastTick, routes, recent, status };
+  return { lastTick, routes, recent, status, updatedAt };
 }
 
 export interface UseCartridgeRestResult {
   messages: CartridgeTelemetry[];
   status: TelemetryStatus;
+  updatedAt: number | null;
 }
 
 export function useCartridgeRest(): UseCartridgeRestResult {
   const [messages, setMessages] = useState<CartridgeTelemetry[]>([]);
   const [status, setStatus] = useState<TelemetryStatus>("CONNECTING");
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -114,6 +119,7 @@ export function useCartridgeRest(): UseCartridgeRestResult {
         // panel's ring-buffer assumption (it slices the tail + reverses).
         setMessages([...r.data.messages].reverse());
         setStatus("LIVE");
+        setUpdatedAt(Date.now());
       } else {
         setStatus("STALE");
       }
@@ -127,5 +133,5 @@ export function useCartridgeRest(): UseCartridgeRestResult {
     };
   }, []);
 
-  return { messages, status };
+  return { messages, status, updatedAt };
 }

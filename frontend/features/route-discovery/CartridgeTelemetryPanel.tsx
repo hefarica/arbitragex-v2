@@ -1,91 +1,70 @@
 "use client";
 
 /**
- * CartridgeTelemetryPanel — live cartridge (Rhai "PlayStation MEV") telemetry.
+ * CartridgeTelemetryPanel — live cartridge (Rhai) telemetry (enterprise-premium).
  *
- * Consumes the "telemetry" WebSocket room via useCartridgeTelemetry (the hook
- * that shipped orphaned — this panel finally surfaces it). Shows the recent
- * log_quantum stream the Rust cartridges publish to arbx:cartridge:telemetry,
- * highlighting v3_source_priced messages.
- *
- * R8 fail-honest: empty/STALE rendered explicitly; never fabricated. Shadow-only.
+ * Reads the public REST snapshot (useCartridgeRest, 5s poll). Highlights
+ * v3_source_priced. R8 fail-honest: explicit STALE/empty states, no fabricated
+ * values. Shadow-only.
  */
 
 import * as React from "react";
-import { CpuIcon, ActivityIcon, ClockIcon, AlertCircleIcon, ShieldCheckIcon } from "lucide-react";
+import { CpuIcon, AlertCircleIcon } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import type { CartridgeTelemetry, TelemetryStatus } from "@/lib/hooks/useCartridgeTelemetry";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { useCartridgeRest } from "@/lib/hooks/useRouteDiscoveryRest";
+import { StatusPill, ReadOnlyBadge, Freshness } from "./premium-ui";
 
-function StatusBadge({ status }: { status: TelemetryStatus }) {
-  if (status === "LIVE")
-    return (
-      <Badge variant="outline" className="text-success border-success">
-        <ActivityIcon className="w-3 h-3 mr-1" />
-        LIVE
-      </Badge>
-    );
-  if (status === "CONNECTING")
-    return (
-      <Badge variant="outline" className="text-warning border-warning">
-        <ClockIcon className="w-3 h-3 mr-1" />
-        CONNECTING
-      </Badge>
-    );
-  return (
-    <Badge variant="outline" className="text-destructive border-destructive">
-      STALE
-    </Badge>
-  );
-}
-
-function MsgRow({ m }: { m: CartridgeTelemetry }) {
-  const message = typeof m.message === "string" ? m.message : "";
-  const isV3 = message.includes("v3_source_priced");
-  return (
-    <div className="grid grid-cols-12 gap-2 px-2 py-1 text-[11px] border-b border-border/30 items-center">
-      <div className="col-span-2 font-mono truncate">
-        {typeof m.cartridge_id === "string" ? m.cartridge_id : "—"}
-      </div>
-      <div className="col-span-1">
-        <span className="font-mono">{typeof m.level === "string" ? m.level : "—"}</span>
-      </div>
-      <div className="col-span-9 font-mono truncate" title={message}>
-        {isV3 ? (
-          <Badge variant="outline" className="mr-1 text-primary border-primary">
-            v3_source_priced
-          </Badge>
-        ) : null}
-        {message || "—"}
-      </div>
-    </div>
-  );
+function levelTone(level?: string): string {
+  switch ((level ?? "").toLowerCase()) {
+    case "error":
+      return "text-destructive border-destructive/50";
+    case "warn":
+    case "warning":
+      return "text-warning border-warning/50";
+    default:
+      return "text-muted-foreground";
+  }
 }
 
 export function CartridgeTelemetryPanel() {
-  const { messages, status } = useCartridgeRest();
-  const recent = messages.slice(-40).reverse();
+  const { messages, status, updatedAt } = useCartridgeRest();
+  const recent = messages.slice(-50).reverse();
 
   return (
     <Card data-slot="cartridge-telemetry-panel">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base flex-wrap">
-          <CpuIcon className="w-5 h-5 text-primary" />
-          Strategy Forge — Cartridge Telemetry
-          <StatusBadge status={status} />
-          <Badge variant="outline" className="text-muted-foreground">
-            <ShieldCheckIcon className="w-3 h-3 mr-1" />
-            shadow-only
+      <CardHeader className="gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <CpuIcon className="h-5 w-5 text-primary" />
+            Strategy Forge — Cartridge Telemetry
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <Freshness at={updatedAt} />
+            <StatusPill status={status} />
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="secondary" className="text-[10px] uppercase tracking-wide">
+            shadow
           </Badge>
-        </CardTitle>
+          <ReadOnlyBadge label="observe-only" />
+        </div>
       </CardHeader>
       <CardContent>
         {status === "STALE" && messages.length === 0 && (
           <Alert variant="destructive">
-            <AlertCircleIcon className="w-4 h-4" />
+            <AlertCircleIcon className="h-4 w-4" />
             <AlertTitle>No telemetry snapshot</AlertTitle>
             <AlertDescription className="text-sm">
               The cartridge telemetry snapshot is unavailable — the api-server/edge may be
@@ -100,16 +79,43 @@ export function CartridgeTelemetryPanel() {
           </p>
         )}
         {messages.length > 0 && (
-          <div className="rounded border border-border/40">
-            <div className="grid grid-cols-12 gap-2 px-2 py-1.5 text-[11px] uppercase text-muted-foreground border-b border-border/60">
-              <div className="col-span-2">cartridge</div>
-              <div className="col-span-1">level</div>
-              <div className="col-span-9">message</div>
-            </div>
-            <div className="max-h-80 overflow-y-auto">
-              {recent.map((m, i) => (
-                <MsgRow key={i} m={m} />
-              ))}
+          <div className="rounded-lg border">
+            <div className="max-h-[22rem] overflow-auto">
+              <Table>
+                <TableHeader className="sticky top-0 bg-card">
+                  <TableRow>
+                    <TableHead className="text-[11px] uppercase tracking-wide">Cartridge</TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-wide">Level</TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-wide">Message</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {recent.map((m, i) => {
+                    const message = typeof m.message === "string" ? m.message : "";
+                    const isV3 = message.includes("v3_source_priced");
+                    return (
+                      <TableRow key={i}>
+                        <TableCell className="font-mono text-xs">
+                          {typeof m.cartridge_id === "string" ? m.cartridge_id : "—"}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={`text-[10px] ${levelTone(m.level as string)}`}>
+                            {typeof m.level === "string" ? m.level : "—"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="max-w-[28rem] truncate font-mono text-[11px]" title={message}>
+                          {isV3 ? (
+                            <Badge variant="outline" className="mr-1 border-primary/50 text-[10px] text-primary">
+                              v3_source_priced
+                            </Badge>
+                          ) : null}
+                          {message || "—"}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
             </div>
           </div>
         )}
