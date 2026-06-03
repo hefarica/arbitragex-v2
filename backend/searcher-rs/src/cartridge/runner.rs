@@ -424,6 +424,31 @@ impl CartridgeRunner {
         raw.and_then(|s| serde_json::from_str(&s).ok())
     }
 
+    /// FASE B — append a resolved shadow eval outcome to a Redis Stream via XADD
+    /// with an approximate MAXLEN cap. Mirrors `read_pool_reserves`' Redis access
+    /// because `host_ctx` is private to this struct. Fail-closed: returns the
+    /// `RedisResult` so the caller logs + swallows any error (never breaks the
+    /// shadow loop). NO-ACTIVE: callers only ever pass the dedicated outcomes
+    /// stream — this path NEVER writes `arbx:opps:detected`.
+    pub async fn xadd_shadow_outcome(
+        &self,
+        stream: &str,
+        maxlen: u64,
+        json: &str,
+    ) -> redis::RedisResult<String> {
+        let mut redis = self.host_ctx.redis.write().await;
+        redis::cmd("XADD")
+            .arg(stream)
+            .arg("MAXLEN")
+            .arg("~")
+            .arg(maxlen)
+            .arg("*")
+            .arg("json")
+            .arg(json)
+            .query_async(&mut *redis)
+            .await
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // Private helpers
     // ─────────────────────────────────────────────────────────────────────

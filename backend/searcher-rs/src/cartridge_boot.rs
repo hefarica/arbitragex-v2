@@ -28,7 +28,7 @@ use tracing::{debug, info, warn};
 use crate::cartridge::host_bindings::HostContext;
 use crate::cartridge::runner::CartridgeRunner;
 use crate::cartridge::subscriber::CartridgeSubscriber;
-use crate::cartridge::types::CartridgeState;
+use crate::cartridge::types::{CartridgeEvalResult, CartridgeState};
 use crate::cartridge_loader::{self, CARTRIDGE_DIR};
 use crate::route_intent::{DetectionSource, ProtocolType, RouteIntent};
 
@@ -227,6 +227,102 @@ pub fn build_cartridge_pool_data(
     m
 }
 
+// ── FASE B — Shadow outcome emitter (gated off by default, NO-ACTIVE) ─────────
+//
+// Persists each resolved `CartridgeEvalResult` from `shadow_evaluate_intent` to a
+// NEW, SEPARATE Redis stream so the ≥2-week hit-rate dataset can accrue. This is
+// the dry-run→stream link the paper-trade archiver header documents.
+//   - Stream: `arbx:route_discovery:outcomes` (NEVER `arbx:opps:detected`).
+//   - Gate: `ARBX_ROUTE_DISCOVERY_OUTCOMES` ∈ {shadow,on,1,true}; default off.
+//   - Zero-Mocks: only emits with a REAL eval result in hand; nothing fabricated.
+//   - Fail-closed: any Redis error is logged (warn!) and swallowed.
+
+/// Independent gate for the outcomes emitter. Default off (NO-ACTIVE).
+fn outcomes_emission_enabled() -> bool {
+    matches!(
+        std::env::var("ARBX_ROUTE_DISCOVERY_OUTCOMES")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "shadow" | "on" | "1" | "true"
+    )
+}
+
+/// Outcomes stream — SEPARATE from `arbx:opps:detected` (which is never touched).
+const ROUTE_DISCOVERY_OUTCOMES_STREAM: &str = "arbx:route_discovery:outcomes";
+/// Approximate cap (`XADD ... MAXLEN ~`). ~2 weeks of ticks fit comfortably.
+const OUTCOMES_STREAM_MAXLEN: u64 = 1_000_000;
+
+/// Persist a resolved shadow eval outcome (fire-and-forget, fail-closed).
+async fn emit_shadow_outcome(
+    runner: &Arc<CartridgeRunner>,
+    chain_id: u64,
+    cartridge_id: &str,
+    intent: &RouteIntent,
+    res: &CartridgeEvalResult,
+    had_reserves: bool,
+) {
+    if !outcomes_emission_enabled() {
+        return; // gate off → nothing emitted
+    }
+
+    let ts_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    let first = intent.legs.first();
+    let last = intent.legs.last();
+    let pool_hint = first
+        .and_then(|l| l.pool_hint)
+        .map(|p| format!("{:#x}", p))
+        .unwrap_or_default();
+
+    let payload = serde_json::json!({
+        "schema": "rd_outcome_v1",
+        "ts_ms": ts_ms,
+        "chain_id": chain_id,
+        "cartridge_id": cartridge_id,
+        "tx_hash": format!("{:#x}", intent.tx_hash),
+        "source_event": intent.source_event.as_str(),
+        "pool_hint": pool_hint,
+        "token_in": first.map(|l| format!("{:#x}", l.token_in)).unwrap_or_default(),
+        "token_out": last.map(|l| format!("{:#x}", l.token_out)).unwrap_or_default(),
+        "is_opportunity": res.is_opportunity,
+        "estimated_profit": res.estimated_profit,
+        "confidence": res.confidence,
+        "urgency": res.urgency.clone(),
+        "had_reserves": had_reserves,
+        "mode": "shadow",
+    });
+
+    let json = match serde_json::to_string(&payload) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!(event = "route_discovery.outcome_serialize_failed", error = %e);
+            return;
+        }
+    };
+
+    match runner
+        .xadd_shadow_outcome(ROUTE_DISCOVERY_OUTCOMES_STREAM, OUTCOMES_STREAM_MAXLEN, &json)
+        .await
+    {
+        Ok(id) => debug!(
+            event = "route_discovery.outcome_emitted",
+            chain_id,
+            cartridge_id = %cartridge_id,
+            stream_id = %id,
+            is_opportunity = res.is_opportunity,
+        ),
+        Err(e) => warn!(
+            event = "route_discovery.outcome_emit_failed",
+            chain_id,
+            error = %e,
+        ),
+    }
+}
+
 /// Smart intent routing — returns `true` iff a cartridge of the given `category` can
 /// MEANINGFULLY evaluate this intent's shape. Without this filter, every active cartridge
 /// is fed every intent, so a single-leg V2 swap (the block scanner's output) is handed to
@@ -376,6 +472,19 @@ pub async fn shadow_evaluate_intent(
                         "cartridge shadow eval: no opportunity"
                     );
                 }
+
+                // FASE B — persist the resolved outcome to the shadow outcomes
+                // stream (gated OFF by default; NO-ACTIVE: writes ONLY
+                // arbx:route_discovery:outcomes, never arbx:opps:detected).
+                emit_shadow_outcome(
+                    &runner,
+                    chain_id,
+                    &id,
+                    &intent,
+                    &res,
+                    reserves_source.is_some(),
+                )
+                .await;
             }
             Err(e) => {
                 warn!(
