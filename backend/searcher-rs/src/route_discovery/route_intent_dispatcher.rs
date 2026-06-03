@@ -84,7 +84,10 @@ pub fn build_intent(c: &RouteCandidate) -> Option<RouteIntent> {
         });
     }
     // route_hash is "0x" + 64 hex = exactly 32 bytes → a meaningful synthetic id.
-    let tx_hash = H256::from_str(&c.route_hash).unwrap_or_else(|_| H256::zero());
+    // Fail-honest (R8): if it ever fails to parse (broken upstream canonicalizer),
+    // return None rather than fabricating an all-zeros H256 sentinel that would both
+    // hide the corruption and collide across routes on a dedup keyed by tx_hash.
+    let tx_hash = H256::from_str(&c.route_hash).ok()?;
     RouteIntent::new(
         c.chain_id,
         tx_hash,

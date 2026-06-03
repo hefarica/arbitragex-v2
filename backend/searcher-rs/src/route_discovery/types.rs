@@ -86,7 +86,17 @@ impl RouteKind {
     pub fn classify(protocols: &[ProtocolType]) -> Option<Self> {
         match protocols.len() {
             2 => RouteKind::from_two_protocols(protocols[0], protocols[1]),
-            3 => Some(RouteKind::Triangular),
+            // Symmetric V2/V3 gate: the 2-hop path whitelists V2/V3 via
+            // `from_two_protocols`; the 3-hop path must do the same, else a future
+            // graph that admits Curve/Balancer/Unknown edges would mislabel a
+            // mixed cycle as a valid `Triangular`. Phase 1 is V2/V3-only.
+            3 if protocols
+                .iter()
+                .all(|p| matches!(p, ProtocolType::V2 | ProtocolType::V3)) =>
+            {
+                Some(RouteKind::Triangular)
+            }
+            3 => None,
             n if n >= 4 => Some(RouteKind::MultiHop),
             _ => None,
         }
@@ -268,5 +278,21 @@ mod tests {
         assert!(RouteKind::V3V3.is_two_cycle());
         assert!(!RouteKind::Triangular.is_two_cycle());
         assert!(!RouteKind::MultiHop.is_two_cycle());
+    }
+
+    #[test]
+    fn classify_three_hop_gates_on_v2_v3_only() {
+        use ProtocolType::{Curve, V2, V3};
+        // All-V2 / mixed-V2V3 triangulars classify.
+        assert_eq!(RouteKind::classify(&[V2, V2, V2]), Some(RouteKind::Triangular));
+        assert_eq!(RouteKind::classify(&[V2, V3, V2]), Some(RouteKind::Triangular));
+        // A 3-cycle containing a non-V2/V3 leg must NOT be mislabeled Triangular —
+        // symmetric with the 2-hop whitelist (R8: don't classify what we can't price).
+        assert_eq!(RouteKind::classify(&[V2, Curve, V2]), None);
+        assert_eq!(RouteKind::classify(&[Curve, Curve, Curve]), None);
+        // 2-hop whitelist unchanged; ≥4 → MultiHop; empty → None.
+        assert_eq!(RouteKind::classify(&[V2, Curve]), None);
+        assert_eq!(RouteKind::classify(&[V2, V2, V2, V2]), Some(RouteKind::MultiHop));
+        assert_eq!(RouteKind::classify(&[]), None);
     }
 }

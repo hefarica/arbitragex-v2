@@ -36,6 +36,7 @@ pub fn tick_event(
     telemetry_emitted: usize,
     routes_dropped_for_cap: usize,
     routes_capped: bool,
+    pools_truncated: bool,
     latency_ms: u64,
     mode: &str,
 ) -> Value {
@@ -51,6 +52,9 @@ pub fn tick_event(
         "telemetry_emitted": telemetry_emitted,
         "routes_dropped_for_cap": routes_dropped_for_cap,
         "routes_capped": routes_capped,
+        // R8: a parallel pool was dropped by the per-pair branching cap this tick —
+        // the route set is not provably exhaustive over the full pool universe.
+        "pools_truncated": pools_truncated,
         "latency_ms": latency_ms,
         "mode": mode,
     })
@@ -173,7 +177,7 @@ mod tests {
 
     #[test]
     fn tick_event_carries_algorithm_and_counts() {
-        let e = tick_event(1, "dfs_bounded", 26, 50, 4, 12, 3, 8, 1, true, 42, "shadow");
+        let e = tick_event(1, "dfs_bounded", 26, 50, 4, 12, 3, 8, 1, true, true, 42, "shadow");
         assert_eq!(e["event"], "route_discovery.tick");
         assert_eq!(e["algorithm"], "dfs_bounded");
         assert_eq!(e["pools_total"], 26);
@@ -181,6 +185,7 @@ mod tests {
         assert_eq!(e["routes_dispatched"], 3);
         assert_eq!(e["routes_dropped_for_cap"], 1);
         assert_eq!(e["routes_capped"], true);
+        assert_eq!(e["pools_truncated"], true);
         assert_eq!(e["latency_ms"], 42);
         assert_eq!(e["mode"], "shadow");
     }
