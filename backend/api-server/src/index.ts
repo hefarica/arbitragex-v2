@@ -2,7 +2,7 @@ import express from "express";
 import pg from "pg";
 import { Redis } from "ioredis";
 import { PaperTradeArchiver } from "./routes/paper-trade-archiver.js";
-import { RouteDiscoveryOutcomesArchiver } from "./routes/route-discovery-outcomes-archiver.js";
+import { RouteDiscoveryOutcomeSink, outcomeSinkEnabled } from "./routes/route-discovery-outcome-sink.js";
 import { z } from "zod";
 import { clampBucketMinutes, clampHours, rowToPoint } from "./recon-timeseries.js";
 import { verifyAll } from "./readiness/verifiers/index.js";
@@ -1172,23 +1172,23 @@ if (pool && (process.env["ARBX_PAPER_ARCHIVER_MODE"] ?? "off").toLowerCase() ===
   );
 }
 
-// FASE B Paso 2 — route_discovery outcomes archiver (passive durable sink).
+// FASE B Paso 2 — route_discovery outcome sink (passive durable sink).
 // Reads arbx:route_discovery:outcomes (the Rust shadow emitter, Fase B Paso 1) and
 // persists each resolved outcome to route_discovery_outcomes — preserving the
 // >=2-week hit-rate series the capped Redis stream would trim. 100% passive: reads
 // the stream + writes its own table only; never opps:detected, never capital.
-// Dormant by default — set ARBX_RD_OUTCOMES_ARCHIVER_MODE=on. Requires DATABASE_URL.
-let rdOutcomesArchiver: RouteDiscoveryOutcomesArchiver | null = null;
-if (pool && (process.env["ARBX_RD_OUTCOMES_ARCHIVER_MODE"] ?? "off").toLowerCase() === "on") {
-  rdOutcomesArchiver = new RouteDiscoveryOutcomesArchiver({ redisUrl: REDIS_URL, pool, logger });
-  rdOutcomesArchiver.start().catch((e) =>
-    logger.error({ event: "rd_outcomes_archiver.start_err", err: (e as Error).message },
-      "route_discovery outcomes archiver failed to start"),
+// Dormant by default — set ARBX_ROUTE_DISCOVERY_OUTCOMES_SINK=shadow. Requires DATABASE_URL.
+let rdOutcomeSink: RouteDiscoveryOutcomeSink | null = null;
+if (pool && outcomeSinkEnabled()) {
+  rdOutcomeSink = new RouteDiscoveryOutcomeSink({ redisUrl: REDIS_URL, pool, logger });
+  rdOutcomeSink.start().catch((e) =>
+    logger.error({ event: "rd_outcome_sink.start_err", err: (e as Error).message },
+      "route-discovery outcome sink failed to start"),
   );
 } else {
   logger.info(
-    { event: "rd_outcomes_archiver.dormant", reason: pool ? "mode_off" : "no_database_url" },
-    "route_discovery outcomes archiver dormant (set ARBX_RD_OUTCOMES_ARCHIVER_MODE=on to enable)",
+    { event: "rd_outcome_sink.dormant", reason: pool ? "gate_off" : "no_database_url" },
+    "route-discovery outcome sink dormant (set ARBX_ROUTE_DISCOVERY_OUTCOMES_SINK=shadow to enable)",
   );
 }
 
@@ -1202,7 +1202,7 @@ const shutdown = async (sig: string) => {
   await killSwitch.close().catch(() => {});
   // Stop the passive paper-trade archiver (closes its dedicated Redis conn).
   await paperArchiver?.stop().catch(() => {});
-  await rdOutcomesArchiver?.stop().catch(() => {});
+  await rdOutcomeSink?.stop().catch(() => {});
   // Arteria WSS: cerrar el subscriber de convergencia antes que el redis
   // principal para evitar errores de "Connection is closed" en handlers.
   await convergenceSubscriber.quit().catch(() => {});

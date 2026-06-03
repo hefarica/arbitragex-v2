@@ -1,51 +1,48 @@
--- Migration 092: route_discovery_outcomes — shadow eval outcome sink (Fase B Paso 2)
+-- ArbitrageX v2 — Migration 092: route_discovery_outcomes (FASE B Paso 2)
 --
--- Durable Postgres table for the shadow outcomes the searcher emits to the Redis
--- stream `arbx:route_discovery:outcomes` (Fase B Paso 1, commit e977ab0). The Redis
--- stream is capped (XADD MAXLEN ~1_000_000 → trims oldest after ~6 days at the
--- current rate); this table preserves the FULL >=2-week series required to measure
--- hit-rate (Gate C). Consumer: api-server `route-discovery-outcomes-archiver`
--- (XREADGROUP/XACK, idempotent via the Redis stream entry id in `stream_id`).
---
--- NO-ACTIVE: this table records observe-only shadow evaluations. No FK to capital
--- tables, no executor, no opps:detected. arbx-no-hardcode: no operator literals.
+-- Durable sink for the shadow outcomes stream `arbx:route_discovery:outcomes`
+-- (emitted by the Rust searcher in shadow mode, Paso 1). A Redis stream with
+-- MAXLEN ~ 1_000_000 trims after ~6 days at ~7k/h; this table is the durable
+-- ≥2-week series for the Gate C hit-rate. Copies REAL rd_outcome_v1 fields only
+-- (Zero-Mocks: nothing computed/derived). stream_id UNIQUE → idempotent
+-- at-least-once consume. Additive + idempotent: safe to re-run.
 
 BEGIN;
 
 CREATE TABLE IF NOT EXISTS route_discovery_outcomes (
-    id                BIGSERIAL    PRIMARY KEY,
-    stream_id         TEXT         NOT NULL UNIQUE,        -- Redis entry id → idempotent ingest
-    schema_ver        TEXT         NOT NULL,
-    ts_ms             BIGINT       NOT NULL,
-    chain_id          INTEGER      NOT NULL,
-    cartridge_id      TEXT         NOT NULL,
-    tx_hash           TEXT,
-    source_event      TEXT,
-    pool_hint         TEXT,
-    token_in          TEXT,
-    token_out         TEXT,
-    is_opportunity    BOOLEAN      NOT NULL,
-    estimated_profit  NUMERIC(38, 18),
-    confidence        NUMERIC(18, 9),
-    urgency           TEXT,
-    had_reserves      BOOLEAN      NOT NULL,
-    mode              TEXT         NOT NULL,
-    inserted_at       TIMESTAMPTZ  NOT NULL DEFAULT now()
+    id               BIGSERIAL PRIMARY KEY,
+    stream_id        TEXT NOT NULL UNIQUE,
+    ts_ms            BIGINT NOT NULL,
+    schema_ver       TEXT NOT NULL,
+    chain_id         BIGINT NOT NULL,
+    cartridge_id     TEXT NOT NULL,
+    tx_hash          TEXT NOT NULL,
+    source_event     TEXT,
+    pool_hint        TEXT,
+    token_in         TEXT,
+    token_out        TEXT,
+    is_opportunity   BOOLEAN NOT NULL,
+    estimated_profit DOUBLE PRECISION NOT NULL,
+    confidence       DOUBLE PRECISION NOT NULL,
+    urgency          TEXT,
+    had_reserves     BOOLEAN NOT NULL,
+    mode             TEXT NOT NULL,
+    inserted_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Time-series scans (latest first).
-CREATE INDEX IF NOT EXISTS idx_rd_outcomes_ts
-    ON route_discovery_outcomes(ts_ms DESC);
--- Hit-rate aggregation by chain + cartridge + opportunity flag.
-CREATE INDEX IF NOT EXISTS idx_rd_outcomes_opp
-    ON route_discovery_outcomes(chain_id, cartridge_id, is_opportunity, ts_ms DESC);
--- Reserve-coverage analysis (had_reserves=false is the data-starvation tail).
-CREATE INDEX IF NOT EXISTS idx_rd_outcomes_reserves
-    ON route_discovery_outcomes(had_reserves, ts_ms DESC);
+-- Access patterns for the Gate C hit-rate analysis:
+--   hit-rate por venue/cadena en una ventana temporal.
+CREATE INDEX IF NOT EXISTS idx_rdo_chain_ts
+    ON route_discovery_outcomes(chain_id, ts_ms);
+CREATE INDEX IF NOT EXISTS idx_rdo_opportunity
+    ON route_discovery_outcomes(is_opportunity, ts_ms);
+CREATE INDEX IF NOT EXISTS idx_rdo_pool_hint
+    ON route_discovery_outcomes(pool_hint)
+    WHERE pool_hint IS NOT NULL AND pool_hint <> '';
 
 DO $$
 BEGIN
-    RAISE NOTICE 'Migration 092: route_discovery_outcomes created (Fase B Paso 2 shadow outcomes sink).';
+    RAISE NOTICE 'Migration 092: route_discovery_outcomes ready for the shadow outcomes consumer.';
 END $$;
 
 COMMIT;
