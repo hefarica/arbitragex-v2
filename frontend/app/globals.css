@@ -210,7 +210,12 @@
   background-color: oklch(0.205 0.042 265 / 0.55);
   backdrop-filter: blur(14px) saturate(1.35);
   -webkit-backdrop-filter: blur(14px) saturate(1.35);
-  border-color: oklch(0.55 0.06 264 / 0.22);
+  /* NOTE: intentionally do NOT set border-color here. Several pages put
+     data-slot="card" on raw divs that carry state borders (e.g. worker-health
+     uses `border-success/40` to signal "Kernel Bypass ACTIVE"). An attribute
+     selector (0,1,1) would clobber those single-class utilities (0,1,0) and
+     silently flatten the state signal. The glass edge comes from the inset
+     top-highlight in the box-shadow below — border tint is not needed. */
   box-shadow:
     inset 0 1px 0 0 oklch(0.92 0.04 260 / 0.07),
     0 10px 34px -16px oklch(0.02 0.02 266 / 0.85);
