@@ -138,7 +138,10 @@ export function isExplicitProxyUrl(url: URL): boolean {
 }
 
 export function isAlchemyProvider(p: { name: string; parsed: URL }): boolean {
-  return p.name.toLowerCase() === "alchemy" || p.parsed.hostname.toLowerCase().includes("alchemy.com");
+  // CodeQL js/incomplete-url-substring-sanitization: exact host or proper subdomain
+  // suffix — never a naive .includes() (which would match alchemy.com.evil.tld).
+  const h = p.parsed.hostname.toLowerCase();
+  return p.name.toLowerCase() === "alchemy" || h === "alchemy.com" || h.endsWith(".alchemy.com");
 }
 
 function parseProviderToken(token: string, family: "http" | "ws", index: number): ParsedProvider {

@@ -100,14 +100,23 @@ BEGIN
       ADD COLUMN IF NOT EXISTS requires_layers JSONB DEFAULT '[]'::jsonb,
       ADD COLUMN IF NOT EXISTS enabled BOOLEAN DEFAULT TRUE;
 
-    INSERT INTO feature_manifest (feature_key, ui_path, backend_route, requires_layers, enabled, description)
+    -- NOTE: feature_manifest (mig 067) requires layer/state_hash/panel_path
+    -- (all NOT NULL, no default). Omitting them aborted the chain at 068.
+    -- Provide them using 067's seed pattern (layer='backend', state_hash=zeros,
+    -- panel_path mirrors ui_path). ON CONFLICT (feature_key) is valid — 067:87
+    -- declares feature_key NOT NULL UNIQUE.
+    INSERT INTO feature_manifest
+      (feature_key, ui_path, backend_route, requires_layers, enabled, description,
+       layer, state_hash, panel_path)
     VALUES
       ('operator_parametrization', '/omega-s5/operator', '/api/operator/me',
        '["api","handler","pg","authz","audit"]'::jsonb, TRUE,
-       'Operator Parametrization Sovereignty (C9.4)'),
+       'Operator Parametrization Sovereignty (C9.4)',
+       'backend', repeat('0',64), '/omega-s5/operator'),
       ('operator_gate_authz', '/omega-s5/registry', '/api/operator/authorize',
        '["api","handler","authz","audit"]'::jsonb, TRUE,
-       '9-Layer Coherence — L8 Operator Authz / L9 Operator Audit')
+       '9-Layer Coherence — L8 Operator Authz / L9 Operator Audit',
+       'backend', repeat('0',64), '/omega-s5/registry')
     ON CONFLICT (feature_key) DO NOTHING;
   END IF;
 END $$;

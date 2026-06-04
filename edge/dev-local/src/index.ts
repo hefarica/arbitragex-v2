@@ -71,7 +71,10 @@ app.disable("x-powered-by");
 // SSH tunnel) can reach this edge shim. Production uses CF Workers CORS.
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin) {
+  // CodeQL js/cors-misconfiguration-for-credentials: with credentials=true we must NOT
+  // reflect arbitrary origins. Allowlist localhost / 127.0.0.1 / *.ape-tv.net only.
+  const CORS_ALLOWED = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$|^https:\/\/[a-z0-9-]+\.ape-tv\.net$/i;
+  if (origin && CORS_ALLOWED.test(origin)) {
     res.setHeader("access-control-allow-origin", origin);
     res.setHeader("access-control-allow-credentials", "true");
     res.setHeader("access-control-allow-headers", "content-type, x-arbx-admin-token, x-arbx-trace-id, x-arbx-actor");

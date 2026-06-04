@@ -50,6 +50,12 @@ pub struct CartridgeEvalResult {
     pub metadata: HashMap<String, serde_json::Value>,
     /// Suggested execution urgency: "immediate", "next_block", "monitor".
     pub urgency: String,
+    /// Explicit reason string the cartridge returned (e.g. "v3_sizing_pending",
+    /// "insufficient_pools", "below_gas_threshold"). `None` if the cartridge omitted it.
+    /// Observability-only (FASE B Paso 9): lets the durable outcomes series explain WHY
+    /// is_opportunity=false (structural ceiling vs real insufficiency). Shadow/telemetry.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 /// Payload assembled by `build_payload` for Web3 execution.

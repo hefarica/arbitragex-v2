@@ -9,6 +9,9 @@ members = [
     "prioritization-spine",
     "simulator-v2",
     "token-enricher",
+    # arbx-sim-engine — local MCP (stdio) server exposing the real searcher-rs
+    # discovery/sizing kernels to Claude. Shadow/read-only; no capital/executor.
+    "mcp-sim-engine",
     # B1.e (2026-05-13) — Sequential Equilibrium Dispatcher quantitative
     # orchestration layer. Phase 1 scaffold ships only types/ (typestate
     # + kill-switch + 501 prereq); math bodies (filtration, eigenstate,

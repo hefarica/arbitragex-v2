@@ -15,6 +15,9 @@ COPY prioritization-spine ./prioritization-spine
 COPY simulator-v2 ./simulator-v2
 COPY token-enricher ./token-enricher
 COPY sed-core ./sed-core
+# mcp-sim-engine: workspace member (9a45a96); manifest required by the resolver
+# even though it is never built here, else "failed to load manifest" aborts.
+COPY mcp-sim-engine ./mcp-sim-engine
 ENV SQLX_OFFLINE=true
 RUN cargo build --release -p recon
 

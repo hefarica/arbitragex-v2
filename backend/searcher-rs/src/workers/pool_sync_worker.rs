@@ -29,6 +29,8 @@ use alloy::rpc::types::{TransactionInput, TransactionRequest};
 use alloy::sol_types::SolCall;
 use ethers::types::{Address, H160, U256};
 use sqlx::PgPool;
+use std::future::Future;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -82,37 +84,77 @@ const SLOT0_RETURN_LEN: usize = 7 * 32;
 /// Minimum returnData length for a valid liquidity() response: 1 x uint128 = 32 bytes.
 const LIQUIDITY_RETURN_LEN: usize = 32;
 
-/// Default sub-calls per aggregate3. We send ONE request per protocol by default
-/// (V2 ~26, V3 ~68 sub-calls) because the bottleneck on public RPCs is REQUEST RATE
-/// (HTTP 429), not payload size — `allowFailure=true` already tolerates per-pool reverts
-/// within a single request, so splitting just multiplies requests and worsens throttling.
-/// Lower this via `POOL_SYNC_BATCH_SIZE` only if a specific provider caps batch size.
-const DEFAULT_MULTICALL_BATCH: usize = 200;
+/// Default sub-calls per aggregate3. Kept in the [50, 100] band so a throttling
+/// provider that rejects an oversized batch only loses ONE sub-chunk's worth of pools
+/// before the degradation path (split → retry → abandon) kicks in — instead of nulling
+/// the ENTIRE tick. `allowFailure=true` still tolerates per-pool reverts within a request;
+/// the chunk size only bounds the blast-radius of a REQUEST-level failure (429 / timeout).
+/// Override per-provider via `POOL_SYNC_BATCH_SIZE`.
+const DEFAULT_MULTICALL_BATCH: usize = 100;
+/// Floor for dynamic sub-chunk degradation. A failing chunk is bisected down to this
+/// size; below it we stop splitting and abandon (leave `None`) rather than firing N tiny
+/// requests that would amplify a 429. Override via `POOL_SYNC_MIN_BATCH_SIZE`.
+const DEFAULT_MIN_BATCH: usize = 10;
+/// Retries per (sub)chunk before bisecting. Each retry waits an exponential backoff so we
+/// back off a throttling provider instead of hammering it. Override `POOL_SYNC_MAX_RETRIES`.
+const DEFAULT_MAX_RETRIES: u32 = 2;
+/// Base for exponential backoff between chunk retries: delay = base * 2^attempt (capped).
+/// Override via `POOL_SYNC_BACKOFF_BASE_MS`.
+const DEFAULT_BACKOFF_BASE_MS: u64 = 100;
+/// Hard cap on a single backoff sleep so a misconfigured base can never stall a tick for
+/// minutes. Backoff is bounded by both `POOL_SYNC_MAX_RETRIES` and this ceiling.
+const BACKOFF_CAP_MS: u64 = 5_000;
 /// Hard per-multicall wall-clock timeout. `HttpRpcPool::with_retry` has NO timeout
 /// of its own, so without this an unresponsive provider hangs the ENTIRE worker
 /// (observed: a 60-call aggregate3 to a public RPC stalled the loop forever, leaving
 /// `arbx:pool_reserves`/`arbx:v3_slot0` empty). Override: `POOL_SYNC_CALL_TIMEOUT_MS`.
 const DEFAULT_MULTICALL_TIMEOUT_MS: u64 = 4_000;
 
+/// Exponential backoff with a hard ceiling. `attempt` is 0-based; the shift is clamped so
+/// a large `attempt` can never overflow the `u64` shift. Pure → unit-tested.
+fn next_backoff_ms(base_ms: u64, attempt: u32, cap_ms: u64) -> u64 {
+    base_ms.saturating_mul(1u64 << attempt.min(16)).min(cap_ms)
+}
+
+/// Bisection point for a `[start, end)` range. Pure → unit-tested.
+fn split_point(start: usize, end: usize) -> usize {
+    start + (end - start) / 2
+}
+
+/// Seed `[start, end)` chunks of width `batch_size` covering `[0, total)`, in order.
+/// 1:1 coverage of every index is guaranteed (no gaps, no overlap). Pure → unit-tested.
+fn seed_chunks(total: usize, batch_size: usize) -> Vec<(usize, usize)> {
+    let bs = batch_size.max(1);
+    let mut chunks = Vec::new();
+    let mut start = 0usize;
+    while start < total {
+        let end = (start + bs).min(total);
+        chunks.push((start, end));
+        start = end;
+    }
+    chunks
+}
+
 /// Execute ONE aggregate3 over `chunk`, wrapped in a hard timeout + the pool's
 /// failover/circuit-breaker. Returns the decoded per-call results (owned, aligned to
 /// `chunk`) or an error (timeout / RPC / decode / short-result). Never hangs.
 async fn exec_aggregate3(
-    rpc_pool: &shared_rs::rpc_failover::HttpRpcPool,
+    rpc_pool: Arc<shared_rs::rpc_failover::HttpRpcPool>,
     multicall_alloy: AlloyAddress,
-    chunk: &[multicall_abi::Call3],
+    chunk: Vec<multicall_abi::Call3>,
     call_timeout: Duration,
     chain_id: u64,
-    label: &str,
+    label: &'static str,
 ) -> anyhow::Result<Vec<multicall_abi::Result>> {
-    let calldata = multicall_abi::aggregate3Call { calls: chunk.to_vec() }.abi_encode();
+    let call_count = chunk.len();
+    let calldata = multicall_abi::aggregate3Call { calls: chunk }.abi_encode();
     let started = Instant::now();
     // TEMP diagnostic (OMEGA pinpoint): brackets the with_retry call so we can see if the
     // multicall await returns. Pairs with rpc_pool.with_retry.* internal events.
     info!(
         event = "pool_sync.multicall.before_with_retry",
         chain_id, label,
-        call_count = chunk.len(),
+        call_count,
         timeout_ms = call_timeout.as_millis() as u64
     );
     let raw = match tokio::time::timeout(
@@ -140,61 +182,169 @@ async fn exec_aggregate3(
         }
     };
     let results = multicall_abi::aggregate3Call::abi_decode_returns(&raw)?;
-    if results.len() != chunk.len() {
+    if results.len() != call_count {
         return Err(anyhow::anyhow!(
             "short_result_{}_of_{}",
             results.len(),
-            chunk.len()
+            call_count
         ));
     }
     Ok(results)
 }
 
-/// Resilient multicall: send `calls` in `batch_size` chunks, each TIMEOUT-bounded (the fix
-/// for the no-timeout hang that stalled the worker forever). A chunk whose REQUEST fails
-/// (timeout / HTTP 429 / circuit-open) is SKIPPED this tick — its pools resolve to `None` and
-/// recover on the next tick (reserves/slot0 carry a TTL). We deliberately do NOT retry
-/// call-by-call: `allowFailure=true` already tolerates per-pool reverts within one request, so
-/// a request-level failure means the PROVIDER is throttling — firing N more individual requests
-/// would amplify the 429s and grind the tick for minutes. Returns results aligned 1:1 to
-/// `calls` so caller decode loops index by position regardless of chunk boundaries.
+/// Type alias for the per-(sub)chunk owned future the driver awaits. Owned (`'static`) so the
+/// driver never borrows `calls`/`rpc_pool` across the retry/backoff `.await` points — the closure
+/// clones the sub-slice + `Arc`s the pool, so a failing chunk can be re-queued and re-run freely.
+type ChunkFut<R, E> = Pin<Box<dyn Future<Output = Result<Vec<R>, E>> + Send>>;
+
+/// Resilient batch driver: the data-starvation fix. Splits `total` items into `batch_size`
+/// chunks; each chunk is attempted up to `max_retries` extra times with EXPONENTIAL BACKOFF
+/// between attempts (so we back OFF a throttling provider, never hammer it). When retries are
+/// exhausted, a chunk wider than `min_batch` is BISECTED (dynamic degradation) so a smaller
+/// request can still land — turning the previous all-or-nothing tick into best-effort PARTIAL
+/// population. Only a chunk already at/under `min_batch` is ABANDONED (its slots stay `None`,
+/// recovered next tick via the 30s TTL). Output is aligned 1:1 to the original order by ABSOLUTE
+/// index, so chunk boundaries / split order never disturb the caller's positional decode.
+///
+/// Fail-loud (R7): every transition emits a structured event — `pool_sync.chunk_failed`,
+/// `pool_sync.chunk_retry`, `pool_sync.chunk_split`, `pool_sync.chunk_abandoned` — each carrying
+/// `chain_id`, `label`, `start`, `end`, `call_count`, `attempt` and the `error`. No fabricated
+/// data: an abandoned pool is `None`, never a synthesized reserve (RULE 00 / R8 fail-honest).
+///
+/// Generic over `R`/`E` purely so the control flow is unit-testable with a synthetic executor;
+/// production instantiates `R = multicall_abi::Result`, `E = anyhow::Error`.
+async fn drive_resilient_batches<R, E, F>(
+    total: usize,
+    batch_size: usize,
+    min_batch: usize,
+    max_retries: u32,
+    backoff_base_ms: u64,
+    chain_id: u64,
+    label: &'static str,
+    exec: F,
+) -> Vec<Option<R>>
+where
+    E: std::fmt::Display,
+    F: Fn(usize, usize) -> ChunkFut<R, E>,
+{
+    let mut out: Vec<Option<R>> = (0..total).map(|_| None).collect();
+    if total == 0 {
+        return out;
+    }
+    let min_batch = min_batch.max(1);
+    // LIFO work-stack of (start, end, attempt). Seeding with explicit `(start,end)` chunks (vs an
+    // index cursor) is what makes the cursor-can't-advance spin-forever bug structurally impossible.
+    let mut stack: Vec<(usize, usize, u32)> = seed_chunks(total, batch_size)
+        .into_iter()
+        .map(|(s, e)| (s, e, 0u32))
+        .collect();
+
+    while let Some((start, end, attempt)) = stack.pop() {
+        let call_count = end - start;
+        match exec(start, end).await {
+            Ok(results) => {
+                // Defensive: a well-behaved exec returns exactly `call_count` items. If it
+                // returns fewer (short result), fill what aligns and warn — never panic, never
+                // shift positions (which would mis-attribute reserves to the wrong pool).
+                if results.len() != call_count {
+                    warn!(
+                        event = "pool_sync.chunk_short_result",
+                        chain_id, label, start, end,
+                        expected = call_count,
+                        got = results.len()
+                    );
+                }
+                for (i, r) in results.into_iter().enumerate() {
+                    if start + i < end {
+                        out[start + i] = Some(r);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(
+                    event = "pool_sync.chunk_failed",
+                    chain_id, label, start, end, call_count, attempt,
+                    error = %e,
+                    "aggregate3 request failed (timeout / 429 / circuit-open)"
+                );
+                if attempt < max_retries {
+                    let backoff_ms = next_backoff_ms(backoff_base_ms, attempt, BACKOFF_CAP_MS);
+                    info!(
+                        event = "pool_sync.chunk_retry",
+                        chain_id, label, start, end, call_count,
+                        attempt = attempt + 1,
+                        max_retries,
+                        backoff_ms,
+                        "backing off then retrying chunk"
+                    );
+                    if backoff_ms > 0 {
+                        sleep(Duration::from_millis(backoff_ms)).await;
+                    }
+                    stack.push((start, end, attempt + 1));
+                } else if call_count > min_batch {
+                    let mid = split_point(start, end);
+                    info!(
+                        event = "pool_sync.chunk_split",
+                        chain_id, label, start, mid, end, call_count,
+                        "retries exhausted; bisecting chunk (dynamic degradation)"
+                    );
+                    // Re-queue both halves at attempt 0 — a smaller request may clear the throttle.
+                    stack.push((start, mid, 0));
+                    stack.push((mid, end, 0));
+                } else {
+                    warn!(
+                        event = "pool_sync.chunk_abandoned",
+                        chain_id, label, start, end, call_count,
+                        min_batch,
+                        "min batch reached after retries — leaving None this tick (TTL recovers; no fabricated data)"
+                    );
+                    // Slots already `None`. Fail-honest: never synthesize a reserve to fill the gap.
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Resilient multicall wrapper: builds owned per-chunk futures over `calls` and drives them
+/// through `drive_resilient_batches`. Each closure invocation clones only the sub-slice it needs
+/// and an `Arc` of the pool, so the produced future is `'static` and a re-queued (split/retried)
+/// chunk re-encodes cleanly. Returns results aligned 1:1 to `calls`; `None` = that call's pool
+/// could not be read this tick (after retries + degradation).
 async fn multicall_resilient(
-    rpc_pool: &shared_rs::rpc_failover::HttpRpcPool,
+    rpc_pool: &Arc<shared_rs::rpc_failover::HttpRpcPool>,
     multicall_alloy: AlloyAddress,
     calls: &[multicall_abi::Call3],
     batch_size: usize,
+    min_batch: usize,
+    max_retries: u32,
+    backoff_base_ms: u64,
     call_timeout: Duration,
     chain_id: u64,
-    label: &str,
+    label: &'static str,
 ) -> Vec<Option<multicall_abi::Result>> {
-    let mut out: Vec<Option<multicall_abi::Result>> = Vec::with_capacity(calls.len());
-    let bs = batch_size.max(1);
-    let mut start = 0usize;
-    while start < calls.len() {
-        let end = (start + bs).min(calls.len());
-        let chunk = &calls[start..end];
-        match exec_aggregate3(rpc_pool, multicall_alloy, chunk, call_timeout, chain_id, label).await {
-            Ok(results) => out.extend(results.into_iter().map(Some)),
-            Err(e) => {
-                // Request-level failure (timeout / 429 / circuit-open). Skip these pools THIS
-                // tick — TTL + next tick recover. Loud (R7 traceable), but no request amplification.
-                warn!(
-                    event = "pool_sync.chunk_skipped",
-                    chain_id,
-                    label,
-                    batch = chunk.len(),
-                    error = %e,
-                    "multicall request failed; skipping this tick (provider throttled — no fallback)"
-                );
-                out.extend(std::iter::repeat_with(|| None).take(chunk.len()));
-            }
-        }
-        // Advance the chunk cursor. Its accidental omission in the unblock-III rewrite made
-        // this `while` spin forever on chunk [0..N] (3402 successful 28ms multicalls/2min that
-        // never returned), so the tick never reached the reserve-writing loop → caches empty.
-        start = end;
-    }
-    out
+    drive_resilient_batches(
+        calls.len(),
+        batch_size,
+        min_batch,
+        max_retries,
+        backoff_base_ms,
+        chain_id,
+        label,
+        |start, end| {
+            let chunk: Vec<multicall_abi::Call3> = calls[start..end].to_vec();
+            let pool = Arc::clone(rpc_pool);
+            Box::pin(exec_aggregate3(
+                pool,
+                multicall_alloy,
+                chunk,
+                call_timeout,
+                chain_id,
+                label,
+            )) as ChunkFut<multicall_abi::Result, anyhow::Error>
+        },
+    )
+    .await
 }
 
 struct PoolRow {
@@ -299,12 +449,31 @@ impl PoolSyncWorker {
                 .filter(|&n| n > 0)
                 .unwrap_or(DEFAULT_MULTICALL_TIMEOUT_MS),
         );
+        // Degradation knobs: floor for sub-chunk bisection + retry/backoff budget. All env-tunable
+        // (resilience tuning constants, NOT operator productive data — defaults are safe for public RPCs).
+        let min_batch: usize = std::env::var("POOL_SYNC_MIN_BATCH_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(DEFAULT_MIN_BATCH);
+        let max_retries: u32 = std::env::var("POOL_SYNC_MAX_RETRIES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_MAX_RETRIES);
+        let backoff_base_ms: u64 = std::env::var("POOL_SYNC_BACKOFF_BASE_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(DEFAULT_BACKOFF_BASE_MS);
         info!(
             event = "pool_sync.batch_config",
             chain_id = self.chain_id,
             batch_size,
+            min_batch,
+            max_retries,
+            backoff_base_ms,
             call_timeout_ms = call_timeout.as_millis() as u64,
-            "resilient multicall batching active (chunk + timeout + call-by-call fallback)"
+            "resilient multicall batching active (chunk + timeout + exponential-backoff retry + dynamic sub-chunk degradation)"
         );
 
         loop {
@@ -334,6 +503,9 @@ impl PoolSyncWorker {
                 multicall_alloy,
                 &calls,
                 batch_size,
+                min_batch,
+                max_retries,
+                backoff_base_ms,
                 call_timeout,
                 self.chain_id,
                 "v2_reserves",
@@ -368,6 +540,20 @@ impl PoolSyncWorker {
             let mut ok_count = 0usize;
             let mut fail_count = 0usize;
 
+            // FASE 3 — Redis write strategy (documented decision, semantics UNCHANGED):
+            // We keep a per-pool `set_ex(... , 30s)` rather than collapsing the tick into a single
+            // `redis::pipe()`/MULTI for THREE reasons, all doctrine-driven:
+            //   1. Fail-honest attribution (R8): `set_ex` per key lets us emit
+            //      `pool_sync.redis_set_failed { pool }` for the EXACT pool that failed. A batched
+            //      pipeline returns one opaque error for the whole tick, erasing which pool starved.
+            //   2. Interleaving: each write is preceded by per-pool ABI decode + guards and followed
+            //      by a per-pool Postgres insert; a tick-level pipeline would force buffering every
+            //      decoded entry first, changing the failure surface (all-or-nothing again — the very
+            //      anti-pattern this fix removes on the RPC side).
+            //   3. `ConnectionManager` already multiplexes over ONE connection, so these `set_ex`
+            //      calls are transport-pipelined without head-of-line blocking — the round-trip win of
+            //      an explicit MULTI here is marginal and not the starvation bottleneck (the RPC was).
+            // TTL stays strict at `RESERVES_TTL_SECS` (30s) / `V3_SLOT0_TTL_SECS` (30s).
             // Persist each result. `results[i]` aligns 1:1 to `pools[i]`.
             for (pool, result) in pools.iter().zip(results.iter()) {
                 // alloy sol! Result fields: `.success` (bool), `.returnData` (alloy Bytes).
@@ -481,6 +667,9 @@ impl PoolSyncWorker {
                     multicall_alloy,
                     &v3_calls,
                     batch_size,
+                    min_batch,
+                    max_retries,
+                    backoff_base_ms,
                     call_timeout,
                     self.chain_id,
                     "v3_slot0",
@@ -856,5 +1045,148 @@ impl PoolSyncWorker {
             pair_count = by_pair.len(),
         );
         Ok(total)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // ── Pure helper tests (the off-by-one / overflow-prone bits) ──────────────────────────
+
+    #[test]
+    fn next_backoff_ms_grows_exponentially_then_caps() {
+        // base=100: 100, 200, 400, 800 ... then clamps to cap.
+        assert_eq!(next_backoff_ms(100, 0, 5_000), 100);
+        assert_eq!(next_backoff_ms(100, 1, 5_000), 200);
+        assert_eq!(next_backoff_ms(100, 2, 5_000), 400);
+        assert_eq!(next_backoff_ms(100, 3, 5_000), 800);
+        // attempt high enough to exceed the cap → clamped, never overflows the u64 shift.
+        assert_eq!(next_backoff_ms(100, 30, 5_000), 5_000);
+        assert_eq!(next_backoff_ms(100, 6, 5_000), 5_000); // 100*64=6400 > cap
+    }
+
+    #[test]
+    fn split_point_halves_range() {
+        assert_eq!(split_point(0, 100), 50);
+        assert_eq!(split_point(50, 100), 75);
+        assert_eq!(split_point(0, 1), 0); // width-1 → mid==start (caller guards width>min_batch)
+        assert_eq!(split_point(10, 11), 10);
+    }
+
+    #[test]
+    fn seed_chunks_covers_every_index_without_gap_or_overlap() {
+        let chunks = seed_chunks(250, 100);
+        assert_eq!(chunks, vec![(0, 100), (100, 200), (200, 250)]);
+        // exhaustively verify 1:1 coverage of [0,total).
+        let mut covered = vec![false; 250];
+        for (s, e) in &chunks {
+            for i in *s..*e {
+                assert!(!covered[i], "index {i} covered twice");
+                covered[i] = true;
+            }
+        }
+        assert!(covered.iter().all(|&c| c), "some index uncovered");
+        assert!(seed_chunks(0, 100).is_empty());
+        assert_eq!(seed_chunks(5, 0), vec![(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]); // bs.max(1)
+    }
+
+    // ── Full driver: degradation + alignment via a synthetic executor (no RPC) ────────────
+
+    /// Helper: synthetic exec that FAILS any chunk wider than `fail_above`, otherwise returns
+    /// `Ok(start..end)` so each slot's value equals its absolute index — alignment is then a
+    /// simple `out[i] == Some(i)` check.
+    fn aligned_exec(
+        fail_above: usize,
+        calls: &AtomicUsize,
+    ) -> impl Fn(usize, usize) -> ChunkFut<usize, String> + '_ {
+        move |start: usize, end: usize| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            let width = end - start;
+            Box::pin(async move {
+                if width > fail_above {
+                    Err::<Vec<usize>, String>(format!("synthetic_429_width_{width}"))
+                } else {
+                    Ok((start..end).collect())
+                }
+            }) as ChunkFut<usize, String>
+        }
+    }
+
+    #[tokio::test]
+    async fn driver_all_success_is_perfectly_aligned() {
+        let calls = AtomicUsize::new(0);
+        let out = drive_resilient_batches(
+            250, 100, 10, 2, 0, /*chain*/ 1, "test",
+            aligned_exec(usize::MAX, &calls), // never fails
+        )
+        .await;
+        assert_eq!(out.len(), 250);
+        for (i, slot) in out.iter().enumerate() {
+            assert_eq!(*slot, Some(i), "slot {i} misaligned");
+        }
+    }
+
+    #[tokio::test]
+    async fn driver_degrades_by_bisecting_until_chunks_fit() {
+        // backoff_base_ms=0 → instant retries. Chunks >32 fail; min_batch small enough that
+        // bisection (100→50→25) reaches a passing width, so EVERY pool still lands aligned.
+        let calls = AtomicUsize::new(0);
+        let out = drive_resilient_batches(
+            200, 100, 4, 0 /*no retries → split immediately*/, 0, 1, "test",
+            aligned_exec(32, &calls),
+        )
+        .await;
+        assert_eq!(out.len(), 200);
+        for (i, slot) in out.iter().enumerate() {
+            assert_eq!(*slot, Some(i), "slot {i} should be recovered via degradation");
+        }
+    }
+
+    #[tokio::test]
+    async fn driver_abandons_below_min_batch_as_none_never_fabricates() {
+        // Everything fails (fail_above=0). With min_batch=25 the driver bisects 100→50→25 then
+        // stops (25 is not > 25) and abandons. Result: ALL None — fail-honest, no fabricated data.
+        let calls = AtomicUsize::new(0);
+        let out = drive_resilient_batches(
+            100, 100, 25, 0, 0, 1, "test",
+            aligned_exec(0, &calls),
+        )
+        .await;
+        assert_eq!(out.len(), 100);
+        assert!(out.iter().all(|s| s.is_none()), "abandoned chunks must be None, never fabricated");
+    }
+
+    #[tokio::test]
+    async fn driver_retries_then_succeeds_without_split() {
+        // Exec fails the first N attempts globally, then succeeds — proves retry budget is honored
+        // and a transient throttle recovers WITHOUT degrading chunk size.
+        let attempts = AtomicUsize::new(0);
+        let exec = |start: usize, end: usize| {
+            let n = attempts.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                if n < 2 {
+                    Err::<Vec<usize>, String>("transient".into())
+                } else {
+                    Ok((start..end).collect())
+                }
+            }) as ChunkFut<usize, String>
+        };
+        // single chunk (batch>=total), 3 retries, instant backoff.
+        let out = drive_resilient_batches(8, 100, 1, 3, 0, 1, "test", exec).await;
+        assert_eq!(out.len(), 8);
+        for (i, slot) in out.iter().enumerate() {
+            assert_eq!(*slot, Some(i));
+        }
+    }
+
+    #[tokio::test]
+    async fn driver_zero_total_is_empty() {
+        let calls = AtomicUsize::new(0);
+        let out = drive_resilient_batches(0, 100, 10, 2, 0, 1, "test", aligned_exec(0, &calls)).await;
+        assert!(out.is_empty());
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "no exec calls for empty input");
     }
 }

@@ -1,6 +1,11 @@
 import express from "express";
 import pg from "pg";
 import { Redis } from "ioredis";
+import { PaperTradeArchiver } from "./routes/paper-trade-archiver.js";
+import { RouteDiscoveryOutcomeSink, outcomeSinkEnabled } from "./routes/route-discovery-outcome-sink.js";
+import { buildRouteDiscoveryOutcomesRouter } from "./routes/route-discovery-outcomes-api.js";
+import { buildOperatorRouter } from "./routes/operator.js";
+import { buildCartridgeForgeRouter } from "./routes/cartridge-forge.js";
 import { z } from "zod";
 import { clampBucketMinutes, clampHours, rowToPoint } from "./recon-timeseries.js";
 import { verifyAll } from "./readiness/verifiers/index.js";
@@ -140,11 +145,33 @@ const adminLimiter = rateLimit({
 });
 app.use("/admin/", adminLimiter);
 
+// SECURITY (CodeQL js/missing-rate-limiting): defense-in-depth GLOBAL IP rate-limit
+// covering EVERY route below. The edge worker already throttles at the network
+// boundary; this protects the api-server if reached directly. Ceiling is very generous
+// (6000/min/IP) so legit dashboard polling is never affected — only genuine abuse/DoS
+// trips it. The stricter /admin/ + runtime-ack limiters remain in force. Tune via
+// API_RATE_LIMIT_PER_MIN. /health + /metrics are registered before this on purpose.
+const GLOBAL_RATE_LIMIT_PER_MIN = Math.max(
+  60,
+  parseInt(process.env["API_RATE_LIMIT_PER_MIN"] ?? "6000", 10),
+);
+const globalLimiter = rateLimit({
+  windowMs: 60_000,
+  max: GLOBAL_RATE_LIMIT_PER_MIN,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "rate_limited", retry_after_seconds: 60 },
+});
+
 app.get("/health", healthHandler(SERVICE, VERSION, startedAt));
 // REST convention alias — load balancers / external monitors expect /api/health.
 // Same handler, no behaviour drift.
 app.get("/api/health", healthHandler(SERVICE, VERSION, startedAt));
 app.get("/metrics", metricsHandler);
+
+// Apply the global rate-limit AFTER health/metrics (never throttle the compose
+// healthcheck or Prometheus scrape) and BEFORE every data/admin route below.
+app.use(globalLimiter);
 
 /** Public read-only snapshot of system health + kill-switch state. */
 app.get("/status", async (_req, res) => {
@@ -493,6 +520,28 @@ const routeDiscoveryCache = new TelemetryCache(200);
 const cartridgeTelemetryCache = new TelemetryCache(200);
 app.use(buildRouteDiscoveryRouter(routeDiscoveryCache));
 app.use(buildCartridgesRouter(cartridgeTelemetryCache));
+
+// FASE B Gate-C — read-only analytics over the durable route_discovery_outcomes
+// table (the shadow outcomes the sink persists, incl. the Paso 9 `reason`). This is
+// the missing READ side for that passive sink. NO-ACTIVE: pure SELECT, never writes.
+app.use(buildRouteDiscoveryOutcomesRouter(pool));
+
+// Enterprise-audit follow-up: mount control-plane routers that were built but never
+// mounted, gating auth INTERNALLY. operator (requireOperatorRole per route; relative
+// paths -> base /api/operator) + cartridge-forge (admin-token validator passed here;
+// shadow strategy injection). admin-registries (auth in registry-engine UNVERIFIED) and
+// admin-promote-mainnet (live-adjacent) are INTENTIONALLY NOT mounted — pending explicit
+// verification / sign-off per the audit/shadow/read-only doctrine.
+if (pool) {
+  app.use("/api/operator", buildOperatorRouter(pool));
+  app.use(
+    buildCartridgeForgeRouter({
+      db: pool,
+      redis,
+      adminTokenValidator: (t: string) => !!ARBX_ADMIN_TOKEN && t === ARBX_ADMIN_TOKEN,
+    }),
+  );
+}
 
 mountSedStatus(app, { pool, logger });
 
@@ -1150,6 +1199,46 @@ if (pool) {
   });
 }
 
+// FASE OMEGA SHADOW — paper_trade_runs archiver (passive telemetry sink).
+// Reads arbx:opps:detected and persists each detected opportunity's sim
+// prediction into paper_trade_runs for drift analysis. 100% passive: reads
+// Redis + writes its own table only; never computes profit, never fabricates
+// rows. Dormant by default (project doctrine: land off, enable with evidence) —
+// set ARBX_PAPER_ARCHIVER_MODE=on to activate. Requires DATABASE_URL (pool).
+let paperArchiver: PaperTradeArchiver | null = null;
+if (pool && (process.env["ARBX_PAPER_ARCHIVER_MODE"] ?? "off").toLowerCase() === "on") {
+  paperArchiver = new PaperTradeArchiver({ redisUrl: REDIS_URL, pool, logger });
+  paperArchiver.start().catch((e) =>
+    logger.error({ event: "paper_archiver.start_err", err: (e as Error).message },
+      "paper_trade_runs archiver failed to start"),
+  );
+} else {
+  logger.info(
+    { event: "paper_archiver.dormant", reason: pool ? "mode_off" : "no_database_url" },
+    "paper_trade_runs archiver dormant (set ARBX_PAPER_ARCHIVER_MODE=on to enable)",
+  );
+}
+
+// FASE B Paso 2 — route_discovery outcome sink (passive durable sink).
+// Reads arbx:route_discovery:outcomes (the Rust shadow emitter, Fase B Paso 1) and
+// persists each resolved outcome to route_discovery_outcomes — preserving the
+// >=2-week hit-rate series the capped Redis stream would trim. 100% passive: reads
+// the stream + writes its own table only; never opps:detected, never capital.
+// Dormant by default — set ARBX_ROUTE_DISCOVERY_OUTCOMES_SINK=shadow. Requires DATABASE_URL.
+let rdOutcomeSink: RouteDiscoveryOutcomeSink | null = null;
+if (pool && outcomeSinkEnabled()) {
+  rdOutcomeSink = new RouteDiscoveryOutcomeSink({ redisUrl: REDIS_URL, pool, logger });
+  rdOutcomeSink.start().catch((e) =>
+    logger.error({ event: "rd_outcome_sink.start_err", err: (e as Error).message },
+      "route-discovery outcome sink failed to start"),
+  );
+} else {
+  logger.info(
+    { event: "rd_outcome_sink.dormant", reason: pool ? "gate_off" : "no_database_url" },
+    "route-discovery outcome sink dormant (set ARBX_ROUTE_DISCOVERY_OUTCOMES_SINK=shadow to enable)",
+  );
+}
+
 httpServer.listen(PORT, () => {
   logger.info({ event: "service.boot", port: PORT, env: cfg.system.env,
     upstreams: Object.keys(UPSTREAMS) }, `${SERVICE} listening`);
@@ -1158,6 +1247,9 @@ httpServer.listen(PORT, () => {
 const shutdown = async (sig: string) => {
   logger.info({ event: "service.shutdown", signal: sig }, "shutting down");
   await killSwitch.close().catch(() => {});
+  // Stop the passive paper-trade archiver (closes its dedicated Redis conn).
+  await paperArchiver?.stop().catch(() => {});
+  await rdOutcomeSink?.stop().catch(() => {});
   // Arteria WSS: cerrar el subscriber de convergencia antes que el redis
   // principal para evitar errores de "Connection is closed" en handlers.
   await convergenceSubscriber.quit().catch(() => {});

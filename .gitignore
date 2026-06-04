@@ -85,3 +85,13 @@ monitoring/vault/tls/
 !docs/**/*.zip
 !tests/**/*.zip
 OMEGA_S5_*_DELIVERY*.zip
+
+# AI tooling generado / no-portable — NO va al repo de producción.
+# .roo/: 565 stubs auto-generados (no reproducibles: input local en Downloads).
+# extract-skills.js: generador con path local hardcodeado.
+# skill-667: off-topic (education/learning), vive en user-scope ~/.claude.
+# 567-skills-catalog.md: 1.4M de bloat duplicado del fuente de .roo.
+.roo/
+scripts/extract-skills.js
+.claude/skills/skill-667-applied-education-technology-and-learning-sciences/
+.claude/skills/arbitragex-omega-supreme-agent/references/567-skills-catalog.md

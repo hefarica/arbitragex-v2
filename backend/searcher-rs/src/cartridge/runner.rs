@@ -424,6 +424,31 @@ impl CartridgeRunner {
         raw.and_then(|s| serde_json::from_str(&s).ok())
     }
 
+    /// FASE B — append a resolved shadow eval outcome to a Redis Stream via XADD
+    /// with an approximate MAXLEN cap. Mirrors `read_pool_reserves`' Redis access
+    /// because `host_ctx` is private to this struct. Fail-closed: returns the
+    /// `RedisResult` so the caller logs + swallows any error (never breaks the
+    /// shadow loop). NO-ACTIVE: callers only ever pass the dedicated outcomes
+    /// stream — this path NEVER writes `arbx:opps:detected`.
+    pub async fn xadd_shadow_outcome(
+        &self,
+        stream: &str,
+        maxlen: u64,
+        json: &str,
+    ) -> redis::RedisResult<String> {
+        let mut redis = self.host_ctx.redis.write().await;
+        redis::cmd("XADD")
+            .arg(stream)
+            .arg("MAXLEN")
+            .arg("~")
+            .arg(maxlen)
+            .arg("*")
+            .arg("json")
+            .arg(json)
+            .query_async(&mut *redis)
+            .await
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // Private helpers
     // ─────────────────────────────────────────────────────────────────────
@@ -532,11 +557,18 @@ impl CartridgeRunner {
             .and_then(|v| v.clone().into_string().ok())
             .unwrap_or_else(|| "monitor".to_owned());
 
+        // FASE B Paso 9 — explicit reason string (observability). The cartridge returns
+        // it in its result map (e.g. "v3_sizing_pending"); promote it to a first-class
+        // field so the durable outcomes series can explain WHY is_opportunity=false.
+        let reason = map
+            .get("reason")
+            .and_then(|v| v.clone().into_string().ok());
+
         // Collect any additional metadata fields
         let mut metadata = std::collections::HashMap::new();
         for (k, v) in map.iter() {
             let key = k.to_string();
-            if !["is_opportunity", "estimated_profit", "confidence", "urgency"]
+            if !["is_opportunity", "estimated_profit", "confidence", "urgency", "reason"]
                 .contains(&key.as_str())
             {
                 metadata.insert(key, dynamic_to_json_value(v));
@@ -549,6 +581,7 @@ impl CartridgeRunner {
             confidence,
             metadata,
             urgency,
+            reason,
         })
     }
 }

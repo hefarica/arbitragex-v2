@@ -91,10 +91,22 @@ fn normalize(raw: f64, decimals: u8) -> f64 {
 
 /// MMBF edge weight `−ln((1−fee)·rate)`. Returns `None` if the argument is
 /// non-positive (cannot take the log) — honest, never a sentinel.
+///
+/// Also returns `None` if the result is non-finite (`±∞`/`NaN`). Without this,
+/// an extreme-but-finite rate (e.g. a pathologically imbalanced pool, or a rate
+/// that overflows `f64` to `∞`) would yield `Some(-∞)` — a phantom
+/// "infinitely profitable" edge that makes ANY cycle through it look like a
+/// guaranteed arb. R8 fail-honest: a weight we cannot compute finitely is
+/// `None` (edge keeps its topology, no Phase-2 weight), never a fabricated value.
 fn log_weight(fee: f64, rate: f64) -> Option<f64> {
     let arg = (1.0 - fee) * rate;
     if arg > 0.0 {
-        Some(-arg.ln())
+        let w = -arg.ln();
+        if w.is_finite() {
+            Some(w)
+        } else {
+            None
+        }
     } else {
         None
     }
@@ -129,6 +141,12 @@ pub fn build_edges_for_pool(
                 }
                 let r0 = r.r0.parse::<f64>().map_err(|_| "invalid_reserves".to_string())?;
                 let r1 = r.r1.parse::<f64>().map_err(|_| "invalid_reserves".to_string())?;
+                // Reject non-finite reserves: a corrupted cache entry whose decimal string
+                // exceeds f64::MAX parses to `∞` and would otherwise sail past the `> 0.0`
+                // guard, poisoning rate/liquidity math with infinities (R8 fail-honest).
+                if !r0.is_finite() || !r1.is_finite() {
+                    return Err("invalid_reserves".to_string());
+                }
                 if r0 <= 0.0 || r1 <= 0.0 {
                     return Err("missing_reserves".to_string());
                 }
@@ -472,6 +490,30 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, "invalid_pool_shape");
+    }
+
+    #[test]
+    fn non_finite_reserves_reject_and_never_yield_infinite_weight() {
+        // A corrupted reserve string that parses to f64::INFINITY ("1e400") must be
+        // rejected, NOT silently admitted as a Some(-inf) "infinitely profitable" edge.
+        let p = v2_pool();
+        let mut r = reserves(1000);
+        r.r0 = "1e400".to_string(); // parses to f64::INFINITY
+        let err = build_edges_for_pool(
+            &p,
+            Some(&r),
+            None,
+            Some(&meta(6)),
+            Some(&meta(6)),
+            1000,
+            &GraphBuildConfig::default(),
+        )
+        .unwrap_err();
+        assert_eq!(err, "invalid_reserves");
+        // And log_weight itself never returns a non-finite value.
+        assert_eq!(log_weight(0.003, f64::INFINITY), None);
+        assert_eq!(log_weight(0.003, 0.0), None);
+        assert!(log_weight(0.003, 1.0).unwrap().is_finite());
     }
 
     #[test]

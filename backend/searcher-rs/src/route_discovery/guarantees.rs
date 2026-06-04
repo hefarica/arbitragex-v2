@@ -109,7 +109,7 @@ fn every_telemetry_builder_avoids_opps_detected() {
         mode: "shadow".to_string(),
     };
     let events = vec![
-        tick_event(1, "dfs_bounded", 1, 2, 0, 1, 0, 1, 0, false, 5, "shadow"),
+        tick_event(1, "dfs_bounded", 1, 2, 0, 1, 0, 1, 0, false, false, 5, "shadow"),
         route_candidate_event(1, "dfs_bounded", &c),
         strategy_applicability_event(1, &c),
         rejected_event(

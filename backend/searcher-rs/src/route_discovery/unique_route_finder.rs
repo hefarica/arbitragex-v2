@@ -70,6 +70,13 @@ pub struct RouteFinderOutcome {
     /// `true` when the route cap stopped enumeration early ⇒ the route set is
     /// **incomplete** (R8 fail-honest: signal truncation, don't imply completeness).
     pub capped: bool,
+    /// `true` when `max_pools_per_pair` dropped one or more parallel pools between
+    /// some token pair during traversal. Distinct from `capped` (which is about the
+    /// total route cap): even with `capped == false`, a `pools_truncated == true`
+    /// means "all cycles over the *retained* pools were explored, but some pools were
+    /// excluded by the per-pair branching cap" — so the set is not provably exhaustive
+    /// over the full pool universe (R8: don't let a per-pair drop masquerade as complete).
+    pub pools_truncated: bool,
 }
 
 struct FinderState<'g> {
@@ -80,22 +87,28 @@ struct FinderState<'g> {
     results: Vec<RouteCandidate>,
     dropped_for_cap: usize,
     capped: bool,
+    pools_truncated: bool,
 }
 
 impl<'g> FinderState<'g> {
     /// Out-edges leaving `token`, capped to `max_pools_per_pair` per destination.
-    fn collect_out_edges(&self, token: Address) -> Vec<RouteEdge> {
+    /// Returns `(edges, truncated)` where `truncated` is `true` iff at least one
+    /// parallel pool was dropped by the per-pair cap — so the caller can flag the
+    /// result set as not-provably-exhaustive (R8) instead of silently swallowing it.
+    fn collect_out_edges(&self, token: Address) -> (Vec<RouteEdge>, bool) {
         let mut per_pair: HashMap<Address, usize> = HashMap::new();
         let mut out = Vec::new();
+        let mut truncated = false;
         for e in self.graph.out_edges(&token) {
             let c = per_pair.entry(e.token_out).or_insert(0);
             if *c >= self.cfg.max_pools_per_pair {
+                truncated = true; // a real pool exists but was excluded by the branching cap
                 continue;
             }
             *c += 1;
             out.push(e.clone());
         }
-        out
+        (out, truncated)
     }
 
     fn dfs(
@@ -117,7 +130,10 @@ impl<'g> FinderState<'g> {
 
         // Clone out-edges first so we don't hold an immutable borrow of the
         // graph across the mutable `self` recursion.
-        let out = self.collect_out_edges(current);
+        let (out, truncated) = self.collect_out_edges(current);
+        if truncated {
+            self.pools_truncated = true; // R8: a parallel pool was dropped here
+        }
         for edge in out {
             if pools_used.contains(&edge.pool) {
                 continue; // never reuse a pool within a cycle
@@ -222,6 +238,7 @@ pub fn find_routes(
         results: Vec::new(),
         dropped_for_cap: 0,
         capped: false,
+        pools_truncated: false,
     };
 
     let starts: Vec<Address> = if cfg.base_tokens.is_empty() {
@@ -250,6 +267,7 @@ pub fn find_routes(
         routes: state.results,
         dropped_for_cap: state.dropped_for_cap,
         capped: state.capped,
+        pools_truncated: state.pools_truncated,
     }
 }
 
@@ -409,6 +427,24 @@ mod tests {
         let o = find_routes(&g, 1, &RouteFinderConfig::default());
         assert!(!o.capped, "ample cap → complete result set, not flagged");
         assert_eq!(o.dropped_for_cap, 0);
+        // 2 pools < default max_pools_per_pair (8) → nothing dropped per-pair.
+        assert!(!o.pools_truncated, "no per-pair drop → not flagged");
+    }
+
+    #[test]
+    fn per_pair_cap_sets_pools_truncated_flag() {
+        use ProtocolType::V2;
+        // Two parallel pools over (A,B); cap to 1 per pair → ≥1 pool excluded.
+        let g = graph_from(&[(0x10, 1, 2, V2), (0x20, 1, 2, V2)]);
+        let cfg = RouteFinderConfig {
+            max_pools_per_pair: 1,
+            ..Default::default()
+        };
+        let o = find_routes(&g, 1, &cfg);
+        assert!(
+            o.pools_truncated,
+            "per-pair cap dropped a real pool → must be flagged (R8 fail-honest)"
+        );
     }
 
     #[test]

@@ -1,0 +1,159 @@
+name: integration-tests
+
+# OMEGA SEAL — closes the CRITICAL CI-blindness gap: unit-tests.yml runs Rust
+# with `--lib` only and a STUB DATABASE_URL, so DB/Redis-backed logic (recon,
+# opportunities-live, stream consumers) was never gated in CI. This workflow
+# provisions REAL postgres:16 + redis:7 service containers, applies the schema
+# migrations via the CANONICAL migrator (automation/scripts/migrate.sh — handles
+# 001b password-var injection + idempotent ordered apply), then runs the full
+# test suite against them.
+#
+# KNOWN PRE-EXISTING SCHEMA DEFECT surfaced by this gate (NOT introduced here):
+# migration 019_audit_log_partitions.sql calls arbx_anonymize_ip()/
+# arbx_hash_user_agent(), which are defined only in 053_audit_pii_hardening.sql
+# (lexically later). A fresh-DB migrate.sh run therefore aborts at 019. This gate
+# correctly turns that latent bug RED. Fix forward (e.g. an 018b_*_pii_helpers.sql
+# that defines the two functions before 019) before expecting this workflow green.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  rust-integration:
+    name: Rust integration (live Postgres + Redis)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: arbitragex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Point the suite at the service containers (mapped to localhost).
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/arbitragex
+      REDIS_URL: redis://localhost:6379
+      # Sentinel signer ADDRESS (not a key) — mirrors unit-tests.yml. A real
+      # capital key (FLASHBOTS_SIGNER_KEY) is intentionally NEVER set here.
+      SIM_SIGNER_ADDRESS: "0x000000000000000000000000000000000000dead"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Apply DB migrations (canonical migrate.sh)
+        # Reuses automation/scripts/migrate.sh — the production migrator. It
+        # applies database/migrations/*.sql in lexical order, idempotently
+        # (schema_migrations table), and injects the -v password vars that
+        # 001b_role_passwords.sql requires (defaults arbx_*_dev_only). Do NOT
+        # re-implement the apply loop here — keep one source of truth.
+        env:
+          POSTGRES_PASSWORD: postgres
+        run: |
+          set -euo pipefail
+          psql "postgres://postgres:postgres@localhost:5432/arbitragex" \
+            -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+          bash automation/scripts/migrate.sh
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Run full test suite against live Postgres + Redis
+        # Unlike unit-tests.yml (`--lib` + stub DB), this runs the WHOLE suite
+        # with real services so integration tests that connect to PG/Redis are
+        # actually exercised and gated.
+        working-directory: backend
+        run: cargo test --workspace --locked
+
+  ts-integration:
+    name: TypeScript integration (live Postgres + Redis)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: arbitragex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/arbitragex
+      REDIS_URL: redis://localhost:6379
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Apply DB migrations (canonical migrate.sh)
+        env:
+          POSTGRES_PASSWORD: postgres
+        run: |
+          set -euo pipefail
+          psql "postgres://postgres:postgres@localhost:5432/arbitragex" \
+            -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+          bash automation/scripts/migrate.sh
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+      - name: Install dependencies
+        run: npm install
+      - name: Build @arbx/shared
+        run: npm run -w @arbx/shared build
+      - name: Run DB-backed integration tests
+        # api-server + selector-api carry PG/Redis-backed integration tests
+        # (e.g. opportunities-live, migrations). Both define a "test" script,
+        # so they are named explicitly (no --if-present needed).
+        run: npm test -w @arbx/api-server -w @arbx/selector-api

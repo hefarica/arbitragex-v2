@@ -224,6 +224,7 @@ pub fn evaluate_tick(
         telemetry_emitted,
         found.dropped_for_cap,
         found.capped,
+        found.pools_truncated,
         latency_ms,
         mode,
     );
