@@ -145,11 +145,33 @@ const adminLimiter = rateLimit({
 });
 app.use("/admin/", adminLimiter);
 
+// SECURITY (CodeQL js/missing-rate-limiting): defense-in-depth GLOBAL IP rate-limit
+// covering EVERY route below. The edge worker already throttles at the network
+// boundary; this protects the api-server if reached directly. Ceiling is very generous
+// (6000/min/IP) so legit dashboard polling is never affected — only genuine abuse/DoS
+// trips it. The stricter /admin/ + runtime-ack limiters remain in force. Tune via
+// API_RATE_LIMIT_PER_MIN. /health + /metrics are registered before this on purpose.
+const GLOBAL_RATE_LIMIT_PER_MIN = Math.max(
+  60,
+  parseInt(process.env["API_RATE_LIMIT_PER_MIN"] ?? "6000", 10),
+);
+const globalLimiter = rateLimit({
+  windowMs: 60_000,
+  max: GLOBAL_RATE_LIMIT_PER_MIN,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "rate_limited", retry_after_seconds: 60 },
+});
+
 app.get("/health", healthHandler(SERVICE, VERSION, startedAt));
 // REST convention alias — load balancers / external monitors expect /api/health.
 // Same handler, no behaviour drift.
 app.get("/api/health", healthHandler(SERVICE, VERSION, startedAt));
 app.get("/metrics", metricsHandler);
+
+// Apply the global rate-limit AFTER health/metrics (never throttle the compose
+// healthcheck or Prometheus scrape) and BEFORE every data/admin route below.
+app.use(globalLimiter);
 
 /** Public read-only snapshot of system health + kill-switch state. */
 app.get("/status", async (_req, res) => {
