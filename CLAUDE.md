@@ -282,3 +282,49 @@ relacionada con cualquiera de estos disparadores:
 - Command Menu / slash: `/git-url-e2e-auditor-scaffold <GIT_URL>`
 - Repo objetivo por defecto: `https://github.com/hefarica/arbitragex-v2.git`
 - Entrega siempre en el formato de 10 ítems definido en `SKILL.md`.
+
+<!-- BEGIN: mcp-policy -->
+---
+
+# 33. POLÍTICA PERMANENTE — MCP STACK (AUDIT / SCAFFOLD / SHADOW / READ-ONLY)
+
+> Anexado de forma NO destructiva (no se removió nada de §1-§32). Define cómo y
+> cuándo Claude DEBE usar los MCP servers declarados en `.mcp.json` (project) y en
+> el user config. Secretos SOLO por entorno (`.env.mcp`, gitignored); en archivos
+> versionados solo placeholders `${VAR}`.
+
+### 33.1 Uso obligatorio por dominio
+
+1. **Documentación de librerías/APIs → Context7.** Antes de escribir contra
+   cualquier librería, framework, SDK o API (viem, ethers, Next.js, socket.io,
+   Express, serde, etc.), consulta **Context7** para inyectar la doc versionada
+   correcta. Prohibido inventar firmas de API.
+2. **Contratos / rutas / on-chain → Foundry + EVM + Blockscout (read-only/fork).**
+   Toda lectura de contratos, simulación, análisis de bytecode o forense de rutas
+   usa **Foundry MCP** (Anvil fork local, `PRIVATE_KEY` VACÍO), **EVM MCP**
+   (lecturas multi-chain) y **Blockscout** (explorador read-only). NUNCA firmar.
+3. **Verificación de invariante → Postgres(RO) + Redis(RO).** Antes y después de
+   CUALQUIER fase que toque el control-plane, verifica el invariante
+   `XLEN arbx:opps:detected` (delta=0) vía **Redis MCP** (ACL `+@read -@write`) y
+   audita el esquema/datos vía **Postgres MCP** (rol `SELECT`-only). Si el delta
+   ≠ 0 sin causa real documentada → DETENERSE y reportar.
+4. **Frontend/E2E → Playwright (+ Magic).** Pruebas de paneles y WebSocket en vivo
+   con **Playwright MCP** (`--headless --isolated`). Generación de UI con **Magic**.
+
+### 33.2 Prohibiciones (INVIOLABLES)
+
+- ❌ Ningún MCP con `PRIVATE_KEY` poblado. Foundry corre SIEMPRE con `PRIVATE_KEY=""`.
+- ❌ Prohibido activar executor, wallets, capital, firma o broadcast de transacciones
+  vía cualquier MCP (incl. GOAT, thirdweb-write, Chainstack-write). NO instalar GOAT.
+- ❌ Prohibido escribir secretos reales en `.mcp.json`, `CLAUDE.md`, o cualquier
+  archivo versionado. Solo placeholders `${VAR}`; valores reales solo en `.env.mcp`.
+- ❌ Postgres/Redis/GitHub MCP en modo escritura. Roles read-only obligatorios
+  (Postgres `SELECT`-only, Redis `+@read -@write`, GitHub PAT read-only).
+
+### 33.3 Operación
+
+- Config compartida del proyecto: `.mcp.json` (raíz). Variables: `.env.mcp.example`
+  (template, tracked) → copiar a `.env.mcp` (real, gitignored).
+- Inventario y salud: `claude mcp list`; detalle: `claude mcp get <name>`; en sesión: `/mcp`.
+- Si una ruta exige violar §33.2 → DETENERSE y reportar el bloqueo (igual que §32).
+<!-- END: mcp-policy -->

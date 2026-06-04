@@ -5,7 +5,13 @@
 .env
 .env.*
 !.env.example
+!.env.mcp.example
+# NOTE: .env.mcp (REAL MCP secrets) stays IGNORED via the .env.* rule above.
+#       Only the .env.mcp.example TEMPLATE (placeholders only) is tracked.
 secrets/
+# Operator secrets SSOT workbook — NEVER commit (real credentials live here).
+*Secrets_Config.xlsx
+ArbitrageX_Secrets_Config.xlsx
 *.pem
 *.key
 *.jks
