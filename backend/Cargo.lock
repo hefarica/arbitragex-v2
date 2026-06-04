@@ -1761,7 +1761,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -2471,7 +2471,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3553,7 +3553,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -4405,7 +4405,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4952,7 +4952,7 @@ dependencies = [
  "hex",
  "lru 0.12.5",
  "math-engine",
- "redis 0.25.5",
+ "redis",
  "revm",
  "serde",
  "serde_json",
@@ -5062,7 +5062,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.2",
  "rustls 0.23.40",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -5100,7 +5100,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -5277,7 +5277,7 @@ dependencies = [
  "ethers",
  "futures-util",
  "hex",
- "redis 0.25.5",
+ "redis",
  "serde",
  "serde_json",
  "shared-rs",
@@ -5296,27 +5296,6 @@ name = "recvmsg"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3edd4d5d42c92f0a659926464d4cce56b562761267ecf0f469d85b7de384175"
-
-[[package]]
-name = "redis"
-version = "0.24.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e23805debcc4435229c51187c0023a4d04499d354c101490e60744c087e973a"
-dependencies = [
- "async-trait",
- "bytes",
- "combine",
- "futures-util",
- "itoa",
- "percent-encoding",
- "pin-project-lite",
- "ryu",
- "sha1_smol",
- "socket2 0.4.10",
- "tokio",
- "tokio-util",
- "url",
-]
 
 [[package]]
 name = "redis"
@@ -5433,7 +5412,7 @@ dependencies = [
  "ethers",
  "futures-util",
  "hex",
- "redis 0.25.5",
+ "redis",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -5863,7 +5842,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5942,7 +5921,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6145,7 +6124,7 @@ dependencies = [
  "prioritization-spine",
  "prometheus",
  "rand 0.8.6",
- "redis 0.25.5",
+ "redis",
  "reqwest 0.12.28",
  "rhai",
  "sed-core",
@@ -6538,7 +6517,7 @@ dependencies = [
  "jsonschema",
  "once_cell",
  "prometheus",
- "redis 0.25.5",
+ "redis",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -6598,7 +6577,7 @@ dependencies = [
  "ethers",
  "futures-util",
  "hex",
- "redis 0.25.5",
+ "redis",
  "serde",
  "serde_json",
  "shared-rs",
@@ -6722,16 +6701,6 @@ dependencies = [
 
 [[package]]
 name = "socket2"
-version = "0.4.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f7916fc008ca5542385b89a3d3ce689953c143e9304a9bf8beec1de48994c0d"
-dependencies = [
- "libc",
- "winapi",
-]
-
-[[package]]
-name = "socket2"
 version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e22376abed350d73dd1cd119b57ffccad95b4e585a7cda43e286245ce23c0678"
@@ -6747,7 +6716,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -7228,7 +7197,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7387,7 +7356,7 @@ dependencies = [
  "mockito",
  "once_cell",
  "prometheus",
- "redis 0.24.1",
+ "redis",
  "reqwest 0.11.27",
  "serde",
  "serde_json",
@@ -8239,7 +8208,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
