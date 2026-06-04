@@ -557,11 +557,18 @@ impl CartridgeRunner {
             .and_then(|v| v.clone().into_string().ok())
             .unwrap_or_else(|| "monitor".to_owned());
 
+        // FASE B Paso 9 — explicit reason string (observability). The cartridge returns
+        // it in its result map (e.g. "v3_sizing_pending"); promote it to a first-class
+        // field so the durable outcomes series can explain WHY is_opportunity=false.
+        let reason = map
+            .get("reason")
+            .and_then(|v| v.clone().into_string().ok());
+
         // Collect any additional metadata fields
         let mut metadata = std::collections::HashMap::new();
         for (k, v) in map.iter() {
             let key = k.to_string();
-            if !["is_opportunity", "estimated_profit", "confidence", "urgency"]
+            if !["is_opportunity", "estimated_profit", "confidence", "urgency", "reason"]
                 .contains(&key.as_str())
             {
                 metadata.insert(key, dynamic_to_json_value(v));
@@ -574,6 +581,7 @@ impl CartridgeRunner {
             confidence,
             metadata,
             urgency,
+            reason,
         })
     }
 }

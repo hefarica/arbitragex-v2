@@ -292,6 +292,7 @@ async fn emit_shadow_outcome(
         "estimated_profit": res.estimated_profit,
         "confidence": res.confidence,
         "urgency": res.urgency.clone(),
+        "reason": res.reason.clone(),
         "had_reserves": had_reserves,
         "mode": "shadow",
     });

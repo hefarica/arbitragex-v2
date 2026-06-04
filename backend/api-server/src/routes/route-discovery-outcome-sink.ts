@@ -70,6 +70,7 @@ interface RdOutcomeV1 {
   urgency?: string;
   had_reserves: boolean;
   mode: string;
+  reason?: string;
 }
 
 /** Validate REAL required fields; reject (→ SKIP+XACK) if malformed. Never coerces. */
@@ -167,8 +168,8 @@ export class RouteDiscoveryOutcomeSink {
         `INSERT INTO route_discovery_outcomes
            (stream_id, ts_ms, schema_ver, chain_id, cartridge_id, tx_hash,
             source_event, pool_hint, token_in, token_out, is_opportunity,
-            estimated_profit, confidence, urgency, had_reserves, mode)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+            estimated_profit, confidence, urgency, had_reserves, mode, reason)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
          ON CONFLICT (stream_id) DO NOTHING`,
         [
           id,                       // stream_id (XADD id) — the idempotency key
@@ -187,6 +188,7 @@ export class RouteDiscoveryOutcomeSink {
           o.urgency ?? null,
           o.had_reserves,
           o.mode,
+          o.reason ?? null,         // FASE B Paso 9 — observability (nullable)
         ],
       );
       await this.redis.xack(STREAM_IN, GROUP, id);
