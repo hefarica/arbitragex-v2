@@ -30,6 +30,11 @@ COPY simulator-v2 ./simulator-v2
 # with "failed to load manifest for workspace member /build/token-enricher".
 COPY token-enricher ./token-enricher
 COPY sed-core ./sed-core
+# mcp-sim-engine: workspace member (9a45a96). Never a build target here, but the
+# workspace resolver requires its manifest to be present, else `cargo build -p
+# searcher-rs` fails "failed to load manifest for workspace member
+# /build/mcp-sim-engine". Same rationale as token-enricher/simulator-v2 above.
+COPY mcp-sim-engine ./mcp-sim-engine
 # --locked enforces reproducibility (Cargo.lock must match Cargo.toml).
 # --frozen would also enable --offline, which requires a pre-populated
 # ~/.cargo/registry index — not available in this fresh build context.
