@@ -605,6 +605,14 @@ app.get("/api/scoring/status", (c) => proxy(c, "/api/v1/scoring/status", "arbx:c
 app.get("/api/risk/circuit-breakers/status", (c) => proxy(c, "/api/v1/risk/circuit-breakers/status", "arbx:cache:cb-status", 15));
 app.get("/api/risk/circuit-breakers/events", (c) => proxy(c, "/api/v1/risk/circuit-breakers/events", "arbx:cache:cb-events", 30));
 
+// FASE B Gate-C — route-discovery OUTCOMES analytics (read-only over the durable
+// Postgres `route_discovery_outcomes` table; shadow emitter's resolved outcomes +
+// Paso 9 `reason` column). Read-side of the passive sink: hit-rate series + reason
+// distribution (the "why 0%"). proxy() forwards ?hours=/?limit= and query-scopes
+// the KV cache key, so 24h vs 14d windows never collide. 15s TTL. Observe-only.
+app.get("/api/route-discovery-outcomes/summary", (c) => proxy(c, "/api/v1/route-discovery-outcomes/summary", "arbx:cache:rdo-summary", 15));
+app.get("/api/route-discovery-outcomes", (c) => proxy(c, "/api/v1/route-discovery-outcomes", "arbx:cache:rdo-list", 15));
+
 // Topology Vault — Admin-token gated; edge forwards header.
 // GET snapshot uses short cache (5s) since topology changes infrequently.
 // POST mutations is pass-through (mutation).

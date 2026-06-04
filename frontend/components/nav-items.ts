@@ -15,6 +15,7 @@ import {
   ZapIcon,
   WalletIcon,
   DatabaseIcon,
+  PercentIcon,
 } from "lucide-react";
 
 export type NavItem = {
@@ -33,6 +34,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/risk",          label: "Entropy & alerts",       icon: AlertTriangleIcon, group: "observe" },
   { href: "/recon",         label: "Recon & yield",          icon: GaugeIcon,         group: "observe" },
   { href: "/operations",    label: "Convergence metrics",    icon: TrendingUpIcon,    group: "observe" },
+  { href: "/route-outcomes", label: "Route outcomes",        icon: PercentIcon,       group: "observe" },
   { href: "/sed",           label: "SED Pipeline",           icon: ActivityIcon,      group: "observe" },
   { href: "/config",        label: "Config",                 icon: SettingsIcon,      group: "control" },
   { href: "/strategies",    label: "Resolution engines",     icon: SlidersHorizontalIcon, group: "control" },

@@ -529,9 +529,19 @@ app.use(buildRouteDiscoveryOutcomesRouter(pool));
 // Enterprise-audit follow-up: mount control-plane routers that were built but never
 // mounted, gating auth INTERNALLY. operator (requireOperatorRole per route; relative
 // paths -> base /api/operator) + cartridge-forge (admin-token validator passed here;
-// shadow strategy injection). admin-registries (auth in registry-engine UNVERIFIED) and
-// admin-promote-mainnet (live-adjacent) are INTENTIONALLY NOT mounted — pending explicit
-// verification / sign-off per the audit/shadow/read-only doctrine.
+// shadow strategy injection). admin-registries and admin-promote-mainnet are
+// INTENTIONALLY NOT mounted:
+//   - admin-registries: VERIFIED 2026-06-04 to carry NO authentication — its router
+//     (lib/registry-engine.ts buildRegistryRouter) exposes raw POST/PATCH/DELETE and
+//     actorOf() reads only an `x-omega-actor` header / req.ip (no token check). It is a
+//     full CRUD mutation surface over live-adjacent entities (risk_gate, capital_gate,
+//     contract_registry, relay_endpoints, rpc) that publishes hot-reload events to the
+//     searcher-rs Arc-swap. Mounting it = unauthenticated runtime mutation of risk/capital
+//     gates + executor contract targets = FASE D territory (blocked: no KMS, no human
+//     authorization-of-record, no audit sign-off). To enable LATER it must be wrapped in
+//     requireAdminToken (V-AT-1) and pass FASE D authorization; read-only (GET-only)
+//     mounting could come first if observability is the only need.
+//   - admin-promote-mainnet: live-adjacent (mainnet promotion) — same FASE D gate.
 if (pool) {
   app.use("/api/operator", buildOperatorRouter(pool));
   app.use(

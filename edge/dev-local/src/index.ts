@@ -195,6 +195,16 @@ app.get("/api/route-discovery/routes", (req, res) => proxy("/api/route-discovery
 app.get("/api/cartridges/status", (req, res) => proxy("/api/cartridges/status", req, res));
 app.get("/api/cartridges/telemetry/latest", (req, res) => proxy("/api/cartridges/telemetry/latest", req, res));
 
+// FASE B Gate-C — route-discovery OUTCOMES analytics (read-only over the durable
+// Postgres `route_discovery_outcomes` table; the shadow emitter's resolved
+// outcomes + Paso 9 `reason` column). This is the read-side of the passive sink:
+// it surfaces the hit-rate series and the reason distribution (the "why 0%").
+// Edge path mirrors api-server /api/v1/route-discovery-outcomes*. Query string
+// (?hours= / ?limit=) is forwarded verbatim by proxy() (mode-1). Observe-only;
+// never touches arbx:opps:detected, capital, or execution.
+app.get("/api/route-discovery-outcomes/summary", (req, res) => proxy("/api/v1/route-discovery-outcomes/summary", req, res));
+app.get("/api/route-discovery-outcomes", (req, res) => proxy("/api/v1/route-discovery-outcomes", req, res));
+
 // Chains Admin registry — admin-token gated. Routed through adminProxy so the
 // V-AT-1 httpOnly cookie (arbx_admin_session) is translated to the upstream
 // x-arbx-admin-token header. adminProxy is defined later in the file; function
