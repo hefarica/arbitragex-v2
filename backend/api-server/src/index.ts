@@ -3,6 +3,9 @@ import pg from "pg";
 import { Redis } from "ioredis";
 import { PaperTradeArchiver } from "./routes/paper-trade-archiver.js";
 import { RouteDiscoveryOutcomeSink, outcomeSinkEnabled } from "./routes/route-discovery-outcome-sink.js";
+import { buildRouteDiscoveryOutcomesRouter } from "./routes/route-discovery-outcomes-api.js";
+import { buildOperatorRouter } from "./routes/operator.js";
+import { buildCartridgeForgeRouter } from "./routes/cartridge-forge.js";
 import { z } from "zod";
 import { clampBucketMinutes, clampHours, rowToPoint } from "./recon-timeseries.js";
 import { verifyAll } from "./readiness/verifiers/index.js";
@@ -495,6 +498,28 @@ const routeDiscoveryCache = new TelemetryCache(200);
 const cartridgeTelemetryCache = new TelemetryCache(200);
 app.use(buildRouteDiscoveryRouter(routeDiscoveryCache));
 app.use(buildCartridgesRouter(cartridgeTelemetryCache));
+
+// FASE B Gate-C — read-only analytics over the durable route_discovery_outcomes
+// table (the shadow outcomes the sink persists, incl. the Paso 9 `reason`). This is
+// the missing READ side for that passive sink. NO-ACTIVE: pure SELECT, never writes.
+app.use(buildRouteDiscoveryOutcomesRouter(pool));
+
+// Enterprise-audit follow-up: mount control-plane routers that were built but never
+// mounted, gating auth INTERNALLY. operator (requireOperatorRole per route; relative
+// paths -> base /api/operator) + cartridge-forge (admin-token validator passed here;
+// shadow strategy injection). admin-registries (auth in registry-engine UNVERIFIED) and
+// admin-promote-mainnet (live-adjacent) are INTENTIONALLY NOT mounted — pending explicit
+// verification / sign-off per the audit/shadow/read-only doctrine.
+if (pool) {
+  app.use("/api/operator", buildOperatorRouter(pool));
+  app.use(
+    buildCartridgeForgeRouter({
+      db: pool,
+      redis,
+      adminTokenValidator: (t: string) => !!ARBX_ADMIN_TOKEN && t === ARBX_ADMIN_TOKEN,
+    }),
+  );
+}
 
 mountSedStatus(app, { pool, logger });
 
