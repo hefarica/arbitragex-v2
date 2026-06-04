@@ -82,7 +82,7 @@ const app = express();
 // IMPORT DEFI ROUTER & WEBSOCKET
 // ==========================================
 import { mountDefi } from "./routes/defi.js";
-import { buildTradingConfigRouter } from "./routes/trading-config.js";
+import { buildTradingConfigRouter, rehydrateTradingConfigMirror } from "./routes/trading-config.js";
 import { buildOperationsRouter } from "./routes/operations.js";
 import { buildStrategyCatalogRouter } from "./routes/strategy-catalog.js";
 import { buildCredentialsRouter } from "./routes/credentials.js";
@@ -992,6 +992,14 @@ app.use(buildTradingConfigRouter({
   writeAudit,
   logger,
 }));
+
+// Boot re-hydration: PG is the source of truth for trading_config; the Redis
+// mirror (arbx:trading_config:<chain>) is written ONLY by the admin PUT, so a
+// Redis restart/eviction silently drops it → searcher-rs sees has_config=false
+// → 0 opportunities. Re-mirror enabled rows from PG at boot so the config (and
+// thus the paper feed) survives Redis restarts. Fire-and-forget; never blocks
+// boot and never throws (handles its own errors). Replays existing PG values only.
+void rehydrateTradingConfigMirror({ pool, redis, logger });
 
 // ── Operations PnL (Sprint 3 — PMI/EVM KPI surface) ────────────────────
 app.use(buildOperationsRouter({
