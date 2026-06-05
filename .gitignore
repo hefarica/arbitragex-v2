@@ -76,8 +76,11 @@ tmp/
 # Playwright
 tests/e2e/node_modules/
 tests/e2e/playwright-report/
+tests/e2e/playwright-report-live/
 tests/e2e/test-results/
 tests/e2e/.playwright-cache/
+# Playwright MCP scratch workspace (browser sessions) — never commit run output.
+.playwright-mcp/
 
 # Docker
 docker-compose.override.yml

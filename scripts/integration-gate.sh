@@ -59,7 +59,10 @@ echo "== 7. Frontend E2E (read-only, live target) — 'evidencia dura' =="
 # A/B local gate runs skip it cleanly. One-time setup:
 #   (cd tests/e2e && npm ci && npm run install-browsers)
 if [ -n "${ARBX_FRONTEND_URL:-}" ]; then
-  ( cd tests/e2e && npx playwright test --config=playwright.live.config.ts 2>&1 | tail -10 ) \
+  # `test:live` = the READ-ONLY subset (functional-live + admin-gate-live +
+  # honest-state-live); it deliberately EXCLUDES admin-mutating-live. No state
+  # is touched even if ARBX_ADMIN_TOKEN happens to be set.
+  ( cd tests/e2e && npm run test:live 2>&1 | tail -10 ) \
     || red "frontend live E2E failed (panels not rendering / honest-state regression)"
 else
   echo "  SKIP — set ARBX_FRONTEND_URL=https://edge-arbx.ape-tv.net (or the VPS edge) to run the live read-only frontend E2E"
