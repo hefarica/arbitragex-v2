@@ -112,6 +112,8 @@ mod workers;
 mod size_optimizer;
 #[allow(dead_code)]
 mod state_projector;
+#[allow(dead_code)]
+mod v3_quote_provider;
 
 use shared_rs::{
     config::{require_env, AppConfig},
