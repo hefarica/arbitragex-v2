@@ -609,12 +609,21 @@ async fn main() -> anyhow::Result<()> {
     let price_alchemy_key = workers::price_worker::alchemy_key_from_env(primary_chain);
     let price_redis = redis_conn.clone();
     let price_chain = primary_chain;
+    // Tier-0 Chainlink on-chain feeds: needs the PG pool (reads operator-seeded
+    // price_oracles) + the chain's HTTP RPC (eth_call latestRoundData). Both
+    // optional — when either is absent the worker skips Chainlink and behaves as
+    // before (Alchemy/Coingecko/Config cascade). Read-only; no signing.
+    let price_db = db_pool.clone();
+    let price_rpc_url = workers::price_worker::rpc_http_url_from_env(primary_chain);
     tokio::spawn(async move {
-        let cfg = workers::price_worker::PriceWorkerConfig::new(
+        let mut cfg = workers::price_worker::PriceWorkerConfig::new(
             price_chain,
             price_period_secs,
             price_alchemy_key,
         );
+        if let (Some(db), Some(url)) = (price_db, price_rpc_url) {
+            cfg = cfg.with_chainlink(db, url);
+        }
         match workers::price_worker::PriceWorker::new(cfg) {
             Ok(worker) => worker.run(price_redis).await,
             Err(e) => warn!(event = "price_worker.boot_failed", chain_id = price_chain, error = %e),
