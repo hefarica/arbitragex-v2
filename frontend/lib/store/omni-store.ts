@@ -160,14 +160,26 @@ export const useOmniStore = create<OmniStoreState>()(
           const chainsData = await chainsRes.json();
           const dexesData = await dexesRes.json();
 
+          // The defi endpoints use inconsistent envelopes: /api/chains + /api/rpcs
+          // return {success, data}, while /api/dexes returns {count, items}.
+          // Normalise to an array, never throwing on a non-array (the old
+          // `x.items || x` fell through to the {success,data} OBJECT and crashed
+          // .forEach → registryError → the registry showed a false error).
+          const toArray = (d: unknown): unknown[] => {
+            const o = d as { data?: unknown; items?: unknown } | null;
+            if (Array.isArray(o?.data)) return o.data as unknown[];
+            if (Array.isArray(o?.items)) return o.items as unknown[];
+            return Array.isArray(d) ? (d as unknown[]) : [];
+          };
+
           const chainsMap = new Map<number, Chain>();
-          (chainsData.items || chainsData).forEach((c: any) => {
+          toArray(chainsData).forEach((c: any) => {
             const id = c.id || c.chain_id;
             chainsMap.set(id, c);
           });
 
           const dexesMap = new Map<string, DEX>();
-          (dexesData.items || dexesData).forEach((d: any) => {
+          toArray(dexesData).forEach((d: any) => {
             dexesMap.set(d.id, d);
           });
 
