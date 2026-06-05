@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, type SetStateAction } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { AlertCircle, RefreshCw, ToggleLeft, ToggleRight, Database, Plus, Trash2, X } from "lucide-react";
+import { AlertCircle, RefreshCw, ToggleLeft, ToggleRight, Plus, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +17,7 @@ import {
 } from "@/lib/api/dexes";
 import { useOmniStore } from "@/lib/store/omni-store";
 import { getApiBaseUrl } from "@/lib/api-client";
+import { EdgeState } from "@/components/EdgeState";
 
 // Protocol types known by the spine's `default_fee_bps_for_adapter` lookup.
 const KNOWN_PROTOCOLS = ["UNISWAP_V2", "UNISWAP_V3", "CURVE", "BALANCER", "SUSHISWAP"] as const;
@@ -28,18 +29,6 @@ export interface DexRegistrySnapshot {
 
 interface Props {
   initialSnapshot: DexRegistrySnapshot;
-}
-
-function EndpointNotice({ message }: { message: string }) {
-  return (
-    <div className="flex items-start gap-3 rounded-xl border border-warning/40 bg-warning/10 p-4 text-sm text-warning">
-      <AlertCircle className="mt-0.5 size-4 shrink-0" />
-      <div>
-        <p className="font-semibold">Endpoint not available</p>
-        <p className="text-xs mt-0.5 font-mono">{message}</p>
-      </div>
-    </div>
-  );
 }
 
 function fmtUsd(v: number | null): string {
@@ -195,7 +184,18 @@ export default function DexRegistryClient({ initialSnapshot }: Props) {
         </div>
       </div>
 
-      {(registryError) && <EndpointNotice message={registryError} />}
+      {registryError && (
+        <EdgeState
+          variant="error"
+          title="DEX registry unreachable"
+          description="The edge endpoint refused or could not be reached. No fabricated DEX data is shown — zero-trust."
+          endpoint="GET /api/dexes"
+          reasons={[registryError]}
+          onRetry={refresh}
+          retrying={refreshing || registryStatus === "loading"}
+          ghost="cards"
+        />
+      )}
       {toggleError && (
         <div className="flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
           <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
@@ -234,10 +234,15 @@ export default function DexRegistryClient({ initialSnapshot }: Props) {
       )}
 
       {!registryError && isMounted && filtered.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3">
-          <Database className="size-10 opacity-30" />
-          <p className="text-sm">No DEXes returned by the API.</p>
-        </div>
+        <EdgeState
+          variant="empty"
+          title="No DEXes registered yet"
+          description="The registry is reachable but no DEX protocols are enabled for this filter."
+          endpoint="GET /api/dexes"
+          onRetry={refresh}
+          retrying={refreshing || registryStatus === "loading"}
+          ghost="cards"
+        />
       )}
 
       {filtered.length > 0 && (
