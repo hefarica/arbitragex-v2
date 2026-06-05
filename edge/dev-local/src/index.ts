@@ -286,14 +286,48 @@ app.get("/api/strategy-catalog/active", (req, res) => {
 // DeFi data routes (defiRouter is mounted at /api in api-server, no /v1/ prefix).
 app.get("/api/chains",  (req, res) => proxy("/api/chains", req, res));
 app.get("/api/rpcs",    (req, res) => proxy("/api/rpcs", req, res));
-// Phase 2 fix: /api/pools now maps to NEW route-finder /api/v1/pools (was old broken defi_pools).
-app.get("/api/pools",   (req, res) => {
+// Phase 2 maps /api/pools to the richer route-finder /api/v1/pools, which
+// returns the {count, items} envelope. The frontend's DefiPoolsResponseSchema
+// (like /api/chains + /api/rpcs) expects {success, data}, so reshape the
+// envelope here — `items` become `data` — keeping all three defi endpoints on
+// one contract. RULE 00: never fabricate — an upstream error is forwarded
+// verbatim; on a transport failure we return an honest {success:false} so the
+// dashboard shows its degraded state rather than a fake-empty list.
+app.get("/api/pools", async (req, res) => {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(req.query)) {
     if (typeof v === "string") qs.set(k, v);
   }
   const qStr = qs.toString();
-  proxy(`/api/v1/pools${qStr ? "?" + qStr : ""}`, req, res);
+  try {
+    const upstream = await fetch(`${API_SERVER_URL}/api/v1/pools${qStr ? "?" + qStr : ""}`, {
+      headers: {
+        "x-arbx-edge-token": ARBX_EDGE_TOKEN,
+        "x-arbx-trace-id": (req as express.Request & { traceId?: string }).traceId ?? "",
+        accept: "application/json",
+      },
+    });
+    const text = await upstream.text();
+    if (!upstream.ok) {
+      res.status(upstream.status).setHeader("content-type", "application/json");
+      res.send(text);
+      return;
+    }
+    let parsed: unknown = null;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = null;
+    }
+    const items =
+      parsed && typeof parsed === "object" && Array.isArray((parsed as { items?: unknown }).items)
+        ? (parsed as { items: unknown[] }).items
+        : [];
+    res.json({ success: true, data: items });
+  } catch (e) {
+    logger.error({ err: (e as Error).message }, "/api/pools reshape error");
+    res.status(502).json({ success: false, error: "upstream_unreachable", data: [] });
+  }
 });
 app.get("/api/metrics/defi", (req, res) => proxy("/api/metrics", req, res));
 // Phase 2 route-finder: DEX catalog + pool catalog.
