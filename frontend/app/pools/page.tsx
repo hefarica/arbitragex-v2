@@ -81,7 +81,7 @@ export default function PoolsPage() {
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold tracking-tight text-foreground">Pool Registry</h1>
         <div className="flex items-center gap-2 bg-success/10 text-success px-3 py-1.5 rounded-full border border-success/40">
-          <Activity size={16} className="animate-pulse" />
+          <Activity size={16} className="motion-safe:animate-pulse" />
           <span className="text-sm font-semibold tracking-wide">LIVE</span>
         </div>
       </div>
@@ -99,7 +99,7 @@ export default function PoolsPage() {
           <tbody className="text-foreground">
             {pools.map((pool, i) => (
               <motion.tr
-                key={i}
+                key={pool.address ?? `pool-${i}`}
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: i * 0.05 }}

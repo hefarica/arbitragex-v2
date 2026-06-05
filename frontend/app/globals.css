@@ -263,6 +263,22 @@
   animation: none !important;
 }
 
+/* EdgeState — degraded-state scanline sweep over the ghost skeleton.
+   Defined globally (not injected per component instance). Motion-guarded. */
+@keyframes edgeScan {
+  0% { transform: translateY(0); opacity: 0; }
+  8% { opacity: 1; }
+  92% { opacity: 1; }
+  100% { transform: translateY(58vh); opacity: 0; }
+}
+.edge-scan {
+  background: linear-gradient(90deg, transparent, var(--primary), transparent);
+  box-shadow: 0 0 12px 1px var(--primary);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .edge-scan { animation: edgeScan 3.6s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+}
+
 /* Custom Scrollbar - Pure White Style */
 ::-webkit-scrollbar {
   width: 6px;

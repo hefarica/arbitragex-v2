@@ -45,7 +45,7 @@ const TONES: Record<EdgeStateVariant, Tone> = {
     label: "EDGE ERROR",
     text: "text-destructive",
     ringBg: "bg-destructive",
-    chip: "border-destructive/30 bg-destructive/10 text-destructive",
+    chip: "border-destructive/30 bg-destructive/15 text-destructive",
     glow: "var(--destructive)",
   },
   offline: {
@@ -53,7 +53,7 @@ const TONES: Record<EdgeStateVariant, Tone> = {
     label: "DISCONNECTED",
     text: "text-warning",
     ringBg: "bg-warning",
-    chip: "border-warning/30 bg-warning/10 text-warning",
+    chip: "border-warning/30 bg-warning/15 text-warning",
     glow: "var(--warning)",
   },
   empty: {
@@ -61,7 +61,7 @@ const TONES: Record<EdgeStateVariant, Tone> = {
     label: "NO DATA",
     text: "text-info",
     ringBg: "bg-info",
-    chip: "border-info/30 bg-info/10 text-info",
+    chip: "border-info/30 bg-info/15 text-info",
     glow: "var(--info)",
   },
   loading: {
@@ -69,7 +69,7 @@ const TONES: Record<EdgeStateVariant, Tone> = {
     label: "SYNCING",
     text: "text-primary",
     ringBg: "bg-primary",
-    chip: "border-primary/30 bg-primary/10 text-primary",
+    chip: "border-primary/30 bg-primary/15 text-primary",
     glow: "var(--primary)",
   },
 };
@@ -118,10 +118,8 @@ export function EdgeState({
       role={variant === "error" || variant === "offline" ? "alert" : "status"}
       aria-busy={variant === "loading"}
     >
-      {/* component-scoped motion (namespaced; honors reduced-motion) */}
-      <style>{edgeStateCss}</style>
-
-      {/* GHOST: the structure that WOULD be here — inert, blurred, scanned. */}
+      {/* GHOST: the structure that WOULD be here — inert, blurred, scanned.
+          Scanline keyframe (.edge-scan) lives in globals.css. */}
       {ghost !== "none" && (
         <div
           aria-hidden
@@ -177,17 +175,17 @@ export function EdgeState({
         </div>
 
         {endpoint && (
-          <code className="max-w-full truncate rounded-md border border-border bg-muted/60 px-2.5 py-1 font-mono text-[11px] text-muted-foreground">
+          <code className="max-w-full truncate rounded-md border border-border bg-muted/70 px-2.5 py-1 font-mono text-[11px] text-foreground/70">
             {endpoint}
           </code>
         )}
 
         {reasons && reasons.length > 0 && (
           <div className="flex flex-wrap justify-center gap-1.5">
-            {reasons.map((r) => (
+            {reasons.map((r, i) => (
               <span
-                key={r}
-                className="rounded border border-border bg-muted/50 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+                key={`reason-${i}`}
+                className="rounded border border-border bg-muted/70 px-1.5 py-0.5 font-mono text-[10px] text-foreground/70"
               >
                 {r}
               </span>
@@ -200,11 +198,11 @@ export function EdgeState({
             type="button"
             onClick={onRetry}
             disabled={retrying}
-            className="group mt-1 inline-flex items-center gap-2 rounded-lg border border-border bg-secondary/70 px-4 py-2 text-sm font-medium text-secondary-foreground transition-colors hover:border-primary/50 hover:bg-secondary disabled:opacity-60"
+            className="group mt-1 inline-flex items-center gap-2 rounded-lg border border-border bg-secondary/70 px-4 py-2 text-sm font-medium text-secondary-foreground outline-none hover:border-primary/50 hover:bg-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60 motion-safe:transition-colors"
           >
             <RefreshCw
               size={15}
-              className={`text-primary ${retrying ? "motion-safe:animate-spin" : "transition-transform group-hover:rotate-90"}`}
+              className={`text-primary ${retrying ? "motion-safe:animate-spin" : "motion-safe:transition-transform motion-safe:group-hover:rotate-90"}`}
             />
             {retrying ? "Retrying…" : "Retry"}
           </button>
@@ -267,21 +265,5 @@ function GhostContent({ kind, columns }: { kind: EdgeGhost; columns: string[] })
     </div>
   );
 }
-
-const edgeStateCss = `
-@keyframes edgeScan {
-  0% { transform: translateY(0); opacity: 0; }
-  8% { opacity: 1; }
-  92% { opacity: 1; }
-  100% { transform: translateY(58vh); opacity: 0; }
-}
-.edge-scan {
-  background: linear-gradient(90deg, transparent, var(--primary), transparent);
-  box-shadow: 0 0 12px 1px var(--primary);
-}
-@media (prefers-reduced-motion: no-preference) {
-  .edge-scan { animation: edgeScan 3.6s cubic-bezier(.4,0,.2,1) infinite; }
-}
-`;
 
 export default EdgeState;
