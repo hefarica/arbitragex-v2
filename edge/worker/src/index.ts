@@ -495,6 +495,48 @@ app.put("/admin/trading-config/:chain_id", async (c) => {
   return c.body(text, upstream.status as 200 | 400 | 401 | 403 | 500 | 502 | 503);
 });
 
+// Cartridge Filters (Idea 1 Phase-1) — public read of the per-chain route pre-filter prefs.
+app.get("/api/cartridge-filters", async (c) => {
+  const url = new URL(c.req.url);
+  const chain = url.searchParams.get("chain_id") ?? "1";
+  const upstream = await fetch(
+    `${c.env.API_SERVER_URL}/api/v1/cartridge-filters?chain_id=${encodeURIComponent(chain)}`,
+    {
+      method: "GET",
+      headers: {
+        "accept": "application/json",
+        "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+        "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+      },
+    },
+  );
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 503);
+});
+
+// Cartridge Filters (Idea 1 Phase-1) — admin upsert (PUT). Same auth pattern as trading-config.
+app.put("/admin/cartridge-filters/:chain_id", async (c) => {
+  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : getCookie(c, SESSION_COOKIE);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const chainId = c.req.param("chain_id");
+  const body = await c.req.text();
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/admin/cartridge-filters/${encodeURIComponent(chainId)}`, {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": adminToken,
+      "x-arbx-actor": c.req.header("x-arbx-actor") ?? "operator",
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    },
+    body,
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 401 | 403 | 500 | 502 | 503);
+});
+
 // Operations PnL — Sprint 3 PMI/EVM KPI surface (public read, numbers only).
 app.get("/api/operations/kpi", async (c) => {
   const url = new URL(c.req.url);

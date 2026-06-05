@@ -83,6 +83,7 @@ const app = express();
 // ==========================================
 import { mountDefi } from "./routes/defi.js";
 import { buildTradingConfigRouter, rehydrateTradingConfigMirror } from "./routes/trading-config.js";
+import { buildCartridgeFiltersRouter } from "./routes/cartridge-filters.js";
 import { buildOperationsRouter } from "./routes/operations.js";
 import { buildStrategyCatalogRouter } from "./routes/strategy-catalog.js";
 import { buildCredentialsRouter } from "./routes/credentials.js";
@@ -1000,6 +1001,17 @@ app.use(buildTradingConfigRouter({
 // thus the paper feed) survives Redis restarts. Fire-and-forget; never blocks
 // boot and never throws (handles its own errors). Replays existing PG values only.
 void rehydrateTradingConfigMirror({ pool, redis, logger });
+
+// ── Cartridge Filters (Idea 1 Phase-1 foundation — operator route pre-filter prefs) ─
+// Redis-only stored preference (arbx:cartridge:filters:<chain>). NOT yet consumed by
+// searcher-rs; the route pre-filter consumer + PG durability are a Phase 2 follow-up.
+app.use(buildCartridgeFiltersRouter({
+  redis,
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
+  writeAudit,
+  logger,
+}));
 
 // ── Operations PnL (Sprint 3 — PMI/EVM KPI surface) ────────────────────
 app.use(buildOperationsRouter({

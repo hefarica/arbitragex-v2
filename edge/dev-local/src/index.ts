@@ -244,6 +244,11 @@ app.get("/api/trading-config", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
   proxy(`/api/v1/trading-config?chain_id=${encodeURIComponent(chain)}`, req, res);
 });
+// Cartridge Filters (Idea 1 Phase-1) — public read of the per-chain route pre-filter prefs.
+app.get("/api/cartridge-filters", (req, res) => {
+  const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
+  proxy(`/api/v1/cartridge-filters?chain_id=${encodeURIComponent(chain)}`, req, res);
+});
 // Operations PnL — Sprint 3 PMI/EVM KPI surface.
 app.get("/api/operations/kpi", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
@@ -518,6 +523,12 @@ app.put("/admin/trading-config/:chain_id",    (req, res) => {
   const cid = req.params["chain_id"];
   if (!cid || !/^[0-9]+$/.test(cid)) { res.status(400).json({ error: "invalid_chain_id" }); return; }
   adminProxy(`/admin/trading-config/${cid}`, req, res, "PUT");
+});
+// Cartridge Filters (Idea 1 Phase-1) — admin upsert via adminProxy (httpOnly session → upstream token).
+app.put("/admin/cartridge-filters/:chain_id", (req, res) => {
+  const cid = req.params["chain_id"];
+  if (!cid || !/^[0-9]+$/.test(cid)) { res.status(400).json({ error: "invalid_chain_id" }); return; }
+  adminProxy(`/admin/cartridge-filters/${cid}`, req, res, "PUT");
 });
 
 // Operator credentials — migration 057. List behind adminProxy so the
