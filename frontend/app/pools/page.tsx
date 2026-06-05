@@ -1,31 +1,80 @@
 // ZERO MOCKS DOCTRINE (rule_00): This page fetches data ONLY through the edge.
 "use client";
-import React, { useEffect, useState } from "react";
-import { Activity, AlertTriangle } from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import { Activity } from "lucide-react";
 import { motion } from "framer-motion";
 import { getDefiPools } from "@/lib/api-client";
 import type { DefiPoolsResponse } from "@/lib/schemas";
+import { EdgeState } from "@/components/EdgeState";
+
+const POOL_COLUMNS = ["Pair", "DEX", "Address", "Status"];
 
 export default function PoolsPage() {
   const [result, setResult] = useState<{ ok: true; data: DefiPoolsResponse } | { ok: false; error: string } | null>(null);
+  const [retrying, setRetrying] = useState(false);
 
-  useEffect(() => {
-    getDefiPools().then(setResult);
+  const load = useCallback(async () => {
+    setRetrying(true);
+    const r = await getDefiPools();
+    setResult(r);
+    setRetrying(false);
   }, []);
 
-  if (!result) return <div className="p-8 text-success animate-pulse">Loading Pool Registry...</div>;
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  if (!result.ok) return (
-    <div className="p-8 min-h-screen text-foreground">
-      <div className="p-4 bg-destructive/10 border border-destructive/30 rounded-xl text-destructive">
-        <h3 className="font-bold flex items-center gap-2"><AlertTriangle size={18} /> EDGE ERROR — ZERO TRUST</h3>
-        <p className="text-sm mt-1">{result.error}</p>
-        <p className="text-xs mt-2 text-destructive/70">The edge/API server is unreachable. No fabricated pool data will be shown.</p>
+  if (!result) {
+    return (
+      <div className="p-8 min-h-screen text-foreground">
+        <EdgeState
+          variant="loading"
+          title="Loading pool registry…"
+          description="Querying the edge for the live pool set."
+          endpoint="GET /api/v1/pools"
+          ghost="table"
+          ghostColumns={POOL_COLUMNS}
+        />
       </div>
-    </div>
-  );
+    );
+  }
+
+  if (!result.ok) {
+    return (
+      <div className="p-8 min-h-screen text-foreground">
+        <EdgeState
+          variant="error"
+          title="Pool registry unreachable"
+          description="The edge endpoint refused or could not be reached. No fabricated pool data is shown — zero-trust."
+          endpoint="GET /api/v1/pools"
+          reasons={[result.error]}
+          onRetry={load}
+          retrying={retrying}
+          ghost="table"
+          ghostColumns={POOL_COLUMNS}
+        />
+      </div>
+    );
+  }
 
   const pools = result.data.data;
+
+  if (pools.length === 0) {
+    return (
+      <div className="p-8 min-h-screen text-foreground">
+        <EdgeState
+          variant="empty"
+          title="No pools registered yet"
+          description="The registry is reachable but empty — the enumerator hasn't seeded pools for this chain."
+          endpoint="GET /api/v1/pools"
+          onRetry={load}
+          retrying={retrying}
+          ghost="table"
+          ghostColumns={POOL_COLUMNS}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 space-y-6 min-h-screen text-foreground">
@@ -68,11 +117,6 @@ export default function PoolsPage() {
                 </td>
               </motion.tr>
             ))}
-            {pools.length === 0 && (
-              <tr>
-                <td colSpan={4} className="p-8 text-center text-muted-foreground italic">No pools registered. Waiting for backend data...</td>
-              </tr>
-            )}
           </tbody>
         </table>
       </div>
