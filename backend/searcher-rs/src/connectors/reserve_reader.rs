@@ -32,6 +32,8 @@ pub struct ReserveReader {
 
 impl ReserveReader {
     pub fn new(rpc_http_url: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        // OBSERVER-ONLY: bare ethers read-only provider (getReserves/.call() only) —
+        // NEVER wrap with SignerMiddleware / .with_signer; no Wallet (capital_exposed == 0).
         let provider = Provider::<Http>::try_from(rpc_http_url)?;
         Ok(Self {
             provider: Arc::new(provider),

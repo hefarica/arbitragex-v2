@@ -114,3 +114,7 @@ pub mod sed_bridge;
 //       which is an optional path dependency only available with that feature.
 #[cfg(feature = "paper-shadow")]
 pub mod telemetry_publisher;
+
+// Observer telemetry — real-node head divergence (reorg) → arbx:telemetry:observability.
+// Ungated: depends only on redis + serde, used by block_scanner in all builds.
+pub mod telemetry_observability;
