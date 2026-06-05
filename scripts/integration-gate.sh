@@ -51,5 +51,19 @@ node frontend/node_modules/typescript/bin/tsc --noEmit -p frontend/tsconfig.json
 echo "== 6. opps:detected invariant (run on VPS before+after deploy) =="
 echo "  ssh arbx 'docker exec arbitragex-v2-redis-1 redis-cli XLEN arbx:opps:detected'  — must NEVER decrease in shadow"
 
+echo "== 7. Frontend E2E (read-only, live target) — 'evidencia dura' =="
+# Reuses tests/e2e/playwright.live.config.ts: read-only by default — the mutating
+# spec (admin-mutating-live.spec.ts) auto-SKIPS unless ARBX_ADMIN_TOKEN is set, so
+# the gate observes panels rendering real backend data + honest states WITHOUT
+# touching state. Runs ONLY when a live URL is provided: C runs it post-deploy;
+# A/B local gate runs skip it cleanly. One-time setup:
+#   (cd tests/e2e && npm ci && npm run install-browsers)
+if [ -n "${ARBX_FRONTEND_URL:-}" ]; then
+  ( cd tests/e2e && npx playwright test --config=playwright.live.config.ts 2>&1 | tail -10 ) \
+    || red "frontend live E2E failed (panels not rendering / honest-state regression)"
+else
+  echo "  SKIP — set ARBX_FRONTEND_URL=https://edge-arbx.ape-tv.net (or the VPS edge) to run the live read-only frontend E2E"
+fi
+
 echo "------------------------------------------------------------"
 if [ "$fail" -ne 0 ]; then echo "INTEGRATION GATE: RED — do NOT merge/deploy"; exit 1; else echo "INTEGRATION GATE: GREEN"; fi
