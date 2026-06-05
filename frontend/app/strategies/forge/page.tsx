@@ -4,6 +4,7 @@ import { Separator } from "@/components/ui/separator";
 import { RouteDiscoveryPanel } from "@/features/route-discovery/RouteDiscoveryPanel";
 import { CartridgeTelemetryPanel } from "@/features/route-discovery/CartridgeTelemetryPanel";
 import { CartridgeFilterPanel } from "@/features/cartridge/CartridgeFilterPanel";
+import { StrategyForgeForm } from "@/features/forge/StrategyForgeForm";
 
 export const metadata = {
   title: "Strategy Forge — ArbitrageX",
@@ -50,6 +51,7 @@ export default function StrategyForgePage() {
       <section className="flex flex-col gap-6">
         <RouteDiscoveryPanel />
         <CartridgeTelemetryPanel />
+        <StrategyForgeForm />
         <CartridgeFilterPanel />
       </section>
     </main>

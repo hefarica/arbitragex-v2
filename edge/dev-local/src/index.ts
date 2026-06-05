@@ -249,6 +249,11 @@ app.get("/api/cartridge-filters", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
   proxy(`/api/v1/cartridge-filters?chain_id=${encodeURIComponent(chain)}`, req, res);
 });
+// Cartridge Forge (Idea 2) — public list of injected cartridges (registry + counters).
+app.get("/api/cartridges", (req, res) => {
+  const qs = new URL(req.url, "http://x").search || "";
+  proxy(`/api/v1/cartridges${qs}`, req, res);
+});
 // Operations PnL — Sprint 3 PMI/EVM KPI surface.
 app.get("/api/operations/kpi", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
@@ -529,6 +534,26 @@ app.put("/admin/cartridge-filters/:chain_id", (req, res) => {
   const cid = req.params["chain_id"];
   if (!cid || !/^[0-9]+$/.test(cid)) { res.status(400).json({ error: "invalid_chain_id" }); return; }
   adminProxy(`/admin/cartridge-filters/${cid}`, req, res, "PUT");
+});
+// Cartridge Forge (Idea 2) — admin inject + lifecycle via adminProxy (cookie → upstream token).
+// Upstream cartridge-forge accepts x-arbx-admin-token (auth normalized). Cartridges run in
+// shadow eval (admin-gated, no capital). Slug format mirrors the api-server validation.
+const CART_SLUG = /^[a-z][a-z0-9_]{2,48}$/;
+app.post("/admin/cartridges", (req, res) => adminProxy("/api/v1/cartridges", req, res, "POST"));
+app.post("/admin/cartridges/:slug/pause", (req, res) => {
+  const slug = req.params["slug"];
+  if (!slug || !CART_SLUG.test(slug)) { res.status(400).json({ error: "invalid_slug" }); return; }
+  adminProxy(`/api/v1/cartridges/${slug}/pause`, req, res, "POST");
+});
+app.post("/admin/cartridges/:slug/resume", (req, res) => {
+  const slug = req.params["slug"];
+  if (!slug || !CART_SLUG.test(slug)) { res.status(400).json({ error: "invalid_slug" }); return; }
+  adminProxy(`/api/v1/cartridges/${slug}/resume`, req, res, "POST");
+});
+app.delete("/admin/cartridges/:slug", (req, res) => {
+  const slug = req.params["slug"];
+  if (!slug || !CART_SLUG.test(slug)) { res.status(400).json({ error: "invalid_slug" }); return; }
+  adminProxy(`/api/v1/cartridges/${slug}`, req, res, "DELETE");
 });
 
 // Operator credentials — migration 057. List behind adminProxy so the

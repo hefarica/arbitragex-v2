@@ -76,7 +76,13 @@ export function buildCartridgeForgeRouter(config: CartridgeForgeConfig): Router 
 
   // ── Middleware: Admin auth ───────────────────────────────────────────────
   const requireAdmin = (req: Request, res: Response, next: Function) => {
-    const token = req.headers['x-admin-token'] as string || '';
+    // Accept both header names: x-admin-token (legacy / CLI) and x-arbx-admin-token
+    // (the canonical header the edge adminProxy emits when translating the httpOnly
+    // session cookie). Same admin token value, validated identically — this just lets
+    // the standard edge adminProxy reach these routes without a bespoke proxy variant.
+    const token = (req.headers['x-admin-token'] as string)
+      || (req.headers['x-arbx-admin-token'] as string)
+      || '';
     if (!adminTokenValidator(token)) {
       return res.status(401).json({ error: 'unauthorized' });
     }

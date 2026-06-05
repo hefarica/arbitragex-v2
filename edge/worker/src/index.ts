@@ -537,6 +537,64 @@ app.put("/admin/cartridge-filters/:chain_id", async (c) => {
   return c.body(text, upstream.status as 200 | 400 | 401 | 403 | 500 | 502 | 503);
 });
 
+// Cartridge Forge (Idea 2) — public list + admin inject/lifecycle. cartridge-forge accepts
+// x-arbx-admin-token (auth normalized). Cartridges run in shadow eval (admin-gated, no capital).
+const CART_SLUG_W = /^[a-z][a-z0-9_]{2,48}$/;
+async function cartForgeAdmin(
+  c: import("hono").Context<{ Bindings: Env }>,
+  upstreamPath: string,
+  method: string,
+): Promise<Response> {
+  const _hdr = c.req.header("x-arbx-admin-token");
+  const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : getCookie(c, SESSION_COOKIE);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const body = method !== "GET" && method !== "DELETE" ? await c.req.text() : undefined;
+  const upstream = await fetch(`${c.env.API_SERVER_URL}${upstreamPath}`, {
+    method,
+    headers: {
+      "content-type": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": adminToken,
+      "x-arbx-actor": c.req.header("x-arbx-actor") ?? "operator",
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    },
+    ...(body !== undefined ? { body } : {}),
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 201 | 400 | 401 | 403 | 404 | 409 | 500 | 502 | 503);
+}
+app.get("/api/cartridges", async (c) => {
+  const url = new URL(c.req.url);
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/cartridges${url.search}`, {
+    method: "GET",
+    headers: {
+      "accept": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    },
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 500 | 502 | 503);
+});
+app.post("/admin/cartridges", (c) => cartForgeAdmin(c, "/api/v1/cartridges", "POST"));
+app.post("/admin/cartridges/:slug/pause", (c) => {
+  const slug = c.req.param("slug");
+  if (!CART_SLUG_W.test(slug)) return c.json({ error: "invalid_slug" }, 400);
+  return cartForgeAdmin(c, `/api/v1/cartridges/${slug}/pause`, "POST");
+});
+app.post("/admin/cartridges/:slug/resume", (c) => {
+  const slug = c.req.param("slug");
+  if (!CART_SLUG_W.test(slug)) return c.json({ error: "invalid_slug" }, 400);
+  return cartForgeAdmin(c, `/api/v1/cartridges/${slug}/resume`, "POST");
+});
+app.delete("/admin/cartridges/:slug", (c) => {
+  const slug = c.req.param("slug");
+  if (!CART_SLUG_W.test(slug)) return c.json({ error: "invalid_slug" }, 400);
+  return cartForgeAdmin(c, `/api/v1/cartridges/${slug}`, "DELETE");
+});
+
 // Operations PnL — Sprint 3 PMI/EVM KPI surface (public read, numbers only).
 app.get("/api/operations/kpi", async (c) => {
   const url = new URL(c.req.url);
