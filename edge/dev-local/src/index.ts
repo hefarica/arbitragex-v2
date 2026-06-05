@@ -67,14 +67,23 @@ const startedAt = new Date();
 const app = express();
 app.disable("x-powered-by");
 
-// DEV-ONLY: permissive CORS so the browser-side frontend (localhost:5173 via
-// SSH tunnel) can reach this edge shim. Production uses CF Workers CORS.
+// DEV-LOCAL CORS: allowlist localhost / 127.0.0.1 / *.ape-tv.net via regex, PLUS any
+// EXACT origin in the operator-configured ALLOWED_ORIGINS env (comma-separated). This
+// covers the public VPS frontend served from a raw-IP origin (e.g.
+// http://195.201.235.70:5173) that the regex deliberately does not match. The IP is
+// NEVER hardcoded in code — the operator supplies origins via env (RULE 00 / no-hardcode);
+// the env is already set on the edge container. Production uses CF Workers CORS.
+const CORS_ENV_ORIGINS = (process.env["ALLOWED_ORIGINS"] ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   // CodeQL js/cors-misconfiguration-for-credentials: with credentials=true we must NOT
-  // reflect arbitrary origins. Allowlist localhost / 127.0.0.1 / *.ape-tv.net only.
+  // reflect arbitrary origins. Still an explicit allowlist (regex OR exact env match);
+  // we reflect only matched origins, never "*", so credentialed CORS stays safe.
   const CORS_ALLOWED = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$|^https:\/\/[a-z0-9-]+\.ape-tv\.net$/i;
-  if (origin && CORS_ALLOWED.test(origin)) {
+  if (origin && (CORS_ALLOWED.test(origin) || CORS_ENV_ORIGINS.includes(origin))) {
     res.setHeader("access-control-allow-origin", origin);
     res.setHeader("access-control-allow-credentials", "true");
     res.setHeader("access-control-allow-headers", "content-type, x-arbx-admin-token, x-arbx-trace-id, x-arbx-actor");
