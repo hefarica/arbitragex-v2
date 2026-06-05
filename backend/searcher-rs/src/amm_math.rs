@@ -16,7 +16,7 @@ use alloy::providers::Provider as AlloyProvider;
 use alloy::rpc::types::{TransactionInput, TransactionRequest};
 use alloy::sol_types::SolCall;
 use ethers::abi::{Function, Param, ParamType, StateMutability, Token};
-use ethers::types::{Address, Bytes, U256};
+use ethers::types::{Address, Bytes, U256, U512};
 use shared_rs::rpc_failover::AlloyHttpProvider;
 use std::sync::Arc;
 use std::time::Duration;
@@ -88,6 +88,100 @@ pub fn v2_amount_out(amount_in: U256, reserve_in: U256, reserve_out: U256, fee_b
         return U256::zero();
     }
     numerator / denominator
+}
+
+/// Full-precision `a * b / denom` with no intermediate overflow.
+///
+/// V3 single-tick math multiplies `liquidity` (uint128) by `sqrtPriceX96`
+/// (uint160) and `Q96` (2^96), whose products reach ~2^288–2^384 — far past
+/// U256 (2^256). We widen to U512 via `U256::full_mul`, divide, then narrow
+/// back (the quotient is a token amount that fits in U256). Returns
+/// `U256::zero()` on a zero denominator (caller treats as degenerate).
+pub fn mul_div(a: U256, b: U256, denom: U256) -> U256 {
+    if denom.is_zero() {
+        return U256::zero();
+    }
+    let prod: U512 = a.full_mul(b); // U256 × U256 → U512, lossless
+    // Widen denom to U512 via big-endian bytes (low 32 of the 64-byte buffer).
+    let mut db = [0u8; 64];
+    denom.to_big_endian(&mut db[32..64]);
+    let denom512 = U512::from_big_endian(&db);
+    let q: U512 = prod / denom512;
+    // Narrow back to U256 (low 256 bits; quotient fits for token-amount formulas).
+    let mut qb = [0u8; 64];
+    q.to_big_endian(&mut qb);
+    U256::from_big_endian(&qb[32..64])
+}
+
+/// Uniswap V3 **single-active-tick** exact-input output amount, post-fee.
+///
+/// Canonical concentrated-liquidity swap math (UniswapV3 SwapMath / whitepaper
+/// §6.2), evaluated WITHIN the current tick — i.e. assuming `liquidity` stays
+/// constant over the price move. Exact when the swap does not cross a tick
+/// boundary; for larger swaps it OVERESTIMATES output (real V3 has less
+/// liquidity beyond the active tick). Per-tick liquidity is not cached
+/// (`V3Slot0Entry` holds only sqrtPriceX96 + liquidity), so cross-tick cannot
+/// be computed locally — callers cap `amount_in` by the capital gate (small vs
+/// deep-pool liquidity ⇒ within-tick is the common case) and MAY confirm the
+/// chosen size on-chain via `v3_quote_exact_in_multicall` (QuoterV2).
+///
+/// `fee_pips` is the V3 fee tier in millionths (100/500/3000/10000 = 0.01/0.05/
+/// 0.30/1.00 %) — NOT the V2 basis-point convention. All arithmetic is integer
+/// (U256/U512); no f64, no fabricated output (RULE 00). Returns `U256::zero()`
+/// on degenerate input or a non-physical price move.
+pub fn v3_amount_out_single_tick(
+    amount_in: U256,
+    sqrt_price_x96: U256,
+    liquidity: U256,
+    fee_pips: u32,
+    zero_for_one: bool,
+) -> U256 {
+    if amount_in.is_zero()
+        || sqrt_price_x96.is_zero()
+        || liquidity.is_zero()
+        || fee_pips >= 1_000_000
+    {
+        return U256::zero();
+    }
+    let q96 = U256::one() << 96u32; // Q96 = 2^96
+    let l = liquidity;
+    let sp = sqrt_price_x96;
+
+    // amount net of fee: amount_in * (1e6 - fee_pips) / 1e6
+    let amount_in_less_fee = mul_div(
+        amount_in,
+        U256::from(1_000_000u32 - fee_pips),
+        U256::from(1_000_000u32),
+    );
+    if amount_in_less_fee.is_zero() {
+        return U256::zero();
+    }
+
+    if zero_for_one {
+        // token0 → token1; price (√P) falls.
+        // √P_next = (L·√P) / (L + Δx·√P/Q96)
+        let denom = l.saturating_add(mul_div(amount_in_less_fee, sp, q96));
+        if denom.is_zero() {
+            return U256::zero();
+        }
+        let sp_next = mul_div(l, sp, denom);
+        if sp_next.is_zero() || sp_next >= sp {
+            return U256::zero(); // price must fall; guard non-physical result
+        }
+        // amount_out (token1) = L·(√P − √P_next)/Q96
+        mul_div(l, sp - sp_next, q96)
+    } else {
+        // token1 → token0; price (√P) rises.
+        // √P_next = √P + Δy·Q96/L
+        let sp_next = sp.saturating_add(mul_div(amount_in_less_fee, q96, l));
+        if sp_next <= sp {
+            return U256::zero();
+        }
+        // amount_out (token0) = L·Q96/√P − L·Q96/√P_next  (avoids √P_next·√P overflow)
+        let inv_sp = mul_div(l, q96, sp);
+        let inv_sp_next = mul_div(l, q96, sp_next);
+        inv_sp.saturating_sub(inv_sp_next)
+    }
 }
 
 // ============================================================================
@@ -575,5 +669,104 @@ mod v3_tests {
             "expected timeout error, got: {}",
             msg
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod v3_single_tick_tests {
+    use super::*;
+
+    fn p10(n: u32) -> U256 {
+        U256::from(10u64).pow(U256::from(n))
+    }
+    fn q96() -> U256 {
+        U256::one() << 96u32
+    }
+
+    // ---- mul_div ----------------------------------------------------------
+    #[test]
+    fn mul_div_small_exact() {
+        assert_eq!(mul_div(U256::from(6u64), U256::from(7u64), U256::from(2u64)), U256::from(21u64));
+        assert_eq!(mul_div(U256::from(100u64), U256::from(3u64), U256::from(7u64)), U256::from(42u64)); // floor(300/7)
+    }
+
+    #[test]
+    fn mul_div_overflows_u256_intermediate_but_quotient_fits() {
+        // a*b = 2^300 (exceeds U256 max 2^256-1); / 2^150 = 2^150 (fits). Proves the U512 path.
+        let a = U256::one() << 200u32;
+        let b = U256::one() << 100u32;
+        let denom = U256::one() << 150u32;
+        assert_eq!(mul_div(a, b, denom), U256::one() << 150u32);
+    }
+
+    #[test]
+    fn mul_div_zero_denom_is_zero() {
+        assert_eq!(mul_div(U256::from(5u64), U256::from(5u64), U256::zero()), U256::zero());
+    }
+
+    // ---- v3_amount_out_single_tick ----------------------------------------
+    #[test]
+    fn v3_degenerate_inputs_return_zero() {
+        let sp = q96();
+        let l = p10(18);
+        assert_eq!(v3_amount_out_single_tick(U256::zero(), sp, l, 3000, true), U256::zero());
+        assert_eq!(v3_amount_out_single_tick(p10(12), U256::zero(), l, 3000, true), U256::zero());
+        assert_eq!(v3_amount_out_single_tick(p10(12), sp, U256::zero(), 3000, true), U256::zero());
+        assert_eq!(v3_amount_out_single_tick(p10(12), sp, l, 1_000_000, true), U256::zero()); // fee >= 100%
+    }
+
+    #[test]
+    fn v3_at_1to1_price_zero_fee_equals_cpmm_virtual_reserves() {
+        // At sqrtPriceX96 = 2^96 (price 1:1) the V3 single-tick swap reduces EXACTLY to a
+        // constant-product pool with virtual reserves (L, L). Cross-check against the proven
+        // v2_amount_out — this pins the canonical formula end-to-end.
+        let sp = q96();
+        let l = p10(18);
+        let amt = p10(12);
+        let v3_z4o = v3_amount_out_single_tick(amt, sp, l, 0, true);
+        let v3_o4z = v3_amount_out_single_tick(amt, sp, l, 0, false);
+        let v2 = v2_amount_out(amt, l, l, 0);
+        // zero_for_one reduces to the integer CPMM L·Δx/(L+Δx) bit-for-bit.
+        assert_eq!(v3_z4o, v2, "zero_for_one single-tick must equal CPMM(L,L) at 1:1");
+        // Integer V3 single-tick math is NOT bit-symmetric across direction: the two
+        // directions use different floor-division paths (zero_for_one: L·Δ√P/Q96;
+        // one_for_zero: differences of L·Q96/√P), so they may disagree by ±1 wei — the
+        // known per-direction rounding of Uniswap V3 SwapMath (always toward the pool).
+        // Negligible for the bracket role; the profit number comes from QuoterV2 (Step 2b).
+        let diff = if v3_o4z > v2 { v3_o4z - v2 } else { v2 - v3_o4z };
+        assert!(diff <= U256::one(), "one_for_zero symmetric at 1:1 within 1 wei (got {v3_o4z} vs {v2})");
+        assert!(v3_z4o > U256::zero() && v3_z4o < amt, "output positive and < input (slippage)");
+    }
+
+    #[test]
+    fn v3_fee_reduces_output() {
+        let sp = q96();
+        let l = p10(18);
+        let amt = p10(12);
+        let no_fee = v3_amount_out_single_tick(amt, sp, l, 0, true);
+        let with_fee = v3_amount_out_single_tick(amt, sp, l, 3000, true); // 0.30%
+        assert!(with_fee < no_fee, "fee must reduce output");
+        assert!(with_fee > U256::zero());
+    }
+
+    #[test]
+    fn v3_output_monotonic_in_input() {
+        let sp = q96();
+        let l = p10(20);
+        let small = v3_amount_out_single_tick(p10(12), sp, l, 500, true);
+        let big = v3_amount_out_single_tick(p10(12) * U256::from(2u64), sp, l, 500, true);
+        assert!(big > small, "more input must yield more output");
+    }
+
+    #[test]
+    fn v3_deeper_liquidity_less_slippage() {
+        // Same trade in a deeper pool keeps more of the input (output closer to amount_in).
+        let sp = q96();
+        let amt = p10(15);
+        let shallow = v3_amount_out_single_tick(amt, sp, p10(18), 0, true);
+        let deep = v3_amount_out_single_tick(amt, sp, p10(24), 0, true);
+        assert!(deep > shallow, "deeper liquidity = less slippage = more output");
+        assert!(deep < amt, "still bounded by input (zero-fee, positive slippage)");
     }
 }
