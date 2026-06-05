@@ -256,10 +256,42 @@ async fn build_orchestrator(
         }
     }
 
-    let state_projector = Arc::new(StateProjector::new(
-        reserves_cache.clone(),
-        None, // V3 provider: Phase 15
-    ));
+    // V3 oracle (read-only): build the on-chain QuoterV2 provider from the
+    // failover RPC pool so DexEngine can value V3 pools via
+    // `state_projector.project_v3_quote` — eliminates `no_price_oracle`.
+    // Mainnet only for now; absent pool/catalog → None (V3 projection stays
+    // None, R8 fail-honest). NO-ACTIVE: staticcall quoting only, no capital.
+    let v3_provider: Option<Arc<dyn crate::state_projector::V3QuoteProvider>> = match &rpc_pool {
+        Some(pool) if chain_id == 1 => {
+            match crate::v3_quote_provider::MulticallV3QuoteProvider::from_pool_and_chain(
+                pool.clone(),
+                chain_id,
+            ) {
+                Some(p) => {
+                    info!(event = "scanner.v3_oracle_wired", chain_id);
+                    Some(Arc::new(p))
+                }
+                None => {
+                    info!(
+                        event = "scanner.v3_oracle_absent",
+                        chain_id,
+                        reason = "no_quoter_catalog"
+                    );
+                    None
+                }
+            }
+        }
+        Some(_) => {
+            info!(event = "scanner.v3_oracle_absent", chain_id, reason = "non_mainnet");
+            None
+        }
+        None => {
+            info!(event = "scanner.v3_oracle_absent", chain_id, reason = "no_rpc_pool");
+            None
+        }
+    };
+
+    let state_projector = Arc::new(StateProjector::new(reserves_cache.clone(), v3_provider));
 
     let size_optimizer = Arc::new(SizeOptimizer::new(state_projector.clone()));
 
