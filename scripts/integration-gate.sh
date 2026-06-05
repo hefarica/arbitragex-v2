@@ -20,7 +20,14 @@ PATTERN='LocalWallet|send_bundle|eth_sendBundle|eth_send_raw_transaction|eth_sen
 hits=$(git grep -nE "$PATTERN" -- backend/ frontend/ 2>/dev/null \
   | grep -vE '^backend/relays-client/' \
   | grep -vE '^backend/searcher-rs/src/main\.rs:' \
-  | grep -vE '/(tests?|__tests__)/' || true)
+  | grep -vE '/(tests?|__tests__)/' \
+  | awk -F: '{ c=$0; sub(/^[^:]*:[^:]*:/,"",c); gsub(/^[ \t]+/,"",c); if (c !~ /^(\/\/|\/\*|\*|#)/) print }' \
+  || true)
+  # The awk filter drops PURE-COMMENT matches (lines whose code portion starts
+  # with //, //!, /*, *, or #). Many legit files NAME these patterns in doc/comments
+  # precisely to assert they are NOT wired (chain_client, rpc_multiplexer, the
+  # execution_worker stub, sed-core's simulation-only connectors). Real wiring —
+  # e.g. `let w = LocalWallet::from_str(..)` — is CODE and still trips the gate.
 if [ -n "$hits" ]; then red "live-wiring outside dormant paths:"; echo "$hits" | sed 's/^/    /'; else echo "  OK (only dormant relays-client + OMEGA SEAL)"; fi
 
 echo "== 2. OMEGA SEAL intact (must still panic on testnet/executor keys) =="
