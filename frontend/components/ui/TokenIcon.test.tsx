@@ -42,7 +42,6 @@ describe("TokenIcon", () => {
   });
 
   it("renders the avatar (no <img>) when explicitly disabled", () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const html = renderToStaticMarkup(
       // disabled is honored by the hook; an unresolved icon → avatar fallback
       <TokenIcon address={USDC} chainId={1} symbol="USDC" />,
