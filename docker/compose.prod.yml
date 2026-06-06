@@ -468,6 +468,12 @@ services:
       ENRICHER_METRICS_PORT: '9004'
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       RUST_LOG: ${RUST_LOG}
+      # DexScreener price oracle — fills no_price_oracle for long-tail tokens by
+      # populating arbx:token_prices:<chain> (by symbol). Default-OFF: runs ONLY
+      # when set to "active". Read-only/shadow (no signer, no broadcast).
+      ARBX_DEXSCREENER_ORACLE: ${ARBX_DEXSCREENER_ORACLE:-off}
+      ARBX_MIN_PRICE_LIQUIDITY_USD: ${ARBX_MIN_PRICE_LIQUIDITY_USD:-50000}
+      DEXSCREENER_PRICE_INTERVAL_MS: ${DEXSCREENER_PRICE_INTERVAL_MS:-15000}
     ports:
     - 127.0.0.1:9004:9004
     healthcheck:

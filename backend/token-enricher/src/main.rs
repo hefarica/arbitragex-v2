@@ -65,6 +65,7 @@ use tracing::{error, info, warn};
 
 use token_enricher::{
     consumer::EnricherConsumer,
+    dexscreener::{DexScreenerConfig, DexScreenerPriceOracle},
     metrics::{
         init_metrics, serve_metrics, BATCHES_TOTAL, ENRICHER_UP, PENDING_UNRESOLVED,
         RPC_CALLS_TOTAL, TOKENS_RESOLVED_TOTAL,
@@ -473,6 +474,33 @@ async fn main() -> Result<()> {
 
     // --- Metrics HTTP server (background task) ---
     tokio::spawn(serve_metrics(metrics_port));
+
+    // --- 4e. DexScreener price oracle (optional, gated, detached background task) ---
+    // Fills the `no_price_oracle` gap for long-tail tokens by populating the SAME
+    // `arbx:token_prices:<chain>` hash the scanner reads (keyed by the canonical
+    // uppercase symbol from the PG `tokens` table). Default-OFF: runs only when
+    // ARBX_DEXSCREENER_ORACLE=active. Read-only/shadow — no signer, no broadcast.
+    // Detached idiom mirrors `serve_metrics` + the RPC health loops (process-exit
+    // shutdown). A DexScreener cycle's chunk-delays therefore never stall the
+    // main consumer/reconciliation select loop.
+    match DexScreenerConfig::from_env(&enabled_chains) {
+        Ok(Some(cfg)) => match DexScreenerPriceOracle::new(cfg, pool.clone(), redis_url.clone()) {
+            Ok(oracle) => {
+                // Wrap so an unexpected loop exit is observable. run() never
+                // returns today; this only fires on a future regression.
+                tokio::spawn(async move {
+                    oracle.run().await;
+                    warn!(
+                        event = "enricher.dexscreener_task_exited",
+                        "DexScreener oracle loop ended unexpectedly"
+                    );
+                });
+            }
+            Err(e) => warn!(event = "enricher.dexscreener_init_err", err = %e),
+        },
+        Ok(None) => info!(event = "enricher.dexscreener_disabled"),
+        Err(e) => warn!(event = "enricher.dexscreener_config_err", err = %e),
+    }
 
     // --- 5. Drain PEL (I1 — crash recovery before main loop) ---
     // ACK-after-process: drain_pel returns (triples, ids).  We call
