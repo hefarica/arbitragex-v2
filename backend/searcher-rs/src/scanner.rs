@@ -2594,6 +2594,25 @@ async fn dispatch_orchestrator_and_classify(
         }
     };
 
+    // Phase OMEGA scoring — wire the Bayesian posterior gate + Kelly sizing per
+    // opportunity (observe-only: produce + log a ConfidenceScore; does NOT gate
+    // emission, never moves capital). Resolves `scoring_pipeline_not_wired`: the
+    // bayesian_filter + kelly_sizing primitives are now invoked on every paper
+    // opportunity and a ConfidenceScore is emitted to the log pipeline.
+    let scoring_cfg = crate::scoring::ScoringConfig::from_env();
+    let confidence = crate::scoring::compute_confidence(outcome.passed, &scoring_cfg);
+    tracing::info!(
+        event = "scoring.confidence_attached",
+        chain_id,
+        route_fingerprint = %candidate.route_fingerprint,
+        sim_passed = outcome.passed,
+        posterior_prob = confidence.posterior_prob,
+        posterior_std = confidence.posterior_std,
+        bayesian_accepted = confidence.bayesian_accepted,
+        kelly_fraction = confidence.kelly_fraction,
+        recommended_size_wei = %confidence.recommended_size_wei,
+    );
+
     if outcome.passed {
         c.round_trip_executor_success_total.fetch_add(1, Relaxed);
         c.simulator_revm_success.fetch_add(1, Relaxed);

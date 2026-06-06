@@ -88,6 +88,7 @@ mod pool_candidate;
 mod pool_discovery;
 mod pool_sources;
 mod route_decoder;
+mod scoring;
 mod source_supervisor;
 // Phase 1 radar — declared in the bin crate so `scanner::run_chain` can spawn
 // the worker. The lib crate also declares it (`pub mod route_discovery`) so the
