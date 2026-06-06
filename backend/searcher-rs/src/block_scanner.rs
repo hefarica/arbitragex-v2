@@ -100,6 +100,41 @@ pub async fn block_detection_loop(
         "block/log backrunning scanner starting"
     );
 
+    // Observer divergence telemetry (opt-in): when ARBX_BLOCK_DIVERGENCE_TELEMETRY is set,
+    // open a best-effort Redis connection (own connection from REDIS_URL — keeps the scan
+    // signature unchanged) to PUBLISH real-node head/reorg divergence to
+    // arbx:telemetry:observability. None = disabled = zero behavior change. Read-only;
+    // a connection failure degrades to None and never blocks detection.
+    let div_redis: Option<redis::aio::ConnectionManager> =
+        if std::env::var("ARBX_BLOCK_DIVERGENCE_TELEMETRY").map(|v| !v.trim().is_empty()).unwrap_or(false) {
+            match std::env::var("REDIS_URL") {
+                Ok(url) => match redis::Client::open(url) {
+                    Ok(client) => match client.get_connection_manager().await {
+                        Ok(cm) => {
+                            info!(
+                                event = "block_scanner.divergence_telemetry_on",
+                                chain_id,
+                                channel = "arbx:telemetry:observability",
+                                "real-node head divergence telemetry enabled (observer-only)"
+                            );
+                            Some(cm)
+                        }
+                        Err(e) => {
+                            warn!(event = "block_scanner.divergence_redis_failed", chain_id, error = %e, "divergence telemetry disabled");
+                            None
+                        }
+                    },
+                    Err(e) => {
+                        warn!(event = "block_scanner.divergence_redis_failed", chain_id, error = %e, "divergence telemetry disabled");
+                        None
+                    }
+                },
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
     let mut backoff_ms: u64 = 1_000;
     let max_backoff_ms: u64 = 30_000;
     let mut url_idx = 0usize;
@@ -109,7 +144,7 @@ pub async fn block_detection_loop(
             return;
         }
         let url = &ws_urls[url_idx % ws_urls.len()];
-        match run_block_subscription(chain_id, url, &orch, &idx, gas_sink.as_ref(), &cancel).await {
+        match run_block_subscription(chain_id, url, &orch, &idx, gas_sink.as_ref(), div_redis.clone(), &cancel).await {
             Ok(()) => return, // clean exit (cancelled)
             Err(e) => {
                 warn!(
@@ -136,12 +171,16 @@ async fn run_block_subscription(
     orch: &Arc<Orchestrator>,
     idx: &Arc<RwLock<ImpactIndex>>,
     gas_sink: Option<&GasBlockSink>,
+    mut div_redis: Option<redis::aio::ConnectionManager>,
     cancel: &CancellationToken,
 ) -> anyhow::Result<()> {
     let client = WsChainClient::connect(chain_id, url).await?;
     let provider = client.provider.clone();
     let mut blocks = client.subscribe_blocks().await?;
     info!(event = "block_scanner.connected", chain_id, "subscribed to newHeads");
+
+    // Previous observed real-node head (number, hash) for chain-continuity / reorg detection.
+    let mut prev_head: Option<(u64, H256)> = None;
 
     loop {
         tokio::select! {
@@ -165,6 +204,58 @@ async fn run_block_subscription(
                         let milligwei = (base_fee_wei / U256::from(1_000_000u64)).as_u64();
                         sink.base_fee_milligwei
                             .store(milligwei, std::sync::atomic::Ordering::Release);
+                    }
+                }
+
+                // ── Observer divergence telemetry (best-effort, read-only) ────────────────
+                // Capture the real-node head identity (number + hash + parent) and, vs the
+                // previous head, flag a reorg (same/lower number, different hash) or a
+                // parent-hash break — the case where the shadow sim simulated against an
+                // orphaned chain state. Published to arbx:telemetry:observability when
+                // enabled; never blocks detection (None redis / publish error is ignored).
+                if let Some(ref mut cm) = div_redis {
+                    let n = block_num.as_u64();
+                    let parent_hash = block.parent_hash;
+                    if let (Some(h), Some((pn, ph))) = (block.hash, prev_head) {
+                        let reorg = n <= pn && h != ph;
+                        let parent_break = n == pn + 1 && parent_hash != ph;
+                        let divergent = reorg || parent_break;
+                        let kind = if reorg {
+                            "reorg_same_or_lower_number"
+                        } else if parent_break {
+                            "parent_hash_break"
+                        } else {
+                            "none"
+                        };
+                        let ts_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        let ev = crate::telemetry_observability::block_head_event(
+                            chain_id,
+                            n,
+                            &format!("{:#x}", h),
+                            &format!("{:#x}", parent_hash),
+                            &format!("{:#x}", ph),
+                            pn,
+                            divergent,
+                            kind,
+                            ts_ms,
+                        );
+                        crate::telemetry_observability::publish(cm, &ev).await;
+                        if divergent {
+                            warn!(
+                                event = "block_scanner.head_divergence",
+                                chain_id,
+                                block_num = n,
+                                prev_block = pn,
+                                kind,
+                                "real-node head divergence (reorg/parent-break) — published to arbx:telemetry:observability"
+                            );
+                        }
+                    }
+                    if let Some(h) = block.hash {
+                        prev_head = Some((n, h));
                     }
                 }
 

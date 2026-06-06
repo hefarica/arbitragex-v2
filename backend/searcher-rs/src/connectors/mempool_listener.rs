@@ -30,6 +30,8 @@ impl MempoolListener {
         rpc_ws_url: &str,
         tx_out: mpsc::Sender<NormalizedTx>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        // OBSERVER-ONLY: bare ethers WS provider (subscribe_pending_txs + get_transaction
+        // only) — NEVER wrap with SignerMiddleware / .with_signer; no Wallet (capital_exposed == 0).
         let provider = Provider::<Ws>::connect(rpc_ws_url).await?;
         Ok(Self {
             provider,

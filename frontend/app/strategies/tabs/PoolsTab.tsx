@@ -30,6 +30,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { TokenPairIcon } from "@/components/ui/TokenIcon";
 import { useOmniStore } from "@/lib/store/omni-store";
 import { shortAddr } from "@/lib/format";
 import { getApiBaseUrl } from "@/lib/api-client";
@@ -339,7 +340,17 @@ export function PoolsTab({ chainId }: Props) {
               {filteredPools.map((pool) => (
                 <TableRow key={pool.id} className="group hover:bg-muted/30 transition-colors">
                   <TableCell className="font-medium">
-                    {tokenPairLabel(pool)}
+                    <div className="flex items-center gap-2 min-w-0">
+                      <TokenPairIcon
+                        tokenInAddress={pool.token0_address}
+                        tokenOutAddress={pool.token1_address}
+                        tokenInSymbol={pool.token0_symbol ?? undefined}
+                        tokenOutSymbol={pool.token1_symbol ?? undefined}
+                        chainId={pool.chain_id}
+                        size={22}
+                      />
+                      <span className="truncate">{tokenPairLabel(pool)}</span>
+                    </div>
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     {pool.dex_name}

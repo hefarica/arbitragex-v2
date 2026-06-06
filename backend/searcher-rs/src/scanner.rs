@@ -256,10 +256,50 @@ async fn build_orchestrator(
         }
     }
 
-    let state_projector = Arc::new(StateProjector::new(
-        reserves_cache.clone(),
-        None, // V3 provider: Phase 15
-    ));
+    // V3 oracle (read-only): build the on-chain QuoterV2 provider from the
+    // failover RPC pool so DexEngine can value V3 pools via
+    // `state_projector.project_v3_quote` — eliminates `no_price_oracle`.
+    // Mainnet only for now; absent pool/catalog → None (V3 projection stays
+    // None, R8 fail-honest). NO-ACTIVE: staticcall quoting only, no capital.
+    let v3_provider: Option<Arc<dyn crate::state_projector::V3QuoteProvider>> = match &rpc_pool {
+        Some(pool) if chain_id == 1 => {
+            match crate::v3_quote_provider::MulticallV3QuoteProvider::from_pool_and_chain(
+                pool.clone(),
+                chain_id,
+            ) {
+                Some(p) => {
+                    info!(event = "scanner.v3_oracle_wired", chain_id);
+                    Some(Arc::new(p))
+                }
+                None => {
+                    info!(
+                        event = "scanner.v3_oracle_absent",
+                        chain_id,
+                        reason = "no_quoter_catalog"
+                    );
+                    None
+                }
+            }
+        }
+        Some(_) => {
+            info!(
+                event = "scanner.v3_oracle_absent",
+                chain_id,
+                reason = "non_mainnet"
+            );
+            None
+        }
+        None => {
+            info!(
+                event = "scanner.v3_oracle_absent",
+                chain_id,
+                reason = "no_rpc_pool"
+            );
+            None
+        }
+    };
+
+    let state_projector = Arc::new(StateProjector::new(reserves_cache.clone(), v3_provider));
 
     let size_optimizer = Arc::new(SizeOptimizer::new(state_projector.clone()));
 
@@ -386,6 +426,16 @@ async fn build_orchestrator(
         rpc_pool,
         reserves_cache.clone(),
     ));
+
+    // Block 2 — gated proactive top-TVL pool enumeration worker. Default-OFF
+    // (ARBX_POOL_ENUM_MODE=off); spawns only when set to "shadow". Read-only/
+    // shadow: HTTP subgraph + eth_call + DB/Redis/impact_index writes for
+    // token-safe pools. No executor/signer/broadcast.
+    crate::workers::pool_enumeration_worker::spawn_if_enabled(
+        chain_id,
+        Arc::clone(&pool_discovery),
+        db.clone(),
+    );
 
     let ctx = OrchestratorContext {
         impact_index: impact_index.clone(),
@@ -744,10 +794,12 @@ pub async fn run_chain(
         // Publish block height + base fee into the cartridge HostContext atomics each block
         // (only when the cartridge runtime is live) so get_base_fee()/get_block_number() are
         // real — the cartridge net-profit gate is otherwise unsatisfiable (gas reads as 0).
-        let gas_sink = cartridge_runner.as_ref().map(|r| crate::block_scanner::GasBlockSink {
-            block_number: r.host_block_number_handle(),
-            base_fee_milligwei: r.host_base_fee_handle(),
-        });
+        let gas_sink = cartridge_runner
+            .as_ref()
+            .map(|r| crate::block_scanner::GasBlockSink {
+                block_number: r.host_block_number_handle(),
+                base_fee_milligwei: r.host_base_fee_handle(),
+            });
         tokio::spawn(crate::block_scanner::block_detection_loop(
             chain_id,
             ws_urls,
@@ -2541,6 +2593,25 @@ async fn dispatch_orchestrator_and_classify(
             );
         }
     };
+
+    // Phase OMEGA scoring — wire the Bayesian posterior gate + Kelly sizing per
+    // opportunity (observe-only: produce + log a ConfidenceScore; does NOT gate
+    // emission, never moves capital). Resolves `scoring_pipeline_not_wired`: the
+    // bayesian_filter + kelly_sizing primitives are now invoked on every paper
+    // opportunity and a ConfidenceScore is emitted to the log pipeline.
+    let scoring_cfg = crate::scoring::ScoringConfig::from_env();
+    let confidence = crate::scoring::compute_confidence(outcome.passed, &scoring_cfg);
+    tracing::info!(
+        event = "scoring.confidence_attached",
+        chain_id,
+        route_fingerprint = %candidate.route_fingerprint,
+        sim_passed = outcome.passed,
+        posterior_prob = confidence.posterior_prob,
+        posterior_std = confidence.posterior_std,
+        bayesian_accepted = confidence.bayesian_accepted,
+        kelly_fraction = confidence.kelly_fraction,
+        recommended_size_wei = %confidence.recommended_size_wei,
+    );
 
     if outcome.passed {
         c.round_trip_executor_success_total.fetch_add(1, Relaxed);

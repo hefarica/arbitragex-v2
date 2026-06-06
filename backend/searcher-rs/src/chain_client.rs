@@ -56,6 +56,9 @@ pub struct WsChainClient {
 
 impl WsChainClient {
     pub async fn connect(chain_id: u64, url: &str) -> anyhow::Result<Self> {
+        // OBSERVER-ONLY: bare ethers WS provider (subscribe_pending / subscribe_blocks /
+        // get_transaction — reads only). NEVER wrap with SignerMiddleware / .with_signer;
+        // no LocalWallet may be attached here (capital_exposed == 0).
         let provider = timeout(Duration::from_secs(10), Provider::<Ws>::connect(url))
             .await
             .context("ws connect timeout")??;

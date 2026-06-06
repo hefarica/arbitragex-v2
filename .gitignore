@@ -5,7 +5,13 @@
 .env
 .env.*
 !.env.example
+!.env.mcp.example
+# NOTE: .env.mcp (REAL MCP secrets) stays IGNORED via the .env.* rule above.
+#       Only the .env.mcp.example TEMPLATE (placeholders only) is tracked.
 secrets/
+# Operator secrets SSOT workbook — NEVER commit (real credentials live here).
+*Secrets_Config.xlsx
+ArbitrageX_Secrets_Config.xlsx
 *.pem
 *.key
 *.jks
@@ -70,8 +76,11 @@ tmp/
 # Playwright
 tests/e2e/node_modules/
 tests/e2e/playwright-report/
+tests/e2e/playwright-report-live/
 tests/e2e/test-results/
 tests/e2e/.playwright-cache/
+# Playwright MCP scratch workspace (browser sessions) — never commit run output.
+.playwright-mcp/
 
 # Docker
 docker-compose.override.yml

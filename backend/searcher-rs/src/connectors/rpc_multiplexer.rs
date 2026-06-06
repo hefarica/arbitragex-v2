@@ -17,10 +17,13 @@ impl RPCMultiplexer {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut http_endpoints = Vec::new();
         for url in http_urls {
+            // OBSERVER-ONLY: bare ethers read-only provider — NEVER wrap with
+            // SignerMiddleware / .with_signer; no LocalWallet attached (capital_exposed == 0).
             let provider = Provider::<Http>::try_from(url)?;
             http_endpoints.push(Arc::new(provider));
         }
 
+        // OBSERVER-ONLY: bare ethers WS provider (subscriptions + reads only); no signer.
         let ws_provider = Provider::<Ws>::connect(ws_url).await?;
         let ws_endpoints = vec![Arc::new(ws_provider)];
 

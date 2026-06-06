@@ -70,11 +70,13 @@ mod scanner;
 // `cartridge_boot` (called from the scanner boot path), so allow dead_code on the two.
 #[allow(dead_code, unused_imports, unused_variables)]
 mod cartridge;
+mod cartridge_boot;
 #[allow(dead_code)]
 mod cartridge_loader;
-mod cartridge_boot;
 // FASE OMEGA — Block/log backrunning scanner (ARBX_MEMPOOL_MODE=block).
 mod block_scanner;
+// Observer telemetry — real-node head divergence (reorg) PUBLISH to arbx:telemetry:observability.
+mod telemetry_observability;
 // Phase 1-3: orchestrator modules — fully wired in Phase 14.
 // `impact_index` still has Phase-15 functions (from_registry, add_pool,
 // seed_cycles_from_mvp) that are public API but not yet called by the binary.
@@ -82,8 +84,12 @@ mod block_scanner;
 #[allow(dead_code)]
 mod impact_index;
 mod opportunity_emitter;
+mod pool_candidate;
 mod pool_discovery;
+mod pool_sources;
 mod route_decoder;
+mod scoring;
+mod source_supervisor;
 // Phase 1 radar — declared in the bin crate so `scanner::run_chain` can spawn
 // the worker. The lib crate also declares it (`pub mod route_discovery`) so the
 // pure submodules are unit-tested under `cargo test --lib`.
@@ -110,6 +116,8 @@ mod workers;
 mod size_optimizer;
 #[allow(dead_code)]
 mod state_projector;
+#[allow(dead_code)]
+mod v3_quote_provider;
 
 use shared_rs::{
     config::{require_env, AppConfig},
@@ -185,32 +193,45 @@ async fn main() -> anyhow::Result<()> {
     // Phase 2: expose applied topology version/client-readiness gauges for clean UI surfaces.
     topology_reload::init_topology_metrics();
 
-    // ── OMEGA SEAL — Shadow capital-key lockout (defense-in-depth) ─────────────
-    // searcher-rs is a DETECTION/EMIT service and must NEVER hold a capital-
-    // bearing signing key (those live only in relays-client / sim-ctl). When
-    // ARBX_ORCHESTRATOR_MODE=shadow, enforce capital_exposed == 0 as a hard boot
-    // invariant: if a private key / mnemonic is present in THIS process's env,
-    // panic before any work. Canonical capital key: FLASHBOTS_SIGNER_KEY
-    // (see backend/relays-client/src/signer.rs).
-    if scanner::OrchestratorMode::from_env() == scanner::OrchestratorMode::Shadow {
-        const CAPITAL_KEY_ENV: [&str; 4] = [
+    // ── OMEGA SEAL — capital-key lockout (defense-in-depth, ALL modes) ─────────
+    // searcher-rs is a DETECTION/EMIT (OBSERVER) service and must NEVER hold a
+    // capital-bearing signing key in ANY mode: it spawns no executor and never
+    // signs nor broadcasts (workers/execution_worker.rs is a never-spawned stub;
+    // sim_orchestrator.rs: "the orchestrator NEVER signs nor broadcasts"; every
+    // RPC provider is read-only — no Wallet/SignerMiddleware anywhere).
+    //
+    // Enforce capital_exposed == 0 as a HARD, mode-INDEPENDENT boot invariant: if
+    // any private key / mnemonic is present in THIS process's env (incl. the
+    // testnet/executor names), panic before any work. This makes a testnet OR
+    // mainnet broadcast posture physically impossible to enable by env alone —
+    // turning execution on is a deliberate code change here, gated by FASE D
+    // (KMS + pre-execute-checklist + registered human authorization), never a flag.
+    // An empty value (e.g. PRIVATE_KEY="" per the Foundry doctrine) does NOT trip
+    // this — only a populated key.
+    {
+        const CAPITAL_KEY_ENV: [&str; 8] = [
             "FLASHBOTS_SIGNER_KEY",
             "EXECUTOR_PRIVATE_KEY",
+            "ARBX_EXECUTOR_PRIVATE_KEY",
             "ARBX_SIGNER_PRIVATE_KEY",
+            "ARBX_TESTNET_PRIVATE_KEY",
+            "SIM_SIGNER_PRIVATE_KEY",
+            "PRIVATE_KEY",
             "MNEMONIC",
         ];
         for key in CAPITAL_KEY_ENV {
             if matches!(std::env::var(key), Ok(v) if !v.trim().is_empty()) {
                 panic!(
-                    "FATAL: capital-bearing key `{key}` present while \
-                     ARBX_ORCHESTRATOR_MODE=shadow — searcher-rs must run with \
-                     capital_exposed == 0 in shadow mode"
+                    "FATAL: capital-bearing key `{key}` present in env — searcher-rs is an \
+                     OBSERVER/detection service and must run with capital_exposed == 0 in ALL \
+                     modes (no signer, no broadcast). Remove the key; enabling execution is a \
+                     deliberate FASE D change, not an env flag."
                 );
             }
         }
         tracing::info!(
-            event = "searcher.shadow_capital_lock",
-            "shadow mode verified: no capital-bearing signer keys in env (capital_exposed=0)"
+            event = "searcher.capital_lock",
+            "capital-key lockout verified: no signer keys in env (capital_exposed=0, observer-only, all modes)"
         );
     }
 
@@ -594,12 +615,21 @@ async fn main() -> anyhow::Result<()> {
     let price_alchemy_key = workers::price_worker::alchemy_key_from_env(primary_chain);
     let price_redis = redis_conn.clone();
     let price_chain = primary_chain;
+    // Tier-0 Chainlink on-chain feeds: needs the PG pool (reads operator-seeded
+    // price_oracles) + the chain's HTTP RPC (eth_call latestRoundData). Both
+    // optional — when either is absent the worker skips Chainlink and behaves as
+    // before (Alchemy/Coingecko/Config cascade). Read-only; no signing.
+    let price_db = db_pool.clone();
+    let price_rpc_url = workers::price_worker::rpc_http_url_from_env(primary_chain);
     tokio::spawn(async move {
-        let cfg = workers::price_worker::PriceWorkerConfig::new(
+        let mut cfg = workers::price_worker::PriceWorkerConfig::new(
             price_chain,
             price_period_secs,
             price_alchemy_key,
         );
+        if let (Some(db), Some(url)) = (price_db, price_rpc_url) {
+            cfg = cfg.with_chainlink(db, url);
+        }
         match workers::price_worker::PriceWorker::new(cfg) {
             Ok(worker) => worker.run(price_redis).await,
             Err(e) => warn!(event = "price_worker.boot_failed", chain_id = price_chain, error = %e),

@@ -40,6 +40,12 @@ import { KillSwitchClient } from "@arbx/shared";
 import { verifyAll } from "../readiness/verifiers/index.js";
 import type { ReadinessReport } from "../readiness/types.js";
 import { __forTesting as scoringTesting } from "./scoring-status.js";
+import {
+  computeBreakerWindow,
+  loadThresholdsFromEnv,
+  type BreakerMetric,
+  type TradeOutcome,
+} from "../risk/rolling-breakers.js";
 
 // ---------------------------------------------------------------------------
 // Wire contract types — mirror frontend Zod schemas exactly.
@@ -76,7 +82,7 @@ type BreakerAction =
 type BlockedPhase = "A.4" | "A.5" | "A.6" | "A.7" | "A.8" | "A.9" | "LIVE";
 
 interface BreakerEvidence {
-  source: "kill_switch" | "readiness_verifier" | "env_probe" | "scoring_status" | "not_configured";
+  source: "kill_switch" | "readiness_verifier" | "env_probe" | "scoring_status" | "paper_ledger" | "not_configured";
   detail: string;
   // Always nullable so the wire contract never lies. UI shows "—" when null.
   current_value: string | number | null;
@@ -149,6 +155,10 @@ interface EvalCtx {
   envExecutor: boolean;
   envTradeMode: string | null;
   scoringPipelineWired: boolean;
+  // A.5 rolling gas-burn from paper_trade_runs (null = thresholds unset / no pool / query failed).
+  gasBurn: BreakerMetric | null;
+  gasBurnReason: string;
+  gasBurnCapUsd: number | null;
 }
 
 async function collectCtx(deps: {
@@ -187,6 +197,44 @@ async function collectCtx(deps: {
   );
   const scoringPipelineWired = pipelineComp?.wired === true;
 
+  // A.5 — rolling gas-burn breaker from paper_trade_runs. This is the ONE breaker
+  // current shadow data can honestly feed: cumulative simulated gas vs the operator
+  // cap over a window. Math is the TS mirror of shared-rs/src/risk_ledger.rs.
+  // (Drawdown needs realized P&L from a drift-tracker; revert needs sim-revert
+  // counters — both remain NOT_AVAILABLE in their evaluators.)
+  let gasBurn: BreakerMetric | null = null;
+  let gasBurnReason = "thresholds_not_configured";
+  let gasBurnCapUsd: number | null = null;
+  const thresholds = loadThresholdsFromEnv();
+  if (!thresholds) {
+    gasBurnReason = "operator risk thresholds not configured (ARBX_RISK_* env)";
+  } else if (!deps.pool) {
+    gasBurnReason = "no database pool";
+  } else {
+    gasBurnCapUsd = thresholds.maxGasBurnUsd;
+    try {
+      const r = await deps.pool.query(
+        `SELECT extract(epoch from created_at)::float8 AS ts,
+                sim_expected_profit_usd::float8 AS pnl,
+                COALESCE(sim_gas_cost_usd, 0)::float8 AS gas
+           FROM paper_trade_runs
+          WHERE created_at >= NOW() - make_interval(secs => $1)
+          ORDER BY created_at ASC`,
+        [thresholds.windowSecs],
+      );
+      const outcomes: TradeOutcome[] = (r.rows as Array<{ ts: number; pnl: number; gas: number }>).map(
+        (row) => ({ tsUnix: Number(row.ts), pnlUsd: Number(row.pnl), gasUsd: Number(row.gas) }),
+      );
+      const win = computeBreakerWindow(Date.now() / 1000, outcomes, thresholds);
+      gasBurn = win.gasBurnUsd;
+      gasBurnReason = win.gasBurnUsd.sufficient
+        ? "ok"
+        : `insufficient samples (${win.windowSamples}/${thresholds.minSamples})`;
+    } catch (e) {
+      gasBurnReason = `query_failed: ${(e as Error).message.slice(0, 80)}`;
+    }
+  }
+
   return {
     now,
     killSwitchEnabled,
@@ -197,6 +245,9 @@ async function collectCtx(deps: {
     envExecutor,
     envTradeMode,
     scoringPipelineWired,
+    gasBurn,
+    gasBurnReason,
+    gasBurnCapUsd,
   };
 }
 
@@ -254,25 +305,57 @@ function makeRevertRateBreaker(ctx: EvalCtx): CircuitBreaker {
 }
 
 function makeGasBurnBreaker(ctx: EvalCtx): CircuitBreaker {
-  return {
+  const base = {
     id: "gas_burn_breaker",
     name: "Max gas burn (rolling window)",
-    category: "gas_burn",
-    state: "NOT_AVAILABLE",
-    severity: "high",
-    action: "none",
-    evidence: {
-      source: "not_configured",
-      detail: "Paper-side gas-used per opportunity is captured by simulator-v2 SequenceContext but no per-window cumulative ledger persists yet.",
-      current_value: null,
-      threshold: null,
-      unit: "gwei per hour",
-    },
-    blocks: ["LIVE"],
+    category: "gas_burn" as BreakerCategory,
     operator_required: false,
     last_evaluated_at: ctx.now,
-    description: "If cumulative paper/live gas burn over a rolling window exceeds the operator-defined cap, pause.",
-    required_action: "Persist gas_used per simulated tx to a time-bucketed table (or Redis stream) and compute rolling sum.",
+    description: "Cumulative paper/live gas burn over a rolling window vs the operator cap (mirror of risk_ledger).",
+  };
+  if (!ctx.gasBurn) {
+    return {
+      ...base,
+      state: "NOT_AVAILABLE",
+      severity: "high",
+      action: "none",
+      evidence: {
+        source: "paper_ledger",
+        detail: `Rolling gas-burn from paper_trade_runs needs operator thresholds + samples — ${ctx.gasBurnReason}.`,
+        current_value: null,
+        threshold: ctx.gasBurnCapUsd,
+        unit: "USD per window",
+      },
+      blocks: ["LIVE"],
+      required_action: "Set ARBX_RISK_{NAV_USD,WINDOW_SECS,MIN_SAMPLES,DD_TIERS,GAS_CAP_USD} and accumulate paper_trade_runs.",
+    };
+  }
+  const m = ctx.gasBurn;
+  const state: BreakerState =
+    !m.sufficient ? "NOT_AVAILABLE"
+    : m.level === "ok" ? "PASS"
+    : m.level === "warn" ? "WARN"
+    : m.level === "kill" ? "KILLED"
+    : "PAUSED";
+  return {
+    ...base,
+    state,
+    severity: state === "PASS" ? "low" : state === "WARN" ? "medium" : "high",
+    action: state === "KILLED" ? "hard_pause" : state === "PAUSED" ? "pause" : state === "WARN" ? "warn" : "none",
+    evidence: {
+      source: "paper_ledger",
+      detail: m.sufficient
+        ? `Cumulative simulated gas $${m.value.toFixed(2)} over ${m.samples} paper runs in the window.`
+        : ctx.gasBurnReason,
+      current_value: Number(m.value.toFixed(2)),
+      threshold: ctx.gasBurnCapUsd,
+      unit: "USD per window",
+    },
+    blocks: state === "PASS" ? [] : ["LIVE"],
+    required_action:
+      state === "PASS" || state === "NOT_AVAILABLE"
+        ? null
+        : "Investigate gas spend; reduce candidate volume or raise ARBX_RISK_GAS_CAP_USD if intended.",
   };
 }
 

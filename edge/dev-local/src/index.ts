@@ -67,14 +67,23 @@ const startedAt = new Date();
 const app = express();
 app.disable("x-powered-by");
 
-// DEV-ONLY: permissive CORS so the browser-side frontend (localhost:5173 via
-// SSH tunnel) can reach this edge shim. Production uses CF Workers CORS.
+// DEV-LOCAL CORS: allowlist localhost / 127.0.0.1 / *.ape-tv.net via regex, PLUS any
+// EXACT origin in the operator-configured ALLOWED_ORIGINS env (comma-separated). This
+// covers the public VPS frontend served from a raw-IP origin (e.g.
+// http://195.201.235.70:5173) that the regex deliberately does not match. The IP is
+// NEVER hardcoded in code — the operator supplies origins via env (RULE 00 / no-hardcode);
+// the env is already set on the edge container. Production uses CF Workers CORS.
+const CORS_ENV_ORIGINS = (process.env["ALLOWED_ORIGINS"] ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   // CodeQL js/cors-misconfiguration-for-credentials: with credentials=true we must NOT
-  // reflect arbitrary origins. Allowlist localhost / 127.0.0.1 / *.ape-tv.net only.
+  // reflect arbitrary origins. Still an explicit allowlist (regex OR exact env match);
+  // we reflect only matched origins, never "*", so credentialed CORS stays safe.
   const CORS_ALLOWED = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$|^https:\/\/[a-z0-9-]+\.ape-tv\.net$/i;
-  if (origin && CORS_ALLOWED.test(origin)) {
+  if (origin && (CORS_ALLOWED.test(origin) || CORS_ENV_ORIGINS.includes(origin))) {
     res.setHeader("access-control-allow-origin", origin);
     res.setHeader("access-control-allow-credentials", "true");
     res.setHeader("access-control-allow-headers", "content-type, x-arbx-admin-token, x-arbx-trace-id, x-arbx-actor");
@@ -195,6 +204,16 @@ app.get("/api/route-discovery/routes", (req, res) => proxy("/api/route-discovery
 app.get("/api/cartridges/status", (req, res) => proxy("/api/cartridges/status", req, res));
 app.get("/api/cartridges/telemetry/latest", (req, res) => proxy("/api/cartridges/telemetry/latest", req, res));
 
+// FASE B Gate-C — route-discovery OUTCOMES analytics (read-only over the durable
+// Postgres `route_discovery_outcomes` table; the shadow emitter's resolved
+// outcomes + Paso 9 `reason` column). This is the read-side of the passive sink:
+// it surfaces the hit-rate series and the reason distribution (the "why 0%").
+// Edge path mirrors api-server /api/v1/route-discovery-outcomes*. Query string
+// (?hours= / ?limit=) is forwarded verbatim by proxy() (mode-1). Observe-only;
+// never touches arbx:opps:detected, capital, or execution.
+app.get("/api/route-discovery-outcomes/summary", (req, res) => proxy("/api/v1/route-discovery-outcomes/summary", req, res));
+app.get("/api/route-discovery-outcomes", (req, res) => proxy("/api/v1/route-discovery-outcomes", req, res));
+
 // Chains Admin registry — admin-token gated. Routed through adminProxy so the
 // V-AT-1 httpOnly cookie (arbx_admin_session) is translated to the upstream
 // x-arbx-admin-token header. adminProxy is defined later in the file; function
@@ -234,6 +253,16 @@ app.get("/api/trading-config", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
   proxy(`/api/v1/trading-config?chain_id=${encodeURIComponent(chain)}`, req, res);
 });
+// Cartridge Filters (Idea 1 Phase-1) — public read of the per-chain route pre-filter prefs.
+app.get("/api/cartridge-filters", (req, res) => {
+  const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
+  proxy(`/api/v1/cartridge-filters?chain_id=${encodeURIComponent(chain)}`, req, res);
+});
+// Cartridge Forge (Idea 2) — public list of injected cartridges (registry + counters).
+app.get("/api/cartridges", (req, res) => {
+  const qs = new URL(req.url, "http://x").search || "";
+  proxy(`/api/v1/cartridges${qs}`, req, res);
+});
 // Operations PnL — Sprint 3 PMI/EVM KPI surface.
 app.get("/api/operations/kpi", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
@@ -257,14 +286,48 @@ app.get("/api/strategy-catalog/active", (req, res) => {
 // DeFi data routes (defiRouter is mounted at /api in api-server, no /v1/ prefix).
 app.get("/api/chains",  (req, res) => proxy("/api/chains", req, res));
 app.get("/api/rpcs",    (req, res) => proxy("/api/rpcs", req, res));
-// Phase 2 fix: /api/pools now maps to NEW route-finder /api/v1/pools (was old broken defi_pools).
-app.get("/api/pools",   (req, res) => {
+// Phase 2 maps /api/pools to the richer route-finder /api/v1/pools, which
+// returns the {count, items} envelope. The frontend's DefiPoolsResponseSchema
+// (like /api/chains + /api/rpcs) expects {success, data}, so reshape the
+// envelope here — `items` become `data` — keeping all three defi endpoints on
+// one contract. RULE 00: never fabricate — an upstream error is forwarded
+// verbatim; on a transport failure we return an honest {success:false} so the
+// dashboard shows its degraded state rather than a fake-empty list.
+app.get("/api/pools", async (req, res) => {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(req.query)) {
     if (typeof v === "string") qs.set(k, v);
   }
   const qStr = qs.toString();
-  proxy(`/api/v1/pools${qStr ? "?" + qStr : ""}`, req, res);
+  try {
+    const upstream = await fetch(`${API_SERVER_URL}/api/v1/pools${qStr ? "?" + qStr : ""}`, {
+      headers: {
+        "x-arbx-edge-token": ARBX_EDGE_TOKEN,
+        "x-arbx-trace-id": (req as express.Request & { traceId?: string }).traceId ?? "",
+        accept: "application/json",
+      },
+    });
+    const text = await upstream.text();
+    if (!upstream.ok) {
+      res.status(upstream.status).setHeader("content-type", "application/json");
+      res.send(text);
+      return;
+    }
+    let parsed: unknown = null;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = null;
+    }
+    const items =
+      parsed && typeof parsed === "object" && Array.isArray((parsed as { items?: unknown }).items)
+        ? (parsed as { items: unknown[] }).items
+        : [];
+    res.json({ success: true, data: items });
+  } catch (e) {
+    logger.error({ err: (e as Error).message }, "/api/pools reshape error");
+    res.status(502).json({ success: false, error: "upstream_unreachable", data: [] });
+  }
 });
 app.get("/api/metrics/defi", (req, res) => proxy("/api/metrics", req, res));
 // Phase 2 route-finder: DEX catalog + pool catalog.
@@ -508,6 +571,32 @@ app.put("/admin/trading-config/:chain_id",    (req, res) => {
   const cid = req.params["chain_id"];
   if (!cid || !/^[0-9]+$/.test(cid)) { res.status(400).json({ error: "invalid_chain_id" }); return; }
   adminProxy(`/admin/trading-config/${cid}`, req, res, "PUT");
+});
+// Cartridge Filters (Idea 1 Phase-1) — admin upsert via adminProxy (httpOnly session → upstream token).
+app.put("/admin/cartridge-filters/:chain_id", (req, res) => {
+  const cid = req.params["chain_id"];
+  if (!cid || !/^[0-9]+$/.test(cid)) { res.status(400).json({ error: "invalid_chain_id" }); return; }
+  adminProxy(`/admin/cartridge-filters/${cid}`, req, res, "PUT");
+});
+// Cartridge Forge (Idea 2) — admin inject + lifecycle via adminProxy (cookie → upstream token).
+// Upstream cartridge-forge accepts x-arbx-admin-token (auth normalized). Cartridges run in
+// shadow eval (admin-gated, no capital). Slug format mirrors the api-server validation.
+const CART_SLUG = /^[a-z][a-z0-9_]{2,48}$/;
+app.post("/admin/cartridges", (req, res) => adminProxy("/api/v1/cartridges", req, res, "POST"));
+app.post("/admin/cartridges/:slug/pause", (req, res) => {
+  const slug = req.params["slug"];
+  if (!slug || !CART_SLUG.test(slug)) { res.status(400).json({ error: "invalid_slug" }); return; }
+  adminProxy(`/api/v1/cartridges/${slug}/pause`, req, res, "POST");
+});
+app.post("/admin/cartridges/:slug/resume", (req, res) => {
+  const slug = req.params["slug"];
+  if (!slug || !CART_SLUG.test(slug)) { res.status(400).json({ error: "invalid_slug" }); return; }
+  adminProxy(`/api/v1/cartridges/${slug}/resume`, req, res, "POST");
+});
+app.delete("/admin/cartridges/:slug", (req, res) => {
+  const slug = req.params["slug"];
+  if (!slug || !CART_SLUG.test(slug)) { res.status(400).json({ error: "invalid_slug" }); return; }
+  adminProxy(`/api/v1/cartridges/${slug}`, req, res, "DELETE");
 });
 
 // Operator credentials — migration 057. List behind adminProxy so the

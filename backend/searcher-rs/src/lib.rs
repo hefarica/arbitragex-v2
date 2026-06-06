@@ -20,12 +20,16 @@ pub mod models;
 pub mod opportunity_emitter;
 pub mod patterns;
 pub mod persistence;
+pub mod pool_candidate;
 pub mod pool_discovery;
+pub mod pool_sources;
 pub mod publisher;
 pub mod reserves;
 pub mod route_decoder;
 pub mod route_discovery;
 pub mod route_intent;
+pub mod scoring;
+pub mod source_supervisor;
 pub mod strategy_label;
 // Phase 7-8: orchestrator + engines exposed for integration tests.
 pub mod engines;
@@ -38,6 +42,8 @@ pub mod orchestrator;
 pub mod workers;
 // Phase 12: StateProjector -- virtual post-tx pool state projection.
 pub mod state_projector;
+// V3 oracle: on-chain QuoterV2 read-only provider feeding StateProjector.
+pub mod v3_quote_provider;
 // Phase 13: SizeOptimizer -- optimal amount_in sizing for arb candidates.
 pub mod size_optimizer;
 // Phase 11: LendingPositionIndexer -- Redis-backed watchlist + cache for
@@ -114,3 +120,7 @@ pub mod sed_bridge;
 //       which is an optional path dependency only available with that feature.
 #[cfg(feature = "paper-shadow")]
 pub mod telemetry_publisher;
+
+// Observer telemetry — real-node head divergence (reorg) → arbx:telemetry:observability.
+// Ungated: depends only on redis + serde, used by block_scanner in all builds.
+pub mod telemetry_observability;

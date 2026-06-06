@@ -341,6 +341,92 @@ function rowToRedisState(row: DbRow): Record<string, unknown> {
   };
 }
 
+/**
+ * Boot re-hydration of the PG→Redis trading_config mirror.
+ *
+ * PG `trading_config` is the source of truth, but the Redis mirror key
+ * `arbx:trading_config:<chain_id>` is written ONLY by the admin PUT handler.
+ * A Redis restart / flush / eviction therefore silently drops the mirror with
+ * nothing to repopulate it → searcher-rs reads None → has_config=false → the
+ * orchestrator falls to observe-only and emits 0 opportunities until the next
+ * PUT. (Root-caused 2026-06-04: the live feed sat at 0 for exactly this reason.)
+ *
+ * This runs once at api-server boot: it re-mirrors every ENABLED row from PG to
+ * Redis (idempotent SET) and publishes the SAME dual-channel reload the PUT
+ * emits, so searcher-rs picks the config back up in <1s. It introduces NO new
+ * values — it replays exactly what the operator already persisted in PG
+ * (no-hardcode safe). Fail-honest: it never throws (must not break boot) and
+ * logs precisely what it mirrored.
+ */
+export async function rehydrateTradingConfigMirror(deps: {
+  pool: Pool | null;
+  redis: Redis;
+  logger: { warn: (obj: object, msg?: string) => void; info: (obj: object, msg?: string) => void };
+}): Promise<void> {
+  if (!deps.pool) {
+    deps.logger.warn({ event: "trading_config.rehydrate_skipped", reason: "db_unavailable" });
+    return;
+  }
+  try {
+    const q = await deps.pool.query<DbRow>(
+      `SELECT chain_id, capital_usd, base_token_symbol, base_token_price_usd,
+              allowed_token_symbols, token_prices_usd,
+              simulation_capital_usd, simulation_per_token_amounts_usd,
+              simulation_per_strategy_caps_usd,
+              simulation_target_profit_usd, simulation_target_roi_pct,
+              min_profit_usd, min_roi_pct,
+              min_landing_probability, min_liquidity_confidence, max_token_risk_score,
+              gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
+              max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
+              enabled_strategies, enabled_dex_ids, strategy_configs,
+              capital_cost_rate_annual_pct, ops_overhead_usd_per_attempt,
+              spread_sanity_mult, p_copied_volume_threshold_usd, p_copied_max,
+              enabled,
+              updated_at, updated_by, created_at
+         FROM trading_config
+        WHERE enabled = TRUE`,
+    );
+    let mirrored = 0;
+    for (const row of q.rows) {
+      try {
+        const json = JSON.stringify(rowToRedisState(row));
+        await deps.redis.set(tradingConfigKey(row.chain_id), json);
+        await deps.redis.publish(TRADING_CONFIG_CHANNEL, json);
+        try {
+          await deps.redis.publish(HOT_RELOAD_CHANNEL, json);
+        } catch (err) {
+          deps.logger.warn({
+            event: "trading_config.rehydrate_hot_reload_failed",
+            chain_id: row.chain_id,
+            err: (err as Error).message,
+          });
+        }
+        mirrored += 1;
+      } catch (err) {
+        deps.logger.warn({
+          event: "trading_config.rehydrate_row_failed",
+          chain_id: row.chain_id,
+          err: (err as Error).message,
+        });
+      }
+    }
+    deps.logger.info(
+      {
+        event: "trading_config.rehydrated",
+        enabled_rows: q.rowCount,
+        mirrored,
+        channels: [TRADING_CONFIG_CHANNEL, HOT_RELOAD_CHANNEL],
+      },
+      "trading_config Redis mirror re-hydrated from Postgres at boot",
+    );
+  } catch (e) {
+    deps.logger.warn(
+      { event: "trading_config.rehydrate_failed", err: (e as Error).message },
+      "trading_config boot re-hydration failed (non-fatal)",
+    );
+  }
+}
+
 export function buildTradingConfigRouter(deps: Deps): Router {
   const r = Router();
 

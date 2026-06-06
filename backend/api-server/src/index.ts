@@ -82,7 +82,9 @@ const app = express();
 // IMPORT DEFI ROUTER & WEBSOCKET
 // ==========================================
 import { mountDefi } from "./routes/defi.js";
-import { buildTradingConfigRouter } from "./routes/trading-config.js";
+import { buildTradingConfigRouter, rehydrateTradingConfigMirror } from "./routes/trading-config.js";
+import { buildCartridgeFiltersRouter } from "./routes/cartridge-filters.js";
+import { mountTokenIconRoutes } from "./routes/token-icon.js";
 import { buildOperationsRouter } from "./routes/operations.js";
 import { buildStrategyCatalogRouter } from "./routes/strategy-catalog.js";
 import { buildCredentialsRouter } from "./routes/credentials.js";
@@ -529,9 +531,19 @@ app.use(buildRouteDiscoveryOutcomesRouter(pool));
 // Enterprise-audit follow-up: mount control-plane routers that were built but never
 // mounted, gating auth INTERNALLY. operator (requireOperatorRole per route; relative
 // paths -> base /api/operator) + cartridge-forge (admin-token validator passed here;
-// shadow strategy injection). admin-registries (auth in registry-engine UNVERIFIED) and
-// admin-promote-mainnet (live-adjacent) are INTENTIONALLY NOT mounted — pending explicit
-// verification / sign-off per the audit/shadow/read-only doctrine.
+// shadow strategy injection). admin-registries and admin-promote-mainnet are
+// INTENTIONALLY NOT mounted:
+//   - admin-registries: VERIFIED 2026-06-04 to carry NO authentication — its router
+//     (lib/registry-engine.ts buildRegistryRouter) exposes raw POST/PATCH/DELETE and
+//     actorOf() reads only an `x-omega-actor` header / req.ip (no token check). It is a
+//     full CRUD mutation surface over live-adjacent entities (risk_gate, capital_gate,
+//     contract_registry, relay_endpoints, rpc) that publishes hot-reload events to the
+//     searcher-rs Arc-swap. Mounting it = unauthenticated runtime mutation of risk/capital
+//     gates + executor contract targets = FASE D territory (blocked: no KMS, no human
+//     authorization-of-record, no audit sign-off). To enable LATER it must be wrapped in
+//     requireAdminToken (V-AT-1) and pass FASE D authorization; read-only (GET-only)
+//     mounting could come first if observability is the only need.
+//   - admin-promote-mainnet: live-adjacent (mainnet promotion) — same FASE D gate.
 if (pool) {
   app.use("/api/operator", buildOperatorRouter(pool));
   app.use(
@@ -982,6 +994,31 @@ app.use(buildTradingConfigRouter({
   writeAudit,
   logger,
 }));
+
+// Boot re-hydration: PG is the source of truth for trading_config; the Redis
+// mirror (arbx:trading_config:<chain>) is written ONLY by the admin PUT, so a
+// Redis restart/eviction silently drops it → searcher-rs sees has_config=false
+// → 0 opportunities. Re-mirror enabled rows from PG at boot so the config (and
+// thus the paper feed) survives Redis restarts. Fire-and-forget; never blocks
+// boot and never throws (handles its own errors). Replays existing PG values only.
+void rehydrateTradingConfigMirror({ pool, redis, logger });
+
+// ── Cartridge Filters (Idea 1 Phase-1 foundation — operator route pre-filter prefs) ─
+// Redis-only stored preference (arbx:cartridge:filters:<chain>). NOT yet consumed by
+// searcher-rs; the route pre-filter consumer + PG durability are a Phase 2 follow-up.
+app.use(buildCartridgeFiltersRouter({
+  redis,
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
+  writeAudit,
+  logger,
+}));
+
+// ── Token Icons (dashboard visual layer) ───────────────────────────────────
+// GET /api/v1/token-icon/:chainId/:address — Redis(producer cache) → curated
+// tokenRegistry → DexScreener(env-gated) → jazzicon fallback. Read-only +
+// best-effort cache population; never 500s for a missing icon (R8).
+mountTokenIconRoutes(app, { redis, logger });
 
 // ── Operations PnL (Sprint 3 — PMI/EVM KPI surface) ────────────────────
 app.use(buildOperationsRouter({

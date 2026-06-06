@@ -1,39 +1,72 @@
 // ZERO MOCKS DOCTRINE (rule_00): This page fetches data ONLY through the edge.
 // NEVER hardcode fallback data or bypass the edge layer.
 "use client";
-import React, { useEffect, useState } from "react";
-import { Activity, AlertTriangle } from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import { Activity } from "lucide-react";
 import { motion } from "framer-motion";
 import { getDefiRpcs } from "@/lib/api-client";
 import type { DefiRpcsResponse } from "@/lib/schemas";
+import { EdgeState } from "@/components/EdgeState";
+
+const RPC_COLUMNS = ["Chain ID", "URL", "Type", "Status"];
 
 export default function RpcHealthPage() {
   const [result, setResult] = useState<{ ok: true; data: DefiRpcsResponse } | { ok: false; error: string } | null>(null);
+  const [retrying, setRetrying] = useState(false);
 
-  useEffect(() => {
-    getDefiRpcs().then(setResult);
+  const load = useCallback(async () => {
+    setRetrying(true);
+    const r = await getDefiRpcs();
+    setResult(r);
+    setRetrying(false);
   }, []);
 
-  if (!result) return <div className="p-8 text-success animate-pulse">Loading RPC Registry...</div>;
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  if (!result.ok) return (
-    <div className="p-8 min-h-screen text-foreground">
-      <div className="p-4 bg-destructive/10 border border-destructive/30 rounded-xl text-destructive">
-        <h3 className="font-bold flex items-center gap-2"><AlertTriangle size={18} /> EDGE ERROR — ZERO TRUST</h3>
-        <p className="text-sm mt-1">{result.error}</p>
-        <p className="text-xs mt-2 text-destructive/70">The edge/API server is unreachable. No fabricated RPC data will be shown.</p>
+  if (!result) {
+    return (
+      <div className="p-8 min-h-screen text-foreground">
+        <EdgeState variant="loading" title="Loading RPC registry…" description="Querying the edge for RPC health." endpoint="GET /api/v1/rpcs" ghost="table" ghostColumns={RPC_COLUMNS} />
       </div>
-    </div>
-  );
+    );
+  }
+
+  if (!result.ok) {
+    return (
+      <div className="p-8 min-h-screen text-foreground">
+        <EdgeState
+          variant="error"
+          title="RPC registry unreachable"
+          description="The edge endpoint refused or could not be reached. No fabricated RPC data is shown — zero-trust."
+          endpoint="GET /api/v1/rpcs"
+          reasons={[result.error]}
+          onRetry={load}
+          retrying={retrying}
+          ghost="table"
+          ghostColumns={RPC_COLUMNS}
+        />
+      </div>
+    );
+  }
 
   const rpcs = result.data.data;
+
+  if (rpcs.length === 0) {
+    return (
+      <div className="p-8 min-h-screen text-foreground">
+        <EdgeState variant="empty" title="No RPCs registered yet" description="The registry is reachable but empty — no RPC endpoints are configured." endpoint="GET /api/v1/rpcs" onRetry={load} retrying={retrying} ghost="table" ghostColumns={RPC_COLUMNS} />
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 space-y-6 min-h-screen text-foreground">
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold tracking-tight text-foreground">RPC Health &amp; Registry</h1>
         <div className="flex items-center gap-2 bg-success/10 text-success px-3 py-1.5 rounded-full border border-success/40">
-          <Activity size={16} className="animate-pulse" />
+          <Activity size={16} className="motion-safe:animate-pulse" />
           <span className="text-sm font-semibold tracking-wide">LIVE</span>
         </div>
       </div>
@@ -52,7 +85,7 @@ export default function RpcHealthPage() {
           <tbody className="text-foreground">
             {rpcs.map((rpc, i) => (
               <motion.tr
-                key={i}
+                key={`${rpc.chain_id ?? "?"}-${rpc.url ?? i}`}
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: i * 0.05 }}
@@ -73,11 +106,6 @@ export default function RpcHealthPage() {
                 </td>
               </motion.tr>
             ))}
-            {rpcs.length === 0 && (
-              <tr>
-                <td colSpan={5} className="p-8 text-center text-muted-foreground italic">No RPCs registered. Waiting for backend data...</td>
-              </tr>
-            )}
           </tbody>
         </table>
       </div>

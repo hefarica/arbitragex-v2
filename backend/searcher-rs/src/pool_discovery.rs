@@ -13,6 +13,7 @@ use sqlx::postgres::PgPool;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use crate::impact_index::{ImpactIndex, PoolRef};
 use crate::route_intent::{DetectionSource, RouteIntent};
@@ -34,6 +35,7 @@ sol! {
         function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
         function token0() external view returns (address);
         function token1() external view returns (address);
+        function factory() external view returns (address);
     }
 
     #[derive(Debug)]
@@ -60,7 +62,21 @@ pub struct PoolDiscoveryService {
     impact_index: Arc<RwLock<ImpactIndex>>,
     rpc_pool: Option<Arc<HttpRpcPool>>,
     reserves_cache: Arc<crate::engines::triangular_engine::ReservesCache>,
-    factories: RwLock<Option<Vec<(u64, Address, crate::route_intent::ProtocolType, String)>>>,
+    factories: RwLock<Option<Vec<(Uuid, Address, crate::route_intent::ProtocolType, String)>>>,
+}
+
+/// Outcome of a single Block-2 enumeration attempt — fail-honest reasons, never
+/// fabricated. Surfaced to the enumeration worker for per-tick metrics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnumOutcome {
+    /// Pool persisted. `activated` = token-safe → is_active=true + added to impact_index.
+    Persisted { activated: bool },
+    /// The pool's on-chain factory is not in the seeded `factories` table — skipped.
+    FactoryUnresolved,
+    /// On-chain hydration/verification failed (token mismatch, meta, or RPC).
+    HydrationFailed,
+    /// No RPC pool configured — cannot resolve the factory on-chain.
+    NoRpc,
 }
 
 impl PoolDiscoveryService {
@@ -85,7 +101,7 @@ impl PoolDiscoveryService {
 
     async fn get_factories(
         &self,
-    ) -> Vec<(u64, Address, crate::route_intent::ProtocolType, String)> {
+    ) -> Vec<(Uuid, Address, crate::route_intent::ProtocolType, String)> {
         let mut cache = self.factories.write().await;
         if let Some(ref facts) = *cache {
             return facts.clone();
@@ -94,7 +110,7 @@ impl PoolDiscoveryService {
         let mut facts = Vec::new();
         if let Some(ref db) = self.db {
             let q = "SELECT f.id, f.address, d.protocol_type, d.name FROM factories f JOIN dexes d ON f.dex_id = d.id WHERE f.chain_id = $1 AND f.is_active = TRUE";
-            if let Ok(rows) = sqlx::query_as::<_, (i64, String, String, String)>(q)
+            if let Ok(rows) = sqlx::query_as::<_, (Uuid, String, String, String)>(q)
                 .bind(self.chain_id as i64)
                 .fetch_all(db)
                 .await
@@ -110,7 +126,7 @@ impl PoolDiscoveryService {
                             }
                             _ => continue,
                         };
-                        facts.push((f_id as u64, addr, proto, name));
+                        facts.push((f_id, addr, proto, name));
                     }
                 }
             }
@@ -160,7 +176,7 @@ impl PoolDiscoveryService {
             let token_b = alloy::primitives::Address::from_slice(leg.token_out.as_bytes());
 
             let mut discovered_pools: Vec<(
-                u64,
+                Uuid,
                 alloy::primitives::Address,
                 crate::route_intent::ProtocolType,
                 String,
@@ -303,6 +319,8 @@ impl PoolDiscoveryService {
                             fee_bps,
                             token_a,
                             token_b,
+                            true,
+                            "reactive",
                         )
                         .await
                     {
@@ -383,12 +401,14 @@ impl PoolDiscoveryService {
         &self,
         rpc: Arc<HttpRpcPool>,
         pool_addr: alloy::primitives::Address,
-        factory_id: u64,
+        factory_id: Uuid,
         proto: crate::route_intent::ProtocolType,
         dex_name: &str,
         fee_bps: Option<u32>,
         intent_t_a: alloy::primitives::Address,
         intent_t_b: alloy::primitives::Address,
+        is_active: bool,
+        enum_source: &str,
     ) -> anyhow::Result<PoolRef> {
         let (token0, token1) = rpc
             .with_retry(|provider| {
@@ -468,13 +488,26 @@ impl PoolDiscoveryService {
         let e_t1 = Address::from_slice(token1.as_slice());
         let e_pool = Address::from_slice(pool_addr.as_slice());
 
-        // Upsert tokens in DB
-        let token0_id = self.upsert_token_in_db(e_t0, &sym0, dec0).await?;
-        let token1_id = self.upsert_token_in_db(e_t1, &sym1, dec1).await?;
+        // Upsert tokens in DB (is_active mirrors the pool's activate verdict).
+        let token0_id = self
+            .upsert_token_in_db(e_t0, &sym0, dec0, is_active)
+            .await?;
+        let token1_id = self
+            .upsert_token_in_db(e_t1, &sym1, dec1, is_active)
+            .await?;
 
-        // Upsert pool in DB
-        self.upsert_pool_in_db(e_pool, factory_id, token0_id, token1_id, fee_bps)
-            .await;
+        // Upsert pool in DB — `?`-propagate so a failed write yields Err (the
+        // caller reports HydrationFailed and does NOT add to impact_index).
+        self.upsert_pool_in_db(
+            e_pool,
+            factory_id,
+            token0_id,
+            token1_id,
+            fee_bps,
+            is_active,
+            enum_source,
+        )
+        .await?;
 
         // Hydrate ReservesCache
         match proto {
@@ -677,74 +710,100 @@ impl PoolDiscoveryService {
         token: Address,
         symbol: &str,
         decimals: u8,
-    ) -> anyhow::Result<u64> {
+        is_active: bool,
+    ) -> anyhow::Result<Uuid> {
         if let Some(ref db) = self.db {
             let t_str = format!("0x{:x}", token);
             let q_sel = "SELECT id FROM tokens WHERE chain_id = $1 AND address = $2";
-            if let Ok(Some((id,))) = sqlx::query_as::<_, (i64,)>(q_sel)
+            if let Ok(Some((id,))) = sqlx::query_as::<_, (Uuid,)>(q_sel)
                 .bind(self.chain_id as i64)
                 .bind(&t_str)
                 .fetch_optional(db)
                 .await
             {
-                return Ok(id as u64);
+                return Ok(id);
             }
 
+            // is_active set from the caller's activate verdict so an UNRATED token
+            // (enumeration) lands is_active=false rather than the migration-021
+            // default TRUE — it isn't allowlist-active until actually rated. The
+            // reactive path passes true. Monotonic on conflict: never deactivate.
             let q_ins = r#"
-                INSERT INTO tokens (chain_id, address, symbol, decimals, created_at)
-                VALUES ($1, $2, $3, $4, NOW())
-                ON CONFLICT (chain_id, address) DO UPDATE SET symbol = EXCLUDED.symbol, decimals = EXCLUDED.decimals
+                INSERT INTO tokens (chain_id, address, symbol, decimals, is_active, created_at)
+                VALUES ($1, $2, $3, $4, $5, NOW())
+                ON CONFLICT (chain_id, address) DO UPDATE SET
+                    symbol = EXCLUDED.symbol,
+                    decimals = EXCLUDED.decimals,
+                    is_active = tokens.is_active OR EXCLUDED.is_active
                 RETURNING id
             "#;
-            if let Ok((id,)) = sqlx::query_as::<_, (i64,)>(q_ins)
+            if let Ok((id,)) = sqlx::query_as::<_, (Uuid,)>(q_ins)
                 .bind(self.chain_id as i64)
                 .bind(&t_str)
                 .bind(symbol)
                 .bind(decimals as i16)
+                .bind(is_active)
                 .fetch_one(db)
                 .await
             {
-                return Ok(id as u64);
+                return Ok(id);
             }
         }
         anyhow::bail!("db_unavailable_or_insert_failed")
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn upsert_pool_in_db(
         &self,
         pool: Address,
-        factory_id: u64,
-        token0_id: u64,
-        token1_id: u64,
+        factory_id: Uuid,
+        token0_id: Uuid,
+        token1_id: Uuid,
         fee_bps: Option<u32>,
-    ) {
-        if let Some(ref db) = self.db {
-            let p_str = format!("0x{:x}", pool);
-            let q = r#"
-                INSERT INTO pools (chain_id, address, factory_id, token0_id, token1_id, fee_tier, is_active, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, TRUE, NOW())
-                ON CONFLICT (chain_id, address) DO UPDATE SET 
-                    factory_id = EXCLUDED.factory_id, 
-                    token0_id = EXCLUDED.token0_id, 
-                    token1_id = EXCLUDED.token1_id, 
-                    fee_tier = EXCLUDED.fee_tier,
-                    is_active = TRUE
-            "#;
-            if let Err(e) = sqlx::query(q)
-                .bind(self.chain_id as i64)
-                .bind(&p_str)
-                .bind(factory_id as i64)
-                .bind(token0_id as i64)
-                .bind(token1_id as i64)
-                .bind(fee_bps.map(|f| f as i32))
-                .execute(db)
-                .await
-            {
-                warn!(event="pool_discovery.upsert_pool_failed", pool=?p_str, error=%e);
-            } else {
-                info!(event="pool_discovery.pool_persisted", pool=?p_str);
-            }
-        }
+        is_active: bool,
+        enum_source: &str,
+    ) -> anyhow::Result<()> {
+        // No DB configured → nothing to persist (preserves the prior no-op).
+        let Some(ref db) = self.db else {
+            return Ok(());
+        };
+        let p_str = format!("0x{:x}", pool);
+        // is_active is MONOTONIC on conflict (`pools.is_active OR EXCLUDED`):
+        // never deactivate a pool that is already active (honors "don't break
+        // existing pools"); a false→true reactivation IS allowed (an unrated
+        // token becoming token-safe). enum_source keeps its original provenance.
+        let q = r#"
+            INSERT INTO pools (chain_id, address, factory_id, token0_id, token1_id, fee_tier, is_active, enum_source, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+            ON CONFLICT (chain_id, address) DO UPDATE SET
+                factory_id = EXCLUDED.factory_id,
+                token0_id = EXCLUDED.token0_id,
+                token1_id = EXCLUDED.token1_id,
+                fee_tier = EXCLUDED.fee_tier,
+                is_active = pools.is_active OR EXCLUDED.is_active,
+                enum_source = COALESCE(pools.enum_source, EXCLUDED.enum_source)
+        "#;
+        // Propagate the error (fail-honest): a swallowed failure would let the
+        // caller report the pool as persisted + inject it into the live
+        // impact_index with no PG backing. On Err the caller yields
+        // HydrationFailed and does NOT add the pool.
+        sqlx::query(q)
+            .bind(self.chain_id as i64)
+            .bind(&p_str)
+            .bind(factory_id)
+            .bind(token0_id)
+            .bind(token1_id)
+            .bind(fee_bps.map(|f| f as i32))
+            .bind(is_active)
+            .bind(enum_source)
+            .execute(db)
+            .await
+            .map_err(|e| {
+                warn!(event = "pool_discovery.upsert_pool_failed", pool = ?p_str, error = %e);
+                anyhow::anyhow!("upsert_pool_failed: {e}")
+            })?;
+        info!(event = "pool_discovery.pool_persisted", pool = ?p_str, is_active, enum_source);
+        Ok(())
     }
 
     pub async fn record_opportunity_observation(
@@ -776,5 +835,118 @@ impl PoolDiscoveryService {
                 tracing::debug!("Failed to insert opportunity observation: {}", e);
             }
         }
+    }
+
+    /// Block 2 entrypoint: enumerate a candidate pool discovered by TVL ranking.
+    ///
+    /// Resolves the pool's factory ON-CHAIN (never trusts the subgraph), looks it
+    /// up in the seeded `factories` cache, and — if found — re-verifies + persists
+    /// the pool via the existing on-chain hydration path. `activate` controls
+    /// is_active + impact_index membership: a token-safe pool is activated; an
+    /// unrated one is persisted is_active=false so a future tick can reactivate it.
+    ///
+    /// Fail-honest: factory-not-seeded or hydration failure returns the reason and
+    /// logs it — it NEVER seeds a factory blindly or fabricates a pool.
+    pub async fn enumerate_and_persist_pool(
+        &self,
+        pool_addr: alloy::primitives::Address,
+        token0_hint: alloy::primitives::Address,
+        token1_hint: alloy::primitives::Address,
+        fee_bps: Option<u32>,
+        activate: bool,
+    ) -> EnumOutcome {
+        let rpc = match &self.rpc_pool {
+            Some(p) => p.clone(),
+            None => return EnumOutcome::NoRpc,
+        };
+
+        // 1. Resolve the factory ON-CHAIN (factory() exists on V2 pairs + V3 pools).
+        let factory_addr = match self.read_pool_factory(&rpc, pool_addr).await {
+            Ok(a) => a,
+            Err(e) => {
+                warn!(event = "poolenum.factory_read_failed", pool = ?pool_addr, error = %e);
+                return EnumOutcome::HydrationFailed;
+            }
+        };
+
+        // 2. Lookup factory.id (Uuid) in the seeded cache by address. NOT seeded → skip.
+        //    Never seed a factory blindly (R8): seeding is a separate migration decision.
+        let factories = self.get_factories().await;
+        let fac_addr_e = Address::from_slice(factory_addr.as_slice());
+        let matched = factories.iter().find(|(_, addr, _, _)| *addr == fac_addr_e);
+        let (factory_id, proto, dex_name) = match matched {
+            Some((id, _, proto, name)) => (*id, *proto, name.clone()),
+            None => {
+                info!(event = "poolenum.factory_unresolved", pool = ?pool_addr, factory = ?fac_addr_e);
+                return EnumOutcome::FactoryUnresolved;
+            }
+        };
+
+        // 3. On-chain hydrate + persist (re-verifies token0/1, upserts tokens+pool,
+        //    refreshes the Redis index). is_active = activate; enum_source tracked.
+        match self
+            .hydrate_and_persist_pool(
+                rpc.clone(),
+                pool_addr,
+                factory_id,
+                proto,
+                &dex_name,
+                fee_bps,
+                token0_hint,
+                token1_hint,
+                activate,
+                "subgraph_tvl",
+            )
+            .await
+        {
+            Ok(pool_ref) => {
+                // Only an activated (token-safe) pool joins the live search surface.
+                if activate {
+                    let mut idx = self.impact_index.write().await;
+                    idx.add_pool(pool_ref);
+                }
+                info!(event = "poolenum.pool_persisted", pool = ?pool_addr, activated = activate);
+                EnumOutcome::Persisted {
+                    activated: activate,
+                }
+            }
+            Err(e) => {
+                warn!(event = "poolenum.hydration_failed", pool = ?pool_addr, error = %e);
+                EnumOutcome::HydrationFailed
+            }
+        }
+    }
+
+    /// Read the pool/pair's `factory()` view on-chain (V2 pairs and V3 pools both
+    /// expose it). Used by Block 2 enumeration to resolve provenance without
+    /// trusting the subgraph. Errors on a zero/failed read (fail-honest).
+    async fn read_pool_factory(
+        &self,
+        rpc: &Arc<HttpRpcPool>,
+        pool_addr: alloy::primitives::Address,
+    ) -> anyhow::Result<alloy::primitives::Address> {
+        let factory = rpc
+            .with_retry(|provider| {
+                let p_addr = pool_addr;
+                async move {
+                    use alloy::rpc::types::TransactionRequest;
+                    use alloy_sol_types::SolCall;
+                    let req = TransactionRequest::default()
+                        .to(p_addr)
+                        .input(IUniswapV2Pair::factoryCall {}.abi_encode().into());
+                    let res = provider
+                        .call(req)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("factory rpc error: {}", e))?;
+                    let factory = IUniswapV2Pair::factoryCall::abi_decode_returns(&res)
+                        .map_err(|e| anyhow::anyhow!("factory decode error: {}", e))?;
+                    if factory.is_zero() {
+                        anyhow::bail!("factory_zero");
+                    }
+                    Ok(factory)
+                }
+            })
+            .await?;
+        Ok(factory)
     }
 }

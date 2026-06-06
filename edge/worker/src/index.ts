@@ -495,6 +495,106 @@ app.put("/admin/trading-config/:chain_id", async (c) => {
   return c.body(text, upstream.status as 200 | 400 | 401 | 403 | 500 | 502 | 503);
 });
 
+// Cartridge Filters (Idea 1 Phase-1) — public read of the per-chain route pre-filter prefs.
+app.get("/api/cartridge-filters", async (c) => {
+  const url = new URL(c.req.url);
+  const chain = url.searchParams.get("chain_id") ?? "1";
+  const upstream = await fetch(
+    `${c.env.API_SERVER_URL}/api/v1/cartridge-filters?chain_id=${encodeURIComponent(chain)}`,
+    {
+      method: "GET",
+      headers: {
+        "accept": "application/json",
+        "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+        "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+      },
+    },
+  );
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 503);
+});
+
+// Cartridge Filters (Idea 1 Phase-1) — admin upsert (PUT). Same auth pattern as trading-config.
+app.put("/admin/cartridge-filters/:chain_id", async (c) => {
+  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : getCookie(c, SESSION_COOKIE);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const chainId = c.req.param("chain_id");
+  const body = await c.req.text();
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/admin/cartridge-filters/${encodeURIComponent(chainId)}`, {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": adminToken,
+      "x-arbx-actor": c.req.header("x-arbx-actor") ?? "operator",
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    },
+    body,
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 401 | 403 | 500 | 502 | 503);
+});
+
+// Cartridge Forge (Idea 2) — public list + admin inject/lifecycle. cartridge-forge accepts
+// x-arbx-admin-token (auth normalized). Cartridges run in shadow eval (admin-gated, no capital).
+const CART_SLUG_W = /^[a-z][a-z0-9_]{2,48}$/;
+async function cartForgeAdmin(
+  c: import("hono").Context<{ Bindings: Env }>,
+  upstreamPath: string,
+  method: string,
+): Promise<Response> {
+  const _hdr = c.req.header("x-arbx-admin-token");
+  const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : getCookie(c, SESSION_COOKIE);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const body = method !== "GET" && method !== "DELETE" ? await c.req.text() : undefined;
+  const upstream = await fetch(`${c.env.API_SERVER_URL}${upstreamPath}`, {
+    method,
+    headers: {
+      "content-type": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": adminToken,
+      "x-arbx-actor": c.req.header("x-arbx-actor") ?? "operator",
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    },
+    ...(body !== undefined ? { body } : {}),
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 201 | 400 | 401 | 403 | 404 | 409 | 500 | 502 | 503);
+}
+app.get("/api/cartridges", async (c) => {
+  const url = new URL(c.req.url);
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/cartridges${url.search}`, {
+    method: "GET",
+    headers: {
+      "accept": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    },
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 500 | 502 | 503);
+});
+app.post("/admin/cartridges", (c) => cartForgeAdmin(c, "/api/v1/cartridges", "POST"));
+app.post("/admin/cartridges/:slug/pause", (c) => {
+  const slug = c.req.param("slug");
+  if (!CART_SLUG_W.test(slug)) return c.json({ error: "invalid_slug" }, 400);
+  return cartForgeAdmin(c, `/api/v1/cartridges/${slug}/pause`, "POST");
+});
+app.post("/admin/cartridges/:slug/resume", (c) => {
+  const slug = c.req.param("slug");
+  if (!CART_SLUG_W.test(slug)) return c.json({ error: "invalid_slug" }, 400);
+  return cartForgeAdmin(c, `/api/v1/cartridges/${slug}/resume`, "POST");
+});
+app.delete("/admin/cartridges/:slug", (c) => {
+  const slug = c.req.param("slug");
+  if (!CART_SLUG_W.test(slug)) return c.json({ error: "invalid_slug" }, 400);
+  return cartForgeAdmin(c, `/api/v1/cartridges/${slug}`, "DELETE");
+});
+
 // Operations PnL — Sprint 3 PMI/EVM KPI surface (public read, numbers only).
 app.get("/api/operations/kpi", async (c) => {
   const url = new URL(c.req.url);
@@ -604,6 +704,14 @@ app.get("/api/scoring/status", (c) => proxy(c, "/api/v1/scoring/status", "arbx:c
 // 5s on api-server, so 15s edge cache is a safe ceiling.
 app.get("/api/risk/circuit-breakers/status", (c) => proxy(c, "/api/v1/risk/circuit-breakers/status", "arbx:cache:cb-status", 15));
 app.get("/api/risk/circuit-breakers/events", (c) => proxy(c, "/api/v1/risk/circuit-breakers/events", "arbx:cache:cb-events", 30));
+
+// FASE B Gate-C — route-discovery OUTCOMES analytics (read-only over the durable
+// Postgres `route_discovery_outcomes` table; shadow emitter's resolved outcomes +
+// Paso 9 `reason` column). Read-side of the passive sink: hit-rate series + reason
+// distribution (the "why 0%"). proxy() forwards ?hours=/?limit= and query-scopes
+// the KV cache key, so 24h vs 14d windows never collide. 15s TTL. Observe-only.
+app.get("/api/route-discovery-outcomes/summary", (c) => proxy(c, "/api/v1/route-discovery-outcomes/summary", "arbx:cache:rdo-summary", 15));
+app.get("/api/route-discovery-outcomes", (c) => proxy(c, "/api/v1/route-discovery-outcomes", "arbx:cache:rdo-list", 15));
 
 // Topology Vault — Admin-token gated; edge forwards header.
 // GET snapshot uses short cache (5s) since topology changes infrequently.

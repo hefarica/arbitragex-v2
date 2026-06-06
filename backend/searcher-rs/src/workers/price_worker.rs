@@ -217,6 +217,38 @@ pub fn coingecko_prices_url(platform: &str) -> String {
     )
 }
 
+/// Chainlink `latestRoundData()` 4-byte selector = keccak256("latestRoundData()")[..4].
+/// Returns (roundId, answer, startedAt, updatedAt, answeredInRound); `answer` is the
+/// USD price in the feed's `decimals`.
+const CHAINLINK_LATEST_ROUND_DATA_SELECTOR: &str = "0xfeaf968c";
+
+/// Extract the first usable HTTP(S) RPC URL from a `RPC_HTTP_<chain>` CSV env value
+/// (entries may be `name=url` or a bare `url`). Used as the `eth_call` target for the
+/// Chainlink Tier-0 reads. Single source of truth for RPC endpoints (no-hardcode).
+pub fn extract_first_rpc_http_url(rpc_http_csv: &str) -> Option<String> {
+    for tok in rpc_http_csv.split(',') {
+        let tok = tok.trim();
+        if tok.is_empty() {
+            continue;
+        }
+        let url = if let Some((_name, u)) = tok.split_once('=') {
+            u.trim()
+        } else {
+            tok
+        };
+        if url.starts_with("http://") || url.starts_with("https://") {
+            return Some(url.to_string());
+        }
+    }
+    None
+}
+
+/// Resolve the chain's first HTTP RPC URL from `RPC_HTTP_<chain_id>` env.
+pub fn rpc_http_url_from_env(chain_id: u64) -> Option<String> {
+    let csv = std::env::var(format!("RPC_HTTP_{chain_id}")).unwrap_or_default();
+    extract_first_rpc_http_url(&csv)
+}
+
 /// Configuration. Operator-tunable knobs at boot; nothing varies per tick.
 #[derive(Debug, Clone)]
 pub struct PriceWorkerConfig {
@@ -229,6 +261,12 @@ pub struct PriceWorkerConfig {
     pub alchemy_api_key: Option<String>,
     /// Override for the Coingecko base URL (tests inject wiremock URL here).
     pub coingecko_base_url_override: Option<String>,
+    /// Tier-0 Chainlink source. `db_pool` reads operator-seeded `price_oracles`
+    /// (kind='chainlink', enabled); `rpc_http_url` is the chain's HTTP RPC for
+    /// `eth_call latestRoundData()`. Both must be present to enable the tier;
+    /// otherwise it is skipped (Chainlink prices = none, cascade falls through).
+    pub db_pool: Option<sqlx::postgres::PgPool>,
+    pub rpc_http_url: Option<String>,
 }
 
 impl PriceWorkerConfig {
@@ -239,7 +277,16 @@ impl PriceWorkerConfig {
             alchemy_base_url_override: None,
             alchemy_api_key,
             coingecko_base_url_override: None,
+            db_pool: None,
+            rpc_http_url: None,
         }
+    }
+
+    /// Enable the Chainlink Tier-0 source (read-only on-chain price feeds).
+    pub fn with_chainlink(mut self, db_pool: sqlx::postgres::PgPool, rpc_http_url: String) -> Self {
+        self.db_pool = Some(db_pool);
+        self.rpc_http_url = Some(rpc_http_url);
+        self
     }
 }
 
@@ -291,6 +338,7 @@ impl PriceWorker {
                     info!(
                         event = "price_worker.tick_done",
                         chain_id = self.cfg.chain_id,
+                        chainlink_hits = stats.chainlink_hits,
                         alchemy_hits = stats.alchemy_hits,
                         coingecko_hits = stats.coingecko_hits,
                         cache_misses = stats.cache_misses,
@@ -313,25 +361,49 @@ impl PriceWorker {
     /// with mocked HTTP servers and verify Redis state.
     pub async fn run_one_tick(&self, redis: &mut ConnectionManager) -> anyhow::Result<TickStats> {
         let started = Instant::now();
-        let tokens = self.discover_tokens(redis).await?;
-        if tokens.is_empty() {
-            debug!(
-                event = "price_worker.no_tokens",
-                chain_id = self.cfg.chain_id,
-                "allowlist + meta cache produced zero tokens this tick"
-            );
-            return Ok(TickStats::default());
-        }
 
         let mut prices: HashMap<String, f64> = HashMap::new();
 
-        // Tier 1: Alchemy batch.
+        // Tier 0: Chainlink on-chain feeds (authoritative; operator-seeded
+        // price_oracles). Independent of the token allowlist — these are the core
+        // priced anchors (WETH/WBTC/USDC/USDT/DAI). Direct insert: Chainlink wins.
+        let chainlink = self.fetch_chainlink(redis).await;
+        let chainlink_hits = chainlink.len();
+        for (sym, price) in chainlink {
+            prices.insert(sym, price);
+        }
+
+        let tokens = self.discover_tokens(redis).await?;
+        if tokens.is_empty() {
+            // No allowlist tokens for the external APIs, but Chainlink prices (if
+            // any) are still worth persisting so the cascade can serve them.
+            if !prices.is_empty() {
+                self.persist_prices(redis, &prices).await?;
+            } else {
+                debug!(
+                    event = "price_worker.no_tokens",
+                    chain_id = self.cfg.chain_id,
+                    "allowlist + meta cache produced zero tokens this tick"
+                );
+            }
+            return Ok(TickStats {
+                chainlink_hits,
+                elapsed_ms: started.elapsed().as_millis() as u64,
+                ..Default::default()
+            });
+        }
+
+        // Tier 1: Alchemy batch (fills only what Chainlink did NOT already price).
+        let mut alchemy_hits = 0usize;
         if self.cfg.alchemy_api_key.is_some() {
             for chunk in tokens.chunks(MAX_BATCH_SIZE) {
                 match self.fetch_alchemy(chunk).await {
                     Ok(map) => {
                         for (sym, price) in map {
-                            prices.insert(sym, price);
+                            if let std::collections::hash_map::Entry::Vacant(e) = prices.entry(sym) {
+                                e.insert(price);
+                                alchemy_hits += 1;
+                            }
                         }
                     }
                     Err(e) => {
@@ -349,7 +421,6 @@ impl PriceWorker {
                 }
             }
         }
-        let alchemy_hits = prices.len();
         counters()
             .price_alchemy_hits
             .fetch_add(alchemy_hits as u64, Ordering::Relaxed);
@@ -408,6 +479,7 @@ impl PriceWorker {
 
         Ok(TickStats {
             attempted: tokens.len(),
+            chainlink_hits,
             alchemy_hits,
             coingecko_hits,
             cache_misses,
@@ -617,6 +689,111 @@ impl PriceWorker {
         Ok(out)
     }
 
+    /// Tier 0 — Chainlink on-chain feeds. Reads operator-seeded `price_oracles`
+    /// (kind='chainlink', enabled) for this chain, `eth_call`s `latestRoundData()`
+    /// on each aggregator via JSON-RPC, and returns `symbol → USD price`. The
+    /// symbol is resolved from the Redis token meta (`arbx:tokens:<chain>:<addr>`,
+    /// same source as `discover_tokens`). Best-effort + R8 fail-honest: any feed
+    /// that fails to read / parse / resolve is skipped (logged), never fabricated.
+    /// Returns empty when the source is not configured so the cascade degrades to
+    /// Alchemy/Coingecko/Config exactly as before.
+    async fn fetch_chainlink(&self, redis: &mut ConnectionManager) -> HashMap<String, f64> {
+        let mut out: HashMap<String, f64> = HashMap::new();
+        let (db, rpc_url) = match (&self.cfg.db_pool, &self.cfg.rpc_http_url) {
+            (Some(db), Some(u)) => (db, u),
+            _ => return out, // Chainlink tier not configured
+        };
+        let rows = match sqlx::query_as::<_, (String, String, i32)>(
+            "SELECT token_address, oracle_address, decimals FROM price_oracles \
+             WHERE chain_id = $1 AND kind = 'chainlink' AND enabled = TRUE",
+        )
+        .bind(self.cfg.chain_id as i32)
+        .fetch_all(db)
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(event = "price_worker.chainlink_db_failed", chain_id = self.cfg.chain_id, error = %e);
+                return out;
+            }
+        };
+        for (token_addr, oracle_addr, decimals) in rows {
+            let raw = match self.eth_call_latest_answer(rpc_url, &oracle_addr).await {
+                Some(v) => v,
+                None => continue,
+            };
+            let price = raw / 10f64.powi(decimals.max(0));
+            if !price.is_finite() || price <= 0.0 {
+                continue;
+            }
+            let addr_lower = token_addr.to_ascii_lowercase();
+            let meta_key = format!("arbx:tokens:{}:{}", self.cfg.chain_id, addr_lower);
+            let meta_raw: Option<String> = redis.get(&meta_key).await.unwrap_or(None);
+            let symbol = match meta_raw.and_then(|s| serde_json::from_str::<TokenMeta>(&s).ok()) {
+                Some(m) => m.symbol.to_ascii_uppercase(),
+                None => {
+                    debug!(
+                        event = "price_worker.chainlink_symbol_unresolved",
+                        chain_id = self.cfg.chain_id,
+                        token = %addr_lower,
+                        "no token meta in Redis; skipping this Chainlink feed"
+                    );
+                    continue;
+                }
+            };
+            out.insert(symbol, price);
+        }
+        if !out.is_empty() {
+            info!(
+                event = "price_worker.chainlink_priced",
+                chain_id = self.cfg.chain_id,
+                count = out.len(),
+                "Chainlink Tier-0 prices resolved on-chain"
+            );
+        }
+        out
+    }
+
+    /// `eth_call latestRoundData()` on a Chainlink aggregator; returns the raw
+    /// `answer` (feed units, pre-decimals) as f64. Read-only JSON-RPC via the
+    /// worker's reqwest client. `None` on any RPC / parse failure (fail-honest).
+    async fn eth_call_latest_answer(&self, rpc_url: &str, oracle_addr: &str) -> Option<f64> {
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_call",
+            "params": [
+                { "to": oracle_addr, "data": CHAINLINK_LATEST_ROUND_DATA_SELECTOR },
+                "latest"
+            ]
+        });
+        let resp = match self.http.post(rpc_url).json(&body).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(event = "price_worker.chainlink_rpc_failed", oracle = %oracle_addr, error = %e);
+                return None;
+            }
+        };
+        let parsed: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(event = "price_worker.chainlink_rpc_parse_failed", oracle = %oracle_addr, error = %e);
+                return None;
+            }
+        };
+        let result_hex = parsed.get("result")?.as_str()?;
+        let hex = result_hex.strip_prefix("0x").unwrap_or(result_hex);
+        // 5 × 32-byte words; `answer` = word[1] (hex chars 64..128). The USD price
+        // fits within u128, so parse its low 16 bytes (chars 96..128). Chainlink USD
+        // answers are positive, so treating the word as unsigned is correct here.
+        if hex.len() < 128 {
+            return None;
+        }
+        let answer_low = &hex[96..128];
+        let raw = u128::from_str_radix(answer_low, 16).ok()?;
+        Some(raw as f64)
+    }
+
     async fn persist_prices(
         &self,
         redis: &mut ConnectionManager,
@@ -646,6 +823,7 @@ impl PriceWorker {
 #[derive(Debug, Default, Clone)]
 pub struct TickStats {
     pub attempted: usize,
+    pub chainlink_hits: usize,
     pub alchemy_hits: usize,
     pub coingecko_hits: usize,
     pub cache_misses: usize,
