@@ -15,11 +15,11 @@
 //! ## Redis key format
 //!
 //! Watchlist (set of lowercase 0x-prefixed user addresses):
-//! ```
+//! ```text
 //! arbx:lending_watchlist:{protocol}:{chain_id}
 //! ```
 //! Position cache (JSON-serialised `LendingPosition`):
-//! ```
+//! ```text
 //! arbx:lending_position:{protocol}:{chain_id}:{user_addr}
 //! ```
 //!
