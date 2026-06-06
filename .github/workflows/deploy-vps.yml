@@ -7,9 +7,13 @@ on:
         description: "Reason for manual deploy"
         required: false
         default: "Manual deploy via workflow_dispatch"
-  push:
-    branches:
-      - main
+  # GATED (2026-06-06, see audits/vps-drift/VPS_REF_DRIFT_REPORT.md): the
+  # `push: [main]` trigger was REMOVED. It auto-deployed on every push to main
+  # (SSH -> `git fetch + git reset --hard origin/main` + `docker compose ... up -d`
+  # on the VPS), which moved the VPS git ref on every main push (even though the
+  # job's later steps were failing) and recreated containers uncontrolled.
+  # Deploys are now MANUAL ONLY via workflow_dispatch — honoring "no deploy
+  # without explicit operator OK". Re-add a gated trigger only with sign-off.
 
 permissions:
   contents: read
@@ -90,11 +94,24 @@ jobs:
             echo "--- docker compose: pulling images ---"
             docker compose -f docker/compose.prod.yml pull
 
-            echo "--- docker compose: starting services ---"
-            docker compose -f docker/compose.prod.yml up -d --remove-orphans
+            echo "--- docker compose: building + starting services ---"
+            docker compose -f docker/compose.prod.yml up -d --build --remove-orphans
 
             echo "--- docker compose: service status ---"
             docker compose -f docker/compose.prod.yml ps
+
+            echo "--- healthcheck ON the VPS (api-server localhost:8080) ---"
+            HC_OK=0
+            for i in $(seq 1 15); do
+              if curl -fsS --max-time 5 http://localhost:8080/health >/dev/null 2>&1; then
+                echo "VPS healthcheck OK (api-server /health)"; HC_OK=1; break
+              fi
+              echo "waiting for api-server health ($i/15)..."; sleep 6
+            done
+            if [ "$HC_OK" -ne 1 ]; then
+              echo "ERROR: api-server did not become healthy on the VPS after build+up" >&2
+              exit 1
+            fi
 
             echo "=== Deploy commands completed at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 
@@ -116,6 +133,10 @@ jobs:
 
           echo "Running healthcheck against: $HEALTH_URL"
 
+          # Best-effort EXTERNAL probe from the runner. The AUTHORITATIVE healthcheck
+          # runs ON the VPS during the SSH deploy step (api-server localhost:8080).
+          # `|| echo 000` captures connection failure so an unreachable VPS endpoint
+          # (expected when /health is not publicly exposed) WARNS instead of failing.
           HTTP_CODE=$(curl \
             --silent \
             --output /dev/null \
@@ -124,14 +145,17 @@ jobs:
             --retry 5 \
             --retry-delay 5 \
             --retry-connrefused \
-            "$HEALTH_URL")
+            "$HEALTH_URL" || echo "000")
 
           echo "HTTP response code: $HTTP_CODE"
 
           if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
-            echo "Healthcheck PASSED (HTTP $HTTP_CODE)"
+            echo "External healthcheck PASSED (HTTP $HTTP_CODE)"
+          elif [ "$HTTP_CODE" = "000" ]; then
+            echo "WARNING: VPS_HEALTH_URL not reachable from the GitHub runner (expected if the VPS"
+            echo "health endpoint is not publicly exposed). Authoritative healthcheck ran on the VPS."
           else
-            echo "ERROR: Healthcheck FAILED (HTTP $HTTP_CODE)" >&2
+            echo "ERROR: External healthcheck returned HTTP $HTTP_CODE" >&2
             exit 1
           fi
 
