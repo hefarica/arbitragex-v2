@@ -7,9 +7,13 @@ on:
         description: "Reason for manual deploy"
         required: false
         default: "Manual deploy via workflow_dispatch"
-  push:
-    branches:
-      - main
+  # GATED (2026-06-06, see audits/vps-drift/VPS_REF_DRIFT_REPORT.md): the
+  # `push: [main]` trigger was REMOVED. It auto-deployed on every push to main
+  # (SSH -> `git fetch + git reset --hard origin/main` + `docker compose ... up -d`
+  # on the VPS), which moved the VPS git ref on every main push (even though the
+  # job's later steps were failing) and recreated containers uncontrolled.
+  # Deploys are now MANUAL ONLY via workflow_dispatch — honoring "no deploy
+  # without explicit operator OK". Re-add a gated trigger only with sign-off.
 
 permissions:
   contents: read
