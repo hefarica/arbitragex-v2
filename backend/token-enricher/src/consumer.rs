@@ -262,18 +262,23 @@ impl EnricherConsumer {
         let mut all_triples: Vec<(u64, String, String)> = Vec::new();
         let mut all_ids: Vec<String> = Vec::new();
 
+        // PEL paging cursor. Reading the PEL with a FIXED delivery-id "0" returns the
+        // SAME pending entries on every call — XACK is deferred to the caller, so the
+        // PEL never shrinks during this loop, `total_entries` is never 0, and the loop
+        // spins forever (observed: ~1000 reads/sec, never reaching the live consumer).
+        // Fix: page forward. Start at "0", then advance the cursor to the last entry id
+        // seen; XREADGROUP history-reads return pending entries with id STRICTLY greater
+        // than the cursor, so each read yields the next page. The pass terminates on an
+        // empty or partial page. XACK still happens in the caller (crash-recovery intact).
+        let mut cursor = "0".to_string();
         loop {
-            // Delivery-id "0" = return pending (delivered-but-not-ACKed) entries.
-            // Note: BLOCK 0 on "0" delivery-id does NOT wait; Redis returns
-            // immediately with an empty reply when PEL is exhausted.
             let opts = StreamReadOptions::default()
                 .group(GROUP, CONSUMER)
                 .count(batch_count);
-            // Do NOT pass .block() here — PEL reads with delivery-id "0" return
-            // immediately when empty; blocking is only for ">" (new entries).
+            // No .block() here — PEL (non-">") reads return immediately.
 
             let reply: StreamReadReply =
-                match self.conn.xread_options(&[STREAM], &["0"], &opts).await {
+                match self.conn.xread_options(&[STREAM], &[cursor.as_str()], &opts).await {
                     Ok(r) => r,
                     Err(e) => {
                         warn!(event = "enricher.drain_pel_error", err = %e);
@@ -281,17 +286,33 @@ impl EnricherConsumer {
                     }
                 };
 
-            // Empty reply = PEL exhausted.
+            // Empty reply = PEL fully paged.
             let total_entries: usize = reply.keys.iter().map(|k| k.ids.len()).sum();
             if total_entries == 0 {
                 break;
             }
+
+            // Advance the cursor to the last entry id in this page BEFORE consuming it,
+            // so the next read returns the pending entries AFTER this page.
+            let next_cursor = reply
+                .keys
+                .iter()
+                .filter_map(|k| k.ids.last())
+                .map(|e| e.id.clone())
+                .last();
 
             let (triples, ids) = self.parse(reply);
             // Accumulate both — NO internal ACK here.
             // ACK is deferred to caller (main.rs) via ack_batch, AFTER process_batch.
             all_triples.extend(triples);
             all_ids.extend(ids);
+
+            match next_cursor {
+                // Full page → keep paging from the last id (strictly-greater semantics).
+                Some(id) if total_entries >= batch_count => cursor = id,
+                // Partial/last page (or no id) → PEL drained in a single pass.
+                _ => break,
+            }
         }
 
         info!(
