@@ -66,6 +66,7 @@ use tracing::{error, info, warn};
 use token_enricher::{
     consumer::EnricherConsumer,
     dexscreener::{DexScreenerConfig, DexScreenerPriceOracle},
+    geckoterminal_tier::{GeckoTerminalConfig, GeckoTerminalOracle},
     metrics::{
         init_metrics, serve_metrics, BATCHES_TOTAL, ENRICHER_UP, PENDING_UNRESOLVED,
         RPC_CALLS_TOTAL, TOKENS_RESOLVED_TOTAL,
@@ -500,6 +501,28 @@ async fn main() -> Result<()> {
         },
         Ok(None) => info!(event = "enricher.dexscreener_disabled"),
         Err(e) => warn!(event = "enricher.dexscreener_config_err", err = %e),
+    }
+
+    // --- 4f. GeckoTerminal price + icon tier (optional, gated, detached) ---
+    // Peer of the DexScreener tier: populates the SAME arbx:token_prices:<chain>
+    // hash (by symbol) AND produces token icons (SETEX arbx:token-icons:{chain}:
+    // {addr}) the api-server token-icon route reads. Default-OFF: runs only when
+    // ARBX_GECKOTERMINAL_ORACLE=active. Read-only/shadow — no signer, no broadcast.
+    match GeckoTerminalConfig::from_env(&enabled_chains) {
+        Ok(Some(cfg)) => match GeckoTerminalOracle::new(cfg, pool.clone(), redis_url.clone()) {
+            Ok(oracle) => {
+                tokio::spawn(async move {
+                    oracle.run().await;
+                    warn!(
+                        event = "enricher.geckoterminal_task_exited",
+                        "GeckoTerminal tier loop ended unexpectedly"
+                    );
+                });
+            }
+            Err(e) => warn!(event = "enricher.geckoterminal_init_err", err = %e),
+        },
+        Ok(None) => info!(event = "enricher.geckoterminal_disabled"),
+        Err(e) => warn!(event = "enricher.geckoterminal_config_err", err = %e),
     }
 
     // --- 5. Drain PEL (I1 — crash recovery before main loop) ---
