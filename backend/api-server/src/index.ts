@@ -84,6 +84,7 @@ const app = express();
 import { mountDefi } from "./routes/defi.js";
 import { buildTradingConfigRouter, rehydrateTradingConfigMirror } from "./routes/trading-config.js";
 import { buildCartridgeFiltersRouter } from "./routes/cartridge-filters.js";
+import { mountTokenIconRoutes } from "./routes/token-icon.js";
 import { buildOperationsRouter } from "./routes/operations.js";
 import { buildStrategyCatalogRouter } from "./routes/strategy-catalog.js";
 import { buildCredentialsRouter } from "./routes/credentials.js";
@@ -1012,6 +1013,12 @@ app.use(buildCartridgeFiltersRouter({
   writeAudit,
   logger,
 }));
+
+// ── Token Icons (dashboard visual layer) ───────────────────────────────────
+// GET /api/v1/token-icon/:chainId/:address — Redis(producer cache) → curated
+// tokenRegistry → DexScreener(env-gated) → jazzicon fallback. Read-only +
+// best-effort cache population; never 500s for a missing icon (R8).
+mountTokenIconRoutes(app, { redis, logger });
 
 // ── Operations PnL (Sprint 3 — PMI/EVM KPI surface) ────────────────────
 app.use(buildOperationsRouter({
