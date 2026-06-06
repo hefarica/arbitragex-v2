@@ -282,11 +282,19 @@ async fn build_orchestrator(
             }
         }
         Some(_) => {
-            info!(event = "scanner.v3_oracle_absent", chain_id, reason = "non_mainnet");
+            info!(
+                event = "scanner.v3_oracle_absent",
+                chain_id,
+                reason = "non_mainnet"
+            );
             None
         }
         None => {
-            info!(event = "scanner.v3_oracle_absent", chain_id, reason = "no_rpc_pool");
+            info!(
+                event = "scanner.v3_oracle_absent",
+                chain_id,
+                reason = "no_rpc_pool"
+            );
             None
         }
     };
@@ -418,6 +426,16 @@ async fn build_orchestrator(
         rpc_pool,
         reserves_cache.clone(),
     ));
+
+    // Block 2 — gated proactive top-TVL pool enumeration worker. Default-OFF
+    // (ARBX_POOL_ENUM_MODE=off); spawns only when set to "shadow". Read-only/
+    // shadow: HTTP subgraph + eth_call + DB/Redis/impact_index writes for
+    // token-safe pools. No executor/signer/broadcast.
+    crate::workers::pool_enumeration_worker::spawn_if_enabled(
+        chain_id,
+        Arc::clone(&pool_discovery),
+        db.clone(),
+    );
 
     let ctx = OrchestratorContext {
         impact_index: impact_index.clone(),
@@ -776,10 +794,12 @@ pub async fn run_chain(
         // Publish block height + base fee into the cartridge HostContext atomics each block
         // (only when the cartridge runtime is live) so get_base_fee()/get_block_number() are
         // real — the cartridge net-profit gate is otherwise unsatisfiable (gas reads as 0).
-        let gas_sink = cartridge_runner.as_ref().map(|r| crate::block_scanner::GasBlockSink {
-            block_number: r.host_block_number_handle(),
-            base_fee_milligwei: r.host_base_fee_handle(),
-        });
+        let gas_sink = cartridge_runner
+            .as_ref()
+            .map(|r| crate::block_scanner::GasBlockSink {
+                block_number: r.host_block_number_handle(),
+                base_fee_milligwei: r.host_base_fee_handle(),
+            });
         tokio::spawn(crate::block_scanner::block_detection_loop(
             chain_id,
             ws_urls,

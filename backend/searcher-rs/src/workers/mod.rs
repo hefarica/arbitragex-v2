@@ -3,6 +3,8 @@
 //! were deleted because they emitted fake telemetry without doing work.
 //! HftMempoolListener and ExecutionWorker stubs are kept but not spawned.
 
+#[cfg(feature = "experimental-engines")]
+pub mod backrun_worker;
 pub mod cex_dex_worker;
 pub mod execution_worker;
 pub mod flashloan_arb_worker;
@@ -11,23 +13,22 @@ pub mod heartbeat_worker;
 pub mod hft_mempool_listener;
 pub mod jit_v3_worker;
 pub mod liquidation_worker;
+pub mod pool_enumeration_worker;
 pub mod pool_sync_worker;
 pub mod price_worker;
 pub mod rpc_health_worker;
-pub mod triangular_worker;
-#[cfg(feature = "experimental-engines")]
-pub mod backrun_worker;
 #[cfg(feature = "experimental-engines")]
 pub mod spatial_worker;
+pub mod triangular_worker;
 // APEX Phase 1.5 — Thermodynamic workers (server-side only)
-#[cfg(feature = "experimental-engines")]
-pub mod svs_worker;
 #[cfg(feature = "experimental-engines")]
 pub mod dlp_worker;
 #[cfg(feature = "experimental-engines")]
-pub mod triangular_atomic_worker;
-#[cfg(feature = "experimental-engines")]
 pub mod funding_rate_worker;
+#[cfg(feature = "experimental-engines")]
+pub mod svs_worker;
+#[cfg(feature = "experimental-engines")]
+pub mod triangular_atomic_worker;
 
 use shared_rs::rpc_failover::HttpRpcPool;
 use sqlx::PgPool;
