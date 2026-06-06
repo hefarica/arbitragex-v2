@@ -54,6 +54,16 @@ const MAX_ARRAY_SIZE: usize = 4_096;
 /// Maximum map size within Rhai scripts.
 const MAX_MAP_SIZE: usize = 1_024;
 
+/// Maximum expression-nesting depth. rhai's DEFAULT for the expr-depth limits is
+/// profile-dependent (debug: 32 expr / 16 function; release: 64 / 32), so without
+/// pinning, cartridge validation would differ between debug and release builds —
+/// a cartridge that parses in a release production binary could fail to load in a
+/// debug build (and vice-versa). Pin the release values so validation is deterministic.
+const MAX_EXPR_DEPTH: usize = 64;
+
+/// Maximum expression-nesting depth inside function bodies (see `MAX_EXPR_DEPTH`).
+const MAX_FUNCTION_EXPR_DEPTH: usize = 32;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Error Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -134,6 +144,10 @@ impl CartridgeRunner {
         engine.set_max_string_size(MAX_STRING_SIZE);
         engine.set_max_array_size(MAX_ARRAY_SIZE);
         engine.set_max_map_size(MAX_MAP_SIZE);
+        // Pin expression-depth limits explicitly. rhai's default is profile-dependent
+        // (debug 32/16 vs release 64/32), which would let a cartridge that loads in a
+        // release build fail to load in a debug build. See MAX_EXPR_DEPTH.
+        engine.set_max_expr_depths(MAX_EXPR_DEPTH, MAX_FUNCTION_EXPR_DEPTH);
 
         // Disable all external module loading (no `import` statements).
         engine.set_max_modules(0);
