@@ -86,22 +86,50 @@ export const ROUTES: RouteSpec[] = [
 ];
 
 /**
- * Error-banner copy our pages render when an upstream is unhealthy or a
- * response fails client-side validation. A match means the page is in a
- * fail-closed state (honest, but the feature is non-functional right now).
+ * LEGACY page-level error banners only — the specific copy a page used to print
+ * when it was *entirely* fail-closed (the old maroon full-page banner).
+ *
+ * Deliberately NARROW. We do NOT match a bare "edge error" or "zero trust":
+ *  - a metric card honestly printing "edge error" for ONE failing upstream is a
+ *    per-widget honest state, not a page failure (RULE 00 / R8);
+ *  - "ZERO TRUST" appears as branding / doctrine copy in healthy pages.
+ * Page-level error is now detected STRUCTURALLY via the EdgeState error surface
+ * (see EDGE_STATE_ERROR_LABELS) scoped to <main>, not by scanning all body text.
  */
 export const ERROR_BANNERS: RegExp[] = [
   /edge unreachable/i,
-  /edge error\b/i, // covers "edge error:" and "EDGE ERROR — ZERO TRUST"
-  /zero[\s\-—]*trust/i,
+  /edge error:/i, // WITH colon — the old page-level banner prefix, not the inline card text
 ];
 
 /**
- * RULE 00 (zero-mocks) forbidden tokens in rendered body text.
- * NOTE: "placeholder" is intentionally excluded — it is a legitimate HTML
- * input attribute word and would false-positive. We match whole words only.
+ * EdgeState (frontend/components/EdgeState.tsx) BLOCKING variants render with
+ * role="alert" and one of these uppercase status labels. Detecting THIS inside
+ * <main> (and the absence of primary content) is what marks a route fail-closed.
+ *
+ * NO `\b` boundaries: textContent glues the label to the following title with no
+ * whitespace (e.g. "EDGE ERRORPool registry unreachable"), so a trailing `\b`
+ * would never match. We match the label as a plain substring via role + filter.
  */
-export const FORBIDDEN_WORDS = /\b(mock|fake|dummy|lorem ipsum)\b/i;
+export const EDGE_STATE_ERROR_LABELS = /EDGE ERROR|DISCONNECTED/;
+
+/**
+ * EdgeState NON-error variants (role="status"): honest empty / first-paint load.
+ * These are NOT defects — a page showing one is rendered + honest, never FAIL.
+ * Same no-`\b` rule (textContent is "NO DATANo RPCs registered yet…").
+ */
+export const EDGE_STATE_EMPTY_LOADING = /NO DATA|SYNCING/;
+
+/**
+ * RULE 00 (zero-mocks) — UNAMBIGUOUS fabrication markers in rendered body text.
+ *
+ * Deliberately limited to "lorem ipsum". Bare "mock"/"fake"/"dummy" are NOT
+ * matched: they appear in legitimate anti-mock doctrine copy (e.g. the
+ * /live-readiness check "zero mocks doctrine: no fabricated data", or "No
+ * fabricated pool data is shown"), which is the OPPOSITE of a violation. Real
+ * zero-mocks enforcement lives in honest-state-live.spec.ts (count===items.length,
+ * no synthesized rows) and the no-hardcode lint — not a blunt body-text scan.
+ */
+export const FORBIDDEN_WORDS = /lorem ipsum/i;
 
 /**
  * Admin endpoints whose 401 under an unauthenticated load is EXPECTED and
