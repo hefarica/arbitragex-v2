@@ -314,7 +314,7 @@ const stColor = s => ({
   REAL:'background:#0d2a1b;color:#4ade80;border:1px solid #14532d'
 }[s]||'background:#1a1a1a;color:#9ca3af;border:1px solid #374151');
 const prioColor = p => ({P0:'#f87171','P0-gated':'#f87171',P1:'#fbbf24',P2:'#38bdf8',P3:'#8b96a8'}[p]||'#8b96a8');
-const badge=(s)=>`<span class="chip" style="${stColor(s)}">${s||'?'}</span>`;
+const badge=(s)=>`<span class="chip" style="${stColor(s)}">${esc(s||'?')}</span>`;
 const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const matches=(obj,q)=>!q||JSON.stringify(obj).toLowerCase().includes(q.toLowerCase());
 
@@ -327,7 +327,7 @@ const kpis=[
  ['Hooks',s.hooks_total,'#a78bfa'],['Dominios trading',s.trading_domains_audited,'#38bdf8'],
  ['Gaps',s.gaps,'#fbbf24'],['Contratos faltantes',s.missing_contracts,'#f87171']
 ];
-document.getElementById('kpis').innerHTML = kpis.map(([k,v,c])=>`<div class="card p-3"><div class="text-2xl font-bold" style="color:${c}">${v}</div><div class="text-xs text-[var(--muted)] mt-1">${k}</div></div>`).join('');
+document.getElementById('kpis').innerHTML = kpis.map(([k,v,c])=>`<div class="card p-3"><div class="text-2xl font-bold" style="color:${c}">${esc(v)}</div><div class="text-xs text-[var(--muted)] mt-1">${esc(k)}</div></div>`).join('');
 
 const TABS=['Overview','Páginas','Endpoints & Hooks','Dominios Trading','Modelos de Datos','Orquestación','Gaps','Contratos Faltantes','Prioridad P0–P3','Scoring'];
 let active='Overview';
@@ -347,8 +347,8 @@ function render(){
     h+=wrap('Score del módulo principal', `<div class="grid grid-cols-2 md:grid-cols-4 gap-3">`+
       [['Wiring',ms.wiring],['Data reality',ms.data_reality],['UX',ms.ux_readiness],['Backend cov.',ms.backend_coverage],['Frontend exp.',ms.frontend_exposure],['Riesgo op.',ms.operational_risk],['Enterprise',ms.enterprise_readiness]]
       .map(([k,v])=>`<div><div class="flex justify-between text-xs mb-1"><span>${k}</span><span class="font-bold">${v}</span></div><div style="height:7px;background:#1f2937;border-radius:6px"><div style="height:7px;border-radius:6px;width:${v}%;background:${v>=85?'#4ade80':v>=50?'#fbbf24':'#f87171'}"></div></div></div>`).join('')
-      +`</div><div class="mt-3 chip" style="${stColor('PARTIAL')}">${ms.classification}</div>`);
-    h+=wrap('Orquestación motores→UI (resumen)', DATA.orchestration.map(o=>`<div class="flex items-start gap-2 py-1 text-sm"><span class="chip" style="${stColor(o.status)}">${o.status}</span><span class="text-[var(--muted)] mono" style="font-size:11px">${esc(o.flow)}</span></div>`).join(''));
+      +`</div><div class="mt-3 chip" style="${stColor('PARTIAL')}">${esc(ms.classification)}</div>`);
+    h+=wrap('Orquestación motores→UI (resumen)', DATA.orchestration.map(o=>`<div class="flex items-start gap-2 py-1 text-sm"><span class="chip" style="${stColor(o.status)}">${esc(o.status)}</span><span class="text-[var(--muted)] mono" style="font-size:11px">${esc(o.flow)}</span></div>`).join(''));
   }
 
   if(active==='Páginas'){
@@ -397,7 +397,7 @@ function render(){
   }
 
   if(active==='Orquestación'){
-    h+=DATA.orchestration.map(o=>`<div class="card p-3 flex items-start gap-3"><span class="chip" style="${stColor(o.status)}">${o.status}</span><span class="mono text-sm text-[var(--muted)]">${esc(o.flow)}</span></div>`).join('');
+    h+=DATA.orchestration.map(o=>`<div class="card p-3 flex items-start gap-3"><span class="chip" style="${stColor(o.status)}">${esc(o.status)}</span><span class="mono text-sm text-[var(--muted)]">${esc(o.flow)}</span></div>`).join('');
   }
 
   if(active==='Gaps'){
