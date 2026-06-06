@@ -180,7 +180,16 @@ export const useOmniStore = create<OmniStoreState>()(
 
           const dexesMap = new Map<string, DEX>();
           toArray(dexesData).forEach((d: any) => {
-            dexesMap.set(d.id, d);
+            // /api/dexes returns chain_id (singular); the dex-registry view expects
+            // chain_ids (an array) for its chain badges + chain filter. Normalise
+            // so the render never crashes on undefined.chain_ids (was throwing a
+            // page-level TypeError once the data finally loaded).
+            const chain_ids = Array.isArray(d.chain_ids)
+              ? d.chain_ids
+              : d.chain_id != null
+                ? [d.chain_id]
+                : [];
+            dexesMap.set(d.id, { ...d, chain_ids });
           });
 
           set({ 
