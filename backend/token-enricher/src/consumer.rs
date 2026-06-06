@@ -2,7 +2,7 @@
 //!
 //! Reads from the `arbx:opps:detected` stream using consumer-group
 //! `enricher` / consumer `enricher-1`.  Each message is expected to carry a
-//! JSON payload under the field key `"payload"` with at least:
+//! JSON payload under the field key `"json"` with at least:
 //!
 //! ```json
 //! { "chain_id": 1, "token_in": "0x...", "token_out": "0x..." }
@@ -156,9 +156,14 @@ impl EnricherConsumer {
                 // Collect ALL ids for caller-side ACK (including poison).
                 ids_to_ack.push(entry.id.clone());
 
-                // Extract the JSON payload from the `"payload"` field.
+                // Extract the JSON payload from the `"json"` field — the key the
+                // searcher publisher actually writes (publisher.rs: `XADD
+                // arbx:opps:detected … json <payload>`) and the same key the
+                // api-server paper-trade-archiver reads. Previously "payload",
+                // which never matched → every opp logged missing_payload_field
+                // (flooding Loki → promtail 429/unhealthy).
                 // In redis 0.24, map values are `Value::Data(Vec<u8>)`.
-                let payload_bytes: Option<&[u8]> = entry.map.get("payload").and_then(|v| match v {
+                let payload_bytes: Option<&[u8]> = entry.map.get("json").and_then(|v| match v {
                     Value::Data(b) => Some(b.as_slice()),
                     _ => None,
                 });
