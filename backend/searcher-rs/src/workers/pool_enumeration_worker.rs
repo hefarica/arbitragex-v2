@@ -9,7 +9,8 @@
 //! ## Per-tick flow
 //! 1. `fetch_top_pools_by_tvl` (V3 primary; V2 best-effort, same endpoint) →
 //!    merge → sort by TVL desc → truncate top-N.
-//! 2. Dedup against `SELECT LOWER(address) FROM pools WHERE chain_id = $1`.
+//! 2. Dedup: skip already-ACTIVE pools; inactive ones re-screen so a now-safe
+//!    token reactivates the pool (monotonic upsert).
 //! 3. For each NEW candidate (capped at MAX_NEW_PER_TICK): token-safety screen
 //!    both tokens (token_safety_cache, floor TOKEN_SAFETY_FLOOR) — both ≥ floor →
 //!    activate; either < floor → skip (unsafe); either unrated → persist
@@ -29,7 +30,7 @@
 //! PoolSyncWorker, the scanner's downstream logic, or existing pools (is_active is
 //! monotonic — never deactivated by this path).
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -68,7 +69,9 @@ impl EnumConfig {
         let top_n = env_usize(ENV_TOP_N, DEFAULT_TOP_N).clamp(1, 1000);
         let min_tvl_usd = env_f64(ENV_MIN_TVL, DEFAULT_MIN_TVL_USD).max(0.0);
         let max_new = env_usize(ENV_MAX_NEW, DEFAULT_MAX_NEW).clamp(1, 1000);
-        let safety_floor = env_i32(ENV_SAFETY_FLOOR, DEFAULT_SAFETY_FLOOR);
+        // Clamp to [1,100] so a hostile/absurd <=0 value can't silently disable
+        // the safety gate (token_safety_cache scores are 0..100).
+        let safety_floor = env_i32(ENV_SAFETY_FLOOR, DEFAULT_SAFETY_FLOOR).clamp(1, 100);
         Self {
             interval: Duration::from_millis(interval_ms),
             top_n,
@@ -226,8 +229,10 @@ impl PoolEnumerationWorker {
         candidates.truncate(self.cfg.top_n);
         let fetched = candidates.len();
 
-        // 2. Dedup against already-known pools (active OR inactive).
-        let known = self.load_known_pool_addrs().await;
+        // 2. Dedup: skip ALREADY-ACTIVE pools; inactive ones are re-screened so a
+        // now-token-safe pool can be reactivated (monotonic upsert). Map is
+        // address(lc) -> is_active.
+        let known = self.load_known_pools().await;
 
         let mut already_known = 0usize;
         let mut factory_missing = 0usize;
@@ -241,13 +246,14 @@ impl PoolEnumerationWorker {
             if processed_new >= self.cfg.max_new {
                 break;
             }
-            if known.contains(&rp.address.to_lowercase()) {
-                already_known += 1;
+            let addr_lc = rp.address.to_lowercase();
+            let prior_active = known.get(&addr_lc).copied();
+            if prior_active == Some(true) {
+                already_known += 1; // already active — nothing to do
                 continue;
             }
-            processed_new += 1;
 
-            // 3a. Token-safety screen for BOTH tokens.
+            // 3a. Token-safety screen for BOTH tokens (cheap DB lookup).
             let s0 = self.token_safety(&rp.token0).await;
             let s1 = self.token_safety(&rp.token1).await;
             let activate = match (s0, s1) {
@@ -264,6 +270,16 @@ impl PoolEnumerationWorker {
                 // at least one token unrated → persist inactive for a future tick
                 _ => false,
             };
+
+            // A dormant (is_active=false) pool that is STILL not activatable needs
+            // no work (already persisted inactive); skip without consuming the
+            // expensive-op budget. A now-safe one falls through and is reactivated.
+            if prior_active == Some(false) && !activate {
+                continue;
+            }
+
+            // Expensive path (on-chain factory resolve + hydration) — budget-capped.
+            processed_new += 1;
 
             // Parse addresses (subgraph gives lowercase 0x hex).
             let (pool_addr, t0, t1) = match (
@@ -306,19 +322,22 @@ impl PoolEnumerationWorker {
         );
     }
 
-    /// All pool addresses already in the DB for this chain (lowercase), so we
-    /// never re-enumerate an existing pool (active or inactive).
-    async fn load_known_pool_addrs(&self) -> HashSet<String> {
-        match sqlx::query_as::<_, (String,)>("SELECT LOWER(address) FROM pools WHERE chain_id = $1")
-            .bind(self.chain_id as i64)
-            .fetch_all(&self.db)
-            .await
+    /// Map of this chain's pool addresses (lowercase) -> is_active. Already-active
+    /// pools are skipped; inactive ones are re-screened each tick so a now-token-
+    /// safe pool can be reactivated (the upsert's monotonic is_active flips it).
+    async fn load_known_pools(&self) -> HashMap<String, bool> {
+        match sqlx::query_as::<_, (String, bool)>(
+            "SELECT LOWER(address), is_active FROM pools WHERE chain_id = $1",
+        )
+        .bind(self.chain_id as i64)
+        .fetch_all(&self.db)
+        .await
         {
-            Ok(rows) => rows.into_iter().map(|(a,)| a).collect(),
+            Ok(rows) => rows.into_iter().collect(),
             Err(e) => {
                 warn!(event = "poolenum.dedup_query_err", chain_id = self.chain_id, error = %e);
-                HashSet::new() // fail-honest: empty set → everything looks new, but the
-                               // upsert is idempotent (ON CONFLICT), so no duplicates result
+                HashMap::new() // fail-honest: empty → all look new, but the upsert is
+                               // idempotent (ON CONFLICT) so no duplicate rows result
             }
         }
     }

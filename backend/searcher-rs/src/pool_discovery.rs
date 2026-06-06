@@ -488,11 +488,16 @@ impl PoolDiscoveryService {
         let e_t1 = Address::from_slice(token1.as_slice());
         let e_pool = Address::from_slice(pool_addr.as_slice());
 
-        // Upsert tokens in DB
-        let token0_id = self.upsert_token_in_db(e_t0, &sym0, dec0).await?;
-        let token1_id = self.upsert_token_in_db(e_t1, &sym1, dec1).await?;
+        // Upsert tokens in DB (is_active mirrors the pool's activate verdict).
+        let token0_id = self
+            .upsert_token_in_db(e_t0, &sym0, dec0, is_active)
+            .await?;
+        let token1_id = self
+            .upsert_token_in_db(e_t1, &sym1, dec1, is_active)
+            .await?;
 
-        // Upsert pool in DB
+        // Upsert pool in DB — `?`-propagate so a failed write yields Err (the
+        // caller reports HydrationFailed and does NOT add to impact_index).
         self.upsert_pool_in_db(
             e_pool,
             factory_id,
@@ -502,7 +507,7 @@ impl PoolDiscoveryService {
             is_active,
             enum_source,
         )
-        .await;
+        .await?;
 
         // Hydrate ReservesCache
         match proto {
@@ -705,6 +710,7 @@ impl PoolDiscoveryService {
         token: Address,
         symbol: &str,
         decimals: u8,
+        is_active: bool,
     ) -> anyhow::Result<Uuid> {
         if let Some(ref db) = self.db {
             let t_str = format!("0x{:x}", token);
@@ -718,10 +724,17 @@ impl PoolDiscoveryService {
                 return Ok(id);
             }
 
+            // is_active set from the caller's activate verdict so an UNRATED token
+            // (enumeration) lands is_active=false rather than the migration-021
+            // default TRUE — it isn't allowlist-active until actually rated. The
+            // reactive path passes true. Monotonic on conflict: never deactivate.
             let q_ins = r#"
-                INSERT INTO tokens (chain_id, address, symbol, decimals, created_at)
-                VALUES ($1, $2, $3, $4, NOW())
-                ON CONFLICT (chain_id, address) DO UPDATE SET symbol = EXCLUDED.symbol, decimals = EXCLUDED.decimals
+                INSERT INTO tokens (chain_id, address, symbol, decimals, is_active, created_at)
+                VALUES ($1, $2, $3, $4, $5, NOW())
+                ON CONFLICT (chain_id, address) DO UPDATE SET
+                    symbol = EXCLUDED.symbol,
+                    decimals = EXCLUDED.decimals,
+                    is_active = tokens.is_active OR EXCLUDED.is_active
                 RETURNING id
             "#;
             if let Ok((id,)) = sqlx::query_as::<_, (Uuid,)>(q_ins)
@@ -729,6 +742,7 @@ impl PoolDiscoveryService {
                 .bind(&t_str)
                 .bind(symbol)
                 .bind(decimals as i16)
+                .bind(is_active)
                 .fetch_one(db)
                 .await
             {
@@ -748,41 +762,48 @@ impl PoolDiscoveryService {
         fee_bps: Option<u32>,
         is_active: bool,
         enum_source: &str,
-    ) {
-        if let Some(ref db) = self.db {
-            let p_str = format!("0x{:x}", pool);
-            // is_active is MONOTONIC on conflict (`pools.is_active OR EXCLUDED`):
-            // never deactivate a pool that is already active (honors "don't break
-            // existing pools"); a false→true reactivation IS allowed (an unrated
-            // token becoming token-safe). enum_source keeps its original provenance.
-            let q = r#"
-                INSERT INTO pools (chain_id, address, factory_id, token0_id, token1_id, fee_tier, is_active, enum_source, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-                ON CONFLICT (chain_id, address) DO UPDATE SET
-                    factory_id = EXCLUDED.factory_id,
-                    token0_id = EXCLUDED.token0_id,
-                    token1_id = EXCLUDED.token1_id,
-                    fee_tier = EXCLUDED.fee_tier,
-                    is_active = pools.is_active OR EXCLUDED.is_active,
-                    enum_source = COALESCE(pools.enum_source, EXCLUDED.enum_source)
-            "#;
-            if let Err(e) = sqlx::query(q)
-                .bind(self.chain_id as i64)
-                .bind(&p_str)
-                .bind(factory_id)
-                .bind(token0_id)
-                .bind(token1_id)
-                .bind(fee_bps.map(|f| f as i32))
-                .bind(is_active)
-                .bind(enum_source)
-                .execute(db)
-                .await
-            {
-                warn!(event="pool_discovery.upsert_pool_failed", pool=?p_str, error=%e);
-            } else {
-                info!(event="pool_discovery.pool_persisted", pool=?p_str, is_active, enum_source);
-            }
-        }
+    ) -> anyhow::Result<()> {
+        // No DB configured → nothing to persist (preserves the prior no-op).
+        let Some(ref db) = self.db else {
+            return Ok(());
+        };
+        let p_str = format!("0x{:x}", pool);
+        // is_active is MONOTONIC on conflict (`pools.is_active OR EXCLUDED`):
+        // never deactivate a pool that is already active (honors "don't break
+        // existing pools"); a false→true reactivation IS allowed (an unrated
+        // token becoming token-safe). enum_source keeps its original provenance.
+        let q = r#"
+            INSERT INTO pools (chain_id, address, factory_id, token0_id, token1_id, fee_tier, is_active, enum_source, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+            ON CONFLICT (chain_id, address) DO UPDATE SET
+                factory_id = EXCLUDED.factory_id,
+                token0_id = EXCLUDED.token0_id,
+                token1_id = EXCLUDED.token1_id,
+                fee_tier = EXCLUDED.fee_tier,
+                is_active = pools.is_active OR EXCLUDED.is_active,
+                enum_source = COALESCE(pools.enum_source, EXCLUDED.enum_source)
+        "#;
+        // Propagate the error (fail-honest): a swallowed failure would let the
+        // caller report the pool as persisted + inject it into the live
+        // impact_index with no PG backing. On Err the caller yields
+        // HydrationFailed and does NOT add the pool.
+        sqlx::query(q)
+            .bind(self.chain_id as i64)
+            .bind(&p_str)
+            .bind(factory_id)
+            .bind(token0_id)
+            .bind(token1_id)
+            .bind(fee_bps.map(|f| f as i32))
+            .bind(is_active)
+            .bind(enum_source)
+            .execute(db)
+            .await
+            .map_err(|e| {
+                warn!(event = "pool_discovery.upsert_pool_failed", pool = ?p_str, error = %e);
+                anyhow::anyhow!("upsert_pool_failed: {e}")
+            })?;
+        info!(event = "pool_discovery.pool_persisted", pool = ?p_str, is_active, enum_source);
+        Ok(())
     }
 
     pub async fn record_opportunity_observation(
