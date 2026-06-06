@@ -70,9 +70,9 @@ mod scanner;
 // `cartridge_boot` (called from the scanner boot path), so allow dead_code on the two.
 #[allow(dead_code, unused_imports, unused_variables)]
 mod cartridge;
+mod cartridge_boot;
 #[allow(dead_code)]
 mod cartridge_loader;
-mod cartridge_boot;
 // FASE OMEGA — Block/log backrunning scanner (ARBX_MEMPOOL_MODE=block).
 mod block_scanner;
 // Observer telemetry — real-node head divergence (reorg) PUBLISH to arbx:telemetry:observability.
@@ -84,8 +84,11 @@ mod telemetry_observability;
 #[allow(dead_code)]
 mod impact_index;
 mod opportunity_emitter;
+mod pool_candidate;
 mod pool_discovery;
+mod pool_sources;
 mod route_decoder;
+mod source_supervisor;
 // Phase 1 radar — declared in the bin crate so `scanner::run_chain` can spawn
 // the worker. The lib crate also declares it (`pub mod route_discovery`) so the
 // pure submodules are unit-tested under `cargo test --lib`.

@@ -20,12 +20,15 @@ pub mod models;
 pub mod opportunity_emitter;
 pub mod patterns;
 pub mod persistence;
+pub mod pool_candidate;
 pub mod pool_discovery;
+pub mod pool_sources;
 pub mod publisher;
 pub mod reserves;
 pub mod route_decoder;
 pub mod route_discovery;
 pub mod route_intent;
+pub mod source_supervisor;
 pub mod strategy_label;
 // Phase 7-8: orchestrator + engines exposed for integration tests.
 pub mod engines;
