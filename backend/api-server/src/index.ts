@@ -2,6 +2,7 @@ import express from "express";
 import pg from "pg";
 import { Redis } from "ioredis";
 import { PaperTradeArchiver } from "./routes/paper-trade-archiver.js";
+import { ScoredOpportunitiesArchiver } from "./routes/scored-opportunities-archiver.js";
 import { RouteDiscoveryOutcomeSink, outcomeSinkEnabled } from "./routes/route-discovery-outcome-sink.js";
 import { buildRouteDiscoveryOutcomesRouter } from "./routes/route-discovery-outcomes-api.js";
 import { buildOperatorRouter } from "./routes/operator.js";
@@ -1276,6 +1277,26 @@ if (pool && outcomeSinkEnabled()) {
   );
 }
 
+// Gate C — scored_opportunities archiver (passive scoring telemetry sink).
+// Reads arbx:scoring:scored (the Rust OpportunityEmitter's ConfidenceScore XADD)
+// and persists each scored opportunity into scored_opportunities. 100% passive:
+// reads the stream + writes its own table only; never opps:detected, never
+// capital. recommended_usd is a HYPOTHETICAL paper figure. Dormant by default —
+// set ARBX_SCORING_ARCHIVER_MODE=on to activate. Requires DATABASE_URL (pool).
+let scoredArchiver: ScoredOpportunitiesArchiver | null = null;
+if (pool && (process.env["ARBX_SCORING_ARCHIVER_MODE"] ?? "off").toLowerCase() === "on") {
+  scoredArchiver = new ScoredOpportunitiesArchiver({ redisUrl: REDIS_URL, pool, logger });
+  scoredArchiver.start().catch((e) =>
+    logger.error({ event: "scoring_archiver.start_err", err: (e as Error).message },
+      "scored_opportunities archiver failed to start"),
+  );
+} else {
+  logger.info(
+    { event: "scoring_archiver.dormant", reason: pool ? "mode_off" : "no_database_url" },
+    "scored_opportunities archiver dormant (set ARBX_SCORING_ARCHIVER_MODE=on to enable)",
+  );
+}
+
 httpServer.listen(PORT, () => {
   logger.info({ event: "service.boot", port: PORT, env: cfg.system.env,
     upstreams: Object.keys(UPSTREAMS) }, `${SERVICE} listening`);
@@ -1287,6 +1308,7 @@ const shutdown = async (sig: string) => {
   // Stop the passive paper-trade archiver (closes its dedicated Redis conn).
   await paperArchiver?.stop().catch(() => {});
   await rdOutcomeSink?.stop().catch(() => {});
+  await scoredArchiver?.stop().catch(() => {});
   // Arteria WSS: cerrar el subscriber de convergencia antes que el redis
   // principal para evitar errores de "Connection is closed" en handlers.
   await convergenceSubscriber.quit().catch(() => {});

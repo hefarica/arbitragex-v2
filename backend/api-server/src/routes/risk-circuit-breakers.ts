@@ -39,7 +39,7 @@ import { KillSwitchClient } from "@arbx/shared";
 
 import { verifyAll } from "../readiness/verifiers/index.js";
 import type { ReadinessReport } from "../readiness/types.js";
-import { __forTesting as scoringTesting } from "./scoring-status.js";
+import { isScoringPipelineWired } from "./scoring-status.js";
 import {
   computeBreakerWindow,
   loadThresholdsFromEnv,
@@ -189,13 +189,9 @@ async function collectCtx(deps: {
   const envExecutor = (process.env["EXECUTOR_1"]?.length ?? 0) > 0;
   const envTradeMode = process.env["ARBX_TRADE_MODE"] ?? null;
 
-  // A.8 scoring wire status — pull from scoring-status's workspace_verified
-  // ledger (the same source of truth surfaced via /api/v1/scoring/status).
-  // Components named "Scoring pipeline invocation" is the gate we read.
-  const pipelineComp = scoringTesting.COMPONENTS.find((c) =>
-    c.name.includes("pipeline"),
-  );
-  const scoringPipelineWired = pipelineComp?.wired === true;
+  // A.8 scoring wire status — derive from the same runtime evidence the
+  // /api/v1/scoring/status surface uses (scored_opportunities table presence).
+  const scoringPipelineWired = await isScoringPipelineWired(deps.pool);
 
   // A.5 — rolling gas-burn breaker from paper_trade_runs. This is the ONE breaker
   // current shadow data can honestly feed: cumulative simulated gas vs the operator
