@@ -13,6 +13,7 @@ use sqlx::postgres::PgPool;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use crate::impact_index::{ImpactIndex, PoolRef};
 use crate::route_intent::{DetectionSource, RouteIntent};
@@ -60,7 +61,7 @@ pub struct PoolDiscoveryService {
     impact_index: Arc<RwLock<ImpactIndex>>,
     rpc_pool: Option<Arc<HttpRpcPool>>,
     reserves_cache: Arc<crate::engines::triangular_engine::ReservesCache>,
-    factories: RwLock<Option<Vec<(u64, Address, crate::route_intent::ProtocolType, String)>>>,
+    factories: RwLock<Option<Vec<(Uuid, Address, crate::route_intent::ProtocolType, String)>>>,
 }
 
 impl PoolDiscoveryService {
@@ -85,7 +86,7 @@ impl PoolDiscoveryService {
 
     async fn get_factories(
         &self,
-    ) -> Vec<(u64, Address, crate::route_intent::ProtocolType, String)> {
+    ) -> Vec<(Uuid, Address, crate::route_intent::ProtocolType, String)> {
         let mut cache = self.factories.write().await;
         if let Some(ref facts) = *cache {
             return facts.clone();
@@ -94,7 +95,7 @@ impl PoolDiscoveryService {
         let mut facts = Vec::new();
         if let Some(ref db) = self.db {
             let q = "SELECT f.id, f.address, d.protocol_type, d.name FROM factories f JOIN dexes d ON f.dex_id = d.id WHERE f.chain_id = $1 AND f.is_active = TRUE";
-            if let Ok(rows) = sqlx::query_as::<_, (i64, String, String, String)>(q)
+            if let Ok(rows) = sqlx::query_as::<_, (Uuid, String, String, String)>(q)
                 .bind(self.chain_id as i64)
                 .fetch_all(db)
                 .await
@@ -110,7 +111,7 @@ impl PoolDiscoveryService {
                             }
                             _ => continue,
                         };
-                        facts.push((f_id as u64, addr, proto, name));
+                        facts.push((f_id, addr, proto, name));
                     }
                 }
             }
@@ -160,7 +161,7 @@ impl PoolDiscoveryService {
             let token_b = alloy::primitives::Address::from_slice(leg.token_out.as_bytes());
 
             let mut discovered_pools: Vec<(
-                u64,
+                Uuid,
                 alloy::primitives::Address,
                 crate::route_intent::ProtocolType,
                 String,
@@ -383,7 +384,7 @@ impl PoolDiscoveryService {
         &self,
         rpc: Arc<HttpRpcPool>,
         pool_addr: alloy::primitives::Address,
-        factory_id: u64,
+        factory_id: Uuid,
         proto: crate::route_intent::ProtocolType,
         dex_name: &str,
         fee_bps: Option<u32>,
@@ -677,17 +678,17 @@ impl PoolDiscoveryService {
         token: Address,
         symbol: &str,
         decimals: u8,
-    ) -> anyhow::Result<u64> {
+    ) -> anyhow::Result<Uuid> {
         if let Some(ref db) = self.db {
             let t_str = format!("0x{:x}", token);
             let q_sel = "SELECT id FROM tokens WHERE chain_id = $1 AND address = $2";
-            if let Ok(Some((id,))) = sqlx::query_as::<_, (i64,)>(q_sel)
+            if let Ok(Some((id,))) = sqlx::query_as::<_, (Uuid,)>(q_sel)
                 .bind(self.chain_id as i64)
                 .bind(&t_str)
                 .fetch_optional(db)
                 .await
             {
-                return Ok(id as u64);
+                return Ok(id);
             }
 
             let q_ins = r#"
@@ -696,7 +697,7 @@ impl PoolDiscoveryService {
                 ON CONFLICT (chain_id, address) DO UPDATE SET symbol = EXCLUDED.symbol, decimals = EXCLUDED.decimals
                 RETURNING id
             "#;
-            if let Ok((id,)) = sqlx::query_as::<_, (i64,)>(q_ins)
+            if let Ok((id,)) = sqlx::query_as::<_, (Uuid,)>(q_ins)
                 .bind(self.chain_id as i64)
                 .bind(&t_str)
                 .bind(symbol)
@@ -704,7 +705,7 @@ impl PoolDiscoveryService {
                 .fetch_one(db)
                 .await
             {
-                return Ok(id as u64);
+                return Ok(id);
             }
         }
         anyhow::bail!("db_unavailable_or_insert_failed")
@@ -713,9 +714,9 @@ impl PoolDiscoveryService {
     async fn upsert_pool_in_db(
         &self,
         pool: Address,
-        factory_id: u64,
-        token0_id: u64,
-        token1_id: u64,
+        factory_id: Uuid,
+        token0_id: Uuid,
+        token1_id: Uuid,
         fee_bps: Option<u32>,
     ) {
         if let Some(ref db) = self.db {
@@ -733,9 +734,9 @@ impl PoolDiscoveryService {
             if let Err(e) = sqlx::query(q)
                 .bind(self.chain_id as i64)
                 .bind(&p_str)
-                .bind(factory_id as i64)
-                .bind(token0_id as i64)
-                .bind(token1_id as i64)
+                .bind(factory_id)
+                .bind(token0_id)
+                .bind(token1_id)
                 .bind(fee_bps.map(|f| f as i32))
                 .execute(db)
                 .await
