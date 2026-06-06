@@ -112,9 +112,10 @@ In `OpportunityEmitter::emit_accepted`, guarded by `ARBX_SCORING_ENABLED` (defau
 ```
 
 Per emitted paper opportunity: load prior (if any) → `evaluate_paper_opportunity` →
-**`XADD arbx:scoring:scored`** (fire-and-forget, non-fatal). If `ARBX_SCORING_HARD_GATE=true`
-**and** `!bayesian_accepted` ⇒ skip downstream active emit **but still XADD the score**
-(telemetry preserved). Default `ARBX_SCORING_HARD_GATE=false` ⇒ emit annotated, never blocked on flat priors (adjustment #3).
+**`XADD arbx:scoring:scored`** (fire-and-forget, non-fatal). Scoring is **ADVISORY**: it NEVER skips the
+`opps:detected` publish — that stream always receives the opportunity (RULE 00 + invariant).
+`ARBX_SCORING_HARD_GATE=true` only records an advisory `scoring.hard_gate.flagged` log (what a future LIVE
+execution layer would gate); it does **not** change emission in this shadow build. Default `false` (adjustment #3).
 Log events: `scoring.pipeline.wired` (boot), `scoring.evaluate.start`, `scoring.bayesian.accepted`,
 `scoring.bayesian.rejected`, `scoring.kelly.computed`, `scoring.confidence.persisted`,
 `scoring.confidence.persist_failed`, `scoring.paper_opportunity.annotated`, `scoring.hard_gate.skipped_emit`.
@@ -138,20 +139,18 @@ alongside the existing (back-compat) `scoring_status` enum.
 Structural evidence, independent of whether the market is currently producing opportunities:
 - module compiled (workspace-verified constant, now genuinely true once wired),
 - stream `arbx:scoring:scored` configured (env present / default),
-- archiver registered — **code-mounted** in the api-server boot path (constant true once I add the mount),
-  independent of `ARBX_SCORING_ARCHIVER_MODE` (which only controls whether it *actively consumes*; a
-  dormant-but-mounted archiver is still "registered/wired"),
+- archiver ENABLED — `ARBX_SCORING_ARCHIVER_MODE=on` (the api-server reads its own env; a dormant
+  archiver means nothing consumes the stream, so claiming "wired" would be cosmetic — report BLOCKED honestly),
 - migration applied (`to_regclass('scored_opportunities') IS NOT NULL`, queried),
 - **plus** runtime evidence flag if `≥1` row exists (`recent_scored_count`, `last_scored_at`).
 
 States:
-- `BLOCKED` — structural pieces absent.
-- `WIRED_NO_RUNTIME_SAMPLE` — structurally wired, **no row yet** (market quiet; not a failure).
-- `WIRED_RUNTIME_SAMPLE` (a.k.a. wired + runtime evidence) — rows flowing.
+- `BLOCKED` — migration absent **OR** archiver dormant (no consumer).
+- `WIRED_NO_RUNTIME_SAMPLE` — migration applied **and** archiver enabled, **no row yet** (market quiet; not a failure).
+- `WIRED_RUNTIME_SAMPLE` — rows present (runtime proof; trumps the flags).
 
-`scoring_pipeline_wired = true` once structurally wired (migration applied + archiver
-registered + module/stream configured), regardless of row count — quiet markets do not
-re-block the dashboard.
+`scoring_pipeline_wired = true` once structurally wired (migration applied **AND** archiver enabled)
+OR rows exist — a quiet market does not re-block, but a dormant archiver honestly does.
 
 ### 4.2 A.4 fork validation
 - `A4_PENDING` — no `gate_c_validation` row with `gate='a4_fork_validation', status='passed'`.
@@ -217,7 +216,7 @@ ARBX_CALIBRATION_MIN_OBSERVATIONS=30   # per-pair prior observations before CALI
 
 ## 7. Tests
 - **Rust** (`scoring_pipeline` unit): flat-prior produces a `ConfidenceScore`; `HARD_GATE=false`
-  does not block emission; `HARD_GATE=true` blocks rejected candidates **but still produces the score**;
+  emits (advisory true); `HARD_GATE=true` flags rejected candidates (advisory false) **but still produces + emits the score**;
   `recommended_position_usd` USD conversion is positive and capped; no panic on degenerate prior.
 - **TS** (`scoring-status`): evidence-based logic with a mock pool — table present + archiver registered
   ⇒ `WIRED_NO_RUNTIME_SAMPLE`; rows present ⇒ runtime sample; `gate_c_validation` a4 row ⇒ `A4_PASSED`;

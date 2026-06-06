@@ -29,6 +29,7 @@ pub mod route_decoder;
 pub mod route_discovery;
 pub mod route_intent;
 pub mod scoring;
+pub mod scoring_pipeline;
 pub mod source_supervisor;
 pub mod strategy_label;
 // Phase 7-8: orchestrator + engines exposed for integration tests.
