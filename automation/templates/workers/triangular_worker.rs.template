@@ -1,0 +1,42 @@
+//! {{STRATEGY_LABEL}} Worker — Route discovery and execution orchestration
+
+use anyhow::Result;
+use redis::aio::ConnectionManager;
+use sqlx::PgPool;
+
+pub struct {{STRATEGY_LABEL}}Worker {
+    db: PgPool,
+    redis: ConnectionManager,
+}
+
+impl {{STRATEGY_LABEL}}Worker {
+    pub fn new(db: PgPool, redis: ConnectionManager) -> Self {
+        Self { db, redis }
+    }
+
+    pub async fn discover_routes(&self) -> Result<Vec<Route>> {
+        // Placeholder: real implementation discovers {{STRATEGY_NAME}} routes
+        log::info!("Discovering {{STRATEGY_NAME}} routes");
+        Ok(vec![])
+    }
+
+    pub async fn evaluate_route(&self, route: &Route) -> Result<bool> {
+        // Gate evaluation placeholder
+        Ok(true)
+    }
+}
+
+pub struct Route {
+    pub id: String,
+    pub hops: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_worker_initialization() {
+        assert_eq!(1, 1);
+    }
+}

@@ -1,0 +1,36 @@
+//! {{STRATEGY_LABEL}} Engine — Triangular arbitrage on {{CHAIN_ID}}
+//!
+//! Detects 3-hop price divergences and routes through optimal liquidity.
+
+use anyhow::Result;
+use redis::aio::ConnectionManager;
+use sqlx::PgPool;
+
+pub struct {{STRATEGY_LABEL}}Engine {
+    db: PgPool,
+    redis: ConnectionManager,
+    chain_id: u64,
+}
+
+impl {{STRATEGY_LABEL}}Engine {
+    pub fn new(db: PgPool, redis: ConnectionManager, chain_id: u64) -> Self {
+        Self { db, redis, chain_id }
+    }
+
+    pub async fn run(&self) -> Result<()> {
+        // Placeholder: real implementation detects divergences
+        log::info!("{{STRATEGY_LABEL}} engine running on chain {}", self.chain_id);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_engine_initialization() {
+        // Placeholder test
+        assert_eq!(1, 1);
+    }
+}

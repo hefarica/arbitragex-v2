@@ -1,0 +1,45 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+
+interface StrategySnapshot {
+  status: string;
+  routes: any[];
+}
+
+interface {{STRATEGY_LABEL}}ClientProps {
+  initialSnapshot: StrategySnapshot;
+}
+
+export function {{STRATEGY_LABEL}}Client({ initialSnapshot }: {{STRATEGY_LABEL}}ClientProps) {
+  const [data, setData] = useState<StrategySnapshot>(initialSnapshot);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const poll = setInterval(async () => {
+      setLoading(true);
+      try {
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_EDGE_URL || 'http://localhost:8787'}/api/strategies/{{STRATEGY_NAME}}`
+        );
+        const updated = await res.json();
+        setData(updated);
+      } catch (e) {
+        console.error('Failed to fetch {{STRATEGY_NAME}}:', e);
+      } finally {
+        setLoading(false);
+      }
+    }, 5000);
+
+    return () => clearInterval(poll);
+  }, []);
+
+  return (
+    <div className="p-4">
+      <h1 className="text-2xl font-bold">{{STRATEGY_LABEL}}</h1>
+      <p className="text-sm text-gray-500">Status: {data.status}</p>
+      <p className="text-sm text-gray-500">Routes: {data.routes.length}</p>
+      {loading && <p className="text-xs">Updating...</p>}
+    </div>
+  );
+}

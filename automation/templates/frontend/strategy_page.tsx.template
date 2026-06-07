@@ -1,0 +1,23 @@
+import { Suspense } from 'react';
+import { {{STRATEGY_LABEL}}Client } from './{{STRATEGY_NAME}}-client';
+
+export const metadata = {
+  title: '{{STRATEGY_LABEL}} Strategy',
+  description: 'Real-time {{STRATEGY_NAME}} arbitrage monitoring and control',
+};
+
+export default async function {{STRATEGY_LABEL}}Page() {
+  // SSR: Fetch initial snapshot from edge
+  const snapshot = await fetch(
+    `${process.env.NEXT_PUBLIC_EDGE_URL || 'http://localhost:8787'}/api/strategies/{{STRATEGY_NAME}}`,
+    { cache: 'no-store' }
+  )
+    .then((r) => r.json())
+    .catch(() => ({ status: 'error', routes: [] }));
+
+  return (
+    <Suspense fallback={<div>Loading {{STRATEGY_NAME}}...</div>}>
+      <{{STRATEGY_LABEL}}Client initialSnapshot={snapshot} />
+    </Suspense>
+  );
+}
