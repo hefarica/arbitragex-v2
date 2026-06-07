@@ -100,14 +100,197 @@ fn evaluate_opportunity(pool_data) {
         // Telemetría shadow REAL → arbx:cartridge:telemetry (log_quantum) → api-server WS → UI.
         // El sizing V3 (amount_out vía QuoterV2 / liquidez por tick) es la siguiente capa.
         log_quantum("info", `v3_source_priced cartridge=dex_arb chain=${chain_id} source_pool=${source_pool} sqrt_price_x96=${slot0.sqrt_price_x96} liquidity=${slot0.liquidity} source_price=${source_price} mode=shadow`);
-        return #{
+        if pool_data.fee_bps == () {
+            return #{
+                is_opportunity: false,
+                estimated_profit: 0.0,
+                confidence: 0.0,
+                reason: "v3_no_fee_tier",
+                source_price: source_price,
+                source_pool: source_pool,
+                protocol_type: "v3",
+                mode: "shadow"
+            };
+        }
+        if slot0.liquidity == "" || slot0.liquidity == "0" {
+            return #{
+                is_opportunity: false,
+                estimated_profit: 0.0,
+                confidence: 0.0,
+                reason: "v3_no_liquidity",
+                source_price: source_price,
+                source_pool: source_pool,
+                protocol_type: "v3",
+                mode: "shadow"
+            };
+        }
+        // hex address order = token0 is the smaller address (Uniswap convention)
+        let zero_for_one = token_in < token_out;
+        let est_out = v3_amount_out_single_tick(amount_in_str, slot0.sqrt_price_x96, slot0.liquidity, pool_data.fee_bps, zero_for_one);
+        if est_out == () {
+            return #{
+                is_opportunity: false,
+                estimated_profit: 0.0,
+                confidence: 0.0,
+                reason: "v3_single_tick_degenerate",
+                source_price: source_price,
+                source_pool: source_pool,
+                protocol_type: "v3",
+                mode: "shadow"
+            };
+        }
+        // The honest is_opportunity:false single-tick candidate (emitted when the cross-pool arb
+        // path is gated OFF, or when it finds no profitable round-trip). single-tick is an UPPER
+        // BOUND on real V3 output -> confidence capped 0.3, single_tick_unconfirmed:true.
+        let single_tick_candidate = #{
             is_opportunity: false,
             estimated_profit: 0.0,
-            confidence: 0.0,
-            urgency: "none",
-            reason: "v3_sizing_pending",
+            confidence: 0.3,
+            reason: "v3_single_tick_candidate",
+            estimated_amount_out: est_out,
+            v3_sizing_method: "single_tick_upper_bound",
+            single_tick_unconfirmed: true,
             source_price: source_price,
             source_pool: source_pool,
+            protocol_type: "v3",
+            mode: "shadow"
+        };
+
+        // ── GATE: cross-pool round-trip arb emission (is_opportunity:true path) ──────────
+        // Default OFF. Until an operator sets ARBX_V3_ARB_MODE=on, emit ONLY the honest
+        // is_opportunity:false candidate above (unchanged behaviour). Shadow/paper, capital=0.
+        if !v3_arb_enabled() {
+            return single_tick_candidate;
+        }
+
+        // ── CROSS-POOL ROUND-TRIP ARB (V3 source pool × V2 alt pools, same token pair) ──
+        // Council-mandated 2-leg round-trip in ONE token (token_in), per protocol-correct curve:
+        //   V3 leg -> v3_amount_out_single_tick on the source slot0 (UPPER BOUND, hence conf 0.3);
+        //   V2 leg -> v2_amount_out_str on the alt pool's reserves.
+        // NEVER the V2 path's buggy `out_alt - out_source` parallel-forward subtraction.
+        // get_pool_index returns V2 pools (the index is built UNISWAP_V2-only), so each alt leg is
+        // priced with V2 math and the source leg with V3 math — partitioned by protocol (council C5).
+        let alt_pools = get_pool_index(meta_in.symbol, meta_out.symbol);
+
+        // USD price of token_in — REQUIRED to express net profit. RULE 00: fail honestly, never
+        // fabricate a price, if the oracle has no fresh value.
+        let price_in_usd = get_token_price_usd(meta_in.symbol);
+        if price_in_usd == () || price_in_usd <= 0.0 {
+            return #{
+                is_opportunity: false,
+                estimated_profit: 0.0,
+                confidence: 0.0,
+                reason: "v3_arb_no_price",
+                source_price: source_price,
+                source_pool: source_pool,
+                protocol_type: "v3",
+                mode: "shadow"
+            };
+        }
+
+        // V2 alt-leg fee = 0.30% (30 bps) — the standard constant-product fee the index pools use.
+        let v2_fee_bps = 30;
+        // zero_for_one for the V3 source pool, per leg's own token order (council derivation):
+        let zfo_in_to_out = token_in < token_out;   // swapping token_in -> token_out on V3 source
+        let zfo_out_to_in = token_out < token_in;   // swapping token_out -> token_in on V3 source
+
+        let best_net_usd = ();          // () = no round-trip computed yet
+        let best_final_in = "";         // final token_in wei of the winning round-trip
+        let best_alt_pool = "";
+        let best_direction = "";
+
+        // gas_usd: gas is paid in the chain's NATIVE token (ETH/MATIC/BNB), NOT token_in.
+        // Council CRITICAL fix: price gas-in-native by the NATIVE gas token's USD price, not
+        // token_in's — multiplying ETH-cost by token_in's price is only correct when token_in==WETH
+        // (under-charges gas ~3000x for stables → false-positive viable). RULE 00: fail honestly
+        // (v3_arb_no_gas_price) if the native price is missing; never substitute a wrong price.
+        let base_fee = get_base_fee();
+        let gas_units = estimate_gas_cost("v3", chain_id);
+        let gas_cost_native = gas_units * base_fee / 1000000000.0; // gas × gwei / 1e9 = native token (ETH)
+        let native_gas_symbol = if chain_id == 1 || chain_id == 10 || chain_id == 8453 || chain_id == 42161 {
+            "WETH"
+        } else if chain_id == 137 {
+            "WMATIC"
+        } else if chain_id == 56 {
+            "WBNB"
+        } else {
+            ""
+        };
+        let native_usd = if native_gas_symbol == "" { () } else { get_token_price_usd(native_gas_symbol) };
+        if native_usd == () || native_usd <= 0.0 {
+            return #{
+                is_opportunity: false,
+                estimated_profit: 0.0,
+                confidence: 0.0,
+                reason: "v3_arb_no_gas_price",
+                source_price: source_price,
+                source_pool: source_pool,
+                protocol_type: "v3",
+                mode: "shadow"
+            };
+        }
+        let gas_usd = gas_cost_native * native_usd;
+
+        let amount_in_f = from_wei(amount_in_str, decimals_in);
+        let block_number = get_block_number();
+        for alt_pool in alt_pools {
+            if alt_pool == source_pool {
+                continue;
+            }
+            // v3_roundtrip_for_alt does all per-alt work (reserves, freshness, both directions) and
+            // returns either () (uncomputable) or #{ net_usd, final_in, direction }. Extracted to a
+            // helper to keep evaluate_opportunity's expression-nesting under the Rhai depth limit.
+            let rt = v3_roundtrip_for_alt(alt_pool, source_pool, token_in, token_out,
+                amount_in_str, amount_in_f, slot0, pool_data.fee_bps,
+                zfo_in_to_out, zfo_out_to_in, v2_fee_bps, price_in_usd, gas_usd,
+                decimals_in, block_number);
+            if rt == () {
+                continue;
+            }
+            if best_net_usd == () || rt.net_usd > best_net_usd {
+                best_net_usd = rt.net_usd;
+                best_final_in = rt.final_in;
+                best_alt_pool = alt_pool;
+                best_direction = rt.direction;
+            }
+        }
+
+        // No alt-pool yielded a computable round-trip -> keep the honest single-tick candidate.
+        if best_net_usd == () {
+            return single_tick_candidate;
+        }
+
+        // A real arb at this probe amount_in: net_usd > 0 (computed from slot0/reserves, RULE 00).
+        if best_net_usd > 0.0 {
+            log_quantum("info", `v3_arb_viable cartridge=dex_arb chain=${chain_id} source_pool=${source_pool} alt_pool=${best_alt_pool} dir=${best_direction} net_usd=${best_net_usd} mode=shadow`);
+            return #{
+                is_opportunity: true,
+                estimated_profit: best_net_usd,
+                estimated_amount_out: best_final_in,
+                confidence: 0.3,
+                single_tick_unconfirmed: true,
+                v3_sizing_method: "single_tick_upper_bound",
+                reason: "v3_arb_viable",
+                source_pool: source_pool,
+                alt_pool: best_alt_pool,
+                direction: best_direction,
+                source_price: source_price,
+                protocol_type: "v3",
+                mode: "shadow"
+            };
+        }
+
+        // Round-trips computed but none profitable -> honest negative (the REAL <=0 number).
+        return #{
+            is_opportunity: false,
+            estimated_profit: best_net_usd,
+            estimated_amount_out: best_final_in,
+            confidence: 0.0,
+            single_tick_unconfirmed: true,
+            v3_sizing_method: "single_tick_upper_bound",
+            reason: "v3_arb_unprofitable",
+            source_pool: source_pool,
+            alt_pool: best_alt_pool,
             protocol_type: "v3",
             mode: "shadow"
         };
@@ -433,6 +616,64 @@ fn calculate_amount_out_v2(amount_in_str, r0_str, r1_str) {
     }
 
     numerator / denominator
+}
+
+/// Cross-pool round-trip for ONE alt (V2) pool against the V3 source pool.
+/// Returns () if uncomputable (missing reserves, stale, missing token0, degenerate legs),
+/// else #{ net_usd, final_in, direction } for the better of the two directions.
+/// Math is per-protocol-partitioned: V3 source leg -> v3_amount_out_single_tick (slot0),
+/// V2 alt leg -> v2_amount_out_str (reserves). gross_profit_wei = final_in - amount_in.
+fn v3_roundtrip_for_alt(alt_pool, source_pool, token_in, token_out, amount_in_str, amount_in_f,
+    slot0, v3_fee_bps, zfo_in_to_out, zfo_out_to_in, v2_fee_bps, price_in_usd, gas_usd,
+    decimals_in, block_number) {
+
+    let alt_res = get_reserves(alt_pool);
+    if alt_res == () {
+        return ();
+    }
+    if alt_res.block != () && alt_res.block < block_number - 3 {
+        return ();
+    }
+    let token0 = alt_res.token0_addr;
+    if token0 == () {
+        return ();
+    }
+    // Order reserves by token0 so reserve_in/out match the swap direction.
+    let rin_io = alt_res.r1;
+    let rout_io = alt_res.r0;
+    if token0 == token_in {
+        rin_io = alt_res.r0;
+        rout_io = alt_res.r1;
+    }
+    // Reversed (token_out -> token_in).
+    let rin_oi = rout_io;
+    let rout_oi = rin_io;
+
+    let best = ();
+
+    // Direction A: leg1 = V3 source (in->out), leg2 = V2 alt (out->in).
+    let a_leg1 = v3_amount_out_single_tick(amount_in_str, slot0.sqrt_price_x96, slot0.liquidity, v3_fee_bps, zfo_in_to_out);
+    if a_leg1 != () {
+        let a_leg2 = v2_amount_out_str(a_leg1, rin_oi, rout_oi, v2_fee_bps);
+        if a_leg2 != () {
+            let net_usd = (from_wei(a_leg2, decimals_in) - amount_in_f) * price_in_usd - gas_usd;
+            best = #{ net_usd: net_usd, final_in: a_leg2, direction: "v3_source_then_v2_alt" };
+        }
+    }
+
+    // Direction B: leg1 = V2 alt (in->out), leg2 = V3 source (out->in).
+    let b_leg1 = v2_amount_out_str(amount_in_str, rin_io, rout_io, v2_fee_bps);
+    if b_leg1 != () {
+        let b_leg2 = v3_amount_out_single_tick(b_leg1, slot0.sqrt_price_x96, slot0.liquidity, v3_fee_bps, zfo_out_to_in);
+        if b_leg2 != () {
+            let net_usd = (from_wei(b_leg2, decimals_in) - amount_in_f) * price_in_usd - gas_usd;
+            if best == () || net_usd > best.net_usd {
+                best = #{ net_usd: net_usd, final_in: b_leg2, direction: "v2_alt_then_v3_source" };
+            }
+        }
+    }
+
+    best
 }
 
 /// Calcula la confianza de la oportunidad basada en múltiples factores.

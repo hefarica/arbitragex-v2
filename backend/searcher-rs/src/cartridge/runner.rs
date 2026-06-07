@@ -763,6 +763,59 @@ mod tests {
             "calc_v3_spot_price",
             |_s: &str, _di: i64, _do: i64| -> f64 { 3000.0 },
         );
+        // Real single-tick math (same conversion as the production host binding: bps -> pips ×100).
+        engine.register_fn(
+            "v3_amount_out_single_tick",
+            |amount_in: &str,
+             sqrt_price_x96: &str,
+             liquidity: &str,
+             fee_bps: i64,
+             zero_for_one: bool|
+             -> Dynamic {
+                use ethers::types::U256;
+                let amount_in = match U256::from_dec_str(amount_in) {
+                    Ok(v) => v,
+                    Err(_) => return Dynamic::UNIT,
+                };
+                let sqrt_price_x96 = match U256::from_dec_str(sqrt_price_x96) {
+                    Ok(v) => v,
+                    Err(_) => return Dynamic::UNIT,
+                };
+                let liquidity = match U256::from_dec_str(liquidity) {
+                    Ok(v) => v,
+                    Err(_) => return Dynamic::UNIT,
+                };
+                let fee_pips = fee_bps * 100;
+                if !(0..1_000_000).contains(&fee_pips) {
+                    return Dynamic::UNIT;
+                }
+                let result = crate::amm_math::v3_amount_out_single_tick(
+                    amount_in,
+                    sqrt_price_x96,
+                    liquidity,
+                    fee_pips as u32,
+                    zero_for_one,
+                );
+                if result.is_zero() {
+                    Dynamic::UNIT
+                } else {
+                    Dynamic::from(result.to_string())
+                }
+            },
+        );
+        // Cross-pool arb gate: default OFF in this unit test so the V3 branch emits the honest
+        // is_opportunity:false single-tick candidate (the is_opportunity:true path is exercised
+        // separately/integration). Production reads ARBX_V3_ARB_MODE.
+        engine.register_fn("v3_arb_enabled", || -> bool { false });
+        // Stubs so the (gated-off) arb code path still resolves if ever reached: never used while
+        // v3_arb_enabled()==false short-circuits first, but registered for eval completeness.
+        engine.register_fn("get_token_price_usd", |_sym: &str| -> Dynamic {
+            Dynamic::UNIT
+        });
+        engine.register_fn(
+            "v2_amount_out_str",
+            |_ai: &str, _ri: &str, _ro: &str, _fee: i64| -> Dynamic { Dynamic::UNIT },
+        );
         {
             let lf = log_fired.clone();
             engine.register_fn("log_quantum", move |_lvl: &str, _msg: &str| {
@@ -796,8 +849,16 @@ mod tests {
             "source_pool".into(),
             Dynamic::from("0x00000000000000000000000000000000000000cc".to_string()),
         );
-        pd.insert("amount_in".into(), Dynamic::from("1000000".to_string()));
+        // 1 WETH (1e18 wei). With the stub slot0 (sqrtP=4339505179874779672736, L=57737784664)
+        // and zero_for_one=true this drives a non-degenerate single-tick move, so the V3 branch
+        // reaches the candidate (a tiny 1e6-wei probe rounds to a zero price move = degenerate).
+        pd.insert(
+            "amount_in".into(),
+            Dynamic::from("1000000000000000000".to_string()),
+        );
         pd.insert("protocol_type".into(), Dynamic::from(protocol.to_string()));
+        // V3 fee tier (0.30% = 30 bps) so the V3 branch exercises the single-tick candidate path.
+        pd.insert("fee_bps".into(), Dynamic::from(30i64));
 
         let res: Dynamic = engine
             .call_fn(&mut scope, &ast, "evaluate_opportunity", (pd,))
@@ -815,11 +876,23 @@ mod tests {
 
     #[test]
     fn dex_arb_v3_prices_before_insufficient_pools_gate() {
-        // V3 source with slot0 available: must reach the V3 branch (emit telemetry, return
-        // v3_sizing_pending) WITHOUT being blocked by the V2 get_pool_index >= 2 gate.
+        // V3 source with slot0 + fee tier available: must reach the V3 branch (emit telemetry,
+        // return the single-tick candidate) WITHOUT being blocked by the V2 get_pool_index >= 2 gate.
         let (res, log_fired, pool_index_hit) = eval_dex_arb_stub("v3", true, 0);
-        assert_eq!(reason_of(&res), "v3_sizing_pending");
+        assert_eq!(reason_of(&res), "v3_single_tick_candidate");
+        // SOUND: single-tick is an upper bound -> never a confirmed opportunity.
         assert!(!res.get("is_opportunity").unwrap().as_bool().unwrap());
+        // The candidate carries the REAL single-tick estimate (RULE 00: no fabricated value).
+        let est_out = res
+            .get("estimated_amount_out")
+            .expect("candidate must carry estimated_amount_out")
+            .clone()
+            .into_string()
+            .expect("estimated_amount_out is a decimal string");
+        assert!(
+            !est_out.is_empty() && est_out.chars().all(|c| c.is_ascii_digit()),
+            "estimated_amount_out must be a non-empty decimal string, got {est_out:?}"
+        );
         assert!(
             log_fired,
             "log_quantum (v3_source_priced) must fire — shadow telemetry"
