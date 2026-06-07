@@ -33,7 +33,8 @@ jobs:
 
       - uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: nightly`n        continue-on-error: true
+          version: nightly
+        continue-on-error: true
 
       - name: forge install dependencies || true
         # contracts/lib/ is gitignored (contracts/.gitignore: lib/).
@@ -86,7 +87,8 @@ jobs:
 
       - uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: nightly`n        continue-on-error: true
+          version: nightly
+        continue-on-error: true
 
       - name: forge install dependencies || true
         run: |
