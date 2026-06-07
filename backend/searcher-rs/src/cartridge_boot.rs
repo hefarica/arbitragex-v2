@@ -439,6 +439,26 @@ fn build_rd_outcome_v2(
     ts_ms: u64,
 ) -> serde_json::Value {
     let hop_count = intent.legs.len();
+
+    // Classify the route SHAPE into an omega_strategy_pack dispatch family — a pure
+    // function of the legs we already decoded (no pricing, no RPC, no sim). This is
+    // OBSERVABLE telemetry only: it is NOT used to dispatch a cartridge here (live
+    // dispatch wiring is gated separately and out of scope for shadow discovery).
+    // `strategy_family_supported` flags whether the committed pack could service the
+    // family, so a non-dispatchable (e.g. cross-chain) family is surfaced honestly
+    // rather than silently rejected downstream. Fail-honest: an unclassifiable shape
+    // ⇒ `strategy_family = null` with the reason carried in `strategy_family_reason`.
+    let applicability =
+        crate::route_discovery::strategy_applicability::classify_route_legs(&intent.legs);
+    let strategy_family_supported =
+        crate::route_discovery::strategy_applicability::is_pack_supported(&applicability.strategy_kind);
+    let strategy_family = if applicability.applicable {
+        serde_json::Value::String(applicability.strategy_kind.clone())
+    } else {
+        serde_json::Value::Null
+    };
+    let strategy_family_reason = applicability.reason.clone();
+
     let route: Vec<serde_json::Value> = intent
         .legs
         .iter()
@@ -473,6 +493,11 @@ fn build_rd_outcome_v2(
             "environment": topology_environment(intent),
             "hop_count": hop_count,
             "route_family": route_family(hop_count),
+            // Classified dispatch family (route shape → omega_strategy_pack key).
+            // Observational telemetry; null when the shape is unclassifiable (R8).
+            "strategy_family": strategy_family,
+            "strategy_family_supported": strategy_family_supported,
+            "strategy_family_reason": strategy_family_reason,
         },
         "route": route,
         "source_event": intent.source_event.as_str(),
@@ -965,6 +990,15 @@ mod tests {
         assert_eq!(v["topology"]["hop_count"].as_u64().unwrap(), 3);
         assert_eq!(v["topology"]["route_family"].as_str().unwrap(), "triangular");
         assert_eq!(v["topology"]["environment"].as_str().unwrap(), "interdex_intrachain");
+
+        // Classifier→cartridge bridge: 3-leg cross-dex cycle (uniswap-v3/curve/sushi)
+        // ⇒ triangular_cross_dex, which the committed omega_strategy_pack can dispatch.
+        assert_eq!(v["topology"]["strategy_family"].as_str().unwrap(), "triangular_cross_dex");
+        assert!(v["topology"]["strategy_family_supported"].as_bool().unwrap());
+        assert_eq!(
+            v["topology"]["strategy_family_reason"].as_str().unwrap(),
+            "three_leg_cross_dex_cycle"
+        );
 
         // route[] carries per-leg dex / fee_bps / invariant.
         let route = v["route"].as_array().unwrap();
