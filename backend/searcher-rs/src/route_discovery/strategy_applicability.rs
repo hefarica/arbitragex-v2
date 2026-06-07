@@ -333,7 +333,7 @@ pub fn classify_v2(shape: &RouteShapeV2) -> StrategyApplicabilityV2 {
                 StrategyApplicabilityV2::applicable("triangular_same_dex", "three_leg_same_dex_cycle", &[])
             }
         }
-        n if n >= 4 && n <= 7 => {
+        n if (4..=7).contains(&n) => {
             StrategyApplicabilityV2::applicable("multi_hop_cycle", "four_to_seven_leg_cycle", &[])
         }
         _ => StrategyApplicabilityV2::not_applicable("hop_count_above_7_unsupported"),
@@ -737,7 +737,7 @@ strategies:
         }
         // 8+ unsupported, fail-honest
         assert!(!classify_v2(&shape(8)).applicable);
-        assert_eq!(classify_v2(&shape(1)).applicable, false);
+        assert!(!classify_v2(&shape(1)).applicable);
     }
 
     #[test]

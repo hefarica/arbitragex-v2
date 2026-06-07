@@ -994,12 +994,12 @@ mod tests {
         assert!(v["gas_cost_usd"].is_null());
         assert!(v["slippage_cost_usd"].is_null());
         assert!(v["net_profit_usd"].is_null());
-        assert_eq!(v["net_computed"].as_bool().unwrap(), false);
+        assert!(!v["net_computed"].as_bool().unwrap());
         assert_eq!(v["estimated_profit_usd"].as_f64().unwrap(), 9.64);
 
         // Gates: simulation disabled here, live blocked, ethics permitted.
         assert_eq!(v["simulation"]["status"].as_str().unwrap(), "disabled");
-        assert_eq!(v["live_gate"]["eligible"].as_bool().unwrap(), false);
+        assert!(!v["live_gate"]["eligible"].as_bool().unwrap());
         assert_eq!(v["ethics"]["status"].as_str().unwrap(), "permitted");
     }
 
