@@ -440,6 +440,19 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
         let factor = 10f64.powi(decimals as i32);
         Dynamic::from(wei / factor)
     });
+
+    // to_float(s: String) -> f64
+    // String → f64 parse. rhai does NOT provide `to_float` on strings natively
+    // (only on integer types), yet the dex_arb and triangular_arb cartridges call
+    // `s.to_float()` inside their `parse_float` helper. Without this binding those
+    // cartridges throw ErrorFunctionNotFound at runtime the moment they reach
+    // reserve parsing — caught and swallowed by the shadow loop, so they would
+    // SILENTLY never emit an opportunity. Registering it here is the root-cause fix
+    // (regression-tested in tests/cartridge_strategies_test.rs). Fail-honest: an
+    // unparseable string yields 0.0, which every cartridge already treats as "skip".
+    engine.register_fn("to_float", |s: &str| -> Dynamic {
+        Dynamic::from(s.parse::<f64>().unwrap_or(0.0))
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
