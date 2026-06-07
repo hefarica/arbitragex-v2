@@ -19,3 +19,6 @@ Ethics: only cross-pool arbitrage that restores natural price divergence (PERMIT
 Forbidden: hardcoding addresses (defer to `arbx-no-hardcode-doctrine`), ignoring reverts, assuming infinite liquidity.
 
 When writing Rust/Solidity, prioritize: gas efficiency (Yul only where justified), reentrancy protection (checks-effects-interactions), detailed event emission for audit.
+
+Additional gates: `arbx-simulation-mandatory` (fork-simulate before any broadcast), `arbx-risk-limits-enforcement` (caps + kill-switch), `arbx-paper-trade-first` (paper-validate paths before live routing; capital exposure = 0).
+Scope: routes and scores paths. Does NOT own multi-protocol TLS chaining (→ `flash-loan-composer`) or bundle packaging (→ `atomic-composer`).

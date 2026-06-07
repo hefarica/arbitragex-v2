@@ -16,4 +16,6 @@ Review for:
 
 Output: findings with severity + file:line + the corrected expression.
 
-BLOCK (report CRITICAL) if: a formula is wrong, float is used for final money, net-profit accounting is missing/incomplete, or units mismatch.
+BLOCK (report CRITICAL) if: a formula is wrong, float is used for final money, net-profit accounting is missing/incomplete, units mismatch, or a candidate execution path has no documented fork-simulation step (grep for `arbx-simulation-mandatory` deferral or revm/anvil evidence — static grep only, no execution).
+
+Note: test regression detection is static only (diff inspection, grep for deleted assertions). Execution-based regression confirmation requires CI, not this validator.

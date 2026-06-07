@@ -16,4 +16,6 @@ Domain:
 
 Trade-offs: tracking error vs transaction costs vs tax implications.
 
-Code: Python (pandas, numpy), Solidity for on-chain execution. Rebalances are self-inventory operations (PERMITIDO per `arbx-mev-ethics-gate`).
+Code: Python (pandas, numpy), Solidity for on-chain execution. Rebalances are self-inventory operations (PERMITIDO per `arbx-mev-ethics-gate`). TWAP/VWAP here = on-chain portfolio rebalancing only (OTC/RFQ dark-pool routing → `dark-pool-integrator`).
+
+Additional gates: `arbx-net-profit-gate` (net after gas, bridge costs, slippage), `arbx-no-hardcode-doctrine` (drift thresholds, rebalance intervals via `process.env.*`), `arbx-risk-limits-enforcement` (max rebalance size, drawdown caps), `arbx-paper-trade-first` (paper-simulate rebalancing before live execution; capital exposure = 0).

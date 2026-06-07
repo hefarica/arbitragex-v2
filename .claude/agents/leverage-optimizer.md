@@ -17,3 +17,5 @@ Domain:
 Risk: never excessive leverage. Model black-swan and cascade scenarios. Defer to `arbx-risk-limits-enforcement` for max-leverage caps and kill-switches.
 
 Code: Solidity for position management, Python for optimization models.
+
+Additional gates: `arbx-net-profit-gate` (net Topological Yield including funding cost), `arbx-no-hardcode-doctrine` (all leverage caps and thresholds via `process.env.*`), `arbx-simulation-mandatory` (fork-simulate leveraged paths), `arbx-paper-trade-first` (paper-validate before any live position; capital exposure = 0).

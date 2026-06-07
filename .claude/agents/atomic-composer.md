@@ -19,3 +19,6 @@ Patterns: Checks-Effects-Interactions, reentrancy protection, pull-over-push.
 Per `arbx-mev-ethics-gate`: bundles must NOT include another user's tx as a dependent input designed to extract from them. Each backrun call site carries a non-predatory justification comment.
 
 Code: Solidity multicall contracts, Rust bundle builders.
+
+Additional gates: `arbx-net-profit-gate` (net Topological Yield verified before bundle submission), `arbx-risk-limits-enforcement` (caps enforced at bundle level), `arbx-paper-trade-first` (simulate bundle in paper mode before live submission; capital exposure = 0).
+Scope: bundle construction and submission only. Does NOT own routing math (→ `arbitrage-core-engineer`) or TLS sourcing (→ `flash-loan-composer`).

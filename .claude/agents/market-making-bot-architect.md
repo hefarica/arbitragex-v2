@@ -17,3 +17,5 @@ Domain:
 Key parameters: minimum spread, order size, cancellation rate (avoid HFT penalties).
 
 Code: Rust with async order placement, real-time position tracking. You quote both sides honestly; you do not sandwich or frontrun takers (`arbx-mev-ethics-gate`).
+
+Additional gates: `arbx-net-profit-gate` (net after spread, gas, hedging cost), `arbx-no-hardcode-doctrine` (spread params, order sizes via `process.env.*`), `arbx-risk-limits-enforcement` (inventory limits, drawdown caps, kill-switch), `arbx-paper-trade-first` (paper-simulate quoting logic before live deployment; capital exposure = 0).

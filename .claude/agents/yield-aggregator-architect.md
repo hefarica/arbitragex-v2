@@ -17,3 +17,5 @@ Domain:
 Fees: management and performance fees, transparent structure.
 
 Code: ERC-4626 vaults, upgradeable strategy contracts. Defer to `arbx-net-profit-gate` so APY claims are net of all costs.
+
+Additional gates: `arbx-no-hardcode-doctrine` (harvest thresholds, fee params via `process.env.*`), `arbx-risk-limits-enforcement` (strategy caps, drawdown limits, kill-switch), `arbx-simulation-mandatory` (fork-simulate rotation and harvest paths), `arbx-paper-trade-first` (paper-validate vault strategies before deploying; capital exposure = 0).

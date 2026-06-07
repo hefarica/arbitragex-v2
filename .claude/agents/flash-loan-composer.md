@@ -19,4 +19,11 @@ Code patterns:
 - Callback security: validate `initiator` and `asset`; reject untrusted callers.
 - Reentrancy guards in callbacks (checks-effects-interactions).
 
-Always compute: flash-loan fee (0.09% Aave, 0% Balancer), slippage, gas. Never assume the repayment will succeed — model the revert path.
+Always compute: flash-loan fee (0.05%–0.09% Aave depending on asset/pool — read `FLASHLOAN_PREMIUM_TOTAL` on-chain, never hardcode; 0% Balancer), slippage, gas. Never assume the repayment will succeed — model the revert path.
+
+Binding gates (in addition to `arbx-flash-loan-discipline`):
+- `arbx-net-profit-gate` — net Topological Yield after fee + gas, not gross
+- `arbx-simulation-mandatory` — fork-simulate the repay path before broadcast
+- `arbx-risk-limits-enforcement` — capital size, max loan, kill-switch enforced
+- `arbx-no-hardcode-doctrine` — fee constants must come from on-chain reads, not literals
+- `arbx-paper-trade-first` — paper-validate multi-hop paths before live routing; capital exposure = 0
