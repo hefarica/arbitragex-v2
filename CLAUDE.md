@@ -27,13 +27,18 @@ Bajo ninguna circunstancia usarás jerga de finanzas descentralizadas. Si debes 
 > 3. **Delegar** la ejecución al agente nativo correspondiente vía Task tool.
 > 4. **Validar** el resultado con el validator asignado (ver matriz §15). Si el validator encuentra error → el builder corrige antes de entregar.
 > 5. **Reportar** qué agentes participaron y qué validó cada uno.
-> - Si es tarea de Rust/backend → despacha `rust-topology-engineer` + valida con `cs-validator` y `math-validator`.
-> - Si es tarea de frontend → despacha `frontend-architect` + valida con `cs-validator`.
-> - Si es tarea de deploy → despacha `devops-platform` + valida con `security-auditor`.
-> - Si es tarea de contratos → despacha `solidity-engineer` + valida con `security-auditor` y `math-validator`.
-> - Si es tarea de estrategia → despacha `strategy-architect` + valida con `economics-validator` y `math-validator`.
-> - Si es tarea de datos → despacha `data-analytics` + valida con `economics-validator`.
-> - Si es tarea simple (typo, pregunta) → ejecuta directamente sin despachar, pero menciona por qué no aplica despacho.
+> Matriz tarea → builder + validator (roster real en `.claude/agents/`; builders = los 30 especialistas, validators read-only = `cs-validator`, `math-validator`, `economics-validator`, `security-auditor-automated`):
+> - Rust/backend hot-path → `hft-latency-architect` o `arbitrage-core-engineer` + valida `cs-validator` y `math-validator`.
+> - Contratos (Solidity) → `atomic-composer`, `gas-optimization-specialist` o `liquidation-engineer` + valida `security-auditor-automated` y `math-validator`.
+> - Estrategia/arbitraje → `arbitrage-core-engineer`, `market-making-bot-architect` o `quant-risk-analyst` + valida `economics-validator` y `math-validator`.
+> - MEV/mempool → `mev-extraction-engineer` (ético) o `mempool-analyst` + valida `security-auditor-automated` (+ gate `arbx-mev-ethics-gate`).
+> - Flash loans → `flash-loan-composer` + valida `security-auditor-automated` y `math-validator`.
+> - Riesgo → `quant-risk-analyst` + valida `math-validator`.
+> - Oráculos / seguridad → `oracle-security-architect` o `security-auditor-automated` + valida `math-validator`.
+> - Datos on-chain → `data-analytics-pipeline` + valida `economics-validator`.
+> - Infra / monitoreo / deploy → `subsecond-monitoring-engineer` o `institutional-api-gateway` + valida `security-auditor-automated`.
+> - Frontend → sin agente dedicado en el roster DeFi; usa `general-purpose` + valida `cs-validator`.
+> - Tarea simple (typo, pregunta) → ejecuta directamente sin despachar, pero menciona por qué no aplica despacho.
 > - **NUNCA ignores a los validators.** Un builder sin validator = trabajo sin peer review = inaceptable.
 
 ## 2. REGLAS INMUTABLES DE OPERACIÓN
@@ -217,7 +222,7 @@ Lee la skill completa de `.agents/skills/<nombre>/SKILL.md` cuando la situación
 
 ### 16.1 Native Subagents (`.claude/agents/`)
 
-10 agentes definidos con YAML frontmatter + sistema de permisos aislado. Claude Code los descubre automáticamente y delega según la `description` con keyword `PROACTIVELY`.
+33 agentes definidos con YAML frontmatter válido (`name`/`description`/`tools`/`model: opus`): **30 builders** especialistas (arbitrage-core, hft-latency, mev-extraction [ético], flash-loan, dark-pool, zkp, cross-chain, custody, quant-risk, market-making, liquidation, oracle-security, gas-opt, mempool-analyst, priority-fee, validator-relations, monitoring, api-gateway, atomic-composer, compliance, leverage, yield, perp, options, rebalance, insurance, governance, tokenomics, security-auditor-automated, data-analytics-pipeline) + **3 validators read-only** (`cs-validator`, `math-validator`, `economics-validator`, tools `Read, Grep, Glob`). Claude Code los descubre automáticamente y delega vía el Task tool según la `description`. Los validators NUNCA editan; bloquean si reportan CRITICAL.
 
 ### 16.2 Agent Teams — Ejecución Paralela
 
