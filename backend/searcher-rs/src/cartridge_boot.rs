@@ -271,31 +271,15 @@ async fn emit_shadow_outcome(
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
 
-    let first = intent.legs.first();
-    let last = intent.legs.last();
-    let pool_hint = first
-        .and_then(|l| l.pool_hint)
-        .map(|p| format!("{:#x}", p))
-        .unwrap_or_default();
-
-    let payload = serde_json::json!({
-        "schema": "rd_outcome_v1",
-        "ts_ms": ts_ms,
-        "chain_id": chain_id,
-        "cartridge_id": cartridge_id,
-        "tx_hash": format!("{:#x}", intent.tx_hash),
-        "source_event": intent.source_event.as_str(),
-        "pool_hint": pool_hint,
-        "token_in": first.map(|l| format!("{:#x}", l.token_in)).unwrap_or_default(),
-        "token_out": last.map(|l| format!("{:#x}", l.token_out)).unwrap_or_default(),
-        "is_opportunity": res.is_opportunity,
-        "estimated_profit": res.estimated_profit,
-        "confidence": res.confidence,
-        "urgency": res.urgency.clone(),
-        "reason": res.reason.clone(),
-        "had_reserves": had_reserves,
-        "mode": "shadow",
-    });
+    // Schema selection: v2 (topology/route[]/waterfall) behind its own opt-in flag,
+    // v1 (flat single-leg) otherwise. Both are pure builders (unit-tested). The v2
+    // schema is additive and default-off — it never alters v1 behaviour or touches
+    // `arbx:opps:detected`.
+    let payload = if outcomes_v2_schema_enabled() {
+        build_rd_outcome_v2(chain_id, cartridge_id, intent, res, had_reserves, ts_ms)
+    } else {
+        build_rd_outcome_v1(chain_id, cartridge_id, intent, res, had_reserves, ts_ms)
+    };
 
     let json = match serde_json::to_string(&payload) {
         Ok(s) => s,
@@ -322,6 +306,197 @@ async fn emit_shadow_outcome(
             error = %e,
         ),
     }
+}
+
+/// Opt-in for the richer `rd_outcome_v2` schema (topology / route[] / waterfall /
+/// simulation / ethics / live_gate). Default off → v1 stays the wire format until an
+/// operator turns this on. Independent of the emission gate, so v2 can be staged
+/// without changing what is emitted.
+fn outcomes_v2_schema_enabled() -> bool {
+    matches!(
+        std::env::var("ARBX_ROUTE_DISCOVERY_OUTCOMES_V2_SCHEMA")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "shadow" | "on" | "1" | "true"
+    )
+}
+
+/// route_family label from hop count (the closed-cycle taxonomy).
+fn route_family(hop_count: usize) -> &'static str {
+    match hop_count {
+        0 | 1 => "single_leg",
+        2 => "spatial_or_pair",
+        3 => "triangular",
+        4 => "quadrangular",
+        5 => "deep_solver",
+        6 => "long_tail",
+        _ => "supreme_graph",
+    }
+}
+
+/// Best-effort topology environment. The discovery worker is single-chain, so a route
+/// is never interchain here; we distinguish intradex vs interdex by distinct dex hints
+/// (R8: only what the decoder actually extracted — no fabrication).
+fn topology_environment(intent: &RouteIntent) -> &'static str {
+    let mut dexes = std::collections::HashSet::new();
+    for leg in &intent.legs {
+        if let Some(d) = leg.dex_hint.as_ref() {
+            dexes.insert(d.as_str());
+        }
+    }
+    if dexes.len() > 1 {
+        "interdex_intrachain"
+    } else {
+        "intradex"
+    }
+}
+
+/// Map a leg's protocol type to its AMM invariant family (fail-honest: unknown stays
+/// "unknown" rather than guessing). Matches on the Debug form so it survives new
+/// `ProtocolType` variants without a compile break.
+fn invariant_of(protocol_debug: &str) -> &'static str {
+    let p = protocol_debug.to_ascii_lowercase();
+    if p.contains("v3") || p.contains("concentrated") {
+        "concentrated_liquidity"
+    } else if p.contains("curve") || p.contains("stable") {
+        "stableswap"
+    } else if p.contains("balancer") || p.contains("weighted") {
+        "weighted"
+    } else if p.contains("v2") || p.contains("constantproduct") || p.contains("constant_product") {
+        "constant_product"
+    } else {
+        "unknown"
+    }
+}
+
+/// Pure builder for the legacy `rd_outcome_v1` payload (flat single-leg).
+fn build_rd_outcome_v1(
+    chain_id: u64,
+    cartridge_id: &str,
+    intent: &RouteIntent,
+    res: &CartridgeEvalResult,
+    had_reserves: bool,
+    ts_ms: u64,
+) -> serde_json::Value {
+    let first = intent.legs.first();
+    let last = intent.legs.last();
+    let pool_hint = first
+        .and_then(|l| l.pool_hint)
+        .map(|p| format!("{:#x}", p))
+        .unwrap_or_default();
+
+    serde_json::json!({
+        "schema": "rd_outcome_v1",
+        "ts_ms": ts_ms,
+        "chain_id": chain_id,
+        "cartridge_id": cartridge_id,
+        "tx_hash": format!("{:#x}", intent.tx_hash),
+        "source_event": intent.source_event.as_str(),
+        "pool_hint": pool_hint,
+        "token_in": first.map(|l| format!("{:#x}", l.token_in)).unwrap_or_default(),
+        "token_out": last.map(|l| format!("{:#x}", l.token_out)).unwrap_or_default(),
+        "is_opportunity": res.is_opportunity,
+        "estimated_profit": res.estimated_profit,
+        "confidence": res.confidence,
+        "urgency": res.urgency.clone(),
+        "reason": res.reason.clone(),
+        "had_reserves": had_reserves,
+        "mode": "shadow",
+    })
+}
+
+/// Pure builder for the enriched `rd_outcome_v2` payload.
+///
+/// Adds topology + full route[] legs + a net-profit waterfall + simulation / ethics /
+/// live_gate objects. FAIL-HONEST: the discovery layer does NOT compute itemized costs
+/// or run a fork simulation, so every cost field that was not computed is emitted as
+/// `null` (never a fabricated number — R8), `simulation.status = "disabled"`, and
+/// `live_gate.eligible = false`. The only profit figure emitted is the cartridge's own
+/// `estimated_profit` (clearly named), with `net_computed = false`.
+fn build_rd_outcome_v2(
+    chain_id: u64,
+    cartridge_id: &str,
+    intent: &RouteIntent,
+    res: &CartridgeEvalResult,
+    had_reserves: bool,
+    ts_ms: u64,
+) -> serde_json::Value {
+    let hop_count = intent.legs.len();
+    let route: Vec<serde_json::Value> = intent
+        .legs
+        .iter()
+        .enumerate()
+        .map(|(i, leg)| {
+            let proto = format!("{:?}", leg.protocol_type);
+            serde_json::json!({
+                "leg": i + 1,
+                "token_in": format!("{:#x}", leg.token_in),
+                "token_out": format!("{:#x}", leg.token_out),
+                "pool": leg.pool_hint.map(|p| format!("{:#x}", p)),
+                "dex": leg.dex_hint.clone(),
+                "fee_bps": leg.fee_bps,
+                "invariant": invariant_of(&proto),
+                "protocol_type": proto,
+                "chain_id": chain_id,
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "schema": "rd_outcome_v2",
+        "snapshot_id": format!("{}:{:#x}:{}", chain_id, intent.tx_hash, ts_ms),
+        "ts_ms": ts_ms,
+        "chain_id": chain_id,
+        "strategy_kind": cartridge_id,
+        "cartridge_id": cartridge_id,
+        "mode": "shadow",
+        "is_opportunity": res.is_opportunity,
+        "status": if res.is_opportunity { "shadow_visible" } else { "rejected_with_reason" },
+        "topology": {
+            "environment": topology_environment(intent),
+            "hop_count": hop_count,
+            "route_family": route_family(hop_count),
+        },
+        "route": route,
+        "source_event": intent.source_event.as_str(),
+        // ── Net-profit waterfall — FAIL-HONEST (R8) ──
+        // Only the cartridge's own estimate is known at the discovery layer; the
+        // itemized costs and the simulated net are NOT computed here → null, not 0.
+        "estimated_profit_usd": res.estimated_profit,
+        "gross_profit_usd": serde_json::Value::Null,
+        "gas_cost_usd": serde_json::Value::Null,
+        "dex_fees_usd": serde_json::Value::Null,
+        "bridge_fees_usd": serde_json::Value::Null,
+        "flashloan_fee_usd": serde_json::Value::Null,
+        "slippage_cost_usd": serde_json::Value::Null,
+        "latency_decay_usd": serde_json::Value::Null,
+        "risk_penalty_usd": serde_json::Value::Null,
+        "net_profit_usd": serde_json::Value::Null,
+        "net_computed": false,
+        "roi_pct": serde_json::Value::Null,
+        "confidence": res.confidence,
+        "risk_score": serde_json::Value::Null,
+        "priority_score": serde_json::Value::Null,
+        "urgency": res.urgency.clone(),
+        "reason": res.reason.clone(),
+        "had_reserves": had_reserves,
+        "simulation": {
+            "status": "disabled",
+            "note": "shadow discovery eval; REVM fork simulation not run at this layer",
+            "fork_block": serde_json::Value::Null,
+            "revert_reason": serde_json::Value::Null,
+        },
+        "ethics": {
+            "status": "permitted",
+            "gate": "arbx-mev-ethics-gate",
+            "notes": ["shadow_only", "no_sandwich", "no_frontrun", "post_state_or_confirmed_only"],
+        },
+        "live_gate": {
+            "eligible": false,
+            "reason": "shadow_only_no_simulation_no_live",
+        },
+    })
 }
 
 /// Smart intent routing — returns `true` iff a cartridge of the given `category` can
@@ -700,5 +875,117 @@ mod tests {
         let lending = intent_with_source(DetectionSource::LendingPositionUpdate);
         assert!(cartridge_matches_intent("my_custom_strategy", &swap));
         assert!(cartridge_matches_intent("my_custom_strategy", &lending));
+    }
+
+    // ── rd_outcome_v2 schema builders (Phase 1) ──────────────────────────────
+
+    /// 3-leg cross-DEX cycle (V3 → Curve → V2) with distinct dex hints + fee tiers.
+    fn three_leg_intent() -> RouteIntent {
+        use crate::route_intent::{DetectionSource, RouteIntentLeg, RouterKind, SwapExactMode};
+        use ethers::types::{Address, H256, U256};
+        let mk = |a: u64, b: u64, pool: u64, dex: &str, proto: ProtocolType, fee: Option<u32>| {
+            RouteIntentLeg {
+                token_in: Address::from_low_u64_be(a),
+                token_out: Address::from_low_u64_be(b),
+                pool_hint: Some(Address::from_low_u64_be(pool)),
+                dex_hint: Some(dex.to_string()),
+                fee_bps: fee,
+                protocol_type: proto,
+            }
+        };
+        RouteIntent::new(
+            1,
+            H256::zero(),
+            Address::zero(),
+            RouterKind::UniswapV3,
+            Address::zero(),
+            vec![
+                mk(0xA, 0xB, 0x1, "uniswap-v3", ProtocolType::V3, Some(500)),
+                mk(0xB, 0xC, 0x2, "curve", ProtocolType::Curve, Some(4)),
+                mk(0xC, 0xA, 0x3, "sushi", ProtocolType::V2, Some(30)),
+            ],
+            U256::from(1000u64),
+            None,
+            SwapExactMode::ExactIn,
+            DetectionSource::NewBlock,
+        )
+        .expect("valid intent")
+    }
+
+    fn eval_result(is_opp: bool) -> CartridgeEvalResult {
+        CartridgeEvalResult {
+            is_opportunity: is_opp,
+            estimated_profit: 9.64,
+            confidence: 0.82,
+            metadata: std::collections::HashMap::new(),
+            urgency: "high".to_string(),
+            reason: Some("net_profit_positive_after_costs".to_string()),
+        }
+    }
+
+    #[test]
+    fn rd_outcome_v1_is_flat_no_topology() {
+        let v = build_rd_outcome_v1(1, "omega_strategy_pack", &three_leg_intent(), &eval_result(true), true, 1_700_000_000_000);
+        assert_eq!(v["schema"].as_str().unwrap(), "rd_outcome_v1");
+        assert_eq!(v["mode"].as_str().unwrap(), "shadow");
+        assert!(v["is_opportunity"].as_bool().unwrap());
+        // v1 is flat: no topology object, no route[] array.
+        assert!(v.get("topology").is_none());
+        assert!(v.get("route").is_none());
+    }
+
+    #[test]
+    fn rd_outcome_v2_topology_route_and_failhonest_waterfall() {
+        let v = build_rd_outcome_v2(1, "omega_strategy_pack", &three_leg_intent(), &eval_result(true), true, 1_700_000_000_000);
+
+        assert_eq!(v["schema"].as_str().unwrap(), "rd_outcome_v2");
+        assert_eq!(v["status"].as_str().unwrap(), "shadow_visible");
+        assert_eq!(v["strategy_kind"].as_str().unwrap(), "omega_strategy_pack");
+
+        // Topology derived honestly from the legs.
+        assert_eq!(v["topology"]["hop_count"].as_u64().unwrap(), 3);
+        assert_eq!(v["topology"]["route_family"].as_str().unwrap(), "triangular");
+        assert_eq!(v["topology"]["environment"].as_str().unwrap(), "interdex_intrachain");
+
+        // route[] carries per-leg dex / fee_bps / invariant.
+        let route = v["route"].as_array().unwrap();
+        assert_eq!(route.len(), 3);
+        assert_eq!(route[0]["invariant"].as_str().unwrap(), "concentrated_liquidity"); // V3
+        assert_eq!(route[1]["invariant"].as_str().unwrap(), "stableswap");             // Curve
+        assert_eq!(route[2]["invariant"].as_str().unwrap(), "constant_product");       // V2
+        assert_eq!(route[0]["fee_bps"].as_u64().unwrap(), 500);
+        assert_eq!(route[0]["dex"].as_str().unwrap(), "uniswap-v3");
+
+        // FAIL-HONEST: uncomputed costs are null (never fabricated 0), net not computed.
+        assert!(v["gas_cost_usd"].is_null());
+        assert!(v["slippage_cost_usd"].is_null());
+        assert!(v["net_profit_usd"].is_null());
+        assert_eq!(v["net_computed"].as_bool().unwrap(), false);
+        assert_eq!(v["estimated_profit_usd"].as_f64().unwrap(), 9.64);
+
+        // Gates: simulation disabled here, live blocked, ethics permitted.
+        assert_eq!(v["simulation"]["status"].as_str().unwrap(), "disabled");
+        assert_eq!(v["live_gate"]["eligible"].as_bool().unwrap(), false);
+        assert_eq!(v["ethics"]["status"].as_str().unwrap(), "permitted");
+    }
+
+    #[test]
+    fn rd_outcome_v2_rejected_status_when_not_opportunity() {
+        let v = build_rd_outcome_v2(1, "omega_strategy_pack", &three_leg_intent(), &eval_result(false), false, 1);
+        assert!(!v["is_opportunity"].as_bool().unwrap());
+        assert_eq!(v["status"].as_str().unwrap(), "rejected_with_reason");
+    }
+
+    #[test]
+    fn route_family_and_invariant_helpers() {
+        assert_eq!(route_family(2), "spatial_or_pair");
+        assert_eq!(route_family(3), "triangular");
+        assert_eq!(route_family(4), "quadrangular");
+        assert_eq!(route_family(7), "supreme_graph");
+        assert_eq!(invariant_of("V3"), "concentrated_liquidity");
+        assert_eq!(invariant_of("Curve"), "stableswap");
+        assert_eq!(invariant_of("Balancer"), "weighted");
+        assert_eq!(invariant_of("V2"), "constant_product");
+        assert_eq!(invariant_of("Mystery"), "unknown");
     }
 }
