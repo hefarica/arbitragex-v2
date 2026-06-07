@@ -898,4 +898,104 @@ strategies:
         assert!(!is_pack_supported("omnichain_shadow_route"));
         assert!(!is_pack_supported(""));
     }
+
+    // ── Rust↔Rhai DISPATCH-KEY DRIFT CONTRACT + end-to-end bridge guarantees ──
+    // OMEGA Council (cs-validator 9/10): the SUPPORTED_DISPATCH_KEYS doc-comment
+    // claims "single source of truth: keep in sync with the pack" — nothing enforced
+    // it until now. These lock it as a compile/CI tripwire (include_str! triggers
+    // recompilation when the pack changes), plus pin the NO-ACTIVE + no-dangling-family
+    // contract that cartridge_boot.rs's strategy_family_supported stamp consumes.
+
+    /// The committed cartridge pack, embedded at COMPILE TIME.
+    const OMEGA_STRATEGY_PACK_RHAI: &str =
+        include_str!("../../cartridges/omega_strategy_pack.rhai");
+
+    #[test]
+    fn supported_keys_have_a_quoted_dispatch_arm_in_the_pack() {
+        // Each allowlisted key must appear as a QUOTED string literal in the pack
+        // (its `s == "<key>"` dispatch arm / `accept("<key>")`). The quoted form is
+        // precise: it cannot be satisfied by a bare `eval_<key>` fn name. If the pack
+        // drops or renames a dispatch arm, this fails — Rust allowlist ↔ Rhai drift.
+        for key in SUPPORTED_DISPATCH_KEYS {
+            let quoted = format!("\"{key}\"");
+            assert!(
+                OMEGA_STRATEGY_PACK_RHAI.contains(&quoted),
+                "DRIFT: SUPPORTED_DISPATCH_KEYS lists `{key}` but omega_strategy_pack.rhai \
+                 has no quoted dispatch arm for it — the Rust allowlist and the Rhai pack diverged"
+            );
+        }
+    }
+
+    #[test]
+    fn cross_chain_keys_are_applicable_but_not_pack_dispatchable() {
+        // The ONE deliberate divergence between `applicable` and "dispatchable":
+        // cross-chain shapes ARE a real strategy (applicable=true) yet have NO pack
+        // handler (is_pack_supported=false) → observational telemetry only, never
+        // dispatched. Pin BOTH halves so a future allowlist edit can't silently
+        // green-light an undispatchable family.
+        let inv = RouteShapeV2 {
+            hop_count: 2,
+            cross_chain: true,
+            inventory_available: true,
+            ..Default::default()
+        };
+        let r1 = classify_v2(&inv);
+        assert!(r1.applicable, "cross-chain IS a strategy");
+        assert!(!is_pack_supported(&r1.strategy_kind), "but the pack cannot dispatch it");
+        assert!(!r1.live_allowed);
+
+        let bridge = RouteShapeV2 {
+            hop_count: 2,
+            cross_chain: true,
+            inventory_available: false,
+            ..Default::default()
+        };
+        let r2 = classify_v2(&bridge);
+        assert!(r2.applicable);
+        assert!(!is_pack_supported(&r2.strategy_kind));
+        assert!(!r2.live_allowed);
+    }
+
+    #[test]
+    fn from_legs_applicable_implies_dispatchable_and_no_live() {
+        // End-to-end bridge contract (the triple cartridge_boot.rs stamps): for EVERY
+        // realistic single-chain leg shape, an `applicable` classification is ALWAYS
+        // pack-dispatchable (no dangling telemetry family reaches /opportunities) and
+        // NEVER live (NO-ACTIVE end-to-end from real legs).
+        let dex = |i: usize| match i % 3 {
+            0 => Some("uniswap-v3"),
+            1 => Some("curve"),
+            _ => Some("sushi"),
+        };
+        let proto = |i: usize| match i % 3 {
+            0 => ProtocolType::V3,
+            1 => ProtocolType::Curve,
+            _ => ProtocolType::V2,
+        };
+        for hops in 2..=7usize {
+            for unknown_venue in [false, true] {
+                let mut legs = Vec::new();
+                for i in 0..hops {
+                    let a = (0xA0 + i) as u64;
+                    let b = (0xA0 + (i + 1) % hops) as u64;
+                    legs.push(leg(
+                        a,
+                        b,
+                        if unknown_venue { None } else { dex(i) },
+                        if unknown_venue { None } else { Some(30) },
+                        proto(i),
+                    ));
+                }
+                let r = classify_route_legs(&legs);
+                if r.applicable {
+                    assert!(
+                        is_pack_supported(&r.strategy_kind),
+                        "hops={hops} unknown_venue={unknown_venue}: applicable family `{}` is NOT pack-dispatchable",
+                        r.strategy_kind
+                    );
+                }
+                assert!(!r.live_allowed, "NO-ACTIVE must hold end-to-end (hops={hops})");
+            }
+        }
+    }
 }
