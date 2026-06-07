@@ -164,11 +164,7 @@ fn dfs_cycles(
     for e in graph.out_edges(&current) {
         // Resolve this edge's index (out_edges yields refs; recover index via adjacency).
         // We re-derive the index by pointer position to keep RouteEdge unmodified.
-        let idx = match graph
-            .edges
-            .iter()
-            .position(|x| std::ptr::eq(x, e))
-        {
+        let idx = match graph.edges.iter().position(|x| std::ptr::eq(x, e)) {
             Some(i) => i,
             None => continue,
         };
@@ -254,7 +250,11 @@ mod tests {
             token_out: addr(token_out),
             token0: addr(token_in),
             token1: addr(token_out),
-            protocol: if log_weight.is_some() { ProtocolType::V2 } else { ProtocolType::V3 },
+            protocol: if log_weight.is_some() {
+                ProtocolType::V2
+            } else {
+                ProtocolType::V3
+            },
             fee_bps: Some(30),
             liquidity_hint: Some(1_000_000.0),
             log_weight,
@@ -306,8 +306,12 @@ mod tests {
         ]);
         let r = find_profitable_cycles(&g, 7, 100);
         assert!(!r.capped);
-        assert!(r.cycles.iter().any(|c| c.hop_count == 2 && c.sum_log_weight < 0.0),
-            "a 2-hop cross-pool cycle with negative sum must be found");
+        assert!(
+            r.cycles
+                .iter()
+                .any(|c| c.hop_count == 2 && c.sum_log_weight < 0.0),
+            "a 2-hop cross-pool cycle with negative sum must be found"
+        );
     }
 
     #[test]
@@ -319,8 +323,10 @@ mod tests {
             edge(0xC, 0xA, 3, Some(-0.02)),
         ]);
         let r = find_profitable_cycles(&profitable, 7, 100);
-        assert!(r.cycles.iter().any(|c| c.hop_count == 3),
-            "profitable triangle must be found");
+        assert!(
+            r.cycles.iter().any(|c| c.hop_count == 3),
+            "profitable triangle must be found"
+        );
 
         // Flat triangle Σ=0 (not < 0) → no cycle.
         let flat = graph_from(vec![
@@ -329,19 +335,25 @@ mod tests {
             edge(0xC, 0xA, 3, Some(0.01)),
         ]);
         let r2 = find_profitable_cycles(&flat, 7, 100);
-        assert!(r2.cycles.is_empty(), "positive-sum (lossy) cycle must NOT be reported");
+        assert!(
+            r2.cycles.is_empty(),
+            "positive-sum (lossy) cycle must NOT be reported"
+        );
     }
 
     #[test]
     fn v3_edges_are_skipped_honestly_not_faked() {
         // A->B is V3 (log_weight=None). It cannot be sized → skipped + counted.
         let g = graph_from(vec![
-            edge(0xA, 0xB, 1, None),        // V3, no weight
+            edge(0xA, 0xB, 1, None), // V3, no weight
             edge(0xB, 0xA, 2, Some(-0.05)),
         ]);
         let r = find_profitable_cycles(&g, 7, 100);
         assert!(r.v3_skipped > 0, "V3 edge must be counted as skipped (R8)");
-        assert!(r.cycles.is_empty(), "cannot complete a cycle through an unsizable V3 leg");
+        assert!(
+            r.cycles.is_empty(),
+            "cannot complete a cycle through an unsizable V3 leg"
+        );
     }
 
     #[test]

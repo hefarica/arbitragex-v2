@@ -19,15 +19,29 @@ use rhai::{Dynamic, Engine, Map, Scope};
 fn register_common(engine: &mut Engine) {
     engine.set_max_operations(2_000_000);
     engine.register_fn("get_chain_id", || -> Dynamic { Dynamic::from(1_i64) });
-    engine.register_fn("get_block_number", || -> Dynamic { Dynamic::from(20_000_000_i64) });
+    engine.register_fn("get_block_number", || -> Dynamic {
+        Dynamic::from(20_000_000_i64)
+    });
     engine.register_fn("get_base_fee", || -> Dynamic { Dynamic::from(30.0_f64) });
-    engine.register_fn("get_timestamp", || -> Dynamic { Dynamic::from(1_717_200_000_i64) });
-    engine.register_fn("log_quantum", |_l: &str, _m: &str| -> Dynamic { Dynamic::UNIT });
-    engine.register_fn("emit_signal", |_s: &str, _d: Map| -> Dynamic { Dynamic::UNIT });
+    engine.register_fn("get_timestamp", || -> Dynamic {
+        Dynamic::from(1_717_200_000_i64)
+    });
+    engine.register_fn("log_quantum", |_l: &str, _m: &str| -> Dynamic {
+        Dynamic::UNIT
+    });
+    engine.register_fn("emit_signal", |_s: &str, _d: Map| -> Dynamic {
+        Dynamic::UNIT
+    });
     engine.register_fn("math_abs", |x: f64| -> Dynamic { Dynamic::from(x.abs()) });
-    engine.register_fn("math_min", |a: f64, b: f64| -> Dynamic { Dynamic::from(a.min(b)) });
-    engine.register_fn("math_max", |a: f64, b: f64| -> Dynamic { Dynamic::from(a.max(b)) });
-    engine.register_fn("math_pow", |b: f64, e: f64| -> Dynamic { Dynamic::from(b.powf(e)) });
+    engine.register_fn("math_min", |a: f64, b: f64| -> Dynamic {
+        Dynamic::from(a.min(b))
+    });
+    engine.register_fn("math_max", |a: f64, b: f64| -> Dynamic {
+        Dynamic::from(a.max(b))
+    });
+    engine.register_fn("math_pow", |b: f64, e: f64| -> Dynamic {
+        Dynamic::from(b.powf(e))
+    });
     engine.register_fn("from_wei", |wei: &str, dec: i64| -> Dynamic {
         let v: f64 = wei.parse().unwrap_or(0.0);
         Dynamic::from(v / 10f64.powi(dec as i32))
@@ -46,7 +60,10 @@ fn token_meta(symbol: &str, decimals: i64) -> Dynamic {
     let mut m = Map::new();
     m.insert("symbol".into(), Dynamic::from(symbol.to_string()));
     m.insert("decimals".into(), Dynamic::from(decimals));
-    m.insert("is_stablecoin".into(), Dynamic::from(symbol == "USDC" || symbol == "DAI"));
+    m.insert(
+        "is_stablecoin".into(),
+        Dynamic::from(symbol == "USDC" || symbol == "DAI"),
+    );
     Dynamic::from_map(m)
 }
 
@@ -97,9 +114,15 @@ fn backrun_pool_data(source_event: &str, amount_in: &str, r1_usdc: &str) -> Map 
     pd.insert("protocol_type".into(), Dynamic::from("v2"));
     pd.insert("fair_price".into(), Dynamic::from(2000.0_f64));
     pd.insert("confirmed_tx_hash".into(), Dynamic::from("0xdead"));
-    pd.insert("source_event".into(), Dynamic::from(source_event.to_string()));
+    pd.insert(
+        "source_event".into(),
+        Dynamic::from(source_event.to_string()),
+    );
     // reserves_post: 1000 WETH (18 dec) vs r1_usdc (6 dec) → price = r1_usdc/1000.
-    pd.insert("reserves_post".into(), reserves("1000000000000000000000", r1_usdc));
+    pd.insert(
+        "reserves_post".into(),
+        reserves("1000000000000000000000", r1_usdc),
+    );
     pd
 }
 
@@ -141,8 +164,12 @@ fn backrun_metadata_declares_zero_victim() {
 #[test]
 fn backrun_rejects_pending_event_zero_victim_guard() {
     let engine = backrun_engine();
-    let r = eval(&engine, BACKRUN, "evaluate_opportunity",
-        backrun_pool_data("pending", "100000000000000000000", "2100000000000"));
+    let r = eval(
+        &engine,
+        BACKRUN,
+        "evaluate_opportunity",
+        backrun_pool_data("pending", "100000000000000000000", "2100000000000"),
+    );
     assert!(!r.get("is_opportunity").unwrap().as_bool().unwrap());
     assert_eq!(
         r.get("reason").unwrap().clone().into_string().unwrap(),
@@ -156,13 +183,29 @@ fn backrun_rejects_pending_event_zero_victim_guard() {
 fn backrun_confirmed_imbalance_is_opportunity() {
     let engine = backrun_engine();
     // r1=2,100,000 USDC vs 1000 WETH → price 2100 vs fair 2000 → 5% imbalance.
-    let r = eval(&engine, BACKRUN, "evaluate_opportunity",
-        backrun_pool_data("confirmed_block", "100000000000000000000", "2100000000000"));
-    assert!(r.get("is_opportunity").unwrap().as_bool().unwrap(),
-        "5% imbalance on a 100-WETH swap must be an opportunity");
-    assert_eq!(r.get("reason").unwrap().clone().into_string().unwrap(), "post_state_rebalance");
+    let r = eval(
+        &engine,
+        BACKRUN,
+        "evaluate_opportunity",
+        backrun_pool_data("confirmed_block", "100000000000000000000", "2100000000000"),
+    );
+    assert!(
+        r.get("is_opportunity").unwrap().as_bool().unwrap(),
+        "5% imbalance on a 100-WETH swap must be an opportunity"
+    );
+    assert_eq!(
+        r.get("reason").unwrap().clone().into_string().unwrap(),
+        "post_state_rebalance"
+    );
     assert!(r.get("net_profit").unwrap().as_float().unwrap() > 0.0);
-    assert_eq!(r.get("target_tx_hash").unwrap().clone().into_string().unwrap(), "0xdead");
+    assert_eq!(
+        r.get("target_tx_hash")
+            .unwrap()
+            .clone()
+            .into_string()
+            .unwrap(),
+        "0xdead"
+    );
 }
 
 /// Confirmed but tiny imbalance on a tiny (0.1 WETH) swap → net below gas → no op.
@@ -170,8 +213,12 @@ fn backrun_confirmed_imbalance_is_opportunity() {
 fn backrun_below_gas_threshold_no_opportunity() {
     let engine = backrun_engine();
     // r1=2,002,000 USDC → price 2002 vs fair 2000 → 0.1% imbalance, 0.1-WETH swap.
-    let r = eval(&engine, BACKRUN, "evaluate_opportunity",
-        backrun_pool_data("confirmed_block", "100000000000000000", "2002000000000"));
+    let r = eval(
+        &engine,
+        BACKRUN,
+        "evaluate_opportunity",
+        backrun_pool_data("confirmed_block", "100000000000000000", "2002000000000"),
+    );
     assert!(!r.get("is_opportunity").unwrap().as_bool().unwrap());
     assert_eq!(
         r.get("reason").unwrap().clone().into_string().unwrap(),
@@ -191,11 +238,31 @@ fn backrun_payload_is_backrun_bundle_zero_victim() {
     let p = eval(&engine, BACKRUN, "build_payload", opp);
 
     let bundle = p.get("bundle").unwrap().clone().cast::<Map>();
-    assert_eq!(bundle.get("bundle_type").unwrap().clone().into_string().unwrap(), "backrun");
-    assert_eq!(bundle.get("ordering").unwrap().clone().into_string().unwrap(), "after_target");
+    assert_eq!(
+        bundle
+            .get("bundle_type")
+            .unwrap()
+            .clone()
+            .into_string()
+            .unwrap(),
+        "backrun"
+    );
+    assert_eq!(
+        bundle
+            .get("ordering")
+            .unwrap()
+            .clone()
+            .into_string()
+            .unwrap(),
+        "after_target"
+    );
 
     let risk = p.get("risk").unwrap().clone().cast::<Map>();
-    assert!(risk.get("zero_victim_attestation").unwrap().as_bool().unwrap());
+    assert!(risk
+        .get("zero_victim_attestation")
+        .unwrap()
+        .as_bool()
+        .unwrap());
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -233,7 +300,11 @@ fn triangular_engine(profitable: bool) -> Engine {
     });
     // C→A leg (0xca): r1=A reserve. 1.05e9 ⇒ +5% rate (clears 3×0.3% fees → profit);
     // 1.0e9 ⇒ flat (fees make the cycle unprofitable).
-    let ca_r1 = if profitable { "1050000000" } else { "1000000000" };
+    let ca_r1 = if profitable {
+        "1050000000"
+    } else {
+        "1000000000"
+    };
     engine.register_fn("get_reserves", move |addr: &str| -> Dynamic {
         match addr {
             "0xab" => reserves("1000000000", "1000000000"),
@@ -276,18 +347,37 @@ fn triangular_profitable_cycle_is_opportunity() {
     let ast = engine.compile(TRIANGULAR).unwrap();
     let mut scope = Scope::new();
     let r: Map = engine
-        .call_fn::<Dynamic>(&mut scope, &ast, "evaluate_opportunity", (triangle_pool_data(),))
+        .call_fn::<Dynamic>(
+            &mut scope,
+            &ast,
+            "evaluate_opportunity",
+            (triangle_pool_data(),),
+        )
         .unwrap()
         .cast::<Map>();
 
-    assert!(r.get("is_opportunity").unwrap().as_bool().unwrap(),
-        "a +5% cross-rate cycle must beat 3x0.3% fees");
-    assert_eq!(r.get("route_type").unwrap().clone().into_string().unwrap(), "three_leg_arb");
+    assert!(
+        r.get("is_opportunity").unwrap().as_bool().unwrap(),
+        "a +5% cross-rate cycle must beat 3x0.3% fees"
+    );
+    assert_eq!(
+        r.get("route_type").unwrap().clone().into_string().unwrap(),
+        "three_leg_arb"
+    );
     assert!(r.get("estimated_profit").unwrap().as_float().unwrap() > 0.0);
     // All three legs of the triangle are populated.
-    assert_eq!(r.get("pool_ab").unwrap().clone().into_string().unwrap(), "0xab");
-    assert_eq!(r.get("pool_bc").unwrap().clone().into_string().unwrap(), "0xbc");
-    assert_eq!(r.get("pool_ca").unwrap().clone().into_string().unwrap(), "0xca");
+    assert_eq!(
+        r.get("pool_ab").unwrap().clone().into_string().unwrap(),
+        "0xab"
+    );
+    assert_eq!(
+        r.get("pool_bc").unwrap().clone().into_string().unwrap(),
+        "0xbc"
+    );
+    assert_eq!(
+        r.get("pool_ca").unwrap().clone().into_string().unwrap(),
+        "0xca"
+    );
 }
 
 /// A flat cycle (all 1:1 pools) cannot overcome 3×0.3% fees → no opportunity.
@@ -297,11 +387,18 @@ fn triangular_flat_cycle_no_opportunity() {
     let ast = engine.compile(TRIANGULAR).unwrap();
     let mut scope = Scope::new();
     let r: Map = engine
-        .call_fn::<Dynamic>(&mut scope, &ast, "evaluate_opportunity", (triangle_pool_data(),))
+        .call_fn::<Dynamic>(
+            &mut scope,
+            &ast,
+            "evaluate_opportunity",
+            (triangle_pool_data(),),
+        )
         .unwrap()
         .cast::<Map>();
-    assert!(!r.get("is_opportunity").unwrap().as_bool().unwrap(),
-        "a flat 1:1 cycle loses to fees");
+    assert!(
+        !r.get("is_opportunity").unwrap().as_bool().unwrap(),
+        "a flat 1:1 cycle loses to fees"
+    );
     let reason = r.get("reason").unwrap().clone().into_string().unwrap();
     assert!(
         reason == "no_profitable_cycle" || reason == "below_gas_threshold",

@@ -502,7 +502,10 @@ mod tests {
         // Multi-hop pass is wired + observe-only: field present, bounded by the cap,
         // and surfaced in the tick summary (R8 honest counters).
         assert!(tick.multi_hop_cycles_found <= finder.max_routes_per_tick);
-        assert!(tick.tick_summary.get("multi_hop_profitable_cycles").is_some());
+        assert!(tick
+            .tick_summary
+            .get("multi_hop_profitable_cycles")
+            .is_some());
         assert!(tick.tick_summary.get("multi_hop_v3_skipped").is_some());
     }
 

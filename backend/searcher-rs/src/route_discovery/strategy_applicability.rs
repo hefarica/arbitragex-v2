@@ -288,13 +288,22 @@ pub fn classify_v2(shape: &RouteShapeV2) -> StrategyApplicabilityV2 {
             StrategyApplicabilityV2::applicable(
                 "cross_chain_inventory_shadow",
                 "cross_chain_with_inventory",
-                &["finality_model", "settlement_risk_model", "cross_chain_accounting"],
+                &[
+                    "finality_model",
+                    "settlement_risk_model",
+                    "cross_chain_accounting",
+                ],
             )
         } else {
             StrategyApplicabilityV2::applicable(
                 "omnichain_shadow_route",
                 "cross_chain_bridge_required",
-                &["bridge_latency_model", "finality_model", "settlement_risk_model", "rollback_killswitch"],
+                &[
+                    "bridge_latency_model",
+                    "finality_model",
+                    "settlement_risk_model",
+                    "rollback_killswitch",
+                ],
             )
         };
     }
@@ -317,20 +326,36 @@ pub fn classify_v2(shape: &RouteShapeV2) -> StrategyApplicabilityV2 {
         0 | 1 => StrategyApplicabilityV2::not_applicable("hop_count_below_2"),
         2 => {
             if shape.same_pair && shape.distinct_dexes <= 1 && shape.distinct_fee_tiers > 1 {
-                StrategyApplicabilityV2::applicable("v3_fee_tier", "same_pair_same_dex_diff_fee_tier", &[])
+                StrategyApplicabilityV2::applicable(
+                    "v3_fee_tier",
+                    "same_pair_same_dex_diff_fee_tier",
+                    &[],
+                )
             } else if shape.same_pair && shape.distinct_dexes > 1 {
                 StrategyApplicabilityV2::applicable("spatial_cross_dex", "same_pair_diff_dex", &[])
             } else if shape.mixes_v2_and_v3 {
-                StrategyApplicabilityV2::applicable("v2_v3_cross_invariant", "mixed_v2_v3_invariants", &[])
+                StrategyApplicabilityV2::applicable(
+                    "v2_v3_cross_invariant",
+                    "mixed_v2_v3_invariants",
+                    &[],
+                )
             } else {
                 StrategyApplicabilityV2::applicable("spatial_cross_dex", "two_leg_default", &[])
             }
         }
         3 => {
             if shape.distinct_dexes > 1 {
-                StrategyApplicabilityV2::applicable("triangular_cross_dex", "three_leg_cross_dex_cycle", &[])
+                StrategyApplicabilityV2::applicable(
+                    "triangular_cross_dex",
+                    "three_leg_cross_dex_cycle",
+                    &[],
+                )
             } else {
-                StrategyApplicabilityV2::applicable("triangular_same_dex", "three_leg_same_dex_cycle", &[])
+                StrategyApplicabilityV2::applicable(
+                    "triangular_same_dex",
+                    "three_leg_same_dex_cycle",
+                    &[],
+                )
             }
         }
         n if (4..=7).contains(&n) => {
@@ -691,12 +716,21 @@ strategies:
     // ── classify_v2 — route shape → omega_strategy_pack dispatch key (Phase 2) ──
 
     fn shape(hop: usize) -> RouteShapeV2 {
-        RouteShapeV2 { hop_count: hop, ..Default::default() }
+        RouteShapeV2 {
+            hop_count: hop,
+            ..Default::default()
+        }
     }
 
     #[test]
     fn v2_two_leg_same_pair_diff_fee_is_v3_fee_tier() {
-        let s = RouteShapeV2 { hop_count: 2, same_pair: true, distinct_dexes: 1, distinct_fee_tiers: 2, ..Default::default() };
+        let s = RouteShapeV2 {
+            hop_count: 2,
+            same_pair: true,
+            distinct_dexes: 1,
+            distinct_fee_tiers: 2,
+            ..Default::default()
+        };
         let r = classify_v2(&s);
         assert_eq!(r.strategy_kind, "v3_fee_tier");
         assert!(r.applicable && r.shadow_allowed && !r.live_allowed);
@@ -704,28 +738,50 @@ strategies:
 
     #[test]
     fn v2_two_leg_same_pair_diff_dex_is_spatial() {
-        let s = RouteShapeV2 { hop_count: 2, same_pair: true, distinct_dexes: 2, ..Default::default() };
+        let s = RouteShapeV2 {
+            hop_count: 2,
+            same_pair: true,
+            distinct_dexes: 2,
+            ..Default::default()
+        };
         assert_eq!(classify_v2(&s).strategy_kind, "spatial_cross_dex");
     }
 
     #[test]
     fn v2_two_leg_mixed_invariant_is_cross_invariant() {
-        let s = RouteShapeV2 { hop_count: 2, same_pair: false, mixes_v2_and_v3: true, ..Default::default() };
+        let s = RouteShapeV2 {
+            hop_count: 2,
+            same_pair: false,
+            mixes_v2_and_v3: true,
+            ..Default::default()
+        };
         assert_eq!(classify_v2(&s).strategy_kind, "v2_v3_cross_invariant");
     }
 
     #[test]
     fn v2_three_leg_cross_vs_same_dex() {
-        let cross = RouteShapeV2 { hop_count: 3, distinct_dexes: 3, ..Default::default() };
+        let cross = RouteShapeV2 {
+            hop_count: 3,
+            distinct_dexes: 3,
+            ..Default::default()
+        };
         assert_eq!(classify_v2(&cross).strategy_kind, "triangular_cross_dex");
-        let same = RouteShapeV2 { hop_count: 3, distinct_dexes: 1, ..Default::default() };
+        let same = RouteShapeV2 {
+            hop_count: 3,
+            distinct_dexes: 1,
+            ..Default::default()
+        };
         assert_eq!(classify_v2(&same).strategy_kind, "triangular_same_dex");
     }
 
     #[test]
     fn v2_four_to_seven_leg_is_multi_hop() {
         for h in 4..=7 {
-            assert_eq!(classify_v2(&shape(h)).strategy_kind, "multi_hop_cycle", "hop {h}");
+            assert_eq!(
+                classify_v2(&shape(h)).strategy_kind,
+                "multi_hop_cycle",
+                "hop {h}"
+            );
         }
         // 8+ unsupported, fail-honest
         assert!(!classify_v2(&shape(8)).applicable);
@@ -734,19 +790,38 @@ strategies:
 
     #[test]
     fn v2_post_block_imbalance_dominates() {
-        let s = RouteShapeV2 { hop_count: 2, post_block_imbalance: true, same_pair: true, distinct_dexes: 2, ..Default::default() };
+        let s = RouteShapeV2 {
+            hop_count: 2,
+            post_block_imbalance: true,
+            same_pair: true,
+            distinct_dexes: 2,
+            ..Default::default()
+        };
         assert_eq!(classify_v2(&s).strategy_kind, "post_block_residual_backrun");
     }
 
     #[test]
     fn v2_cross_chain_inventory_vs_bridge_shadow_only() {
-        let inv = RouteShapeV2 { hop_count: 2, cross_chain: true, inventory_available: true, ..Default::default() };
+        let inv = RouteShapeV2 {
+            hop_count: 2,
+            cross_chain: true,
+            inventory_available: true,
+            ..Default::default()
+        };
         let r1 = classify_v2(&inv);
         assert_eq!(r1.strategy_kind, "cross_chain_inventory_shadow");
         assert!(!r1.live_allowed && r1.shadow_allowed);
-        assert!(!r1.missing_bindings.is_empty(), "cross-chain must flag missing bindings (R8)");
+        assert!(
+            !r1.missing_bindings.is_empty(),
+            "cross-chain must flag missing bindings (R8)"
+        );
 
-        let bridge = RouteShapeV2 { hop_count: 2, cross_chain: true, inventory_available: false, ..Default::default() };
+        let bridge = RouteShapeV2 {
+            hop_count: 2,
+            cross_chain: true,
+            inventory_available: false,
+            ..Default::default()
+        };
         let r2 = classify_v2(&bridge);
         assert_eq!(r2.strategy_kind, "omnichain_shadow_route");
         assert!(r2.missing_bindings.iter().any(|b| b.contains("bridge")));
@@ -754,7 +829,12 @@ strategies:
 
     #[test]
     fn v2_stablecoin_basket_is_stable_depeg() {
-        let s = RouteShapeV2 { hop_count: 3, all_stablecoins: true, distinct_dexes: 2, ..Default::default() };
+        let s = RouteShapeV2 {
+            hop_count: 3,
+            all_stablecoins: true,
+            distinct_dexes: 2,
+            ..Default::default()
+        };
         assert_eq!(classify_v2(&s).strategy_kind, "stable_depeg");
     }
 
@@ -772,7 +852,13 @@ strategies:
     use crate::route_intent::RouteIntentLeg;
     use ethers::types::Address;
 
-    fn leg(ti: u64, to: u64, dex: Option<&str>, fee: Option<u32>, pt: ProtocolType) -> RouteIntentLeg {
+    fn leg(
+        ti: u64,
+        to: u64,
+        dex: Option<&str>,
+        fee: Option<u32>,
+        pt: ProtocolType,
+    ) -> RouteIntentLeg {
         RouteIntentLeg {
             token_in: Address::from_low_u64_be(ti),
             token_out: Address::from_low_u64_be(to),
@@ -849,7 +935,10 @@ strategies:
             leg(0xB, 0xC, None, None, ProtocolType::V2),
             leg(0xC, 0xA, None, None, ProtocolType::V2),
         ];
-        assert_eq!(classify_route_legs(&legs).strategy_kind, "triangular_same_dex");
+        assert_eq!(
+            classify_route_legs(&legs).strategy_kind,
+            "triangular_same_dex"
+        );
     }
 
     #[test]
@@ -941,7 +1030,10 @@ strategies:
         };
         let r1 = classify_v2(&inv);
         assert!(r1.applicable, "cross-chain IS a strategy");
-        assert!(!is_pack_supported(&r1.strategy_kind), "but the pack cannot dispatch it");
+        assert!(
+            !is_pack_supported(&r1.strategy_kind),
+            "but the pack cannot dispatch it"
+        );
         assert!(!r1.live_allowed);
 
         let bridge = RouteShapeV2 {
@@ -994,7 +1086,10 @@ strategies:
                         r.strategy_kind
                     );
                 }
-                assert!(!r.live_allowed, "NO-ACTIVE must hold end-to-end (hops={hops})");
+                assert!(
+                    !r.live_allowed,
+                    "NO-ACTIVE must hold end-to-end (hops={hops})"
+                );
             }
         }
     }

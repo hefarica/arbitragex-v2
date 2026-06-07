@@ -451,7 +451,9 @@ fn build_rd_outcome_v2(
     let applicability =
         crate::route_discovery::strategy_applicability::classify_route_legs(&intent.legs);
     let strategy_family_supported =
-        crate::route_discovery::strategy_applicability::is_pack_supported(&applicability.strategy_kind);
+        crate::route_discovery::strategy_applicability::is_pack_supported(
+            &applicability.strategy_kind,
+        );
     let strategy_family = if applicability.applicable {
         serde_json::Value::String(applicability.strategy_kind.clone())
     } else {
@@ -969,7 +971,14 @@ mod tests {
 
     #[test]
     fn rd_outcome_v1_is_flat_no_topology() {
-        let v = build_rd_outcome_v1(1, "omega_strategy_pack", &three_leg_intent(), &eval_result(true), true, 1_700_000_000_000);
+        let v = build_rd_outcome_v1(
+            1,
+            "omega_strategy_pack",
+            &three_leg_intent(),
+            &eval_result(true),
+            true,
+            1_700_000_000_000,
+        );
         assert_eq!(v["schema"].as_str().unwrap(), "rd_outcome_v1");
         assert_eq!(v["mode"].as_str().unwrap(), "shadow");
         assert!(v["is_opportunity"].as_bool().unwrap());
@@ -980,7 +989,14 @@ mod tests {
 
     #[test]
     fn rd_outcome_v2_topology_route_and_failhonest_waterfall() {
-        let v = build_rd_outcome_v2(1, "omega_strategy_pack", &three_leg_intent(), &eval_result(true), true, 1_700_000_000_000);
+        let v = build_rd_outcome_v2(
+            1,
+            "omega_strategy_pack",
+            &three_leg_intent(),
+            &eval_result(true),
+            true,
+            1_700_000_000_000,
+        );
 
         assert_eq!(v["schema"].as_str().unwrap(), "rd_outcome_v2");
         assert_eq!(v["status"].as_str().unwrap(), "shadow_visible");
@@ -988,13 +1004,24 @@ mod tests {
 
         // Topology derived honestly from the legs.
         assert_eq!(v["topology"]["hop_count"].as_u64().unwrap(), 3);
-        assert_eq!(v["topology"]["route_family"].as_str().unwrap(), "triangular");
-        assert_eq!(v["topology"]["environment"].as_str().unwrap(), "interdex_intrachain");
+        assert_eq!(
+            v["topology"]["route_family"].as_str().unwrap(),
+            "triangular"
+        );
+        assert_eq!(
+            v["topology"]["environment"].as_str().unwrap(),
+            "interdex_intrachain"
+        );
 
         // Classifier→cartridge bridge: 3-leg cross-dex cycle (uniswap-v3/curve/sushi)
         // ⇒ triangular_cross_dex, which the committed omega_strategy_pack can dispatch.
-        assert_eq!(v["topology"]["strategy_family"].as_str().unwrap(), "triangular_cross_dex");
-        assert!(v["topology"]["strategy_family_supported"].as_bool().unwrap());
+        assert_eq!(
+            v["topology"]["strategy_family"].as_str().unwrap(),
+            "triangular_cross_dex"
+        );
+        assert!(v["topology"]["strategy_family_supported"]
+            .as_bool()
+            .unwrap());
         assert_eq!(
             v["topology"]["strategy_family_reason"].as_str().unwrap(),
             "three_leg_cross_dex_cycle"
@@ -1003,9 +1030,12 @@ mod tests {
         // route[] carries per-leg dex / fee_bps / invariant.
         let route = v["route"].as_array().unwrap();
         assert_eq!(route.len(), 3);
-        assert_eq!(route[0]["invariant"].as_str().unwrap(), "concentrated_liquidity"); // V3
-        assert_eq!(route[1]["invariant"].as_str().unwrap(), "stableswap");             // Curve
-        assert_eq!(route[2]["invariant"].as_str().unwrap(), "constant_product");       // V2
+        assert_eq!(
+            route[0]["invariant"].as_str().unwrap(),
+            "concentrated_liquidity"
+        ); // V3
+        assert_eq!(route[1]["invariant"].as_str().unwrap(), "stableswap"); // Curve
+        assert_eq!(route[2]["invariant"].as_str().unwrap(), "constant_product"); // V2
         assert_eq!(route[0]["fee_bps"].as_u64().unwrap(), 500);
         assert_eq!(route[0]["dex"].as_str().unwrap(), "uniswap-v3");
 
@@ -1024,7 +1054,14 @@ mod tests {
 
     #[test]
     fn rd_outcome_v2_rejected_status_when_not_opportunity() {
-        let v = build_rd_outcome_v2(1, "omega_strategy_pack", &three_leg_intent(), &eval_result(false), false, 1);
+        let v = build_rd_outcome_v2(
+            1,
+            "omega_strategy_pack",
+            &three_leg_intent(),
+            &eval_result(false),
+            false,
+            1,
+        );
         assert!(!v["is_opportunity"].as_bool().unwrap());
         assert_eq!(v["status"].as_str().unwrap(), "rejected_with_reason");
     }
