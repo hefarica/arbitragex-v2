@@ -59,6 +59,7 @@ jobs:
           echo "::notice::.env materialized + Docker DNS endpoints + SECURE_BOOT tokens injected"
 
       - name: Bring up compose stack (dev — defaults OK for CI)
+        run: |
           # OMEGA-102 hot-fix: --env-file .env is REQUIRED so compose reads the
           # root .env (NEXT_PUBLIC_EDGE_URL=http://edge:8787 injected at line 43
           # above), instead of falling back to compose.dev.yml's literal default

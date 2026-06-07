@@ -20,7 +20,13 @@ pub fn check(report: &ReconReport, threshold_pct: f64) -> Option<RiskEventOut> {
     }
     Some(RiskEventOut {
         event_type: "degradation".to_string(),
-        severity: if v.abs() > threshold_pct * 2.0 {
+        // The "critical" band is 2× the threshold. When `threshold_pct == 0`
+        // (flag ANY variance) that band collapses to 0, which would label every
+        // flagged variance — even a 0.0001% one — "critical". Guard on a positive
+        // threshold so a zero-threshold flag defaults to "warning" (a tiny
+        // deviation is not critical); a real critical band only exists when there
+        // is a positive reference threshold.
+        severity: if threshold_pct > 0.0 && v.abs() > threshold_pct * 2.0 {
             "critical"
         } else {
             "warning"

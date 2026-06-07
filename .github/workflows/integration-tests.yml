@@ -150,6 +150,23 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm install
+      - name: Ensure rollup native binary (workaround npm/cli#4828)
+        # `npm install` intermittently SKIPS rollup's platform-specific optional
+        # dependency when the committed package-lock.json was generated without it
+        # (npm/cli#4828) — vitest then dies with
+        # "Cannot find module @rollup/rollup-linux-x64-gnu". This flaked the TS
+        # integration job while unit-tests/typescript (same install) passed.
+        # Force-install ONLY the matching native binary for this runner — version
+        # pinned to the resolved rollup, --no-save (no package.json/lock change),
+        # fail-safe (|| true) so it never breaks a healthy install.
+        run: |
+          ROLLUP_VER="$(node -p "require('rollup/package.json').version" 2>/dev/null || echo '')"
+          if [ -n "$ROLLUP_VER" ]; then
+            echo "rollup resolved to ${ROLLUP_VER}; ensuring @rollup/rollup-linux-x64-gnu@${ROLLUP_VER}"
+            npm install --no-save "@rollup/rollup-linux-x64-gnu@${ROLLUP_VER}" || true
+          else
+            echo "rollup not resolved in node_modules; nothing to ensure"
+          fi
       - name: Build @arbx/shared
         run: npm run -w @arbx/shared build
       - name: Run DB-backed integration tests
