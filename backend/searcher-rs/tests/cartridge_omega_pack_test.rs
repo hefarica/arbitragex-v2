@@ -208,6 +208,6 @@ fn omega_payload_is_shadow_observe_only() {
     let p = run("build_payload", opp);
     assert_eq!(p.get("mode").unwrap().clone().into_string().unwrap(), "shadow");
     assert_eq!(p.get("action").unwrap().clone().into_string().unwrap(), "observe_only");
-    assert_eq!(p.get("can_execute").unwrap().as_bool().unwrap(), false);
+    assert!(!p.get("can_execute").unwrap().as_bool().unwrap());
     assert_eq!(p.get("capital_exposed").unwrap().as_int().unwrap(), 0);
 }

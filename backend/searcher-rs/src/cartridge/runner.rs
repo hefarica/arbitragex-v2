@@ -783,7 +783,7 @@ mod tests {
         // v3_sizing_pending) WITHOUT being blocked by the V2 get_pool_index >= 2 gate.
         let (res, log_fired, pool_index_hit) = eval_dex_arb_stub("v3", true, 0);
         assert_eq!(reason_of(&res), "v3_sizing_pending");
-        assert_eq!(res.get("is_opportunity").unwrap().as_bool().unwrap(), false);
+        assert!(!res.get("is_opportunity").unwrap().as_bool().unwrap());
         assert!(log_fired, "log_quantum (v3_source_priced) must fire — shadow telemetry");
         assert!(
             !pool_index_hit,
