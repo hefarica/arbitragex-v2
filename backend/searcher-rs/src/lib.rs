@@ -13,6 +13,7 @@ pub mod calldata;
 pub mod chain_client;
 pub mod counters;
 pub mod dedup;
+pub mod mev_gate;
 // Phase 16: per-strategy Prometheus metrics for the orchestrator.
 pub mod impact_index;
 pub mod metrics;
