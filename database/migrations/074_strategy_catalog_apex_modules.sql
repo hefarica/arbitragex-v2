@@ -5,19 +5,28 @@
 --   (see 073 header for the full root-cause / fix-forward rationale).
 -- Constraint: All evaluation is server-side in searcher-rs. No external proxies.
 --
--- ⛔ strat_dlp_01 (Provisión Liquidez Determinística EKF) is DELIBERATELY OMITTED.
---   It is a Just-In-Time concentrated-liquidity strategy that predicts the next
---   swap's landing tick and injects liquidity there to capture that swap's fee —
---   i.e. JIT displacement of an existing, non-consenting third-party LP's accrued
---   fee. That is PROHIBITED by arbx-mev-ethics-gate (#5 "Liquidez JIT que desplaza
---   la fee acumulada de un LP existente"), consistent with the 2026-06-06 MEV-ethics
---   audit that eliminated jit_v3_worker.rs. The platform does not advertise a
---   prohibited strategy as runnable. Do NOT re-add it without an explicit, written
---   ethics override per the gate's Override protocol.
+-- ⛔ strat_dlp_01 (Provisión Liquidez Determinística EKF) is DELIBERATELY OMITTED
+--   from the catalog. It is a Just-In-Time concentrated-liquidity strategy that
+--   predicts the next swap's landing tick (via an EKF) and injects liquidity there
+--   to capture that swap's fee — i.e. JIT displacement of an existing, non-consenting
+--   third-party LP's accrued fee. That is PROHIBITED by arbx-mev-ethics-gate (the
+--   "Liquidez JIT que desplaza la fee acumulada de un LP existente" clause). The
+--   platform does not advertise a prohibited strategy as runnable.
+--
+--   TRUTH-IN-RECORD: unlike jit_v3_worker.rs — fully DELETED in the 2026-06-06
+--   MEV-ethics audit (commit 9317c07) — the dlp_engine.rs / dlp_worker.rs code is
+--   still PRESENT in-tree behind the non-default `experimental-engines` feature
+--   (compiled out of the production build; default = ["v2-simulator"]). Its full
+--   deletion plus a mev-ethics-lint rule against `strat_dlp_01` / EKF-tick JIT
+--   injection are tracked as a REQUIRED follow-up. Do NOT re-add strat_dlp_01 to
+--   the catalog without an explicit written ethics override per the gate's Override
+--   protocol.
 
 -- 1. Estabilización de Volatilidad Estocástica (SVS)
 --    Ethics: PERMITTED per arbx-mev-ethics-gate — captures the residual rebalance
---    AFTER convergence (post-state), no specific user is targeted (akin to #2/#5).
+--    AFTER convergence (post-state); no specific user is targeted. Falls under the
+--    PERMITTED categories "backrun that does not extract from the originator" and
+--    "statistical arbitrage on public on-chain data".
 INSERT INTO strategy_catalog (
     kind, display_name, description, category, is_implemented, is_default,
     risk_level, ethical_constraint, lifecycle_status, requires_flashloan
