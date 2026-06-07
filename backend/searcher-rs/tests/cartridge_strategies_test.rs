@@ -143,7 +143,7 @@ fn backrun_rejects_pending_event_zero_victim_guard() {
     let engine = backrun_engine();
     let r = eval(&engine, BACKRUN, "evaluate_opportunity",
         backrun_pool_data("pending", "100000000000000000000", "2100000000000"));
-    assert_eq!(r.get("is_opportunity").unwrap().as_bool().unwrap(), false);
+    assert!(!r.get("is_opportunity").unwrap().as_bool().unwrap());
     assert_eq!(
         r.get("reason").unwrap().clone().into_string().unwrap(),
         "not_confirmed_zero_victim_guard"
@@ -158,7 +158,7 @@ fn backrun_confirmed_imbalance_is_opportunity() {
     // r1=2,100,000 USDC vs 1000 WETH → price 2100 vs fair 2000 → 5% imbalance.
     let r = eval(&engine, BACKRUN, "evaluate_opportunity",
         backrun_pool_data("confirmed_block", "100000000000000000000", "2100000000000"));
-    assert_eq!(r.get("is_opportunity").unwrap().as_bool().unwrap(), true,
+    assert!(r.get("is_opportunity").unwrap().as_bool().unwrap(),
         "5% imbalance on a 100-WETH swap must be an opportunity");
     assert_eq!(r.get("reason").unwrap().clone().into_string().unwrap(), "post_state_rebalance");
     assert!(r.get("net_profit").unwrap().as_float().unwrap() > 0.0);
@@ -172,7 +172,7 @@ fn backrun_below_gas_threshold_no_opportunity() {
     // r1=2,002,000 USDC → price 2002 vs fair 2000 → 0.1% imbalance, 0.1-WETH swap.
     let r = eval(&engine, BACKRUN, "evaluate_opportunity",
         backrun_pool_data("confirmed_block", "100000000000000000", "2002000000000"));
-    assert_eq!(r.get("is_opportunity").unwrap().as_bool().unwrap(), false);
+    assert!(!r.get("is_opportunity").unwrap().as_bool().unwrap());
     assert_eq!(
         r.get("reason").unwrap().clone().into_string().unwrap(),
         "below_gas_threshold"
@@ -195,7 +195,7 @@ fn backrun_payload_is_backrun_bundle_zero_victim() {
     assert_eq!(bundle.get("ordering").unwrap().clone().into_string().unwrap(), "after_target");
 
     let risk = p.get("risk").unwrap().clone().cast::<Map>();
-    assert_eq!(risk.get("zero_victim_attestation").unwrap().as_bool().unwrap(), true);
+    assert!(risk.get("zero_victim_attestation").unwrap().as_bool().unwrap());
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ fn triangular_profitable_cycle_is_opportunity() {
         .unwrap()
         .cast::<Map>();
 
-    assert_eq!(r.get("is_opportunity").unwrap().as_bool().unwrap(), true,
+    assert!(r.get("is_opportunity").unwrap().as_bool().unwrap(),
         "a +5% cross-rate cycle must beat 3x0.3% fees");
     assert_eq!(r.get("route_type").unwrap().clone().into_string().unwrap(), "three_leg_arb");
     assert!(r.get("estimated_profit").unwrap().as_float().unwrap() > 0.0);
@@ -300,7 +300,7 @@ fn triangular_flat_cycle_no_opportunity() {
         .call_fn::<Dynamic>(&mut scope, &ast, "evaluate_opportunity", (triangle_pool_data(),))
         .unwrap()
         .cast::<Map>();
-    assert_eq!(r.get("is_opportunity").unwrap().as_bool().unwrap(), false,
+    assert!(!r.get("is_opportunity").unwrap().as_bool().unwrap(),
         "a flat 1:1 cycle loses to fees");
     let reason = r.get("reason").unwrap().clone().into_string().unwrap();
     assert!(
