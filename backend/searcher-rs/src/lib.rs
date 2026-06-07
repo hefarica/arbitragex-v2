@@ -5,7 +5,7 @@
 
 // Suppress the same lints as main.rs for consistency. Individual modules
 // carry their own allows where the pattern is demonstrably safe.
-#![deny(clippy::unwrap_used, clippy::expect_used)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 // Phase 1-3 modules re-exported so the library target compiles standalone.
 pub mod amm_math;

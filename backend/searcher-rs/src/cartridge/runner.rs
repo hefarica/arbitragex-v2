@@ -32,7 +32,7 @@ use rhai::{Dynamic, Engine, Map, Scope, AST};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration Constants
@@ -471,7 +471,7 @@ impl CartridgeRunner {
     fn execute_init_strategy(
         &self,
         ast: &AST,
-        cartridge_id: &str,
+        _cartridge_id: &str,
     ) -> Result<CartridgeMetadata, CartridgeError> {
         let mut scope = Scope::new();
         let result = self
@@ -639,6 +639,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicU64;
 
+    #[allow(dead_code)]
     fn make_test_host_ctx() -> HostContext {
         // For unit tests, we create a minimal context.
         // Real Redis is not needed — host bindings will return UNIT.
@@ -797,7 +798,7 @@ mod tests {
         // v3_sizing_pending) WITHOUT being blocked by the V2 get_pool_index >= 2 gate.
         let (res, log_fired, pool_index_hit) = eval_dex_arb_stub("v3", true, 0);
         assert_eq!(reason_of(&res), "v3_sizing_pending");
-        assert_eq!(res.get("is_opportunity").unwrap().as_bool().unwrap(), false);
+        assert!(!res.get("is_opportunity").unwrap().as_bool().unwrap());
         assert!(log_fired, "log_quantum (v3_source_priced) must fire — shadow telemetry");
         assert!(
             !pool_index_hit,

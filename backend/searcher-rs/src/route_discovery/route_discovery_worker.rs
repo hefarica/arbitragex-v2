@@ -176,13 +176,11 @@ pub fn evaluate_tick(
     }
 
     // Rejected pools share the same per-tick cap budget (separate counter).
-    let mut rejected_emitted = 0usize;
-    for r in outcome.rejected.iter() {
+    for (rejected_emitted, r) in outcome.rejected.iter().enumerate() {
         if rejected_emitted >= max_telemetry_per_tick {
             break;
         }
         events.push(telemetry::rejected_event(chain_id, r));
-        rejected_emitted += 1;
     }
 
     // Dispatch planning (only when a cartridge runner is available). Capped at

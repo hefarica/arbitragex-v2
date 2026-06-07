@@ -213,6 +213,7 @@ pub struct ScannerHandle {
 /// In `Shadow` mode the emitter uses `dry_run = true` so candidates are
 /// evaluated and logged but NOT written to PG or Redis (the legacy path
 /// handles those writes).
+#[allow(clippy::too_many_arguments)]
 async fn build_orchestrator(
     mode: OrchestratorMode,
     chain_id: u64,

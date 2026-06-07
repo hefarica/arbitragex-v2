@@ -33,7 +33,7 @@
 //! | `from_wei(amount, decimals)`      | Pure conversion | <1μs       |
 
 use redis::aio::ConnectionManager;
-use rhai::{Dynamic, Engine, EvalAltResult, Map, Scope};
+use rhai::{Dynamic, Engine, Map};
 use std::sync::Arc;
 use tokio::runtime::Handle;
 use tokio::sync::RwLock;
@@ -75,7 +75,7 @@ pub(crate) fn v3_spot_price_from_sqrt(sqrt_price_x96: &str, dec_in: i64, dec_out
         Ok(v) => v,
         Err(_) => return 0.0,
     };
-    if !(sqrt > 0.0) {
+    if sqrt <= 0.0 || sqrt.is_nan() {
         return 0.0;
     }
     let q96 = 2f64.powi(96);
@@ -173,7 +173,7 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
             Some(json_str) => {
                 match serde_json::from_str::<Vec<String>>(&json_str) {
                     Ok(addrs) => {
-                        let arr: Vec<Dynamic> = addrs.into_iter().map(|a| Dynamic::from(a)).collect();
+                        let arr: Vec<Dynamic> = addrs.into_iter().map(Dynamic::from).collect();
                         Dynamic::from_array(arr)
                     }
                     Err(_) => Dynamic::from_array(vec![]),
@@ -278,7 +278,7 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
         map.insert("error".into(), Dynamic::from("simulation_pending"));
         map.insert("amount_in".into(), Dynamic::from(amount_in.to_string()));
         map.insert("path".into(), Dynamic::from_array(
-            path_strs.into_iter().map(|s| Dynamic::from(s)).collect()
+            path_strs.into_iter().map(Dynamic::from).collect()
         ));
         Dynamic::from_map(map)
     });
@@ -336,7 +336,7 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
 
         // Fire-and-forget telemetry publish
         let channel = ctx.telemetry_channel.clone();
-        let _ = ctx.rt_handle.block_on(async {
+        ctx.rt_handle.block_on(async {
             let mut redis = ctx.redis.write().await;
             let _: Result<(), _> = redis::AsyncCommands::publish(
                 &mut *redis,
@@ -373,7 +373,7 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
             "timestamp": chrono::Utc::now().to_rfc3339(),
         });
 
-        let _ = ctx.rt_handle.block_on(async {
+        ctx.rt_handle.block_on(async {
             let mut redis = ctx.redis.write().await;
             let _: Result<(), _> = redis::AsyncCommands::publish(
                 &mut *redis,

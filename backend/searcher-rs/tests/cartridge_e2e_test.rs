@@ -22,7 +22,6 @@
 //! ```
 
 use rhai::{Dynamic, Engine, Map, Scope};
-use std::collections::HashMap;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test: Contract Validation (no Redis needed)

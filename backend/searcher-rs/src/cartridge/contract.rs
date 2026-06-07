@@ -20,7 +20,7 @@
 //! | `fn on_deactivate()`               | Called when cartridge is paused   |
 //! | `fn on_new_block(block_number)`     | Called on each new block          |
 
-use rhai::{AST, Engine};
+use rhai::AST;
 use std::collections::HashSet;
 
 /// The three mandatory function names every cartridge must define.
@@ -137,7 +137,7 @@ pub fn validate_metadata(map: &rhai::Map) -> Result<(), Vec<ContractViolation>> 
                 violations.push(ContractViolation::MissingMetadataKey(key.to_owned()));
             }
             Some(val) => {
-                if let Some(s) = val.clone().into_string().ok() {
+                if let Ok(s) = val.clone().into_string() {
                     if s.trim().is_empty() {
                         violations.push(ContractViolation::MissingMetadataKey(
                             format!("{key} (empty string)"),
@@ -159,6 +159,7 @@ pub fn validate_metadata(map: &rhai::Map) -> Result<(), Vec<ContractViolation>> 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use rhai::Engine;
 
     fn make_engine() -> Engine {
         Engine::new()

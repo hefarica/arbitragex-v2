@@ -590,7 +590,7 @@ mod tests {
         assert_eq!(m.get("source_pool").unwrap().to_string(), "");
         assert_eq!(m.get("protocol_type").unwrap().to_string(), "unknown");
         // No reserves provided -> key absent -> Rhai sees () -> reserve-dependent cartridges fail-honest.
-        assert!(m.get("reserves_source").is_none());
+        assert!(!m.contains_key("reserves_source"));
     }
 
     #[test]
