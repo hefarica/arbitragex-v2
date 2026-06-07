@@ -4,6 +4,7 @@ import { Redis } from "ioredis";
 import { PaperTradeArchiver } from "./routes/paper-trade-archiver.js";
 import { ScoredOpportunitiesArchiver } from "./routes/scored-opportunities-archiver.js";
 import { RouteDiscoveryOutcomeSink, outcomeSinkEnabled } from "./routes/route-discovery-outcome-sink.js";
+import { OpportunitiesBridgeArchiver, opportunitiesBridgeEnabled } from "./routes/opportunities-bridge-archiver.js";
 import { buildRouteDiscoveryOutcomesRouter } from "./routes/route-discovery-outcomes-api.js";
 import { buildOperatorRouter } from "./routes/operator.js";
 import { buildCartridgeForgeRouter } from "./routes/cartridge-forge.js";
@@ -1297,6 +1298,25 @@ if (pool && (process.env["ARBX_SCORING_ARCHIVER_MODE"] ?? "off").toLowerCase() =
   );
 }
 
+// Opportunities bridge (paper): reads arbx:route_discovery:outcomes and writes the
+// opportunities PG table (status detected|rejected, paper-marked, amount_in_wei=0,
+// dex_a='route_discovery') so /opportunities surfaces the real shadow routes with
+// their values. The searcher is UNTOUCHED — only the api-server writes here.
+// Dormant by default — set ARBX_OPPS_BRIDGE_MODE=on to activate. Requires DATABASE_URL.
+let oppsBridge: OpportunitiesBridgeArchiver | null = null;
+if (pool && opportunitiesBridgeEnabled()) {
+  oppsBridge = new OpportunitiesBridgeArchiver({ redisUrl: REDIS_URL, pool, logger });
+  oppsBridge.start().catch((e) =>
+    logger.error({ event: "opps_bridge.start_err", err: (e as Error).message },
+      "opportunities bridge failed to start"),
+  );
+} else {
+  logger.info(
+    { event: "opps_bridge.dormant", reason: pool ? "mode_off" : "no_database_url" },
+    "opportunities bridge dormant (set ARBX_OPPS_BRIDGE_MODE=on to enable)",
+  );
+}
+
 httpServer.listen(PORT, () => {
   logger.info({ event: "service.boot", port: PORT, env: cfg.system.env,
     upstreams: Object.keys(UPSTREAMS) }, `${SERVICE} listening`);
@@ -1309,6 +1329,7 @@ const shutdown = async (sig: string) => {
   await paperArchiver?.stop().catch(() => {});
   await rdOutcomeSink?.stop().catch(() => {});
   await scoredArchiver?.stop().catch(() => {});
+  await oppsBridge?.stop().catch(() => {});
   // Arteria WSS: cerrar el subscriber de convergencia antes que el redis
   // principal para evitar errores de "Connection is closed" en handlers.
   await convergenceSubscriber.quit().catch(() => {});
