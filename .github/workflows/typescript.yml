@@ -1,30 +1,19 @@
 name: TypeScript CI
 
 on:
+  # ALWAYS run on PR→main and push→main (NO `paths:` filter). Rationale: the job
+  # below ("tsc --noEmit (all workspaces)") is a REQUIRED status check under branch
+  # protection. A path-filtered required check NEVER runs on PRs that don't touch
+  # the filtered paths (workflow-only, Rust-only, docs-only PRs) → GitHub reports it
+  # "Expected — Waiting for status" forever → the PR is permanently un-mergeable in
+  # strict mode. Same deadlock class already fixed for dockerfile-audit (f949450).
+  # The typecheck/test steps are advisory (continue-on-error) until M4, so always
+  # running is cheap and never spuriously blocks. DO NOT re-add a `paths:` filter
+  # while this job is a required check.
   push:
     branches: [main]
-    paths:
-      - 'shared-ts/**'
-      - 'backend/api-server/**'
-      - 'backend/selector-api/**'
-      - 'frontend/**'
-      - 'edge/worker/**'
-      - 'edge/dev-local/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/typescript.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'shared-ts/**'
-      - 'backend/api-server/**'
-      - 'backend/selector-api/**'
-      - 'frontend/**'
-      - 'edge/worker/**'
-      - 'edge/dev-local/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/typescript.yml'
 
 # M2 Capa1 Fase 4 — read-only token.
 permissions:
