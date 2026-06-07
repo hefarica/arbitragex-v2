@@ -197,6 +197,148 @@ fn applicable_label(name: &str, route_kind: RouteKind) -> Option<StrategyLabel> 
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// strategy_applicability_v2 — route shape → omega_strategy_pack dispatch key
+//
+// ADDITIVE bridge (Phase 2). Maps a measured route shape to the polymorphic
+// omega_strategy_pack's `strategy_kind` string (the cartridge DISPATCH key — NOT
+// the persisted `StrategyLabel`/`StrategyKind` enum, so this changes no DB/API
+// contract and needs no migration). Pure + deterministic + unit-tested.
+//
+// NO-ACTIVE: `shadow_allowed` is always true, `live_allowed` is always false here —
+// live eligibility is decided downstream by the execution gates, never by the
+// classifier. Fail-honest: an unrecognised shape → applicable=false with a reason.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Measured shape of a candidate route (what route_discovery already knows about it).
+/// All fields are observations, never fabricated — absent signals stay at their
+/// conservative default (R8).
+#[derive(Debug, Clone, Default)]
+pub struct RouteShapeV2 {
+    /// Number of swap legs (2..=7).
+    pub hop_count: usize,
+    /// Distinct DEX venues across the legs.
+    pub distinct_dexes: usize,
+    /// Distinct fee tiers across the legs.
+    pub distinct_fee_tiers: usize,
+    /// True when all legs trade the same token pair (2-leg spatial / fee-tier).
+    pub same_pair: bool,
+    /// True when the route mixes a constant-product (V2) and a concentrated (V3) leg.
+    pub mixes_v2_and_v3: bool,
+    /// True when every token in the route is a stablecoin (basket / depeg).
+    pub all_stablecoins: bool,
+    /// True when the trigger is a confirmed new-block post-state imbalance (backrun).
+    pub post_block_imbalance: bool,
+    /// True when the route spans more than one chain.
+    pub cross_chain: bool,
+    /// True when own inventory is available on both chains (cross-chain w/o bridge).
+    pub inventory_available: bool,
+}
+
+/// Result of v2 classification — mirrors the master-prompt applicability contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StrategyApplicabilityV2 {
+    /// The omega_strategy_pack dispatch key, or "" when not applicable.
+    pub strategy_kind: String,
+    pub applicable: bool,
+    pub reason: String,
+    pub required_bindings: Vec<String>,
+    pub missing_bindings: Vec<String>,
+    /// Always true (route discovery is shadow-only by construction).
+    pub shadow_allowed: bool,
+    /// Always false here (live is gated downstream, never granted by the classifier).
+    pub live_allowed: bool,
+}
+
+impl StrategyApplicabilityV2 {
+    fn applicable(kind: &str, reason: &str, missing: &[&str]) -> Self {
+        Self {
+            strategy_kind: kind.to_string(),
+            applicable: true,
+            reason: reason.to_string(),
+            required_bindings: Vec::new(),
+            missing_bindings: missing.iter().map(|s| s.to_string()).collect(),
+            shadow_allowed: true,
+            live_allowed: false,
+        }
+    }
+    fn not_applicable(reason: &str) -> Self {
+        Self {
+            strategy_kind: String::new(),
+            applicable: false,
+            reason: reason.to_string(),
+            required_bindings: Vec::new(),
+            missing_bindings: Vec::new(),
+            shadow_allowed: true,
+            live_allowed: false,
+        }
+    }
+}
+
+/// Classify a measured route shape into an omega_strategy_pack dispatch key.
+///
+/// Precedence follows the master-prompt §6 matrix: cross-chain and post-block
+/// signals dominate (they constrain the surface), then stable baskets, then hop
+/// count, then 2-leg sub-shapes (fee-tier vs spatial vs cross-invariant).
+pub fn classify_v2(shape: &RouteShapeV2) -> StrategyApplicabilityV2 {
+    // Cross-chain is shadow-only and flags the bindings it still lacks (R8 honesty).
+    if shape.cross_chain {
+        return if shape.inventory_available {
+            StrategyApplicabilityV2::applicable(
+                "cross_chain_inventory_shadow",
+                "cross_chain_with_inventory",
+                &["finality_model", "settlement_risk_model", "cross_chain_accounting"],
+            )
+        } else {
+            StrategyApplicabilityV2::applicable(
+                "omnichain_shadow_route",
+                "cross_chain_bridge_required",
+                &["bridge_latency_model", "finality_model", "settlement_risk_model", "rollback_killswitch"],
+            )
+        };
+    }
+
+    // Confirmed post-state imbalance → non-extractive backrun (no pending-tx surface).
+    if shape.post_block_imbalance {
+        return StrategyApplicabilityV2::applicable(
+            "post_block_residual_backrun",
+            "new_block_post_state_imbalance",
+            &[],
+        );
+    }
+
+    // Stablecoin basket → depeg/curve family.
+    if shape.all_stablecoins && shape.hop_count >= 2 {
+        return StrategyApplicabilityV2::applicable("stable_depeg", "stablecoin_basket", &[]);
+    }
+
+    match shape.hop_count {
+        0 | 1 => StrategyApplicabilityV2::not_applicable("hop_count_below_2"),
+        2 => {
+            if shape.same_pair && shape.distinct_dexes <= 1 && shape.distinct_fee_tiers > 1 {
+                StrategyApplicabilityV2::applicable("v3_fee_tier", "same_pair_same_dex_diff_fee_tier", &[])
+            } else if shape.same_pair && shape.distinct_dexes > 1 {
+                StrategyApplicabilityV2::applicable("spatial_cross_dex", "same_pair_diff_dex", &[])
+            } else if shape.mixes_v2_and_v3 {
+                StrategyApplicabilityV2::applicable("v2_v3_cross_invariant", "mixed_v2_v3_invariants", &[])
+            } else {
+                StrategyApplicabilityV2::applicable("spatial_cross_dex", "two_leg_default", &[])
+            }
+        }
+        3 => {
+            if shape.distinct_dexes > 1 {
+                StrategyApplicabilityV2::applicable("triangular_cross_dex", "three_leg_cross_dex_cycle", &[])
+            } else {
+                StrategyApplicabilityV2::applicable("triangular_same_dex", "three_leg_same_dex_cycle", &[])
+            }
+        }
+        n if n >= 4 && n <= 7 => {
+            StrategyApplicabilityV2::applicable("multi_hop_cycle", "four_to_seven_leg_cycle", &[])
+        }
+        _ => StrategyApplicabilityV2::not_applicable("hop_count_above_7_unsupported"),
+    }
+}
+
 /// Strategy applicability engine.
 #[derive(Debug, Clone, Default)]
 pub struct StrategyApplicabilityEngine {
@@ -439,5 +581,83 @@ strategies:
         let a = eng.evaluate(RouteKind::V2V3);
         assert!(a.applicable.contains(&StrategyLabel::DexArbV2V3));
         assert!(a.applicable.contains(&StrategyLabel::FlashloanArb));
+    }
+
+    // ── classify_v2 — route shape → omega_strategy_pack dispatch key (Phase 2) ──
+
+    fn shape(hop: usize) -> RouteShapeV2 {
+        RouteShapeV2 { hop_count: hop, ..Default::default() }
+    }
+
+    #[test]
+    fn v2_two_leg_same_pair_diff_fee_is_v3_fee_tier() {
+        let s = RouteShapeV2 { hop_count: 2, same_pair: true, distinct_dexes: 1, distinct_fee_tiers: 2, ..Default::default() };
+        let r = classify_v2(&s);
+        assert_eq!(r.strategy_kind, "v3_fee_tier");
+        assert!(r.applicable && r.shadow_allowed && !r.live_allowed);
+    }
+
+    #[test]
+    fn v2_two_leg_same_pair_diff_dex_is_spatial() {
+        let s = RouteShapeV2 { hop_count: 2, same_pair: true, distinct_dexes: 2, ..Default::default() };
+        assert_eq!(classify_v2(&s).strategy_kind, "spatial_cross_dex");
+    }
+
+    #[test]
+    fn v2_two_leg_mixed_invariant_is_cross_invariant() {
+        let s = RouteShapeV2 { hop_count: 2, same_pair: false, mixes_v2_and_v3: true, ..Default::default() };
+        assert_eq!(classify_v2(&s).strategy_kind, "v2_v3_cross_invariant");
+    }
+
+    #[test]
+    fn v2_three_leg_cross_vs_same_dex() {
+        let cross = RouteShapeV2 { hop_count: 3, distinct_dexes: 3, ..Default::default() };
+        assert_eq!(classify_v2(&cross).strategy_kind, "triangular_cross_dex");
+        let same = RouteShapeV2 { hop_count: 3, distinct_dexes: 1, ..Default::default() };
+        assert_eq!(classify_v2(&same).strategy_kind, "triangular_same_dex");
+    }
+
+    #[test]
+    fn v2_four_to_seven_leg_is_multi_hop() {
+        for h in 4..=7 {
+            assert_eq!(classify_v2(&shape(h)).strategy_kind, "multi_hop_cycle", "hop {h}");
+        }
+        // 8+ unsupported, fail-honest
+        assert!(!classify_v2(&shape(8)).applicable);
+        assert_eq!(classify_v2(&shape(1)).applicable, false);
+    }
+
+    #[test]
+    fn v2_post_block_imbalance_dominates() {
+        let s = RouteShapeV2 { hop_count: 2, post_block_imbalance: true, same_pair: true, distinct_dexes: 2, ..Default::default() };
+        assert_eq!(classify_v2(&s).strategy_kind, "post_block_residual_backrun");
+    }
+
+    #[test]
+    fn v2_cross_chain_inventory_vs_bridge_shadow_only() {
+        let inv = RouteShapeV2 { hop_count: 2, cross_chain: true, inventory_available: true, ..Default::default() };
+        let r1 = classify_v2(&inv);
+        assert_eq!(r1.strategy_kind, "cross_chain_inventory_shadow");
+        assert!(!r1.live_allowed && r1.shadow_allowed);
+        assert!(!r1.missing_bindings.is_empty(), "cross-chain must flag missing bindings (R8)");
+
+        let bridge = RouteShapeV2 { hop_count: 2, cross_chain: true, inventory_available: false, ..Default::default() };
+        let r2 = classify_v2(&bridge);
+        assert_eq!(r2.strategy_kind, "omnichain_shadow_route");
+        assert!(r2.missing_bindings.iter().any(|b| b.contains("bridge")));
+    }
+
+    #[test]
+    fn v2_stablecoin_basket_is_stable_depeg() {
+        let s = RouteShapeV2 { hop_count: 3, all_stablecoins: true, distinct_dexes: 2, ..Default::default() };
+        assert_eq!(classify_v2(&s).strategy_kind, "stable_depeg");
+    }
+
+    #[test]
+    fn v2_never_grants_live() {
+        // NO-ACTIVE invariant: no shape ever yields live_allowed=true.
+        for h in 0..=8 {
+            assert!(!classify_v2(&shape(h)).live_allowed);
+        }
     }
 }
