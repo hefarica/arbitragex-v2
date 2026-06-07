@@ -97,6 +97,7 @@ pub fn v2_amount_out(amount_in: U256, reserve_in: U256, reserve_out: U256, fee_b
 /// U256 (2^256). We widen to U512 via `U256::full_mul`, divide, then narrow
 /// back (the quotient is a token amount that fits in U256). Returns
 /// `U256::zero()` on a zero denominator (caller treats as degenerate).
+#[allow(dead_code)]
 pub fn mul_div(a: U256, b: U256, denom: U256) -> U256 {
     if denom.is_zero() {
         return U256::zero();
@@ -129,6 +130,7 @@ pub fn mul_div(a: U256, b: U256, denom: U256) -> U256 {
 /// 0.30/1.00 %) — NOT the V2 basis-point convention. All arithmetic is integer
 /// (U256/U512); no f64, no fabricated output (RULE 00). Returns `U256::zero()`
 /// on degenerate input or a non-physical price move.
+#[allow(dead_code)]
 pub fn v3_amount_out_single_tick(
     amount_in: U256,
     sqrt_price_x96: U256,
