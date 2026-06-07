@@ -34,7 +34,12 @@ jobs:
           workspaces: backend
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --version 0.21.1 --locked
+        # Bumped 0.21.1 → 0.22.1: 0.21.1's older rustsec loader ERRORS the entire
+        # advisory-db load when ANY upstream advisory file is malformed (observed:
+        # rustsec/advisory-db `pingora-cache/RUSTSEC-2026-0035.md` TOML parse error —
+        # a crate we do not depend on). 0.22.x skips malformed advisories with a
+        # warning instead of failing the gate. CI-tool bump only; no runtime impact.
+        run: cargo install cargo-audit --version 0.22.1 --locked
 
       - name: Run cargo audit
         working-directory: backend
