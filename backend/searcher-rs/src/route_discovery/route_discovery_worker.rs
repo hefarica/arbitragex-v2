@@ -142,6 +142,10 @@ pub struct TickOutput {
     pub routes_found: usize,
     pub routes_dispatched: usize,
     pub telemetry_emitted: usize,
+    /// Profitable (Σ log_weight < 0) closed cycles found by the multi_hop_search
+    /// negative-cycle pass over the same graph snapshot. Observe-only shadow signal;
+    /// bounded by `finder.max_depth` (2..=7) and `finder.max_routes_per_tick`.
+    pub multi_hop_cycles_found: usize,
 }
 
 /// Pure tick evaluation: run the finder over `outcome.graph`, annotate each
@@ -222,7 +226,19 @@ pub fn evaluate_tick(
         }
     }
 
-    let tick_summary = telemetry::tick_event(
+    // Multi-hop profitable-cycle pass (additive, observe-only). Runs the
+    // negative-`log_weight` cycle finder over the SAME graph snapshot, bounded by
+    // the already-configured DFS depth (no new explosion surface) and the per-tick
+    // route cap. Fail-honest: V3 (None-weight) legs are skipped inside the finder.
+    let mh_max_hops = (finder.max_depth as usize).clamp(2, 7);
+    let mh = crate::route_discovery::multi_hop_search::find_profitable_cycles(
+        &outcome.graph,
+        mh_max_hops,
+        finder.max_routes_per_tick,
+    );
+    let multi_hop_cycles_found = mh.cycles.len();
+
+    let mut tick_summary = telemetry::tick_event(
         chain_id,
         ALGORITHM,
         outcome.pools_total,
@@ -237,6 +253,10 @@ pub fn evaluate_tick(
         latency_ms,
         mode,
     );
+    // Inject the multi-hop signal without changing tick_event's signature.
+    tick_summary["multi_hop_profitable_cycles"] = serde_json::json!(multi_hop_cycles_found);
+    tick_summary["multi_hop_v3_skipped"] = serde_json::json!(mh.v3_skipped);
+    tick_summary["multi_hop_capped"] = serde_json::json!(mh.capped);
 
     TickOutput {
         routes_found: routes.len(),
@@ -246,6 +266,7 @@ pub fn evaluate_tick(
         dispatch_intents,
         routes_dispatched,
         telemetry_emitted,
+        multi_hop_cycles_found,
     }
 }
 
@@ -477,6 +498,15 @@ mod tests {
         assert_eq!(tick.tick_summary["edges_rejected"], 1);
         assert_eq!(tick.tick_summary["latency_ms"], 42);
         assert_eq!(tick.tick_summary["mode"], "shadow");
+
+        // Multi-hop pass is wired + observe-only: field present, bounded by the cap,
+        // and surfaced in the tick summary (R8 honest counters).
+        assert!(tick.multi_hop_cycles_found <= finder.max_routes_per_tick);
+        assert!(tick
+            .tick_summary
+            .get("multi_hop_profitable_cycles")
+            .is_some());
+        assert!(tick.tick_summary.get("multi_hop_v3_skipped").is_some());
     }
 
     #[test]

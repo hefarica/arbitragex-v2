@@ -11,6 +11,7 @@
 //! by health-factor scan, not the DEX graph (corpus §finding 7).
 
 use crate::route_discovery::types::{RejectedStrategy, RouteKind};
+use crate::route_intent::{ProtocolType, RouteIntentLeg};
 use crate::strategy_label::StrategyLabel;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -195,6 +196,277 @@ fn applicable_label(name: &str, route_kind: RouteKind) -> Option<StrategyLabel> 
         "liquidation" => Some(StrategyLabel::Liquidation),
         _ => None, // stable_arb → tag, not a label
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// strategy_applicability_v2 — route shape → omega_strategy_pack dispatch key
+//
+// ADDITIVE bridge (Phase 2). Maps a measured route shape to the polymorphic
+// omega_strategy_pack's `strategy_kind` string (the cartridge DISPATCH key — NOT
+// the persisted `StrategyLabel`/`StrategyKind` enum, so this changes no DB/API
+// contract and needs no migration). Pure + deterministic + unit-tested.
+//
+// NO-ACTIVE: `shadow_allowed` is always true, `live_allowed` is always false here —
+// live eligibility is decided downstream by the execution gates, never by the
+// classifier. Fail-honest: an unrecognised shape → applicable=false with a reason.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Measured shape of a candidate route (what route_discovery already knows about it).
+/// All fields are observations, never fabricated — absent signals stay at their
+/// conservative default (R8).
+#[derive(Debug, Clone, Default)]
+pub struct RouteShapeV2 {
+    /// Number of swap legs (2..=7).
+    pub hop_count: usize,
+    /// Distinct DEX venues across the legs.
+    pub distinct_dexes: usize,
+    /// Distinct fee tiers across the legs.
+    pub distinct_fee_tiers: usize,
+    /// True when all legs trade the same token pair (2-leg spatial / fee-tier).
+    pub same_pair: bool,
+    /// True when the route mixes a constant-product (V2) and a concentrated (V3) leg.
+    pub mixes_v2_and_v3: bool,
+    /// True when every token in the route is a stablecoin (basket / depeg).
+    pub all_stablecoins: bool,
+    /// True when the trigger is a confirmed new-block post-state imbalance (backrun).
+    pub post_block_imbalance: bool,
+    /// True when the route spans more than one chain.
+    pub cross_chain: bool,
+    /// True when own inventory is available on both chains (cross-chain w/o bridge).
+    pub inventory_available: bool,
+}
+
+/// Result of v2 classification — mirrors the master-prompt applicability contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StrategyApplicabilityV2 {
+    /// The omega_strategy_pack dispatch key, or "" when not applicable.
+    pub strategy_kind: String,
+    pub applicable: bool,
+    pub reason: String,
+    pub required_bindings: Vec<String>,
+    pub missing_bindings: Vec<String>,
+    /// Always true (route discovery is shadow-only by construction).
+    pub shadow_allowed: bool,
+    /// Always false here (live is gated downstream, never granted by the classifier).
+    pub live_allowed: bool,
+}
+
+impl StrategyApplicabilityV2 {
+    fn applicable(kind: &str, reason: &str, missing: &[&str]) -> Self {
+        Self {
+            strategy_kind: kind.to_string(),
+            applicable: true,
+            reason: reason.to_string(),
+            required_bindings: Vec::new(),
+            missing_bindings: missing.iter().map(|s| s.to_string()).collect(),
+            shadow_allowed: true,
+            live_allowed: false,
+        }
+    }
+    fn not_applicable(reason: &str) -> Self {
+        Self {
+            strategy_kind: String::new(),
+            applicable: false,
+            reason: reason.to_string(),
+            required_bindings: Vec::new(),
+            missing_bindings: Vec::new(),
+            shadow_allowed: true,
+            live_allowed: false,
+        }
+    }
+}
+
+/// Classify a measured route shape into an omega_strategy_pack dispatch key.
+///
+/// Precedence follows the master-prompt §6 matrix: cross-chain and post-block
+/// signals dominate (they constrain the surface), then stable baskets, then hop
+/// count, then 2-leg sub-shapes (fee-tier vs spatial vs cross-invariant).
+pub fn classify_v2(shape: &RouteShapeV2) -> StrategyApplicabilityV2 {
+    // Cross-chain is shadow-only and flags the bindings it still lacks (R8 honesty).
+    if shape.cross_chain {
+        return if shape.inventory_available {
+            StrategyApplicabilityV2::applicable(
+                "cross_chain_inventory_shadow",
+                "cross_chain_with_inventory",
+                &[
+                    "finality_model",
+                    "settlement_risk_model",
+                    "cross_chain_accounting",
+                ],
+            )
+        } else {
+            StrategyApplicabilityV2::applicable(
+                "omnichain_shadow_route",
+                "cross_chain_bridge_required",
+                &[
+                    "bridge_latency_model",
+                    "finality_model",
+                    "settlement_risk_model",
+                    "rollback_killswitch",
+                ],
+            )
+        };
+    }
+
+    // Confirmed post-state imbalance → non-extractive backrun (no pending-tx surface).
+    if shape.post_block_imbalance {
+        return StrategyApplicabilityV2::applicable(
+            "post_block_residual_backrun",
+            "new_block_post_state_imbalance",
+            &[],
+        );
+    }
+
+    // Stablecoin basket → depeg/curve family.
+    if shape.all_stablecoins && shape.hop_count >= 2 {
+        return StrategyApplicabilityV2::applicable("stable_depeg", "stablecoin_basket", &[]);
+    }
+
+    match shape.hop_count {
+        0 | 1 => StrategyApplicabilityV2::not_applicable("hop_count_below_2"),
+        2 => {
+            if shape.same_pair && shape.distinct_dexes <= 1 && shape.distinct_fee_tiers > 1 {
+                StrategyApplicabilityV2::applicable(
+                    "v3_fee_tier",
+                    "same_pair_same_dex_diff_fee_tier",
+                    &[],
+                )
+            } else if shape.same_pair && shape.distinct_dexes > 1 {
+                StrategyApplicabilityV2::applicable("spatial_cross_dex", "same_pair_diff_dex", &[])
+            } else if shape.mixes_v2_and_v3 {
+                StrategyApplicabilityV2::applicable(
+                    "v2_v3_cross_invariant",
+                    "mixed_v2_v3_invariants",
+                    &[],
+                )
+            } else {
+                StrategyApplicabilityV2::applicable("spatial_cross_dex", "two_leg_default", &[])
+            }
+        }
+        3 => {
+            if shape.distinct_dexes > 1 {
+                StrategyApplicabilityV2::applicable(
+                    "triangular_cross_dex",
+                    "three_leg_cross_dex_cycle",
+                    &[],
+                )
+            } else {
+                StrategyApplicabilityV2::applicable(
+                    "triangular_same_dex",
+                    "three_leg_same_dex_cycle",
+                    &[],
+                )
+            }
+        }
+        n if (4..=7).contains(&n) => {
+            StrategyApplicabilityV2::applicable("multi_hop_cycle", "four_to_seven_leg_cycle", &[])
+        }
+        _ => StrategyApplicabilityV2::not_applicable("hop_count_above_7_unsupported"),
+    }
+}
+
+/// Dispatch keys that the committed `omega_strategy_pack.rhai` actually handles
+/// AND that `classify_v2` can emit for a single-chain route — the INTERSECTION.
+///
+/// `classify_v2` can also emit two cross-chain keys (`cross_chain_inventory_shadow`,
+/// `omnichain_shadow_route`) for which the pack has **no handler** (it would hit the
+/// pack's `reject("unsupported_strategy_kind")` fallthrough); and the pack handles
+/// ~10 more keys the classifier never emits. This allowlist is therefore the set a
+/// classified family can be *dispatched* on — used only to flag a family as routable
+/// vs. observational shadow telemetry. SINGLE SOURCE OF TRUTH: keep in sync with the
+/// pack's `evaluate_opportunity` dispatch table.
+pub const SUPPORTED_DISPATCH_KEYS: [&str; 8] = [
+    "v3_fee_tier",
+    "spatial_cross_dex",
+    "v2_v3_cross_invariant",
+    "triangular_same_dex",
+    "triangular_cross_dex",
+    "multi_hop_cycle",
+    "stable_depeg",
+    "post_block_residual_backrun",
+];
+
+/// `true` when `key` is one the committed omega_strategy_pack can dispatch on.
+/// The two cross-chain keys are deliberately ABSENT — they stay observational
+/// (shadow telemetry), never dispatched, until finality/settlement/rollback
+/// bindings exist. The empty string (unclassifiable shape) is unsupported.
+pub fn is_pack_supported(key: &str) -> bool {
+    SUPPORTED_DISPATCH_KEYS.contains(&key)
+}
+
+impl RouteShapeV2 {
+    /// Derive a route shape from the legs the discovery layer already decoded.
+    ///
+    /// PURE + HONEST (R8): every field comes from data the legs carry; anything
+    /// not derivable from legs alone stays at its conservative default rather than
+    /// being fabricated:
+    /// - `all_stablecoins` → always `false`: stablecoin-ness needs a token registry
+    ///   this function does not have. A real stable route just classifies by
+    ///   hop-count instead of `stable_depeg` (less specific, never wrong).
+    /// - `post_block_imbalance` → always `false`: backrun provenance lives on
+    ///   `RouteIntent::source_event` (`DetectionSource::NewBlock`), NOT on the route
+    ///   geometry. The classifier must never infer it from legs — a backrun-wiring
+    ///   caller sets it from the real confirmed-block source, downstream of here.
+    /// - `cross_chain` / `inventory_available` → always `false`: the discovery worker
+    ///   is single-chain and legs carry no per-leg chain id.
+    ///
+    /// DOCUMENTED CONSERVATIVE DEGRADATION (not hidden — see math-validator note):
+    /// when venue/fee data is absent (`dex_hint`/`fee_bps` = `None`, the common case
+    /// since the dispatcher emits `dex_hint: None`), `distinct_dexes` /
+    /// `distinct_fee_tiers` count only KNOWN values, so unknown-venue routes
+    /// under-claim toward `triangular_same_dex` (3-leg) or `spatial_cross_dex`
+    /// (`two_leg_default`, 2-leg). These are dispatch HINTS for shadow telemetry, not
+    /// money decisions; the net-profit gate re-derives everything before any action.
+    pub fn from_legs(legs: &[RouteIntentLeg]) -> Self {
+        use std::collections::HashSet;
+        let distinct_dexes = legs
+            .iter()
+            .filter_map(|l| l.dex_hint.as_deref())
+            .collect::<HashSet<&str>>()
+            .len();
+        let distinct_fee_tiers = legs
+            .iter()
+            .filter_map(|l| l.fee_bps)
+            .collect::<HashSet<u32>>()
+            .len();
+        // `same_pair`: every leg trades the SAME unordered token pair as the first
+        // leg. A 2-leg spatial round-trip has leg[1] reversed (A→B then B→A), so the
+        // pair is canonicalized by address order before comparing. Empty ⇒ false.
+        let same_pair = match legs.first() {
+            None => false,
+            Some(first) => {
+                let canon = |l: &RouteIntentLeg| {
+                    if l.token_in <= l.token_out {
+                        (l.token_in, l.token_out)
+                    } else {
+                        (l.token_out, l.token_in)
+                    }
+                };
+                let p0 = canon(first);
+                legs.iter().all(|l| canon(l) == p0)
+            }
+        };
+        let any_v2 = legs.iter().any(|l| l.protocol_type == ProtocolType::V2);
+        let any_v3 = legs.iter().any(|l| l.protocol_type == ProtocolType::V3);
+        Self {
+            hop_count: legs.len(),
+            distinct_dexes,
+            distinct_fee_tiers,
+            same_pair,
+            mixes_v2_and_v3: any_v2 && any_v3,
+            // Not derivable from legs alone — forced conservative (R8 honest).
+            all_stablecoins: false,
+            post_block_imbalance: false,
+            cross_chain: false,
+            inventory_available: false,
+        }
+    }
+}
+
+/// Classify a route directly from its decoded legs (shadow-telemetry helper).
+/// Equivalent to `classify_v2(&RouteShapeV2::from_legs(legs))`. Pure + deterministic.
+pub fn classify_route_legs(legs: &[RouteIntentLeg]) -> StrategyApplicabilityV2 {
+    classify_v2(&RouteShapeV2::from_legs(legs))
 }
 
 /// Strategy applicability engine.
@@ -439,5 +711,386 @@ strategies:
         let a = eng.evaluate(RouteKind::V2V3);
         assert!(a.applicable.contains(&StrategyLabel::DexArbV2V3));
         assert!(a.applicable.contains(&StrategyLabel::FlashloanArb));
+    }
+
+    // ── classify_v2 — route shape → omega_strategy_pack dispatch key (Phase 2) ──
+
+    fn shape(hop: usize) -> RouteShapeV2 {
+        RouteShapeV2 {
+            hop_count: hop,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn v2_two_leg_same_pair_diff_fee_is_v3_fee_tier() {
+        let s = RouteShapeV2 {
+            hop_count: 2,
+            same_pair: true,
+            distinct_dexes: 1,
+            distinct_fee_tiers: 2,
+            ..Default::default()
+        };
+        let r = classify_v2(&s);
+        assert_eq!(r.strategy_kind, "v3_fee_tier");
+        assert!(r.applicable && r.shadow_allowed && !r.live_allowed);
+    }
+
+    #[test]
+    fn v2_two_leg_same_pair_diff_dex_is_spatial() {
+        let s = RouteShapeV2 {
+            hop_count: 2,
+            same_pair: true,
+            distinct_dexes: 2,
+            ..Default::default()
+        };
+        assert_eq!(classify_v2(&s).strategy_kind, "spatial_cross_dex");
+    }
+
+    #[test]
+    fn v2_two_leg_mixed_invariant_is_cross_invariant() {
+        let s = RouteShapeV2 {
+            hop_count: 2,
+            same_pair: false,
+            mixes_v2_and_v3: true,
+            ..Default::default()
+        };
+        assert_eq!(classify_v2(&s).strategy_kind, "v2_v3_cross_invariant");
+    }
+
+    #[test]
+    fn v2_three_leg_cross_vs_same_dex() {
+        let cross = RouteShapeV2 {
+            hop_count: 3,
+            distinct_dexes: 3,
+            ..Default::default()
+        };
+        assert_eq!(classify_v2(&cross).strategy_kind, "triangular_cross_dex");
+        let same = RouteShapeV2 {
+            hop_count: 3,
+            distinct_dexes: 1,
+            ..Default::default()
+        };
+        assert_eq!(classify_v2(&same).strategy_kind, "triangular_same_dex");
+    }
+
+    #[test]
+    fn v2_four_to_seven_leg_is_multi_hop() {
+        for h in 4..=7 {
+            assert_eq!(
+                classify_v2(&shape(h)).strategy_kind,
+                "multi_hop_cycle",
+                "hop {h}"
+            );
+        }
+        // 8+ unsupported, fail-honest
+        assert!(!classify_v2(&shape(8)).applicable);
+        assert!(!classify_v2(&shape(1)).applicable);
+    }
+
+    #[test]
+    fn v2_post_block_imbalance_dominates() {
+        let s = RouteShapeV2 {
+            hop_count: 2,
+            post_block_imbalance: true,
+            same_pair: true,
+            distinct_dexes: 2,
+            ..Default::default()
+        };
+        assert_eq!(classify_v2(&s).strategy_kind, "post_block_residual_backrun");
+    }
+
+    #[test]
+    fn v2_cross_chain_inventory_vs_bridge_shadow_only() {
+        let inv = RouteShapeV2 {
+            hop_count: 2,
+            cross_chain: true,
+            inventory_available: true,
+            ..Default::default()
+        };
+        let r1 = classify_v2(&inv);
+        assert_eq!(r1.strategy_kind, "cross_chain_inventory_shadow");
+        assert!(!r1.live_allowed && r1.shadow_allowed);
+        assert!(
+            !r1.missing_bindings.is_empty(),
+            "cross-chain must flag missing bindings (R8)"
+        );
+
+        let bridge = RouteShapeV2 {
+            hop_count: 2,
+            cross_chain: true,
+            inventory_available: false,
+            ..Default::default()
+        };
+        let r2 = classify_v2(&bridge);
+        assert_eq!(r2.strategy_kind, "omnichain_shadow_route");
+        assert!(r2.missing_bindings.iter().any(|b| b.contains("bridge")));
+    }
+
+    #[test]
+    fn v2_stablecoin_basket_is_stable_depeg() {
+        let s = RouteShapeV2 {
+            hop_count: 3,
+            all_stablecoins: true,
+            distinct_dexes: 2,
+            ..Default::default()
+        };
+        assert_eq!(classify_v2(&s).strategy_kind, "stable_depeg");
+    }
+
+    #[test]
+    fn v2_never_grants_live() {
+        // NO-ACTIVE invariant: no shape ever yields live_allowed=true.
+        for h in 0..=8 {
+            assert!(!classify_v2(&shape(h)).live_allowed);
+        }
+    }
+
+    // ── RouteShapeV2::from_legs — honest shape derivation from decoded legs ──
+    // (Phase-2 bridge; conditions imposed by cs-validator + math-validator Fase 3.)
+
+    use crate::route_intent::RouteIntentLeg;
+    use ethers::types::Address;
+
+    fn leg(
+        ti: u64,
+        to: u64,
+        dex: Option<&str>,
+        fee: Option<u32>,
+        pt: ProtocolType,
+    ) -> RouteIntentLeg {
+        RouteIntentLeg {
+            token_in: Address::from_low_u64_be(ti),
+            token_out: Address::from_low_u64_be(to),
+            pool_hint: None,
+            dex_hint: dex.map(|s| s.to_string()),
+            fee_bps: fee,
+            protocol_type: pt,
+        }
+    }
+
+    #[test]
+    fn from_legs_empty_is_not_applicable_no_panic() {
+        // math-validator guard: must not index legs[0] on an empty slice.
+        let r = classify_route_legs(&[]);
+        assert!(!r.applicable);
+        assert_eq!(r.strategy_kind, "");
+        assert!(!RouteShapeV2::from_legs(&[]).same_pair);
+    }
+
+    #[test]
+    fn from_legs_single_leg_rejected() {
+        let legs = vec![leg(0xA, 0xB, Some("uni"), Some(30), ProtocolType::V2)];
+        assert!(!classify_route_legs(&legs).applicable);
+    }
+
+    #[test]
+    fn from_legs_same_pair_canonicalizes_reversed_round_trip() {
+        // leg0 A→B, leg1 B→A is a round trip on the SAME unordered pair {A,B}.
+        let legs = vec![
+            leg(0xA, 0xB, Some("uni"), None, ProtocolType::V2),
+            leg(0xB, 0xA, Some("sushi"), None, ProtocolType::V2),
+        ];
+        let s = RouteShapeV2::from_legs(&legs);
+        assert!(s.same_pair, "reversed round-trip must read as same_pair");
+        assert_eq!(s.distinct_dexes, 2);
+        // same_pair + 2 distinct dexes ⇒ spatial_cross_dex.
+        assert_eq!(classify_v2(&s).strategy_kind, "spatial_cross_dex");
+    }
+
+    #[test]
+    fn from_legs_fee_none_does_not_classify_v3_fee_tier() {
+        // cs-validator HIGH-1: same pair / single dex but fee_bps unknown (None) ⇒
+        // distinct_fee_tiers = 0, so it must NOT claim v3_fee_tier (which needs >1).
+        let legs = vec![
+            leg(0xA, 0xB, Some("uni"), None, ProtocolType::V3),
+            leg(0xB, 0xA, Some("uni"), None, ProtocolType::V3),
+        ];
+        let s = RouteShapeV2::from_legs(&legs);
+        assert_eq!(s.distinct_fee_tiers, 0);
+        assert_ne!(classify_v2(&s).strategy_kind, "v3_fee_tier");
+    }
+
+    #[test]
+    fn from_legs_two_leg_default_else_arm_unknown_venue() {
+        // math-validator: pin the `two_leg_default` else-arm — the COMMON production
+        // case (dispatcher emits dex_hint: None ⇒ distinct_dexes=0).
+        let legs = vec![
+            leg(0xA, 0xB, None, None, ProtocolType::Unknown),
+            leg(0xB, 0xA, None, None, ProtocolType::Unknown),
+        ];
+        let s = RouteShapeV2::from_legs(&legs);
+        assert_eq!(s.distinct_dexes, 0);
+        let r = classify_v2(&s);
+        assert_eq!(r.strategy_kind, "spatial_cross_dex");
+        assert_eq!(r.reason, "two_leg_default");
+    }
+
+    #[test]
+    fn from_legs_three_leg_unknown_venue_is_conservative_same_dex() {
+        // Unknown venues ⇒ distinct_dexes=0 ⇒ triangular_same_dex (do NOT over-claim
+        // cross-dex without venue evidence — the honest direction).
+        let legs = vec![
+            leg(0xA, 0xB, None, None, ProtocolType::V2),
+            leg(0xB, 0xC, None, None, ProtocolType::V2),
+            leg(0xC, 0xA, None, None, ProtocolType::V2),
+        ];
+        assert_eq!(
+            classify_route_legs(&legs).strategy_kind,
+            "triangular_same_dex"
+        );
+    }
+
+    #[test]
+    fn from_legs_three_leg_cross_dex_cycle_is_pack_supported() {
+        let legs = vec![
+            leg(0xA, 0xB, Some("uni"), Some(30), ProtocolType::V2),
+            leg(0xB, 0xC, Some("curve"), Some(4), ProtocolType::Curve),
+            leg(0xC, 0xA, Some("sushi"), Some(30), ProtocolType::V2),
+        ];
+        let r = classify_route_legs(&legs);
+        assert_eq!(r.strategy_kind, "triangular_cross_dex");
+        assert!(is_pack_supported(&r.strategy_kind));
+    }
+
+    #[test]
+    fn from_legs_mixes_v2_v3_flag() {
+        let legs = vec![
+            leg(0xA, 0xB, Some("uni"), None, ProtocolType::V2),
+            leg(0xB, 0xC, Some("uni"), None, ProtocolType::V3),
+        ];
+        assert!(RouteShapeV2::from_legs(&legs).mixes_v2_and_v3);
+    }
+
+    #[test]
+    fn from_legs_never_fabricates_unverifiable_signals() {
+        // all_stablecoins / post_block_imbalance / cross_chain / inventory are NOT
+        // derivable from legs ⇒ always false (R8 honest, never fabricated).
+        let legs = vec![
+            leg(0xA, 0xB, Some("curve"), Some(4), ProtocolType::Curve),
+            leg(0xB, 0xA, Some("curve"), Some(4), ProtocolType::Curve),
+        ];
+        let s = RouteShapeV2::from_legs(&legs);
+        assert!(!s.all_stablecoins);
+        assert!(!s.post_block_imbalance);
+        assert!(!s.cross_chain);
+        assert!(!s.inventory_available);
+    }
+
+    #[test]
+    fn is_pack_supported_excludes_cross_chain_keys() {
+        // cs-validator HIGH-2: single-source allowlist; cross-chain keys unsupported.
+        assert!(is_pack_supported("v3_fee_tier"));
+        assert!(is_pack_supported("triangular_cross_dex"));
+        assert!(is_pack_supported("post_block_residual_backrun"));
+        assert!(!is_pack_supported("cross_chain_inventory_shadow"));
+        assert!(!is_pack_supported("omnichain_shadow_route"));
+        assert!(!is_pack_supported(""));
+    }
+
+    // ── Rust↔Rhai DISPATCH-KEY DRIFT CONTRACT + end-to-end bridge guarantees ──
+    // OMEGA Council (cs-validator 9/10): the SUPPORTED_DISPATCH_KEYS doc-comment
+    // claims "single source of truth: keep in sync with the pack" — nothing enforced
+    // it until now. These lock it as a compile/CI tripwire (include_str! triggers
+    // recompilation when the pack changes), plus pin the NO-ACTIVE + no-dangling-family
+    // contract that cartridge_boot.rs's strategy_family_supported stamp consumes.
+
+    /// The committed cartridge pack, embedded at COMPILE TIME.
+    const OMEGA_STRATEGY_PACK_RHAI: &str =
+        include_str!("../../cartridges/omega_strategy_pack.rhai");
+
+    #[test]
+    fn supported_keys_have_a_quoted_dispatch_arm_in_the_pack() {
+        // Each allowlisted key must appear as a QUOTED string literal in the pack
+        // (its `s == "<key>"` dispatch arm / `accept("<key>")`). The quoted form is
+        // precise: it cannot be satisfied by a bare `eval_<key>` fn name. If the pack
+        // drops or renames a dispatch arm, this fails — Rust allowlist ↔ Rhai drift.
+        for key in SUPPORTED_DISPATCH_KEYS {
+            let quoted = format!("\"{key}\"");
+            assert!(
+                OMEGA_STRATEGY_PACK_RHAI.contains(&quoted),
+                "DRIFT: SUPPORTED_DISPATCH_KEYS lists `{key}` but omega_strategy_pack.rhai \
+                 has no quoted dispatch arm for it — the Rust allowlist and the Rhai pack diverged"
+            );
+        }
+    }
+
+    #[test]
+    fn cross_chain_keys_are_applicable_but_not_pack_dispatchable() {
+        // The ONE deliberate divergence between `applicable` and "dispatchable":
+        // cross-chain shapes ARE a real strategy (applicable=true) yet have NO pack
+        // handler (is_pack_supported=false) → observational telemetry only, never
+        // dispatched. Pin BOTH halves so a future allowlist edit can't silently
+        // green-light an undispatchable family.
+        let inv = RouteShapeV2 {
+            hop_count: 2,
+            cross_chain: true,
+            inventory_available: true,
+            ..Default::default()
+        };
+        let r1 = classify_v2(&inv);
+        assert!(r1.applicable, "cross-chain IS a strategy");
+        assert!(
+            !is_pack_supported(&r1.strategy_kind),
+            "but the pack cannot dispatch it"
+        );
+        assert!(!r1.live_allowed);
+
+        let bridge = RouteShapeV2 {
+            hop_count: 2,
+            cross_chain: true,
+            inventory_available: false,
+            ..Default::default()
+        };
+        let r2 = classify_v2(&bridge);
+        assert!(r2.applicable);
+        assert!(!is_pack_supported(&r2.strategy_kind));
+        assert!(!r2.live_allowed);
+    }
+
+    #[test]
+    fn from_legs_applicable_implies_dispatchable_and_no_live() {
+        // End-to-end bridge contract (the triple cartridge_boot.rs stamps): for EVERY
+        // realistic single-chain leg shape, an `applicable` classification is ALWAYS
+        // pack-dispatchable (no dangling telemetry family reaches /opportunities) and
+        // NEVER live (NO-ACTIVE end-to-end from real legs).
+        let dex = |i: usize| match i % 3 {
+            0 => Some("uniswap-v3"),
+            1 => Some("curve"),
+            _ => Some("sushi"),
+        };
+        let proto = |i: usize| match i % 3 {
+            0 => ProtocolType::V3,
+            1 => ProtocolType::Curve,
+            _ => ProtocolType::V2,
+        };
+        for hops in 2..=7usize {
+            for unknown_venue in [false, true] {
+                let mut legs = Vec::new();
+                for i in 0..hops {
+                    let a = (0xA0 + i) as u64;
+                    let b = (0xA0 + (i + 1) % hops) as u64;
+                    legs.push(leg(
+                        a,
+                        b,
+                        if unknown_venue { None } else { dex(i) },
+                        if unknown_venue { None } else { Some(30) },
+                        proto(i),
+                    ));
+                }
+                let r = classify_route_legs(&legs);
+                if r.applicable {
+                    assert!(
+                        is_pack_supported(&r.strategy_kind),
+                        "hops={hops} unknown_venue={unknown_venue}: applicable family `{}` is NOT pack-dispatchable",
+                        r.strategy_kind
+                    );
+                }
+                assert!(
+                    !r.live_allowed,
+                    "NO-ACTIVE must hold end-to-end (hops={hops})"
+                );
+            }
+        }
     }
 }
