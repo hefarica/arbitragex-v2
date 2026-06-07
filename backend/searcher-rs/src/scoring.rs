@@ -143,6 +143,7 @@ fn env_u128(key: &str, default: u128) -> u128 {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn cfg() -> ScoringConfig {

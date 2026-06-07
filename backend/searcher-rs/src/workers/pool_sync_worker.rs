@@ -213,6 +213,7 @@ type ChunkFut<R, E> = Pin<Box<dyn Future<Output = Result<Vec<R>, E>> + Send>>;
 ///
 /// Generic over `R`/`E` purely so the control flow is unit-testable with a synthetic executor;
 /// production instantiates `R = multicall_abi::Result`, `E = anyhow::Error`.
+#[allow(clippy::too_many_arguments)]
 async fn drive_resilient_batches<R, E, F>(
     total: usize,
     batch_size: usize,
@@ -311,6 +312,7 @@ where
 /// and an `Arc` of the pool, so the produced future is `'static` and a re-queued (split/retried)
 /// chunk re-encodes cleanly. Returns results aligned 1:1 to `calls`; `None` = that call's pool
 /// could not be read this tick (after retries + degradation).
+#[allow(clippy::too_many_arguments)]
 async fn multicall_resilient(
     rpc_pool: &Arc<shared_rs::rpc_failover::HttpRpcPool>,
     multicall_alloy: AlloyAddress,
@@ -1083,6 +1085,7 @@ mod tests {
         // exhaustively verify 1:1 coverage of [0,total).
         let mut covered = vec![false; 250];
         for (s, e) in &chunks {
+            #[allow(clippy::needless_range_loop)]
             for i in *s..*e {
                 assert!(!covered[i], "index {i} covered twice");
                 covered[i] = true;

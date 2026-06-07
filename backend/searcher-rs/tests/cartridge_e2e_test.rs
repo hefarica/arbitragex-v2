@@ -22,7 +22,6 @@
 //! ```
 
 use rhai::{Dynamic, Engine, Map, Scope};
-use std::collections::HashMap;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test: Contract Validation (no Redis needed)
@@ -39,7 +38,7 @@ fn test_valid_cartridge_compiles_and_validates() {
     let ast = ast.unwrap();
 
     // Check required functions exist
-    let fn_names: Vec<&str> = ast.iter_functions().map(|f| f.name.as_str()).collect();
+    let fn_names: Vec<&str> = ast.iter_functions().map(|f| f.name).collect();
     assert!(fn_names.contains(&"init_strategy"), "missing init_strategy");
     assert!(fn_names.contains(&"evaluate_opportunity"), "missing evaluate_opportunity");
     assert!(fn_names.contains(&"build_payload"), "missing build_payload");
@@ -53,13 +52,20 @@ fn test_valid_cartridge_compiles_and_validates() {
 /// Triangular arbitrage cartridge compiles and validates.
 #[test]
 fn test_triangular_arb_compiles() {
-    let engine = Engine::new();
+    // Mirror the release-build engine: rhai's default max function-expression depth is
+    // 16 in debug builds but 32 in release. The searcher deploys in release (see
+    // src/cartridge/runner.rs, which inherits rhai's default and never raises it), where
+    // this cartridge parses fine. Pin the release limits so this debug test is not
+    // stricter than production. 32 (not unlimited) is intentional: if a cartridge needed
+    // a deeper expression, release production would reject it too and this test SHOULD fail.
+    let mut engine = Engine::new();
+    engine.set_max_expr_depths(64, 32);
     let source = include_str!("../cartridges/triangular_arb.rhai");
     let ast = engine.compile(source);
     assert!(ast.is_ok(), "triangular_arb.rhai should compile: {:?}", ast.err());
 
     let ast = ast.unwrap();
-    let fn_names: Vec<&str> = ast.iter_functions().map(|f| f.name.as_str()).collect();
+    let fn_names: Vec<&str> = ast.iter_functions().map(|f| f.name).collect();
     assert!(fn_names.contains(&"init_strategy"));
     assert!(fn_names.contains(&"evaluate_opportunity"));
     assert!(fn_names.contains(&"build_payload"));
@@ -74,7 +80,7 @@ fn test_liquidation_compiles() {
     assert!(ast.is_ok(), "liquidation.rhai should compile: {:?}", ast.err());
 
     let ast = ast.unwrap();
-    let fn_names: Vec<&str> = ast.iter_functions().map(|f| f.name.as_str()).collect();
+    let fn_names: Vec<&str> = ast.iter_functions().map(|f| f.name).collect();
     assert!(fn_names.contains(&"init_strategy"));
     assert!(fn_names.contains(&"evaluate_opportunity"));
     assert!(fn_names.contains(&"build_payload"));
@@ -412,7 +418,7 @@ fn test_missing_function_detected() {
     "#;
 
     let ast = engine.compile(incomplete).unwrap();
-    let fn_names: Vec<&str> = ast.iter_functions().map(|f| f.name.as_str()).collect();
+    let fn_names: Vec<&str> = ast.iter_functions().map(|f| f.name).collect();
     assert!(!fn_names.contains(&"build_payload"), "build_payload should be missing");
 }
 

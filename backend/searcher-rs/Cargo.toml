@@ -73,3 +73,11 @@ tokio = { version = "1", features = ["macros","rt-multi-thread","test-util"] }
 # unit tests). Production code path uses `reqwest` directly; wiremock spawns
 # a localhost server the worker treats as the configured base URL.
 wiremock = "0.6"
+# A.4 fork-validation integration test (`tests/multistep_fork.rs`, gated
+# `#[cfg(feature = "v2-simulator")]`) constructs a `simulator_v2::SimulatorV2`
+# directly to drive `execute_multistep_revm` against a real archive RPC.
+# Integration tests only see the crate's dev-deps — not its optional
+# `[dependencies]` — so simulator-v2 must be nameable here too. Test-scoped:
+# this does NOT change the shipped library's public API, and it's a harmless
+# build when the feature is off (the test simply isn't compiled).
+simulator-v2 = { path = "../simulator-v2" }

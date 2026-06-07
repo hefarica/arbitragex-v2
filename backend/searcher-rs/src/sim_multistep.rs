@@ -17,21 +17,21 @@
 //!   Step H. gas_cost = total_gas_used * gas_price.
 //!   Step I. net_profit = profit - gas_cost.
 //!
-//! ## Scope of this commit
+//! ## Status (A.3.c.3 — IMPLEMENTED)
 //!
-//! Ships the ORCHESTRATOR SKELETON + PLAN BUILDER + validation + typed
-//! errors + tests. The actual REVM-side state-persistent execution
-//! (`evm.transact_commit` on a shared `CacheDB`) requires extending
-//! `simulator-v2` with a multi-tx API and is deferred to **Phase A.3.c.3**
-//! per the directive's fail-honest clause. Today, `execute_multistep_revm`
-//! returns `SimulationOutcome::failed("multistep_revm_cachedb_pending")`
-//! once it has validated the inputs and computed the plan — every other
-//! reject path returns its own typed reason.
+//! Ships the PLAN BUILDER + validation + typed errors AND the real REVM-side
+//! state-persistent executor. `execute_multistep_revm` drives the plan through
+//! `simulator_v2::sequence_runner::SequenceContext` over a persistent
+//! `CacheDB<LazyDb>`, returning `passed = true` only after a real round trip
+//! (see the per-condition guards on the function). Every reject path returns
+//! its own typed reason. (Historical note: A.3.c.2 shipped only the skeleton
+//! and returned `multistep_revm_cachedb_pending`; that phase is superseded.)
 //!
 //! ## Anti-fraud invariants
 //!
-//! 1. NEVER returns a `SimulationOutcome::passed = true` from this module.
-//!    The success path is gated on REVM execution that lands in A.3.c.3.
+//! 1. Returns `SimulationOutcome::passed = true` ONLY after real REVM
+//!    execution with `gas_used_total > 0`, a non-zero trace hash, >= 2
+//!    committed calls, and `net_profit_wei > 0`. No PASS is fabricated.
 //! 2. NEVER applies storage overrides outside paper mode. The config gate
 //!    is `paper_mode == true && enable_storage_cheats == true`; either flag
 //!    flipped rejects with the corresponding typed error.
@@ -436,30 +436,11 @@ fn validate_context(ctx: &RoundTripContext) -> Result<(), MultiStepError> {
 }
 
 // ---------------------------------------------------------------------------
-// REVM orchestrator (Phase A.3.c.3 pending)
+// REVM orchestrator (Phase A.3.c.3 — IMPLEMENTED)
 // ---------------------------------------------------------------------------
 
 /// Run the multi-step plan through REVM with persistent state between
-/// legs. Returns `SimulationOutcome` with `passed = true` ONLY when:
-///   - Forward swap executed without revert.
-///   - Intermediate balance read returned non-zero.
-///   - Backward swap executed without revert.
-///   - Final balance read returned `final_balance > amount_in`.
-///   - `gross_profit_wei > gas_cost_wei` (positive net profit).
-///   - Combined trace hash is non-zero.
-///
-/// **Phase A.3.c.2 STATUS**: this function VALIDATES inputs + BUILDS the
-/// multi-step plan, then returns `SimulationOutcome::failed(...)` with
-/// the typed reason `multistep_revm_cachedb_pending`. Phase A.3.c.3 will
-/// extend `simulator-v2` with the `simulate_sequence` API needed to
-/// execute the plan against a persistent `revm::CacheDB<LazyDb>` and
-/// fill in the success path.
-///
-/// Why this layered approach: REVM CacheDB integration is a substantial
-/// extension of `simulator-v2` that should land in a focused PR with its
-/// own validation. Shipping the validation + plan builder + tests today
-/// means A.3.c.3 only needs to wire the executor, not also debate the
-/// plan shape (RULE 12 fail-honest applied to incremental delivery).
+/// legs against a `CacheDB<LazyDb>` resolved from `simulator.rpc_url`.
 /// Phase A.3.c.3 — REAL multi-step REVM executor wired to
 /// `simulator_v2::sequence_runner::SequenceContext`.
 ///
