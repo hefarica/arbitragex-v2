@@ -207,8 +207,13 @@ services:
         condition: service_healthy
     healthcheck:
       test:
-      - CMD-SHELL
-      - wget -q -O- http://localhost:3004/health >/dev/null 2>&1 || exit 1
+      # recon image ships no wget/curl, so the previous wget healthcheck always
+      # failed (false "unhealthy") even though /health serves 200. bash IS present
+      # → use a wget-free TCP liveness probe on the recon port.
+      - CMD
+      - bash
+      - -c
+      - exec 3<>/dev/tcp/127.0.0.1/3004
       interval: 30s
       timeout: 5s
       retries: 5
@@ -516,8 +521,13 @@ services:
     - loki
     healthcheck:
       test:
-      - CMD-SHELL
-      - wget -q -O- http://localhost:9080/ready 2>/dev/null || exit 1
+      # promtail image ships no wget, so the previous wget healthcheck always
+      # failed (false "unhealthy"). bash IS present → wget-free TCP liveness probe
+      # on the promtail HTTP port.
+      - CMD
+      - bash
+      - -c
+      - exec 3<>/dev/tcp/127.0.0.1/9080
       interval: 30s
       timeout: 5s
       retries: 3
