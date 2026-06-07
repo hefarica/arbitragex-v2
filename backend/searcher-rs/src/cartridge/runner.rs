@@ -809,7 +809,9 @@ mod tests {
         engine.register_fn("v3_arb_enabled", || -> bool { false });
         // Stubs so the (gated-off) arb code path still resolves if ever reached: never used while
         // v3_arb_enabled()==false short-circuits first, but registered for eval completeness.
-        engine.register_fn("get_token_price_usd", |_sym: &str| -> Dynamic { Dynamic::UNIT });
+        engine.register_fn("get_token_price_usd", |_sym: &str| -> Dynamic {
+            Dynamic::UNIT
+        });
         engine.register_fn(
             "v2_amount_out_str",
             |_ai: &str, _ri: &str, _ro: &str, _fee: i64| -> Dynamic { Dynamic::UNIT },

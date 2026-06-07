@@ -344,7 +344,9 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
     // branch keeps emitting the honest is_opportunity:false single-tick candidate until an operator
     // explicitly opts in. Shadow/paper only — capital=0.
     engine.register_fn("v3_arb_enabled", || -> bool {
-        std::env::var("ARBX_V3_ARB_MODE").map(|v| v == "on").unwrap_or(false)
+        std::env::var("ARBX_V3_ARB_MODE")
+            .map(|v| v == "on")
+            .unwrap_or(false)
     });
 
     // simulate_swap(amount_in: String, path: Array) -> Map
