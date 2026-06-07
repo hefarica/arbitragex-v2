@@ -284,15 +284,24 @@ mod tests {
     fn classify_three_hop_gates_on_v2_v3_only() {
         use ProtocolType::{Curve, V2, V3};
         // All-V2 / mixed-V2V3 triangulars classify.
-        assert_eq!(RouteKind::classify(&[V2, V2, V2]), Some(RouteKind::Triangular));
-        assert_eq!(RouteKind::classify(&[V2, V3, V2]), Some(RouteKind::Triangular));
+        assert_eq!(
+            RouteKind::classify(&[V2, V2, V2]),
+            Some(RouteKind::Triangular)
+        );
+        assert_eq!(
+            RouteKind::classify(&[V2, V3, V2]),
+            Some(RouteKind::Triangular)
+        );
         // A 3-cycle containing a non-V2/V3 leg must NOT be mislabeled Triangular —
         // symmetric with the 2-hop whitelist (R8: don't classify what we can't price).
         assert_eq!(RouteKind::classify(&[V2, Curve, V2]), None);
         assert_eq!(RouteKind::classify(&[Curve, Curve, Curve]), None);
         // 2-hop whitelist unchanged; ≥4 → MultiHop; empty → None.
         assert_eq!(RouteKind::classify(&[V2, Curve]), None);
-        assert_eq!(RouteKind::classify(&[V2, V2, V2, V2]), Some(RouteKind::MultiHop));
+        assert_eq!(
+            RouteKind::classify(&[V2, V2, V2, V2]),
+            Some(RouteKind::MultiHop)
+        );
         assert_eq!(RouteKind::classify(&[]), None);
     }
 }

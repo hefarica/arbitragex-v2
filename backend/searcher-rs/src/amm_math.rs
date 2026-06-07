@@ -103,7 +103,7 @@ pub fn mul_div(a: U256, b: U256, denom: U256) -> U256 {
         return U256::zero();
     }
     let prod: U512 = a.full_mul(b); // U256 × U256 → U512, lossless
-    // Widen denom to U512 via big-endian bytes (low 32 of the 64-byte buffer).
+                                    // Widen denom to U512 via big-endian bytes (low 32 of the 64-byte buffer).
     let mut db = [0u8; 64];
     denom.to_big_endian(&mut db[32..64]);
     let denom512 = U512::from_big_endian(&db);
@@ -689,8 +689,14 @@ mod v3_single_tick_tests {
     // ---- mul_div ----------------------------------------------------------
     #[test]
     fn mul_div_small_exact() {
-        assert_eq!(mul_div(U256::from(6u64), U256::from(7u64), U256::from(2u64)), U256::from(21u64));
-        assert_eq!(mul_div(U256::from(100u64), U256::from(3u64), U256::from(7u64)), U256::from(42u64)); // floor(300/7)
+        assert_eq!(
+            mul_div(U256::from(6u64), U256::from(7u64), U256::from(2u64)),
+            U256::from(21u64)
+        );
+        assert_eq!(
+            mul_div(U256::from(100u64), U256::from(3u64), U256::from(7u64)),
+            U256::from(42u64)
+        ); // floor(300/7)
     }
 
     #[test]
@@ -704,7 +710,10 @@ mod v3_single_tick_tests {
 
     #[test]
     fn mul_div_zero_denom_is_zero() {
-        assert_eq!(mul_div(U256::from(5u64), U256::from(5u64), U256::zero()), U256::zero());
+        assert_eq!(
+            mul_div(U256::from(5u64), U256::from(5u64), U256::zero()),
+            U256::zero()
+        );
     }
 
     // ---- v3_amount_out_single_tick ----------------------------------------
@@ -712,10 +721,22 @@ mod v3_single_tick_tests {
     fn v3_degenerate_inputs_return_zero() {
         let sp = q96();
         let l = p10(18);
-        assert_eq!(v3_amount_out_single_tick(U256::zero(), sp, l, 3000, true), U256::zero());
-        assert_eq!(v3_amount_out_single_tick(p10(12), U256::zero(), l, 3000, true), U256::zero());
-        assert_eq!(v3_amount_out_single_tick(p10(12), sp, U256::zero(), 3000, true), U256::zero());
-        assert_eq!(v3_amount_out_single_tick(p10(12), sp, l, 1_000_000, true), U256::zero()); // fee >= 100%
+        assert_eq!(
+            v3_amount_out_single_tick(U256::zero(), sp, l, 3000, true),
+            U256::zero()
+        );
+        assert_eq!(
+            v3_amount_out_single_tick(p10(12), U256::zero(), l, 3000, true),
+            U256::zero()
+        );
+        assert_eq!(
+            v3_amount_out_single_tick(p10(12), sp, U256::zero(), 3000, true),
+            U256::zero()
+        );
+        assert_eq!(
+            v3_amount_out_single_tick(p10(12), sp, l, 1_000_000, true),
+            U256::zero()
+        ); // fee >= 100%
     }
 
     #[test]
@@ -730,15 +751,28 @@ mod v3_single_tick_tests {
         let v3_o4z = v3_amount_out_single_tick(amt, sp, l, 0, false);
         let v2 = v2_amount_out(amt, l, l, 0);
         // zero_for_one reduces to the integer CPMM L·Δx/(L+Δx) bit-for-bit.
-        assert_eq!(v3_z4o, v2, "zero_for_one single-tick must equal CPMM(L,L) at 1:1");
+        assert_eq!(
+            v3_z4o, v2,
+            "zero_for_one single-tick must equal CPMM(L,L) at 1:1"
+        );
         // Integer V3 single-tick math is NOT bit-symmetric across direction: the two
         // directions use different floor-division paths (zero_for_one: L·Δ√P/Q96;
         // one_for_zero: differences of L·Q96/√P), so they may disagree by ±1 wei — the
         // known per-direction rounding of Uniswap V3 SwapMath (always toward the pool).
         // Negligible for the bracket role; the profit number comes from QuoterV2 (Step 2b).
-        let diff = if v3_o4z > v2 { v3_o4z - v2 } else { v2 - v3_o4z };
-        assert!(diff <= U256::one(), "one_for_zero symmetric at 1:1 within 1 wei (got {v3_o4z} vs {v2})");
-        assert!(v3_z4o > U256::zero() && v3_z4o < amt, "output positive and < input (slippage)");
+        let diff = if v3_o4z > v2 {
+            v3_o4z - v2
+        } else {
+            v2 - v3_o4z
+        };
+        assert!(
+            diff <= U256::one(),
+            "one_for_zero symmetric at 1:1 within 1 wei (got {v3_o4z} vs {v2})"
+        );
+        assert!(
+            v3_z4o > U256::zero() && v3_z4o < amt,
+            "output positive and < input (slippage)"
+        );
     }
 
     #[test]
@@ -768,7 +802,13 @@ mod v3_single_tick_tests {
         let amt = p10(15);
         let shallow = v3_amount_out_single_tick(amt, sp, p10(18), 0, true);
         let deep = v3_amount_out_single_tick(amt, sp, p10(24), 0, true);
-        assert!(deep > shallow, "deeper liquidity = less slippage = more output");
-        assert!(deep < amt, "still bounded by input (zero-fee, positive slippage)");
+        assert!(
+            deep > shallow,
+            "deeper liquidity = less slippage = more output"
+        );
+        assert!(
+            deep < amt,
+            "still bounded by input (zero-fee, positive slippage)"
+        );
     }
 }

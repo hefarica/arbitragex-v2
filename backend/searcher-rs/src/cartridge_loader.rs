@@ -129,11 +129,13 @@ pub async fn load_cartridges_from_dir(
         }
 
         // Load the cartridge
-        match runner.load_cartridge(&cartridge_id, &source, &content_hash).await {
+        match runner
+            .load_cartridge(&cartridge_id, &source, &content_hash)
+            .await
+        {
             Ok(metadata) => {
                 // Check chain compatibility
-                if !metadata.target_chains.is_empty()
-                    && !metadata.target_chains.contains(&chain_id)
+                if !metadata.target_chains.is_empty() && !metadata.target_chains.contains(&chain_id)
                 {
                     info!(
                         event = "cartridge_loader.chain_mismatch",

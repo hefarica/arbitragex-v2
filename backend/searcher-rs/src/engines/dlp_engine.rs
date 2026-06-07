@@ -95,10 +95,19 @@ impl DlpEngine {
         let x_price = state.x_price + dt * state.x_velocity;
         let x_velocity = state.x_velocity;
         // P = F*P*F' + Q  (F = [[1,dt],[0,1]])
-        let p00 = state.p00 + dt * (state.p01 + state.p10()) + dt * dt * state.p11 + self.config.process_noise_q;
+        let p00 = state.p00
+            + dt * (state.p01 + state.p10())
+            + dt * dt * state.p11
+            + self.config.process_noise_q;
         let p01 = state.p01 + dt * state.p11;
         let p11 = state.p11 + self.config.process_noise_q;
-        EkfState { x_price, x_velocity, p00, p01, p11 }
+        EkfState {
+            x_price,
+            x_velocity,
+            p00,
+            p01,
+            p11,
+        }
     }
 
     /// EKF update step given a new price measurement.
@@ -120,7 +129,13 @@ impl DlpEngine {
         let p00 = (1.0 - k0) * state.p00;
         let p01 = (1.0 - k0) * state.p01;
         let p11 = state.p11 - k1 * state.p01;
-        EkfState { x_price, x_velocity, p00, p01, p11 }
+        EkfState {
+            x_price,
+            x_velocity,
+            p00,
+            p01,
+            p11,
+        }
     }
 
     /// Evaluates a pool for JIT liquidity injection at the predicted tick.

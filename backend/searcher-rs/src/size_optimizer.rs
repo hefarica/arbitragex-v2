@@ -902,9 +902,9 @@ impl SizeOptimizer {
         let probes = geom_probes(U256::one(), cap_wei, V3_BRACKET_POINTS);
 
         let mut best: Option<(U256, U256, i128)> = None; // (amount_in, out_b, profit_wei)
-        // Per-V3-leg pricing telemetry (R8): `priced` = the quoter answered at
-        // least once (value may be 0); `leg1_reached` = leg 1 was quoted at all
-        // (only happens when leg 0 yields a non-zero mid-amount).
+                                                         // Per-V3-leg pricing telemetry (R8): `priced` = the quoter answered at
+                                                         // least once (value may be 0); `leg1_reached` = leg 1 was quoted at all
+                                                         // (only happens when leg 0 yields a non-zero mid-amount).
         let mut leg0_priced = false;
         let mut leg1_priced = false;
         let mut leg1_reached = false;
@@ -952,8 +952,8 @@ impl SizeOptimizer {
                 // `V3QuoteUnavailable`; everything else (quoter answered, even
                 // with 0, but the real spread is ≤ 0) is `NonPositiveProfit`.
                 // leg 0 is always quoted; leg 1 only when it was reached.
-                let v3_unpriced = (leg0_v3 && !leg0_priced)
-                    || (leg1_v3 && leg1_reached && !leg1_priced);
+                let v3_unpriced =
+                    (leg0_v3 && !leg0_priced) || (leg1_v3 && leg1_reached && !leg1_priced);
                 if v3_unpriced {
                     return OptimizeOutcome::Rejected(OptimizeRejectReason::V3QuoteUnavailable);
                 }
@@ -1064,8 +1064,7 @@ impl SizeOptimizer {
                 .get(&addr)
                 .await
                 .ok_or(missing_reserves)?;
-            let (reserve_in, reserve_out) =
-                orient_reserves(r0, r1, &leg.token_in, &leg.token_out);
+            let (reserve_in, reserve_out) = orient_reserves(r0, r1, &leg.token_in, &leg.token_out);
             if reserve_in.is_zero() || reserve_out.is_zero() {
                 return Err(OptimizeRejectReason::ZeroReserves);
             }
@@ -1096,7 +1095,12 @@ impl SizeOptimizer {
                 reserve_in,
                 reserve_out,
                 fee_bps,
-            } => LegQuote::Priced(v2_amount_out(amount_in, *reserve_in, *reserve_out, *fee_bps)),
+            } => LegQuote::Priced(v2_amount_out(
+                amount_in,
+                *reserve_in,
+                *reserve_out,
+                *fee_bps,
+            )),
             LegEval::V3 { pool, zero_for_one } => match self
                 .state_projector
                 .project_v3_quote(pool, amount_in, *zero_for_one)
@@ -2624,8 +2628,13 @@ mod tests {
         token_in: Address,
         token_out: Address,
     ) -> StrategyCandidate {
-        let mut c =
-            make_dex_candidate(pool_a, pool_b, token_in, token_out, StrategyLabel::DexArbV3V3);
+        let mut c = make_dex_candidate(
+            pool_a,
+            pool_b,
+            token_in,
+            token_out,
+            StrategyLabel::DexArbV3V3,
+        );
         for leg in c.route_plan.legs.iter_mut() {
             leg.protocol_type = "uniswap-v3".to_string();
             leg.fee_bps = Some(500); // V3 0.05% tier
@@ -2658,7 +2667,10 @@ mod tests {
                 assert!(s.estimated_net_profit_usd > 0.0, "net must be positive");
             }
             OptimizeOutcome::Rejected(r) => {
-                panic!("expected Sized for a profitable V3 route, got {}", r.as_str())
+                panic!(
+                    "expected Sized for a profitable V3 route, got {}",
+                    r.as_str()
+                )
             }
         }
     }

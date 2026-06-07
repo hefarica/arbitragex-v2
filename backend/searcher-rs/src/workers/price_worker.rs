@@ -400,7 +400,8 @@ impl PriceWorker {
                 match self.fetch_alchemy(chunk).await {
                     Ok(map) => {
                         for (sym, price) in map {
-                            if let std::collections::hash_map::Entry::Vacant(e) = prices.entry(sym) {
+                            if let std::collections::hash_map::Entry::Vacant(e) = prices.entry(sym)
+                            {
                                 e.insert(price);
                                 alchemy_hits += 1;
                             }

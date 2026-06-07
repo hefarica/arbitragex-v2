@@ -147,7 +147,8 @@ pub fn spawn_cartridge_runtime(
         // Boot-load cartridges from the filesystem directory (dev/bootstrap path).
         // Redis-injected cartridges arrive later via the subscriber.
         let dir = std::path::Path::new(CARTRIDGE_DIR);
-        let results = cartridge_loader::load_cartridges_from_dir(&runner_for_task, dir, chain_id).await;
+        let results =
+            cartridge_loader::load_cartridges_from_dir(&runner_for_task, dir, chain_id).await;
         let loaded = results.iter().filter(|r| r.success).count();
         info!(
             event = "cartridge.boot_loaded",
@@ -164,8 +165,7 @@ pub fn spawn_cartridge_runtime(
 
         info!(
             event = "cartridge.runtime_stopped",
-            chain_id,
-            "cartridge subscriber task exited"
+            chain_id, "cartridge subscriber task exited"
         );
     });
 
@@ -199,10 +199,19 @@ pub fn build_cartridge_pool_data(
     use rhai::Dynamic;
     let mut m = rhai::Map::new();
     m.insert("chain_id".into(), Dynamic::from(intent.chain_id as i64));
-    m.insert("amount_in".into(), Dynamic::from(intent.amount_in.to_string()));
+    m.insert(
+        "amount_in".into(),
+        Dynamic::from(intent.amount_in.to_string()),
+    );
     if let Some(leg) = intent.legs.first() {
-        m.insert("token_in".into(), Dynamic::from(format!("{:#x}", leg.token_in)));
-        m.insert("token_out".into(), Dynamic::from(format!("{:#x}", leg.token_out)));
+        m.insert(
+            "token_in".into(),
+            Dynamic::from(format!("{:#x}", leg.token_in)),
+        );
+        m.insert(
+            "token_out".into(),
+            Dynamic::from(format!("{:#x}", leg.token_out)),
+        );
         m.insert(
             "protocol_type".into(),
             Dynamic::from(protocol_type_str(leg.protocol_type).to_string()),
@@ -306,7 +315,11 @@ async fn emit_shadow_outcome(
     };
 
     match runner
-        .xadd_shadow_outcome(ROUTE_DISCOVERY_OUTCOMES_STREAM, OUTCOMES_STREAM_MAXLEN, &json)
+        .xadd_shadow_outcome(
+            ROUTE_DISCOVERY_OUTCOMES_STREAM,
+            OUTCOMES_STREAM_MAXLEN,
+            &json,
+        )
         .await
     {
         Ok(id) => debug!(
@@ -632,7 +645,10 @@ mod tests {
             .expect("reserves_source must be present when provided")
             .clone();
         let rmap = rsrc.cast::<rhai::Map>();
-        assert_eq!(rmap.get("r0").unwrap().to_string(), "1500000000000000000000");
+        assert_eq!(
+            rmap.get("r0").unwrap().to_string(),
+            "1500000000000000000000"
+        );
         assert_eq!(rmap.get("r1").unwrap().to_string(), "4800000000000");
         assert_eq!(rmap.get("block").unwrap().to_string(), "18500000");
         assert_eq!(rmap.get("ts").unwrap().to_string(), "1714857600");

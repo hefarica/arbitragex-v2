@@ -477,9 +477,7 @@ impl CartridgeRunner {
         let result = self
             .engine
             .call_fn::<Dynamic>(&mut scope, ast, "init_strategy", ())
-            .map_err(|e| {
-                CartridgeError::RuntimeError(format!("init_strategy() failed: {e}"))
-            })?;
+            .map_err(|e| CartridgeError::RuntimeError(format!("init_strategy() failed: {e}")))?;
 
         let map = result.try_cast::<Map>().ok_or_else(|| {
             CartridgeError::InvalidMetadata("init_strategy() must return a Map".into())
@@ -574,16 +572,20 @@ impl CartridgeRunner {
         // FASE B Paso 9 — explicit reason string (observability). The cartridge returns
         // it in its result map (e.g. "v3_sizing_pending"); promote it to a first-class
         // field so the durable outcomes series can explain WHY is_opportunity=false.
-        let reason = map
-            .get("reason")
-            .and_then(|v| v.clone().into_string().ok());
+        let reason = map.get("reason").and_then(|v| v.clone().into_string().ok());
 
         // Collect any additional metadata fields
         let mut metadata = std::collections::HashMap::new();
         for (k, v) in map.iter() {
             let key = k.to_string();
-            if !["is_opportunity", "estimated_profit", "confidence", "urgency", "reason"]
-                .contains(&key.as_str())
+            if ![
+                "is_opportunity",
+                "estimated_profit",
+                "confidence",
+                "urgency",
+                "reason",
+            ]
+            .contains(&key.as_str())
             {
                 metadata.insert(key, dynamic_to_json_value(v));
             }
@@ -676,7 +678,9 @@ mod tests {
     #[test]
     fn test_contract_validation_standalone() {
         let engine = Engine::new();
-        let ast = engine.compile(r#"
+        let ast = engine
+            .compile(
+                r#"
             fn init_strategy() {
                 #{
                     name: "Test",
@@ -691,7 +695,9 @@ mod tests {
             fn build_payload(opportunity) {
                 #{ target_contract: "0x0", calldata: "0x0" }
             }
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         assert!(validate_contract(&ast).is_ok());
     }
@@ -743,14 +749,20 @@ mod tests {
         engine.register_fn("get_v3_slot0", move |_pool: &str| -> Dynamic {
             if slot0_present {
                 let mut m = Map::new();
-                m.insert("sqrt_price_x96".into(), Dynamic::from("4339505179874779672736".to_string()));
+                m.insert(
+                    "sqrt_price_x96".into(),
+                    Dynamic::from("4339505179874779672736".to_string()),
+                );
                 m.insert("liquidity".into(), Dynamic::from("57737784664".to_string()));
                 Dynamic::from_map(m)
             } else {
                 Dynamic::UNIT
             }
         });
-        engine.register_fn("calc_v3_spot_price", |_s: &str, _di: i64, _do: i64| -> f64 { 3000.0 });
+        engine.register_fn(
+            "calc_v3_spot_price",
+            |_s: &str, _di: i64, _do: i64| -> f64 { 3000.0 },
+        );
         {
             let lf = log_fired.clone();
             engine.register_fn("log_quantum", move |_lvl: &str, _msg: &str| {
@@ -772,9 +784,18 @@ mod tests {
         let mut scope = Scope::new();
         let mut pd = Map::new();
         pd.insert("chain_id".into(), Dynamic::from(1i64));
-        pd.insert("token_in".into(), Dynamic::from("0x00000000000000000000000000000000000000aa".to_string()));
-        pd.insert("token_out".into(), Dynamic::from("0x00000000000000000000000000000000000000bb".to_string()));
-        pd.insert("source_pool".into(), Dynamic::from("0x00000000000000000000000000000000000000cc".to_string()));
+        pd.insert(
+            "token_in".into(),
+            Dynamic::from("0x00000000000000000000000000000000000000aa".to_string()),
+        );
+        pd.insert(
+            "token_out".into(),
+            Dynamic::from("0x00000000000000000000000000000000000000bb".to_string()),
+        );
+        pd.insert(
+            "source_pool".into(),
+            Dynamic::from("0x00000000000000000000000000000000000000cc".to_string()),
+        );
         pd.insert("amount_in".into(), Dynamic::from("1000000".to_string()));
         pd.insert("protocol_type".into(), Dynamic::from(protocol.to_string()));
 
@@ -799,7 +820,10 @@ mod tests {
         let (res, log_fired, pool_index_hit) = eval_dex_arb_stub("v3", true, 0);
         assert_eq!(reason_of(&res), "v3_sizing_pending");
         assert!(!res.get("is_opportunity").unwrap().as_bool().unwrap());
-        assert!(log_fired, "log_quantum (v3_source_priced) must fire — shadow telemetry");
+        assert!(
+            log_fired,
+            "log_quantum (v3_source_priced) must fire — shadow telemetry"
+        );
         assert!(
             !pool_index_hit,
             "V3 must NOT reach the get_pool_index insufficient_pools gate"
@@ -826,7 +850,9 @@ mod tests {
         let mut engine = Engine::new();
         engine.set_max_operations(1000);
 
-        let ast = engine.compile(r#"
+        let ast = engine
+            .compile(
+                r#"
             fn init_strategy() { #{ name: "X", version: "1", author: "a", description: "d" } }
             fn evaluate_opportunity(pool_data) {
                 let x = 0;
@@ -834,11 +860,14 @@ mod tests {
                 #{ is_opportunity: false }
             }
             fn build_payload(opp) { #{} }
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         let mut scope = Scope::new();
         let pool_data = Map::new();
-        let result = engine.call_fn::<Dynamic>(&mut scope, &ast, "evaluate_opportunity", (pool_data,));
+        let result =
+            engine.call_fn::<Dynamic>(&mut scope, &ast, "evaluate_opportunity", (pool_data,));
         assert!(result.is_err());
         let err_str = result.unwrap_err().to_string();
         assert!(
@@ -852,18 +881,23 @@ mod tests {
         let mut engine = Engine::new();
         engine.set_max_operations(MAX_OPERATIONS);
 
-        let ast = engine.compile(r#"
+        let ast = engine
+            .compile(
+                r#"
             fn init_strategy() { #{ name: "X", version: "1", author: "a", description: "d" } }
             fn evaluate_opportunity(pool_data) {
                 let x = 1 / 0;
                 #{ is_opportunity: false }
             }
             fn build_payload(opp) { #{} }
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         let mut scope = Scope::new();
         let pool_data = Map::new();
-        let result = engine.call_fn::<Dynamic>(&mut scope, &ast, "evaluate_opportunity", (pool_data,));
+        let result =
+            engine.call_fn::<Dynamic>(&mut scope, &ast, "evaluate_opportunity", (pool_data,));
         // Division by zero in Rhai produces a runtime error, not a panic
         assert!(result.is_err());
     }

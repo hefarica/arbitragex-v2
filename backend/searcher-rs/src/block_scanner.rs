@@ -88,7 +88,10 @@ pub async fn block_detection_loop(
         }
     };
     if ws_urls.is_empty() {
-        warn!(event = "block_scanner.no_ws", chain_id, "no WS endpoints for block mode; idling");
+        warn!(
+            event = "block_scanner.no_ws",
+            chain_id, "no WS endpoints for block mode; idling"
+        );
         cancel.cancelled().await;
         return;
     }
@@ -105,35 +108,39 @@ pub async fn block_detection_loop(
     // signature unchanged) to PUBLISH real-node head/reorg divergence to
     // arbx:telemetry:observability. None = disabled = zero behavior change. Read-only;
     // a connection failure degrades to None and never blocks detection.
-    let div_redis: Option<redis::aio::ConnectionManager> =
-        if std::env::var("ARBX_BLOCK_DIVERGENCE_TELEMETRY").map(|v| !v.trim().is_empty()).unwrap_or(false) {
-            match std::env::var("REDIS_URL") {
-                Ok(url) => match redis::Client::open(url) {
-                    Ok(client) => match client.get_connection_manager().await {
-                        Ok(cm) => {
-                            info!(
-                                event = "block_scanner.divergence_telemetry_on",
-                                chain_id,
-                                channel = "arbx:telemetry:observability",
-                                "real-node head divergence telemetry enabled (observer-only)"
-                            );
-                            Some(cm)
-                        }
-                        Err(e) => {
-                            warn!(event = "block_scanner.divergence_redis_failed", chain_id, error = %e, "divergence telemetry disabled");
-                            None
-                        }
-                    },
+    let div_redis: Option<redis::aio::ConnectionManager> = if std::env::var(
+        "ARBX_BLOCK_DIVERGENCE_TELEMETRY",
+    )
+    .map(|v| !v.trim().is_empty())
+    .unwrap_or(false)
+    {
+        match std::env::var("REDIS_URL") {
+            Ok(url) => match redis::Client::open(url) {
+                Ok(client) => match client.get_connection_manager().await {
+                    Ok(cm) => {
+                        info!(
+                            event = "block_scanner.divergence_telemetry_on",
+                            chain_id,
+                            channel = "arbx:telemetry:observability",
+                            "real-node head divergence telemetry enabled (observer-only)"
+                        );
+                        Some(cm)
+                    }
                     Err(e) => {
                         warn!(event = "block_scanner.divergence_redis_failed", chain_id, error = %e, "divergence telemetry disabled");
                         None
                     }
                 },
-                Err(_) => None,
-            }
-        } else {
-            None
-        };
+                Err(e) => {
+                    warn!(event = "block_scanner.divergence_redis_failed", chain_id, error = %e, "divergence telemetry disabled");
+                    None
+                }
+            },
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
 
     let mut backoff_ms: u64 = 1_000;
     let max_backoff_ms: u64 = 30_000;
@@ -144,7 +151,17 @@ pub async fn block_detection_loop(
             return;
         }
         let url = &ws_urls[url_idx % ws_urls.len()];
-        match run_block_subscription(chain_id, url, &orch, &idx, gas_sink.as_ref(), div_redis.clone(), &cancel).await {
+        match run_block_subscription(
+            chain_id,
+            url,
+            &orch,
+            &idx,
+            gas_sink.as_ref(),
+            div_redis.clone(),
+            &cancel,
+        )
+        .await
+        {
             Ok(()) => return, // clean exit (cancelled)
             Err(e) => {
                 warn!(
@@ -177,7 +194,10 @@ async fn run_block_subscription(
     let client = WsChainClient::connect(chain_id, url).await?;
     let provider = client.provider.clone();
     let mut blocks = client.subscribe_blocks().await?;
-    info!(event = "block_scanner.connected", chain_id, "subscribed to newHeads");
+    info!(
+        event = "block_scanner.connected",
+        chain_id, "subscribed to newHeads"
+    );
 
     // Previous observed real-node head (number, hash) for chain-continuity / reorg detection.
     let mut prev_head: Option<(u64, H256)> = None;
@@ -286,7 +306,10 @@ async fn process_block(
             .collect()
     };
     if watched.is_empty() {
-        debug!(event = "block_scanner.no_watched_pools", chain_id, block_num);
+        debug!(
+            event = "block_scanner.no_watched_pools",
+            chain_id, block_num
+        );
         return;
     }
 
@@ -441,7 +464,11 @@ async fn process_block(
 /// Decode a Uniswap-V2 `Swap` event's non-indexed data
 /// `(amount0In, amount1In, amount0Out, amount1Out)` (4×uint256) into the observed
 /// `(token_in, token_out, amount_in)`. Returns `None` for a malformed / zero swap.
-fn decode_v2_swap(data: &[u8], token0: Address, token1: Address) -> Option<(Address, Address, U256)> {
+fn decode_v2_swap(
+    data: &[u8],
+    token0: Address,
+    token1: Address,
+) -> Option<(Address, Address, U256)> {
     if data.len() < 128 {
         return None;
     }
@@ -471,7 +498,11 @@ fn decode_v2_swap(data: &[u8], token0: Address, token1: Address) -> Option<(Addr
 /// equals its absolute value. We NEVER negate, so the `i256::MIN.abs()` overflow panic is
 /// structurally impossible. Returns `None` for malformed (< 64 bytes) or degenerate (no
 /// positive side) data.
-fn decode_v3_swap(data: &[u8], token0: Address, token1: Address) -> Option<(Address, Address, U256)> {
+fn decode_v3_swap(
+    data: &[u8],
+    token0: Address,
+    token1: Address,
+) -> Option<(Address, Address, U256)> {
     if data.len() < 64 {
         return None;
     }
@@ -516,7 +547,12 @@ mod tests {
         let t0 = Address::from_low_u64_be(0xA);
         let t1 = Address::from_low_u64_be(0xB);
         // amount0In=1000, amount1In=0, amount0Out=0, amount1Out=990
-        let data = enc(&[U256::from(1000u64), U256::zero(), U256::zero(), U256::from(990u64)]);
+        let data = enc(&[
+            U256::from(1000u64),
+            U256::zero(),
+            U256::zero(),
+            U256::from(990u64),
+        ]);
         let (ti, to, amt) = decode_v2_swap(&data, t0, t1).expect("decodes");
         assert_eq!(ti, t0);
         assert_eq!(to, t1);
@@ -528,7 +564,12 @@ mod tests {
         let t0 = Address::from_low_u64_be(0xA);
         let t1 = Address::from_low_u64_be(0xB);
         // amount0In=0, amount1In=2000
-        let data = enc(&[U256::zero(), U256::from(2000u64), U256::from(1980u64), U256::zero()]);
+        let data = enc(&[
+            U256::zero(),
+            U256::from(2000u64),
+            U256::from(1980u64),
+            U256::zero(),
+        ]);
         let (ti, to, amt) = decode_v2_swap(&data, t0, t1).expect("decodes");
         assert_eq!(ti, t1);
         assert_eq!(to, t0);

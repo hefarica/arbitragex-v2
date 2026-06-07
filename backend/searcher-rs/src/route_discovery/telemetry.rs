@@ -155,7 +155,10 @@ mod tests {
             route_hash: "0xabc".to_string(),
             route_kind: RouteKind::V2V3,
             tokens: vec![Address::from_low_u64_be(1), Address::from_low_u64_be(2)],
-            pools: vec![Address::from_low_u64_be(0x10), Address::from_low_u64_be(0x20)],
+            pools: vec![
+                Address::from_low_u64_be(0x10),
+                Address::from_low_u64_be(0x20),
+            ],
             protocols: vec![ProtocolType::V2, ProtocolType::V3],
             fee_tiers: vec![Some(30), Some(500)],
             directions: vec![RouteDirection::ZeroForOne, RouteDirection::OneForZero],
@@ -171,13 +174,30 @@ mod tests {
 
     #[test]
     fn channel_is_dedicated_and_not_opps() {
-        assert_eq!(ROUTE_DISCOVERY_TELEMETRY_CHANNEL, "arbx:route_discovery:telemetry");
+        assert_eq!(
+            ROUTE_DISCOVERY_TELEMETRY_CHANNEL,
+            "arbx:route_discovery:telemetry"
+        );
         assert!(!ROUTE_DISCOVERY_TELEMETRY_CHANNEL.contains("opps"));
     }
 
     #[test]
     fn tick_event_carries_algorithm_and_counts() {
-        let e = tick_event(1, "dfs_bounded", 26, 50, 4, 12, 3, 8, 1, true, true, 42, "shadow");
+        let e = tick_event(
+            1,
+            "dfs_bounded",
+            26,
+            50,
+            4,
+            12,
+            3,
+            8,
+            1,
+            true,
+            true,
+            42,
+            "shadow",
+        );
         assert_eq!(e["event"], "route_discovery.tick");
         assert_eq!(e["algorithm"], "dfs_bounded");
         assert_eq!(e["pools_total"], 26);
@@ -201,7 +221,10 @@ mod tests {
         assert_eq!(e["protocols"][0], "v2");
         assert_eq!(e["protocols"][1], "v3");
         assert_eq!(e["directions"][0], "0to1");
-        assert_eq!(e["tokens"][0], format!("{:#x}", Address::from_low_u64_be(1)));
+        assert_eq!(
+            e["tokens"][0],
+            format!("{:#x}", Address::from_low_u64_be(1))
+        );
         assert_eq!(e["fee_tiers"][0], 30);
         assert_eq!(e["fee_tiers"][1], 500);
     }
@@ -215,7 +238,10 @@ mod tests {
         assert!(appl.iter().any(|v| v == "dex_arb_v2v3"));
         assert!(appl.iter().any(|v| v == "flashloan_arb"));
         assert_eq!(e["rejected_strategies"][0]["strategy"], "liquidation");
-        assert_eq!(e["rejected_strategies"][0]["reason"], "strategy_not_route_based");
+        assert_eq!(
+            e["rejected_strategies"][0]["reason"],
+            "strategy_not_route_based"
+        );
     }
 
     #[test]
@@ -227,7 +253,10 @@ mod tests {
         let e = rejected_event(1, &r);
         assert_eq!(e["event"], "route_discovery.rejected");
         assert_eq!(e["reason"], "missing_reserves");
-        assert_eq!(e["pool"], format!("{:#x}", Address::from_low_u64_be(0xbeef)));
+        assert_eq!(
+            e["pool"],
+            format!("{:#x}", Address::from_low_u64_be(0xbeef))
+        );
     }
 
     #[test]
