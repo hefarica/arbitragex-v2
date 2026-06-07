@@ -81,7 +81,7 @@ impl CexDexEngine {
             id: uuid::Uuid::new_v4().to_string(),
             chain_id,
             strategy_kind: StrategyKind::DexArb, // Or a specific CexDex kind if added
-            tokens: vec![], // To be filled
+            tokens: vec![],                      // To be filled
             amounts: vec![],
             expected_profit_usd: theoretical_profit,
             detected_at: chrono::Utc::now(),

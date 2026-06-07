@@ -17,7 +17,9 @@
 //! weight is stored only so the Phase-2 MMBF can consume it without rebuilding.
 
 use crate::impact_index::PoolRef;
-use crate::reserves::{get_reserves, get_token_meta, get_v3_slot0, ReservesEntry, TokenMeta, V3Slot0Entry};
+use crate::reserves::{
+    get_reserves, get_token_meta, get_v3_slot0, ReservesEntry, TokenMeta, V3Slot0Entry,
+};
 use crate::route_discovery::types::{RouteDirection, RouteEdge};
 use crate::route_intent::ProtocolType;
 use ethers::types::Address;
@@ -128,8 +130,12 @@ pub fn build_edges_for_pool(
     if pool.token0 == pool.token1 || pool.token0.is_zero() || pool.token1.is_zero() {
         return Err("invalid_pool_shape".to_string());
     }
-    let dec0 = meta0.ok_or_else(|| "missing_token_metadata".to_string())?.decimals;
-    let dec1 = meta1.ok_or_else(|| "missing_token_metadata".to_string())?.decimals;
+    let dec0 = meta0
+        .ok_or_else(|| "missing_token_metadata".to_string())?
+        .decimals;
+    let dec1 = meta1
+        .ok_or_else(|| "missing_token_metadata".to_string())?
+        .decimals;
 
     // (liquidity_hint, log_weight token0→token1, log_weight token1→token0, ts, blk)
     let (liquidity_hint, lw_01, lw_10, ts, blk): (f64, Option<f64>, Option<f64>, u64, u64) =
@@ -139,8 +145,12 @@ pub fn build_edges_for_pool(
                 if now_ts.saturating_sub(r.ts) > cfg.max_age_secs {
                     return Err("stale_reserves".to_string());
                 }
-                let r0 = r.r0.parse::<f64>().map_err(|_| "invalid_reserves".to_string())?;
-                let r1 = r.r1.parse::<f64>().map_err(|_| "invalid_reserves".to_string())?;
+                let r0 =
+                    r.r0.parse::<f64>()
+                        .map_err(|_| "invalid_reserves".to_string())?;
+                let r1 =
+                    r.r1.parse::<f64>()
+                        .map_err(|_| "invalid_reserves".to_string())?;
                 // Reject non-finite reserves: a corrupted cache entry whose decimal string
                 // exceeds f64::MAX parses to `∞` and would otherwise sail past the `> 0.0`
                 // guard, poisoning rate/liquidity math with infinities (R8 fail-honest).
@@ -154,7 +164,13 @@ pub fn build_edges_for_pool(
                 let n1 = normalize(r1, dec1);
                 // V2 fee: explicit bps when known, else canonical 0.30%.
                 let fee = pool.fee_bps.map(|b| b as f64 / 10_000.0).unwrap_or(0.003);
-                (n0 + n1, log_weight(fee, n1 / n0), log_weight(fee, n0 / n1), r.ts, r.blk)
+                (
+                    n0 + n1,
+                    log_weight(fee, n1 / n0),
+                    log_weight(fee, n0 / n1),
+                    r.ts,
+                    r.blk,
+                )
             }
             ProtocolType::V3 => {
                 let s = slot0.ok_or_else(|| "missing_slot0".to_string())?;
@@ -227,16 +243,28 @@ pub async fn build_graph(
         let t0_lower = format!("{:#x}", pool.token0);
         let t1_lower = format!("{:#x}", pool.token1);
 
-        let meta0 = get_token_meta(redis, chain_id, &t0_lower).await.ok().flatten();
-        let meta1 = get_token_meta(redis, chain_id, &t1_lower).await.ok().flatten();
+        let meta0 = get_token_meta(redis, chain_id, &t0_lower)
+            .await
+            .ok()
+            .flatten();
+        let meta1 = get_token_meta(redis, chain_id, &t1_lower)
+            .await
+            .ok()
+            .flatten();
 
         let reserves = if pool.protocol_type == ProtocolType::V2 {
-            get_reserves(redis, chain_id, &pool_lower).await.ok().flatten()
+            get_reserves(redis, chain_id, &pool_lower)
+                .await
+                .ok()
+                .flatten()
         } else {
             None
         };
         let slot0 = if pool.protocol_type == ProtocolType::V3 {
-            get_v3_slot0(redis, chain_id, &pool_lower).await.ok().flatten()
+            get_v3_slot0(redis, chain_id, &pool_lower)
+                .await
+                .ok()
+                .flatten()
         } else {
             None
         };

@@ -359,7 +359,11 @@ mod tests {
             .iter()
             .filter(|r| r.route_kind == RouteKind::Triangular)
             .collect();
-        assert_eq!(tri.len(), 2, "both cycle directions discovered from the graph");
+        assert_eq!(
+            tri.len(),
+            2,
+            "both cycle directions discovered from the graph"
+        );
         for r in &tri {
             assert_eq!(r.hops, 3);
             assert_eq!(r.tokens.len(), 3);
@@ -416,8 +420,14 @@ mod tests {
         };
         let o = find_routes(&g, 1, &cfg);
         assert_eq!(o.routes.len(), 1);
-        assert!(o.dropped_for_cap >= 1, "overflow counted, not silently dropped");
-        assert!(o.capped, "cap hit → result set flagged incomplete (R8 fail-honest)");
+        assert!(
+            o.dropped_for_cap >= 1,
+            "overflow counted, not silently dropped"
+        );
+        assert!(
+            o.capped,
+            "cap hit → result set flagged incomplete (R8 fail-honest)"
+        );
     }
 
     #[test]

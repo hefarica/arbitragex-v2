@@ -42,13 +42,22 @@ const DEFAULT_MAX_TELEMETRY_PER_TICK: usize = 200;
 const DEFAULT_MAX_AGE_SECS: u64 = 120;
 
 fn env_usize(key: &str, default: usize) -> usize {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 fn env_u64(key: &str, default: u64) -> u64 {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 fn env_u8(key: &str, default: u8) -> u8 {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 /// Resolve the applicability config path (`ARBX_ROUTE_APPLICABILITY_CONFIG` or
@@ -85,8 +94,10 @@ impl WorkerConfig {
     /// Build from env (caps) layered over the engine's YAML discovery settings.
     pub fn from_env_and_engine(engine: &StrategyApplicabilityEngine) -> Self {
         let disc = &engine.config().discovery;
-        let max_routes =
-            env_usize("ARBX_ROUTE_DISCOVERY_MAX_ROUTES_PER_TICK", DEFAULT_MAX_ROUTES_PER_TICK);
+        let max_routes = env_usize(
+            "ARBX_ROUTE_DISCOVERY_MAX_ROUTES_PER_TICK",
+            DEFAULT_MAX_ROUTES_PER_TICK,
+        );
         let max_telemetry = env_usize(
             "ARBX_ROUTE_DISCOVERY_MAX_TELEMETRY_PER_TICK",
             DEFAULT_MAX_TELEMETRY_PER_TICK,
@@ -494,7 +505,11 @@ mod tests {
         let engine = StrategyApplicabilityEngine::default();
         let finder = RouteFinderConfig::default();
         let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, true, 0, "shadow");
-        for e in tick.events.iter().chain(std::iter::once(&tick.tick_summary)) {
+        for e in tick
+            .events
+            .iter()
+            .chain(std::iter::once(&tick.tick_summary))
+        {
             let name = e["event"].as_str().unwrap_or_default();
             assert!(
                 name.starts_with("route_discovery.") || name == "route_intent.emitted",

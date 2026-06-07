@@ -32,15 +32,15 @@ pub mod triangular_engine;
 #[cfg(feature = "experimental-engines")]
 pub mod backrun_engine;
 #[cfg(feature = "experimental-engines")]
-pub mod spatial_engine;
-#[cfg(feature = "experimental-engines")]
 pub mod cex_dex_engine;
-// APEX Phase 1.5 — Thermodynamic engines (server-side only)
 #[cfg(feature = "experimental-engines")]
-pub mod svs_engine;
+pub mod spatial_engine;
+// APEX Phase 1.5 — Thermodynamic engines (server-side only)
 #[cfg(feature = "experimental-engines")]
 pub mod dlp_engine;
 #[cfg(feature = "experimental-engines")]
-pub mod triangular_atomic_engine;
-#[cfg(feature = "experimental-engines")]
 pub mod funding_rate_engine;
+#[cfg(feature = "experimental-engines")]
+pub mod svs_engine;
+#[cfg(feature = "experimental-engines")]
+pub mod triangular_atomic_engine;

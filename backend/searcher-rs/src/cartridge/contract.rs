@@ -24,26 +24,13 @@ use rhai::AST;
 use std::collections::HashSet;
 
 /// The three mandatory function names every cartridge must define.
-pub const REQUIRED_FUNCTIONS: &[&str] = &[
-    "init_strategy",
-    "evaluate_opportunity",
-    "build_payload",
-];
+pub const REQUIRED_FUNCTIONS: &[&str] = &["init_strategy", "evaluate_opportunity", "build_payload"];
 
 /// Optional lifecycle hook functions.
-pub const OPTIONAL_HOOKS: &[&str] = &[
-    "on_activate",
-    "on_deactivate",
-    "on_new_block",
-];
+pub const OPTIONAL_HOOKS: &[&str] = &["on_activate", "on_deactivate", "on_new_block"];
 
 /// Metadata fields that `init_strategy()` MUST return in its Map.
-pub const REQUIRED_METADATA_KEYS: &[&str] = &[
-    "name",
-    "version",
-    "author",
-    "description",
-];
+pub const REQUIRED_METADATA_KEYS: &[&str] = &["name", "version", "author", "description"];
 
 /// Validation errors for cartridge contract compliance.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,7 +38,11 @@ pub enum ContractViolation {
     /// A required function is missing from the AST.
     MissingFunction(String),
     /// A required function has wrong arity (expected, actual).
-    WrongArity { function: String, expected: usize, actual: usize },
+    WrongArity {
+        function: String,
+        expected: usize,
+        actual: usize,
+    },
     /// The `init_strategy()` return map is missing a required key.
     MissingMetadataKey(String),
     /// The script contains forbidden operations (e.g., file I/O).
@@ -64,11 +55,21 @@ impl std::fmt::Display for ContractViolation {
             Self::MissingFunction(name) => {
                 write!(f, "missing required function: `fn {name}(..)`")
             }
-            Self::WrongArity { function, expected, actual } => {
-                write!(f, "function `{function}` expects {expected} params, found {actual}")
+            Self::WrongArity {
+                function,
+                expected,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "function `{function}` expects {expected} params, found {actual}"
+                )
             }
             Self::MissingMetadataKey(key) => {
-                write!(f, "init_strategy() return map missing required key: `{key}`")
+                write!(
+                    f,
+                    "init_strategy() return map missing required key: `{key}`"
+                )
             }
             Self::ForbiddenOperation(op) => {
                 write!(f, "forbidden operation detected: {op}")
@@ -86,10 +87,8 @@ pub fn validate_contract(ast: &AST) -> Result<(), Vec<ContractViolation>> {
     let mut violations = Vec::new();
 
     // Collect all function names defined in the AST.
-    let defined_functions: HashSet<String> = ast
-        .iter_functions()
-        .map(|f| f.name.to_string())
-        .collect();
+    let defined_functions: HashSet<String> =
+        ast.iter_functions().map(|f| f.name.to_string()).collect();
 
     // Check required functions exist.
     for &required in REQUIRED_FUNCTIONS {
@@ -139,9 +138,9 @@ pub fn validate_metadata(map: &rhai::Map) -> Result<(), Vec<ContractViolation>> 
             Some(val) => {
                 if let Ok(s) = val.clone().into_string() {
                     if s.trim().is_empty() {
-                        violations.push(ContractViolation::MissingMetadataKey(
-                            format!("{key} (empty string)"),
-                        ));
+                        violations.push(ContractViolation::MissingMetadataKey(format!(
+                            "{key} (empty string)"
+                        )));
                     }
                 }
             }
@@ -168,7 +167,9 @@ mod tests {
     #[test]
     fn valid_contract_passes() {
         let engine = make_engine();
-        let ast = engine.compile(r#"
+        let ast = engine
+            .compile(
+                r#"
             fn init_strategy() {
                 #{
                     name: "Test Strategy",
@@ -183,7 +184,9 @@ mod tests {
             fn build_payload(opportunity) {
                 #{ target_contract: "0x0", calldata: "0x0", value_wei: "0", gas_limit: 21000 }
             }
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         assert!(validate_contract(&ast).is_ok());
     }
@@ -191,26 +194,36 @@ mod tests {
     #[test]
     fn missing_function_fails() {
         let engine = make_engine();
-        let ast = engine.compile(r#"
+        let ast = engine
+            .compile(
+                r#"
             fn init_strategy() { #{} }
             fn evaluate_opportunity(pool_data) { #{} }
             // build_payload is missing
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         let result = validate_contract(&ast);
         assert!(result.is_err());
         let violations = result.unwrap_err();
-        assert!(violations.iter().any(|v| matches!(v, ContractViolation::MissingFunction(name) if name == "build_payload")));
+        assert!(violations.iter().any(
+            |v| matches!(v, ContractViolation::MissingFunction(name) if name == "build_payload")
+        ));
     }
 
     #[test]
     fn wrong_arity_fails() {
         let engine = make_engine();
-        let ast = engine.compile(r#"
+        let ast = engine
+            .compile(
+                r#"
             fn init_strategy(unexpected_param) { #{} }
             fn evaluate_opportunity(pool_data) { #{} }
             fn build_payload(opportunity) { #{} }
-        "#).unwrap();
+        "#,
+            )
+            .unwrap();
 
         let result = validate_contract(&ast);
         assert!(result.is_err());

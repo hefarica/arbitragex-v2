@@ -87,7 +87,10 @@ fn render(
         .join(",");
     let fee_seq = fee_tiers
         .iter()
-        .map(|f| f.map(|x| x.to_string()).unwrap_or_else(|| "none".to_string()))
+        .map(|f| {
+            f.map(|x| x.to_string())
+                .unwrap_or_else(|| "none".to_string())
+        })
         .collect::<Vec<_>>()
         .join(",");
     let dir_seq = directions
@@ -220,8 +223,7 @@ mod tests {
         let rd = rotate(&d, 1);
 
         let base = canonicalize(1, &t, &p, &pr, &f, &d).unwrap();
-        let rotated =
-            canonicalize(1, &rt, &rp, &rpr, &rf, &rd).unwrap();
+        let rotated = canonicalize(1, &rt, &rp, &rpr, &rf, &rd).unwrap();
         assert_eq!(base.route_hash, rotated.route_hash);
         // Canonical rotation must also pin the same start token for both.
         assert_eq!(base.tokens, rotated.tokens);

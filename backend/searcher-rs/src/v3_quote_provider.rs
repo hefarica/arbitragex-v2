@@ -92,13 +92,16 @@ impl V3QuoteProvider for MulticallV3QuoteProvider {
             }];
             // with_retry engages circuit-breaker + failover; the closure may run
             // more than once, so clone the (single-element) request set per call.
-            let results = rpc_pool
-                .with_retry(|provider| {
-                    let reqs = reqs.clone();
-                    async move { v3_quote_exact_in_multicall(provider, quoter, multicall, reqs).await }
-                })
-                .await
-                .map_err(|e| anyhow::anyhow!("v3 quote rpc failover exhausted: {e}"))?;
+            let results =
+                rpc_pool
+                    .with_retry(|provider| {
+                        let reqs = reqs.clone();
+                        async move {
+                            v3_quote_exact_in_multicall(provider, quoter, multicall, reqs).await
+                        }
+                    })
+                    .await
+                    .map_err(|e| anyhow::anyhow!("v3 quote rpc failover exhausted: {e}"))?;
 
             match results.into_iter().next() {
                 Some(r) if r.success => Ok(r.amount_out),
@@ -180,11 +183,27 @@ mod tests {
     #[test]
     fn env_override_takes_precedence_over_catalog() {
         // Use an uncatalogued chain so only the env override can satisfy it.
-        std::env::set_var("V3_QUOTER_424242", "0x2222222222222222222222222222222222222222");
-        std::env::set_var("MULTICALL3_424242", "0x3333333333333333333333333333333333333333");
+        std::env::set_var(
+            "V3_QUOTER_424242",
+            "0x2222222222222222222222222222222222222222",
+        );
+        std::env::set_var(
+            "MULTICALL3_424242",
+            "0x3333333333333333333333333333333333333333",
+        );
         let (q, m) = resolve_quoter_multicall(424_242).expect("env override must resolve");
-        assert_eq!(q, "0x2222222222222222222222222222222222222222".parse::<Address>().unwrap());
-        assert_eq!(m, "0x3333333333333333333333333333333333333333".parse::<Address>().unwrap());
+        assert_eq!(
+            q,
+            "0x2222222222222222222222222222222222222222"
+                .parse::<Address>()
+                .unwrap()
+        );
+        assert_eq!(
+            m,
+            "0x3333333333333333333333333333333333333333"
+                .parse::<Address>()
+                .unwrap()
+        );
         std::env::remove_var("V3_QUOTER_424242");
         std::env::remove_var("MULTICALL3_424242");
     }

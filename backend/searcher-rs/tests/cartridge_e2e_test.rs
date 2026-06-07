@@ -33,20 +33,36 @@ fn test_valid_cartridge_compiles_and_validates() {
     let engine = Engine::new();
     let source = include_str!("../cartridges/dex_arb.rhai");
     let ast = engine.compile(source);
-    assert!(ast.is_ok(), "dex_arb.rhai should compile without errors: {:?}", ast.err());
+    assert!(
+        ast.is_ok(),
+        "dex_arb.rhai should compile without errors: {:?}",
+        ast.err()
+    );
 
     let ast = ast.unwrap();
 
     // Check required functions exist
     let fn_names: Vec<&str> = ast.iter_functions().map(|f| f.name).collect();
     assert!(fn_names.contains(&"init_strategy"), "missing init_strategy");
-    assert!(fn_names.contains(&"evaluate_opportunity"), "missing evaluate_opportunity");
+    assert!(
+        fn_names.contains(&"evaluate_opportunity"),
+        "missing evaluate_opportunity"
+    );
     assert!(fn_names.contains(&"build_payload"), "missing build_payload");
 
     // Check optional hooks
-    assert!(fn_names.contains(&"on_activate"), "missing on_activate hook");
-    assert!(fn_names.contains(&"on_deactivate"), "missing on_deactivate hook");
-    assert!(fn_names.contains(&"on_new_block"), "missing on_new_block hook");
+    assert!(
+        fn_names.contains(&"on_activate"),
+        "missing on_activate hook"
+    );
+    assert!(
+        fn_names.contains(&"on_deactivate"),
+        "missing on_deactivate hook"
+    );
+    assert!(
+        fn_names.contains(&"on_new_block"),
+        "missing on_new_block hook"
+    );
 }
 
 /// Triangular arbitrage cartridge compiles and validates.
@@ -62,7 +78,11 @@ fn test_triangular_arb_compiles() {
     engine.set_max_expr_depths(64, 32);
     let source = include_str!("../cartridges/triangular_arb.rhai");
     let ast = engine.compile(source);
-    assert!(ast.is_ok(), "triangular_arb.rhai should compile: {:?}", ast.err());
+    assert!(
+        ast.is_ok(),
+        "triangular_arb.rhai should compile: {:?}",
+        ast.err()
+    );
 
     let ast = ast.unwrap();
     let fn_names: Vec<&str> = ast.iter_functions().map(|f| f.name).collect();
@@ -77,7 +97,11 @@ fn test_liquidation_compiles() {
     let engine = Engine::new();
     let source = include_str!("../cartridges/liquidation.rhai");
     let ast = engine.compile(source);
-    assert!(ast.is_ok(), "liquidation.rhai should compile: {:?}", ast.err());
+    assert!(
+        ast.is_ok(),
+        "liquidation.rhai should compile: {:?}",
+        ast.err()
+    );
 
     let ast = ast.unwrap();
     let fn_names: Vec<&str> = ast.iter_functions().map(|f| f.name).collect();
@@ -98,20 +122,39 @@ fn test_init_strategy_returns_valid_metadata() {
 
     // Register stub host bindings for standalone test
     engine.register_fn("get_chain_id", || -> Dynamic { Dynamic::from(1_i64) });
-    engine.register_fn("get_block_number", || -> Dynamic { Dynamic::from(12345678_i64) });
+    engine.register_fn("get_block_number", || -> Dynamic {
+        Dynamic::from(12345678_i64)
+    });
     engine.register_fn("get_base_fee", || -> Dynamic { Dynamic::from(30.0_f64) });
-    engine.register_fn("get_timestamp", || -> Dynamic { Dynamic::from(1717200000_i64) });
-    engine.register_fn("log_quantum", |_level: &str, _msg: &str| -> Dynamic { Dynamic::UNIT });
-    engine.register_fn("emit_signal", |_sig: &str, _data: Map| -> Dynamic { Dynamic::UNIT });
+    engine.register_fn("get_timestamp", || -> Dynamic {
+        Dynamic::from(1717200000_i64)
+    });
+    engine.register_fn("log_quantum", |_level: &str, _msg: &str| -> Dynamic {
+        Dynamic::UNIT
+    });
+    engine.register_fn("emit_signal", |_sig: &str, _data: Map| -> Dynamic {
+        Dynamic::UNIT
+    });
     engine.register_fn("get_reserves", |_addr: &str| -> Dynamic { Dynamic::UNIT });
     engine.register_fn("get_token_meta", |_addr: &str| -> Dynamic { Dynamic::UNIT });
-    engine.register_fn("get_pool_index", |_a: &str, _b: &str| -> Dynamic { Dynamic::from_array(vec![]) });
-    engine.register_fn("simulate_swap", |_amt: &str, _path: rhai::Array| -> Dynamic { Dynamic::UNIT });
+    engine.register_fn("get_pool_index", |_a: &str, _b: &str| -> Dynamic {
+        Dynamic::from_array(vec![])
+    });
+    engine.register_fn(
+        "simulate_swap",
+        |_amt: &str, _path: rhai::Array| -> Dynamic { Dynamic::UNIT },
+    );
     engine.register_fn("math_sqrt", |x: f64| -> Dynamic { Dynamic::from(x.sqrt()) });
     engine.register_fn("math_abs", |x: f64| -> Dynamic { Dynamic::from(x.abs()) });
-    engine.register_fn("math_min", |a: f64, b: f64| -> Dynamic { Dynamic::from(a.min(b)) });
-    engine.register_fn("math_max", |a: f64, b: f64| -> Dynamic { Dynamic::from(a.max(b)) });
-    engine.register_fn("math_pow", |base: f64, exp: f64| -> Dynamic { Dynamic::from(base.powf(exp)) });
+    engine.register_fn("math_min", |a: f64, b: f64| -> Dynamic {
+        Dynamic::from(a.min(b))
+    });
+    engine.register_fn("math_max", |a: f64, b: f64| -> Dynamic {
+        Dynamic::from(a.max(b))
+    });
+    engine.register_fn("math_pow", |base: f64, exp: f64| -> Dynamic {
+        Dynamic::from(base.powf(exp))
+    });
     engine.register_fn("math_log", |x: f64| -> Dynamic { Dynamic::from(x.ln()) });
     engine.register_fn("math_exp", |x: f64| -> Dynamic { Dynamic::from(x.exp()) });
     engine.register_fn("to_wei", |amount: f64, decimals: i64| -> Dynamic {
@@ -128,25 +171,48 @@ fn test_init_strategy_returns_valid_metadata() {
     let ast = engine.compile(source).unwrap();
 
     let mut scope = Scope::new();
-    let result: Dynamic = engine.call_fn(&mut scope, &ast, "init_strategy", ()).unwrap();
+    let result: Dynamic = engine
+        .call_fn(&mut scope, &ast, "init_strategy", ())
+        .unwrap();
     let map = result.cast::<Map>();
 
     // Verify required metadata fields
     assert!(map.contains_key("name"), "metadata missing 'name'");
     assert!(map.contains_key("version"), "metadata missing 'version'");
     assert!(map.contains_key("author"), "metadata missing 'author'");
-    assert!(map.contains_key("description"), "metadata missing 'description'");
+    assert!(
+        map.contains_key("description"),
+        "metadata missing 'description'"
+    );
 
     // Verify values
-    let name = map.get("name").unwrap().clone().into_immutable_string().unwrap();
+    let name = map
+        .get("name")
+        .unwrap()
+        .clone()
+        .into_immutable_string()
+        .unwrap();
     assert_eq!(&*name, "DEX Arbitrage Universal");
 
-    let version = map.get("version").unwrap().clone().into_immutable_string().unwrap();
+    let version = map
+        .get("version")
+        .unwrap()
+        .clone()
+        .into_immutable_string()
+        .unwrap();
     assert_eq!(&*version, "2.0.0");
 
     // Verify target_chains is empty (supports all chains)
-    let target_chains = map.get("target_chains").unwrap().clone().into_typed_array::<Dynamic>().unwrap();
-    assert!(target_chains.is_empty(), "target_chains should be empty for universal support");
+    let target_chains = map
+        .get("target_chains")
+        .unwrap()
+        .clone()
+        .into_typed_array::<Dynamic>()
+        .unwrap();
+    assert!(
+        target_chains.is_empty(),
+        "target_chains should be empty for universal support"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -161,11 +227,19 @@ fn test_evaluate_opportunity_no_pools() {
 
     // Register stub bindings that return "no data"
     engine.register_fn("get_chain_id", || -> Dynamic { Dynamic::from(42161_i64) }); // Arbitrum
-    engine.register_fn("get_block_number", || -> Dynamic { Dynamic::from(200000000_i64) });
+    engine.register_fn("get_block_number", || -> Dynamic {
+        Dynamic::from(200000000_i64)
+    });
     engine.register_fn("get_base_fee", || -> Dynamic { Dynamic::from(0.1_f64) });
-    engine.register_fn("get_timestamp", || -> Dynamic { Dynamic::from(1717200000_i64) });
-    engine.register_fn("log_quantum", |_level: &str, _msg: &str| -> Dynamic { Dynamic::UNIT });
-    engine.register_fn("emit_signal", |_sig: &str, _data: Map| -> Dynamic { Dynamic::UNIT });
+    engine.register_fn("get_timestamp", || -> Dynamic {
+        Dynamic::from(1717200000_i64)
+    });
+    engine.register_fn("log_quantum", |_level: &str, _msg: &str| -> Dynamic {
+        Dynamic::UNIT
+    });
+    engine.register_fn("emit_signal", |_sig: &str, _data: Map| -> Dynamic {
+        Dynamic::UNIT
+    });
     engine.register_fn("get_reserves", |_addr: &str| -> Dynamic { Dynamic::UNIT });
     engine.register_fn("get_token_meta", |_addr: &str| -> Dynamic {
         let mut map = Map::new();
@@ -178,12 +252,21 @@ fn test_evaluate_opportunity_no_pools() {
         // Return only 1 pool (need >= 2 for arb)
         Dynamic::from_array(vec![Dynamic::from("0xpool1")])
     });
-    engine.register_fn("simulate_swap", |_amt: &str, _path: rhai::Array| -> Dynamic { Dynamic::UNIT });
+    engine.register_fn(
+        "simulate_swap",
+        |_amt: &str, _path: rhai::Array| -> Dynamic { Dynamic::UNIT },
+    );
     engine.register_fn("math_sqrt", |x: f64| -> Dynamic { Dynamic::from(x.sqrt()) });
     engine.register_fn("math_abs", |x: f64| -> Dynamic { Dynamic::from(x.abs()) });
-    engine.register_fn("math_min", |a: f64, b: f64| -> Dynamic { Dynamic::from(a.min(b)) });
-    engine.register_fn("math_max", |a: f64, b: f64| -> Dynamic { Dynamic::from(a.max(b)) });
-    engine.register_fn("math_pow", |base: f64, exp: f64| -> Dynamic { Dynamic::from(base.powf(exp)) });
+    engine.register_fn("math_min", |a: f64, b: f64| -> Dynamic {
+        Dynamic::from(a.min(b))
+    });
+    engine.register_fn("math_max", |a: f64, b: f64| -> Dynamic {
+        Dynamic::from(a.max(b))
+    });
+    engine.register_fn("math_pow", |base: f64, exp: f64| -> Dynamic {
+        Dynamic::from(base.powf(exp))
+    });
     engine.register_fn("math_log", |x: f64| -> Dynamic { Dynamic::from(x.ln()) });
     engine.register_fn("math_exp", |x: f64| -> Dynamic { Dynamic::from(x.exp()) });
     engine.register_fn("to_wei", |amount: f64, decimals: i64| -> Dynamic {
@@ -216,14 +299,21 @@ fn test_evaluate_opportunity_no_pools() {
     pool_data.insert("reserves_source".into(), Dynamic::from_map(reserves));
 
     let mut scope = Scope::new();
-    let result: Dynamic = engine.call_fn(&mut scope, &ast, "evaluate_opportunity", (pool_data,)).unwrap();
+    let result: Dynamic = engine
+        .call_fn(&mut scope, &ast, "evaluate_opportunity", (pool_data,))
+        .unwrap();
     let map = result.cast::<Map>();
 
     // Should return not an opportunity (insufficient pools)
     let is_opp = map.get("is_opportunity").unwrap().as_bool().unwrap();
     assert!(!is_opp, "should not find opportunity with < 2 pools");
 
-    let reason = map.get("reason").unwrap().clone().into_immutable_string().unwrap();
+    let reason = map
+        .get("reason")
+        .unwrap()
+        .clone()
+        .into_immutable_string()
+        .unwrap();
     assert_eq!(&*reason, "insufficient_pools");
 }
 
@@ -347,20 +437,39 @@ fn test_multi_chain_agnostic() {
 
         let cid = chain_id;
         engine.register_fn("get_chain_id", move || -> Dynamic { Dynamic::from(cid) });
-        engine.register_fn("get_block_number", || -> Dynamic { Dynamic::from(99999_i64) });
+        engine.register_fn("get_block_number", || -> Dynamic {
+            Dynamic::from(99999_i64)
+        });
         engine.register_fn("get_base_fee", || -> Dynamic { Dynamic::from(10.0_f64) });
-        engine.register_fn("get_timestamp", || -> Dynamic { Dynamic::from(1717200000_i64) });
-        engine.register_fn("log_quantum", |_level: &str, _msg: &str| -> Dynamic { Dynamic::UNIT });
-        engine.register_fn("emit_signal", |_sig: &str, _data: Map| -> Dynamic { Dynamic::UNIT });
+        engine.register_fn("get_timestamp", || -> Dynamic {
+            Dynamic::from(1717200000_i64)
+        });
+        engine.register_fn("log_quantum", |_level: &str, _msg: &str| -> Dynamic {
+            Dynamic::UNIT
+        });
+        engine.register_fn("emit_signal", |_sig: &str, _data: Map| -> Dynamic {
+            Dynamic::UNIT
+        });
         engine.register_fn("get_reserves", |_addr: &str| -> Dynamic { Dynamic::UNIT });
         engine.register_fn("get_token_meta", |_addr: &str| -> Dynamic { Dynamic::UNIT });
-        engine.register_fn("get_pool_index", |_a: &str, _b: &str| -> Dynamic { Dynamic::from_array(vec![]) });
-        engine.register_fn("simulate_swap", |_amt: &str, _path: rhai::Array| -> Dynamic { Dynamic::UNIT });
+        engine.register_fn("get_pool_index", |_a: &str, _b: &str| -> Dynamic {
+            Dynamic::from_array(vec![])
+        });
+        engine.register_fn(
+            "simulate_swap",
+            |_amt: &str, _path: rhai::Array| -> Dynamic { Dynamic::UNIT },
+        );
         engine.register_fn("math_sqrt", |x: f64| -> Dynamic { Dynamic::from(x.sqrt()) });
         engine.register_fn("math_abs", |x: f64| -> Dynamic { Dynamic::from(x.abs()) });
-        engine.register_fn("math_min", |a: f64, b: f64| -> Dynamic { Dynamic::from(a.min(b)) });
-        engine.register_fn("math_max", |a: f64, b: f64| -> Dynamic { Dynamic::from(a.max(b)) });
-        engine.register_fn("math_pow", |base: f64, exp: f64| -> Dynamic { Dynamic::from(base.powf(exp)) });
+        engine.register_fn("math_min", |a: f64, b: f64| -> Dynamic {
+            Dynamic::from(a.min(b))
+        });
+        engine.register_fn("math_max", |a: f64, b: f64| -> Dynamic {
+            Dynamic::from(a.max(b))
+        });
+        engine.register_fn("math_pow", |base: f64, exp: f64| -> Dynamic {
+            Dynamic::from(base.powf(exp))
+        });
         engine.register_fn("math_log", |x: f64| -> Dynamic { Dynamic::from(x.ln()) });
         engine.register_fn("math_exp", |x: f64| -> Dynamic { Dynamic::from(x.exp()) });
         engine.register_fn("to_wei", |amount: f64, decimals: i64| -> Dynamic {
@@ -376,9 +485,14 @@ fn test_multi_chain_agnostic() {
 
         // init_strategy should work regardless of chain
         let mut scope = Scope::new();
-        let result: Dynamic = engine.call_fn(&mut scope, &ast, "init_strategy", ()).unwrap();
+        let result: Dynamic = engine
+            .call_fn(&mut scope, &ast, "init_strategy", ())
+            .unwrap();
         let map = result.cast::<Map>();
-        assert!(map.contains_key("name"), "chain {chain_id}: metadata missing name");
+        assert!(
+            map.contains_key("name"),
+            "chain {chain_id}: metadata missing name"
+        );
 
         // evaluate_opportunity should handle gracefully when token_meta unavailable
         let mut pool_data = Map::new();
@@ -399,7 +513,10 @@ fn test_multi_chain_agnostic() {
 
         // Should gracefully return no opportunity (no token meta available)
         let is_opp = eval_map.get("is_opportunity").unwrap().as_bool().unwrap();
-        assert!(!is_opp, "chain {chain_id}: should not find opportunity without token meta");
+        assert!(
+            !is_opp,
+            "chain {chain_id}: should not find opportunity without token meta"
+        );
     }
 }
 
@@ -419,7 +536,10 @@ fn test_missing_function_detected() {
 
     let ast = engine.compile(incomplete).unwrap();
     let fn_names: Vec<&str> = ast.iter_functions().map(|f| f.name).collect();
-    assert!(!fn_names.contains(&"build_payload"), "build_payload should be missing");
+    assert!(
+        !fn_names.contains(&"build_payload"),
+        "build_payload should be missing"
+    );
 }
 
 /// Wrong arity is detected.
@@ -447,7 +567,7 @@ fn test_wrong_arity_detected() {
 /// Same content hash should not trigger recompilation.
 #[test]
 fn test_content_hash_dedup() {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
 
     let source = include_str!("../cartridges/dex_arb.rhai");
 
@@ -469,5 +589,8 @@ fn test_content_hash_dedup() {
     hasher3.update(modified.as_bytes());
     let hash3 = format!("{:x}", hasher3.finalize());
 
-    assert_ne!(hash1, hash3, "different source should produce different hash");
+    assert_ne!(
+        hash1, hash3,
+        "different source should produce different hash"
+    );
 }

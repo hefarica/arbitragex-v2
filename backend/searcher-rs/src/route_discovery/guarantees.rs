@@ -88,7 +88,10 @@ fn route_discovery_mode_has_no_active_variant() {
 
 #[test]
 fn telemetry_channel_is_dedicated_not_opps() {
-    assert_eq!(ROUTE_DISCOVERY_TELEMETRY_CHANNEL, "arbx:route_discovery:telemetry");
+    assert_eq!(
+        ROUTE_DISCOVERY_TELEMETRY_CHANNEL,
+        "arbx:route_discovery:telemetry"
+    );
     assert!(!ROUTE_DISCOVERY_TELEMETRY_CHANNEL.contains("opps"));
 }
 
@@ -109,7 +112,21 @@ fn every_telemetry_builder_avoids_opps_detected() {
         mode: "shadow".to_string(),
     };
     let events = vec![
-        tick_event(1, "dfs_bounded", 1, 2, 0, 1, 0, 1, 0, false, false, 5, "shadow"),
+        tick_event(
+            1,
+            "dfs_bounded",
+            1,
+            2,
+            0,
+            1,
+            0,
+            1,
+            0,
+            false,
+            false,
+            5,
+            "shadow",
+        ),
         route_candidate_event(1, "dfs_bounded", &c),
         strategy_applicability_event(1, &c),
         rejected_event(
@@ -125,7 +142,10 @@ fn every_telemetry_builder_avoids_opps_detected() {
         let name = e["event"].as_str().unwrap();
         assert!(ALLOWED_EVENTS.contains(&name), "unexpected event {name}");
         let s = serde_json::to_string(e).unwrap();
-        assert!(!s.contains("opps:detected"), "event {name} mentions opps:detected");
+        assert!(
+            !s.contains("opps:detected"),
+            "event {name} mentions opps:detected"
+        );
         assert!(!s.contains("opps_detected"));
     }
 }
@@ -153,7 +173,11 @@ fn shadow_tick_stamps_algorithm_dfs_bounded_everywhere() {
     let finder = RouteFinderConfig::default();
     let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, true, 0, "shadow");
     // Every event that carries an algorithm field must say dfs_bounded.
-    for e in tick.events.iter().chain(std::iter::once(&tick.tick_summary)) {
+    for e in tick
+        .events
+        .iter()
+        .chain(std::iter::once(&tick.tick_summary))
+    {
         if let Some(alg) = e.get("algorithm") {
             assert_eq!(alg, "dfs_bounded");
         }
