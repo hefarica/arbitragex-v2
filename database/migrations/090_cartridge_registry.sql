@@ -110,19 +110,24 @@ CREATE INDEX idx_cartridge_metrics_time ON cartridge_metrics_hourly(hour DESC);
 
 -- Note: Source code is NOT stored in migrations. The API server reads from
 -- the cartridges/ directory at first boot and populates this table.
--- This seed only creates placeholder entries for the built-in strategies.
+-- This seed only creates placeholder entries for the built-in strategies. Each
+-- content_hash is a DISTINCT pre-boot placeholder ('pending_boot_load:<slug>')
+-- because the partial UNIQUE index idx_cartridge_registry_hash (WHERE state !=
+-- 'archived') forbids duplicate hashes among active rows — three identical
+-- 'pending_boot_load' values would violate it. The API server overwrites each with
+-- the real SHA-256 of the cartridge source at first boot.
 
 INSERT INTO cartridge_registry (slug, name, version, author, description, category, source_code, content_hash, target_chains, state)
 VALUES
     ('dex_arb', 'DEX Arbitrage Universal', '2.0.0', 'ArbitrageX Core Team',
      'Multi-chain DEX arbitrage detector. Identifies price discrepancies between V2/V3 pools.',
-     'dex_arb', '-- loaded from filesystem at boot --', 'pending_boot_load', '[]'::jsonb, 'active'),
+     'dex_arb', '-- loaded from filesystem at boot --', 'pending_boot_load:dex_arb', '[]'::jsonb, 'active'),
     ('triangular_arb', 'Triangular Arbitrage Universal', '2.0.0', 'ArbitrageX Core Team',
      'Multi-chain triangular arbitrage detector. Finds profitable A→B→C→A cycles.',
-     'triangular_arb', '-- loaded from filesystem at boot --', 'pending_boot_load', '[]'::jsonb, 'active'),
+     'triangular_arb', '-- loaded from filesystem at boot --', 'pending_boot_load:triangular_arb', '[]'::jsonb, 'active'),
     ('liquidation', 'Liquidation Monitor Universal', '2.0.0', 'ArbitrageX Core Team',
      'Multi-chain liquidation opportunity detector for Aave V3 and Compound V2/V3.',
-     'liquidation', '-- loaded from filesystem at boot --', 'pending_boot_load', '[]'::jsonb, 'active')
+     'liquidation', '-- loaded from filesystem at boot --', 'pending_boot_load:liquidation', '[]'::jsonb, 'active')
 ON CONFLICT (slug) DO NOTHING;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
