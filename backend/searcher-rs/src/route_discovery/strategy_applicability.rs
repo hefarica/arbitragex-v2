@@ -198,12 +198,10 @@ fn applicable_label(name: &str, route_kind: RouteKind) -> Option<StrategyLabel> 
 }
 
 /// Strategy applicability engine.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct StrategyApplicabilityEngine {
     config: ApplicabilityConfig,
 }
-
 
 impl StrategyApplicabilityEngine {
     pub fn new(config: ApplicabilityConfig) -> Self {

@@ -88,9 +88,18 @@ mod tests {
 
     #[test]
     fn mode_parse_is_fail_safe_off() {
-        assert_eq!(RouteDiscoveryMode::parse("shadow"), RouteDiscoveryMode::Shadow);
-        assert_eq!(RouteDiscoveryMode::parse("SHADOW"), RouteDiscoveryMode::Shadow);
-        assert_eq!(RouteDiscoveryMode::parse("  Shadow  "), RouteDiscoveryMode::Shadow);
+        assert_eq!(
+            RouteDiscoveryMode::parse("shadow"),
+            RouteDiscoveryMode::Shadow
+        );
+        assert_eq!(
+            RouteDiscoveryMode::parse("SHADOW"),
+            RouteDiscoveryMode::Shadow
+        );
+        assert_eq!(
+            RouteDiscoveryMode::parse("  Shadow  "),
+            RouteDiscoveryMode::Shadow
+        );
         // Everything else — unset, garbage, and crucially "active" — is Off.
         assert_eq!(RouteDiscoveryMode::parse(""), RouteDiscoveryMode::Off);
         assert_eq!(RouteDiscoveryMode::parse("off"), RouteDiscoveryMode::Off);

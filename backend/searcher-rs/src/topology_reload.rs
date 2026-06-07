@@ -100,6 +100,7 @@ pub struct TopologyClients {
     pub chain_id: u64,
     #[allow(dead_code)]
     pub mempool_mode: MempoolMode,
+    #[allow(dead_code)]
     pub checksum: String,
     pub http_pool: Arc<HttpRpcPool>,
     pub ws_endpoints: Vec<WsEndpoint>,
@@ -107,7 +108,10 @@ pub struct TopologyClients {
 
 impl TopologyClients {
     pub fn redacted_ws_urls(&self) -> Vec<String> {
-        self.ws_endpoints.iter().map(|e| redact_url(&e.url)).collect()
+        self.ws_endpoints
+            .iter()
+            .map(|e| redact_url(&e.url))
+            .collect()
     }
 }
 
@@ -174,7 +178,10 @@ impl TopologyClientFactory for LiveTopologyClientFactory {
             http_pool,
             ws_endpoints: ws
                 .into_iter()
-                .map(|e| WsEndpoint { name: e.name, url: e.url })
+                .map(|e| WsEndpoint {
+                    name: e.name,
+                    url: e.url,
+                })
                 .collect(),
         })
     }
@@ -246,13 +253,19 @@ impl TopologyRuntime {
         let _ = self.notify.send(applied_version);
 
         if let Ok(metric) = &*TOPOLOGY_APPLIED_VERSION {
-            metric.with_label_values(&[scope.as_str(), chain_label.as_str()]).set(applied_version as i64);
+            metric
+                .with_label_values(&[scope.as_str(), chain_label.as_str()])
+                .set(applied_version as i64);
         }
         if let Ok(metric) = &*TOPOLOGY_HTTP_READY {
-            metric.with_label_values(&[scope.as_str(), chain_label.as_str()]).set(http_ready);
+            metric
+                .with_label_values(&[scope.as_str(), chain_label.as_str()])
+                .set(http_ready);
         }
         if let Ok(metric) = &*TOPOLOGY_WS_READY {
-            metric.with_label_values(&[scope.as_str(), chain_label.as_str()]).set(ws_ready);
+            metric
+                .with_label_values(&[scope.as_str(), chain_label.as_str()])
+                .set(ws_ready);
         }
 
         info!(
@@ -316,7 +329,11 @@ where
                 res.context("subscribe to topology mutation channel")?;
             }
         };
-        info!(event = "topology.subscribed", channel = TOPOLOGY_MUTATION_CHANNEL, "topology Pub/Sub subscriber ready");
+        info!(
+            event = "topology.subscribed",
+            channel = TOPOLOGY_MUTATION_CHANNEL,
+            "topology Pub/Sub subscriber ready"
+        );
         let mut stream = pubsub.on_message();
         loop {
             tokio::select! {
@@ -346,7 +363,11 @@ where
 
     async fn apply_durable_fallback(&self) {
         let Some(url) = &self.snapshot_url else {
-            warn!(event = "topology.snapshot.skipped", reason = "TOPOLOGY_SNAPSHOT_URL_unset", "durable fallback URL not configured; Redis subscriber remains active");
+            warn!(
+                event = "topology.snapshot.skipped",
+                reason = "TOPOLOGY_SNAPSHOT_URL_unset",
+                "durable fallback URL not configured; Redis subscriber remains active"
+            );
             return;
         };
         match fetch_snapshot(url, self.admin_token.as_deref()).await {
@@ -355,17 +376,24 @@ where
                     warn!(event = "topology.snapshot.apply_failed", error = %e, "durable topology snapshot rejected or unavailable");
                 }
             }
-            Ok(None) => info!(event = "topology.snapshot.empty", "durable topology snapshot returned empty vault"),
-            Err(e) => warn!(event = "topology.snapshot.fetch_failed", error = %e, "durable topology snapshot fetch failed; continuing with Redis subscriber"),
+            Ok(None) => info!(
+                event = "topology.snapshot.empty",
+                "durable topology snapshot returned empty vault"
+            ),
+            Err(e) => {
+                warn!(event = "topology.snapshot.fetch_failed", error = %e, "durable topology snapshot fetch failed; continuing with Redis subscriber")
+            }
         }
     }
 }
 
-pub async fn fetch_snapshot(url: &str, admin_token: Option<&str>) -> Result<Option<TopologyMutationCommitted>> {
+pub async fn fetch_snapshot(
+    url: &str,
+    admin_token: Option<&str>,
+) -> Result<Option<TopologyMutationCommitted>> {
     let mut headers = HeaderMap::new();
     if let Some(token) = admin_token {
-        let value = HeaderValue::from_str(token)
-            .context("invalid topology admin token header")?;
+        let value = HeaderValue::from_str(token).context("invalid topology admin token header")?;
         headers.insert(HeaderName::from_static("x-arbx-admin-token"), value);
     }
     let client = reqwest::Client::builder()
@@ -387,8 +415,14 @@ pub async fn fetch_snapshot(url: &str, admin_token: Option<&str>) -> Result<Opti
     let Some(topology) = body.topology else {
         return Ok(None);
     };
-    if topology.get("rpc_http_1").and_then(serde_json::Value::as_str).is_none()
-        || topology.get("rpc_ws_1").and_then(serde_json::Value::as_str).is_none()
+    if topology
+        .get("rpc_http_1")
+        .and_then(serde_json::Value::as_str)
+        .is_none()
+        || topology
+            .get("rpc_ws_1")
+            .and_then(serde_json::Value::as_str)
+            .is_none()
     {
         anyhow::bail!(
             "topology snapshot is redacted or incomplete; configure an internal full-url snapshot endpoint for cold boot"
@@ -405,7 +439,9 @@ enum ProviderFamily {
     Ws,
 }
 
-pub fn validate_mutation(event: &TopologyMutationCommitted) -> std::result::Result<(), TopologyError> {
+pub fn validate_mutation(
+    event: &TopologyMutationCommitted,
+) -> std::result::Result<(), TopologyError> {
     if event.event != "topology.mutation.committed" {
         return Err(TopologyError::UnexpectedEvent);
     }
@@ -420,7 +456,10 @@ pub fn validate_mutation(event: &TopologyMutationCommitted) -> std::result::Resu
     Ok(())
 }
 
-fn parse_provider_list(input: &str, family: ProviderFamily) -> std::result::Result<Vec<ProviderEndpoint>, TopologyError> {
+fn parse_provider_list(
+    input: &str,
+    family: ProviderFamily,
+) -> std::result::Result<Vec<ProviderEndpoint>, TopologyError> {
     let mut providers = Vec::new();
     for (index, token) in input.split(',').enumerate() {
         let trimmed = token.trim();
@@ -435,7 +474,11 @@ fn parse_provider_list(input: &str, family: ProviderFamily) -> std::result::Resu
     Ok(providers)
 }
 
-fn parse_provider_token(token: &str, family: ProviderFamily, index: usize) -> std::result::Result<ProviderEndpoint, TopologyError> {
+fn parse_provider_token(
+    token: &str,
+    family: ProviderFamily,
+    index: usize,
+) -> std::result::Result<ProviderEndpoint, TopologyError> {
     let (name, raw_url) = match token.split_once('=') {
         Some((name, raw_url)) if !name.trim().is_empty() && !raw_url.trim().is_empty() => {
             (name.trim().to_string(), raw_url.trim().to_string())
@@ -496,14 +539,24 @@ pub fn redact_url(raw_url: &str) -> String {
     match reqwest::Url::parse(raw_url) {
         Ok(url) => {
             let suffix_source = format!("{}{}", url.path(), url.query().unwrap_or_default());
-            let compact: String = suffix_source.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+            let compact: String = suffix_source
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .collect();
             let suffix = if compact.len() >= 4 {
                 compact[compact.len() - 4..].to_string()
             } else {
                 "set".to_string()
             };
             let port = url.port().map(|p| format!(":{p}")).unwrap_or_default();
-            format!("{}://...{}{} /****{}", url.scheme(), url.host_str().unwrap_or("unknown"), port, suffix).replace(" ", "")
+            format!(
+                "{}://...{}{} /****{}",
+                url.scheme(),
+                url.host_str().unwrap_or("unknown"),
+                port,
+                suffix
+            )
+            .replace(" ", "")
         }
         Err(_) => "<invalid-url-redacted>".to_string(),
     }
@@ -532,7 +585,13 @@ mod tests {
                     chain_id: event.chain_id,
                     entries: Vec::with_capacity(http.len()),
                 }),
-                ws_endpoints: ws.into_iter().map(|e| WsEndpoint { name: e.name, url: e.url }).collect(),
+                ws_endpoints: ws
+                    .into_iter()
+                    .map(|e| WsEndpoint {
+                        name: e.name,
+                        url: e.url,
+                    })
+                    .collect(),
             })
         }
     }
@@ -559,12 +618,21 @@ mod tests {
         let first = event(100, "alchemy=wss://eth-mainnet.g.alchemy.com/v2/firstabcd");
         let second = event(101, "alchemy=wss://eth-mainnet.g.alchemy.com/v2/secondwxyz");
 
-        assert_eq!(runtime.apply_event(first, &factory).await.unwrap(), TopologyApplyDecision::Applied);
+        assert_eq!(
+            runtime.apply_event(first, &factory).await.unwrap(),
+            TopologyApplyDecision::Applied
+        );
         let before = runtime.current().unwrap();
         assert_eq!(before.version_id, 100);
-        assert_eq!(before.redacted_ws_urls()[0], "wss://...eth-mainnet.g.alchemy.com/****abcd");
+        assert_eq!(
+            before.redacted_ws_urls()[0],
+            "wss://...eth-mainnet.g.alchemy.com/****abcd"
+        );
 
-        assert_eq!(runtime.apply_event(second, &factory).await.unwrap(), TopologyApplyDecision::Applied);
+        assert_eq!(
+            runtime.apply_event(second, &factory).await.unwrap(),
+            TopologyApplyDecision::Applied
+        );
         let after = runtime.current().unwrap();
         assert_eq!(after.version_id, 101);
         assert_eq!(after.checksum, "checksum-101");
@@ -575,25 +643,61 @@ mod tests {
     async fn ignores_stale_or_duplicate_version_id() {
         let runtime = TopologyRuntime::new();
         let factory = MockFactory;
-        assert_eq!(runtime.apply_event(event(200, "alchemy=wss://eth-mainnet.g.alchemy.com/v2/newerabcd"), &factory).await.unwrap(), TopologyApplyDecision::Applied);
+        assert_eq!(
+            runtime
+                .apply_event(
+                    event(200, "alchemy=wss://eth-mainnet.g.alchemy.com/v2/newerabcd"),
+                    &factory
+                )
+                .await
+                .unwrap(),
+            TopologyApplyDecision::Applied
+        );
         let current = runtime.current().unwrap();
-        assert_eq!(runtime.apply_event(event(199, "alchemy=wss://eth-mainnet.g.alchemy.com/v2/staleabcd"), &factory).await.unwrap(), TopologyApplyDecision::IdempotentSkip);
-        assert_eq!(runtime.apply_event(event(200, "alchemy=wss://eth-mainnet.g.alchemy.com/v2/dupeabcd"), &factory).await.unwrap(), TopologyApplyDecision::IdempotentSkip);
+        assert_eq!(
+            runtime
+                .apply_event(
+                    event(199, "alchemy=wss://eth-mainnet.g.alchemy.com/v2/staleabcd"),
+                    &factory
+                )
+                .await
+                .unwrap(),
+            TopologyApplyDecision::IdempotentSkip
+        );
+        assert_eq!(
+            runtime
+                .apply_event(
+                    event(200, "alchemy=wss://eth-mainnet.g.alchemy.com/v2/dupeabcd"),
+                    &factory
+                )
+                .await
+                .unwrap(),
+            TopologyApplyDecision::IdempotentSkip
+        );
         assert!(Arc::ptr_eq(&current, &runtime.current().unwrap()));
     }
 
     #[test]
     fn rejects_proxy_and_userinfo_urls() {
         let mut proxied = event(1, "alchemy=wss://gateway.proxy.example/ws");
-        assert!(matches!(validate_mutation(&proxied), Err(TopologyError::ProxyForbidden)));
+        assert!(matches!(
+            validate_mutation(&proxied),
+            Err(TopologyError::ProxyForbidden)
+        ));
         proxied.rpc_ws_1 = "alchemy=wss://user:secret@eth-mainnet.g.alchemy.com/v2/key".to_string();
-        assert!(matches!(validate_mutation(&proxied), Err(TopologyError::UserInfoForbidden)));
+        assert!(matches!(
+            validate_mutation(&proxied),
+            Err(TopologyError::UserInfoForbidden)
+        ));
     }
 
     #[test]
     fn filtered_mode_requires_first_ws_alchemy() {
         let evt = event(1, "standard=wss://rpc.example.org/wsabcd");
-        assert!(matches!(validate_mutation(&evt), Err(TopologyError::FilteredRequiresAlchemy)));
+        assert!(matches!(
+            validate_mutation(&evt),
+            Err(TopologyError::FilteredRequiresAlchemy)
+        ));
     }
 
     #[test]

@@ -64,11 +64,7 @@ pub struct CartridgeSubscriber {
 
 impl CartridgeSubscriber {
     /// Creates a new subscriber.
-    pub fn new(
-        redis_url: String,
-        runner: Arc<CartridgeRunner>,
-        cancel: CancellationToken,
-    ) -> Self {
+    pub fn new(redis_url: String, runner: Arc<CartridgeRunner>, cancel: CancellationToken) -> Self {
         Self {
             redis_url,
             runner,
@@ -294,12 +290,9 @@ impl CartridgeSubscriber {
 
         if let Ok(client) = redis::Client::open(self.redis_url.clone()) {
             if let Ok(mut conn) = client.get_connection_manager().await {
-                let _: Result<(), _> = redis::AsyncCommands::publish(
-                    &mut conn,
-                    "arbx:cartridge:ack",
-                    ack.to_string(),
-                )
-                .await;
+                let _: Result<(), _> =
+                    redis::AsyncCommands::publish(&mut conn, "arbx:cartridge:ack", ack.to_string())
+                        .await;
             }
         }
     }

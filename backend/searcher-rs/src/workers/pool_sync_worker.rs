@@ -153,7 +153,8 @@ async fn exec_aggregate3(
     // multicall await returns. Pairs with rpc_pool.with_retry.* internal events.
     info!(
         event = "pool_sync.multicall.before_with_retry",
-        chain_id, label,
+        chain_id,
+        label,
         call_count,
         timeout_ms = call_timeout.as_millis() as u64
     );
@@ -169,7 +170,13 @@ async fn exec_aggregate3(
     .await
     {
         Ok(Ok(b)) => {
-            info!(event = "pool_sync.multicall.after_with_retry", chain_id, label, status = "ok", elapsed_ms = started.elapsed().as_millis() as u64);
+            info!(
+                event = "pool_sync.multicall.after_with_retry",
+                chain_id,
+                label,
+                status = "ok",
+                elapsed_ms = started.elapsed().as_millis() as u64
+            );
             b
         }
         Ok(Err(e)) => {
@@ -177,7 +184,13 @@ async fn exec_aggregate3(
             return Err(anyhow::anyhow!("rpc: {e}"));
         }
         Err(_) => {
-            info!(event = "pool_sync.multicall.after_with_retry", chain_id, label, status = "outer_timeout", elapsed_ms = started.elapsed().as_millis() as u64);
+            info!(
+                event = "pool_sync.multicall.after_with_retry",
+                chain_id,
+                label,
+                status = "outer_timeout",
+                elapsed_ms = started.elapsed().as_millis() as u64
+            );
             return Err(anyhow::anyhow!("timeout_{}ms", call_timeout.as_millis()));
         }
     };
@@ -250,7 +263,10 @@ where
                 if results.len() != call_count {
                     warn!(
                         event = "pool_sync.chunk_short_result",
-                        chain_id, label, start, end,
+                        chain_id,
+                        label,
+                        start,
+                        end,
                         expected = call_count,
                         got = results.len()
                     );
@@ -272,7 +288,11 @@ where
                     let backoff_ms = next_backoff_ms(backoff_base_ms, attempt, BACKOFF_CAP_MS);
                     info!(
                         event = "pool_sync.chunk_retry",
-                        chain_id, label, start, end, call_count,
+                        chain_id,
+                        label,
+                        start,
+                        end,
+                        call_count,
                         attempt = attempt + 1,
                         max_retries,
                         backoff_ms,
@@ -286,7 +306,12 @@ where
                     let mid = split_point(start, end);
                     info!(
                         event = "pool_sync.chunk_split",
-                        chain_id, label, start, mid, end, call_count,
+                        chain_id,
+                        label,
+                        start,
+                        mid,
+                        end,
+                        call_count,
                         "retries exhausted; bisecting chunk (dynamic degradation)"
                     );
                     // Re-queue both halves at attempt 0 — a smaller request may clear the throttle.
@@ -1093,7 +1118,10 @@ mod tests {
         }
         assert!(covered.iter().all(|&c| c), "some index uncovered");
         assert!(seed_chunks(0, 100).is_empty());
-        assert_eq!(seed_chunks(5, 0), vec![(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]); // bs.max(1)
+        assert_eq!(
+            seed_chunks(5, 0),
+            vec![(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]
+        ); // bs.max(1)
     }
 
     // ── Full driver: degradation + alignment via a synthetic executor (no RPC) ────────────
@@ -1122,7 +1150,13 @@ mod tests {
     async fn driver_all_success_is_perfectly_aligned() {
         let calls = AtomicUsize::new(0);
         let out = drive_resilient_batches(
-            250, 100, 10, 2, 0, /*chain*/ 1, "test",
+            250,
+            100,
+            10,
+            2,
+            0,
+            /*chain*/ 1,
+            "test",
             aligned_exec(usize::MAX, &calls), // never fails
         )
         .await;
@@ -1138,13 +1172,23 @@ mod tests {
         // bisection (100→50→25) reaches a passing width, so EVERY pool still lands aligned.
         let calls = AtomicUsize::new(0);
         let out = drive_resilient_batches(
-            200, 100, 4, 0 /*no retries → split immediately*/, 0, 1, "test",
+            200,
+            100,
+            4,
+            0, /*no retries → split immediately*/
+            0,
+            1,
+            "test",
             aligned_exec(32, &calls),
         )
         .await;
         assert_eq!(out.len(), 200);
         for (i, slot) in out.iter().enumerate() {
-            assert_eq!(*slot, Some(i), "slot {i} should be recovered via degradation");
+            assert_eq!(
+                *slot,
+                Some(i),
+                "slot {i} should be recovered via degradation"
+            );
         }
     }
 
@@ -1153,13 +1197,13 @@ mod tests {
         // Everything fails (fail_above=0). With min_batch=25 the driver bisects 100→50→25 then
         // stops (25 is not > 25) and abandons. Result: ALL None — fail-honest, no fabricated data.
         let calls = AtomicUsize::new(0);
-        let out = drive_resilient_batches(
-            100, 100, 25, 0, 0, 1, "test",
-            aligned_exec(0, &calls),
-        )
-        .await;
+        let out =
+            drive_resilient_batches(100, 100, 25, 0, 0, 1, "test", aligned_exec(0, &calls)).await;
         assert_eq!(out.len(), 100);
-        assert!(out.iter().all(|s| s.is_none()), "abandoned chunks must be None, never fabricated");
+        assert!(
+            out.iter().all(|s| s.is_none()),
+            "abandoned chunks must be None, never fabricated"
+        );
     }
 
     #[tokio::test]
@@ -1188,8 +1232,13 @@ mod tests {
     #[tokio::test]
     async fn driver_zero_total_is_empty() {
         let calls = AtomicUsize::new(0);
-        let out = drive_resilient_batches(0, 100, 10, 2, 0, 1, "test", aligned_exec(0, &calls)).await;
+        let out =
+            drive_resilient_batches(0, 100, 10, 2, 0, 1, "test", aligned_exec(0, &calls)).await;
         assert!(out.is_empty());
-        assert_eq!(calls.load(Ordering::SeqCst), 0, "no exec calls for empty input");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "no exec calls for empty input"
+        );
     }
 }

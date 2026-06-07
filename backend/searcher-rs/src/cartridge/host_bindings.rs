@@ -142,12 +142,10 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
         });
 
         match result {
-            Some(json_str) => {
-                match serde_json::from_str::<serde_json::Value>(&json_str) {
-                    Ok(val) => json_value_to_dynamic(&val),
-                    Err(_) => Dynamic::UNIT,
-                }
-            }
+            Some(json_str) => match serde_json::from_str::<serde_json::Value>(&json_str) {
+                Ok(val) => json_value_to_dynamic(&val),
+                Err(_) => Dynamic::UNIT,
+            },
             None => Dynamic::UNIT,
         }
     });
@@ -155,33 +153,35 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
     // get_pool_index(token_a: String, token_b: String) -> Array
     // Returns array of pool addresses for the given token pair.
     let ctx_pools = ctx.clone();
-    engine.register_fn("get_pool_index", move |token_a: &str, token_b: &str| -> Dynamic {
-        let ctx = ctx_pools.clone();
-        let (lo, hi) = if token_a < token_b {
-            (token_a.to_lowercase(), token_b.to_lowercase())
-        } else {
-            (token_b.to_lowercase(), token_a.to_lowercase())
-        };
-        let result = ctx.rt_handle.block_on(async {
-            let mut redis = ctx.redis.write().await;
-            let key = format!("arbx:pool_index:{}:{}:{}", ctx.chain_id, lo, hi);
-            let raw: Option<String> = redis::AsyncCommands::get(&mut *redis, &key).await.ok()?;
-            raw
-        });
+    engine.register_fn(
+        "get_pool_index",
+        move |token_a: &str, token_b: &str| -> Dynamic {
+            let ctx = ctx_pools.clone();
+            let (lo, hi) = if token_a < token_b {
+                (token_a.to_lowercase(), token_b.to_lowercase())
+            } else {
+                (token_b.to_lowercase(), token_a.to_lowercase())
+            };
+            let result = ctx.rt_handle.block_on(async {
+                let mut redis = ctx.redis.write().await;
+                let key = format!("arbx:pool_index:{}:{}:{}", ctx.chain_id, lo, hi);
+                let raw: Option<String> =
+                    redis::AsyncCommands::get(&mut *redis, &key).await.ok()?;
+                raw
+            });
 
-        match result {
-            Some(json_str) => {
-                match serde_json::from_str::<Vec<String>>(&json_str) {
+            match result {
+                Some(json_str) => match serde_json::from_str::<Vec<String>>(&json_str) {
                     Ok(addrs) => {
                         let arr: Vec<Dynamic> = addrs.into_iter().map(Dynamic::from).collect();
                         Dynamic::from_array(arr)
                     }
                     Err(_) => Dynamic::from_array(vec![]),
-                }
+                },
+                None => Dynamic::from_array(vec![]),
             }
-            None => Dynamic::from_array(vec![]),
-        }
-    });
+        },
+    );
 
     // get_v3_slot0(pool_addr: String) -> Map
     // Returns: #{ sqrt_price_x96: "...", liquidity: "...", ts: N }  (() on cache miss).
@@ -236,52 +236,61 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
     // Simulates a swap through the given path. Returns estimated output.
     // NOTE: This is a CACHED simulation — real RPC calls are rate-limited.
     let ctx_sim = ctx.clone();
-    engine.register_fn("simulate_swap", move |amount_in: &str, path: rhai::Array| -> Dynamic {
-        let ctx = ctx_sim.clone();
-        let path_strs: Vec<String> = path
-            .iter()
-            .filter_map(|d| d.clone().into_string().ok())
-            .collect();
+    engine.register_fn(
+        "simulate_swap",
+        move |amount_in: &str, path: rhai::Array| -> Dynamic {
+            let ctx = ctx_sim.clone();
+            let path_strs: Vec<String> = path
+                .iter()
+                .filter_map(|d| d.clone().into_string().ok())
+                .collect();
 
-        if path_strs.len() < 2 {
+            if path_strs.len() < 2 {
+                let mut map = Map::new();
+                map.insert("success".into(), Dynamic::from(false));
+                map.insert(
+                    "error".into(),
+                    Dynamic::from("path must have at least 2 tokens"),
+                );
+                return Dynamic::from_map(map);
+            }
+
+            // Check Redis cache first for recent simulation result
+            let cache_key = format!(
+                "arbx:sim_cache:{}:{}:{}",
+                ctx.chain_id,
+                amount_in,
+                path_strs.join("_")
+            );
+
+            let cached = ctx.rt_handle.block_on(async {
+                let mut redis = ctx.redis.write().await;
+                let raw: Option<String> = redis::AsyncCommands::get(&mut *redis, &cache_key)
+                    .await
+                    .ok()?;
+                raw
+            });
+
+            if let Some(cached_json) = cached {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&cached_json) {
+                    return json_value_to_dynamic(&val);
+                }
+            }
+
+            // If no cache hit, return a placeholder indicating simulation needed.
+            // Real RPC simulation is handled by the orchestrator layer to maintain
+            // rate limits and prevent abuse from cartridge scripts.
             let mut map = Map::new();
             map.insert("success".into(), Dynamic::from(false));
-            map.insert("error".into(), Dynamic::from("path must have at least 2 tokens"));
-            return Dynamic::from_map(map);
-        }
-
-        // Check Redis cache first for recent simulation result
-        let cache_key = format!(
-            "arbx:sim_cache:{}:{}:{}",
-            ctx.chain_id,
-            amount_in,
-            path_strs.join("_")
-        );
-
-        let cached = ctx.rt_handle.block_on(async {
-            let mut redis = ctx.redis.write().await;
-            let raw: Option<String> = redis::AsyncCommands::get(&mut *redis, &cache_key).await.ok()?;
-            raw
-        });
-
-        if let Some(cached_json) = cached {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&cached_json) {
-                return json_value_to_dynamic(&val);
-            }
-        }
-
-        // If no cache hit, return a placeholder indicating simulation needed.
-        // Real RPC simulation is handled by the orchestrator layer to maintain
-        // rate limits and prevent abuse from cartridge scripts.
-        let mut map = Map::new();
-        map.insert("success".into(), Dynamic::from(false));
-        map.insert("error".into(), Dynamic::from("simulation_pending"));
-        map.insert("amount_in".into(), Dynamic::from(amount_in.to_string()));
-        map.insert("path".into(), Dynamic::from_array(
-            path_strs.into_iter().map(Dynamic::from).collect()
-        ));
-        Dynamic::from_map(map)
-    });
+            map.insert("error".into(), Dynamic::from("simulation_pending"));
+            map.insert("amount_in".into(), Dynamic::from(amount_in.to_string()));
+            map.insert(
+                "path".into(),
+                Dynamic::from_array(path_strs.into_iter().map(Dynamic::from).collect()),
+            );
+            Dynamic::from_map(map)
+        },
+    );
 
     // ─────────────────────────────────────────────────────────────────────
     // CHAIN STATE BINDINGS
@@ -290,7 +299,9 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
     // get_base_fee() -> f64 (in gwei)
     let ctx_fee = ctx.clone();
     engine.register_fn("get_base_fee", move || -> Dynamic {
-        let fee = ctx_fee.base_fee_gwei.load(std::sync::atomic::Ordering::Relaxed);
+        let fee = ctx_fee
+            .base_fee_gwei
+            .load(std::sync::atomic::Ordering::Relaxed);
         // Stored as gwei * 1000 for 3-decimal precision without floats
         Dynamic::from(fee as f64 / 1000.0)
     });
@@ -298,7 +309,9 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
     // get_block_number() -> i64
     let ctx_block = ctx.clone();
     engine.register_fn("get_block_number", move || -> Dynamic {
-        let block = ctx_block.block_number.load(std::sync::atomic::Ordering::Relaxed);
+        let block = ctx_block
+            .block_number
+            .load(std::sync::atomic::Ordering::Relaxed);
         Dynamic::from(block as i64)
     });
 
@@ -320,70 +333,75 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
     // log_quantum(level: String, message: String)
     // Levels: "debug", "info", "warn", "error"
     let ctx_log = ctx.clone();
-    engine.register_fn("log_quantum", move |level: &str, message: &str| -> Dynamic {
-        let ctx = ctx_log.clone();
-        let cartridge_id = ctx.rt_handle.block_on(async {
-            ctx.cartridge_id.read().await.clone()
-        });
+    engine.register_fn(
+        "log_quantum",
+        move |level: &str, message: &str| -> Dynamic {
+            let ctx = ctx_log.clone();
+            let cartridge_id = ctx
+                .rt_handle
+                .block_on(async { ctx.cartridge_id.read().await.clone() });
 
-        let log_entry = serde_json::json!({
-            "cartridge_id": cartridge_id,
-            "level": level,
-            "message": message,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-            "chain_id": ctx.chain_id,
-        });
+            let log_entry = serde_json::json!({
+                "cartridge_id": cartridge_id,
+                "level": level,
+                "message": message,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "chain_id": ctx.chain_id,
+            });
 
-        // Fire-and-forget telemetry publish
-        let channel = ctx.telemetry_channel.clone();
-        ctx.rt_handle.block_on(async {
-            let mut redis = ctx.redis.write().await;
-            let _: Result<(), _> = redis::AsyncCommands::publish(
-                &mut *redis,
-                &channel,
-                log_entry.to_string(),
-            ).await;
-        });
+            // Fire-and-forget telemetry publish
+            let channel = ctx.telemetry_channel.clone();
+            ctx.rt_handle.block_on(async {
+                let mut redis = ctx.redis.write().await;
+                let _: Result<(), _> =
+                    redis::AsyncCommands::publish(&mut *redis, &channel, log_entry.to_string())
+                        .await;
+            });
 
-        match level {
-            "debug" => debug!(cartridge = %cartridge_id, "{}", message),
-            "info" => tracing::info!(cartridge = %cartridge_id, "{}", message),
-            "warn" => warn!(cartridge = %cartridge_id, "{}", message),
-            "error" => tracing::error!(cartridge = %cartridge_id, "{}", message),
-            _ => debug!(cartridge = %cartridge_id, "[{}] {}", level, message),
-        }
+            match level {
+                "debug" => debug!(cartridge = %cartridge_id, "{}", message),
+                "info" => tracing::info!(cartridge = %cartridge_id, "{}", message),
+                "warn" => warn!(cartridge = %cartridge_id, "{}", message),
+                "error" => tracing::error!(cartridge = %cartridge_id, "{}", message),
+                _ => debug!(cartridge = %cartridge_id, "[{}] {}", level, message),
+            }
 
-        Dynamic::UNIT
-    });
+            Dynamic::UNIT
+        },
+    );
 
     // emit_signal(signal_type: String, data: Map)
     // Publishes a signal to the Arteria PubSub for downstream consumers.
     let ctx_signal = ctx.clone();
-    engine.register_fn("emit_signal", move |signal_type: &str, data: Map| -> Dynamic {
-        let ctx = ctx_signal.clone();
-        let cartridge_id = ctx.rt_handle.block_on(async {
-            ctx.cartridge_id.read().await.clone()
-        });
+    engine.register_fn(
+        "emit_signal",
+        move |signal_type: &str, data: Map| -> Dynamic {
+            let ctx = ctx_signal.clone();
+            let cartridge_id = ctx
+                .rt_handle
+                .block_on(async { ctx.cartridge_id.read().await.clone() });
 
-        let signal = serde_json::json!({
-            "signal_type": signal_type,
-            "cartridge_id": cartridge_id,
-            "chain_id": ctx.chain_id,
-            "data": format!("{:?}", data),
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-        });
+            let signal = serde_json::json!({
+                "signal_type": signal_type,
+                "cartridge_id": cartridge_id,
+                "chain_id": ctx.chain_id,
+                "data": format!("{:?}", data),
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            });
 
-        ctx.rt_handle.block_on(async {
-            let mut redis = ctx.redis.write().await;
-            let _: Result<(), _> = redis::AsyncCommands::publish(
-                &mut *redis,
-                "arbx:cartridge:signals",
-                signal.to_string(),
-            ).await;
-        });
+            ctx.rt_handle.block_on(async {
+                let mut redis = ctx.redis.write().await;
+                let _: Result<(), _> = redis::AsyncCommands::publish(
+                    &mut *redis,
+                    "arbx:cartridge:signals",
+                    signal.to_string(),
+                )
+                .await;
+            });
 
-        Dynamic::UNIT
-    });
+            Dynamic::UNIT
+        },
+    );
 
     // ─────────────────────────────────────────────────────────────────────
     // MATH UTILITY BINDINGS (pure, no I/O)
@@ -397,9 +415,7 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
         }
     });
 
-    engine.register_fn("math_abs", |x: f64| -> Dynamic {
-        Dynamic::from(x.abs())
-    });
+    engine.register_fn("math_abs", |x: f64| -> Dynamic { Dynamic::from(x.abs()) });
 
     engine.register_fn("math_min", |a: f64, b: f64| -> Dynamic {
         Dynamic::from(a.min(b))
@@ -421,9 +437,7 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
         }
     });
 
-    engine.register_fn("math_exp", |x: f64| -> Dynamic {
-        Dynamic::from(x.exp())
-    });
+    engine.register_fn("math_exp", |x: f64| -> Dynamic { Dynamic::from(x.exp()) });
 
     // to_wei(amount: f64, decimals: i64) -> String
     // Converts a human-readable amount to wei string representation.
@@ -496,7 +510,10 @@ mod tests {
         let val = serde_json::json!({"r0": "1000", "r1": "2000"});
         let d = json_value_to_dynamic(&val);
         let map = d.cast::<Map>();
-        assert_eq!(map.get("r0").unwrap().clone().into_string().unwrap(), "1000");
+        assert_eq!(
+            map.get("r0").unwrap().clone().into_string().unwrap(),
+            "1000"
+        );
     }
 
     // 2^96 exactly = 79228162514264337593543950336 (exactly representable as f64).
@@ -523,7 +540,10 @@ mod tests {
         // ratio 1.0, dec_in=6 dec_out=18 ⇒ 1.0 * 10^(6-18) = 1e-12 (USDC/WETH-style scaling).
         let p = v3_spot_price_from_sqrt(Q96_STR, 6, 18);
         let expected = 1e-12;
-        assert!((p - expected).abs() < expected * 1e-6, "expected ~1e-12, got {p}");
+        assert!(
+            (p - expected).abs() < expected * 1e-6,
+            "expected ~1e-12, got {p}"
+        );
     }
 
     #[test]

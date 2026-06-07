@@ -40,6 +40,7 @@
 //! - `gross_profit_usd = None` from an engine propagates unchanged through
 //!   the evaluator and emitter paths.
 
+use crate::cartridge::runner::CartridgeRunner;
 use crate::engines::dex_engine::DexEngine;
 use crate::engines::flashloan_engine::FlashloanEngine;
 use crate::engines::liquidation_engine::LiquidationEngine;
@@ -51,7 +52,6 @@ use crate::metrics::{
     OPPORTUNITIES_PUBLISHED_TOTAL, REJECTED_CONFIG_TOTAL, REJECTED_NO_PROFIT_TOTAL,
     SIMULATION_FAILED_TOTAL,
 };
-use crate::cartridge::runner::CartridgeRunner;
 use crate::opportunity_emitter::OpportunityEmitter;
 use crate::route_intent::RouteIntent;
 use crate::size_optimizer::{OptimizeOutcome, OptimizeRejectReason, SizeOptimizer};

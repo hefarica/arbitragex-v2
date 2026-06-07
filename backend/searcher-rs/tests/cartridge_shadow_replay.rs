@@ -243,7 +243,10 @@ async fn cartridge_evaluates_deterministically_from_adapter_pool_data() {
         result.is_opportunity,
         "cartridge must detect an opportunity when the adapter delivers chain_id=1 + source_pool"
     );
-    assert_eq!(result.estimated_profit, 42.0, "deterministic profit mismatch");
+    assert_eq!(
+        result.estimated_profit, 42.0,
+        "deterministic profit mismatch"
+    );
     assert_eq!(result.confidence, 0.9, "deterministic confidence mismatch");
     assert_eq!(result.urgency, "immediate", "urgency mismatch");
 

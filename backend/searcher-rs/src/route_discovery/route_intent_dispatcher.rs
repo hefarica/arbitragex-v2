@@ -65,9 +65,7 @@ pub struct DispatchPlan {
 pub fn build_intent(c: &RouteCandidate) -> Option<RouteIntent> {
     // Guard every vector this function indexes by position (tokens/pools/
     // protocols). fee_tiers is read via .get(i) so a short fee_tiers is safe.
-    if c.tokens.is_empty()
-        || c.pools.len() != c.tokens.len()
-        || c.protocols.len() != c.tokens.len()
+    if c.tokens.is_empty() || c.pools.len() != c.tokens.len() || c.protocols.len() != c.tokens.len()
     {
         return None;
     }
@@ -243,7 +241,10 @@ mod tests {
         let plans = plan_dispatch(&c, &eng);
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].strategy_name, "triangular_arb");
-        assert!(plans[0].intent.is_none(), "triangular is NOT shadow-evaluated");
+        assert!(
+            plans[0].intent.is_none(),
+            "triangular is NOT shadow-evaluated"
+        );
         assert_eq!(
             plans[0].dispatch_deferred.as_deref(),
             Some("needs_triangular_adapter")

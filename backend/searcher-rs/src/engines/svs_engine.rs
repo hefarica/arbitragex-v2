@@ -37,7 +37,7 @@ impl Default for SvsEngineConfig {
     fn default() -> Self {
         Self {
             min_profit_usd: 8.0,
-            min_shock_pct: 2.0,   // 2% price move triggers analysis
+            min_shock_pct: 2.0, // 2% price move triggers analysis
             lookback_blocks: 10,
         }
     }

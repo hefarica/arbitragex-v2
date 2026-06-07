@@ -5,7 +5,9 @@
 //! Phase 1.5: logs candidates only, no pipeline emission.
 //! Phase 2 will wire real reserve reads and atomic calldata encoding.
 
-use crate::engines::triangular_atomic_engine::{TriangularAtomicEngine, TriangularAtomicEngineConfig};
+use crate::engines::triangular_atomic_engine::{
+    TriangularAtomicEngine, TriangularAtomicEngineConfig,
+};
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, info};

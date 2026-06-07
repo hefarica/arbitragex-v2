@@ -55,12 +55,12 @@
 //! - Division by zero → runtime error (caught, not panic)
 //! - Stack overflow → runtime error (caught, not panic)
 
-pub mod runner;
-pub mod host_bindings;
-pub mod subscriber;
 pub mod contract;
+pub mod host_bindings;
+pub mod runner;
+pub mod subscriber;
 pub mod types;
 
 pub use runner::CartridgeRunner;
 pub use subscriber::CartridgeSubscriber;
-pub use types::{CartridgeMetadata, CartridgeState, CartridgeEvalResult};
+pub use types::{CartridgeEvalResult, CartridgeMetadata, CartridgeState};
