@@ -36,8 +36,9 @@ Bajo ninguna circunstancia usarás jerga de finanzas descentralizadas. Si debes 
 > - Riesgo → `quant-risk-analyst` + valida `math-validator`.
 > - Oráculos / seguridad → `oracle-security-architect` o `security-auditor-automated` + valida `math-validator`.
 > - Datos on-chain → `data-analytics-pipeline` + valida `economics-validator`.
-> - Infra / monitoreo / deploy → `subsecond-monitoring-engineer` o `institutional-api-gateway` + valida `security-auditor-automated`.
-> - Frontend → sin agente dedicado en el roster DeFi; usa `general-purpose` + valida `cs-validator`.
+> - Deploy / plataforma (Docker→VPS) → `devops-platform` + valida `security-auditor-automated`.
+> - Monitoreo / API → `subsecond-monitoring-engineer` o `institutional-api-gateway` + valida `security-auditor-automated`.
+> - Frontend (Next.js 14) → `frontend-architect` + valida `cs-validator`.
 > - Tarea simple (typo, pregunta) → ejecuta directamente sin despachar, pero menciona por qué no aplica despacho.
 > - **NUNCA ignores a los validators.** Un builder sin validator = trabajo sin peer review = inaceptable.
 
@@ -222,7 +223,7 @@ Lee la skill completa de `.agents/skills/<nombre>/SKILL.md` cuando la situación
 
 ### 16.1 Native Subagents (`.claude/agents/`)
 
-33 agentes definidos con YAML frontmatter válido (`name`/`description`/`tools`/`model: opus`): **30 builders** especialistas (arbitrage-core, hft-latency, mev-extraction [ético], flash-loan, dark-pool, zkp, cross-chain, custody, quant-risk, market-making, liquidation, oracle-security, gas-opt, mempool-analyst, priority-fee, validator-relations, monitoring, api-gateway, atomic-composer, compliance, leverage, yield, perp, options, rebalance, insurance, governance, tokenomics, security-auditor-automated, data-analytics-pipeline) + **3 validators read-only** (`cs-validator`, `math-validator`, `economics-validator`, tools `Read, Grep, Glob`). Claude Code los descubre automáticamente y delega vía el Task tool según la `description`. Los validators NUNCA editan; bloquean si reportan CRITICAL.
+35 agentes definidos con YAML frontmatter válido (`name`/`description`/`tools`/`model: opus`): **32 builders** especialistas (arbitrage-core, hft-latency, mev-extraction [ético], flash-loan, dark-pool, zkp, cross-chain, custody, quant-risk, market-making, liquidation, oracle-security, gas-opt, mempool-analyst, priority-fee, validator-relations, monitoring, api-gateway, atomic-composer, compliance, leverage, yield, perp, options, rebalance, insurance, governance, tokenomics, security-auditor-automated, data-analytics-pipeline, frontend-architect, devops-platform) + **3 validators read-only** (`cs-validator`, `math-validator`, `economics-validator`, tools `Read, Grep, Glob`). Claude Code los descubre automáticamente y delega vía el Task tool según la `description`. Los validators NUNCA editan; bloquean si reportan CRITICAL.
 
 ### 16.2 Agent Teams — Ejecución Paralela
 
