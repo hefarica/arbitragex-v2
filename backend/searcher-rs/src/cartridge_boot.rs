@@ -216,6 +216,9 @@ pub fn build_cartridge_pool_data(
             "protocol_type".into(),
             Dynamic::from(protocol_type_str(leg.protocol_type).to_string()),
         );
+        if let Some(fee) = leg.fee_bps {
+            m.insert("fee_bps".into(), Dynamic::from(fee as i64));
+        }
         let pool = leg
             .pool_hint
             .map(|p| format!("{:#x}", p))

@@ -232,6 +232,121 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
         },
     );
 
+    // v3_amount_out_single_tick(amount_in, sqrt_price_x96, liquidity, fee_bps, zero_for_one) -> Dynamic
+    // Within-tick (single-tick) Uniswap-V3 output estimate. This is an UPPER BOUND on real output
+    // (V3 has less liquidity beyond the active tick), so cartridges MUST treat the result as a
+    // candidate only — never as a confirmed opportunity. Pure integer math (no RPC/Redis/block_on).
+    // `fee_bps` (basis points: 30 = 0.30%) is converted to V3 on-chain pips (millionths) by ×100.
+    // Returns the decimal-string amount_out, or () on parse error / out-of-range fee / degenerate move.
+    engine.register_fn(
+        "v3_amount_out_single_tick",
+        move |amount_in: &str,
+              sqrt_price_x96: &str,
+              liquidity: &str,
+              fee_bps: i64,
+              zero_for_one: bool|
+              -> Dynamic {
+            use ethers::types::U256;
+            let amount_in = match U256::from_dec_str(amount_in) {
+                Ok(v) => v,
+                Err(_) => return Dynamic::UNIT,
+            };
+            let sqrt_price_x96 = match U256::from_dec_str(sqrt_price_x96) {
+                Ok(v) => v,
+                Err(_) => return Dynamic::UNIT,
+            };
+            let liquidity = match U256::from_dec_str(liquidity) {
+                Ok(v) => v,
+                Err(_) => return Dynamic::UNIT,
+            };
+            // V3 on-chain fee is in millionths (pips): bps 30 -> pips 3000 (0.30%).
+            let fee_pips = fee_bps * 100;
+            if !(0..1_000_000).contains(&fee_pips) {
+                return Dynamic::UNIT;
+            }
+            let result = crate::amm_math::v3_amount_out_single_tick(
+                amount_in,
+                sqrt_price_x96,
+                liquidity,
+                fee_pips as u32,
+                zero_for_one,
+            );
+            if result.is_zero() {
+                Dynamic::UNIT
+            } else {
+                Dynamic::from(result.to_string())
+            }
+        },
+    );
+
+    // v2_amount_out_str(amount_in, reserve_in, reserve_out, fee_bps) -> Dynamic
+    // Constant-product (Uniswap-V2) EXACT-INPUT output, post-fee, as a decimal wei STRING.
+    // This is the V2 analogue of v3_amount_out_single_tick: it keeps the round-trip arb math in
+    // exact integer wei (no f64 rounding) and is the ONLY way a cartridge prices a V2 leg for the
+    // round-trip path. `reserve_in`/`reserve_out` MUST be the reserves in swap direction (caller
+    // orders them by token0_addr). `fee_bps` is the V2 basis-point convention (30 = 0.30%).
+    // Returns () on parse error, out-of-range fee, or degenerate (zero) output (RULE 00: never
+    // fabricates a non-zero amount).
+    engine.register_fn(
+        "v2_amount_out_str",
+        move |amount_in: &str, reserve_in: &str, reserve_out: &str, fee_bps: i64| -> Dynamic {
+            use ethers::types::U256;
+            if !(0..10_000).contains(&fee_bps) {
+                return Dynamic::UNIT;
+            }
+            let amount_in = match U256::from_dec_str(amount_in) {
+                Ok(v) => v,
+                Err(_) => return Dynamic::UNIT,
+            };
+            let reserve_in = match U256::from_dec_str(reserve_in) {
+                Ok(v) => v,
+                Err(_) => return Dynamic::UNIT,
+            };
+            let reserve_out = match U256::from_dec_str(reserve_out) {
+                Ok(v) => v,
+                Err(_) => return Dynamic::UNIT,
+            };
+            let out =
+                crate::amm_math::v2_amount_out(amount_in, reserve_in, reserve_out, fee_bps as u32);
+            if out.is_zero() {
+                Dynamic::UNIT
+            } else {
+                Dynamic::from(out.to_string())
+            }
+        },
+    );
+
+    // get_token_price_usd(symbol: String) -> Dynamic (f64 USD, or () on miss)
+    // Reads the price oracle hash arbx:token_prices:<chain> (HGET field=symbol), populated every
+    // ~30s by price_worker (Chainlink/DexScreener/GeckoTerminal). RULE 00: returns () on cache miss
+    // or unparsable value — the cartridge MUST fail honestly ("v3_arb_no_price"), never fabricate.
+    let ctx_price = ctx.clone();
+    engine.register_fn("get_token_price_usd", move |symbol: &str| -> Dynamic {
+        let ctx = ctx_price.clone();
+        let key = format!("arbx:token_prices:{}", ctx.chain_id);
+        let field = symbol.to_string();
+        let raw: Option<String> = ctx.rt_handle.block_on(async {
+            let mut redis = ctx.redis.write().await;
+            redis::AsyncCommands::hget(&mut *redis, &key, &field)
+                .await
+                .ok()
+                .flatten()
+        });
+        match raw.and_then(|s| s.trim().parse::<f64>().ok()) {
+            Some(p) if p.is_finite() && p > 0.0 => Dynamic::from(p),
+            _ => Dynamic::UNIT,
+        }
+    });
+
+    // v3_arb_enabled() -> bool
+    // Gate for the cross-pool round-trip arb emission (is_opportunity:true path). Reads
+    // ARBX_V3_ARB_MODE; ONLY "on" enables it. Default OFF (any other/unset value -> false), so the
+    // branch keeps emitting the honest is_opportunity:false single-tick candidate until an operator
+    // explicitly opts in. Shadow/paper only — capital=0.
+    engine.register_fn("v3_arb_enabled", || -> bool {
+        std::env::var("ARBX_V3_ARB_MODE").map(|v| v == "on").unwrap_or(false)
+    });
+
     // simulate_swap(amount_in: String, path: Array) -> Map
     // Simulates a swap through the given path. Returns estimated output.
     // NOTE: This is a CACHED simulation — real RPC calls are rate-limited.
