@@ -1,9 +1,9 @@
-// M11 allow: two `Address::from_str(CONSTANT).unwrap()` calls that parse
-// well-known mainnet contract addresses (QuoterV2 + Multicall3). Both strings
-// are valid Ethereum addresses embedded as `const &str`; the `unwrap()` is
-// unreachable in any production or test environment. Follow-up: convert to
-// `Address::from(hex_literal::hex!(...))` consts to eliminate the runtime
-// parse entirely (M11-TODO-scanner-addr-const).
+// OMEGA-8/M4 Fase 1 (2026-05-15): the previous two `Address::from_str(CONSTANT).unwrap()`
+// calls in the V3 quoter dispatch path were replaced by `Lazy<Result<Address, _>>`
+// statics (see V3_QUOTER_V2_ADDRESS / V3_MULTICALL3_ADDRESS below) so the runtime
+// parse happens exactly once and a constant typo cannot panic the scanner hot path.
+// The previous file-wide `#![allow(clippy::unwrap_used, clippy::expect_used)]` was
+// kept while we audit the remaining call sites; Fase 3 will narrow this further.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Scanner loop — real mempool detection.
 //!
@@ -18,6 +18,8 @@
 //! corresponds to a real pending tx observed on the wire.
 
 use crate::amm_math;
+use crate::cartridge::runner::CartridgeRunner;
+use crate::cartridge_boot::CartridgeMode;
 use crate::counters::{chain_counters, counters};
 use crate::reserves;
 use crate::{
@@ -117,6 +119,22 @@ const V3_QUOTER_V2_MAINNET: &str = "0x61fFE014bA17989E743c5F6cB21bF9697530B21e";
 const V3_MULTICALL3_ADDR: &str = "0xcA11bde05977b3631167028862bE2a173976CA11";
 const V3_QUOTE_CACHE_TTL_SECS: u64 = 5;
 
+/// OMEGA-8/M4 Fase 1: parse the V3 hot-path mainnet constants exactly once at
+/// first use instead of on every quote request. Wrapped in `Result` so a typo in
+/// the constant produces an explicit error log and a skip of the V3 branch,
+/// never a panic in pre-dispatch. RULE 9 (no `unwrap` / `expect` in hot-path).
+static V3_QUOTER_V2_ADDRESS: once_cell::sync::Lazy<Result<Address, String>> =
+    once_cell::sync::Lazy::new(|| {
+        Address::from_str(V3_QUOTER_V2_MAINNET)
+            .map_err(|e| format!("invalid V3 quoter address constant: {e}"))
+    });
+
+static V3_MULTICALL3_ADDRESS: once_cell::sync::Lazy<Result<Address, String>> =
+    once_cell::sync::Lazy::new(|| {
+        Address::from_str(V3_MULTICALL3_ADDR)
+            .map_err(|e| format!("invalid V3 multicall3 address constant: {e}"))
+    });
+
 // ---------------------------------------------------------------------------
 // OrchestratorMode — feature flag for Phase 14 scanner integration
 // ---------------------------------------------------------------------------
@@ -195,6 +213,7 @@ pub struct ScannerHandle {
 /// In `Shadow` mode the emitter uses `dry_run = true` so candidates are
 /// evaluated and logged but NOT written to PG or Redis (the legacy path
 /// handles those writes).
+#[allow(clippy::too_many_arguments)]
 async fn build_orchestrator(
     mode: OrchestratorMode,
     chain_id: u64,
@@ -203,6 +222,7 @@ async fn build_orchestrator(
     opp_dedup: Arc<OppDedup>,
     trading_config: TradingConfigClient,
     rpc_pool: Option<Arc<shared_rs::rpc_failover::HttpRpcPool>>,
+    cartridge_runner: Option<Arc<CartridgeRunner>>,
 ) -> Option<(Arc<Orchestrator>, Arc<tokio::sync::RwLock<ImpactIndex>>)> {
     if mode == OrchestratorMode::V1 || mode == OrchestratorMode::Off {
         return None;
@@ -214,7 +234,10 @@ async fn build_orchestrator(
     // This ensures engines see real reserves on the first intents rather than cold-cache.
     // Best-effort: partial or empty hydration is R8 fail-honest (engines emit
     // reserves_cache_miss for pools not yet in cache rather than fabricating data).
-    match reserves_cache.hydrate_from_redis(&mut redis, chain_id).await {
+    match reserves_cache
+        .hydrate_from_redis(&mut redis, chain_id)
+        .await
+    {
         Ok(n) => {
             // TASK 1 log #5: renamed to v2.reserves.hydrated for Grafana event taxonomy.
             info!(
@@ -234,10 +257,50 @@ async fn build_orchestrator(
         }
     }
 
-    let state_projector = Arc::new(StateProjector::new(
-        reserves_cache.clone(),
-        None, // V3 provider: Phase 15
-    ));
+    // V3 oracle (read-only): build the on-chain QuoterV2 provider from the
+    // failover RPC pool so DexEngine can value V3 pools via
+    // `state_projector.project_v3_quote` — eliminates `no_price_oracle`.
+    // Mainnet only for now; absent pool/catalog → None (V3 projection stays
+    // None, R8 fail-honest). NO-ACTIVE: staticcall quoting only, no capital.
+    let v3_provider: Option<Arc<dyn crate::state_projector::V3QuoteProvider>> = match &rpc_pool {
+        Some(pool) if chain_id == 1 => {
+            match crate::v3_quote_provider::MulticallV3QuoteProvider::from_pool_and_chain(
+                pool.clone(),
+                chain_id,
+            ) {
+                Some(p) => {
+                    info!(event = "scanner.v3_oracle_wired", chain_id);
+                    Some(Arc::new(p))
+                }
+                None => {
+                    info!(
+                        event = "scanner.v3_oracle_absent",
+                        chain_id,
+                        reason = "no_quoter_catalog"
+                    );
+                    None
+                }
+            }
+        }
+        Some(_) => {
+            info!(
+                event = "scanner.v3_oracle_absent",
+                chain_id,
+                reason = "non_mainnet"
+            );
+            None
+        }
+        None => {
+            info!(
+                event = "scanner.v3_oracle_absent",
+                chain_id,
+                reason = "no_rpc_pool"
+            );
+            None
+        }
+    };
+
+    let state_projector = Arc::new(StateProjector::new(reserves_cache.clone(), v3_provider));
 
     let size_optimizer = Arc::new(SizeOptimizer::new(state_projector.clone()));
 
@@ -261,7 +324,8 @@ async fn build_orchestrator(
             for (s0, s1) in edges {
                 let (lo, hi) = if s0 <= s1 { (s0, s1) } else { (s1, s0) };
                 let key = format!("arbx:pool_index:{}:{}:{}", chain_id, lo, hi);
-                let raw: Result<Option<String>, _> = redis::AsyncCommands::get(&mut redis, &key).await;
+                let raw: Result<Option<String>, _> =
+                    redis::AsyncCommands::get(&mut redis, &key).await;
                 if let Ok(Some(json)) = raw {
                     if let Ok(addrs) = serde_json::from_str::<Vec<String>>(&json) {
                         if let Some(first) = addrs.first() {
@@ -303,6 +367,20 @@ async fn build_orchestrator(
     } else {
         OpportunityEmitter::new(db.clone(), redis.clone(), opp_dedup)
     });
+
+    // ── OMEGA SEAL — Shadow "capital_exposed == 0" invariant ───────────────────
+    // In Shadow mode the orchestrator is observe-only: the emitter MUST be
+    // dry-run so it writes NOTHING to PG/Redis and can therefore never feed the
+    // downstream execution path (relays-client). This is searcher-rs's honest
+    // analog of `executor.capital_exposed() == 0` (searcher-rs holds no executor
+    // or capital). Asserted as a hard, always-on invariant so any future edit
+    // that swaps in a writing emitter under Shadow fails loudly at boot.
+    if mode == OrchestratorMode::Shadow {
+        assert!(
+            emitter.is_dry_run(),
+            "FATAL: Capital exposure detected in SHADOW mode — orchestrator emitter is not dry_run"
+        );
+    }
 
     let config_provider = Arc::new(ConfigProvider { trading_config });
 
@@ -350,6 +428,16 @@ async fn build_orchestrator(
         reserves_cache.clone(),
     ));
 
+    // Block 2 — gated proactive top-TVL pool enumeration worker. Default-OFF
+    // (ARBX_POOL_ENUM_MODE=off); spawns only when set to "shadow". Read-only/
+    // shadow: HTTP subgraph + eth_call + DB/Redis/impact_index writes for
+    // token-safe pools. No executor/signer/broadcast.
+    crate::workers::pool_enumeration_worker::spawn_if_enabled(
+        chain_id,
+        Arc::clone(&pool_discovery),
+        db.clone(),
+    );
+
     let ctx = OrchestratorContext {
         impact_index: impact_index.clone(),
         pool_discovery,
@@ -362,6 +450,7 @@ async fn build_orchestrator(
         emitter,
         config_provider,
         chain_id,
+        cartridge_runner,
     };
 
     Some((Arc::new(Orchestrator::new(ctx)), impact_index))
@@ -409,10 +498,16 @@ async fn pool_sync_watcher(
         //   pools → factories → dexes (for protocol_type) → tokens×2 (for token addresses).
         // Column aliases are kept identical to the boot-time loader to share the same
         // row-parsing logic and ensure the impact index stays consistent.
-        type NewPoolRow = (chrono::DateTime<chrono::Utc>, String, String, String, String, Option<i32>);
-        let rows: Vec<NewPoolRow> =
-            match sqlx::query_as::<_, NewPoolRow>(
-                r#"SELECT
+        type NewPoolRow = (
+            chrono::DateTime<chrono::Utc>,
+            String,
+            String,
+            String,
+            String,
+            Option<i32>,
+        );
+        let rows: Vec<NewPoolRow> = match sqlx::query_as::<_, NewPoolRow>(
+            r#"SELECT
                      p.created_at,
                      p.address,
                      d.protocol_type,
@@ -428,23 +523,23 @@ async fn pool_sync_watcher(
                      AND p.created_at > $2
                    ORDER BY p.created_at ASC
                    LIMIT 500"#,
-            )
-            .bind(chain_id as i64)
-            .bind(last_created_at)
-            .fetch_all(&db)
-            .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    warn!(
-                        event = "pool_sync_watcher.query_failed",
-                        chain_id,
-                        error = %e,
-                        "failed to query new pools from PG; will retry next tick"
-                    );
-                    continue;
-                }
-            };
+        )
+        .bind(chain_id as i64)
+        .bind(last_created_at)
+        .fetch_all(&db)
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(
+                    event = "pool_sync_watcher.query_failed",
+                    chain_id,
+                    error = %e,
+                    "failed to query new pools from PG; will retry next tick"
+                );
+                continue;
+            }
+        };
 
         if rows.is_empty() {
             continue;
@@ -591,6 +686,33 @@ pub async fn run_chain(
         "orchestrator mode resolved from ARBX_ORCHESTRATOR_MODE"
     );
 
+    // FASE OMEGA — Cartridge runtime boot (gated by ARBX_CARTRIDGE_MODE; default `off` = dormant).
+    // When `off` (the default) nothing is constructed and scanner behavior is byte-for-byte
+    // unchanged. When enabled, a per-chain cartridge runtime loads filesystem cartridges and
+    // runs the Redis hot-reload subscriber. The orchestrator evaluation hook (calling
+    // `runner.evaluate()` and routing candidates through the existing gate pipeline) is a
+    // follow-up iteration gated by paper-trade evidence.
+    let cartridge_mode = CartridgeMode::from_env();
+    info!(
+        event = "scanner.cartridge_mode",
+        chain_id,
+        mode = cartridge_mode.as_str(),
+        "cartridge mode resolved from ARBX_CARTRIDGE_MODE"
+    );
+    // Boot the cartridge runtime when enabled; capture the shared runner so the
+    // orchestrator can shadow-evaluate cartridges against live intents. `None`
+    // when off (the default) -> the orchestrator's shadow block is skipped entirely.
+    let cartridge_runner: Option<Arc<CartridgeRunner>> = if cartridge_mode.is_enabled() {
+        crate::cartridge_boot::spawn_cartridge_runtime(
+            chain_id,
+            redis.clone(),
+            cancel.clone(),
+            cartridge_mode,
+        )
+    } else {
+        None
+    };
+
     // Build the orchestrator (or None for V1/Off).
     // For Shadow: takes a clone of redis + opp_dedup; legacy path still owns the originals.
     // For V2: takes ownership of redis + opp_dedup (legacy path won't need them for emit).
@@ -610,6 +732,7 @@ pub async fn run_chain(
                 opp_dedup.clone(),
                 trading_config.clone(),
                 rpc_http_pool.clone(),
+                cartridge_runner.clone(),
             )
             .await
             {
@@ -626,6 +749,7 @@ pub async fn run_chain(
                 opp_dedup.clone(),
                 trading_config.clone(),
                 rpc_http_pool.clone(),
+                cartridge_runner.clone(),
             )
             .await
             {
@@ -635,6 +759,58 @@ pub async fn run_chain(
         }
         OrchestratorMode::V1 | OrchestratorMode::Off => (None, None),
     };
+
+    // Phase 1 OMEGA Route Discovery — spawn the shadow radar (gated by
+    // ARBX_ROUTE_DISCOVERY_MODE; default off → not spawned, zero overhead). It
+    // reuses the orchestrator's ImpactIndex as the live pool source, runs purely
+    // in shadow, and NEVER writes arbx:opps:detected. Cloned handles so the
+    // mempool-mode branches below are unaffected. When the orchestrator is off
+    // (impact_index_opt = None) the worker logs an honest skip.
+    crate::route_discovery::route_discovery_worker::spawn_route_discovery(
+        chain_id,
+        redis.clone(),
+        impact_index_opt.clone(),
+        cartridge_runner.clone(),
+        cancel.clone(),
+    );
+
+    // FASE OMEGA — Block/log backrun mode: subscribe to `newHeads` + `eth_getLogs`(Swap)
+    // instead of the pending-tx firehose (free-RPC friendly). Spawns the block scanner and
+    // SKIPS the pending-tx detection_loop entirely. Requires orch_mode v2/shadow so an
+    // orchestrator exists to consume the `DetectionSource::NewBlock` intents.
+    let mempool_mode_top = crate::chain_client::MempoolMode::from_env();
+    if mempool_mode_top == crate::chain_client::MempoolMode::Block {
+        info!(
+            event = "scanner.block_mode",
+            chain_id, "ARBX_MEMPOOL_MODE=block — confirmed-state backrunning scanner active"
+        );
+        let ws_urls: Vec<String> = pool.endpoints.iter().map(|e| e.url.clone()).collect();
+        // Keep the impact index fresh (pool registry feeds the getLogs address filter).
+        if let (Some(idx_arc), Some(db_pool)) = (impact_index_opt.clone(), db.clone()) {
+            let watcher_cancel = cancel.clone();
+            tokio::spawn(async move {
+                pool_sync_watcher(chain_id, db_pool, idx_arc, watcher_cancel).await;
+            });
+        }
+        // Publish block height + base fee into the cartridge HostContext atomics each block
+        // (only when the cartridge runtime is live) so get_base_fee()/get_block_number() are
+        // real — the cartridge net-profit gate is otherwise unsatisfiable (gas reads as 0).
+        let gas_sink = cartridge_runner
+            .as_ref()
+            .map(|r| crate::block_scanner::GasBlockSink {
+                block_number: r.host_block_number_handle(),
+                base_fee_milligwei: r.host_base_fee_handle(),
+            });
+        tokio::spawn(crate::block_scanner::block_detection_loop(
+            chain_id,
+            ws_urls,
+            orchestrator,
+            impact_index_opt,
+            gas_sink,
+            cancel,
+        ));
+        return Ok(ScannerHandle { chain_id });
+    }
 
     // Phase 16: spawn the pool_sync_watcher if we have a DB + impact_index handle.
     // The watcher polls PG every 60s for new pools and calls add_pool() with a write lock.
@@ -672,7 +848,11 @@ pub async fn run_chain(
     Ok(ScannerHandle { chain_id })
 }
 
-async fn idle_chain_loop(chain_id: u64, killswitch: KillSwitchClient, cancel: tokio_util::sync::CancellationToken) {
+async fn idle_chain_loop(
+    chain_id: u64,
+    killswitch: KillSwitchClient,
+    cancel: tokio_util::sync::CancellationToken,
+) {
     let mut ticker = tokio::time::interval(Duration::from_secs(60));
     loop {
         tokio::select! {
@@ -749,7 +929,10 @@ async fn detection_loop(
     let mut idx: usize = 0;
     loop {
         if cancel.is_cancelled() {
-            info!(event = "scanner.detection_loop.cancelled", chain_id, "exiting detection loop gracefully");
+            info!(
+                event = "scanner.detection_loop.cancelled",
+                chain_id, "exiting detection loop gracefully"
+            );
             break;
         }
 
@@ -761,7 +944,7 @@ async fn detection_loop(
         // La inteligencia HFT exige latencia sub-milisegundo. Cualquier loop que tome >1ms es un fallo.
         // El scanner opera como un DEPREDADOR MATEMÁTICO. No pedimos permiso para interceptar transacciones.
         let loop_start = std::time::Instant::now();
-        
+
         // Pick the next endpoint round-robin. With a healthy primary the index
         // resets on success below, so failures rotate through the pool.
         let endpoint = &endpoints[idx % endpoints.len()];
@@ -894,6 +1077,17 @@ async fn run_subscription<'a>(
             tokio::time::sleep(Duration::from_secs(60)).await;
             return Ok(());
         }
+        MempoolMode::Block => {
+            // Block/log mode never spawns the pending-tx detection_loop — run_chain
+            // routes it to block_scanner. Defensive idle if somehow reached here.
+            warn!(
+                event = "scanner.block_mode_unexpected",
+                chain_id = client.chain_id,
+                "Block mode reached run_subscription; idling (should route to block_scanner)"
+            );
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            return Ok(());
+        }
         MempoolMode::Filtered => {
             match client.subscribe_pending_filtered_txs(&allowlist).await {
                 Ok(mut stream) => {
@@ -990,7 +1184,9 @@ async fn process_pending<'a>(
     if !dedup.check_and_mark(hash, redis).await {
         return Ok(());
     }
-    chain_counters(client.chain_id).pending_received.fetch_add(1, Ordering::Relaxed);
+    chain_counters(client.chain_id)
+        .pending_received
+        .fetch_add(1, Ordering::Relaxed);
     // Aggressive but realistic timeout for eth_getTransactionByHash.
     // 1ms (the previous value) drops 100% of healthy network RPCs and effectively
     // disables enrichment — auto-DDOS of our own pipeline. 50ms accepts healthy
@@ -1059,7 +1255,9 @@ async fn process_pending_tx<'a>(
     if !dedup.check_and_mark(tx.hash, redis).await {
         return Ok(());
     }
-    chain_counters(client.chain_id).pending_received.fetch_add(1, Ordering::Relaxed);
+    chain_counters(client.chain_id)
+        .pending_received
+        .fetch_add(1, Ordering::Relaxed);
     decode_and_score_tx(
         client,
         tx,
@@ -1181,7 +1379,9 @@ async fn decode_and_score_tx<'a>(
     if router.kind == RouterKind::Unknown {
         return Ok(());
     }
-    chain_counters(client.chain_id).decoded_ok.fetch_add(1, Ordering::Relaxed);
+    chain_counters(client.chain_id)
+        .decoded_ok
+        .fetch_add(1, Ordering::Relaxed);
 
     let ctx = patterns::TxContext {
         chain_id: client.chain_id,
@@ -1400,45 +1600,64 @@ async fn decode_and_score_tx<'a>(
                 // breaker and EWMA failover are engaged transparently.
                 if !to_quote.is_empty() {
                     if let Some(rpc_pool) = v3_rpc_pool {
-                        let quoter = Address::from_str(V3_QUOTER_V2_MAINNET).unwrap();
-                        let multicall = Address::from_str(V3_MULTICALL3_ADDR).unwrap();
-                        let quotes_to_send = to_quote.clone();
-                        match rpc_pool
-                            .with_retry(|provider| {
-                                let reqs = quotes_to_send.clone();
-                                async move {
-                                    amm_math::v3_quote_exact_in_multicall(
-                                        provider, quoter, multicall, reqs,
-                                    )
-                                    .await
-                                }
-                            })
-                            .await
-                        {
-                            Ok(results) => {
-                                for r in &results {
-                                    if r.success && !r.amount_out.is_zero() {
-                                        // Cache + push.
-                                        let pool_lower = format!("0x{:040x}", r.pool_addr);
-                                        let amount_out_dec = r.amount_out.to_string();
-                                        let _ = reserves::set_v3_quote(
-                                            redis,
-                                            client.chain_id,
-                                            &pool_lower,
-                                            &amount_in_dec,
-                                            &amount_out_dec,
-                                            V3_QUOTE_CACHE_TTL_SECS,
+                        // OMEGA-8/M4 Fase 1: resolve once-parsed Lazy statics.
+                        // On constant typo (unreachable in production) we log
+                        // and skip the V3 RPC dispatch instead of panicking —
+                        // the V2 branch already populated `outs` so the chain
+                        // stays operational in degraded but honest mode.
+                        let v3_addrs = match (
+                            V3_QUOTER_V2_ADDRESS.as_ref(),
+                            V3_MULTICALL3_ADDRESS.as_ref(),
+                        ) {
+                            (Ok(q), Ok(m)) => Some((*q, *m)),
+                            (Err(e), _) | (_, Err(e)) => {
+                                error!(
+                                    event = "scanner.v3_constant_invalid",
+                                    error = %e,
+                                    "V3 mainnet constant failed to parse — skipping V3 RPC batch"
+                                );
+                                None
+                            }
+                        };
+                        if let Some((quoter, multicall)) = v3_addrs {
+                            let quotes_to_send = to_quote.clone();
+                            match rpc_pool
+                                .with_retry(|provider| {
+                                    let reqs = quotes_to_send.clone();
+                                    async move {
+                                        amm_math::v3_quote_exact_in_multicall(
+                                            provider, quoter, multicall, reqs,
                                         )
-                                        .await;
-                                        outs.push(r.amount_out);
-                                        v3_used += 1;
+                                        .await
+                                    }
+                                })
+                                .await
+                            {
+                                Ok(results) => {
+                                    for r in &results {
+                                        if r.success && !r.amount_out.is_zero() {
+                                            // Cache + push.
+                                            let pool_lower = format!("0x{:040x}", r.pool_addr);
+                                            let amount_out_dec = r.amount_out.to_string();
+                                            let _ = reserves::set_v3_quote(
+                                                redis,
+                                                client.chain_id,
+                                                &pool_lower,
+                                                &amount_in_dec,
+                                                &amount_out_dec,
+                                                V3_QUOTE_CACHE_TTL_SECS,
+                                            )
+                                            .await;
+                                            outs.push(r.amount_out);
+                                            v3_used += 1;
+                                        }
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                debug!(event = "scanner.v3_quote_rpc_failed",
-                                       pair = format!("{}-{}", m_in.symbol, m_out.symbol),
-                                       error = %e);
+                                Err(e) => {
+                                    debug!(event = "scanner.v3_quote_rpc_failed",
+                                           pair = format!("{}-{}", m_in.symbol, m_out.symbol),
+                                           error = %e);
+                                }
                             }
                         }
                     } else {
@@ -1493,10 +1712,14 @@ async fn decode_and_score_tx<'a>(
                 // Distinguish V2-only enrichment from V2+V3 in the event name so
                 // dashboards can chart V3 reach growth without parsing fields.
                 let event_name = if v3_used > 0 {
-                    chain_counters(client.chain_id).enriched_v3.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id)
+                        .enriched_v3
+                        .fetch_add(1, Ordering::Relaxed);
                     "scanner.candidate_enriched_v3"
                 } else {
-                    chain_counters(client.chain_id).enriched_v2.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id)
+                        .enriched_v2
+                        .fetch_add(1, Ordering::Relaxed);
                     "scanner.candidate_enriched"
                 };
                 info!(event = event_name,
@@ -1569,15 +1792,21 @@ async fn decode_and_score_tx<'a>(
             hash = %hash,
             "configure /config/trading to enable scoring; persisting raw observation"
         );
-        chain_counters(client.chain_id).gate_no_config.fetch_add(1, Ordering::Relaxed);
+        chain_counters(client.chain_id)
+            .gate_no_config
+            .fetch_add(1, Ordering::Relaxed);
         opportunity.roi_pct = None;
         opportunity.risk_score = None;
         if let Some(pool) = db {
             if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-                chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
+                chain_counters(client.chain_id)
+                    .db_errors
+                    .fetch_add(1, Ordering::Relaxed);
                 error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
             } else {
-                chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
+                chain_counters(client.chain_id)
+                    .db_persisted
+                    .fetch_add(1, Ordering::Relaxed);
             }
         }
         publisher::publish(redis, &opportunity).await?;
@@ -1714,10 +1943,14 @@ async fn decode_and_score_tx<'a>(
                 .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
                 if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-                    chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id)
+                        .db_errors
+                        .fetch_add(1, Ordering::Relaxed);
                     error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
                 } else {
-                    chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id)
+                        .db_persisted
+                        .fetch_add(1, Ordering::Relaxed);
                 }
             }
             publisher::publish(redis, &opportunity).await?;
@@ -1747,10 +1980,14 @@ async fn decode_and_score_tx<'a>(
                 .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
                 if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-                    chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id)
+                        .db_errors
+                        .fetch_add(1, Ordering::Relaxed);
                     error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
                 } else {
-                    chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id)
+                        .db_persisted
+                        .fetch_add(1, Ordering::Relaxed);
                 }
             }
             publisher::publish(redis, &opportunity).await?;
@@ -1785,10 +2022,14 @@ async fn decode_and_score_tx<'a>(
                 .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
                 if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-                    chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id)
+                        .db_errors
+                        .fetch_add(1, Ordering::Relaxed);
                     error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
                 } else {
-                    chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
+                    chain_counters(client.chain_id)
+                        .db_persisted
+                        .fetch_add(1, Ordering::Relaxed);
                 }
             }
             publisher::publish(redis, &opportunity).await?;
@@ -1846,12 +2087,8 @@ async fn decode_and_score_tx<'a>(
     // every value other than `PASS` or `SIM_SUCCESS` maps to
     // `RejectReason::SimulationFailed`. Zero paper opportunities survive
     // this PR — that is the truth of the system today (RULE 12 fail-honest).
-    let gate_outcome = dispatch_encoder_gate(
-        &candidate,
-        client.chain_id,
-        simulator_v2,
-        decimals_provider,
-    );
+    let gate_outcome =
+        dispatch_encoder_gate(&candidate, client.chain_id, simulator_v2, decimals_provider);
     bump_encoder_gate_counter(&gate_outcome);
 
     // Phase A.3.c — if the encoder produced a RoundTripContext AND we have a
@@ -1958,7 +2195,9 @@ async fn decode_and_score_tx<'a>(
             .expected_profit_usd
             .map(|gross| gross - cfg.gas_cost_usd());
     } else {
-        chain_counters(client.chain_id).passed_all_gates.fetch_add(1, Ordering::Relaxed);
+        chain_counters(client.chain_id)
+            .passed_all_gates
+            .fetch_add(1, Ordering::Relaxed);
         // Spine scoring on REAL evidence (no more hardcoded 0.95 / 0.9 / 1.0).
         let engine = PrioritizationEngine {
             min_profit_threshold: cfg.min_profit_usd,
@@ -2025,10 +2264,14 @@ async fn decode_and_score_tx<'a>(
     // Persist + publish. Both are best-effort with their own error paths.
     if let Some(pool) = db {
         if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
-            chain_counters(client.chain_id).db_errors.fetch_add(1, Ordering::Relaxed);
+            chain_counters(client.chain_id)
+                .db_errors
+                .fetch_add(1, Ordering::Relaxed);
             error!(event = "scanner.db_error", tx_hash = %hash, error = %e);
         } else {
-            chain_counters(client.chain_id).db_persisted.fetch_add(1, Ordering::Relaxed);
+            chain_counters(client.chain_id)
+                .db_persisted
+                .fetch_add(1, Ordering::Relaxed);
         }
     }
     publisher::publish(redis, &opportunity).await?;
@@ -2138,10 +2381,7 @@ impl EncoderGateOutcome {
                 "encoder_ok_orchestrator_dispatched",
                 "fail_closed:orchestrator_in_flight",
             ),
-            Self::Rejected { reason_tag } => (
-                reason_tag,
-                "fail_closed:encoder_rejected",
-            ),
+            Self::Rejected { reason_tag } => (reason_tag, "fail_closed:encoder_rejected"),
         }
     }
 
@@ -2243,15 +2483,19 @@ fn bump_encoder_gate_counter(outcome: &EncoderGateOutcome) {
                 "missing_decimals" | "invalid_decimals" => {
                     c.encoder_missing_decimals_total.fetch_add(1, Relaxed);
                 }
-                "amount_nan" | "amount_infinite" | "amount_non_positive"
-                | "amount_overflow" | "amount_too_small" => {
+                "amount_nan"
+                | "amount_infinite"
+                | "amount_non_positive"
+                | "amount_overflow"
+                | "amount_too_small" => {
                     c.encoder_invalid_amount_total.fetch_add(1, Relaxed);
                 }
                 "unsupported_dex_kind" | "missing_router" => {
                     c.encoder_unsupported_dex_total.fetch_add(1, Relaxed);
                 }
                 "unsupported_route_shape" | "missing_route_legs" => {
-                    c.encoder_unsupported_route_shape_total.fetch_add(1, Relaxed);
+                    c.encoder_unsupported_route_shape_total
+                        .fetch_add(1, Relaxed);
                 }
                 "zero_token_address" => {
                     c.encoder_zero_token_address_total.fetch_add(1, Relaxed);
@@ -2299,7 +2543,8 @@ async fn dispatch_orchestrator_and_classify(
     let executor = match crate::sim_encoder::parse_executor_address(chain_id) {
         Ok(addr) => addr,
         Err(_) => {
-            c.round_trip_executor_rejected_pre_revm_total.fetch_add(1, Relaxed);
+            c.round_trip_executor_rejected_pre_revm_total
+                .fetch_add(1, Relaxed);
             return (
                 "missing_executor".to_string(),
                 "fail_closed:missing_executor".to_string(),
@@ -2340,7 +2585,8 @@ async fn dispatch_orchestrator_and_classify(
     {
         Ok(o) => o,
         Err(e) => {
-            c.round_trip_executor_spawn_blocking_failed_total.fetch_add(1, Relaxed);
+            c.round_trip_executor_spawn_blocking_failed_total
+                .fetch_add(1, Relaxed);
             return (
                 format!("spawn_blocking_failed:{e}"),
                 "fail_closed:spawn_blocking_failed".to_string(),
@@ -2348,6 +2594,25 @@ async fn dispatch_orchestrator_and_classify(
             );
         }
     };
+
+    // Phase OMEGA scoring — wire the Bayesian posterior gate + Kelly sizing per
+    // opportunity (observe-only: produce + log a ConfidenceScore; does NOT gate
+    // emission, never moves capital). Resolves `scoring_pipeline_not_wired`: the
+    // bayesian_filter + kelly_sizing primitives are now invoked on every paper
+    // opportunity and a ConfidenceScore is emitted to the log pipeline.
+    let scoring_cfg = crate::scoring::ScoringConfig::from_env();
+    let confidence = crate::scoring::compute_confidence(outcome.passed, &scoring_cfg);
+    tracing::info!(
+        event = "scoring.confidence_attached",
+        chain_id,
+        route_fingerprint = %candidate.route_fingerprint,
+        sim_passed = outcome.passed,
+        posterior_prob = confidence.posterior_prob,
+        posterior_std = confidence.posterior_std,
+        bayesian_accepted = confidence.bayesian_accepted,
+        kelly_fraction = confidence.kelly_fraction,
+        recommended_size_wei = %confidence.recommended_size_wei,
+    );
 
     if outcome.passed {
         c.round_trip_executor_success_total.fetch_add(1, Relaxed);
@@ -2379,7 +2644,8 @@ async fn dispatch_orchestrator_and_classify(
                 .fetch_add(1, Relaxed);
         }
         _ => {
-            c.round_trip_executor_rejected_pre_revm_total.fetch_add(1, Relaxed);
+            c.round_trip_executor_rejected_pre_revm_total
+                .fetch_add(1, Relaxed);
         }
     }
     (
@@ -2450,5 +2716,39 @@ mod tests {
             Some(0.0),
             "zero spread in a priced token must yield Some(0.0), not None"
         );
+    }
+
+    /// OMEGA-8/M4 Fase 1: the V3 mainnet address constants must parse cleanly
+    /// at startup. A typo in the constant source would surface here as an
+    /// `Err`, never as a runtime panic on the V3 hot path.
+    #[test]
+    fn v3_mainnet_address_constants_parse_to_valid_addresses() {
+        let quoter = V3_QUOTER_V2_ADDRESS.as_ref();
+        assert!(
+            quoter.is_ok(),
+            "V3 quoter constant must parse: {:?}",
+            quoter.as_ref().err()
+        );
+        let multicall = V3_MULTICALL3_ADDRESS.as_ref();
+        assert!(
+            multicall.is_ok(),
+            "V3 multicall3 constant must parse: {:?}",
+            multicall.as_ref().err()
+        );
+        let q = quoter.expect("checked above");
+        let m = multicall.expect("checked above");
+        assert_ne!(*q, Address::zero(), "quoter cannot be the zero address");
+        assert_ne!(*m, Address::zero(), "multicall3 cannot be the zero address");
+    }
+
+    /// OMEGA-8/M4 Fase 1: confirm the parser used by the Lazy static rejects
+    /// malformed input the same way it would inside `Lazy::new`. We do not
+    /// inject a bad constant (the production constants are correct); we
+    /// exercise the same `Address::from_str` failure path the Lazy guards.
+    #[test]
+    fn invalid_address_string_returns_err_not_panic() {
+        let bad: &str = "0xNOT_AN_ADDRESS";
+        let parsed: Result<Address, _> = Address::from_str(bad);
+        assert!(parsed.is_err(), "parser must reject malformed address");
     }
 }

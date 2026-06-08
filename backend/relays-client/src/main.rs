@@ -36,7 +36,6 @@ use shared_rs::{
     paper_mode::PaperModeClient,
     rpc_failover::HttpRpcPool,
 };
-use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tracing::{info, warn};
 
@@ -231,7 +230,13 @@ async fn main() -> anyhow::Result<()> {
     // silently fall back to a baked-in relay URL.
     let db_pool_opt: Option<sqlx::postgres::PgPool> = match std::env::var("DATABASE_URL") {
         Ok(url) if !url.is_empty() => {
-            match PgPoolOptions::new().max_connections(4).connect(&url).await {
+            // OMEGA-8/M3 P1-2: timeouts applied.
+            match shared_rs::db_pool::options_with_timeouts(
+                &shared_rs::db_pool::PoolConfig::from_env(4),
+            )
+            .connect(&url)
+            .await
+            {
                 Ok(pool) => {
                     info!(event = "db.connected", "postgres pool up");
                     Some(pool)

@@ -32,10 +32,11 @@
 use crate::amm_math::v2_amount_out;
 use crate::engines::StrategyCandidate;
 use crate::route_intent::RouteIntent;
-use crate::state_projector::StateProjector;
+use crate::state_projector::{PoolRef, StateProjector};
 use crate::strategy_label::StrategyLabel;
 use crate::workers::triangular_worker::{clamp_to_cap_wei, evaluate_cycle, EvalInput};
-use ethers::types::U256;
+use ethers::types::{Address, U256};
+use prioritization_spine::route_plan::RouteLeg;
 use shared_rs::trading_config::TradingConfigState;
 use std::sync::Arc;
 use tracing::debug;
@@ -89,6 +90,13 @@ pub enum OptimizeRejectReason {
     /// avoids deploying capital on bets where the expected logarithmic growth
     /// is negative even after the kernel found a profit-optimal point.
     KellyNegativeEdge,
+    /// A V3 leg could not be priced: the `StateProjector` has no V3 quote
+    /// provider (e.g. non-mainnet / absent at boot) OR every on-chain QuoterV2
+    /// probe failed (pool revert / insufficient liquidity / RPC exhausted).
+    /// R8 fail-honest: no fabricated price, so no opportunity is emitted —
+    /// distinct from `NonPositiveProfit` (which means the quoter answered and
+    /// the real spread is ≤ 0).
+    V3QuoteUnavailable,
 }
 
 impl OptimizeRejectReason {
@@ -111,6 +119,7 @@ impl OptimizeRejectReason {
             Self::CapClampFailed => "cap_clamp_failed",
             Self::GasFloorBreach => "gas_floor_breach",
             Self::KellyNegativeEdge => "kelly_negative_edge",
+            Self::V3QuoteUnavailable => "v3_quote_unavailable",
         }
     }
 }
@@ -308,7 +317,23 @@ impl SizeOptimizer {
                 )
                 .await
             }
-            // All 2-leg DEX variants use the 2-leg kernel.
+            // 2-leg routes that touch a Uniswap-V3-style pool: concentrated-
+            // liquidity sizing via the on-chain QuoterV2 (Step 1 provider).
+            // Triangular V3 cycles are handled by the triangular kernel above;
+            // this is the 2-leg DEX-arb path that previously had no V3 sizer.
+            _ if route_has_v3(&candidate) => {
+                self.size_two_leg_v3_with_reason(
+                    &candidate,
+                    intent,
+                    cap_wei,
+                    cap_usd,
+                    token_price_usd,
+                    decimals,
+                    state,
+                )
+                .await
+            }
+            // All remaining 2-leg V2 variants use the V2 CPMM kernel.
             _ => {
                 self.size_two_leg_with_reason(
                     &candidate,
@@ -432,23 +457,19 @@ impl SizeOptimizer {
         // fractional-Kelly bound on small NAVs frequently yields amounts
         // smaller than one token (e.g., 0.001 WETH = 10^15 wei is valid).
         let kelly_cap_usd = cap_usd * f_capped;
-        let kelly_cap_wei = if kelly_cap_usd > 0.0
-            && token_price_usd.is_finite()
-            && token_price_usd > 0.0
-        {
-            let tokens_capped = kelly_cap_usd / token_price_usd;
-            let wei_f = tokens_capped * 10f64.powi(i32::from(decimals));
-            if !wei_f.is_finite() || wei_f <= 0.0 {
-                // Kelly cap rounds to zero wei — too small to bet at all.
-                return OptimizeOutcome::Rejected(
-                    OptimizeRejectReason::ZeroCapitalCap,
-                );
-            }
-            f64_to_u256_clamped(wei_f.floor())
-        } else {
-            // Numerical edge — keep kernel result (conservative fall-back).
-            return OptimizeOutcome::Sized(Box::new(sized));
-        };
+        let kelly_cap_wei =
+            if kelly_cap_usd > 0.0 && token_price_usd.is_finite() && token_price_usd > 0.0 {
+                let tokens_capped = kelly_cap_usd / token_price_usd;
+                let wei_f = tokens_capped * 10f64.powi(i32::from(decimals));
+                if !wei_f.is_finite() || wei_f <= 0.0 {
+                    // Kelly cap rounds to zero wei — too small to bet at all.
+                    return OptimizeOutcome::Rejected(OptimizeRejectReason::ZeroCapitalCap);
+                }
+                f64_to_u256_clamped(wei_f.floor())
+            } else {
+                // Numerical edge — keep kernel result (conservative fall-back).
+                return OptimizeOutcome::Sized(Box::new(sized));
+            };
 
         if sized.optimal_amount_in <= kelly_cap_wei {
             // Kelly cap not binding — kernel's optimum is already inside Kelly's
@@ -536,9 +557,7 @@ impl SizeOptimizer {
         for (leg_idx, leg) in legs.iter().take(3).enumerate() {
             let pool_addr_str = match leg.pool_address.as_deref() {
                 Some(s) => s,
-                None => {
-                    return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress)
-                }
+                None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress),
             };
             let pool_addr: ethers::types::Address = match pool_addr_str.parse().ok() {
                 Some(a) => a,
@@ -659,12 +678,7 @@ impl SizeOptimizer {
             Some(a) => a,
             None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress),
         };
-        let (r0_a, r1_a) = match self
-            .state_projector
-            .reserves_cache
-            .get(&pool_a_addr)
-            .await
-        {
+        let (r0_a, r1_a) = match self.state_projector.reserves_cache.get(&pool_a_addr).await {
             Some(pair) => pair,
             None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingReservesPoolA),
         };
@@ -678,12 +692,7 @@ impl SizeOptimizer {
             Some(a) => a,
             None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress),
         };
-        let (r0_b, r1_b) = match self
-            .state_projector
-            .reserves_cache
-            .get(&pool_b_addr)
-            .await
-        {
+        let (r0_b, r1_b) = match self.state_projector.reserves_cache.get(&pool_b_addr).await {
             Some(pair) => pair,
             None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingReservesPoolB),
         };
@@ -713,7 +722,11 @@ impl SizeOptimizer {
             } else {
                 reserve_in_a
             };
-            if ceiling > x_lo { ceiling } else { x_lo }
+            if ceiling > x_lo {
+                ceiling
+            } else {
+                x_lo
+            }
         };
 
         let hop_reserves_a = vec![(reserve_in_a, reserve_out_a)];
@@ -760,9 +773,8 @@ impl SizeOptimizer {
         }
 
         let flashloan_fee_usd = if candidate.base_strategy.is_some() {
-            let borrow_usd = (clamped_to_i128(amount_in) as f64)
-                / 10f64.powi(decimals as i32)
-                * token_price_usd;
+            let borrow_usd =
+                (clamped_to_i128(amount_in) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
             borrow_usd * 0.0005
         } else {
             0.0
@@ -807,6 +819,297 @@ impl SizeOptimizer {
             gross_profit_usd: gross_usd,
             estimated_net_profit_usd: net_usd,
         }))
+    }
+
+    // -----------------------------------------------------------------------
+    // 2-leg DEX sizing — V3 concentrated liquidity — with explicit reason
+    // -----------------------------------------------------------------------
+    //
+    // Sizes a 2-leg DEX arb where at least one leg is a Uniswap-V3-style
+    // concentrated-liquidity pool. V3 output is NOT a closed-form function of
+    // two reserves — it depends on the tick/liquidity distribution — so every
+    // probe size is priced with the REAL on-chain QuoterV2 via
+    // `state_projector.project_v3_quote` (the provider wired in Step 1 /
+    // commit 6cb7d69). QuoterV2's `amount_out` already incorporates the fee
+    // tier and cross-tick liquidity, so the profit number is EXACT and never an
+    // over-report — the invariant the net-profit-gate depends on.
+    //
+    // Search: a fixed log-spaced bracket of `V3_BRACKET_POINTS` sizes over
+    // `[1, cap_wei]`. The 2-leg profit f(x)=leg2(leg1(x))−x is unimodal for
+    // CFMM-style curves, so the best grid point is a sound, honest size for
+    // DETECTION. (RPC-frugal refinement tracked separately: bracket locally
+    // with `amm_math::v3_amount_out_single_tick` over a slot0 cache — an upper
+    // bound that early-rejects at 0 RPC — then refine survivors with a batched
+    // multicall. Not required to surface real opps, so deferred.)
+    //
+    // RPC: each V3 leg is quoted once per probe (≤ `V3_BRACKET_POINTS` calls),
+    // each through `HttpRpcPool::with_retry` (circuit-breaker + failover). V2
+    // legs are local. NO-ACTIVE: QuoterV2 is a `staticcall` — read-only, no
+    // signer, no capital. Only `amount_in` is decided here; the capital barrier
+    // (net-profit-gate, simulation, checklist) is downstream and untouched.
+    //
+    // Honesty caveats (adversarial review 2026-06-05):
+    //   * `amount_in` is an exactly-quoted grid point — the reported profit is
+    //     the REAL QuoterV2 round-trip at that size, not an interpolation.
+    //   * Block freshness: the quote reads the provider's default block, which
+    //     `rpc_failover` allows to lag ≤ `DRIFT_THRESHOLD_BLOCKS`. This is the
+    //     SAME provenance the triangular V3 path already relies on; acceptable
+    //     for shadow DETECTION, and the mandatory fork simulation re-verifies
+    //     against fresh state before any execution (which is FASE D regardless).
+    //   * Kelly (Step 8) only ever shrinks the size when it binds, and rescales
+    //     gross linearly. For a concave 2-leg profit curve a linear down-scale
+    //     UNDER-states the true profit (chord ≤ curve) — conservative, never an
+    //     over-report. The sparse 8-point grid likewise can only under-sample
+    //     the optimum (false negative), never fabricate one (false positive).
+    #[allow(clippy::too_many_arguments)]
+    async fn size_two_leg_v3_with_reason(
+        &self,
+        candidate: &StrategyCandidate,
+        intent: &RouteIntent,
+        cap_wei: U256,
+        cap_usd: f64,
+        token_price_usd: f64,
+        decimals: u8,
+        state: &TradingConfigState,
+    ) -> OptimizeOutcome {
+        let legs = &candidate.route_plan.legs;
+        if legs.len() < 2 {
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingRouteLegs);
+        }
+
+        // Resolve a per-leg evaluator once (V2 → oriented cached reserves;
+        // V3 → PoolRef + direction for the on-chain quoter). Precise reject
+        // reason per leg (PoolA / PoolB) for metric fidelity.
+        let eval0 = match self
+            .build_leg_eval(&legs[0], OptimizeRejectReason::MissingReservesPoolA)
+            .await
+        {
+            Ok(e) => e,
+            Err(r) => return OptimizeOutcome::Rejected(r),
+        };
+        let eval1 = match self
+            .build_leg_eval(&legs[1], OptimizeRejectReason::MissingReservesPoolB)
+            .await
+        {
+            Ok(e) => e,
+            Err(r) => return OptimizeOutcome::Rejected(r),
+        };
+
+        let leg0_v3 = matches!(eval0, LegEval::V3 { .. });
+        let leg1_v3 = matches!(eval1, LegEval::V3 { .. });
+
+        // Log-spaced probe bracket over [1, cap_wei].
+        let probes = geom_probes(U256::one(), cap_wei, V3_BRACKET_POINTS);
+
+        let mut best: Option<(U256, U256, i128)> = None; // (amount_in, out_b, profit_wei)
+                                                         // Per-V3-leg pricing telemetry (R8): `priced` = the quoter answered at
+                                                         // least once (value may be 0); `leg1_reached` = leg 1 was quoted at all
+                                                         // (only happens when leg 0 yields a non-zero mid-amount).
+        let mut leg0_priced = false;
+        let mut leg1_priced = false;
+        let mut leg1_reached = false;
+
+        for x in probes {
+            if x.is_zero() {
+                continue;
+            }
+            // Leg 0 (always quoted for every probe with x > 0).
+            let out_a = match self.eval_leg_out(&eval0, x).await {
+                LegQuote::Priced(v) => {
+                    leg0_priced = true;
+                    v
+                }
+                LegQuote::Unavailable => continue, // V3 leg could not be priced
+            };
+            if out_a.is_zero() {
+                continue; // leg 0 yields nothing → unprofitable; don't quote leg 1 on 0
+            }
+
+            // Leg 1 (input = leg 0 output; closed 2-leg arb back to token_in).
+            leg1_reached = true;
+            let out_b = match self.eval_leg_out(&eval1, out_a).await {
+                LegQuote::Priced(v) => {
+                    leg1_priced = true;
+                    v
+                }
+                LegQuote::Unavailable => continue,
+            };
+            if out_b.is_zero() {
+                continue;
+            }
+
+            let profit = clamped_to_i128(out_b).saturating_sub(clamped_to_i128(x));
+            if best.as_ref().is_none_or(|(_, _, bp)| profit > *bp) {
+                best = Some((x, out_b, profit));
+            }
+        }
+
+        let (amount_in, _out_b, profit_wei) = match best {
+            Some(b) if b.2 > 0 => b,
+            _ => {
+                // No positive-profit probe. R8: a V3 leg that was quoted but the
+                // provider NEVER answered (absent / all RPC failures) is
+                // `V3QuoteUnavailable`; everything else (quoter answered, even
+                // with 0, but the real spread is ≤ 0) is `NonPositiveProfit`.
+                // leg 0 is always quoted; leg 1 only when it was reached.
+                let v3_unpriced =
+                    (leg0_v3 && !leg0_priced) || (leg1_v3 && leg1_reached && !leg1_priced);
+                if v3_unpriced {
+                    return OptimizeOutcome::Rejected(OptimizeRejectReason::V3QuoteUnavailable);
+                }
+                return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit);
+            }
+        };
+
+        // `amount_in` is already ≤ cap_wei (probes ⊆ [1, cap_wei]); no extra
+        // clamp needed. USD + net math is byte-identical to the V2 path.
+        let profit_token_units = (profit_wei as f64) / 10f64.powi(decimals as i32);
+        let gross_usd = profit_token_units * token_price_usd;
+        if gross_usd <= 0.0 {
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveGrossUsd);
+        }
+
+        let flashloan_fee_usd = if candidate.base_strategy.is_some() {
+            let borrow_usd =
+                (clamped_to_i128(amount_in) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+            borrow_usd * 0.0005
+        } else {
+            0.0
+        };
+
+        let gas_cost = state.gas_cost_usd();
+        let ops_overhead = state.ops_overhead_usd_per_attempt;
+        let net_usd = gross_usd - gas_cost - ops_overhead - flashloan_fee_usd;
+        if net_usd <= 0.0 {
+            debug!(
+                event = "size_optimizer.v3_negative_net",
+                label = candidate.label.as_str(),
+                gross_usd,
+                gas_cost,
+                ops_overhead,
+                flashloan_fee_usd,
+                net_usd,
+            );
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveNetUsd);
+        }
+
+        let _ = (intent, cap_usd);
+
+        let mut sized = candidate.clone();
+        sized.opportunity.amount_in_wei = amount_in.to_string();
+        sized.opportunity.expected_profit_usd = Some(gross_usd);
+        sized.gross_profit_usd = Some(gross_usd);
+        sized.net_expected_profit_usd = Some(net_usd);
+
+        debug!(
+            event = "size_optimizer.v3_sized",
+            label = sized.label.as_str(),
+            amount_in = %amount_in,
+            gross_usd,
+            net_usd,
+        );
+
+        OptimizeOutcome::Sized(Box::new(SizedCandidate {
+            candidate: sized,
+            optimal_amount_in: amount_in,
+            gross_profit_usd: gross_usd,
+            estimated_net_profit_usd: net_usd,
+        }))
+    }
+
+    /// Build a per-leg evaluator. V2 → oriented cached reserves + fee. V3 →
+    /// `PoolRef` (token0/token1 sorted ascending, Uniswap convention) + swap
+    /// direction for the on-chain quoter. `missing_reserves` is the reject
+    /// reason for an absent V2 reserve entry (caller supplies PoolA / PoolB).
+    async fn build_leg_eval(
+        &self,
+        leg: &RouteLeg,
+        missing_reserves: OptimizeRejectReason,
+    ) -> Result<LegEval, OptimizeRejectReason> {
+        let addr: Address = leg
+            .pool_address
+            .as_deref()
+            .and_then(|s| s.parse().ok())
+            .ok_or(OptimizeRejectReason::MissingPoolAddress)?;
+
+        if leg_is_v3(leg) {
+            let tin: Address = leg
+                .token_in
+                .parse()
+                .map_err(|_| OptimizeRejectReason::MissingPoolAddress)?;
+            let tout: Address = leg
+                .token_out
+                .parse()
+                .map_err(|_| OptimizeRejectReason::MissingPoolAddress)?;
+            // Uniswap V3 sorts tokens ascending: token0 < token1.
+            // zero_for_one (token0 → token1) iff the leg's input is token0.
+            let (token0, token1, zero_for_one) = if tin < tout {
+                (tin, tout, true)
+            } else {
+                (tout, tin, false)
+            };
+            Ok(LegEval::V3 {
+                pool: PoolRef {
+                    address: addr,
+                    token0,
+                    token1,
+                    fee_bps: leg.fee_bps,
+                },
+                zero_for_one,
+            })
+        } else {
+            let (r0, r1) = self
+                .state_projector
+                .reserves_cache
+                .get(&addr)
+                .await
+                .ok_or(missing_reserves)?;
+            let (reserve_in, reserve_out) = orient_reserves(r0, r1, &leg.token_in, &leg.token_out);
+            if reserve_in.is_zero() || reserve_out.is_zero() {
+                return Err(OptimizeRejectReason::ZeroReserves);
+            }
+            Ok(LegEval::V2 {
+                reserve_in,
+                reserve_out,
+                fee_bps: leg.fee_bps.unwrap_or(30),
+            })
+        }
+    }
+
+    /// Evaluate one leg's output for `amount_in`.
+    ///   * V2 → local CPMM (always `Priced`; may be `Priced(0)` for degenerate
+    ///     reserves).
+    ///   * V3 → on-chain QuoterV2 via the StateProjector. `Priced(v)` when the
+    ///     quoter answered (`v` may be 0 — a real "this size yields nothing");
+    ///     `Unavailable` when the provider is absent or the call failed/reverted.
+    ///
+    /// R8 fail-honest: `Unavailable` (could-not-price) stays DISTINCT from
+    /// `Priced(0)` (real zero-yield) — never a fabricated number, and the caller
+    /// classifies `V3QuoteUnavailable` vs `NonPositiveProfit` precisely.
+    async fn eval_leg_out(&self, leg: &LegEval, amount_in: U256) -> LegQuote {
+        if amount_in.is_zero() {
+            return LegQuote::Priced(U256::zero());
+        }
+        match leg {
+            LegEval::V2 {
+                reserve_in,
+                reserve_out,
+                fee_bps,
+            } => LegQuote::Priced(v2_amount_out(
+                amount_in,
+                *reserve_in,
+                *reserve_out,
+                *fee_bps,
+            )),
+            LegEval::V3 { pool, zero_for_one } => match self
+                .state_projector
+                .project_v3_quote(pool, amount_in, *zero_for_one)
+                .await
+            {
+                Some(q) => LegQuote::Priced(q.amount_out),
+                None => LegQuote::Unavailable,
+            },
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -967,6 +1270,71 @@ fn f64_to_u256_clamped(x: f64) -> U256 {
     }
     let s = format!("{:.0}", x);
     U256::from_dec_str(&s).unwrap_or(U256::from(1u64))
+}
+
+/// Number of log-spaced probe sizes in the V3 sizing bracket. Matches the
+/// "8 puntos [x_lo..x_hi]" spec; each probe is one on-chain QuoterV2 call per
+/// V3 leg, so this directly bounds RPC per V3 candidate.
+const V3_BRACKET_POINTS: usize = 8;
+
+/// Per-leg evaluator resolved once before the sizing search, so the bracket
+/// loop never re-reads the cache / re-parses addresses.
+enum LegEval {
+    /// V2 CPMM leg — oriented cached reserves + fee (local, no RPC).
+    V2 {
+        reserve_in: U256,
+        reserve_out: U256,
+        fee_bps: u32,
+    },
+    /// V3 concentrated-liquidity leg — priced on-chain via QuoterV2.
+    V3 { pool: PoolRef, zero_for_one: bool },
+}
+
+/// Outcome of pricing one leg. R8 fail-honest: a real zero-yield (`Priced(0)`)
+/// is kept DISTINCT from a pricing failure (`Unavailable`) so the optimizer can
+/// emit `NonPositiveProfit` vs `V3QuoteUnavailable` accurately — never
+/// conflating "the quoter answered with 0" with "the quoter could not answer".
+enum LegQuote {
+    /// The leg was priced. V2 is always priced (local CPMM); V3 is `Priced`
+    /// when the on-chain quoter answered — the value may legitimately be 0.
+    Priced(U256),
+    /// A V3 leg could not be priced: provider absent, RPC failure, or pool
+    /// revert. V2 legs never produce this (local arithmetic always succeeds).
+    Unavailable,
+}
+
+/// True when a route leg is a Uniswap-V3-style concentrated-liquidity pool.
+/// Matches the codebase's `protocol_type` spellings ("uniswap-v3",
+/// "UNISWAP_V3", "V3", "v3", …) case-insensitively; never matches
+/// v2 / curve / balancer.
+fn leg_is_v3(leg: &RouteLeg) -> bool {
+    leg.protocol_type.to_ascii_lowercase().contains("v3")
+}
+
+/// True when any leg of the candidate's route plan is a V3 pool. Routes a
+/// candidate to the V3 sizing kernel instead of the V2 CPMM kernel.
+fn route_has_v3(candidate: &StrategyCandidate) -> bool {
+    candidate.route_plan.legs.iter().any(leg_is_v3)
+}
+
+/// `n` log-spaced sizes spanning `[lo, hi]` inclusive (`n ≥ 2`). Geometric
+/// spacing covers many orders of magnitude with few probes — the 2-leg arb
+/// optimum can sit anywhere below the capital cap. Degenerate range → a single
+/// clamped point.
+fn geom_probes(lo: U256, hi: U256, n: usize) -> Vec<U256> {
+    if n < 2 || hi <= lo {
+        return vec![if hi.is_zero() { U256::one() } else { hi }];
+    }
+    let lo_f = u256_to_f64_lossy(lo).max(1.0);
+    let hi_f = u256_to_f64_lossy(hi).max(lo_f);
+    let ln_lo = lo_f.ln();
+    let ln_hi = hi_f.ln();
+    (0..n)
+        .map(|i| {
+            let t = i as f64 / (n as f64 - 1.0);
+            f64_to_u256_clamped((ln_lo + t * (ln_hi - ln_lo)).exp())
+        })
+        .collect()
 }
 
 /// Orient pool reserves for a leg: returns (reserve_in, reserve_out) such
@@ -1713,7 +2081,10 @@ mod tests {
             .expect("optimize_with_reason must not return Err");
 
         assert!(
-            matches!(outcome, OptimizeOutcome::Rejected(OptimizeRejectReason::NoConfig)),
+            matches!(
+                outcome,
+                OptimizeOutcome::Rejected(OptimizeRejectReason::NoConfig)
+            ),
             "cfg=None must produce Rejected(NoConfig)"
         );
     }
@@ -1822,10 +2193,18 @@ mod tests {
         // The profit on 0.001 WETH at $3000/WETH ≈ $0.003. So net = 0.003 - 30 < 0.
         let tiny = U256::from(10u128).pow(U256::from(15u32)); // 0.001 ETH in wei units
         cache
-            .insert(pool_a, tiny * U256::from(1001u32), tiny * U256::from(1000u32))
+            .insert(
+                pool_a,
+                tiny * U256::from(1001u32),
+                tiny * U256::from(1000u32),
+            )
             .await;
         cache
-            .insert(pool_b, tiny * U256::from(1000u32), tiny * U256::from(1001u32))
+            .insert(
+                pool_b,
+                tiny * U256::from(1000u32),
+                tiny * U256::from(1001u32),
+            )
             .await;
 
         let projector = Arc::new(StateProjector::new(cache, None));
@@ -1942,10 +2321,7 @@ mod tests {
                 outcome2.net_profit_usd(),
                 Some(sized.estimated_net_profit_usd)
             );
-            assert_eq!(
-                outcome2.optimal_amount_in(),
-                Some(sized.optimal_amount_in)
-            );
+            assert_eq!(outcome2.optimal_amount_in(), Some(sized.optimal_amount_in));
         }
         // Ok(Rejected(...)) is also valid if orientation doesn't produce profit.
     }
@@ -2001,11 +2377,7 @@ mod tests {
 
     /// Build a SizedCandidate with explicit gross/net/optimal_amount_in
     /// for direct `apply_kelly_constraints` testing.
-    fn make_sized(
-        optimal_amount_in_wei: U256,
-        gross_usd: f64,
-        net_usd: f64,
-    ) -> SizedCandidate {
+    fn make_sized(optimal_amount_in_wei: U256, gross_usd: f64, net_usd: f64) -> SizedCandidate {
         let pa = addr(1);
         let pb = addr(2);
         let ti = addr(3);
@@ -2084,11 +2456,10 @@ mod tests {
     fn kelly_caps_optimal_when_max_per_trade_binds() {
         // Tight max_per_trade forces the cap to bind. Profit must scale down.
         let cfg = make_cfg_kelly(
-            /* capital_usd */ 3_000.0,    // $3K cap
+            /* capital_usd */ 3_000.0, // $3K cap
             /* multiplier */ 0.5,
             /* max_per_trade */ 0.001, // 0.1% of NAV → max bet $3
-            /* gas_safety */ 1.0,
-            /* min_p */ 0.8,
+            /* gas_safety */ 1.0, /* min_p */ 0.8,
         );
         // Kernel says: 1 WETH ≈ $3000, gross=$100, net=$90 (cost=$10).
         let sized = make_sized(unit(1), 100.0, 90.0);
@@ -2217,6 +2588,173 @@ mod tests {
         assert_eq!(
             OptimizeRejectReason::KellyNegativeEdge.as_str(),
             "kelly_negative_edge"
+        );
+        assert_eq!(
+            OptimizeRejectReason::V3QuoteUnavailable.as_str(),
+            "v3_quote_unavailable"
+        );
+    }
+
+    // ── V3 sizing ────────────────────────────────────────────────────────────
+    //
+    // A mock V3 quoter with a proportional rate (out = in·num/den) so the 2-leg
+    // round-trip profit is monotone — lets us drive Sized vs unprofitable vs
+    // unavailable deterministically without any RPC. RULE 00: test-only.
+    struct ProportionalV3Mock {
+        num: u64,
+        den: u64,
+    }
+
+    impl crate::state_projector::V3QuoteProvider for ProportionalV3Mock {
+        fn quote_exact_input_single(
+            &self,
+            _pool: Address,
+            _token_in: Address,
+            _token_out: Address,
+            amount_in: U256,
+            _fee_bps: u32,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<U256>> + Send + '_>>
+        {
+            let out = amount_in.saturating_mul(U256::from(self.num)) / U256::from(self.den);
+            Box::pin(async move { Ok(out) })
+        }
+    }
+
+    /// A 2-leg candidate whose both legs are V3 pools (protocol_type flipped to
+    /// "uniswap-v3" so `route_has_v3` routes it to the V3 sizing kernel).
+    fn make_v3_dex_candidate(
+        pool_a: Address,
+        pool_b: Address,
+        token_in: Address,
+        token_out: Address,
+    ) -> StrategyCandidate {
+        let mut c = make_dex_candidate(
+            pool_a,
+            pool_b,
+            token_in,
+            token_out,
+            StrategyLabel::DexArbV3V3,
+        );
+        for leg in c.route_plan.legs.iter_mut() {
+            leg.protocol_type = "uniswap-v3".to_string();
+            leg.fee_bps = Some(500); // V3 0.05% tier
+        }
+        c
+    }
+
+    // Profitable V3 route via mock QuoterV2 → Sized (amount_in>0, net>0).
+    #[tokio::test]
+    async fn v3_route_sized_with_mock_provider() {
+        let cache = Arc::new(ReservesCache::new()); // V3 legs don't read reserves
+        let provider = Arc::new(ProportionalV3Mock { num: 12, den: 10 }); // 1.2x/leg → profitable
+        let projector = Arc::new(StateProjector::new(cache, Some(provider)));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_v3_dex_candidate(addr(0x10), addr(0x11), addr(0xAAAA), addr(0xBBBB));
+        let intent = make_intent(addr(0xAAAA), addr(0xBBBB));
+        let mut cfg = make_cfg(10_000.0);
+        cfg.min_landing_probability = 0.9; // positive Kelly edge so Sized survives Step 8
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        match outcome {
+            OptimizeOutcome::Sized(s) => {
+                assert!(s.optimal_amount_in > U256::zero(), "amount_in must be > 0");
+                assert!(s.gross_profit_usd > 0.0, "gross must be positive");
+                assert!(s.estimated_net_profit_usd > 0.0, "net must be positive");
+            }
+            OptimizeOutcome::Rejected(r) => {
+                panic!(
+                    "expected Sized for a profitable V3 route, got {}",
+                    r.as_str()
+                )
+            }
+        }
+    }
+
+    // No V3 provider → V3QuoteUnavailable (R8 fail-honest; NOT a fabricated 0).
+    #[tokio::test]
+    async fn v3_route_without_provider_is_quote_unavailable() {
+        let cache = Arc::new(ReservesCache::new());
+        let projector = Arc::new(StateProjector::new(cache, None)); // no V3 provider wired
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_v3_dex_candidate(addr(0x10), addr(0x11), addr(0xAAAA), addr(0xBBBB));
+        let intent = make_intent(addr(0xAAAA), addr(0xBBBB));
+        let cfg = make_cfg(10_000.0);
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        assert!(
+            matches!(
+                outcome,
+                OptimizeOutcome::Rejected(OptimizeRejectReason::V3QuoteUnavailable)
+            ),
+            "no V3 provider must yield V3QuoteUnavailable, got {:?}",
+            outcome.reason_str()
+        );
+    }
+
+    // Quoter answers but the spread is ≤ 0 → NonPositiveProfit (distinct from
+    // V3QuoteUnavailable: the quoter DID respond).
+    #[tokio::test]
+    async fn v3_route_unprofitable_is_non_positive_profit() {
+        let cache = Arc::new(ReservesCache::new());
+        let provider = Arc::new(ProportionalV3Mock { num: 8, den: 10 }); // 0.8x/leg → always a loss
+        let projector = Arc::new(StateProjector::new(cache, Some(provider)));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_v3_dex_candidate(addr(0x10), addr(0x11), addr(0xAAAA), addr(0xBBBB));
+        let intent = make_intent(addr(0xAAAA), addr(0xBBBB));
+        let cfg = make_cfg(10_000.0);
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        assert!(
+            matches!(
+                outcome,
+                OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit)
+            ),
+            "answered-but-unprofitable must be NonPositiveProfit, got {:?}",
+            outcome.reason_str()
+        );
+    }
+
+    // R8 honesty (adversarial-review fix): when the quoter ANSWERS with 0 (a
+    // real zero-yield), the reason must be NonPositiveProfit — NOT
+    // V3QuoteUnavailable (which means the quoter could not answer at all).
+    #[tokio::test]
+    async fn v3_route_zero_quote_is_non_positive_not_unavailable() {
+        let cache = Arc::new(ReservesCache::new());
+        let provider = Arc::new(ProportionalV3Mock { num: 0, den: 1 }); // quoter answers, always 0
+        let projector = Arc::new(StateProjector::new(cache, Some(provider)));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_v3_dex_candidate(addr(0x10), addr(0x11), addr(0xAAAA), addr(0xBBBB));
+        let intent = make_intent(addr(0xAAAA), addr(0xBBBB));
+        let cfg = make_cfg(10_000.0);
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        assert!(
+            matches!(
+                outcome,
+                OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit)
+            ),
+            "quoter-answered-zero must be NonPositiveProfit (not V3QuoteUnavailable), got {:?}",
+            outcome.reason_str()
         );
     }
 }

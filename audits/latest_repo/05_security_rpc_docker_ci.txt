@@ -1,0 +1,2153 @@
+# Auditoría seguridad / RPC / Docker / CI
+Fecha UTC: 2026-05-31T06:06:20Z
+
+## Archivos env y ejemplos (nombres solamente)
+./.env.crucible
+./.env.edge
+./.env.example
+./backend/api-server/src/routes/credentials.ts
+./ci-artifacts/materialize_secrets.py
+./configs/secrets.policy.md
+./crucible/.env.crucible.template
+./database/migrations/057_service_credentials.sql
+./docs/adr/003-vault-secrets-management.md
+./docs/code-review-graph/sarif/semgrep-secrets.json
+./docs/runbooks/rotate-secrets.md
+./frontend/.env.example
+./frontend/.next/server/chunks/ssr/frontend__next-internal_server_app_settings_credentials_page_actions_0-o0.q-.js
+./frontend/.next/server/chunks/ssr/frontend__next-internal_server_app_settings_credentials_page_actions_0-o0.q-.js.map
+./frontend/.next/server/chunks/ssr/frontend_app_settings_credentials_CredentialsClient_tsx_0m7psh2._.js
+./frontend/.next/server/chunks/ssr/frontend_app_settings_credentials_CredentialsClient_tsx_0m7psh2._.js.map
+./frontend/lib/api-client-credentials.test.ts
+./frontend/node_modules/.pnpm/caniuse-lite@1.0.30001793/node_modules/caniuse-lite/data/features/credential-management.js
+./runbooks/rotate-secrets.md
+./shared-ts/src/contracts/credentials.ts
+
+## Variables críticas referenciadas (valores redactados)
+./.agent/skill_042_auto_rebalanceo_cross.md:50:- Missing Deposit (Depósito Atrapado): Binance retira los USDT, la tx es válida on-chain, pero Kraken no los acredita por "Revisión de AML/Compliance". El capital queda en el Limbo. El Rebalanceador, al superar 24 horas en In-Flight, debe escupir un log "ADMIN_INTERVENTION_REQUIRED_FOR_FUNDS".
+./.agent/skill_045_gestion_dinamica_llaves.md:11:2. Limpieza estricta de Logs (Log Sanitization): Interceptador implacable que sobre-escribe cualquier variable en el objeto `console.log` o framework de logging que parezca un formato de clave privada (`0x[a-f0-9]{64}`) o HMAC Token (`***SECRET***`).
+./.agent/skill_050_mev_blocker_private_tx.md:127:  auth_signer_private_key_env_var: "FLASHBOTS_AUTH_KEY"
+./.agent/skill_073_nlp_sentiment_scraper.md:46:- Ticker Confusion (Colisiones Léxicas NLP O(1)): Elon Musk Twitea "Me encanta el cielo AZUL L2 O(1)". El Bot Extrae "AZUL L2" y compra la Criptomoneda `$AZUL` L1 (Meme Coin L1 L2 O(1)). (Falso Positivo Fatal NLP L2 O(1)). Solución NER Cripto O(1): FinBERT es re-entrenado L2 O(1) Localmente (Fine-Tuning L2) con Contexto Financiero Cripto L1 L2. Para activar una Compra HFT L2 O(1), el Tokenizer debe hallar Contexto Sintáctico (`Amo el TOKEN AZUL` O(1) o `$AZUL` Casings Strict L2 O(1)).
+./.agent/skill_077_interest_rate_swaps_arb.md:119:- [ ] Monitor de Emisiones Tóxicas L1 (Reward Dumps O(1)): Extraes Token AAVE O(1) L1 Gratis. NO GUARDES EL TOKEN L1 O(1) HFT. Configura un MUX O(1) Para Auto-Dumpear TODO Token L1 Emitido Como Reward Instantáneamente O(1) en Curve/UniV3 Cripto, Mutando la Renta Exótica en Renta Dólar L1 L2 O(1) Fija.
+./.agent/skill_083_whale_manipulation_frontrunning.md:17:8. Front-Running De Listados CEX L1 O(1): Binance Pone Billeteras "Warm Wallets L1 O(1)" A Recibir Tokens Antes De Un Anuncio O(1). El Motor Analiza El Patrón De Ingreso Cripto O(1) A Billeteras Binance L1 O(1). Sabe Que Listarán "TOKEN_X" O(1) 4 Horas Antes Del Tweet (Skill 73 L2 O(1)). Snipea HFT O(1) L1 Cripto.
+./.agent/skill_083_whale_manipulation_frontrunning.md:155:             log.info(`ALPHA WALLET DETECTED L1 O(1). Cloning Arbitrage Trade L1 L2 O(1) and front-running with MEV Bribe O(1).`);
+./.agent/skills/SKILL_012_JIT_LIQUIDITY_MEV_EXTRACTION.md:10:Step 1 (Frontrun): Comprar X TOKEN, mover precio +0.8%
+./.agent/skills/hft_elite_50/SKILL_012_JIT_LIQUIDITY_MEV_EXTRACTION.md:10:Step 1 (Frontrun): Comprar X TOKEN, mover precio +0.8%
+./.agent/skills/skill_042_auto_rebalanceo_cross.md:50:- Missing Deposit (Depósito Atrapado): Binance retira los USDT, la tx es válida on-chain, pero Kraken no los acredita por "Revisión de AML/Compliance". El capital queda en el Limbo. El Rebalanceador, al superar 24 horas en In-Flight, debe escupir un log "ADMIN_INTERVENTION_REQUIRED_FOR_FUNDS".
+./.agent/skills/skill_045_gestion_dinamica_llaves.md:11:2. Limpieza estricta de Logs (Log Sanitization): Interceptador implacable que sobre-escribe cualquier variable en el objeto `console.log` o framework de logging que parezca un formato de clave privada (`0x[a-f0-9]{64}`) o HMAC Token (`***SECRET***`).
+./.agent/skills/skill_050_mev_blocker_private_tx.md:127:  auth_signer_private_key_env_var: "FLASHBOTS_AUTH_KEY"
+./.agent/skills/skill_073_nlp_sentiment_scraper.md:46:- Ticker Confusion (Colisiones Léxicas NLP O(1)): Elon Musk Twitea "Me encanta el cielo AZUL L2 O(1)". El Bot Extrae "AZUL L2" y compra la Criptomoneda `$AZUL` L1 (Meme Coin L1 L2 O(1)). (Falso Positivo Fatal NLP L2 O(1)). Solución NER Cripto O(1): FinBERT es re-entrenado L2 O(1) Localmente (Fine-Tuning L2) con Contexto Financiero Cripto L1 L2. Para activar una Compra HFT L2 O(1), el Tokenizer debe hallar Contexto Sintáctico (`Amo el TOKEN AZUL` O(1) o `$AZUL` Casings Strict L2 O(1)).
+./.agent/skills/skill_077_interest_rate_swaps_arb.md:119:- [ ] Monitor de Emisiones Tóxicas L1 (Reward Dumps O(1)): Extraes Token AAVE O(1) L1 Gratis. NO GUARDES EL TOKEN L1 O(1) HFT. Configura un MUX O(1) Para Auto-Dumpear TODO Token L1 Emitido Como Reward Instantáneamente O(1) en Curve/UniV3 Cripto, Mutando la Renta Exótica en Renta Dólar L1 L2 O(1) Fija.
+./.agent/skills/skill_083_whale_manipulation_frontrunning.md:17:8. Front-Running De Listados CEX L1 O(1): Binance Pone Billeteras "Warm Wallets L1 O(1)" A Recibir Tokens Antes De Un Anuncio O(1). El Motor Analiza El Patrón De Ingreso Cripto O(1) A Billeteras Binance L1 O(1). Sabe Que Listarán "TOKEN_X" O(1) 4 Horas Antes Del Tweet (Skill 73 L2 O(1)). Snipea HFT O(1) L1 Cripto.
+./.agent/skills/skill_083_whale_manipulation_frontrunning.md:155:             log.info(`ALPHA WALLET DETECTED L1 O(1). Cloning Arbitrage Trade L1 L2 O(1) and front-running with MEV Bribe O(1).`);
+./.agents/generate_batch_1.py:168:Aplicable a la arquitectura de páginas como `/opportunities` donde el layout base, la pre-validación de tokens JWT, la carga estática inicial de datos desde Redis, y el armazón de las tablas se renderizan en servidor, dejando solo el módulo de WebSocket (`LiveFeed`) interactivo al cliente.
+./.agents/generate_batch_1.py:265:- Todo código asíncrono que extrae datos a nivel de base de datos (`DATABASE_URL`) no debe fallar; si lo hace por "Module not found: 'pg'", significa que se filtró accidentalmente a un Client Component.
+./.agents/generate_batch_4.py:23:- **Regla del NEXT_PUBLIC:** NUNCA, jamás, utilices el prefijo `NEXT_PUBLIC_` para contraseñas, JWTs, llaves privadas o strings de conexión a base de datos.
+./.agents/generate_batch_4.py:33:- [ ] ¿Los tokens o claves sensibles (`ARBX_EDGE_TOKEN`, `DATABASE_URL`) carecen explícitamente del prefijo `NEXT_PUBLIC_`?
+./.agents/generate_batch_4.py:102:- Auditar el bundle minificado de producción buscando regex de credenciales comunes (`DB_PASS`, `TOKEN`, `SECRET`). Si se encuentra el valor textual, hay un leak grave (Uso de NEXT_PUBLIC o importación en Client Component).
+./.agents/generate_batch_4.py:514:      - DATABASE_URL=postgres://user:pass@db/prod
+./.agents/memory/anti_reincidencia.md:159:| R6 | Todo servicio productor DEBE tener `DATABASE_URL` + `depends_on: postgres` | `SKILL.md` §5.R6 |
+./.agents/memory/anti_reincidencia.md:228:## Incidente #5: Pipeline E2E Roto — searcher-rs sin DATABASE_URL (824+ oportunidades perdidas)
+./.agents/memory/anti_reincidencia.md:240:  REDIS_URL: redis://redis:6379
+./.agents/memory/anti_reincidencia.md:242:  # ← DATABASE_URL AUSENTE
+./.agents/memory/anti_reincidencia.md:244:Sin `DATABASE_URL`, el `main.rs` inicializaba `db_pool = None`. En `scanner.rs` línea 346:
+./.agents/memory/anti_reincidencia.md:253:Omisión de `DATABASE_URL` en la sección `environment` de `searcher-rs` dentro de `compose.dev.yml`. El código de `main.rs` trata la conexión a PostgreSQL como opcional (línea 64-68: `warn!("DATABASE_URL not set; scanner will publish to stream but NOT persist")`), lo cual es correcto para desarrollo local pero catastrófico en producción.
+./.agents/memory/anti_reincidencia.md:258:- Todo servicio backend que produzca datos para el Dashboard DEBE tener `DATABASE_URL` en `compose.dev.yml`.
+./.agents/memory/anti_reincidencia.md:270:- Después de agregar `DATABASE_URL` y reiniciar: ejecutar `SELECT COUNT(*) FROM opportunities` y confirmar que el número crece.
+./.agents/memory/anti_reincidencia.md:276:- `backend/searcher-rs/src/main.rs` (líneas 51-68: `DATABASE_URL` handling)
+./.agents/memory/anti_reincidencia.md:282:Antes de declarar que el pipeline está operativo, SIEMPRE ejecutar la secuencia R7 completa. Si Redis tiene datos pero PG no, revisar `DATABASE_URL` en el servicio productor. Confirmar con `SELECT COUNT(*)` que las filas crecen.
+./.agents/memory/anti_reincidencia.md:555:- `.github/workflows/unit-tests.yml` — toolchain 1.85 + step `npm run -w @arbx/shared build` + DATABASE_URL stub para sqlx offline + `--lib` flag
+./.agents/skills/02-server-components-architect/skill.md:7:Aplicable a la arquitectura de páginas como `/opportunities` donde el layout base, la pre-validación de tokens JWT, la carga estática inicial de datos desde Redis, y el armazón de las tablas se renderizan en servidor, dejando solo el módulo de WebSocket (`LiveFeed`) interactivo al cliente.
+./.agents/skills/02-server-components-architect/validation.md:5:- Todo código asíncrono que extrae datos a nivel de base de datos (`DATABASE_URL`) no debe fallar; si lo hace por "Module not found: 'pg'", significa que se filtró accidentalmente a un Client Component.
+./.agents/skills/16-security-oriented-frontend-architect/checklist.md:3:- [ ] ¿Los tokens o claves sensibles (`ARBX_EDGE_TOKEN`, `DATABASE_URL`) carecen explícitamente del prefijo `NEXT_PUBLIC_`?
+./.agents/skills/16-security-oriented-frontend-architect/skill.md:16:- **Regla del NEXT_PUBLIC:** NUNCA, jamás, utilices el prefijo `NEXT_PUBLIC_` para contraseñas, JWTs, llaves privadas o strings de conexión a base de datos.
+./.agents/skills/16-security-oriented-frontend-architect/validation.md:4:- Auditar el bundle minificado de producción buscando regex de credenciales comunes (`DB_PASS`, `TOKEN`, `SECRET`). Si se encuentra el valor textual, hay un leak grave (Uso de NEXT_PUBLIC o importación en Client Component).
+./.agents/skills/20-deployment-runtime-scaling-strategist/implementation-patterns.md:48:      - DATABASE_URL=postgres://user:pass@db/prod
+./.agents/skills/SKILL_012_JIT_LIQUIDITY_MEV_EXTRACTION.md:10:Step 1 (Frontrun): Comprar X TOKEN, mover precio +0.8%
+./.agents/skills/alchemy-rpc-robust-integration/SKILL.md:30:- `ALCHEMY_API_KEY` (inyectado por entorno).
+./.agents/skills/anti_reincidencia_operativa/SKILL.md:4:> **Origen:** Incidentes de hidratación React #425/#418/#423, fallo de WebSocket Upgrade Proxy, fuga de variables de entorno en producción, y ruptura silenciosa del pipeline E2E Alchemy→Dashboard por `DATABASE_URL` ausente.
+./.agents/skills/anti_reincidencia_operativa/SKILL.md:36:| 9 | Servicio Docker sin `DATABASE_URL` → datos fluyen pero nunca se persisten | **CRÍTICA** |
+./.agents/skills/anti_reincidencia_operativa/SKILL.md:67:**Causa operacional:** El servicio `searcher-rs` en `docker/compose.dev.yml` no tenía `DATABASE_URL` configurado. En `main.rs`, cuando `DATABASE_URL` está ausente, `db_pool = None`. En `scanner.rs` línea 346, el bloque de persistencia se salta silenciosamente:
+./.agents/skills/anti_reincidencia_operativa/SKILL.md:120:1. `DATABASE_URL` apuntando a `postgres://...@postgres:5432/arbitragex` con credenciales explícitas.
+./.agents/skills/anti_reincidencia_operativa/SKILL.md:126:- ¿Tiene `DATABASE_URL`? Si no, los datos se pierden silenciosamente.
+./.agents/skills/anti_reincidencia_operativa/SKILL.md:127:- ¿Tiene `REDIS_URL`? Si publica a streams, ¿alguien los consume?
+./.agents/skills/anti_reincidencia_operativa/SKILL.md:142:Si Redis tiene datos pero PG no → falta `DATABASE_URL` en el productor.
+./.agents/skills/anti_reincidencia_operativa/SKILL.md:195:- [ ] ¿Todos los servicios productores tienen `DATABASE_URL` (R6)?
+./.agents/skills/arbx-j-j001-postgres-mvcc-vacuum-tuning/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j002-advanced-postgres-mvcc-vacuum-tuning/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j003-applied-postgres-mvcc-vacuum-tuning-in-arbitragex-v2/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j004-postgres-indexing-bringinhash/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j005-advanced-postgres-indexing-bringinhash/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j006-applied-postgres-indexing-bringinhash-in-arbitragex-v2/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j007-postgres-cte-window-recursive/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j008-advanced-postgres-cte-window-recursive/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j009-applied-postgres-cte-window-recursive-in-arbitragex-v2/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j010-migration-idempotency-patterns/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j011-advanced-migration-idempotency-patterns/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j012-applied-migration-idempotency-patterns-in-arbitragex-v2/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j013-timescaledb-hypertables/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j014-advanced-timescaledb-hypertables/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j015-applied-timescaledb-hypertables-in-arbitragex-v2/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j016-redis-streams-xaddxreadxgroup/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j017-advanced-redis-streams-xaddxreadxgroup/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j018-applied-redis-streams-xaddxreadxgroup-in-arbitragex-v2/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j019-redis-cluster-resharding-sentinel/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j020-advanced-redis-cluster-resharding-sentinel/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j021-applied-redis-cluster-resharding-sentinel-in-arbitragex-v2/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j022-pgvector-ivfflat-hnsw/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j023-advanced-pgvector-ivfflat-hnsw/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j024-applied-pgvector-ivfflat-hnsw-in-arbitragex-v2/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j025-pgbackrest-pitr-logical_decoding/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j026-advanced-pgbackrest-pitr-logical_decoding/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j027-applied-pgbackrest-pitr-logical_decoding-in-arbitragex-v2/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j028-foreign-data-wrappers-materialized-views/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j029-advanced-foreign-data-wrappers-materialized-views/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j030-applied-foreign-data-wrappers-materialized-views-in-arbitragex-v2/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j031-partition-pruning-brin-append-only/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j032-advanced-partition-pruning-brin-append-only/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/arbx-j-j033-applied-partition-pruning-brin-append-only-in-arbitragex-v2/SKILL.md:16:psql $DATABASE_URL -f db/migrations/034_reconcile_tokens.sql
+./.agents/skills/hft_elite_50/SKILL_012_JIT_LIQUIDITY_MEV_EXTRACTION.md:10:Step 1 (Frontrun): Comprar X TOKEN, mover precio +0.8%
+./.agents/skills/safe-production-observability/SKILL.md:32:2. Filtrar logs para enmascarar `API_KEY` o `PRIVATE_KEY` (Redaction).
+./.agents/skills/safe-production-observability/SKILL.md:65:- [ ] API de Kill Switch protegida por Token/JWT.
+./.agents/skills/safe-production-observability/examples.md:33:  redact: ['req.headers.authorization', 'private_key', 'env.ALCHEMY_API_KEY'],
+./.agents/skills/safe-production-observability/risks.md:4:- **Riesgos de seguridad**: Imprimir la `PRIVATE_KEY` en un log de error de viem o ethers-rs. (Error clásico que filtra llaves al enviar telemetría a Datadog/Sentry).
+./.agents/skills/skill_042_auto_rebalanceo_cross.md:50:- Missing Deposit (Depósito Atrapado): Binance retira los USDT, la tx es válida on-chain, pero Kraken no los acredita por "Revisión de AML/Compliance". El capital queda en el Limbo. El Rebalanceador, al superar 24 horas en In-Flight, debe escupir un log "ADMIN_INTERVENTION_REQUIRED_FOR_FUNDS".
+./.agents/skills/skill_045_gestion_dinamica_llaves.md:11:2. Limpieza estricta de Logs (Log Sanitization): Interceptador implacable que sobre-escribe cualquier variable en el objeto `console.log` o framework de logging que parezca un formato de clave privada (`0x[a-f0-9]{64}`) o HMAC Token (`***SECRET***`).
+./.agents/skills/skill_050_mev_blocker_private_tx.md:127:  auth_signer_private_key_env_var: "FLASHBOTS_AUTH_KEY"
+./.agents/skills/skill_073_nlp_sentiment_scraper.md:46:- Ticker Confusion (Colisiones Léxicas NLP O(1)): Elon Musk Twitea "Me encanta el cielo AZUL L2 O(1)". El Bot Extrae "AZUL L2" y compra la Criptomoneda `$AZUL` L1 (Meme Coin L1 L2 O(1)). (Falso Positivo Fatal NLP L2 O(1)). Solución NER Cripto O(1): FinBERT es re-entrenado L2 O(1) Localmente (Fine-Tuning L2) con Contexto Financiero Cripto L1 L2. Para activar una Compra HFT L2 O(1), el Tokenizer debe hallar Contexto Sintáctico (`Amo el TOKEN AZUL` O(1) o `$AZUL` Casings Strict L2 O(1)).
+./.agents/skills/skill_077_interest_rate_swaps_arb.md:119:- [ ] Monitor de Emisiones Tóxicas L1 (Reward Dumps O(1)): Extraes Token AAVE O(1) L1 Gratis. NO GUARDES EL TOKEN L1 O(1) HFT. Configura un MUX O(1) Para Auto-Dumpear TODO Token L1 Emitido Como Reward Instantáneamente O(1) en Curve/UniV3 Cripto, Mutando la Renta Exótica en Renta Dólar L1 L2 O(1) Fija.
+./.agents/skills/skill_083_whale_manipulation_frontrunning.md:17:8. Front-Running De Listados CEX L1 O(1): Binance Pone Billeteras "Warm Wallets L1 O(1)" A Recibir Tokens Antes De Un Anuncio O(1). El Motor Analiza El Patrón De Ingreso Cripto O(1) A Billeteras Binance L1 O(1). Sabe Que Listarán "TOKEN_X" O(1) 4 Horas Antes Del Tweet (Skill 73 L2 O(1)). Snipea HFT O(1) L1 Cripto.
+./.agents/skills/skill_083_whale_manipulation_frontrunning.md:155:             log.info(`ALPHA WALLET DETECTED L1 O(1). Cloning Arbitrage Trade L1 L2 O(1) and front-running with MEV Bribe O(1).`);
+./.agents/skills/sop_deployment_operations/SKILL.md:90:      - RPC_WS_1=${ALCHEMY_WSS}
+./.agents/skills/sop_deployment_operations/SKILL.md:91:      - RPC_WS_1_BACKUP=${QUICKNODE_WSS}
+./.agents/skills/sop_deployment_operations/SKILL.md:92:      - DATABASE_URL=postgres://arbx:${PG_PWD}@postgres:5432/arbitragex
+./.agents/skills/sop_deployment_operations/SKILL.md:115:- [ ] Postgres `DATABASE_URL` configurado en TODOS los productores.
+./.agents/skills/sop_deployment_operations/SKILL.md:134:- Postgres + Redis setup: capítulo 6 (R6 anti-reincidencia + DATABASE_URL doctrine).
+./.agents/workflows/skill_042_auto_rebalanceo_cross.md:50:- Missing Deposit (Depósito Atrapado): Binance retira los USDT, la tx es válida on-chain, pero Kraken no los acredita por "Revisión de AML/Compliance". El capital queda en el Limbo. El Rebalanceador, al superar 24 horas en In-Flight, debe escupir un log "ADMIN_INTERVENTION_REQUIRED_FOR_FUNDS".
+./.agents/workflows/skill_045_gestion_dinamica_llaves.md:11:2. Limpieza estricta de Logs (Log Sanitization): Interceptador implacable que sobre-escribe cualquier variable en el objeto `console.log` o framework de logging que parezca un formato de clave privada (`0x[a-f0-9]{64}`) o HMAC Token (`***SECRET***`).
+./.agents/workflows/skill_050_mev_blocker_private_tx.md:127:  auth_signer_private_key_env_var: "FLASHBOTS_AUTH_KEY"
+./.agents/workflows/skill_073_nlp_sentiment_scraper.md:46:- Ticker Confusion (Colisiones Léxicas NLP O(1)): Elon Musk Twitea "Me encanta el cielo AZUL L2 O(1)". El Bot Extrae "AZUL L2" y compra la Criptomoneda `$AZUL` L1 (Meme Coin L1 L2 O(1)). (Falso Positivo Fatal NLP L2 O(1)). Solución NER Cripto O(1): FinBERT es re-entrenado L2 O(1) Localmente (Fine-Tuning L2) con Contexto Financiero Cripto L1 L2. Para activar una Compra HFT L2 O(1), el Tokenizer debe hallar Contexto Sintáctico (`Amo el TOKEN AZUL` O(1) o `$AZUL` Casings Strict L2 O(1)).
+./.agents/workflows/skill_077_interest_rate_swaps_arb.md:119:- [ ] Monitor de Emisiones Tóxicas L1 (Reward Dumps O(1)): Extraes Token AAVE O(1) L1 Gratis. NO GUARDES EL TOKEN L1 O(1) HFT. Configura un MUX O(1) Para Auto-Dumpear TODO Token L1 Emitido Como Reward Instantáneamente O(1) en Curve/UniV3 Cripto, Mutando la Renta Exótica en Renta Dólar L1 L2 O(1) Fija.
+./.agents/workflows/skill_083_whale_manipulation_frontrunning.md:17:8. Front-Running De Listados CEX L1 O(1): Binance Pone Billeteras "Warm Wallets L1 O(1)" A Recibir Tokens Antes De Un Anuncio O(1). El Motor Analiza El Patrón De Ingreso Cripto O(1) A Billeteras Binance L1 O(1). Sabe Que Listarán "TOKEN_X" O(1) 4 Horas Antes Del Tweet (Skill 73 L2 O(1)). Snipea HFT O(1) L1 Cripto.
+./.agents/workflows/skill_083_whale_manipulation_frontrunning.md:155:             log.info(`ALPHA WALLET DETECTED L1 O(1). Cloning Arbitrage Trade L1 L2 O(1) and front-running with MEV Bribe O(1).`);
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:141:./docker/compose.prod.yml:105:      REDIS_URL: redis://redis:6379
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:143:./docker/compose.prod.yml:143:      REDIS_URL: redis://redis:6379
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:145:./docker/compose.prod.yml:177:      REDIS_URL: redis://redis:6379
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:147:./docker/compose.prod.yml:247:      REDIS_URL: redis://redis:6379
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:149:./docker/compose.prod.yml:280:      REDIS_URL: redis://redis:6379
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:151:./docker/compose.prod.yml:467:      REDIS_URL: redis://redis:6379
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:159:./docker/compose.dev.yml:140:      REDIS_URL: redis://redis:6379
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:161:./docker/compose.dev.yml:171:      REDIS_URL: redis://redis:6379
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:163:./docker/compose.dev.yml:197:      REDIS_URL: redis://redis:6379
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:165:./docker/compose.dev.yml:248:      REDIS_URL: redis://redis:6379
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:167:./docker/compose.dev.yml:266:      REDIS_URL: redis://redis:6379
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:169:./docker/compose.dev.yml:417:      REDIS_URL: redis://redis:6379
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:192:./docs/omega_s5_plus/OMEGA_S5_PLUS_IMPLEMENTATION_PLAN.md:119:let _h = coord.spawn(std::env::var("REDIS_URL").unwrap()).await?;
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:256:./docker/compose.prod.yml:108:      RPC_WS_1: ${RPC_WS_1:?RPC_WS_1 required for mainnet detection}
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:257:./docker/compose.prod.yml:109:      RPC_HTTP_1: ${RPC_HTTP_1:?RPC_HTTP_1 required for mainnet receipts}
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:258:./docker/compose.dev.yml:25:# T1 secrets: SLACK_WEBHOOK_URL, PAGERDUTY_INTEGRATION_KEY, RPC_WS_1, RPC_HTTP_1.
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:259:./tests/e2e/rpc-down.spec.ts:6: * When RPC_WS_1 is empty (the compose default — operator hasn't completed
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:260:./tests/primitives.test.ts:111:      blocker_codes: ['RPC_HTTP_1'],
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:262:./docs/runbooks/rpc-down.md:54:     sh -c 'wget -qO- --timeout=5 "$RPC_HTTP_1" \
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:316:./docs/superpowers/specs/SCAFFOLD_STATUS_GAP_ANALYSIS.md:65:| **Conectividad RPC** | Añadir URLs reales de Alchemy/Infura (HTTP y WSS) en el archivo `.env` del VPS (`RPC_HTTP_1`, `RPC_WS_1`). | 🔴 Bloqueante |
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:338:./docs/superpowers/specs/2026-05-13-option5-rpc-migration.md:87:**Action**: provision Hetzner CX52 (~$50/mo) with Reth + Lighthouse for Ethereum mainnet. Switch `RPC_HTTP_1` first provider to local Reth (`https://<REDACTED_URL> Public RPCs remain as failover.
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:340:./docs/superpowers/specs/2026-05-13-option5-rpc-migration.md:101:#   RPC_HTTP_1=local=https://<REDACTED_URL>
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:341:./docs/superpowers/specs/2026-05-13-option5-rpc-migration.md:102:#   RPC_WS_1=local=wss://<REDACTED_URL>
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:349:./docs/superpowers/specs/2026-04-20-sprint2-detection-design.md:137:- `RPC_WS_1` (per-chain WebSocket URL). Required to actually detect; absent â†’ service stays healthy but no detection.
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:351:./docs/superpowers/specs/2026-04-20-sprint2-detection-design.md:156:| `RPC_WS_1` ausente | Log warn, set gauge `state=no_rpc`, no detectar, **no hacer 501** (el servicio es worker, no HTTP). `/health` = 200. |
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:353:./docs/superpowers/specs/2026-04-20-sprint2-detection-design.md:172:- [ ] Con `RPC_WS_1` no configurado: servicio sube, health 200, logs `state=no_rpc`, gauge correcta, **cero filas insertadas**.
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:354:./docs/superpowers/specs/2026-04-20-sprint2-detection-design.md:173:- [ ] Con `RPC_WS_1` real (Alchemy free tier): â‰¥ 1 oportunidad persistida por minuto (dependiente del chain activity), logs estructurados con trace_id, mÃ©trica `arbx_searcher_candidates_total > 0`.
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:358:./docs/superpowers/specs/2026-04-21-sprint7-8-runtime-plan.md:34:- `.env` on VPS only (not repo): `RPC_WS_1`, `RPC_HTTP_1` filled.
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:359:./docs/superpowers/specs/2026-04-21-sprint7-8-runtime-plan.md:36:- `docker/docker-compose.prod-like.yml`: pass `RPC_WS_1` and `RPC_HTTP_1` env to `searcher-rs`, `sim-ctl`, `relays-client` explicitly (currently via `env_file` only).
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:360:./docs/superpowers/specs/2026-04-21-sprint5-execution-design.md:16:- `RPC_HTTP_1` â€” RPC HTTP mainnet para lectura de nonce + broadcast eth_sendRawTransaction como backup.
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:361:./docs/superpowers/specs/2026-04-21-sprint5-execution-design.md:143:- `RPC_HTTP_1` â€” for nonce fetching + inclusion tracking.
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:362:./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:1:# Diagnóstico e Implementación End-to-End: RPC_HTTP_1 y RPC_WS_1
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:363:./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:11:1. **La Validación R8 Fail-Honest:** En `backend/searcher-rs/src/main.rs:370`, el orquestador intenta leer `RPC_HTTP_1`. Al no encontrarlo, emite un log de advertencia y **se niega a iniciar los workers** para la cadena 1 (Ethereum Mainnet).
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:364:./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:13:3. **El Silencio del Mempool:** En `backend/searcher-rs/src/chain_client.rs:116`, el sistema espera `RPC_WS_1` para suscribirse al evento `alchemy_pendingTransactions`. Sin WS, no hay ingesta de datos.
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:365:./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:20:   RPC_WS_1: ${RPC_WS_1:?RPC_WS_1 required for mainnet detection}
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:366:./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:21:   RPC_HTTP_1: ${RPC_HTTP_1:?RPC_HTTP_1 required for mainnet receipts}
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:367:./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:31:**Para RPC_HTTP_1:**
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:368:./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:33:RPC_HTTP_1=alchemy=https://<REDACTED_URL>
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:369:./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:37:**Para RPC_WS_1:**
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:370:./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:39:RPC_WS_1=alchemy=wss://<REDACTED_URL>
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:371:./docs/superpowers/specs/RPC_END_TO_END_DIAGNOSTIC.md:58:Buscar las líneas `RPC_HTTP_1=` y `RPC_WS_1=` y reemplazarlas con tus URLs reales.
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:375:./docs/superpowers/specs/2026-04-21-sprint6-recon-learning-design.md:36:                                          â”œâ”€ fetch tx receipt via RPC_HTTP_1
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:376:./docs/superpowers/specs/2026-04-21-sprint6-recon-learning-design.md:234:| RPC_HTTP_1 unreachable | Fetch receipt fails with timeout â†’ recon fails fast. `risk_event` severity=warning. NO persiste ReconReport inexacto. |
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:383:./docs/superpowers/specs/2026-04-21-sprint7-8-runtime-design.md:58:RPC_WS_1=wss://<REDACTED_URL>
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:384:./docs/superpowers/specs/2026-04-21-sprint7-8-runtime-design.md:59:RPC_HTTP_1=https://<REDACTED_URL>
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:385:./docs/superpowers/specs/2026-04-21-sprint7-8-runtime-design.md:62:`sim-ctl` additionally consumes `RPC_HTTP_1` for Anvil fork URL when `ANVIL_FORK_URL` is empty (lazy default). `relays-client` uses `RPC_HTTP_1` only for tx status lookups (optional).
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:388:./docs/superpowers/specs/2026-04-21-sprint7-8-runtime-design.md:168:- `rpc-down.spec.ts` â€” unset `RPC_WS_1`, restart searcher-rs, verify `/status` shows the chain as "idle" without lying about it.
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:412:./docs/operations/SECRETS_POLICY.md:46:| `RPC_WS_1`, `RPC_HTTP_1` | Alchemy/QuickNode authenticated WebSocket + HTTP RPC |
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:413:./docs/operations/SECRETS_POLICY.md:128:RPC_WS_1=wss://<REDACTED_URL>
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:425:./docs/governance/DATA-MATRIX.md:42:| `ANVIL_FORK_URL` | url | Env â† Vault (may alias `RPC_HTTP_1`) | 3 | `eth_blockNumber` probe | Vault | sim provider = `anvil` | sim-ctl returns `501 {error:"not_implemented", requires:["ANVIL_FORK_URL"]}` |
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:429:./docs/how-to/deploy-to-vps.md:147:RPC_HTTP_1="alchemy=https://<REDACTED_URL>
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:430:./docs/how-to/deploy-to-vps.md:148:RPC_WS_1="alchemy=wss://<REDACTED_URL>
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:431:./docs/how-to/deploy-to-vps.md:181:| `RPC_HTTP_1` | Primary RPC HTTP endpoint |
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:432:./docs/how-to/deploy-to-vps.md:182:| `RPC_WS_1` | Primary RPC WebSocket endpoint |
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:433:./docs/how-to/deploy-to-vps.md:389:  "https://<REDACTED_URL> -O /dev/null
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:434:./docs/crucible/CRUCIBLE_CHECKLIST.md:50:cast balance $GAS_SPONSOR_ADDRESS --rpc-url $RPC_HTTP_17000
+./.audit/fase0_20260523T190839Z/structure_inspection.txt:435:./docs/crucible/CRUCIBLE_CHECKLIST.md:113:cast code <FACTORY_ADDRESS> --rpc-url $RPC_HTTP_17000
+./.audit/fase1_api_server/inspection.txt:109:backend/api-server/src/index.ts:46:  redisUrl: REDIS_URL,
+./.audit/fase1_api_server/inspection.txt:134:backend/api-server/src/index.ts:263:const redis = new Redis(REDIS_URL, { lazyConnect: false, maxRetriesPerRequest: 3 });
+./.audit/fase1_api_server/inspection.txt:226:backend/api-server/src/readiness/verifiers/g-pap-1.ts:5:const DEFAULT_REDIS = process.env["REDIS_URL"] ?? "redis://redis:6379";
+./.audit/fase1_api_server/inspection.txt:245:backend/api-server/src/readiness/verifiers/g-ris-1.ts:8:const DEFAULT_REDIS = process.env["REDIS_URL"] ?? "redis://redis:6379";
+./.audit/fase1_api_server/inspection.txt:266:backend/api-server/src/websocket-rooms.test.ts:32:const ADMIN_TOKEN = <REDACTED>
+./.env.crucible:15:RPC_HTTP_17000=https://<REDACTED_URL>
+./.env.crucible:16:RPC_WS_17000=wss://<REDACTED_URL>
+./.env.crucible:21:RPC_HTTP_421614=https://<REDACTED_URL>
+./.env.crucible:22:RPC_WS_421614=wss://<REDACTED_URL>
+./.env.crucible:27:RPC_HTTP_80002=https://<REDACTED_URL>
+./.env.crucible:28:RPC_WS_80002=wss://<REDACTED_URL>
+./.env.crucible:47:# --- WALLETS (testnet only — low security) ---
+./.env.edge:11:# ALCHEMY API KEY (shared across all Alchemy-backed chains)
+./.env.edge:13:ALCHEMY_KEY=<REDACTED>
+./.env.edge:19:RPC_HTTP_1=https://<REDACTED_URL>
+./.env.edge:20:RPC_WS_1=wss://<REDACTED_URL>
+./.env.edge:32:RPC_HTTP_42161=https://<REDACTED_URL>
+./.env.edge:33:RPC_WS_42161=wss://<REDACTED_URL>
+./.env.edge:45:RPC_HTTP_10=https://<REDACTED_URL>
+./.env.edge:46:RPC_WS_10=wss://<REDACTED_URL>
+./.env.edge:58:RPC_HTTP_8453=https://<REDACTED_URL>
+./.env.edge:59:RPC_WS_8453=wss://<REDACTED_URL>
+./.env.edge:71:RPC_HTTP_137=https://<REDACTED_URL>
+./.env.edge:72:RPC_WS_137=wss://<REDACTED_URL>
+./.env.edge:85:RPC_HTTP_56=https://<REDACTED_URL>
+./.env.edge:86:RPC_HTTP_56_FALLBACK=https://<REDACTED_URL>
+./.env.edge:87:RPC_HTTP_56_FALLBACK2=https://<REDACTED_URL>
+./.env.edge:88:RPC_WS_56=wss://<REDACTED_URL>
+./.env.edge:97:# SECTION: WALLET TOPOLOGY
+./.env.edge:157:FLASHBOTS_AUTH_KEY=<REDACTED>
+./.env.edge:158:FLASHBOTS_ENDPOINT=https://<REDACTED_URL>
+./.env.edge:159:FLASHBOTS_ENDPOINT_GOERLI=https://<REDACTED_URL>
+./.env.example:33:DATABASE_URL=postgres://arbx_rw:REPLACE_ME@postgres:5432/arbitragex
+./.env.example:49:REDIS_URL=redis://redis:6379
+./.env.example:63:#   RPC_HTTP_1=alchemy=https://<REDACTED_URL>
+./.env.example:69:#   RPC_WS_1=alchemy=wss://<REDACTED_URL>
+./.env.example:70:RPC_HTTP_1=
+./.env.example:71:RPC_WS_1=
+./.env.example:72:RPC_HTTP_137=
+./.env.example:73:RPC_WS_137=
+./.env.example:82:FLASHBOTS_SIGNER_KEY=
+./.env.example:83:FLASHBOTS_RELAY_URL=https://<REDACTED_URL>
+./.env.example:108:# JWT for frontend → edge authentication.
+./.env.example:109:JWT_SECRET=<REDACTED> openssl rand -base64 64>
+./.env.example:110:JWT_ISSUER=arbitragex-v2
+./.env.example:111:JWT_AUDIENCE=arbitragex-frontend
+./.github/workflows/audit-vps-wiring.yml:160:          SECRETS_LIST=<REDACTED> '[]' secret list --repo "${REPO_SLUG}" --json name --jq '[.[].name]')"
+./.github/workflows/audit-vps-wiring.yml:162:          if ! echo "${SECRETS_LIST}" | jq -e 'type=="array"' >/dev/null 2>&1; then
+./.github/workflows/audit-vps-wiring.yml:163:            SECRETS_LIST=<REDACTED>
+./.github/workflows/audit-vps-wiring.yml:197:            --argjson secrets "${SECRETS_LIST}" \
+./.github/workflows/ci.yml:41:          REDIS_URL: redis://localhost:6379
+./.github/workflows/deploy-edge-only-v2.yml:147:          ADMIN_TOKEN=<REDACTED> -E '^ARBX_ADMIN_TOKEN=<REDACTED> /opt/arbitragex-v2/.env | cut -d= -f2-)
+./.github/workflows/deploy-edge-only-v2.yml:157:            -H 'content-type: application/json' -d "{\"token\":\"$ADMIN_TOKEN\"}")
+./.github/workflows/deploy-edge-only.yml:154:          ADMIN_TOKEN=<REDACTED> -E '^ARBX_ADMIN_TOKEN=<REDACTED> /opt/arbitragex-v2/.env | cut -d= -f2-)
+./.github/workflows/deploy-edge-only.yml:165:            -H 'content-type: application/json' -d "{\"token\":\"$ADMIN_TOKEN\"}")
+./.github/workflows/diag-cookie-emission.yml:23:            ADMIN_TOKEN=<REDACTED> -E '^ARBX_ADMIN_TOKEN=<REDACTED> /opt/arbitragex-v2/.env | cut -d= -f2-)
+./.github/workflows/diag-cookie-emission.yml:38:              -d "{\"token\":\"$ADMIN_TOKEN\"}" \
+./.github/workflows/diag-cookie-emission.yml:45:              -d "{\"token\":\"$ADMIN_TOKEN\"}" \
+./.github/workflows/diag-cookie-emission.yml:53:              -d "{\"token\":\"$ADMIN_TOKEN\"}" \
+./.github/workflows/diag-cookie-emission.yml:63:              -d "{\"token\":\"$ADMIN_TOKEN\"}" \
+./.github/workflows/probe-admin-session.yml:48:            ADMIN_TOKEN=<REDACTED> -E '^ARBX_ADMIN_TOKEN=<REDACTED> /opt/arbitragex-v2/.env | cut -d= -f2-)
+./.github/workflows/probe-admin-session.yml:49:            if [ -z "$ADMIN_TOKEN" ]; then
+./.github/workflows/probe-admin-session.yml:52:              echo "  Token detectado (longitud: ${#ADMIN_TOKEN} chars)"
+./.github/workflows/probe-admin-session.yml:56:                -d "{\"token\":\"$ADMIN_TOKEN\"}" \
+./.github/workflows/probe-admin-session.yml:66:            if [ -n "$ADMIN_TOKEN" ] && [ -s /tmp/probe-cookies.txt ]; then
+./.github/workflows/probe-cookies-deep.yml:28:            ADMIN_TOKEN=<REDACTED> -E '^ARBX_ADMIN_TOKEN=<REDACTED> /opt/arbitragex-v2/.env | cut -d= -f2-)
+./.github/workflows/probe-cookies-deep.yml:32:              -d "{\"token\":\"$ADMIN_TOKEN\"}" \
+./.github/workflows/probe-cookies-deep.yml:37:              -H "x-arbx-admin-token: $ADMIN_TOKEN" \
+./.github/workflows/probe-cookies-deep.yml:51:              -H "x-arbx-admin-token: $ADMIN_TOKEN" \
+./.github/workflows/rust.yml:76:        # sqlx compile-time checked queries are excluded by DATABASE_URL stub.
+./.github/workflows/rust.yml:80:          DATABASE_URL: postgres://test:test@localhost/arbitragex_test
+./.github/workflows/rust.yml:81:          REDIS_URL: redis://localhost:6379
+./.github/workflows/sync-vps-metadata.yml:571:                    ADMIN_WITH_COOKIE_CODE="$(
+./.github/workflows/sync-vps-metadata.yml:584:                    printf "ADMIN_WITH_COOKIE_CODE=%s\n" "$ADMIN_WITH_COOKIE_CODE"
+./.github/workflows/sync-vps-metadata.yml:597:                ADMIN_WITH_COOKIE_CODE="$(printf '%s\n' "$SMOKE_OUT" | awk -F= '/^ADMIN_WITH_COOKIE_CODE=/{print $2; found=1} END{if(!found) print "ERR"}')"
+./.github/workflows/sync-vps-metadata.yml:602:                  echo "admin_with_cookie=${ADMIN_WITH_COOKIE_CODE}"
+./.github/workflows/sync-vps-metadata.yml:620:                if [[ "$ADMIN_WITH_COOKIE_CODE" != "200" ]]; then
+./.github/workflows/sync-vps-metadata.yml:621:                  echo "::error::/api/admin/chains con cookie != 200 (${ADMIN_WITH_COOKIE_CODE})"
+./.github/workflows/unit-tests.yml:32:        # sqlx offline mode satisfied by stub DATABASE_URL.
+./.github/workflows/unit-tests.yml:35:          DATABASE_URL: postgres://test:test@localhost/arbitragex_test
+./.github/workflows/unit-tests.yml:36:          REDIS_URL: redis://localhost:6379
+./.github/workflows/verify-admin-session-wiring.yml:27:            ADMIN_TOKEN=<REDACTED> -E '^ARBX_ADMIN_TOKEN=<REDACTED> /opt/arbitragex-v2/.env | cut -d= -f2-)
+./.github/workflows/verify-admin-session-wiring.yml:44:              -d "{\"token\":\"$ADMIN_TOKEN\"}")
+./CLAUDE.md:123:1. `DATABASE_URL` apuntando a `postgres://...@postgres:5432/arbitragex`.
+./CLAUDE.md:128:- ¿Produce datos que el Dashboard necesita? → Necesita `DATABASE_URL`.
+./CLAUDE.md:144:- Redis tiene datos pero PG no → falta `DATABASE_URL` en el productor.
+./KIMI_GITHUB_CHANNEL_SETUP.md:76:export GITHUB_PAT="TOKEN_REAL"
+./KIMI_GITHUB_CHANNEL_SETUP.md:88:export GH_TOKEN=<REDACTED>
+./ONBOARDING.md:57:RPC_HTTP_1=<YOUR_PROVIDER_HTTP_URL>
+./ONBOARDING.md:58:RPC_WS_1=<YOUR_PROVIDER_WS_URL>
+./README.md:49:psql $DATABASE_URL -f database/migrations/066_omni_entity_registries.sql
+./README.md:50:psql $DATABASE_URL -f database/migrations/067_config_hash_registry_drift_runtime_ack.sql
+./audits/AUDIT_2026-05-01_E2E.md:34:4. **[GAP-RPC-1] G-RPC-1**: ningÃºn servicio implementa la disciplina `arbx-rpc-failover-discipline` aÃºn. `searcher-rs/chain_client.rs`, `relays-client/main.rs:101`, `recon/main.rs:188` y `sim-ctl/main.rs:81` cargan **un solo `RPC_HTTP_1` / `RPC_WS_1`** sin fallback, sin health check, sin block-height-drift detection, sin circuit breaker per-RPC. Doctrina exige mÃ­nimo 2 RPCs distintos vendors. Esperable porque Sprint 2 promete "Detection real" â€” pero `relays-client` *ya* puede submitir bundles si el operador llena las credenciales hoy; en ese estado la disciplina aplica y el cÃ³digo no la cumple. Bloqueante para flip `paper_mode=false`.
+./audits/AUDIT_2026-05-01_E2E.md:392:  echo "           RPC_HTTP_1=https://<REDACTED_URL>
+./audits/AUDIT_2026-05-01_E2E.md:445:- Tests Foundry: `forge test --fork-url $RPC_HTTP_1` cubriendo: revert por `NoProfit`, revert por reentrancy, revert por pause, comportamiento USDT (no-bool token).
+./audits/AUDIT_2026-05-01_E2E.md:467:  - `backend/searcher-rs/src/scanner.rs:43` â€” `let url = std::env::var(&env_key).unwrap_or_default()` lee `RPC_WS_<chain_id>` Ãºnico.
+./audits/AUDIT_2026-05-01_E2E.md:469:  - `backend/relays-client/src/main.rs:101-112` â€” abre un solo `Provider<Http>` desde `RPC_HTTP_1`.
+./audits/AUDIT_2026-05-01_E2E.md:471:  - `backend/recon/src/main.rs:185-189` â€” un solo `RPC_HTTP_1`.
+./audits/AUDIT_2026-05-01_E2E.md:482:2. `RPC_HTTP_1` y `RPC_WS_1` deben aceptar lista comma-separated o mÃºltiples `RPC_HTTP_1_PRIMARY`/`RPC_HTTP_1_BACKUP`/`RPC_HTTP_1_TERTIARY`.
+./audits/AUDIT_2026-05-01_E2E.md:650:| Q9 | INFO | **Honesty rule aplicada**: `relays-client/main.rs:60-67` retorna 501 con `requires:["FLASHBOTS_SIGNER_KEY", "RPC_HTTP_1"]` cuando no hay signer. `sim-ctl/main.rs:55-62` retorna 501 con `requires:["ANVIL_URL", "ANVIL_FORK_URL"]`. `frontend/lib/api-client.ts:78-79` propaga el error verbatim sin sintetizar data. âœ… |
+./audits/REPORTE_ESTADO_CUANTICO_V5.md:148:DATABASE_URL=$DB SOVEREIGN_PUBKEY=<REDACTED> \
+./audits/latest_repo/01_arch_inventory.txt:756:docs/operations/SECRETS_POLICY.md
+./audits/latest_repo/02_scripts_manifests.txt:331:# Enabled by default at compile time; runtime is gated by RPC_HTTP_<chain>
+./audits/latest_repo/security_audit.sh:11:    -e 's#([A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD)[A-Za-z0-9_]*[[:space:]]*[:=][[:space:]]*)[^[:space:]]+#\1<REDACTED>#g'
+./audits/latest_repo/security_audit.sh:21:  grep -RIn --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=target --exclude-dir=.next -E '\b(RPC_HTTP_|RPC_WS_|ADMIN_|PRIVATE_KEY|EXECUTOR|DATABASE_URL|REDIS_URL|JWT|TOKEN|SECRET|INFURA|ALCHEMY|QUICKNODE|FLASHBOTS|WALLET)' . 2>/dev/null | redact | head -300 || true
+./audits/latest_repo/security_audit.sh:27:  grep -RIn --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=target --exclude-dir=.next -E 'fail.?honest|RPC_HTTP_1|RPC_WS_1|paper_mode|paper mode|live.?mode|mempool|provider.*pool|TopologyVault|topology|archive|executor' backend edge frontend docker database .github 2>/dev/null | redact | head -360 || true
+./audits/latest_repo/05_security_rpc_docker_ci.txt:27:./.agent/skill_042_auto_rebalanceo_cross.md:50:- Missing Deposit (Depósito Atrapado): Binance retira los USDT, la tx es válida on-chain, pero Kraken no los acredita por "Revisión de AML/Compliance". El capital queda en el Limbo. El Rebalanceador, al superar 24 horas en In-Flight, debe escupir un log "ADMIN_INTERVENTION_REQUIRED_FOR_FUNDS".
+./audits/latest_repo/05_security_rpc_docker_ci.txt:28:./.agent/skill_045_gestion_dinamica_llaves.md:11:2. Limpieza estricta de Logs (Log Sanitization): Interceptador implacable que sobre-escribe cualquier variable en el objeto `console.log` o framework de logging que parezca un formato de clave privada (`0x[a-f0-9]{64}`) o HMAC Token (`***SECRET***`).
+./audits/latest_repo/05_security_rpc_docker_ci.txt:29:./.agent/skill_050_mev_blocker_private_tx.md:127:  auth_signer_private_key_env_var: "FLASHBOTS_AUTH_KEY"
+./audits/latest_repo/05_security_rpc_docker_ci.txt:30:./.agent/skill_073_nlp_sentiment_scraper.md:46:- Ticker Confusion (Colisiones Léxicas NLP O(1)): Elon Musk Twitea "Me encanta el cielo AZUL L2 O(1)". El Bot Extrae "AZUL L2" y compra la Criptomoneda `$AZUL` L1 (Meme Coin L1 L2 O(1)). (Falso Positivo Fatal NLP L2 O(1)). Solución NER Cripto O(1): FinBERT es re-entrenado L2 O(1) Localmente (Fine-Tuning L2) con Contexto Financiero Cripto L1 L2. Para activar una Compra HFT L2 O(1), el Tokenizer debe hallar Contexto Sintáctico (`Amo el TOKEN AZUL` O(1) o `$AZUL` Casings Strict L2 O(1)).
+./audits/latest_repo/05_security_rpc_docker_ci.txt:31:./.agent/skill_077_interest_rate_swaps_arb.md:119:- [ ] Monitor de Emisiones Tóxicas L1 (Reward Dumps O(1)): Extraes Token AAVE O(1) L1 Gratis. NO GUARDES EL TOKEN L1 O(1) HFT. Configura un MUX O(1) Para Auto-Dumpear TODO Token L1 Emitido Como Reward Instantáneamente O(1) en Curve/UniV3 Cripto, Mutando la Renta Exótica en Renta Dólar L1 L2 O(1) Fija.
+./audits/latest_repo/05_security_rpc_docker_ci.txt:32:./.agent/skill_083_whale_manipulation_frontrunning.md:17:8. Front-Running De Listados CEX L1 O(1): Binance Pone Billeteras "Warm Wallets L1 O(1)" A Recibir Tokens Antes De Un Anuncio O(1). El Motor Analiza El Patrón De Ingreso Cripto O(1) A Billeteras Binance L1 O(1). Sabe Que Listarán "TOKEN_X" O(1) 4 Horas Antes Del Tweet (Skill 73 L2 O(1)). Snipea HFT O(1) L1 Cripto.
+./audits/latest_repo/05_security_rpc_docker_ci.txt:33:./.agent/skill_083_whale_manipulation_frontrunning.md:155:             log.info(`ALPHA WALLET DETECTED L1 O(1). Cloning Arbitrage Trade L1 L2 O(1) and front-running with MEV Bribe O(1).`);
+./audits/latest_repo/05_security_rpc_docker_ci.txt:34:./.agent/skills/SKILL_012_JIT_LIQUIDITY_MEV_EXTRACTION.md:10:Step 1 (Frontrun): Comprar X TOKEN, mover precio +0.8%
+./audits/latest_repo/05_security_rpc_docker_ci.txt:35:./.agent/skills/hft_elite_50/SKILL_012_JIT_LIQUIDITY_MEV_EXTRACTION.md:10:Step 1 (Frontrun): Comprar X TOKEN, mover precio +0.8%
+./audits/latest_repo/05_security_rpc_docker_ci.txt:36:./.agent/skills/skill_042_auto_rebalanceo_cross.md:50:- Missing Deposit (Depósito Atrapado): Binance retira los USDT, la tx es válida on-chain, pero Kraken no los acredita por "Revisión de AML/Compliance". El capital queda en el Limbo. El Rebalanceador, al superar 24 horas en In-Flight, debe escupir un log "ADMIN_INTERVENTION_REQUIRED_FOR_FUNDS".
+./audits/latest_repo/05_security_rpc_docker_ci.txt:37:./.agent/skills/skill_045_gestion_dinamica_llaves.md:11:2. Limpieza estricta de Logs (Log Sanitization): Interceptador implacable que sobre-escribe cualquier variable en el objeto `console.log` o framework de logging que parezca un formato de clave privada (`0x[a-f0-9]{64}`) o HMAC Token (`***SECRET***`).
+./audits/latest_repo/05_security_rpc_docker_ci.txt:38:./.agent/skills/skill_050_mev_blocker_private_tx.md:127:  auth_signer_private_key_env_var: "FLASHBOTS_AUTH_KEY"
+./audits/latest_repo/05_security_rpc_docker_ci.txt:39:./.agent/skills/skill_073_nlp_sentiment_scraper.md:46:- Ticker Confusion (Colisiones Léxicas NLP O(1)): Elon Musk Twitea "Me encanta el cielo AZUL L2 O(1)". El Bot Extrae "AZUL L2" y compra la Criptomoneda `$AZUL` L1 (Meme Coin L1 L2 O(1)). (Falso Positivo Fatal NLP L2 O(1)). Solución NER Cripto O(1): FinBERT es re-entrenado L2 O(1) Localmente (Fine-Tuning L2) con Contexto Financiero Cripto L1 L2. Para activar una Compra HFT L2 O(1), el Tokenizer debe hallar Contexto Sintáctico (`Amo el TOKEN AZUL` O(1) o `$AZUL` Casings Strict L2 O(1)).
+./audits/latest_repo/05_security_rpc_docker_ci.txt:40:./.agent/skills/skill_077_interest_rate_swaps_arb.md:119:- [ ] Monitor de Emisiones Tóxicas L1 (Reward Dumps O(1)): Extraes Token AAVE O(1) L1 Gratis. NO GUARDES EL TOKEN L1 O(1) HFT. Configura un MUX O(1) Para Auto-Dumpear TODO Token L1 Emitido Como Reward Instantáneamente O(1) en Curve/UniV3 Cripto, Mutando la Renta Exótica en Renta Dólar L1 L2 O(1) Fija.
+./audits/latest_repo/05_security_rpc_docker_ci.txt:41:./.agent/skills/skill_083_whale_manipulation_frontrunning.md:17:8. Front-Running De Listados CEX L1 O(1): Binance Pone Billeteras "Warm Wallets L1 O(1)" A Recibir Tokens Antes De Un Anuncio O(1). El Motor Analiza El Patrón De Ingreso Cripto O(1) A Billeteras Binance L1 O(1). Sabe Que Listarán "TOKEN_X" O(1) 4 Horas Antes Del Tweet (Skill 73 L2 O(1)). Snipea HFT O(1) L1 Cripto.
+./audits/latest_repo/05_security_rpc_docker_ci.txt:42:./.agent/skills/skill_083_whale_manipulation_frontrunning.md:155:             log.info(`ALPHA WALLET DETECTED L1 O(1). Cloning Arbitrage Trade L1 L2 O(1) and front-running with MEV Bribe O(1).`);
+./audits/latest_repo/05_security_rpc_docker_ci.txt:43:./.agents/generate_batch_1.py:168:Aplicable a la arquitectura de páginas como `/opportunities` donde el layout base, la pre-validación de tokens JWT, la carga estática inicial de datos desde Redis, y el armazón de las tablas se renderizan en servidor, dejando solo el módulo de WebSocket (`LiveFeed`) interactivo al cliente.
+./audits/latest_repo/05_security_rpc_docker_ci.txt:44:./.agents/generate_batch_1.py:265:- Todo código asíncrono que extrae datos a nivel de base de datos (`DATABASE_URL`) no debe fallar; si lo hace por "Module not found: 'pg'", significa que se filtró accidentalmente a un Client Component.
+./audits/latest_repo/05_security_rpc_docker_ci.txt:45:./.agents/generate_batch_4.py:23:- **Regla del NEXT_PUBLIC:** NUNCA, jamás, utilices el prefijo `NEXT_PUBLIC_` para contraseñas, JWTs, llaves privadas o strings de conexión a base de datos.
+./audits/latest_repo/05_security_rpc_docker_ci.txt:46:./.agents/generate_batch_4.py:33:- [ ] ¿Los tokens o claves sensibles (`ARBX_EDGE_TOKEN`, `DATABASE_URL`) carecen explícitamente del prefijo `NEXT_PUBLIC_`?
+./audits/latest_repo/05_security_rpc_docker_ci.txt:47:./.agents/generate_batch_4.py:102:- Auditar el bundle minificado de producción buscando regex de credenciales comunes (`DB_PASS`, `TOKEN`, `SECRET`). Si se encuentra el valor textual, hay un leak grave (Uso de NEXT_PUBLIC o importación en Client Component).
+./audits/latest_repo/05_security_rpc_docker_ci.txt:48:./.agents/generate_batch_4.py:514:      - DATABASE_URL=postgres://user:pass@db/prod
+./audits/latest_repo/05_security_rpc_docker_ci.txt:49:./.agents/memory/anti_reincidencia.md:159:| R6 | Todo servicio productor DEBE tener `DATABASE_URL` + `depends_on: postgres` | `SKILL.md` §5.R6 |
+./audits/latest_repo/05_security_rpc_docker_ci.txt:50:./.agents/memory/anti_reincidencia.md:228:## Incidente #5: Pipeline E2E Roto — searcher-rs sin DATABASE_URL (824+ oportunidades perdidas)
+./audits/latest_repo/05_security_rpc_docker_ci.txt:51:./.agents/memory/anti_reincidencia.md:240:  REDIS_URL: redis://redis:6379
+./audits/latest_repo/05_security_rpc_docker_ci.txt:52:./.agents/memory/anti_reincidencia.md:242:  # ← DATABASE_URL AUSENTE
+./audits/latest_repo/05_security_rpc_docker_ci.txt:53:./.agents/memory/anti_reincidencia.md:244:Sin `DATABASE_URL`, el `main.rs` inicializaba `db_pool = None`. En `scanner.rs` línea 346:
+./audits/latest_repo/05_security_rpc_docker_ci.txt:54:./.agents/memory/anti_reincidencia.md:253:Omisión de `DATABASE_URL` en la sección `environment` de `searcher-rs` dentro de `compose.dev.yml`. El código de `main.rs` trata la conexión a PostgreSQL como opcional (línea 64-68: `warn!("DATABASE_URL not set; scanner will publish to stream but NOT persist")`), lo cual es correcto para desarrollo local pero catastrófico en producción.
+./audits/latest_repo/05_security_rpc_docker_ci.txt:55:./.agents/memory/anti_reincidencia.md:258:- Todo servicio backend que produzca datos para el Dashboard DEBE tener `DATABASE_URL` en `compose.dev.yml`.
+./audits/latest_repo/05_security_rpc_docker_ci.txt:56:./.agents/memory/anti_reincidencia.md:270:- Después de agregar `DATABASE_URL` y reiniciar: ejecutar `SELECT COUNT(*) FROM opportunities` y confirmar que el número crece.
+./audits/latest_repo/05_security_rpc_docker_ci.txt:57:./.agents/memory/anti_reincidencia.md:276:- `backend/searcher-rs/src/main.rs` (líneas 51-68: `DATABASE_URL` handling)
+
+## Posibles secretos hardcodeados por patrón (redactado)
+./.agent/rule_01_deployment_workflow.md:32:  - Acceso al dashboard: `https://<REDACTED_URL> o dominio configurado.
+./.agent/rule_01_deployment_workflow.md:61:     └── Abrir https://<REDACTED_URL> en el navegador
+./.agent/skill_013_arbitraje_dex_dex.md:126:    - "https://<REDACTED_URL>
+./.agent/skill_013_arbitraje_dex_dex.md:127:  mev_endpoint: "https://<REDACTED_URL>
+./.agent/skill_021_lectura_on_chain_rpcs.md:83:    "rpc_used": "alchemy_primary",
+./.agent/skill_022_gestion_dinamica_rpcs.md:79:    "primary_node": "alchemy_poly_mainnet",
+./.agent/skill_022_gestion_dinamica_rpcs.md:81:      { "id": "alchemy", "ping_ms": 32, "block": 50123000, "score": 98 },
+./.agent/skill_022_gestion_dinamica_rpcs.md:127:    - "https://<REDACTED_URL>
+./.agent/skill_022_gestion_dinamica_rpcs.md:129:    - url: "https://<REDACTED_URL>
+./.agent/skill_022_gestion_dinamica_rpcs.md:132:    - url: "https://<REDACTED_URL>
+./.agent/skill_027_balancer_weighted.md:80:    "pool_id": "0x<REDACTED_PRIVATE_OR_HASH>",
+./.agent/skill_029_simulacion_pre_trade.md:123:  rpc_simulation_node: "https://<REDACTED_URL>
+./.agent/skill_030_deteccion_honeypots.md:91:- Sub-módulo forense independiente. Puede conectarse asincrónicamente a la API de GoPlus Security (`https://<REDACTED_URL> y simultáneamente ejecutar el "Dynamic Simulation Checker" on-chain local.
+./.agent/skill_037_data_lake_timeseries.md:127:  write_endpoint: "https://<REDACTED_URL>
+./.agent/skill_050_mev_blocker_private_tx.md:129:    - "https://<REDACTED_URL>
+./.agent/skill_050_mev_blocker_private_tx.md:130:    - "https://<REDACTED_URL>
+./.agent/skill_050_mev_blocker_private_tx.md:131:    - "https://<REDACTED_URL>
+./.agent/skill_050_mev_blocker_private_tx.md:132:    - "https://<REDACTED_URL>
+./.agent/skill_071_sybil_api_management.md:116:- [ ] Optimización de Memoria TLS/SSL Cripto O(1): Mantener 50 conexiones `wss://<REDACTED_URL> (Websockets Seguros L2 Cripto) abiertas devora RAM y CPU (Handshake TLS Overhead L1 L2). Usar librerías C++ nativas `uWebSockets` o `Rust Tungstenite` L2 O(1) para sostener Cientos de Conexiones HFT sin Garbage Collection Penalty Cripto O(1).
+./.agent/skill_082_tcp_kernel_bypassing_hft.md:16:7. WebSocket TLS/SSL Handshake Offloading L2 O(1): Desencriptar TLS (wss:// O(1) L2) Consume Pura CPU HFT O(1) L2. Esta Skill Delega Cripto O(1) La Criptografía Asimétrica (AES-GCM L2 O(1)) Directo a Aceleradores de Hardware O(1) o Hilos C++ Especializados O(1), Dejando El Hilo Maestro HFT L2 Libre Para Matemática De Arbitraje Cripto O(1).
+./.agent/skills/SKILL_048_BLOCKCHAIN_NODE_OPERATION.md:24:lighthouse bn --network mainnet --http --execution-endpoint https://<REDACTED_URL>
+./.agent/skills/hft_elite_50/SKILL_048_BLOCKCHAIN_NODE_OPERATION.md:24:lighthouse bn --network mainnet --http --execution-endpoint https://<REDACTED_URL>
+./.agent/skills/rule_01_deployment_workflow.md:32:  - Acceso al dashboard: `https://<REDACTED_URL> o dominio configurado.
+./.agent/skills/rule_01_deployment_workflow.md:61:     └── Abrir https://<REDACTED_URL> en el navegador
+./.agent/skills/skill_013_arbitraje_dex_dex.md:126:    - "https://<REDACTED_URL>
+./.agent/skills/skill_013_arbitraje_dex_dex.md:127:  mev_endpoint: "https://<REDACTED_URL>
+./.agent/skills/skill_021_lectura_on_chain_rpcs.md:83:    "rpc_used": "alchemy_primary",
+./.agent/skills/skill_022_gestion_dinamica_rpcs.md:79:    "primary_node": "alchemy_poly_mainnet",
+./.agent/skills/skill_022_gestion_dinamica_rpcs.md:81:      { "id": "alchemy", "ping_ms": 32, "block": 50123000, "score": 98 },
+./.agent/skills/skill_022_gestion_dinamica_rpcs.md:127:    - "https://<REDACTED_URL>
+./.agent/skills/skill_022_gestion_dinamica_rpcs.md:129:    - url: "https://<REDACTED_URL>
+./.agent/skills/skill_022_gestion_dinamica_rpcs.md:132:    - url: "https://<REDACTED_URL>
+./.agent/skills/skill_027_balancer_weighted.md:80:    "pool_id": "0x<REDACTED_PRIVATE_OR_HASH>",
+./.agent/skills/skill_029_simulacion_pre_trade.md:123:  rpc_simulation_node: "https://<REDACTED_URL>
+./.agent/skills/skill_030_deteccion_honeypots.md:91:- Sub-módulo forense independiente. Puede conectarse asincrónicamente a la API de GoPlus Security (`https://<REDACTED_URL> y simultáneamente ejecutar el "Dynamic Simulation Checker" on-chain local.
+./.agent/skills/skill_037_data_lake_timeseries.md:127:  write_endpoint: "https://<REDACTED_URL>
+./.agent/skills/skill_050_mev_blocker_private_tx.md:129:    - "https://<REDACTED_URL>
+./.agent/skills/skill_050_mev_blocker_private_tx.md:130:    - "https://<REDACTED_URL>
+./.agent/skills/skill_050_mev_blocker_private_tx.md:131:    - "https://<REDACTED_URL>
+./.agent/skills/skill_050_mev_blocker_private_tx.md:132:    - "https://<REDACTED_URL>
+./.agent/skills/skill_071_sybil_api_management.md:116:- [ ] Optimización de Memoria TLS/SSL Cripto O(1): Mantener 50 conexiones `wss://<REDACTED_URL> (Websockets Seguros L2 Cripto) abiertas devora RAM y CPU (Handshake TLS Overhead L1 L2). Usar librerías C++ nativas `uWebSockets` o `Rust Tungstenite` L2 O(1) para sostener Cientos de Conexiones HFT sin Garbage Collection Penalty Cripto O(1).
+./.agent/skills/skill_082_tcp_kernel_bypassing_hft.md:16:7. WebSocket TLS/SSL Handshake Offloading L2 O(1): Desencriptar TLS (wss:// O(1) L2) Consume Pura CPU HFT O(1) L2. Esta Skill Delega Cripto O(1) La Criptografía Asimétrica (AES-GCM L2 O(1)) Directo a Aceleradores de Hardware O(1) o Hilos C++ Especializados O(1), Dejando El Hilo Maestro HFT L2 Libre Para Matemática De Arbitraje Cripto O(1).
+./.agents/generate_batch_1.py:436:const res = await fetch("https://<REDACTED_URL> {
+./.agents/generate_batch_1.py:523:    const socket = io('https://<REDACTED_URL>
+./.agents/generate_batch_2.py:34:- [ ] En Server Components: ¿Se usa acceso directo a la DB o Servicios en lugar de `fetch("https://<REDACTED_URL>
+./.agents/generate_batch_2.py:95:  const res = await fetch("https://<REDACTED_URL>
+./.agents/generate_batch_2.py:179:  const res = await fetch('https://<REDACTED_URL> {
+./.agents/generate_batch_4.py:528:      - NEXT_PUBLIC_API_URL=https://<REDACTED_URL> # El Server Node lo leerá, pero el Navegador jamás lo verá.
+./.agents/github/codex-pr-103-comments.md:28:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:34:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Restore env bootstrap before starting E2E compose stack**
+./.agents/github/codex-pr-103-comments.md:47:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:53:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Reintroduce localhost CI opt-in for production Next builds**
+./.agents/github/codex-pr-103-comments.md:55:This unconditional production guard now rejects any localhost `NEXT_PUBLIC_EDGE_URL`, but the dev/E2E compose path builds the frontend with `NEXT_PUBLIC_EDGE_URL` defaulting to `https://<REDACTED_URL> Because the frontend Docker build runs `next build` in production mode, this throw aborts the image build and prevents the stack from coming up in local/E2E environments that intentionally use localhost routing.
+./.agents/github/codex-pr-103-comments.md:66:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:72:**<sub><sub>![P2 Badge](https://<REDACTED_URL>  Preserve edge error taxonomy instead of hardcoding unreachable**
+./.agents/github/codex-pr-103-comments.md:85:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:91:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Deploy VPS stack from supported compose file**
+./.agents/github/codex-pr-103-comments.md:104:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:110:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Use the existing SSH secret name in hardened deploy**
+./.agents/github/codex-pr-103-comments.md:123:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:129:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Run DB bootstrap before starting API in E2E workflow**
+./.agents/github/codex-pr-103-comments.md:142:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:148:**<sub><sub>![P2 Badge](https://<REDACTED_URL>  Keep SSH port configurable in VPS deploy workflow**
+./.agents/github/codex-pr-103-comments.md:161:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:166:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Run Rust CI commands from backend workspace**
+./.agents/github/codex-pr-103-comments.md:179:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:185:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Push images on tag builds before SBOM/signing**
+./.agents/github/codex-pr-103-comments.md:198:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:203:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Restore .js extension in NodeNext route imports**
+./.agents/github/codex-pr-103-comments.md:216:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:221:**<sub><sub>![P2 Badge](https://<REDACTED_URL>  Point setup-node cache path at an existing lockfile**
+./.agents/github/codex-pr-103-comments.md:234:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:240:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Fix invalid YAML scalar in Foundry toolchain config**
+./.agents/github/codex-pr-103-comments.md:253:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:259:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Correct malformed gitleaks step syntax in security workflow**
+./.agents/github/codex-pr-103-comments.md:272:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:278:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Restore blocking behavior for high-severity npm audit**
+./.agents/github/codex-pr-103-comments.md:291:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:297:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Fail contract CI when forge checks fail**
+./.agents/github/codex-pr-103-comments.md:310:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:316:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Pass cargo-audit ignore flags in the same command**
+./.agents/github/codex-pr-103-comments.md:329:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:335:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Keep cargo-audit failing when advisories are present**
+./.agents/github/codex-pr-103-comments.md:348:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:354:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Make Foundry tests blocking again**
+./.agents/github/codex-pr-103-comments.md:367:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:373:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Restore additive reconciliation in tokens migration**
+./.agents/github/codex-pr-103-comments.md:386:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:392:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Replace unsupported IF NOT EXISTS on ADD CONSTRAINT**
+./.agents/github/codex-pr-103-comments.md:405:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:411:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Move RAISE NOTICE back into a PL/pgSQL block**
+./.agents/github/codex-pr-103-comments.md:424:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:430:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Add feature_manifest columns before inserting v68 rows**
+./.agents/github/codex-pr-103-comments.md:443:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:449:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Restore network normalization in IP anonymization**
+./.agents/github/codex-pr-103-comments.md:462:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:468:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Fail lint-no-hardcode when violations are detected**
+./.agents/github/codex-pr-103-comments.md:481:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:487:**<sub><sub>![P1 Badge](https://<REDACTED_URL>  Re-allow expect/unwrap lints in signer test module**
+./.agents/github/codex-pr-103-comments.md:500:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:515:[Your team has set up Codex to review pull requests in this repo](https://<REDACTED_URL> Reviews are triggered when you
+./.agents/github/codex-pr-103-comments.md:536:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:551:[Your team has set up Codex to review pull requests in this repo](https://<REDACTED_URL> Reviews are triggered when you
+./.agents/github/codex-pr-103-comments.md:572:- URL: https://<REDACTED_URL>
+./.agents/github/codex-pr-103-comments.md:587:[Your team has set up Codex to review pull requests in this repo](https://<REDACTED_URL> Reviews are triggered when you
+./.agents/memory/anti_reincidencia.md:14:El dashboard del operador en `https://<REDACTED_URL> presentaba una cascada de errores React (#425, #418, #423). La aplicación caía de SSR a un costoso Client-Side Rendering completo. La interfaz parpadeaba y mostraba overlays de error.
+./.agents/memory/anti_reincidencia.md:18:2. El componente `SiteHeader` en `layout.tsx` llamaba a `getApiBaseUrl()`, que resolvía a `https://<REDACTED_URL> en servidor y `https://<REDACTED_URL> en cliente.
+./.agents/memory/anti_reincidencia.md:19:3. El despliegue al VPS se hizo sin `--env-file .env`, causando que `NEXT_PUBLIC_EDGE_URL` cayera al fallback `https://<REDACTED_URL>
+./.agents/memory/anti_reincidencia.md:53:`docker/compose.dev.yml` define fallbacks de desarrollo (`${NEXT_PUBLIC_EDGE_URL:-https://<REDACTED_URL> que son seguros para desarrollo local pero letales si se filtran al build de producción.
+./.agents/memory/anti_reincidencia.md:638:Operador accedió a `https://<REDACTED_URL> desde Chrome móvil Android. Vio el error boundary de la app (`error.tsx`) con mensaje "Algo se rompió" y diagnóstico técnico:
+./.agents/skills/04-rendering-strategy-master/implementation-patterns.md:22:const res = await fetch("https://<REDACTED_URL> {
+./.agents/skills/05-initial-snapshot-live-update-engineer/implementation-patterns.md:17:    const socket = io('https://<REDACTED_URL>
+./.agents/skills/06-data-fetching-strategist/anti-patterns.md:10:  const res = await fetch("https://<REDACTED_URL>
+./.agents/skills/06-data-fetching-strategist/checklist.md:3:- [ ] En Server Components: ¿Se usa acceso directo a la DB o Servicios en lugar de `fetch("https://<REDACTED_URL>
+./.agents/skills/07-cache-components-revalidation-expert/implementation-patterns.md:7:  const res = await fetch('https://<REDACTED_URL> {
+./.agents/skills/20-deployment-runtime-scaling-strategist/anti-patterns.md:12:      - NEXT_PUBLIC_API_URL=https://<REDACTED_URL> # El Server Node lo leerá, pero el Navegador jamás lo verá.
+./.agents/skills/INDEX.md:11:| `alchemy-rpc-robust-integration` | Web3 / RPC | Alchemy Docs | Caídas RPC, Rate Limits (429) | Medio | Activa |
+./.agents/skills/INDEX.md:23:   - `alchemy-rpc-robust-integration`: La conexión al mempool es la sangre del proyecto.
+./.agents/skills/INDEX.md:33:- **Tareas de Alchemy/RPC**: Se activa `alchemy-rpc-robust-integration`.
+./.agents/skills/PROJECT_APPLICATION_PLAN.md:8:- `alchemy-rpc-robust-integration`: Para garantizar que el bot `searcher-rs` no se caiga cuando Alchemy hace throttling.
+./.agents/skills/SKILL_048_BLOCKCHAIN_NODE_OPERATION.md:24:lighthouse bn --network mainnet --http --execution-endpoint https://<REDACTED_URL>
+./.agents/skills/alchemy-rpc-robust-integration/SKILL.md:10:https://<REDACTED_URL>
+./.agents/skills/alchemy-rpc-robust-integration/SKILL.md:17:- **Filtros Avanzados**: Alchemy provee APIs mejoradas (ej. `alchemy_pendingTransactions`) específicas para MEV y monitoreo de mempool.
+./.agents/skills/alchemy-rpc-robust-integration/metadata.json:2:  "name": "alchemy-rpc-robust-integration",
+./.agents/skills/alchemy-rpc-robust-integration/metadata.json:5:  "source_urls": ["https://<REDACTED_URL>
+./.agents/skills/alchemy-rpc-robust-integration/metadata.json:10:  "skill_path": "C:\\Users\\HFRC\\Desktop\\arbitragex_v2_productivo_full\\.agents\\skills\\alchemy-rpc-robust-integration",
+./.agents/skills/anti_reincidencia_operativa/SKILL.md:46:- `getApiBaseUrl()` resolvía a `https://<REDACTED_URL> en el servidor (Docker DNS) pero a `https://<REDACTED_URL> en el navegador.
+./.agents/skills/anti_reincidencia_operativa/SKILL.md:54:**Causa operacional:** `docker compose build` se ejecutó SIN `--env-file .env`. Next.js resolvió `NEXT_PUBLIC_EDGE_URL` al fallback de `compose.dev.yml`: `https://<REDACTED_URL> Este valor se inyectó estáticamente en el bundle JS de producción. Resultado: la API del dashboard apuntaba a un puerto vacío en el navegador del operador.
+./.agents/skills/arbx-edge-worker-proxy-wiring/SKILL.md:11:Cuando un nuevo endpoint (ej. `runtime-status`) se ha expuesto en el `api-server` (puerto 8080) y necesita ser consumible por el frontend público a través de `https://<REDACTED_URL>
+./.agents/skills/arbx-edge-worker-proxy-wiring/SKILL.md:23:- `curl -s "https://<REDACTED_URL> | jq`
+./.agents/skills/arbx-fail-honest-runtime-status/SKILL.md:23:- `ssh arbx "curl -s https://<REDACTED_URL> | jq"`
+./.agents/skills/arbx-vps-verification-runbook/SKILL.md:15:- Dominios de exposición públicos en Cloudflare (e.g., `https://<REDACTED_URL>
+./.agents/skills/arbx-vps-verification-runbook/SKILL.md:23:- Curl Interno (bypass Firewall): `ssh arbx "curl -s https://<REDACTED_URL> | jq"`
+./.agents/skills/arbx-vps-verification-runbook/SKILL.md:24:- Curl Público (Edge): `curl -s "https://<REDACTED_URL> | jq`
+./.agents/skills/artemis-bot-framework/SKILL.md:10:https://<REDACTED_URL>
+./.agents/skills/artemis-bot-framework/SKILL.md:11:https://<REDACTED_URL>
+./.agents/skills/artemis-bot-framework/metadata.json:5:  "source_urls": ["https://<REDACTED_URL> "https://<REDACTED_URL>
+./.agents/skills/cloud-low-latency-infrastructure/SKILL.md:10:https://<REDACTED_URL>
+./.agents/skills/cloud-low-latency-infrastructure/metadata.json:5:  "source_urls": ["https://<REDACTED_URL>
+./.agents/skills/hft_elite_50/SKILL_048_BLOCKCHAIN_NODE_OPERATION.md:24:lighthouse bn --network mainnet --http --execution-endpoint https://<REDACTED_URL>
+./.agents/skills/rule_01_deployment_workflow.md:32:  - Acceso al dashboard: `https://<REDACTED_URL> o dominio configurado.
+./.agents/skills/rule_01_deployment_workflow.md:61:     └── Abrir https://<REDACTED_URL> en el navegador
+./.agents/skills/rule_03_nextjs_docker_build_strictness.md:11:- **El Problema**: Si el archivo `.env` del servidor se actualiza *después* de haber construido la imagen Docker, los cambios **NO** tendrán ningún efecto en el frontend, ya que el JS estático mantendrá los valores antiguos o los "fallbacks" definidos en el código (ej. `https://<REDACTED_URL>
+./.agents/skills/rule_04_nextjs_docker_env_propagation.md:16:        NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:-https://<REDACTED_URL>
+./.agents/skills/rule_04_nextjs_docker_env_propagation.md:23:- Docker Compose resuelve la interpolación aplicando el fallback hardcodeado: `https://<REDACTED_URL>
+./.agents/skills/rule_04_nextjs_docker_env_propagation.md:43:curl -I https://<REDACTED_URL>
+./.agents/skills/rule_04_nextjs_docker_env_propagation.md:45:Si el resultado de `connect-src` contiene `localhost`, **LA REGLA FUE VIOLADA** y la inyección falló. Debe contener URLs productivas absolutas (ej. `https://<REDACTED_URL>
+./.agents/skills/rust-mev-architecture/SKILL.md:10:https://<REDACTED_URL>
+./.agents/skills/rust-mev-architecture/metadata.json:5:  "source_urls": ["https://<REDACTED_URL>
+./.agents/skills/skill_013_arbitraje_dex_dex.md:126:    - "https://<REDACTED_URL>
+./.agents/skills/skill_013_arbitraje_dex_dex.md:127:  mev_endpoint: "https://<REDACTED_URL>
+./.agents/skills/skill_021_lectura_on_chain_rpcs.md:83:    "rpc_used": "alchemy_primary",
+./.agents/skills/skill_022_gestion_dinamica_rpcs.md:79:    "primary_node": "alchemy_poly_mainnet",
+./.agents/skills/skill_022_gestion_dinamica_rpcs.md:81:      { "id": "alchemy", "ping_ms": 32, "block": 50123000, "score": 98 },
+./.agents/skills/skill_022_gestion_dinamica_rpcs.md:127:    - "https://<REDACTED_URL>
+./.agents/skills/skill_022_gestion_dinamica_rpcs.md:129:    - url: "https://<REDACTED_URL>
+./.agents/skills/skill_022_gestion_dinamica_rpcs.md:132:    - url: "https://<REDACTED_URL>
+./.agents/skills/skill_027_balancer_weighted.md:80:    "pool_id": "0x<REDACTED_PRIVATE_OR_HASH>",
+./.agents/skills/skill_029_simulacion_pre_trade.md:123:  rpc_simulation_node: "https://<REDACTED_URL>
+./.agents/skills/skill_030_deteccion_honeypots.md:91:- Sub-módulo forense independiente. Puede conectarse asincrónicamente a la API de GoPlus Security (`https://<REDACTED_URL> y simultáneamente ejecutar el "Dynamic Simulation Checker" on-chain local.
+./.agents/skills/skill_037_data_lake_timeseries.md:127:  write_endpoint: "https://<REDACTED_URL>
+./.agents/skills/skill_050_mev_blocker_private_tx.md:129:    - "https://<REDACTED_URL>
+./.agents/skills/skill_050_mev_blocker_private_tx.md:130:    - "https://<REDACTED_URL>
+./.agents/skills/skill_050_mev_blocker_private_tx.md:131:    - "https://<REDACTED_URL>
+./.agents/skills/skill_050_mev_blocker_private_tx.md:132:    - "https://<REDACTED_URL>
+./.agents/skills/skill_071_sybil_api_management.md:116:- [ ] Optimización de Memoria TLS/SSL Cripto O(1): Mantener 50 conexiones `wss://<REDACTED_URL> (Websockets Seguros L2 Cripto) abiertas devora RAM y CPU (Handshake TLS Overhead L1 L2). Usar librerías C++ nativas `uWebSockets` o `Rust Tungstenite` L2 O(1) para sostener Cientos de Conexiones HFT sin Garbage Collection Penalty Cripto O(1).
+./.agents/skills/skill_082_tcp_kernel_bypassing_hft.md:16:7. WebSocket TLS/SSL Handshake Offloading L2 O(1): Desencriptar TLS (wss:// O(1) L2) Consume Pura CPU HFT O(1) L2. Esta Skill Delega Cripto O(1) La Criptografía Asimétrica (AES-GCM L2 O(1)) Directo a Aceleradores de Hardware O(1) o Hilos C++ Especializados O(1), Dejando El Hilo Maestro HFT L2 Libre Para Matemática De Arbitraje Cripto O(1).
+./.agents/skills/skill_101_react_hydration_mounted_snapshot.md:46:   - Validar que el navegador solicita nuevos *Chunks* de JavaScript mediante un *Hard Refresh* (`Ctrl+F5`) o verificando el código fuente: `curl -s https://<REDACTED_URL> | grep -oE 'page-[a-f0-9]+\.js'`
+./.agents/skills/sop_flashbots_bundles/SKILL.md:13:- Endpoint: `https://<REDACTED_URL> (RPC) y `https://<REDACTED_URL> (relay para bundles).
+./.agents/skills/sop_flashbots_bundles/SKILL.md:43:    let relay_url = "https://<REDACTED_URL>
+./.agents/skills/sop_sandwich_defensive/SKILL.md:36:TODAS las txs de ArbitrageX van via `https://<REDACTED_URL> **Excluye del mempool público** → invisible para sandwich bots.
+./.agents/skills/sop_sandwich_defensive/SKILL.md:56:    .on_http("https://<REDACTED_URL>
+./.agents/skills/sop_sandwich_defensive/SKILL.md:60:    .on_http("https://<REDACTED_URL>
+./.agents/skills/sop_scam_detection/SKILL.md:94:| Token Sniffer | Honeypot detection + risk score | https://<REDACTED_URL> |
+./.agents/skills/sop_scam_detection/SKILL.md:95:| De.Fi Scanner | Smart contract audit | https://<REDACTED_URL> |
+./.agents/skills/sop_scam_detection/SKILL.md:96:| Honeypot.is | Simulación buy+sell | https://<REDACTED_URL> |
+./.agents/skills/sop_scam_detection/SKILL.md:97:| GoPlus Security | Risk score multi-chain | https://<REDACTED_URL> |
+./.agents/skills/sop_scam_detection/SKILL.md:98:| DefiSafety | Audit transparency score | https://<REDACTED_URL> |
+./.agents/skills/viem-websocket-resilience/SKILL.md:10:https://<REDACTED_URL>
+./.agents/skills/viem-websocket-resilience/SKILL.md:11:https://<REDACTED_URL>
+./.agents/skills/viem-websocket-resilience/examples.md:13:  transport: webSocket('wss://<REDACTED_URL> {
+./.agents/skills/viem-websocket-resilience/metadata.json:5:  "source_urls": ["https://<REDACTED_URL> "https://<REDACTED_URL>
+./.agents/workflows/rule_01_deployment_workflow.md:32:  - Acceso al dashboard: `https://<REDACTED_URL> o dominio configurado.
+./.agents/workflows/rule_01_deployment_workflow.md:61:     └── Abrir https://<REDACTED_URL> en el navegador
+./.agents/workflows/skill_013_arbitraje_dex_dex.md:126:    - "https://<REDACTED_URL>
+./.agents/workflows/skill_013_arbitraje_dex_dex.md:127:  mev_endpoint: "https://<REDACTED_URL>
+./.agents/workflows/skill_021_lectura_on_chain_rpcs.md:83:    "rpc_used": "alchemy_primary",
+./.agents/workflows/skill_022_gestion_dinamica_rpcs.md:79:    "primary_node": "alchemy_poly_mainnet",
+./.agents/workflows/skill_022_gestion_dinamica_rpcs.md:81:      { "id": "alchemy", "ping_ms": 32, "block": 50123000, "score": 98 },
+./.agents/workflows/skill_022_gestion_dinamica_rpcs.md:127:    - "https://<REDACTED_URL>
+./.agents/workflows/skill_022_gestion_dinamica_rpcs.md:129:    - url: "https://<REDACTED_URL>
+./.agents/workflows/skill_022_gestion_dinamica_rpcs.md:132:    - url: "https://<REDACTED_URL>
+./.agents/workflows/skill_027_balancer_weighted.md:80:    "pool_id": "0x<REDACTED_PRIVATE_OR_HASH>",
+./.agents/workflows/skill_029_simulacion_pre_trade.md:123:  rpc_simulation_node: "https://<REDACTED_URL>
+./.agents/workflows/skill_030_deteccion_honeypots.md:91:- Sub-módulo forense independiente. Puede conectarse asincrónicamente a la API de GoPlus Security (`https://<REDACTED_URL> y simultáneamente ejecutar el "Dynamic Simulation Checker" on-chain local.
+./.agents/workflows/skill_037_data_lake_timeseries.md:127:  write_endpoint: "https://<REDACTED_URL>
+./.agents/workflows/skill_050_mev_blocker_private_tx.md:129:    - "https://<REDACTED_URL>
+./.agents/workflows/skill_050_mev_blocker_private_tx.md:130:    - "https://<REDACTED_URL>
+./.agents/workflows/skill_050_mev_blocker_private_tx.md:131:    - "https://<REDACTED_URL>
+./.agents/workflows/skill_050_mev_blocker_private_tx.md:132:    - "https://<REDACTED_URL>
+
+## RPC Fail-Honest: módulos y guards
+backend/Cargo.lock:2896: "futures-executor",
+backend/Cargo.lock:2920:name = "futures-executor"
+backend/Cargo.lock:6681: "futures-executor",
+backend/api-server/src/credentials/validators.ts:5: * service and returns a structured result. R8 fail-honest: a validator MUST
+backend/api-server/src/index.ts:97:import { buildTopologyVaultRouter } from "./routes/topology-vault.js";
+backend/api-server/src/index.ts:471:app.use(buildTopologyVaultRouter({
+backend/api-server/src/index.ts:484:// recent restart (R8 fail-honest: surface the gap, don't fabricate zeros).
+backend/api-server/src/index.ts:868:            phase_5_completed_at, phase_5_completed_by, phase_5_paper_mode_off_at,
+backend/api-server/src/index.ts:941:  // Merge dynamic paper_mode from Redis (B0.2: per-chain key with legacy fallback).
+backend/api-server/src/index.ts:944:  // map under `paper_mode_per_chain` so the operator can see each chain
+backend/api-server/src/index.ts:945:  // independently. The legacy `execution.paper_mode` boolean is kept for
+backend/api-server/src/index.ts:946:  // retro-compat and is set to TRUE if ANY chain is in paper mode (safe-side
+backend/api-server/src/index.ts:964:        let enabled = cfg.execution.paper_mode;
+backend/api-server/src/index.ts:981:    ? cfg.execution.paper_mode
+backend/api-server/src/index.ts:989:      paper_mode: dynamicPaperMode,
+backend/api-server/src/index.ts:990:      paper_mode_per_chain: perChainPaperMode,
+backend/api-server/src/index.ts:991:      paper_mode_all_chains_in_paper: allEnabled,
+backend/api-server/src/lib/pii-wireado-recursive.test.ts:15: * R8 fail-honest: the test reports the violating file + table; it never
+backend/api-server/src/lib/registry-engine.ts:308:    // Narrowing fail-honest (R8): los 6 descriptors canónicos usan z.object,
+backend/api-server/src/lib/registry-engine.ts:492:    tier: z.enum(["primary","secondary","fallback","archive"]).default("primary"),
+backend/api-server/src/lib/registry-engine.ts:527:      "flashloan_uniswap_v3","wallet_topology","gas_sponsor","cold_treasury",
+backend/api-server/src/readiness/types.ts:4: * The 16 items represent the full doctrinal gate between paper_mode=true and
+backend/api-server/src/readiness/verifiers/g-mev-1.ts:19: *   2. Body mentions sandwich, frontrun, and the chosen private mempool
+backend/api-server/src/readiness/verifiers/g-mev-1.ts:71:    reason: "policy doc names sandwich + frontrun + private-mempool vendor with structured bullets",
+backend/api-server/src/readiness/verifiers/g-net-1.ts:63:  // contract requires net for live-mode pre-execute Gate 3 (C1 fix).
+backend/api-server/src/readiness/verifiers/g-net-1.ts:79:    reason: `scanner.rs wires ${wires_net ? "net_expected_profit_usd (live-mode gate)" : "expected_profit_usd (gross)"} into opportunity payload; spine evaluator subtracts 8 cost components incl. relay_fee_usd`,
+backend/api-server/src/readiness/verifiers/g-pap-1.ts:13: * unit tests but break under real mempool pressure.
+backend/api-server/src/readiness/verifiers/g-pap-1.ts:20: *      OR cfg system.paper_mode_default=true).
+backend/api-server/src/readiness/verifiers/g-pap-1.ts:53:  let paper_mode_enabled = false;
+backend/api-server/src/readiness/verifiers/g-pap-1.ts:60:        paper_mode_enabled = !!j.enabled;
+backend/api-server/src/readiness/verifiers/g-pap-1.ts:63:        paper_mode_enabled = raw === "1" || raw === "true";
+backend/api-server/src/readiness/verifiers/g-pap-1.ts:66:      // No key set — fall back to default (production: paper_mode_default=true).
+backend/api-server/src/readiness/verifiers/g-pap-1.ts:69:      paper_mode_enabled = false;
+backend/api-server/src/readiness/verifiers/g-pap-1.ts:80:  if (!paper_mode_enabled) {
+backend/api-server/src/readiness/verifiers/g-pec-1.ts:19: * Doctrine: before any submission to relays, the executor must pass
+backend/api-server/src/readiness/verifiers/g-rpc-1.ts:78:      reason: "no arbx_rpc_provider_state metric series — searcher-rs not exposing RPC pool state",
+backend/api-server/src/readiness/verifiers/g-rpc-1.ts:93:      reason: `${totalSeries} providers configured but all are Open (circuit broken) — pool is dead`,
+backend/api-server/src/routes/admin-chains.ts:26: *     verifies returned chain id matches, measures latency. R8 fail-honest:
+backend/api-server/src/routes/agents-status.ts:17: * R8 fail-honest: NO agent is silently marked PASS. If verifyAll fails,
+backend/api-server/src/routes/agents-status.ts:243:      "4/4 SSR tests assert R8 fail-honest contract",
+backend/api-server/src/routes/agents-status.ts:305:    // SIM_ERROR, RPC health, route/token blacklists, executor health,
+backend/api-server/src/routes/agents-status.ts:331:      "F4: primary_chain fail-honest — empty enabled_chains aborts boot instead of silent fallback to chain 1",
+backend/api-server/src/routes/defi.ts:15: * R8 fail-honest: never fabricates rows. Empty array = no data.
+backend/api-server/src/routes/dexes.ts:21: * R8 fail-honest: never synthesises rows. Empty arrays = no DEXes seeded.
+backend/api-server/src/routes/dexes.ts:312:      // dexes.* if the per-chain row is missing. R8 fail-honest: NULL flows
+backend/api-server/src/routes/opportunities-live.ts:13: *   - NEVER synthesize data (R8 fail-honest). NULL = no data. 0 = data is zero.
+backend/api-server/src/routes/opportunities-live.ts:172:-- right now" by the dashboard, which is fail-honest.
+backend/api-server/src/routes/opportunities-live.ts:219: * R8 fail-honest: we still don't fabricate a symbol when we don't have one
+backend/api-server/src/routes/opportunities-live.ts:308: * re-doing the rejection_reason null-check inline. R8 fail-honest: derivation
+backend/api-server/src/routes/opportunities-live.ts:428:    // Target-driven simulation (R8 fail-honest: all nullable, source-labeled).
+backend/api-server/src/routes/opportunities-live.ts:453: *                wire shape's simulated_* fields stay null (R8 fail-honest).
+backend/api-server/src/routes/opportunities-live.ts:554:      // R8 fail-honest:
+backend/api-server/src/routes/pools.ts:10: * R8 fail-honest: never synthesizes rows. Array empty = no matching pools.
+backend/api-server/src/routes/readiness-extras.test.ts:7: *   - envBlockers tolerates paper-mode and blocks non-paper modes.
+backend/api-server/src/routes/readiness-extras.test.ts:51:  it("emits rpc_http_1_missing when RPC_HTTP_1 absent", () => {
+backend/api-server/src/routes/readiness-extras.test.ts:52:    delete process.env["RPC_HTTP_1"];
+backend/api-server/src/routes/readiness-extras.test.ts:62:  it("emits executor_1_missing when EXECUTOR_1 absent", () => {
+backend/api-server/src/routes/readiness-extras.test.ts:65:    const exec = b.find((x) => x.id === "executor_1_missing");
+backend/api-server/src/routes/readiness-extras.test.ts:104:    process.env["RPC_HTTP_1"] = "https://<REDACTED_URL>
+backend/api-server/src/routes/readiness-extras.ts:24: * R8 fail-honest contract:
+backend/api-server/src/routes/readiness-extras.ts:116:  paper_mode: boolean;
+backend/api-server/src/routes/readiness-extras.ts:145:  // A.4 fork real requires an archive-capable RPC endpoint.
+backend/api-server/src/routes/readiness-extras.ts:146:  const rpc = probeEnv("RPC_HTTP_1");
+backend/api-server/src/routes/readiness-extras.ts:153:      title: "RPC_HTTP_1 archive node missing",
+backend/api-server/src/routes/readiness-extras.ts:155:        "A.4 fork validation cannot execute without an archive-capable Ethereum RPC URL. " +
+backend/api-server/src/routes/readiness-extras.ts:158:        "Set RPC_HTTP_1 to a Tier-1 archive RPC (Alchemy/QuickNode/Infura archive plan) in the .env on the VPS, then restart api-server.",
+backend/api-server/src/routes/readiness-extras.ts:170:      id: "executor_1_missing",
+backend/api-server/src/routes/readiness-extras.ts:178:        "Deploy contracts/executor/ArbitrageExecutor.sol via the existing Foundry script, then export EXECUTOR_1 in the .env on the VPS.",
+backend/api-server/src/routes/readiness-extras.ts:325:        "tests/multistep_fork.rs exists with #[ignore]; it has not been run against a real archive RPC + deployed EXECUTOR. Without this, REVM cannot be trusted on mainnet state.",
+backend/api-server/src/routes/readiness-extras.ts:327:        "Provide RPC_HTTP_1 + EXECUTOR_1 + verify ERC20 storage layouts with `cast storage`, then run `cargo test -p searcher-rs --test multistep_fork -- --ignored --nocapture`.",
+backend/api-server/src/routes/readiness-extras.ts:355:        "Doctrinal CBs required: DD 10/20/30/40 tiers, max revert rate, max gas burn, max latency, max SIM_ERROR, RPC health, route/token blacklists, executor health, confidence-scoring tie-in.",
+backend/api-server/src/routes/readiness-extras.ts:531:          "Provide RPC_HTTP_1 + EXECUTOR_1, verify ERC20 storage layouts, then run multistep_fork ignored test.",
+backend/api-server/src/routes/readiness-extras.ts:557:        paper_mode: paperMode,
+backend/api-server/src/routes/risk-circuit-breakers.test.ts:8: *   - RPC health → BLOCKED when RPC_HTTP_1 missing.
+backend/api-server/src/routes/risk-circuit-breakers.test.ts:114:  it("returns BLOCKED when RPC_HTTP_1 missing", () => {
+backend/api-server/src/routes/risk-circuit-breakers.test.ts:115:    delete process.env["RPC_HTTP_1"];
+backend/api-server/src/routes/risk-circuit-breakers.test.ts:189:    // With env missing, rpc+executor are BLOCKED → overall should be BLOCKED.
+backend/api-server/src/routes/risk-circuit-breakers.test.ts:202:    process.env["RPC_HTTP_1"] = "https://<REDACTED_URL>
+backend/api-server/src/routes/risk-circuit-breakers.ts:23: *   - process.env — RPC_HTTP_1, EXECUTOR_1, ARBX_TRADE_MODE.
+backend/api-server/src/routes/risk-circuit-breakers.ts:64:  | "executor"
+backend/api-server/src/routes/risk-circuit-breakers.ts:178:  const envRpc = (process.env["RPC_HTTP_1"]?.length ?? 0) > 0;
+backend/api-server/src/routes/risk-circuit-breakers.ts:376:        detail: "RPC_HTTP_1 env var missing — no primary RPC configured.",
+backend/api-server/src/routes/risk-circuit-breakers.ts:380:        ref: "env:RPC_HTTP_1",
+backend/api-server/src/routes/risk-circuit-breakers.ts:386:      required_action: "Set RPC_HTTP_1 to an archive-capable Tier-1 endpoint.",
+backend/api-server/src/routes/risk-circuit-breakers.ts:452:      id: "executor_breaker",
+backend/api-server/src/routes/risk-circuit-breakers.ts:454:      category: "executor",
+backend/api-server/src/routes/risk-circuit-breakers.ts:469:      description: "Verifies executor presence + reachability.",
+backend/api-server/src/routes/risk-circuit-breakers.ts:475:    id: "executor_breaker",
+backend/api-server/src/routes/risk-circuit-breakers.ts:477:    category: "executor",
+backend/api-server/src/routes/risk-circuit-breakers.ts:709:        : overallState === "BLOCKED" ? "Resolve env prerequisites (RPC_HTTP_1, EXECUTOR_1) and run A.4 fork validation."
+backend/api-server/src/routes/scoring-status.ts:20: * R8 fail-honest: every "true" is grounded in source. Every "false" surfaces
+backend/api-server/src/routes/scoring-status.ts:153:    description: "Even if the pipeline is wired, scoring outputs cannot be trusted on mainnet state until A.4 fork validation has PASSED against a real archive RPC + deployed EXECUTOR.",
+backend/api-server/src/routes/scoring-status.ts:155:    required_action: "Provide RPC_HTTP_1 + EXECUTOR_1 + verify ERC20 storage layouts; run multistep_fork ignored test.",
+backend/api-server/src/routes/stubs.ts:15: * R8 fail-honest: never fabricates a fake response body. The stubs never
+backend/api-server/src/routes/tokenResolver.ts:5: * altcoin just appeared in the mempool, the enricher hasn't picked it
+backend/api-server/src/routes/tokenResolver.ts:18: *     token just keeps its "we don't know yet" placeholder. R8 fail-honest.
+backend/api-server/src/routes/topology-vault.test.ts:9:  buildTopologyVaultRouter,
+backend/api-server/src/routes/topology-vault.test.ts:11:} from "./topology-vault.js";
+backend/api-server/src/routes/topology-vault.test.ts:22:  const dir = await mkdtemp(path.join(tmpdir(), "arbx-topology-vault-"));
+backend/api-server/src/routes/topology-vault.test.ts:27:  app.use(buildTopologyVaultRouter({
+backend/api-server/src/routes/topology-vault.test.ts:42:    vaultPath: path.join(dir, "topology-vault.json"),
+backend/api-server/src/routes/topology-vault.test.ts:61:  it("requires Alchemy as first WS provider when mempool mode is filtered", () => {
+backend/api-server/src/routes/topology-vault.test.ts:65:      mempool_mode: "filtered",
+backend/api-server/src/routes/topology-vault.test.ts:73:      mempool_mode: "filtered",
+backend/api-server/src/routes/topology-vault.test.ts:86:  it("POST persists full server-side topology but returns only a redacted snapshot", async () => {
+backend/api-server/src/routes/topology-vault.test.ts:90:        .post("/api/admin/topology/mutations")
+backend/api-server/src/routes/topology-vault.test.ts:94:          mempool_mode: "filtered",
+backend/api-server/src/routes/topology-vault.test.ts:104:      expect(res.body.topology.rpc_ws_1[0].provider_kind).toBe("alchemy");
+backend/api-server/src/routes/topology-vault.test.ts:105:      expect(res.body.topology.rpc_ws_1[0].url_masked).toContain("****abcd");
+backend/api-server/src/routes/topology-vault.test.ts:106:      expect(res.body.published_to_channel).toBe("arbx:topology:mutation");
+backend/api-server/src/routes/topology-vault.test.ts:109:      const stored = await readFile(path.join(dir, "topology-vault.json"), "utf8");
+backend/api-server/src/routes/topology-vault.test.ts:114:      expect(published[0]!.channel).toBe("arbx:topology:mutation");
+backend/api-server/src/routes/topology-vault.test.ts:115:      expect(event.event).toBe("topology.mutation.committed");
+backend/api-server/src/routes/topology-vault.test.ts:126:  it("GET snapshot returns the persisted topology without leaking credentials", async () => {
+backend/api-server/src/routes/topology-vault.test.ts:130:        .post("/api/admin/topology/mutations")
+backend/api-server/src/routes/topology-vault.test.ts:132:          mempool_mode: "filtered",
+backend/api-server/src/routes/topology-vault.test.ts:139:        .get("/api/admin/topology/snapshot")
+backend/api-server/src/routes/topology-vault.test.ts:148:      expect(res.body.topology.rpc_ws_1[0].url_masked).toContain("****abcd");
+backend/api-server/src/routes/topology-vault.test.ts:158:        .post("/api/admin/topology/mutations")
+backend/api-server/src/routes/topology-vault.test.ts:160:          mempool_mode: "filtered",
+backend/api-server/src/routes/topology-vault.test.ts:178:        .post("/api/admin/topology/mutations")
+backend/api-server/src/routes/topology-vault.test.ts:180:          mempool_mode: "firehose",
+backend/api-server/src/routes/topology-vault.ts:20:  mempool_mode: MempoolMode;
+backend/api-server/src/routes/topology-vault.ts:31:  mempool_mode: MempoolMode;
+backend/api-server/src/routes/topology-vault.ts:37:  event: "topology.mutation.committed";
+backend/api-server/src/routes/topology-vault.ts:42:  mempool_mode: MempoolMode;
+backend/api-server/src/routes/topology-vault.ts:56:export interface TopologyVaultDeps {
+backend/api-server/src/routes/topology-vault.ts:90:export const TOPOLOGY_MUTATION_CHANNEL = "arbx:topology:mutation";
+backend/api-server/src/routes/topology-vault.ts:95:  mempool_mode: z.enum(["auto", "filtered", "firehose"]),
+backend/api-server/src/routes/topology-vault.ts:101:  return process.env["TOPOLOGY_VAULT_PATH"] ?? "/var/lib/arbx/topology-vault.staging.json";
+backend/api-server/src/routes/topology-vault.ts:189:    mempool_mode: record.mempool_mode,
+backend/api-server/src/routes/topology-vault.ts:201:  if (req.mempool_mode === "filtered" && !isAlchemyProvider(wsProviders[0]!)) {
+backend/api-server/src/routes/topology-vault.ts:212:    mempool_mode: input.mempool_mode,
+backend/api-server/src/routes/topology-vault.ts:246:    event: "topology.mutation.committed",
+backend/api-server/src/routes/topology-vault.ts:251:    mempool_mode: record.mempool_mode,
+backend/api-server/src/routes/topology-vault.ts:265:  const msg = e instanceof Error ? e.message : "invalid_topology";
+backend/api-server/src/routes/topology-vault.ts:267:  return "invalid_topology";
+backend/api-server/src/routes/topology-vault.ts:270:export function buildTopologyVaultRouter(deps: TopologyVaultDeps): express.Router {
+backend/api-server/src/routes/topology-vault.ts:277:  router.get("/api/admin/topology/snapshot", adminGate, async (_req, res) => {
+backend/api-server/src/routes/topology-vault.ts:283:          topology: null,
+backend/api-server/src/routes/topology-vault.ts:291:        topology: toSnapshot(record),
+backend/api-server/src/routes/topology-vault.ts:296:      deps.logger.warn({ event: "topology.snapshot.failed", err: (e as Error).message });
+backend/api-server/src/routes/topology-vault.ts:297:      res.status(500).json({ error: "topology_snapshot_failed" });
+backend/api-server/src/routes/topology-vault.ts:301:  router.post("/api/admin/topology/mutations", adminGate, async (req, res) => {
+backend/api-server/src/routes/topology-vault.ts:319:        "topology.mutation.commit",
+backend/api-server/src/routes/topology-vault.ts:321:        "topology",
+backend/api-server/src/routes/topology-vault.ts:331:        event: "topology.mutation.committed",
+backend/api-server/src/routes/topology-vault.ts:346:        topology: afterSnapshot,
+backend/api-server/src/routes/topology-vault.ts:351:      deps.logger.warn({ event: "topology.mutation.rejected", reason: code, error_message: e instanceof Error ? e.message : String(e), payload: req.body });
+backend/api-server/src/routes/trading-config.ts:249: * R8 fail-honest: never invents a value. All defaults are `null` (or `[]`
+backend/api-server/src/routes/trading-config.ts:530:        // canónico ni la respuesta al cliente (fail-honest).
+backend/api-server/src/routes/wallets.ts:4: * Three routes, all R8 fail-honest (empty data when not yet seeded):
+backend/api-server/src/routes/wallets.ts:14: *     capital sits behind it, which is the opposite of fail-honest.
+backend/api-server/src/routes/wallets.ts:88:      // R8 fail-honest: explicit pending hint so the WalletDetailDialog
+backend/api-server/src/services/tokenRegistry.ts:45: * R8 fail-honest
+backend/api-server/src/services/tokenValidation/index.ts:26: * R8 fail-honest: when none of the layers have data, we return a
+backend/api-server/src/services/tokenValidation/index.ts:244:  // which the searcher needs to decode pending mempool txs. End effect:
+backend/api-server/src/services/tokenValidation/liquidityReality.ts:26: * R8 fail-honest
+backend/api-server/src/services/tokenValidation/onChainTruth.ts:21: * R8 fail-honest
+backend/api-server/src/simulation/computeSimulatedNet.ts:17: * R8 fail-honest: every output carries `source: "simulation"`, notes
+backend/api-server/src/simulation/computeSimulatedNet.ts:99:   *                       amount can satisfy the ROI floor (R8 fail-honest).
+backend/api-server/src/simulation/tradingConfigSnapshot.ts:14: * R8 fail-honest: when Redis misses or the JSON is malformed, returns null
+backend/api-server/src/simulation/tradingConfigSnapshot.ts:190: * simulation for that chain — R8 fail-honest).
+backend/api-server/src/websocket.ts:82:        mempool_tx_per_sec: number;
+backend/api-server/src/websocket.ts:83:        mempool_avg_gas_price_gwei: number;
+backend/api-server/src/websocket.ts:84:        mempool_entropy_score: number;
+backend/api-server/src/websocket.ts:104:// "*" is INTENTIONALLY NOT supported — fail-honest.
+backend/api-server/src/websocket.ts:161:    if (typeof e.mempool_tx_per_sec !== 'number') return false;
+backend/api-server/src/websocket.ts:162:    if (typeof e.mempool_avg_gas_price_gwei !== 'number') return false;
+backend/api-server/src/websocket.ts:163:    if (typeof e.mempool_entropy_score !== 'number') return false;
+backend/api-server/src/websocket.ts:453:        // Error-level log pero SIN throw — fail-honest.  El WebSocket de
+backend/api-server/src/websocket.ts:490:        // 2. Validación mínima de shape — fail-honest: si no cumple el
+backend/api-server/test/migrations.test.ts:45:    const sql = readFileSync(path.join(__dirname, "../../../database/migrations/033_opportunities_fail_honest_and_cross_chain_slots.sql"), "utf8");
+backend/api-server/test/migrations.test.ts:71:    const sql = readFileSync(path.join(__dirname, "../../../database/migrations/033_opportunities_fail_honest_and_cross_chain_slots.sql"), "utf8");
+backend/api-server/test/opportunities-live.test.ts:8: *   033_*               — fail-honest nullable + cross-chain slots
+backend/api-server/test/opportunities-live.test.ts:14: *   3. expected_profit_usd is null (R8 fail-honest — not coerced to 0)
+backend/api-server/test/opportunities-live.test.ts:75:    "033_opportunities_fail_honest_and_cross_chain_slots.sql",
+backend/api-server/test/opportunities-live.test.ts:113:  // simulation when redis is null (R8 fail-honest, simulated_* fields stay
+backend/api-server/test/opportunities-live.test.ts:144:    // R8 fail-honest: no tokens row → metadata fields stay null, but the
+backend/api-server/test/opportunities-live.test.ts:190:// ── Test: R8 fail-honest — null profit ───────────────────────────────────────
+backend/api-server/test/opportunities-live.test.ts:192:describe("GET /api/v1/opportunities/live — fail-honest nulls", () => {
+backend/math-engine/src/amm_math.rs:107:/// (R8 fail-honest: missing data never synthesised).
+backend/math-engine/src/amm_math.rs:114:    // R8 fail-honest: missing inputs → 0 → caller falls back to proxy.
+backend/math-engine/src/amm_math.rs:144:    // opportunities when impact is near the threshold (R8 fail-honest direction).
+backend/math-engine/src/amm_math.rs:201:/// the distribution (R8 fail-honest — no data is synthesised).
+backend/math-engine/src/amm_math.rs:233:            0, // sqrt_price_x96 unknown without dist → 0 → returns 0.0 (fail-honest)
+backend/math-engine/src/amm_math.rs:396:    /// Zero liquidity → returns 0.0 (R8 fail-honest).
+backend/math-engine/src/amm_math.rs:405:        assert_eq!(impact, 0.0, "zero liquidity must return 0.0 (fail-honest)");
+backend/math-engine/src/amm_math.rs:408:    /// Zero sqrtPriceX96 → returns 0.0 (R8 fail-honest).
+backend/math-engine/src/amm_math.rs:419:            "zero sqrtPriceX96 must return 0.0 (fail-honest)"
+backend/math-engine/src/amm_math.rs:536:    /// With sqrt_price_x96=0 and liquidity=0, proxy returns 0.0 (R8 fail-honest).
+backend/math-engine/src/roi_engine.rs:40:///   `None` also applies at cold-start or when no row exists yet (R8 fail-honest).
+backend/math-engine/src/roi_engine.rs:48:///   `None` → no `dex_chain_metrics` row for the pool; cost NOT added (R8 fail-honest).
+backend/math-engine/src/roi_engine.rs:194:    // `None` → R8 fail-honest: no dex_chain_metrics row; zero cost added.
+backend/math-engine/src/route_math.rs:125:    /// extract value from a zero-priced pool — fail-honest).
+backend/math-engine/src/subgraph_client.rs:6://! R8 fail-honest: if the env var is absent or the query returns no pool,
+backend/math-engine/src/subgraph_client.rs:52:/// R8 fail-honest: callers that receive `None` must fall back to the proxy approximation.
+backend/prioritization-spine/src/config_aware.rs:19://!     Putting it in spine keeps searcher-rs focused on mempool I/O and lets
+backend/prioritization-spine/src/config_aware.rs:68:/// | unknown                                  |    0    | fail-honest: don't add |
+backend/prioritization-spine/src/config_aware.rs:82:        // tier we cannot resolve it here — return 0 (R8 fail-honest: don't
+backend/prioritization-spine/src/config_aware.rs:191:    /// `RejectReason::UnknownTokenPrice` (R8 fail-honest).
+backend/prioritization-spine/src/config_aware.rs:216:    ///   copy-trade cost added (R8 fail-honest — never synthesise volume data).
+backend/prioritization-spine/src/config_aware.rs:234:    ///   falls back to `max_slippage_pct` proxy (R8 fail-honest).
+backend/prioritization-spine/src/config_aware.rs:256:    ///   V3 slot0 data) → falls back to `max_slippage_pct` proxy (R8 fail-honest).
+backend/prioritization-spine/src/config_aware.rs:347:    /// `p_fail_rate` is `None` for cold-start / new strategies (R8 fail-honest:
+backend/prioritization-spine/src/config_aware.rs:373:    /// Pass `None` when no `dex_chain_metrics` row exists (R8 fail-honest).
+backend/prioritization-spine/src/config_aware.rs:401:    /// (R8 fail-honest — fallback to `max_slippage_pct` proxy).
+backend/prioritization-spine/src/config_aware.rs:430:    /// Pass `None` when the key is absent or the pool is not V3 (R8 fail-honest).
+backend/prioritization-spine/src/config_aware.rs:495:    /// (SQL path) or the proxy (R8 fail-honest).
+backend/prioritization-spine/src/config_aware.rs:598:        //   miss   → None → RejectReason::UnknownTokenPrice (R8 fail-honest)
+backend/prioritization-spine/src/config_aware.rs:662:        // R8 fail-honest: ONLY fires when BOTH oracle prices are present.
+backend/prioritization-spine/src/config_aware.rs:713:            _ => None, // None or 0-volume → R8 fail-honest: no cost
+backend/prioritization-spine/src/config_aware.rs:733:        // R8 fail-honest: if dex_adapters is empty → 0.0 (no synthetic fees).
+backend/prioritization-spine/src/config_aware.rs:751:        //   3. Neither            → 0.0 → `max_slippage_pct` proxy (R8 fail-honest).
+backend/prioritization-spine/src/config_aware.rs:808:            0.0 // no snapshot → proxy fallback (R8 fail-honest)
+backend/prioritization-spine/src/config_aware.rs:880:                    // Tier 3: flat proxy fallback (R8 fail-honest).
+backend/prioritization-spine/src/config_aware.rs:2268:    /// R8 fail-honest: when dex_adapters is empty → lp_fees_usd = 0 (no phantom fees).
+backend/prioritization-spine/src/decision.rs:44:    /// R8 fail-honest: ONLY fired when BOTH oracle prices are present.
+backend/prioritization-spine/src/erc20_storage.rs:22://! Phase 4 (round-trip executor) will consume this to populate
+backend/prioritization-spine/src/erc20_storage.rs:190:        // Never-deployed address — must fail-honest with None, not fabricate
+backend/prioritization-spine/src/feedback.rs:8://! ## Failure modes (both are fail-honest)
+backend/prioritization-spine/src/gates.rs:12:        // stub is fully removed) AND the new fail-honest "SIM_SUCCESS" sentinel
+backend/prioritization-spine/src/lib.rs:9:pub mod round_trip_executor;
+backend/prioritization-spine/src/round_trip_executor.rs:1://! Round-trip executor — Phase 4 of REVM real implementation.
+backend/prioritization-spine/src/route_plan.rs:70:    /// R8 fail-honest: missing TVL → check skipped, never synthesised.
+backend/prioritization-spine/src/strategy_config_gate.rs:706:    fn post_math_skips_pool_check_when_no_route_plan_r8_fail_honest() {
+backend/prioritization-spine/src/strategy_scores_db.rs:11://! ## R8 (fail-honest) contract
+backend/prioritization-spine/src/swap_encoder.rs:8://! This is the foundation for `simulator.rs` Phase 4 (round-trip executor),
+backend/recon/src/aggregator.rs:13://! aggregation cycle (R8 fail-honest — the spine always has the SQL fallback).
+backend/relays-client/src/main.rs:11://! Without FLASHBOTS_SIGNER_KEY or RPC_HTTP_1: /execute returns 501,
+backend/relays-client/src/main.rs:12://! consumer doesn't spawn. paper_mode=true by default; only builds+signs
+backend/relays-client/src/main.rs:36:    paper_mode::PaperModeClient,
+backend/relays-client/src/main.rs:66:            vec!["FLASHBOTS_SIGNER_KEY", "RPC_HTTP_1"],
+backend/relays-client/src/main.rs:109:    let paper_mode = PaperModeClient::connect(&redis_url, cfg.execution.paper_mode)
+backend/relays-client/src/main.rs:113:    // SECURE_BOOT (audit A2, 2026-05-10): refuse to start if paper_mode=false
+backend/relays-client/src/main.rs:118:    // validating against real on-chain state. If paper_mode is disabled without
+backend/relays-client/src/main.rs:126:        let live_mode = !paper_mode.is_enabled().await;
+backend/relays-client/src/main.rs:127:        if live_mode {
+backend/relays-client/src/main.rs:133:                    "SECURE_BOOT (audit A2): paper_mode=false but ARBX_SIMULATOR_V2_READY != \
+backend/relays-client/src/main.rs:143:                "paper_mode=false AND ARBX_SIMULATOR_V2_READY=true — live submission enabled"
+backend/relays-client/src/main.rs:397:        paper_mode: paper_mode.clone(),
+backend/relays-client/src/main.rs:424:        paper_mode = cfg.execution.paper_mode,
+backend/relays-client/src/main.rs:446:                paper_mode: paper_mode.clone(),
+backend/relays-client/src/nonce_manager.rs:65:    /// Retry semantics: on the first provider failure the pool tries the next
+backend/relays-client/src/persistence.rs:143:    // fall back to gross. R8 fail-honest: if both are None, record 0.0 —
+backend/relays-client/src/submit_engine.rs:21:    paper_mode::PaperModeClient,
+backend/relays-client/src/submit_engine.rs:59:    pub paper_mode: PaperModeClient,
+backend/relays-client/src/submit_engine.rs:66:    /// paper_mode, gas freshness, mempool, circuit-breaker).
+backend/relays-client/src/submit_engine.rs:87:        // fallback in live mode (C1 fix, audit re-run #2 2026-05-10).
+backend/relays-client/src/submit_engine.rs:105:        let paper_dynamic = self.paper_mode.is_enabled_for_chain(opp.chain_id).await;
+backend/relays-client/src/submit_engine.rs:136:            // enforce net-only in live mode.  If it returns Err we propagate
+backend/relays-client/src/submit_engine.rs:137:            // directly — no fallback to gross in live mode.
+backend/relays-client/src/submit_engine.rs:146:                        "net_expected_profit_usd is None in live mode — rejecting (gross fallback forbidden)"
+backend/relays-client/src/submit_engine.rs:158:                // in live mode rejects gross-only rows (NetProfitUnknown).
+backend/relays-client/src/submit_engine.rs:159:                // In paper mode the gross fallback is permitted with a warn log.
+backend/relays-client/src/submit_engine.rs:185:                        event = "paper_mode.checklist_suppressed",
+backend/relays-client/src/submit_engine.rs:188:                        "pre_execute_checklist: paper_mode active — broadcast suppressed"
+backend/relays-client/src/submit_engine.rs:206:                        relay_used: Some("paper_mode".into()),
+backend/relays-client/src/submit_engine.rs:210:                        error_message: Some("paper_mode_enabled".into()),
+backend/relays-client/src/submit_engine.rs:245:        // Pick the best available provider from the pool for this execution.
+backend/relays-client/src/submit_engine.rs:253:        let provider: Arc<AlloyHttpProvider> = match rpc_pool.pick() {
+backend/relays-client/src/submit_engine.rs:310:            paper_mode = paper,
+backend/relays-client/src/submit_engine.rs:320:            info!(event = "paper_mode.skip_submit", opp_id = %opp.id,
+backend/relays-client/src/submit_engine.rs:339:                relay_used: Some("paper_mode".into()),
+backend/relays-client/src/submit_engine.rs:343:                error_message: Some("paper_mode_enabled".into()),
+backend/relays-client/src/submit_engine.rs:420:                    // R8 fail-honest: we only update when coinbase_diff_wei > 0.
+backend/relays-client/src/submit_engine.rs:470:                    // R8 fail-honest: if the safety check endpoint itself fails
+backend/relays-client/src/submit_engine.rs:542:        // simply won't exist, Check 11 passes as before (fail-honest / R8).
+backend/relays-client/src/submit_engine.rs:643:    /// - **Live mode** (`paper_mode = false`): if `net_expected_profit_usd` is
+backend/relays-client/src/submit_engine.rs:645:    ///   Falling back to the gross `expected_profit_usd` is forbidden in live mode
+backend/relays-client/src/submit_engine.rs:650:    /// - **Paper mode** (`paper_mode = true`): the gross fallback is allowed.
+backend/relays-client/src/submit_engine.rs:656:    /// gross regardless of `paper_mode` — this is unchanged from H2.
+backend/relays-client/src/submit_engine.rs:659:        paper_mode: bool,
+backend/relays-client/src/submit_engine.rs:666:        if paper_mode {
+backend/relays-client/src/submit_engine.rs:667:            // Gross fallback permitted in paper mode; warn so the gap is visible.
+backend/relays-client/src/submit_engine.rs:673:                 (paper mode: safe for observation, not for live capital)"
+backend/relays-client/src/submit_engine.rs:749:        // Net present — paper_mode flag is irrelevant.
+backend/relays-client/src/submit_engine.rs:751:            .expect("net present → no error in live mode");
+backend/relays-client/src/submit_engine.rs:753:            .expect("net present → no error in paper mode");
+backend/relays-client/src/submit_engine.rs:756:            "live mode: expected 7.0 (net), got {profit_live}"
+backend/relays-client/src/submit_engine.rs:760:            "paper mode: expected 7.0 (net), got {profit_paper}"
+backend/relays-client/src/submit_engine.rs:764:    /// C1 regression (audit re-run #2): in live mode (paper_mode=false) with
+backend/relays-client/src/submit_engine.rs:766:    /// Falling back to gross in live mode overstates profit by 20-40% and can
+backend/relays-client/src/submit_engine.rs:769:    fn c1_live_mode_net_absent_returns_net_profit_unknown() {
+backend/relays-client/src/submit_engine.rs:774:            "C1: live mode with net=None must return Err(NetProfitUnknown), got: {:?}",
+backend/relays-client/src/submit_engine.rs:779:    /// C1 regression: in paper mode (paper_mode=true) with net=None, the gross
+backend/relays-client/src/submit_engine.rs:783:    fn c1_paper_mode_net_absent_falls_back_to_gross() {
+backend/relays-client/src/submit_engine.rs:787:            result.expect("paper mode with net=None must return Ok (gross fallback allowed)");
+backend/relays-client/src/submit_engine.rs:790:            "C1 paper mode: expected 52.0 (gross fallback), got {profit}"
+backend/relays-client/src/submit_engine.rs:794:    /// C1 regression: in paper mode with BOTH fields absent, fallback to 0.0.
+backend/relays-client/src/submit_engine.rs:797:    fn c1_paper_mode_both_absent_falls_back_to_zero() {
+backend/relays-client/src/submit_engine.rs:800:            .expect("paper mode both-None must return Ok(0.0)");
+backend/relays-client/src/submit_engine.rs:803:            "paper mode both-absent: expected 0.0 (floor-fail-safe), got {profit}"
+backend/relays-client/src/submit_engine.rs:807:    /// C1 regression: in live mode with BOTH fields absent, must also return
+backend/relays-client/src/submit_engine.rs:810:    fn c1_live_mode_both_absent_returns_net_profit_unknown() {
+backend/relays-client/src/submit_engine.rs:815:            "C1: live mode both-None must return Err(NetProfitUnknown), got: {:?}",
+backend/relays-client/src/submit_engine.rs:821:    /// Both modes: net present → always returned regardless of paper_mode.
+backend/relays-client/src/submit_engine.rs:826:            .expect("net present → no error in live mode");
+backend/relays-client/src/submit_engine.rs:828:            .expect("net present → no error in paper mode");
+backend/searcher-rs/Cargo.toml:7:description = "ArbitrageX v2 — MEV opportunity searcher. S2: real mempool ingestion + calldata decode + DEX candidate detection."
+backend/searcher-rs/src/amm_math.rs:49:    // silent 0.0.  R8 fail-honest: a bad wei string is a data quality event
+backend/searcher-rs/src/bayesian_filter.rs:24://!    ranges, and division-by-zero conditions. RULE 12 fail-honest: no
+backend/searcher-rs/src/calldata/mod.rs:64:    /// - Unknown protocol or decode failure: `vec![]` (empty — R8 fail-honest).
+backend/searcher-rs/src/chain_client.rs:1://! WebSocket chain client — mempool subscriptions and new-head events only.
+backend/searcher-rs/src/chain_client.rs:16://!     - Appropriate for push-based mempool and block-head data.
+backend/searcher-rs/src/chain_client.rs:131:            "filtered mempool subscription active"
+backend/searcher-rs/src/chain_client.rs:160:/// - `Firehose`: `newPendingTransactions`. Full mempool visibility.
+backend/searcher-rs/src/chain_client.rs:194:                        event = "chain_client.mempool_mode_unknown",
+backend/searcher-rs/src/chain_client.rs:280:    fn mempool_mode_resolves_auto_to_filtered_on_alchemy_with_allowlist() {
+backend/searcher-rs/src/chain_client.rs:285:    fn mempool_mode_resolves_auto_to_firehose_off_alchemy() {
+backend/searcher-rs/src/chain_client.rs:290:    fn mempool_mode_resolves_auto_to_firehose_with_empty_allowlist() {
+backend/searcher-rs/src/chain_client.rs:295:    fn mempool_mode_explicit_choice_passes_through() {
+backend/searcher-rs/src/connectors/mempool_listener.rs:7:/// mempool_listener — Conector Alloy Anti-Mock
+backend/searcher-rs/src/connectors/mod.rs:1:pub mod mempool_listener;
+backend/searcher-rs/src/counters.rs:118:    /// active liquidity for the candidate amount_in. R8 fail-honest: every
+backend/searcher-rs/src/counters.rs:223:    pub encoder_missing_executor_total: AtomicU64,
+backend/searcher-rs/src/counters.rs:250:    pub encoder_round_trip_executor_pending_total: AtomicU64,
+backend/searcher-rs/src/counters.rs:272:    pub round_trip_executor_started_total: AtomicU64,
+backend/searcher-rs/src/counters.rs:277:    pub round_trip_executor_success_total: AtomicU64,
+backend/searcher-rs/src/counters.rs:280:    /// ERC-20 prefund + role storage cheating (RULE 12 fail-honest).
+backend/searcher-rs/src/counters.rs:281:    pub round_trip_executor_revert_total: AtomicU64,
+backend/searcher-rs/src/counters.rs:285:    pub round_trip_executor_error_total: AtomicU64,
+backend/searcher-rs/src/counters.rs:288:    pub round_trip_executor_rejected_pre_revm_total: AtomicU64,
+backend/searcher-rs/src/counters.rs:292:    pub round_trip_executor_net_profit_non_positive_total: AtomicU64,
+backend/searcher-rs/src/counters.rs:296:    pub round_trip_executor_antifraud_rejected_total: AtomicU64,
+backend/searcher-rs/src/counters.rs:300:    pub round_trip_executor_spawn_blocking_failed_total: AtomicU64,
+backend/searcher-rs/src/counters.rs:322:    // observed under R8 fail-honest means another thread panicked WHILE
+backend/searcher-rs/src/engines/backrun_engine.rs:58:    /// be derived from the mempool listener's `ImpactSet`.
+backend/searcher-rs/src/engines/candidate.rs:43:    /// cannot be priced (R8 fail-honest: never fabricated).
+backend/searcher-rs/src/engines/candidate.rs:50:    /// Hash of the originating mempool transaction (for route_id uniqueness).
+backend/searcher-rs/src/engines/dex_engine.rs:72:    /// (R8 fail-honest: never fabricate a V3 quote without an RPC).
+backend/searcher-rs/src/engines/dex_engine.rs:122:    /// chain — USD pricing falls back to `None` (R8 fail-honest).
+backend/searcher-rs/src/engines/dex_engine.rs:280:                    // exceed gross profit. R8 fail-honest: emit honest data, don't reject
+backend/searcher-rs/src/engines/flashloan_engine.rs:253:        // call will revert (fail-honest at execution time).
+backend/searcher-rs/src/engines/flashloan_engine.rs:275:/// fail-honest proxy: ensures the fee is never under-estimated).
+backend/searcher-rs/src/engines/liquidation_engine.rs:10://! universe. This gives sub-block latency when a price-impacting mempool tx
+backend/searcher-rs/src/engines/liquidation_engine.rs:117:                // Redis error → assume non-empty (R8 fail-honest: don't fire
+backend/searcher-rs/src/engines/liquidation_engine.rs:241:                    "estimate_liquidation_profit returned None; skipping (R8 fail-honest)"
+backend/searcher-rs/src/engines/liquidation_engine.rs:275:            // the executor (Phase 15+). The string is required by the schema.
+backend/searcher-rs/src/engines/liquidation_engine.rs:453:    /// fail-honest guard). We just verify the return value.
+backend/searcher-rs/src/engines/liquidation_engine.rs:459:        // (fail-honest) and returns Ok(vec![]) without incrementing the counter.
+backend/searcher-rs/src/engines/liquidation_engine.rs:481:        // Verify the counter unchanged (no Redis → no increment due to fail-honest guard).
+backend/searcher-rs/src/engines/liquidation_engine.rs:586:            "estimate must return None for zero debt (R8 fail-honest)"
+backend/searcher-rs/src/engines/triangular_engine.rs:115:    /// `reserves_cache_miss` rejection label, R8 fail-honest).
+backend/searcher-rs/src/engines/triangular_engine.rs:301:    /// cycle (skip gracefully — fail-honest, same as cold-cache path in worker).
+backend/searcher-rs/src/engines/triangular_engine.rs:751:/// map. Edge not in the map → cycle not included (fail-honest).
+backend/searcher-rs/src/impact_index.rs:18://!      (Phase 11 of the spec). R8 fail-honest — nothing is fabricated.
+backend/searcher-rs/src/impact_index.rs:101:/// will always be empty (R8 fail-honest).
+backend/searcher-rs/src/impact_index.rs:220:    /// (R8 fail-honest). Callers should always treat a successful return as
+backend/searcher-rs/src/impact_index.rs:275:        // R8 fail-honest: no fabrication.
+backend/searcher-rs/src/impact_index.rs:572:/// skipped — R8 fail-honest. The caller logs the total seeds loaded.
+backend/searcher-rs/src/kelly_sizing.rs:21://!    candidate" (RULE 12 fail-honest).
+backend/searcher-rs/src/lending_position_indexer.rs:13://! involving the token the mempool tx just moved?"
+backend/searcher-rs/src/lending_position_indexer.rs:160:                        "cached position JSON is corrupt; returning None (R8 fail-honest)"
+backend/searcher-rs/src/lib.rs:67:// tests + the future A.3.c.3 REVM CacheDB executor can drive the plan
+backend/searcher-rs/src/lib.rs:77:pub mod topology_reload;
+backend/searcher-rs/src/main.rs:58:// Phase 2: Topology Vault hot-reload subscriber. Listens on `arbx:topology:mutation`,
+backend/searcher-rs/src/main.rs:60:mod topology_reload;
+backend/searcher-rs/src/main.rs:170:    // Phase 2: expose applied topology version/client-readiness gauges for clean UI surfaces.
+backend/searcher-rs/src/main.rs:171:    topology_reload::init_topology_metrics();
+
+## Docker Compose services y env_file
+--- docker/compose.dev.yml
+28:name: arbitragex-v2
+30:networks:
+31:  arbx-net:
+32:    driver: bridge
+34:volumes:
+35:  postgres_data:
+36:  redis_data:
+37:  grafana_data:
+38:  loki_data:
+39:  prometheus_data:
+40:  vault_data:
+41:  vault_logs:
+42:  minio_data:
+43:  thanos_store_data:
+45:x-common-logging: &common-logging
+46:  restart: unless-stopped
+47:  logging:
+48:    driver: json-file
+49:    options: { max-size: "10m", max-file: "5" }
+51:services:
+55:  postgres:
+56:    image: postgres:15
+57:    environment:
+69:    ports: ["127.0.0.1:5432:5432"]
+70:    volumes:
+73:    healthcheck:
+78:    networks: [arbx-net]
+81:  redis:
+82:    image: redis:7.2
+83:    command: ["redis-server","--save","","--appendonly","no"]
+85:    ports: ["127.0.0.1:6379:6379"]
+86:    volumes: [redis_data:/data]
+87:    healthcheck:
+92:    networks: [arbx-net]
+96:  geth:
+97:    image: ethereum/client-go:v1.13.18
+98:    profiles: ["chain"]
+99:    command:
+103:    ports: ["8545:8545","8546:8546"]
+104:    networks: [arbx-net]
+109:  anvil:
+110:    image: ghcr.io/foundry-rs/foundry:latest
+111:    profiles: ["sim"]
+112:    entrypoint: ["anvil"]
+113:    command: >
+122:    ports: ["8545:8545"]
+123:    healthcheck:
+128:    networks: [arbx-net]
+133:  searcher-rs:
+134:    build:
+137:    env_file: ["../.env"]
+138:    environment:
+146:    volumes:
+148:    depends_on:
+151:    networks: [arbx-net]
+153:    deploy:
+162:  sim-ctl:
+163:    build:
+166:    env_file: ["../.env"]
+167:    environment:
+173:    volumes:
+175:    ports: ["127.0.0.1:3003:3003"]
+176:    depends_on:
+179:    networks: [arbx-net]
+181:    deploy:
+190:  relays-client:
+191:    build:
+194:    env_file: ["../.env"]
+195:    environment:
+199:    volumes:
+201:    ports: ["127.0.0.1:3005:3005"]
+202:    depends_on:
+204:    networks: [arbx-net]
+206:    deploy:
+215:  recon:
+216:    build:
+219:    env_file: ["../.env"]
+220:    environment:
+224:    volumes:
+226:    ports: ["127.0.0.1:3004:3004"]
+227:    depends_on:
+229:    networks: [arbx-net]
+231:    deploy:
+240:  selector-api:
+241:    build:
+244:    env_file: ["../.env"]
+245:    environment:
+250:    ports: ["127.0.0.1:3002:3002"]
+251:    depends_on:
+254:    networks: [arbx-net]
+257:  api-server:
+258:    build:
+261:    env_file: ["../.env"]
+262:    environment:
+278:    ports: ["127.0.0.1:8080:8080"]
+279:    volumes:
+285:    depends_on:
+287:    networks: [arbx-net]
+292:  edge:
+293:    build:
+296:    env_file: ["../.env"]
+297:    environment:
+301:    ports: ["8787:8787"]
+302:    depends_on: [api-server]
+303:    networks: [arbx-net]
+308:  frontend:
+309:    build:
+318:    environment:
+323:    ports: ["5173:5173"]
+324:    depends_on: [edge]
+325:    networks: [arbx-net]
+330:  prometheus:
+332:    image: prom/prometheus:v2.55.1
+336:    command:
+342:    ports: ["127.0.0.1:9090:9090"]
+343:    volumes:
+348:    healthcheck:
+353:    networks: [arbx-net]
+356:  grafana:
+358:    image: grafana/grafana:11.4.0
+359:    ports: ["127.0.0.1:3000:3000"]
+360:    environment:
+366:    volumes:
+370:    depends_on: [prometheus]
+372:    healthcheck:
+377:    networks: [arbx-net]
+380:  alertmanager:
+381:    image: prom/alertmanager:v0.27.0
+382:    ports: ["127.0.0.1:9093:9093"]
+383:    volumes:
+386:    healthcheck:
+391:    networks: [arbx-net]
+394:  loki:
+395:    image: grafana/loki:2.9.7
+396:    ports: ["127.0.0.1:3100:3100"]
+397:    command: ["-config.file=/etc/loki/config.yml"]
+398:    volumes:
+402:    healthcheck:
+407:    networks: [arbx-net]
+410:  token-enricher:
+411:    build:
+414:    env_file: ["../.env"]
+415:    environment:
+428:    ports: ["127.0.0.1:9004:9004"]
+429:    depends_on:
+432:    networks: [arbx-net]
+434:    deploy:
+441:  promtail:
+442:    image: grafana/promtail:2.9.7
+443:    command: ["-config.file=/etc/promtail/config.yml"]
+444:    volumes:
+447:    depends_on: [loki]
+449:    healthcheck:
+454:    networks: [arbx-net]
+469:  vault:
+470:    image: hashicorp/vault:1.18.1
+471:    container_name: arbitragex-v2-vault-1
+473:    cap_add:
+475:    environment:
+485:    command: server
+486:    volumes:
+490:    ports:
+492:    restart: unless-stopped
+493:    healthcheck:
+501:    networks: [arbx-net]
+502:    deploy:
+516:  minio:
+517:    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+518:    container_name: arbitragex-v2-minio-1
+519:    command: server /data --console-address :9001
+520:    environment:
+523:    volumes:
+525:    ports:
+528:    restart: unless-stopped
+529:    healthcheck:
+535:    networks: [arbx-net]
+536:    deploy:
+548:  thanos-sidecar:
+549:    image: quay.io/thanos/thanos:v0.36.1
+550:    container_name: arbitragex-v2-thanos-sidecar-1
+551:    command:
+558:    volumes:
+561:    depends_on:
+566:    restart: unless-stopped
+567:    networks: [arbx-net]
+568:    deploy:
+579:  thanos-store:
+580:    image: quay.io/thanos/thanos:v0.36.1
+581:    container_name: arbitragex-v2-thanos-store-1
+582:    command:
+588:    volumes:
+591:    depends_on:
+594:    restart: unless-stopped
+595:    networks: [arbx-net]
+596:    deploy:
+608:  thanos-query:
+609:    image: quay.io/thanos/thanos:v0.36.1
+610:    container_name: arbitragex-v2-thanos-query-1
+611:    command:
+617:    ports:
+619:    depends_on:
+622:    restart: unless-stopped
+623:    networks: [arbx-net]
+624:    deploy:
+--- docker/compose.loopback.override.yml
+24:name: arbitragex-v2
+26:services:
+27:  prometheus:
+28:    ports:
+30:  grafana:
+31:    ports:
+33:  alertmanager:
+34:    ports:
+36:  loki:
+37:    ports:
+39:  frontend:
+40:    ports:
+42:  edge:
+43:    ports:
+45:  api-server:
+46:    ports:
+48:  sim-ctl:
+49:    ports:
+51:  relays-client:
+52:    ports:
+54:  recon:
+55:    ports:
+57:  selector-api:
+58:    ports:
+--- docker/compose.noports.override.yml
+29:name: arbitragex-v2
+31:services:
+32:  prometheus:    { ports: [] }
+33:  grafana:       { ports: [] }
+34:  alertmanager:  { ports: [] }
+35:  loki:          { ports: [] }
+36:  frontend:      { ports: [] }
+37:  edge:          { ports: [] }
+38:  api-server:    { ports: [] }
+39:  sim-ctl:       { ports: [] }
+40:  relays-client: { ports: [] }
+41:  recon:         { ports: [] }
+42:  selector-api:  { ports: [] }
+43:  postgres:      { ports: [] }
+44:  redis:         { ports: [] }
+--- docker/compose.prod.yml
+1:name: arbitragex-v2
+2:networks:
+3:  arbx-net:
+4:    driver: bridge
+5:volumes:
+6:  postgres_data: null
+7:  redis_data: null
+8:  grafana_data: null
+9:  loki_data: null
+10:  prometheus_data: null
+11:  vault_data: null
+12:  vault_logs: null
+13:  minio_data: null
+14:  thanos_store_data: null
+15:  arbx_vault_data: null
+16:x-common-logging:
+17:  logging: &id001
+18:    driver: json-file
+19:    options:
+22:services:
+23:  postgres:
+24:    logging: *id001
+25:    image: postgres:15
+26:    environment:
+35:    ports:
+37:    volumes:
+40:    healthcheck:
+47:    restart: unless-stopped
+48:    networks:
+50:  redis:
+51:    logging: *id001
+52:    image: redis:7.2
+53:    command:
+59:    ports:
+61:    volumes:
+63:    healthcheck:
+71:    restart: unless-stopped
+72:    networks:
+74:  searcher-rs:
+75:    logging: *id001
+76:    build:
+79:    env_file:
+81:    environment:
+88:    volumes:
+90:    depends_on:
+95:    healthcheck:
+103:    restart: unless-stopped
+104:    networks:
+106:    deploy:
+113:  sim-ctl:
+114:    logging: *id001
+115:    build:
+118:    env_file:
+120:    environment:
+126:    volumes:
+128:    ports:
+130:    depends_on:
+135:    healthcheck:
+143:    restart: unless-stopped
+144:    networks:
+146:    deploy:
+153:  relays-client:
+154:    logging: *id001
+155:    build:
+158:    env_file:
+160:    environment:
+165:    volumes:
+167:    ports:
+169:    depends_on:
+172:    healthcheck:
+180:    restart: unless-stopped
+181:    networks:
+183:    deploy:
+190:  recon:
+191:    logging: *id001
+192:    build:
+195:    env_file:
+197:    environment:
+201:    volumes:
+203:    ports:
+205:    depends_on:
+208:    healthcheck:
+216:    restart: unless-stopped
+217:    networks:
+219:    deploy:
+226:  selector-api:
+227:    logging: *id001
+228:    build:
+231:    env_file:
+233:    environment:
+238:    ports:
+240:    depends_on:
+245:    healthcheck:
+253:    restart: unless-stopped
+254:    networks:
+256:    deploy:
+263:  api-server:
+264:    logging: *id001
+265:    build:
+268:    env_file:
+270:    environment:
+281:    ports:
+283:    depends_on:
+286:    healthcheck:
+294:    restart: unless-stopped
+295:    networks:
+297:    deploy:
+304:    volumes:
+308:  edge:
+309:    logging: *id001
+310:    build:
+313:    env_file:
+315:    environment:
+319:    ports:
+321:    depends_on:
+323:    healthcheck:
+331:    restart: unless-stopped
+332:    networks:
+334:  frontend:
+335:    logging: *id001
+336:    build:
+342:    environment:
+346:    ports:
+348:    depends_on:
+350:    healthcheck:
+358:    restart: unless-stopped
+359:    networks:
+361:    deploy:
+368:  prometheus:
+369:    logging: *id001
+370:    image: prom/prometheus:v2.55.1
+371:    command:
+377:    ports:
+379:    volumes:
+383:    healthcheck:
+390:    restart: unless-stopped
+391:    networks:
+393:  grafana:
+394:    logging: *id001
+395:    image: grafana/grafana:11.4.0
+396:    ports:
+398:    environment:
+402:    secrets:
+404:    volumes:
+408:    depends_on:
+410:    healthcheck:
+417:    restart: unless-stopped
+418:    networks:
+420:  alertmanager:
+421:    logging: *id001
+422:    image: prom/alertmanager:v0.27.0
+423:    ports:
+425:    volumes:
+427:    healthcheck:
+434:    restart: unless-stopped
+435:    networks:
+437:  loki:
+438:    logging: *id001
+439:    image: grafana/loki:2.9.7
+440:    ports:
+442:    command:
+444:    volumes:
+447:    healthcheck:
+454:    restart: unless-stopped
+455:    networks:
+457:  token-enricher:
+458:    logging: *id001
+459:    build:
+462:    env_file:
+464:    environment:
+471:    ports:
+473:    healthcheck:
+482:    restart: unless-stopped
+483:    depends_on:
+488:    networks:
+490:    deploy:
+495:  promtail:
+496:    logging: *id001
+497:    image: grafana/promtail:2.9.7
+498:    command:
+500:    volumes:
+503:    depends_on:
+505:    healthcheck:
+512:    restart: unless-stopped
+513:    networks:
+515:  vault:
+516:    logging: *id001
+517:    image: hashicorp/vault:1.18.1
+518:    container_name: arbitragex-v2-vault-1
+519:    cap_add:
+521:    environment:
+530:    command: server
+531:    volumes:
+535:    ports:
+537:    restart: unless-stopped
+538:    healthcheck:
+548:    networks:
+550:    deploy:
+555:  minio:
+556:    logging: *id001
+557:    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+558:    container_name: arbitragex-v2-minio-1
+559:    command: server /data --console-address :9001
+560:    environment:
+564:    volumes:
+566:    ports:
+569:    restart: unless-stopped
+570:    healthcheck:
+580:    networks:
+582:    deploy:
+587:  thanos-sidecar:
+588:    logging: *id001
+589:    image: quay.io/thanos/thanos:v0.36.1
+590:    container_name: arbitragex-v2-thanos-sidecar-1
+591:    command:
+598:    volumes:
+601:    depends_on:
+606:    healthcheck:
+614:    restart: unless-stopped
+615:    networks:
+--- docker/compose.staging.override.yml
+11:services:
+12:  api-server:
+13:    environment:
+19:    labels:
+20:      arbx.environment: staging
+23:  searcher-rs:
+24:    environment:
+32:    labels:
+33:      arbx.environment: staging
+36:  sim-ctl:
+37:    environment:
+42:    labels:
+43:      arbx.environment: staging
+46:  token-enricher:
+47:    environment:
+52:    labels:
+53:      arbx.environment: staging
+56:  frontend:
+57:    environment:
+60:    labels:
+61:      arbx.environment: staging
+64:  redis:
+65:    labels:
+66:      arbx.environment: staging
+--- docker-compose.edge.yml
+17:version: "3.9"
+19:services:
+24:  sed-core:
+25:    build:
+28:    container_name: omega-sed-core
+29:    restart: unless-stopped
+32:    deploy:
+42:    env_file:
+45:    environment:
+51:    ports:
+55:    networks:
+58:    depends_on:
+65:    security_opt:
+67:    read_only: true
+68:    tmpfs:
+71:    logging:
+80:  db:
+81:    image: postgres:16-alpine
+82:    container_name: omega-db
+83:    restart: unless-stopped
+85:    deploy:
+91:    env_file:
+94:    environment:
+99:    volumes:
+103:    ports:
+106:    networks:
+109:    healthcheck:
+117:    command: >
+139:  prometheus:
+140:    image: prom/prometheus:v2.51.0
+141:    container_name: omega-prometheus
+142:    restart: unless-stopped
+144:    volumes:
+148:    ports:
+151:    networks:
+154:    command:
+165:  grafana:
+166:    image: grafana/grafana:10.4.0
+167:    container_name: omega-grafana
+168:    restart: unless-stopped
+170:    env_file:
+173:    volumes:
+178:    ports:
+181:    networks:
+184:    depends_on:
+190:  loki:
+191:    image: grafana/loki:2.9.0
+192:    container_name: omega-loki
+193:    restart: unless-stopped
+195:    volumes:
+199:    ports:
+202:    networks:
+205:    command: -config.file=/etc/loki/local-config.yaml
+210:  promtail:
+211:    image: grafana/promtail:2.9.0
+212:    container_name: omega-promtail
+213:    restart: unless-stopped
+215:    volumes:
+220:    networks:
+223:    depends_on:
+226:    command: -config.file=/etc/promtail/config.yml
+233:  nginx-gateway:
+234:    image: nginx:1.25-alpine
+235:    container_name: omega-nginx-gateway
+236:    restart: unless-stopped
+238:    volumes:
+242:    ports:
+245:    networks:
+248:    depends_on:
+251:    security_opt:
+253:    read_only: true
+254:    tmpfs:
+259:    healthcheck:
+265:    logging:
+274:networks:
+275:  omega-edge-net:
+276:    driver: bridge
+277:    ipam:
+284:volumes:
+285:  pgdata:
+286:    driver: local
+287:  prometheus_data:
+288:    driver: local
+289:  grafana_data:
+290:    driver: local
+291:  loki_data:
+292:    driver: local
+
+## GitHub Actions: triggers y jobs
+--- .github/workflows/action-a-plus-v2.yml
+1:name: Ω-S5++ APEX Acción A+ v2 — Alineación metadata Git (con fetch de objetos)
+8:on:
+9:  workflow_dispatch:
+17:  group: deploy-arbx
+18:  cancel-in-progress: false
+21:  contents: read
+24:  VPS_HOST: 195.201.235.70
+25:  REPO_PATH: /opt/arbitragex-v2
+26:  TARGET_SHA: 6c922106fb6db30152d011ef109da78af16ece23
+27:  GITHUB_REMOTE: https://github.com/hefarica/arbitragex-v2.git
+29:jobs:
+30:  action-a-plus-v2:
+32:    runs-on: ubuntu-latest
+36:        run: |
+43:        run: |
+69:        run: |
+101:        run: |
+121:        run: |
+160:        run: |
+194:        run: rm -f ~/.ssh/arbx_key
+--- .github/workflows/action-a-plus.yml
+1:name: Ω-S5++ APEX Acción A+ — Alineación metadata Git + Purga decoherencia
+7:on:
+8:  workflow_dispatch:
+16:  group: deploy-arbx
+17:  cancel-in-progress: false
+20:  contents: read
+23:  VPS_HOST: 195.201.235.70
+24:  REPO_PATH: /opt/arbitragex-v2
+25:  TARGET_SHA: 6c922106fb6db30152d011ef109da78af16ece23
+26:  GITHUB_REMOTE: https://github.com/hefarica/arbitragex-v2.git
+28:jobs:
+29:  action-a-plus:
+31:    runs-on: ubuntu-latest
+35:        run: |
+42:        run: |
+69:        run: |
+101:        run: |
+140:        run: |
+177:        run: rm -f ~/.ssh/arbx_key
+--- .github/workflows/audit-vps-wiring.yml
+13:name: audit-vps-wiring
+15:on:
+16:  workflow_dispatch:
+27:  contents: read
+28:  actions: read
+31:  group: audit-vps-wiring
+32:  cancel-in-progress: false
+34:jobs:
+35:  audit:
+37:    runs-on: ubuntu-latest
+48:        uses: actions/checkout@v4
+54:        run: |
+73:        run: |
+205:        run: |
+225:        run: |
+293:        run: |
+454:        run: |
+592:        run: |
+602:        run: |
+607:        uses: actions/upload-artifact@v4
+618:        run: rm -f ~/.ssh/deploy_key ~/.ssh/config
+--- .github/workflows/audit-wiring.yml
+1:name: Ω-S5++ APEX Wiring Audit — Cableado post-c815ef9 (READ-ONLY)
+13:on:
+14:  workflow_dispatch:
+17:  contents: read
+20:  VPS_HOST: 195.201.235.70
+22:jobs:
+23:  wiring-audit:
+25:    runs-on: ubuntu-latest
+29:        run: |
+36:        run: |
+62:        run: |
+91:        run: |
+127:        run: |
+152:        run: |
+173:        run: |
+190:        run: |
+202:        run: rm -f ~/.ssh/arbx_key
+--- .github/workflows/audit.yml
+1:name: Ω-S5++ APEX Forensic Audit — VPS arbx (READ-ONLY)
+7:on:
+8:  workflow_dispatch:
+11:  group: audit-arbx
+12:  cancel-in-progress: true
+15:  contents: read
+17:jobs:
+18:  forensic-audit:
+20:    runs-on: ubuntu-latest
+24:        run: |
+31:        run: mkdir -p audit_report
+34:        run: |
+47:        run: |
+77:        run: |
+103:        run: |
+123:        run: |
+148:        run: |
+180:        run: |
+207:        run: |
+220:        run: |
+242:        run: |
+255:        uses: actions/upload-artifact@v4
+263:        run: rm -f ~/.ssh/arbx_key
+--- .github/workflows/c10-f1-recovery-step14-only.yml
+1:name: Ω-S5++ C10 Fase 1 — Recovery Step 14 Only
+3:on:
+4:  workflow_dispatch:
+7:  contents: read
+9:jobs:
+10:  recovery-step14-only:
+11:    runs-on: ubuntu-latest
+24:        run: |
+42:        run: |
+54:        run: |
+67:        run: |
+72:        run: |
+80:        run: |
+155:        run: |
+162:        run: |
+169:        run: |
+178:        run: |
+201:        run: |
+207:        run: |
+226:        run: |
+241:        uses: actions/upload-artifact@v4
+249:        run: |
+--- .github/workflows/ci.yml
+1:name: CI
+3:on:
+4:  push:
+6:  pull_request:
+10:  group: ${{ github.workflow }}-${{ github.ref }}
+11:  cancel-in-progress: true
+13:jobs:
+14:  lint-and-test-node:
+15:    runs-on: ubuntu-latest
+43:  lint-and-test-rust:
+44:    runs-on: ubuntu-latest
+52:        run: cargo fmt -- --check
+56:        run: cargo clippy --all-targets --all-features -- -D warnings
+60:        run: cargo test --all
+64:  lint-and-test-frontend:
+65:    runs-on: ubuntu-latest
+79:  lint-and-test-contracts:
+80:    runs-on: ubuntu-latest
+93:  ci-gate:
+94:    runs-on: ubuntu-latest
+98:        run: echo "CI gate passed"
+--- .github/workflows/codeql.yml
+1:name: CodeQL
+3:on:
+4:  push:
+6:  pull_request:
+8:  schedule:
+12:  group: ${{ github.workflow }}-${{ github.ref }}
+13:  cancel-in-progress: true
+15:jobs:
+16:  analyze:
+17:    runs-on: ubuntu-latest
+29:        uses: github/codeql-action/init@v3
+34:        uses: github/codeql-action/autobuild@v3
+37:        run: cd backend && cargo build --release
+39:        uses: github/codeql-action/analyze@v3
+--- .github/workflows/deploy-edge-only-v2.yml
+1:name: Ω-S5++ APEX Deploy edge-only v2 (hard sync edge tree)
+6:on:
+7:  workflow_dispatch:
+15:  group: deploy-arbx-edge
+16:  cancel-in-progress: false
+19:  contents: read
+22:  VPS_HOST: 195.201.235.70
+23:  COMPOSE_FILE: docker/compose.prod.yml
+25:jobs:
+26:  deploy-edge:
+28:    runs-on: ubuntu-latest
+33:        run: |
+53:        run: |
+74:        run: |
+98:        run: |
+112:        run: |
+126:        run: |
+144:        run: |
+195:        run: rm -f ~/.ssh/deploy_key
+--- .github/workflows/deploy-edge-only.yml
+1:name: Ω-S5++ APEX Deploy edge-only (Control Plane)
+5:on:
+6:  workflow_dispatch:
+14:  group: deploy-arbx-edge
+15:  cancel-in-progress: false
+18:  contents: read
+21:  VPS_HOST: 195.201.235.70
+22:  COMPOSE_FILE: docker/compose.prod.yml
+24:jobs:
+25:  deploy-edge:
+27:    runs-on: ubuntu-latest
+32:        run: |
+52:        run: |
+67:        run: |
+90:        run: |
+101:        run: |
+130:        run: |
+151:        run: |
+192:        run: rm -f ~/.ssh/deploy_key
+--- .github/workflows/deploy-frontend.yml
+1:name: Ω-S5++ APEX Deploy frontend-only c815ef8
+12:on:
+13:  workflow_dispatch:
+21:  group: deploy-arbx
+22:  cancel-in-progress: false
+25:  contents: read
+28:  TARGET_SHA: 6c922106fb6db30152d011ef109da78af16ece23
+29:  VPS_HOST: 195.201.235.70
+30:  COMPOSE_FILE: docker/compose.prod.yml
+31:  REPO_PATH: /opt/arbitragex-v2
+33:jobs:
+34:  deploy:
+36:    runs-on: ubuntu-latest
+41:        run: |
+49:        run: |
+69:        run: |
+89:        run: |
+103:        run: |
+126:        run: |
+150:        uses: actions/checkout@v4
+157:        run: |
+177:        run: |
+244:        run: |
+299:        run: |
+316:        run: |
+342:        run: |
+385:        run: |
+413:        run: |
+433:        run: |
+459:        run: rm -f ~/.ssh/arbx_key
+--- .github/workflows/deploy-vps.yml
+1:name: Deploy to VPS
+3:on:
+4:  workflow_dispatch:
+10:  push:
+15:  contents: read
+18:  group: deploy-vps-${{ github.ref }}
+19:  cancel-in-progress: false
+21:jobs:
+22:  deploy:
+24:    runs-on: ubuntu-latest
+29:        uses: actions/checkout@v6
+37:        run: |
+68:        uses: appleboy/ssh-action@v1
+107:        run: |
+140:        run: |
+--- .github/workflows/deploy.yml
+1:name: Ω-S5++ APEX Deploy to VPS arbx
+9:on:
+10:  workflow_dispatch:
+24:  group: deploy-arbx
+25:  cancel-in-progress: false  # NUNCA cancelar un deploy en curso
+28:  contents: read
+30:jobs:
+31:  deploy:
+33:    runs-on: ubuntu-latest
+48:        run: |
+76:        run: |
+108:        run: |
+130:        run: |
+148:        run: |
+161:        run: |
+174:        run: |
+188:        run: |
+204:        run: |
+248:        run: |
+266:        run: |
+--- .github/workflows/diag-cookie-emission.yml
+1:name: Ω-S5++ Diag cookie emission (READ-ONLY)
+2:on:
+3:  workflow_dispatch: {}
+5:  contents: read
+7:  VPS_HOST: 195.201.235.70
+8:jobs:
+9:  diag:
+10:    runs-on: ubuntu-latest
+14:        run: |
+20:        run: |
+86:        run: rm -f ~/.ssh/arbx_key
+--- .github/workflows/docker-build.yml
+1:name: Docker Build
+3:on:
+4:  push:
+9:  group: ${{ github.workflow }}-${{ github.ref }}
+10:  cancel-in-progress: true
+12:jobs:
+13:  build:
+14:    runs-on: ubuntu-latest
+28:        uses: docker/build-push-action@v5
+40:        uses: anchore/sbom-action@v0
+44:        uses: sigstore/cosign-installer@v3
+--- .github/workflows/dockerfile-audit.yml
+1:name: Dockerfile Audit
+6:on:
+7:  push:
+15:  pull_request:
+26:  contents: read
+28:jobs:
+29:  audit:
+31:    runs-on: ubuntu-latest
+38:        run: chmod +x automation/scripts/audit-dockerfiles.sh
+41:        run: ./automation/scripts/audit-dockerfiles.sh
+--- .github/workflows/dr-drill.yml
+1:name: DR Drill (Dry-Run to Live)
+2:on:
+3:  workflow_dispatch:
+14:jobs:
+15:  dry-run:
+17:    runs-on: ubuntu-latest
+21:        run: docker compose -f docker/compose.prod.yml config -q
+23:        run: |
+29:  live-deployment:
+32:    runs-on: ubuntu-latest
+37:        run: |
+41:        run: |
+45:        uses: actions/upload-artifact@v4
+--- .github/workflows/e2e.yml
+1:name: e2e
+3:on:
+4:  pull_request:
+6:  push:
+12:  contents: read
+14:jobs:
+15:  playwright:
+16:    runs-on: ubuntu-latest
+29:        run: |
+34:        run: |
+90:        run: npm run test:smoke
+97:        run: npm test
+101:        run: |
+111:        uses: actions/upload-artifact@v7
+119:        run: docker compose -f docker/compose.dev.yml down -v
+121:  lighthouse-budget:
+124:    runs-on: ubuntu-latest
+134:        run: npm install -g @lhci/cli@0.13.x
+137:        run: |
+147:        run: |
+--- .github/workflows/foundry.yml
+1:name: Foundry CI
+3:on:
+4:  push:
+9:  pull_request:
+18:  contents: read
+20:jobs:
+21:  test:
+23:    runs-on: ubuntu-latest
+27:      run:
+45:        run: |
+51:        run: forge build --sizes || true
+54:        run: forge test -vv || true
+61:  test-fork:
+63:    runs-on: ubuntu-latest
+81:      run:
+92:        run: |
+98:        run: forge build --sizes || true
+105:        run: forge test --fork-url $MAINNET_RPC_URL --match-test "testFork_" -vvv
+--- .github/workflows/frontend-build.yml
+1:name: Frontend Build
+13:on:
+14:  push:
+22:  pull_request:
+33:  contents: read
+35:jobs:
+36:  build:
+38:    runs-on: ubuntu-latest
+63:        run: |
+70:        run: npm run -w @arbx/shared build
+73:        run: npm run -w @arbx/frontend typecheck
+81:        run: npm run -w @arbx/frontend build
+87:        run: npm run -w @arbx/frontend validate:prod-api
+--- .github/workflows/hardened-vps-audit.yml
+18:name: "C10-F2 Hardened VPS Audit"
+20:on:
+21:  workflow_dispatch:
+45:  contents: read
+46:  actions: read
+52:  group: vps-${{ github.workflow }}-${{ github.ref }}
+53:  cancel-in-progress: false
+56:  VPS_HOST: "195.201.235.70"
+57:  VPS_USER: "root"
+58:  VPS_WORKDIR: "/opt/arbitragex-v2"
+59:  ARTIFACT_DIR: "audit_artifact"
+61:jobs:
+62:  audit:
+64:    runs-on: ubuntu-latest
+73:        run: |
+95:        run: |
+105:        run: |
+116:        run: |
+151:        run: |
+175:        run: |
+216:        run: |
+332:        run: |
+361:        run: |
+382:        run: |
+446:        run: |
+481:        run: |
+536:        uses: actions/upload-artifact@v4
+548:        run: |
+--- .github/workflows/hardened-vps-baseline.yml
+1:name: Ω-S5++ C10-F2 H0 — Hardened VPS Baseline (audit-only / read-only)
+3:on:
+4:  workflow_dispatch:
+7:  contents: read
+9:jobs:
+10:  baseline:
+11:    runs-on: ubuntu-latest
+22:        run: |
+36:        run: |
+46:        run: |
+51:        run: |
+57:        run: |
+64:        run: |
+81:        run: |
+114:        run: |
+167:        uses: actions/upload-artifact@v4
+175:        run: |
+--- .github/workflows/hardened-vps-deploy.yml
+13:name: "C10-F2 Hardened VPS Deploy"
+15:on:
+16:  workflow_dispatch:
+66:  contents: read
+67:  actions: read
+73:  group: vps-${{ github.workflow }}-${{ github.ref }}
+74:  cancel-in-progress: false
+77:  VPS_HOST: "195.201.235.70"
+78:  VPS_USER: "root"
+79:  VPS_WORKDIR: "/opt/arbitragex-v2"
+80:  LOCK_FILE: "/tmp/arbitragex_deploy.lock"
+81:  ARTIFACT_DIR: "deploy_artifact"
+82:  DEPLOY_TIMEOUT: "600"
+84:jobs:
+85:  validate-and-deploy:
+87:    runs-on: ubuntu-latest
+107:        run: |
+118:        run: |
+126:        run: |
+135:        run: |
+143:        run: |
+156:        run: |
+172:        run: |
+182:        run: |
+193:        run: |
+221:        run: |
+258:        run: |
+293:        run: |
+319:        run: |
+376:        run: |
+414:        run: |
+436:        run: |
+563:        run: |
+675:        run: |
+697:        run: |
+778:        run: |
+791:        uses: actions/upload-artifact@v4
+803:        run: |
+--- .github/workflows/monitoring-config.yml
+1:name: Monitoring Config
+7:on:
+8:  push:
+14:  pull_request:
+22:  contents: read
+24:jobs:
+25:  promtool:
+27:    runs-on: ubuntu-latest
+36:        run: |
+50:        run: |
+55:        run: promtool check rules monitoring/alerts.rules.yml
+58:        run: promtool check config monitoring/prometheus/prometheus.yml
+61:        run: promtool check config monitoring/prometheus/prometheus.prod.yml
+67:        run: |
+--- .github/workflows/no-hardcode.yml
+1:name: no-hardcode
+3:on:
+4:  pull_request:
+6:  push:
+11:  contents: read
+13:jobs:
+14:  lint:
+15:    runs-on: ubuntu-latest
+22:        uses: actions/setup-node@v4
+26:        run: bash automation/tools/lint-no-hardcode.sh
+28:        run: bash automation/tools/verify-dashboard-metrics.sh
+31:        run: |
+--- .github/workflows/no-regression.yml
+1:name: No Regression (P9)
+2:on:
+3:  repository_dispatch:
+5:  workflow_dispatch:
+7:jobs:
+8:  validate-and-declare:
+9:    runs-on: ubuntu-latest
+13:        run: |
+17:        run: |
+21:        uses: actions/upload-artifact@v4
+--- .github/workflows/omega8-m3-grep-gates.yml
+1:name: OMEGA-8/M3 grep gates (Capa 2 hardening)
+8:on:
+9:  push:
+11:  pull_request:
+16:  contents: read
+18:jobs:
+19:  grep-gates:
+21:    runs-on: ubuntu-latest
+29:        run: |
+43:        run: |
+52:        run: |
+65:        run: |
+78:        run: |
+91:        run: |
+100:        run: |
+109:        run: |
+--- .github/workflows/omega8-pii-gates.yml
+1:name: OMEGA-8/CAPA5-F10 PII wireado gates (recursive)
+11:on:
+12:  push:
+14:  pull_request:
+17:jobs:
+18:  pii-recursive-gates:
+20:    runs-on: ubuntu-latest
+28:        run: |
+52:        run: |
+70:        run: |
+88:        run: |
+106:        run: |
+141:        run: |
+--- .github/workflows/paper-shadow.yml
+1:name: Paper Shadow (P7)
+2:on:
+3:  schedule:
+5:  workflow_dispatch:
+7:jobs:
+8:  track-shadow-days:
+9:    runs-on: ubuntu-latest
+13:        run: |
+24:        uses: peter-evans/repository-dispatch@v3
+--- .github/workflows/probe-admin-session.yml
+1:name: Ω-S5++ Probe /admin/session (READ-ONLY)
+3:on:
+4:  workflow_dispatch:
+7:  contents: read
+10:  VPS_HOST: 195.201.235.70
+12:jobs:
+13:  probe:
+14:    runs-on: ubuntu-latest
+18:        run: |
+25:        run: |
+91:        run: rm -f ~/.ssh/arbx_key
+--- .github/workflows/probe-cookies-deep.yml
+1:name: Ω-S5++ Probe cookies deep (READ-ONLY)
+3:on:
+4:  workflow_dispatch:
+7:  contents: read
+10:  VPS_HOST: 195.201.235.70
+12:jobs:
+13:  probe:
+14:    runs-on: ubuntu-latest
+18:        run: |
+25:        run: |
+66:        run: rm -f ~/.ssh/arbx_key
+--- .github/workflows/rust.yml
+1:name: Rust CI
+3:on:
+4:  push:
+9:  pull_request:
+17:  contents: read
+19:jobs:
+20:  check:
+22:    runs-on: ubuntu-latest
+26:      run:
+47:        run: cargo check --workspace --locked
+56:        run: cargo clippy -p searcher-rs -p relays-client --locked --all-targets -- -D warnings
+59:        run: cargo fmt --all -- --check
+65:        run: cargo fmt -p searcher-rs -p relays-client -- --check
+68:        run: cargo clippy --workspace --locked -- -D warnings
+77:        run: cargo test --workspace --locked --lib
+--- .github/workflows/security.yml
+1:name: Security Scans
+3:on:
+4:  push:
+6:  pull_request:
+8:  schedule:
+16:  contents: read
+18:jobs:
+19:  cargo-audit:
+21:    runs-on: ubuntu-latest
+37:        run: cargo install cargo-audit --version 0.21.1 --locked
+45:        run: |
+104:  gitleaks:
+106:    runs-on: ubuntu-latest
+121:  npm-audit:
+128:    runs-on: ubuntu-latest
+141:        run: npm install
+148:        run: npm audit --omit=dev --audit-level=high || true
+154:        run: npm audit --include=dev || true
+--- .github/workflows/sync-vps-metadata.yml
+1:name: Ω-S5++ C10 Fase 1 — Sync VPS Metadata Git (Plan/Execute)
+3:on:
+4:  workflow_dispatch:
+33:  contents: read
+34:  actions: read
+37:  group: sync-vps-metadata
+38:  cancel-in-progress: false
+41:  VPS_HOST: 195.201.235.70
+42:  VPS_USER: root
+43:  VPS_PATH: /opt/arbitragex-v2
+45:jobs:
+46:  sync-vps-metadata:
+47:    runs-on: ubuntu-latest
+57:        run: |
+133:        run: |
+152:        uses: actions/checkout@v4
+161:        run: |
+179:        run: |
+200:        run: |
+219:        run: |
+242:        run: |
+271:        run: |
+292:        run: |
+318:        run: |
+341:        run: |
+369:        run: |
+383:        run: |
+405:        run: |
+419:        run: |
+463:        run: |
+486:        run: |
+636:        run: |
+656:        run: |
+729:        uses: actions/upload-artifact@v4
+740:        run: |
+--- .github/workflows/typescript.yml
+1:name: TypeScript CI
+3:on:
+4:  push:
+16:  pull_request:
+31:  contents: read
+33:jobs:
+34:  typecheck:
+36:    runs-on: ubuntu-latest
+52:        run: npm install
+62:        run: npm run -w @arbx/shared build
+75:        run: npm run typecheck --workspaces --if-present
+85:        run: npm test --workspaces --if-present
+--- .github/workflows/unit-tests.yml
+1:name: unit-tests
+3:on:
+4:  pull_request:
+6:  push:
+11:  contents: read
+13:jobs:
+14:  rust:
+16:    runs-on: ubuntu-latest
+19:      run:
+33:        run: cargo test --workspace --locked --lib
+39:  typescript:
+41:    runs-on: ubuntu-latest
+50:        run: npm install
+55:        run: npm run -w @arbx/shared build
+62:        run: npm run typecheck --workspaces --if-present
+66:        run: npm test --workspaces --if-present
+--- .github/workflows/verify-admin-session-wiring.yml
+1:name: Ω-S5++ APEX Verify admin session wiring (READ-ONLY)
+2:on:
+3:  workflow_dispatch: {}
+6:  contents: read
+9:  VPS_HOST: 195.201.235.70
+11:jobs:
+12:  verify:
+13:    runs-on: ubuntu-latest
+17:        run: |
+24:        run: |
+97:        run: rm -f ~/.ssh/arbx_key

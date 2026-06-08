@@ -58,10 +58,11 @@ impl ReserveReader {
 
     /// Create from environment variable.
     pub fn from_env() -> Result<Self, ConnectorError> {
-        let url = shared_rs::config::require_env("ARBX_RPC_HTTP_URL")
-            .map_err(|e| ConnectorError::ConfigMissing {
+        let url = shared_rs::config::require_env("ARBX_RPC_HTTP_URL").map_err(|e| {
+            ConnectorError::ConfigMissing {
                 parameter: format!("ARBX_RPC_HTTP_URL: {e}"),
-            })?;
+            }
+        })?;
         Self::new(url)
     }
 

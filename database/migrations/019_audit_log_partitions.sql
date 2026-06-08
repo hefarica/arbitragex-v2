@@ -41,8 +41,14 @@ BEGIN
 END
 $$;
 
--- 5. Migrar datos existentes
-INSERT INTO audit_log SELECT * FROM audit_log_old;
+-- 5. Migrar datos existentes (applying PII anonymization to comply with Omega-8 Doctrine)
+INSERT INTO audit_log (id, actor, action, target_kind, target_id, before_state, after_state, ip_address, user_agent, trace_id, created_at)
+SELECT 
+  id, actor, action, target_kind, target_id, before_state, after_state,
+  arbx_anonymize_ip(ip_address),
+  arbx_hash_user_agent(user_agent),
+  trace_id, created_at
+FROM audit_log_old;
 
 -- 6. Eliminar tabla vieja
 DROP TABLE audit_log_old;

@@ -78,7 +78,10 @@ mod tests {
             schema_version: 1,
         };
         let json_result = serde_json::to_string(&signal);
-        assert!(json_result.is_ok(), "ConvergenceSignal debe serializar a JSON");
+        assert!(
+            json_result.is_ok(),
+            "ConvergenceSignal debe serializar a JSON"
+        );
         let json_str = match json_result {
             Ok(s) => s,
             Err(_) => return,
@@ -91,7 +94,10 @@ mod tests {
             json_str.contains("mempool_entropy_score"),
             "JSON debe contener mempool_entropy_score"
         );
-        assert!(json_str.contains("0.78"), "JSON debe contener el valor 0.78");
+        assert!(
+            json_str.contains("0.78"),
+            "JSON debe contener el valor 0.78"
+        );
     }
 
     #[test]

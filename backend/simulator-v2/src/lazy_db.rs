@@ -562,7 +562,8 @@ mod tests {
     fn lazy_offline() -> LazyDb {
         // Use a URL that parses but is never reachable; tests below do not
         // issue any RPC call — they exercise cache-hit / trait-bound paths.
-        LazyDb::new("http://127.0.0.1:1/never", Some(1)).expect("LazyDb::new should accept a well-formed URL")
+        LazyDb::new("http://127.0.0.1:1/never", Some(1))
+            .expect("LazyDb::new should accept a well-formed URL")
     }
 
     /// THE CRITICAL TEST: this is the trait-bound that A.3.c.3's
@@ -614,7 +615,10 @@ mod tests {
         // Database path (needs &mut)
         let mut lazy_mut = lazy;
         let mut_result = Database::basic(&mut lazy_mut, addr).expect("basic ok");
-        assert_eq!(ref_result.map(|i| (i.balance, i.nonce)), mut_result.map(|i| (i.balance, i.nonce)));
+        assert_eq!(
+            ref_result.map(|i| (i.balance, i.nonce)),
+            mut_result.map(|i| (i.balance, i.nonce))
+        );
     }
 
     /// Equivalence between `Database::storage` and `DatabaseRef::storage`

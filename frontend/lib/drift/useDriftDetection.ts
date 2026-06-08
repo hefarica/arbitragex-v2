@@ -73,13 +73,19 @@ export function useDriftDetection(pollIntervalMs = 30_000) {
 
       if (!res.ok) {
         const body = await parseBody(res);
-        const message =
+        // REPAIR c815ef9: bajo noUncheckedIndexedAccess Record<string,string>.error
+        // puede ser undefined; usar narrowing local que preserva string puro.
+        let message: string = `HTTP ${res.status}`;
+        if (
           typeof body === "object" &&
           body !== null &&
-          "error" in body &&
-          typeof (body as Record<string, unknown>).error === "string"
-            ? (body as Record<string, string>).error
-            : `HTTP ${res.status}`;
+          "error" in body
+        ) {
+          const candidate = (body as { error?: unknown }).error;
+          if (typeof candidate === "string") {
+            message = candidate;
+          }
+        }
         setLastError(message);
         setReport(null);
         return;

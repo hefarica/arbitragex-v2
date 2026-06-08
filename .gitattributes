@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.rs linguist-language=Rust
+*.sol linguist-language=Solidity
+*.ts linguist-language=TypeScript
+*.tsx linguist-language=TypeScript
+backend/* linguist-documentation=false

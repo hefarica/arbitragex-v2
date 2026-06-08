@@ -196,6 +196,7 @@ async fn build_test_orchestrator() -> Option<std::sync::Arc<searcher_rs::orchest
         config_provider,
         pool_discovery,
         chain_id: CHAIN_ID,
+        cartridge_runner: None,
     };
 
     Some(Arc::new(Orchestrator::new(ctx)))

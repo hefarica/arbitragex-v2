@@ -93,7 +93,9 @@ pub enum SimEncoderError {
     #[error("decimals not configured for chain {chain_id} token {token:?}")]
     MissingTokenDecimals { chain_id: u64, token: Address },
 
-    #[error("decimals {decimals} for chain {chain_id} token {token:?} exceed the safe range (>36)")]
+    #[error(
+        "decimals {decimals} for chain {chain_id} token {token:?} exceed the safe range (>36)"
+    )]
     InvalidTokenDecimals {
         chain_id: u64,
         token: Address,
@@ -327,12 +329,21 @@ pub fn convert_amount_to_wei(amount_in: f64, decimals: u8) -> Result<U256, SimEn
     let wei_string = wei_decimal.to_string();
     // After Floor on a positive bd, neither '-' nor '.' can appear at scale=0.
     // These asserts catch bigdecimal API drift in future upgrades.
-    debug_assert!(!wei_string.contains('-'), "unexpected negative wei string: {wei_string}");
-    debug_assert!(!wei_string.contains('.'), "unexpected fractional wei string: {wei_string}");
-    let wei = U256::from_dec_str(&wei_string)
-        .map_err(|_| SimEncoderError::AmountConversionOverflow)?;
+    debug_assert!(
+        !wei_string.contains('-'),
+        "unexpected negative wei string: {wei_string}"
+    );
+    debug_assert!(
+        !wei_string.contains('.'),
+        "unexpected fractional wei string: {wei_string}"
+    );
+    let wei =
+        U256::from_dec_str(&wei_string).map_err(|_| SimEncoderError::AmountConversionOverflow)?;
     if wei.is_zero() {
-        return Err(SimEncoderError::AmountTooSmallForDecimals { amount_in, decimals });
+        return Err(SimEncoderError::AmountTooSmallForDecimals {
+            amount_in,
+            decimals,
+        });
     }
     Ok(wei)
 }
@@ -356,10 +367,7 @@ pub fn parse_dex_kind(label: &str) -> Result<RouterKind, SimEncoderError> {
 /// Resolve a router address from the static catalogue. Returns
 /// `MissingRouterAddress` when the catalogue has no entry for
 /// `(chain_id, kind)`. NO hardcode fallback.
-pub fn resolve_router_address(
-    chain_id: u64,
-    kind: RouterKind,
-) -> Result<Address, SimEncoderError> {
+pub fn resolve_router_address(chain_id: u64, kind: RouterKind) -> Result<Address, SimEncoderError> {
     for entry in routers_for_chain(chain_id) {
         if entry.kind == kind {
             return Ok(Address::from(entry.address));
@@ -430,12 +438,12 @@ pub fn build_round_trip_context_from_candidate(
     }
 
     // ── Decimals ───────────────────────────────────────────────────────────
-    let decimals_in = decimals_provider
-        .decimals(chain_id, &token_in)
-        .ok_or(SimEncoderError::MissingTokenDecimals {
+    let decimals_in = decimals_provider.decimals(chain_id, &token_in).ok_or(
+        SimEncoderError::MissingTokenDecimals {
             chain_id,
             token: token_in,
-        })?;
+        },
+    )?;
     if decimals_in > 36 {
         return Err(SimEncoderError::InvalidTokenDecimals {
             chain_id,
@@ -548,14 +556,9 @@ mod tests {
     fn valid_candidate_v2_builds_round_trip_context() {
         let c = valid_candidate_v2();
         let p = provider_with_weth_18();
-        let ctx = build_round_trip_context_from_candidate(
-            &c,
-            1,
-            dummy_executor(),
-            &p,
-            &valid_config(),
-        )
-        .unwrap();
+        let ctx =
+            build_round_trip_context_from_candidate(&c, 1, dummy_executor(), &p, &valid_config())
+                .unwrap();
         assert_eq!(ctx.token_in, addr(WETH));
         assert_eq!(ctx.token_out, addr(USDC));
         // 1.5 WETH (18 decimals) → 1.5 × 10^18 = 1500000000000000000
@@ -611,7 +614,10 @@ mod tests {
     fn missing_executor_rejected() {
         std::env::remove_var("EXECUTOR_9999");
         let err = parse_executor_address(9999).unwrap_err();
-        assert!(matches!(err, SimEncoderError::MissingExecutorAddress { chain_id: 9999 }));
+        assert!(matches!(
+            err,
+            SimEncoderError::MissingExecutorAddress { chain_id: 9999 }
+        ));
         assert_eq!(err.reason_tag(), "missing_executor");
     }
 
@@ -621,7 +627,10 @@ mod tests {
     fn invalid_executor_rejected() {
         std::env::set_var("EXECUTOR_9998", "not_an_address");
         let err = parse_executor_address(9998).unwrap_err();
-        assert!(matches!(err, SimEncoderError::InvalidExecutorAddress { .. }));
+        assert!(matches!(
+            err,
+            SimEncoderError::InvalidExecutorAddress { .. }
+        ));
         std::env::remove_var("EXECUTOR_9998");
     }
 
@@ -634,7 +643,10 @@ mod tests {
             "0x0000000000000000000000000000000000000000",
         );
         let err = parse_executor_address(9997).unwrap_err();
-        assert!(matches!(err, SimEncoderError::ZeroExecutorAddress { chain_id: 9997 }));
+        assert!(matches!(
+            err,
+            SimEncoderError::ZeroExecutorAddress { chain_id: 9997 }
+        ));
         std::env::remove_var("EXECUTOR_9997");
     }
 
@@ -678,14 +690,9 @@ mod tests {
     fn missing_decimals_rejected() {
         let c = valid_candidate_v2();
         let p = InMemoryTokenDecimalsProvider::new(); // empty
-        let err = build_round_trip_context_from_candidate(
-            &c,
-            1,
-            dummy_executor(),
-            &p,
-            &valid_config(),
-        )
-        .unwrap_err();
+        let err =
+            build_round_trip_context_from_candidate(&c, 1, dummy_executor(), &p, &valid_config())
+                .unwrap_err();
         assert!(matches!(err, SimEncoderError::MissingTokenDecimals { .. }));
         assert_eq!(err.reason_tag(), "missing_decimals");
     }
@@ -696,14 +703,9 @@ mod tests {
     fn invalid_decimals_rejected() {
         let c = valid_candidate_v2();
         let p = InMemoryTokenDecimalsProvider::new().with_decimals(1, addr(WETH), 50);
-        let err = build_round_trip_context_from_candidate(
-            &c,
-            1,
-            dummy_executor(),
-            &p,
-            &valid_config(),
-        )
-        .unwrap_err();
+        let err =
+            build_round_trip_context_from_candidate(&c, 1, dummy_executor(), &p, &valid_config())
+                .unwrap_err();
         assert!(matches!(err, SimEncoderError::InvalidTokenDecimals { .. }));
     }
 
@@ -760,7 +762,10 @@ mod tests {
         assert_eq!(ok, U256::from(100_000_000u64));
         // 1e-10 USDC with 6 decimals = 1e-4 wei → floor to 0 → reject.
         let err = convert_amount_to_wei(1e-10, 6).unwrap_err();
-        assert!(matches!(err, SimEncoderError::AmountTooSmallForDecimals { .. }));
+        assert!(matches!(
+            err,
+            SimEncoderError::AmountTooSmallForDecimals { .. }
+        ));
     }
 
     // ── Test 17 — Unsupported dex_kind rejected ────────────────────────────
@@ -846,14 +851,9 @@ mod tests {
         let mut c = valid_candidate_v2();
         c.token_addresses = vec![WETH.into(), WETH.into()];
         let p = InMemoryTokenDecimalsProvider::new().with_decimals(1, addr(WETH), 18);
-        let err = build_round_trip_context_from_candidate(
-            &c,
-            1,
-            dummy_executor(),
-            &p,
-            &valid_config(),
-        )
-        .unwrap_err();
+        let err =
+            build_round_trip_context_from_candidate(&c, 1, dummy_executor(), &p, &valid_config())
+                .unwrap_err();
         assert!(matches!(err, SimEncoderError::SameTokenInOut { .. }));
     }
 

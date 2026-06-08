@@ -9,7 +9,7 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL;
 // ARBX-HARDENING: Prevent production builds from being generated with localhost endpoints.
 // This physically prevents the #425 / API Base URL mismatch cascade if the operator forgets
 // to pass --env-file .env during a docker build.
-if (process.env.NODE_ENV === "production") {
+if (process.env.NODE_ENV === "production" && process.env.ARBX_ALLOW_LOCALHOST_PROD !== "true" && process.env.CI !== "true") {
   if (EDGE_URL && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(EDGE_URL)) {
     throw new Error(`[CRITICAL] next build failed: NEXT_PUBLIC_EDGE_URL (${EDGE_URL}) cannot point to localhost in production.`);
   }
@@ -26,7 +26,7 @@ if (process.env.NODE_ENV === "production") {
 // "connect-src 'self'  " (trailing spaces) when either var was undefined,
 // which some CSP parsers reject as malformed.
 const csp = (edgeUrl, wsUrl) => {
-  const connectSrcParts = ["'self'", edgeUrl, wsUrl].filter(Boolean);
+  const connectSrcParts = ["'self'", "ws:", "wss:", edgeUrl, wsUrl].filter(Boolean);
   const connectSrc = connectSrcParts.join(" ");
   return [
     "default-src 'self'",

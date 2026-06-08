@@ -88,7 +88,7 @@ contract DeployCrucible is Script {
         address deployer = vm.addr(pk);
 
         console2.log("============================================================");
-        console2.log("  OMEGA CRUCIBLE — Testnet Deploy");
+        console2.log("  OMEGA CRUCIBLE -- Testnet Deploy");
         console2.log("============================================================");
         console2.log("Deployer       :", deployer);
         console2.log("Chain ID       :", block.chainid);

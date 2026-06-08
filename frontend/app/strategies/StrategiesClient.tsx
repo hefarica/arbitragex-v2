@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from "react";
 import { AlertCircleIcon } from "lucide-react";
+import Link from "next/link";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -66,7 +67,7 @@ export function StrategiesClient({ initialConfig, initialCatalog, initialError }
         <AlertTitle>convergence_config not seeded</AlertTitle>
         <AlertDescription>
           Chain 1 has no trading config row. Seed it via the existing{" "}
-          <a href="/config/trading" className="underline">/config/trading</a> form first, then return to this page.
+          <Link href="/config/trading" className="underline">/config/trading</Link> form first, then return to this page.
         </AlertDescription>
       </Alert>
     );

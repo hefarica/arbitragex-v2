@@ -1,16 +1,36 @@
 "use client";
-import { useEffect, useState } from "react";
-import type { ContractEntity, FeatureManifestEntry } from "@/lib/registries/types-omni";
+import { useContracts } from "@/lib/hooks/useContracts";
+import { useFeatureManifest } from "@/lib/hooks/useFeatureManifest";
 
 export default function CorePage() {
-  const [cores, setCores] = useState<ContractEntity[]>([]);
-  const [manifest, setManifest] = useState<FeatureManifestEntry | null>(null);
-  useEffect(() => {
-    fetch("/api/contracts").then((r) => r.json())
-      .then((d) => setCores((d.rows ?? []).filter((c: ContractEntity) => c.contract_kind === "resolution_core")));
-    fetch("/api/system/feature_manifest").then((r) => r.json())
-      .then((d) => setManifest(d.features.find((f: FeatureManifestEntry) => f.feature_key === "omega.s5.core") ?? null));
-  }, []);
+  const { data: cores, isLoading: coresLoading, error: coresError } = useContracts({
+    contractKind: "resolution_core",
+  });
+  const { feature: manifest, isLoading: manifestLoading, error: manifestError } = useFeatureManifest({
+    featureKey: "omega.s5.core",
+  });
+
+  const isLoading = coresLoading || manifestLoading;
+  const error = coresError || manifestError;
+
+  if (isLoading) {
+    return (
+      <div>
+        <h1 className="text-xl font-semibold">ResolutionCore + Holonomic Decoder</h1>
+        <p className="text-sm text-muted-foreground">Loading...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div>
+        <h1 className="text-xl font-semibold">ResolutionCore + Holonomic Decoder</h1>
+        <p className="text-sm text-destructive">Error: {error}</p>
+      </div>
+    );
+  }
+
   return (
     <div>
       <h1 className="text-xl font-semibold">ResolutionCore + Holonomic Decoder</h1>

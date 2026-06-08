@@ -105,8 +105,19 @@ export function ReconClient({ initialSummary, initialTimeseries }: Props) {
       {error && (
         <Alert variant="destructive">
           <AlertCircleIcon />
-          <AlertTitle>fetch error</AlertTitle>
-          <AlertDescription><code className="font-mono text-xs">{error}</code></AlertDescription>
+          <AlertTitle>Recon data unavailable</AlertTitle>
+          <AlertDescription className="flex flex-col items-start gap-2">
+            <span className="font-mono text-xs break-all">{error}</span>
+            <button
+              type="button"
+              onClick={() => void applyWindow(windowHours)}
+              disabled={loading}
+              className="inline-flex items-center gap-1.5 rounded-md border border-destructive/40 px-2.5 py-1 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:opacity-60 motion-safe:transition-colors"
+            >
+              <RefreshCwIcon className={`size-3 ${loading ? "motion-safe:animate-spin" : ""}`} />
+              Retry
+            </button>
+          </AlertDescription>
         </Alert>
       )}
 

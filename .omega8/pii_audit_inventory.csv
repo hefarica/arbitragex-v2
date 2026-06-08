@@ -1,0 +1,38 @@
+archivo,linea,snippet,tipo,tabla_objetivo,columnas_pii_en_insert,estado,fix_aplicado,observacion
+backend/api-server/src/index.ts,279,"INSERT INTO audit_log (... ip_address ... user_agent) VALUES (... arbx_anonymize_ip($7)::cidr ... arbx_hash_user_agent($9))",insert,audit_log,ip_address+user_agent,wired,none,pre-M3 already wired via writeAudit() (mig 053/055)
+backend/api-server/src/lib/registry-engine.ts,145,"INSERT INTO audit_event (...) VALUES (... arbx_anonymize_ip($13)::cidr arbx_hash_user_agent($14) ...)",insert,audit_event,ip_address+user_agent,wired,none,M3 P1-3 wired (mig 070)
+backend/api-server/src/routes/operator.ts,116,"INSERT INTO audit_event (action entity_type entity_id idempotency_key config_hash_* operator_* payload)",insert,audit_event,none,pass,n/a,no PII columns referenced (NULL by omission); sovereign-only operator action
+backend/api-server/src/routes/operator.ts,181,"INSERT INTO audit_event (action entity_type entity_id idempotency_key config_hash_* operator_* payload)",insert,audit_event,none,pass,n/a,no PII columns referenced (NULL by omission); sovereign-only operator action
+backend/api-server/src/routes/admin-promote-mainnet.ts,161,"INSERT INTO audit_event (action entity_type entity_id idempotency_key config_hash_* operator_* payload)",insert,audit_event,none,pass,n/a,no PII columns referenced (NULL by omission); sovereign-only operator action
+backend/api-server/src/routes/admin-chains.ts,355,"writeAudit(... req.ip ... req.header('user-agent'))",header_capture,audit_log,ip_address+user_agent,wired,none,delegated to writeAudit() in index.ts:258
+backend/api-server/src/routes/admin-chains.ts,414,"writeAudit(... req.ip ... req.header('user-agent'))",header_capture,audit_log,ip_address+user_agent,wired,none,delegated to writeAudit() in index.ts:258
+backend/api-server/src/routes/admin-chains.ts,455,"writeAudit(... req.ip ... req.header('user-agent'))",header_capture,audit_log,ip_address+user_agent,wired,none,delegated to writeAudit() in index.ts:258
+backend/api-server/src/routes/trading-config.ts,548,"deps.writeAudit(... req.ip ... req.header('user-agent'))",header_capture,audit_log,ip_address+user_agent,wired,none,delegated to writeAudit() in index.ts:258
+backend/api-server/src/lib/registry-engine.ts,272,"writeAuditEvent({ ... ip: req.ip userAgent: req.header('user-agent') })",header_capture,audit_event,ip_address+user_agent,wired,none,delegated to writeAuditEvent() (M3 P1-3)
+backend/api-server/src/credentials/store.ts,114,INSERT INTO service_credentials,insert,service_credentials,none,pass,n/a,no PII columns
+backend/api-server/src/routes/admin-chains.ts,345,INSERT INTO chains_runtime,insert,chains_runtime,none,pass,n/a,no PII columns
+backend/api-server/src/routes/dexes.ts,100,INSERT INTO dexes,insert,dexes,none,pass,n/a,no PII columns
+backend/api-server/src/routes/dexes.ts,109,INSERT INTO factories,insert,factories,none,pass,n/a,no PII columns
+backend/api-server/src/routes/system-manifest.ts,126,INSERT INTO runtime_ack,insert,runtime_ack,none,pass,n/a,no PII columns
+backend/api-server/src/routes/tokenResolver.ts,174,INSERT INTO tokens,insert,tokens,none,pass,n/a,no PII columns
+backend/api-server/src/routes/trading-config.ts,420,INSERT INTO trading_config,insert,trading_config,none,pass,n/a,no PII columns
+backend/api-server/src/services/tokenValidation/index.ts,112,INSERT INTO token_validations,insert,token_validations,none,pass,n/a,no PII columns
+backend/recon/src/aggregator.rs,124,INSERT INTO strategy_scores,insert,strategy_scores,none,pass,n/a,no PII columns (Rust)
+backend/recon/src/aggregator.rs,185,INSERT INTO relay_scores,insert,relay_scores,none,pass,n/a,no PII columns (Rust)
+backend/recon/src/anomaly.rs,57,INSERT INTO risk_events,insert,risk_events,none,pass,n/a,no PII columns (Rust)
+backend/recon/src/persistence.rs,17,INSERT INTO recon_reports,insert,recon_reports,none,pass,n/a,no PII columns (Rust)
+backend/recon/src/persistence.rs,80,INSERT INTO risk_events,insert,risk_events,none,pass,n/a,no PII columns (Rust)
+backend/relays-client/src/persistence.rs,23,INSERT INTO executions,insert,executions,none,pass,n/a,no PII columns (Rust)
+backend/relays-client/src/persistence.rs,81,INSERT INTO relay_scores,insert,relay_scores,none,pass,n/a,no PII columns (Rust)
+backend/relays-client/src/persistence.rs,152,INSERT INTO paper_trade_runs,insert,paper_trade_runs,none,pass,n/a,no PII columns (Rust)
+backend/searcher-rs/src/persistence.rs,31,INSERT INTO opportunities,insert,opportunities,none,pass,n/a,no PII columns (Rust)
+backend/searcher-rs/src/persistence/dao.rs,18,INSERT INTO sed_opportunities,insert,sed_opportunities,none,pass,n/a,no PII columns (Rust)
+backend/searcher-rs/src/pool_discovery.rs,276,INSERT INTO observed_unindexed_pairs,insert,observed_unindexed_pairs,none,pass,n/a,no PII columns (Rust)
+backend/searcher-rs/src/sed_engine/mod.rs,151,INSERT INTO sed_opportunities,insert,sed_opportunities,none,pass,n/a,no PII columns (Rust)
+backend/selector-api/src/persistence.ts,43,INSERT INTO risk_events,insert,risk_events,none,pass,n/a,no PII columns
+backend/selector-api/src/token_safety/cache.ts,65,INSERT INTO token_safety_cache,insert,token_safety_cache,none,pass,n/a,no PII columns
+backend/sim-ctl/src/persistence.rs,25,INSERT INTO simulations,insert,simulations,none,pass,n/a,no PII columns (Rust)
+backend/token-enricher/src/persistence.rs,54,INSERT INTO tokens,insert,tokens,none,pass,n/a,no PII columns (Rust)
+backend/searcher-rs/src/workers/cex_dex_worker.rs,184,".user_agent('arbitragex-v2-cex-dex-worker/0.1')",http_client_ua,n/a,n/a,debug_ephemeral,n/a,outbound HTTP client identity (not server PII)
+backend/searcher-rs/src/workers/cex_dex_worker.rs,519,".user_agent('test')",http_client_ua,n/a,n/a,debug_ephemeral,n/a,test fixture (not server PII)
+backend/searcher-rs/src/workers/price_worker.rs,255,".user_agent('arbitragex-v2-price-worker/0.1')",http_client_ua,n/a,n/a,debug_ephemeral,n/a,outbound HTTP client identity (not server PII)

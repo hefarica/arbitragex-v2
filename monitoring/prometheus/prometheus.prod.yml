@@ -1,0 +1,64 @@
+# M2 Capa1 Fase 10 (P2) — production Prometheus config.
+#
+# Separated from prometheus.yml (dev) so the `env: prod` external label
+# is unambiguous in Thanos / Grafana / alert payloads. Previously the
+# shared file shipped `env: dev` and the prod stack inherited it; alerts
+# rooted at a "dev" environment masked real prod incidents in PagerDuty.
+#
+# compose.prod.yml mounts THIS file (post-Fase 10). Dev/compose.dev.yml
+# continues to mount prometheus.yml.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    platform: arbitragex-v2
+    env: prod
+
+rule_files:
+  - /etc/prometheus/alerts.rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs: [{ targets: ["localhost:9090"] }]
+
+  - job_name: searcher-rs
+    metrics_path: /metrics
+    static_configs: [{ targets: ["searcher-rs:9001"], labels: { service: "searcher-rs" } }]
+
+  - job_name: selector-api
+    metrics_path: /metrics
+    static_configs: [{ targets: ["selector-api:3002"], labels: { service: "selector-api" } }]
+
+  - job_name: sim-ctl
+    metrics_path: /metrics
+    static_configs: [{ targets: ["sim-ctl:3003"], labels: { service: "sim-ctl" } }]
+
+  - job_name: recon
+    metrics_path: /metrics
+    static_configs: [{ targets: ["recon:3004"], labels: { service: "recon" } }]
+
+  - job_name: relays-client
+    metrics_path: /metrics
+    static_configs: [{ targets: ["relays-client:3005"], labels: { service: "relays-client" } }]
+
+  - job_name: api-server
+    metrics_path: /metrics
+    static_configs: [{ targets: ["api-server:8080"], labels: { service: "api-server" } }]
+
+  - job_name: edge
+    metrics_path: /metrics
+    static_configs: [{ targets: ["edge:8787"], labels: { service: "edge" } }]
+
+  # M2 Capa1 Fase 10 — token-enricher exposes Prometheus metrics on 9004
+  # (see backend/token-enricher/src/main.rs / ENRICHER_METRICS_PORT).
+  # The shared compose stack already runs this service in prod; previously
+  # Prometheus didn't scrape it so `arbx_enricher_*` series went silent.
+  - job_name: token-enricher
+    metrics_path: /metrics
+    static_configs: [{ targets: ["token-enricher:9004"], labels: { service: "token-enricher" } }]

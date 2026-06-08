@@ -26,12 +26,16 @@ ALTER TABLE trading_config
   ADD COLUMN IF NOT EXISTS simulation_target_roi_pct         NUMERIC(8,4)  NULL;
 
 -- Sanity bounds: positive values only when present.
+ALTER TABLE trading_config DROP CONSTRAINT IF EXISTS trading_config_simulation_capital_positive;
+ALTER TABLE trading_config DROP CONSTRAINT IF EXISTS trading_config_simulation_target_profit_nonneg;
+ALTER TABLE trading_config DROP CONSTRAINT IF EXISTS trading_config_simulation_target_roi_nonneg;
+
 ALTER TABLE trading_config
-  ADD CONSTRAINT IF NOT EXISTS trading_config_simulation_capital_positive
+  ADD CONSTRAINT trading_config_simulation_capital_positive
     CHECK (simulation_capital_usd IS NULL OR simulation_capital_usd > 0),
-  ADD CONSTRAINT IF NOT EXISTS trading_config_simulation_target_profit_nonneg
+  ADD CONSTRAINT trading_config_simulation_target_profit_nonneg
     CHECK (simulation_target_profit_usd IS NULL OR simulation_target_profit_usd >= 0),
-  ADD CONSTRAINT IF NOT EXISTS trading_config_simulation_target_roi_nonneg
+  ADD CONSTRAINT trading_config_simulation_target_roi_nonneg
     CHECK (simulation_target_roi_pct IS NULL OR simulation_target_roi_pct >= 0);
 
 COMMENT ON COLUMN trading_config.token_prices_usd

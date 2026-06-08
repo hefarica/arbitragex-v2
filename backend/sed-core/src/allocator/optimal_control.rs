@@ -10,9 +10,9 @@
 //! Implementación: Newton-Raphson 1D con colocación pseudoespectral
 //! reducida mediante parametrización de la variedad: y = k/x.
 
-use nalgebra::{DVector, Vector2};
-use crate::allocator::{LiquidityManifold, HyperbolicConstraint, ManifoldError};
+use crate::allocator::{HyperbolicConstraint, LiquidityManifold, ManifoldError};
 use crate::eigenstate::EquilibriumBoundary;
+use nalgebra::{DVector, Vector2};
 
 /// Solución del problema de control óptimo
 #[derive(Debug, Clone, PartialEq)]
@@ -113,12 +113,16 @@ impl PontryaginSolver {
 
         let (satisfied, rel_err) = self.constraint.verify_with_error(target_x, target_y);
         if !satisfied {
-            return Err(OcpError::TargetHyperbolicViolation { relative_error: rel_err });
+            return Err(OcpError::TargetHyperbolicViolation {
+                relative_error: rel_err,
+            });
         }
 
         // Newton-Raphson 1D sobre la parametrización x (y = k/x)
         let f = |x: f64| -> f64 {
-            if x <= 0.0 { return f64::INFINITY; }
+            if x <= 0.0 {
+                return f64::INFINITY;
+            }
             let y = k / x;
             let dx = (x / target_x).ln();
             let dy = (y / target_y).ln();
@@ -126,14 +130,18 @@ impl PontryaginSolver {
         };
 
         let df = |x: f64| -> f64 {
-            if x <= 0.0 { return f64::INFINITY; }
+            if x <= 0.0 {
+                return f64::INFINITY;
+            }
             let dx = (x / target_x).ln();
             let dy = ((k / x) / target_y).ln();
             (2.0 / x) * (dx - dy)
         };
 
         let d2f = |x: f64| -> f64 {
-            if x <= 0.0 { return f64::INFINITY; }
+            if x <= 0.0 {
+                return f64::INFINITY;
+            }
             let dx = (x / target_x).ln();
             let dy = ((k / x) / target_y).ln();
             (2.0 / (x * x)) * (2.0 - dx + dy)
@@ -199,7 +207,8 @@ impl PontryaginSolver {
             costate_traj.push(Vector2::new(px, py));
         }
 
-        let post_manifold = manifold.with_reserves(x, y_opt)
+        let post_manifold = manifold
+            .with_reserves(x, y_opt)
             .map_err(OcpError::ManifoldError)?;
 
         let now = std::time::SystemTime::now()
@@ -261,10 +270,14 @@ mod tests {
 
     fn test_manifold() -> LiquidityManifold {
         LiquidityManifold::new(
-            1_000_000.0, 1000.0, 1000.0,
+            1_000_000.0,
+            1000.0,
+            1000.0,
             "0x1234".to_string(),
-            ("WETH".to_string(), "USDC".to_string()), 1,
-        ).unwrap()
+            ("WETH".to_string(), "USDC".to_string()),
+            1,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -322,7 +335,10 @@ mod tests {
         };
         let target = Vector2::new(800.0, 1250.0);
         let result = solver.solve(&m, &boundary, &target);
-        assert!(matches!(result, Err(OcpError::TargetOutsideConvergenceRadius)));
+        assert!(matches!(
+            result,
+            Err(OcpError::TargetOutsideConvergenceRadius)
+        ));
     }
 
     #[test]
@@ -337,6 +353,9 @@ mod tests {
         };
         let target = Vector2::new(1000.0, 1001.0);
         let result = solver.solve(&m, &boundary, &target);
-        assert!(matches!(result, Err(OcpError::TargetHyperbolicViolation { .. })));
+        assert!(matches!(
+            result,
+            Err(OcpError::TargetHyperbolicViolation { .. })
+        ));
     }
 }

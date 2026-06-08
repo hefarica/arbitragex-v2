@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useContracts } from "@/lib/hooks/useContracts";
 import type { ContractEntity } from "@/lib/registries/types-omni";
 
 const ROLES: Array<ContractEntity["contract_kind"]> = [
@@ -7,11 +7,26 @@ const ROLES: Array<ContractEntity["contract_kind"]> = [
 ];
 
 export default function WalletsPage() {
-  const [rows, setRows] = useState<ContractEntity[]>([]);
-  useEffect(() => {
-    fetch("/api/contracts").then((r) => r.json())
-      .then((d) => setRows((d.rows ?? []).filter((c: ContractEntity) => ROLES.includes(c.contract_kind))));
-  }, []);
+  const { data: rows, isLoading, error } = useContracts({ contractKinds: ROLES });
+
+  if (isLoading) {
+    return (
+      <div>
+        <h1 className="text-xl font-semibold">Wallet Topology</h1>
+        <p className="text-sm text-muted-foreground">Loading...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div>
+        <h1 className="text-xl font-semibold">Wallet Topology</h1>
+        <p className="text-sm text-destructive">Error: {error}</p>
+      </div>
+    );
+  }
+
   return (
     <div>
       <h1 className="text-xl font-semibold">Wallet Topology</h1>

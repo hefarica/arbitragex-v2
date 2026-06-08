@@ -1,0 +1,645 @@
+openapi: 3.1.0
+info:
+  title: arbitragex-v2 API
+  version: 0.1.0
+  description: |
+    Operational and administrative API for the ArbitrageX V2 trading system.
+    Provides health probes, configuration, opportunity feeds, execution
+    telemetry, risk metrics, and the emergency kill-switch.
+  contact:
+    name: ArbitrageX SRE
+    email: sre@arbitragex.io
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: http://195.201.235.70:8080
+    description: Staging / Canary
+  - url: https://api.arbitragex-v2.io
+    description: Production (TLS)
+security:
+  - AdminToken: []
+tags:
+  - name: Health
+    description: Liveness, readiness, and general health probes
+  - name: System
+    description: Runtime guard state and system-level telemetry
+  - name: Config
+    description: Runtime configuration and feature flags
+  - name: Opportunities
+    description: Arbitrage opportunity discovery and listing
+  - name: Executions
+    description: Trade execution logs and audit trail
+  - name: Risk
+    description: Risk limits, exposure, and circuit-breaker status
+  - name: Admin
+    description: Administrative operations including kill-switch
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Comprehensive health check
+      description: Returns composite health of all subsystems.
+      security: []
+      operationId: getHealth
+      responses:
+        "200":
+          description: All subsystems healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: One or more subsystems degraded or down
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /ready:
+    get:
+      tags:
+        - Health
+      summary: Readiness probe
+      description: Indicates whether the process is ready to accept traffic.
+      security: []
+      operationId: getReady
+      responses:
+        "200":
+          description: Ready
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ready
+        "503":
+          description: Not ready (initializing or shutting down)
+  /live:
+    get:
+      tags:
+        - Health
+      summary: Liveness probe
+      description: Indicates whether the process is alive.
+      security: []
+      operationId: getLive
+      responses:
+        "200":
+          description: Alive
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: alive
+        "503":
+          description: Dead (should be restarted)
+  /api/system/guard-state:
+    get:
+      tags:
+        - System
+      summary: Get current guard state
+      description: Returns the current guard/circuit-breaker state of the system.
+      operationId: getGuardState
+      responses:
+        "200":
+          description: Current guard state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuardState"
+  /api/config:
+    get:
+      tags:
+        - Config
+      summary: Get runtime configuration
+      description: Returns non-sensitive runtime configuration.
+      operationId: getConfig
+      responses:
+        "200":
+          description: Runtime configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeConfig"
+    put:
+      tags:
+        - Config
+      summary: Update runtime configuration
+      description: Updates runtime configuration values dynamically.
+      operationId: updateConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuntimeConfigUpdate"
+      responses:
+        "200":
+          description: Configuration updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeConfig"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /api/opportunities:
+    get:
+      tags:
+        - Opportunities
+      summary: List opportunities
+      description: Returns a list of current arbitrage opportunities.
+      operationId: listOpportunities
+      parameters:
+        - name: chain
+          in: query
+          schema:
+            type: string
+          description: Filter by blockchain chain ID
+        - name: minProfitBps
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          description: Minimum profit in basis points
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Maximum number of results
+      responses:
+        "200":
+          description: List of opportunities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpportunityList"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/executions:
+    get:
+      tags:
+        - Executions
+      summary: List executions
+      description: Returns trade execution logs and audit trail.
+      operationId: listExecutions
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Start timestamp (ISO 8601)
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: End timestamp (ISO 8601)
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum:
+              - pending
+              - submitted
+              - confirmed
+              - failed
+              - reverted
+          description: Filter by execution status
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+          description: Maximum number of results
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Pagination cursor
+      responses:
+        "200":
+          description: Paginated execution list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /admin/killswitch:
+    post:
+      tags:
+        - Admin
+      summary: Activate or deactivate kill switch
+      description: |
+        Emergency kill-switch. When activated, all trading operations are
+        immediately halted and no new transactions are submitted.
+        Requires admin token.
+      operationId: postKillswitch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KillSwitchRequest"
+      responses:
+        "200":
+          description: Kill-switch state changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KillSwitchResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Kill-switch already in requested state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    get:
+      tags:
+        - Admin
+      summary: Get kill-switch state
+      description: Returns the current kill-switch state.
+      operationId: getKillswitch
+      responses:
+        "200":
+          description: Kill-switch state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KillSwitchResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+components:
+  securitySchemes:
+    AdminToken:
+      type: apiKey
+      in: header
+      name: x-admin-token
+      description: Admin authentication token
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - version
+        - checks
+      properties:
+        status:
+          type: string
+          enum:
+            - healthy
+            - degraded
+            - unhealthy
+        version:
+          type: string
+          example: 0.1.0
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            required:
+              - status
+            properties:
+              status:
+                type: string
+                enum:
+                  - pass
+                  - fail
+                  - warn
+              latencyMs:
+                type: integer
+              message:
+                type: string
+          example:
+            rpc_eth:
+              status: pass
+              latencyMs: 12
+            rpc_bsc:
+              status: warn
+              latencyMs: 450
+              message: high latency
+            db:
+              status: pass
+              latencyMs: 2
+    GuardState:
+      type: object
+      required:
+        - state
+        - since
+        - reason
+      properties:
+        state:
+          type: string
+          enum:
+            - open
+            - half_open
+            - closed
+          description: Circuit-breaker state
+        since:
+          type: string
+          format: date-time
+        reason:
+          type: string
+        triggeredBy:
+          type: string
+          description: Component that triggered the guard
+    RuntimeConfig:
+      type: object
+      required:
+        - version
+        - updatedAt
+      properties:
+        version:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+        features:
+          type: object
+          additionalProperties:
+            type: boolean
+        thresholds:
+          type: object
+          additionalProperties:
+            type: number
+        rpcEndpoints:
+          type: array
+          items:
+            type: object
+            properties:
+              chain:
+                type: string
+              url:
+                type: string
+                format: uri
+              priority:
+                type: integer
+    RuntimeConfigUpdate:
+      type: object
+      properties:
+        features:
+          type: object
+          additionalProperties:
+            type: boolean
+        thresholds:
+          type: object
+          additionalProperties:
+            type: number
+    Opportunity:
+      type: object
+      required:
+        - id
+        - chain
+        - tokenIn
+        - tokenOut
+        - profitBps
+        - timestamp
+      properties:
+        id:
+          type: string
+          format: uuid
+        chain:
+          type: string
+        tokenIn:
+          type: string
+        tokenOut:
+          type: string
+        amountIn:
+          type: string
+        expectedOut:
+          type: string
+        profitBps:
+          type: integer
+        dexA:
+          type: string
+        dexB:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        ttlMs:
+          type: integer
+    OpportunityList:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Opportunity"
+        total:
+          type: integer
+        nextCursor:
+          type: string
+    Execution:
+      type: object
+      required:
+        - id
+        - opportunityId
+        - status
+        - chain
+        - timestamp
+      properties:
+        id:
+          type: string
+          format: uuid
+        opportunityId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - pending
+            - submitted
+            - confirmed
+            - failed
+            - reverted
+        chain:
+          type: string
+        txHash:
+          type: string
+        gasUsed:
+          type: string
+        gasPrice:
+          type: string
+        effectiveProfitBps:
+          type: integer
+        revertReason:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        confirmedAt:
+          type: string
+          format: date-time
+    ExecutionList:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Execution"
+        total:
+          type: integer
+        nextCursor:
+          type: string
+    KillSwitchRequest:
+      type: object
+      required:
+        - active
+        - reason
+      properties:
+        active:
+          type: boolean
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+        durationMs:
+          type: integer
+          description: Optional auto-resume after N milliseconds
+          minimum: 1000
+    KillSwitchResponse:
+      type: object
+      required:
+        - active
+        - changedAt
+        - changedBy
+      properties:
+        active:
+          type: boolean
+        changedAt:
+          type: string
+          format: date-time
+        changedBy:
+          type: string
+        reason:
+          type: string
+        autoResumeAt:
+          type: string
+          format: date-time
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code
+        message:
+          type: string
+          description: Human-readable error description
+        details:
+          type: object
+          additionalProperties: true
+        requestId:
+          type: string
+          format: uuid
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            PROCESS_DOWN:
+              summary: Required process is down
+              value:
+                code: PROCESS_DOWN
+                message: Required dependency process is not running
+            NO_RPC_CONFIGURED:
+              summary: No RPC endpoint configured
+              value:
+                code: NO_RPC_CONFIGURED
+                message: No RPC endpoint configured for requested chain
+    Unauthorized:
+      description: Missing or invalid authentication
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            AUTH_UNAUTHORIZED:
+              summary: Unauthorized
+              value:
+                code: AUTH_UNAUTHORIZED
+                message: Missing or invalid x-admin-token header
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            VALIDATION_ERROR:
+              summary: Validation error
+              value:
+                code: VALIDATION_ERROR
+                message: Request body failed validation
+                details:
+                  field: reason
+                  issue: must not be empty
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          description: Seconds until retry is allowed
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            RATE_LIMITED:
+              summary: Rate limited
+              value:
+                code: RATE_LIMITED
+                message: Too many requests, retry after the indicated interval
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            PROCESS_UP_DEPENDENCY_DEGRADED:
+              summary: Dependency degraded
+              value:
+                code: PROCESS_UP_DEPENDENCY_DEGRADED
+                message: Process is running but a dependency is degraded
+            INTERNAL_ERROR:
+              summary: Generic internal error
+              value:
+                code: INTERNAL_ERROR
+                message: An unexpected internal error occurred

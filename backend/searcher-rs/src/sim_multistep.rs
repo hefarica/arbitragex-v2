@@ -17,21 +17,21 @@
 //!   Step H. gas_cost = total_gas_used * gas_price.
 //!   Step I. net_profit = profit - gas_cost.
 //!
-//! ## Scope of this commit
+//! ## Status (A.3.c.3 — IMPLEMENTED)
 //!
-//! Ships the ORCHESTRATOR SKELETON + PLAN BUILDER + validation + typed
-//! errors + tests. The actual REVM-side state-persistent execution
-//! (`evm.transact_commit` on a shared `CacheDB`) requires extending
-//! `simulator-v2` with a multi-tx API and is deferred to **Phase A.3.c.3**
-//! per the directive's fail-honest clause. Today, `execute_multistep_revm`
-//! returns `SimulationOutcome::failed("multistep_revm_cachedb_pending")`
-//! once it has validated the inputs and computed the plan — every other
-//! reject path returns its own typed reason.
+//! Ships the PLAN BUILDER + validation + typed errors AND the real REVM-side
+//! state-persistent executor. `execute_multistep_revm` drives the plan through
+//! `simulator_v2::sequence_runner::SequenceContext` over a persistent
+//! `CacheDB<LazyDb>`, returning `passed = true` only after a real round trip
+//! (see the per-condition guards on the function). Every reject path returns
+//! its own typed reason. (Historical note: A.3.c.2 shipped only the skeleton
+//! and returned `multistep_revm_cachedb_pending`; that phase is superseded.)
 //!
 //! ## Anti-fraud invariants
 //!
-//! 1. NEVER returns a `SimulationOutcome::passed = true` from this module.
-//!    The success path is gated on REVM execution that lands in A.3.c.3.
+//! 1. Returns `SimulationOutcome::passed = true` ONLY after real REVM
+//!    execution with `gas_used_total > 0`, a non-zero trace hash, >= 2
+//!    committed calls, and `net_profit_wei > 0`. No PASS is fabricated.
 //! 2. NEVER applies storage overrides outside paper mode. The config gate
 //!    is `paper_mode == true && enable_storage_cheats == true`; either flag
 //!    flipped rejects with the corresponding typed error.
@@ -436,30 +436,11 @@ fn validate_context(ctx: &RoundTripContext) -> Result<(), MultiStepError> {
 }
 
 // ---------------------------------------------------------------------------
-// REVM orchestrator (Phase A.3.c.3 pending)
+// REVM orchestrator (Phase A.3.c.3 — IMPLEMENTED)
 // ---------------------------------------------------------------------------
 
 /// Run the multi-step plan through REVM with persistent state between
-/// legs. Returns `SimulationOutcome` with `passed = true` ONLY when:
-///   - Forward swap executed without revert.
-///   - Intermediate balance read returned non-zero.
-///   - Backward swap executed without revert.
-///   - Final balance read returned `final_balance > amount_in`.
-///   - `gross_profit_wei > gas_cost_wei` (positive net profit).
-///   - Combined trace hash is non-zero.
-///
-/// **Phase A.3.c.2 STATUS**: this function VALIDATES inputs + BUILDS the
-/// multi-step plan, then returns `SimulationOutcome::failed(...)` with
-/// the typed reason `multistep_revm_cachedb_pending`. Phase A.3.c.3 will
-/// extend `simulator-v2` with the `simulate_sequence` API needed to
-/// execute the plan against a persistent `revm::CacheDB<LazyDb>` and
-/// fill in the success path.
-///
-/// Why this layered approach: REVM CacheDB integration is a substantial
-/// extension of `simulator-v2` that should land in a focused PR with its
-/// own validation. Shipping the validation + plan builder + tests today
-/// means A.3.c.3 only needs to wire the executor, not also debate the
-/// plan shape (RULE 12 fail-honest applied to incremental delivery).
+/// legs against a `CacheDB<LazyDb>` resolved from `simulator.rpc_url`.
 /// Phase A.3.c.3 — REAL multi-step REVM executor wired to
 /// `simulator_v2::sequence_runner::SequenceContext`.
 ///
@@ -578,22 +559,20 @@ pub fn execute_multistep_revm(
                 // step. NO PLACEHOLDER reaches REVM.
                 let amount_in_ethers: U256 = match amount_source {
                     AmountSource::Literal(a) => *a,
-                    AmountSource::FromReadLabel(lbl) => {
-                        match sctx.reads().get(*lbl) {
-                            Some(v) if !v.is_zero() => alloy_u256_to_ethers(*v),
-                            Some(_) => {
-                                return SimulationOutcome::failed(
-                                    "multistep_intermediate_amount_zero".to_string(),
-                                );
-                            }
-                            None => {
-                                return SimulationOutcome::failed(format!(
-                                    "multistep_missing_read_label:{}",
-                                    lbl
-                                ));
-                            }
+                    AmountSource::FromReadLabel(lbl) => match sctx.reads().get(*lbl) {
+                        Some(v) if !v.is_zero() => alloy_u256_to_ethers(*v),
+                        Some(_) => {
+                            return SimulationOutcome::failed(
+                                "multistep_intermediate_amount_zero".to_string(),
+                            );
                         }
-                    }
+                        None => {
+                            return SimulationOutcome::failed(format!(
+                                "multistep_missing_read_label:{}",
+                                lbl
+                            ));
+                        }
+                    },
                 };
                 // Build the swap calldata with the resolved amount (ethers
                 // domain — the encoder lives in prioritization-spine).
@@ -657,9 +636,7 @@ pub fn execute_multistep_revm(
     {
         Some(v) => *v,
         None => {
-            return SimulationOutcome::failed(
-                "multistep_missing_final_balance_read".to_string(),
-            );
+            return SimulationOutcome::failed("multistep_missing_final_balance_read".to_string());
         }
     };
 
@@ -797,7 +774,10 @@ mod tests {
     fn config_storage_cheats_required() {
         let mut c = valid_config();
         c.enable_storage_cheats = false;
-        assert_eq!(c.validate().unwrap_err(), MultiStepError::StorageCheatsDisabled);
+        assert_eq!(
+            c.validate().unwrap_err(),
+            MultiStepError::StorageCheatsDisabled
+        );
     }
 
     #[test]
@@ -841,21 +821,30 @@ mod tests {
     fn context_zero_caller_rejected() {
         let mut ctx = valid_ctx();
         ctx.caller = Address::zero();
-        assert_eq!(validate_context(&ctx).unwrap_err(), MultiStepError::InvalidCaller);
+        assert_eq!(
+            validate_context(&ctx).unwrap_err(),
+            MultiStepError::InvalidCaller
+        );
     }
 
     #[test]
     fn context_same_token_in_out_rejected() {
         let mut ctx = valid_ctx();
         ctx.token_out = ctx.token_in;
-        assert_eq!(validate_context(&ctx).unwrap_err(), MultiStepError::SameTokenInOut);
+        assert_eq!(
+            validate_context(&ctx).unwrap_err(),
+            MultiStepError::SameTokenInOut
+        );
     }
 
     #[test]
     fn context_zero_amount_in_rejected() {
         let mut ctx = valid_ctx();
         ctx.amount_in = U256::zero();
-        assert_eq!(validate_context(&ctx).unwrap_err(), MultiStepError::InvalidAmountIn);
+        assert_eq!(
+            validate_context(&ctx).unwrap_err(),
+            MultiStepError::InvalidAmountIn
+        );
     }
 
     #[test]
@@ -903,8 +892,8 @@ mod tests {
 
     #[test]
     fn build_plan_forward_swap_uses_literal_amount() {
-        let plan = build_multistep_plan(&valid_ctx(), &valid_config(), &provider_with_layouts())
-            .unwrap();
+        let plan =
+            build_multistep_plan(&valid_ctx(), &valid_config(), &provider_with_layouts()).unwrap();
         // The first ExecuteSwap entry is the forward swap; its amount source
         // must be a literal == ctx.amount_in.
         let forward_swap = plan
@@ -915,16 +904,13 @@ mod tests {
                 _ => None,
             })
             .unwrap();
-        assert_eq!(
-            *forward_swap,
-            AmountSource::Literal(valid_ctx().amount_in)
-        );
+        assert_eq!(*forward_swap, AmountSource::Literal(valid_ctx().amount_in));
     }
 
     #[test]
     fn build_plan_backward_swap_uses_read_label() {
-        let plan = build_multistep_plan(&valid_ctx(), &valid_config(), &provider_with_layouts())
-            .unwrap();
+        let plan =
+            build_multistep_plan(&valid_ctx(), &valid_config(), &provider_with_layouts()).unwrap();
         // The SECOND ExecuteSwap entry is the backward swap; its amount
         // source must reference the intermediate balance read label —
         // NEVER a placeholder literal.
@@ -945,8 +931,8 @@ mod tests {
 
     #[test]
     fn build_plan_includes_final_balance_read() {
-        let plan = build_multistep_plan(&valid_ctx(), &valid_config(), &provider_with_layouts())
-            .unwrap();
+        let plan =
+            build_multistep_plan(&valid_ctx(), &valid_config(), &provider_with_layouts()).unwrap();
         // The plan must end with a ReadBalance for the final token_in.
         let last = plan.steps.last().unwrap();
         matches!(
@@ -972,8 +958,8 @@ mod tests {
     fn build_plan_rejects_max_steps_too_low() {
         let mut config = valid_config();
         config.max_steps = 3; // Plan needs 7; reject.
-        let err = build_multistep_plan(&valid_ctx(), &config, &provider_with_layouts())
-            .unwrap_err();
+        let err =
+            build_multistep_plan(&valid_ctx(), &config, &provider_with_layouts()).unwrap_err();
         assert_eq!(err, MultiStepError::InvalidStepCount);
     }
 
@@ -981,8 +967,8 @@ mod tests {
     fn build_plan_propagates_paper_mode_failure() {
         let mut config = valid_config();
         config.paper_mode = false;
-        let err = build_multistep_plan(&valid_ctx(), &config, &provider_with_layouts())
-            .unwrap_err();
+        let err =
+            build_multistep_plan(&valid_ctx(), &config, &provider_with_layouts()).unwrap_err();
         assert_eq!(err, MultiStepError::PaperModeRequired);
     }
 
@@ -990,13 +976,22 @@ mod tests {
 
     #[test]
     fn error_reason_tags_are_stable() {
-        assert_eq!(MultiStepError::PaperModeRequired.reason_tag(), "paper_mode_required");
+        assert_eq!(
+            MultiStepError::PaperModeRequired.reason_tag(),
+            "paper_mode_required"
+        );
         assert_eq!(
             MultiStepError::StorageCheatsDisabled.reason_tag(),
             "storage_cheats_disabled"
         );
-        assert_eq!(MultiStepError::InvalidGasPrice.reason_tag(), "invalid_gas_price");
-        assert_eq!(MultiStepError::SameTokenInOut.reason_tag(), "same_token_in_out");
+        assert_eq!(
+            MultiStepError::InvalidGasPrice.reason_tag(),
+            "invalid_gas_price"
+        );
+        assert_eq!(
+            MultiStepError::SameTokenInOut.reason_tag(),
+            "same_token_in_out"
+        );
         assert_eq!(
             MultiStepError::RevmCacheDbPending.reason_tag(),
             "multistep_revm_cachedb_pending"

@@ -118,8 +118,8 @@ export type ProtocolType =
 export interface DEX {
   /** UUID primary key. */
   id: UUID;
-  /** Chain on which this DEX is deployed. */
-  chain_id: number;
+  /** Chains on which this DEX is deployed. */
+  chain_ids: number[];
   /** Human-readable name (e.g. "Uniswap V3", "Curve"). */
   name: string;
   /** URL-safe slug. */
@@ -127,11 +127,17 @@ export interface DEX {
   /** Protocol version. */
   version: DexVersion;
   /** Checksummed router / entry-point contract address. */
-  router_address: Address;
+  router_address: Address | null;
   /** Checksummed factory contract address. */
-  factory_address: Address;
+  factory_address: Address | null;
   /** Pricing model employed by the protocol. */
   protocol_type: ProtocolType;
+  /** Volume in USD over the last 24 hours. */
+  volume_24h_usd: number | null;
+  /** Total Value Locked in USD. */
+  tvl_usd: number | null;
+  /** Whether the DEX is currently active. */
+  is_active: boolean;
   /** Lifecycle status. */
   status: EntityStatus;
   /** On-chain ArbitrageX adapter deployed for this DEX (undefined if not yet deployed). */
@@ -140,6 +146,8 @@ export interface DEX {
   config_hash: ConfigHash;
   created_at: ISOTimestamp;
   updated_at: ISOTimestamp;
+  /** Fee in basis points (e.g. 30 = 0.30 %). */
+  fee_bps: number | null;
 }
 
 // ---------------------------------------------------------------------------

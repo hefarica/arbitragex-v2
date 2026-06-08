@@ -1,0 +1,339 @@
+=== branch/head ===
+feature/topology-vault-rpc-mux
+9841216 docs: define topology vault hot reload staging profile
+f5f0346 docs: diagnóstico e implementación end-to-end de RPC
+ada2052 docs: generar scaffold visual y gap analysis (Paper Mode vs Live Trade)
+
+=== api-server tree ===
+backend/api-server/Dockerfile
+backend/api-server/inject-trigger.mjs
+backend/api-server/package.json
+backend/api-server/src/audit-events.test.ts
+backend/api-server/src/contract-isomorphism.test.ts
+backend/api-server/src/credentials/store.ts
+backend/api-server/src/credentials/validators.ts
+backend/api-server/src/index.ts
+backend/api-server/src/lib/pii-wireado-recursive.test.ts
+backend/api-server/src/lib/registry-engine.pii.test.ts
+backend/api-server/src/lib/registry-engine.ts
+backend/api-server/src/middleware/operator-authz.ts
+backend/api-server/src/readiness/readiness.test.ts
+backend/api-server/src/readiness/types.ts
+backend/api-server/src/readiness/verifiers/alerts.ts
+backend/api-server/src/readiness/verifiers/g-fl-1.ts
+backend/api-server/src/readiness/verifiers/g-mev-1.ts
+backend/api-server/src/readiness/verifiers/g-net-1.ts
+backend/api-server/src/readiness/verifiers/g-pap-1.ts
+backend/api-server/src/readiness/verifiers/g-pec-1.ts
+backend/api-server/src/readiness/verifiers/g-ris-1.ts
+backend/api-server/src/readiness/verifiers/g-rpc-1.ts
+backend/api-server/src/readiness/verifiers/g-sim-1.ts
+backend/api-server/src/readiness/verifiers/g-tok-1.ts
+backend/api-server/src/readiness/verifiers/index.ts
+backend/api-server/src/readiness/verifiers/monitoring.ts
+backend/api-server/src/readiness/verifiers/pending.ts
+backend/api-server/src/readiness/verifiers/pr-1-csp.ts
+backend/api-server/src/readiness/verifiers/pr-2-audit.ts
+backend/api-server/src/readiness/verifiers/runbook.ts
+backend/api-server/src/readiness/verifiers/v-at-1.ts
+backend/api-server/src/readiness/verifiers/v-db-1.ts
+backend/api-server/src/readiness/verifiers/v-nh-1.ts
+backend/api-server/src/recon-timeseries.test.ts
+backend/api-server/src/recon-timeseries.ts
+backend/api-server/src/routes/admin-chains.test.ts
+backend/api-server/src/routes/admin-chains.ts
+backend/api-server/src/routes/admin-promote-mainnet.ts
+backend/api-server/src/routes/admin-registries.ts
+backend/api-server/src/routes/agents-status.test.ts
+backend/api-server/src/routes/agents-status.ts
+backend/api-server/src/routes/credentials.ts
+backend/api-server/src/routes/defi.ts
+backend/api-server/src/routes/dexes.ts
+backend/api-server/src/routes/operations.ts
+backend/api-server/src/routes/operator.ts
+backend/api-server/src/routes/opportunities-live.ts
+backend/api-server/src/routes/pools.ts
+backend/api-server/src/routes/readiness-extras.test.ts
+backend/api-server/src/routes/readiness-extras.ts
+backend/api-server/src/routes/risk-circuit-breakers.test.ts
+backend/api-server/src/routes/risk-circuit-breakers.ts
+backend/api-server/src/routes/scoring-status.test.ts
+backend/api-server/src/routes/scoring-status.ts
+backend/api-server/src/routes/sed-status.ts
+backend/api-server/src/routes/strategy-catalog.ts
+backend/api-server/src/routes/strategy-runtime-status.ts
+backend/api-server/src/routes/stubs.test.ts
+backend/api-server/src/routes/stubs.ts
+backend/api-server/src/routes/system-manifest.test.ts
+backend/api-server/src/routes/system-manifest.ts
+backend/api-server/src/routes/tokenResolver.ts
+backend/api-server/src/routes/trading-config.ts
+backend/api-server/src/routes/wallets.ts
+backend/api-server/src/schemas/operations.ts
+backend/api-server/src/services/coingecko-coinslist.json
+backend/api-server/src/services/pmiCalculator.test.ts
+backend/api-server/src/services/pmiCalculator.ts
+backend/api-server/src/services/tokenRegistry.test.ts
+backend/api-server/src/services/tokenRegistry.ts
+backend/api-server/src/services/tokenValidation/index.ts
+backend/api-server/src/services/tokenValidation/liquidityReality.ts
+backend/api-server/src/services/tokenValidation/onChainTruth.ts
+backend/api-server/src/services/tokenValidation/score.test.ts
+backend/api-server/src/services/tokenValidation/score.ts
+backend/api-server/src/services/uniswap-tokenlist.json
+backend/api-server/src/simulation/computeSimulatedNet.test.ts
+backend/api-server/src/simulation/computeSimulatedNet.ts
+backend/api-server/src/simulation/tradingConfigSnapshot.ts
+backend/api-server/src/simulation/vacuumDecoherenceCost.ts
+backend/api-server/src/websocket-rooms.test.ts
+backend/api-server/src/websocket.test.ts
+backend/api-server/src/websocket.ts
+backend/api-server/test/migrations.test.ts
+backend/api-server/test/opportunities-live.test.ts
+backend/api-server/tsconfig.json
+
+=== package files ===
+backend/api-server/package.json
+backend/api-server/tsconfig.json
+
+=== route hints ===
+backend/api-server/Dockerfile:24:ENV ARBX_CONFIG_PATH=/app/configs/app.toml
+backend/api-server/package.json:23:    "ioredis": "^5.3.2",
+backend/api-server/test/opportunities-live.test.ts:109:  // 2026-05-10: target-driven simulation wiring added a `redis` parameter so
+backend/api-server/test/opportunities-live.test.ts:113:  // simulation when redis is null (R8 fail-honest, simulated_* fields stay
+backend/api-server/src/audit-events.test.ts:64:      await mockWriteAudit(action, "admin", "killswitch", "global",
+backend/api-server/src/audit-events.test.ts:68:        "killswitch.armed", "admin", "killswitch", "global",
+backend/api-server/src/index.ts:3:import { Redis } from "ioredis";
+backend/api-server/src/index.ts:35:// SECURE_BOOT (audit C1, 2026-05-10): refuse to start if admin/edge tokens
+backend/api-server/src/index.ts:42:// (searcher-rs, recon, relays-client → api-server). NEVER reuse admin token.
+backend/api-server/src/index.ts:46:  redisUrl: REDIS_URL,
+backend/api-server/src/index.ts:94:import { mountAdminChains } from "./routes/admin-chains.js";
+backend/api-server/src/index.ts:107:app.disable("x-powered-by");
+backend/api-server/src/index.ts:112:app.use(securityHeadersMiddleware());
+backend/api-server/src/index.ts:113:app.use(express.json({ limit: "256kb" }));
+backend/api-server/src/index.ts:114:app.use(traceIdMiddleware());
+backend/api-server/src/index.ts:115:app.use(createHttpLogger(SERVICE, cfg.observability.log_level ?? "info"));
+backend/api-server/src/index.ts:116:app.use(metricsMiddleware(SERVICE));
+backend/api-server/src/index.ts:118:// API-3: defense-in-depth rate limit on /admin/*. The edge worker rate-limits at the
+backend/api-server/src/index.ts:120:// tunnels, future multi-instance), admin endpoints would be unprotected. 30 req/min/IP
+backend/api-server/src/index.ts:126:const adminLimiter = rateLimit({
+backend/api-server/src/index.ts:133:app.use("/admin/", adminLimiter);
+backend/api-server/src/index.ts:135:app.get("/health", healthHandler(SERVICE, VERSION, startedAt));
+backend/api-server/src/index.ts:138:app.get("/api/health", healthHandler(SERVICE, VERSION, startedAt));
+backend/api-server/src/index.ts:139:app.get("/metrics", metricsHandler);
+backend/api-server/src/index.ts:142:app.get("/status", async (_req, res) => {
+backend/api-server/src/index.ts:157:/** Admin: toggle kill-switch. Requires admin token. */
+backend/api-server/src/index.ts:163:app.post("/admin/killswitch", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:169:  const actorHeader = req.header("x-arbx-actor") ?? "admin";
+backend/api-server/src/index.ts:185:  logger.warn({ event: "admin.killswitch", actor: actorHeader, state: out }, "kill-switch toggled");
+backend/api-server/src/index.ts:190:app.get("/admin/killswitch/status", requireAdminToken(ARBX_ADMIN_TOKEN), async (_req, res) => {
+backend/api-server/src/index.ts:197:app.get("/admin/config", requireAdminToken(ARBX_ADMIN_TOKEN), (_req, res) => {
+backend/api-server/src/index.ts:226:app.post("/internal/audit/auth", requireEdgeToken(ARBX_EDGE_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:248:// ─────── Sprint 3: admin endpoints for blacklist + circuit breakers ───────
+backend/api-server/src/index.ts:252:// concurrent admin + readiness + recon-timeseries load. Connection timeout added so
+backend/api-server/src/index.ts:263:const redis = new Redis(REDIS_URL, { lazyConnect: false, maxRetriesPerRequest: 3 });
+backend/api-server/src/index.ts:314:app.post("/admin/blacklist/tokens", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:321:  await redis.sadd(key, addr);
+backend/api-server/src/index.ts:322:  const actor = req.header("x-arbx-actor") ?? "admin";
+backend/api-server/src/index.ts:326:  logger.warn({ event: "admin.blacklist.add", addr, chain_id: parsed.data.chain_id, actor });
+backend/api-server/src/index.ts:330:app.delete("/admin/blacklist/tokens/:chain/:addr", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:335:  const removed = await redis.srem(`arbx:blacklist:tokens:${chain}`, addr);
+backend/api-server/src/index.ts:336:  const actor = req.header("x-arbx-actor") ?? "admin";
+backend/api-server/src/index.ts:341:app.get("/admin/blacklist/tokens", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:344:  const members = await redis.smembers(`arbx:blacklist:tokens:${chain}`);
+backend/api-server/src/index.ts:348:/** Circuit breaker admin proxied via Redis pub/sub (any service subscribed reacts). */
+backend/api-server/src/index.ts:349:const CB_CHANNEL = "arbx:cb:admin";
+backend/api-server/src/index.ts:350:app.get("/admin/circuit_breakers", requireAdminToken(ARBX_ADMIN_TOKEN), async (_req, res) => {
+backend/api-server/src/index.ts:355:    note: "Live state available at selector-api:/metrics (arbx_cb_state{name=...}). Use /admin/circuit_breakers/:name/{reset,trip} to command.",
+backend/api-server/src/index.ts:356:    admin_channel: CB_CHANNEL,
+backend/api-server/src/index.ts:361:app.post("/admin/circuit_breakers/:name/trip", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:365:  const delivered = await redis.publish(CB_CHANNEL, msg);
+backend/api-server/src/index.ts:366:  await writeAudit("cb.trip", req.header("x-arbx-actor") ?? "admin", "circuit_breaker", req.params.name ?? "", null, parsed.data, req.ip ?? null, (req as any).traceId ?? null, reqUA(req));
+backend/api-server/src/index.ts:370:app.post("/admin/circuit_breakers/:name/reset", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:372:  const delivered = await redis.publish(CB_CHANNEL, msg);
+backend/api-server/src/index.ts:373:  await writeAudit("cb.reset", req.header("x-arbx-actor") ?? "admin", "circuit_breaker", req.params.name ?? "", null, null, req.ip ?? null, (req as any).traceId ?? null, reqUA(req));
+backend/api-server/src/index.ts:377:app.get("/admin/scoring/weights", requireAdminToken(ARBX_ADMIN_TOKEN), (_req, res) => {
+backend/api-server/src/index.ts:389:app.get("/admin/audit", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:451:mountOpportunitiesLive(app, pool, redis, logger);
+backend/api-server/src/index.ts:456:mountStrategyRuntimeStatus(app, { pool, redis, logger });
+backend/api-server/src/index.ts:463:  redis,
+backend/api-server/src/index.ts:465:  adminToken: ARBX_ADMIN_TOKEN,
+backend/api-server/src/index.ts:476:app.get("/api/v1/scanner/heartbeat", async (req, res) => {
+backend/api-server/src/index.ts:484:    const raw = await redis.get(key);
+backend/api-server/src/index.ts:503:    res.status(503).json({ error: "redis_read_failed", detail: (e as Error).message });
+backend/api-server/src/index.ts:507:app.get("/api/v1/risk/alerts", async (req, res) => {
+backend/api-server/src/index.ts:534:app.get("/api/v1/executions/recent", async (req, res) => {
+backend/api-server/src/index.ts:564:app.get("/api/v1/recon/summary", async (req, res) => {
+backend/api-server/src/index.ts:625:app.get("/api/v1/recon/timeseries", async (req, res) => {
+backend/api-server/src/index.ts:675:// ─────── Sprint 7 / Phase 0.5 — relay catalog CRUD (admin) ───────
+backend/api-server/src/index.ts:693:app.get("/admin/relays", requireAdminToken(ARBX_ADMIN_TOKEN), async (_req, res) => {
+backend/api-server/src/index.ts:704:app.post("/admin/relays", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:714:  const actor = req.header("x-arbx-actor") ?? "admin";
+backend/api-server/src/index.ts:734:app.put("/admin/relays/:id", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:747:  const actor = req.header("x-arbx-actor") ?? "admin";
+backend/api-server/src/index.ts:770:// Paper mode admin endpoint.
+backend/api-server/src/index.ts:779:app.post("/admin/config/paper-mode", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:780:  const actor = req.header("x-arbx-actor") ?? "admin";
+backend/api-server/src/index.ts:795:    const rc = redis;
+backend/api-server/src/index.ts:797:      res.status(503).json({ error: "redis_unavailable" });
+backend/api-server/src/index.ts:820:    res.status(500).json({ error: "redis_error" });
+backend/api-server/src/index.ts:824:app.delete("/admin/relays/:id", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:830:  const actor = req.header("x-arbx-actor") ?? "admin";
+backend/api-server/src/index.ts:837:app.get("/api/v1/relays", async (_req, res) => {
+backend/api-server/src/index.ts:850:app.get("/api/v1/onboarding/status", async (_req, res) => {
+backend/api-server/src/index.ts:872:app.post("/admin/onboarding/1/complete", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:900:// Mounted late so it inherits express.json + admin token middleware semantics.
+backend/api-server/src/index.ts:901:app.use(buildTradingConfigRouter({
+backend/api-server/src/index.ts:903:  redis,
+backend/api-server/src/index.ts:905:  adminToken: ARBX_ADMIN_TOKEN,
+backend/api-server/src/index.ts:911:app.use(buildOperationsRouter({
+backend/api-server/src/index.ts:914:  adminToken: ARBX_ADMIN_TOKEN,
+backend/api-server/src/index.ts:919:app.use(buildStrategyCatalogRouter({ pool, logger }));
+backend/api-server/src/index.ts:924:app.use(buildCredentialsRouter({
+backend/api-server/src/index.ts:927:  adminToken: ARBX_ADMIN_TOKEN,
+backend/api-server/src/index.ts:931:app.get("/api/v1/config/current", async (_req, res) => {
+backend/api-server/src/index.ts:943:    const rc = redis;
+backend/api-server/src/index.ts:967:    logger.warn({ err: (e as Error).message }, "failed to read per-chain papermode from redis");
+backend/api-server/src/index.ts:998:mountStubs(app, { requireAdminToken, adminToken: ARBX_ADMIN_TOKEN });
+backend/api-server/src/index.ts:1009:app.get("/api/v1/readiness", async (req, res) => {
+backend/api-server/src/index.ts:1066:  app.use(
+backend/api-server/src/index.ts:1068:    mountSystemManifest(pool, redis, io, {
+backend/api-server/src/index.ts:1084:// ioredis no permite mezclar comandos regulares con modo SUBSCRIBE.
+backend/api-server/src/index.ts:1116:  // Arteria WSS: cerrar el subscriber de convergencia antes que el redis
+backend/api-server/src/index.ts:1119:  await redis.quit().catch(() => {});
+backend/api-server/src/readiness/readiness.test.ts:66:  it("returns green when file does not use localStorage with admin/token", async () => {
+backend/api-server/src/readiness/readiness.test.ts:67:    const safe = `export async function setAdminToken(token: string) { /* httpOnly cookie via /admin/session */ }`;
+backend/api-server/src/readiness/readiness.test.ts:68:    const f = path.join(tmpDir, "admin-token.ts");
+backend/api-server/src/readiness/readiness.test.ts:73:  it("returns red when localStorage admin/token usage is detected", async () => {
+backend/api-server/src/readiness/readiness.test.ts:74:    const bad = `localStorage.setItem("admin_token", token);`;
+backend/api-server/src/readiness/readiness.test.ts:75:    const f = path.join(tmpDir, "admin-token.ts");
+backend/api-server/src/readiness/verifiers/v-nh-1.ts:17:export async function verifyVNH1(opts?: {
+backend/api-server/src/readiness/verifiers/g-tok-1.ts:24:export async function verifyGTOK1(opts?: {
+backend/api-server/src/readiness/verifiers/monitoring.ts:30:export async function verifyMonitoring(opts?: {
+backend/api-server/src/readiness/verifiers/v-at-1.ts:4:const DEFAULT_FILE = "/repo/frontend/lib/admin-token.ts";
+backend/api-server/src/readiness/verifiers/v-at-1.ts:5:// Detects localStorage usage with admin/token strings — the V-AT-1 vulnerability.
+backend/api-server/src/readiness/verifiers/v-at-1.ts:6:const FORBIDDEN_RE = /localStorage\s*\.\s*(?:setItem|getItem|removeItem)\s*\(\s*['"][^'"]*(?:token|admin)[^'"]*['"]/i;
+backend/api-server/src/readiness/verifiers/v-at-1.ts:11: * Verification: regex over /repo/frontend/lib/admin-token.ts.
+backend/api-server/src/readiness/verifiers/v-at-1.ts:16:export async function verifyVAT1(opts?: {
+backend/api-server/src/readiness/verifiers/v-at-1.ts:45:      reason: "localStorage.{set,get,remove}Item with admin/token literal detected — V-AT-1 regression",
+backend/api-server/src/readiness/verifiers/v-at-1.ts:46:      evidence: { kind: "file", ref: "frontend/lib/admin-token.ts" },
+backend/api-server/src/readiness/verifiers/v-at-1.ts:53:    reason: "no localStorage admin/token usage; httpOnly cookie pattern intact",
+backend/api-server/src/readiness/verifiers/v-at-1.ts:54:    evidence: { kind: "file", ref: "frontend/lib/admin-token.ts" },
+backend/api-server/src/readiness/verifiers/pr-1-csp.ts:14:export async function verifyPR1CSP(opts?: {
+backend/api-server/src/readiness/verifiers/pr-1-csp.ts:25:    label: "CSP-Report-Only + HSTS + rate-limit edge admin session",
+backend/api-server/src/readiness/verifiers/index.ts:33:export async function verifyAll(deps: {
+backend/api-server/src/readiness/verifiers/g-pap-1.ts:2:import { Redis } from "ioredis";
+backend/api-server/src/readiness/verifiers/g-pap-1.ts:5:const DEFAULT_REDIS = process.env["REDIS_URL"] ?? "redis://redis:6379";
+backend/api-server/src/readiness/verifiers/g-pap-1.ts:30:export async function verifyGPAP1(opts?: {
+backend/api-server/src/readiness/verifiers/g-pap-1.ts:32:  redisUrl?: string;
+backend/api-server/src/readiness/verifiers/g-pap-1.ts:36:  const redisUrl = opts?.redisUrl ?? DEFAULT_REDIS;
+backend/api-server/src/readiness/verifiers/g-pap-1.ts:48:  const redis = new Redis(redisUrl, {
+backend/api-server/src/readiness/verifiers/g-pap-1.ts:55:    await redis.connect();
+backend/api-server/src/readiness/verifiers/g-pap-1.ts:56:    const raw = await redis.get("arbx:papermode");
+backend/api-server/src/readiness/verifiers/g-pap-1.ts:78:    redis.disconnect();
+backend/api-server/src/readiness/verifiers/v-db-1.ts:17:export async function verifyVDB1(opts?: {
+backend/api-server/src/readiness/verifiers/pr-2-audit.ts:10: * - Reachable, 0 rows in last 7d → yellow ("no admin activity recently"; not necessarily bad).
+backend/api-server/src/readiness/verifiers/pr-2-audit.ts:13:export async function verifyPR2Audit(opts: {
+backend/api-server/src/readiness/verifiers/pr-2-audit.ts:47:        reason: `audit_log reachable but 0 rows in last ${days}d (no admin activity yet)`,
+backend/api-server/src/readiness/verifiers/g-rpc-1.ts:22:export async function verifyGRPC1(opts?: {
+backend/api-server/src/readiness/verifiers/g-pec-1.ts:34:export async function verifyGPEC1(opts?: {
+backend/api-server/src/readiness/verifiers/g-sim-1.ts:29:export async function verifyGSIM1(opts?: {
+backend/api-server/src/readiness/verifiers/g-mev-1.ts:23:export async function verifyGMEV1(opts?: {
+backend/api-server/src/readiness/verifiers/alerts.ts:25:export async function verifyAlerts(opts?: {
+backend/api-server/src/readiness/verifiers/g-fl-1.ts:20:export async function verifyGFL1(opts?: {
+backend/api-server/src/readiness/verifiers/g-ris-1.ts:5:import { Redis } from "ioredis";
+backend/api-server/src/readiness/verifiers/g-ris-1.ts:8:const DEFAULT_REDIS = process.env["REDIS_URL"] ?? "redis://redis:6379";
+backend/api-server/src/readiness/verifiers/g-ris-1.ts:15: *   1. Config: configs/app.toml has [risk] section with at least
+backend/api-server/src/readiness/verifiers/g-ris-1.ts:24: *      (b) configs/app.toml has `auto_trip_on_high_revert_rate=true` —
+backend/api-server/src/readiness/verifiers/g-ris-1.ts:27:export async function verifyGRIS1(opts?: {
+backend/api-server/src/readiness/verifiers/g-ris-1.ts:30:  redisUrl?: string;
+backend/api-server/src/readiness/verifiers/g-ris-1.ts:34:  const redisUrl = opts?.redisUrl ?? DEFAULT_REDIS;
+backend/api-server/src/readiness/verifiers/g-ris-1.ts:45:  const cfgPath = path.join(repo, "configs/app.toml");
+backend/api-server/src/readiness/verifiers/g-ris-1.ts:60:  // will migrate to USD as the multi-asset router lands (Sprint S4+).
+backend/api-server/src/readiness/verifiers/g-ris-1.ts:75:      reason: `app.toml missing: ${missing}`,
+backend/api-server/src/readiness/verifiers/g-ris-1.ts:80:  const redis = new Redis(redisUrl, {
+backend/api-server/src/readiness/verifiers/g-ris-1.ts:87:    await redis.connect();
+backend/api-server/src/readiness/verifiers/g-ris-1.ts:88:    kswitch_state = await redis.get("arbx:killswitch:enabled");
+backend/api-server/src/readiness/verifiers/g-ris-1.ts:96:    redis.disconnect();
+backend/api-server/src/readiness/verifiers/g-ris-1.ts:121:      evidence: { kind: "config", ref: "configs/app.toml + arbx:killswitch:enabled" },
+backend/api-server/src/readiness/verifiers/g-ris-1.ts:133:    evidence: { kind: "config", ref: "configs/app.toml + arbx:killswitch:enabled" },
+backend/api-server/src/readiness/verifiers/runbook.ts:15:export async function verifyRunbook(opts?: {
+backend/api-server/src/readiness/verifiers/g-net-1.ts:19:export async function verifyGNET1(opts?: {
+backend/api-server/src/websocket-rooms.test.ts:5: * requires a valid admin token in the handshake. That means EVERY room
+backend/api-server/src/websocket-rooms.test.ts:13: *   1) A socket with the correct admin token connects and can subscribe to
+backend/api-server/src/websocket-rooms.test.ts:15: *   2) A socket with a wrong/missing admin token is refused at the
+backend/api-server/src/websocket-rooms.test.ts:23: * complements it by exercising the connection-level admin gate.
+backend/api-server/src/websocket-rooms.test.ts:32:const ADMIN_TOKEN = "test-admin-token-32-bytes-or-more-of-entropy";
+backend/api-server/src/websocket-rooms.test.ts:73:describe("OMEGA-8/M4 Fase 10 — WSS rooms admin-gate regression", () => {
+backend/api-server/src/websocket-rooms.test.ts:84:  it("rejects sockets without the admin token at handshake (no room reachable)", async () => {
+backend/api-server/src/contract-isomorphism.test.ts:45:    "api", "persistence", "redis_pubsub", "searcher_rs", "arc_swap",
+backend/api-server/src/contract-isomorphism.test.ts:97:      "api", "persistence", "redis_pubsub", "searcher_rs", "arc_swap",
+backend/api-server/src/routes/agents-status.ts:129:      "13 services preserved untouched (postgres, redis, searcher-rs, sim-ctl, recon, etc.)",
+backend/api-server/src/routes/agents-status.ts:144:      "stash@{0}: OPERATOR WIP 2026-05-13 (configs/app.toml env=development) preserved on VPS",
+backend/api-server/src/routes/agents-status.ts:329:      "F2: arbx:papermode:<chain_id> per-chain; legacy global key read-only fallback (30-day deprecation); POST /admin/config/paper-mode rejects requests without chain_id",
+backend/api-server/src/routes/agents-status.ts:509:  app.get("/api/v1/agents/status", async (_req: Request, res: Response) => {
+backend/api-server/src/routes/operations.ts:8: *   GET  /admin/operations/{kpi,scurve,variance}  admin mirrors (admin token gate)
+backend/api-server/src/routes/operations.ts:26:  adminToken: string;
+backend/api-server/src/routes/operations.ts:54:  const adminGate = deps.requireAdminToken(deps.adminToken);
+backend/api-server/src/routes/operations.ts:234:  r.get("/admin/operations/kpi", adminGate, kpiHandler);
+backend/api-server/src/routes/operations.ts:235:  r.get("/admin/operations/scurve", adminGate, scurveHandler);
+backend/api-server/src/routes/operations.ts:236:  r.get("/admin/operations/variance", adminGate, varianceHandler);
+backend/api-server/src/routes/opportunities-live.ts:25:import type { Redis } from "ioredis";
+backend/api-server/src/routes/opportunities-live.ts:444: * Mounts GET /api/v1/opportunities/live on the given Express app.
+backend/api-server/src/routes/opportunities-live.ts:448: * @param redis - ioredis client | null. When non-null, the route loads each
+backend/api-server/src/routes/opportunities-live.ts:459:  redis: Redis | null,
+backend/api-server/src/routes/opportunities-live.ts:462:  app.get("/api/v1/opportunities/live", async (req: Request, res: Response) => {
+backend/api-server/src/routes/opportunities-live.ts:568:            [chain_id, await getTradingConfigForChain(redis, chain_id)] as const,
+backend/api-server/src/routes/operator.ts:20:  const router = Router();
+backend/api-server/src/routes/operator.ts:25:  router.get('/me', requireOperatorRole('observer'), async (req, res) => {
+backend/api-server/src/routes/operator.ts:77:  router.post('/preferences', requireOperatorRole('steward'), async (req, res) => {
+backend/api-server/src/routes/operator.ts:154:  router.post('/feature-overrides', requireOperatorRole('sovereign'), async (req, res) => {
+backend/api-server/src/routes/operator.ts:216:  return router;
+backend/api-server/src/routes/dexes.ts:33:  // Reusable admin gate (mirrors the inline check used by PUT below).
+backend/api-server/src/routes/dexes.ts:36:    const got = String(req.header("x-arbx-admin-token") ?? "");
+backend/api-server/src/routes/dexes.ts:57:  app.post("/api/v1/dexes", async (req: Request, res: Response) => {
+backend/api-server/src/routes/dexes.ts:125:        router_address: null,
+backend/api-server/src/routes/dexes.ts:147:  app.delete("/api/v1/dexes/:id", async (req: Request, res: Response) => {
+backend/api-server/src/routes/dexes.ts:202:  // does not receive admin deps; we inline-validate via env header check
+backend/api-server/src/routes/dexes.ts:203:  // mirroring the convention in trading-config route's other admin paths.
+backend/api-server/src/routes/dexes.ts:204:  app.put("/api/v1/dexes/:id/active", async (req: Request, res: Response) => {
+backend/api-server/src/routes/dexes.ts:245:  app.get("/api/v1/dexes", async (req: Request, res: Response) => {
+backend/api-server/src/routes/dexes.ts:286:            // R8: router/fee not yet a column on `dexes` — surface null
+backend/api-server/src/routes/dexes.ts:288:            router_address:   null,
+backend/api-server/src/routes/credentials.ts:2: * Operator credentials surface — REST API behind /admin/credentials and
+backend/api-server/src/routes/credentials.ts:6: *   POST /admin/credentials/test      run validator without persisting
+backend/api-server/src/routes/credentials.ts:7: *   PUT  /admin/credentials           upsert (runs validator + persists)
+backend/api-server/src/routes/credentials.ts:8: *   DELETE /admin/credentials/:provider/:scope
+backend/api-server/src/routes/credentials.ts:11: *   - GET list is admin-protected (token in cookie or header).
+backend/api-server/src/routes/credentials.ts:12: *   - All mutations require admin token.
+backend/api-server/src/routes/credentials.ts:33:  adminToken: string;
+backend/api-server/src/routes/credentials.ts:40:  // ── GET list (admin) ──────────────────────────────────────────────────
+backend/api-server/src/routes/credentials.ts:41:  r.get("/api/v1/credentials", deps.requireAdminToken(deps.adminToken), async (_req, res) => {
+backend/api-server/src/routes/credentials.ts:56:  r.post("/admin/credentials/test", deps.requireAdminToken(deps.adminToken), async (req, res) => {
+backend/api-server/src/routes/credentials.ts:78:  r.put("/admin/credentials", deps.requireAdminToken(deps.adminToken), async (req, res) => {
+backend/api-server/src/routes/credentials.ts:89:    const actor = (req.header("x-arbx-actor") ?? "admin").slice(0, 64);
+backend/api-server/src/routes/credentials.ts:132:    "/admin/credentials/:provider/:scope",
+backend/api-server/src/routes/credentials.ts:133:    deps.requireAdminToken(deps.adminToken),
+backend/api-server/src/routes/credentials.ts:151:        const actor = (req.header("x-arbx-actor") ?? "admin").slice(0, 64);
+backend/api-server/src/routes/admin-chains.ts:2: * admin-chains — Operator Admin Console: Chains CRUD (B1).
+backend/api-server/src/routes/admin-chains.ts:4: * Endpoints (all gated by V-AT-1 admin token):
+backend/api-server/src/routes/admin-chains.ts:6: *   GET    /api/v1/admin/chains
+backend/api-server/src/routes/admin-chains.ts:9: *   GET    /api/v1/admin/chains/:chain_id
+backend/api-server/src/routes/admin-chains.ts:13: *   POST   /api/v1/admin/chains
+backend/api-server/src/routes/admin-chains.ts:17: *   PUT    /api/v1/admin/chains/:chain_id
+backend/api-server/src/routes/admin-chains.ts:21: *   DELETE /api/v1/admin/chains/:chain_id
+backend/api-server/src/routes/admin-chains.ts:24: *   POST   /api/v1/admin/chains/:chain_id/probe
+backend/api-server/src/routes/admin-chains.ts:30: *   - PG chains_runtime gains over TOML configs/app.toml [[chains]] seed.
+backend/api-server/src/routes/admin-chains.ts:50:import type { Redis } from "ioredis";
+backend/api-server/src/routes/admin-chains.ts:132:  redis: Redis,
+backend/api-server/src/routes/admin-chains.ts:146:    redis.publish("arbx:config:chains:reload", payload),
+backend/api-server/src/routes/admin-chains.ts:147:    redis.publish(`arbx:config:chains:${chainId}:reload`, payload),
+backend/api-server/src/routes/admin-chains.ts:268:    redis: Redis | null;
+backend/api-server/src/routes/admin-chains.ts:270:    adminToken: string;
+backend/api-server/src/routes/admin-chains.ts:285:  const { pool, redis, requireAdminToken, adminToken, writeAudit, logger } = deps;
+backend/api-server/src/routes/admin-chains.ts:288:  app.get("/api/v1/admin/chains", requireAdminToken(adminToken), async (req: Request, res: Response) => {
+backend/api-server/src/routes/admin-chains.ts:305:      logger.warn({ event: "admin_chains.list_failed", err: (e as Error).message });
+backend/api-server/src/routes/admin-chains.ts:311:  app.get("/api/v1/admin/chains/:chain_id", requireAdminToken(adminToken), async (req: Request, res: Response) => {
+backend/api-server/src/routes/admin-chains.ts:325:  app.post("/api/v1/admin/chains", requireAdminToken(adminToken), async (req: Request, res: Response) => {
+backend/api-server/src/routes/admin-chains.ts:327:    if (!redis) { res.status(503).json({ error: "redis_unavailable", detail: "B1 requires Redis for hot-reload pub/sub" }); return; }
+backend/api-server/src/routes/admin-chains.ts:331:    const actor = req.header("x-arbx-actor") ?? "admin";

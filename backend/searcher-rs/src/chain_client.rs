@@ -56,6 +56,9 @@ pub struct WsChainClient {
 
 impl WsChainClient {
     pub async fn connect(chain_id: u64, url: &str) -> anyhow::Result<Self> {
+        // OBSERVER-ONLY: bare ethers WS provider (subscribe_pending / subscribe_blocks /
+        // get_transaction — reads only). NEVER wrap with SignerMiddleware / .with_signer;
+        // no LocalWallet may be attached here (capital_exposed == 0).
         let provider = timeout(Duration::from_secs(10), Provider::<Ws>::connect(url))
             .await
             .context("ws connect timeout")??;
@@ -136,6 +139,25 @@ impl WsChainClient {
     pub async fn get_tx(&self, hash: H256) -> anyhow::Result<Option<Transaction>> {
         Ok(self.provider.get_transaction(hash).await?)
     }
+
+    /// Subscribe to new block headers (`eth_subscribe("newHeads")`). Free RPCs
+    /// support this even when they reject `alchemy_pendingTransactions`. Used by the
+    /// block/log backrun scanner (`ARBX_MEMPOOL_MODE=block`).
+    pub async fn subscribe_blocks(
+        &self,
+    ) -> anyhow::Result<SubscriptionStream<'_, Ws, ethers::types::Block<H256>>> {
+        let sub = self
+            .provider
+            .subscribe_blocks()
+            .await
+            .context("subscribe_blocks (newHeads)")?;
+        info!(
+            event = "chain_client.subscribed_blocks",
+            chain_id = self.chain_id,
+            "newHeads subscription active"
+        );
+        Ok(sub)
+    }
 }
 
 /// Heuristic: does the WS URL belong to Alchemy? Used by the scanner to decide
@@ -168,6 +190,10 @@ pub enum MempoolMode {
     Filtered,
     Firehose,
     Auto,
+    /// FASE OMEGA — block/log backrunning. No pending-tx subscription; instead
+    /// subscribe to `newHeads` + `eth_getLogs` for confirmed V2 swaps on watched
+    /// pools (free-RPC friendly). Spawns `block_scanner::block_detection_loop`.
+    Block,
 }
 
 impl MempoolMode {
@@ -177,6 +203,7 @@ impl MempoolMode {
             MempoolMode::Filtered => "filtered",
             MempoolMode::Firehose => "firehose",
             MempoolMode::Auto => "auto",
+            MempoolMode::Block => "block",
         }
     }
 
@@ -188,6 +215,7 @@ impl MempoolMode {
                 "disabled" | "off" | "none" => MempoolMode::Disabled,
                 "filtered" | "alchemy" => MempoolMode::Filtered,
                 "firehose" | "all" | "raw" => MempoolMode::Firehose,
+                "block" | "blocks" | "newheads" | "backrun" => MempoolMode::Block,
                 "auto" | "" => MempoolMode::Auto,
                 _ => {
                     warn!(

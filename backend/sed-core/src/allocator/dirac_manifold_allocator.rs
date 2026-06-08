@@ -3,14 +3,14 @@
 //! Orquestador de Phase 5. Consume Phase 3/4 outputs y produce el
 //! DiracImpulse regularizado + BundlePosition<DiracImpulseOnly> sellado.
 
-use nalgebra::Vector2;
+use crate::allocator::{
+    HyperbolicConstraint, LiquidityManifold, ManifoldError, OcpError, OptimalControlSolution,
+    PontryaginSolver,
+};
+use crate::eigenstate::{EigenState, EquilibriumBoundary};
 use crate::types::bundle_position::{BundlePosition, DiracImpulseOnly};
 use crate::types::errors::TopologyValidationError;
-use crate::eigenstate::{EquilibriumBoundary, EigenState};
-use crate::allocator::{
-    LiquidityManifold, HyperbolicConstraint, PontryaginSolver,
-    OptimalControlSolution, OcpError, ManifoldError,
-};
+use nalgebra::Vector2;
 
 /// Función impulso de Dirac regularizada sobre una variedad de liquidez
 #[derive(Debug, Clone, PartialEq)]
@@ -91,7 +91,9 @@ impl DiracManifoldAllocator {
     ) -> Result<AllocationResult, AllocationError> {
         let target = Self::extract_target_from_eigenstate(equilibrium_state, manifold)?;
 
-        let ocp_solution = self.solver.solve(manifold, boundary, &target)
+        let ocp_solution = self
+            .solver
+            .solve(manifold, boundary, &target)
             .map_err(AllocationError::OptimalControlFailed)?;
 
         if !ocp_solution.hyperbolic_constraint_satisfied {
@@ -115,7 +117,8 @@ impl DiracManifoldAllocator {
             return Err(AllocationError::HyperbolicInvariantViolation {
                 violation: (impulse.post_injection_manifold.token0_reserve
                     * impulse.post_injection_manifold.token1_reserve
-                    - manifold.constant_product).abs()
+                    - manifold.constant_product)
+                    .abs()
                     / manifold.constant_product,
             });
         }
@@ -126,9 +129,14 @@ impl DiracManifoldAllocator {
             amplitude,
             ocp_solution.value_functional.abs(),
             &ocp_solution,
-        ).map_err(AllocationError::TopologyValidationFailed)?;
+        )
+        .map_err(AllocationError::TopologyValidationFailed)?;
 
-        Ok(AllocationResult { bundle, impulse, ocp_solution })
+        Ok(AllocationResult {
+            bundle,
+            impulse,
+            ocp_solution,
+        })
     }
 
     /// Asignación simplificada por precio objetivo
@@ -137,7 +145,9 @@ impl DiracManifoldAllocator {
         manifold: &LiquidityManifold,
         target_price: f64,
     ) -> Result<AllocationResult, AllocationError> {
-        let ocp_solution = self.solver.solve_for_target_price(manifold, target_price)
+        let ocp_solution = self
+            .solver
+            .solve_for_target_price(manifold, target_price)
             .map_err(AllocationError::OptimalControlFailed)?;
 
         if !ocp_solution.hyperbolic_constraint_satisfied {
@@ -163,9 +173,14 @@ impl DiracManifoldAllocator {
             amplitude,
             ocp_solution.value_functional.abs(),
             &ocp_solution,
-        ).map_err(AllocationError::TopologyValidationFailed)?;
+        )
+        .map_err(AllocationError::TopologyValidationFailed)?;
 
-        Ok(AllocationResult { bundle, impulse, ocp_solution })
+        Ok(AllocationResult {
+            bundle,
+            impulse,
+            ocp_solution,
+        })
     }
 
     fn extract_target_from_eigenstate(
@@ -199,15 +214,12 @@ impl DiracManifoldAllocator {
         Ok(Vector2::new(x_star, y_star))
     }
 
-    fn compute_support_radius(
-        manifold: &LiquidityManifold,
-        ocp: &OptimalControlSolution,
-    ) -> f64 {
+    fn compute_support_radius(manifold: &LiquidityManifold, ocp: &OptimalControlSolution) -> f64 {
         let control_norm = ocp.optimal_control.norm();
         let reserve_norm = (manifold.token0_reserve * manifold.token0_reserve
-            + manifold.token1_reserve * manifold.token1_reserve).sqrt();
-        let radius = DiracImpulse::DEFAULT_SUPPORT_RADIUS_FACTOR
-            * reserve_norm.max(control_norm);
+            + manifold.token1_reserve * manifold.token1_reserve)
+            .sqrt();
+        let radius = DiracImpulse::DEFAULT_SUPPORT_RADIUS_FACTOR * reserve_norm.max(control_norm);
         radius.max(1e-9)
     }
 }
@@ -239,15 +251,19 @@ pub enum AllocationError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use num_complex::Complex64;
     use nalgebra::DVector;
+    use num_complex::Complex64;
 
     fn test_manifold() -> LiquidityManifold {
         LiquidityManifold::new(
-            1_000_000.0, 1000.0, 1000.0,
+            1_000_000.0,
+            1000.0,
+            1000.0,
             "0xPool".to_string(),
-            ("WETH".to_string(), "USDC".to_string()), 1,
-        ).unwrap()
+            ("WETH".to_string(), "USDC".to_string()),
+            1,
+        )
+        .unwrap()
     }
 
     fn test_boundary() -> EquilibriumBoundary {
@@ -267,10 +283,7 @@ mod tests {
         // Asymmetric amplitudes: |ψ₀|=0.6, |ψ₁|=0.8 → price hint ≈ (0.8/0.6)·(1000/1000)
         // This drives the target away from spot, requiring non-zero allocation.
         EigenState {
-            amplitude: DVector::from(vec![
-                Complex64::new(0.6, 0.0),
-                Complex64::new(0.8, 0.0),
-            ]),
+            amplitude: DVector::from(vec![Complex64::new(0.6, 0.0), Complex64::new(0.8, 0.0)]),
             energy: 1.0,
             degeneracy: 1,
             quantum_numbers: vec![0, 1],
@@ -282,9 +295,7 @@ mod tests {
         let manifold = test_manifold();
         let boundary = test_boundary();
         let eigenstate = test_eigenstate();
-        let allocator = DiracManifoldAllocator::new(
-            HyperbolicConstraint::new(1_000_000.0), 30,
-        );
+        let allocator = DiracManifoldAllocator::new(HyperbolicConstraint::new(1_000_000.0), 30);
         let result = allocator.allocate(&manifold, &boundary, &eigenstate);
         assert!(result.is_ok(), "Allocation failed: {:?}", result.err());
         let alloc = result.unwrap();
@@ -297,11 +308,13 @@ mod tests {
     #[test]
     fn allocate_for_target_price_pipeline() {
         let manifold = test_manifold();
-        let allocator = DiracManifoldAllocator::new(
-            HyperbolicConstraint::new(1_000_000.0), 30,
-        );
+        let allocator = DiracManifoldAllocator::new(HyperbolicConstraint::new(1_000_000.0), 30);
         let result = allocator.allocate_for_target_price(&manifold, 1.5);
-        assert!(result.is_ok(), "Price allocation failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Price allocation failed: {:?}",
+            result.err()
+        );
         let alloc = result.unwrap();
         let realized_price = alloc.impulse.injection_point.y / alloc.impulse.injection_point.x;
         assert!((realized_price - 1.5).abs() < 1e-4);
@@ -326,15 +339,12 @@ mod tests {
         let manifold = test_manifold();
         let boundary = test_boundary();
         let bad = EigenState {
-            amplitude: DVector::from(vec![
-                Complex64::new(0.0, 0.0),
-                Complex64::new(0.0, 0.0),
-            ]),
-            energy: 0.0, degeneracy: 1, quantum_numbers: vec![],
+            amplitude: DVector::from(vec![Complex64::new(0.0, 0.0), Complex64::new(0.0, 0.0)]),
+            energy: 0.0,
+            degeneracy: 1,
+            quantum_numbers: vec![],
         };
-        let allocator = DiracManifoldAllocator::new(
-            HyperbolicConstraint::new(1_000_000.0), 30,
-        );
+        let allocator = DiracManifoldAllocator::new(HyperbolicConstraint::new(1_000_000.0), 30);
         let result = allocator.allocate(&manifold, &boundary, &bad);
         assert!(matches!(result, Err(AllocationError::DegenerateEigenstate)));
     }

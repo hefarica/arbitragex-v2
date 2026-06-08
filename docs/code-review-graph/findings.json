@@ -1,0 +1,25 @@
+{
+  "iteration": 1,
+  "date": "2026-05-21",
+  "tools_run": ["cargo-audit", "semgrep(p/secrets)"],
+  "tools_ci": ["CodeQL", "Foundry/forge"],
+  "tools_blocked": ["Slither", "Joern", "Syft", "dependency-cruiser(no-config)"],
+  "findings": [
+    {"id": "RUSTSEC-2023-0071", "tool": "cargo-audit", "crate": "rsa", "severity": "medium", "cvss": 5.9, "title": "Marvin Attack: key recovery via timing sidechannel", "kind": "vuln", "blocks_merge": false},
+    {"id": "RUSTSEC-2024-0363", "tool": "cargo-audit", "crate": "sqlx", "severity": "medium", "title": "Binary Protocol Misinterpretation (truncating/overflowing casts)", "kind": "vuln", "blocks_merge": false},
+    {"id": "RUSTSEC-2024-0437", "tool": "cargo-audit", "crate": "protobuf", "severity": "medium", "title": "Crash via uncontrolled recursion (DoS)", "kind": "vuln", "blocks_merge": false},
+    {"id": "RUSTSEC-2025-0009", "tool": "cargo-audit", "crate": "ring", "severity": "low", "title": "AES functions may panic with overflow checking", "kind": "vuln", "blocks_merge": false},
+    {"id": "RUSTSEC-2026-0098", "tool": "cargo-audit", "crate": "rustls-webpki", "severity": "medium", "title": "Name constraints for URI names incorrectly accepted", "kind": "vuln", "blocks_merge": false},
+    {"id": "RUSTSEC-2026-0099", "tool": "cargo-audit", "crate": "rustls-webpki", "severity": "medium", "title": "Name constraints accepted for wildcard certs", "kind": "vuln", "blocks_merge": false},
+    {"id": "RUSTSEC-2026-0104", "tool": "cargo-audit", "crate": "rustls-webpki", "severity": "medium", "title": "Reachable panic in CRL parsing", "kind": "vuln", "blocks_merge": false},
+    {"id": "RUSTSEC-2024-0388", "tool": "cargo-audit", "crate": "derivative", "severity": "info", "title": "unmaintained", "kind": "warning", "blocks_merge": false},
+    {"id": "RUSTSEC-2025-0057", "tool": "cargo-audit", "crate": "fxhash", "severity": "info", "title": "unmaintained", "kind": "warning", "blocks_merge": false},
+    {"id": "RUSTSEC-2024-0384", "tool": "cargo-audit", "crate": "instant", "severity": "info", "title": "unmaintained", "kind": "warning", "blocks_merge": false},
+    {"id": "RUSTSEC-2024-0436", "tool": "cargo-audit", "crate": "paste", "severity": "info", "title": "unmaintained", "kind": "warning", "blocks_merge": false},
+    {"id": "RUSTSEC-2025-0010", "tool": "cargo-audit", "crate": "ring", "severity": "info", "title": "ring<0.17 unmaintained", "kind": "warning", "blocks_merge": false},
+    {"id": "RUSTSEC-2025-0134", "tool": "cargo-audit", "crate": "rustls-pemfile", "severity": "info", "title": "unmaintained", "kind": "warning", "blocks_merge": false},
+    {"id": "RUSTSEC-2026-0002", "tool": "cargo-audit", "crate": "lru", "severity": "info", "title": "IterMut unsound (Stacked Borrows)", "kind": "warning", "blocks_merge": false}
+  ],
+  "root_cause_hint": "Most advisories are transitive via deprecated ethers 2.0.14; structural fix = complete ethers->alloy migration + bump sqlx/rustls-webpki/protobuf/ring.",
+  "semgrep_secrets": {"rules": 41, "files": 279, "findings": 0}
+}

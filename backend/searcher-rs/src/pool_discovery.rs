@@ -13,10 +13,11 @@ use sqlx::postgres::PgPool;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
+use uuid::Uuid;
 
-use shared_rs::rpc_failover::HttpRpcPool;
 use crate::impact_index::{ImpactIndex, PoolRef};
 use crate::route_intent::{DetectionSource, RouteIntent};
+use shared_rs::rpc_failover::HttpRpcPool;
 
 sol! {
     #[derive(Debug)]
@@ -34,6 +35,7 @@ sol! {
         function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
         function token0() external view returns (address);
         function token1() external view returns (address);
+        function factory() external view returns (address);
     }
 
     #[derive(Debug)]
@@ -60,7 +62,21 @@ pub struct PoolDiscoveryService {
     impact_index: Arc<RwLock<ImpactIndex>>,
     rpc_pool: Option<Arc<HttpRpcPool>>,
     reserves_cache: Arc<crate::engines::triangular_engine::ReservesCache>,
-    factories: RwLock<Option<Vec<(u64, Address, crate::route_intent::ProtocolType, String)>>>,
+    factories: RwLock<Option<Vec<(Uuid, Address, crate::route_intent::ProtocolType, String)>>>,
+}
+
+/// Outcome of a single Block-2 enumeration attempt — fail-honest reasons, never
+/// fabricated. Surfaced to the enumeration worker for per-tick metrics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnumOutcome {
+    /// Pool persisted. `activated` = token-safe → is_active=true + added to impact_index.
+    Persisted { activated: bool },
+    /// The pool's on-chain factory is not in the seeded `factories` table — skipped.
+    FactoryUnresolved,
+    /// On-chain hydration/verification failed (token mismatch, meta, or RPC).
+    HydrationFailed,
+    /// No RPC pool configured — cannot resolve the factory on-chain.
+    NoRpc,
 }
 
 impl PoolDiscoveryService {
@@ -83,16 +99,18 @@ impl PoolDiscoveryService {
         }
     }
 
-    async fn get_factories(&self) -> Vec<(u64, Address, crate::route_intent::ProtocolType, String)> {
+    async fn get_factories(
+        &self,
+    ) -> Vec<(Uuid, Address, crate::route_intent::ProtocolType, String)> {
         let mut cache = self.factories.write().await;
         if let Some(ref facts) = *cache {
             return facts.clone();
         }
-        
+
         let mut facts = Vec::new();
         if let Some(ref db) = self.db {
             let q = "SELECT f.id, f.address, d.protocol_type, d.name FROM factories f JOIN dexes d ON f.dex_id = d.id WHERE f.chain_id = $1 AND f.is_active = TRUE";
-            if let Ok(rows) = sqlx::query_as::<_, (i64, String, String, String)>(q)
+            if let Ok(rows) = sqlx::query_as::<_, (Uuid, String, String, String)>(q)
                 .bind(self.chain_id as i64)
                 .fetch_all(db)
                 .await
@@ -100,20 +118,24 @@ impl PoolDiscoveryService {
                 for (f_id, addr_str, proto_str, name) in rows {
                     if let Ok(addr) = addr_str.parse::<Address>() {
                         let proto = match proto_str.as_str() {
-                            "UNISWAP_V2" | "V2" | "uniswap_v2" | "UniswapV2" => crate::route_intent::ProtocolType::V2,
-                            "UNISWAP_V3" | "V3" | "uniswap_v3" | "UniswapV3" => crate::route_intent::ProtocolType::V3,
+                            "UNISWAP_V2" | "V2" | "uniswap_v2" | "UniswapV2" => {
+                                crate::route_intent::ProtocolType::V2
+                            }
+                            "UNISWAP_V3" | "V3" | "uniswap_v3" | "UniswapV3" => {
+                                crate::route_intent::ProtocolType::V3
+                            }
                             _ => continue,
                         };
-                        facts.push((f_id as u64, addr, proto, name));
+                        facts.push((f_id, addr, proto, name));
                     }
                 }
             }
         }
-        
+
         if facts.is_empty() {
             warn!("discovery_failed:no_factories_configured");
         }
-        
+
         *cache = Some(facts.clone());
         facts
     }
@@ -152,58 +174,105 @@ impl PoolDiscoveryService {
 
             let token_a = alloy::primitives::Address::from_slice(leg.token_in.as_bytes());
             let token_b = alloy::primitives::Address::from_slice(leg.token_out.as_bytes());
-            
-            let mut discovered_pools: Vec<(u64, alloy::primitives::Address, crate::route_intent::ProtocolType, String, Option<u32>)> = Vec::new();
+
+            let mut discovered_pools: Vec<(
+                Uuid,
+                alloy::primitives::Address,
+                crate::route_intent::ProtocolType,
+                String,
+                Option<u32>,
+            )> = Vec::new();
 
             for (f_id, factory_addr, proto, dex_name) in &factories {
                 match proto {
                     crate::route_intent::ProtocolType::V2 => {
-                        let f_addr_alloy = alloy::primitives::Address::from_slice(factory_addr.as_bytes());
-                        let discovered: Result<alloy::primitives::Address, _> = rpc.with_retry(|provider| {
-                            let t_a = token_a;
-                            let t_b = token_b;
-                            async move {
-                                let call = IUniswapV2Factory::getPairCall { tokenA: t_a, tokenB: t_b };
-                                use alloy_sol_types::SolCall;
-                                use alloy::rpc::types::TransactionRequest;
-                                let req = TransactionRequest::default().to(f_addr_alloy).input(call.abi_encode().into());
-                                
-                                let result = provider.call(req).await.map_err(|e| anyhow::anyhow!("rpc error: {}", e))?;
-                                let decoded_return = IUniswapV2Factory::getPairCall::abi_decode_returns(&result).map_err(|e| anyhow::anyhow!("decode error: {}", e))?;
-                                if decoded_return.is_zero() {
-                                    anyhow::bail!("discovery_no_pool_found");
-                                }
-                                Ok(decoded_return)
-                            }
-                        }).await;
-                        if let Ok(pool_addr) = discovered {
-                            discovered_pools.push((*f_id, pool_addr, *proto, dex_name.clone(), Some(30)));
-                        }
-                    }
-                    crate::route_intent::ProtocolType::V3 => {
-                        let f_addr_alloy = alloy::primitives::Address::from_slice(factory_addr.as_bytes());
-                        let fees: [u32; 4] = [100, 500, 3000, 10000];
-                        for fee in fees {
-                            let discovered: Result<alloy::primitives::Address, _> = rpc.with_retry(|provider| {
+                        let f_addr_alloy =
+                            alloy::primitives::Address::from_slice(factory_addr.as_bytes());
+                        let discovered: Result<alloy::primitives::Address, _> = rpc
+                            .with_retry(|provider| {
                                 let t_a = token_a;
                                 let t_b = token_b;
                                 async move {
-                                    let fee_u24 = alloy::primitives::Uint::<24, 1>::from(fee);
-                                    let call = IUniswapV3Factory::getPoolCall { tokenA: t_a, tokenB: t_b, fee: fee_u24 };
-                                    use alloy_sol_types::SolCall;
+                                    let call = IUniswapV2Factory::getPairCall {
+                                        tokenA: t_a,
+                                        tokenB: t_b,
+                                    };
                                     use alloy::rpc::types::TransactionRequest;
-                                    let req = TransactionRequest::default().to(f_addr_alloy).input(call.abi_encode().into());
-                                    
-                                    let result = provider.call(req).await.map_err(|e| anyhow::anyhow!("rpc error: {}", e))?;
-                                    let decoded_return = IUniswapV3Factory::getPoolCall::abi_decode_returns(&result).map_err(|e| anyhow::anyhow!("decode error: {}", e))?;
+                                    use alloy_sol_types::SolCall;
+                                    let req = TransactionRequest::default()
+                                        .to(f_addr_alloy)
+                                        .input(call.abi_encode().into());
+
+                                    let result = provider
+                                        .call(req)
+                                        .await
+                                        .map_err(|e| anyhow::anyhow!("rpc error: {}", e))?;
+                                    let decoded_return =
+                                        IUniswapV2Factory::getPairCall::abi_decode_returns(&result)
+                                            .map_err(|e| anyhow::anyhow!("decode error: {}", e))?;
                                     if decoded_return.is_zero() {
                                         anyhow::bail!("discovery_no_pool_found");
                                     }
                                     Ok(decoded_return)
                                 }
-                            }).await;
+                            })
+                            .await;
+                        if let Ok(pool_addr) = discovered {
+                            discovered_pools.push((
+                                *f_id,
+                                pool_addr,
+                                *proto,
+                                dex_name.clone(),
+                                Some(30),
+                            ));
+                        }
+                    }
+                    crate::route_intent::ProtocolType::V3 => {
+                        let f_addr_alloy =
+                            alloy::primitives::Address::from_slice(factory_addr.as_bytes());
+                        let fees: [u32; 4] = [100, 500, 3000, 10000];
+                        for fee in fees {
+                            let discovered: Result<alloy::primitives::Address, _> = rpc
+                                .with_retry(|provider| {
+                                    let t_a = token_a;
+                                    let t_b = token_b;
+                                    async move {
+                                        let fee_u24 = alloy::primitives::Uint::<24, 1>::from(fee);
+                                        let call = IUniswapV3Factory::getPoolCall {
+                                            tokenA: t_a,
+                                            tokenB: t_b,
+                                            fee: fee_u24,
+                                        };
+                                        use alloy::rpc::types::TransactionRequest;
+                                        use alloy_sol_types::SolCall;
+                                        let req = TransactionRequest::default()
+                                            .to(f_addr_alloy)
+                                            .input(call.abi_encode().into());
+
+                                        let result = provider
+                                            .call(req)
+                                            .await
+                                            .map_err(|e| anyhow::anyhow!("rpc error: {}", e))?;
+                                        let decoded_return =
+                                            IUniswapV3Factory::getPoolCall::abi_decode_returns(
+                                                &result,
+                                            )
+                                            .map_err(|e| anyhow::anyhow!("decode error: {}", e))?;
+                                        if decoded_return.is_zero() {
+                                            anyhow::bail!("discovery_no_pool_found");
+                                        }
+                                        Ok(decoded_return)
+                                    }
+                                })
+                                .await;
                             if let Ok(pool_addr) = discovered {
-                                discovered_pools.push((*f_id, pool_addr, *proto, dex_name.clone(), Some(fee)));
+                                discovered_pools.push((
+                                    *f_id,
+                                    pool_addr,
+                                    *proto,
+                                    dex_name.clone(),
+                                    Some(fee),
+                                ));
                             }
                         }
                     }
@@ -232,8 +301,29 @@ impl PoolDiscoveryService {
                         "Discovered real on-chain pool"
                     );
 
-                    self.record_observation(leg.token_in, leg.token_out, intent.router, intent.source_event, Some(e_pool)).await;
-                    if let Ok(pool_ref) = self.hydrate_and_persist_pool(rpc.clone(), pool_addr, f_id, proto, &dex_name, fee_bps, token_a, token_b).await {
+                    self.record_observation(
+                        leg.token_in,
+                        leg.token_out,
+                        intent.router,
+                        intent.source_event,
+                        Some(e_pool),
+                    )
+                    .await;
+                    if let Ok(pool_ref) = self
+                        .hydrate_and_persist_pool(
+                            rpc.clone(),
+                            pool_addr,
+                            f_id,
+                            proto,
+                            &dex_name,
+                            fee_bps,
+                            token_a,
+                            token_b,
+                            true,
+                            "reactive",
+                        )
+                        .await
+                    {
                         let mut idx = self.impact_index.write().await;
                         idx.add_pool(pool_ref);
                         drop(idx);
@@ -244,14 +334,20 @@ impl PoolDiscoveryService {
                     }
                 }
             } else {
-                    warn!(
-                        event = "pool_discovery.failed",
-                        chain_id,
-                        "discovery_no_pool_found"
-                    );
-                    self.record_observation(leg.token_in, leg.token_out, intent.router, intent.source_event, None).await;
-                }
+                warn!(
+                    event = "pool_discovery.failed",
+                    chain_id, "discovery_no_pool_found"
+                );
+                self.record_observation(
+                    leg.token_in,
+                    leg.token_out,
+                    intent.router,
+                    intent.source_event,
+                    None,
+                )
+                .await;
             }
+        }
 
         Ok(discovered_any)
     }
@@ -305,45 +401,82 @@ impl PoolDiscoveryService {
         &self,
         rpc: Arc<HttpRpcPool>,
         pool_addr: alloy::primitives::Address,
-        factory_id: u64,
+        factory_id: Uuid,
         proto: crate::route_intent::ProtocolType,
         dex_name: &str,
         fee_bps: Option<u32>,
         intent_t_a: alloy::primitives::Address,
         intent_t_b: alloy::primitives::Address,
+        is_active: bool,
+        enum_source: &str,
     ) -> anyhow::Result<PoolRef> {
-        let (token0, token1) = rpc.with_retry(|provider| {
-            let p_addr = pool_addr;
-            async move {
-                use alloy_sol_types::SolCall;
-                use alloy::rpc::types::TransactionRequest;
-                
-                let req0 = TransactionRequest::default().to(p_addr).input(IUniswapV2Pair::token0Call {}.abi_encode().into());
-                let res0 = provider.call(req0).await.map_err(|e| anyhow::anyhow!("token0 rpc error: {}", e))?;
-                let t0 = IUniswapV2Pair::token0Call::abi_decode_returns(&res0).map_err(|e| anyhow::anyhow!("token0 decode error: {}", e))?.0;
+        let (token0, token1) = rpc
+            .with_retry(|provider| {
+                let p_addr = pool_addr;
+                async move {
+                    use alloy::rpc::types::TransactionRequest;
+                    use alloy_sol_types::SolCall;
 
-                let req1 = TransactionRequest::default().to(p_addr).input(IUniswapV2Pair::token1Call {}.abi_encode().into());
-                let res1 = provider.call(req1).await.map_err(|e| anyhow::anyhow!("token1 rpc error: {}", e))?;
-                let t1 = IUniswapV2Pair::token1Call::abi_decode_returns(&res1).map_err(|e| anyhow::anyhow!("token1 decode error: {}", e))?.0;
-                
-                Ok((t0, t1))
-            }
-        }).await?;
+                    let req0 = TransactionRequest::default()
+                        .to(p_addr)
+                        .input(IUniswapV2Pair::token0Call {}.abi_encode().into());
+                    let res0 = provider
+                        .call(req0)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("token0 rpc error: {}", e))?;
+                    let t0 = IUniswapV2Pair::token0Call::abi_decode_returns(&res0)
+                        .map_err(|e| anyhow::anyhow!("token0 decode error: {}", e))?
+                        .0;
 
-        if (token0.as_slice() != intent_t_a.as_slice() && token0.as_slice() != intent_t_b.as_slice()) || (token1.as_slice() != intent_t_a.as_slice() && token1.as_slice() != intent_t_b.as_slice()) {
-            warn!("discovery_failed:token_pair_mismatch (intent: {:?}/{:?}, pool: {:?}/{:?})", intent_t_a, intent_t_b, token0, token1);
+                    let req1 = TransactionRequest::default()
+                        .to(p_addr)
+                        .input(IUniswapV2Pair::token1Call {}.abi_encode().into());
+                    let res1 = provider
+                        .call(req1)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("token1 rpc error: {}", e))?;
+                    let t1 = IUniswapV2Pair::token1Call::abi_decode_returns(&res1)
+                        .map_err(|e| anyhow::anyhow!("token1 decode error: {}", e))?
+                        .0;
+
+                    Ok((t0, t1))
+                }
+            })
+            .await?;
+
+        if (token0.as_slice() != intent_t_a.as_slice()
+            && token0.as_slice() != intent_t_b.as_slice())
+            || (token1.as_slice() != intent_t_a.as_slice()
+                && token1.as_slice() != intent_t_b.as_slice())
+        {
+            warn!(
+                "discovery_failed:token_pair_mismatch (intent: {:?}/{:?}, pool: {:?}/{:?})",
+                intent_t_a, intent_t_b, token0, token1
+            );
             anyhow::bail!("token_pair_mismatch");
         }
 
         // Extract metadata for token0
-        let (sym0, dec0) = match self.fetch_token_meta(&rpc, alloy::primitives::Address::from_slice(token0.as_slice())).await {
+        let (sym0, dec0) = match self
+            .fetch_token_meta(
+                &rpc,
+                alloy::primitives::Address::from_slice(token0.as_slice()),
+            )
+            .await
+        {
             Ok(meta) => meta,
             Err(e) => {
                 warn!("token_meta_unavailable for {:?}: {}", token0, e);
                 anyhow::bail!("token_meta_unavailable");
             }
         };
-        let (sym1, dec1) = match self.fetch_token_meta(&rpc, alloy::primitives::Address::from_slice(token1.as_slice())).await {
+        let (sym1, dec1) = match self
+            .fetch_token_meta(
+                &rpc,
+                alloy::primitives::Address::from_slice(token1.as_slice()),
+            )
+            .await
+        {
             Ok(meta) => meta,
             Err(e) => {
                 warn!("token_meta_unavailable for {:?}: {}", token1, e);
@@ -355,52 +488,92 @@ impl PoolDiscoveryService {
         let e_t1 = Address::from_slice(token1.as_slice());
         let e_pool = Address::from_slice(pool_addr.as_slice());
 
-        // Upsert tokens in DB
-        let token0_id = self.upsert_token_in_db(e_t0, &sym0, dec0).await?;
-        let token1_id = self.upsert_token_in_db(e_t1, &sym1, dec1).await?;
+        // Upsert tokens in DB (is_active mirrors the pool's activate verdict).
+        let token0_id = self
+            .upsert_token_in_db(e_t0, &sym0, dec0, is_active)
+            .await?;
+        let token1_id = self
+            .upsert_token_in_db(e_t1, &sym1, dec1, is_active)
+            .await?;
 
-        // Upsert pool in DB
-        self.upsert_pool_in_db(e_pool, factory_id, token0_id, token1_id, fee_bps).await;
+        // Upsert pool in DB — `?`-propagate so a failed write yields Err (the
+        // caller reports HydrationFailed and does NOT add to impact_index).
+        self.upsert_pool_in_db(
+            e_pool,
+            factory_id,
+            token0_id,
+            token1_id,
+            fee_bps,
+            is_active,
+            enum_source,
+        )
+        .await?;
 
         // Hydrate ReservesCache
         match proto {
             crate::route_intent::ProtocolType::V2 => {
-                let reserves = rpc.with_retry(|provider| {
-                    let p_addr = pool_addr;
-                    async move {
-                        use alloy_sol_types::SolCall;
-                        use alloy::rpc::types::TransactionRequest;
-                        let req = TransactionRequest::default().to(p_addr).input(IUniswapV2Pair::getReservesCall {}.abi_encode().into());
-                        let res = provider.call(req).await.map_err(|e| anyhow::anyhow!("getReserves rpc error: {}", e))?;
-                        let decoded = IUniswapV2Pair::getReservesCall::abi_decode_returns(&res).map_err(|e| anyhow::anyhow!("getReserves decode error: {}", e))?;
-                        Ok((decoded.reserve0, decoded.reserve1))
-                    }
-                }).await?;
+                let reserves = rpc
+                    .with_retry(|provider| {
+                        let p_addr = pool_addr;
+                        async move {
+                            use alloy::rpc::types::TransactionRequest;
+                            use alloy_sol_types::SolCall;
+                            let req = TransactionRequest::default()
+                                .to(p_addr)
+                                .input(IUniswapV2Pair::getReservesCall {}.abi_encode().into());
+                            let res = provider
+                                .call(req)
+                                .await
+                                .map_err(|e| anyhow::anyhow!("getReserves rpc error: {}", e))?;
+                            let decoded = IUniswapV2Pair::getReservesCall::abi_decode_returns(&res)
+                                .map_err(|e| anyhow::anyhow!("getReserves decode error: {}", e))?;
+                            Ok((decoded.reserve0, decoded.reserve1))
+                        }
+                    })
+                    .await?;
                 // We insert directly into the cache.
-                self.reserves_cache.insert(
-                    e_pool,
-                    ethers::types::U256::from_str_radix(&reserves.0.to_string(), 10).unwrap_or_default(),
-                    ethers::types::U256::from_str_radix(&reserves.1.to_string(), 10).unwrap_or_default()
-                ).await;
+                self.reserves_cache
+                    .insert(
+                        e_pool,
+                        ethers::types::U256::from_str_radix(&reserves.0.to_string(), 10)
+                            .unwrap_or_default(),
+                        ethers::types::U256::from_str_radix(&reserves.1.to_string(), 10)
+                            .unwrap_or_default(),
+                    )
+                    .await;
             }
             crate::route_intent::ProtocolType::V3 => {
                 // Read slot0 + liquidity
-                let (_sqrt_price, _tick, _liq) = rpc.with_retry(|provider| {
-                    let p_addr = pool_addr;
-                    async move {
-                        use alloy_sol_types::SolCall;
-                        use alloy::rpc::types::TransactionRequest;
-                        let req_s0 = TransactionRequest::default().to(p_addr).input(IUniswapV3Pool::slot0Call {}.abi_encode().into());
-                        let res_s0 = provider.call(req_s0).await.map_err(|e| anyhow::anyhow!("slot0 rpc error: {}", e))?;
-                        let slot0 = IUniswapV3Pool::slot0Call::abi_decode_returns(&res_s0).map_err(|e| anyhow::anyhow!("slot0 decode error: {}", e))?;
+                let (_sqrt_price, _tick, _liq) = rpc
+                    .with_retry(|provider| {
+                        let p_addr = pool_addr;
+                        async move {
+                            use alloy::rpc::types::TransactionRequest;
+                            use alloy_sol_types::SolCall;
+                            let req_s0 = TransactionRequest::default()
+                                .to(p_addr)
+                                .input(IUniswapV3Pool::slot0Call {}.abi_encode().into());
+                            let res_s0 = provider
+                                .call(req_s0)
+                                .await
+                                .map_err(|e| anyhow::anyhow!("slot0 rpc error: {}", e))?;
+                            let slot0 = IUniswapV3Pool::slot0Call::abi_decode_returns(&res_s0)
+                                .map_err(|e| anyhow::anyhow!("slot0 decode error: {}", e))?;
 
-                        let req_l = TransactionRequest::default().to(p_addr).input(IUniswapV3Pool::liquidityCall {}.abi_encode().into());
-                        let res_l = provider.call(req_l).await.map_err(|e| anyhow::anyhow!("liquidity rpc error: {}", e))?;
-                        let liq = IUniswapV3Pool::liquidityCall::abi_decode_returns(&res_l).map_err(|e| anyhow::anyhow!("liquidity decode error: {}", e))?;
-                        Ok((slot0.sqrtPriceX96, slot0.tick, liq))
-                    }
-                }).await?;
-                
+                            let req_l = TransactionRequest::default()
+                                .to(p_addr)
+                                .input(IUniswapV3Pool::liquidityCall {}.abi_encode().into());
+                            let res_l = provider
+                                .call(req_l)
+                                .await
+                                .map_err(|e| anyhow::anyhow!("liquidity rpc error: {}", e))?;
+                            let liq = IUniswapV3Pool::liquidityCall::abi_decode_returns(&res_l)
+                                .map_err(|e| anyhow::anyhow!("liquidity decode error: {}", e))?;
+                            Ok((slot0.sqrtPriceX96, slot0.tick, liq))
+                        }
+                    })
+                    .await?;
+
                 // We set v3 state via the cache
                 // Note: the reserves cache doesn't fully support V3 slots directly yet without Phase 15 state projector,
                 // but we insert what we can or wait for the V3 indexer.
@@ -411,36 +584,72 @@ impl PoolDiscoveryService {
 
         // Update Redis pool_index
         let mut redis_conn = self.redis.clone();
-        
+
         match proto {
             crate::route_intent::ProtocolType::V2 => {
-                let key = format!("arbx:pool_index:{}:{}:{}", self.chain_id, sym0.to_lowercase(), sym1.to_lowercase());
-                let raw_val: Option<String> = redis::cmd("GET").arg(&key).query_async(&mut redis_conn).await.unwrap_or(None);
-                let mut list: Vec<String> = raw_val.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default();
+                let key = format!(
+                    "arbx:pool_index:{}:{}:{}",
+                    self.chain_id,
+                    sym0.to_lowercase(),
+                    sym1.to_lowercase()
+                );
+                let raw_val: Option<String> = redis::cmd("GET")
+                    .arg(&key)
+                    .query_async(&mut redis_conn)
+                    .await
+                    .unwrap_or(None);
+                let mut list: Vec<String> = raw_val
+                    .and_then(|v| serde_json::from_str(&v).ok())
+                    .unwrap_or_default();
                 let addr_str = format!("0x{:x}", e_pool);
                 if !list.contains(&addr_str) {
                     list.push(addr_str);
                     if let Ok(json) = serde_json::to_string(&list) {
-                        let _ = redis::cmd("SET").arg(&key).arg(&json).query_async::<_, ()>(&mut redis_conn).await;
+                        let _ = redis::cmd("SET")
+                            .arg(&key)
+                            .arg(&json)
+                            .query_async::<_, ()>(&mut redis_conn)
+                            .await;
                         info!(event="pool_discovery.redis_index_updated", key=?key);
                     }
                 }
             }
             crate::route_intent::ProtocolType::V3 => {
-                let key = format!("arbx:pool_index_v3:{}:{}:{}", self.chain_id, sym0.to_lowercase(), sym1.to_lowercase());
-                let raw_val: Option<String> = redis::cmd("GET").arg(&key).query_async(&mut redis_conn).await.unwrap_or(None);
-                
+                let key = format!(
+                    "arbx:pool_index_v3:{}:{}:{}",
+                    self.chain_id,
+                    sym0.to_lowercase(),
+                    sym1.to_lowercase()
+                );
+                let raw_val: Option<String> = redis::cmd("GET")
+                    .arg(&key)
+                    .query_async(&mut redis_conn)
+                    .await
+                    .unwrap_or(None);
+
                 #[derive(serde::Serialize, serde::Deserialize, PartialEq)]
-                struct V3PoolInfo { address: String, fee_bps: u32 }
-                
-                let mut list: Vec<V3PoolInfo> = raw_val.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default();
+                struct V3PoolInfo {
+                    address: String,
+                    fee_bps: u32,
+                }
+
+                let mut list: Vec<V3PoolInfo> = raw_val
+                    .and_then(|v| serde_json::from_str(&v).ok())
+                    .unwrap_or_default();
                 let addr_str = format!("0x{:x}", e_pool);
                 let fee = fee_bps.unwrap_or(30);
-                
+
                 if !list.iter().any(|p| p.address == addr_str) {
-                    list.push(V3PoolInfo { address: addr_str, fee_bps: fee });
+                    list.push(V3PoolInfo {
+                        address: addr_str,
+                        fee_bps: fee,
+                    });
                     if let Ok(json) = serde_json::to_string(&list) {
-                        let _ = redis::cmd("SET").arg(&key).arg(&json).query_async::<_, ()>(&mut redis_conn).await;
+                        let _ = redis::cmd("SET")
+                            .arg(&key)
+                            .arg(&json)
+                            .query_async::<_, ()>(&mut redis_conn)
+                            .await;
                         info!(event="pool_discovery.redis_v3_index_updated", key=?key);
                     }
                 }
@@ -459,86 +668,142 @@ impl PoolDiscoveryService {
         })
     }
 
-    async fn fetch_token_meta(&self, rpc: &Arc<HttpRpcPool>, token: alloy::primitives::Address) -> anyhow::Result<(String, u8)> {
+    async fn fetch_token_meta(
+        &self,
+        rpc: &Arc<HttpRpcPool>,
+        token: alloy::primitives::Address,
+    ) -> anyhow::Result<(String, u8)> {
         rpc.with_retry(|provider| {
             let t_addr = token;
             async move {
-                use alloy_sol_types::SolCall;
                 use alloy::rpc::types::TransactionRequest;
-                let req_s = TransactionRequest::default().to(t_addr).input(IERC20::symbolCall {}.abi_encode().into());
-                let res_s = provider.call(req_s).await.map_err(|e| anyhow::anyhow!("symbol rpc error: {}", e))?;
-                let sym = IERC20::symbolCall::abi_decode_returns(&res_s).map_err(|e| anyhow::anyhow!("symbol decode error: {}", e))?;
+                use alloy_sol_types::SolCall;
+                let req_s = TransactionRequest::default()
+                    .to(t_addr)
+                    .input(IERC20::symbolCall {}.abi_encode().into());
+                let res_s = provider
+                    .call(req_s)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("symbol rpc error: {}", e))?;
+                let sym = IERC20::symbolCall::abi_decode_returns(&res_s)
+                    .map_err(|e| anyhow::anyhow!("symbol decode error: {}", e))?;
 
-                let req_d = TransactionRequest::default().to(t_addr).input(IERC20::decimalsCall {}.abi_encode().into());
-                let res_d = provider.call(req_d).await.map_err(|e| anyhow::anyhow!("decimals rpc error: {}", e))?;
-                let dec = IERC20::decimalsCall::abi_decode_returns(&res_d).map_err(|e| anyhow::anyhow!("decimals decode error: {}", e))?;
-                
+                let req_d = TransactionRequest::default()
+                    .to(t_addr)
+                    .input(IERC20::decimalsCall {}.abi_encode().into());
+                let res_d = provider
+                    .call(req_d)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("decimals rpc error: {}", e))?;
+                let dec = IERC20::decimalsCall::abi_decode_returns(&res_d)
+                    .map_err(|e| anyhow::anyhow!("decimals decode error: {}", e))?;
+
                 Ok((sym, dec))
             }
-        }).await.map_err(|e| anyhow::anyhow!("token meta rpc error: {}", e))
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("token meta rpc error: {}", e))
     }
 
-    async fn upsert_token_in_db(&self, token: Address, symbol: &str, decimals: u8) -> anyhow::Result<u64> {
+    async fn upsert_token_in_db(
+        &self,
+        token: Address,
+        symbol: &str,
+        decimals: u8,
+        is_active: bool,
+    ) -> anyhow::Result<Uuid> {
         if let Some(ref db) = self.db {
             let t_str = format!("0x{:x}", token);
             let q_sel = "SELECT id FROM tokens WHERE chain_id = $1 AND address = $2";
-            if let Ok(Some((id,))) = sqlx::query_as::<_, (i64,)>(q_sel)
+            if let Ok(Some((id,))) = sqlx::query_as::<_, (Uuid,)>(q_sel)
                 .bind(self.chain_id as i64)
                 .bind(&t_str)
                 .fetch_optional(db)
                 .await
             {
-                return Ok(id as u64);
+                return Ok(id);
             }
 
+            // is_active set from the caller's activate verdict so an UNRATED token
+            // (enumeration) lands is_active=false rather than the migration-021
+            // default TRUE — it isn't allowlist-active until actually rated. The
+            // reactive path passes true. Monotonic on conflict: never deactivate.
             let q_ins = r#"
-                INSERT INTO tokens (chain_id, address, symbol, decimals, created_at)
-                VALUES ($1, $2, $3, $4, NOW())
-                ON CONFLICT (chain_id, address) DO UPDATE SET symbol = EXCLUDED.symbol, decimals = EXCLUDED.decimals
+                INSERT INTO tokens (chain_id, address, symbol, decimals, is_active, created_at)
+                VALUES ($1, $2, $3, $4, $5, NOW())
+                ON CONFLICT (chain_id, address) DO UPDATE SET
+                    symbol = EXCLUDED.symbol,
+                    decimals = EXCLUDED.decimals,
+                    is_active = tokens.is_active OR EXCLUDED.is_active
                 RETURNING id
             "#;
-            if let Ok((id,)) = sqlx::query_as::<_, (i64,)>(q_ins)
+            if let Ok((id,)) = sqlx::query_as::<_, (Uuid,)>(q_ins)
                 .bind(self.chain_id as i64)
                 .bind(&t_str)
                 .bind(symbol)
                 .bind(decimals as i16)
+                .bind(is_active)
                 .fetch_one(db)
                 .await
             {
-                return Ok(id as u64);
+                return Ok(id);
             }
         }
         anyhow::bail!("db_unavailable_or_insert_failed")
     }
 
-    async fn upsert_pool_in_db(&self, pool: Address, factory_id: u64, token0_id: u64, token1_id: u64, fee_bps: Option<u32>) {
-        if let Some(ref db) = self.db {
-            let p_str = format!("0x{:x}", pool);
-            let q = r#"
-                INSERT INTO pools (chain_id, address, factory_id, token0_id, token1_id, fee_tier, is_active, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, TRUE, NOW())
-                ON CONFLICT (chain_id, address) DO UPDATE SET 
-                    factory_id = EXCLUDED.factory_id, 
-                    token0_id = EXCLUDED.token0_id, 
-                    token1_id = EXCLUDED.token1_id, 
-                    fee_tier = EXCLUDED.fee_tier,
-                    is_active = TRUE
-            "#;
-            if let Err(e) = sqlx::query(q)
-                .bind(self.chain_id as i64)
-                .bind(&p_str)
-                .bind(factory_id as i64)
-                .bind(token0_id as i64)
-                .bind(token1_id as i64)
-                .bind(fee_bps.map(|f| f as i32))
-                .execute(db)
-                .await
-            {
-                warn!(event="pool_discovery.upsert_pool_failed", pool=?p_str, error=%e);
-            } else {
-                info!(event="pool_discovery.pool_persisted", pool=?p_str);
-            }
-        }
+    #[allow(clippy::too_many_arguments)]
+    async fn upsert_pool_in_db(
+        &self,
+        pool: Address,
+        factory_id: Uuid,
+        token0_id: Uuid,
+        token1_id: Uuid,
+        fee_bps: Option<u32>,
+        is_active: bool,
+        enum_source: &str,
+    ) -> anyhow::Result<()> {
+        // No DB configured → nothing to persist (preserves the prior no-op).
+        let Some(ref db) = self.db else {
+            return Ok(());
+        };
+        let p_str = format!("0x{:x}", pool);
+        // is_active is MONOTONIC on conflict (`pools.is_active OR EXCLUDED`):
+        // never deactivate a pool that is already active (honors "don't break
+        // existing pools"); a false→true reactivation IS allowed (an unrated
+        // token becoming token-safe). enum_source keeps its original provenance.
+        let q = r#"
+            INSERT INTO pools (chain_id, address, factory_id, token0_id, token1_id, fee_tier, is_active, enum_source, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+            ON CONFLICT (chain_id, address) DO UPDATE SET
+                factory_id = EXCLUDED.factory_id,
+                token0_id = EXCLUDED.token0_id,
+                token1_id = EXCLUDED.token1_id,
+                fee_tier = EXCLUDED.fee_tier,
+                is_active = pools.is_active OR EXCLUDED.is_active,
+                enum_source = COALESCE(pools.enum_source, EXCLUDED.enum_source)
+        "#;
+        // Propagate the error (fail-honest): a swallowed failure would let the
+        // caller report the pool as persisted + inject it into the live
+        // impact_index with no PG backing. On Err the caller yields
+        // HydrationFailed and does NOT add the pool.
+        sqlx::query(q)
+            .bind(self.chain_id as i64)
+            .bind(&p_str)
+            .bind(factory_id)
+            .bind(token0_id)
+            .bind(token1_id)
+            .bind(fee_bps.map(|f| f as i32))
+            .bind(is_active)
+            .bind(enum_source)
+            .execute(db)
+            .await
+            .map_err(|e| {
+                warn!(event = "pool_discovery.upsert_pool_failed", pool = ?p_str, error = %e);
+                anyhow::anyhow!("upsert_pool_failed: {e}")
+            })?;
+        info!(event = "pool_discovery.pool_persisted", pool = ?p_str, is_active, enum_source);
+        Ok(())
     }
 
     pub async fn record_opportunity_observation(
@@ -570,5 +835,118 @@ impl PoolDiscoveryService {
                 tracing::debug!("Failed to insert opportunity observation: {}", e);
             }
         }
+    }
+
+    /// Block 2 entrypoint: enumerate a candidate pool discovered by TVL ranking.
+    ///
+    /// Resolves the pool's factory ON-CHAIN (never trusts the subgraph), looks it
+    /// up in the seeded `factories` cache, and — if found — re-verifies + persists
+    /// the pool via the existing on-chain hydration path. `activate` controls
+    /// is_active + impact_index membership: a token-safe pool is activated; an
+    /// unrated one is persisted is_active=false so a future tick can reactivate it.
+    ///
+    /// Fail-honest: factory-not-seeded or hydration failure returns the reason and
+    /// logs it — it NEVER seeds a factory blindly or fabricates a pool.
+    pub async fn enumerate_and_persist_pool(
+        &self,
+        pool_addr: alloy::primitives::Address,
+        token0_hint: alloy::primitives::Address,
+        token1_hint: alloy::primitives::Address,
+        fee_bps: Option<u32>,
+        activate: bool,
+    ) -> EnumOutcome {
+        let rpc = match &self.rpc_pool {
+            Some(p) => p.clone(),
+            None => return EnumOutcome::NoRpc,
+        };
+
+        // 1. Resolve the factory ON-CHAIN (factory() exists on V2 pairs + V3 pools).
+        let factory_addr = match self.read_pool_factory(&rpc, pool_addr).await {
+            Ok(a) => a,
+            Err(e) => {
+                warn!(event = "poolenum.factory_read_failed", pool = ?pool_addr, error = %e);
+                return EnumOutcome::HydrationFailed;
+            }
+        };
+
+        // 2. Lookup factory.id (Uuid) in the seeded cache by address. NOT seeded → skip.
+        //    Never seed a factory blindly (R8): seeding is a separate migration decision.
+        let factories = self.get_factories().await;
+        let fac_addr_e = Address::from_slice(factory_addr.as_slice());
+        let matched = factories.iter().find(|(_, addr, _, _)| *addr == fac_addr_e);
+        let (factory_id, proto, dex_name) = match matched {
+            Some((id, _, proto, name)) => (*id, *proto, name.clone()),
+            None => {
+                info!(event = "poolenum.factory_unresolved", pool = ?pool_addr, factory = ?fac_addr_e);
+                return EnumOutcome::FactoryUnresolved;
+            }
+        };
+
+        // 3. On-chain hydrate + persist (re-verifies token0/1, upserts tokens+pool,
+        //    refreshes the Redis index). is_active = activate; enum_source tracked.
+        match self
+            .hydrate_and_persist_pool(
+                rpc.clone(),
+                pool_addr,
+                factory_id,
+                proto,
+                &dex_name,
+                fee_bps,
+                token0_hint,
+                token1_hint,
+                activate,
+                "subgraph_tvl",
+            )
+            .await
+        {
+            Ok(pool_ref) => {
+                // Only an activated (token-safe) pool joins the live search surface.
+                if activate {
+                    let mut idx = self.impact_index.write().await;
+                    idx.add_pool(pool_ref);
+                }
+                info!(event = "poolenum.pool_persisted", pool = ?pool_addr, activated = activate);
+                EnumOutcome::Persisted {
+                    activated: activate,
+                }
+            }
+            Err(e) => {
+                warn!(event = "poolenum.hydration_failed", pool = ?pool_addr, error = %e);
+                EnumOutcome::HydrationFailed
+            }
+        }
+    }
+
+    /// Read the pool/pair's `factory()` view on-chain (V2 pairs and V3 pools both
+    /// expose it). Used by Block 2 enumeration to resolve provenance without
+    /// trusting the subgraph. Errors on a zero/failed read (fail-honest).
+    async fn read_pool_factory(
+        &self,
+        rpc: &Arc<HttpRpcPool>,
+        pool_addr: alloy::primitives::Address,
+    ) -> anyhow::Result<alloy::primitives::Address> {
+        let factory = rpc
+            .with_retry(|provider| {
+                let p_addr = pool_addr;
+                async move {
+                    use alloy::rpc::types::TransactionRequest;
+                    use alloy_sol_types::SolCall;
+                    let req = TransactionRequest::default()
+                        .to(p_addr)
+                        .input(IUniswapV2Pair::factoryCall {}.abi_encode().into());
+                    let res = provider
+                        .call(req)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("factory rpc error: {}", e))?;
+                    let factory = IUniswapV2Pair::factoryCall::abi_decode_returns(&res)
+                        .map_err(|e| anyhow::anyhow!("factory decode error: {}", e))?;
+                    if factory.is_zero() {
+                        anyhow::bail!("factory_zero");
+                    }
+                    Ok(factory)
+                }
+            })
+            .await?;
+        Ok(factory)
     }
 }

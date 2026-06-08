@@ -159,7 +159,11 @@ impl TransitionProjector {
         } else {
             let sum: f64 = self_energies.iter().sum();
             let avg = sum / self_energies.len() as f64;
-            if avg.abs() < 1e-15 { 1.0 } else { avg.abs() }
+            if avg.abs() < 1e-15 {
+                1.0
+            } else {
+                avg.abs()
+            }
         };
         let perturbed_energies: Vec<f64> = self_energies
             .iter()
@@ -190,11 +194,7 @@ impl TransitionProjector {
         // mixing induced by the perturbation.
         //
         // Build unperturbed eigenstates for comparison.
-        let h_unperturbed = EffectiveHamiltonian::new(
-            self_energies,
-            couplings,
-            0.0,
-        )?;
+        let h_unperturbed = EffectiveHamiltonian::new(self_energies, couplings, 0.0)?;
 
         // The unperturbed decomposition may have a degenerate spectrum
         // (identical self-energies with zero coupling). In that case,
@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn dispatch_respects_threshold() {
         let proj = TransitionProjector::new(0.01, 1.0); // very low threshold
-        // Large perturbation on a nearly degenerate system → high transition prob.
+                                                        // Large perturbation on a nearly degenerate system → high transition prob.
         let result = proj.project(&[1.0, 1.1], &[0.5], 10.0).unwrap();
         // With such a large perturbation on a nearly degenerate system,
         // transition probability should be significant.
@@ -337,7 +337,9 @@ mod tests {
     #[test]
     fn projection_carries_metadata() {
         let proj = TransitionProjector::new(0.3, 1.0);
-        let result = proj.project(&[1.0, 3.0, 5.0], &[0.1, 0.2, 0.3], 0.5).unwrap();
+        let result = proj
+            .project(&[1.0, 3.0, 5.0], &[0.1, 0.2, 0.3], 0.5)
+            .unwrap();
         assert_eq!(result.dimension(), 3);
         assert!((result.cdc_value() - 0.5).abs() < 1e-15);
         assert!(result.spectral_gap() > 0.0);

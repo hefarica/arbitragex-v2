@@ -45,16 +45,14 @@ mod paper_shadow_e2e {
     use crate::types::kill_switch::KillSwitchState;
 
     // Phase 5 — Allocator
-    use crate::allocator::{
-        DiracManifoldAllocator, HyperbolicConstraint, LiquidityManifold,
-    };
-    use crate::eigenstate::{EquilibriumBoundary, EigenState};
+    use crate::allocator::{DiracManifoldAllocator, HyperbolicConstraint, LiquidityManifold};
+    use crate::eigenstate::{EigenState, EquilibriumBoundary};
 
     // Phase 6 — Hedger
-    use crate::hedger::orthogonal_variance_hedger::OrthogonalVarianceHedger;
     use crate::hedger::holonomic_loop_resolution::{
-        LiquidityGraph, TopologicalYield, HolonomicInvariantChecker,
+        HolonomicInvariantChecker, LiquidityGraph, TopologicalYield,
     };
+    use crate::hedger::orthogonal_variance_hedger::OrthogonalVarianceHedger;
     use crate::hedger::temporal_liquidity_superposition::TemporalLiquidityEngine;
 
     // Metrics (real, not mocked)
@@ -83,11 +81,14 @@ mod paper_shadow_e2e {
     /// Construct a LiquidityManifold test fixture with verified x·y = k.
     fn manifold(addr: &str, t0: &str, t1: &str, x: f64, y: f64) -> LiquidityManifold {
         LiquidityManifold::new(
-            x * y, x, y,
+            x * y,
+            x,
+            y,
             addr.to_string(),
             (t0.to_string(), t1.to_string()),
             1,
-        ).expect("Manifold fixture must satisfy x·y = k")
+        )
+        .expect("Manifold fixture must satisfy x·y = k")
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -115,7 +116,10 @@ mod paper_shadow_e2e {
         let cdc = cdc_calc.compute();
         // CDC may return NaN if warmup conditions aren't met — that's R8 honest.
         // For this structural test with set_warmup(10,50) and 100 obs, it should be finite.
-        assert!(cdc.value.is_finite(), "CDC must be finite after 100 observations with lowered warmup");
+        assert!(
+            cdc.value.is_finite(),
+            "CDC must be finite after 100 observations with lowered warmup"
+        );
         metrics.record_cdc("structural-test", cdc.value);
 
         // ─── Phase 3: Eigenstate Decomposition ─────────────────────
@@ -123,29 +127,32 @@ mod paper_shadow_e2e {
         let couplings = [0.5, 0.3, 0.2];
         let cdc_perturbation = cdc.value.abs().max(0.1);
 
-        let hamiltonian = EffectiveHamiltonian::new(
-            &self_energies,
-            &couplings,
-            cdc_perturbation,
-        ).expect("Hamiltonian construction");
+        let hamiltonian = EffectiveHamiltonian::new(&self_energies, &couplings, cdc_perturbation)
+            .expect("Hamiltonian construction");
 
-        let decomposition = EigenstateDecomposition::decompose(&hamiltonian)
-            .expect("Eigenstate decomposition");
+        let decomposition =
+            EigenstateDecomposition::decompose(&hamiltonian).expect("Eigenstate decomposition");
 
-        assert!(decomposition.spectral_gap() > 0.0, "Non-degenerate spectrum");
+        assert!(
+            decomposition.spectral_gap() > 0.0,
+            "Non-degenerate spectrum"
+        );
         metrics.record_eigenstate_energy(0, decomposition.ground_state_energy());
         metrics.record_eigenstate_energy(1, decomposition.first_excited_energy());
 
         // ─── Phase 3b: Transition Projector ────────────────────────
         let projector = TransitionProjector::new(0.3, 0.1);
 
-        let projection = projector.project(
-            &self_energies.iter()
-                .map(|&e| e + 0.1 * cdc_perturbation * e / 3.0)
-                .collect::<Vec<_>>(),
-            &couplings,
-            cdc_perturbation,
-        ).expect("Projection should succeed");
+        let projection = projector
+            .project(
+                &self_energies
+                    .iter()
+                    .map(|&e| e + 0.1 * cdc_perturbation * e / 3.0)
+                    .collect::<Vec<_>>(),
+                &couplings,
+                cdc_perturbation,
+            )
+            .expect("Projection should succeed");
 
         let stochastic_gate = StochasticGateInput {
             should_dispatch: projection.should_dispatch(),
@@ -183,14 +190,14 @@ mod paper_shadow_e2e {
         let constraint = HyperbolicConstraint::new(1_000_000.0);
         let allocator = DiracManifoldAllocator::new(constraint, 30);
 
-        let alloc_result = allocator.allocate(
-            &weth_usdc,
-            &boundary,
-            &equilibrium_state,
-        ).expect("Allocation should succeed");
+        let alloc_result = allocator
+            .allocate(&weth_usdc, &boundary, &equilibrium_state)
+            .expect("Allocation should succeed");
 
-        assert!(alloc_result.ocp_solution.hyperbolic_constraint_satisfied,
-            "Hyperbolic constraint x·y = k MUST be satisfied");
+        assert!(
+            alloc_result.ocp_solution.hyperbolic_constraint_satisfied,
+            "Hyperbolic constraint x·y = k MUST be satisfied"
+        );
 
         metrics.record_dirac_amplitude("WETH/USDC", alloc_result.impulse.amplitude);
 
@@ -201,7 +208,8 @@ mod paper_shadow_e2e {
             alloc_result.impulse.amplitude,
             alloc_result.impulse.amplitude * 0.1,
             &alloc_result.ocp_solution,
-        ).expect("BundlePosition construction");
+        )
+        .expect("BundlePosition construction");
 
         // Force dispatch for E2E (the real stochastic gate decision was
         // already recorded above for observability)
@@ -229,11 +237,9 @@ mod paper_shadow_e2e {
         let hedger = OrthogonalVarianceHedger::new();
         let cex_prices = DVector::from(vec![2000.0, 1000.0]);
 
-        let hedge_result = hedger.hedge(
-            &alloc_result.impulse,
-            &cex_manifold,
-            &cex_prices,
-        ).expect("Hedge computation");
+        let hedge_result = hedger
+            .hedge(&alloc_result.impulse, &cex_manifold, &cex_prices)
+            .expect("Hedge computation");
 
         metrics.record_hedge_covariance("DEX", "CEX", hedge_result.covariance_off_diagonal);
 
@@ -256,16 +262,20 @@ mod paper_shadow_e2e {
             metrics.record_holonomy_value(holonomy);
 
             let yield_data = TopologicalYield::from_holonomy_and_friction(
-                holonomy.abs(), 0.001, 0.0005,
-                contour.manifolds.iter().map(|m| m.pool_address.clone()).collect(),
+                holonomy.abs(),
+                0.001,
+                0.0005,
+                contour
+                    .manifolds
+                    .iter()
+                    .map(|m| m.pool_address.clone())
+                    .collect(),
             );
 
             metrics.record_holonomic_yield(yield_data.net_yield, contour.manifolds.len());
 
             // Verify 5-condition invariant
-            let invariant_check = HolonomicInvariantChecker::verify(
-                contour, &yield_data, 50, 5000,
-            );
+            let invariant_check = HolonomicInvariantChecker::verify(contour, &yield_data, 50, 5000);
             match invariant_check {
                 Ok(report) => {
                     assert!(report.is_closed);
@@ -297,7 +307,10 @@ mod paper_shadow_e2e {
 
         // ─── FINAL ASSERTIONS ─────────────────────────────────────
         assert!(metrics.count("sed_cdc_value") > 0, "CDC recorded");
-        assert!(metrics.count("sed_eigenstate_energy") > 0, "Eigenstate recorded");
+        assert!(
+            metrics.count("sed_eigenstate_energy") > 0,
+            "Eigenstate recorded"
+        );
         assert!(metrics.count("sed_dirac_amplitude") > 0, "Dirac recorded");
         assert!(metrics.count("sed_hedge_covariance") > 0, "Hedge recorded");
         assert!(metrics.count("sed_gate_verdict") > 0, "Gate recorded");
@@ -320,17 +333,18 @@ mod paper_shadow_e2e {
     /// Verify eigenstate decomposition preserves spectral gap under perturbation.
     #[test]
     fn eigenstate_spectral_gap_stable_under_cdc_perturbation() {
-        let h_base = EffectiveHamiltonian::new(&[1.0, 3.0, 5.0], &[0.5, 0.3, 0.2], 0.0)
-            .unwrap();
-        let h_perturbed = EffectiveHamiltonian::new(&[1.0, 3.0, 5.0], &[0.5, 0.3, 0.2], 2.0)
-            .unwrap();
+        let h_base = EffectiveHamiltonian::new(&[1.0, 3.0, 5.0], &[0.5, 0.3, 0.2], 0.0).unwrap();
+        let h_perturbed =
+            EffectiveHamiltonian::new(&[1.0, 3.0, 5.0], &[0.5, 0.3, 0.2], 2.0).unwrap();
 
         let d_base = EigenstateDecomposition::decompose(&h_base).unwrap();
         let d_perturbed = EigenstateDecomposition::decompose(&h_perturbed).unwrap();
 
         // Spectral gap is preserved under uniform perturbation
-        assert!((d_base.spectral_gap() - d_perturbed.spectral_gap()).abs() < 1e-10,
-            "Uniform perturbation must preserve spectral gap");
+        assert!(
+            (d_base.spectral_gap() - d_perturbed.spectral_gap()).abs() < 1e-10,
+            "Uniform perturbation must preserve spectral gap"
+        );
     }
 
     /// Verify allocator produces valid DiracImpulse with hyperbolic constraint.
@@ -344,7 +358,11 @@ mod paper_shadow_e2e {
             stability_exponent: 0.0,
         };
         let state = EigenState {
-            amplitude: DVector::from(vec![Complex64::new(0.7071, 0.0), Complex64::new(0.7071, 0.0), Complex64::new(0.0, 0.0)]),
+            amplitude: DVector::from(vec![
+                Complex64::new(0.7071, 0.0),
+                Complex64::new(0.7071, 0.0),
+                Complex64::new(0.0, 0.0),
+            ]),
             energy: 0.5,
             degeneracy: 1,
             quantum_numbers: vec![0],
@@ -355,8 +373,10 @@ mod paper_shadow_e2e {
 
         match result {
             Ok(alloc) => {
-                assert!(alloc.ocp_solution.hyperbolic_constraint_satisfied,
-                    "x·y = k MUST hold post-allocation");
+                assert!(
+                    alloc.ocp_solution.hyperbolic_constraint_satisfied,
+                    "x·y = k MUST hold post-allocation"
+                );
             }
             Err(e) => {
                 // R8: allocation rejection is honest, not a failure

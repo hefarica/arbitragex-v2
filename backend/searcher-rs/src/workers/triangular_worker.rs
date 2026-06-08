@@ -54,6 +54,7 @@ use ethers::types::{Address, U256};
 use redis::aio::ConnectionManager;
 use shared_rs::contracts::{Opportunity, StrategyKind};
 use shared_rs::rpc_failover::HttpRpcPool;
+use shared_rs::tokens;
 use shared_rs::trading_config::TradingConfigClient;
 use sqlx::postgres::PgPool;
 use std::collections::HashSet;
@@ -417,26 +418,22 @@ pub fn cycle_hash(tokens: &[&str]) -> String {
 /// kicks in when the cache hasn't been bootstrapped yet (e.g. immediately after
 /// PoolSyncWorker boot).
 ///
-/// Operator extension path: when a new token is added via migration 029/030 it
-/// must also be added here OR the cache must be live. The fallback is conservative
-/// — if both lookups miss, the cycle is skipped (no fake address).
-fn known_token_address(symbol: &str) -> Option<&'static str> {
-    match symbol.to_ascii_uppercase().as_str() {
-        // Blue chips
-        "WETH" => Some("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
-        "USDC" => Some("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
-        "USDT" => Some("0xdac17f958d2ee523a2206206994597c13d831ec7"),
-        "DAI" => Some("0x6b175474e89094c44da98b954eedeac495271d0f"),
-        "WBTC" => Some("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"),
-        // Long-tail majors (added 2026-05-07 alongside the long-tail cycles
-        // in MVP_CYCLES). All four are in the operator's Tier 1 allowlist
-        // applied via Redis HSET on 2026-05-07 with real Coingecko prices.
-        "PEPE" => Some("0x6982508145454ce325ddbe47a25d4ec3d2311933"),
-        "SHIB" => Some("0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"),
-        "MKR" => Some("0x9f8f72aa9304c8b593d555f12ef6589cc3a579a2"),
-        "COMP" => Some("0xc00e94cb662c3520282e6f5717214004a7f26888"),
-        _ => None,
-    }
+/// Delegates to `arbx_shared::tokens` (chain_id = 1, Ethereum mainnet).
+/// Returns `None` for any symbol not present in the canonical catalog.
+///
+/// Operator extension path: new tokens must be added to `shared_rs::tokens`
+/// (reviewed, auditable constants) rather than this function. If both the
+/// catalog lookup and the Redis cache miss, the cycle is skipped (fail-honest).
+///
+/// # Type note
+/// The return type was changed from `Option<&'static str>` to `Option<String>`
+/// to match the `token_address_str` API, which builds the hex string at
+/// call-time from the static byte array stored in `TokenEntry`. The single
+/// production caller (`resolve_token`) already converts to `String` for the
+/// tuple it returns, so the change is transparent. The symbol lookup is
+/// case-insensitive (normalised to uppercase before delegating).
+fn known_token_address(symbol: &str) -> Option<String> {
+    tokens::token_address_str(1u64, &symbol.to_ascii_uppercase())
 }
 
 /// Resolve `(token_addr, decimals)` for a symbol. Tries Redis cache first; on
@@ -450,10 +447,13 @@ async fn resolve_token(
     // Try Redis: requires knowing the address first, so we bootstrap from the
     // hardcoded table — the cache is keyed by address, not symbol.
     let addr = known_token_address(symbol)?;
-    if let Ok(Some(meta)) = get_token_meta(redis, chain_id, addr).await {
-        return Some((addr.to_string(), meta.decimals, meta.is_stablecoin));
+    if let Ok(Some(meta)) = get_token_meta(redis, chain_id, &addr).await {
+        return Some((addr, meta.decimals, meta.is_stablecoin));
     }
     // Fallback to hard-coded mainnet decimals (truthful, not invented).
+    // Decimals are sourced from the canonical catalog (shared_rs::tokens) for
+    // correctness; the match below mirrors TokenEntry.decimals for performance
+    // (avoids a second catalog lookup in the hot path).
     let (decimals, is_stable) = match symbol.to_ascii_uppercase().as_str() {
         "WETH" => (18, false),
         "USDC" | "USDT" => (6, true),
@@ -463,7 +463,7 @@ async fn resolve_token(
         "PEPE" | "SHIB" | "MKR" | "COMP" => (18, false),
         _ => return None,
     };
-    Some((addr.to_string(), decimals, is_stable))
+    Some((addr, decimals, is_stable))
 }
 
 /// One hop's resolved data: (pool_address_lower, reserves entry, swap orientation).

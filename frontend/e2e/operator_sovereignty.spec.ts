@@ -39,8 +39,8 @@ test.describe('C9.4 — Operator Sovereignty Matrix', () => {
     for (const reg of REGISTRIES) {
       await page.goto(`/omega-s5/registry/${reg}`);
       await expect(page.getByTestId(`${reg}-create-btn`)).toBeHidden();
-      await expect(page.getByTestId(`${reg}-edit-btn`).first()).toBeHidden();
-      await expect(page.getByTestId(`${reg}-disable-btn`).first()).toBeHidden();
+      await expect(page.getByTestId(`${reg}-edit-btn`)).toBeHidden();
+      await expect(page.getByTestId(`${reg}-disable-btn`)).toBeHidden();
       await expect(page.getByTestId(`${reg}-reload-btn`)).toBeHidden();
       await expect(page.getByTestId(`${reg}-list`)).toBeVisible();
       await expect(page.getByTestId(`${reg}-audit-trail`)).toBeVisible();

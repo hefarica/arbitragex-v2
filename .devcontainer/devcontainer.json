@@ -1,0 +1,55 @@
+{
+  "name": "ArbitrageX v2 — Frontend Control Plane",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "frontend-dev",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "remoteUser": "node",
+  "overrideCommand": true,
+  "forwardPorts": [5173, 8787, 3000],
+  "portsAttributes": {
+    "5173": {
+      "label": "Frontend Next.js",
+      "onAutoForward": "openBrowser"
+    },
+    "8787": {
+      "label": "Edge API via local/staging tunnel",
+      "onAutoForward": "notify"
+    },
+    "3000": {
+      "label": "Socket.IO / WS via local/staging tunnel",
+      "onAutoForward": "notify"
+    }
+  },
+  "containerEnv": {
+    "NEXT_TELEMETRY_DISABLED": "1",
+    "NODE_ENV": "development",
+    "NEXT_PUBLIC_EDGE_URL": "http://localhost:8787",
+    "NEXT_PUBLIC_WS_URL": "http://localhost:3000",
+    "NEXT_PUBLIC_WSS_URL": "http://localhost:3000",
+    "INTERNAL_EDGE_URL": "http://host.docker.internal:8787"
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postStartCommand": "printf '\\nDev Container listo. Ejecuta: npm run -w @arbx/frontend dev:container\\nFrontend: http://localhost:5173/executions\\n\\n'",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "bradlc.vscode-tailwindcss",
+        "ms-vscode.vscode-typescript-next",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "typescript.tsdk": "node_modules/typescript/lib",
+        "eslint.workingDirectories": [
+          { "directory": "frontend", "changeProcessCWD": true },
+          { "directory": "shared-ts", "changeProcessCWD": true }
+        ],
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "files.eol": "\n",
+        "editor.formatOnSave": false
+      }
+    }
+  }
+}

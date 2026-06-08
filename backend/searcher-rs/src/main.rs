@@ -2,7 +2,7 @@
 // Promoted from warn→deny so CI fails on new unwrap/expect in this binary.
 // Per-file #[allow(...)] is used below in files where the pattern is
 // demonstrably safe (mutex poison, infallible slice casts, test modules).
-#![deny(clippy::unwrap_used, clippy::expect_used)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 //! searcher-rs — Sprint 2 entry point.
 //!
@@ -55,6 +55,9 @@ mod sim_multistep;
 // pub/sub `arbx:config:chains:reload` for events from the api-server admin
 // endpoint.
 mod config_reload;
+// Phase 2: Topology Vault hot-reload subscriber. Listens on `arbx:topology:mutation`,
+// applies durable HTTP fallback at cold boot, and swaps RPC/WS clients atomically.
+mod topology_reload;
 // Phase 16: per-strategy Prometheus metrics for the event-driven orchestrator.
 mod metrics;
 mod patterns;
@@ -62,6 +65,18 @@ mod persistence;
 mod publisher;
 mod reserves;
 mod scanner;
+// FASE OMEGA — cartridge runtime (Rhai). `cartridge` + `cartridge_loader` are API-heavy
+// and mostly exercised via lib/integration tests; the binary only drives them through
+// `cartridge_boot` (called from the scanner boot path), so allow dead_code on the two.
+#[allow(dead_code, unused_imports, unused_variables)]
+mod cartridge;
+mod cartridge_boot;
+#[allow(dead_code)]
+mod cartridge_loader;
+// FASE OMEGA — Block/log backrunning scanner (ARBX_MEMPOOL_MODE=block).
+mod block_scanner;
+// Observer telemetry — real-node head divergence (reorg) PUBLISH to arbx:telemetry:observability.
+mod telemetry_observability;
 // Phase 1-3: orchestrator modules — fully wired in Phase 14.
 // `impact_index` still has Phase-15 functions (from_registry, add_pool,
 // seed_cycles_from_mvp) that are public API but not yet called by the binary.
@@ -69,8 +84,18 @@ mod scanner;
 #[allow(dead_code)]
 mod impact_index;
 mod opportunity_emitter;
+mod pool_candidate;
 mod pool_discovery;
+mod pool_sources;
 mod route_decoder;
+mod scoring;
+mod scoring_pipeline;
+mod source_supervisor;
+// Phase 1 radar — declared in the bin crate so `scanner::run_chain` can spawn
+// the worker. The lib crate also declares it (`pub mod route_discovery`) so the
+// pure submodules are unit-tested under `cargo test --lib`.
+#[allow(dead_code)]
+mod route_discovery;
 mod route_intent;
 mod strategy_label;
 // Phase 7-8: orchestrator + engines — fully wired in Phase 14.
@@ -92,6 +117,8 @@ mod workers;
 mod size_optimizer;
 #[allow(dead_code)]
 mod state_projector;
+#[allow(dead_code)]
+mod v3_quote_provider;
 
 use shared_rs::{
     config::{require_env, AppConfig},
@@ -102,7 +129,6 @@ use shared_rs::{
     rpc_failover::HttpRpcPool,
     trading_config::TradingConfigClient,
 };
-use sqlx::postgres::PgPoolOptions;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tracing::{info, warn};
 
@@ -165,6 +191,50 @@ async fn main() -> anyhow::Result<()> {
     init_metrics();
     // Phase 16: register per-strategy orchestrator metrics into the shared registry.
     init_orchestrator_metrics();
+    // Phase 2: expose applied topology version/client-readiness gauges for clean UI surfaces.
+    topology_reload::init_topology_metrics();
+
+    // ── OMEGA SEAL — capital-key lockout (defense-in-depth, ALL modes) ─────────
+    // searcher-rs is a DETECTION/EMIT (OBSERVER) service and must NEVER hold a
+    // capital-bearing signing key in ANY mode: it spawns no executor and never
+    // signs nor broadcasts (workers/execution_worker.rs is a never-spawned stub;
+    // sim_orchestrator.rs: "the orchestrator NEVER signs nor broadcasts"; every
+    // RPC provider is read-only — no Wallet/SignerMiddleware anywhere).
+    //
+    // Enforce capital_exposed == 0 as a HARD, mode-INDEPENDENT boot invariant: if
+    // any private key / mnemonic is present in THIS process's env (incl. the
+    // testnet/executor names), panic before any work. This makes a testnet OR
+    // mainnet broadcast posture physically impossible to enable by env alone —
+    // turning execution on is a deliberate code change here, gated by FASE D
+    // (KMS + pre-execute-checklist + registered human authorization), never a flag.
+    // An empty value (e.g. PRIVATE_KEY="" per the Foundry doctrine) does NOT trip
+    // this — only a populated key.
+    {
+        const CAPITAL_KEY_ENV: [&str; 8] = [
+            "FLASHBOTS_SIGNER_KEY",
+            "EXECUTOR_PRIVATE_KEY",
+            "ARBX_EXECUTOR_PRIVATE_KEY",
+            "ARBX_SIGNER_PRIVATE_KEY",
+            "ARBX_TESTNET_PRIVATE_KEY",
+            "SIM_SIGNER_PRIVATE_KEY",
+            "PRIVATE_KEY",
+            "MNEMONIC",
+        ];
+        for key in CAPITAL_KEY_ENV {
+            if matches!(std::env::var(key), Ok(v) if !v.trim().is_empty()) {
+                panic!(
+                    "FATAL: capital-bearing key `{key}` present in env — searcher-rs is an \
+                     OBSERVER/detection service and must run with capital_exposed == 0 in ALL \
+                     modes (no signer, no broadcast). Remove the key; enabling execution is a \
+                     deliberate FASE D change, not an env flag."
+                );
+            }
+        }
+        tracing::info!(
+            event = "searcher.capital_lock",
+            "capital-key lockout verified: no signer keys in env (capital_exposed=0, observer-only, all modes)"
+        );
+    }
 
     let port: u16 = std::env::var("SEARCHER_HEALTH_PORT")
         .ok()
@@ -179,6 +249,30 @@ async fn main() -> anyhow::Result<()> {
     // Shared redis connection manager for scanners.
     let redis_client = redis::Client::open(redis_url.clone())?;
     let redis_conn = redis_client.get_connection_manager().await?;
+
+    // Phase 2 — Topology Vault runtime (durable fallback + Redis Pub/Sub).
+    // Full RPC/WS URLs stay inside this process. Operators may set
+    // TOPOLOGY_SNAPSHOT_URL to the internal api-server snapshot endpoint for cold boot;
+    // Redis mutations on `arbx:topology:mutation` remain the live update path.
+    let topology_runtime = topology_reload::TopologyRuntime::new();
+    let topology_cancel = tokio_util::sync::CancellationToken::new();
+    let topology_subscriber = topology_reload::TopologySubscriber::new(
+        redis_url.clone(),
+        std::env::var("TOPOLOGY_SNAPSHOT_URL").ok(),
+        std::env::var("TOPOLOGY_ADMIN_TOKEN").ok(),
+        topology_runtime.clone(),
+        Arc::new(topology_reload::LiveTopologyClientFactory),
+        topology_cancel,
+    );
+    tokio::spawn(async move {
+        if let Err(e) = topology_subscriber.run().await {
+            warn!(
+                event = "topology.subscriber_failed",
+                error = %e,
+                "topology subscriber exited; restart pod to recover Redis hot-reload"
+            );
+        }
+    });
 
     // Trading-config client (Redis-backed, hot-reload <1s) — re-uses the manager
     // above so we don't double the open-fd count per pod. Each scanner per-chain
@@ -202,13 +296,11 @@ async fn main() -> anyhow::Result<()> {
     let chain_reload_cancel = tokio_util::sync::CancellationToken::new();
     let chain_reload_redis_url = redis_url.clone();
     let _chain_reload_cancel_handle = chain_reload_cancel.clone();
-    
-    let reloader = config_reload::ChainConfigReloader::new(
-        chain_reload_redis_url,
-        chain_reload_cancel,
-    );
+
+    let reloader =
+        config_reload::ChainConfigReloader::new(chain_reload_redis_url, chain_reload_cancel);
     let event_rx = reloader.event_tx.subscribe();
-    
+
     tokio::spawn(async move {
         if let Err(e) = reloader.run().await {
             warn!(
@@ -245,13 +337,18 @@ async fn main() -> anyhow::Result<()> {
     // liquidation_worker, plus per-chain scanner). Was 4 historically; bumped
     // 2026-05-07 per cs-validator MAJOR finding when liquidation_worker landed.
     // Override via DATABASE_POOL_MAX env if needed.
+    // OMEGA-8/M3 P1-2: explicit timeouts so connection acquisition cannot
+    // block forever under pressure. `DATABASE_POOL_MAX` continues to override
+    // the default; the other timeout knobs (DATABASE_ACQUIRE_TIMEOUT_SECS,
+    // DATABASE_IDLE_TIMEOUT_SECS, DATABASE_MAX_LIFETIME_SECS,
+    // DATABASE_POOL_MIN) live inside `shared::PoolConfig::from_env`.
     let db_pool_max = std::env::var("DATABASE_POOL_MAX")
         .ok()
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(8);
+    let pool_cfg = shared_rs::db_pool::PoolConfig::from_env(db_pool_max);
     let db_pool = match std::env::var("DATABASE_URL") {
-        Ok(url) if !url.is_empty() => match PgPoolOptions::new()
-            .max_connections(db_pool_max)
+        Ok(url) if !url.is_empty() => match shared_rs::db_pool::options_with_timeouts(&pool_cfg)
             .connect(&url)
             .await
         {
@@ -284,49 +381,46 @@ async fn main() -> anyhow::Result<()> {
     // Without a DB pool the encoder cannot resolve decimals — scanner stays
     // in the Phase A.2.5 fail-closed path (`no_simulator_for_chain` /
     // `encoder_not_ready`) for every candidate (RULE 12 fail-honest).
-    let token_decimals_provider: Option<
-        Arc<dyn sim_encoder::TokenDecimalsProvider + Send + Sync>,
-    > = match &db_pool {
-        Some(pool) => {
-            let provider = Arc::new(sim_encoder_pg::PgTokenDecimalsProvider::with_default_capacity(
-                pool.clone(),
-            ));
-            match provider.bootstrap_load().await {
-                Ok(loaded) => info!(
-                    event = "sim_encoder.boot",
-                    provider = "pg",
-                    cache_max_entries = sim_encoder_pg::DEFAULT_CACHE_CAPACITY,
-                    bootstrap_loaded = loaded,
-                    refresh_interval_secs = sim_encoder_pg::DEFAULT_REFRESH_INTERVAL_SECS,
-                    runtime_enabled = true,
-                    "PG decimals provider bootstrapped"
-                ),
-                Err(e) => warn!(
-                    event = "sim_encoder.bootstrap_failed",
-                    error = %e,
-                    "PG decimals provider bootstrap failed; cache stays empty until first refresh"
-                ),
-            };
-            // Refresh loop fills the cache from PG every N seconds. Handle
-            // intentionally dropped — task runs until process exit.
-            provider
-                .clone()
-                .spawn_refresh_loop(Duration::from_secs(
+    let token_decimals_provider: Option<Arc<dyn sim_encoder::TokenDecimalsProvider + Send + Sync>> =
+        match &db_pool {
+            Some(pool) => {
+                let provider = Arc::new(
+                    sim_encoder_pg::PgTokenDecimalsProvider::with_default_capacity(pool.clone()),
+                );
+                match provider.bootstrap_load().await {
+                    Ok(loaded) => info!(
+                        event = "sim_encoder.boot",
+                        provider = "pg",
+                        cache_max_entries = sim_encoder_pg::DEFAULT_CACHE_CAPACITY,
+                        bootstrap_loaded = loaded,
+                        refresh_interval_secs = sim_encoder_pg::DEFAULT_REFRESH_INTERVAL_SECS,
+                        runtime_enabled = true,
+                        "PG decimals provider bootstrapped"
+                    ),
+                    Err(e) => warn!(
+                        event = "sim_encoder.bootstrap_failed",
+                        error = %e,
+                        "PG decimals provider bootstrap failed; cache stays empty until first refresh"
+                    ),
+                };
+                // Refresh loop fills the cache from PG every N seconds. Handle
+                // intentionally dropped — task runs until process exit.
+                provider.clone().spawn_refresh_loop(Duration::from_secs(
                     sim_encoder_pg::DEFAULT_REFRESH_INTERVAL_SECS,
                 ));
-            Some(provider as Arc<dyn sim_encoder::TokenDecimalsProvider + Send + Sync>)
-        }
-        None => {
-            warn!(
-                event = "sim_encoder.boot",
-                provider = "none",
-                runtime_enabled = false,
-                reason = "no_db_pool",
-                "no PG pool available — token decimals provider not constructed"
-            );
-            None
-        }
-    };
+                Some(provider as Arc<dyn sim_encoder::TokenDecimalsProvider + Send + Sync>)
+            }
+            None => {
+                warn!(
+                    event = "sim_encoder.boot",
+                    provider = "none",
+                    runtime_enabled = false,
+                    reason = "no_db_pool",
+                    "no PG pool available — token decimals provider not constructed"
+                );
+                None
+            }
+        };
 
     let dedup = Arc::new(dedup::Dedup::new(50_000, Duration::from_secs(60)));
 
@@ -522,12 +616,21 @@ async fn main() -> anyhow::Result<()> {
     let price_alchemy_key = workers::price_worker::alchemy_key_from_env(primary_chain);
     let price_redis = redis_conn.clone();
     let price_chain = primary_chain;
+    // Tier-0 Chainlink on-chain feeds: needs the PG pool (reads operator-seeded
+    // price_oracles) + the chain's HTTP RPC (eth_call latestRoundData). Both
+    // optional — when either is absent the worker skips Chainlink and behaves as
+    // before (Alchemy/Coingecko/Config cascade). Read-only; no signing.
+    let price_db = db_pool.clone();
+    let price_rpc_url = workers::price_worker::rpc_http_url_from_env(primary_chain);
     tokio::spawn(async move {
-        let cfg = workers::price_worker::PriceWorkerConfig::new(
+        let mut cfg = workers::price_worker::PriceWorkerConfig::new(
             price_chain,
             price_period_secs,
             price_alchemy_key,
         );
+        if let (Some(db), Some(url)) = (price_db, price_rpc_url) {
+            cfg = cfg.with_chainlink(db, url);
+        }
         match workers::price_worker::PriceWorker::new(cfg) {
             Ok(worker) => worker.run(price_redis).await,
             Err(e) => warn!(event = "price_worker.boot_failed", chain_id = price_chain, error = %e),
@@ -807,7 +910,7 @@ async fn main() -> anyhow::Result<()> {
         token_decimals_provider.clone(),
         event_rx,
     );
-    
+
     let initial_chains = enabled_chains.clone();
     tokio::spawn(async move {
         supervisor.run(initial_chains).await;

@@ -102,6 +102,29 @@ pub fn routers_for_chain(chain_id: u64) -> &'static [RouterEntry] {
     }
 }
 
+// Uniswap V3 QuoterV2 + canonical Multicall3, centralized here (were hardcoded
+// in triangular_worker.rs). Read-only quote infrastructure — no signer/capital.
+const QUOTER_V2_MAINNET: [u8; 20] = hex20("0x61fFE014bA17989E743c5F6cB21bF9697530B21e");
+const MULTICALL3_CANONICAL: [u8; 20] = hex20("0xcA11bde05977b3631167028862bE2a173976CA11");
+
+/// Uniswap V3 QuoterV2 address for a chain (read-only `quoteExactInputSingle`).
+/// `None` when the chain has no catalogued quoter — caller fails honest.
+pub fn quoter_v2_for_chain(chain_id: u64) -> Option<[u8; 20]> {
+    match chain_id {
+        1 => Some(QUOTER_V2_MAINNET),
+        _ => None,
+    }
+}
+
+/// Multicall3 address for a chain. The canonical CREATE2 deployment shares one
+/// address across most EVM chains; only mainnet is seeded here for now.
+pub fn multicall3_for_chain(chain_id: u64) -> Option<[u8; 20]> {
+    match chain_id {
+        1 => Some(MULTICALL3_CANONICAL),
+        _ => None,
+    }
+}
+
 /// Finds a router entry by address (case-insensitive, byte-exact).
 pub fn find_router(chain_id: u64, addr: &[u8; 20]) -> Option<&'static RouterEntry> {
     routers_for_chain(chain_id)

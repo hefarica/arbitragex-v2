@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { AlertCircleIcon, RefreshCwIcon } from "lucide-react";
+import Link from "next/link";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -53,7 +54,7 @@ export default function GlobalError({
           <RefreshCwIcon /> Try again
         </Button>
         <Button type="button" variant="outline" asChild>
-          <a href="/">Back to console</a>
+          <Link href="/">Back to console</Link>
         </Button>
       </div>
     </>

@@ -93,7 +93,7 @@ contract ReentrantAttackerRouter {
     bool public attacked;
 
     constructor(address _target) {
-        target = ArbitrageExecutor(_target);
+        target = ArbitrageExecutor(payable(_target));
     }
 
     fallback() external {
@@ -105,7 +105,7 @@ contract ReentrantAttackerRouter {
             try target.executeArbitrage(
                 bytes32(0), address(0), address(0), 0, 0, routers, payloads
             ) {
-                revert("REENTRANCY SUCCESS — INVARIANT VIOLATED");
+                revert(unicode"REENTRANCY SUCCESS — INVARIANT VIOLATED");
             } catch {
                 // Reentrance bloqueado correctamente
             }
@@ -264,11 +264,16 @@ contract ExecutorInvariantTest is Test {
         proxy = new ERC1967Proxy(address(impl), initData);
         executor = ArbitrageExecutor(payable(address(proxy)));
 
+        // All admin operations must be called from the admin address (OZ v5)
+        vm.startPrank(admin);
+
         // Grant EXECUTOR_ROLE
         executor.grantRole(executor.EXECUTOR_ROLE(), execRole);
 
-        // Desplegar handler
+        // Desplegar handler (stop prank temporarily for deployment)
+        vm.stopPrank();
         handler = new ExecutorHandler(executor, admin, execRole);
+        vm.startPrank(admin);
 
         // Configurar approved tokens
         executor.setTokenApproval(address(handler.tokenA()), true);
@@ -295,6 +300,8 @@ contract ExecutorInvariantTest is Test {
         NoopRouter noop = handler.noopRouter();
         executor.setRouterApproval(address(noop), true);
         executor.setRouterSelectorApproval(address(noop), bytes4(0), true);
+
+        vm.stopPrank();
 
         // Configurar target selector para invariant testing
         bytes4[] memory selectors = new bytes4[](2);
@@ -366,12 +373,14 @@ contract ExecutorInvariantTest is Test {
         if (!ok || data.length < 32) return;
         router = ProfitRouter(abi.decode(data, (address)));
 
+        vm.startPrank(admin);
         if (!executor.approvedRouters(address(router))) {
             executor.setRouterApproval(address(router), true);
         }
         if (!executor.approvedTokens(address(handler.tokenA()))) {
             executor.setTokenApproval(address(handler.tokenA()), true);
         }
+        vm.stopPrank();
 
         // Revocar selector malicioso
         bytes4 badSelector = bytes4(keccak256("transferFrom(address,address,uint256)"));
@@ -407,9 +416,11 @@ contract ExecutorInvariantTest is Test {
         );
         if (!ok || data.length < 32) return;
         router = ProfitRouter(abi.decode(data, (address)));
+        vm.startPrank(admin);
         if (!executor.approvedRouters(address(router))) {
             executor.setRouterApproval(address(router), true);
         }
+        vm.stopPrank();
 
         address[] memory routers = new address[](1);
         routers[0] = address(router);
@@ -431,6 +442,7 @@ contract ExecutorInvariantTest is Test {
     /// @notice INVARIANT I6 — Reentrar en executeArbitrage SIEMPRE es bloqueado.
     function invariant_I6_reentrancyBlocked() public {
         ReentrantAttackerRouter reentrant = handler.reentrantRouter();
+        vm.startPrank(admin);
         if (!executor.approvedRouters(address(reentrant))) {
             executor.setRouterApproval(address(reentrant), true);
         }
@@ -441,6 +453,7 @@ contract ExecutorInvariantTest is Test {
         if (!executor.approvedSelectors(address(reentrant), sel)) {
             executor.setRouterSelectorApproval(address(reentrant), sel, true);
         }
+        vm.stopPrank();
 
         handler.tokenA().mint(address(executor), 1000e18);
 
@@ -465,6 +478,7 @@ contract ExecutorInvariantTest is Test {
     /// @notice INVARIANT I7 — ADMIN_ROLE sin EXECUTOR_ROLE no puede ejecutar.
     function invariant_I7_adminCannotExecuteWithoutRole() public {
         address newAdmin = makeAddr("newAdmin");
+        vm.prank(admin);
         executor.grantRole(executor.ADMIN_ROLE(), newAdmin);
         assertFalse(executor.hasRole(executor.EXECUTOR_ROLE(), newAdmin), "I7 SETUP");
 
@@ -544,12 +558,14 @@ contract ExecutorInvariantTest is Test {
         }
 
         NoopRouter noop = handler.noopRouter();
+        vm.startPrank(admin);
         if (!executor.approvedRouters(address(noop))) {
             executor.setRouterApproval(address(noop), true);
         }
         if (!executor.approvedTokens(address(handler.tokenA()))) {
             executor.setTokenApproval(address(handler.tokenA()), true);
         }
+        vm.stopPrank();
 
         address[] memory routers = new address[](1);
         routers[0] = address(noop);
@@ -578,9 +594,11 @@ contract ExecutorInvariantTest is Test {
         ProfitRouter router = new ProfitRouter(
             address(handler.tokenA()), address(executor), grossProfit
         );
+        vm.startPrank(admin);
         executor.setRouterApproval(address(router), true);
         bytes4 sel = bytes4(keccak256("swapExactTokensForTokens(uint256,uint256,address[],address,uint256)"));
         executor.setRouterSelectorApproval(address(router), sel, true);
+        vm.stopPrank();
 
         address[] memory routers = new address[](1);
         routers[0] = address(router);
@@ -619,12 +637,14 @@ contract ExecutorInvariantTest is Test {
         handler.tokenA().mint(address(executor), amountIn);
 
         NoopRouter noop = handler.noopRouter();
+        vm.startPrank(admin);
         if (!executor.approvedRouters(address(noop))) {
             executor.setRouterApproval(address(noop), true);
         }
         if (!executor.approvedTokens(address(handler.tokenA()))) {
             executor.setTokenApproval(address(handler.tokenA()), true);
         }
+        vm.stopPrank();
 
         address[] memory routers = new address[](1);
         routers[0] = address(noop);
@@ -662,9 +682,11 @@ contract ExecutorInvariantTest is Test {
         vm.assume(randomRouter != address(0));
         vm.assume(!executor.approvedRouters(randomRouter));
 
+        vm.startPrank(admin);
         if (!executor.approvedTokens(address(handler.tokenA()))) {
             executor.setTokenApproval(address(handler.tokenA()), true);
         }
+        vm.stopPrank();
 
         address[] memory routers = new address[](1);
         routers[0] = randomRouter;
@@ -691,17 +713,23 @@ contract ExecutorInvariantTest is Test {
         if (!ok || data.length < 32) {
             // Crear uno temporal
             router = new ProfitRouter(address(handler.tokenA()), address(executor), 1e18);
-            executor.setRouterApproval(address(router), true);
+            vm.startPrank(admin);
+            if (!executor.approvedRouters(address(router))) {
+                executor.setRouterApproval(address(router), true);
+            }
+            vm.stopPrank();
         } else {
             router = ProfitRouter(abi.decode(data, (address)));
         }
 
+        vm.startPrank(admin);
         if (!executor.approvedRouters(address(router))) {
             executor.setRouterApproval(address(router), true);
         }
         if (!executor.approvedTokens(address(handler.tokenA()))) {
             executor.setTokenApproval(address(handler.tokenA()), true);
         }
+        vm.stopPrank();
 
         address[] memory routers = new address[](1);
         routers[0] = address(router);

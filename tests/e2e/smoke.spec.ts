@@ -30,8 +30,8 @@ for (const { path, heading } of PAGES) {
     expect(response?.status(), `HTTP status for ${path}`).toBeLessThan(400);
 
     // The h1 is always set on every page per our PageHeader pattern.
-    await expect(page.locator("h1").first()).toBeVisible();
-    await expect(page.locator("h1").first()).toHaveText(heading);
+    await expect(page.locator("h1")).toBeVisible();
+    await expect(page.locator("h1")).toHaveText(heading);
 
     // Forbid the two error banners our pages use when upstream is unhealthy.
     // (Empty-state strings like "No opportunities" ARE allowed.)
@@ -48,7 +48,7 @@ test("nav sidebar lists every page we registered", async ({ page }) => {
     // /onboarding is in the Setup group; others in Observe/Control.
     // We just assert each href exists in the sidebar. Mobile viewports may
     // collapse it into a sheet — expand if needed.
-    const link = page.locator(`a[href="${path}"]`).first();
+    const link = page.locator(`a[href="${path}"]`);
     await expect(link, `sidebar link for ${path}`).toBeVisible();
   }
 });

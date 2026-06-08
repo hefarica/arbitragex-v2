@@ -469,11 +469,13 @@ export function mountOpportunitiesLive(
 
     // viable_only filters out rows persisted as gate rejections (rejection_reason
     // populated by spine when an opportunity is rejected before profit eval).
-    // Default false so operators can see activity from ALL strategy families
-    // in one live feed (including rejected rows). Pass viable_only=true to
-    // restrict to viable lifecycle states only.
+    // Default TRUE — the route contract (see header) and the regression guard
+    // for commit 97ffc52 require that, with no param, only viable opportunities
+    // are returned. Callers pass viable_only=false to also see rejected rows.
+    // The interactive client always sends the flag explicitly; SSR/default
+    // callers get the safe viable-only view.
     const viableOnly =
-      String(req.query["viable_only"] ?? "false").toLowerCase() !== "false";
+      String(req.query["viable_only"] ?? "true").toLowerCase() !== "false";
 
     // 2026-05-10 hotfix: bound the live window so the SSR snapshot can never
     // surface opportunities from days ago when no fresh viable rows exist.

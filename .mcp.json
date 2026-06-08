@@ -1,0 +1,57 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "${PROJECT_ROOT:-.}"
+      ]
+    },
+    "postgres": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "${DATABASE_URL_READONLY}"
+      ]
+    },
+    "redis": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-redis",
+        "${REDIS_URL_READONLY}"
+      ]
+    },
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@latest",
+        "--headless",
+        "--isolated"
+      ]
+    },
+    "foundry": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@pranesh.asp/foundry-mcp-server"
+      ],
+      "env": {
+        "RPC_URL": "${ANVIL_FORK_RPC_URL}",
+        "PRIVATE_KEY": ""
+      }
+    },
+    "evm": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@mcpdotdirect/evm-mcp-server"
+      ],
+      "env": {
+        "RPC_URL": "${EVM_RPC_URL}"
+      }
+    }
+  }
+}

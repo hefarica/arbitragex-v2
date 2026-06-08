@@ -42,10 +42,11 @@ impl FlashbotsDryRun {
     }
 
     pub fn from_env() -> Result<Self, ConnectorError> {
-        let url = shared_rs::config::require_env("ARBX_FLASHBOTS_RELAY_URL")
-            .map_err(|e| ConnectorError::ConfigMissing {
+        let url = shared_rs::config::require_env("ARBX_FLASHBOTS_RELAY_URL").map_err(|e| {
+            ConnectorError::ConfigMissing {
                 parameter: format!("ARBX_FLASHBOTS_RELAY_URL: {e}"),
-            })?;
+            }
+        })?;
         Self::new(url)
     }
 

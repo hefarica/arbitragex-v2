@@ -1,0 +1,45 @@
+sequenceDiagram
+  autonumber
+  participant Block as BlockListener
+  participant Mempool as MempoolScanner
+  participant DEX as DEX Price Feed
+  participant Detect as OpportunityDetector
+  participant Sim as REVM Simulator
+  participant Build as BundleBuilder
+  participant Relay as MEV Relay
+  participant Chain as Blockchain
+  participant Recon as Recon Service
+
+  Note over Block,Chain: Stage 1: DETECT
+  Block->>Mempool: New block header
+  Mempool->>DEX: Query pool states
+  DEX-->>Mempool: Token prices, reserves
+  Mempool->>Detect: Pool state + mempool txs
+
+  Note over Detect,Sim: Stage 2: SELECT
+  Detect->>Detect: Run bounded DFS for paths
+  Detect->>Sim: Profitable path found?
+  Sim->>Sim: Simulate with REVM (state fork)
+  Sim-->>Detect: Expected profit + gas
+
+  Note over Detect,Build: Stage 3: SIMULATE
+  alt Profitable
+    Detect->>Build: Approve execution
+    Build->>Build: Construct bundle (backrun)
+    Build->>Build: Sign transactions
+
+    Note over Build,Relay: Stage 4: EXECUTE
+    Build->>Relay: Submit bundle
+    Relay->>Chain: Include in next block
+    Chain-->>Relay: Block receipt
+    Relay-->>Build: Inclusion status
+
+    Note over Build,Recon: Stage 5: RECONCILE
+    Build->>Recon: Execution report
+    Recon->>Recon: Calculate actual P&L
+    Recon->>DEX: Verify final state
+    DEX-->>Recon: Confirmed balances
+    Recon->>Recon: Update strategy stats
+  else Not Profitable
+    Detect->>Detect: Discard, continue scanning
+  end

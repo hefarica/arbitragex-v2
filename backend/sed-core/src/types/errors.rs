@@ -44,7 +44,6 @@ pub enum TopologyValidationError {
     // Holonomic loop construction failures. Each variant maps 1:1 to one
     // of the six validations in `BundlePosition<HolonomicLoopResolution>::
     // new_holonomic_loop`. See `bundle_position.rs` for the constructor.
-
     /// Validation 1 — `ClosedContourTrajectory::is_closed()` returned
     /// `false`. The start and end transition points do not coincide
     /// within `1e-9`, OR the manifold list is below `MIN_LOOP_SIZE`,

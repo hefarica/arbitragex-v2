@@ -29,6 +29,7 @@ import {
   recordAuthSuccess,
 } from "./admin-session-limits.js";
 import { emitAuditEvent, tokenFingerprint } from "./audit-emit.js";
+import { parseCookies as parseCookiesShared, resolveAdminToken } from "./admin-token-resolver.js";
 import { createProxyMiddleware } from "http-proxy-middleware";
 
 const SERVICE = "edge-dev-local";
@@ -39,6 +40,12 @@ initMetrics(SERVICE);
 
 const API_SERVER_URL = process.env["API_SERVER_URL"] ?? "http://api-server:8080";
 const ARBX_EDGE_TOKEN = requireEnv("ARBX_EDGE_TOKEN");
+// QUANTUM FULLSTACK SYMMETRY — frontend (Next.js) upstream for the SPA-fallback
+// catch-all. Default resolves via Docker DNS on arbx-net. PUBLIC_EDGE_HOST is the
+// externally-visible https host, forwarded so Next builds https-correct absolute
+// URLs (no Mixed Content).
+const FRONTEND_URL = process.env["FRONTEND_URL"] ?? "http://frontend:5173";
+const PUBLIC_EDGE_HOST = process.env["PUBLIC_EDGE_HOST"] ?? "edge-arbx.ape-tv.net";
 
 // Very naive in-memory rate-limit (per-IP, 60s window, 120 req).
 const WINDOW_MS = 60_000;
@@ -60,11 +67,23 @@ const startedAt = new Date();
 const app = express();
 app.disable("x-powered-by");
 
-// DEV-ONLY: permissive CORS so the browser-side frontend (localhost:5173 via
-// SSH tunnel) can reach this edge shim. Production uses CF Workers CORS.
+// DEV-LOCAL CORS: allowlist localhost / 127.0.0.1 / *.ape-tv.net via regex, PLUS any
+// EXACT origin in the operator-configured ALLOWED_ORIGINS env (comma-separated). This
+// covers the public VPS frontend served from a raw-IP origin (e.g.
+// http://195.201.235.70:5173) that the regex deliberately does not match. The IP is
+// NEVER hardcoded in code — the operator supplies origins via env (RULE 00 / no-hardcode);
+// the env is already set on the edge container. Production uses CF Workers CORS.
+const CORS_ENV_ORIGINS = (process.env["ALLOWED_ORIGINS"] ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin) {
+  // CodeQL js/cors-misconfiguration-for-credentials: with credentials=true we must NOT
+  // reflect arbitrary origins. Still an explicit allowlist (regex OR exact env match);
+  // we reflect only matched origins, never "*", so credentialed CORS stays safe.
+  const CORS_ALLOWED = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$|^https:\/\/[a-z0-9-]+\.ape-tv\.net$/i;
+  if (origin && (CORS_ALLOWED.test(origin) || CORS_ENV_ORIGINS.includes(origin))) {
     res.setHeader("access-control-allow-origin", origin);
     res.setHeader("access-control-allow-credentials", "true");
     res.setHeader("access-control-allow-headers", "content-type, x-arbx-admin-token, x-arbx-trace-id, x-arbx-actor");
@@ -87,6 +106,11 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// JSON body parser — registered early so all POST/PUT routes (including
+// /api/admin/chains and /admin/session, which arrive before the original
+// later-mounted express.json) receive a parsed req.body.
+app.use(express.json({ limit: "64kb" }));
 
 app.get("/health", healthHandler(SERVICE, VERSION, startedAt));
 app.get("/metrics", metricsHandler);
@@ -170,17 +194,74 @@ app.get("/api/scoring/status", (req, res) => proxy("/api/v1/scoring/status", req
 app.get("/api/risk/circuit-breakers/status", (req, res) => proxy("/api/v1/risk/circuit-breakers/status", req, res));
 app.get("/api/risk/circuit-breakers/events", (req, res) => proxy("/api/v1/risk/circuit-breakers/events", req, res));
 
-// B1 Chains Admin CRUD (admin-token gated; dev-local forwards header).
-app.get("/api/admin/chains", (req, res) => proxy("/api/v1/admin/chains" + (new URL(req.url, "http://x").search || ""), req, res));
-app.get("/api/admin/chains/:chain_id", (req, res) => proxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res));
-app.post("/api/admin/chains", (req, res) => proxy("/api/v1/admin/chains", req, res));
-app.put("/api/admin/chains/:chain_id", (req, res) => proxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res));
-app.delete("/api/admin/chains/:chain_id", (req, res) => proxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res));
-app.post("/api/admin/chains/:chain_id/probe", (req, res) => proxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}/probe${new URL(req.url, "http://x").search || ""}`, req, res));
+// QUANTUM FULLSTACK SYMMETRY — OMEGA Route Discovery radar + cartridge telemetry
+// read-only snapshots. api-server mounts these at the SAME paths (no /v1/ prefix),
+// fed by its Redis pub/sub cache. Observe-only; never touches opportunities.
+app.get("/api/route-discovery/status", (req, res) => proxy("/api/route-discovery/status", req, res));
+app.get("/api/route-discovery/latest", (req, res) => proxy("/api/route-discovery/latest", req, res));
+app.get("/api/route-discovery/metrics", (req, res) => proxy("/api/route-discovery/metrics", req, res));
+app.get("/api/route-discovery/routes", (req, res) => proxy("/api/route-discovery/routes", req, res));
+app.get("/api/cartridges/status", (req, res) => proxy("/api/cartridges/status", req, res));
+app.get("/api/cartridges/telemetry/latest", (req, res) => proxy("/api/cartridges/telemetry/latest", req, res));
+
+// FASE B Gate-C — route-discovery OUTCOMES analytics (read-only over the durable
+// Postgres `route_discovery_outcomes` table; the shadow emitter's resolved
+// outcomes + Paso 9 `reason` column). This is the read-side of the passive sink:
+// it surfaces the hit-rate series and the reason distribution (the "why 0%").
+// Edge path mirrors api-server /api/v1/route-discovery-outcomes*. Query string
+// (?hours= / ?limit=) is forwarded verbatim by proxy() (mode-1). Observe-only;
+// never touches arbx:opps:detected, capital, or execution.
+app.get("/api/route-discovery-outcomes/summary", (req, res) => proxy("/api/v1/route-discovery-outcomes/summary", req, res));
+app.get("/api/route-discovery-outcomes", (req, res) => proxy("/api/v1/route-discovery-outcomes", req, res));
+
+// Chains Admin registry — admin-token gated. Routed through adminProxy so the
+// V-AT-1 httpOnly cookie (arbx_admin_session) is translated to the upstream
+// x-arbx-admin-token header. adminProxy is defined later in the file; function
+// hoisting via `async function` keeps the reference valid here.
+app.get("/api/admin/chains", (req, res) => {
+  const search = new URL(req.url, "http://x").search || "";
+  adminProxy(`/api/v1/admin/chains${search}`, req, res, "GET");
+});
+app.get("/api/admin/chains/:chain_id", (req, res) => {
+  adminProxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res, "GET");
+});
+app.post("/api/admin/chains", (req, res) => {
+  adminProxy("/api/v1/admin/chains", req, res, "POST");
+});
+app.put("/api/admin/chains/:chain_id", (req, res) => {
+  adminProxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res, "PUT");
+});
+app.delete("/api/admin/chains/:chain_id", (req, res) => {
+  adminProxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res, "DELETE");
+});
+app.post("/api/admin/chains/:chain_id/probe", (req, res) => {
+  const search = new URL(req.url, "http://x").search || "";
+  adminProxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}/probe${search}`, req, res, "POST");
+});
+// Topology Vault — admin-token gated RPC/WSS hot-swap control plane.
+// Uses the same V-AT-1 httpOnly cookie translation as Chains Admin; the
+// upstream API Server stores full URLs in Vault/Redis and returns only masked
+// provider snapshots to the browser.
+app.get("/api/admin/topology/snapshot", (req, res) => {
+  adminProxy("/api/admin/topology/snapshot", req, res, "GET");
+});
+app.post("/api/admin/topology/mutations", (req, res) => {
+  adminProxy("/api/admin/topology/mutations", req, res, "POST");
+});
 // Trading Config — operator-tunable strategy parameters per chain.
 app.get("/api/trading-config", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
   proxy(`/api/v1/trading-config?chain_id=${encodeURIComponent(chain)}`, req, res);
+});
+// Cartridge Filters (Idea 1 Phase-1) — public read of the per-chain route pre-filter prefs.
+app.get("/api/cartridge-filters", (req, res) => {
+  const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
+  proxy(`/api/v1/cartridge-filters?chain_id=${encodeURIComponent(chain)}`, req, res);
+});
+// Cartridge Forge (Idea 2) — public list of injected cartridges (registry + counters).
+app.get("/api/cartridges", (req, res) => {
+  const qs = new URL(req.url, "http://x").search || "";
+  proxy(`/api/v1/cartridges${qs}`, req, res);
 });
 // Operations PnL — Sprint 3 PMI/EVM KPI surface.
 app.get("/api/operations/kpi", (req, res) => {
@@ -205,14 +286,48 @@ app.get("/api/strategy-catalog/active", (req, res) => {
 // DeFi data routes (defiRouter is mounted at /api in api-server, no /v1/ prefix).
 app.get("/api/chains",  (req, res) => proxy("/api/chains", req, res));
 app.get("/api/rpcs",    (req, res) => proxy("/api/rpcs", req, res));
-// Phase 2 fix: /api/pools now maps to NEW route-finder /api/v1/pools (was old broken defi_pools).
-app.get("/api/pools",   (req, res) => {
+// Phase 2 maps /api/pools to the richer route-finder /api/v1/pools, which
+// returns the {count, items} envelope. The frontend's DefiPoolsResponseSchema
+// (like /api/chains + /api/rpcs) expects {success, data}, so reshape the
+// envelope here — `items` become `data` — keeping all three defi endpoints on
+// one contract. RULE 00: never fabricate — an upstream error is forwarded
+// verbatim; on a transport failure we return an honest {success:false} so the
+// dashboard shows its degraded state rather than a fake-empty list.
+app.get("/api/pools", async (req, res) => {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(req.query)) {
     if (typeof v === "string") qs.set(k, v);
   }
   const qStr = qs.toString();
-  proxy(`/api/v1/pools${qStr ? "?" + qStr : ""}`, req, res);
+  try {
+    const upstream = await fetch(`${API_SERVER_URL}/api/v1/pools${qStr ? "?" + qStr : ""}`, {
+      headers: {
+        "x-arbx-edge-token": ARBX_EDGE_TOKEN,
+        "x-arbx-trace-id": (req as express.Request & { traceId?: string }).traceId ?? "",
+        accept: "application/json",
+      },
+    });
+    const text = await upstream.text();
+    if (!upstream.ok) {
+      res.status(upstream.status).setHeader("content-type", "application/json");
+      res.send(text);
+      return;
+    }
+    let parsed: unknown = null;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = null;
+    }
+    const items =
+      parsed && typeof parsed === "object" && Array.isArray((parsed as { items?: unknown }).items)
+        ? (parsed as { items: unknown[] }).items
+        : [];
+    res.json({ success: true, data: items });
+  } catch (e) {
+    logger.error({ err: (e as Error).message }, "/api/pools reshape error");
+    res.status(502).json({ success: false, error: "upstream_unreachable", data: [] });
+  }
 });
 app.get("/api/metrics/defi", (req, res) => proxy("/api/metrics", req, res));
 // Phase 2 route-finder: DEX catalog + pool catalog.
@@ -262,7 +377,8 @@ app.get("/api/v1/wallets/:address/allowances", (req, res) => {
 
 // S7: admin POST proxies — forward caller's x-arbx-admin-token alongside the
 // edge token. Rejected by api-server if admin token is missing/wrong.
-app.use(express.json({ limit: "64kb" }));
+// express.json body parser is already registered above (moved earlier so
+// admin chains POST/PUT/probe also receive a parsed body).
 
 // ─── V-AT-1 hardening: httpOnly cookie session for admin token ───
 // The admin token (T1 per secrets.policy.md) is stored in an httpOnly cookie
@@ -271,16 +387,9 @@ const SESSION_COOKIE = "arbx_admin_session";
 const SESSION_TTL_COOKIE = "arbx_admin_session_ttl";
 const SESSION_TTL_S = 8 * 60 * 60; // 8 hours
 
-function parseCookies(header: string | undefined): Record<string, string> {
-  if (!header) return {};
-  const out: Record<string, string> = {};
-  for (const pair of header.split(";")) {
-    const idx = pair.indexOf("=");
-    if (idx < 0) continue;
-    out[pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim();
-  }
-  return out;
-}
+// Cookie parser re-exported from the V-AT-1 token resolver module so both
+// runtime and unit tests share the same implementation.
+const parseCookies = parseCookiesShared;
 
 // POST /admin/session — validate token, set httpOnly cookie.
 // Hardened: per-path rate-limit (5/min/IP) + 401 lockout (10 fails → 15min block).
@@ -352,8 +461,8 @@ app.post("/admin/session", async (req, res) => {
   const expiresAtMs = Date.now() + SESSION_TTL_S * 1000;
   // Set the actual token in an httpOnly cookie (JS cannot read it).
   res.setHeader("set-cookie", [
-    `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_S}`,
-    `${SESSION_TTL_COOKIE}=${expiresAtMs}; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_S}`,
+    `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_S}`,
+    `${SESSION_TTL_COOKIE}=${expiresAtMs}; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_S}`,
   ]);
   // ── Event 3: login_ok ──
   const fp = tokenFingerprint(token);
@@ -374,8 +483,8 @@ app.post("/admin/session/logout", (req, res) => {
   const sessionToken = cookies[SESSION_COOKIE];
   const actor = sessionToken ? tokenFingerprint(sessionToken) : "anonymous";
   res.setHeader("set-cookie", [
-    `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`,
-    `${SESSION_TTL_COOKIE}=; SameSite=Strict; Path=/; Max-Age=0`,
+    `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`,
+    `${SESSION_TTL_COOKIE}=; SameSite=Lax; Path=/; Max-Age=0`,
   ]);
   // ── Event 5: logout ──
   emitAuditEvent(API_SERVER_URL, ARBX_EDGE_TOKEN, {
@@ -386,18 +495,13 @@ app.post("/admin/session/logout", (req, res) => {
 });
 
 async function adminProxy(path: string, req: express.Request, res: express.Response, method: string = "POST"): Promise<void> {
-  // Accept admin token from: (1) header (CLI/programmatic), (2) httpOnly cookie (browser).
-  // The browser flow sends the literal sentinel "__session_active__" in the header
-  // (frontend's getAdminToken() never returns the real secret) — when we see the
-  // sentinel we MUST defer to the cookie, otherwise api-server validates the
-  // sentinel string against ARBX_ADMIN_TOKEN and 401s every browser-driven write.
-  const cookies = parseCookies(req.headers.cookie);
-  const headerToken = req.header("x-arbx-admin-token");
-  const cookieToken = cookies[SESSION_COOKIE];
-  const adminToken =
-    headerToken && headerToken !== "__session_active__"
-      ? headerToken
-      : cookieToken;
+  // V-AT-1 token translation: header for CLI/programmatic callers, cookie for
+  // the browser flow (where the real token is httpOnly and the header carries
+  // only the public sentinel). resolveAdminToken centralises this contract.
+  const adminToken = resolveAdminToken({
+    headerToken: req.header("x-arbx-admin-token"),
+    cookieHeader: req.headers.cookie,
+  });
   if (!adminToken) { res.status(401).json({ error: "missing_admin_token" }); return; }
   try {
     const upstream = await fetch(`${API_SERVER_URL}${path}`, {
@@ -421,6 +525,30 @@ async function adminProxy(path: string, req: express.Request, res: express.Respo
 }
 
 app.post("/admin/killswitch",                 (req, res) => adminProxy("/admin/killswitch", req, res, "POST"));
+
+// GET /api/killswitch/status — public read of killswitch state (admin-token gated).
+app.get("/api/killswitch/status", (req, res) => {
+  adminProxy("/admin/killswitch/status", req, res, "GET");
+});
+
+// POST /api/killswitch/:action — activate/deactivate killswitch.
+// Maps semantic actions to the api-server's /admin/killswitch toggle.
+app.post("/api/killswitch/:action", async (req, res) => {
+  const action = req.params["action"];
+  if (action !== "activate" && action !== "deactivate") {
+    res.status(400).json({ error: "invalid_action", valid_actions: ["activate", "deactivate"] });
+    return;
+  }
+  const body = {
+    enabled: action === "activate",
+    reason: `operator_${action}`,
+    triggered_by: req.header("x-arbx-actor") ?? "operator",
+  };
+  // Override req.body so adminProxy serialises the mapped payload.
+  (req as express.Request & { body?: unknown }).body = body;
+  adminProxy("/admin/killswitch", req, res, "POST");
+});
+
 app.post("/admin/config/paper-mode",          (req, res) => adminProxy("/admin/config/paper-mode", req, res, "POST"));
 app.post("/admin/onboarding/1/complete",      (req, res) => adminProxy("/admin/onboarding/1/complete", req, res, "POST"));
 // 2026-05-10 audit follow-up: DEX active toggle from /dex-registry. Mounted
@@ -443,6 +571,32 @@ app.put("/admin/trading-config/:chain_id",    (req, res) => {
   const cid = req.params["chain_id"];
   if (!cid || !/^[0-9]+$/.test(cid)) { res.status(400).json({ error: "invalid_chain_id" }); return; }
   adminProxy(`/admin/trading-config/${cid}`, req, res, "PUT");
+});
+// Cartridge Filters (Idea 1 Phase-1) — admin upsert via adminProxy (httpOnly session → upstream token).
+app.put("/admin/cartridge-filters/:chain_id", (req, res) => {
+  const cid = req.params["chain_id"];
+  if (!cid || !/^[0-9]+$/.test(cid)) { res.status(400).json({ error: "invalid_chain_id" }); return; }
+  adminProxy(`/admin/cartridge-filters/${cid}`, req, res, "PUT");
+});
+// Cartridge Forge (Idea 2) — admin inject + lifecycle via adminProxy (cookie → upstream token).
+// Upstream cartridge-forge accepts x-arbx-admin-token (auth normalized). Cartridges run in
+// shadow eval (admin-gated, no capital). Slug format mirrors the api-server validation.
+const CART_SLUG = /^[a-z][a-z0-9_]{2,48}$/;
+app.post("/admin/cartridges", (req, res) => adminProxy("/api/v1/cartridges", req, res, "POST"));
+app.post("/admin/cartridges/:slug/pause", (req, res) => {
+  const slug = req.params["slug"];
+  if (!slug || !CART_SLUG.test(slug)) { res.status(400).json({ error: "invalid_slug" }); return; }
+  adminProxy(`/api/v1/cartridges/${slug}/pause`, req, res, "POST");
+});
+app.post("/admin/cartridges/:slug/resume", (req, res) => {
+  const slug = req.params["slug"];
+  if (!slug || !CART_SLUG.test(slug)) { res.status(400).json({ error: "invalid_slug" }); return; }
+  adminProxy(`/api/v1/cartridges/${slug}/resume`, req, res, "POST");
+});
+app.delete("/admin/cartridges/:slug", (req, res) => {
+  const slug = req.params["slug"];
+  if (!slug || !CART_SLUG.test(slug)) { res.status(400).json({ error: "invalid_slug" }); return; }
+  adminProxy(`/api/v1/cartridges/${slug}`, req, res, "DELETE");
 });
 
 // Operator credentials — migration 057. List behind adminProxy so the
@@ -472,9 +626,46 @@ app.get("/admin/audit", (req, res) => {
   adminProxy(url.pathname + url.search, req, res, "GET");
 });
 
+// ─── QUANTUM FULLSTACK SYMMETRY — SPA fallback to the Next.js frontend ────────
+// Everything NOT matched by an explicit /api, /admin, /status, /health, /metrics
+// route above and NOT /socket.io is a frontend route or static asset (/,
+// /config, /strategies/forge, /_next/static/*, /favicon.ico, fonts, …). Stream
+// it to the frontend with http-proxy-middleware: it PIPES the upstream response
+// (no full-body buffering, no http->https text rewrite), so JS/CSS/font chunks
+// are delivered byte-exact — avoiding the corruption + Mixed-Content + memory
+// hazards of a manual fetch()+replace(). Next serves https-correct relative asset
+// URLs; x-forwarded-proto/host tell it the public origin for any absolute URL.
+//
+// Registered LAST so it only catches requests no explicit route handled.
+const frontendProxy = createProxyMiddleware({
+  target: FRONTEND_URL,
+  changeOrigin: true,
+  ws: false,
+  headers: {
+    "x-forwarded-proto": "https",
+    "x-forwarded-host": PUBLIC_EDGE_HOST,
+    // CRITICAL: force the edge->frontend hop to identity so the frontend never
+    // compresses. Otherwise a Content-Encoding: gzip header can end up on an
+    // uncompressed body through the proxy path -> browser ERR_CONTENT_DECODING_
+    // FAILED on /_next/static chunks (the webpack runtime), which kills the JS
+    // bootstrap on every page. The edge then serves uncompressed; Cloudflare
+    // re-compresses for the public client. The edge->frontend hop is on the
+    // local Docker network, so the uncompressed bytes cost nothing public-facing.
+    "accept-encoding": "identity",
+  },
+});
+app.use((req, res, next) => {
+  // /api and /socket.io are owned by the explicit routes above (or 404 if an
+  // unknown /api path) — never fall through to the frontend.
+  if (req.path.startsWith("/api/") || req.path.startsWith("/socket.io")) {
+    return next();
+  }
+  return frontendProxy(req, res, next);
+});
+
 const PORT = Number(process.env["EDGE_PORT"] ?? 8787);
 const server = app.listen(PORT, () => {
-  logger.info({ event: "service.boot", port: PORT, api_server: API_SERVER_URL, env: cfg.system.env }, "edge-dev-local listening");
+  logger.info({ event: "service.boot", port: PORT, api_server: API_SERVER_URL, frontend: FRONTEND_URL, env: cfg.system.env }, "edge-dev-local listening");
 });
 
 // IMPORTANT: Bind the upgrade event to the proxy so WebSockets correctly upgrade.
