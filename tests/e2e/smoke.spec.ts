@@ -13,9 +13,9 @@ import { test, expect } from "@playwright/test";
  */
 
 const PAGES: Array<{ path: string; heading: RegExp }> = [
-  { path: "/",              heading: /operator console|arbitragex/i },
+  { path: "/",              heading: /operator console|arbitragex|platform control plane/i },
   { path: "/status",        heading: /system status/i },
-  { path: "/opportunities", heading: /live opportunities|opportunities/i },
+  { path: "/opportunities", heading: /live opportunities|opportunities|live network/i },
   { path: "/executions",    heading: /executions/i },
   { path: "/risk",          heading: /risk.*alerts|risk/i },
   { path: "/recon",         heading: /recon/i },
@@ -48,7 +48,9 @@ test("nav sidebar lists every page we registered", async ({ page }) => {
     // /onboarding is in the Setup group; others in Observe/Control.
     // We just assert each href exists in the sidebar. Mobile viewports may
     // collapse it into a sheet — expand if needed.
-    const link = page.locator(`a[href="${path}"]`);
+    // Use .first() — some routes (e.g. "/") have both a brand logo
+    // and a sidebar nav link pointing to the same href.
+    const link = page.locator(`a[href="${path}"]`).first();
     await expect(link, `sidebar link for ${path}`).toBeVisible();
   }
 });
