@@ -769,6 +769,63 @@ export type ReadinessBlocker = z.infer<typeof ReadinessBlockerSchema>;
 export type ReadinessBlockersResponse = z.infer<typeof ReadinessBlockersResponseSchema>;
 export type ReadinessDecisionResponse = z.infer<typeof ReadinessDecisionResponseSchema>;
 
+// ─────── Readiness Steps (server-side 4-step "Live Readiness" stepper) ───────
+// Mirrors backend/api-server/src/routes/readiness-steps.ts. The N/4 count is now
+// derived SERVER-SIDE from real evidence (topology vault / credentials presence /
+// market registry counts / enabled engines) — never from localStorage.
+export const ReadinessStepStatusSchema = z.enum(["PASS", "PENDING", "BLOCKED", "FAIL"]);
+export const ReadinessStepEvidenceSchema = z.object({
+  label: z.string(),
+  detail: z.string(),
+});
+const ReadinessStepBaseSchema = z.object({
+  step: z.number().int().positive(),
+  id: z.enum(["topology", "credentials", "markets", "engines"]),
+  name: z.string(),
+  status: ReadinessStepStatusSchema,
+  ready: z.boolean(),
+  reason: z.string(),
+  evidence: z.array(ReadinessStepEvidenceSchema),
+});
+export const ReadinessStepSchema = ReadinessStepBaseSchema.extend({
+  // Topology fields
+  wss_active_count: z.number().int().nonnegative().optional(),
+  rpc_active_count: z.number().int().nonnegative().optional(),
+  snapshot_non_empty: z.boolean().optional(),
+  // Credentials fields (redacted — only the literal "present" or null)
+  signer: z.literal("present").nullable().optional(),
+  private_key: z.literal("present").nullable().optional(),
+  private_relay: z.literal("present").nullable().optional(),
+  redacted: z.literal(true).optional(),
+  // Markets fields
+  chains_count: z.number().int().nonnegative().nullable().optional(),
+  dexes_count: z.number().int().nonnegative().nullable().optional(),
+  pools_count: z.number().int().nonnegative().nullable().optional(),
+  tokens_count: z.number().int().nonnegative().nullable().optional(),
+  // Engines fields
+  engines_active: z.array(z.string()).optional(),
+  paper_ready: z.boolean().optional(),
+  shadow_ready: z.boolean().optional(),
+  live_enabled: z.literal(false).optional(),
+});
+export const ReadinessStepsResponseSchema = z.object({
+  generated_at: z.string(),
+  source: z.literal("runtime_evidence"),
+  mode: z.literal("paper_only"),
+  completed_steps: z.number().int().nonnegative(),
+  total_steps: z.literal(4),
+  readiness_score: z.string(),
+  all_ready: z.boolean(),
+  // STRUCTURAL safety invariant: this endpoint can never report live enabled.
+  live_enabled: z.literal(false),
+  capital_exposure_usd: z.number().nonnegative(),
+  steps: z.array(ReadinessStepSchema),
+});
+
+export type ReadinessStepStatus = z.infer<typeof ReadinessStepStatusSchema>;
+export type ReadinessStep = z.infer<typeof ReadinessStepSchema>;
+export type ReadinessStepsResponse = z.infer<typeof ReadinessStepsResponseSchema>;
+
 // ─────── Agent Teams Status (P2-continued) ───────
 //
 // 17 workspace-verified agent verdicts from the build/audit/deploy cycle.

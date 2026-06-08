@@ -147,7 +147,7 @@ export function useChains(): { chains: readonly ChainInfo[]; error: string | nul
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const edgeUrl = process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
+    const edgeUrl = process.env.NEXT_PUBLIC_EDGE_URL ?? "";
     const ctrl = new AbortController();
     fetch(`${edgeUrl}/api/chains`, {
       signal: ctrl.signal,

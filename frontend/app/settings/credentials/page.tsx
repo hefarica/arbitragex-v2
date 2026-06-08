@@ -20,7 +20,7 @@ export const metadata: Metadata = {
   description: "Operator credentials store — RPC, CEX, MEV, prices. Live status per credential.",
 };
 
-const EDGE_URL = process.env["NEXT_PUBLIC_EDGE_URL"] ?? "http://localhost:8787";
+const EDGE_URL = process.env["NEXT_PUBLIC_EDGE_URL"] ?? "";
 
 async function fetchInitial(): Promise<CredentialsSnapshot> {
   try {

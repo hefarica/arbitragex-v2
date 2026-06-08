@@ -79,7 +79,7 @@ export default function OpportunitiesClient({
 }) {
   // ─── Omni-Store Integration ───────────────────────────────────────────────
   // Connect WebSocket stream to the store (replaces useOpportunitiesStream)
-  const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
+  const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL ?? "";
   const [viableOnly, setViableOnly] = useState(false);
   
   useOmniOpportunities({

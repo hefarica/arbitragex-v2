@@ -1,8 +1,33 @@
 "use client";
 
+/**
+ * useSystemReadiness — SERVER-DRIVEN 4-step "Live Readiness" state.
+ *
+ * Audit 2026-06-08 rewire: this hook used to derive its N/4 count from
+ * `localStorage` (Steps 2-4 via useSystemStore) + an ADMIN-gated topology
+ * snapshot (Step 1, which returns 401 to a normal operator browser). That made
+ * the readiness count a client-side fiction (4/4 in one browser, 0/4 in another,
+ * same backend) — a zero-mocks / RULE 00 violation.
+ *
+ * It now reads ONE public, server-evaluated endpoint, `/api/readiness/steps`
+ * (api-server readiness-steps.ts), through the resilient `getReadinessSteps()`
+ * pipeline: 5s timeout + AbortController, retries on 5xx, Zod-validated, and it
+ * NEVER throws (always resolves to a Result). Therefore:
+ *   - the spinner can never hang (the old raw no-timeout fetch could),
+ *   - a fabricated green can never slip through (server is the only source),
+ *   - credentials stay redacted (present|null), live stays structurally off.
+ *
+ * The public interface (fields + exported types) is unchanged so existing
+ * consumers (ReadinessStepper, SystemGuardBanner, TopologyVaultClient) keep
+ * working untouched.
+ */
+
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getApiBaseUrl } from "@/lib/api-client";
-import { rehydrateSystemStore, useSystemStore, type ActiveChain } from "@/store/useSystemStore";
+import { getReadinessSteps } from "@/lib/api-client";
+import type {
+  ReadinessStep as ServerReadinessStep,
+  ReadinessStepStatus as ServerStepStatus,
+} from "@/lib/schemas";
 
 export type ReadinessStepId = "topology" | "credentials" | "markets" | "engines";
 export type ReadinessStepStatus = "complete" | "pending" | "blocked" | "error";
@@ -19,31 +44,6 @@ export interface SystemReadinessStep {
   evidence: string;
 }
 
-interface TopologyProviderSnapshot {
-  name?: string;
-  url_masked?: string;
-  scheme?: string;
-  host?: string;
-  provider_kind?: string;
-}
-
-interface TopologySnapshot {
-  scope?: string;
-  chain_id?: number;
-  mempool_mode?: string;
-  rpc_http_1?: TopologyProviderSnapshot[];
-  rpc_ws_1?: TopologyProviderSnapshot[];
-  version_id?: number;
-  updated_at?: string;
-}
-
-interface TopologyEnvelope {
-  ok?: boolean;
-  topology?: TopologySnapshot | null;
-  source?: string;
-  error?: string;
-}
-
 export interface SystemReadinessState {
   isLoading: boolean;
   error: string | null;
@@ -55,7 +55,6 @@ export interface SystemReadinessState {
   allReady: boolean;
   completedCount: number;
   totalCount: number;
-  topology: TopologySnapshot | null;
   steps: SystemReadinessStep[];
   refresh: () => Promise<void>;
 }
@@ -63,35 +62,87 @@ export interface SystemReadinessState {
 const POLL_MS = 20_000;
 const REFRESH_EVENT = "arbx:system-readiness:refresh";
 
-function hasActiveWss(topology: TopologySnapshot | null): boolean {
-  if (!topology) return false;
-  const wsProviders = Array.isArray(topology.rpc_ws_1) ? topology.rpc_ws_1 : [];
-  return wsProviders.some((provider) => provider.scheme === "wss" && Boolean(provider.host));
-}
+// Static presentation metadata per step id. The STATE (ready/status/evidence)
+// always comes from the server; only the human copy + deep-link live here.
+const STEP_META: Record<ReadinessStepId, { index: number; title: string; label: string; description: string; href: string }> = {
+  topology: {
+    index: 1,
+    title: "Manifolds de Ingesta",
+    label: "Topology Vault",
+    description: "≥1 proveedor RPC + ≥1 WSS activos en el Topology Vault (verificado server-side).",
+    href: "/admin/topology",
+  },
+  credentials: {
+    index: 2,
+    title: "Firmas Cuánticas",
+    label: "Credentials / Wallets",
+    description: "Presencia server-side de signer/clave autorizada (redactado: present|null).",
+    href: "/settings/credentials",
+  },
+  markets: {
+    index: 3,
+    title: "Topología de Mercados",
+    label: "Chains & DEXes",
+    description: "Chains, DEXes y pools registrados en el backend (conteos reales).",
+    href: "/dex-registry",
+  },
+  engines: {
+    index: 4,
+    title: "Motores de Resolución",
+    label: "SVS / DLP / Backrun",
+    description: "≥1 motor de resolución habilitado (paper/shadow; live deshabilitado).",
+    href: "/strategies",
+  },
+};
 
-function snapshotToActiveChains(topology: TopologySnapshot | null | undefined): ActiveChain[] {
-  if (!topology || typeof topology.chain_id !== "number") return [];
-  return [{
-    chainId: topology.chain_id,
-    name: `Chain ${topology.chain_id}`,
-    rpcHttpHost: topology.rpc_http_1?.[0]?.host ?? "",
-    rpcWsHost: topology.rpc_ws_1?.[0]?.host ?? "",
-    versionId: topology.version_id ?? 0,
-    validatedAt: topology.updated_at ?? new Date().toISOString(),
-  }];
-}
+const STEP_ORDER: ReadinessStepId[] = ["topology", "credentials", "markets", "engines"];
 
-async function fetchTopologySnapshot(): Promise<TopologyEnvelope> {
-  const res = await fetch(`${getApiBaseUrl()}/api/admin/topology/snapshot`, {
-    cache: "no-store",
-    credentials: "include",
-    headers: { accept: "application/json" },
-  });
-  const data = (await res.json().catch(() => ({}))) as TopologyEnvelope;
-  if (!res.ok || !data.ok) {
-    return { ok: false, error: data.error ?? `HTTP ${res.status}`, topology: null };
+function mapStatus(s: ServerStepStatus): ReadinessStepStatus {
+  switch (s) {
+    case "PASS":
+      return "complete";
+    case "BLOCKED":
+      return "blocked";
+    case "FAIL":
+      return "error";
+    default:
+      return "pending";
   }
-  return data;
+}
+
+function toUiStep(server: ServerReadinessStep): SystemReadinessStep {
+  const meta = STEP_META[server.id];
+  return {
+    id: server.id,
+    index: meta.index,
+    title: meta.title,
+    label: meta.label,
+    description: meta.description,
+    href: meta.href,
+    ready: server.ready,
+    status: mapStatus(server.status),
+    // The server reason IS the evidence line — honest, concise, redacted.
+    evidence: server.reason,
+  };
+}
+
+// Stable placeholder while the first fetch is in-flight or after an error: all
+// PENDING/blocked, NEVER a fabricated green. Step 1 is the only reachable one.
+function placeholderSteps(): SystemReadinessStep[] {
+  return STEP_ORDER.map((id) => {
+    const meta = STEP_META[id];
+    return {
+      id,
+      index: meta.index,
+      title: meta.title,
+      label: meta.label,
+      description: meta.description,
+      href: meta.href,
+      ready: false,
+      status: id === "topology" ? ("pending" as const) : ("blocked" as const),
+      evidence: "—",
+    };
+  });
 }
 
 export function emitSystemReadinessRefresh(): void {
@@ -103,50 +154,29 @@ export function useSystemReadiness(): SystemReadinessState {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(null);
-  const [topology, setTopology] = useState<TopologySnapshot | null>(null);
-  const storeTopologyReady = useSystemStore((state) => state.topology.isReady);
-  const activeChains = useSystemStore((state) => state.topology.activeChains);
-  const storeCredentialsReady = useSystemStore((state) => state.credentials.isReady);
-  const credentialEntries = useSystemStore((state) => state.credentials.entries);
-  const storeMarketsReady = useSystemStore((state) => state.markets.isReady);
-  const storeMarketsValidatedAt = useSystemStore((state) => state.markets.validatedAt);
-  const storeEnginesReady = useSystemStore((state) => state.engines.isReady);
-  const enabledStrategies = useSystemStore((state) => state.engines.enabledStrategies);
-  const setTopologyReady = useSystemStore((state) => state.setTopologyReady);
-  const clearTopology = useSystemStore((state) => state.clearTopology);
+  const [steps, setSteps] = useState<SystemReadinessStep[]>(placeholderSteps);
+  const [completedCount, setCompletedCount] = useState(0);
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
-    try {
-      const envelope = await fetchTopologySnapshot();
-      if (!envelope.ok) {
-        setError(envelope.error ?? "topology_readiness_unavailable");
-        setTopology(null);
-        return;
-      }
-      const nextTopology = envelope.topology ?? null;
-      setTopology(nextTopology);
-      if (hasActiveWss(nextTopology)) {
-        const chains = snapshotToActiveChains(nextTopology);
-        setTopologyReady(chains, nextTopology?.version_id ?? 0, nextTopology?.updated_at ?? new Date().toISOString());
-      } else if ((envelope.source ?? "") === "empty_vault") {
-        clearTopology();
-      }
-      setError(null);
-      setLastCheckedAt(new Date().toISOString());
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setIsLoading(false);
+    const r = await getReadinessSteps();
+    setIsLoading(false);
+    if (!r.ok) {
+      // Fail-honest: surface the error, KEEP the last good (or placeholder)
+      // steps — never invent a green to paper over the failure.
+      setError(r.error);
+      return;
     }
-  }, [clearTopology, setTopologyReady]);
+    setError(null);
+    setSteps(r.data.steps.map(toUiStep));
+    setCompletedCount(r.data.completed_steps);
+    setLastCheckedAt(r.data.generated_at);
+  }, []);
 
   useEffect(() => {
-    rehydrateSystemStore();
     let alive = true;
     const tick = async () => {
-      if (!alive) return;
-      await refresh();
+      if (alive) await refresh();
     };
     void tick();
     const interval = window.setInterval(tick, POLL_MS);
@@ -159,81 +189,14 @@ export function useSystemReadiness(): SystemReadinessState {
     };
   }, [refresh]);
 
-  const isTopologyReady = hasActiveWss(topology) || storeTopologyReady;
-  const isCredentialsReady = storeCredentialsReady;
-  const isMarketsReady = storeMarketsReady;
-  const isEnginesReady = storeEnginesReady;
-  const validCredentialCount = Object.values(credentialEntries).filter((entry) => entry.status === "valid").length;
+  const byId = useMemo(() => new Map(steps.map((s) => [s.id, s] as const)), [steps]);
 
-  const steps = useMemo<SystemReadinessStep[]>(() => {
-    const base: SystemReadinessStep[] = [
-      {
-        id: "topology",
-        index: 1,
-        title: "Manifolds de Ingesta",
-        label: "Topology Vault",
-        description: "Valida que exista al menos un proveedor WSS activo registrado por el backend.",
-        href: "/admin/topology",
-        ready: isTopologyReady,
-        status: isTopologyReady ? "complete" : error ? "error" : "pending",
-        evidence: isTopologyReady
-          ? `${topology?.rpc_ws_1?.length ?? activeChains.length} WSS confirmado(s) · versión ${topology?.version_id ?? activeChains[0]?.versionId ?? "n/a"}`
-          : error
-            ? error
-            : "Pendiente de snapshot no vacío con WSS activo.",
-      },
-      {
-        id: "credentials",
-        index: 2,
-        title: "Firmas Cuánticas",
-        label: "Credentials / Wallets",
-        description: "Validará presencia server-side de una private key o signer autorizado.",
-        href: "/settings/credentials",
-        ready: isCredentialsReady,
-        status: isCredentialsReady ? "complete" : isTopologyReady ? "pending" : "blocked",
-        evidence: isCredentialsReady
-          ? `${validCredentialCount} credencial(es) RPC/WSS validada(s) para ${activeChains.length} cadena(s).`
-          : isTopologyReady
-            ? "Pendiente de validar credenciales requeridas para las cadenas activas."
-            : "Bloqueado hasta publicar Topology Vault.",
-      },
-      {
-        id: "markets",
-        index: 3,
-        title: "Topología de Mercados",
-        label: "Chains & DEXes",
-        description: "Validará que el registro de exchanges esté inicializado.",
-        href: "/dex-registry",
-        ready: isMarketsReady,
-        status: isMarketsReady ? "complete" : isCredentialsReady ? "pending" : "blocked",
-        evidence: isMarketsReady
-          ? `Mercados validados${storeMarketsValidatedAt ? ` · ${storeMarketsValidatedAt}` : ""}.`
-          : isCredentialsReady
-            ? "Pendiente de validar DEXes y mercados activos."
-            : "Bloqueado hasta validar credenciales RPC/WSS.",
-      },
-      {
-        id: "engines",
-        index: 4,
-        title: "Motores de Resolución",
-        label: "SVS / DLP / Backrun",
-        description: "Validará que al menos un motor de resolución esté activado.",
-        href: "/strategies",
-        ready: isEnginesReady,
-        status: isEnginesReady ? "complete" : isMarketsReady ? "pending" : "blocked",
-        evidence: isEnginesReady
-          ? `${enabledStrategies.length} estrategia(s) habilitada(s).`
-          : isMarketsReady
-            ? "Pendiente de habilitar al menos un motor de resolución."
-            : "Bloqueado hasta validar mercados y DEXes.",
-      },
-    ];
-    return base;
-  }, [activeChains, enabledStrategies.length, error, isCredentialsReady, isEnginesReady, isMarketsReady, isTopologyReady, storeMarketsValidatedAt, topology, validCredentialCount]);
-
-  const completedCount = steps.filter((step) => step.ready).length;
+  const isTopologyReady = byId.get("topology")?.ready ?? false;
+  const isCredentialsReady = byId.get("credentials")?.ready ?? false;
+  const isMarketsReady = byId.get("markets")?.ready ?? false;
+  const isEnginesReady = byId.get("engines")?.ready ?? false;
   const totalCount = steps.length;
-  const allReady = completedCount === totalCount;
+  const allReady = totalCount > 0 && completedCount === totalCount;
 
   return {
     isLoading,
@@ -246,7 +209,6 @@ export function useSystemReadiness(): SystemReadinessState {
     allReady,
     completedCount,
     totalCount,
-    topology,
     steps,
     refresh,
   };

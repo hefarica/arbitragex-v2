@@ -130,7 +130,7 @@ export function useRouteDiscoveryTelemetry(): UseRouteDiscoveryTelemetryResult {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "http://localhost:3000";
+    const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "";
 
     const adminToken = getAdminToken();
     if (!adminToken) {

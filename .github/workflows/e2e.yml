@@ -56,7 +56,17 @@ jobs:
             echo "ARBX_EDGE_TOKEN=$(openssl rand -base64 48 | tr -d '\n')"
             echo "ARBX_SERVICE_TOKEN=$(openssl rand -base64 48 | tr -d '\n')"
           } >> .env
-          echo "::notice::.env materialized + Docker DNS endpoints + SECURE_BOOT tokens injected"
+          # PLAYWRIGHT-FIX: .env.example has <run: openssl rand -base64 48> placeholders
+          # (lines 198/200/204) that break `bash . .env` sourcing in migrate.sh (bash
+          # interprets < as redirection → syntax error → migration fails). Replace all
+          # such placeholders with empty strings before migrate.sh is called.
+          sed -i "s|=<run:[^>]*>$|=|g" .env
+          # PLAYWRIGHT-FIX-2: DATABASE_MIGRATOR_URL in .env.example points to Docker
+          # service name 'postgres' (only resolvable inside Docker network). migrate.sh
+          # runs on the host runner where 5432 is mapped to localhost (compose.dev.yml
+          # ports: ["127.0.0.1:5432:5432"]). Override to localhost so psql can connect.
+          sed -i "s|DATABASE_MIGRATOR_URL=.*|DATABASE_MIGRATOR_URL=postgres://postgres:postgres@localhost:5432/arbitragex|" .env
+          echo "::notice::.env materialized + placeholders cleaned + SECURE_BOOT tokens injected"
 
       - name: Bring up compose stack (dev — defaults OK for CI)
         run: |
@@ -71,7 +81,7 @@ jobs:
             if docker exec arbitragex-v2-postgres-1 pg_isready -U postgres >/dev/null 2>&1; then break; fi
             sleep 1
           done
-          ./automation/scripts/migrate.sh
+          bash ./automation/scripts/migrate.sh
           docker compose --env-file .env -f docker/compose.dev.yml up -d --build \
             frontend edge api-server
           echo "stack up; waiting for frontend"

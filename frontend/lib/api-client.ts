@@ -28,7 +28,7 @@ import {
 
 // Server Components run inside Docker — INTERNAL_EDGE_URL reaches the edge via
 // Docker DNS (http://edge:8787). The browser uses NEXT_PUBLIC_EDGE_URL which
-// resolves via the operator's SSH tunnel (http://localhost:8787).
+// resolves via the operator's SSH tunnel to the edge port.
 const isBrowser = typeof window !== "undefined";
 
 export function getApiBaseUrl(): string {
@@ -299,6 +299,15 @@ export function getReadinessBlockers() {
 // safety flags (live_trading=false, capital_exposure_usd=0).
 export function getReadinessDecision() {
   return getValidated("/api/readiness/decision", S.ReadinessDecisionResponseSchema);
+}
+
+// Readiness steps — server-side 4-step "Live Readiness" stepper (Topology /
+// Credentials / Market Topology / Resolution Engines). The N/4 count is derived
+// from real backend evidence (vault providers, credential presence, registry
+// counts, enabled engines) — NOT localStorage. Credentials are redacted
+// (present|null), live_enabled is structurally false.
+export function getReadinessSteps() {
+  return getValidated("/api/readiness/steps", S.ReadinessStepsResponseSchema);
 }
 
 // Agent teams status — 17 workspace-verified agent verdicts (P2-continued).

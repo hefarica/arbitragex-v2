@@ -56,7 +56,7 @@ export function useCartridgeTelemetry(): UseCartridgeTelemetryResult {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "http://localhost:3000";
+    const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "";
 
     // Admin-token gate: the backend WS gateway rejects every handshake without a
     // valid admin token. When no admin session exists, go to STALE rather than

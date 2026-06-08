@@ -53,26 +53,37 @@ DO $$ BEGIN CREATE ROLE arbx_rw       WITH LOGIN; EXCEPTION WHEN duplicate_objec
 DO $$ BEGIN CREATE ROLE arbx_ro       WITH LOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 "#;
 
-/// The tokens table schema verbatim from migration 034.
+/// DDL-only equivalent of migration 034 for test databases.
 ///
-/// Migration 034 was rewritten (post-77f8168, during the omega-apex sprint) from
-/// `ALTER TABLE tokens ADD COLUMN ...` to `CREATE TABLE IF NOT EXISTS tokens (...)`
-/// with the compound primary key `(chain_id, address)`, all audit columns, and no
-/// foreign-key dependency on `chains`. The `chains` table is therefore NOT needed
-/// in the test setup, and applying ROLES → 034 is sufficient.
-const MIGRATION_034_TOKENS: &str =
-    include_str!("../../../database/migrations/034_tokens_table.sql");
+/// Production migration 034 includes GRANT statements that cause the
+/// multi-statement `raw_sql` batch to abort in sqlx::test ephemeral databases,
+/// rolling back the preceding CREATE TABLE (PG 42P01 on every test).
+/// This inline constant omits the GRANTs — the sqlx::test pool runs as
+/// superuser and requires no explicit grants.
+/// Production `database/migrations/034_tokens_table.sql` is NOT modified.
+const MIGRATION_034_TOKENS_DDL: &str = r#"
+CREATE TABLE IF NOT EXISTS tokens (
+  chain_id      INTEGER     NOT NULL,
+  address       TEXT        NOT NULL,
+  symbol        TEXT        NULL,
+  decimals      SMALLINT    NULL,
+  logo_url      TEXT        NULL,
+  resolved_via  TEXT        NOT NULL
+    CHECK (resolved_via IN ('onchain_full','onchain_partial','trustwallet_only','failed')),
+  resolved_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (chain_id, address),
+  CONSTRAINT chk_address_format CHECK (address ~ '^0x[a-f0-9]{40}$')
+);
+CREATE INDEX IF NOT EXISTS idx_tokens_last_seen ON tokens(last_seen_at DESC);
+"#;
 
 /// Apply the minimum migrations required for `tokens` table tests.
-///
-/// Order: roles → 034 CREATE TABLE IF NOT EXISTS. Migration 034 now owns the full
-/// `tokens` DDL (all audit columns, CHECK constraints, index, GRANTs) and has no
-/// upstream FK dependency, so no additional migrations are needed.
 async fn apply_token_migrations(pool: &sqlx::PgPool) -> sqlx::Result<()> {
     sqlx::raw_sql(TEST_MIGRATION_001_ROLES)
         .execute(pool)
         .await?;
-    sqlx::raw_sql(MIGRATION_034_TOKENS).execute(pool).await?;
+    sqlx::raw_sql(MIGRATION_034_TOKENS_DDL).execute(pool).await?;
     Ok(())
 }
 
