@@ -13,6 +13,7 @@
  */
 
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import type { Pool } from 'pg';
 import type { Redis } from 'ioredis';
 import { createHash } from 'crypto';
@@ -63,10 +64,26 @@ async function readCrucibleStatus(pool: Pool, chainId: number): Promise<Crucible
   };
 }
 
+// SECURITY (CodeQL js/missing-rate-limiting): per-route express-rate-limit so the throttle
+// is dataflow-visible here (the global limiter at index.ts:179 is not traced across this
+// factory). The endpoint is already sovereign-auth + idempotency gated; this is generous
+// defense-in-depth (mainnet promotion is a rare, deliberate operator action).
+const PROMOTE_RATE_LIMIT_PER_MIN = Math.max(
+  1,
+  parseInt(process.env['PROMOTE_RATE_LIMIT_PER_MIN'] ?? '12', 10),
+);
+const promoteLimiter = rateLimit({
+  windowMs: 60_000,
+  max: PROMOTE_RATE_LIMIT_PER_MIN,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { status: 'BLOCKED', reason: 'RATE_LIMITED', retry_after_seconds: 60 },
+});
+
 export function buildAdminPromoteMainnetRouter(pool: Pool, redis: any): Router {
   const router = Router();
 
-  router.post('/promote-mainnet', requireOperatorRole('sovereign'), async (req, res) => {
+  router.post('/promote-mainnet', promoteLimiter, requireOperatorRole('sovereign'), async (req, res) => {
     const op = req.operator!;
     const idempotencyKey = req.header('Idempotency-Key');
     if (!idempotencyKey) {

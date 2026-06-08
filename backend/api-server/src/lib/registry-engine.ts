@@ -25,6 +25,26 @@ import type { Request, Response, Router } from "express";
 import type { Pool, PoolClient } from "pg";
 import type { Redis } from "ioredis";
 import { z, type ZodTypeAny } from "zod";
+import rateLimit from "express-rate-limit";
+
+// SECURITY (CodeQL js/missing-rate-limiting): the api-server already applies a global
+// express-rate-limit (index.ts:179) + an /admin limiter, but CodeQL cannot trace
+// app-level middleware into the handlers built by this factory. Attach a shared
+// express-rate-limit instance PER-ROUTE below so the throttle is local and
+// dataflow-visible. Generous ceiling — defense-in-depth, not the primary limit.
+// (Per-route, not router.use(): admin-registries.ts builds many entities onto one
+// router in a loop, so a single .use() would stack and over-count.)
+const REGISTRY_RATE_LIMIT_PER_MIN = Math.max(
+  1,
+  parseInt(process.env["REGISTRY_RATE_LIMIT_PER_MIN"] ?? "120", 10),
+);
+const registryLimiter = rateLimit({
+  windowMs: 60_000,
+  max: REGISTRY_RATE_LIMIT_PER_MIN,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "rate_limited", retry_after_seconds: 60 },
+});
 
 // ---------------------------------------------------------------------------
 // Types
@@ -190,7 +210,7 @@ export function buildRegistryRouter<TSchema extends ZodTypeAny>(
   const base = `/${descriptor.entity.replace("_", "-")}s`;
 
   /** GET /:entity — list with optional chain filter */
-  router.get(base, async (req, res) => {
+  router.get(base, registryLimiter, async (req, res) => {
     const chainFilter =
       descriptor.chainScoped && req.query.chain_id
         ? `WHERE chain_id = $1`
@@ -205,7 +225,7 @@ export function buildRegistryRouter<TSchema extends ZodTypeAny>(
   });
 
   /** GET /:entity/:id */
-  router.get(`${base}/:id`, async (req, res) => {
+  router.get(`${base}/:id`, registryLimiter, async (req, res) => {
     const r = await deps.db.query(
       `SELECT * FROM ${descriptor.table} WHERE id = $1`,
       [req.params.id],
@@ -218,7 +238,7 @@ export function buildRegistryRouter<TSchema extends ZodTypeAny>(
   });
 
   /** POST /:entity — create with idempotency_key + audit + reload */
-  router.post(base, async (req, res) => {
+  router.post(base, registryLimiter, async (req, res) => {
     const parse = descriptor.schema.safeParse(req.body);
     if (!parse.success) {
       res.status(400).json({ error: "schema_violation", details: parse.error.format() });
@@ -304,7 +324,7 @@ export function buildRegistryRouter<TSchema extends ZodTypeAny>(
   });
 
   /** PATCH /:entity/:id — update with hash diff + audit + reload */
-  router.patch(`${base}/:id`, async (req, res) => {
+  router.patch(`${base}/:id`, registryLimiter, async (req, res) => {
     // Narrowing fail-honest (R8): los 6 descriptors canónicos usan z.object,
     // así .partial() existe en runtime. Si alguien registra un schema no-object,
     // detener con 500 explícito en vez de cast ciego.
@@ -397,7 +417,7 @@ export function buildRegistryRouter<TSchema extends ZodTypeAny>(
   });
 
   /** DELETE /:entity/:id — soft-delete via status = deprecated */
-  router.delete(`${base}/:id`, async (req, res) => {
+  router.delete(`${base}/:id`, registryLimiter, async (req, res) => {
     const idempotencyKey = String(
       req.header("Idempotency-Key") ?? randomUUID(),
     );

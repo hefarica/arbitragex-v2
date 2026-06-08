@@ -166,14 +166,15 @@ interface ProbeResult {
 
 async function probeRpc(rpcUrl: string, expectedChainId: number, timeoutMs = 5000): Promise<ProbeResult> {
   const now = new Date().toISOString();
-  // CodeQL js/resource-exhaustion: clamp the caller-supplied timeout to a sane bound
-  // so a large ?timeout_ms cannot hold an abort timer / connection open indefinitely.
-  timeoutMs = Math.min(Math.max(timeoutMs, 500), 15_000);
+  // CodeQL js/resource-exhaustion: bound the caller-supplied timeout with an explicit
+  // upper limit and feed ONLY the bounded const into the abort timer, so a large
+  // ?timeout_ms can never drive the abort timer / connection past 15s.
+  const safeTimeoutMs = Math.min(Math.max(Number(timeoutMs) || 5000, 500), 15_000);
   const u = new URL(rpcUrl);
   const redacted = `${u.protocol}//${u.hostname}/<path-redacted>`;
 
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const timer = setTimeout(() => ctrl.abort(), safeTimeoutMs);
   const start = Date.now();
 
   try {
@@ -242,7 +243,7 @@ async function probeRpc(rpcUrl: string, expectedChainId: number, timeoutMs = 500
       observed_chain_id: null,
       latency_ms: latency,
       block_number: null,
-      error: err.name === "AbortError" ? `timeout after ${timeoutMs}ms` : err.message,
+      error: err.name === "AbortError" ? `timeout after ${safeTimeoutMs}ms` : err.message,
       probed_at: now,
     };
   } finally {

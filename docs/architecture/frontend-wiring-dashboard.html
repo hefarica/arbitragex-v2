@@ -315,7 +315,7 @@ const stColor = s => ({
 }[s]||'background:#1a1a1a;color:#9ca3af;border:1px solid #374151');
 const prioColor = p => ({P0:'#f87171','P0-gated':'#f87171',P1:'#fbbf24',P2:'#38bdf8',P3:'#8b96a8'}[p]||'#8b96a8');
 const badge=(s)=>`<span class="chip" style="${stColor(s)}">${esc(s||'?')}</span>`;
-const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const matches=(obj,q)=>!q||JSON.stringify(obj).toLowerCase().includes(q.toLowerCase());
 
 // KPIs
