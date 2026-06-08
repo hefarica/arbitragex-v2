@@ -11,6 +11,7 @@
     "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "lint": "echo 'lint placeholder'"
   },
   "dependencies": {

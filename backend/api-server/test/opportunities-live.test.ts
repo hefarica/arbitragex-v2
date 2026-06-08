@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
+import { GenericContainer, type StartedTestContainer } from "testcontainers";
 import { Pool } from "pg";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -55,7 +55,6 @@ beforeAll(async () => {
       POSTGRES_DB:       "arbitragex",
     })
     .withExposedPorts(5432)
-    .withWaitStrategy(Wait.forSuccessfulCommand("pg_isready -U postgres"))
     .start();
 
   pool = new Pool({

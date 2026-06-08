@@ -174,3 +174,8 @@ jobs:
         # (e.g. opportunities-live, migrations). Both define a "test" script,
         # so they are named explicitly (no --if-present needed).
         run: npm test -w @arbx/api-server -w @arbx/selector-api
+      - name: Run testcontainer integration tests (api-server test/)
+        # test/ holds Docker-based testcontainer tests (postgres:15 containers).
+        # They are excluded from the default `npm test` (vitest.config.ts) and
+        # run here instead, where Docker + a real Postgres service are available.
+        run: npm run test:integration -w @arbx/api-server
