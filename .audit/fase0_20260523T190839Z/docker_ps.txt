@@ -1,0 +1,22 @@
+NAMES                               IMAGE                                      STATUS                    PORTS
+arbitragex-v2-relays-client-1       arbitragex-v2-relays-client                Up 2 days (healthy)       127.0.0.1:3005->3005/tcp
+arbitragex-v2-sim-ctl-1             arbitragex-v2-sim-ctl                      Up 2 days (healthy)       127.0.0.1:3003->3003/tcp
+arbitragex-v2-searcher-rs-1         arbitragex-v2-searcher-rs                  Up 2 days (healthy)       9001/tcp
+arbitragex-v2-edge-1                arbitragex-v2-edge                         Up 2 days (healthy)       127.0.0.1:8787->8787/tcp
+arbitragex-v2-selector-api-1        arbitragex-v2-selector-api                 Up 2 days (healthy)       127.0.0.1:3002->3002/tcp
+arbitragex-v2-token-enricher-1      arbitragex-v2-token-enricher               Up 2 days (healthy)       127.0.0.1:9004->9004/tcp
+arbitragex-v2-recon-1               arbitragex-v2-recon                        Up 2 days (unhealthy)     127.0.0.1:3004->3004/tcp
+arbitragex-v2-postgres-1            postgres:15                                Up 2 days (healthy)       127.0.0.1:5432->5432/tcp
+arbitragex-v2-vault-1               hashicorp/vault:1.18.1                     Up 2 days (healthy)       127.0.0.1:8200->8200/tcp
+arbitragex-v2-redis-1               redis:7.2                                  Up 2 days (healthy)       127.0.0.1:6379->6379/tcp
+arbitragex-v2-api-server-1          arbitragex-v2-api-server                   Up 2 days (healthy)       127.0.0.1:8080->8080/tcp
+arbitragex-v2-frontend-1            arbitragex-v2-frontend                     Up 4 days (healthy)       127.0.0.1:5173->5173/tcp
+arbitragex-v2-grafana-1             grafana/grafana:11.4.0                     Up 5 days (healthy)       127.0.0.1:3000->3000/tcp
+arbitragex-v2-promtail-1            grafana/promtail:2.9.7                     Up 6 days (unhealthy)     
+arbitragex-v2-thanos-query-1        quay.io/thanos/thanos:v0.36.1              Up 6 days (healthy)       127.0.0.1:10904->10904/tcp
+arbitragex-v2-thanos-sidecar-1      quay.io/thanos/thanos:v0.36.1              Up 6 days (healthy)       
+arbitragex-v2-prometheus-1          prom/prometheus:v2.55.1                    Up 6 days (healthy)       127.0.0.1:9090->9090/tcp
+arbitragex-v2-alertmanager-1        prom/alertmanager:v0.27.0                  Up 6 days (healthy)       127.0.0.1:9093->9093/tcp
+arbitragex-v2-thanos-store-1        quay.io/thanos/thanos:v0.36.1              Up 10 seconds (healthy)   
+957190bc6d60_arbitragex-v2-loki-1   grafana/loki:2.9.7                         Up 6 days (healthy)       127.0.0.1:3100->3100/tcp
+arbitragex-v2-minio-1               minio/minio:RELEASE.2024-11-07T00-52-20Z   Up 6 days (healthy)       127.0.0.1:9000-9001->9000-9001/tcp

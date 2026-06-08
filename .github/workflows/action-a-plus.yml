@@ -1,0 +1,177 @@
+name: Ω-S5++ APEX Acción A+ — Alineación metadata Git + Purga decoherencia
+
+# DOCTRINA: Mutación QUIRÚRGICA solo de metadata git del VPS.
+# NO toca: archivos físicos, .env, stash del operador, contenedores, builds.
+# Mandato: Operador Lead + Arquitecto OMEGA.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_sovereign:
+        description: 'Confirma "EJECUTA" para detonar'
+        required: true
+        default: 'EJECUTA'
+
+concurrency:
+  group: deploy-arbx
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: 195.201.235.70
+  REPO_PATH: /opt/arbitragex-v2
+  TARGET_SHA: 6c922106fb6db30152d011ef109da78af16ece23
+  GITHUB_REMOTE: https://github.com/hefarica/arbitragex-v2.git
+
+jobs:
+  action-a-plus:
+    name: Acción A+ — git metadata alignment
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/arbx_key
+          chmod 600 ~/.ssh/arbx_key
+          ssh-keyscan -H ${{ env.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: "[1] FOTO FORENSE — Pre-vuelo"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set +e
+            cd ${{ env.REPO_PATH }}
+            echo "═══════════════════════════════════════════════"
+            echo "  FOTO FORENSE — ESTADO ANTES DE LA CORRECCIÓN"
+            echo "═══════════════════════════════════════════════"
+            echo ""
+            echo "── git status --short ──"
+            git status --short
+            echo ""
+            echo "── git rev-parse HEAD ──"
+            git rev-parse HEAD
+            echo ""
+            echo "── git remote -v ──"
+            git remote -v
+            echo ""
+            echo "── git stash list ──"
+            git stash list
+            echo ""
+            echo "── Conteo de archivos ──"
+            echo "Tracked:    $(git ls-files | wc -l)"
+            echo "Modified:   $(git diff --name-only | wc -l)"
+            echo "Untracked:  $(git ls-files --others --exclude-standard | wc -l)"
+          REMOTE
+
+      - name: "[2] CORRECCIÓN DE METADATA — Acción A+"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set -e
+            cd ${{ env.REPO_PATH }}
+            echo "═══════════════════════════════════════════════"
+            echo "  CORRECCIÓN DE METADATA (ACCIÓN A+)"
+            echo "═══════════════════════════════════════════════"
+            echo ""
+            echo "── [2.1] Reapuntar origin → GitHub ──"
+            if git remote get-url origin >/dev/null 2>&1; then
+              OLD=$(git remote get-url origin)
+              git remote set-url origin ${{ env.GITHUB_REMOTE }}
+              echo "✅ origin reapuntado: $OLD → ${{ env.GITHUB_REMOTE }}"
+            else
+              git remote add origin ${{ env.GITHUB_REMOTE }}
+              echo "✅ origin creado: ${{ env.GITHUB_REMOTE }}"
+            fi
+            echo ""
+            echo "── [2.2] Reapuntar refs/heads/main → TARGET_SHA ──"
+            git update-ref "refs/heads/main" "${{ env.TARGET_SHA }}"
+            echo "✅ refs/heads/main = ${{ env.TARGET_SHA }}"
+            echo ""
+            echo "── [2.3] Reapuntar HEAD → refs/heads/main ──"
+            git symbolic-ref HEAD "refs/heads/main"
+            echo "✅ HEAD → refs/heads/main"
+            echo ""
+            echo "── [2.4] git reset --mixed (sincroniza índice, NO toca working tree) ──"
+            git reset --mixed "${{ env.TARGET_SHA }}"
+            echo "✅ índice sincronizado con TARGET_SHA"
+          REMOTE
+
+      - name: "[3] VERIFICACIÓN DE ESTADO LIMPIO"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set +e
+            cd ${{ env.REPO_PATH }}
+            echo "═══════════════════════════════════════════════"
+            echo "  VERIFICACIÓN POST-CORRECCIÓN"
+            echo "═══════════════════════════════════════════════"
+            echo ""
+            echo "── git rev-parse HEAD (debe ser 6c92210...) ──"
+            HEAD_NOW=$(git rev-parse HEAD)
+            echo "$HEAD_NOW"
+            if [ "$HEAD_NOW" = "${{ env.TARGET_SHA }}" ]; then
+              echo "✅ HEAD MATCH"
+            else
+              echo "❌ HEAD MISMATCH — esperado: ${{ env.TARGET_SHA }}"
+              exit 1
+            fi
+            echo ""
+            echo "── git remote -v (debe ser github.com) ──"
+            git remote -v
+            echo ""
+            echo "── git status --short (debe estar limpio) ──"
+            STATUS_OUT=$(git status --short)
+            if [ -z "$STATUS_OUT" ]; then
+              echo "✅ Working tree LIMPIO (sin modified ni untracked)"
+            else
+              echo "$STATUS_OUT"
+              echo ""
+              echo "── Análisis del status restante ──"
+              MOD=$(git diff --name-only | wc -l)
+              UNT=$(git ls-files --others --exclude-standard | wc -l)
+              echo "Modified: $MOD | Untracked: $UNT"
+            fi
+            echo ""
+            echo "── git stash list (debe seguir intacto) ──"
+            git stash list
+          REMOTE
+
+      - name: "[4] VERIFICACIÓN DE SUPERVIVENCIA EN PRODUCCIÓN"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set +e
+            echo "═══════════════════════════════════════════════"
+            echo "  VERIFICACIÓN DE SUPERVIVENCIA PRODUCTIVA"
+            echo "═══════════════════════════════════════════════"
+            echo ""
+            echo "── docker ps ──"
+            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | head -20
+            echo ""
+            echo "── HTTP probes (puerto directo del frontend 5173) ──"
+            C1=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://localhost:5173/apex/allocator)
+            C2=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://localhost:5173/)
+            C3=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://localhost:8787/health)
+            echo "  http://localhost:5173/apex/allocator → $C1 (esperado 200)"
+            echo "  http://localhost:5173/               → $C2 (esperado 200)"
+            echo "  http://localhost:8787/health         → $C3 (esperado 200)"
+            echo ""
+            echo "── HTTP probes adicionales (vía nginx host :80) ──"
+            for p in / /api/health /chains /apex/allocator /omega-s5/core; do
+              code=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://localhost$p)
+              echo "  $code  http://localhost$p"
+            done
+            echo ""
+            FAIL=0
+            [ "$C1" != "200" ] && FAIL=1
+            [ "$C2" != "200" ] && FAIL=1
+            [ "$C3" != "200" ] && FAIL=1
+            if [ "$FAIL" = "1" ]; then
+              echo "❌ Al menos un endpoint crítico NO retorna 200"
+              exit 1
+            fi
+            echo "✅ Todos los endpoints críticos OK"
+          REMOTE
+
+      - name: "[FINAL] Cleanup SSH key"
+        if: always()
+        run: rm -f ~/.ssh/arbx_key

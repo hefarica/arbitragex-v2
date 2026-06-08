@@ -286,8 +286,7 @@ mod tests {
             e.update(x, 1.0);
         }
         let mean = xs.iter().sum::<f64>() / xs.len() as f64;
-        let naive_var = xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
-            / (xs.len() - 1) as f64;
+        let naive_var = xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (xs.len() - 1) as f64;
         let expected_sigma = naive_var.sqrt();
         assert!(
             (e.current_sigma() - expected_sigma).abs() < 1e-15,
@@ -389,11 +388,11 @@ mod tests {
         e.set_jump_threshold(-1.0); // should be ignored
         e.set_jump_threshold(0.0); // should be ignored
         e.set_jump_threshold(f64::NAN); // should be ignored
-        // Default 3.0 preserved through all rejections. Default
-        // warmup (30) preserved too.
-        // 60 alternating warmup samples establish stable σ̂ — see the
-        // explanation in lambda_scales_with_elapsed_time for why tiny
-        // warmup windows degenerate the jump-classification z-score.
+                                        // Default 3.0 preserved through all rejections. Default
+                                        // warmup (30) preserved too.
+                                        // 60 alternating warmup samples establish stable σ̂ — see the
+                                        // explanation in lambda_scales_with_elapsed_time for why tiny
+                                        // warmup windows degenerate the jump-classification z-score.
         for i in 0..60 {
             let v = if i % 2 == 0 { 0.0001 } else { -0.0001 };
             e.update(v, 1.0);

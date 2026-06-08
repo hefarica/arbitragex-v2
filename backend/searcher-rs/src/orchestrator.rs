@@ -40,6 +40,7 @@
 //! - `gross_profit_usd = None` from an engine propagates unchanged through
 //!   the evaluator and emitter paths.
 
+use crate::cartridge::runner::CartridgeRunner;
 use crate::engines::dex_engine::DexEngine;
 use crate::engines::flashloan_engine::FlashloanEngine;
 use crate::engines::liquidation_engine::LiquidationEngine;
@@ -100,6 +101,11 @@ pub struct OrchestratorContext {
     pub pool_discovery: Arc<crate::pool_discovery::PoolDiscoveryService>,
     /// EVM chain ID for this orchestrator instance.
     pub chain_id: u64,
+    /// FASE OMEGA — cartridge runtime for shadow evaluation. `Some` only when
+    /// `ARBX_CARTRIDGE_MODE` is enabled AND the runtime booted. When present, each
+    /// route intent is shadow-evaluated against active cartridges OFF the hot path
+    /// (observe-only: logs/telemetry, never a StrategyCandidate, never execution).
+    pub cartridge_runner: Option<Arc<CartridgeRunner>>,
     /// SED Bridge — connects to sed-core math pipeline (paper-shadow only).
     /// When `Some`, feeds gas observations and enriches candidates with
     /// stochastic convergence metrics. When `None`, orchestrator runs
@@ -235,12 +241,31 @@ impl Orchestrator {
             impacted_protocols = impact.impacted_protocols.len(),
         );
 
+        // ── FASE OMEGA — cartridge shadow evaluation (observe-only) ──────────
+        // When the cartridge runtime is present (ARBX_CARTRIDGE_MODE enabled),
+        // shadow-evaluate active cartridges against this live intent on a DETACHED
+        // task — zero added latency to the hot path. Results go to logs/telemetry
+        // only: this never builds a StrategyCandidate, never calls process_candidate,
+        // and never reaches the execution pipeline. The evaluation→execution wiring
+        // (active mode) is a follow-up gated by paper-trade evidence.
+        if let Some(runner) = &self.ctx.cartridge_runner {
+            let runner = runner.clone();
+            let intent_for_shadow = intent.clone();
+            tokio::spawn(async move {
+                crate::cartridge_boot::shadow_evaluate_intent(runner, intent_for_shadow, chain_id)
+                    .await;
+            });
+        }
+
         let mut impact = impact;
         if impact.impacted_pools.is_empty() && impact.impacted_cycles.is_empty() {
             // No pools impacted. This is an unmapped pair.
             // Dispatch synchronously to the PoolDiscoveryService.
-            self.ctx.pool_discovery.record_opportunity_observation(&intent, "discovery_started", None, None).await;
-            
+            self.ctx
+                .pool_discovery
+                .record_opportunity_observation(&intent, "discovery_started", None, None)
+                .await;
+
             match self.ctx.pool_discovery.discover_from_intent(&intent).await {
                 Ok(true) => {
                     // Retry impact resolution
@@ -257,11 +282,22 @@ impl Orchestrator {
                     );
                 }
                 Ok(false) => {
-                    self.ctx.pool_discovery.record_opportunity_observation(&intent, "discovery_no_pool_found", None, None).await;
+                    self.ctx
+                        .pool_discovery
+                        .record_opportunity_observation(
+                            &intent,
+                            "discovery_no_pool_found",
+                            None,
+                            None,
+                        )
+                        .await;
                 }
                 Err(e) => {
                     warn!("Pool discovery error: {}", e);
-                    self.ctx.pool_discovery.record_opportunity_observation(&intent, "discovery_failed", None, None).await;
+                    self.ctx
+                        .pool_discovery
+                        .record_opportunity_observation(&intent, "discovery_failed", None, None)
+                        .await;
                 }
             }
 
@@ -272,7 +308,10 @@ impl Orchestrator {
                     tx_hash = %intent.tx_hash,
                     "rejection_reason" = "impact_zero"
                 );
-                self.ctx.pool_discovery.record_opportunity_observation(&intent, "impact_zero", None, None).await;
+                self.ctx
+                    .pool_discovery
+                    .record_opportunity_observation(&intent, "impact_zero", None, None)
+                    .await;
                 return Ok(());
             }
         }
@@ -318,9 +357,15 @@ impl Orchestrator {
         );
 
         // Emit metric if no config (operator visibility, not a crash).
+        // ENGINE_ERRORS_TOTAL is defined with EXACTLY two labels [chain_id, strategy]
+        // (see metrics.rs). The config-absence signal occupies the `strategy` slot with
+        // the sentinel pseudo-strategy "no_trading_config" — distinguishable in Grafana
+        // from the real StrategyLabel values. Passing a 3rd value here previously panicked
+        // the worker with `InconsistentCardinality { expect: 2, got: 3 }` once per intent
+        // whenever no trading config was loaded (the common case under block mode).
         if cfg_snapshot.is_none() {
             ENGINE_ERRORS_TOTAL
-                .with_label_values(&[&chain_str, "all", "no_trading_config"])
+                .with_label_values(&[&chain_str, "no_trading_config"])
                 .inc();
         }
 
@@ -461,10 +506,11 @@ impl Orchestrator {
 
         // FlashloanEngine (Phase 10 — live): wrap net-positive base candidates.
         let flash_candidates = {
-            let wrapped = self
-                .ctx
-                .flashloan_engine
-                .wrap_profitable_routes(&base_candidates, chain_id, cfg_snapshot.as_ref());
+            let wrapped = self.ctx.flashloan_engine.wrap_profitable_routes(
+                &base_candidates,
+                chain_id,
+                cfg_snapshot.as_ref(),
+            );
             // Count flashloan candidates — label comes from the candidate itself.
             for c in &wrapped {
                 CANDIDATES_TOTAL

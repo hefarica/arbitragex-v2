@@ -33,7 +33,6 @@ use shared_rs::{
     metrics::init_metrics,
     rpc_failover::{AlloyHttpProvider, HttpRpcPool},
 };
-use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, sync::Arc};
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -187,10 +186,11 @@ async fn main() -> anyhow::Result<()> {
     init_metrics();
 
     let db_url = require_env("DATABASE_URL")?;
-    let db = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(&db_url)
-        .await?;
+    // OMEGA-8/M3 P1-2: timeouts applied (acquire/idle/max_lifetime/min).
+    let db =
+        shared_rs::db_pool::options_with_timeouts(&shared_rs::db_pool::PoolConfig::from_env(5))
+            .connect(&db_url)
+            .await?;
     let state = Arc::new(AppState { db });
 
     let port: u16 = std::env::var("RECON_PORT")
@@ -262,14 +262,17 @@ async fn main() -> anyhow::Result<()> {
                 };
 
             if let Some(provider) = provider_arc {
-                let db_for_consumer = PgPoolOptions::new()
-                    .max_connections(4)
-                    .connect(&db_url)
-                    .await?;
-                let db_for_aggregator = PgPoolOptions::new()
-                    .max_connections(2)
-                    .connect(&db_url)
-                    .await?;
+                // OMEGA-8/M3 P1-2: timeouts applied to all per-task pools.
+                let db_for_consumer = shared_rs::db_pool::options_with_timeouts(
+                    &shared_rs::db_pool::PoolConfig::from_env(4),
+                )
+                .connect(&db_url)
+                .await?;
+                let db_for_aggregator = shared_rs::db_pool::options_with_timeouts(
+                    &shared_rs::db_pool::PoolConfig::from_env(2),
+                )
+                .connect(&db_url)
+                .await?;
                 let redis_client = redis::Client::open(redis_url.clone())?;
                 let redis_conn = redis_client.get_connection_manager().await?;
                 let killswitch =

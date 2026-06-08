@@ -111,7 +111,12 @@ const CHAIN_ID_TO_DEXSCREENER_SLUG: Record<number, string> = {
   534352:  "scroll",
 };
 
-function chainSlug(chain_id: number): string | null {
+/**
+ * Map an EVM chain_id to DEX Screener's `chainId` slug, or null when the chain
+ * is not in the conservative whitelist. Exported for reuse by other DexScreener
+ * readers (e.g. the token-icon route) so the slug table lives in one place.
+ */
+export function chainSlug(chain_id: number): string | null {
   return CHAIN_ID_TO_DEXSCREENER_SLUG[chain_id] ?? null;
 }
 

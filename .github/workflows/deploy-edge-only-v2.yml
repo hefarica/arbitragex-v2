@@ -1,0 +1,195 @@
+name: Ω-S5++ APEX Deploy edge-only v2 (hard sync edge tree)
+# Mismo patrón que v1 pero con git checkout -- edge/ frontend/lib/ para forzar
+# el working tree del subárbol relevante a coincidir con HEAD. Los stashes y
+# otros archivos modificados (configs/app.toml, etc.) quedan intactos.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: 'Commit SHA a desplegar (default: HEAD de main)'
+        required: false
+        default: ''
+
+concurrency:
+  group: deploy-arbx-edge
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: 195.201.235.70
+  COMPOSE_FILE: docker/compose.prod.yml
+
+jobs:
+  deploy-edge:
+    name: Edge-only deploy v2 + Sovereign rollback
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 🔐 Setup SSH
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ env.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+          cat > ~/.ssh/config <<EOF
+          Host arbx
+            HostName ${{ env.VPS_HOST }}
+            User root
+            Port 22
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+            ServerAliveInterval 30
+          EOF
+          chmod 600 ~/.ssh/config
+          ssh arbx 'echo "SSH OK · $(hostname)"'
+
+      - name: "[E0] Pre-flight + verify what the working tree currently has"
+        run: |
+          ssh arbx 'bash -s' <<'EOSSH'
+          set -e
+          cd /opt/arbitragex-v2
+          echo "=== git HEAD ==="
+          git rev-parse --short HEAD
+          echo ""
+          echo "=== git status (edge dir only) ==="
+          git status --short edge/ | head -20
+          echo ""
+          echo "=== adminProxy cabling check (must be 6 after sync) ==="
+          grep -c 'adminProxy.*api/v1/admin/chains' edge/dev-local/src/index.ts || echo "0"
+          echo ""
+          echo "=== Current edge container ==="
+          docker inspect arbitragex-v2-edge-1 --format 'image={{.Image}} cmd={{.Config.Cmd}}'
+          echo ""
+          echo "=== Stashes (must remain after this workflow) ==="
+          git stash list
+          EOSSH
+
+      - name: "[E1] Fetch origin/main + checkout edge/ + frontend/lib/ (PRESERVES STASHES)"
+        run: |
+          ssh arbx 'bash -s' <<'EOSSH'
+          set -e
+          cd /opt/arbitragex-v2
+          git fetch origin main --depth=1
+          echo "=== Hard-restore ONLY edge/ + frontend/ subtrees from origin/main ==="
+          # checkout -- <pathspec> overwrites working tree from index/HEAD for that path
+          # but does NOT touch stashes, .env, or paths outside the pathspec.
+          # First make sure HEAD is at origin/main (mixed reset, no working-tree damage)
+          git reset --mixed origin/main
+          # Now restore just the subtrees we need to rebuild
+          git checkout HEAD -- edge/dev-local/src/ edge/dev-local/package.json edge/worker/src/ frontend/lib/ frontend/app/admin/ frontend/app/omega-s5/registry/ frontend/components/
+          echo ""
+          echo "=== adminProxy cabling AFTER restore ==="
+          grep -c 'adminProxy.*api/v1/admin/chains' edge/dev-local/src/index.ts
+          echo ""
+          echo "=== Verify the 6 admin chains routes use adminProxy ==="
+          grep -nE 'admin/chains' edge/dev-local/src/index.ts | head -10
+          echo ""
+          echo "=== Confirm stashes intact ==="
+          git stash list
+          EOSSH
+
+      - name: "[E2] Backup current edge image"
+        run: |
+          ssh arbx 'bash -s' <<'EOSSH'
+          set -e
+          CURRENT_IMG_ID=$(docker inspect arbitragex-v2-edge-1 --format '{{.Image}}' | sed 's/sha256://')
+          # Avoid clobbering the pre-wiring-backup from v1; use a timestamped tag
+          TS=$(date -u +%Y%m%d-%H%M%S)
+          docker tag "$CURRENT_IMG_ID" "arbitragex-v2-edge:pre-v2-$TS"
+          echo "$CURRENT_IMG_ID" > /root/last-known-good-edge-v2.id
+          echo "TS=$TS" > /root/last-edge-backup-tag.txt
+          echo "✓ Backup tag: arbitragex-v2-edge:pre-v2-$TS ($CURRENT_IMG_ID)"
+          docker images arbitragex-v2-edge --format 'table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}'
+          EOSSH
+
+      - name: "[E3] Build edge (no-cache to be sure source changed)"
+        run: |
+          ssh arbx 'bash -s' <<'EOSSH'
+          set -e
+          cd /opt/arbitragex-v2
+          START=$(date +%s)
+          echo "=== Pre-build ==="; free -h | head -2
+          # Force no-cache for the edge service only — Node build is fast (~40s)
+          docker compose --env-file .env -f docker/compose.prod.yml build --no-cache edge 2>&1 | tail -50
+          END=$(date +%s)
+          echo "✓ Build (no-cache) completed in $((END - START))s"
+          docker images arbitragex-v2-edge --format 'table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}' | head -5
+          EOSSH
+
+      - name: "[E4] Hot-swap edge"
+        run: |
+          ssh arbx 'bash -s' <<'EOSSH'
+          set -e
+          cd /opt/arbitragex-v2
+          BEFORE_ID=$(docker inspect arbitragex-v2-edge-1 --format '{{.Image}}' 2>/dev/null | sed 's/sha256://' || echo "none")
+          echo "BEFORE_ID=$BEFORE_ID"
+          docker compose --env-file .env -f docker/compose.prod.yml up -d --no-deps --force-recreate edge
+          sleep 5
+          AFTER_ID=$(docker inspect arbitragex-v2-edge-1 --format '{{.Image}}' 2>/dev/null | sed 's/sha256://' || echo "none")
+          echo "AFTER_ID=$AFTER_ID"
+          [ "$BEFORE_ID" = "$AFTER_ID" ] && echo "⚠ Image unchanged" || echo "✓ Image swapped: $BEFORE_ID → $AFTER_ID"
+          docker ps --filter "name=edge" --format '{{.Names}}\t{{.Status}}\t{{.Image}}'
+          echo ""
+          echo "=== Verify code IN container is the new one ==="
+          docker exec arbitragex-v2-edge-1 sh -c "grep -c 'adminProxy.*api/v1/admin/chains' /app/edge/dev-local/dist/index.js 2>/dev/null || grep -nE 'admin/chains' /app/edge/dev-local/dist/index.js | head -10"
+          EOSSH
+
+      - name: "[E5] Smoke test"
+        run: |
+          ssh arbx 'bash -s' <<'EOSSH'
+          set -e
+          ADMIN_TOKEN=$(grep -E '^ARBX_ADMIN_TOKEN=' /opt/arbitragex-v2/.env | cut -d= -f2-)
+          for i in $(seq 1 12); do
+            HC=$(curl -s -o /dev/null -w '%{http_code}' -m 2 http://127.0.0.1:8787/health 2>/dev/null || echo "000")
+            [ "$HC" = "200" ] && { echo "  edge health $i: $HC"; break; }
+            echo "  edge health $i: $HC (waiting...)"
+            sleep 2
+          done
+
+          rm -f /tmp/c
+          HTTP1=$(curl -sk -o /tmp/r1.json -w '%{http_code}' -c /tmp/c -X POST http://127.0.0.1:8787/admin/session \
+            -H 'content-type: application/json' -d "{\"token\":\"$ADMIN_TOKEN\"}")
+          echo "POST /admin/session → $HTTP1"
+          echo "  Set-Cookie line:"; grep -E '^[^#]' /tmp/c 2>/dev/null | awk '{print "    "$6"="substr($7,1,12)"..."}' | head -2
+
+          HTTP2=$(curl -sk -o /tmp/r2.json -w '%{http_code}' -b /tmp/c http://127.0.0.1:8787/api/admin/chains)
+          echo "GET /api/admin/chains (cookie) → $HTTP2"
+          echo "  body[0:200]: $(head -c 200 /tmp/r2.json)"
+
+          HTTP3=$(curl -sk -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/api/admin/chains)
+          echo "GET /api/admin/chains (no cookie) → $HTTP3"
+
+          echo ""
+          echo "════════════════════════════════════════════════════"
+          echo "  SERVICES INVENTORY (Hot-Path must be intact)"
+          echo "════════════════════════════════════════════════════"
+          docker ps --format '{{.Names}}\t{{.Status}}\t{{.Image}}' | head -25
+
+          if [ "$HTTP1" = "200" ] && [ "$HTTP2" = "200" ] && [ "$HTTP3" = "401" ]; then
+            echo ""
+            echo "════════════════════════════════════════════════════"
+            echo "  ✓ HOLONOMIC RESOLUTION CONFIRMED — wiring fix LIVE"
+            echo "════════════════════════════════════════════════════"
+            exit 0
+          else
+            echo ""
+            echo "════════════════════════════════════════════════════"
+            echo "  ❌ Got: POST=$HTTP1  GET-cookie=$HTTP2  GET-anon=$HTTP3"
+            echo "  Expected: 200 / 200 / 401"
+            echo "════════════════════════════════════════════════════"
+            echo ""
+            echo "=== Edge logs (last 40 lines) ==="
+            docker logs arbitragex-v2-edge-1 --tail 40 2>&1
+            exit 1
+          fi
+          EOSSH
+
+      - name: "[E6] Cleanup"
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

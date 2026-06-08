@@ -46,9 +46,7 @@ use std::str::FromStr;
 
 use ethers::types::{Address, U256};
 use prioritization_spine::round_trip_executor::RoundTripContext;
-use searcher_rs::sim_multistep::{
-    build_multistep_plan, MultiStepExecutionConfig, MultiStepError,
-};
+use searcher_rs::sim_multistep::{build_multistep_plan, MultiStepError, MultiStepExecutionConfig};
 use searcher_rs::sim_prefund::{Erc20StorageLayout, Erc20StorageLayoutProvider};
 use std::collections::HashMap;
 
@@ -126,10 +124,20 @@ impl PrereqStatus {
 
     fn missing(&self) -> Vec<&'static str> {
         let mut m = Vec::new();
-        if self.rpc_http_1.as_deref().filter(|s| !s.is_empty()).is_none() {
+        if self
+            .rpc_http_1
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .is_none()
+        {
             m.push("RPC_HTTP_1");
         }
-        if self.executor_1.as_deref().filter(|s| !s.is_empty()).is_none() {
+        if self
+            .executor_1
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .is_none()
+        {
             m.push("EXECUTOR_1");
         }
         if self
@@ -258,62 +266,75 @@ async fn multistep_fork_round_trip_weth_usdc() {
         }
     }
 
-    // The full sequence_runner dispatch lives behind the
-    // `execute_multistep_revm` function in `sim_multistep`. To exercise it
-    // against a real RPC we'd construct an `Arc<SimulatorV2>` here. That
-    // requires the operator's RPC URL — which the prereq check confirmed
-    // is present.
+    // ── Live REVM dispatch against the operator's archive RPC ─────────────
     //
-    // SimulatorV2 + LazyDb both spin up an internal tokio runtime; calling
-    // them from this `#[tokio::test]` context creates a runtime-in-runtime
-    // panic on drop (the same hazard A.3.c.4's `cache_db_accepts_lazy_db_database_ref`
-    // test addressed by reverting to a synchronous `#[test]`). To preserve
-    // that semantic here, the actual REVM dispatch happens inside a
-    // `spawn_blocking` task and the test awaits its join handle.
+    // `SimulatorV2` + `LazyDb` spin up an internal tokio runtime; invoking the
+    // synchronous `execute_multistep_revm` directly from this `#[tokio::test]`
+    // would nest runtimes and panic on drop (the same hazard A.3.c.4 fixed by
+    // reverting `cache_db_accepts_lazy_db_database_ref` to a sync `#[test]`).
+    // We therefore run it inside `spawn_blocking` — a non-worker thread that is
+    // free to own a runtime — and await the join handle.
     //
-    // NOTE: the live dispatch is implemented commented-out here. Operators
-    // running this test against real RPC should uncomment the block,
-    // verify the executor's `approvedRouters` and `approvedTokens` at the
-    // pinned block, and run with `--nocapture`.
-    //
-    // ```ignore
-    // let simulator = std::sync::Arc::new(
-    //     simulator_v2::SimulatorV2::new(prereqs.rpc_http_1.unwrap()),
-    // );
-    // let provider_arc: std::sync::Arc<
-    //     dyn searcher_rs::sim_prefund::Erc20StorageLayoutProvider + Send + Sync,
-    // > = std::sync::Arc::new(provider);
-    // let ctx_owned = ctx.clone();
-    // let config_owned = config.clone();
-    // let outcome = tokio::task::spawn_blocking(move || {
-    //     searcher_rs::sim_multistep::execute_multistep_revm(
-    //         &ctx_owned,
-    //         simulator,
-    //         &config_owned,
-    //         provider_arc.as_ref(),
-    //     )
-    // })
-    // .await
-    // .expect("spawn_blocking joined");
-    //
-    // // Anti-fraud guards: success path MUST have gas + trace + profit.
-    // if outcome.passed {
-    //     assert!(outcome.gas_used_total > 0, "SIM_SUCCESS with zero gas");
-    //     assert!(!outcome.simulated_profit_token_in.is_zero(),
-    //             "SIM_SUCCESS with zero net profit");
-    //     eprintln!(
-    //         "A.4 SIM_SUCCESS: gas={}, net_profit={}, intermediate={:?}",
-    //         outcome.gas_used_total,
-    //         outcome.simulated_profit_token_in,
-    //         outcome.intermediate_amount_out,
-    //     );
-    // } else {
-    //     eprintln!(
-    //         "A.4 fail-honest: {}",
-    //         outcome.fail_reason.as_deref().unwrap_or("(none)"),
-    //     );
-    // }
-    // ```
+    // `RPC_HTTP_1` here MUST be a single bare archive URL: `LazyDb` performs
+    // direct JSON-RPC and does NOT parse the multi-vendor `name=url,...` CSV.
+    let rpc_url = prereqs
+        .rpc_http_1
+        .clone()
+        .expect("RPC_HTTP_1 present (missing check already passed)");
+    let simulator = std::sync::Arc::new(simulator_v2::SimulatorV2::new(rpc_url));
+    let provider_arc: std::sync::Arc<
+        dyn searcher_rs::sim_prefund::Erc20StorageLayoutProvider + Send + Sync,
+    > = std::sync::Arc::new(provider);
+    let ctx_owned = ctx.clone();
+    let config_owned = config.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        searcher_rs::sim_multistep::execute_multistep_revm(
+            &ctx_owned,
+            simulator,
+            &config_owned,
+            provider_arc.as_ref(),
+        )
+    })
+    .await
+    .expect("spawn_blocking joined");
+
+    // Anti-fraud / fail-honest guards on the outcome:
+    //   * `execute_multistep_revm` returns `passed = true` ONLY after a real
+    //     round trip (gas > 0, non-zero trace hash, >= 2 committed calls, and
+    //     net_profit > 0). We re-assert gas + profit here so a future drift
+    //     that fabricates a pass trips immediately.
+    //   * A non-passing outcome (SIM_REVERT / SIM_REJECTED) is an ACCEPTABLE
+    //     fork-validation result — it proves the system reached REVM and
+    //     rejected honestly — but it MUST carry a typed `fail_reason`.
+    // Either branch prints exactly ONE machine-greppable `A4_OUTCOME=` line
+    // that `run_a4_fork_validation.sh` asserts on, so a skipped / 0-test run
+    // can never be recorded as a pass.
+    if outcome.passed {
+        assert!(
+            outcome.gas_used_total > 0,
+            "anti-fraud: SIM_SUCCESS with zero gas"
+        );
+        assert!(
+            !outcome.simulated_profit_token_in.is_zero(),
+            "anti-fraud: SIM_SUCCESS with zero net profit"
+        );
+        eprintln!(
+            "A4_OUTCOME=SIM_SUCCESS gas_used={} net_profit_token_in={} intermediate={:?}",
+            outcome.gas_used_total,
+            outcome.simulated_profit_token_in,
+            outcome.intermediate_amount_out,
+        );
+    } else {
+        let reason = outcome
+            .fail_reason
+            .as_deref()
+            .expect("fail-honest: a non-passing outcome MUST carry a typed reason");
+        assert!(
+            !reason.is_empty(),
+            "fail-honest: empty fail_reason on a non-passing outcome"
+        );
+        eprintln!("A4_OUTCOME=SIM_REVERT reason={reason}");
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -149,6 +149,6 @@ contract DeployTestnet is Script {
         console2.log("[ ] setTokenApproval(<tokenIn>, true) on ArbitrageExecutor");
         console2.log("[ ] setRouterApproval(<router>, true) on ArbitrageExecutor");
         console2.log("[ ] batchGrantAllowance(...) on AllowanceManager if needed");
-        console2.log("[ ] (SC-10) Transfer ADMIN_ROLE to AdminTimelock — see DEPLOY.md §9");
+        console2.log("[ ] (SC-10) Transfer ADMIN_ROLE to AdminTimelock -- see DEPLOY.md S9");
     }
 }

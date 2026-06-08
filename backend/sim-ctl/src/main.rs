@@ -27,7 +27,6 @@ use shared_rs::{
     logging::init_tracing,
     metrics::init_metrics,
 };
-use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
 use tracing::{info, warn};
 
@@ -227,10 +226,12 @@ async fn main() -> anyhow::Result<()> {
         if let (Ok(db_url), Ok(redis_url)) =
             (std::env::var("DATABASE_URL"), std::env::var("REDIS_URL"))
         {
-            let pool = PgPoolOptions::new()
-                .max_connections(4)
-                .connect(&db_url)
-                .await?;
+            // OMEGA-8/M3 P1-2: timeouts applied.
+            let pool = shared_rs::db_pool::options_with_timeouts(
+                &shared_rs::db_pool::PoolConfig::from_env(4),
+            )
+            .connect(&db_url)
+            .await?;
             let redis_client = redis::Client::open(redis_url.clone())?;
             let redis_conn = redis_client.get_connection_manager().await?;
             let killswitch =

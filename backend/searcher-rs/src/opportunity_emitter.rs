@@ -31,6 +31,7 @@ use crate::counters::counters;
 use crate::dedup::OppDedup;
 use crate::persistence;
 use crate::publisher;
+use crate::scoring_pipeline::ScoringPipeline;
 use crate::strategy_label::StrategyLabel;
 use shared_rs::contracts::Opportunity;
 use shared_rs::metrics::OPPORTUNITIES_TOTAL;
@@ -38,6 +39,12 @@ use sqlx::postgres::PgPool;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use tracing::error;
+
+/// Gate C scoring telemetry stream (twin of `publisher::STREAM_KEY`). The
+/// `OpportunityEmitter` XADDs each ConfidenceScore here; the api-server
+/// scored-opportunities archiver consumes it into Postgres `scored_opportunities`.
+const SCORING_STREAM_KEY: &str = "arbx:scoring:scored";
+const SCORING_STREAM_MAXLEN: usize = 100_000;
 
 // ---------------------------------------------------------------------------
 // EmittedRecord — for test introspection (TASK 4)
@@ -116,6 +123,9 @@ pub struct OpportunityEmitter {
     /// Protected by a `Mutex` so the emitter can be shared via `Arc` across
     /// async tasks while still allowing test introspection.
     recorded: Mutex<Vec<EmittedRecord>>,
+    /// Gate C scoring pipeline (env-configured). Produces a ConfidenceScore per
+    /// emitted paper opportunity; observe-only by default (no emission change).
+    scoring: ScoringPipeline,
 }
 
 impl OpportunityEmitter {
@@ -131,12 +141,19 @@ impl OpportunityEmitter {
         redis: redis::aio::ConnectionManager,
         opp_dedup: Arc<OppDedup>,
     ) -> Self {
+        let scoring = ScoringPipeline::from_env();
+        tracing::info!(
+            event = "scoring.pipeline.wired",
+            enabled = scoring.enabled(),
+            hard_gate = scoring.hard_gate(),
+        );
         Self {
             pool,
             redis,
             opp_dedup,
             dry_run: false,
             recorded: Mutex::new(Vec::new()),
+            scoring,
         }
     }
 
@@ -153,6 +170,7 @@ impl OpportunityEmitter {
             opp_dedup,
             dry_run: true,
             recorded: Mutex::new(Vec::new()),
+            scoring: ScoringPipeline::from_env(),
         }
     }
 
@@ -171,10 +189,7 @@ impl OpportunityEmitter {
     /// Used by integration tests (TASK 4) to inspect the V2 pipeline's output.
     #[allow(dead_code)] // used in tests/v2_shadow_replay.rs
     pub fn recorded_emissions(&self) -> Vec<EmittedRecord> {
-        self.recorded
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default()
+        self.recorded.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
     // -----------------------------------------------------------------------
@@ -227,6 +242,16 @@ impl OpportunityEmitter {
         if !is_fresh {
             return Ok(EmitOutcome::Deduped);
         }
+
+        // ── Gate C scoring (observe-only, ADVISORY) ───────────────────────
+        // Scoring is wired here at the REAL paper opportunity emission path.
+        // dispatch_orchestrator_and_classify is simulation classification only
+        // in this repo revision. The XADD of the ConfidenceScore is non-fatal
+        // and NEVER blocks emission: opps:detected ALWAYS receives the
+        // opportunity (RULE 00 transparency + invariant). HARD_GATE only records
+        // an advisory flag for a future live execution layer — it does NOT skip
+        // the publish below in this shadow build.
+        self.score_and_publish(opportunity).await;
 
         // ── PG write ──────────────────────────────────────────────────────
         let pg_ok = self.try_insert_pg(opportunity).await;
@@ -313,6 +338,104 @@ impl OpportunityEmitter {
     // -----------------------------------------------------------------------
     // Private helpers
     // -----------------------------------------------------------------------
+
+    /// Gate C: score the (fresh) paper opportunity and XADD the ConfidenceScore
+    /// to `arbx:scoring:scored` (non-fatal). ADVISORY ONLY — it never gates the
+    /// caller's emission: `opps:detected` always receives the opportunity (RULE
+    /// 00 + invariant). `HARD_GATE=true` only records an advisory flag for a
+    /// future live execution layer. A scoring/Redis error never breaks emission.
+    async fn score_and_publish(&self, opp: &Opportunity) {
+        if !self.scoring.enabled() {
+            return;
+        }
+        let net_profit_usd = opp.net_expected_profit_usd.or(opp.expected_profit_usd);
+        let chain_id_i64 = i64::try_from(opp.chain_id).unwrap_or(-1);
+        // Flat prior: `bayesian_priors` is empty until the A.5 paper-shadow
+        // window; a priors cache feeds real PriorState in the A.5 follow-up.
+        // Passing None is the honest "wired but not calibrated" state.
+        let score = match self
+            .scoring
+            .evaluate_paper_opportunity(
+                &opp.id.to_string(),
+                &opp.pair_symbol,
+                net_profit_usd,
+                Some(chain_id_i64),
+                None,
+            )
+            .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(
+                    event = "scoring.confidence.persist_failed",
+                    error = %e,
+                    "scoring evaluate failed (non-fatal)"
+                );
+                return;
+            }
+        };
+
+        // XADD the score (non-fatal) — twin of `publisher::publish`.
+        let record = serde_json::json!({
+            "opportunity_id": opp.id.to_string(),
+            "token_pair": opp.pair_symbol,
+            "posterior_prob": score.posterior_prob,
+            "kelly_fraction": score.kelly_fraction,
+            "recommended_usd": score.recommended_position_usd,
+            "net_profit_usd": net_profit_usd,
+            "bayesian_accepted": score.bayesian_accepted,
+            "prior_log_odds": score.prior_log_odds,
+            "chain_id": chain_id_i64,
+            "source_context": score.source_context,
+            "scoring_mode": "paper",
+        });
+        match serde_json::to_string(&record) {
+            Ok(json) => {
+                let mut redis = self.redis.clone();
+                let res: redis::RedisResult<String> = redis::cmd("XADD")
+                    .arg(SCORING_STREAM_KEY)
+                    .arg("MAXLEN")
+                    .arg("~")
+                    .arg(SCORING_STREAM_MAXLEN)
+                    .arg("*")
+                    .arg("json")
+                    .arg(&json)
+                    .query_async(&mut redis)
+                    .await;
+                match res {
+                    Ok(_) => tracing::debug!(
+                        event = "scoring.confidence.persisted",
+                        token_pair = %opp.pair_symbol
+                    ),
+                    Err(e) => tracing::warn!(
+                        event = "scoring.confidence.persist_failed",
+                        error = %e
+                    ),
+                }
+            }
+            Err(e) => tracing::warn!(
+                event = "scoring.confidence.persist_failed",
+                error = %e
+            ),
+        }
+
+        // Advisory only: record what a future LIVE execution layer would do.
+        // In this SHADOW build the opportunity is ALWAYS emitted downstream.
+        if self.scoring.should_emit_downstream(&score) {
+            tracing::debug!(
+                event = "scoring.paper_opportunity.annotated",
+                token_pair = %opp.pair_symbol,
+                bayesian_accepted = score.bayesian_accepted,
+            );
+        } else {
+            tracing::info!(
+                event = "scoring.hard_gate.flagged",
+                token_pair = %opp.pair_symbol,
+                posterior_prob = score.posterior_prob,
+                "HARD_GATE advisory: a live layer would gate this; opps:detected emission preserved",
+            );
+        }
+    }
 
     /// Attempts a PG insert and updates the `db_persisted` / `db_errors` counters.
     ///

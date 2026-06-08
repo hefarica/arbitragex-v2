@@ -116,13 +116,44 @@ const SESSION_COOKIE = "arbx_admin_session";
 const SESSION_TTL_COOKIE = "arbx_admin_session_ttl";
 const SESSION_TTL_S = 8 * 60 * 60; // 8 hours
 
+/**
+ * V-AT-1 cookie translation. Returns the admin token from either the
+ * x-arbx-admin-token header (CLI / programmatic callers) or the
+ * arbx_admin_session httpOnly cookie (browser flow). When the header carries
+ * the public sentinel "__session_active__" (which the frontend sends because
+ * it cannot read the real httpOnly cookie) we MUST defer to the cookie —
+ * otherwise upstream validates the sentinel literal against ARBX_ADMIN_TOKEN
+ * and rejects every browser write. Returns null when no usable token exists.
+ */
+function resolveAdminToken(c: import("hono").Context<{ Bindings: Env }>): string | null {
+  const headerToken = c.req.header("x-arbx-admin-token");
+  if (headerToken && headerToken !== "__session_active__") return headerToken;
+  const cookieToken = getCookie(c, SESSION_COOKIE);
+  return cookieToken ?? null;
+}
+function isHttpsRequest(c: import("hono").Context<{ Bindings: Env }>): boolean {
+  const forwardedProto = c.req.header("x-forwarded-proto")?.toLowerCase();
+  if (forwardedProto === "https") return true;
+  if (forwardedProto === "http") return false;
+  try {
+    return new URL(c.req.url).protocol === "https:";
+  } catch {
+    return true;
+  }
+}
+
 app.use("*", async (c, next) => {
   const startMs = Date.now();
   const origin = c.req.header("origin") ?? "";
   const allowed = c.env.ALLOWED_ORIGINS === "*" ? "*" :
     c.env.ALLOWED_ORIGINS.split(",").map(s => s.trim()).includes(origin) ? origin : "";
   c.header("access-control-allow-origin", allowed);
-  c.header("access-control-allow-headers", "content-type,authorization,x-arbx-trace-id");
+  c.header("access-control-allow-headers", "content-type,authorization,x-arbx-trace-id,x-arbx-admin-token,x-arbx-actor");
+  // V-AT-1: must echo allow-credentials so the browser sends arbx_admin_session
+  // cookie on cross-origin admin calls. Allowed origin is already restricted
+  // (no "*"), so credentialed CORS is safe.
+  if (allowed && allowed !== "*") c.header("access-control-allow-credentials", "true");
+  c.header("access-control-allow-methods", "GET,POST,PUT,DELETE,OPTIONS");
   c.header("vary", "origin");
   if (c.req.method === "OPTIONS") return c.body(null, 204);
 
@@ -306,15 +337,16 @@ app.post("/admin/session", async (c) => {
 
   await recordAuthSuccess(c.env, ip);
   const expiresAtMs = now + SESSION_TTL_S * 1000;
+  const secureCookie = isHttpsRequest(c);
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: true,
+    secure: secureCookie,
     sameSite: "Strict",
     path: "/",
     maxAge: SESSION_TTL_S,
   });
   setCookie(c, SESSION_TTL_COOKIE, String(expiresAtMs), {
-    secure: true,
+    secure: secureCookie,
     sameSite: "Strict",
     path: "/",
     maxAge: SESSION_TTL_S,
@@ -336,6 +368,54 @@ app.post("/admin/killswitch", async (c) => {
   const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : getCookie(c, SESSION_COOKIE);
   if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
   const body = await c.req.text();
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/admin/killswitch`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": adminToken,
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    },
+    body,
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 401 | 403 | 500 | 502);
+});
+
+// GET /api/killswitch/status — public read of killswitch state.
+// Proxies to api-server's /admin/killswitch/status. 2s KV cache TTL.
+app.get("/api/killswitch/status", async (c) => {
+  const adminToken = resolveAdminToken(c);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/admin/killswitch/status`, {
+    headers: {
+      "accept": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": adminToken,
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    },
+    cf: { cacheTtl: 0, cacheEverything: false },
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 401 | 403 | 503);
+});
+
+// POST /api/killswitch/:action — activate/deactivate killswitch.
+// Maps semantic actions to the api-server's /admin/killswitch toggle.
+app.post("/api/killswitch/:action", async (c) => {
+  const action = c.req.param("action");
+  if (action !== "activate" && action !== "deactivate") {
+    return c.json({ error: "invalid_action", valid_actions: ["activate", "deactivate"] }, 400);
+  }
+  const adminToken = resolveAdminToken(c);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const body = JSON.stringify({
+    enabled: action === "activate",
+    reason: `operator_${action}`,
+    triggered_by: c.req.header("x-arbx-actor") ?? "operator",
+  });
   const upstream = await fetch(`${c.env.API_SERVER_URL}/admin/killswitch`, {
     method: "POST",
     headers: {
@@ -413,6 +493,106 @@ app.put("/admin/trading-config/:chain_id", async (c) => {
   const text = await upstream.text();
   c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
   return c.body(text, upstream.status as 200 | 400 | 401 | 403 | 500 | 502 | 503);
+});
+
+// Cartridge Filters (Idea 1 Phase-1) — public read of the per-chain route pre-filter prefs.
+app.get("/api/cartridge-filters", async (c) => {
+  const url = new URL(c.req.url);
+  const chain = url.searchParams.get("chain_id") ?? "1";
+  const upstream = await fetch(
+    `${c.env.API_SERVER_URL}/api/v1/cartridge-filters?chain_id=${encodeURIComponent(chain)}`,
+    {
+      method: "GET",
+      headers: {
+        "accept": "application/json",
+        "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+        "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+      },
+    },
+  );
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 503);
+});
+
+// Cartridge Filters (Idea 1 Phase-1) — admin upsert (PUT). Same auth pattern as trading-config.
+app.put("/admin/cartridge-filters/:chain_id", async (c) => {
+  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : getCookie(c, SESSION_COOKIE);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const chainId = c.req.param("chain_id");
+  const body = await c.req.text();
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/admin/cartridge-filters/${encodeURIComponent(chainId)}`, {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": adminToken,
+      "x-arbx-actor": c.req.header("x-arbx-actor") ?? "operator",
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    },
+    body,
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 401 | 403 | 500 | 502 | 503);
+});
+
+// Cartridge Forge (Idea 2) — public list + admin inject/lifecycle. cartridge-forge accepts
+// x-arbx-admin-token (auth normalized). Cartridges run in shadow eval (admin-gated, no capital).
+const CART_SLUG_W = /^[a-z][a-z0-9_]{2,48}$/;
+async function cartForgeAdmin(
+  c: import("hono").Context<{ Bindings: Env }>,
+  upstreamPath: string,
+  method: string,
+): Promise<Response> {
+  const _hdr = c.req.header("x-arbx-admin-token");
+  const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : getCookie(c, SESSION_COOKIE);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const body = method !== "GET" && method !== "DELETE" ? await c.req.text() : undefined;
+  const upstream = await fetch(`${c.env.API_SERVER_URL}${upstreamPath}`, {
+    method,
+    headers: {
+      "content-type": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": adminToken,
+      "x-arbx-actor": c.req.header("x-arbx-actor") ?? "operator",
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    },
+    ...(body !== undefined ? { body } : {}),
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 201 | 400 | 401 | 403 | 404 | 409 | 500 | 502 | 503);
+}
+app.get("/api/cartridges", async (c) => {
+  const url = new URL(c.req.url);
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/cartridges${url.search}`, {
+    method: "GET",
+    headers: {
+      "accept": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    },
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 500 | 502 | 503);
+});
+app.post("/admin/cartridges", (c) => cartForgeAdmin(c, "/api/v1/cartridges", "POST"));
+app.post("/admin/cartridges/:slug/pause", (c) => {
+  const slug = c.req.param("slug");
+  if (!CART_SLUG_W.test(slug)) return c.json({ error: "invalid_slug" }, 400);
+  return cartForgeAdmin(c, `/api/v1/cartridges/${slug}/pause`, "POST");
+});
+app.post("/admin/cartridges/:slug/resume", (c) => {
+  const slug = c.req.param("slug");
+  if (!CART_SLUG_W.test(slug)) return c.json({ error: "invalid_slug" }, 400);
+  return cartForgeAdmin(c, `/api/v1/cartridges/${slug}/resume`, "POST");
+});
+app.delete("/admin/cartridges/:slug", (c) => {
+  const slug = c.req.param("slug");
+  if (!CART_SLUG_W.test(slug)) return c.json({ error: "invalid_slug" }, 400);
+  return cartForgeAdmin(c, `/api/v1/cartridges/${slug}`, "DELETE");
 });
 
 // Operations PnL — Sprint 3 PMI/EVM KPI surface (public read, numbers only).
@@ -525,11 +705,50 @@ app.get("/api/scoring/status", (c) => proxy(c, "/api/v1/scoring/status", "arbx:c
 app.get("/api/risk/circuit-breakers/status", (c) => proxy(c, "/api/v1/risk/circuit-breakers/status", "arbx:cache:cb-status", 15));
 app.get("/api/risk/circuit-breakers/events", (c) => proxy(c, "/api/v1/risk/circuit-breakers/events", "arbx:cache:cb-events", 30));
 
+// FASE B Gate-C — route-discovery OUTCOMES analytics (read-only over the durable
+// Postgres `route_discovery_outcomes` table; shadow emitter's resolved outcomes +
+// Paso 9 `reason` column). Read-side of the passive sink: hit-rate series + reason
+// distribution (the "why 0%"). proxy() forwards ?hours=/?limit= and query-scopes
+// the KV cache key, so 24h vs 14d windows never collide. 15s TTL. Observe-only.
+app.get("/api/route-discovery-outcomes/summary", (c) => proxy(c, "/api/v1/route-discovery-outcomes/summary", "arbx:cache:rdo-summary", 15));
+app.get("/api/route-discovery-outcomes", (c) => proxy(c, "/api/v1/route-discovery-outcomes", "arbx:cache:rdo-list", 15));
+
+// Topology Vault — Admin-token gated; edge forwards header.
+// GET snapshot uses short cache (5s) since topology changes infrequently.
+// POST mutations is pass-through (mutation).
+app.get("/api/admin/topology/snapshot", async (c) => {
+  const adminToken = resolveAdminToken(c);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/admin/topology/snapshot`, {
+    headers: { "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN, "x-arbx-admin-token": adminToken },
+  });
+  const t = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(t, upstream.status as 200 | 401 | 503);
+});
+app.post("/api/admin/topology/mutations", async (c) => {
+  const adminToken = resolveAdminToken(c);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const body = await c.req.text();
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/admin/topology/mutations`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": adminToken,
+    },
+    body,
+  });
+  const t = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(t, upstream.status as 200 | 400 | 401 | 503);
+});
+
 // B1 — Chains Admin CRUD. Admin-token gated; edge forwards header.
 // GET list/single use short cache (5s) since runtime chain state changes
 // infrequently. POST/PUT/DELETE/probe are pass-through (mutations).
 app.get("/api/admin/chains", async (c) => {
-  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  const adminToken = resolveAdminToken(c);
   if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
   const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains${new URL(c.req.url).search}`, {
     headers: { "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN, "x-arbx-admin-token": adminToken },
@@ -539,7 +758,7 @@ app.get("/api/admin/chains", async (c) => {
   return c.body(t, upstream.status as 200 | 401 | 503);
 });
 app.get("/api/admin/chains/:chain_id", async (c) => {
-  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  const adminToken = resolveAdminToken(c);
   if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
   const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains/${encodeURIComponent(c.req.param("chain_id") ?? "")}`, {
     headers: { "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN, "x-arbx-admin-token": adminToken },
@@ -549,7 +768,7 @@ app.get("/api/admin/chains/:chain_id", async (c) => {
   return c.body(t, upstream.status as 200 | 404 | 503);
 });
 app.post("/api/admin/chains", async (c) => {
-  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  const adminToken = resolveAdminToken(c);
   if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
   const body = await c.req.text();
   const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains`, {
@@ -562,7 +781,7 @@ app.post("/api/admin/chains", async (c) => {
   return c.body(t, upstream.status as 200 | 201 | 400 | 409 | 503);
 });
 app.put("/api/admin/chains/:chain_id", async (c) => {
-  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  const adminToken = resolveAdminToken(c);
   if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
   const body = await c.req.text();
   const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains/${encodeURIComponent(c.req.param("chain_id") ?? "")}`, {
@@ -575,7 +794,7 @@ app.put("/api/admin/chains/:chain_id", async (c) => {
   return c.body(t, upstream.status as 200 | 400 | 404 | 503);
 });
 app.delete("/api/admin/chains/:chain_id", async (c) => {
-  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  const adminToken = resolveAdminToken(c);
   if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
   const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains/${encodeURIComponent(c.req.param("chain_id") ?? "")}`, {
     method: "DELETE",
@@ -586,7 +805,7 @@ app.delete("/api/admin/chains/:chain_id", async (c) => {
   return c.body(t, upstream.status as 200 | 404 | 503);
 });
 app.post("/api/admin/chains/:chain_id/probe", async (c) => {
-  const _hdr = c.req.header("x-arbx-admin-token"); const adminToken = (_hdr && _hdr !== "__session_active__") ? _hdr : null;
+  const adminToken = resolveAdminToken(c);
   if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
   const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains/${encodeURIComponent(c.req.param("chain_id") ?? "")}/probe${new URL(c.req.url).search}`, {
     method: "POST",

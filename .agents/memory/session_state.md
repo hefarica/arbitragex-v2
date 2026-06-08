@@ -1,4 +1,26 @@
-# OMEGA CORTEX — Estado de sesión persistido (pre-/compact 2026-05-12 evening)
+# OMEGA CORTEX — REPORTE SESIÓN C (Integrador + Guardián) · 2026-06-06
+
+> Broadcast a las sesiones A (searcher-rs/math-engine) y B (shared-rs/frontend).
+> Branch activo: `feat/cartridge-hotpath-shadow`. Remote `github` sincronizado en **`88ed161`**.
+> (El histórico de 2026-05-12 [branch main] queda ARCHIVADO más abajo — no borrar.)
+
+## Estado del Integration Gate (`scripts/integration-gate.sh`)
+- Steps 1-6 **GREEN**: doctrine · OMEGA SEAL · Clause-34 (no adoptada) · **Rust 122 passed** (`cargo test -p searcher-rs -p shared-rs -p math-engine --lib`) · tsc api+frontend · invariante (echo).
+- Step 7 (E2E live) **RED quirúrgico → solo `SHADOWED:/status`**. Matriz: 34 PASS / 1 SHADOWED / 8 RATE_LIMITED / **0 FAIL** (43 rutas).
+- La suite live tenía falsos positivos (`/`, `/recon`, `/admin/signin`, `/chains`, `/live-readiness`) por regex amplia / h1 obligatorio / 429 in-page / palabra "mock" en copy anti-mock. **CORREGIDO test-only en `88ed161`** (detección estructural EdgeState role=alert dentro de `<main>`, h1 relajado, 429→RATE_LIMITED, FORBIDDEN→solo "lorem ipsum"). NO se relajó ningún defecto real.
+
+## ACCIÓN REQUERIDA POR EQUIPO
+- **B / edge → ÚNICO bloqueador del Step 7:** `/status` está SHADOWED — el edge worker `app.get("/status", …)` ([edge/worker/src/index.ts:290](edge/worker/src/index.ts#L290)) eclipsa la ruta SPA `/status`; deep-link/refresh devuelve JSON. Fix: renombrar la health route a `/api/status` o content-negotiate por `Accept`. Mientras siga, Step 7 = RED (correcto).
+- **B / frontend-contract:** el contract-drift de `/pools` (schema `{success,data}` vs API `{count,items}`) **YA SE RESOLVIÓ upstream** — `/api/pools` vivo ahora devuelve `{success,data}` y la página renderiza. Confirmar que `DefiPoolsResponseSchema` quedó alineado en el build desplegado para que no regrese.
+- **A / Block 2:** spec listo en [docs/superpowers/specs/2026-06-05-block2-factory-resolution-uuid-drift.md](docs/superpowers/specs/2026-06-05-block2-factory-resolution-uuid-drift.md) (commit `f8057fb`). **P0 obligatorio antes de Block 2:** reconciliar drift UUID↔i64/u64 en `pool_discovery.rs` (get_factories L97 decodifica `f.id` UUID como i64 → factories NUNCA cargan; upsert_pool/upsert_token mismo bug). Luego Block 2 = **RESOLVE on-chain** (leer `pool.factory()` → lookup `factories.id` por (chain,address) → token-safety → hydrate_and_persist; skip+observation si no seeded). Fork BYPASS (`arbx:config:pools`) descartado (canal sin consumidor).
+- **A o B / Block 3 IO:** `risk_ledger_io.rs` NO existe aún; `compute_breakers` (math pura, `shared-rs/src/risk_ledger.rs`) está; falta el shell que lea `paper_trade_runs` y publique snapshot a `arbx:risk:breakers`.
+
+## Gates de merge→main (sin cambios — el operador es el único driver)
+merge→main + deploy = (A Block 2 verde) + (B Block 3 IO verde) + **fix `/status` (B/edge)** + disparo del operador. `opps:detected` invariante intacto (no se deployó nada). WIP ajeno en árbol (token-enricher/compose.prod/.env.example) — NO tocado por C.
+
+---
+
+# OMEGA CORTEX — Estado de sesión persistido (pre-/compact 2026-05-12 evening) [ARCHIVADO]
 
 > Post-compact: primera acción obligatoria → `cat .agents/memory/session_state.md`.
 > El chat es volátil. Los archivos persisten. NUNCA compactar sin persistir.

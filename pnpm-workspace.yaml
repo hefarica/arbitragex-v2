@@ -1,0 +1,15 @@
+packages:
+  - 'shared-ts'
+  - 'backend/selector-api'
+  - 'backend/api-server'
+  - 'edge/worker'
+  - 'edge/dev-local'
+  - 'frontend'
+allowBuilds:
+  cpu-features: true
+  esbuild: true
+  protobufjs: true
+  sharp: true
+  ssh2: true
+  unrs-resolver: true
+  workerd: true

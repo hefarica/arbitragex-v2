@@ -1,0 +1,217 @@
+$ npm run test --workspaces --if-present
+
+> @arbx/shared@0.1.0 test
+> vitest run
+
+
+ RUN  v1.6.1 /home/ubuntu/arbitragex-v2-latest-audit/shared-ts
+
+ ✓ src/__tests__/metrics-naming.test.ts  (6 tests) 8ms
+ ✓ src/circuit_breaker/index.test.ts  (11 tests) 20ms
+ ✓ src/killswitch/killswitch.test.ts  (3 tests) 6ms
+ ✓ src/__tests__/api-contracts.test.ts  (7 tests) 10ms
+ ✓ src/__tests__/security-headers.test.ts  (5 tests) 98ms
+
+ Test Files  5 passed (5)
+      Tests  32 passed (32)
+   Start at  14:39:50
+   Duration  819ms (transform 281ms, setup 0ms, collect 656ms, tests 142ms, environment 2ms, prepare 781ms)
+
+
+> @arbx/selector-api@0.1.0 test
+> vitest run
+
+
+ RUN  v1.6.1 /home/ubuntu/arbitragex-v2-latest-audit/backend/selector-api
+
+ ✓ src/policy/engine.test.ts  (5 tests) 5ms
+ ✓ src/scoring/bayesian.test.ts  (19 tests) 32ms
+ ✓ src/score.test.ts  (4 tests) 5ms
+ ✓ src/pipeline-invariants.test.ts  (7 tests) 6ms
+ ✓ src/scoring/engine.test.ts  (10 tests) 11ms
+ ✓ src/token_safety/client.test.ts  (6 tests) 6ms
+
+ Test Files  6 passed (6)
+      Tests  51 passed (51)
+   Start at  14:39:51
+   Duration  731ms (transform 176ms, setup 1ms, collect 302ms, tests 65ms, environment 1ms, prepare 766ms)
+
+
+> @arbx/api-server@0.1.0 test
+> vitest run
+
+
+ RUN  v1.6.1 /home/ubuntu/arbitragex-v2-latest-audit/backend/api-server
+
+ ✓ src/services/tokenValidation/score.test.ts  (11 tests) 9ms
+ ✓ src/simulation/computeSimulatedNet.test.ts  (24 tests) 15ms
+stderr | src/readiness/readiness.test.ts > verifyAll() integration > returns 17 items + summary; flip_blocked=true when any non-green
+[ioredis] Unhandled error event: Error: getaddrinfo ENOTFOUND redis
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:120:26)
+
+ ✓ src/readiness/readiness.test.ts  (28 tests) 84ms
+ ✓ src/routes/risk-circuit-breakers.test.ts  (22 tests) 14ms
+ ❯ test/opportunities-live.test.ts  (6 tests) 11ms
+ ✓ src/routes/system-manifest.test.ts  (10 tests) 123ms
+ ❯ test/migrations.test.ts  (15 tests) 10ms
+ ✓ src/routes/readiness-extras.test.ts  (20 tests) 14ms
+ ✓ src/routes/topology-vault.test.ts  (7 tests) 135ms
+ ✓ src/audit-events.test.ts  (10 tests) 23ms
+ ❯ src/websocket-rooms.test.ts  (0 test)
+ ✓ src/contract-isomorphism.test.ts  (8 tests) 14ms
+ ❯ src/websocket.test.ts  (0 test)
+ ✓ src/routes/agents-status.test.ts  (14 tests) 20ms
+ ✓ src/routes/admin-chains.test.ts  (16 tests) 10ms
+ ✓ src/routes/scoring-status.test.ts  (12 tests) 7ms
+ ✓ src/services/tokenRegistry.test.ts  (12 tests) 614ms
+ ✓ src/routes/stubs.test.ts  (11 tests) 108ms
+ ✓ src/lib/pii-wireado-recursive.test.ts  (5 tests) 178ms
+ ✓ src/recon-timeseries.test.ts  (11 tests) 6ms
+ ✓ src/lib/registry-engine.pii.test.ts  (3 tests) 4ms
+ ✓ src/services/pmiCalculator.test.ts  (5 tests) 5ms
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/websocket-rooms.test.ts [ src/websocket-rooms.test.ts ]
+ FAIL  src/websocket.test.ts [ src/websocket.test.ts ]
+Error: Failed to load url socket.io-client (resolved id: socket.io-client) in /home/ubuntu/arbitragex-v2-latest-audit/backend/api-server/src/websocket-rooms.test.ts. Does the file exist?
+ ❯ loadAndTransform ../../node_modules/.pnpm/vite@5.4.21_@types+node@20.19.41_lightningcss@1.32.0/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  test/migrations.test.ts [ test/migrations.test.ts ]
+Error: Could not find a working container runtime strategy
+ ❯ getContainerRuntimeClient ../../node_modules/.pnpm/testcontainers@12.0.1/node_modules/testcontainers/build/container-runtime/clients/client.js:67:11
+ ❯ GenericContainer.start ../../node_modules/.pnpm/testcontainers@12.0.1/node_modules/testcontainers/build/generic-container/generic-container.js:62:24
+ ❯ test/migrations.test.ts:11:15
+      9| 
+     10| beforeAll(async () => {
+     11|   container = await new GenericContainer("postgres:15")
+       |               ^
+     12|     .withEnvironment({
+     13|       POSTGRES_PASSWORD: "test",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  test/migrations.test.ts [ test/migrations.test.ts ]
+TypeError: Cannot read properties of undefined (reading 'end')
+ ❯ test/migrations.test.ts:39:14
+     37| 
+     38| afterAll(async () => {
+     39|   await pool.end();
+       |              ^
+     40|   await container.stop();
+     41| }, 30_000);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  test/opportunities-live.test.ts [ test/opportunities-live.test.ts ]
+Error: Could not find a working container runtime strategy
+ ❯ getContainerRuntimeClient ../../node_modules/.pnpm/testcontainers@12.0.1/node_modules/testcontainers/build/container-runtime/clients/client.js:67:11
+ ❯ GenericContainer.start ../../node_modules/.pnpm/testcontainers@12.0.1/node_modules/testcontainers/build/generic-container/generic-container.js:62:24
+ ❯ test/opportunities-live.test.ts:52:15
+     50|   //   GRANT CONNECT ON DATABASE arbitragex
+     51|   // succeeds. This mirrors the pattern from migrations.test.ts.
+     52|   container = await new GenericContainer("postgres:15")
+       |               ^
+     53|     .withEnvironment({
+     54|       POSTGRES_PASSWORD: "test",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+ FAIL  test/opportunities-live.test.ts [ test/opportunities-live.test.ts ]
+TypeError: Cannot read properties of undefined (reading 'end')
+ ❯ test/opportunities-live.test.ts:97:14
+     95| 
+     96| afterAll(async () => {
+     97|   await pool.end();
+       |              ^
+     98|   await container.stop();
+     99| }, 30_000);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯
+
+ Test Files  4 failed | 18 passed (22)
+      Tests  229 passed (250)
+   Start at  14:39:52
+   Duration  2.71s (transform 696ms, setup 3ms, collect 3.98s, tests 1.40s, environment 5ms, prepare 2.79s)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /home/ubuntu/arbitragex-v2-latest-audit/backend/api-server
+npm error workspace @arbx/api-server@0.1.0
+npm error location /home/ubuntu/arbitragex-v2-latest-audit/backend/api-server
+npm error command failed
+npm error command sh -c vitest run
+
+
+> @arbx/edge-worker@0.1.0 test
+> vitest run --passWithNoTests
+
+
+ RUN  v1.6.1 /home/ubuntu/arbitragex-v2-latest-audit/edge/worker
+
+include: **/*.{test,spec}.?(c|m)[jt]s?(x)
+exclude:  **/node_modules/**, **/dist/**, **/cypress/**, **/.{idea,git,cache,output,temp}/**, **/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build,eslint,prettier}.config.*
+watch exclude:  **/node_modules/**, **/dist/**
+No test files found, exiting with code 0
+
+
+> @arbx/edge-dev-local@0.1.0 test
+> vitest run
+
+
+ RUN  v1.6.1 /home/ubuntu/arbitragex-v2-latest-audit/edge/dev-local
+
+ ✓ src/admin-token-resolver.test.ts  (11 tests) 6ms
+ ✓ src/admin-session.test.ts  (7 tests) 7ms
+ ✓ src/audit-emit.test.ts  (6 tests) 19ms
+
+ Test Files  3 passed (3)
+      Tests  24 passed (24)
+   Start at  14:39:56
+   Duration  463ms (transform 101ms, setup 0ms, collect 155ms, tests 32ms, environment 1ms, prepare 340ms)
+
+
+> @arbx/frontend@0.1.0 test
+> vitest run
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+
+ RUN  v1.6.1 /home/ubuntu/arbitragex-v2-latest-audit/frontend
+
+ ✓ lib/schemas.test.ts  (13 tests) 22ms
+ ✓ lib/statemachine/__tests__/useRuntimeAckSocket.test.ts  (5 tests) 21ms
+ ✓ features/opportunities/__tests__/OpportunityEvidenceCell.test.tsx  (21 tests) 69ms
+ ✓ lib/api-client.test.ts  (10 tests) 56ms
+ ✓ app/admin/chains/__tests__/ChainsAdmin.test.tsx  (10 tests) 58ms
+ ✓ features/opportunities/socket-lifecycle.test.ts  (8 tests) 11ms
+ ✓ lib/__tests__/format.test.ts  (26 tests) 15ms
+ ✓ lib/admin-token.test.ts  (13 tests) 15ms
+ ✓ app/omega-s5/registry/[entity]/snapshot.test.ts  (7 tests) 75ms
+ ✓ lib/formatters.test.ts  (18 tests) 19ms
+ ✓ features/opportunities/__tests__/OpportunityEvidenceCellScoring.test.tsx  (10 tests) 37ms
+ ✓ components/__tests__/TokenChip.test.tsx  (4 tests) 45ms
+ ✓ components/__tests__/SystemGuardBanner.test.tsx  (8 tests) 7ms
+ ✓ app/admin/signin/submitHandler.test.ts  (6 tests) 13ms
+ ✓ features/home/__tests__/ProgressRealCard.test.tsx  (11 tests) 8ms
+ ✓ app/admin/__tests__/v-at-1-invariants.test.ts  (2 tests) 19ms
+ ✓ features/table/keyboard.test.ts  (8 tests) 5ms
+ ✓ components/__tests__/DeterministicAvatar.test.tsx  (5 tests) 32ms
+ ✓ components/__tests__/StatusPill.test.tsx  (10 tests) 15ms
+ ✓ features/readiness/__tests__/GoNoGoPanel.test.tsx  (6 tests) 5ms
+ ✓ components/__tests__/CrossChainSlot.test.tsx  (2 tests) 18ms
+ ✓ features/readiness/__tests__/AgentTeamsPanel.test.tsx  (5 tests) 5ms
+ ✓ features/readiness/__tests__/BlockersPanel.test.tsx  (4 tests) 5ms
+ ✓ features/readiness/__tests__/ConfidenceScoringPanel.test.tsx  (4 tests) 12ms
+ ✓ lib/api-client-credentials.test.ts  (1 test) 78ms
+ ✓ components/__tests__/AdminSessionBadge.test.tsx  (1 test) 30ms
+ ✓ features/risk/__tests__/RiskCircuitPanel.test.tsx  (5 tests) 14ms
+
+ Test Files  27 passed (27)
+      Tests  223 passed (223)
+   Start at  14:39:57
+   Duration  3.22s (transform 810ms, setup 597ms, collect 4.13s, tests 709ms, environment 7ms, prepare 3.67s)
+
+[ELIFECYCLE] Command failed with exit code 1.
+Tests failed

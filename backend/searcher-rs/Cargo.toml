@@ -36,6 +36,15 @@ bigdecimal.workspace = true
 rand.workspace = true
 prioritization-spine = { workspace = true }
 math-engine = { workspace = true }
+async-trait.workspace = true
+arc-swap = "1"
+# Phase 1 route-discovery: parse config/strategies/route_applicability.yaml at
+# boot (fail-safe to embedded safe defaults when absent/invalid).
+serde_yaml = "0.9"
+
+# FASE OMEGA — Dynamic strategy cartridge runtime (Rhai scripting engine).
+rhai.workspace = true
+sha2.workspace = true
 
 # Sprint 4 — REVM-backed simulator (Phase A.1+A.2 fail-closed wire).
 # Enabled by default at compile time; runtime is gated by RPC_HTTP_<chain>
@@ -55,6 +64,7 @@ sed-core = { path = "../sed-core", optional = true }
 default = ["v2-simulator"]
 v2-simulator = ["dep:simulator-v2"]
 paper-shadow = ["dep:lazy_static", "dep:sed-core", "sed-core?/filtration", "sed-core?/eigenstate", "sed-core?/metrics"]
+experimental-engines = []
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros","rt-multi-thread","test-util"] }
@@ -63,3 +73,11 @@ tokio = { version = "1", features = ["macros","rt-multi-thread","test-util"] }
 # unit tests). Production code path uses `reqwest` directly; wiremock spawns
 # a localhost server the worker treats as the configured base URL.
 wiremock = "0.6"
+# A.4 fork-validation integration test (`tests/multistep_fork.rs`, gated
+# `#[cfg(feature = "v2-simulator")]`) constructs a `simulator_v2::SimulatorV2`
+# directly to drive `execute_multistep_revm` against a real archive RPC.
+# Integration tests only see the crate's dev-deps — not its optional
+# `[dependencies]` — so simulator-v2 must be nameable here too. Test-scoped:
+# this does NOT change the shipped library's public API, and it's a harmless
+# build when the feature is off (the test simply isn't compiled).
+simulator-v2 = { path = "../simulator-v2" }

@@ -108,6 +108,18 @@ export interface DriftReport {
   differences: DriftDifference[];
   /** Human-readable summary with next steps. */
   recommendation: string;
+  // REPAIR c815ef9: campos emitidos por backend que la UI ya consumía;
+  // se declaran como requeridos (DriftPanel asume su presencia).
+  /** ISO-8601 timestamp of when this report was generated. */
+  checked_at: string;
+  /** Total entities compared during this pass. */
+  total_entities_checked: number;
+  /** Total individual differences across all entities. */
+  total_differences: number;
+  /** Labels of layers that responded successfully (e.g. ["postgres","redis"]). */
+  layers_reachable: string[];
+  /** Labels of layers that did not respond / are unhealthy. */
+  layers_unreachable: string[];
 }
 
 // ---------------------------------------------------------------------------

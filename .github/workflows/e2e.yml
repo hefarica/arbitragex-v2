@@ -6,6 +6,11 @@ on:
   push:
     branches: [main]
 
+# M2 Capa1 Fase 4 — read-only token. upload-artifact uses GITHUB_TOKEN
+# implicitly but only requires contents:read in the v4+ artifact API.
+permissions:
+  contents: read
+
 jobs:
   playwright:
     runs-on: ubuntu-latest
@@ -25,10 +30,50 @@ jobs:
           npm install
           npx playwright install --with-deps chromium
 
+      - name: Materialize .env from .env.example (Ghost-safe — placeholders T2 only)
+        run: |
+          # Doctrina: .env.example contiene SOLO placeholders públicos T2 (puertos,
+          # log levels, feature flags). NO contiene secretos reales. Compose.dev.yml
+          # requiere env_file: ../.env por design — esto es materialización CI legítima.
+          cp .env.example .env
+          # ARBX-HARDENING (next.config.js): NEXT_PUBLIC_EDGE_URL/WS_URL must NOT
+          # point to localhost when NODE_ENV=production (forced by frontend/Dockerfile).
+          # Use Docker DNS service names — these are valid in both build and runtime.
+          {
+            echo "NEXT_PUBLIC_EDGE_URL=http://edge:8787"
+            echo "NEXT_PUBLIC_WS_URL=http://api-server:3000"
+          } >> .env
+          # OMEGA-102 hot-fix (SECURE_BOOT): api-server / edge / shared-ts run
+          # assertSecureBootTokens() at boot which REJECTS any token shorter than
+          # 32 bytes (shared-ts/src/middleware/index.ts:51). The .env.example file
+          # uses literal "<run: openssl rand -base64 48>" placeholders (30 chars)
+          # which fail this check and cause api-server to crash-loop, producing
+          # 502s on edge proxy → playwright timeouts. We generate ephemeral CI
+          # tokens here (48-byte base64 ≈ 64 chars) — these never leave the
+          # ephemeral CI runner and are NOT secrets.
+          {
+            echo "ARBX_ADMIN_TOKEN=$(openssl rand -base64 48 | tr -d '\n')"
+            echo "ARBX_EDGE_TOKEN=$(openssl rand -base64 48 | tr -d '\n')"
+            echo "ARBX_SERVICE_TOKEN=$(openssl rand -base64 48 | tr -d '\n')"
+          } >> .env
+          echo "::notice::.env materialized + Docker DNS endpoints + SECURE_BOOT tokens injected"
+
       - name: Bring up compose stack (dev — defaults OK for CI)
         run: |
-          docker compose -f docker/compose.dev.yml up -d --build \
-            postgres redis frontend edge api-server
+          # OMEGA-102 hot-fix: --env-file .env is REQUIRED so compose reads the
+          # root .env (NEXT_PUBLIC_EDGE_URL=http://edge:8787 injected at line 43
+          # above), instead of falling back to compose.dev.yml's literal default
+          # http://localhost:8787 which triggers the next.config.js R2 guard
+          # under NODE_ENV=production during the frontend builder stage.
+          docker compose --env-file .env -f docker/compose.dev.yml up -d postgres redis
+          echo "waiting for postgres"
+          for i in $(seq 1 30); do
+            if docker exec arbitragex-v2-postgres-1 pg_isready -U postgres >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          ./automation/scripts/migrate.sh
+          docker compose --env-file .env -f docker/compose.dev.yml up -d --build \
+            frontend edge api-server
           echo "stack up; waiting for frontend"
           for i in $(seq 1 60); do
             if curl -sf http://localhost:5173 >/dev/null; then
@@ -73,3 +118,37 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose -f docker/compose.dev.yml down -v
+
+  lighthouse-budget:
+    name: Lighthouse Performance Budget (F-14)
+    needs: [playwright]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Install LHCI
+        run: npm install -g @lhci/cli@0.13.x
+
+      - name: Wait for frontend
+        run: |
+          LHCI_BASE_URL="${{ secrets.LHCI_BASE_URL }}"
+          if [ -z "$LHCI_BASE_URL" ]; then
+            echo "⚠️ LHCI_BASE_URL not set — skipping Lighthouse"
+            exit 0
+          fi
+          curl --retry 10 --retry-delay 5 -sf "$LHCI_BASE_URL/" > /dev/null
+          echo "✅ Frontend accessible"
+
+      - name: Run Lighthouse CI
+        run: |
+          LHCI_BASE_URL="${{ secrets.LHCI_BASE_URL }}"
+          [ -z "$LHCI_BASE_URL" ] && { echo "⚠️ LHCI_BASE_URL not set — skip"; exit 0; }
+          lhci autorun --config=lighthouserc.json
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+          LHCI_BASE_URL: ${{ secrets.LHCI_BASE_URL }}

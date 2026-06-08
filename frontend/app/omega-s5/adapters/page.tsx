@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useContracts } from "@/lib/hooks/useContracts";
 import type { ContractEntity } from "@/lib/registries/types-omni";
 
 const KINDS: Array<ContractEntity["contract_kind"]> = [
@@ -8,11 +8,26 @@ const KINDS: Array<ContractEntity["contract_kind"]> = [
 ];
 
 export default function AdaptersPage() {
-  const [rows, setRows] = useState<ContractEntity[]>([]);
-  useEffect(() => {
-    fetch("/api/contracts").then((r) => r.json())
-      .then((d) => setRows((d.rows ?? []).filter((c: ContractEntity) => KINDS.includes(c.contract_kind))));
-  }, []);
+  const { data: rows, isLoading, error } = useContracts({ contractKinds: KINDS });
+
+  if (isLoading) {
+    return (
+      <div>
+        <h1 className="text-xl font-semibold">DEX Adapters</h1>
+        <p className="text-sm text-muted-foreground">Loading...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div>
+        <h1 className="text-xl font-semibold">DEX Adapters</h1>
+        <p className="text-sm text-destructive">Error: {error}</p>
+      </div>
+    );
+  }
+
   return (
     <div>
       <h1 className="text-xl font-semibold">DEX Adapters</h1>

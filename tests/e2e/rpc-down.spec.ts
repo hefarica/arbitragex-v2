@@ -47,7 +47,8 @@ testMaybe("opportunities page shows empty state, not an error", async ({ page })
   ];
   let any = false;
   for (const re of honestMarkers) {
-    if (await page.getByText(re).first().isVisible().catch(() => false)) {
+    const matches = page.getByText(re);
+    if (await page.getByText(re).isVisible().catch(() => false)) {
       any = true;
       break;
     }
@@ -63,7 +64,7 @@ testMaybe("platform overview dashboard link (if exposed) does not fabricate", as
   await expect(page.locator("h1")).toBeVisible();
 
   // If the KPI cards exist, "Attempts" KPI should be 0 when there's no RPC.
-  const attemptsCard = page.locator('[class*="card"]', { hasText: /attempts/i }).first();
+  const attemptsCard = page.locator('[class*="card"]', { hasText: /attempts/i });
   if (await attemptsCard.count()) {
     await expect(attemptsCard.locator('text=/^0$/')).toBeVisible();
   }

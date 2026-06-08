@@ -209,7 +209,7 @@ export const AppConfigViewSchema = z.object({
     service_name_prefix: z.string(),
   }),
   risk: z.record(z.string(), z.union([z.number(), z.boolean()])),
-  execution: z.record(z.string(), z.union([z.number(), z.boolean(), z.string()])),
+  execution: z.record(z.string(), z.union([z.number(), z.boolean(), z.string(), z.record(z.string(), z.object({ enabled: z.boolean(), source: z.string() }))])),
   observability: z.record(z.string(), z.union([z.boolean(), z.string()])),
   chains: z.array(
     z.object({

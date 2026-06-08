@@ -1,0 +1,192 @@
+name: Ω-S5++ APEX Deploy edge-only (Control Plane)
+# Hot-swap quirúrgico del contenedor edge sin tocar el Hot-Path (Rust/api-server/searcher).
+# Doctrina: Mirror Law + Ghost Protocol + Crucible Sovereignty.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: 'Commit SHA a desplegar (default: HEAD de main)'
+        required: false
+        default: ''
+
+concurrency:
+  group: deploy-arbx-edge
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: 195.201.235.70
+  COMPOSE_FILE: docker/compose.prod.yml
+
+jobs:
+  deploy-edge:
+    name: Edge-only deploy + Sovereign rollback
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 🔐 Setup SSH
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ env.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+          cat > ~/.ssh/config <<EOF
+          Host arbx
+            HostName ${{ env.VPS_HOST }}
+            User root
+            Port 22
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+            ServerAliveInterval 30
+          EOF
+          chmod 600 ~/.ssh/config
+          ssh arbx 'echo "SSH OK · $(hostname)"'
+
+      - name: "[E0] Pre-flight + identify edge service"
+        run: |
+          ssh arbx 'bash -s' <<'EOSSH'
+          set -e
+          cd /opt/arbitragex-v2
+          echo "=== Current edge container ==="
+          docker inspect arbitragex-v2-edge-1 --format 'image={{.Image}} cmd={{.Config.Cmd}} created={{.Created}}'
+          echo ""
+          echo "=== git status ==="
+          git status --short
+          echo ""
+          echo "=== Stashes preservados (Operator WIP) ==="
+          git stash list
+          EOSSH
+
+      - name: "[E1] Git fetch + checkout target SHA"
+        run: |
+          TARGET="${{ inputs.target_sha }}"
+          ssh arbx "bash -s" <<EOSSH
+          set -e
+          cd /opt/arbitragex-v2
+          git fetch origin main --depth=1
+          if [ -n "$TARGET" ]; then
+            echo "=== Checkout explicit SHA: $TARGET ==="
+            git fetch origin "$TARGET" --depth=1 || true
+            git checkout "$TARGET"
+          else
+            echo "=== Reset to origin/main ==="
+            git reset --mixed origin/main
+            git checkout main
+          fi
+          NEW_HEAD=\$(git rev-parse --short HEAD)
+          echo "NEW_HEAD=\$NEW_HEAD"
+          echo ""
+          echo "=== Sanity: edge/dev-local/src/index.ts has adminProxy on /api/admin/chains? ==="
+          grep -c 'adminProxy.*api/v1/admin/chains' edge/dev-local/src/index.ts || echo "0 (will need to rebuild)"
+          EOSSH
+
+      - name: "[E2] Backup current edge image (sovereign rollback target)"
+        run: |
+          ssh arbx 'bash -s' <<'EOSSH'
+          set -e
+          CURRENT_IMG_ID=$(docker inspect arbitragex-v2-edge-1 --format '{{.Image}}' | sed 's/sha256://')
+          docker tag "$CURRENT_IMG_ID" arbitragex-v2-edge:pre-wiring-backup
+          echo "$CURRENT_IMG_ID" > /root/last-known-good-edge.id
+          echo "✓ Backup tag: arbitragex-v2-edge:pre-wiring-backup ($CURRENT_IMG_ID)"
+          docker images arbitragex-v2-edge --format 'table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}'
+          EOSSH
+
+      - name: "[E3] Build edge (single service, with cache)"
+        run: |
+          ssh arbx 'bash -s' <<'EOSSH'
+          set -e
+          cd /opt/arbitragex-v2
+          START=$(date +%s)
+          echo "=== Pre-build resources ==="; free -h | head -2; df -h / | tail -1
+          # Try a few likely service names — the compose file may name it `edge`, `edge-dev-local`, or similar.
+          if docker compose --env-file .env -f ${COMPOSE_FILE:-docker/compose.prod.yml} config --services 2>/dev/null | grep -E '^edge$|^edge-dev-local$' > /tmp/svc; then
+            SVC=$(head -1 /tmp/svc)
+          else
+            SVC=$(docker compose --env-file .env -f docker/compose.prod.yml config --services 2>&1 | grep -i edge | head -1)
+          fi
+          echo "edge service name in compose: $SVC"
+          if [ -z "$SVC" ]; then
+            echo "❌ Could not locate edge service in compose; aborting"
+            docker compose --env-file .env -f docker/compose.prod.yml config --services
+            exit 1
+          fi
+          echo "=== Build $SVC ==="
+          docker compose --env-file .env -f docker/compose.prod.yml build "$SVC" 2>&1 | tail -40
+          END=$(date +%s)
+          echo "✓ Build completed in $((END - START))s"
+          echo "$SVC" > /root/last-edge-svc.txt
+          echo "=== Post-build image ==="
+          docker images "arbitragex-v2-${SVC}" --format 'table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}\t{{.Size}}' 2>/dev/null || \
+          docker images | grep -i edge | head -5
+          EOSSH
+
+      - name: "[E4] Hot-swap edge (--no-deps, Hot-Path untouched)"
+        run: |
+          ssh arbx 'bash -s' <<'EOSSH'
+          set -e
+          cd /opt/arbitragex-v2
+          SVC=$(cat /root/last-edge-svc.txt)
+          BEFORE_ID=$(docker inspect arbitragex-v2-edge-1 --format '{{.Image}}' 2>/dev/null | sed 's/sha256://' || echo "none")
+          echo "BEFORE_ID=$BEFORE_ID"
+          echo "=== docker compose up -d --no-deps $SVC ==="
+          docker compose --env-file .env -f docker/compose.prod.yml up -d --no-deps "$SVC"
+          sleep 4
+          AFTER_ID=$(docker inspect arbitragex-v2-edge-1 --format '{{.Image}}' 2>/dev/null | sed 's/sha256://' || echo "none")
+          echo "AFTER_ID=$AFTER_ID"
+          if [ "$BEFORE_ID" = "$AFTER_ID" ]; then
+            echo "⚠ Image ID unchanged — build may have been a no-op (no source changes since last build)"
+          else
+            echo "✓ Image swapped: $BEFORE_ID → $AFTER_ID"
+          fi
+          docker ps --filter "name=edge" --format '{{.Names}}\t{{.Status}}\t{{.Image}}'
+          EOSSH
+
+      - name: "[E5] Smoke test — POST /admin/session then GET /api/admin/chains"
+        run: |
+          ssh arbx 'bash -s' <<'EOSSH'
+          set -e
+          ADMIN_TOKEN=$(grep -E '^ARBX_ADMIN_TOKEN=' /opt/arbitragex-v2/.env | cut -d= -f2-)
+          # Wait for edge to be ready
+          for i in $(seq 1 10); do
+            HC=$(curl -s -o /dev/null -w '%{http_code}' -m 2 http://127.0.0.1:8787/health 2>/dev/null || echo "000")
+            echo "  edge health attempt $i: $HC"
+            [ "$HC" = "200" ] && break
+            sleep 2
+          done
+
+          rm -f /tmp/c
+          HTTP1=$(curl -sk -o /tmp/r1.json -w '%{http_code}' -c /tmp/c -X POST http://127.0.0.1:8787/admin/session \
+            -H 'content-type: application/json' -d "{\"token\":\"$ADMIN_TOKEN\"}")
+          echo "POST /admin/session → $HTTP1"
+
+          HTTP2=$(curl -sk -o /tmp/r2.json -w '%{http_code}' -b /tmp/c http://127.0.0.1:8787/api/admin/chains)
+          echo "GET /api/admin/chains (cookie) → $HTTP2"
+          echo "  response head: $(head -c 200 /tmp/r2.json)"
+
+          HTTP3=$(curl -sk -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/api/admin/chains)
+          echo "GET /api/admin/chains (no cookie) → $HTTP3"
+
+          if [ "$HTTP1" = "200" ] && [ "$HTTP2" = "200" ] && [ "$HTTP3" = "401" ]; then
+            echo "════════════════════════════════════════════"
+            echo "  ✓ HOLONOMIC RESOLUTION CONFIRMED"
+            echo "  Cookie → x-arbx-admin-token translation: OPERATIONAL"
+            echo "════════════════════════════════════════════"
+            exit 0
+          else
+            echo "════════════════════════════════════════════"
+            echo "  ❌ WIRING FIX NOT YET EFFECTIVE"
+            echo "  Expected: 200/200/401  Got: $HTTP1/$HTTP2/$HTTP3"
+            echo "════════════════════════════════════════════"
+            exit 1
+          fi
+          EOSSH
+
+      - name: "[E6] Cleanup SSH key"
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

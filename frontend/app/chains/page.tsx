@@ -2,39 +2,72 @@
 // NEVER hardcode fallback data or bypass the edge layer.
 // If the edge/api-server is unreachable, show the error honestly.
 "use client";
-import React, { useEffect, useState } from "react";
-import { Activity, AlertTriangle } from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import { Activity } from "lucide-react";
 import { motion } from "framer-motion";
 import { getDefiChains } from "@/lib/api-client";
 import type { DefiChainsResponse } from "@/lib/schemas";
+import { EdgeState } from "@/components/EdgeState";
+
+const CHAIN_COLUMNS = ["Chain ID", "Name", "RPC URL", "Status"];
 
 export default function ChainsPage() {
   const [result, setResult] = useState<{ ok: true; data: DefiChainsResponse } | { ok: false; error: string } | null>(null);
+  const [retrying, setRetrying] = useState(false);
 
-  useEffect(() => {
-    getDefiChains().then(setResult);
+  const load = useCallback(async () => {
+    setRetrying(true);
+    const r = await getDefiChains();
+    setResult(r);
+    setRetrying(false);
   }, []);
 
-  if (!result) return <div className="p-8 text-success animate-pulse">Loading Chains Registry...</div>;
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  if (!result.ok) return (
-    <div className="p-8 min-h-screen text-foreground">
-      <div className="p-4 bg-destructive/10 border border-destructive/30 rounded-xl text-destructive">
-        <h3 className="font-bold flex items-center gap-2"><AlertTriangle size={18} /> EDGE ERROR — ZERO TRUST</h3>
-        <p className="text-sm mt-1">{result.error}</p>
-        <p className="text-xs mt-2 text-destructive/70">The edge/API server is unreachable. No fabricated chain data will be shown.</p>
+  if (!result) {
+    return (
+      <div className="p-8 min-h-screen text-foreground">
+        <EdgeState variant="loading" title="Loading chain registry…" description="Querying the edge for the configured chains." endpoint="GET /api/v1/chains" ghost="table" ghostColumns={CHAIN_COLUMNS} />
       </div>
-    </div>
-  );
+    );
+  }
+
+  if (!result.ok) {
+    return (
+      <div className="p-8 min-h-screen text-foreground">
+        <EdgeState
+          variant="error"
+          title="Chain registry unreachable"
+          description="The edge endpoint refused or could not be reached. No fabricated chain data is shown — zero-trust."
+          endpoint="GET /api/v1/chains"
+          reasons={[result.error]}
+          onRetry={load}
+          retrying={retrying}
+          ghost="table"
+          ghostColumns={CHAIN_COLUMNS}
+        />
+      </div>
+    );
+  }
 
   const chains = result.data.data;
+
+  if (chains.length === 0) {
+    return (
+      <div className="p-8 min-h-screen text-foreground">
+        <EdgeState variant="empty" title="No chains registered yet" description="The registry is reachable but empty — no chains are configured." endpoint="GET /api/v1/chains" onRetry={load} retrying={retrying} ghost="table" ghostColumns={CHAIN_COLUMNS} />
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 space-y-6 min-h-screen text-foreground">
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold tracking-tight text-foreground">Chain Registry</h1>
         <div className="flex items-center gap-2 bg-success/10 text-success px-3 py-1.5 rounded-full border border-success/40">
-          <Activity size={16} className="animate-pulse" />
+          <Activity size={16} className="motion-safe:animate-pulse" />
           <span className="text-sm font-semibold tracking-wide">LIVE</span>
         </div>
       </div>
@@ -68,11 +101,6 @@ export default function ChainsPage() {
                 </td>
               </motion.tr>
             ))}
-            {chains.length === 0 && (
-              <tr>
-                <td colSpan={4} className="p-8 text-center text-muted-foreground italic">No chains registered. Waiting for backend data...</td>
-              </tr>
-            )}
           </tbody>
         </table>
       </div>

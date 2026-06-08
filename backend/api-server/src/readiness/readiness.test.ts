@@ -91,13 +91,17 @@ describe("verifyVNH1()", () => {
   it("returns green when script exits 0", async () => {
     const f = path.join(tmpDir, "ok.sh");
     await fs.writeFile(f, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
-    const item = await verifyVNH1({ script: f, cwd: tmpDir, now: NOW });
+    
+    const execFn = async () => ({ stdout: "", stderr: "" });
+    const item = await verifyVNH1({ script: f, cwd: tmpDir, now: NOW, execFn });
     expect(item.status).toBe("green");
   });
   it("returns red when script exits non-zero", async () => {
     const f = path.join(tmpDir, "fail.sh");
     await fs.writeFile(f, "#!/usr/bin/env bash\necho 'leak detected'\nexit 1\n", { mode: 0o755 });
-    const item = await verifyVNH1({ script: f, cwd: tmpDir, now: NOW });
+    
+    const execFn = async () => { throw new Error("leak detected"); };
+    const item = await verifyVNH1({ script: f, cwd: tmpDir, now: NOW, execFn });
     expect(item.status).toBe("red");
   });
 });

@@ -236,3 +236,95 @@ Reglas:
 Script `automation/claude-headless.sh` ejecuta Claude Code sin terminal para pipelines automatizados.
 
 *CORTEX MASTER ACTIVADO. IDENTIDAD INSTITUCIONAL Física Cuántica TOP 1% EMBEBIDA Y EN EJECUCIÓN CONTINUA. PIPELINE CANÓNICO Y ARQUITECTURA C-S-E SINCRONIZADA CON CONOCIMIENTO PHD.*
+
+---
+
+# 32. POLÍTICA PERMANENTE — GIT-URL-E2E-AUDITOR-SCAFFOLD (AUDIT / SCAFFOLD / SHADOW / READ-ONLY)
+
+> Integrada desde `~/.claude/skills/git-url-e2e-auditor-scaffold/project-policy/CLAUDE.md`.
+> Encabezado nuevo, anexado de forma NO destructiva (no se removió nada de §1-§31).
+
+Claude DEBE consultar la skill `git-url-e2e-auditor-scaffold` (en
+`~/.claude/skills/git-url-e2e-auditor-scaffold/SKILL.md`) en **toda interacción**
+relacionada con cualquiera de estos disparadores:
+
+- repositorios / **Git URL**
+- **frontend** / **backend**
+- **APIs** / **WebSocket**
+- **Redis / DB** (Postgres)
+- **Docker** / **CI/CD**
+- **pruebas** (tests) / **despliegue** (deploy)
+- **scaffold** / esqueleto / "qué falta por implementar"
+- **ArbitrageX / QuantumX**
+- **strategy upload** / **strategy validation**
+- **shadow runner** / **route builder live**
+- **ejecución shadow / read-only**
+
+### Reglas de la política
+
+1. **Consulta primero.** Ante cualquier disparador anterior, invoca la skill ANTES
+   de actuar (auditar, opinar o generar código).
+2. **Modo permanente:** `audit / scaffold / shadow / read-only`. NUNCA se activa
+   executor, wallets, llaves privadas, capital, ni se hace broadcast on-chain.
+3. **Sin flips a `live`.** Prohibido `live: true`, `*_MODE=live`. Solo
+   shadow/paper/read-only. Capital expuesto = 0.
+4. **Zero invención (RULE 00).** Solo se reporta lo observado en el repo. Si falta
+   algo → "no encontrado". Nunca fabricar archivos, endpoints ni resultados.
+5. **No-hardcode (`arbx-no-hardcode-doctrine`).** Valores de operador en el
+   scaffold = placeholders `process.env.*`, jamás literales.
+6. **Deferir a los gates existentes.** Si la auditoría toca contratos, flash loans,
+   ordenamiento MEV, net-profit, límites de riesgo o RPC failover, cita la skill
+   `arbx-*` correspondiente en vez de re-derivar la regla.
+7. **Si una ruta exige violar lo anterior → DETENERSE y reportar el bloqueo.**
+
+### Invocación
+
+- Command Menu / slash: `/git-url-e2e-auditor-scaffold <GIT_URL>`
+- Repo objetivo por defecto: `https://github.com/hefarica/arbitragex-v2.git`
+- Entrega siempre en el formato de 10 ítems definido en `SKILL.md`.
+
+<!-- BEGIN: mcp-policy -->
+---
+
+# 33. POLÍTICA PERMANENTE — MCP STACK (AUDIT / SCAFFOLD / SHADOW / READ-ONLY)
+
+> Anexado de forma NO destructiva (no se removió nada de §1-§32). Define cómo y
+> cuándo Claude DEBE usar los MCP servers declarados en `.mcp.json` (project) y en
+> el user config. Secretos SOLO por entorno (`.env.mcp`, gitignored); en archivos
+> versionados solo placeholders `${VAR}`.
+
+### 33.1 Uso obligatorio por dominio
+
+1. **Documentación de librerías/APIs → Context7.** Antes de escribir contra
+   cualquier librería, framework, SDK o API (viem, ethers, Next.js, socket.io,
+   Express, serde, etc.), consulta **Context7** para inyectar la doc versionada
+   correcta. Prohibido inventar firmas de API.
+2. **Contratos / rutas / on-chain → Foundry + EVM + Blockscout (read-only/fork).**
+   Toda lectura de contratos, simulación, análisis de bytecode o forense de rutas
+   usa **Foundry MCP** (Anvil fork local, `PRIVATE_KEY` VACÍO), **EVM MCP**
+   (lecturas multi-chain) y **Blockscout** (explorador read-only). NUNCA firmar.
+3. **Verificación de invariante → Postgres(RO) + Redis(RO).** Antes y después de
+   CUALQUIER fase que toque el control-plane, verifica el invariante
+   `XLEN arbx:opps:detected` (delta=0) vía **Redis MCP** (ACL `+@read -@write`) y
+   audita el esquema/datos vía **Postgres MCP** (rol `SELECT`-only). Si el delta
+   ≠ 0 sin causa real documentada → DETENERSE y reportar.
+4. **Frontend/E2E → Playwright (+ Magic).** Pruebas de paneles y WebSocket en vivo
+   con **Playwright MCP** (`--headless --isolated`). Generación de UI con **Magic**.
+
+### 33.2 Prohibiciones (INVIOLABLES)
+
+- ❌ Ningún MCP con `PRIVATE_KEY` poblado. Foundry corre SIEMPRE con `PRIVATE_KEY=""`.
+- ❌ Prohibido activar executor, wallets, capital, firma o broadcast de transacciones
+  vía cualquier MCP (incl. GOAT, thirdweb-write, Chainstack-write). NO instalar GOAT.
+- ❌ Prohibido escribir secretos reales en `.mcp.json`, `CLAUDE.md`, o cualquier
+  archivo versionado. Solo placeholders `${VAR}`; valores reales solo en `.env.mcp`.
+- ❌ Postgres/Redis/GitHub MCP en modo escritura. Roles read-only obligatorios
+  (Postgres `SELECT`-only, Redis `+@read -@write`, GitHub PAT read-only).
+
+### 33.3 Operación
+
+- Config compartida del proyecto: `.mcp.json` (raíz). Variables: `.env.mcp.example`
+  (template, tracked) → copiar a `.env.mcp` (real, gitignored).
+- Inventario y salud: `claude mcp list`; detalle: `claude mcp get <name>`; en sesión: `/mcp`.
+- Si una ruta exige violar §33.2 → DETENERSE y reportar el bloqueo (igual que §32).
+<!-- END: mcp-policy -->

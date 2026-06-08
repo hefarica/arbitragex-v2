@@ -307,14 +307,22 @@ impl GateManager {
     }
 }
 
-#[cfg(test)]
+// Tests reach into `crate::hedger` (Phase 6) and `crate::allocator`
+// (Phase 5) for the stub proof witnesses needed by the
+// `new_orthogonal_equilibrium` / `new_dirac_impulse_only` constructors
+// (also feature-gated on `hedger` / `allocator`). Gate the whole module
+// on the same features so default-profile `cargo test -p sed-core`
+// stays Z=0; CI exercises the gate logic via `--features pipeline-full`.
+#[cfg(all(test, feature = "hedger", feature = "allocator"))]
 mod tests {
     use super::*;
-    use crate::hedger::OrthogonalHedgeResult;
     use crate::allocator::OptimalControlSolution;
+    use crate::hedger::OrthogonalHedgeResult;
 
     /// Helper: build an OrthogonalEquilibrium bundle with a given variance.
-    fn make_ortho_bundle(variance: f64) -> BundlePosition<crate::types::bundle_position::OrthogonalEquilibrium> {
+    fn make_ortho_bundle(
+        variance: f64,
+    ) -> BundlePosition<crate::types::bundle_position::OrthogonalEquilibrium> {
         let proof = OrthogonalHedgeResult::stub(true);
         BundlePosition::new_orthogonal_equilibrium(
             "ETH-USDC".to_string(),
@@ -322,11 +330,14 @@ mod tests {
             1000.0,
             variance,
             &proof,
-        ).expect("valid proof")
+        )
+        .expect("valid proof")
     }
 
     /// Helper: build a Dirac bundle with a given variance.
-    fn make_dirac_bundle(variance: f64) -> BundlePosition<crate::types::bundle_position::DiracImpulseOnly> {
+    fn make_dirac_bundle(
+        variance: f64,
+    ) -> BundlePosition<crate::types::bundle_position::DiracImpulseOnly> {
         let proof = OptimalControlSolution::stub(true);
         BundlePosition::new_dirac_impulse_only(
             "WETH-DAI".to_string(),
@@ -334,7 +345,8 @@ mod tests {
             500.0,
             variance,
             &proof,
-        ).expect("valid proof")
+        )
+        .expect("valid proof")
     }
 
     fn dispatch_input() -> StochasticGateInput {
@@ -364,7 +376,10 @@ mod tests {
         let mut gm = GateManager::new(100.0, config);
         let bundle = make_ortho_bundle(1.0);
         let verdict = gm.evaluate(bundle, KillSwitchState::Active, &dispatch_input());
-        assert!(matches!(verdict, GateVerdict::Rejected(DispatchRejection::InfrastructureNotReady(_))));
+        assert!(matches!(
+            verdict,
+            GateVerdict::Rejected(DispatchRejection::InfrastructureNotReady(_))
+        ));
         assert_eq!(gm.rejection_count(), 1);
     }
 
@@ -386,7 +401,9 @@ mod tests {
         let verdict = gm.evaluate(bundle, KillSwitchState::Terminated, &dispatch_input());
         assert!(matches!(
             verdict,
-            GateVerdict::Rejected(DispatchRejection::EmergencyStop(DispatchError::KillSwitchTerminated))
+            GateVerdict::Rejected(DispatchRejection::EmergencyStop(
+                DispatchError::KillSwitchTerminated
+            ))
         ));
     }
 
@@ -397,7 +414,9 @@ mod tests {
         let verdict = gm.evaluate(bundle, KillSwitchState::Suspended, &dispatch_input());
         assert!(matches!(
             verdict,
-            GateVerdict::Rejected(DispatchRejection::EmergencyStop(DispatchError::KillSwitchSuspended))
+            GateVerdict::Rejected(DispatchRejection::EmergencyStop(
+                DispatchError::KillSwitchSuspended
+            ))
         ));
     }
 
@@ -409,7 +428,10 @@ mod tests {
         let bundle = make_ortho_bundle(1.0);
         let verdict = gm.evaluate(bundle, KillSwitchState::Active, &stable_input());
         match verdict {
-            GateVerdict::Rejected(DispatchRejection::StochasticStable { transition_probability, .. }) => {
+            GateVerdict::Rejected(DispatchRejection::StochasticStable {
+                transition_probability,
+                ..
+            }) => {
                 assert!((transition_probability - 0.05).abs() < 1e-10);
             }
             _ => panic!("expected StochasticStable rejection"),
@@ -462,7 +484,10 @@ mod tests {
         // 4th bundle with variance 3.0 → aggregate would be 12.0 > 10.0 → reject.
         let bundle = make_ortho_bundle(3.0);
         let verdict = gm.evaluate(bundle, KillSwitchState::Active, &input);
-        assert!(matches!(verdict, GateVerdict::Rejected(DispatchRejection::VarianceCeilingExceeded { .. })));
+        assert!(matches!(
+            verdict,
+            GateVerdict::Rejected(DispatchRejection::VarianceCeilingExceeded { .. })
+        ));
         assert_eq!(gm.rejection_count(), 1);
     }
 
@@ -541,7 +566,10 @@ mod tests {
         let bundle = make_ortho_bundle(1.0);
         // Both infra AND kill-switch should fail, but infra fires FIRST.
         let verdict = gm.evaluate(bundle, KillSwitchState::Terminated, &dispatch_input());
-        assert!(matches!(verdict, GateVerdict::Rejected(DispatchRejection::InfrastructureNotReady(_))));
+        assert!(matches!(
+            verdict,
+            GateVerdict::Rejected(DispatchRejection::InfrastructureNotReady(_))
+        ));
     }
 
     #[test]
@@ -552,7 +580,9 @@ mod tests {
         let verdict = gm.evaluate(bundle, KillSwitchState::Terminated, &stable_input());
         assert!(matches!(
             verdict,
-            GateVerdict::Rejected(DispatchRejection::EmergencyStop(DispatchError::KillSwitchTerminated))
+            GateVerdict::Rejected(DispatchRejection::EmergencyStop(
+                DispatchError::KillSwitchTerminated
+            ))
         ));
     }
 
@@ -560,7 +590,7 @@ mod tests {
     fn barriers_fire_in_order_stochastic_before_variance() {
         let mut gm = GateManager::new(0.1, InfraPrereqConfig::default()); // very low ceiling
         let bundle = make_ortho_bundle(100.0); // way over ceiling
-        // Both stochastic AND variance should fail, but stochastic fires FIRST.
+                                               // Both stochastic AND variance should fail, but stochastic fires FIRST.
         let verdict = gm.evaluate(bundle, KillSwitchState::Active, &stable_input());
         assert!(matches!(
             verdict,

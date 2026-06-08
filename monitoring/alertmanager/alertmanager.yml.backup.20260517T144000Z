@@ -1,0 +1,104 @@
+# Dev configuration — Slack/PagerDuty receivers use env-var placeholders.
+# (Audit M12, 2026-05-10)
+#
+# In production:
+#   - Set SLACK_WEBHOOK_URL via Vault:
+#       vault kv put arbx/prod/t1/slack_webhook_url value=https://hooks.slack.com/...
+#   - Set PAGERDUTY_INTEGRATION_KEY via Vault:
+#       vault kv put arbx/prod/t1/pagerduty_integration_key value=<key>
+#   - vault-agent renders these into /run/secrets/arbx.env before alertmanager starts.
+#   - alertmanager startup script sources /run/secrets/arbx.env, then envsubst
+#     renders this config template into the final alertmanager.yml before launch.
+#
+# The ${SLACK_WEBHOOK_URL} and ${PAGERDUTY_INTEGRATION_KEY} placeholders below
+# are NOT expanded by alertmanager itself — they require the envsubst render step
+# documented in docs/operations/PRODUCTION_DEPLOY.md.
+#
+# DO NOT deploy this file to production without the render step.
+# Secrets classification: docs/operations/SECRETS_POLICY.md (T1 tier).
+
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ["alertname", "service", "severity"]
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: default
+  routes:
+    # Critical: page immediately via PagerDuty, also notify Slack
+    - match:
+        severity: critical
+      receiver: pagerduty-critical
+      group_wait: 0s
+      repeat_interval: 15m
+      continue: true
+    - match:
+        severity: critical
+      receiver: slack-critical
+      group_wait: 0s
+      repeat_interval: 15m
+    # Warning + info go to Slack only
+    - match_re:
+        severity: warning|info
+      receiver: slack-critical
+      repeat_interval: 2h
+
+receivers:
+  - name: default
+    webhook_configs:
+      - url: "http://api-server:8080/admin/alertmanager/webhook"
+        send_resolved: true
+
+  # MON-1: Slack receiver
+  # Requires SLACK_WEBHOOK_URL env var — provision before enabling in prod.
+  - name: slack-critical
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#arbx-alerts-critical'
+        send_resolved: true
+        title: '[{{ .Status | toUpper }}] {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ "\n" }}{{ end }}'
+
+  # MON-1: PagerDuty receiver
+  # Requires PAGERDUTY_INTEGRATION_KEY env var — provision before enabling in prod.
+  - name: pagerduty-critical
+    pagerduty_configs:
+      - service_key: '${PAGERDUTY_INTEGRATION_KEY}'
+        send_resolved: true
+
+# === TELEGRAM RECEIVER (activate when bot token is ready) ===
+# To enable:
+# 1. Create bot via @BotFather on Telegram
+# 2. Get your chat_id via @userinfobot
+# 3. Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to .env
+# 4. Uncomment below and change route receiver to "telegram-alerts"
+#
+#  - name: telegram-alerts
+#    telegram_configs:
+#      - bot_token: "YOUR_BOT_TOKEN"
+#        chat_id: YOUR_CHAT_ID
+#        parse_mode: HTML
+#        message: |
+#          <b>{{ .Status | toUpper }}</b>
+#          {{ range .Alerts }}
+#          <b>{{ .Labels.alertname }}</b> [{{ .Labels.severity }}]
+#          {{ .Annotations.summary }}
+#          {{ .Annotations.description }}
+#          {{ end }}
+
+# MON-8: Inhibition rules — suppress redundant/noisy child alerts when parent fires
+inhibit_rules:
+  # If ContainerRestartLoop fires, suppress the less-severe ExcessiveRestarts for same container
+  - source_match:
+      alertname: ContainerRestartLoop
+    target_match:
+      alertname: ContainerExcessiveRestarts
+    equal: ['container']
+  # If a critical alert fires for a service, suppress warnings for the same service
+  - source_match:
+      severity: critical
+    target_match:
+      severity: warning
+    equal: ['service']

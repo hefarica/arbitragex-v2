@@ -31,6 +31,7 @@ import * as React from "react";
 import { ShieldOff, ShieldAlert, RefreshCwIcon } from "lucide-react";
 
 import { getRuntimeStatus, getReadiness, getScannerHeartbeat } from "@/lib/api-client";
+import { useSystemReadiness } from "@/hooks/useSystemReadiness";
 import { cn } from "@/lib/utils";
 
 type LoadState =
@@ -85,6 +86,7 @@ export function SystemGuardBanner() {
   // R1: Mounted snapshot pattern — initial server render shows neutral
   // "loading" tokens; the first useEffect tick reads real data.
   const [state, setState] = React.useState<LoadState>({ kind: "loading" });
+  const readiness = useSystemReadiness();
 
   React.useEffect(() => {
     let alive = true;
@@ -140,6 +142,8 @@ export function SystemGuardBanner() {
         <GuardTile label="Broadcast" value="OFF" tone="danger" />
         <GuardTile label="Paper" value="ON" tone="safe" />
         <GuardTile label="Capital" value="$0" tone="safe" />
+        <GuardTile label="Readiness" value={`${readiness.completedCount}/${readiness.totalCount}`} tone={readiness.allReady ? "safe" : "warning"} />
+        <GuardTile label="LIVE lock" value={readiness.allReady ? "REVIEW" : "LOCKED"} tone={readiness.allReady ? "warning" : "danger"} />
         <GuardTile label="GO live" value="NO-GO" tone="danger" />
         <GuardTile label="A.4 fork" value="BLOCKED" tone="warning" />
         <GuardTile label="A.5 paper-shadow" value="BLOCKED" tone="warning" />

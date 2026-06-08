@@ -5,25 +5,33 @@
 
 // Suppress the same lints as main.rs for consistency. Individual modules
 // carry their own allows where the pattern is demonstrably safe.
-#![deny(clippy::unwrap_used, clippy::expect_used)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 // Phase 1-3 modules re-exported so the library target compiles standalone.
 pub mod amm_math;
 pub mod calldata;
+pub mod chain_client;
 pub mod counters;
 pub mod dedup;
 // Phase 16: per-strategy Prometheus metrics for the orchestrator.
 pub mod impact_index;
 pub mod metrics;
+pub mod models;
 pub mod opportunity_emitter;
 pub mod patterns;
 pub mod persistence;
+pub mod pool_candidate;
+pub mod pool_discovery;
+pub mod pool_sources;
 pub mod publisher;
 pub mod reserves;
 pub mod route_decoder;
+pub mod route_discovery;
 pub mod route_intent;
+pub mod scoring;
+pub mod scoring_pipeline;
+pub mod source_supervisor;
 pub mod strategy_label;
-pub mod pool_discovery;
 // Phase 7-8: orchestrator + engines exposed for integration tests.
 pub mod engines;
 pub mod orchestrator;
@@ -35,6 +43,8 @@ pub mod orchestrator;
 pub mod workers;
 // Phase 12: StateProjector -- virtual post-tx pool state projection.
 pub mod state_projector;
+// V3 oracle: on-chain QuoterV2 read-only provider feeding StateProjector.
+pub mod v3_quote_provider;
 // Phase 13: SizeOptimizer -- optimal amount_in sizing for arb candidates.
 pub mod size_optimizer;
 // Phase 11: LendingPositionIndexer -- Redis-backed watchlist + cache for
@@ -71,6 +81,24 @@ pub mod sim_multistep;
 // config_hash per chain to skip no-op reloads. Public so the future
 // B1.d chain-task supervisor can consume the dedup map.
 pub mod config_reload;
+// Phase 2 Topology Vault runtime: durable fallback + Redis Pub/Sub + atomic RPC/WS hot-swap.
+pub mod topology_reload;
+// FASE OMEGA — Dynamic strategy cartridge runtime (Rhai scripting engine).
+// Implements the "PlayStation MEV" architecture: sandboxed Rhai scripts that
+// can be hot-loaded at runtime via Redis PubSub without recompiling the binary.
+// Each cartridge exports `init_strategy`, `evaluate_opportunity`, `build_payload`
+// and communicates with infrastructure through registered host bindings.
+pub mod cartridge;
+// FASE OMEGA — Filesystem-based cartridge loader for dev/bootstrap.
+// Scans `cartridges/` directory at boot and loads all `.rhai` files.
+// In production, hot-reload is handled by `cartridge::subscriber`.
+pub mod cartridge_loader;
+// FASE OMEGA — Cartridge runtime boot wiring (gated by ARBX_CARTRIDGE_MODE; default off).
+// Spawns the per-chain runner + hot-reload subscriber so the (previously unspawned)
+// cartridge subsystem actually loads. Dormant unless the mode flag is enabled.
+pub mod cartridge_boot;
+// FASE OMEGA — Block/log backrunning scanner (ARBX_MEMPOOL_MODE=block).
+pub mod block_scanner;
 
 // -- SOP-EDGE-001: Edge Node modules (paper-shadow feature gate) -------
 // These modules implement the Alloy anti-mock layer, U256<->f64 normalization,
@@ -93,3 +121,7 @@ pub mod sed_bridge;
 //       which is an optional path dependency only available with that feature.
 #[cfg(feature = "paper-shadow")]
 pub mod telemetry_publisher;
+
+// Observer telemetry — real-node head divergence (reorg) → arbx:telemetry:observability.
+// Ungated: depends only on redis + serde, used by block_scanner in all builds.
+pub mod telemetry_observability;

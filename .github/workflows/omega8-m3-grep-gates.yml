@@ -1,0 +1,133 @@
+name: OMEGA-8/M3 grep gates (Capa 2 hardening)
+
+# Fails CI if any of the OMEGA-8/M3 P0/P1 invariants is unintentionally
+# regressed. These grep checks are CHEAP (single-digit seconds) and run
+# on every PR — they are the canary for "someone reverted the fix without
+# updating the tests".
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# M2 Capa1 Fase 4 — read-only token; grep gates only inspect tree.
+permissions:
+  contents: read
+
+jobs:
+  grep-gates:
+    name: Doctrine grep gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: "P0-1 — runtime-ack POST route must use requireServiceToken"
+        run: |
+          set -euo pipefail
+          if ! grep -q "requireServiceToken" backend/api-server/src/routes/system-manifest.ts; then
+            echo "::error file=backend/api-server/src/routes/system-manifest.ts::P0-1 regression: POST /runtime-ack lost requireServiceToken middleware"
+            exit 1
+          fi
+          # The middleware MUST appear in the index.ts wiring too.
+          if ! grep -q "ARBX_SERVICE_TOKEN" backend/api-server/src/index.ts; then
+            echo "::error file=backend/api-server/src/index.ts::P0-1 regression: ARBX_SERVICE_TOKEN env not wired"
+            exit 1
+          fi
+          echo "P0-1 OK"
+
+      - name: "P0-2 — subscribe:runtime_ack must check runtimeAckAllowed flag"
+        run: |
+          set -euo pipefail
+          if ! grep -q "runtimeAckAllowed" backend/api-server/src/websocket.ts; then
+            echo "::error file=backend/api-server/src/websocket.ts::P0-2 regression: subscribe:runtime_ack lost the runtimeAckAllowed defense-in-depth gate"
+            exit 1
+          fi
+          echo "P0-2 OK"
+
+      - name: "P1-1 — runtime_ack INSERT must use ON CONFLICT (event_id, layer)"
+        run: |
+          set -euo pipefail
+          if ! grep -q "ON CONFLICT (event_id, layer)" backend/api-server/src/routes/system-manifest.ts; then
+            echo "::error file=backend/api-server/src/routes/system-manifest.ts::P1-1 regression: runtime_ack INSERT lost ON CONFLICT clause"
+            exit 1
+          fi
+          if ! ls database/migrations/069_*.sql >/dev/null 2>&1; then
+            echo "::error::P1-1 regression: migration 069 (UNIQUE event_id,layer) missing"
+            exit 1
+          fi
+          echo "P1-1 OK"
+
+      - name: "P1-2 — no PgPoolOptions::new() outside the shared db_pool helper"
+        run: |
+          set -euo pipefail
+          violations=$(grep -rln "PgPoolOptions::new" backend/ \
+            | grep -v "backend/shared-rs/src/db_pool.rs" \
+            || true)
+          if [ -n "$violations" ]; then
+            echo "::error::P1-2 regression: PgPoolOptions::new() used outside shared::db_pool — timeouts may be missing"
+            echo "$violations"
+            exit 1
+          fi
+          echo "P1-2 OK"
+
+      - name: "P1-3 — registry-engine.ts must wrap audit_event ip/UA with PII helpers"
+        run: |
+          set -euo pipefail
+          if ! grep -q "arbx_anonymize_ip" backend/api-server/src/lib/registry-engine.ts; then
+            echo "::error file=backend/api-server/src/lib/registry-engine.ts::P1-3 regression: audit_event INSERT not anonymizing IP"
+            exit 1
+          fi
+          if ! grep -q "arbx_hash_user_agent" backend/api-server/src/lib/registry-engine.ts; then
+            echo "::error file=backend/api-server/src/lib/registry-engine.ts::P1-3 regression: audit_event INSERT not hashing user_agent"
+            exit 1
+          fi
+          echo "P1-3 OK"
+
+      - name: "P1-4 — GET /api/system/runtime-ack/:event_id endpoint must exist"
+        run: |
+          set -euo pipefail
+          if ! grep -q "runtime-ack/:event_id" backend/api-server/src/routes/system-manifest.ts; then
+            echo "::error file=backend/api-server/src/routes/system-manifest.ts::P1-4 regression: GET fallback endpoint removed"
+            exit 1
+          fi
+          echo "P1-4 OK"
+
+      - name: "P1-5 — POST handler must call pg_advisory_xact_lock"
+        run: |
+          set -euo pipefail
+          if ! grep -q "pg_advisory_xact_lock" backend/api-server/src/routes/system-manifest.ts; then
+            echo "::error file=backend/api-server/src/routes/system-manifest.ts::P1-5 regression: advisory lock removed from runtime_ack POST"
+            exit 1
+          fi
+          echo "P1-5 OK"
+
+      - name: "Doctrine — no NEW .env file added in this PR"
+        run: |
+          set -euo pipefail
+          # Pre-existing tracked .env-like files are templates/fixtures
+          # (.env.example, .env.crucible, .env.edge, crucible/.env.crucible.template).
+          # We only fail this PR if it ADDS a new tracked file matching the
+          # .env pattern that is NOT in the allowlist.
+          ALLOWLIST_RE='^(\.env\.example|\.env\.crucible|\.env\.edge|crucible/\.env\.crucible\.template)$'
+          BASE="${GITHUB_BASE_REF:-main}"
+          git fetch --depth=50 origin "$BASE" 2>/dev/null || true
+          MERGE_BASE=$(git merge-base "origin/$BASE" HEAD 2>/dev/null || echo "")
+          violations=""
+          if [ -n "$MERGE_BASE" ]; then
+            new_env=$(git diff --name-only --diff-filter=A "$MERGE_BASE" HEAD \
+              | grep -E "(^|/)\.env(\..*)?$" \
+              || true)
+            if [ -n "$new_env" ]; then
+              violations=$(echo "$new_env" | grep -vE "$ALLOWLIST_RE" | sed '/^$/d' || true)
+            fi
+          fi
+          if [ -n "$violations" ]; then
+            echo "::error::This PR adds a tracked .env file — STRICTLY forbidden"
+            echo "$violations"
+            exit 1
+          fi
+          echo "no-new-env-tracked OK"

@@ -1,14 +1,27 @@
 "use client";
-import { useEffect, useState } from "react";
-import type { ContractEntity } from "@/lib/registries/types-omni";
+import { useContracts } from "@/lib/hooks/useContracts";
 
 export default function FactoryPage() {
-  const [rows, setRows] = useState<ContractEntity[]>([]);
-  useEffect(() => {
-    fetch("/api/contracts?contract_kind=factory")
-      .then((r) => r.json())
-      .then((d) => setRows((d.rows ?? []).filter((c: ContractEntity) => c.contract_kind === "factory")));
-  }, []);
+  const { data: rows, isLoading, error } = useContracts({ contractKind: "factory" });
+
+  if (isLoading) {
+    return (
+      <div>
+        <h1 className="text-xl font-semibold">DeterministicFactory Deployments</h1>
+        <p className="text-sm text-muted-foreground">Loading...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div>
+        <h1 className="text-xl font-semibold">DeterministicFactory Deployments</h1>
+        <p className="text-sm text-destructive">Error: {error}</p>
+      </div>
+    );
+  }
+
   return (
     <div>
       <h1 className="text-xl font-semibold">DeterministicFactory Deployments</h1>
@@ -22,9 +35,9 @@ export default function FactoryPage() {
             <tr key={r.id} className="border-b border-border/50">
               <td className="py-2">{r.chain_id}</td>
               <td className="font-mono text-xs">{r.address}</td>
-              <td className="font-mono text-xs">{r.salt.slice(0, 18)}…</td>
+              <td className="font-mono text-xs">{r.salt?.slice(0, 18) ?? "—"}…</td>
               <td>{r.verified ? "✅" : "—"}</td>
-              <td className="font-mono text-xs">{r.config_hash.slice(0, 12)}…</td>
+              <td className="font-mono text-xs">{r.config_hash?.slice(0, 12) ?? "—"}…</td>
             </tr>
           ))}
         </tbody>

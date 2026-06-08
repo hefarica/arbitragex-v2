@@ -121,15 +121,12 @@ async fn build_orchestrator_with_emitter(
     let dummy_conn = {
         let client = redis::Client::open("redis://127.0.0.1:6379/")
             .expect("redis::Client::open must succeed for test infrastructure");
-        client
-            .get_connection_manager()
-            .await
-            .unwrap_or_else(|_| {
-                panic!(
-                    "v2_shadow_replay tests require a local Redis at 127.0.0.1:6379. \
+        client.get_connection_manager().await.unwrap_or_else(|_| {
+            panic!(
+                "v2_shadow_replay tests require a local Redis at 127.0.0.1:6379. \
                      Start Redis locally or skip this test suite."
-                )
-            })
+            )
+        })
     };
 
     let liq_indexer = Arc::new(tokio::sync::Mutex::new(LendingPositionIndexer::new(
@@ -171,6 +168,7 @@ async fn build_orchestrator_with_emitter(
         config_provider,
         pool_discovery,
         chain_id: CHAIN_ID,
+        cartridge_runner: None,
     };
 
     (Arc::new(Orchestrator::new(ctx)), emitter)
@@ -436,8 +434,8 @@ async fn shadow_missing_reserves_returns_specific_reject_reason() {
         OptimizeRejectReason::MissingReservesPoolB.as_str(),
         OptimizeRejectReason::MissingPoolAddress.as_str(),
         OptimizeRejectReason::ZeroReserves.as_str(),
-        "reserves_cache_miss",     // DexEngine-level rejection before optimizer
-        "single_pool_no_spread",   // DexEngine rejects when only 1 pool found
+        "reserves_cache_miss",   // DexEngine-level rejection before optimizer
+        "single_pool_no_spread", // DexEngine rejects when only 1 pool found
         OptimizeRejectReason::NoConfig.as_str(), // valid when Redis has no config
     ];
     for record in &emissions {

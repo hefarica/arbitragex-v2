@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { hasAdminSession } from "@/lib/admin-token";
+import { rehydrateSystemStore, useSystemStore } from "@/store/useSystemStore";
 
 export interface CredentialItem {
   id: string;
@@ -139,7 +140,7 @@ const CATEGORIES: CategorySpec[] = [
         display_name: "Flashbots searcher signing key",
         description: "0x-prefixed 32-byte private key. Used to sign Flashbots bundle headers. The on-chain executor uses a different key.",
         secret_label: "Private key (0x...)",
-        secret_placeholder: "0x0000000000000000000000000000000000000000000000000000000000000000",
+        secret_placeholder: "<empty-secret-placeholder>",
         secret_kind: "password",
       },
       {
@@ -252,6 +253,43 @@ const CATEGORIES: CategorySpec[] = [
   },
 ];
 
+const RPC_CATEGORY_TEMPLATE = CATEGORIES.find((cat) => cat.id === "rpc")!;
+
+function buildDynamicRpcCategory(activeChains: Array<{ chainId: number; name: string; rpcHttpHost: string; rpcWsHost: string }>): CategorySpec {
+  if (activeChains.length === 0) {
+    return {
+      ...RPC_CATEGORY_TEMPLATE,
+      description: "Primero publica una topología válida en Topology Vault. Esta categoría se hidrata dinámicamente desde el store persistente y no duplica RPC/WSS.",
+      creds: [],
+    };
+  }
+
+  return {
+    ...RPC_CATEGORY_TEMPLATE,
+    description: "RPC/WSS derivado de Topology Vault. Cada input se genera desde activeChains.map(...) para conservar Topology Vault como SSOT.",
+    creds: activeChains.flatMap((chain) => [
+      {
+        provider: "rpc_http",
+        scope: `chain:${chain.chainId}`,
+        display_name: `RPC HTTP — ${chain.name}`,
+        description: `Scope validado por Topology Vault. Host activo: ${chain.rpcHttpHost || "pendiente"}.`,
+        secret_label: "Provider CSV",
+        secret_placeholder: chain.rpcHttpHost ? `primary=https://${chain.rpcHttpHost}/...` : "provider=https://...",
+        secret_kind: "text" as const,
+      },
+      {
+        provider: "rpc_ws",
+        scope: `chain:${chain.chainId}`,
+        display_name: `RPC WebSocket — ${chain.name}`,
+        description: `Scope validado por Topology Vault. Host activo: ${chain.rpcWsHost || "pendiente"}.`,
+        secret_label: "WS Provider CSV",
+        secret_placeholder: chain.rpcWsHost ? `primary=wss://${chain.rpcWsHost}/...` : "provider=wss://...",
+        secret_kind: "text" as const,
+      },
+    ]),
+  };
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Status badge helper
 // ──────────────────────────────────────────────────────────────────────────
@@ -302,6 +340,7 @@ interface CredentialCardProps {
 }
 
 function CredentialCard({ spec, current, edgeUrl, onSaved }: CredentialCardProps) {
+  const setCredentialStatus = useSystemStore((state) => state.setCredentialStatus);
   const [secret, setSecret] = useState("");
   const [metadata, setMetadata] = useState<Record<string, string>>({});
   const [inFlight, setInFlight] = useState<"none" | "testing" | "saving">("none");
@@ -353,8 +392,10 @@ function CredentialCard({ spec, current, edgeUrl, onSaved }: CredentialCardProps
         return;
       }
       const ok = j.status === "valid";
-      setTransientStatus(ok ? "valid" : "invalid");
+      const nextStatus = ok ? "valid" : "invalid";
+      setTransientStatus(nextStatus);
       setTransientMessage(j.message ?? null);
+      setCredentialStatus(spec.provider, spec.scope, nextStatus, ok ? new Date().toISOString() : null);
       if (ok) toast.success(`${spec.display_name}`, { description: j.message });
       else toast.error(`${spec.display_name}`, { description: j.message ?? "invalid" });
     } catch (e) {
@@ -364,7 +405,7 @@ function CredentialCard({ spec, current, edgeUrl, onSaved }: CredentialCardProps
     } finally {
       setInFlight("none");
     }
-  }, [edgeUrl, metadata, secret, spec.display_name, spec.provider, spec.scope]);
+  }, [edgeUrl, metadata, secret, setCredentialStatus, spec.display_name, spec.provider, spec.scope]);
 
   const handleSave = useCallback(async () => {
     if (!secret) {
@@ -394,6 +435,7 @@ function CredentialCard({ spec, current, edgeUrl, onSaved }: CredentialCardProps
       setTransientStatus(null);
       setTransientMessage(null);
       const ok = j.status === "valid";
+      setCredentialStatus(spec.provider, spec.scope, ok ? "valid" : "invalid", ok ? new Date().toISOString() : null);
       if (ok) toast.success(`${spec.display_name} saved + validated`);
       else toast.message(`${spec.display_name} saved`, { description: j.last_validation_error ?? "validation failed" });
       onSaved();
@@ -402,7 +444,7 @@ function CredentialCard({ spec, current, edgeUrl, onSaved }: CredentialCardProps
     } finally {
       setInFlight("none");
     }
-  }, [edgeUrl, metadata, secret, spec.display_name, spec.provider, spec.scope, onSaved]);
+  }, [edgeUrl, metadata, secret, setCredentialStatus, spec.display_name, spec.provider, spec.scope, onSaved]);
 
   const handleDelete = useCallback(async () => {
     if (!current) return;
@@ -525,8 +567,10 @@ export function CredentialsClient({ initialSnapshot, edgeUrl }: ClientProps) {
   const [activeCategory, setActiveCategory] = useState<string>(CATEGORIES[0]!.id);
   const [isMounted, setIsMounted] = useState(false);
   const [hasSession, setHasSession] = useState(false);
+  const activeChains = useSystemStore((state) => state.topology.activeChains);
 
   useEffect(() => {
+    rehydrateSystemStore();
     setIsMounted(true);
     setHasSession(hasAdminSession());
   }, []);
@@ -552,6 +596,13 @@ export function CredentialsClient({ initialSnapshot, edgeUrl }: ClientProps) {
     }
   }, [edgeUrl, snapshot]);
 
+  const dynamicRpcCategory = useMemo(() => buildDynamicRpcCategory(activeChains), [activeChains]);
+
+  const categories = useMemo(() => [
+    dynamicRpcCategory,
+    ...CATEGORIES.filter((cat) => cat.id !== "rpc"),
+  ], [dynamicRpcCategory]);
+
   const byKey = useMemo(() => {
     const map = new Map<string, CredentialItem>();
     for (const it of snapshot.items) {
@@ -562,7 +613,7 @@ export function CredentialsClient({ initialSnapshot, edgeUrl }: ClientProps) {
 
   const summary = useMemo(() => {
     let total = 0, valid = 0, invalid = 0, untested = 0;
-    for (const cat of CATEGORIES) {
+    for (const cat of categories) {
       for (const c of cat.creds) {
         total += 1;
         const row = byKey.get(`${c.provider}:${c.scope}`);
@@ -573,9 +624,9 @@ export function CredentialsClient({ initialSnapshot, edgeUrl }: ClientProps) {
       }
     }
     return { total, valid, invalid, untested };
-  }, [byKey]);
+  }, [byKey, categories]);
 
-  const activeCat = CATEGORIES.find((c) => c.id === activeCategory)!;
+  const activeCat = categories.find((c) => c.id === activeCategory) ?? categories[0]!;
 
   if (isMounted && !hasSession) {
     return (
@@ -584,7 +635,10 @@ export function CredentialsClient({ initialSnapshot, edgeUrl }: ClientProps) {
         <div className="bg-warning/10 border border-warning/40 text-warning rounded-lg p-4">
           <p className="font-semibold">Admin session required</p>
           <p className="text-sm mt-1">
-            Go to <button onClick={() => router.push("/settings")} className="underline">/settings</button> to sign in with your admin token first.
+            Go to <button onClick={() => router.push("/admin/signin?next=/settings/credentials")} className="underline">/admin/signin</button> to sign in with your admin token first.
+          </p>
+          <p className="text-sm mt-3">
+            For Alchemy, PublicNode or any RPC/WSS provider used by the hot path, use <button onClick={() => router.push("/admin/signin?next=/admin/topology")} className="font-semibold underline">/admin/topology</button> after signing in. That screen sends full URLs only to the API Server and shows back masked provider snapshots.
           </p>
         </div>
       </div>
@@ -600,6 +654,9 @@ export function CredentialsClient({ initialSnapshot, edgeUrl }: ClientProps) {
         <p className="text-muted-foreground mt-1 text-sm">
           Operator-managed external credentials. Each row turns green only after the server runs the live test and it passes (R8 fail-honest).
         </p>
+        <div className="mt-3 rounded-lg border border-primary/30 bg-primary/10 p-3 text-sm text-foreground">
+          <span className="font-semibold">Hot-path RPC/WSS:</span> configure Alchemy, PublicNode or other node providers in <button onClick={() => router.push("/admin/topology")} className="font-semibold underline">Topology Vault</button>. This generic Credentials page remains for non-topology secrets and legacy checks.
+        </div>
         <div className="flex items-center gap-4 mt-3 text-sm">
           <span className="text-success font-semibold">{summary.valid} valid</span>
           <span className="text-destructive font-semibold">{summary.invalid} invalid</span>
@@ -616,7 +673,7 @@ export function CredentialsClient({ initialSnapshot, edgeUrl }: ClientProps) {
 
       <div className="grid grid-cols-[220px_1fr] gap-6">
         <aside className="space-y-1">
-          {CATEGORIES.map((cat) => {
+          {categories.map((cat) => {
             const catRows = cat.creds.map((c) => byKey.get(`${c.provider}:${c.scope}`));
             const validInCat = catRows.filter((r) => r?.status === "valid").length;
             const invalidInCat = catRows.filter((r) => r?.status === "invalid").length;
@@ -646,6 +703,11 @@ export function CredentialsClient({ initialSnapshot, edgeUrl }: ClientProps) {
           <div className="bg-muted/20 border border-border rounded-lg p-3 text-sm text-muted-foreground">
             {activeCat.description}
           </div>
+          {activeCat.id === "rpc" && activeCat.creds.length === 0 && (
+            <div className="rounded-xl border border-warning/40 bg-warning/10 p-5 text-sm text-foreground">
+              Publica primero una topología activa en <button onClick={() => router.push("/admin/topology")} className="font-semibold underline">Topology Vault</button>. La categoría RPC se generará automáticamente desde el store persistente sin pedir cadenas duplicadas.
+            </div>
+          )}
           {activeCat.creds.map((spec) => (
             <CredentialCard
               key={`${spec.provider}:${spec.scope}`}

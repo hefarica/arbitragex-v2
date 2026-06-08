@@ -1,0 +1,22 @@
+# Global fallback
+* @hefarica
+
+# Backend (Rust)
+backend/ @hefarica
+
+# Frontend (Next.js)
+frontend/ @hefarica
+
+# Contracts (Solidity)
+contracts/ @hefarica
+
+# CI/CD
+.github/workflows/ @hefarica
+
+# Infrastructure
+infra/ @hefarica
+scripts/ @hefarica
+
+# Documentation
+docs/ @hefarica
+runbooks/ @hefarica

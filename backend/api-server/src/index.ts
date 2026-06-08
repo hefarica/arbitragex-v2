@@ -1,6 +1,13 @@
 import express from "express";
 import pg from "pg";
 import { Redis } from "ioredis";
+import { PaperTradeArchiver } from "./routes/paper-trade-archiver.js";
+import { ScoredOpportunitiesArchiver } from "./routes/scored-opportunities-archiver.js";
+import { RouteDiscoveryOutcomeSink, outcomeSinkEnabled } from "./routes/route-discovery-outcome-sink.js";
+import { OpportunitiesBridgeArchiver, opportunitiesBridgeEnabled } from "./routes/opportunities-bridge-archiver.js";
+import { buildRouteDiscoveryOutcomesRouter } from "./routes/route-discovery-outcomes-api.js";
+import { buildOperatorRouter } from "./routes/operator.js";
+import { buildCartridgeForgeRouter } from "./routes/cartridge-forge.js";
 import { z } from "zod";
 import { clampBucketMinutes, clampHours, rowToPoint } from "./recon-timeseries.js";
 import { verifyAll } from "./readiness/verifiers/index.js";
@@ -13,9 +20,11 @@ import {
   metricsHandler,
   metricsMiddleware,
   traceIdMiddleware,
+  securityHeadersMiddleware,
   requireEnv,
   requireAdminToken,
   requireEdgeToken,
+  requireServiceToken,
   assertSecureBootTokens,
   KillSwitchClient,
   initMetrics,
@@ -36,6 +45,9 @@ assertSecureBootTokens(process.env);
 
 const ARBX_ADMIN_TOKEN = requireEnv("ARBX_ADMIN_TOKEN");
 const ARBX_EDGE_TOKEN = requireEnv("ARBX_EDGE_TOKEN");
+// OMEGA-8/M3 P0-1: dedicated service-token for inter-service POSTs
+// (searcher-rs, recon, relays-client → api-server). NEVER reuse admin token.
+const ARBX_SERVICE_TOKEN = requireEnv("ARBX_SERVICE_TOKEN");
 
 const killSwitch = new KillSwitchClient({
   redisUrl: REDIS_URL,
@@ -72,7 +84,9 @@ const app = express();
 // IMPORT DEFI ROUTER & WEBSOCKET
 // ==========================================
 import { mountDefi } from "./routes/defi.js";
-import { buildTradingConfigRouter } from "./routes/trading-config.js";
+import { buildTradingConfigRouter, rehydrateTradingConfigMirror } from "./routes/trading-config.js";
+import { buildCartridgeFiltersRouter } from "./routes/cartridge-filters.js";
+import { mountTokenIconRoutes } from "./routes/token-icon.js";
 import { buildOperationsRouter } from "./routes/operations.js";
 import { buildStrategyCatalogRouter } from "./routes/strategy-catalog.js";
 import { buildCredentialsRouter } from "./routes/credentials.js";
@@ -88,17 +102,31 @@ import { mountScoringStatus } from "./routes/scoring-status.js";
 import { mountRiskCircuitBreakers } from "./routes/risk-circuit-breakers.js";
 import { mountAdminChains } from "./routes/admin-chains.js";
 import { mountSedStatus } from "./routes/sed-status.js";
+import { mountSystemManifest } from "./routes/system-manifest.js";
+import { buildTopologyVaultRouter } from "./routes/topology-vault.js";
 import {
   setupWebSocketGateway,
   broadcastOpportunity,
   subscribeToConvergenceSignals,
+  subscribeToCartridgeTelemetry,
+  subscribeToRouteDiscoveryTelemetry,
 } from "./websocket.js";
+import {
+  TelemetryCache,
+  buildRouteDiscoveryRouter,
+  buildCartridgesRouter,
+} from "./routes/route-discovery.js";
 import { createServer } from "http";
 import rateLimit from "express-rate-limit";
 
 // defi routes mounted later (after `pool` and `logger` are constructed). See mountDefi() below.
 
 app.disable("x-powered-by");
+// OMEGA-8/M4 Fase 7: institutional HTTP security headers. nosniff, frameguard,
+// no-referrer, CSP compatible with Socket.IO ws:/wss: upgrades. HSTS is gated
+// by ARBX_ENABLE_HSTS=true because the api-server runs behind plain HTTP
+// inside the VPS network — only the edge worker is TLS-terminated.
+app.use(securityHeadersMiddleware());
 app.use(express.json({ limit: "256kb" }));
 app.use(traceIdMiddleware());
 app.use(createHttpLogger(SERVICE, cfg.observability.log_level ?? "info"));
@@ -121,11 +149,33 @@ const adminLimiter = rateLimit({
 });
 app.use("/admin/", adminLimiter);
 
+// SECURITY (CodeQL js/missing-rate-limiting): defense-in-depth GLOBAL IP rate-limit
+// covering EVERY route below. The edge worker already throttles at the network
+// boundary; this protects the api-server if reached directly. Ceiling is very generous
+// (6000/min/IP) so legit dashboard polling is never affected — only genuine abuse/DoS
+// trips it. The stricter /admin/ + runtime-ack limiters remain in force. Tune via
+// API_RATE_LIMIT_PER_MIN. /health + /metrics are registered before this on purpose.
+const GLOBAL_RATE_LIMIT_PER_MIN = Math.max(
+  60,
+  parseInt(process.env["API_RATE_LIMIT_PER_MIN"] ?? "6000", 10),
+);
+const globalLimiter = rateLimit({
+  windowMs: 60_000,
+  max: GLOBAL_RATE_LIMIT_PER_MIN,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "rate_limited", retry_after_seconds: 60 },
+});
+
 app.get("/health", healthHandler(SERVICE, VERSION, startedAt));
 // REST convention alias — load balancers / external monitors expect /api/health.
 // Same handler, no behaviour drift.
 app.get("/api/health", healthHandler(SERVICE, VERSION, startedAt));
 app.get("/metrics", metricsHandler);
+
+// Apply the global rate-limit AFTER health/metrics (never throttle the compose
+// healthcheck or Prometheus scrape) and BEFORE every data/admin route below.
+app.use(globalLimiter);
 
 /** Public read-only snapshot of system health + kill-switch state. */
 app.get("/status", async (_req, res) => {
@@ -173,6 +223,13 @@ app.post("/admin/killswitch", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, r
   );
   logger.warn({ event: "admin.killswitch", actor: actorHeader, state: out }, "kill-switch toggled");
   res.status(200).json(out);
+});
+
+/** Admin: read killswitch state. */
+app.get("/admin/killswitch/status", requireAdminToken(ARBX_ADMIN_TOKEN), async (_req, res) => {
+  const state = await killSwitch.state().catch(() => null);
+  if (!state) return res.status(503).json({ error: "killswitch_unavailable" });
+  res.status(200).json(state);
 });
 
 /** Admin: read current effective config (secrets never included). */
@@ -448,6 +505,57 @@ mountAdminChains(app, {
   writeAudit,
   logger,
 });
+
+app.use(buildTopologyVaultRouter({
+  redis,
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
+  writeAudit,
+  logger,
+}));
+
+// QUANTUM FULLSTACK SYMMETRY — read-only telemetry snapshot caches + REST
+// routers for the OMEGA Route Discovery radar and cartridge telemetry. The
+// caches are populated at runtime by the WS Redis bridges (instantiated near the
+// bottom of this file); these routers serve the last known state without
+// fabricating data (R8 fail-honest: ok=false when empty). RULE 00 / NO-ACTIVE:
+// strictly observational — never touch arbx:opps:detected, never execute.
+const routeDiscoveryCache = new TelemetryCache(200);
+const cartridgeTelemetryCache = new TelemetryCache(200);
+app.use(buildRouteDiscoveryRouter(routeDiscoveryCache));
+app.use(buildCartridgesRouter(cartridgeTelemetryCache));
+
+// FASE B Gate-C — read-only analytics over the durable route_discovery_outcomes
+// table (the shadow outcomes the sink persists, incl. the Paso 9 `reason`). This is
+// the missing READ side for that passive sink. NO-ACTIVE: pure SELECT, never writes.
+app.use(buildRouteDiscoveryOutcomesRouter(pool));
+
+// Enterprise-audit follow-up: mount control-plane routers that were built but never
+// mounted, gating auth INTERNALLY. operator (requireOperatorRole per route; relative
+// paths -> base /api/operator) + cartridge-forge (admin-token validator passed here;
+// shadow strategy injection). admin-registries and admin-promote-mainnet are
+// INTENTIONALLY NOT mounted:
+//   - admin-registries: VERIFIED 2026-06-04 to carry NO authentication — its router
+//     (lib/registry-engine.ts buildRegistryRouter) exposes raw POST/PATCH/DELETE and
+//     actorOf() reads only an `x-omega-actor` header / req.ip (no token check). It is a
+//     full CRUD mutation surface over live-adjacent entities (risk_gate, capital_gate,
+//     contract_registry, relay_endpoints, rpc) that publishes hot-reload events to the
+//     searcher-rs Arc-swap. Mounting it = unauthenticated runtime mutation of risk/capital
+//     gates + executor contract targets = FASE D territory (blocked: no KMS, no human
+//     authorization-of-record, no audit sign-off). To enable LATER it must be wrapped in
+//     requireAdminToken (V-AT-1) and pass FASE D authorization; read-only (GET-only)
+//     mounting could come first if observability is the only need.
+//   - admin-promote-mainnet: live-adjacent (mainnet promotion) — same FASE D gate.
+if (pool) {
+  app.use("/api/operator", buildOperatorRouter(pool));
+  app.use(
+    buildCartridgeForgeRouter({
+      db: pool,
+      redis,
+      adminTokenValidator: (t: string) => !!ARBX_ADMIN_TOKEN && t === ARBX_ADMIN_TOKEN,
+    }),
+  );
+}
 
 mountSedStatus(app, { pool, logger });
 
@@ -889,6 +997,31 @@ app.use(buildTradingConfigRouter({
   logger,
 }));
 
+// Boot re-hydration: PG is the source of truth for trading_config; the Redis
+// mirror (arbx:trading_config:<chain>) is written ONLY by the admin PUT, so a
+// Redis restart/eviction silently drops it → searcher-rs sees has_config=false
+// → 0 opportunities. Re-mirror enabled rows from PG at boot so the config (and
+// thus the paper feed) survives Redis restarts. Fire-and-forget; never blocks
+// boot and never throws (handles its own errors). Replays existing PG values only.
+void rehydrateTradingConfigMirror({ pool, redis, logger });
+
+// ── Cartridge Filters (Idea 1 Phase-1 foundation — operator route pre-filter prefs) ─
+// Redis-only stored preference (arbx:cartridge:filters:<chain>). NOT yet consumed by
+// searcher-rs; the route pre-filter consumer + PG durability are a Phase 2 follow-up.
+app.use(buildCartridgeFiltersRouter({
+  redis,
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
+  writeAudit,
+  logger,
+}));
+
+// ── Token Icons (dashboard visual layer) ───────────────────────────────────
+// GET /api/v1/token-icon/:chainId/:address — Redis(producer cache) → curated
+// tokenRegistry → DexScreener(env-gated) → jazzicon fallback. Read-only +
+// best-effort cache population; never 500s for a missing icon (R8).
+mountTokenIconRoutes(app, { redis, logger });
+
 // ── Operations PnL (Sprint 3 — PMI/EVM KPI surface) ────────────────────
 app.use(buildOperationsRouter({
   pool,
@@ -1007,9 +1140,59 @@ app.get("/api/v1/readiness", async (req, res) => {
   }
 });
 
-const PORT = Number(process.env["API_PORT"] ?? 3000); // 3000 to match frontend fetch
+// OMEGA-8/M4 Fase 8: align Dockerfile `EXPOSE 8080` with the runtime default.
+// docker/compose.{dev,prod}.yml already set `API_PORT: "8080"` explicitly,
+// so the fallback only fires for `npm run dev` / bare `node dist/index.js`
+// invocations. Standardising on 8080 eliminates the previous mismatch where
+// the container's exposed port could differ from the listener port if the
+// env var was absent.
+const PORT = Number(process.env["API_PORT"] ?? 8080);
 const httpServer = createServer(app);
 const io = setupWebSocketGateway(httpServer);
+
+// OMEGA-7 PR-1: system manifest + runtime_ack handler. Must be mounted AFTER
+// `io` exists because POST /api/system/runtime-ack emits a WSS broadcast into
+// the `runtime_ack` room after a successful PostgreSQL INSERT (invariant
+// I-2). Requires `pool` to be non-null; if the DB is missing this is a
+// fail-fast condition because runtime_ack persistence is non-negotiable.
+if (pool) {
+  // OMEGA-8/M3 P0-1: per-IP rate-limits on runtime_ack endpoints. Defaults are
+  // conservative but operator-overridable via env. POST is higher (legitimate
+  // searcher-rs reloads burst up to ~60/min in M5 reload tests); GET is lower
+  // (frontend fallback poll, bounded by useRuntimeAckSocket retry budget).
+  const postWindowMs = Number(process.env["RUNTIME_ACK_POST_RATE_WINDOW_MS"] ?? 60_000);
+  const postMax = Number(process.env["RUNTIME_ACK_POST_RATE_MAX"] ?? 120);
+  const getWindowMs = Number(process.env["RUNTIME_ACK_GET_RATE_WINDOW_MS"] ?? 60_000);
+  const getMax = Number(process.env["RUNTIME_ACK_GET_RATE_MAX"] ?? 30);
+  const runtimeAckPostLimiter = rateLimit({
+    windowMs: postWindowMs,
+    max: postMax,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "rate_limited", source: "runtime_ack_post" },
+  });
+  const runtimeAckGetLimiter = rateLimit({
+    windowMs: getWindowMs,
+    max: getMax,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "rate_limited", source: "runtime_ack_get" },
+  });
+  app.use(
+    "/api/system",
+    mountSystemManifest(pool, redis, io, {
+      requireServiceToken: requireServiceToken(ARBX_SERVICE_TOKEN),
+      requireAdminToken: requireAdminToken(ARBX_ADMIN_TOKEN),
+      runtimeAckPostLimiter,
+      runtimeAckGetLimiter,
+    }),
+  );
+} else {
+  logger.error(
+    { event: "system_manifest.disabled" },
+    "system-manifest routes NOT mounted — DATABASE_URL missing",
+  );
+}
 
 // Arteria WSS — OMEGA-v2: puente Redis Pub/Sub → WebSocket para señales de
 // convergencia del motor SED (Rust).  Instancia dedicada (subscriber) porque
@@ -1017,6 +1200,24 @@ const io = setupWebSocketGateway(httpServer);
 // Fail-honest: si Redis falla, las oportunidades por PostgreSQL NOTIFY
 // siguen funcionando; la conexión se auto-reconecta.
 const convergenceSubscriber = subscribeToConvergenceSignals(io, REDIS_URL);
+
+// FASE OMEGA — puente Redis Pub/Sub → WebSocket para la telemetría de cartuchos
+// (`log_quantum` del motor Rhai en Rust). Misma postura fail-honest que convergencia.
+const cartridgeTelemetrySubscriber = subscribeToCartridgeTelemetry(
+  io,
+  REDIS_URL,
+  (m) => cartridgeTelemetryCache.record(m),
+);
+
+// QUANTUM FULLSTACK SYMMETRY — puente Redis Pub/Sub → WebSocket para la
+// telemetría del radar Route Discovery (`arbx:route_discovery:telemetry`).
+// Espejo 1:1 del puente de cartuchos; alimenta el cache REST de solo-lectura.
+// Fail-honest; NUNCA escribe arbx:opps:detected (observe-only).
+const routeDiscoveryTelemetrySubscriber = subscribeToRouteDiscoveryTelemetry(
+  io,
+  REDIS_URL,
+  (m) => routeDiscoveryCache.record(m),
+);
 
 if (pool) {
   pool.connect().then(client => {
@@ -1037,6 +1238,85 @@ if (pool) {
   });
 }
 
+// FASE OMEGA SHADOW — paper_trade_runs archiver (passive telemetry sink).
+// Reads arbx:opps:detected and persists each detected opportunity's sim
+// prediction into paper_trade_runs for drift analysis. 100% passive: reads
+// Redis + writes its own table only; never computes profit, never fabricates
+// rows. Dormant by default (project doctrine: land off, enable with evidence) —
+// set ARBX_PAPER_ARCHIVER_MODE=on to activate. Requires DATABASE_URL (pool).
+let paperArchiver: PaperTradeArchiver | null = null;
+if (pool && (process.env["ARBX_PAPER_ARCHIVER_MODE"] ?? "off").toLowerCase() === "on") {
+  paperArchiver = new PaperTradeArchiver({ redisUrl: REDIS_URL, pool, logger });
+  paperArchiver.start().catch((e) =>
+    logger.error({ event: "paper_archiver.start_err", err: (e as Error).message },
+      "paper_trade_runs archiver failed to start"),
+  );
+} else {
+  logger.info(
+    { event: "paper_archiver.dormant", reason: pool ? "mode_off" : "no_database_url" },
+    "paper_trade_runs archiver dormant (set ARBX_PAPER_ARCHIVER_MODE=on to enable)",
+  );
+}
+
+// FASE B Paso 2 — route_discovery outcome sink (passive durable sink).
+// Reads arbx:route_discovery:outcomes (the Rust shadow emitter, Fase B Paso 1) and
+// persists each resolved outcome to route_discovery_outcomes — preserving the
+// >=2-week hit-rate series the capped Redis stream would trim. 100% passive: reads
+// the stream + writes its own table only; never opps:detected, never capital.
+// Dormant by default — set ARBX_ROUTE_DISCOVERY_OUTCOMES_SINK=shadow. Requires DATABASE_URL.
+let rdOutcomeSink: RouteDiscoveryOutcomeSink | null = null;
+if (pool && outcomeSinkEnabled()) {
+  rdOutcomeSink = new RouteDiscoveryOutcomeSink({ redisUrl: REDIS_URL, pool, logger });
+  rdOutcomeSink.start().catch((e) =>
+    logger.error({ event: "rd_outcome_sink.start_err", err: (e as Error).message },
+      "route-discovery outcome sink failed to start"),
+  );
+} else {
+  logger.info(
+    { event: "rd_outcome_sink.dormant", reason: pool ? "gate_off" : "no_database_url" },
+    "route-discovery outcome sink dormant (set ARBX_ROUTE_DISCOVERY_OUTCOMES_SINK=shadow to enable)",
+  );
+}
+
+// Gate C — scored_opportunities archiver (passive scoring telemetry sink).
+// Reads arbx:scoring:scored (the Rust OpportunityEmitter's ConfidenceScore XADD)
+// and persists each scored opportunity into scored_opportunities. 100% passive:
+// reads the stream + writes its own table only; never opps:detected, never
+// capital. recommended_usd is a HYPOTHETICAL paper figure. Dormant by default —
+// set ARBX_SCORING_ARCHIVER_MODE=on to activate. Requires DATABASE_URL (pool).
+let scoredArchiver: ScoredOpportunitiesArchiver | null = null;
+if (pool && (process.env["ARBX_SCORING_ARCHIVER_MODE"] ?? "off").toLowerCase() === "on") {
+  scoredArchiver = new ScoredOpportunitiesArchiver({ redisUrl: REDIS_URL, pool, logger });
+  scoredArchiver.start().catch((e) =>
+    logger.error({ event: "scoring_archiver.start_err", err: (e as Error).message },
+      "scored_opportunities archiver failed to start"),
+  );
+} else {
+  logger.info(
+    { event: "scoring_archiver.dormant", reason: pool ? "mode_off" : "no_database_url" },
+    "scored_opportunities archiver dormant (set ARBX_SCORING_ARCHIVER_MODE=on to enable)",
+  );
+}
+
+// Opportunities bridge (paper): reads arbx:route_discovery:outcomes and writes the
+// opportunities PG table (status detected|rejected, paper-marked, amount_in_wei=0,
+// dex_a='route_discovery') so /opportunities surfaces the real shadow routes with
+// their values. The searcher is UNTOUCHED — only the api-server writes here.
+// Dormant by default — set ARBX_OPPS_BRIDGE_MODE=on to activate. Requires DATABASE_URL.
+let oppsBridge: OpportunitiesBridgeArchiver | null = null;
+if (pool && opportunitiesBridgeEnabled()) {
+  oppsBridge = new OpportunitiesBridgeArchiver({ redisUrl: REDIS_URL, pool, logger });
+  oppsBridge.start().catch((e) =>
+    logger.error({ event: "opps_bridge.start_err", err: (e as Error).message },
+      "opportunities bridge failed to start"),
+  );
+} else {
+  logger.info(
+    { event: "opps_bridge.dormant", reason: pool ? "mode_off" : "no_database_url" },
+    "opportunities bridge dormant (set ARBX_OPPS_BRIDGE_MODE=on to enable)",
+  );
+}
+
 httpServer.listen(PORT, () => {
   logger.info({ event: "service.boot", port: PORT, env: cfg.system.env,
     upstreams: Object.keys(UPSTREAMS) }, `${SERVICE} listening`);
@@ -1045,9 +1325,16 @@ httpServer.listen(PORT, () => {
 const shutdown = async (sig: string) => {
   logger.info({ event: "service.shutdown", signal: sig }, "shutting down");
   await killSwitch.close().catch(() => {});
+  // Stop the passive paper-trade archiver (closes its dedicated Redis conn).
+  await paperArchiver?.stop().catch(() => {});
+  await rdOutcomeSink?.stop().catch(() => {});
+  await scoredArchiver?.stop().catch(() => {});
+  await oppsBridge?.stop().catch(() => {});
   // Arteria WSS: cerrar el subscriber de convergencia antes que el redis
   // principal para evitar errores de "Connection is closed" en handlers.
   await convergenceSubscriber.quit().catch(() => {});
+  await cartridgeTelemetrySubscriber.quit().catch(() => {});
+  await routeDiscoveryTelemetrySubscriber.quit().catch(() => {});
   await redis.quit().catch(() => {});
   if (pool) await pool.end().catch(() => {});
   process.exit(0);

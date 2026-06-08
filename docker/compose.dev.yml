@@ -298,7 +298,13 @@ services:
       API_SERVER_URL: http://api-server:8080
       ARBX_EDGE_TOKEN: ${ARBX_EDGE_TOKEN:-dev_edge_token_change_me_0123456789}
       EDGE_PORT: "8787"
+      # QUANTUM FULLSTACK SYMMETRY — SPA-fallback target + public https host.
+      FRONTEND_URL: http://frontend:5173
+      PUBLIC_EDGE_HOST: edge-arbx.ape-tv.net
     ports: ["8787:8787"]
+    # NOTE: do NOT add `frontend` here — the frontend service depends_on edge
+    # (SSR via INTERNAL_EDGE_URL), so edge->frontend would be a compose cycle.
+    # The edge proxies to frontend at REQUEST time via Docker DNS, not boot order.
     depends_on: [api-server]
     networks: [arbx-net]
     <<: *common-logging

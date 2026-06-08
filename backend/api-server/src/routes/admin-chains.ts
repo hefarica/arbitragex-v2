@@ -166,6 +166,9 @@ interface ProbeResult {
 
 async function probeRpc(rpcUrl: string, expectedChainId: number, timeoutMs = 5000): Promise<ProbeResult> {
   const now = new Date().toISOString();
+  // CodeQL js/resource-exhaustion: clamp the caller-supplied timeout to a sane bound
+  // so a large ?timeout_ms cannot hold an abort timer / connection open indefinitely.
+  timeoutMs = Math.min(Math.max(timeoutMs, 500), 15_000);
   const u = new URL(rpcUrl);
   const redacted = `${u.protocol}//${u.hostname}/<path-redacted>`;
 

@@ -180,10 +180,26 @@ impl HttpRpcPool {
                     continue;
                 }
             };
+            // Client-level HTTP request timeout. A hung eth_call (observed: a Multicall3
+            // aggregate3 to a throttled public RPC never returned) cannot be preempted by an
+            // OUTER tokio::time::timeout when the future wedges in poll() without yielding —
+            // reqwest enforces THIS timeout inside the transport and returns a timeout error
+            // the failover/circuit layer handles cleanly. Env-tunable; default 10s.
+            let http_timeout_ms: u64 = std::env::var("RPC_HTTP_REQUEST_TIMEOUT_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|&n| n > 0)
+                .unwrap_or(10_000);
+            // `with_reqwest` hands the closure alloy's OWN reqwest::ClientBuilder, so we set the
+            // timeout without any reqwest-version-mismatch on the Client type.
             let provider = Arc::new(
                 ProviderBuilder::new()
                     .disable_recommended_fillers()
-                    .connect_http(parsed_url),
+                    .with_reqwest(parsed_url, |b| {
+                        b.timeout(std::time::Duration::from_millis(http_timeout_ms))
+                            .build()
+                            .expect("build reqwest client with request timeout")
+                    }),
             );
             // Validate chain id once; on mismatch we drop the entry rather than
             // poisoning the pool (operator catches it via the warn log).

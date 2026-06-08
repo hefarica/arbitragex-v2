@@ -1,23 +1,29 @@
 "use client";
-import { useEffect, useState } from "react";
-
-interface CrucibleStatus {
-  chain_id: number;
-  network: string;
-  resolutions_total: number;
-  resolutions_success: number;
-  success_rate_pct: number;
-  runtime_hours: number;
-  doctrinal_reverts: number;
-  capital_cap_usd: number;
-}
+import { useCrucibleStatus } from "@/lib/hooks/useCrucibleStatus";
 
 export default function CruciblePage() {
-  const [rows, setRows] = useState<CrucibleStatus[]>([]);
-  useEffect(() => {
-    fetch("/api/crucible/status").then((r) => r.json()).then((d) => setRows(d.networks ?? []));
-  }, []);
+  const { data: rows, isLoading, error } = useCrucibleStatus();
+
+  if (isLoading) {
+    return (
+      <div>
+        <h1 className="text-xl font-semibold">Crucible Survival Tracker</h1>
+        <p className="text-sm text-muted-foreground">Loading...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div>
+        <h1 className="text-xl font-semibold">Crucible Survival Tracker</h1>
+        <p className="text-sm text-destructive">Error: {error}</p>
+      </div>
+    );
+  }
+
   const ok = rows.every((r) => r.success_rate_pct >= 95 && r.runtime_hours >= 72 && r.doctrinal_reverts === 0);
+
   return (
     <div>
       <h1 className="text-xl font-semibold">Crucible Survival Tracker</h1>

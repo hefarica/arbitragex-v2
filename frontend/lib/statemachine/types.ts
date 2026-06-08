@@ -189,8 +189,8 @@ export interface RollbackAvailableState {
  *
  * ```typescript
  * switch (state.kind) {
- *   case "IDLE":               /* ... */
- *   case "VALIDATING":         /* ... */
+ *   case "IDLE":               // ...
+ *   case "VALIDATING":         // ...
  *   // ... all cases required by TypeScript exhaustiveness checking
  * }
  * ```

@@ -1,0 +1,52 @@
+$ npm run typecheck --workspaces --if-present
+
+> @arbx/shared@0.1.0 typecheck
+> tsc --noEmit -p tsconfig.json
+
+
+> @arbx/selector-api@0.1.0 typecheck
+> tsc --noEmit -p tsconfig.json
+
+
+> @arbx/api-server@0.1.0 typecheck
+> tsc --noEmit -p tsconfig.json
+
+
+> @arbx/edge-worker@0.1.0 typecheck
+> tsc --noEmit -p tsconfig.json
+
+
+> @arbx/edge-dev-local@0.1.0 typecheck
+> tsc --noEmit -p tsconfig.json
+
+
+> @arbx/frontend@0.1.0 typecheck
+> tsc --noEmit
+
+app/dex-registry/DexRegistryClient.tsx(16,21): error TS2305: Module '"@/lib/api/dexes"' has no exported member 'DEX'.
+app/opportunities/OpportunitiesClient.tsx(116,9): error TS2322: Type 'WsStatus' is not assignable to type 'FeedStatus'.
+  Type '"DISCONNECTED"' is not assignable to type 'FeedStatus'.
+app/strategies/tabs/DexesTab.tsx(235,44): error TS2339: Property 'chain_id' does not exist on type 'Chain'.
+app/strategies/tabs/DexesTab.tsx(235,78): error TS2339: Property 'chain_id' does not exist on type 'Chain'.
+app/strategies/tabs/DexesTab.tsx(254,11): error TS2304: Cannot find name 'loading'.
+app/strategies/tabs/DexesTab.tsx(260,11): error TS2304: Cannot find name 'loading'.
+app/strategies/tabs/PoolsTab.tsx(253,46): error TS2339: Property 'chain_id' does not exist on type 'Chain'.
+app/strategies/tabs/PoolsTab.tsx(253,80): error TS2339: Property 'chain_id' does not exist on type 'Chain'.
+app/wallets/WalletsClient.tsx(42,25): error TS2339: Property 'wallets' does not exist on type 'RegistrySlice & OpportunitySlice & WalletSlice'.
+app/wallets/WalletsClient.tsx(115,24): error TS18046: 'w' is of type 'unknown'.
+app/wallets/WalletsClient.tsx(116,46): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'SetStateAction<WalletRow | null>'.
+app/wallets/WalletsClient.tsx(119,68): error TS18046: 'w' is of type 'unknown'.
+app/wallets/WalletsClient.tsx(121,22): error TS18046: 'w' is of type 'unknown'.
+app/wallets/WalletsClient.tsx(121,46): error TS18046: 'w' is of type 'unknown'.
+app/wallets/WalletsClient.tsx(124,22): error TS18046: 'w' is of type 'unknown'.
+app/wallets/WalletsClient.tsx(125,49): error TS18046: 'w' is of type 'unknown'.
+app/wallets/WalletsClient.tsx(135,37): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'SetStateAction<WalletRow | null>'.
+npm error Lifecycle script `typecheck` failed with error:
+npm error code 2
+npm error path /home/ubuntu/arbitragex-v2-latest-audit/frontend
+npm error workspace @arbx/frontend@0.1.0
+npm error location /home/ubuntu/arbitragex-v2-latest-audit/frontend
+npm error command failed
+npm error command sh -c tsc --noEmit
+[ELIFECYCLE] Command failed with exit code 2.
+Typecheck failed

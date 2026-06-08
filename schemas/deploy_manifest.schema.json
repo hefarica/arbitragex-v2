@@ -1,0 +1,375 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arbitragex-v2/schemas/deploy_manifest/v1",
+  "title": "DeployManifest",
+  "description": "Manifest de deploy para el flujo C10-F2 HARDENING TOTAL. Todo deploy requiere un manifest válido y aprobado por el operador antes de ejecutar cualquier acción en VPS.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "manifest_id",
+    "generated_at",
+    "generated_by",
+    "cycle",
+    "target_sha",
+    "current_vps_sha",
+    "change_type",
+    "files_changed",
+    "services_to_rebuild",
+    "services_to_restart",
+    "services_forbidden",
+    "requires_db_backup",
+    "requires_hot_path_approval",
+    "requires_env_change",
+    "dry_run_required",
+    "rollback_strategy",
+    "risk",
+    "operator_approval"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "C10-F2-v1",
+      "description": "Versión del schema. Cambiar si se modifica la estructura."
+    },
+    "manifest_id": {
+      "type": "string",
+      "description": "SHA-256 (hex lowercase, 64 chars) del contenido canónico del manifest. ALGORITMO PRIMARIO: RFC 8785 JSON Canonicalization Scheme (JCS) aplicado al objeto manifest con el campo 'manifest_id' EXCLUIDO del cálculo. ALGORITMO FALLBACK (documentado para entornos sin librería JCS): (1) eliminar la clave 'manifest_id' del objeto, (2) serializar a JSON con claves ordenadas lexicográficamente en todos los niveles (recursivo), (3) UTF-8 sin BOM, (4) separadores compactos (',' y ':') sin espacios, (5) sin trailing newline, (6) calcular SHA-256 y representar en hex lowercase. El fallback NO es bit-idéntico a JCS para todos los casos (números float, escapes Unicode), por lo que el productor DEBE registrar en 'notes' qué algoritmo usó: 'manifest_id_algorithm: rfc8785-jcs' o 'manifest_id_algorithm: fallback-sorted-keys-v1'. El verificador DEBE soportar ambos algoritmos hasta que JCS sea universal. Sirve como approved_manifest_id en OperatorApproval.",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp de generación del manifest."
+    },
+    "generated_by": {
+      "type": "string",
+      "description": "Identificador del agente o run que generó el manifest. Ej: 'github-actions/run/12345678'."
+    },
+    "cycle": {
+      "type": "string",
+      "description": "Ciclo y fase del flujo. Ej: 'C10-F2'.",
+      "pattern": "^C[0-9]+-F[0-9]+$"
+    },
+    "target_sha": {
+      "type": "string",
+      "description": "SHA-1 de 40 caracteres del commit de destino en el repositorio.",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "current_vps_sha": {
+      "type": "string",
+      "description": "SHA-1 de 40 caracteres del HEAD actual del VPS al momento de generación del manifest.",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "change_type": {
+      "type": "string",
+      "description": "Clasificación del conjunto de cambios según la tabla de clasificación C10-F2.",
+      "enum": [
+        "workflows-only",
+        "docs-only",
+        "frontend-only",
+        "edge-only",
+        "api-server-only",
+        "searcher-rs/hot-path",
+        "docker/compose",
+        "database/migrations",
+        "infra/monitoring",
+        "mixed-change",
+        "secret/config-sensitive"
+      ]
+    },
+    "files_changed": {
+      "type": "array",
+      "description": "Lista completa de archivos modificados entre current_vps_sha y target_sha.",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/ChangedFile"
+      }
+    },
+    "services_to_rebuild": {
+      "type": "array",
+      "description": "Lista de nombres de containers Docker que deben ser rebuildeados.",
+      "items": {
+        "$ref": "#/$defs/ContainerName"
+      },
+      "uniqueItems": true
+    },
+    "services_to_restart": {
+      "type": "array",
+      "description": "Lista de nombres de containers Docker que deben ser restarteados (sin rebuild).",
+      "items": {
+        "$ref": "#/$defs/ContainerName"
+      },
+      "uniqueItems": true
+    },
+    "services_forbidden": {
+      "type": "array",
+      "description": "Lista de nombres de containers que explícitamente NO deben tocarse en este deploy. ENFORCEMENT TÉCNICO OBLIGATORIO: el workflow DEBE validar antes de cualquier step de ejecución que: (1) intersección(services_forbidden, services_to_rebuild) == ∅, (2) intersección(services_forbidden, services_to_restart) == ∅, (3) ningún step posterior puede invocar 'docker compose build/up/restart/stop/kill/rm' sobre un container listado en services_forbidden, (4) ningún step puede modificar archivos cuyo path mapee a un container de services_forbidden según la matriz de TABLA_ACCIONES_SERVICIO.md. Si alguna validación falla → el job DEBE abortar con código de salida no-cero antes de cualquier acción sobre VPS. La validación se implementa en el step preflight del workflow deploy.",
+      "items": {
+        "$ref": "#/$defs/ContainerName"
+      },
+      "uniqueItems": true
+    },
+    "requires_db_backup": {
+      "type": "boolean",
+      "description": "Si true, se requiere confirmación de backup de base de datos antes de proceder."
+    },
+    "requires_hot_path_approval": {
+      "type": "boolean",
+      "description": "Si true, se requiere autorización explícita del operador para tocar servicios hot-path."
+    },
+    "requires_env_change": {
+      "type": "boolean",
+      "description": "Si true, algún archivo .env o de configuración sensible cambia. Siempre resulta en BLOCKED si es true."
+    },
+    "dry_run_required": {
+      "type": "boolean",
+      "description": "Siempre debe ser true. Un manifest con dry_run_required=false no es válido para producción.",
+      "const": true
+    },
+    "rollback_strategy": {
+      "$ref": "#/$defs/RollbackStrategy"
+    },
+    "risk": {
+      "type": "string",
+      "description": "Nivel de riesgo del deploy. BLOCKED implica que no se puede proceder sin análisis especial.",
+      "enum": ["LOW", "MEDIUM", "HIGH", "BLOCKED"]
+    },
+    "operator_approval": {
+      "$ref": "#/$defs/OperatorApproval"
+    },
+    "dry_run_artifact": {
+      "type": "string",
+      "description": "Nombre del archivo de output del dry-run, una vez ejecutado. Vacío hasta que se ejecute H5.",
+      "default": ""
+    },
+    "exception_name": {
+      "type": "string",
+      "description": "Nombre de la excepción bajo Cláusula 14 si aplica. Formato: 'C10-F2-EXCEPTION-NAME'.",
+      "pattern": "^C[0-9]+-F[0-9]+-[A-Z][A-Z0-9-]+$"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Notas adicionales del agente o del operador."
+    }
+  },
+  "$defs": {
+    "ChangedFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "status", "classified_as"],
+      "description": "Descripción de un archivo modificado entre current_vps_sha y target_sha.",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Ruta relativa desde la raíz del repositorio.",
+          "minLength": 1,
+          "pattern": "^[^/].*"
+        },
+        "status": {
+          "type": "string",
+          "description": "Estado del archivo según git diff: A=Added, M=Modified, D=Deleted, R=Renamed, T=Type changed.",
+          "enum": ["A", "M", "D", "R", "T"]
+        },
+        "blob_target": {
+          "type": "string",
+          "description": "SHA-1 del blob en target_sha. Vacío para archivos D (deleted) que no existen en target.",
+          "pattern": "^([0-9a-f]{40}|)$",
+          "default": ""
+        },
+        "blob_current": {
+          "type": "string",
+          "description": "SHA-1 del blob en current_vps_sha. Vacío para archivos A (added) que no existen en current.",
+          "pattern": "^([0-9a-f]{40}|)$",
+          "default": ""
+        },
+        "size": {
+          "type": "integer",
+          "description": "Tamaño del archivo en bytes en target_sha. -1 si fue eliminado.",
+          "minimum": -1
+        },
+        "classified_as": {
+          "type": "string",
+          "description": "Tipo de cambio al que fue clasificado este archivo específico.",
+          "enum": [
+            "workflows-only",
+            "docs-only",
+            "frontend-only",
+            "edge-only",
+            "api-server-only",
+            "searcher-rs/hot-path",
+            "docker/compose",
+            "database/migrations",
+            "infra/monitoring",
+            "mixed-change",
+            "secret/config-sensitive"
+          ]
+        },
+        "stop_gate_match": {
+          "type": "boolean",
+          "description": "Si este archivo matcheó algún patrón de stop gate.",
+          "default": false
+        },
+        "stop_gate_pattern": {
+          "type": "string",
+          "description": "El patrón de stop gate que matcheó, si aplica.",
+          "default": ""
+        }
+      }
+    },
+    "ContainerName": {
+      "type": "string",
+      "description": "Nombre real del container Docker del sistema arbitragex-v2 tal como aparece en 'docker ps'. La mayoría usa el prefijo 'arbitragex-v2-' (auto-generado por docker compose desde el nombre del proyecto). EXCEPCIÓN: 'omega-nginx-gateway' es un container externo al stack compose principal y NO lleva prefijo.",
+      "enum": [
+        "arbitragex-v2-edge-1",
+        "arbitragex-v2-frontend-1",
+        "arbitragex-v2-api-server-1",
+        "omega-nginx-gateway",
+        "arbitragex-v2-relays-client-1",
+        "arbitragex-v2-searcher-rs-1",
+        "arbitragex-v2-recon-1",
+        "arbitragex-v2-selector-api-1",
+        "arbitragex-v2-token-enricher-1",
+        "arbitragex-v2-sim-ctl-1",
+        "arbitragex-v2-postgres-1",
+        "arbitragex-v2-alertmanager-1",
+        "arbitragex-v2-grafana-1",
+        "arbitragex-v2-promtail-1",
+        "arbitragex-v2-prometheus-1",
+        "arbitragex-v2-redis-1",
+        "arbitragex-v2-loki-1"
+      ]
+    },
+    "RollbackStrategy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Plan de rollback estructurado, concreto y verificable. Reemplaza la descripción textual libre por un objeto auditable.",
+      "required": [
+        "rollback_type",
+        "rollback_to_sha",
+        "affected_services",
+        "image_tags",
+        "requires_stash_decision",
+        "requires_db_restore",
+        "health_gates",
+        "operator_approval_required"
+      ],
+      "properties": {
+        "rollback_type": {
+          "type": "string",
+          "description": "Mecanismo principal de rollback.",
+          "enum": [
+            "docker-tag-revert",
+            "git-reset-hard",
+            "compose-down-up-previous-sha",
+            "db-restore-from-backup",
+            "env-restore-from-backup",
+            "no-rollback-required",
+            "mixed"
+          ]
+        },
+        "rollback_to_sha": {
+          "type": "string",
+          "description": "SHA-1 de 40 caracteres del commit al que se haría rollback. Normalmente coincide con current_vps_sha previo al deploy. Vacío si rollback_type='no-rollback-required'.",
+          "pattern": "^([0-9a-f]{40}|)$"
+        },
+        "affected_services": {
+          "type": "array",
+          "description": "Lista de containers que se restauran/reinician durante el rollback. Debe ser subconjunto de la unión de services_to_rebuild y services_to_restart del manifest original.",
+          "items": {
+            "$ref": "#/$defs/ContainerName"
+          },
+          "uniqueItems": true
+        },
+        "image_tags": {
+          "type": "object",
+          "description": "Mapa de servicio → image tag a restaurar durante el rollback. Las imágenes referenciadas DEBEN existir en el VPS al momento del manifest (verificable con 'docker images').",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "requires_stash_decision": {
+          "type": "boolean",
+          "description": "Si true, el operador DEBE decidir el destino de los stashes existentes en el VPS antes de aplicar el rollback (pop, drop, preservar)."
+        },
+        "requires_db_restore": {
+          "type": "boolean",
+          "description": "Si true, el rollback incluye restaurar la base de datos desde backup. Implica BLOCKED salvo excepción explícita."
+        },
+        "health_gates": {
+          "type": "array",
+          "description": "Lista de health checks que DEBEN pasar tras el rollback para considerarlo exitoso. Cada entrada describe un check con su criterio de éxito.",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "target", "expected_status"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Nombre descriptivo del check. Ej: 'edge-health-post-rollback'.",
+                "minLength": 1
+              },
+              "target": {
+                "type": "string",
+                "description": "URL o comando del health check. Ej: 'http://127.0.0.1:8787/health'.",
+                "minLength": 1
+              },
+              "expected_status": {
+                "type": "integer",
+                "description": "Código HTTP esperado o código de salida esperado del comando.",
+                "minimum": 0
+              },
+              "fallback_target": {
+                "type": "string",
+                "description": "URL/comando alterno aceptado si target falla con status documentado. Ej: para frontend, target='http://127.0.0.1:5173/api/health' con fallback_target='http://127.0.0.1:5173/'.",
+                "default": ""
+              }
+            }
+          }
+        },
+        "operator_approval_required": {
+          "type": "boolean",
+          "description": "Siempre debe ser true en C10-F2. Ningún rollback se ejecuta sin aprobación explícita del operador con manifest_id firmado.",
+          "const": true
+        }
+      }
+    },
+    "OperatorApproval": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Registro de la aprobación del operador.",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["PENDING", "APPROVED", "REJECTED", "EXPIRED"],
+          "description": "Estado de la aprobación del operador."
+        },
+        "approved_by": {
+          "type": "string",
+          "description": "Identificador del operador que aprobó. Ej: 'Hector Fabio Riascos Castro'.",
+          "default": ""
+        },
+        "approved_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp ISO 8601 de la aprobación.",
+          "default": ""
+        },
+        "approved_manifest_id": {
+          "type": "string",
+          "description": "SHA-256 del manifest exacto que fue aprobado (debe coincidir con manifest_id).",
+          "pattern": "^([0-9a-f]{64}|)$",
+          "default": ""
+        },
+        "exception_authorized": {
+          "type": "string",
+          "description": "Texto literal de la excepción autorizada por el operador, si aplica.",
+          "default": ""
+        }
+      }
+    }
+  }
+}

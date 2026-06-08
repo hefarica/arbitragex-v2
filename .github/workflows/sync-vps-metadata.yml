@@ -1,0 +1,742 @@
+name: Ω-S5++ C10 Fase 1 — Sync VPS Metadata Git (Plan/Execute)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (solo lectura + dry-run) | execute (aplica con doble candado)"
+        required: true
+        type: choice
+        options: [plan, execute]
+        default: plan
+      target_sha:
+        description: "SHA completo 40-hex. Debe existir en main."
+        required: true
+        type: string
+      confirm_token:
+        description: "Defensa en profundidad. En execute debe ser IDÉNTICO a target_sha."
+        required: false
+        type: string
+        default: ""
+      approved_plan_run_id:
+        description: "Run ID de un mode=plan SUCCESS previo con mismo target_sha. Requerido en execute."
+        required: false
+        type: string
+        default: ""
+      recreate_edge:
+        description: "Si true y mode=execute, recrea SOLO edge. Default false."
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: sync-vps-metadata
+  cancel-in-progress: false
+
+env:
+  VPS_HOST: 195.201.235.70
+  VPS_USER: root
+  VPS_PATH: /opt/arbitragex-v2
+
+jobs:
+  sync-vps-metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      # ──────────────────────────────────────────────────────────────
+      # STEP 1 — Self-check ejecutable (excluye texto documental)
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 1 — Self-check (executable lines only)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          F=".github/workflows/sync-vps-metadata.yml"
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/${{ github.repository }}/contents/${F}?ref=${{ github.sha }}" \
+            > /tmp/self.yml
+          python3 - <<'PY'
+          import re, sys
+          banned = [
+              r'\bgit\s+reset\s+--hard\b',
+              r'\bgit\s+pull\b',
+              r'\bgit\s+checkout\b',
+              r'\bgit\s+stash\s+apply\b',
+              r'\bgit\s+stash\s+pop\b',
+              r'\bgit\s+stash\s+drop\b',
+              r'\brm\s+-rf\b',
+              r'\bcat\s+\.env\b',
+              r'\bsource\s+\.env\b',
+              r'\bdocker\s+compose\s+down\b',
+              r'sshpass',
+              r'--admin\b',
+          ]
+          with open('/tmp/self.yml') as f:
+              lines = f.readlines()
+          in_run = False
+          run_indent = 0
+          in_heredoc = False
+          heredoc_marker = None
+          violations = []
+          for i, raw in enumerate(lines, 1):
+              line = raw.rstrip('\n')
+              stripped = line.lstrip()
+              m = re.match(r'^(\s*)run:\s*\|', line)
+              if m:
+                  in_run = True
+                  run_indent = len(m.group(1)) + 2
+                  continue
+              if in_run:
+                  if stripped == "" or len(line) - len(line.lstrip()) >= run_indent:
+                      if in_heredoc:
+                          if stripped == heredoc_marker:
+                              in_heredoc = False
+                              heredoc_marker = None
+                          continue
+                      hd = re.search(r"<<['\"]?([A-Z]+)['\"]?\s*$", line)
+                      if hd:
+                          in_heredoc = True
+                          heredoc_marker = hd.group(1)
+                          continue
+                      if stripped.startswith('#'):
+                          continue
+                      if re.search(r'(echo|printf|cat)\s+.*(REPORT|rollback|smoke|services_touched|danger)', line, re.I):
+                          continue
+                      for pat in banned:
+                          if re.search(pat, line):
+                              if 'rollback_plan' in line or 'MANUAL' in line:
+                                  continue
+                              violations.append((i, pat, line.strip()))
+                  else:
+                      in_run = False
+          if violations:
+              for v in violations:
+                  print(f"::error line={v[0]}::Banned pattern {v[1]} in: {v[2]}")
+              sys.exit(1)
+          print("Self-check OK")
+          PY
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 2 — Validar inputs (formato + doble candado execute)
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 2 — Validate inputs
+        env:
+          MODE: ${{ inputs.mode }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+          CONFIRM_TOKEN: ${{ inputs.confirm_token }}
+          APPROVED_PLAN_RUN_ID: ${{ inputs.approved_plan_run_id }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::target_sha debe ser 40-hex"; exit 1
+          fi
+          if [[ "$MODE" == "execute" ]]; then
+            [[ "$CONFIRM_TOKEN" == "$TARGET_SHA" ]] || \
+              { echo "::error::confirm_token != target_sha"; exit 1; }
+            [[ -n "$APPROVED_PLAN_RUN_ID" ]] || \
+              { echo "::error::approved_plan_run_id requerido en execute"; exit 1; }
+            [[ "$APPROVED_PLAN_RUN_ID" =~ ^[0-9]+$ ]] || \
+              { echo "::error::approved_plan_run_id formato inválido"; exit 1; }
+          fi
+          echo "Inputs OK"
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 3 — Checkout TARGET_SHA + verificar ancestro main
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 3 — Checkout TARGET_SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_sha }}
+          fetch-depth: 0
+
+      - name: Step 3b — Verify TARGET_SHA in main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          set -euo pipefail
+          MAIN_HEAD=$(gh api "repos/${{ github.repository }}/commits/main" --jq '.sha')
+          if [[ "$TARGET_SHA" != "$MAIN_HEAD" ]]; then
+            git merge-base --is-ancestor "$TARGET_SHA" "$MAIN_HEAD" || \
+              { echo "::error::TARGET_SHA no es ancestro de main"; exit 1; }
+          fi
+          echo "TARGET_SHA OK"
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 4 — Gate dry-run review (solo execute)
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 4 — Gate dry-run review
+        if: inputs.mode == 'execute'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPROVED_PLAN_RUN_ID: ${{ inputs.approved_plan_run_id }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          set -euo pipefail
+          RUN_JSON=$(gh api "repos/${{ github.repository }}/actions/runs/${APPROVED_PLAN_RUN_ID}")
+          WF=$(echo "$RUN_JSON" | jq -r '.path // ""')
+          CONC=$(echo "$RUN_JSON" | jq -r '.conclusion // ""')
+          [[ "$WF" == ".github/workflows/sync-vps-metadata.yml" ]] || \
+            { echo "::error::run no pertenece a este workflow ($WF)"; exit 1; }
+          [[ "$CONC" == "success" ]] || \
+            { echo "::error::run no SUCCESS ($CONC)"; exit 1; }
+          ART=$(gh api "repos/${{ github.repository }}/actions/runs/${APPROVED_PLAN_RUN_ID}/artifacts" \
+                --jq ".artifacts[] | select(.name | startswith(\"plan-${TARGET_SHA}\")) | .id" | head -1)
+          [[ -n "$ART" ]] || \
+            { echo "::error::artifact plan-${TARGET_SHA}-* no encontrado en run ${APPROVED_PLAN_RUN_ID}"; exit 1; }
+          echo "Gate review OK (run ${APPROVED_PLAN_RUN_ID}, artifact ${ART})"
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 5 — SSH setup (clave efímera; jamás logged)
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 5 — SSH setup
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_arbx
+          chmod 600 ~/.ssh/id_arbx
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          cat > ~/ssh_vps.sh <<'WRAP'
+          #!/usr/bin/env bash
+          exec ssh -i ~/.ssh/id_arbx -o StrictHostKeyChecking=yes -o BatchMode=yes \
+                   -o ConnectTimeout=10 -o LogLevel=ERROR \
+                   "${VPS_USER}@${VPS_HOST}" "$@"
+          WRAP
+          chmod +x ~/ssh_vps.sh
+          echo "SSH wrapper OK"
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 6 — Decide DIST_EXCLUDED (doble criterio; persistido)
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 6 — Decide DIST_EXCLUDED
+        run: |
+          set -euo pipefail
+          DIST_TRACKED=$(git ls-files | grep -cE '(^|/)dist/' || true)
+          DIST_COPIED_FROM_HOST=$(grep -rEn '^(COPY|ADD)\s+([^[:space:]]*\s+)?(\./)?dist(/|\s)' \
+            --include='Dockerfile*' . | grep -v -- '--from=' | wc -l || true)
+          if [[ "$DIST_TRACKED" -eq 0 && "$DIST_COPIED_FROM_HOST" -eq 0 ]]; then
+            DIST_EXCLUDED=1
+          else
+            DIST_EXCLUDED=0
+          fi
+          echo "DIST_TRACKED=${DIST_TRACKED}"
+          echo "DIST_COPIED_FROM_HOST=${DIST_COPIED_FROM_HOST}"
+          echo "DIST_EXCLUDED=${DIST_EXCLUDED}"
+          {
+            echo "DIST_EXCLUDED=${DIST_EXCLUDED}"
+            echo "DIST_TRACKED=${DIST_TRACKED}"
+            echo "DIST_COPIED_FROM_HOST=${DIST_COPIED_FROM_HOST}"
+          } >> "$GITHUB_ENV"
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 7 — Snapshot pre (READ-ONLY desde VPS)
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 7 — Snapshot pre
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/audit
+          ~/ssh_vps.sh "cd ${VPS_PATH} && git rev-parse HEAD" > /tmp/audit/vps_head_pre.txt
+          ~/ssh_vps.sh "cd ${VPS_PATH} && git remote -v" > /tmp/audit/vps_remote_pre.txt
+          ~/ssh_vps.sh "cd ${VPS_PATH} && git status --porcelain=v1" > /tmp/audit/vps_status_pre.txt
+          ~/ssh_vps.sh "cd ${VPS_PATH} && git stash list" > /tmp/audit/vps_stashes_pre.txt
+          ~/ssh_vps.sh "cd ${VPS_PATH} && stat -c '%a %s %U %G' .env 2>/dev/null || echo 'absent'" \
+            > /tmp/audit/vps_env_meta_pre.txt
+          ~/ssh_vps.sh "docker ps --format '{{.Names}}\t{{.Status}}\t{{.Image}}'" \
+            > /tmp/audit/vps_docker_pre.txt
+          STATUS_COUNT_PRE=$(wc -l < /tmp/audit/vps_status_pre.txt || echo 0)
+          echo "STATUS_COUNT_PRE=${STATUS_COUNT_PRE}" >> "$GITHUB_ENV"
+          {
+            echo "## VPS State Pre-sync"
+            echo "HEAD=$(cat /tmp/audit/vps_head_pre.txt)"
+            echo "STATUS_COUNT=${STATUS_COUNT_PRE}"
+            echo "STASH_COUNT=$(wc -l < /tmp/audit/vps_stashes_pre.txt)"
+            echo "ENV_META=$(cat /tmp/audit/vps_env_meta_pre.txt)"
+            echo ""
+            echo "### Remote"; cat /tmp/audit/vps_remote_pre.txt
+            echo "### Stashes"; cat /tmp/audit/vps_stashes_pre.txt
+            echo "### Docker"; cat /tmp/audit/vps_docker_pre.txt
+          } > /tmp/audit/pre_state.txt
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 8 — Invariantes pre
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 8 — Invariantes pre
+        run: |
+          set -euo pipefail
+          grep -q "https://github.com/hefarica/arbitragex-v2" /tmp/audit/vps_remote_pre.txt
+          PERMS=$(awk '{print $1}' /tmp/audit/vps_env_meta_pre.txt)
+          [[ "$PERMS" == "600" ]] || { echo "::error::.env perms != 600 ($PERMS)"; exit 1; }
+          grep -q "configs/app.toml" /tmp/audit/vps_stashes_pre.txt || \
+            { echo "::error::stash operador configs/app.toml ausente"; exit 1; }
+          grep -q "opportunities" /tmp/audit/vps_stashes_pre.txt || \
+            { echo "::error::stash operador opportunities ausente"; exit 1; }
+          for svc in searcher-rs api-server postgres redis edge; do
+            grep -q "$svc" /tmp/audit/vps_docker_pre.txt || \
+              { echo "::error::$svc no presente"; exit 1; }
+            grep "$svc" /tmp/audit/vps_docker_pre.txt | grep -q "Up" || \
+              { echo "::error::$svc no está Up"; exit 1; }
+          done
+          echo "Invariantes pre OK"
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 9 — Rsync dry-run con itemize-changes (siempre)
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 9 — Rsync dry-run (itemize)
+        run: |
+          set -euo pipefail
+          EXCLUDES=(
+            --exclude='.git/' --exclude='.env' --exclude='.env.*'
+            --exclude='node_modules/' --exclude='target/' --exclude='backups/'
+            --exclude='audits/' --exclude='*.pem' --exclude='*.key' --exclude='*.p12'
+            --exclude='.next/' --exclude='build/'
+          )
+          if [[ "$DIST_EXCLUDED" == "1" ]]; then EXCLUDES+=(--exclude='dist/'); fi
+          rsync -avnci --delete \
+            -e "ssh -i ~/.ssh/id_arbx -o StrictHostKeyChecking=yes -o BatchMode=yes" \
+            "${EXCLUDES[@]}" \
+            ./ "${VPS_USER}@${VPS_HOST}:${VPS_PATH}/" \
+            > /tmp/audit/rsync_dryrun.txt 2>&1 || \
+            { echo "::error::dry-run falló"; tail -50 /tmp/audit/rsync_dryrun.txt; exit 1; }
+          FILES_CHANGED=$(grep -cE '^[><ch*]' /tmp/audit/rsync_dryrun.txt || true)
+          FILES_DELETED=$(grep -cE '^\*deleting' /tmp/audit/rsync_dryrun.txt || true)
+          echo "FILES_CHANGED=${FILES_CHANGED}" >> "$GITHUB_ENV"
+          echo "FILES_DELETED=${FILES_DELETED}" >> "$GITHUB_ENV"
+          echo "FILES_CHANGED=${FILES_CHANGED} FILES_DELETED=${FILES_DELETED}"
+          head -200 /tmp/audit/rsync_dryrun.txt
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 10 — Danger pattern detector
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 10 — Danger pattern detector
+        run: |
+          set -euo pipefail
+          DANGER=$(grep -iE '(^|/|\s)\.env(\s|$|\.[a-zA-Z0-9_-]+(\s|$))|(^|/|\s)backups/|\.(pem|key|p12|pfx|crt)(\s|$)|(^|/|\s)secrets/|(^|/|\s)credentials(\s|$)|(^|/|\s)credentials\.(env|json|ya?ml|toml|ini|conf|txt|csv)(\s|$)|(^|/|\s)private\.key(\s|$)|(^|/|\s)id_rsa(\s|$|\.[a-zA-Z0-9_-]+(\s|$))|(^|/|\s)id_ed25519(\s|$|\.[a-zA-Z0-9_-]+(\s|$))|(^|/|\s)\.git/|stash@\{' \
+                   /tmp/audit/rsync_dryrun.txt || true)
+          if [[ -n "$DANGER" ]]; then
+            echo "$DANGER" > /tmp/audit/danger_report.txt
+            echo "::error::Patrones peligrosos en dry-run"
+            cat /tmp/audit/danger_report.txt
+            exit 1
+          fi
+          echo "OK: cero patrones peligrosos" > /tmp/audit/danger_report.txt
+
+      # ══════════════════════════════════════════════════════════════
+      # MUTATION ZONE — solo mode=execute desde aquí en adelante
+      # ══════════════════════════════════════════════════════════════
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 11 — Pre-sync stash condicional (execute only)
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 11 — Pre-sync stash (execute only, if dirty)
+        if: inputs.mode == 'execute'
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [[ "${STATUS_COUNT_PRE:-0}" -eq 0 ]]; then
+            echo "NEW_STASH=NONE" >> "$GITHUB_ENV"
+            echo "Working tree limpio. Sin pre-sync stash."
+            exit 0
+          fi
+          TS=$(date -u +%Y%m%dT%H%M%SZ)
+          MSG="C10-F1-pre-sync-${RUN_ID}-${TS}"
+          ~/ssh_vps.sh "cd ${VPS_PATH} && git stash push -u -m '${MSG}'" \
+            > /tmp/audit/stash_push.txt 2>&1
+          ~/ssh_vps.sh "cd ${VPS_PATH} && git stash list -n 5" > /tmp/audit/stash_list_post.txt
+          NEW_STASH=$(grep -F "${MSG}" /tmp/audit/stash_list_post.txt | head -1 | cut -d: -f1)
+          [[ -n "$NEW_STASH" ]] || { echo "::error::pre-sync stash no creado"; exit 1; }
+          grep -q "configs/app.toml" /tmp/audit/stash_list_post.txt || \
+            { echo "::error::stash operador configs/app.toml perdido"; exit 1; }
+          grep -q "opportunities" /tmp/audit/stash_list_post.txt || \
+            { echo "::error::stash operador opportunities perdido"; exit 1; }
+          echo "NEW_STASH=${NEW_STASH}" >> "$GITHUB_ENV"
+          echo "PRE_SYNC_STASH_MSG=${MSG}" >> "$GITHUB_ENV"
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 12 — Snapshot Docker edge (solo si recreate_edge=true)
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 12 — Snapshot Docker edge
+        if: inputs.mode == 'execute' && inputs.recreate_edge == true
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TS=$(date -u +%Y%m%d-%H%M%S)
+          TAG="arbitragex-v2-edge:pre-c10-f1-${RUN_ID}-${TS}"
+          EDGE_IMG=$(~/ssh_vps.sh "docker inspect arbitragex-v2-edge-1 --format '{{.Image}}'")
+          ~/ssh_vps.sh "docker tag ${EDGE_IMG} ${TAG}"
+          echo "EDGE_BACKUP_TAG=${TAG}" >> "$GITHUB_ENV"
+          echo "EDGE_IMG_ORIGIN=${EDGE_IMG}" >> "$GITHUB_ENV"
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 13 — Rsync real (execute only)
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 13 — Rsync real
+        if: inputs.mode == 'execute'
+        run: |
+          set -euo pipefail
+          EXCLUDES=(
+            --exclude='.git/' --exclude='.env' --exclude='.env.*'
+            --exclude='node_modules/' --exclude='target/' --exclude='backups/'
+            --exclude='audits/' --exclude='*.pem' --exclude='*.key' --exclude='*.p12'
+            --exclude='.next/' --exclude='build/'
+          )
+          if [[ "$DIST_EXCLUDED" == "1" ]]; then EXCLUDES+=(--exclude='dist/'); fi
+          rsync -avci --delete \
+            -e "ssh -i ~/.ssh/id_arbx -o StrictHostKeyChecking=yes -o BatchMode=yes" \
+            "${EXCLUDES[@]}" \
+            ./ "${VPS_USER}@${VPS_HOST}:${VPS_PATH}/" \
+            > /tmp/audit/rsync_real.txt 2>&1
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 14 — update-ref + reset --mixed (PROHIBIDO --hard)
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 14 — Update ref + reset mixed
+        if: inputs.mode == 'execute'
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          set -euo pipefail
+          ~/ssh_vps.sh "cd ${VPS_PATH} && git update-ref refs/heads/main ${TARGET_SHA}"
+          ~/ssh_vps.sh "cd ${VPS_PATH} && git reset --mixed ${TARGET_SHA}"
+          NEW_HEAD=$(~/ssh_vps.sh "cd ${VPS_PATH} && git rev-parse HEAD")
+          [[ "$NEW_HEAD" == "$TARGET_SHA" ]] || \
+            { echo "::error::HEAD mismatch post-reset"; exit 1; }
+          echo "HEAD=${NEW_HEAD}"
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 15 — Recreate edge (solo si recreate_edge=true)  [v3.2]
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 15 — Recreate edge
+        if: inputs.mode == 'execute' && inputs.recreate_edge == true
+        run: |
+          set -euo pipefail
+
+          redact() {
+            sed -E \
+              -e 's/([Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|_KEY|_key|[Bb][Ee][Aa][Rr][Ee][Rr])[= :][^[:space:]]+/\1=[REDACTED]/g' \
+              -e 's/[A-Za-z0-9_\-]{32,}/[REDACTED_LONG]/g'
+          }
+
+          set +e
+          ~/ssh_vps.sh "cd ${VPS_PATH} && docker compose --env-file .env -f docker/compose.prod.yml build --no-cache edge" \
+            > /tmp/audit/edge_build.raw 2>&1
+          BUILD_RC=$?
+          set -e
+
+          cat /tmp/audit/edge_build.raw | redact > /tmp/audit/edge_build.txt
+          rm -f /tmp/audit/edge_build.raw
+
+          if [[ "$BUILD_RC" -ne 0 ]]; then
+            echo "::error::docker compose build edge falló. Ver edge_build.txt redactado."
+            exit "$BUILD_RC"
+          fi
+
+          set +e
+          ~/ssh_vps.sh "cd ${VPS_PATH} && docker compose --env-file .env -f docker/compose.prod.yml up -d --no-deps edge" \
+            > /tmp/audit/edge_up.raw 2>&1
+          UP_RC=$?
+          set -e
+
+          cat /tmp/audit/edge_up.raw | redact > /tmp/audit/edge_up.txt
+          rm -f /tmp/audit/edge_up.raw
+
+          if [[ "$UP_RC" -ne 0 ]]; then
+            echo "::error::docker compose up edge falló. Ver edge_up.txt redactado."
+            exit "$UP_RC"
+          fi
+
+          sleep 8
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 16 — Snapshot post (solo execute)
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 16 — Snapshot post
+        if: inputs.mode == 'execute'
+        run: |
+          set -euo pipefail
+          ~/ssh_vps.sh "cd ${VPS_PATH} && git rev-parse HEAD" > /tmp/audit/vps_head_post.txt
+          ~/ssh_vps.sh "cd ${VPS_PATH} && git status --porcelain=v1" > /tmp/audit/vps_status_post.txt
+          ~/ssh_vps.sh "cd ${VPS_PATH} && git stash list" > /tmp/audit/vps_stashes_post.txt
+          ~/ssh_vps.sh "cd ${VPS_PATH} && stat -c '%a %s %U %G' .env" > /tmp/audit/vps_env_meta_post.txt
+          ~/ssh_vps.sh "docker ps --format '{{.Names}}\t{{.Status}}'" > /tmp/audit/vps_docker_post.txt
+          {
+            echo "## VPS State Post-sync"
+            echo "HEAD=$(cat /tmp/audit/vps_head_post.txt)"
+            echo "ENV_META=$(cat /tmp/audit/vps_env_meta_post.txt)"
+            echo "### Stashes"; cat /tmp/audit/vps_stashes_post.txt
+            echo "### Docker"; cat /tmp/audit/vps_docker_post.txt
+          } > /tmp/audit/post_state.txt
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 17 — Smoke tests escalonados  [v3.3 — bash -n PASS]
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 17 — Smoke tests
+        if: inputs.mode == 'execute'
+        env:
+          ARBX_ADMIN_TOKEN: ${{ secrets.ARBX_ADMIN_TOKEN }}
+          RECREATE_EDGE: ${{ inputs.recreate_edge }}
+        run: |
+          set -euo pipefail
+          : > /tmp/audit/smoke.txt
+
+          http_code() {
+            local url="$1"
+            ~/ssh_vps.sh "curl -sS -o /dev/null -w '%{http_code}' --max-time 8 '${url}'" || echo "CURL_FAIL"
+          }
+
+          # Health 4/4.
+          # IMPORTANTE:
+          # - frontend = 5173
+          # - grafana = 3000
+          # - NO confundir frontend con Grafana.
+          for entry in "edge:8787:/health" "api:8080:/health" "frontend:5173:/api/health" "prom:9090:/-/ready"; do
+            NAME="${entry%%:*}"
+            REST="${entry#*:}"
+            PORT="${REST%%:*}"
+            PATH_="${REST#*:}"
+
+            CODE="$(http_code "http://127.0.0.1:${PORT}${PATH_}")"
+
+            if [[ "$NAME" == "frontend" && "$CODE" != "200" ]]; then
+              CODE="$(http_code "http://127.0.0.1:${PORT}/")"
+            fi
+
+            echo "${NAME}=${CODE}" >> /tmp/audit/smoke.txt
+
+            if [[ "$CODE" != "200" ]]; then
+              echo "::error::health ${NAME} != 200 (${CODE})"
+              exit 1
+            fi
+          done
+
+          # Smoke extendido solo si recreate_edge=true.
+          if [[ "$RECREATE_EDGE" == "true" ]]; then
+
+            # Check 1: /api/admin/chains SIN cookie debe devolver 401.
+            # No usar -f porque 401 es el resultado esperado.
+            CODE_NO="$(~/ssh_vps.sh "curl -sS -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:8787/api/admin/chains" || echo "CURL_FAIL")"
+            echo "admin_no_cookie=${CODE_NO}" >> /tmp/audit/smoke.txt
+
+            if [[ "$CODE_NO" != "401" ]]; then
+              echo "::error::/api/admin/chains sin cookie != 401 (${CODE_NO})"
+              exit 1
+            fi
+
+            # Check 2: /api/admin/chains CON cookie es opcional.
+            # Solo corre si existe ARBX_ADMIN_TOKEN y jq en el VPS.
+            if [[ -z "${ARBX_ADMIN_TOKEN:-}" ]]; then
+              echo "admin_with_cookie=SKIPPED_ADMIN_TOKEN_UNAVAILABLE" >> /tmp/audit/smoke.txt
+            else
+              JQ_AVAILABLE="$(~/ssh_vps.sh "command -v jq >/dev/null 2>&1 && echo yes || echo no")"
+
+              if [[ "$JQ_AVAILABLE" != "yes" ]]; then
+                echo "admin_with_cookie=SKIPPED_ADMIN_COOKIE_SMOKE_DEPENDENCY_UNAVAILABLE" >> /tmp/audit/smoke.txt
+              else
+                # Token enviado por stdin SSH.
+                # No se interpola en comando visible.
+                # No se escribe a disco VPS.
+                # Cookie temporal se elimina en el mismo bloque remoto.
+                set +e
+                SMOKE_OUT="$(
+                  printf '%s' "$ARBX_ADMIN_TOKEN" | ~/ssh_vps.sh '
+                    set +e
+                    read T || true
+
+                    CF="/tmp/arbx_cookies_$$"
+
+                    SESSION_CODE="$(
+                      jq -n --arg t "$T" "{token:\$t}" \
+                        | curl -sS -c "$CF" -X POST \
+                            -H "Content-Type: application/json" \
+                            --data-binary @- \
+                            http://127.0.0.1:8787/admin/session \
+                            -o /dev/null \
+                            -w "%{http_code}" \
+                        || echo "CURL_FAIL"
+                    )"
+
+                    COOKIE_PRESENT="$(
+                      grep -c "arbx_admin_session" "$CF" 2>/dev/null
+                    )"
+                    COOKIE_PRESENT="${COOKIE_PRESENT:-0}"
+
+                    ADMIN_WITH_COOKIE_CODE="$(
+                      curl -sS -b "$CF" \
+                        -o /dev/null \
+                        -w "%{http_code}" \
+                        --max-time 8 \
+                        http://127.0.0.1:8787/api/admin/chains \
+                        || echo "CURL_FAIL"
+                    )"
+
+                    shred -u "$CF" 2>/dev/null || rm -f "$CF"
+
+                    printf "SESSION_CODE=%s\n" "$SESSION_CODE"
+                    printf "COOKIE_PRESENT=%s\n" "$COOKIE_PRESENT"
+                    printf "ADMIN_WITH_COOKIE_CODE=%s\n" "$ADMIN_WITH_COOKIE_CODE"
+                  '
+                )"
+                SMOKE_RC=$?
+                set -e
+
+                if [[ "$SMOKE_RC" -ne 0 || -z "${SMOKE_OUT:-}" ]]; then
+                  SMOKE_OUT=$'SESSION_CODE=ERR\nCOOKIE_PRESENT=0\nADMIN_WITH_COOKIE_CODE=ERR'
+                fi
+
+                # Parseo robusto. No usar grep bajo pipefail sin fallback.
+                SESSION_CODE="$(printf '%s\n' "$SMOKE_OUT" | awk -F= '/^SESSION_CODE=/{print $2; found=1} END{if(!found) print "ERR"}')"
+                COOKIE_PRESENT="$(printf '%s\n' "$SMOKE_OUT" | awk -F= '/^COOKIE_PRESENT=/{print $2; found=1} END{if(!found) print "0"}')"
+                ADMIN_WITH_COOKIE_CODE="$(printf '%s\n' "$SMOKE_OUT" | awk -F= '/^ADMIN_WITH_COOKIE_CODE=/{print $2; found=1} END{if(!found) print "ERR"}')"
+
+                {
+                  echo "session_code=${SESSION_CODE}"
+                  echo "cookie_present=${COOKIE_PRESENT}"
+                  echo "admin_with_cookie=${ADMIN_WITH_COOKIE_CODE}"
+                } >> /tmp/audit/smoke.txt
+
+                if [[ "$SESSION_CODE" != "200" ]]; then
+                  echo "::error::POST /admin/session != 200 (${SESSION_CODE})"
+                  exit 1
+                fi
+
+                if ! [[ "$COOKIE_PRESENT" =~ ^[0-9]+$ ]]; then
+                  echo "::error::COOKIE_PRESENT no numérico (${COOKIE_PRESENT})"
+                  exit 1
+                fi
+
+                if [[ "$COOKIE_PRESENT" -lt 1 ]]; then
+                  echo "::error::cookie arbx_admin_session ausente"
+                  exit 1
+                fi
+
+                if [[ "$ADMIN_WITH_COOKIE_CODE" != "200" ]]; then
+                  echo "::error::/api/admin/chains con cookie != 200 (${ADMIN_WITH_COOKIE_CODE})"
+                  exit 1
+                fi
+              fi
+            fi
+          fi
+
+          echo "Smoke OK" >> /tmp/audit/smoke.txt
+          echo "Smoke OK"
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 18 — Invariantes post (.env intacto, stashes operador OK)
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 18 — Invariantes post
+        if: inputs.mode == 'execute'
+        run: |
+          set -euo pipefail
+          diff /tmp/audit/vps_env_meta_pre.txt /tmp/audit/vps_env_meta_post.txt || \
+            { echo "::error::.env mutó"; exit 1; }
+          grep -q "configs/app.toml" /tmp/audit/vps_stashes_post.txt
+          grep -q "opportunities" /tmp/audit/vps_stashes_post.txt
+          for svc in searcher-rs api-server postgres redis; do
+            grep "$svc" /tmp/audit/vps_docker_post.txt | grep -q "Up"
+          done
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 19 — Reporte final + services_touched.json + rollback_plan.md
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 19 — Final reports
+        if: always()
+        env:
+          MODE: ${{ inputs.mode }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+          RECREATE_EDGE: ${{ inputs.recreate_edge }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/audit
+          if [[ "$MODE" == "plan" ]]; then
+            FS=false; META=false; REBUILT="[]"; RESTARTED="[]"
+          elif [[ "$RECREATE_EDGE" == "true" ]]; then
+            FS=true; META=true; REBUILT='["edge"]'; RESTARTED='["edge"]'
+          else
+            FS=true; META=true; REBUILT="[]"; RESTARTED="[]"
+          fi
+          cat > /tmp/audit/services_touched.json <<JSON
+          {
+            "mode": "${MODE}",
+            "target_sha": "${TARGET_SHA}",
+            "filesystem_sync": ${FS},
+            "git_metadata_sync": ${META},
+            "services_rebuilt": ${REBUILT},
+            "services_restarted": ${RESTARTED},
+            "containers_untouched": [
+              "searcher-rs","api-server","postgres","redis","relays-client",
+              "sim-ctl","token-enricher","recon","selector-api","frontend",
+              "omega-nginx-gateway","prometheus","grafana","loki","promtail","alertmanager"
+            ]
+          }
+          JSON
+          cat > /tmp/audit/rollback_plan.md <<MD
+          # Rollback Plan — C10 Fase 1 run ${RUN_ID}
+
+          **IMPORTANTE:** todas las acciones de stash son MANUALES y requieren
+          autorización explícita del operador. El workflow NO ejecuta stash apply,
+          stash pop ni stash drop. La restauración de stash solo manual, previa
+          inspección y autorización explícita del operador.
+
+          ## Pasos (si mode=execute aplicó cambios)
+          1. git update-ref refs/heads/main \$(cat pre_state.txt | grep ^HEAD | head -1 | cut -d= -f2)
+          2. git reset --mixed \$(mismo SHA del paso 1)
+          3. Pre-sync stash creado: \${NEW_STASH:-NONE}
+             - Inspección manual: git stash show -p \${NEW_STASH:-N/A}
+             - Decisión operador: aplicar manualmente o descartar
+          4. Si recreate_edge=true:
+             docker tag \${EDGE_BACKUP_TAG:-N/A} <imagen-actual-edge>
+             docker compose --env-file .env -f docker/compose.prod.yml up -d --no-deps edge
+          MD
+          VERDICT="PENDING"
+          if [[ "${{ job.status }}" == "success" ]]; then VERDICT="PASS"; fi
+          cat > /tmp/audit/REPORT.md <<MD
+          # Ω-S5++ C10 Fase 1 — Reporte run ${RUN_ID}
+
+          - MODE: ${MODE}
+          - TARGET_SHA: ${TARGET_SHA}
+          - RECREATE_EDGE: ${RECREATE_EDGE}
+          - DIST_EXCLUDED: ${DIST_EXCLUDED:-?}
+          - DIST_TRACKED: ${DIST_TRACKED:-?}
+          - DIST_COPIED_FROM_HOST: ${DIST_COPIED_FROM_HOST:-?}
+          - STATUS_COUNT_PRE: ${STATUS_COUNT_PRE:-?}
+          - FILES_CHANGED (dry-run): ${FILES_CHANGED:-?}
+          - FILES_DELETED (dry-run): ${FILES_DELETED:-?}
+          - NEW_STASH: ${NEW_STASH:-N/A}
+          - EDGE_BACKUP_TAG: ${EDGE_BACKUP_TAG:-N/A}
+
+          ## Veredicto: ${VERDICT}
+
+          Ver services_touched.json, rollback_plan.md, smoke.txt, pre_state.txt, post_state.txt, rsync_dryrun.txt.
+          MD
+          cat /tmp/audit/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/audit/services_touched.json >> "$GITHUB_STEP_SUMMARY"
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 20 — Upload artifact con nombre convencional
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 20 — Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.mode }}-${{ inputs.target_sha }}-${{ github.run_id }}
+          path: /tmp/audit/
+          retention-days: 30
+
+      # ──────────────────────────────────────────────────────────────
+      # STEP 21 — Cleanup SSH
+      # ──────────────────────────────────────────────────────────────
+      - name: Step 21 — Cleanup SSH
+        if: always()
+        run: |
+          shred -u ~/.ssh/id_arbx 2>/dev/null || rm -f ~/.ssh/id_arbx
+          rm -f ~/.ssh/known_hosts 2>/dev/null || true

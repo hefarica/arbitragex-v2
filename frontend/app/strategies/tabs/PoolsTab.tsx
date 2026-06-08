@@ -1,30 +1,15 @@
 /**
  * Phase 2 Route Finder — Pool browser tab (read-only MVP).
  *
- * Fetches /api/pools?chain_id=N&dex_id=X&limit=200 on mount and when
- * the DEX filter or chain selector changes (R1: useEffect + useState).
- * Loads DEX list from /api/dexes for the filter dropdown.
- *
- * Chain selector (Phase 2 multichain): operator can browse pools for any of the
- * 6 supported chains. Switching chain resets the DEX filter and pagination.
- *
- * Filters (all client-side after initial load):
- *   - Chain selector (re-fetches dexes + pools for selected chain)
- *   - DEX dropdown (triggers new server request — different DEX = different dataset)
- *   - Protocol type chips (multiselect, client-side)
- *   - Token search (symbol or address prefix, client-side)
- *
- * Pagination: loads LIMIT=200 per request, "Load more" increments offset.
- * (Offset-based: re-fetches with limit+200 on each Load more click.)
- *
- * R8 fail-honest: empty items = explicit "no pools" message, never hidden.
- * Errors shown verbatim.
- *
- * Local types mirror shared-ts — no cross-package import required.
+ * Migrated to Omni-Store (Phase 8):
+ * - Consumes chains and dexes from useOmniStore.
+ * - Centralized registry fetch reduces redundant API calls.
+ * - Preserves R8 fail-honest error reporting.
  */
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -45,26 +30,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useChains } from "@/lib/chains";
+import { TokenPairIcon } from "@/components/ui/TokenIcon";
+import { useOmniStore } from "@/lib/store/omni-store";
 import { shortAddr } from "@/lib/format";
+import { getApiBaseUrl } from "@/lib/api-client";
 
 // ── Local type mirrors (no cross-package import) ───────────────────────────
 
-/** Mirrors DexInfo from shared-ts — no cross-package import */
-interface DexInfo {
-  id: string;
-  name: string;
-  protocol_type: string;
-  chain_id: number;
-}
-
-interface DexesResponse {
-  count: number;
-  chain_id: number;
-  items: DexInfo[];
-}
-
-/** Mirrors PoolInfo from shared-ts — no cross-package import */
 interface PoolInfo {
   id: string;
   chain_id: number;
@@ -87,13 +59,8 @@ interface PoolsResponse {
   items: PoolInfo[];
 }
 
-// Audit 2026-05-10 fix: chain catalog now sourced from `lib/chains.ts`
-// (live `/api/chains` fetch with doctrinal fallback). Single source for
-// DexesTab + PoolsTab.
-
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
 const LOAD_PAGE = 200;
 const DASH = "—";
 
@@ -104,7 +71,6 @@ const KNOWN_PROTOCOLS = ["UNISWAP_V2", "UNISWAP_V3", "CURVE", "BALANCER"];
 
 function fmtFeeTier(tier: number | null | undefined): string {
   if (tier == null) return DASH;
-  // fee_tier is in basis-points (e.g. 500 = 0.05%, 3000 = 0.3%, 10000 = 1%)
   return `${(tier / 10_000).toFixed(tier % 100 === 0 ? 2 : 4)}%`;
 }
 
@@ -114,7 +80,6 @@ function tokenPairLabel(pool: PoolInfo): string {
   return `${t0}/${t1}`;
 }
 
-// Protocol badge colours — reuse same palette as DexesTab (chart vars, theme-aware).
 const PROTOCOL_CLASSES: Record<string, string> = {
   UNISWAP_V3: "bg-chart-1/15 text-chart-1 border-chart-1/40",
   UNISWAP_V2: "bg-chart-2/15 text-chart-2 border-chart-2/40",
@@ -141,44 +106,40 @@ interface Props {
 // ── Component ──────────────────────────────────────────────────────────────
 
 export function PoolsTab({ chainId }: Props) {
-  // Audit 2026-05-10 fix: live chain catalog from `/api/chains`.
-  const { chains: SUPPORTED_CHAINS } = useChains();
+  // ── Omni-Store Selectors ──
+  const { 
+    chainsMap, 
+    dexesMap, 
+    registryStatus, 
+    registryError, 
+    fetchRegistry 
+  } = useOmniStore(
+    useShallow((state) => ({
+      chainsMap: state.chains,
+      dexesMap: state.dexes,
+      registryStatus: state.registryStatus,
+      registryError: state.registryError,
+      fetchRegistry: state.fetchRegistry,
+    }))
+  );
 
-  // ── Chain selector state (R1: init = chainId prop) ──
+  const SUPPORTED_CHAINS = useMemo(() => Array.from(chainsMap.values()), [chainsMap]);
+  const dexes = useMemo(() => Array.from(dexesMap.values()), [dexesMap]);
+
+  // ── Chain selector state ──
   const [selectedChainId, setSelectedChainId] = useState<number>(chainId);
 
-  // ── DEX list for filter dropdown ──
-  const [dexes, setDexes] = useState<DexInfo[]>([]);
-  const [dexesLoading, setDexesLoading] = useState(true);
-
+  // Initial registry fetch
   useEffect(() => {
-    const ctrl = new AbortController();
-    setDexesLoading(true);
-    fetch(`${EDGE_URL}/api/dexes?chain_id=${selectedChainId}`, {
-      signal: ctrl.signal,
-      credentials: "include",
-      headers: { accept: "application/json" },
-    })
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json() as Promise<DexesResponse>;
-      })
-      .then((d) => {
-        setDexes(d.items ?? []);
-        setDexesLoading(false);
-      })
-      .catch((e: Error) => {
-        if (e.name !== "AbortError") setDexesLoading(false);
-      });
-    return () => ctrl.abort();
-  }, [selectedChainId]);
+    fetchRegistry(selectedChainId);
+  }, [selectedChainId, fetchRegistry]);
 
   // ── Filter state ──
   const [selectedDexId, setSelectedDexId] = useState<string>("__all__");
   const [activeProtocols, setActiveProtocols] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
 
-  // ── Pool fetch state ──
+  // ── Pool fetch state (Still local as it's a large paginated dataset) ──
   const [pools, setPools] = useState<PoolInfo[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [limit, setLimit] = useState(LOAD_PAGE);
@@ -191,7 +152,8 @@ export function PoolsTab({ chainId }: Props) {
     setPoolsLoading(true);
     setFetchError(null);
 
-    const url = new URL(`${EDGE_URL}/api/pools`);
+    const baseUrl = getApiBaseUrl();
+    const url = new URL(`${baseUrl}/api/pools`);
     url.searchParams.set("chain_id", String(selectedChainId));
     if (selectedDexId !== "__all__") url.searchParams.set("dex_id", selectedDexId);
     url.searchParams.set("limit", String(limit));
@@ -218,16 +180,12 @@ export function PoolsTab({ chainId }: Props) {
     return () => ctrl.abort();
   }, [selectedChainId, selectedDexId, limit]);
 
-  // ── Client-side filtering (protocol chips + search) ──
+  // ── Client-side filtering ──
   const filteredPools = useMemo(() => {
     let result = pools;
-
-    // Protocol filter — only active if at least one chip is toggled.
     if (activeProtocols.size > 0) {
       result = result.filter((p) => activeProtocols.has(p.protocol_type));
     }
-
-    // Search by token symbol or address (prefix, case-insensitive).
     const q = search.trim().toLowerCase();
     if (q.length > 0) {
       result = result.filter((p) => {
@@ -236,7 +194,6 @@ export function PoolsTab({ chainId }: Props) {
         return pair.includes(q) || addr.startsWith(q);
       });
     }
-
     return result;
   }, [pools, activeProtocols, search]);
 
@@ -253,7 +210,6 @@ export function PoolsTab({ chainId }: Props) {
 
   const onChainChange = (value: string) => {
     setSelectedChainId(Number(value));
-    // Reset DEX filter and pagination — different chain has different DEXes.
     setSelectedDexId("__all__");
     setLimit(LOAD_PAGE);
     setActiveProtocols(new Set());
@@ -261,20 +217,17 @@ export function PoolsTab({ chainId }: Props) {
 
   const onDexChange = (value: string) => {
     setSelectedDexId(value);
-    setLimit(LOAD_PAGE); // reset pagination on DEX change
+    setLimit(LOAD_PAGE);
   };
 
   const loadMore = () => {
     setLimit((prev) => prev + LOAD_PAGE);
   };
 
-  // Whether there are more results on the server side.
   const hasMore = pools.length < totalCount && !poolsLoading;
 
   const selectedChainName =
-    SUPPORTED_CHAINS.find((c) => c.chain_id === selectedChainId)?.name ?? String(selectedChainId);
-
-  // ── Render ─────────────────────────────────────────────────────────────
+    chainsMap.get(selectedChainId)?.name ?? String(selectedChainId);
 
   return (
     <Card>
@@ -282,25 +235,13 @@ export function PoolsTab({ chainId }: Props) {
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <CardTitle>Pools · {selectedChainName}</CardTitle>
-            {/*
-              Audit 2026-05-10 honesty fix (C3): the dashboard previously
-              implied per-pool control was coming "next phase". The contract
-              for that exists at the Rust struct level — `StrategyRuntimeConfig
-              .enabled_pool_ids` is reserved in `route_constraints` — but the
-              writeback UI is not wired yet. Until then this tab is a strict
-              READ-ONLY browser. Coarse control of which pools the searcher
-              evaluates is achieved indirectly via `Strategies → DEXes`
-              (whitelist DEXes) and `Strategies → Tokens` (whitelist tokens).
-            */}
             <p className="text-xs text-muted-foreground mt-1">
               Read-only browser. Operator controls pools indirectly today via
               <strong className="font-mono mx-1">DEXes</strong> +
-              <strong className="font-mono mx-1">Tokens</strong> tabs. Per-pool
-              allowlist UI lands in a future sprint.
+              <strong className="font-mono mx-1">Tokens</strong> tabs.
             </p>
           </div>
           <div className="flex items-center gap-3">
-            {/* Chain selector */}
             <Select
               value={String(selectedChainId)}
               onValueChange={onChainChange}
@@ -310,8 +251,8 @@ export function PoolsTab({ chainId }: Props) {
               </SelectTrigger>
               <SelectContent>
                 {SUPPORTED_CHAINS.map((c) => (
-                  <SelectItem key={c.chain_id} value={String(c.chain_id)}>
-                    {c.name} ({c.short})
+                  <SelectItem key={c.id} value={String(c.id)}>
+                    {c.name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -328,15 +269,11 @@ export function PoolsTab({ chainId }: Props) {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-
-        {/* ── Filters bar ── */}
         <div className="flex flex-wrap items-center gap-3">
-
-          {/* DEX dropdown */}
           <Select
             value={selectedDexId}
             onValueChange={onDexChange}
-            disabled={dexesLoading}
+            disabled={registryStatus === "loading"}
           >
             <SelectTrigger size="sm" className="w-48">
               <SelectValue placeholder="All DEXes" />
@@ -351,7 +288,6 @@ export function PoolsTab({ chainId }: Props) {
             </SelectContent>
           </Select>
 
-          {/* Protocol type chips (multiselect) */}
           <div className="flex flex-wrap items-center gap-1.5">
             {KNOWN_PROTOCOLS.map((proto) => {
               const active = activeProtocols.has(proto);
@@ -364,24 +300,13 @@ export function PoolsTab({ chainId }: Props) {
                   type="button"
                   onClick={() => toggleProtocol(proto)}
                   className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors cursor-pointer ${cls}`}
-                  title={active ? `Remove ${proto} filter` : `Filter by ${proto}`}
                 >
                   {proto}
                 </button>
               );
             })}
-            {activeProtocols.size > 0 && (
-              <button
-                type="button"
-                onClick={() => setActiveProtocols(new Set())}
-                className="text-[10px] text-muted-foreground underline ml-1"
-              >
-                clear
-              </button>
-            )}
           </div>
 
-          {/* Token search */}
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -390,83 +315,80 @@ export function PoolsTab({ chainId }: Props) {
           />
         </div>
 
-        {/* ── Error ── */}
-        {fetchError && (
+        {(fetchError || registryError) && (
           <p className="text-xs text-destructive font-mono bg-destructive/10 px-3 py-2 rounded">
-            Failed to load pools: {fetchError}
+            Error: {fetchError || registryError}
           </p>
         )}
 
-        {/* ── Loading ── */}
-        {poolsLoading && !fetchError && (
-          <p className="text-xs text-muted-foreground">Loading pools from edge…</p>
+          {poolsLoading && !fetchError && !registryError && (
+          <p className="text-xs text-muted-foreground">Loading from edge…</p>
         )}
 
-        {/* ── Empty state (R8) ── */}
-        {!poolsLoading && !fetchError && filteredPools.length === 0 && (
-          <p className="text-xs text-muted-foreground py-6 text-center">
-            {pools.length === 0
-              ? `No pools seeded for ${selectedChainName} (chain ${selectedChainId})${selectedDexId !== "__all__" ? " + selected DEX" : ""} — migration 043 seeds top 6 DEXes per chain.`
-              : "No pools match the current filters."}
-          </p>
-        )}
-
-        {/* ── Pool table ── */}
-        {!poolsLoading && filteredPools.length > 0 && (
+        <div className="rounded-md border">
           <Table>
             <TableHeader>
-              <TableRow>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="w-[180px]">Pair</TableHead>
                 <TableHead>DEX</TableHead>
                 <TableHead>Protocol</TableHead>
-                <TableHead>Pair</TableHead>
                 <TableHead>Fee</TableHead>
-                <TableHead>Pool address</TableHead>
-                <TableHead className="text-center">Status</TableHead>
+                <TableHead className="text-right">Address</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredPools.map((pool) => (
-                <TableRow key={pool.id}>
-                  <TableCell className="text-xs font-medium">{pool.dex_name}</TableCell>
+                <TableRow key={pool.id} className="group hover:bg-muted/30 transition-colors">
+                  <TableCell className="font-medium">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <TokenPairIcon
+                        tokenInAddress={pool.token0_address}
+                        tokenOutAddress={pool.token1_address}
+                        tokenInSymbol={pool.token0_symbol ?? undefined}
+                        tokenOutSymbol={pool.token1_symbol ?? undefined}
+                        chainId={pool.chain_id}
+                        size={22}
+                      />
+                      <span className="truncate">{tokenPairLabel(pool)}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {pool.dex_name}
+                  </TableCell>
                   <TableCell>
                     <ProtocolBadge type={pool.protocol_type} />
                   </TableCell>
-                  <TableCell className="font-mono text-xs font-medium">
-                    {tokenPairLabel(pool)}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs text-muted-foreground">
+                  <TableCell className="text-xs font-mono">
                     {fmtFeeTier(pool.fee_tier)}
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-muted-foreground">
-                    <span title={pool.address}>{shortAddr(pool.address)}</span>
-                  </TableCell>
-                  <TableCell className="text-center">
-                    {pool.is_active ? (
-                      <span className="text-[10px] text-success font-mono">active</span>
-                    ) : (
-                      <span className="text-[10px] text-muted-foreground font-mono">inactive</span>
-                    )}
+                  <TableCell className="text-right font-mono text-[10px] text-muted-foreground group-hover:text-foreground transition-colors">
+                    {pool.address}
                   </TableCell>
                 </TableRow>
               ))}
+              {!poolsLoading && filteredPools.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="h-24 text-center text-xs text-muted-foreground">
+                    No pools found matching your filters.
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
-        )}
+        </div>
 
-        {/* ── Load more ── */}
         {hasMore && (
-          <div className="pt-2 flex justify-center">
+          <div className="flex justify-center pt-2">
             <Button
               variant="outline"
               size="sm"
               onClick={loadMore}
-              disabled={poolsLoading}
+              className="text-xs font-mono h-8"
             >
-              {poolsLoading ? "Loading…" : `Load more (${pools.length} / ${totalCount})`}
+              Load more pools (+{LOAD_PAGE})
             </Button>
           </div>
         )}
-
       </CardContent>
     </Card>
   );

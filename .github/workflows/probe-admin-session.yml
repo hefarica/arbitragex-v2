@@ -1,0 +1,91 @@
+name: Ω-S5++ Probe /admin/session (READ-ONLY)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: 195.201.235.70
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/arbx_key
+          chmod 600 ~/.ssh/arbx_key
+          ssh-keyscan -H ${{ env.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: "Probe /admin/session endpoints"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set +e
+            echo "═══ Probe endpoints admin/session ═══"
+            echo ""
+            echo "── Edge port directo (8787) — POST /admin/session sin body ──"
+            curl -s -o /dev/null -w "  http %{http_code}\n" -m 5 -X POST \
+              -H "content-type: application/json" \
+              http://localhost:8787/admin/session
+            echo ""
+            echo "── Edge POST /admin/session con body vacío ──"
+            curl -s -o /dev/null -w "  http %{http_code}\n" -m 5 -X POST \
+              -H "content-type: application/json" \
+              -d '{}' \
+              http://localhost:8787/admin/session
+            echo ""
+            echo "── Edge POST /admin/session con token inválido ──"
+            curl -s -o /dev/null -w "  http %{http_code}\n" -m 5 -X POST \
+              -H "content-type: application/json" \
+              -d '{"token":"bogus-token-for-probe"}' \
+              http://localhost:8787/admin/session
+            echo ""
+            echo "── Edge POST /admin/session con token real desde .env (ARBX_ADMIN_TOKEN) ──"
+            ADMIN_TOKEN=$(grep -E '^ARBX_ADMIN_TOKEN=' /opt/arbitragex-v2/.env | cut -d= -f2-)
+            if [ -z "$ADMIN_TOKEN" ]; then
+              echo "  ⚠ ARBX_ADMIN_TOKEN no encontrado en .env"
+            else
+              echo "  Token detectado (longitud: ${#ADMIN_TOKEN} chars)"
+              RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" -m 5 -X POST \
+                -H "content-type: application/json" \
+                -c /tmp/probe-cookies.txt \
+                -d "{\"token\":\"$ADMIN_TOKEN\"}" \
+                http://localhost:8787/admin/session)
+              echo "  Response:"
+              echo "$RESPONSE" | sed 's/^/    /'
+              echo ""
+              echo "  Cookies recibidas:"
+              cat /tmp/probe-cookies.txt | grep -v '^#' | grep -v '^$' | sed 's/^/    /'
+            fi
+            echo ""
+            echo "── Con cookie válida, GET /api/admin/chains ──"
+            if [ -n "$ADMIN_TOKEN" ] && [ -s /tmp/probe-cookies.txt ]; then
+              curl -s -o /dev/null -w "  http %{http_code}\n" -m 5 \
+                -b /tmp/probe-cookies.txt \
+                http://localhost:8787/api/admin/chains
+            fi
+            echo ""
+            echo "── Sin cookie, GET /api/admin/chains (debe ser 401) ──"
+            curl -s -o /dev/null -w "  http %{http_code}\n" -m 5 \
+              http://localhost:8787/api/admin/chains
+            echo ""
+            echo "── Vía nginx :80, GET /api/admin/chains ──"
+            curl -s -o /dev/null -w "  http %{http_code}\n" -m 5 \
+              http://localhost/api/admin/chains
+            echo ""
+            echo "── POST /admin/session/logout (con cookie) ──"
+            if [ -s /tmp/probe-cookies.txt ]; then
+              curl -s -w "  http %{http_code}\n" -m 5 -X POST \
+                -b /tmp/probe-cookies.txt \
+                http://localhost:8787/admin/session/logout
+            fi
+            rm -f /tmp/probe-cookies.txt
+          REMOTE
+
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/arbx_key

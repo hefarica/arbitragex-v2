@@ -26,6 +26,8 @@ import { getAdminToken, hasAdminSession } from "@/lib/admin-token";
 import { deleteAdminChain, getAdminChains } from "@/lib/api-client";
 import type { AdminChainRow } from "@/lib/schemas";
 
+import { AdminSessionBadge } from "@/components/AdminSessionBadge";
+
 import { ChainStatusBadge } from "./ChainStatusBadge";
 import { CreateChainDialog } from "./CreateChainDialog";
 import { EditChainDialog } from "./EditChainDialog";
@@ -173,6 +175,7 @@ export function ChainsAdminClient({ initialSnapshot }: Props) {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <AdminSessionBadge />
           <Button
             type="button"
             size="sm"

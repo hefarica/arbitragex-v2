@@ -14,8 +14,7 @@
 
 use super::sed_metrics::SedMetricsRecorder;
 use prometheus::{
-    CounterVec, GaugeVec, HistogramVec, Registry,
-    histogram_opts, opts, exponential_buckets,
+    exponential_buckets, histogram_opts, opts, CounterVec, GaugeVec, HistogramVec, Registry,
 };
 
 /// Production Prometheus-backed metrics recorder for the SED pipeline.
@@ -54,7 +53,10 @@ impl PrometheusMetricsRecorder {
     /// Returns `Err` if any metric fails to register (duplicate name, etc.).
     pub fn new(registry: &Registry) -> Result<Self, prometheus::Error> {
         let cdc_value = GaugeVec::new(
-            opts!("sed_cdc_value", "State Divergence Coefficient (CDC) — latest value per market"),
+            opts!(
+                "sed_cdc_value",
+                "State Divergence Coefficient (CDC) — latest value per market"
+            ),
             &["market"],
         )?;
 
@@ -78,22 +80,30 @@ impl PrometheusMetricsRecorder {
         )?;
 
         let hedge_covariance = GaugeVec::new(
-            opts!("sed_hedge_covariance", "Hedge covariance off-diagonal between market pairs"),
+            opts!(
+                "sed_hedge_covariance",
+                "Hedge covariance off-diagonal between market pairs"
+            ),
             &["market_a", "market_b"],
         )?;
 
-        let holonomy_value = prometheus::Gauge::with_opts(
-            opts!("sed_holonomy_value", "Contour integral holonomy value (latest)"),
-        )?;
+        let holonomy_value = prometheus::Gauge::with_opts(opts!(
+            "sed_holonomy_value",
+            "Contour integral holonomy value (latest)"
+        ))?;
 
         let holonomic_yield = GaugeVec::new(
-            opts!("sed_holonomic_yield", "Net topological yield after friction + vacuum cost"),
+            opts!(
+                "sed_holonomic_yield",
+                "Net topological yield after friction + vacuum cost"
+            ),
             &["manifolds"],
         )?;
 
-        let convergence_rate = prometheus::Gauge::with_opts(
-            opts!("sed_convergence_rate", "Current convergence rate of the SED pipeline"),
-        )?;
+        let convergence_rate = prometheus::Gauge::with_opts(opts!(
+            "sed_convergence_rate",
+            "Current convergence rate of the SED pipeline"
+        ))?;
 
         let kill_switch_checks = CounterVec::new(
             opts!("sed_kill_switch_checks_total", "Kill-switch state checks"),
@@ -101,12 +111,18 @@ impl PrometheusMetricsRecorder {
         )?;
 
         let infra_501_responses = CounterVec::new(
-            opts!("sed_501_responses_total", "Infrastructure 501 Not Implemented responses"),
+            opts!(
+                "sed_501_responses_total",
+                "Infrastructure 501 Not Implemented responses"
+            ),
             &["module", "sprint"],
         )?;
 
         let invariant_violations = CounterVec::new(
-            opts!("sed_holonomic_invariant_violation_total", "Holonomic invariant violations by type"),
+            opts!(
+                "sed_holonomic_invariant_violation_total",
+                "Holonomic invariant violations by type"
+            ),
             &["type"],
         )?;
 
@@ -115,9 +131,10 @@ impl PrometheusMetricsRecorder {
             &["dispatched", "barrier"],
         )?;
 
-        let variance_headroom = prometheus::Gauge::with_opts(
-            opts!("sed_variance_headroom", "Remaining variance headroom in GateManager"),
-        )?;
+        let variance_headroom = prometheus::Gauge::with_opts(opts!(
+            "sed_variance_headroom",
+            "Remaining variance headroom in GateManager"
+        ))?;
 
         // Register all metrics
         registry.register(Box::new(cdc_value.clone()))?;
@@ -196,9 +213,7 @@ impl SedMetricsRecorder for PrometheusMetricsRecorder {
     }
 
     fn record_kill_switch_check(&self, state: &str) {
-        self.kill_switch_checks
-            .with_label_values(&[state])
-            .inc();
+        self.kill_switch_checks.with_label_values(&[state]).inc();
     }
 
     fn record_501_response(&self, module: &str, sprint: &str) {
@@ -262,7 +277,10 @@ mod tests {
         recorder.record_gate_verdict(true, None);
         recorder.record_gate_verdict(true, Some(2));
         recorder.record_gate_verdict(false, Some(3));
-        let dispatched = recorder.gate_verdicts.with_label_values(&["true", "none"]).get();
+        let dispatched = recorder
+            .gate_verdicts
+            .with_label_values(&["true", "none"])
+            .get();
         assert!((dispatched - 1.0).abs() < 1e-10);
     }
 }

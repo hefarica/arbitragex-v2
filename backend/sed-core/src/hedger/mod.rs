@@ -17,10 +17,10 @@
 //! - `ClosedContourTrajectory` con holonomía calculada
 //! - `BundlePosition<HolonomicLoopResolution>` sellado
 
-pub mod orthogonal_variance_hedger;
 pub mod holonomic_loop_resolution;
+pub mod orthogonal_variance_hedger;
 pub mod temporal_liquidity_superposition;
 
-pub use orthogonal_variance_hedger::*;
 pub use holonomic_loop_resolution::*;
+pub use orthogonal_variance_hedger::*;
 pub use temporal_liquidity_superposition::*;

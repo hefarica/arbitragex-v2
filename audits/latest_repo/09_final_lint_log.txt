@@ -1,0 +1,32 @@
+$ npm run lint --workspaces --if-present
+
+> @arbx/shared@0.1.0 lint
+> echo 'lint placeholder for shared-ts'
+
+lint placeholder for shared-ts
+
+> @arbx/selector-api@0.1.0 lint
+> echo 'lint placeholder'
+
+lint placeholder
+
+> @arbx/api-server@0.1.0 lint
+> echo 'lint placeholder'
+
+lint placeholder
+
+> @arbx/frontend@0.1.0 lint
+> eslint . --ext .ts,.tsx
+
+
+/home/ubuntu/arbitragex-v2-latest-audit/frontend/components/TokenChip.tsx
+  305:11  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+/home/ubuntu/arbitragex-v2-latest-audit/frontend/lib/hooks/useContracts.ts
+  99:6  warning  React Hook useEffect has a missing dependency: 'fetchData'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+/home/ubuntu/arbitragex-v2-latest-audit/frontend/lib/useWebSocket.ts
+  195:6  warning  React Hook useCallback has a missing dependency: 'protocols'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+✖ 3 problems (0 errors, 3 warnings)
+

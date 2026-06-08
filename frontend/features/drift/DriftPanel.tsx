@@ -4,18 +4,20 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDriftDetection } from "@/lib/drift/useDriftDetection";
-import { ACTION_STATE_LABELS } from "@/lib/statemachine/types";
+// REPAIR c815ef9: removed unused import of ACTION_STATE_LABELS (no longer exported).
 
 /**
  * Maps a DriftStatus to the Badge visual variant.
  */
 function driftStatusVariant(
-  status: "consistent" | "drift_detected" | "partial" | "unknown",
+  status: "consistent" | "drift_detected" | "partial" | "blocked" | "unknown",
 ): "default" | "secondary" | "destructive" | "outline" {
   switch (status) {
     case "consistent":
       return "outline";
     case "drift_detected":
+      return "destructive";
+    case "blocked":
       return "destructive";
     case "partial":
       return "secondary";
@@ -28,12 +30,14 @@ function driftStatusVariant(
 /**
  * Maps a DriftStatus to a human-readable label.
  */
-function driftStatusLabel(status: "consistent" | "drift_detected" | "partial" | "unknown"): string {
+function driftStatusLabel(status: "consistent" | "drift_detected" | "partial" | "blocked" | "unknown"): string {
   switch (status) {
     case "consistent":
       return "CONSISTENT";
     case "drift_detected":
       return "DRIFT DETECTED";
+    case "blocked":
+      return "BLOCKED";
     case "partial":
       return "PARTIAL";
     case "unknown":
@@ -44,16 +48,22 @@ function driftStatusLabel(status: "consistent" | "drift_detected" | "partial" | 
 /**
  * Maps a drift action to a Badge variant for per-row display.
  */
+// REPAIR c815ef9: ampliado para aceptar tanto el vocabulario de divergencia
+// (mismatch/missing_in_*/stale) como el de remediación (reconcile/reload/investigate)
+// emitido por el backend en DriftDifference.action.
 function driftActionVariant(
-  action: "mismatch" | "missing_in_a" | "missing_in_b" | "stale",
+  action: string,
 ): "default" | "secondary" | "destructive" | "outline" {
   switch (action) {
     case "mismatch":
+    case "investigate":
       return "destructive";
     case "missing_in_a":
     case "missing_in_b":
+    case "reload":
       return "secondary";
     case "stale":
+    case "reconcile":
       return "outline";
     default:
       return "default";
@@ -82,18 +92,16 @@ export function DriftPanel() {
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="flex items-center gap-2 text-base font-semibold">
           <span
-            className="inline-block h-2.5 w-2.5 rounded-full"
+            className={`inline-block h-2.5 w-2.5 rounded-full ${
+              status === "consistent"
+                ? "bg-success"
+                : status === "drift_detected"
+                  ? "bg-destructive"
+                  : status === "partial"
+                    ? "bg-warning"
+                    : "bg-muted-foreground"
+            }`}
             aria-hidden="true"
-            style={{
-              backgroundColor:
-                status === "consistent"
-                  ? "#22c55e"
-                  : status === "drift_detected"
-                    ? "#ef4444"
-                    : status === "partial"
-                      ? "#f59e0b"
-                      : "#6b7280",
-            }}
           />
           Drift Detection
           <Badge variant={driftStatusVariant(status)}>{driftStatusLabel(status)}</Badge>
