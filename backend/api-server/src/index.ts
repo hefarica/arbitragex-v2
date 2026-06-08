@@ -937,6 +937,194 @@ app.get("/api/v1/relays", async (_req, res) => {
   res.status(200).json({ count: q.rows.length, items: q.rows, ts: new Date().toISOString() });
 });
 
+// ─────── FE-CRIT-03/04/01 — honest contract/capital/crucible read surface ───────
+//
+// Three public read endpoints the frontend's system-guard / live-readiness layer
+// consumes. Doctrine (RULE 00 + R8 fail-honest):
+//   • SAFETY fields (live_enabled / capital_exposed / broadcast / submit_enabled /
+//     private_relay_enabled) are HARDCODED to the safe posture (false / 0). They are
+//     NOT derived from request input or mutable runtime state — this is a security
+//     invariant of the shadow/paper deployment, not a reflection of data.
+//   • DATA fields are sourced READ-ONLY from real tables when present; on an empty
+//     table OR a missing-table/query error the response is an HONEST-EMPTY payload
+//     with an explicit `reason` — NEVER a fabricated 200 and NEVER a 500.
+//   • crucible `ready` carries a FALSE-GREEN GUARD: it is `false` unless count>0 AND
+//     every row clears the qualification bar.
+
+/** Postgres "undefined_table" (42P01) — crucible_runs has no migration yet, so its
+ *  absence is an expected honest-empty condition, not an error to surface as 500. */
+function isUndefinedTable(e: unknown): boolean {
+  return !!e && typeof e === "object" && (e as { code?: string }).code === "42P01";
+}
+
+// GET /api/contracts — read-only view of the contract_registry (migration 066).
+// Honest-empty when the registry has no rows. Safety fields are always false/0.
+app.get("/api/contracts", async (_req, res) => {
+  const p = requireDbPool();
+  const base = {
+    status: "ok" as const,
+    mode: "shadow" as const,
+    source: "api-server" as const,
+    live_enabled: false,
+    capital_exposed: 0,
+    broadcast: false,
+  };
+  if (!p) {
+    res.status(200).json({ ...base, contracts: [], count: 0, reason: "db_unavailable" });
+    return;
+  }
+  try {
+    const q = await p.query(
+      `SELECT chain_id, label, address, contract_kind, proxy_kind, verified,
+              enabled, status, updated_at
+         FROM contract_registry
+        WHERE status <> 'deprecated'
+        ORDER BY chain_id, label
+        LIMIT 500`,
+    );
+    res.status(200).json({
+      ...base,
+      contracts: q.rows,
+      count: q.rows.length,
+      ...(q.rows.length === 0 ? { reason: "empty_contract_registry" } : {}),
+    });
+  } catch (e) {
+    if (isUndefinedTable(e)) {
+      res.status(200).json({ ...base, contracts: [], count: 0, reason: "contract_registry_absent" });
+      return;
+    }
+    logger.warn({ event: "contracts.query_failed", err: (e as Error).message });
+    res.status(200).json({ ...base, contracts: [], count: 0, reason: "query_failed" });
+  }
+});
+
+// GET /api/capital-gates — safety posture + (read-only) configured capital gates.
+// The top-level safety flags are HARDCODED-safe (shadow invariant); the `gates`
+// list reflects real capital_gates rows when present, else a single honest
+// capital_exposure gate proving exposure is zero.
+app.get("/api/capital-gates", async (_req, res) => {
+  const p = requireDbPool();
+  const safety = {
+    status: "ok" as const,
+    live_enabled: false,
+    capital_exposed: 0,
+    broadcast: false,
+    submit_enabled: false,
+    private_relay_enabled: false,
+  };
+  const exposureGate = { name: "capital_exposure", status: "PASS" as const, value: 0 };
+  if (!p) {
+    res.status(200).json({ ...safety, gates: [exposureGate], reason: "db_unavailable" });
+    return;
+  }
+  try {
+    const q = await p.query(
+      `SELECT scope, scope_ref, name,
+              capital_cap_usd::float   AS capital_cap_usd,
+              max_gas_burn_usd::float  AS max_gas_burn_usd,
+              max_drawdown_pct::float  AS max_drawdown_pct,
+              enabled, status
+         FROM capital_gates
+        WHERE enabled = TRUE AND status = 'active'
+        ORDER BY scope, name
+        LIMIT 500`,
+    );
+    // The exposure-proof gate is ALWAYS first (it proves capital_exposed=0 in the
+    // shadow deployment); configured gates follow as informational rows.
+    const configured = q.rows.map((g) => ({
+      name: g.name,
+      status: g.status === "active" ? ("PASS" as const) : ("HOLD" as const),
+      value: Number(g.capital_cap_usd ?? 0),
+      scope: g.scope,
+      scope_ref: g.scope_ref,
+    }));
+    res.status(200).json({ ...safety, gates: [exposureGate, ...configured] });
+  } catch (e) {
+    if (isUndefinedTable(e)) {
+      res.status(200).json({ ...safety, gates: [exposureGate], reason: "capital_gates_absent" });
+      return;
+    }
+    logger.warn({ event: "capital_gates.query_failed", err: (e as Error).message });
+    res.status(200).json({ ...safety, gates: [exposureGate], reason: "query_failed" });
+  }
+});
+
+// GET /api/crucible/status — read-only crucible_runs qualification snapshot.
+// FALSE-GREEN GUARD: `ready` is `false` on empty AND on any per-row failure to
+// clear the bar (≥72h uptime, ≥95% success, 0 non-doctrinal reverts). The
+// crucible_runs table has no migration yet → a missing table is honest-empty,
+// not a 500.
+const CRUCIBLE_BAR = { uptime_hours: 72, success_rate: 0.95, non_doctrinal_reverts: 0 };
+app.get("/api/crucible/status", async (req, res) => {
+  const p = requireDbPool();
+  if (!p) {
+    res.status(200).json({
+      status: "ok", ready: false, rows: [], count: 0,
+      reason: "db_unavailable", false_green_guard: true,
+    });
+    return;
+  }
+  const chainFilter = Number(req.query["chain_id"]);
+  const hasChain = Number.isFinite(chainFilter) && chainFilter >= 1;
+  try {
+    const q = await p.query(
+      `SELECT chain_id,
+              EXTRACT(EPOCH FROM (NOW() - MIN(started_at))) / 3600.0 AS uptime_hours,
+              COALESCE(SUM(CASE WHEN status='success' THEN 1 ELSE 0 END)::float
+                       / NULLIF(COUNT(*), 0), 0)                     AS success_rate,
+              COALESCE(SUM(CASE WHEN status='revert' AND revert_kind <> 'doctrinal'
+                                THEN 1 ELSE 0 END), 0)               AS non_doctrinal_reverts,
+              COUNT(*)::int                                          AS runs
+         FROM crucible_runs
+        WHERE started_at > NOW() - INTERVAL '7 days'
+          AND ($1::bigint IS NULL OR chain_id = $1)
+        GROUP BY chain_id
+        ORDER BY chain_id`,
+      [hasChain ? chainFilter : null],
+    );
+    const rows = q.rows.map((r) => {
+      const uptime = Number(r.uptime_hours ?? 0);
+      const success = Number(r.success_rate ?? 0);
+      const nonDoc = Number(r.non_doctrinal_reverts ?? 0);
+      return {
+        chain_id: Number(r.chain_id),
+        uptime_hours: uptime,
+        success_rate: success,
+        non_doctrinal_reverts: nonDoc,
+        runs: Number(r.runs ?? 0),
+        qualified:
+          uptime >= CRUCIBLE_BAR.uptime_hours &&
+          success >= CRUCIBLE_BAR.success_rate &&
+          nonDoc === CRUCIBLE_BAR.non_doctrinal_reverts,
+      };
+    });
+    // FALSE-GREEN GUARD: ready ONLY when there ARE rows and EVERY row qualifies.
+    const ready = rows.length > 0 && rows.every((r) => r.qualified);
+    res.status(200).json({
+      status: "ok",
+      ready,
+      rows,
+      count: rows.length,
+      required: CRUCIBLE_BAR,
+      false_green_guard: true,
+      ...(rows.length === 0 ? { reason: "no_crucible_rows_available" } : {}),
+    });
+  } catch (e) {
+    if (isUndefinedTable(e)) {
+      res.status(200).json({
+        status: "ok", ready: false, rows: [], count: 0,
+        reason: "no_crucible_rows_available", false_green_guard: true,
+      });
+      return;
+    }
+    logger.warn({ event: "crucible.status.query_failed", err: (e as Error).message });
+    res.status(200).json({
+      status: "ok", ready: false, rows: [], count: 0,
+      reason: "query_failed", false_green_guard: true,
+    });
+  }
+});
+
 // ─────── Sprint 7 / Phase 0.5 R9 — onboarding ───────
 
 app.get("/api/v1/onboarding/status", async (_req, res) => {
