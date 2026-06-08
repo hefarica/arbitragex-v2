@@ -1,33 +1,65 @@
 import { test, expect } from "@playwright/test";
 
 /**
- * Honest-idle contract.
+ * Honest-idle contract — ITER-18 (PR #90 / OMEGA-S5).
  *
  * When RPC_WS_1 is empty (the compose default — operator hasn't completed
- * onboarding phase 2 yet), the platform must:
- *   1. Show searcher-rs as UP on /status (the service is alive).
- *   2. Show /opportunities as empty (not an error banner).
- *   3. Produce zero `arbx_opportunity_total{status="detected"}` counter growth.
+ * onboarding phase 2 yet) AND the operator has explicitly opted in with
+ * ARBX_ASSUME_NO_RPC=1, the platform MUST classify searcher-rs as
+ * DEGRADED, not UP and not DOWN:
  *
- * If any of those turn into fabricated data or error banners, this test
- * catches it. This is the "never pretend to operate" guardrail made executable.
+ *   - UP would be a lie  → the searcher cannot trade without an RPC.
+ *   - DOWN would also be a lie → the process is intentionally idle, not crashed.
+ *   - DEGRADED with reason=no_rpc_configured is the only honest answer.
  *
- * The test only runs when ARBX_ASSUME_NO_RPC=1, i.e. the operator is
- * explicitly running the stack without an RPC key. In production pipelines
- * that's the default; if someone has wired a real RPC we skip.
+ * The previous iteration of this test asserted "UP" — that was a workaround
+ * that survived only because the searcher-rs container happened to answer.
+ * In CI it does not answer (404 / fetch failed), and the test must drive the
+ * backend to emit the correct taxonomy instead of being relaxed to accept
+ * a fabricated UP. See backend/api-server/src/index.ts::pingUpstream.
+ *
+ * Row selection uses getByTestId("service-health-row-searcher-rs") — the
+ * tag added in ServicesTable — to disambiguate from the sibling
+ * ServiceControlPanel table (data-testid="service-control-row-searcher-rs"),
+ * which would otherwise trigger a strict-mode locator violation because both
+ * rows contain the literal text "searcher-rs".
+ *
+ * The test only runs when ARBX_ASSUME_NO_RPC=1.
  */
 
 const NO_RPC = process.env["ARBX_ASSUME_NO_RPC"] === "1";
 const testMaybe = NO_RPC ? test : test.skip;
 
-testMaybe("searcher-rs reports UP even with no RPC configured", async ({ page }) => {
-  await page.goto("/status");
+testMaybe(
+  "searcher-rs reports degraded, not down, when no RPC is configured",
+  async ({ page }) => {
+    await page.goto("/status");
 
-  // searcher-rs row exists and is UP.
-  const row = page.locator("tr", { has: page.getByText("searcher-rs", { exact: true }) });
-  await expect(row).toBeVisible();
-  await expect(row.getByText(/UP/i)).toBeVisible();
-});
+    // The page must render its h1 — if the client bundle crashed we'd see
+    // the Next.js error overlay instead and this would fail fast with a
+    // clear message rather than a strict-mode locator violation downstream.
+    await expect(page.getByTestId("page-title")).toBeVisible();
+
+    // Pick the health row unambiguously. The control panel renders its own
+    // row for the same service; without the testid we'd hit strict mode.
+    const healthRow = page.getByTestId("service-health-row-searcher-rs");
+    await expect(healthRow).toBeVisible();
+
+    // Doctrinal assertion: under ARBX_ASSUME_NO_RPC=1, searcher-rs must be
+    // surfaced as DEGRADED with the human "no RPC configured" detail, never
+    // as a flat DOWN and never with the raw "fetch failed" exception leaking
+    // through the UI.
+    await expect(healthRow).toContainText(/DEGRADED|NO RPC|NO_RPC_CONFIGURED/i);
+    await expect(healthRow).not.toContainText(/\bDOWN\b/);
+    await expect(healthRow).not.toContainText(/fetch failed/i);
+
+    // Belt-and-suspenders: the structured attribute the backend exposes via
+    // ServicesTable must match the machine-readable reason. This is what
+    // external monitoring (and any future scripted gates) should branch on.
+    await expect(healthRow).toHaveAttribute("data-status", "degraded");
+    await expect(healthRow).toHaveAttribute("data-reason", "no_rpc_configured");
+  },
+);
 
 testMaybe("opportunities page shows empty state, not an error", async ({ page }) => {
   await page.goto("/opportunities");

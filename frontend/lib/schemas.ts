@@ -7,6 +7,12 @@ export const KillSwitchStateSchema = z.object({
   updated_at: z.string(),
 });
 
+// ITER-18: tripartite service health
+//   { ok: true }                                     → UP
+//   { ok: false, degraded: true, reason: "..." }     → DEGRADED (e.g. no_rpc_configured)
+//   { ok: false }                                    → DOWN (genuine PROCESS_DOWN)
+// The frontend MUST distinguish DEGRADED from DOWN — see ServicesTable and
+// ServiceControlPanel for the rendering rules and rpc-down.spec.ts for the contract.
 export const StatusResponseSchema = z.object({
   ok: z.boolean(),
   services: z.record(
@@ -15,6 +21,8 @@ export const StatusResponseSchema = z.object({
       ok: z.boolean(),
       status: z.number().optional(),
       detail: z.string().optional(),
+      degraded: z.boolean().optional(),
+      reason: z.string().optional(),
     }),
   ),
   killswitch: KillSwitchStateSchema.nullable(),

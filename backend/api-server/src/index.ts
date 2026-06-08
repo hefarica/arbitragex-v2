@@ -58,15 +58,70 @@ const UPSTREAMS = {
   "searcher-rs":  process.env["SEARCHER_URL"]  ?? "http://searcher-rs:9001",
 } as const;
 
-async function pingUpstream(name: string, url: string): Promise<{ ok: boolean; status?: number; detail?: string }> {
+// ITER-18 / OMEGA-S5: tripartite service health.
+//
+//   UP        — ok=true,  degraded=undefined   → process is alive AND has the
+//                                                 dependencies it needs to do useful work.
+//   DOWN      — ok=false, degraded=undefined   → process is genuinely unreachable
+//                                                 (PROCESS_DOWN). Either crashed or the
+//                                                 health endpoint returned non-2xx for a
+//                                                 reason unrelated to RPC configuration.
+//   DEGRADED  — ok=false, degraded=true        → process is alive (or expected to be
+//                                                 alive) but a declared, non-fatal
+//                                                 dependency is intentionally absent. The
+//                                                 canonical case: ARBX_ASSUME_NO_RPC=1
+//                                                 with searcher-rs not running because no
+//                                                 RPC has been configured yet (operator
+//                                                 onboarding phase 1). Showing this as
+//                                                 plain DOWN would be doctrinally false —
+//                                                 the platform is honestly idle, not
+//                                                 crashed. `reason` carries the machine
+//                                                 token so the UI and any external
+//                                                 monitoring can branch on it without
+//                                                 string-matching `detail`.
+async function pingUpstream(name: string, url: string): Promise<{
+  ok: boolean;
+  status?: number;
+  detail?: string;
+  degraded?: boolean;
+  reason?: string;
+}> {
+  const assumeNoRpc = process.env["ARBX_ASSUME_NO_RPC"] === "1";
   try {
     const controller = new AbortController();
     const to = setTimeout(() => controller.abort(), 1500);
     const r = await fetch(`${url}/health`, { signal: controller.signal });
     clearTimeout(to);
-    return { ok: r.ok, status: r.status };
+    if (r.ok) {
+      return { ok: true, status: r.status };
+    }
+    // 404 from searcher-rs while ARBX_ASSUME_NO_RPC=1 is the declared honest-idle
+    // contract: the process is intentionally not serving /health because no RPC
+    // has been configured. Not a crash — classify as DEGRADED with a machine reason.
+    if (assumeNoRpc && name === "searcher-rs") {
+      return {
+        ok: false,
+        status: r.status,
+        degraded: true,
+        reason: "no_rpc_configured",
+        detail: "no RPC configured",
+      };
+    }
+    return { ok: false, status: r.status };
   } catch (e) {
-    return { ok: false, detail: (e as Error).message };
+    const detail = (e as Error).message;
+    // Network-level failure (DNS, connection refused, abort). Under
+    // ARBX_ASSUME_NO_RPC=1 the searcher-rs container is expected to be absent
+    // — surface that as DEGRADED, not a fabricated DOWN with `fetch failed`.
+    if (assumeNoRpc && name === "searcher-rs") {
+      return {
+        ok: false,
+        degraded: true,
+        reason: "no_rpc_configured",
+        detail: "no RPC configured",
+      };
+    }
+    return { ok: false, detail };
   }
 }
 
@@ -144,8 +199,13 @@ app.get("/status", async (_req, res) => {
     Object.entries(UPSTREAMS).map(async ([name, url]) => [name, await pingUpstream(name, url)] as const)
   );
   const ks = await killSwitch.state().catch(() => null);
+  // ITER-18: a service in `degraded` state (e.g. searcher-rs with no RPC configured
+  // under ARBX_ASSUME_NO_RPC=1) MUST NOT collapse the platform-level `ok` flag to
+  // false. Honest-idle is not the same as a crash. Only true non-degraded failures
+  // (`ok=false && !degraded`) downgrade the aggregate.
+  const allHealthy = probes.every(([, r]) => r.ok || r.degraded === true);
   res.status(200).json({
-    ok: probes.every(([, r]) => r.ok),
+    ok: allHealthy,
     services: Object.fromEntries(probes),
     killswitch: ks,
     env: cfg.system.env,

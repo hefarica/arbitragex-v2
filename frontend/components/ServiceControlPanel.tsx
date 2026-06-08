@@ -14,7 +14,7 @@
  * useEffect. Component is pure client — imported only by Client Components.
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Square, Play, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -83,8 +83,14 @@ interface ServiceControlPanelProps {
    * Live service status map from the last /status poll, keyed by service name.
    * Keys present in MANAGED_SERVICES that are also in this map display a
    * live status badge. Unknown services show "UNKNOWN".
+   *
+   * ITER-18: shape extended with `degraded` + `reason` so the control panel
+   * mirrors the tripartite contract (UP / DEGRADED / DOWN) used by
+   * ServicesTable. A degraded service (e.g. searcher-rs under
+   * ARBX_ASSUME_NO_RPC=1) must NOT render as DOWN — that would be a
+   * fabricated negative signal.
    */
-  liveStatus?: Record<string, { ok: boolean }>;
+  liveStatus?: Record<string, { ok: boolean; degraded?: boolean; reason?: string }>;
 }
 
 export function ServiceControlPanel({ liveStatus = {} }: ServiceControlPanelProps) {
@@ -147,28 +153,59 @@ export function ServiceControlPanel({ liveStatus = {} }: ServiceControlPanelProp
           <TableBody>
             {MANAGED_SERVICES.map((svc) => {
               const statusEntry = liveStatus[svc];
-              const isUp = statusEntry?.ok ?? null;
+              // ITER-18 tripartite badge resolution. `isUp` is intentionally
+              // tri-state (true | false | null) so UNKNOWN stays distinct from
+              // DOWN, and DEGRADED stays distinct from both. Order matters:
+              // we check `degraded` before falling back to DOWN.
+              const isKnown = statusEntry !== undefined;
+              const isUp = isKnown ? statusEntry.ok === true : null;
+              const isDegraded = isKnown && statusEntry.ok === false && statusEntry.degraded === true;
               const stopKey: PendingKey = `${svc}:stop`;
               const startKey: PendingKey = `${svc}:start`;
               const stopPending = pending.has(stopKey);
               const startPending = pending.has(startKey);
 
+              let badgeNode: ReactNode;
+              let statusLabel: string;
+              if (!isKnown) {
+                statusLabel = "unknown";
+                badgeNode = <Badge variant="secondary">UNKNOWN</Badge>;
+              } else if (isDegraded) {
+                statusLabel = "degraded";
+                badgeNode = (
+                  <Badge variant="warning">
+                    <span className="size-1.5 rounded-full bg-warning" aria-hidden />
+                    DEGRADED
+                  </Badge>
+                );
+              } else if (isUp) {
+                statusLabel = "up";
+                badgeNode = (
+                  <Badge variant="success">
+                    <span className="size-1.5 rounded-full bg-success" aria-hidden />
+                    UP
+                  </Badge>
+                );
+              } else {
+                statusLabel = "down";
+                badgeNode = (
+                  <Badge variant="destructive">
+                    <span className="size-1.5 rounded-full bg-destructive" aria-hidden />
+                    DOWN
+                  </Badge>
+                );
+              }
+
               return (
-                <TableRow key={svc}>
+                <TableRow
+                  key={svc}
+                  data-testid={`service-control-row-${svc}`}
+                  data-service={svc}
+                  data-status={statusLabel}
+                  data-reason={statusEntry?.reason ?? ""}
+                >
                   <TableCell className="font-mono text-sm">{svc}</TableCell>
-                  <TableCell>
-                    {isUp === null ? (
-                      <Badge variant="secondary">UNKNOWN</Badge>
-                    ) : (
-                      <Badge variant={isUp ? "success" : "destructive"}>
-                        <span
-                          className={`size-1.5 rounded-full ${isUp ? "bg-success" : "bg-destructive"}`}
-                          aria-hidden
-                        />
-                        {isUp ? "UP" : "DOWN"}
-                      </Badge>
-                    )}
-                  </TableCell>
+                  <TableCell>{badgeNode}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-2">
                       <Button
