@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   description: "Operator control plane for RPC/WSS topology mutations.",
 };
 
-const BROWSER_EDGE_URL = process.env["NEXT_PUBLIC_EDGE_URL"] ?? "http://localhost:8787";
+const BROWSER_EDGE_URL = process.env["NEXT_PUBLIC_EDGE_URL"] ?? "";
 const SERVER_EDGE_URL = process.env["INTERNAL_EDGE_URL"] ?? BROWSER_EDGE_URL;
 
 async function buildAdminCookieHeader(): Promise<string | undefined> {

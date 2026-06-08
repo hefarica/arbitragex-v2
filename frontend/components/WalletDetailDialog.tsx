@@ -44,7 +44,7 @@ function EndpointNotice({ message }: { message: string }) {
 
 export function WalletDetailDialog({ wallet, onClose }: Props) {
   const EDGE_URL =
-    process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
+    process.env.NEXT_PUBLIC_EDGE_URL ?? "";
 
   const [balances, setBalances] = useState<WalletBalance[] | null>(null);
   const [allowances, setAllowances] = useState<WalletAllowance[] | null>(null);

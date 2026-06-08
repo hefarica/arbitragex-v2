@@ -260,7 +260,7 @@ export function useOpportunitiesStream(
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "http://localhost:3000";
+    const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "";
 
     // C4 fix (audit 2026-05-10): the backend WS gateway rejects every
     // handshake without a valid admin token (`extractHandshakeToken`).

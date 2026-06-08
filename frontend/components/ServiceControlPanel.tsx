@@ -91,7 +91,7 @@ export function ServiceControlPanel({ liveStatus = {} }: ServiceControlPanelProp
   const [pending, setPending] = useState<Set<PendingKey>>(new Set());
 
   const edgeUrl =
-    process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
+    process.env.NEXT_PUBLIC_EDGE_URL ?? "";
 
   const handleControl = useCallback(
     async (service: ServiceName, action: ControlAction) => {
