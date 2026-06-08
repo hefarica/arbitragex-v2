@@ -237,6 +237,20 @@ async function readVault(vaultPath: string): Promise<VaultRecord | null> {
   }
 }
 
+/**
+ * loadTopologySnapshot — server-side, READ-ONLY, redacted vault read.
+ *
+ * Returns the same masked snapshot the admin `GET /api/admin/topology/snapshot`
+ * returns, but with NO auth gate, for TRUSTED in-process consumers only (e.g.
+ * the readiness-steps evaluator). It never exposes raw URLs or keys: every
+ * provider URL passes through `maskUrl`, so only `host` + masked suffix leak.
+ * Returns `null` when the vault file does not exist (ENOENT → empty vault).
+ */
+export async function loadTopologySnapshot(vaultPath?: string): Promise<TopologySnapshot | null> {
+  const record = await readVault(vaultPath ?? defaultVaultPath());
+  return record ? toSnapshot(record) : null;
+}
+
 async function writeVault(vaultPath: string, record: VaultRecord): Promise<void> {
   await mkdir(path.dirname(vaultPath), { recursive: true, mode: 0o700 });
   const tmp = `${vaultPath}.${process.pid}.${Date.now()}.tmp`;

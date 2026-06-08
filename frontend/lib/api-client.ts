@@ -301,6 +301,15 @@ export function getReadinessDecision() {
   return getValidated("/api/readiness/decision", S.ReadinessDecisionResponseSchema);
 }
 
+// Readiness steps — server-side 4-step "Live Readiness" stepper (Topology /
+// Credentials / Market Topology / Resolution Engines). The N/4 count is derived
+// from real backend evidence (vault providers, credential presence, registry
+// counts, enabled engines) — NOT localStorage. Credentials are redacted
+// (present|null), live_enabled is structurally false.
+export function getReadinessSteps() {
+  return getValidated("/api/readiness/steps", S.ReadinessStepsResponseSchema);
+}
+
 // Agent teams status — 17 workspace-verified agent verdicts (P2-continued).
 // Backend overlays runtime context (verifyAll outcome) onto each agent so
 // PASS demotes to BLOCKED when readiness fails.

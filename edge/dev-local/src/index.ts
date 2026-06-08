@@ -186,6 +186,8 @@ app.get("/api/readiness", (req, res) => proxy("/api/v1/readiness", req, res));
 // P2 readiness extras: derived blockers list and go/no-go decision.
 app.get("/api/readiness/blockers", (req, res) => proxy("/api/v1/readiness/blockers", req, res));
 app.get("/api/readiness/decision", (req, res) => proxy("/api/v1/readiness/decision", req, res));
+// Server-side evaluated 4-step "Live Readiness" stepper (replaces localStorage count).
+app.get("/api/readiness/steps", (req, res) => proxy("/api/v1/readiness/steps", req, res));
 // P2-continued: agent teams status.
 app.get("/api/agents/status", (req, res) => proxy("/api/v1/agents/status", req, res));
 // A.8 confidence scoring wire status.

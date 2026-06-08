@@ -689,6 +689,10 @@ app.get("/api/scanner/heartbeat", (c) => proxy(c, "/api/v1/scanner/heartbeat", "
 // Same 15s KV TTL as /api/readiness so the operator sees coherent state.
 app.get("/api/readiness/blockers", (c) => proxy(c, "/api/v1/readiness/blockers", "arbx:cache:readiness-blockers", 15));
 app.get("/api/readiness/decision", (c) => proxy(c, "/api/v1/readiness/decision", "arbx:cache:readiness-decision", 15));
+//   /api/readiness/steps — server-side evaluated 4-step "Live Readiness" stepper
+//   (Topology Vault / Credentials / Market Topology / Resolution Engines). Replaces
+//   the old localStorage-derived count so N/4 reflects real backend state. 15s TTL.
+app.get("/api/readiness/steps", (c) => proxy(c, "/api/v1/readiness/steps", "arbx:cache:readiness-steps", 15));
 
 // Agent teams status (P2-continued). Workspace-verified verdicts of the 17
 // Agent Teams that drive the build/audit/deploy cycle. 30s KV TTL — verdicts
