@@ -83,14 +83,8 @@ app.use((req, res, next) => {
   // reflect arbitrary origins. Still an explicit allowlist (regex OR exact env match);
   // we reflect only matched origins, never "*", so credentialed CORS stays safe.
   const CORS_ALLOWED = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$|^https:\/\/[a-z0-9-]+\.ape-tv\.net$/i;
-  // CodeQL js/cors-misconfiguration-for-credentials: echo an origin taken from an
-  // EXACT-MATCH allowlist element (env) instead of the raw request header, or a strict dev
-  // regex (localhost / 127.0.0.1 / *.ape-tv.net). We never echo "*" and never reflect an
-  // unvalidated origin, so credentialed CORS stays safe.
-  const envAllowed = origin ? CORS_ENV_ORIGINS.find((o) => o === origin) : undefined;
-  const allowedOrigin = envAllowed ?? (origin && CORS_ALLOWED.test(origin) ? origin : null);
-  if (allowedOrigin) {
-    res.setHeader("access-control-allow-origin", allowedOrigin);
+  if (origin && (CORS_ALLOWED.test(origin) || CORS_ENV_ORIGINS.includes(origin))) {
+    res.setHeader("access-control-allow-origin", origin);
     res.setHeader("access-control-allow-credentials", "true");
     res.setHeader("access-control-allow-headers", "content-type, x-arbx-admin-token, x-arbx-trace-id, x-arbx-actor");
     res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS");
