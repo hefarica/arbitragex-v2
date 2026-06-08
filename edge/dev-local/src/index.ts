@@ -154,14 +154,45 @@ async function proxy(path: string, req: express.Request, res: express.Response) 
   }
 }
 
-const wsProxy = createProxyMiddleware({ 
+// FE-CRIT-01 — /status content-negotiation. The edge historically proxied the
+// api-server's JSON /status UNCONDITIONALLY, which SHADOWED the Next.js SPA
+// /status page (a browser navigating to /status got raw JSON instead of the
+// dashboard). This predicate decides whether a request wants the backend JSON
+// (API clients) or the SPA HTML (browser navigation):
+//   • JSON  ⇐ Accept: application/json, OR ?format=json, OR a CLI User-Agent
+//            (curl / httpie / wget / python-requests).
+//   • HTML  ⇐ Accept includes text/html (browser navigation) and not the above.
+// When neither is decisive we DEFAULT TO JSON to preserve the legacy API-client
+// behaviour exactly (no contract drift for existing programmatic callers).
+function statusWantsJson(req: express.Request): boolean {
+  const fmt = typeof req.query["format"] === "string" ? req.query["format"].toLowerCase() : "";
+  if (fmt === "json") return true;
+  const ua = (req.header("user-agent") ?? "").toLowerCase();
+  if (/\b(curl|httpie|wget|python-requests|go-http-client|node-fetch|axios)\b/.test(ua)) {
+    return true;
+  }
+  const accept = (req.header("accept") ?? "").toLowerCase();
+  // Browser navigations send `text/html` first. Only treat as HTML when the
+  // client explicitly asks for text/html AND did not ask for application/json.
+  if (accept.includes("text/html") && !accept.includes("application/json")) {
+    return false;
+  }
+  // Default (no Accept, */*, application/json, etc.) → JSON, preserving the
+  // exact behaviour API clients relied on before this change.
+  return true;
+}
+
+const wsProxy = createProxyMiddleware({
   target: API_SERVER_URL, 
   ws: true, 
   changeOrigin: true
 });
 app.use('/socket.io', wsProxy);
 
-app.get("/status", (req, res) => proxy("/status", req, res));
+// FE-CRIT-01 — /status is content-negotiated. The actual handler is registered
+// LATER (just before the SPA catch-all) so its HTML branch can delegate to
+// `frontendProxy` (a const declared further down). API clients (Accept: json,
+// ?format=json, curl/wget/httpie UA) still get the backend JSON verbatim.
 // Health probe alias — REST convention for load balancers / external monitors.
 // Proxied to api-server's /api/health which returns service/version/uptime JSON.
 app.get("/api/health", (req, res) => proxy("/api/health", req, res));
@@ -205,6 +236,14 @@ app.get("/api/route-discovery/metrics", (req, res) => proxy("/api/route-discover
 app.get("/api/route-discovery/routes", (req, res) => proxy("/api/route-discovery/routes", req, res));
 app.get("/api/cartridges/status", (req, res) => proxy("/api/cartridges/status", req, res));
 app.get("/api/cartridges/telemetry/latest", (req, res) => proxy("/api/cartridges/telemetry/latest", req, res));
+
+// FE-CRIT — system manifest read surface. api-server mounts these at
+// /api/system/* (system-manifest.ts, no /v1/ prefix). proxy() forwards the
+// upstream status verbatim — if api-server returns non-2xx, the real status +
+// body are surfaced; on transport failure proxy() returns an honest 502
+// {error:"upstream_unreachable"}. NEVER a fabricated 200. Observe-only.
+app.get("/api/system/drift", (req, res) => proxy("/api/system/drift", req, res));
+app.get("/api/system/feature_manifest", (req, res) => proxy("/api/system/feature_manifest", req, res));
 
 // FASE B Gate-C — route-discovery OUTCOMES analytics (read-only over the durable
 // Postgres `route_discovery_outcomes` table; the shadow emitter's resolved
@@ -656,6 +695,20 @@ const frontendProxy = createProxyMiddleware({
     "accept-encoding": "identity",
   },
 });
+
+// FE-CRIT-01 — content-negotiated /status (registered here so the HTML branch
+// can delegate to `frontendProxy`, declared just above). API clients get the
+// backend JSON /status verbatim (preserving the exact legacy behaviour); browser
+// navigations (Accept: text/html) get the Next.js SPA /status page instead of
+// being shadowed by raw JSON.
+app.get("/status", (req, res, next) => {
+  if (statusWantsJson(req)) {
+    void proxy("/status", req, res);
+    return;
+  }
+  return frontendProxy(req, res, next);
+});
+
 app.use((req, res, next) => {
   // /api and /socket.io are owned by the explicit routes above (or 404 if an
   // unknown /api path) — never fall through to the frontend.
