@@ -55,7 +55,7 @@ beforeAll(async () => {
       POSTGRES_DB:       "arbitragex",
     })
     .withExposedPorts(5432)
-    .withWaitStrategy(Wait.forLogMessage("database system is ready to accept connections"))
+    .withWaitStrategy(Wait.forSuccessfulCommand("pg_isready -U postgres"))
     .start();
 
   pool = new Pool({
