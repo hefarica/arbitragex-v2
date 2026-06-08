@@ -46,8 +46,31 @@ const MIGRATION_033_CROSS_CHAIN: &str = include_str!(
     "../../../database/migrations/033_opportunities_fail_honest_and_cross_chain_slots.sql"
 );
 
-const MIGRATION_034_TOKENS: &str =
-    include_str!("../../../database/migrations/034_tokens_table.sql");
+/// DDL-only equivalent of migration 034 for test databases.
+///
+/// Production migration 034 ends with GRANT statements. When passed to
+/// `sqlx::raw_sql` as part of a multi-statement batch, those GRANTs abort
+/// the implicit transaction and roll back the preceding CREATE TABLE, causing
+/// PG 42P01 ("relation tokens does not exist") on every test that follows.
+/// This inline constant omits the GRANTs — the sqlx::test pool runs as
+/// superuser and needs no explicit grants.
+/// Production `database/migrations/034_tokens_table.sql` is NOT modified.
+const MIGRATION_034_TOKENS: &str = r#"
+CREATE TABLE IF NOT EXISTS tokens (
+  chain_id      INTEGER     NOT NULL,
+  address       TEXT        NOT NULL,
+  symbol        TEXT        NULL,
+  decimals      SMALLINT    NULL,
+  logo_url      TEXT        NULL,
+  resolved_via  TEXT        NOT NULL
+    CHECK (resolved_via IN ('onchain_full','onchain_partial','trustwallet_only','failed')),
+  resolved_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (chain_id, address),
+  CONSTRAINT chk_address_format CHECK (address ~ '^0x[a-f0-9]{40}$')
+);
+CREATE INDEX IF NOT EXISTS idx_tokens_last_seen ON tokens(last_seen_at DESC);
+"#;
 
 /// Apply the minimum migrations required for reconciliation tests.
 ///
