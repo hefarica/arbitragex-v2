@@ -28,7 +28,7 @@ import {
 
 // Server Components run inside Docker — INTERNAL_EDGE_URL reaches the edge via
 // Docker DNS (http://edge:8787). The browser uses NEXT_PUBLIC_EDGE_URL which
-// resolves via the operator's SSH tunnel (http://localhost:8787).
+// resolves via the operator's SSH tunnel to the edge port.
 const isBrowser = typeof window !== "undefined";
 
 export function getApiBaseUrl(): string {
