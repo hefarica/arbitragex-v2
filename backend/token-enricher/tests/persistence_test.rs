@@ -53,11 +53,21 @@ DO $$ BEGIN CREATE ROLE arbx_rw       WITH LOGIN; EXCEPTION WHEN duplicate_objec
 DO $$ BEGIN CREATE ROLE arbx_ro       WITH LOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 "#;
 
-/// The tokens table schema and its indexes, verbatim from migration 034.
+/// The tokens table schema verbatim from migration 034.
+///
+/// Migration 034 was rewritten (post-77f8168, during the omega-apex sprint) from
+/// `ALTER TABLE tokens ADD COLUMN ...` to `CREATE TABLE IF NOT EXISTS tokens (...)`
+/// with the compound primary key `(chain_id, address)`, all audit columns, and no
+/// foreign-key dependency on `chains`. The `chains` table is therefore NOT needed
+/// in the test setup, and applying ROLES → 034 is sufficient.
 const MIGRATION_034_TOKENS: &str =
     include_str!("../../../database/migrations/034_tokens_table.sql");
 
 /// Apply the minimum migrations required for `tokens` table tests.
+///
+/// Order: roles → 034 CREATE TABLE IF NOT EXISTS. Migration 034 now owns the full
+/// `tokens` DDL (all audit columns, CHECK constraints, index, GRANTs) and has no
+/// upstream FK dependency, so no additional migrations are needed.
 async fn apply_token_migrations(pool: &sqlx::PgPool) -> sqlx::Result<()> {
     sqlx::raw_sql(TEST_MIGRATION_001_ROLES)
         .execute(pool)
