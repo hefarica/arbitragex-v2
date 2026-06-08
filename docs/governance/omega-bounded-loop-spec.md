@@ -38,17 +38,39 @@ Independent of any task or stop-condition pressure:
 | D-7 | Inflate a `STATUS_REPORT.md` % without committed + CI-verified evidence | RULE 00 / I-8. |
 | D-8 | Mark a `not_available` panel "done" with placeholder/last-known data | Mirror Law / RULE 00 zero-mocks. |
 | D-9 | Deploy a contract or to the VPS, or run a DB `DROP` without verified backup | Operator-gated; I-7. |
+| D-10 | Blanket-stage with `git add -A` / `git add .` without Review-Board confirmation | Leaks artifacts/secrets/logs/`test-results/`/out-of-scope files. See §2 Commit hygiene. |
 
 Crossing any denylist item = **immediate stop + operator handoff**, never a "fix".
 
-## 2. Bounds — the loop is finite
+## 2. Bounds — the loop is autonomous *with checkpoints*, not infinite
 
 - **Cycle ceiling:** max `N` cycles per run (default `N=8`); then mandatory stop + report.
 - **Budget ceiling:** wall-clock / token budget per run; on exhaustion → stop + report.
 - **Human checkpoint:** every `K` cycles (default `K=3`) **and** on every `TERMINAL-BLOCKED`, the loop
   pauses and emits an operator-handoff report. It does **not** auto-resume past a checkpoint.
-- The phrase *"no preguntas, no esperas, continúas"* is explicitly **overridden** by
-  `arbx-no-live-without-go-no-go` + the human-checkpoint requirement.
+- **Every cycle ends with a PHVA report.** While the stop condition is unmet the loop runs the next
+  cycle, but **no cycle may merge, deploy, go live, touch the VPS, touch capital, force-push, or make
+  any destructive change without explicit operator authorization.** The phrase *"no preguntas, no
+  esperas, continúas"* is explicitly **overridden** by `arbx-no-live-without-go-no-go` + the per-cycle
+  report + the human-checkpoint requirement.
+
+### Execution mode
+- **Recommended:** normal permissions or **plan mode**. The loop proposes and verifies; the operator merges.
+- **`bypass-permissions` is NOT a requirement and NOT a default.** Allowed **only** when the operator
+  explicitly activates it for a **bounded, non-destructive task with a defined rollback** — never paired
+  with the standing loop. `bypass-permissions` + unbounded loop + auto-commit is the exact combination
+  the Council **blocked**.
+
+### Commit hygiene (Fase A)
+- **Forbidden:** `git add -A` / `git add .` blanket staging (denylist **D-10**).
+- **Required protocol** before any commit:
+  1. `git status --short` — inspect the full working tree.
+  2. `git diff --stat`, then `git diff --cached` after staging — confirm scope.
+  3. `git add <only the explicit files produced by this cycle>` — pathspec, never wildcard.
+  4. `git commit -m "phva(ciclo-[N]): …"`, then `git show HEAD --stat` to confirm exactly the intended files landed.
+- `git add -A` is permitted **only** if the GitHub / CI-CD Review Board explicitly confirms there are
+  **no** accidental files, secrets, build artifacts, logs, `test-results/`, reports, or out-of-scope
+  changes staged. Absent that confirmation, blanket staging is a denylist violation.
 
 ## 3. Dual-exit stop condition (replaces "loop until 100%")
 
