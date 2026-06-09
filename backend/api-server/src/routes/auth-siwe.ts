@@ -172,6 +172,10 @@ function parseCookies(header: string | undefined): Record<string, string> {
 }
 
 function isSecureRequest(req: Request): boolean {
+  // Hardening: in production the wallet session cookie MUST carry Secure regardless of how
+  // the reverse proxy forwards the scheme — never let a missing/misconfigured
+  // x-forwarded-proto downgrade it to plain HTTP and expose it to interception.
+  if (process.env.NODE_ENV === "production") return true;
   if (req.secure) return true;
   const xf = (req.header("x-forwarded-proto") ?? "").toLowerCase();
   return xf.includes("https");
@@ -288,15 +292,18 @@ export function mountAuthSiwe(
       return;
     }
 
-    // Verify via the siwe library — NEVER hand-rolled. Bind domain (when an
-    // expected domain is configured) and the consumed nonce. The library checks
-    // the cryptographic signature, expiry, not-before, and these bindings.
+    // Verify via the siwe library — NEVER hand-rolled. Domain binding is MANDATORY:
+    // if no expected domain is configured we fail-honest (issue no session) rather than
+    // verifying without it, which would allow a signature minted for a phishing origin to
+    // be replayed here (cross-domain replay). The library then checks the cryptographic
+    // signature, expiry, not-before, the consumed nonce, AND this domain binding.
     const expDomain = expectedDomain();
+    if (!expDomain) return unavailable(res, "wallet_siwe_domain_not_configured");
     try {
       const result = await siwe.verify({
         signature,
         nonce: siwe.nonce,
-        ...(expDomain ? { domain: expDomain } : {}),
+        domain: expDomain,
       });
       if (!result.success) {
         deps.logger.warn({ event: "siwe.verify_failed", reason: result.error?.type ?? "unknown" });

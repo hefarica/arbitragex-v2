@@ -44,7 +44,11 @@ export function useTransactionSimulation() {
         body: JSON.stringify(draft),
       });
       const body = (await res.json()) as SimulationResult;
-      setResult({ ...body, broadcast_allowed: false, live_enabled: false, capital_exposed: 0, broadcast: false });
+      // Mirror Law (RULE 00): reflect the backend's real safe posture (verified always
+      // broadcast_allowed:false / capital 0 / live false; honest "unavailable" without a
+      // wired sim runtime) rather than synthesizing it client-side — a regression then
+      // surfaces as a visible alarm. The frontend never broadcasts regardless.
+      setResult(body);
     } catch (e) {
       setError((e as Error).message);
     } finally {

@@ -42,11 +42,20 @@ test("disconnected / read-only state is shown", async ({ page }) => {
   await expect(page.getByTestId("wallet-safety-badges").getByText(/read-only mode/i)).toBeVisible();
 });
 
-test("no private-key / mnemonic text anywhere on the page", async ({ page }) => {
-  const txt = (await page.locator("body").innerText()).toLowerCase();
-  expect(txt).not.toContain("private key");
-  expect(txt).not.toContain("mnemonic");
-  expect(txt).not.toContain("seed phrase");
+test("the page never solicits or exposes private-key / mnemonic material", async ({ page }) => {
+  // The REAL risk is SOLICITATION (an input asking the user for a key/seed) or an EXPOSED
+  // key value — NOT the WalletSafetyBanner's reassurance copy ("No private keys are held
+  // server-side"), which is a security guarantee and must be allowed to render.
+  const solicitingInputs = await page.locator("input, textarea").evaluateAll((els) =>
+    els.filter((e) => {
+      const meta = `${e.getAttribute("placeholder") ?? ""} ${e.getAttribute("aria-label") ?? ""} ${e.getAttribute("name") ?? ""}`.toLowerCase();
+      return /private[ _-]?key|mnemonic|seed phrase/.test(meta);
+    }).length,
+  );
+  expect(solicitingInputs, "no input solicits a private key / mnemonic / seed phrase").toBe(0);
+  // No raw private-key value (0x + 64 hex) rendered anywhere on the page.
+  const html = await page.content();
+  expect(/0x[a-fA-F0-9]{64}/.test(html), "no raw 32-byte private-key value rendered").toBe(false);
 });
 
 test("no React #418 hydration error in the console", async ({ page }) => {

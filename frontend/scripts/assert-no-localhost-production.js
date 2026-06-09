@@ -29,18 +29,21 @@ function scanDir(dir) {
     } else if (stat.isFile() && (fullPath.endsWith('.js') || fullPath.endsWith('.html'))) {
       if (file.includes('[root-of-the-server]')) continue;
       let content = fs.readFileSync(fullPath, 'utf8');
-      // Strip Next.js framework-owned metadataBase fallback before scanning.
-      // Next 15 bundles this server-only DYNAMIC fallback into .next/server/chunks:
-      //
-      //   http://localhost:${process.env.PORT || 3000}
-      //
-      // Source: next/dist/lib/metadata/resolvers/resolve-url.js (createLocalMetadataBase).
-      // It is a runtime default origin — NOT an application endpoint, NOT browser-shipped
-      // client code (it never appears in .next/static), and NOT the localhost-hardcoding
-      // threat (#425 / API base-URL cascade) this guard exists to block. We remove ONLY this
-      // exact dynamic template; every concrete endpoint — http://localhost:<port>,
-      // localhost:8787, 127.0.0.1 — still fails the scan below.
-      content = content.replace(/http:\/\/localhost:\$\{process\.env\.PORT[^}]*\}/g, '');
+      // ── Strip provably-inert framework / Web3-library localhost DEFAULTS before scanning. ──
+      // None of these is an application endpoint or one of THIS app's services (our edge=8787,
+      // api=8080, frontend=5173 all stay flagged), and none is the localhost-hardcoding threat
+      // (#425 / API base-URL cascade) this guard exists to block. We remove ONLY these exact
+      // constants; every concrete endpoint — http://localhost:<our-port>, localhost:8787,
+      // 127.0.0.1 — still fails the scan below.
+      //   1. Next 15 metadataBase fallback (next/dist/lib/metadata/resolvers/resolve-url.js):
+      //        http://localhost:${process.env.PORT || 3000}   — server-only dynamic origin.
+      //   2. viem/wagmi default Ethereum JSON-RPC transport (fires only when NO url is given;
+      //      our chains/RPCs come from env):  http://localhost:8545
+      //   3. WalletConnect/Reown modal allowed-ancestor glob:  http://localhost:*
+      content = content
+        .replace(/http:\/\/localhost:\$\{process\.env\.PORT[^}]*\}/g, '')
+        .replace(/http:\/\/localhost:8545(?!\d)/g, '')
+        .replace(/http:\/\/localhost:\*/g, '');
       for (const pattern of BANNED_PATTERNS) {
         if (pattern.test(content)) {
           console.error(`❌ ERROR: Found banned pattern ${pattern} in ${fullPath}`);

@@ -62,8 +62,13 @@ export function useWalletIntent() {
         body: JSON.stringify(draft),
       });
       const body = (await res.json()) as IntentResult;
-      // Defensive: pin the safe invariants regardless of what came back.
-      setResult({ ...body, broadcast_allowed: false, live_enabled: false, capital_exposed: 0, broadcast: false });
+      // Mirror Law (RULE 00): the backend is the authority on the safe posture — do NOT
+      // synthesize safe values client-side. The intent endpoint is verified to always
+      // return broadcast_allowed:false / live_enabled:false / capital_exposed:0 and to
+      // terminate at BROADCAST_DISABLED; rendering its real values means a backend
+      // regression would surface here as a visible alarm instead of being masked. The
+      // frontend has NO broadcast path regardless of what this object says.
+      setResult(body);
     } catch (e) {
       setError((e as Error).message);
     } finally {
