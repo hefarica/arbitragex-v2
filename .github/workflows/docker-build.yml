@@ -29,7 +29,12 @@ jobs:
         with:
           context: .
           file: frontend/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          # amd64-only: the deploy target (Hetzner VPS) is x86_64, and the heavy Web3
+          # wallet deps (wagmi / WalletConnect / @metamask/sdk, added in #149) make the
+          # linux/arm64 `npm install` fail deterministically under qemu emulation
+          # (OOM/timeout, ~12min → exit 1). The arm64 image is never deployed, so building
+          # it was wasted work and the sole Docker Build failure on main@6285b60.
+          platforms: linux/amd64
           push: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
           tags: |
             ghcr.io/${{ github.repository }}:latest
