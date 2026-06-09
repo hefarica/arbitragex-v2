@@ -254,6 +254,61 @@ app.get("/api/contracts", (req, res) => proxy("/api/contracts", req, res));
 app.get("/api/capital-gates", (req, res) => proxy("/api/capital-gates", req, res));
 app.get("/api/crucible/status", (req, res) => proxy("/api/crucible/status", req, res));
 
+// =============================================================================
+// Web3 safe-gated WALLET surface + SIWE identity-only auth. Mirrors the
+// /api/system/* proxy pattern: upstream status forwarded verbatim, honest 502
+// on transport failure, NEVER a fabricated 200. The api-server enforces the
+// hard invariants (live OFF, capital 0, broadcast OFF, no signer); the edge is
+// a transparent pass-through. SIWE sessions are httpOnly cookies set by the
+// api-server, so this public proxy forwards the client Cookie header upstream
+// and relays any upstream Set-Cookie back to the browser.
+// =============================================================================
+
+// Public POST proxy that forwards the JSON body + the client's Cookie header to
+// the api-server, and relays upstream Set-Cookie back to the browser. Used by
+// the wallet/auth POST endpoints (intent, simulate, signature/verify, siwe
+// verify, logout). NEVER a fabricated 200.
+async function walletProxy(path: string, req: express.Request, res: express.Response, method: string): Promise<void> {
+  try {
+    const upstream = await fetch(`${API_SERVER_URL}${path}`, {
+      method,
+      headers: {
+        "content-type": "application/json",
+        "x-arbx-edge-token": ARBX_EDGE_TOKEN,
+        "x-arbx-trace-id": (req as express.Request & { traceId?: string }).traceId ?? "",
+        // Forward the wallet identity cookie so /api/auth/session reflects login.
+        ...(req.headers.cookie ? { cookie: req.headers.cookie } : {}),
+        accept: "application/json",
+      },
+      body: method !== "GET" && method !== "HEAD" ? JSON.stringify(req.body ?? {}) : null,
+    });
+    const text = await upstream.text();
+    // Relay the upstream httpOnly Set-Cookie (SIWE session) to the browser.
+    const setCookie = upstream.headers.get("set-cookie");
+    if (setCookie) res.setHeader("set-cookie", setCookie);
+    res.status(upstream.status);
+    res.setHeader("content-type", upstream.headers.get("content-type") ?? "application/json");
+    res.send(text);
+  } catch (e) {
+    logger.error({ err: (e as Error).message, path }, "wallet proxy error");
+    res.status(502).json({ error: "upstream_unreachable" });
+  }
+}
+
+// GET /api/wallet/* — public read surface (status + safety). proxy() already
+// forwards cookies? No — the read endpoints don't need the cookie. Plain proxy.
+app.get("/api/wallet/status", (req, res) => proxy("/api/wallet/status", req, res));
+app.get("/api/wallet/safety", (req, res) => proxy("/api/wallet/safety", req, res));
+// POST /api/wallet/* — intent + simulate + signature verify (never broadcast).
+app.post("/api/wallet/intent", (req, res) => walletProxy("/api/wallet/intent", req, res, "POST"));
+app.post("/api/wallet/simulate", (req, res) => walletProxy("/api/wallet/simulate", req, res, "POST"));
+app.post("/api/wallet/signature/verify", (req, res) => walletProxy("/api/wallet/signature/verify", req, res, "POST"));
+// SIWE identity-only auth. nonce (GET) needs no cookie; verify/session/logout do.
+app.get("/api/auth/siwe/nonce", (req, res) => walletProxy("/api/auth/siwe/nonce", req, res, "GET"));
+app.post("/api/auth/siwe/verify", (req, res) => walletProxy("/api/auth/siwe/verify", req, res, "POST"));
+app.get("/api/auth/session", (req, res) => walletProxy("/api/auth/session", req, res, "GET"));
+app.post("/api/auth/logout", (req, res) => walletProxy("/api/auth/logout", req, res, "POST"));
+
 // FASE B Gate-C — route-discovery OUTCOMES analytics (read-only over the durable
 // Postgres `route_discovery_outcomes` table; the shadow emitter's resolved
 // outcomes + Paso 9 `reason` column). This is the read-side of the passive sink:

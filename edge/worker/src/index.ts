@@ -327,6 +327,56 @@ app.get("/api/system/feature_manifest", (c) => proxy(c, "/api/system/feature_man
 app.get("/api/contracts", (c) => proxy(c, "/api/contracts", "arbx:cache:contracts", 5));
 app.get("/api/capital-gates", (c) => proxy(c, "/api/capital-gates", "arbx:cache:capital-gates", 5));
 app.get("/api/crucible/status", (c) => proxy(c, "/api/crucible/status", "arbx:cache:crucible", 5));
+
+// =============================================================================
+// Web3 safe-gated WALLET surface + SIWE identity-only auth. Mirrors the
+// /api/system/* proxy pattern: upstream status forwarded verbatim, NEVER a
+// fabricated 200; honest non-2xx surfaced as-is. The api-server enforces the
+// hard invariants (live OFF, capital 0, broadcast OFF, no signer); the worker
+// is a transparent pass-through. SIWE sessions are httpOnly cookies set by the
+// api-server, so walletProxy forwards the client Cookie header upstream and
+// relays any upstream Set-Cookie back to the browser. These are NEVER cached
+// (auth/session/intent must be live).
+// =============================================================================
+async function walletProxy(
+  c: import("hono").Context<{ Bindings: Env }>,
+  path: string,
+  method: "GET" | "POST",
+) {
+  const headers: Record<string, string> = {
+    "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+    "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    accept: "application/json",
+  };
+  if (method === "POST") headers["content-type"] = "application/json";
+  // Forward the wallet identity cookie so /api/auth/session reflects login.
+  const cookie = c.req.header("cookie");
+  if (cookie) headers["cookie"] = cookie;
+  const init: RequestInit = {
+    method,
+    headers,
+    cf: { cacheTtl: 0, cacheEverything: false },
+  };
+  if (method === "POST") init.body = await c.req.text();
+  const upstream = await fetch(`${c.env.API_SERVER_URL}${path}`, init);
+  const body = await upstream.text();
+  // Relay the upstream httpOnly Set-Cookie (SIWE session) to the browser.
+  const setCookie = upstream.headers.get("set-cookie");
+  if (setCookie) c.header("set-cookie", setCookie);
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(body, upstream.status as 200 | 400 | 401 | 403 | 500 | 502);
+}
+
+app.get("/api/wallet/status", (c) => walletProxy(c, "/api/wallet/status", "GET"));
+app.get("/api/wallet/safety", (c) => walletProxy(c, "/api/wallet/safety", "GET"));
+app.post("/api/wallet/intent", (c) => walletProxy(c, "/api/wallet/intent", "POST"));
+app.post("/api/wallet/simulate", (c) => walletProxy(c, "/api/wallet/simulate", "POST"));
+app.post("/api/wallet/signature/verify", (c) => walletProxy(c, "/api/wallet/signature/verify", "POST"));
+app.get("/api/auth/siwe/nonce", (c) => walletProxy(c, "/api/auth/siwe/nonce", "GET"));
+app.post("/api/auth/siwe/verify", (c) => walletProxy(c, "/api/auth/siwe/verify", "POST"));
+app.get("/api/auth/session", (c) => walletProxy(c, "/api/auth/session", "GET"));
+app.post("/api/auth/logout", (c) => walletProxy(c, "/api/auth/logout", "POST"));
+
 app.get("/api/opportunities/live", (c) => proxy(c, "/api/v1/opportunities/live", "arbx:cache:opps", 2));
 // Risk alerts view (read-only). No cache in S1; S3 adds.
 app.get("/api/risk/alerts", (c) => proxy(c, "/api/v1/risk/alerts"));
