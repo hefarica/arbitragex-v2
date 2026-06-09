@@ -26,7 +26,11 @@ jobs:
   deploy:
     name: Deploy to VPS (Hetzner)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Raised from 15m: the FIRST deploy after a cold VPS docker cache does a full
+    # `cargo build --release` of all 6 Rust services (searcher-rs / sim-ctl / recon /
+    # relays-client / token-enricher / ...), which exceeds 15m. Subsequent deploys reuse
+    # the warm build cache and finish far faster.
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
@@ -75,6 +79,11 @@ jobs:
           username: ${{ secrets.VPS_SSH_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || '22' }}
+          # appleboy/ssh-action's command_timeout defaults to 10m — far too short for a cold
+          # `docker compose up -d --build` (full Rust --release build of 6 services). Run
+          # 27187428117 hit exactly this ("Run Command Timeout" ~10min in, mid dep-compile).
+          # Raised to 40m so the build completes; the in-VPS healthcheck then runs.
+          command_timeout: "40m"
           # Strict fail-on-error is enforced by `set -euo pipefail` in the script below.
           # NOTE: appleboy/ssh-action@v1 REMOVED the `script_stop` input — passing it makes
           # the action abort at input validation ("Unexpected input(s) 'script_stop'") before
