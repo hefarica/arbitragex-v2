@@ -104,6 +104,8 @@ import { mountRiskCircuitBreakers } from "./routes/risk-circuit-breakers.js";
 import { mountAdminChains } from "./routes/admin-chains.js";
 import { mountSedStatus } from "./routes/sed-status.js";
 import { mountSystemManifest } from "./routes/system-manifest.js";
+import { mountWalletRoutes } from "./routes/wallet.js";
+import { mountAuthSiwe } from "./routes/auth-siwe.js";
 import { buildTopologyVaultRouter } from "./routes/topology-vault.js";
 import {
   setupWebSocketGateway,
@@ -498,6 +500,12 @@ mountReadinessExtras(app, { pool, logger });
 mountReadinessSteps(app, { pool, logger });
 mountAgentsStatus(app, { pool, logger });
 mountScoringStatus(app, { pool, logger });
+// Web3 safe-gated wallet surface (read-only / paper) + SIWE identity-only auth.
+// HARD INVARIANTS: live OFF, capital_exposed 0, broadcast OFF, no signer/keys
+// server-side; every intent terminates at BROADCAST_DISABLED. Public, behind
+// the existing globalLimiter (applied above, before all data routes).
+mountWalletRoutes(app, { logger });
+mountAuthSiwe(app, { logger });
 mountRiskCircuitBreakers(app, { pool, killSwitch, logger });
 mountAdminChains(app, {
   pool,
