@@ -39,8 +39,11 @@ test("live OFF + capital 0 + broadcast OFF are visible", async ({ page }) => {
 
 test("read-only + paper mode are visible", async ({ page }) => {
   const banner = page.getByTestId("wallet-safety-banner");
-  await expect(banner.getByText(/read-only mode/i)).toBeVisible();
-  await expect(banner.getByText(/paper mode/i)).toBeVisible();
+  // "Read-only mode" / "Paper mode" intentionally appear BOTH in the intro sentence and as
+  // badges, so getByText resolves to 2 elements — .first() disambiguates (presence is the
+  // assertion; the banner is verified visible above). The UI is correct, not weakened.
+  await expect(banner.getByText(/read-only mode/i).first()).toBeVisible();
+  await expect(banner.getByText(/paper mode/i).first()).toBeVisible();
 });
 
 test("the broadcast/execute affordance exists ONLY as a disabled shell", async ({ page }) => {
