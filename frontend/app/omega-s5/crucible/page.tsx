@@ -22,7 +22,9 @@ export default function CruciblePage() {
     );
   }
 
-  const ok = rows.every((r) => r.success_rate_pct >= 95 && r.runtime_hours >= 72 && r.doctrinal_reverts === 0);
+  // FE-CRIT-05 fix: rows.every() returns true on an empty array → "CRUCIBLE PASSED" with
+  // zero data (false-green, RULE 00). Require at least one network row before passing.
+  const ok = rows.length > 0 && rows.every((r) => r.success_rate_pct >= 95 && r.runtime_hours >= 72 && r.doctrinal_reverts === 0);
 
   return (
     <div>
