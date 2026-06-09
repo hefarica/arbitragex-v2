@@ -1,26 +1,42 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, type SetStateAction } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { AlertCircle, RefreshCw, ToggleLeft, ToggleRight, Plus, Trash2, X } from "lucide-react";
+import { AlertCircle, RefreshCw, ToggleLeft, ToggleRight, Plus, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { DexDetailDialog } from "@/components/DexDetailDialog";
 import {
-  createDex,
   deleteDex,
   toggleDexActive,
-  type CreateDexFactory,
   type DexRow,
 } from "@/lib/api/dexes";
 import { useOmniStore } from "@/lib/store/omni-store";
 import { getApiBaseUrl } from "@/lib/api-client";
 import { EdgeState } from "@/components/EdgeState";
+import { AddDexDialog } from "./AddDexDialog";
+import { RemoveDexDialog } from "./RemoveDexDialog";
 
 // Protocol types known by the spine's `default_fee_bps_for_adapter` lookup.
 const KNOWN_PROTOCOLS = ["UNISWAP_V2", "UNISWAP_V3", "CURVE", "BALANCER", "SUSHISWAP"] as const;
+
+/**
+ * Resolve the operator admin token the same way every mutation on this page
+ * does: a live admin session cookie wins (the server validates it), otherwise
+ * fall back to the locally-stored token. Returns "" when neither is present so
+ * the dialogs render their "no admin session" guard rather than firing a
+ * doomed request.
+ */
+function resolveAdminToken(): string {
+  const sessionActive =
+    typeof document !== "undefined" &&
+    /(?:^|;\s*)arbx_admin_session_ttl=/.test(document.cookie);
+  if (sessionActive) return "__session_active__";
+  return (
+    (typeof window !== "undefined" &&
+      localStorage.getItem("arbx-admin-token")) ||
+    ""
+  );
+}
 
 export interface DexRegistrySnapshot {
   dexes: DexRow[];
@@ -64,8 +80,21 @@ export default function DexRegistryClient({ initialSnapshot }: Props) {
     fetchRegistry();
   }, [fetchRegistry]);
 
-  const dexes = useMemo(() => Array.from(dexesMap.values()), [dexesMap]);
-  const chainCatalog = useMemo(() => Array.from(chainsMap.values()), [chainsMap]);
+  // R1 Mounted-Snapshot: seed first paint from the SSR snapshot so the table is
+  // not empty before the omni-store's client fetch resolves. Once the store has
+  // data we render the live store values (the canonical source); the snapshot
+  // only covers the pre-hydration gap.
+  const storeDexes = useMemo(() => Array.from(dexesMap.values()), [dexesMap]);
+  const dexes: DexRow[] =
+    storeDexes.length > 0 ? (storeDexes as unknown as DexRow[]) : initialSnapshot.dexes;
+  const chainCatalog = useMemo(
+    () =>
+      Array.from(chainsMap.values()).map((c) => ({
+        id: c.id,
+        label: c.name ?? `Chain ${c.id}`,
+      })),
+    [chainsMap],
+  );
 
   const [selected, setSelected] = useState<DexRow | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -77,6 +106,8 @@ export default function DexRegistryClient({ initialSnapshot }: Props) {
   const [removeTarget, setRemoveTarget] = useState<DexRow | null>(null);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
+  // R1: document.cookie / localStorage are read only after mount.
+  const [adminToken, setAdminToken] = useState("");
 
   const chainLabel = useCallback(
     (id: number): string => chainsMap.get(id)?.name ?? `Chain ${id}`,
@@ -85,6 +116,7 @@ export default function DexRegistryClient({ initialSnapshot }: Props) {
 
   useEffect(() => {
     setIsMounted(true);
+    setAdminToken(resolveAdminToken());
   }, []);
 
   const refresh = useCallback(async () => {
@@ -98,17 +130,10 @@ export default function DexRegistryClient({ initialSnapshot }: Props) {
       e.stopPropagation();
       setToggling(dex.id);
       setToggleError(null);
-      
-      const sessionActive =
-        typeof document !== "undefined" &&
-        /(?:^|;\s*)arbx_admin_session_ttl=/.test(document.cookie);
-      const adminToken = sessionActive
-        ? "__session_active__"
-        : (typeof window !== "undefined" &&
-            localStorage.getItem("arbx-admin-token")) || "";
-            
+
+      const token = resolveAdminToken();
       const baseUrl = getApiBaseUrl();
-      const res = await toggleDexActive(baseUrl, dex.id, !dex.is_active, adminToken);
+      const res = await toggleDexActive(baseUrl, dex.id, !dex.is_active, token);
       if (res.ok) {
         // We could manually update the store here, or just refresh
         await fetchRegistry();
@@ -124,24 +149,25 @@ export default function DexRegistryClient({ initialSnapshot }: Props) {
     if (!removeTarget) return;
     setRemoving(true);
     setRemoveError(null);
-    const sessionActive =
-      typeof document !== "undefined" &&
-      /(?:^|;\s*)arbx_admin_session_ttl=/.test(document.cookie);
-    const adminToken = sessionActive
-      ? "__session_active__"
-      : (typeof window !== "undefined" &&
-          localStorage.getItem("arbx-admin-token")) || "";
-    
+
     const baseUrl = getApiBaseUrl();
-    const res = await deleteDex(baseUrl, removeTarget.id, adminToken);
+    const res = await deleteDex(baseUrl, removeTarget.id, resolveAdminToken());
     setRemoving(false);
     if (res.ok) {
       await fetchRegistry();
       setRemoveTarget(null);
     } else {
+      // Keep the dialog open and surface the verbatim error (incl. the 404
+      // missing_backend_contract case, classified inside RemoveDexDialog).
       setRemoveError(res.error);
     }
   }, [removeTarget, fetchRegistry]);
+
+  const handleCreated = useCallback(async () => {
+    // Refetch the canonical store after a successful create, then close.
+    await fetchRegistry();
+    setAddOpen(false);
+  }, [fetchRegistry]);
 
   const allChainIds: number[] = isMounted
     ? Array.from(new Set(dexes.flatMap((d) => d.chain_ids))).sort((a, b) => a - b)
@@ -166,8 +192,12 @@ export default function DexRegistryClient({ initialSnapshot }: Props) {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setAddOpen(true)}
+            onClick={() => {
+              setAdminToken(resolveAdminToken());
+              setAddOpen(true);
+            }}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-xs font-semibold"
+            data-testid="dex-add-open"
           >
             <Plus className="size-3.5" />
             Add DEX
@@ -297,9 +327,12 @@ export default function DexRegistryClient({ initialSnapshot }: Props) {
                       onClick={(e) => {
                         e.stopPropagation();
                         setRemoveError(null);
+                        setAdminToken(resolveAdminToken());
                         setRemoveTarget(d);
                       }}
                       className="flex items-center justify-center mx-auto text-muted-foreground hover:text-destructive transition-colors"
+                      data-testid={`dex-remove-open-${d.id}`}
+                      aria-label={`Remove ${d.name}`}
                     >
                       <Trash2 className="size-4" />
                     </button>
@@ -317,9 +350,34 @@ export default function DexRegistryClient({ initialSnapshot }: Props) {
           onClose={() => setSelected(null)}
         />
       )}
-      
-      {/* Remove confirmation dialog and Add DEX dialog would go here, 
-          omitted for brevity but preserving original logic structure */}
+
+      {/* FE-CRIT-06: Add DEX dialog — real form wired to createDex(). */}
+      {addOpen && (
+        <AddDexDialog
+          edgeUrl={getApiBaseUrl()}
+          adminToken={adminToken}
+          protocols={KNOWN_PROTOCOLS}
+          chainCatalog={chainCatalog}
+          onClose={() => setAddOpen(false)}
+          onCreated={handleCreated}
+        />
+      )}
+
+      {/* FE-CRIT-06: Remove confirmation dialog — wired to handleRemove(). */}
+      {removeTarget && (
+        <RemoveDexDialog
+          dex={removeTarget}
+          removing={removing}
+          error={removeError}
+          adminToken={adminToken}
+          onConfirm={handleRemove}
+          onClose={() => {
+            if (removing) return;
+            setRemoveTarget(null);
+            setRemoveError(null);
+          }}
+        />
+      )}
     </div>
   );
 }
