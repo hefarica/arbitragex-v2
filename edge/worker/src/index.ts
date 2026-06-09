@@ -322,6 +322,11 @@ app.get("/status", (c) => {
 // onError. NEVER a fabricated 200. Observe-only.
 app.get("/api/system/drift", (c) => proxy(c, "/api/system/drift", "arbx:cache:sys-drift", 5));
 app.get("/api/system/feature_manifest", (c) => proxy(c, "/api/system/feature_manifest", "arbx:cache:sys-manifest", 30));
+// FE-CRIT-03/04 — honest contract / capital / crucible read surface (api-server
+// /api/*, no /v1/). proxy() forwards upstream status verbatim, never a fake 200.
+app.get("/api/contracts", (c) => proxy(c, "/api/contracts", "arbx:cache:contracts", 5));
+app.get("/api/capital-gates", (c) => proxy(c, "/api/capital-gates", "arbx:cache:capital-gates", 5));
+app.get("/api/crucible/status", (c) => proxy(c, "/api/crucible/status", "arbx:cache:crucible", 5));
 app.get("/api/opportunities/live", (c) => proxy(c, "/api/v1/opportunities/live", "arbx:cache:opps", 2));
 // Risk alerts view (read-only). No cache in S1; S3 adds.
 app.get("/api/risk/alerts", (c) => proxy(c, "/api/v1/risk/alerts"));

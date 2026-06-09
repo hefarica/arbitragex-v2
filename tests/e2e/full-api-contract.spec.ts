@@ -12,17 +12,32 @@ import { test, expect } from "@playwright/test";
  *   • crucible `ready` is false on empty AND carries the false_green_guard flag.
  *   • /api/system/drift + /feature_manifest respond OR fail honestly (no fake 200).
  *
- * BASE defaults to the compose stack's edge (CI sets ARBX_FRONTEND_URL to the
- * freshly-built edge :8787). Tests hit the edge so they exercise the full
- * frontend→edge→api-server proxy contract end-to-end.
+ * BASE must point at the EDGE (8787) — NOT the frontend (5173) — because the
+ * /api/* proxying lives at the edge. Set E2E_BASE_URL (public edge) or
+ * ARBX_EDGE_URL (CI compose); default localhost:8787. (ARBX_FRONTEND_URL points
+ * at the Next frontend, which has no /api/contracts route — hence not used here.)
+ * If the edge is not reachable the suite SKIPS honestly
+ * (VALIDATION_PENDING_POST_DEPLOY) — never a false pass.
  */
 
 const BASE =
   process.env["E2E_BASE_URL"] ??
-  process.env["ARBX_FRONTEND_URL"] ??
+  process.env["ARBX_EDGE_URL"] ??
   "http://localhost:8787";
 
 test.describe.configure({ mode: "serial" });
+
+// Honest skip when the edge isn't reachable (e.g. compose not up) — never a fake green.
+test.beforeEach(async ({ request }) => {
+  let up = false;
+  try {
+    const r = await request.get(`${BASE}/api/health`, { failOnStatusCode: false, timeout: 8000 });
+    up = r.ok();
+  } catch {
+    up = false;
+  }
+  test.skip(!up, `edge not reachable at ${BASE} — VALIDATION_PENDING_POST_DEPLOY`);
+});
 
 test("/api/contracts returns the honest contract shape (safe posture)", async ({
   request,

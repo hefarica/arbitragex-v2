@@ -245,6 +245,15 @@ app.get("/api/cartridges/telemetry/latest", (req, res) => proxy("/api/cartridges
 app.get("/api/system/drift", (req, res) => proxy("/api/system/drift", req, res));
 app.get("/api/system/feature_manifest", (req, res) => proxy("/api/system/feature_manifest", req, res));
 
+// FE-CRIT-03/04 — honest contract / capital / crucible read surface. api-server
+// mounts these at /api/* (no /v1/ prefix). proxy() forwards upstream status
+// verbatim (honest 502 on transport failure, never a fabricated 200). The
+// frontend reads them via the edge (getApiBaseUrl()), so the edge MUST proxy
+// them — otherwise the edge 404s and the 6 omega-s5 pages stay data-dead.
+app.get("/api/contracts", (req, res) => proxy("/api/contracts", req, res));
+app.get("/api/capital-gates", (req, res) => proxy("/api/capital-gates", req, res));
+app.get("/api/crucible/status", (req, res) => proxy("/api/crucible/status", req, res));
+
 // FASE B Gate-C — route-discovery OUTCOMES analytics (read-only over the durable
 // Postgres `route_discovery_outcomes` table; the shadow emitter's resolved
 // outcomes + Paso 9 `reason` column). This is the read-side of the passive sink:

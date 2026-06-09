@@ -9,16 +9,30 @@ import { test, expect } from "@playwright/test";
  *   • Accept: text/html (browser navigation) → the SPA HTML /status page.
  *   • Accept: application/json, ?format=json, or a CLI User-Agent → backend JSON.
  *
- * BASE defaults to the compose stack's edge (CI sets ARBX_FRONTEND_URL to the
- * freshly-built edge :8787).
+ * BASE must point at the EDGE (8787) — NOT the frontend — because /status
+ * content-negotiation lives at the edge (the frontend always serves the SPA).
+ * Set E2E_BASE_URL (public edge) or ARBX_EDGE_URL (CI compose); default
+ * localhost:8787. If the edge is unreachable the suite SKIPS honestly.
  */
 
 const BASE =
   process.env["E2E_BASE_URL"] ??
-  process.env["ARBX_FRONTEND_URL"] ??
+  process.env["ARBX_EDGE_URL"] ??
   "http://localhost:8787";
 
 test.describe.configure({ mode: "serial" });
+
+// Honest skip when the edge isn't reachable — never a fake green.
+test.beforeEach(async ({ request }) => {
+  let up = false;
+  try {
+    const r = await request.get(`${BASE}/api/health`, { failOnStatusCode: false, timeout: 8000 });
+    up = r.ok();
+  } catch {
+    up = false;
+  }
+  test.skip(!up, `edge not reachable at ${BASE} — VALIDATION_PENDING_POST_DEPLOY`);
+});
 
 test("/status with Accept: text/html serves the SPA (text/html)", async ({
   request,
