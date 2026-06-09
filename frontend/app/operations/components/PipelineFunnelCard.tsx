@@ -141,7 +141,10 @@ export function PipelineFunnelCard({ snapshot, error, fetchedAt }: Props) {
             <ActivityIcon className="size-4 text-success" />
             Scanner Pipeline Funnel · last {snapshot.period_secs}s
           </span>
-          <span className="font-mono text-xs text-muted-foreground">{fmtAge(fetchedAt)}</span>
+          {/* R1 / React #418: fmtAge() uses Date.now() (line ~131) so the "Xs ago" text
+              differs between SSR and client hydration. suppressHydrationWarning on this
+              individual span is the sanctioned pattern for an intentionally-live value. */}
+          <span suppressHydrationWarning className="font-mono text-xs text-muted-foreground">{fmtAge(fetchedAt)}</span>
         </CardTitle>
         <CardDescription>
           Mempool funnel across decoder → enrichment → gate → persistence. Shows where throughput
@@ -168,7 +171,7 @@ export function PipelineFunnelCard({ snapshot, error, fetchedAt }: Props) {
                 </div>
               </div>
               <div className={`font-mono text-sm tabular-nums text-right ${tone.text}`}>
-                {stage.value.toLocaleString()}
+                {stage.value.toLocaleString("en-US")}
               </div>
             </div>
           );

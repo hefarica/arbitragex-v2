@@ -287,7 +287,46 @@ async function proxy(c: import("hono").Context<{ Bindings: Env }>, path: string,
   return c.body(body, upstream.status as 200 | 501 | 502);
 }
 
-app.get("/status", (c) => proxy(c, "/status", "arbx:cache:status", 2));
+// FE-CRIT-01 — /status content-negotiation predicate. Returns true when the
+// caller wants the backend JSON (API client), false when it wants HTML (browser
+// navigation). JSON ⇐ Accept: application/json, ?format=json, or a CLI UA
+// (curl/httpie/wget/...). HTML ⇐ Accept includes text/html and not json. Default
+// (ambiguous) → JSON, preserving the exact legacy API-client behaviour.
+function statusWantsJson(c: import("hono").Context<{ Bindings: Env }>): boolean {
+  const fmt = (new URL(c.req.url).searchParams.get("format") ?? "").toLowerCase();
+  if (fmt === "json") return true;
+  const ua = (c.req.header("user-agent") ?? "").toLowerCase();
+  if (/\b(curl|httpie|wget|python-requests|go-http-client|node-fetch|axios)\b/.test(ua)) {
+    return true;
+  }
+  const accept = (c.req.header("accept") ?? "").toLowerCase();
+  if (accept.includes("text/html") && !accept.includes("application/json")) {
+    return false;
+  }
+  return true;
+}
+
+// FE-CRIT-01 — content-negotiated /status. API clients get the proxied backend
+// JSON verbatim (unchanged). For browser navigations (Accept: text/html) the
+// worker does NOT shadow the SPA with JSON — it returns the same not_found JSON
+// it gives every non-API path, so the front layer (Pages/Next) serves the SPA
+// /status page. The worker has no frontend upstream binding, so this is the
+// honest "I don't own the HTML route" signal (NEVER a fabricated 200).
+app.get("/status", (c) => {
+  if (statusWantsJson(c)) return proxy(c, "/status", "arbx:cache:status", 2);
+  return c.json({ error: "not_found", detail: "html_served_by_spa" }, 404);
+});
+// FE-CRIT — system manifest read surface. api-server mounts these at /api/system/*
+// (no /v1/ prefix). proxy() forwards the upstream status verbatim — a non-2xx from
+// api-server is surfaced as-is; a transport failure throws and is handled by Hono's
+// onError. NEVER a fabricated 200. Observe-only.
+app.get("/api/system/drift", (c) => proxy(c, "/api/system/drift", "arbx:cache:sys-drift", 5));
+app.get("/api/system/feature_manifest", (c) => proxy(c, "/api/system/feature_manifest", "arbx:cache:sys-manifest", 30));
+// FE-CRIT-03/04 — honest contract / capital / crucible read surface (api-server
+// /api/*, no /v1/). proxy() forwards upstream status verbatim, never a fake 200.
+app.get("/api/contracts", (c) => proxy(c, "/api/contracts", "arbx:cache:contracts", 5));
+app.get("/api/capital-gates", (c) => proxy(c, "/api/capital-gates", "arbx:cache:capital-gates", 5));
+app.get("/api/crucible/status", (c) => proxy(c, "/api/crucible/status", "arbx:cache:crucible", 5));
 app.get("/api/opportunities/live", (c) => proxy(c, "/api/v1/opportunities/live", "arbx:cache:opps", 2));
 // Risk alerts view (read-only). No cache in S1; S3 adds.
 app.get("/api/risk/alerts", (c) => proxy(c, "/api/v1/risk/alerts"));

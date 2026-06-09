@@ -2,9 +2,10 @@
  * Sprint 3 Task 3.4 — Cumulative S-curve (actual vs target) over 24h.
  *
  * Client component because recharts ResponsiveContainer mounts to the DOM.
- * Time conversion happens inside `useMemo` — never inside render — so the
- * Mounted Snapshot Pattern (R1) is preserved: no Date.now()/locale calls
- * during SSR.
+ * R1 / React #418 fix: useMemo runs during render on BOTH server and client, so a
+ * runtime-default-locale toLocaleTimeString(undefined, …) produced server-tz/locale at
+ * SSR ≠ client-tz at hydration → hydration mismatch. We pin a DETERMINISTIC locale
+ * ("en-US") + timeZone:"UTC" so the axis labels are byte-identical on SSR and client.
  */
 "use client";
 
@@ -31,7 +32,7 @@ export function SCurveChart({ data }: Props) {
   const points = useMemo(
     () =>
       data.buckets.map((b) => ({
-        ts: new Date(b.ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+        ts: new Date(b.ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }),
         actual: b.profit_cumulative_usd,
         target: b.target_cumulative_usd,
       })),
