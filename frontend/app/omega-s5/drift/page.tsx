@@ -19,7 +19,11 @@ export default function DriftPage() {
         <span className={`rounded px-2 py-0.5 font-medium ${SEVERITY_COLOR[worstSeverity] ?? ""}`}>
           {worstSeverity}
         </span>{" "}
-        · refreshed {new Date(refreshedAt).toLocaleTimeString()}
+        · refreshed{" "}
+        {/* R1 / React #418: live wall-clock formatted with the runtime locale+tz differs
+            between SSR and client hydration. suppressHydrationWarning on the individual
+            span (NOT a container) is the sanctioned pattern for an intentionally-live value. */}
+        <span suppressHydrationWarning>{new Date(refreshedAt).toLocaleTimeString()}</span>
       </div>
       {error && <div className="mt-2 text-sm text-rose-500">{error}</div>}
       <table className="mt-4 w-full text-sm">
