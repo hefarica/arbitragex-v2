@@ -61,37 +61,70 @@ export function mountSystemManifest(
 ): Router {
   const r = Router();
 
+  // Postgres "undefined_table" (42P01): like crucible_runs / contract_registry elsewhere
+  // in the api-server, these observability tables may have no migration on a given
+  // environment. Their absence is an EXPECTED honest-empty condition (RULE 00 / R8
+  // fail-honest), NOT a 500 — and the handlers MUST NOT throw uncaught, because an
+  // unhandled async rejection sends NO response → the request hangs → the edge proxy
+  // returns 502 (observed on /api/system/{drift,feature_manifest} post-deploy).
+  const isUndefinedTable = (e: unknown): boolean =>
+    !!e && typeof e === "object" && (e as { code?: string }).code === "42P01";
+
   r.get("/feature_manifest", async (_req: Request, res: Response) => {
-    const q = await db.query(
-      `SELECT feature_key, description, layer, state_hash, panel_path, required, updated_at
-         FROM feature_manifest
-        ORDER BY layer, feature_key`,
-    );
-    res.json({ features: q.rows, generated_at: new Date().toISOString() });
+    try {
+      const q = await db.query(
+        `SELECT feature_key, description, layer, state_hash, panel_path, required, updated_at
+           FROM feature_manifest
+          ORDER BY layer, feature_key`,
+      );
+      res.json({ features: q.rows, generated_at: new Date().toISOString() });
+    } catch (e) {
+      if (isUndefinedTable(e)) {
+        res.status(200).json({ features: [], generated_at: new Date().toISOString(), reason: "feature_manifest_table_absent" });
+        return;
+      }
+      res.status(500).json({ status: "error", reason: "feature_manifest_query_failed", detail: (e as Error).message });
+    }
   });
 
   r.get("/config-hashes", async (req: Request, res: Response) => {
     const chainId = req.query.chain_id ? Number(req.query.chain_id) : null;
-    const q = await db.query(
-      `SELECT DISTINCT ON (resource, chain_id)
-              resource, chain_id, hash_value, row_count, computed_at, snapshot_id
-         FROM config_hash_registry
-        WHERE ($1::bigint IS NULL OR chain_id = $1 OR chain_id IS NULL)
-        ORDER BY resource, chain_id, computed_at DESC`,
-      [chainId],
-    );
-    res.json({ hashes: q.rows });
+    try {
+      const q = await db.query(
+        `SELECT DISTINCT ON (resource, chain_id)
+                resource, chain_id, hash_value, row_count, computed_at, snapshot_id
+           FROM config_hash_registry
+          WHERE ($1::bigint IS NULL OR chain_id = $1 OR chain_id IS NULL)
+          ORDER BY resource, chain_id, computed_at DESC`,
+        [chainId],
+      );
+      res.json({ hashes: q.rows });
+    } catch (e) {
+      if (isUndefinedTable(e)) {
+        res.status(200).json({ hashes: [], reason: "config_hash_registry_table_absent" });
+        return;
+      }
+      res.status(500).json({ status: "error", reason: "config_hashes_query_failed", detail: (e as Error).message });
+    }
   });
 
   r.get("/drift", async (_req: Request, res: Response) => {
-    const q = await db.query(
-      `SELECT *
-         FROM drift_observations
-        WHERE resolved_at IS NULL
-        ORDER BY severity DESC, observed_at DESC
-        LIMIT 200`,
-    );
-    res.json({ drift: q.rows, count: q.rowCount });
+    try {
+      const q = await db.query(
+        `SELECT *
+           FROM drift_observations
+          WHERE resolved_at IS NULL
+          ORDER BY severity DESC, observed_at DESC
+          LIMIT 200`,
+      );
+      res.json({ drift: q.rows, count: q.rowCount });
+    } catch (e) {
+      if (isUndefinedTable(e)) {
+        res.status(200).json({ drift: [], count: 0, reason: "drift_observations_table_absent" });
+        return;
+      }
+      res.status(500).json({ status: "error", reason: "drift_query_failed", detail: (e as Error).message });
+    }
   });
 
   r.post(
