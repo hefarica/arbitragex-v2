@@ -14,7 +14,7 @@
  * static and the results render only after the user acts.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -32,10 +32,18 @@ export function WalletIntentPanel() {
   const { result: intent, error: intentError, submitting, submitIntent } = useWalletIntent();
   const { result: sim, error: simError, running, simulate } = useTransactionSimulation();
 
+  // UI-ready signal (NON-FUNCTIONAL): flips true only after the client mounts — i.e. once React
+  // has hydrated this panel and wired the onClick handlers. The intent E2E waits for
+  // data-hydrated="true" before clicking "Register intent", eliminating the click-races-hydration
+  // flake deterministically. This changes NO wallet / intent / simulation / safety behaviour;
+  // submitIntent() is a plain fetch that does not depend on a connected wallet.
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
+
   const draft = { kind, to: to || undefined, note: note || undefined };
 
   return (
-    <Card data-testid="wallet-intent-panel">
+    <Card data-testid="wallet-intent-panel" data-hydrated={hydrated ? "true" : "false"}>
       <CardHeader>
         <CardTitle className="flex items-center justify-between">
           <span>Transaction intent (read-only)</span>
