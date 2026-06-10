@@ -32,6 +32,11 @@ test("intent panel is present with a disabled broadcast shell", async ({ page })
 });
 
 test("registering an intent terminates at BROADCAST_DISABLED", async ({ page }) => {
+  // Deterministic hydration gate: the panel exposes data-hydrated="true" only after React has
+  // mounted it (onClick handlers wired). Waiting for it removes the click-races-hydration flake
+  // WITHOUT relaxing any assertion below. RainbowKit/Reown init can delay hydration (esp. with no
+  // WalletConnect projectId); submitIntent() itself is a plain fetch that needs no connected wallet.
+  await expect(page.getByTestId("wallet-intent-panel")).toHaveAttribute("data-hydrated", "true", { timeout: 20000 });
   await page.getByTestId("intent-register").click();
   // The result block renders once the round-trip resolves (or an honest error).
   const result = page.getByTestId("intent-result");
@@ -48,6 +53,8 @@ test("registering an intent terminates at BROADCAST_DISABLED", async ({ page }) 
 });
 
 test("simulation never reports broadcast allowed", async ({ page }) => {
+  // Same deterministic hydration gate as above before interacting with the panel.
+  await expect(page.getByTestId("wallet-intent-panel")).toHaveAttribute("data-hydrated", "true", { timeout: 20000 });
   await page.getByTestId("intent-simulate").click();
   const result = page.getByTestId("simulation-result");
   await expect(result).toBeVisible({ timeout: 15000 });
