@@ -106,6 +106,7 @@ import { mountSedStatus } from "./routes/sed-status.js";
 import { mountSystemManifest } from "./routes/system-manifest.js";
 import { mountWalletRoutes } from "./routes/wallet.js";
 import { mountAuthSiwe } from "./routes/auth-siwe.js";
+import { mountOperatorSelfTest } from "./routes/operator-selftest.js";
 import { buildTopologyVaultRouter } from "./routes/topology-vault.js";
 import {
   setupWebSocketGateway,
@@ -506,6 +507,17 @@ mountScoringStatus(app, { pool, logger });
 // the existing globalLimiter (applied above, before all data routes).
 mountWalletRoutes(app, { logger });
 mountAuthSiwe(app, { logger });
+// Operator Self-Test Center (PR-1+PR-2) — presence-only credential matrix +
+// 10-block checklist aggregator. READ-ONLY, public, behind the existing
+// globalLimiter. HARD INVARIANTS: no env VALUE ever leaves the server (presence
+// booleans only); live OFF / capital 0 / broadcast OFF (structural, reused from
+// the wallet SAFE_POSTURE). Block 10 reuses the existing 17-item verifyAll().
+mountOperatorSelfTest(app, {
+  pool,
+  redis,
+  logger,
+  readiness: () => verifyAll({ pool }),
+});
 mountRiskCircuitBreakers(app, { pool, killSwitch, logger });
 mountAdminChains(app, {
   pool,
