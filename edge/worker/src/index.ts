@@ -377,6 +377,13 @@ app.post("/api/auth/siwe/verify", (c) => walletProxy(c, "/api/auth/siwe/verify",
 app.get("/api/auth/session", (c) => walletProxy(c, "/api/auth/session", "GET"));
 app.post("/api/auth/logout", (c) => walletProxy(c, "/api/auth/logout", "POST"));
 
+// Operator Self-Test Center — presence-only credential matrix + 10-block
+// checklist aggregator. Same proxy()+KV-cache pattern as the other GET read
+// surfaces (short TTL: probes are live but cheap-cacheable). The api-server
+// guarantees no env VALUE ever appears in these bodies (presence booleans only).
+app.get("/api/operator/credentials/status", (c) => proxy(c, "/api/operator/credentials/status", "arbx:cache:operator-creds", 10));
+app.get("/api/operator/selftest", (c) => proxy(c, "/api/operator/selftest", "arbx:cache:operator-selftest", 10));
+
 app.get("/api/opportunities/live", (c) => proxy(c, "/api/v1/opportunities/live", "arbx:cache:opps", 2));
 // Risk alerts view (read-only). No cache in S1; S3 adds.
 app.get("/api/risk/alerts", (c) => proxy(c, "/api/v1/risk/alerts"));
