@@ -5,8 +5,13 @@ WORKDIR /build
 # when NODE_ENV=production. No default here on purpose.
 ARG NEXT_PUBLIC_EDGE_URL
 ARG NEXT_PUBLIC_WS_URL
+# Optional: WalletConnect/Reown project id. Default empty → wagmiConfig degrades
+# fail-honest ('walletconnect_project_id_missing'); injected/MetaMask unaffected.
+# The value comes from the caller's env (VPS .env / CI secret) — never hardcoded.
+ARG NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=
 ENV NEXT_PUBLIC_EDGE_URL=$NEXT_PUBLIC_EDGE_URL
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
+ENV NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=$NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY package.json ./
