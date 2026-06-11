@@ -51,22 +51,41 @@ export async function verifyGPAP1(opts?: {
     connectTimeout: 2000,
   });
   let paper_mode_enabled = false;
+  let paper_mode_source = "none";
+  const parseEnabled = (raw: string): boolean => {
+    try {
+      const j = JSON.parse(raw) as { enabled?: boolean };
+      return !!j.enabled;
+    } catch {
+      // bare key (legacy) — treat string "1"/"true" as enabled
+      return raw === "1" || raw === "true";
+    }
+  };
   try {
     await redis.connect();
+    // Legacy global key (pre-B0.2 writers).
     const raw = await redis.get("arbx:papermode");
-    if (raw) {
-      try {
-        const j = JSON.parse(raw) as { enabled?: boolean };
-        paper_mode_enabled = !!j.enabled;
-      } catch {
-        // bare key (legacy) — treat string "1"/"true" as enabled
-        paper_mode_enabled = raw === "1" || raw === "true";
+    if (raw && parseEnabled(raw)) {
+      paper_mode_enabled = true;
+      paper_mode_source = "arbx:papermode (legacy global)";
+    }
+    // B0.2 (2026-05-13) made POST /admin/config/paper-mode write PER-CHAIN keys
+    // (arbx:papermode:{chain_id}) and stop writing the global key — this verifier
+    // kept reading only the global, so the gate could NEVER flip via the current
+    // writer. Honest fix: ALSO accept any per-chain enabled=true. The gate is not
+    // weakened — Layers 2-3 (pipeline alive + ≥7d accumulation) still apply.
+    if (!paper_mode_enabled) {
+      const chainKeys = (await redis.keys("arbx:papermode:*")).filter(
+        (k) => !k.endsWith(":changes"),
+      );
+      for (const k of chainKeys) {
+        const v = await redis.get(k);
+        if (v && parseEnabled(v)) {
+          paper_mode_enabled = true;
+          paper_mode_source = k;
+          break;
+        }
       }
-    } else {
-      // No key set — fall back to default (production: paper_mode_default=true).
-      // We cannot know the boot config from here without a config endpoint.
-      // Treat as unknown rather than failing: yellow.
-      paper_mode_enabled = false;
     }
   } catch (e) {
     return {
@@ -152,7 +171,7 @@ export async function verifyGPAP1(opts?: {
   return {
     ...base,
     status: "green",
-    reason: `paper-mode running ${first_row_age_days.toFixed(1)}d (≥${minDays}d threshold); ${recent_count} detections in last 7d, last ${(last_row_age_hours ?? 0).toFixed(1)}h ago`,
+    reason: `paper-mode running ${first_row_age_days.toFixed(1)}d (≥${minDays}d threshold); ${recent_count} detections in last 7d, last ${(last_row_age_hours ?? 0).toFixed(1)}h ago · papermode source: ${paper_mode_source}`,
     evidence: { kind: "db_query", ref: "MIN(detected_at) FROM opportunities" },
   };
 }
