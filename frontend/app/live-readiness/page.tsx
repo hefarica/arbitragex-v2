@@ -71,7 +71,13 @@ function StatusDot({ status }: { status: ReadinessStatus }) {
 
 function ReadinessRow({ item }: { item: ReadinessItem }) {
   return (
-    <div className="grid grid-cols-[auto_8rem_1fr_auto] items-start gap-x-4 border-b border-border/40 py-2.5 last:border-b-0">
+    <div
+      className="grid grid-cols-[auto_8rem_1fr_auto] items-start gap-x-4 border-b border-border/40 py-2.5 last:border-b-0"
+      // Test observability only (live-readiness row-by-row E2E loop): lets Playwright
+      // address each doctrinal row deterministically. No logic/render change.
+      data-testid={`readiness-row-${item.id.toLowerCase()}`}
+      data-status={item.status}
+    >
       <div className="pt-1.5">
         <StatusDot status={item.status} />
       </div>
