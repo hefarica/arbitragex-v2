@@ -309,6 +309,14 @@ app.post("/api/auth/siwe/verify", (req, res) => walletProxy("/api/auth/siwe/veri
 app.get("/api/auth/session", (req, res) => walletProxy("/api/auth/session", req, res, "GET"));
 app.post("/api/auth/logout", (req, res) => walletProxy("/api/auth/logout", req, res, "POST"));
 
+// Operator Self-Test Center — presence-only credential matrix + 10-block
+// checklist aggregator. Mirrors the /api/wallet/* GET pattern: plain proxy,
+// upstream status forwarded verbatim, honest 502 on transport failure, NEVER a
+// fabricated 200. The api-server guarantees no env VALUE ever appears in these
+// bodies (presence booleans only).
+app.get("/api/operator/credentials/status", (req, res) => proxy("/api/operator/credentials/status", req, res));
+app.get("/api/operator/selftest", (req, res) => proxy("/api/operator/selftest", req, res));
+
 // FASE B Gate-C — route-discovery OUTCOMES analytics (read-only over the durable
 // Postgres `route_discovery_outcomes` table; the shadow emitter's resolved
 // outcomes + Paso 9 `reason` column). This is the read-side of the passive sink:

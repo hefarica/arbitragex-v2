@@ -1,6 +1,7 @@
 import {
   ActivityIcon,
   AlertTriangleIcon,
+  ClipboardCheckIcon,
   GaugeIcon,
   HouseIcon,
   KeyRoundIcon,
@@ -41,6 +42,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/killswitch",    label: "Kill-switch",            icon: PowerIcon,         group: "control" },
   { href: "/audit-logs",    label: "Audit logs",             icon: ShieldCheckIcon,   group: "control" },
   { href: "/live-readiness",label: "Live readiness",         icon: ListChecksIcon,    group: "control" },
+  { href: "/operator/self-test", label: "Self-test center",  icon: ClipboardCheckIcon, group: "control" },
   { href: "/wallets",        label: "Observers",             icon: WalletIcon,        group: "setup" },
   { href: "/dex-registry",  label: "Exchange registry",      icon: DatabaseIcon,      group: "setup" },
   { href: "/onboarding",    label: "Onboarding",             icon: ListChecksIcon,    group: "setup" },
