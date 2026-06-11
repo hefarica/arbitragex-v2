@@ -283,15 +283,6 @@ services:
       RECON_URL: http://recon:3004
       RELAYS_URL: http://relays-client:3005
       SEARCHER_URL: http://searcher-rs:9001
-    volumes:
-    # READ-ONLY repo mount for the 17 live-readiness verifiers (REPO_ROOT default /repo,
-    # backend/api-server/src/readiness/verifiers/*). Without it, every filesystem-based
-    # verifier (V-NH-1, V-DB-1, V-AT-1, G-NET-1, G-PEC-1, G-RIS-1, G-TOK-1, G-FL-1,
-    # G-MEV-1, RUNBOOK, ALERTS layer-1) degrades to honest-PARTIAL "no repo mount" even
-    # though every artifact exists in the checkout. :ro — the container can never write
-    # the repo. No new secret exposure: this service already receives the same .env via
-    # env_file above.
-    - ..:/repo:ro
     ports:
     - 127.0.0.1:8080:8080
     depends_on:
@@ -319,6 +310,13 @@ services:
     - type: bind
       source: /var/lib/arbx
       target: /var/lib/arbx
+    # READ-ONLY repo mount for the 17 live-readiness verifiers (REPO_ROOT default /repo).
+    # #155 added this as a SECOND `volumes:` key on this service — a duplicate mapping
+    # key that PyYAML tolerates (takes the last) but docker compose's parser rejects,
+    # which failed deploy run 27329677627 at parse time (before pull/up — VPS runtime
+    # untouched). Single key now; :ro — the container can never write the repo; same
+    # .env already injected via env_file → no new secret exposure.
+    - ..:/repo:ro
   edge:
     logging: *id001
     build:
