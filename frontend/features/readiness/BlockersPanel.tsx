@@ -28,6 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { cn } from "@/lib/utils";
+import { LastUpdated } from "@/components/last-updated";
 import { getReadinessBlockers } from "@/lib/api-client";
 import type { ReadinessBlocker, ReadinessBlockersResponse } from "@/lib/schemas";
 
@@ -40,6 +41,7 @@ const POLL_MS = 30_000;
 
 export function BlockersPanel() {
   const [state, setState] = React.useState<State>({ kind: "loading" });
+  const [fetchedAt, setFetchedAt] = React.useState<number | null>(null);
 
   React.useEffect(() => {
     let alive = true;
@@ -48,6 +50,7 @@ export function BlockersPanel() {
       if (!alive) return;
       if (r.ok) setState({ kind: "ok", data: r.data });
       else setState({ kind: "error", detail: r.error.slice(0, 200) });
+      setFetchedAt(Date.now());
     };
     void tick();
     const id = setInterval(tick, POLL_MS);
@@ -72,7 +75,10 @@ export function BlockersPanel() {
               Env values are redacted to <code className="font-mono text-[11px]">"present"</code> or <code className="font-mono text-[11px]">null</code> — raw values never reach the UI.
             </CardDescription>
           </div>
-          {state.kind === "ok" && <SummaryBadges summary={state.data.summary} />}
+          <div className="flex flex-col items-end gap-1.5">
+            {state.kind === "ok" && <SummaryBadges summary={state.data.summary} />}
+            <LastUpdated at={fetchedAt} pollMs={POLL_MS} />
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">

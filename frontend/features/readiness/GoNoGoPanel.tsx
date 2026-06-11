@@ -41,6 +41,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { LastUpdated } from "@/components/last-updated";
 import { getReadinessDecision } from "@/lib/api-client";
 import type { ReadinessDecisionResponse } from "@/lib/schemas";
 
@@ -53,6 +54,7 @@ const POLL_MS = 30_000;
 
 export function GoNoGoPanel() {
   const [state, setState] = React.useState<State>({ kind: "loading" });
+  const [fetchedAt, setFetchedAt] = React.useState<number | null>(null);
 
   React.useEffect(() => {
     let alive = true;
@@ -61,6 +63,7 @@ export function GoNoGoPanel() {
       if (!alive) return;
       if (r.ok) setState({ kind: "ok", data: r.data });
       else setState({ kind: "error", detail: r.error.slice(0, 200) });
+      setFetchedAt(Date.now());
     };
     void tick();
     const id = setInterval(tick, POLL_MS);
@@ -86,9 +89,12 @@ export function GoNoGoPanel() {
               <span className="ml-1">There is no UI control to flip Live to ON.</span>
             </CardDescription>
           </div>
-          {state.kind === "ok" && (
-            <DecisionDetailDialog data={state.data} />
-          )}
+          <div className="flex flex-col items-end gap-1.5">
+            {state.kind === "ok" && (
+              <DecisionDetailDialog data={state.data} />
+            )}
+            <LastUpdated at={fetchedAt} pollMs={POLL_MS} />
+          </div>
         </div>
       </CardHeader>
       <CardContent>
