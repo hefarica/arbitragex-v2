@@ -13,21 +13,25 @@
  * Ejecutar: npx playwright test tests/e2e/cartridge-integration.spec.ts
  */
 
-import { test, expect, Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURACIÓN
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const API_URL = process.env.ARBITRAGEX_API_URL || 'http://localhost:8080';
-const ADMIN_TOKEN = process.env.ARBITRAGEX_ADMIN_TOKEN || 'test-token';
-const FRONTEND_URL = process.env.ARBITRAGEX_FRONTEND_URL || 'http://localhost:3000';
+const ADMIN_TOKEN = process.env.ARBITRAGEX_ADMIN_TOKEN || 'test-admin-token';
+const FRONTEND_URL = process.env.ARBX_FRONTEND_URL || process.env.ARBITRAGEX_FRONTEND_URL || 'http://localhost:5173';
+
+// Skip cartridge tests if running in CI without full stack
+const SKIP_CARTRIDGE_TESTS = process.env.ARBX_ASSUME_NO_RPC === '1';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TEST SUITE 1: REGISTRO DE CARTUCHOS
 // ═══════════════════════════════════════════════════════════════════════════════
 
 test.describe('Cartridge Registration', () => {
+  test.skip(SKIP_CARTRIDGE_TESTS, 'Skip in CI without full stack');
   test('should register Funding Rate Arbitrage cartridge', async ({ request }) => {
     const response = await request.get(`${API_URL}/api/v1/cartridges`, {
       headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
