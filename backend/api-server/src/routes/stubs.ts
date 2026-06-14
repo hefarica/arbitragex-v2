@@ -56,14 +56,15 @@ function notImplemented(body: Omit<StubBody, "error">): RequestHandler {
 }
 
 
-  // GET /api/v1/status — structured 501 (feature pending)
+export function mountStubs(app: Express, deps: StubDeps): void {
+  const { requireAdminToken, adminToken } = deps;
+  // ── System Status ────────────────────────────────────────────────────────
+  // GET /api/v1/status — structured 501 (feature pending, S6)
   app.get("/api/v1/status", notImplemented({
     message: "GET /api/v1/status is scaffolded but not yet wired to backend",
     feature: "FE system status page",
     roadmap: "S6: wire to readiness verifiers + system manifest",
   }));
-export function mountStubs(app: Express, deps: StubDeps): void {
-  const { requireAdminToken, adminToken } = deps;
 
   // ── FE-2 Wallets ─────────────────────────────────────────────────────────
   // Operator must decide wallet sourcing strategy (multisig vs hot signer
