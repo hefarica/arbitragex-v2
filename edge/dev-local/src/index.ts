@@ -780,6 +780,30 @@ const frontendProxy = createProxyMiddleware({
     // local Docker network, so the uncompressed bytes cost nothing public-facing.
     "accept-encoding": "identity",
   },
+  // AUDIT-P0: emit an honest 502 (frontend_unreachable) instead of letting
+  // http-proxy-middleware v3 surface an opaque 500. This makes the root cause
+  // immediately visible in logs and browser DevTools. The Docker network alias
+  // bug was hidden precisely because the 500 carried no diagnostic detail.
+  // In v3, error handling uses the plugins API — RequestHandler does not expose
+  // .on() and onError was removed from Options. The plugin receives the internal
+  // http-proxy server instance and registers the error handler there.
+  plugins: [
+    (proxyServer) => {
+      proxyServer.on("error", (err, req, res) => {
+        logger.warn(
+          { event: "frontend_proxy_error", path: (req as express.Request).path, err: (err as Error).message },
+          "frontend unreachable — returning 502"
+        );
+        const expressRes = res as unknown as express.Response;
+        if (!expressRes.headersSent) {
+          expressRes.status(502).json({
+            error: "frontend_unreachable",
+            detail: (err as Error).message,
+          });
+        }
+      });
+    },
+  ],
 });
 
 // FE-CRIT-01 — content-negotiated /status (registered here so the HTML branch
