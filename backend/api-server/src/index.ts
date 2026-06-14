@@ -681,9 +681,9 @@ app.get("/api/v1/recon/summary", async (req, res) => {
     const [agg, top, anomalies] = await Promise.all([
       p.query(
         `SELECT COUNT(*)::int AS total,
-                SUM(CASE WHEN status='included' THEN 1 ELSE 0 END)::int AS included,
-                SUM(CASE WHEN status='reverted' THEN 1 ELSE 0 END)::int AS reverted,
-                SUM(CASE WHEN status='dropped'  THEN 1 ELSE 0 END)::int AS dropped,
+                COALESCE(SUM(CASE WHEN status='included' THEN 1 ELSE 0 END), 0)::int AS included,
+                COALESCE(SUM(CASE WHEN status='reverted' THEN 1 ELSE 0 END), 0)::int AS reverted,
+                COALESCE(SUM(CASE WHEN status='dropped'  THEN 1 ELSE 0 END), 0)::int AS dropped,
                 AVG(CASE WHEN status='included' AND actual_profit_usd IS NOT NULL
                          THEN actual_profit_usd END)::float           AS avg_pnl_included_usd,
                 AVG(CASE WHEN confirmed_at IS NOT NULL
