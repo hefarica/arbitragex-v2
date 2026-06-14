@@ -767,12 +767,14 @@ app.get("/admin/audit", (req, res) => {
 const frontendProxy = createProxyMiddleware({
   target: FRONTEND_URL,
   changeOrigin: true,
-  onError: (err, req, res) => {
+  // onError: typed via http-proxy-middleware v3 compatible signature.
+  // res is ServerResponse (express.Response extends it); cast is safe here.
+  onError: (err: Error, _req: import("http").IncomingMessage, res: import("http").ServerResponse) => {
     logger.warn(
-      { event: "frontend_proxy_error", path: req.path, err: (err as Error).message },
+      { event: "frontend_proxy_error", err: err.message },
       "frontend proxy failed"
     );
-    res.status(500).json({ error: "proxy_failed", detail: (err as Error).message });
+    (res as express.Response).status(500).json({ error: "proxy_failed", detail: err.message });
   },
   ws: false,
   headers: {
