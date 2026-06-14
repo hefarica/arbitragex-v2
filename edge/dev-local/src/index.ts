@@ -789,15 +789,16 @@ const frontendProxy = createProxyMiddleware({
   // http-proxy server instance and registers the error handler there.
   plugins: [
     (proxyServer) => {
-      proxyServer.on("error", (err: Error, req: express.Request, res: express.Response) => {
+      proxyServer.on("error", (err, req, res) => {
         logger.warn(
-          { event: "frontend_proxy_error", path: req.path, err: err.message },
+          { event: "frontend_proxy_error", path: (req as express.Request).path, err: (err as Error).message },
           "frontend unreachable — returning 502"
         );
-        if (!res.headersSent) {
-          res.status(502).json({
+        const expressRes = res as unknown as express.Response;
+        if (!expressRes.headersSent) {
+          expressRes.status(502).json({
             error: "frontend_unreachable",
-            detail: err.message,
+            detail: (err as Error).message,
           });
         }
       });
