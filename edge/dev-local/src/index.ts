@@ -250,6 +250,14 @@ app.get("/api/cartridges/telemetry/latest", (req, res) => proxy("/api/cartridges
 // {error:"upstream_unreachable"}. NEVER a fabricated 200. Observe-only.
 app.get("/api/system/drift", (req, res) => proxy("/api/system/drift", req, res));
 app.get("/api/system/feature_manifest", (req, res) => proxy("/api/system/feature_manifest", req, res));
+// SED Convergence Status — backend mounts at /api/v1/sed/status (sed-status.ts).
+// Observe-only; never writes capital or triggers execution. Query string
+// (chain_id, window_minutes) forwarded verbatim by proxy() mode-1.
+app.get("/api/sed/status", (req, res) => proxy("/api/v1/sed/status", req, res));
+// Paper Trade History — backend mounts at /api/v1/paper/history (paper-history-api.ts).
+// Read-only drift-analysis surface over paper_trade_runs. Never touches capital.
+app.get("/api/paper/history", (req, res) => proxy("/api/v1/paper/history", req, res));
+app.get("/api/paper/history/summary", (req, res) => proxy("/api/v1/paper/history/summary", req, res));
 
 // FE-CRIT-03/04 — honest contract / capital / crucible read surface. api-server
 // mounts these at /api/* (no /v1/ prefix). proxy() forwards upstream status

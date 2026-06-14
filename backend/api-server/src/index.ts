@@ -6,6 +6,7 @@ import { ScoredOpportunitiesArchiver } from "./routes/scored-opportunities-archi
 import { RouteDiscoveryOutcomeSink, outcomeSinkEnabled } from "./routes/route-discovery-outcome-sink.js";
 import { OpportunitiesBridgeArchiver, opportunitiesBridgeEnabled } from "./routes/opportunities-bridge-archiver.js";
 import { buildRouteDiscoveryOutcomesRouter } from "./routes/route-discovery-outcomes-api.js";
+import { buildPaperHistoryRouter } from "./routes/paper-history-api.js";
 import { buildOperatorRouter } from "./routes/operator.js";
 import { buildCartridgeForgeRouter } from "./routes/cartridge-forge.js";
 import { z } from "zod";
@@ -551,6 +552,9 @@ app.use(buildCartridgesRouter(cartridgeTelemetryCache));
 // table (the shadow outcomes the sink persists, incl. the Paso 9 `reason`). This is
 // the missing READ side for that passive sink. NO-ACTIVE: pure SELECT, never writes.
 app.use(buildRouteDiscoveryOutcomesRouter(pool));
+// FASE OMEGA SHADOW — paper_trade_runs read-side (drift-analysis surface).
+// 100% read-only / NO-ACTIVE: pure SELECT, never touches capital or execution.
+app.use(buildPaperHistoryRouter(pool));
 
 // Enterprise-audit follow-up: mount control-plane routers that were built but never
 // mounted, gating auth INTERNALLY. operator (requireOperatorRole per route; relative
