@@ -45,12 +45,44 @@ const csp = (edgeUrl, wsUrl) => {
   ].join("; ");
 };
 
+// N5 fix (2026-06-13): Next.js server-side rewrites — when the browser accesses
+// the frontend directly (e.g. http://VPS_IP:5173) and NEXT_PUBLIC_EDGE_URL was
+// not baked into the build, getApiBaseUrl() falls back to window.location.origin
+// (the frontend origin), which has no /api/* or /socket.io routes → 404 →
+// completedCount stays 0/4 in the UI (Dashboard Readiness 0/4 bug).
+//
+// These rewrites make the Next.js server proxy /api/* and /socket.io/* to the
+// edge at INTERNAL_EDGE_URL (server-side runtime env, always available).
+// The browser still fetches from its own origin; Next.js forwards the request
+// to the edge transparently. This is a defense-in-depth fallback — when the
+// user accesses the app through the edge (https://edge-arbx.ape-tv.net), the
+// edge handles /api/* before they reach the frontend, so these rewrites are
+// never triggered in the normal path.
+//
+// INTERNAL_EDGE_URL is a runtime env var (not baked), so it resolves correctly
+// even when NEXT_PUBLIC_EDGE_URL was missing at build time.
+const INTERNAL_EDGE = process.env.INTERNAL_EDGE_URL || "http://edge:8787";
+
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   env: {
     NEXT_PUBLIC_EDGE_URL: EDGE_URL,
     NEXT_PUBLIC_WS_URL: WS_URL,
+  },
+  async rewrites() {
+    return [
+      {
+        // Proxy all /api/* requests to the edge (server-side, no CORS issues).
+        source: "/api/:path*",
+        destination: `${INTERNAL_EDGE}/api/:path*`,
+      },
+      {
+        // Proxy /socket.io/* to the edge for Socket.IO polling fallback.
+        source: "/socket.io/:path*",
+        destination: `${INTERNAL_EDGE}/socket.io/:path*`,
+      },
+    ];
   },
   async headers() {
     const resolvedEdge = EDGE_URL || "";

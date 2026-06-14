@@ -182,10 +182,16 @@ function statusWantsJson(req: express.Request): boolean {
   return true;
 }
 
+// N4 fix (2026-06-13): http-proxy-middleware v3 strips the mount prefix before
+// forwarding to upstream. When mounted at '/socket.io', the proxy sends '/?EIO=4'
+// instead of '/socket.io/?EIO=4', causing the api-server to return 404 for
+// Socket.IO polling requests. pathRewrite restores the stripped prefix so the
+// api-server receives the correct path for both HTTP polling and WS upgrade.
 const wsProxy = createProxyMiddleware({
   target: API_SERVER_URL, 
   ws: true, 
-  changeOrigin: true
+  changeOrigin: true,
+  pathRewrite: (path: string) => `/socket.io${path}`,
 });
 app.use('/socket.io', wsProxy);
 
