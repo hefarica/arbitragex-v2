@@ -805,7 +805,7 @@ app.use((req, res, next) => {
 });
 
 const PORT = Number(process.env["EDGE_PORT"] ?? 8787);
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, "0.0.0.0", () => {
   logger.info({ event: "service.boot", port: PORT, api_server: API_SERVER_URL, frontend: FRONTEND_URL, env: cfg.system.env }, "edge-dev-local listening");
 });
 
