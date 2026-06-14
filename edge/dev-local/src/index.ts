@@ -780,23 +780,29 @@ const frontendProxy = createProxyMiddleware({
     // local Docker network, so the uncompressed bytes cost nothing public-facing.
     "accept-encoding": "identity",
   },
-});
-// AUDIT-P0: emit an honest 502 (frontend_unreachable) instead of letting
-// http-proxy-middleware v3 surface an opaque 500. This makes the root cause
-// immediately visible in logs and browser DevTools — the Docker network alias
-// bug was hidden precisely because the 500 carried no diagnostic detail.
-// Using .on() is the correct v3 API (onError was removed from Options in v3).
-frontendProxy.on("error", (err: Error, req: express.Request, res: express.Response) => {
-  logger.warn(
-    { event: "frontend_proxy_error", path: req.path, err: err.message },
-    "frontend unreachable — returning 502"
-  );
-  if (!res.headersSent) {
-    res.status(502).json({
-      error: "frontend_unreachable",
-      detail: err.message,
-    });
-  }
+  // AUDIT-P0: emit an honest 502 (frontend_unreachable) instead of letting
+  // http-proxy-middleware v3 surface an opaque 500. This makes the root cause
+  // immediately visible in logs and browser DevTools. The Docker network alias
+  // bug was hidden precisely because the 500 carried no diagnostic detail.
+  // In v3, error handling uses the plugins API — RequestHandler does not expose
+  // .on() and onError was removed from Options. The plugin receives the internal
+  // http-proxy server instance and registers the error handler there.
+  plugins: [
+    (proxyServer) => {
+      proxyServer.on("error", (err: Error, req: express.Request, res: express.Response) => {
+        logger.warn(
+          { event: "frontend_proxy_error", path: req.path, err: err.message },
+          "frontend unreachable — returning 502"
+        );
+        if (!res.headersSent) {
+          res.status(502).json({
+            error: "frontend_unreachable",
+            detail: err.message,
+          });
+        }
+      });
+    },
+  ],
 });
 
 // FE-CRIT-01 — content-negotiated /status (registered here so the HTML branch
