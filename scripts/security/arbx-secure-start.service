@@ -1,0 +1,47 @@
+[Unit]
+Description=ArbitrageX v2 — Secure Start (AES-256-GCM encrypted secrets)
+Documentation=https://github.com/hefarica/arbitragex-v2/blob/main/scripts/security/
+# Arrancar DESPUÉS de que Docker esté completamente listo
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+# Si Docker se reinicia, este servicio también debe reiniciarse
+BindsTo=docker.service
+
+[Service]
+Type=oneshot
+# El servicio permanece "activo" mientras los contenedores corran
+RemainAfterExit=yes
+
+# Directorio de trabajo
+WorkingDirectory=/opt/arbitragex-v2
+
+# El Excel debe estar disponible en esta ruta o en ARBX_EXCEL_PATH
+# Para arranque automático sin intervención del operador, el Excel debe
+# estar en una ruta segura (ej. USB montado, NFS, o ruta configurada aquí)
+Environment=ARBX_EXCEL_PATH=/opt/arbitragex-v2/ArbitrageX_Secrets_Config.xlsx
+
+# Comando de arranque seguro
+ExecStart=/bin/bash /opt/arbitragex-v2/scripts/security/arbx-secure-start.sh --silent
+
+# Comando de parada limpia
+ExecStop=/bin/bash -c 'docker compose -f /opt/arbitragex-v2/docker/compose.prod.yml stop'
+
+# Reintentos: si falla (ej. Excel no disponible), reintenta 3 veces con 30s de espera
+Restart=on-failure
+RestartSec=30s
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+# Timeout: dar hasta 5 minutos para que los contenedores arranquen
+TimeoutStartSec=300
+TimeoutStopSec=120
+
+# Logging a journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=arbx-secure-start
+
+[Install]
+WantedBy=multi-user.target
