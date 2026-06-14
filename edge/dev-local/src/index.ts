@@ -767,15 +767,6 @@ app.get("/admin/audit", (req, res) => {
 const frontendProxy = createProxyMiddleware({
   target: FRONTEND_URL,
   changeOrigin: true,
-  // onError: typed via http-proxy-middleware v3 compatible signature.
-  // res is ServerResponse (express.Response extends it); cast is safe here.
-  onError: (err: Error, _req: import("http").IncomingMessage, res: import("http").ServerResponse) => {
-    logger.warn(
-      { event: "frontend_proxy_error", err: err.message },
-      "frontend proxy failed"
-    );
-    (res as express.Response).status(500).json({ error: "proxy_failed", detail: err.message });
-  },
   ws: false,
   headers: {
     "x-forwarded-proto": "https",
@@ -789,6 +780,16 @@ const frontendProxy = createProxyMiddleware({
     // local Docker network, so the uncompressed bytes cost nothing public-facing.
     "accept-encoding": "identity",
   },
+});
+// FE-PROXY-ERROR: log proxy errors to avoid silent 500s when the frontend
+// container is unreachable. http-proxy-middleware v3 exposes error events
+// via the underlying http-proxy instance (the .on() API, not Options).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(frontendProxy as any).on?.("error", (err: Error, _req: express.Request, res: express.Response) => {
+  logger.warn({ event: "frontend_proxy_error", err: err.message, target: FRONTEND_URL }, "frontend proxy failed");
+  if (!res.headersSent) {
+    res.status(502).json({ error: "frontend_unreachable", detail: err.message });
+  }
 });
 
 // FE-CRIT-01 — content-negotiated /status (registered here so the HTML branch
