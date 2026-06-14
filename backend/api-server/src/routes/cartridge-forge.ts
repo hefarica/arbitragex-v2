@@ -80,8 +80,12 @@ export function buildCartridgeForgeRouter(config: CartridgeForgeConfig): Router 
     // (the canonical header the edge adminProxy emits when translating the httpOnly
     // session cookie). Same admin token value, validated identically — this just lets
     // the standard edge adminProxy reach these routes without a bespoke proxy variant.
+    // Also accept Authorization: Bearer <token> for test clients and CLI tooling
+    const authHeader = (req.headers['authorization'] as string) || '';
+    const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
     const token = (req.headers['x-admin-token'] as string)
       || (req.headers['x-arbx-admin-token'] as string)
+      || bearerToken
       || '';
     if (!adminTokenValidator(token)) {
       return res.status(401).json({ error: 'unauthorized' });
