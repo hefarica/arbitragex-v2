@@ -9,6 +9,10 @@ Wants=network-online.target
 # Si Docker se reinicia, este servicio también debe reiniciarse
 BindsTo=docker.service
 
+# Límite de reintentos
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
 [Service]
 Type=oneshot
 # El servicio permanece "activo" mientras los contenedores corran
@@ -31,8 +35,6 @@ ExecStop=/bin/bash -c 'docker compose -f /opt/arbitragex-v2/docker/compose.prod.
 # Reintentos: si falla (ej. Excel no disponible), reintenta 3 veces con 30s de espera
 Restart=on-failure
 RestartSec=30s
-StartLimitIntervalSec=300
-StartLimitBurst=3
 
 # Timeout: dar hasta 5 minutos para que los contenedores arranquen
 TimeoutStartSec=300
