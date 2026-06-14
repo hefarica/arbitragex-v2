@@ -798,7 +798,7 @@ app.get("/status", (req, res, next) => {
 app.use((req, res, next) => {
   // /api and /socket.io are owned by the explicit routes above (or 404 if an
   // unknown /api path) — never fall through to the frontend.
-  if (req.path.startsWith("/api/") || req.path.startsWith("/socket.io")) {
+  if (req.path.startsWith("/api/") || req.path.startsWith("/socket.io") || req.path.startsWith("/_next/")) {
     return next();
   }
   return frontendProxy(req, res, next);
