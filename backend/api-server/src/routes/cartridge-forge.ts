@@ -42,6 +42,7 @@ interface CartridgeForgeConfig {
   db: Pool;
   redis: Redis;
   adminTokenValidator: (token: string) => boolean;
+  logger?: { error: (obj: Record<string, unknown>, msg: string) => void };
 }
 
 interface InjectCartridgeBody {
@@ -73,6 +74,7 @@ const ACK_TIMEOUT_MS = 5000;
 export function buildCartridgeForgeRouter(config: CartridgeForgeConfig): Router {
   const router = Router();
   const { db, redis, adminTokenValidator } = config;
+  const logger = config.logger ?? { error: (_obj: Record<string, unknown>, msg: string) => console.error(`[cartridge-forge] ${msg}`) };
 
   // ── Middleware: Admin auth ───────────────────────────────────────────────
   const requireAdmin = (req: Request, res: Response, next: Function) => {
@@ -178,7 +180,7 @@ export function buildCartridgeForgeRouter(config: CartridgeForgeConfig): Router 
       if (err.code === '23505') {  // unique_violation
         return res.status(409).json({ error: 'slug_exists', message: 'A cartridge with this slug already exists' });
       }
-      console.error('[cartridge-forge] inject error:', err);
+      logger.error({ event: 'cartridge_inject_error', err: err.message }, 'inject failed');
       res.status(500).json({ error: 'internal_error' });
     }
   });
@@ -242,7 +244,7 @@ export function buildCartridgeForgeRouter(config: CartridgeForgeConfig): Router 
         content_hash: contentHash
       });
     } catch (err: any) {
-      console.error('[cartridge-forge] update error:', err);
+      logger.error({ event: 'cartridge_update_error', err: err.message }, 'update failed');
       res.status(500).json({ error: 'internal_error' });
     }
   });
@@ -283,7 +285,7 @@ export function buildCartridgeForgeRouter(config: CartridgeForgeConfig): Router 
 
       res.json({ success: true, message: 'Cartridge archived and removed from all nodes.' });
     } catch (err: any) {
-      console.error('[cartridge-forge] delete error:', err);
+      logger.error({ event: 'cartridge_delete_error', err: err.message }, 'delete failed');
       res.status(500).json({ error: 'internal_error' });
     }
   });
@@ -321,7 +323,7 @@ export function buildCartridgeForgeRouter(config: CartridgeForgeConfig): Router 
       // Return array directly (test-compatible); wrap in object via ?envelope=1 if needed
       res.json(result.rows);
     } catch (err: any) {
-      console.error('[cartridge-forge] list error:', err);
+      logger.error({ event: 'cartridge_list_error', err: err.message }, 'list failed');
       res.status(500).json({ error: 'internal_error' });
     }
   });
@@ -351,7 +353,7 @@ export function buildCartridgeForgeRouter(config: CartridgeForgeConfig): Router 
         audit_log: audit.rows
       });
     } catch (err: any) {
-      console.error('[cartridge-forge] get error:', err);
+      logger.error({ event: 'cartridge_get_error', err: err.message }, 'get failed');
       res.status(500).json({ error: 'internal_error' });
     }
   });
@@ -622,7 +624,7 @@ export function buildCartridgeForgeRouter(config: CartridgeForgeConfig): Router 
       });
 
     } catch (err: any) {
-      console.error('[cartridge-forge] evaluate error:', err);
+      logger.error({ event: 'cartridge_evaluate_error', err: err.message }, 'evaluate failed');
       res.status(500).json({ error: 'internal_error' });
     }
   });
@@ -630,8 +632,9 @@ export function buildCartridgeForgeRouter(config: CartridgeForgeConfig): Router 
   // ── POST /api/v1/cartridges/execute — Execute cartridge ──────────────────
   //
   // Executes a cartridge strategy against provided market data in the
-  // specified mode (SHADOW, PAPER, LIVE). In SHADOW mode, no real
-  // transactions are submitted — only telemetry is recorded.
+  // specified mode (SHADOW or PAPER only). LIVE mode is permanently sealed
+  // per doctrine (LIVE_ACTIVE=false). In SHADOW mode, no real transactions
+  // are submitted — only telemetry is recorded.
   router.post('/api/v1/cartridges/execute', requireAdmin, async (req: Request, res: Response) => {
     try {
       const { cartridge_name, mode = 'SHADOW', market_data = {} } = req.body;
@@ -640,10 +643,16 @@ export function buildCartridgeForgeRouter(config: CartridgeForgeConfig): Router 
         return res.status(400).json({ error: 'cartridge_name is required' });
       }
 
-      // Only SHADOW mode is allowed without additional safety checks
-      const allowedModes = ['SHADOW', 'PAPER', 'LIVE'];
+      // DOCTRINE: LIVE mode is permanently disabled until explicit governance
+      // approval. LIVE_ACTIVE=false is a system invariant — no code path may
+      // expose capital or broadcast transactions.
+      const allowedModes = ['SHADOW', 'PAPER'];
       if (!allowedModes.includes(mode)) {
-        return res.status(400).json({ error: 'invalid_mode', allowed: allowedModes });
+        return res.status(403).json({
+          error: 'mode_forbidden',
+          detail: `Mode '${mode}' is not allowed. Only SHADOW and PAPER are permitted.`,
+          doctrine: 'LIVE_ACTIVE=false, CAPITAL_EXPOSED=0, BROADCAST=OFF',
+        });
       }
 
       // Find cartridge by name
@@ -779,7 +788,7 @@ export function buildCartridgeForgeRouter(config: CartridgeForgeConfig): Router 
       });
 
     } catch (err: any) {
-      console.error('[cartridge-forge] execute error:', err);
+      logger.error({ event: 'cartridge_execute_error', err: err.message }, 'execute failed');
       res.status(500).json({ error: 'internal_error' });
     }
   });
@@ -848,7 +857,7 @@ export function buildCartridgeForgeRouter(config: CartridgeForgeConfig): Router 
       });
 
     } catch (err: any) {
-      console.error('[cartridge-forge] update error:', err);
+      logger.error({ event: 'cartridge_hotreload_error', err: err.message }, 'hot-reload failed');
       res.status(500).json({ error: 'internal_error' });
     }
   });
@@ -904,7 +913,7 @@ export function buildCartridgeForgeRouter(config: CartridgeForgeConfig): Router 
       });
 
     } catch (err: any) {
-      console.error('[cartridge-forge] status error:', err);
+      logger.error({ event: 'cartridge_status_error', err: err.message }, 'status failed');
       res.status(500).json({ error: 'internal_error' });
     }
   });
