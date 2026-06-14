@@ -154,15 +154,15 @@ export const ExecutionsRecentSchema = z.object({
 export const ReconSummarySchema = z.object({
   window_hours: z.number(),
   totals: z.object({
-    // FIX: PostgreSQL SUM() returns null when no rows match — coerce null/undefined
-    // to 0 so the Recon & PnL page never shows a Zod parse error when the
-    // executions table is empty (paper mode, no capital deployed).
-    // z.preprocess keeps the output type as `number` (not nullable), which is
-    // what AttemptsBreakdown and ReconKpiGrid expect for arithmetic operations.
-    total: z.preprocess((v) => v ?? 0, z.number()),
-    included: z.preprocess((v) => v ?? 0, z.number()),
-    reverted: z.preprocess((v) => v ?? 0, z.number()),
-    dropped: z.preprocess((v) => v ?? 0, z.number()),
+    // FIX: PostgreSQL SUM() returns null when no rows match — coerce null to 0
+    // so the Recon & PnL page never shows a Zod parse error when the executions
+    // table is empty (paper mode, no capital deployed).
+    // .transform(v => v ?? 0) produces output type `number` (not nullable),
+    // which is what AttemptsBreakdown and ReconKpiGrid expect for arithmetic.
+    total: z.number().nullable().transform((v) => v ?? 0),
+    included: z.number().nullable().transform((v) => v ?? 0),
+    reverted: z.number().nullable().transform((v) => v ?? 0),
+    dropped: z.number().nullable().transform((v) => v ?? 0),
     avg_pnl_included_usd: z.number().nullable(),
     avg_confirm_latency_ms: z.number().nullable(),
   }),
@@ -194,9 +194,9 @@ export const ReconSummarySchema = z.object({
 export const ReconTimeseriesPointSchema = z.object({
   bucket_start: z.string(),
   // FIX: Same as ReconSummarySchema — SUM() returns null when bucket is empty.
-  attempts: z.preprocess((v) => v ?? 0, z.number()),
-  included: z.preprocess((v) => v ?? 0, z.number()),
-  reverted: z.preprocess((v) => v ?? 0, z.number()),
+  attempts: z.number().nullable().transform((v) => v ?? 0),
+  included: z.number().nullable().transform((v) => v ?? 0),
+  reverted: z.number().nullable().transform((v) => v ?? 0),
   avg_pnl_included_usd: z.number().nullable(),
   revert_rate: z.number().nullable(),
 });
