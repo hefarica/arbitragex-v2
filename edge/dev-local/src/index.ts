@@ -767,6 +767,13 @@ app.get("/admin/audit", (req, res) => {
 const frontendProxy = createProxyMiddleware({
   target: FRONTEND_URL,
   changeOrigin: true,
+  onError: (err, req, res) => {
+    logger.warn(
+      { event: "frontend_proxy_error", path: req.path, err: (err as Error).message },
+      "frontend proxy failed"
+    );
+    res.status(500).json({ error: "proxy_failed", detail: (err as Error).message });
+  },
   ws: false,
   headers: {
     "x-forwarded-proto": "https",
