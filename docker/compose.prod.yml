@@ -360,6 +360,10 @@ services:
       NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:?NEXT_PUBLIC_EDGE_URL required
         (public edge URL)}
       INTERNAL_EDGE_URL: http://edge:8787
+      # V-AT-2: SSR server components (e.g. /audit-logs) need the admin token to
+      # authenticate against the edge adminProxy via x-arbx-admin-token header.
+      # The browser flow uses the httpOnly cookie; SSR has no browser session.
+      ARBX_ADMIN_TOKEN: ${ARBX_ADMIN_TOKEN:?ARBX_ADMIN_TOKEN required}
     ports:
     - 0.0.0.0:5173:5173
     depends_on:

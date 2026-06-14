@@ -154,10 +154,13 @@ export const ExecutionsRecentSchema = z.object({
 export const ReconSummarySchema = z.object({
   window_hours: z.number(),
   totals: z.object({
-    total: z.number(),
-    included: z.number(),
-    reverted: z.number(),
-    dropped: z.number(),
+    // FIX: PostgreSQL SUM() returns null when no rows match — tolerate null
+    // and coerce to 0 so the Recon & PnL page never shows a Zod parse error
+    // when the executions table is empty (paper mode, no capital deployed).
+    total: z.number().nullable().default(0),
+    included: z.number().nullable().default(0),
+    reverted: z.number().nullable().default(0),
+    dropped: z.number().nullable().default(0),
     avg_pnl_included_usd: z.number().nullable(),
     avg_confirm_latency_ms: z.number().nullable(),
   }),
@@ -188,9 +191,10 @@ export const ReconSummarySchema = z.object({
 
 export const ReconTimeseriesPointSchema = z.object({
   bucket_start: z.string(),
-  attempts: z.number(),
-  included: z.number(),
-  reverted: z.number(),
+  // FIX: Same as ReconSummarySchema — SUM() returns null when bucket is empty.
+  attempts: z.number().nullable().default(0),
+  included: z.number().nullable().default(0),
+  reverted: z.number().nullable().default(0),
   avg_pnl_included_usd: z.number().nullable(),
   revert_rate: z.number().nullable(),
 });
