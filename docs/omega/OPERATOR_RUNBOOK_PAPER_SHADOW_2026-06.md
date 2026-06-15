@@ -15,6 +15,62 @@
 
 ## FASE 1 — Credentials & infra (P0, blocks everything)
 
+### 1.0 Secure injection — secrets spreadsheet → VPS `.env` (values never leave your VPS)
+
+> **GOLDEN RULE.** Secret values travel: **spreadsheet → your eyes → the VPS `.env` editor.**
+> Never paste a value into a chat/agent session or a shell command that echoes it
+> (`echo $VAR`) — it lands in bash history and the session transcript. The agent never
+> sees the values; it only supplies the canonical variable names below. Verify by
+> **presence, never by value** (`grep -c`, never `cat`). Keep `.env` gitignored + `chmod 600`.
+> This file is committed with **placeholders only** — never commit real values
+> (`arbx-no-hardcode-doctrine`; `SECURE_BOOT` rejects `REPLACE_ME`/placeholder tokens at boot).
+
+Map your spreadsheet columns to these canonical env var names (the literals the code
+actually consumes — verified in `backend/api-server/src/index.ts`, the readiness verifiers,
+and `searcher-rs`/`sim-ctl`):
+
+```bash
+# ── Block A — Detection (lights up scanner.subscribed; P0) ──────────────────
+# Format is EXACT: provider=url,provider=url  (≥2 providers/chain — doctrine G-RPC-1)
+RPC_HTTP_1=alchemy=https://eth-mainnet.g.alchemy.com/v2/<TU_KEY_ALCHEMY>,infura=https://mainnet.infura.io/v3/<TU_KEY_INFURA>
+RPC_WS_1=alchemy=wss://eth-mainnet.g.alchemy.com/v2/<TU_KEY_ALCHEMY>,infura=wss://mainnet.infura.io/ws/v3/<TU_KEY_INFURA>
+ARBX_DEXSCREENER_ORACLE=active            # free, no key
+
+# ── Block B — Security tokens (SECURE_BOOT validates; GENERATE, don't copy a placeholder) ──
+ARBX_EDGE_TOKEN=<openssl rand -base64 48>
+ARBX_ADMIN_TOKEN=<openssl rand -base64 48>
+ARBX_SERVICE_TOKEN=<openssl rand -base64 48>
+JWT_SECRET=<openssl rand -base64 64>
+
+# ── Block C — Simulation (ForkValidationPanel → HEALTHY) ────────────────────
+ANVIL_FORK_URL=<same URL as the alchemy entry in RPC_HTTP_1>   # Anvil option, $0
+# also configs/app.toml → [simulation] provider = "anvil"
+
+# ── Block D — Scoring archiver (PaperShadowPanel / ConfidenceScoringPanel) ──
+ARBX_SCORING_ARCHIVER_MODE=on
+
+# ── Block E — LIVE ONLY (NOT for paper-shadow; defer) ───────────────────────
+# FLASHBOTS_SIGNER_KEY=<...>  BLOXROUTE_AUTH=<...>  GOPLUS_API_KEY=<...>
+# SIM_SIGNER_ADDRESS=<...>    ARBX_SUBGRAPH_URL_1=<...>  CLOUDFLARE_API_TOKEN=<...>
+```
+
+**Procedure (manual paste on the VPS — keeps values off shell history and out of any transcript):**
+```bash
+ssh arbx                                  # 195.201.235.70
+cd /opt/arbitragex-v2                      # adjust to the real path
+git check-ignore .env && echo ".env gitignored ✓"   # must print .env
+nano .env                                  # PASTE values from the spreadsheet here, by hand
+chmod 600 .env
+```
+
+**Verification (presence, never value):**
+```bash
+grep -cE '^(RPC_HTTP_1|RPC_WS_1)=' .env                 # → 2
+grep -c 'alchemy\|infura' .env                          # → > 0
+grep -E 'REPLACE_ME|<.*KEY.*>|placeholder|TU_KEY' .env  # → EMPTY (no placeholders left)
+```
+Then proceed to 1.1's restart + log check.
+
 ### 1.1 Inject RPCs (S2 — detection)
 On the VPS `.env` (`ssh arbx` → `/opt/arbitragex-v2/.env` or compose env):
 ```bash
