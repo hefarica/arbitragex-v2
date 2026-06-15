@@ -1,3 +1,4 @@
+pub mod bayesian_allocator;
 pub mod config_aware;
 pub mod decision;
 pub mod erc20_storage;
@@ -15,6 +16,7 @@ pub mod strategy_scores_db;
 pub mod swap_encoder;
 pub mod types;
 
+pub use bayesian_allocator::{Allocation, AllocationSource, BayesianAllocator, BetaPosterior};
 pub use config_aware::{ConfigAwareEvaluator, ConfigGateOutcome, NetworkSignals};
 pub use decision::*;
 pub use errors::*;
