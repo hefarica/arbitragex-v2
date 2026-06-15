@@ -38,8 +38,11 @@ export function mountPaperShadowMetrics(app: import("express").Express, deps: De
     }
 
     // target_days: A.5 minimum paper-shadow streak (operator-tunable via env).
-    const targetRaw = Number(process.env["ARBX_PAPER_SHADOW_MIN_DAYS"] ?? 14);
-    const targetDays = Number.isFinite(targetRaw) && targetRaw > 0 ? Math.floor(targetRaw) : 14;
+    // Default 7 to match scoring-status.ts + .env.example + activate_paper_shadow.sh
+    // (the span threshold the rest of the system uses). Floor at 1 whole day.
+    const targetRaw = Number(process.env["ARBX_PAPER_SHADOW_MIN_DAYS"] ?? 7);
+    const targetDays =
+      Number.isFinite(targetRaw) && Math.floor(targetRaw) >= 1 ? Math.floor(targetRaw) : 7;
 
     try {
       const totals = await deps.pool.query<{

@@ -45,7 +45,9 @@ export function mountOpportunitySimulate(app: import("express").Express, deps: D
         const upstream = await fetch(`${SIM_BASE}/simulate`, {
           method: "POST",
           headers: { "content-type": "application/json", accept: "application/json" },
-          body: JSON.stringify({ opportunity_id: id, ...reqBody }),
+          // Validated path id wins: spread the body FIRST so a client-supplied
+          // opportunity_id cannot override the ID_RE-validated path param.
+          body: JSON.stringify({ ...reqBody, opportunity_id: id }),
           signal: ctrl.signal,
         });
 
