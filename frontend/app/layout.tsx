@@ -24,12 +24,33 @@ export const metadata = {
   },
 };
 
+// Resolve the real paper-mode state server-side so the sidebar badge reflects
+// runtime config (not a hardcoded green dot). FAIL-SAFE: any uncertainty
+// (missing env, non-OK, parse error, or paper_mode not explicitly false) →
+// `true`. We must NEVER paint "LIVE TRADING" on a failed/ambiguous fetch.
+async function getPaperMode(): Promise<boolean> {
+  try {
+    const base = process.env.INTERNAL_EDGE_URL ?? process.env.NEXT_PUBLIC_EDGE_URL;
+    if (!base) return true;
+    const res = await fetch(`${base.replace(/\/$/, "")}/api/v1/config/current`, {
+      headers: { accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!res.ok) return true;
+    const json = (await res.json()) as { execution?: { paper_mode?: boolean } };
+    return json?.execution?.paper_mode !== false;
+  } catch {
+    return true;
+  }
+}
+
 export default async function RootLayout({ children }: { children: ReactNode }) {
   // Forward the request Cookie header to the Web3Provider so wagmi can hydrate
   // its initial connection state on the server (cookieToInitialState), keeping
   // server + client paint in agreement (avoids React #418). headers() is async
   // in Next 15.
   const requestCookie = (await headers()).get("cookie");
+  const paperMode = await getPaperMode();
   return (
     <html
       lang="en"
@@ -56,10 +77,10 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         */}
         <Web3Provider cookie={requestCookie}>
           <div className="flex min-h-dvh flex-col">
-            <SiteHeader />
+            <SiteHeader paperMode={paperMode} />
             <SystemGuardBanner />
             <div className="flex flex-1">
-              <AppSidebar />
+              <AppSidebar paperMode={paperMode} />
               <main id="main" tabIndex={-1} className="min-w-0 flex-1 outline-none">
                 {/*
                   2026-05-10: max-w-7xl (1280px) wasted ~340px on each side of a

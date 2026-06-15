@@ -1,5 +1,5 @@
 "use client";
-import { getApiBaseUrl } from "@/lib/api-client";
+import { getApiBaseUrl, getReadiness, getReadinessBlockers } from "@/lib/api-client";
 
 import { useState, useEffect } from "react";
 import { Switch } from "@/components/ui/switch";
@@ -29,6 +29,36 @@ export function PaperModeToggle({ initialValue }: { initialValue: boolean }) {
       toast.error("Admin session required — open /killswitch and unlock a session first.");
       return;
     }
+
+    // Gate the flip to LIVE (paper_mode OFF). Doctrine: never enable live capital
+    // while readiness is blocked. Uses /api/readiness (flip_blocked) + the blocker
+    // list — NOT getReadinessDecision (which has no flip_blocked field).
+    if (val === false) {
+      const rd = await getReadiness();
+      if (!rd.ok) {
+        toast.error(`Readiness check failed: ${rd.error} — live trading stays disabled`);
+        setChecked(true);
+        return;
+      }
+      if (rd.data.flip_blocked) {
+        const bl = await getReadinessBlockers();
+        const top =
+          bl.ok && bl.data.blockers.length > 0
+            ? bl.data.blockers.slice(0, 3).map((b) => b.title).join("; ")
+            : `${rd.data.summary.total - rd.data.summary.green} readiness item(s) not green`;
+        toast.error(`NO-GO: ${top} — resolve before enabling live trading`);
+        setChecked(true);
+        return;
+      }
+      const confirmed = window.confirm(
+        "⚠ ACTIVATE LIVE TRADING\n\nReal capital will be at risk.\nConfirm?",
+      );
+      if (!confirmed) {
+        setChecked(true);
+        return;
+      }
+    }
+
     setLoading(true);
     setChecked(val);
     try {

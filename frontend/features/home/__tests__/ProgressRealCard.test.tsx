@@ -42,9 +42,9 @@ describe("ProgressRealCard", () => {
     expect(html).toContain("100%");
   });
 
-  it("renders frontend integration percentage (post-P1)", () => {
+  it("renders frontend integration percentage (post code-brechas)", () => {
     expect(html).toMatch(/Frontend integration applied/i);
-    expect(html).toContain("22%");
+    expect(html).toContain("80%");
   });
 
   it("asserts Live trading: OFF (structural barrier badge)", () => {

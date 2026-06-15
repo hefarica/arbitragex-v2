@@ -44,42 +44,50 @@ function NavList({ group, onNavigate }: { group: NavItem["group"]; onNavigate?: 
   );
 }
 
-export function AppSidebar() {
+export function AppSidebar({ paperMode = true }: { paperMode?: boolean } = {}) {
   return (
     <aside className="hidden lg:flex lg:flex-col lg:gap-6 lg:sticky lg:top-16 lg:self-start lg:h-[calc(100dvh-4rem)] lg:w-64 lg:shrink-0 lg:border-r lg:bg-sidebar lg:px-3 lg:py-6">
-      <SidebarContents />
+      <SidebarContents paperMode={paperMode} />
     </aside>
   );
 }
 
-export function SidebarContents({ onNavigate }: { onNavigate?: () => void } = {}) {
+const NAV_SECTIONS: { group: NavItem["group"]; title: string }[] = [
+  { group: "pipeline", title: "Pipeline" },
+  { group: "control", title: "Risk & Control" },
+  { group: "setup", title: "Configuration" },
+  { group: "omega", title: "Omega S5" },
+];
+
+export function SidebarContents({
+  paperMode = true,
+  onNavigate,
+}: { paperMode?: boolean; onNavigate?: () => void } = {}) {
   return (
     <>
-      <div>
-        <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
-          Observe
+      {NAV_SECTIONS.map(({ group, title }) => (
+        <div key={group}>
+          <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
+            {title}
+          </div>
+          <NavList group={group} {...(onNavigate ? { onNavigate } : {})} />
         </div>
-        <NavList group="observe" {...(onNavigate ? { onNavigate } : {})} />
-      </div>
-      <div>
-        <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
-          Control
-        </div>
-        <NavList group="control" {...(onNavigate ? { onNavigate } : {})} />
-      </div>
-      <div>
-        <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
-          Setup
-        </div>
-        <NavList group="setup" {...(onNavigate ? { onNavigate } : {})} />
-      </div>
+      ))}
       <div className="mt-auto rounded-md border bg-card/40 p-3 text-xs text-muted-foreground">
         <div className="flex items-center gap-2 font-medium text-foreground">
-          <span className="size-1.5 rounded-full bg-success" aria-hidden />
-          paper-mode
+          <span
+            className={cn(
+              "size-1.5 rounded-full",
+              paperMode ? "bg-success" : "bg-destructive animate-pulse",
+            )}
+            aria-hidden
+          />
+          {paperMode ? "paper-mode" : "⚠ LIVE TRADING"}
         </div>
         <p className="mt-1 leading-relaxed">
-          Executions are simulated only. No capital at risk until S9.
+          {paperMode
+            ? "Executions are simulated only. No capital at risk until S9."
+            : "LIVE CAPITAL EXECUTION ENABLED. Kill-switch armed."}
         </p>
       </div>
     </>
