@@ -101,6 +101,10 @@ import { mountReadinessExtras } from "./routes/readiness-extras.js";
 import { mountReadinessSteps } from "./routes/readiness-steps.js";
 import { mountAgentsStatus } from "./routes/agents-status.js";
 import { mountScoringStatus } from "./routes/scoring-status.js";
+import { mountPaperShadowMetrics } from "./routes/paper-shadow-metrics.js";
+import { mountForkStatus } from "./routes/fork-status.js";
+import { mountOpportunitySimulate } from "./routes/opportunity-simulate.js";
+import { mountAlertmanagerWebhook } from "./routes/alertmanager-webhook.js";
 import { mountRiskCircuitBreakers } from "./routes/risk-circuit-breakers.js";
 import { mountAdminChains } from "./routes/admin-chains.js";
 import { mountSedStatus } from "./routes/sed-status.js";
@@ -523,6 +527,21 @@ mountRiskCircuitBreakers(app, { pool, killSwitch, logger });
 mountAdminChains(app, {
   pool,
   redis,
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
+  writeAudit,
+  logger,
+});
+
+// ── Code-brechas (paper-shadow) — real handlers that SHADOW the A8 stubs and add
+// the two missing live-readiness panel endpoints. Mounted here (well before
+// mountStubs at the bottom of this file) so Express dispatches these real handlers
+// instead of the 501 stubs. All fail-honest; paper-safe; zero capital.
+// See docs/superpowers/specs/2026-06-14-arbx-code-brechas-design.md
+mountPaperShadowMetrics(app, { pool, logger });
+mountForkStatus(app, { logger });
+mountOpportunitySimulate(app, { logger });
+mountAlertmanagerWebhook(app, {
   requireAdminToken,
   adminToken: ARBX_ADMIN_TOKEN,
   writeAudit,
