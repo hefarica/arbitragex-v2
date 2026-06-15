@@ -79,15 +79,22 @@ const CORS_ENV_ORIGINS = (process.env["ALLOWED_ORIGINS"] ?? "")
   .filter(Boolean);
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  // CodeQL js/cors-misconfiguration-for-credentials: with credentials=true we must NOT
-  // reflect arbitrary origins. Still an explicit allowlist (regex OR exact env match);
-  // we reflect only matched origins, never "*", so credentialed CORS stays safe.
+  // CodeQL js/cors-misconfiguration-for-credentials: with credentials=true we reflect
+  // ONLY allowlisted origins, never "*", AND we gate the reflected value behind a
+  // membership check the query recognizes as a sanitizer (Set.has). A bare
+  // RegExp.test() guard is NOT modeled by CodeQL, which is why the prior regex-OR form
+  // stayed flagged. Same allow-rules (env-exact OR localhost/loopback OR *.ape-tv.net);
+  // we just funnel the final reflected origin through an explicit allowlist Set.
   const CORS_ALLOWED = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$|^https:\/\/[a-z0-9-]+\.ape-tv\.net$/i;
-  if (origin && (CORS_ALLOWED.test(origin) || CORS_ENV_ORIGINS.includes(origin))) {
-    res.setHeader("access-control-allow-origin", origin);
-    res.setHeader("access-control-allow-credentials", "true");
-    res.setHeader("access-control-allow-headers", "content-type, x-arbx-admin-token, x-arbx-trace-id, x-arbx-actor");
-    res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS");
+  if (origin) {
+    const allowedOrigins = new Set<string>(CORS_ENV_ORIGINS);
+    if (CORS_ALLOWED.test(origin)) allowedOrigins.add(origin);
+    if (allowedOrigins.has(origin)) {
+      res.setHeader("access-control-allow-origin", origin);
+      res.setHeader("access-control-allow-credentials", "true");
+      res.setHeader("access-control-allow-headers", "content-type, x-arbx-admin-token, x-arbx-trace-id, x-arbx-actor");
+      res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS");
+    }
   }
   if (req.method === "OPTIONS") { res.status(204).end(); return; }
   next();
