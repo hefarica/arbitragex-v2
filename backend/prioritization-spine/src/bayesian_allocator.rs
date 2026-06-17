@@ -223,7 +223,7 @@ impl BayesianAllocator {
         } else {
             0.0
         };
-        let kelly_pos = raw_kelly.max(0.0).min(KELLY_FRACTION_CAP);
+        let kelly_pos = raw_kelly.clamp(0.0, KELLY_FRACTION_CAP);
 
         // Atenuación por varianza: cuanto mayor σ, menor confianza, menor fracción.
         let variance_penalty = (1.0 - KAPPA_VARIANCE_AVERSION * p_std).max(0.0);
