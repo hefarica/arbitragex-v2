@@ -72,7 +72,7 @@ window_ms = 60000
 cooldown_ms = 60000
 
 [simulation]
-provider = "not_implemented"            # "anvil" | "tenderly" | "not_implemented"
+provider = "anvil"            # "anvil" | "tenderly" | "not_implemented"
 fork_block = "latest"
 snapshot_pool_size = 4
 sim_timeout_ms = 3000
