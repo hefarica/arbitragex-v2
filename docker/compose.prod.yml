@@ -110,6 +110,32 @@ services:
           cpus: '2.0'
         reservations:
           memory: 512M
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    env_file:
+    - ../.env
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - exec anvil --fork-url "$$ANVIL_FORK_URL" --host 0.0.0.0 --port 8545
+    expose:
+    - "8545"
+    networks:
+    - arbx-net
+    restart: unless-stopped
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - cast block-number --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1 || exit 1
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 45s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
   sim-ctl:
     logging: *id001
     build:

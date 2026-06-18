@@ -158,15 +158,20 @@ impl BayesianAllocator {
 
     /// Incorpora un `AdaptiveSignal` proveniente del módulo `feedback`.
     ///
-    /// El signal trae `n_observations` y `success_rate`; reconstruimos
-    /// successes/failures y actualizamos la posterior.
+    /// El signal trae `sample_count` (nº de ejecuciones en la ventana de
+    /// agregación) y `revert_rate` (fracción que revirtió ≈ p_fail).
+    /// Reconstruimos successes/failures con `success_rate = 1 − revert_rate`
+    /// y actualizamos la posterior beta:
+    ///   successes = round(sample_count · (1 − revert_rate))
+    ///   failures  = sample_count − successes
     pub fn ingest_signal(&self, signal: &AdaptiveSignal) {
-        if signal.n_observations == 0 {
+        if signal.sample_count <= 0 {
             return;
         }
-        let successes =
-            (signal.success_rate.clamp(0.0, 1.0) * signal.n_observations as f64).round() as u64;
-        let failures = signal.n_observations.saturating_sub(successes);
+        let n = signal.sample_count as u64;
+        let success_rate = (1.0 - signal.revert_rate).clamp(0.0, 1.0);
+        let successes = (success_rate * n as f64).round() as u64;
+        let failures = n.saturating_sub(successes);
 
         let key = (signal.strategy_kind.clone(), signal.chain_id);
         let mut map = self.posteriors.write().unwrap();
@@ -218,7 +223,7 @@ impl BayesianAllocator {
         } else {
             0.0
         };
-        let kelly_pos = raw_kelly.max(0.0).min(KELLY_FRACTION_CAP);
+        let kelly_pos = raw_kelly.clamp(0.0, KELLY_FRACTION_CAP);
 
         // Atenuación por varianza: cuanto mayor σ, menor confianza, menor fracción.
         let variance_penalty = (1.0 - KAPPA_VARIANCE_AVERSION * p_std).max(0.0);
@@ -277,12 +282,14 @@ mod tests {
         let signal = AdaptiveSignal {
             strategy_kind: "hf".to_string(),
             chain_id: 1,
-            success_rate: 0.95,
-            n_observations: 200,
-            published_at: SystemTime::now(),
+            revert_rate: 0.05, // success_rate 0.95
+            sample_count: 200,
+            received_at: SystemTime::now(),
         };
         a.ingest_signal(&signal);
-        let alloc = a.assign("hf", 1, 1000.0, 0.05);
+        // yield 0.2: at a 5% edge Kelly needs p > 95.2%; the 0.95 posterior sits just
+        // below that, so use a feasible edge to exercise the positive-allocation path.
+        let alloc = a.assign("hf", 1, 1000.0, 0.2);
         assert!(alloc.fraction > 0.0);
         assert_eq!(alloc.source, AllocationSource::Posterior);
         assert!(alloc.p_success_mean > 0.9);
@@ -295,22 +302,27 @@ mod tests {
         let signal_few = AdaptiveSignal {
             strategy_kind: "hf".to_string(),
             chain_id: 137,
-            success_rate: 0.75,
-            n_observations: 4,
-            published_at: SystemTime::now(),
+            revert_rate: 0.25, // success_rate 0.75
+            sample_count: 4,
+            received_at: SystemTime::now(),
         };
         a.ingest_signal(&signal_few);
-        let alloc_few = a.assign("hf", 1000.0, 1000.0, 0.05);
+        // chain_id 137 matches signal_few (the original literal 1000.0 was an f64 in a
+        // u64 slot — a latent bug in this never-compiled test). yield 1.0 keeps BOTH
+        // allocations above the Kelly threshold so the comparison isolates the
+        // observation-count effect (few obs → wider posterior + lower mean → lower
+        // fraction) instead of degenerating to 0 == 0 at a sub-threshold edge.
+        let alloc_few = a.assign("hf", 137, 1000.0, 1.0);
         // 1000 obs estables → varianza pequeña → fracción mayor
         let signal_many = AdaptiveSignal {
             strategy_kind: "hf2".to_string(),
             chain_id: 137,
-            success_rate: 0.75,
-            n_observations: 1000,
-            published_at: SystemTime::now(),
+            revert_rate: 0.25, // success_rate 0.75
+            sample_count: 1000,
+            received_at: SystemTime::now(),
         };
         a.ingest_signal(&signal_many);
-        let alloc_many = a.assign("hf2", 137, 1000.0, 0.05);
+        let alloc_many = a.assign("hf2", 137, 1000.0, 1.0);
         assert!(alloc_many.fraction > alloc_few.fraction);
     }
 
@@ -364,9 +376,9 @@ mod tests {
                 a.ingest_signal(&AdaptiveSignal {
                     strategy_kind: "k".to_string(),
                     chain_id: 1,
-                    success_rate: sr,
-                    n_observations: n,
-                    published_at: SystemTime::now(),
+                    revert_rate: 1.0 - sr,
+                    sample_count: n as i64,
+                    received_at: SystemTime::now(),
                 });
             }
             let alloc = a.assign("k", 1, cap, y);
@@ -417,9 +429,9 @@ mod tests {
             a_low.ingest_signal(&AdaptiveSignal {
                 strategy_kind: "k".to_string(),
                 chain_id: 1,
-                success_rate: low,
-                n_observations: n,
-                published_at: SystemTime::now(),
+                revert_rate: 1.0 - low,
+                sample_count: n as i64,
+                received_at: SystemTime::now(),
             });
             let alloc_low = a_low.assign("k", 1, cap, y);
 
@@ -428,9 +440,9 @@ mod tests {
             a_hi.ingest_signal(&AdaptiveSignal {
                 strategy_kind: "k".to_string(),
                 chain_id: 1,
-                success_rate: high,
-                n_observations: n,
-                published_at: SystemTime::now(),
+                revert_rate: 1.0 - high,
+                sample_count: n as i64,
+                received_at: SystemTime::now(),
             });
             let alloc_hi = a_hi.assign("k", 1, cap, y);
 

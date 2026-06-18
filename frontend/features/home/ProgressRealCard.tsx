@@ -72,11 +72,14 @@ const FULL_SYSTEM_DETAIL =
   "A.8 confidence scoring, A.9 GO/NO-GO formal.";
 
 const FE_AUDIT_PCT = 100;
-const FE_INTEGRATION_PCT = 22; // post-P1: 2 of ~9 planned integrations live
+const FE_INTEGRATION_PCT = 80; // code-brechas: 4 endpoints wired + panels rendered + nav/home/sidebar/gate
 const FE_INTEGRATION_DETAIL =
-  "Post-P1: SystemGuardBanner + ProgressRealCard + Opportunities evidence " +
-  "fields. Remaining: AgentTeamsPanel, ForkValidationPanel, PaperShadowPanel, " +
-  "BlockersPanel, GoNoGoPanel, SimulationPipelineTimeline.";
+  "Code brechas closed: /api/metrics/paper-shadow + /api/sim-ctl/fork-status endpoints, with " +
+  "ForkValidationPanel + PaperShadowPanel now rendered on /live-readiness; opportunity simulate " +
+  "+ alertmanager-webhook wired; 4-group nav (credentials first); home tiles (live-readiness, " +
+  "credentials, paper/history); dynamic paper-mode badge; PaperModeToggle readiness gate. " +
+  "Remaining: live data needs operator RPC/sim injection (runbook); ServiceControlPanel (501 by " +
+  "design); SimulationPipelineTimeline.";
 
 type RuntimeProbe =
   | { kind: "loading" }

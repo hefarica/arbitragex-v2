@@ -4,7 +4,10 @@ import {
   ActivityIcon,
   AlertTriangleIcon,
   ArrowUpRightIcon,
+  FlaskConicalIcon,
   GaugeIcon,
+  KeyRoundIcon,
+  ListChecksIcon,
   PowerIcon,
   SatelliteDishIcon,
   SettingsIcon,
@@ -30,13 +33,16 @@ type Tile = {
 };
 
 const TILES: Tile[] = [
-  { href: "/status",        title: "System status",      blurb: "Per-service health, kill-switch state, version metadata.",                          icon: ActivityIcon,      tag: "observe" },
-  { href: "/opportunities", title: "Live opportunities", blurb: "Recent detections from the mempool; filter by chain + strategy.",                  icon: SatelliteDishIcon, tag: "observe" },
-  { href: "/executions",    title: "Recent executions",  blurb: "Bundle submissions and outcomes — included, reverted, replaced, dropped.",          icon: ZapIcon,           tag: "observe" },
-  { href: "/risk",          title: "Risk & alerts",      blurb: "Circuit-breaker trips, anomaly events, blacklist hits, kill-switch log.",           icon: AlertTriangleIcon, tag: "observe" },
-  { href: "/recon",         title: "Recon & PnL",        blurb: "Window totals, realised PnL, top strategies by adaptive score.",                    icon: GaugeIcon,         tag: "observe" },
-  { href: "/config",        title: "Current config",     blurb: "Loaded application settings. Secrets are redacted.",                                icon: SettingsIcon,      tag: "control" },
-  { href: "/killswitch",    title: "Kill-switch",        blurb: "Arm or disable execution at the platform level. Admin token required.",              icon: PowerIcon,         tag: "control" },
+  { href: "/status",             title: "System status",      blurb: "Per-service health, kill-switch state, version metadata.",                          icon: ActivityIcon,      tag: "observe" },
+  { href: "/opportunities",      title: "Live opportunities", blurb: "Recent detections from the mempool; filter by chain + strategy.",                  icon: SatelliteDishIcon, tag: "observe" },
+  { href: "/executions",         title: "Recent executions",  blurb: "Bundle submissions and outcomes — included, reverted, replaced, dropped.",          icon: ZapIcon,           tag: "observe" },
+  { href: "/live-readiness",     title: "Live readiness",     blurb: "GO/NO-GO gate — readiness criteria that must be green before flipping paper-mode off.", icon: ListChecksIcon,  tag: "control" },
+  { href: "/risk",               title: "Risk & alerts",      blurb: "Circuit-breaker trips, anomaly events, blacklist hits, kill-switch log.",           icon: AlertTriangleIcon, tag: "observe" },
+  { href: "/recon",              title: "Recon & PnL",        blurb: "Window totals, realised PnL, top strategies by adaptive score.",                    icon: GaugeIcon,         tag: "observe" },
+  { href: "/paper/history",      title: "Paper history",      blurb: "Paper-trade ledger and drift analysis during the paper-shadow accumulation window.", icon: FlaskConicalIcon,  tag: "observe" },
+  { href: "/settings/credentials", title: "Credentials",      blurb: "Inject RPC keys, relay auth, token-safety APIs. Step 1 — the platform is blind without it.", icon: KeyRoundIcon, tag: "control" },
+  { href: "/config",             title: "Current config",     blurb: "Loaded application settings. Secrets are redacted.",                                icon: SettingsIcon,      tag: "control" },
+  { href: "/killswitch",         title: "Kill-switch",        blurb: "Arm or disable execution at the platform level. Admin token required.",              icon: PowerIcon,         tag: "control" },
 ];
 
 export default async function Home() {

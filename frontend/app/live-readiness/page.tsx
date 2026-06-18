@@ -17,6 +17,8 @@ import { AgentTeamsPanel } from "@/features/readiness/AgentTeamsPanel";
 import { ConfidenceScoringPanel } from "@/features/readiness/ConfidenceScoringPanel";
 import { RiskCircuitPanel } from "@/features/risk/RiskCircuitPanel";
 import { LiveReadinessStepper } from "@/components/ReadinessStepper";
+import { ForkValidationPanel } from "@/components/ForkValidationPanel";
+import { PaperShadowPanel } from "@/components/PaperShadowPanel";
 
 // ─── Aesthetic helpers ───────────────────────────────────────────────────
 
@@ -333,6 +335,14 @@ export default function LiveReadinessPage() {
       <div className="mt-10 space-y-6 border-t border-border/40 pt-8">
         <GoNoGoPanel />
         <BlockersPanel />
+        {/* Simulation/fork status + paper-shadow accumulation — consume the two
+            endpoints wired in feat/code-brechas-paper-shadow. Fail-honest:
+            ForkValidationPanel renders DEGRADED on 404 (sim-ctl not ready);
+            PaperShadowPanel renders INACTIVE with 0 trades until accumulation. */}
+        <div className="grid gap-6 lg:grid-cols-2">
+          <ForkValidationPanel />
+          <PaperShadowPanel />
+        </div>
         <AgentTeamsPanel />
         <ConfidenceScoringPanel />
         <RiskCircuitPanel />

@@ -13,7 +13,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { QuantumLogo } from "@/components/quantum-logo";
 import { cn } from "@/lib/utils";
 
-export function SiteHeader() {
+export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
@@ -50,7 +50,7 @@ export function SiteHeader() {
               </SheetTitle>
             </SheetHeader>
             <div className="flex flex-col gap-6 px-3 pb-6">
-              <SidebarContents onNavigate={() => setMobileOpen(false)} />
+              <SidebarContents paperMode={paperMode} onNavigate={() => setMobileOpen(false)} />
             </div>
           </SheetContent>
         </Sheet>
