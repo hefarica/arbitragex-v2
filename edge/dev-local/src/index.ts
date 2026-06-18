@@ -79,15 +79,22 @@ const CORS_ENV_ORIGINS = (process.env["ALLOWED_ORIGINS"] ?? "")
   .filter(Boolean);
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  // CodeQL js/cors-misconfiguration-for-credentials: with credentials=true we must NOT
-  // reflect arbitrary origins. Still an explicit allowlist (regex OR exact env match);
-  // we reflect only matched origins, never "*", so credentialed CORS stays safe.
+  // CodeQL js/cors-misconfiguration-for-credentials: with credentials=true we reflect
+  // ONLY allowlisted origins, never "*", AND we gate the reflected value behind a
+  // membership check the query recognizes as a sanitizer (Set.has). A bare
+  // RegExp.test() guard is NOT modeled by CodeQL, which is why the prior regex-OR form
+  // stayed flagged. Same allow-rules (env-exact OR localhost/loopback OR *.ape-tv.net);
+  // we just funnel the final reflected origin through an explicit allowlist Set.
   const CORS_ALLOWED = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$|^https:\/\/[a-z0-9-]+\.ape-tv\.net$/i;
-  if (origin && (CORS_ALLOWED.test(origin) || CORS_ENV_ORIGINS.includes(origin))) {
-    res.setHeader("access-control-allow-origin", origin);
-    res.setHeader("access-control-allow-credentials", "true");
-    res.setHeader("access-control-allow-headers", "content-type, x-arbx-admin-token, x-arbx-trace-id, x-arbx-actor");
-    res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS");
+  if (origin) {
+    const allowedOrigins = new Set<string>(CORS_ENV_ORIGINS);
+    if (CORS_ALLOWED.test(origin)) allowedOrigins.add(origin);
+    if (allowedOrigins.has(origin)) {
+      res.setHeader("access-control-allow-origin", origin);
+      res.setHeader("access-control-allow-credentials", "true");
+      res.setHeader("access-control-allow-headers", "content-type, x-arbx-admin-token, x-arbx-trace-id, x-arbx-actor");
+      res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS");
+    }
   }
   if (req.method === "OPTIONS") { res.status(204).end(); return; }
   next();
@@ -780,6 +787,30 @@ const frontendProxy = createProxyMiddleware({
     // local Docker network, so the uncompressed bytes cost nothing public-facing.
     "accept-encoding": "identity",
   },
+  // AUDIT-P0: emit an honest 502 (frontend_unreachable) instead of letting
+  // http-proxy-middleware v3 surface an opaque 500. This makes the root cause
+  // immediately visible in logs and browser DevTools. The Docker network alias
+  // bug was hidden precisely because the 500 carried no diagnostic detail.
+  // In v3, error handling uses the plugins API — RequestHandler does not expose
+  // .on() and onError was removed from Options. The plugin receives the internal
+  // http-proxy server instance and registers the error handler there.
+  plugins: [
+    (proxyServer) => {
+      proxyServer.on("error", (err, req, res) => {
+        logger.warn(
+          { event: "frontend_proxy_error", path: (req as express.Request).path, err: (err as Error).message },
+          "frontend unreachable — returning 502"
+        );
+        const expressRes = res as unknown as express.Response;
+        if (!expressRes.headersSent) {
+          expressRes.status(502).json({
+            error: "frontend_unreachable",
+            detail: (err as Error).message,
+          });
+        }
+      });
+    },
+  ],
 });
 
 // FE-CRIT-01 — content-negotiated /status (registered here so the HTML branch

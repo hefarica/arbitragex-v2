@@ -168,4 +168,20 @@ export function mountStubs(app: Express, deps: StubDeps): void {
         "Sprint 2+ — add per-DEX shortcut that delegates to trading_config writer",
     }),
   );
+
+  // ── /api/v1/status — honest 501 stub ─────────────────────────────────────
+  // Some callers probe /api/v1/status directly (e.g. cartridge-integration
+  // e2e tests). The canonical system-status endpoint is GET /status (proxied
+  // by the edge with content-negotiation). Until a dedicated versioned status
+  // endpoint is implemented, return an honest 501 with a pointer.
+  app.get(
+    "/api/v1/status",
+    notImplemented({
+      message:
+        "GET /api/v1/status is not yet implemented; use GET /status for the canonical system status",
+      feature: "versioned status endpoint",
+      roadmap:
+        "Sprint 2+ — add /api/v1/status that mirrors the /status JSON contract",
+    }),
+  );
 }

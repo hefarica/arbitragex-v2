@@ -469,7 +469,15 @@ export function mountAdminChains(
     if (!pool) { res.status(503).json({ error: "db_unavailable" }); return; }
     const cid = Number(req.params["chain_id"]);
     if (!Number.isInteger(cid) || cid < 1) { res.status(400).json({ error: "invalid_chain_id" }); return; }
-    const timeoutMs = Math.max(1000, Math.min(30000, Number(req.query["timeout_ms"] ?? 5000)));
+    // Reject an out-of-range caller-supplied timeout instead of silently clamping it.
+    // CodeQL js/resource-exhaustion models a *rejecting guard* (an early-return on a
+    // range check) as a sanitizer barrier; a Math.min/Math.max clamp is NOT recognized,
+    // which is why the prior clamp left the setTimeout sink inside probeRpc still flagged.
+    const rawTimeoutMs = Number(req.query["timeout_ms"] ?? 5000);
+    if (!Number.isInteger(rawTimeoutMs) || rawTimeoutMs < 1000 || rawTimeoutMs > 30000) {
+      res.status(400).json({ error: "invalid_timeout_ms", allowed: "integer 1000..30000" }); return;
+    }
+    const timeoutMs = rawTimeoutMs;
     try {
       const q = await pool.query(`SELECT rpc_http_url FROM chains_runtime WHERE chain_id = $1`, [cid]);
       if (q.rowCount === 0) { res.status(404).json({ error: "chain_not_found" }); return; }
