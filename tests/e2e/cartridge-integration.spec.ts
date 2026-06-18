@@ -90,6 +90,7 @@ test.describe('Cartridge Registration', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 test.describe('Funding Rate Arbitrage Detection', () => {
+  test.skip(SKIP_CARTRIDGE_TESTS, 'Skip in CI without full stack');
   test('should detect funding rate differential opportunities', async ({ request }) => {
     // Simular datos de funding rates
     const marketData = {
@@ -213,6 +214,7 @@ test.describe('Funding Rate Arbitrage Detection', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 test.describe('Mean Reversion Arbitrage Detection', () => {
+  test.skip(SKIP_CARTRIDGE_TESTS, 'Skip in CI without full stack');
   test('should detect mean reversion opportunities', async ({ request }) => {
     // Generar precios con desviación
     const priceHistory = Array(20)
@@ -327,6 +329,7 @@ test.describe('Mean Reversion Arbitrage Detection', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 test.describe('Cartridge Execution', () => {
+  test.skip(SKIP_CARTRIDGE_TESTS, 'Skip in CI without full stack');
   test('should execute cartridge in SHADOW mode', async ({ request }) => {
     const executionRequest = {
       cartridge_name: 'Funding Rate Arbitrage',
@@ -453,6 +456,7 @@ test.describe('Cartridge Execution', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 test.describe('Frontend Integration', () => {
+  test.skip(SKIP_CARTRIDGE_TESTS, 'Skip in CI without full stack');
   test('should display cartridges in dashboard', async ({ page }) => {
     await page.goto(`${FRONTEND_URL}/cartridges`);
 
@@ -513,6 +517,7 @@ test.describe('Frontend Integration', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 test.describe('Hot-Reload via Redis', () => {
+  test.skip(SKIP_CARTRIDGE_TESTS, 'Skip in CI without full stack');
   test('should trigger hot-reload when cartridge is updated', async ({ request }) => {
     // Simular actualización de cartucho
     const updateRequest = {
