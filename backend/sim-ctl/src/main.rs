@@ -17,7 +17,13 @@ mod sim_engine;
 mod simulator_backend;
 mod tx_builder;
 
-use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::post, Json, Router};
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, post},
+    Json, Router,
+};
 use ethers::types::Address;
 use shared_rs::{
     config::AppConfig,
@@ -97,6 +103,68 @@ async fn simulate_handler(
         |e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}),
     );
     (StatusCode::OK, Json(body))
+}
+
+/// GET /fork-status — honest fork health for components/ForkValidationPanel.tsx,
+/// consumed through the api-server proxy GET /api/sim-ctl/fork-status.
+///
+/// R8 fail-honest contract (mirrors what the proxy + panel expect):
+///   - No fork configured (ANVIL_URL unset/unreachable at boot)  → 503, no block.
+///   - Fork present but eth_blockNumber errors (anvil went away)  → 503, no block.
+///   - Fork present and the block fetch succeeds → 200 with ONLY honestly-sourced
+///     fields: `block_number` (real eth_blockNumber), `rpc_latency_ms` (measured
+///     around that single call), `executor_address` (the configured signer), and
+///     `status` ("HEALTHY", only reachable once the block fetch succeeds).
+///
+/// `fork_age_seconds` and `simulations_today` are deliberately NOT emitted:
+/// sim-ctl keeps no fork-creation timestamp nor a per-day simulation counter, so
+/// fabricating them would violate fail-honest. The api-server proxy already
+/// defaults both to 0. `rpc_url_redacted` is also omitted on purpose — anvil/RPC
+/// URLs can embed API keys, so we never echo them; the proxy substitutes
+/// "sim-ctl:***". A non-2xx here is mapped by the proxy to an honest 404
+/// "DEGRADED — paper mode" without ever inventing a block number.
+async fn fork_status_handler(State(st): State<Arc<AppState>>) -> impl IntoResponse {
+    let fork = match st.engine.fork.as_ref() {
+        Some(f) => f,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "fork_not_configured",
+                    "detail": format!("sim-ctl up but anvil not configured (env={})", st.env),
+                })),
+            );
+        }
+    };
+
+    let started = std::time::Instant::now();
+    let block_number = match fork.current_block().await {
+        Ok(bn) => bn,
+        Err(e) => {
+            warn!(event = "fork_status.block_query_failed", error = %e);
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "fork_unreachable",
+                    "detail": e.to_string(),
+                })),
+            );
+        }
+    };
+    let rpc_latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "metrics": {
+                "block_number": block_number,
+                "rpc_latency_ms": rpc_latency_ms,
+                "executor_address": format!("{:?}", st.engine.signer_from),
+                "status": "HEALTHY",
+            },
+            "generated_at": chrono::Utc::now().to_rfc3339(),
+        })),
+    )
 }
 
 #[tokio::main]
@@ -213,6 +281,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(3003);
     let sim_router = Router::new()
         .route("/simulate", post(simulate_handler))
+        .route("/fork-status", get(fork_status_handler))
         .with_state(state);
     let app = build_health_router(ServiceInfo::new(SERVICE, VERSION)).merge(sim_router);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
