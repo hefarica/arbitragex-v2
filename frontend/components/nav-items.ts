@@ -34,6 +34,7 @@ import {
   GitBranchIcon,
   RocketIcon,
   LinkIcon,
+  LogInIcon,
 } from "lucide-react";
 
 // Four operational groups matching the activation flow:
@@ -90,6 +91,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/deploy-pipeline",      label: "Deploy pipeline",        icon: RocketIcon,             group: "setup" },
   { href: "/admin/topology",       label: "Topology Vault",         icon: SatelliteDishIcon,      group: "setup" },
   { href: "/admin/chains",         label: "Admin chains",           icon: LinkIcon,               group: "setup" },
+  { href: "/admin/signin",         label: "Admin sign-in",          icon: LogInIcon,              group: "setup" },
   { href: "/settings",             label: "Settings",               icon: SettingsIcon,           group: "setup" },
 
   // ── OMEGA-S5 SUITE ─────────────────────────────────────────────────────────
