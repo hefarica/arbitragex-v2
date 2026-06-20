@@ -1,0 +1,6 @@
+# NEVER commit exported secrets or runtime artifacts
+*.env
+arbx_env_fragment.env
+.arbx_*
+*.bak_*
+*.log
