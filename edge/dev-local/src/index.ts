@@ -236,6 +236,11 @@ app.get("/api/readiness/steps", (req, res) => proxy("/api/v1/readiness/steps", r
 app.get("/api/agents/status", (req, res) => proxy("/api/v1/agents/status", req, res));
 // A.8 confidence scoring wire status.
 app.get("/api/scoring/status", (req, res) => proxy("/api/v1/scoring/status", req, res));
+// Live-readiness grid panels: sim/fork status + paper-shadow metrics. Without
+// these the ForkValidationPanel + PaperShadowPanel 404 at the edge and render
+// DEGRADED/INACTIVE even though the api-server serves them (audit gap, 2026-06-22).
+app.get("/api/sim-ctl/fork-status", (req, res) => proxy("/api/v1/sim-ctl/fork-status", req, res));
+app.get("/api/metrics/paper-shadow", (req, res) => proxy("/api/v1/metrics/paper-shadow", req, res));
 // A.6 comprehensive circuit breakers.
 app.get("/api/risk/circuit-breakers/status", (req, res) => proxy("/api/v1/risk/circuit-breakers/status", req, res));
 app.get("/api/risk/circuit-breakers/events", (req, res) => proxy("/api/v1/risk/circuit-breakers/events", req, res));
