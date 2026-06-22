@@ -828,8 +828,11 @@ app.get("/status", (req, res, next) => {
 
 app.use((req, res, next) => {
   // /api and /socket.io are owned by the explicit routes above (or 404 if an
-  // unknown /api path) — never fall through to the frontend.
-  if (req.path.startsWith("/api/") || req.path.startsWith("/socket.io") || req.path.startsWith("/_next/")) {
+  // unknown /api path) — never fall through to the frontend. /_next/* MUST fall
+  // through to frontendProxy: Next.js static assets (CSS/JS/font chunks) live on
+  // the frontend origin, so excluding it here 404s every asset and breaks the
+  // styling + JS hydration of the whole dapp.
+  if (req.path.startsWith("/api/") || req.path.startsWith("/socket.io")) {
     return next();
   }
   return frontendProxy(req, res, next);
