@@ -52,6 +52,41 @@ export function buildCredentialsRouter(deps: Deps): Router {
     }
   });
 
+  // ── GET summary (counts only — powers the sidebar "needs attention" badge) ──
+  // Returns ONLY aggregate counts (no provider, scope, value or metadata), so it
+  // is intentionally NOT admin-gated; the detailed list above stays gated.
+  // needs_attention = invalid + untested rows. NOTE: reflects rows in the store
+  // (tracked credentials), not the frontend's expected catalog — a fresh/empty
+  // store reports 0.
+  r.get("/api/v1/credentials/summary", async (_req, res) => {
+    if (!deps.pool) {
+      res.status(503).json({ error: "db_unavailable" });
+      return;
+    }
+    try {
+      const items = await listCredentials(deps.pool);
+      let valid = 0;
+      let invalid = 0;
+      let untested = 0;
+      for (const it of items) {
+        if (it.status === "valid") valid += 1;
+        else if (it.status === "invalid") invalid += 1;
+        else untested += 1;
+      }
+      res.status(200).json({
+        total: items.length,
+        valid,
+        invalid,
+        untested,
+        needs_attention: invalid + untested,
+        generated_at: new Date().toISOString(),
+      });
+    } catch (e) {
+      deps.logger.warn({ event: "credentials.summary_failed", err: (e as Error).message });
+      res.status(500).json({ error: "db_error", detail: (e as Error).message });
+    }
+  });
+
   // ── POST test (run validator without persisting) ──────────────────────
   r.post("/admin/credentials/test", deps.requireAdminToken(deps.adminToken), async (req, res) => {
     const parsed = CredentialTestSchema.safeParse(req.body);

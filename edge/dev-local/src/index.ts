@@ -223,6 +223,8 @@ app.get("/api/risk/alerts", (req, res) => proxy("/api/v1/risk/alerts", req, res)
 app.get("/api/executions/recent", (req, res) => proxy("/api/v1/executions/recent", req, res));
 app.get("/api/recon/summary", (req, res) => proxy("/api/v1/recon/summary", req, res));
 app.get("/api/config/current", (req, res) => proxy("/api/v1/config/current", req, res));
+// Credentials health summary (counts only) for the sidebar "needs attention" badge.
+app.get("/api/credentials/summary", (req, res) => proxy("/api/v1/credentials/summary", req, res));
 // Phase 0.5: relays catalog (public list of enabled) + onboarding status.
 app.get("/api/relays", (req, res) => proxy("/api/v1/relays", req, res));
 app.get("/api/onboarding/status", (req, res) => proxy("/api/v1/onboarding/status", req, res));
