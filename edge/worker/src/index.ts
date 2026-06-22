@@ -799,6 +799,11 @@ app.get("/api/agents/status", (c) => proxy(c, "/api/v1/agents/status", "arbx:cac
 // component map. 30s KV TTL — wire status moves on commits, not runtime drift.
 app.get("/api/scoring/status", (c) => proxy(c, "/api/v1/scoring/status", "arbx:cache:scoring-status", 30));
 
+// Live-readiness grid panels. fork-status is near-real-time block data (short
+// TTL); paper-shadow is daily metrics (slower cadence). Mirrors the dev-local edge.
+app.get("/api/sim-ctl/fork-status", (c) => proxy(c, "/api/v1/sim-ctl/fork-status", "arbx:cache:fork-status", 5));
+app.get("/api/metrics/paper-shadow", (c) => proxy(c, "/api/v1/metrics/paper-shadow", "arbx:cache:paper-shadow", 30));
+
 // A.6 comprehensive circuit breakers status + events. 15s KV TTL — kill_switch
 // state can change at any moment; readiness verifier outcomes refresh every
 // 5s on api-server, so 15s edge cache is a safe ceiling.
