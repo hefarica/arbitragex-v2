@@ -225,6 +225,8 @@ app.get("/api/recon/summary", (req, res) => proxy("/api/v1/recon/summary", req, 
 app.get("/api/config/current", (req, res) => proxy("/api/v1/config/current", req, res));
 // Credentials health summary (counts only) for the sidebar "needs attention" badge.
 app.get("/api/credentials/summary", (req, res) => proxy("/api/v1/credentials/summary", req, res));
+// RPC registry status (counts only) for the /rpcs panel.
+app.get("/api/rpc/status", (req, res) => proxy("/api/v1/rpc/status", req, res));
 // Phase 0.5: relays catalog (public list of enabled) + onboarding status.
 app.get("/api/relays", (req, res) => proxy("/api/v1/relays", req, res));
 app.get("/api/onboarding/status", (req, res) => proxy("/api/v1/onboarding/status", req, res));
@@ -378,6 +380,13 @@ app.delete("/api/admin/chains/:chain_id", (req, res) => {
 app.post("/api/admin/chains/:chain_id/probe", (req, res) => {
   const search = new URL(req.url, "http://x").search || "";
   adminProxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}/probe${search}`, req, res, "POST");
+});
+// RPC registry sync — admin import (Excel catalog → rpc_endpoints) + bare reload.
+app.post("/api/admin/rpcs/import", (req, res) => {
+  adminProxy("/api/v1/admin/rpcs/import", req, res, "POST");
+});
+app.post("/api/admin/rpcs/reload", (req, res) => {
+  adminProxy("/api/v1/admin/rpcs/reload", req, res, "POST");
 });
 // Topology Vault — admin-token gated RPC/WSS hot-swap control plane.
 // Uses the same V-AT-1 httpOnly cookie translation as Chains Admin; the
