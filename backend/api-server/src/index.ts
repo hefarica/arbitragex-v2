@@ -103,6 +103,7 @@ import { mountAgentsStatus } from "./routes/agents-status.js";
 import { mountScoringStatus } from "./routes/scoring-status.js";
 import { mountPaperShadowMetrics } from "./routes/paper-shadow-metrics.js";
 import { mountForkStatus } from "./routes/fork-status.js";
+import { mountRpcRegistry } from "./routes/rpc-registry.js";
 import { mountOpportunitySimulate } from "./routes/opportunity-simulate.js";
 import { mountAlertmanagerWebhook } from "./routes/alertmanager-webhook.js";
 import { mountRiskCircuitBreakers } from "./routes/risk-circuit-breakers.js";
@@ -541,6 +542,9 @@ mountAdminChains(app, {
 mountPaperShadowMetrics(app, { pool, logger });
 mountForkStatus(app, { logger });
 mountOpportunitySimulate(app, { logger });
+// RPC registry sync (Excel catalog → rpc_endpoints): public status + admin import/reload.
+// status is counts-only (ungated); import/reload are requireAdminToken-gated.
+mountRpcRegistry(app, { pool, redis, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN, logger });
 mountAlertmanagerWebhook(app, {
   requireAdminToken,
   adminToken: ARBX_ADMIN_TOKEN,
