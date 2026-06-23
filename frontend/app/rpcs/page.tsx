@@ -7,6 +7,7 @@ import { motion } from "framer-motion";
 import { getDefiRpcs } from "@/lib/api-client";
 import type { DefiRpcsResponse } from "@/lib/schemas";
 import { EdgeState } from "@/components/EdgeState";
+import { RpcSyncPanel } from "@/components/RpcSyncPanel";
 
 const RPC_COLUMNS = ["Chain ID", "URL", "Type", "Status"];
 
@@ -25,52 +26,36 @@ export default function RpcHealthPage() {
     void load();
   }, [load]);
 
+  // Legacy RPC-health table (defi_rpcs / migration 021) — distinct from the
+  // rpc_endpoints catalog registry shown in <RpcSyncPanel/> above. Rendered as a
+  // section below the panel so the catalog sync is always available (even when
+  // the legacy table is loading/empty/unreachable).
+  let legacy: React.ReactNode;
   if (!result) {
-    return (
-      <div className="p-8 min-h-screen text-foreground">
-        <EdgeState variant="loading" title="Loading RPC registry…" description="Querying the edge for RPC health." endpoint="GET /api/v1/rpcs" ghost="table" ghostColumns={RPC_COLUMNS} />
-      </div>
+    legacy = (
+      <EdgeState variant="loading" title="Loading RPC registry…" description="Querying the edge for RPC health." endpoint="GET /api/v1/rpcs" ghost="table" ghostColumns={RPC_COLUMNS} />
     );
-  }
-
-  if (!result.ok) {
-    return (
-      <div className="p-8 min-h-screen text-foreground">
-        <EdgeState
-          variant="error"
-          title="RPC registry unreachable"
-          description="The edge endpoint refused or could not be reached. No fabricated RPC data is shown — zero-trust."
-          endpoint="GET /api/v1/rpcs"
-          reasons={[result.error]}
-          onRetry={load}
-          retrying={retrying}
-          ghost="table"
-          ghostColumns={RPC_COLUMNS}
-        />
-      </div>
+  } else if (!result.ok) {
+    legacy = (
+      <EdgeState
+        variant="error"
+        title="RPC registry unreachable"
+        description="The edge endpoint refused or could not be reached. No fabricated RPC data is shown — zero-trust."
+        endpoint="GET /api/v1/rpcs"
+        reasons={[result.error]}
+        onRetry={load}
+        retrying={retrying}
+        ghost="table"
+        ghostColumns={RPC_COLUMNS}
+      />
     );
-  }
-
-  const rpcs = result.data.data;
-
-  if (rpcs.length === 0) {
-    return (
-      <div className="p-8 min-h-screen text-foreground">
-        <EdgeState variant="empty" title="No RPCs registered yet" description="The registry is reachable but empty — no RPC endpoints are configured." endpoint="GET /api/v1/rpcs" onRetry={load} retrying={retrying} ghost="table" ghostColumns={RPC_COLUMNS} />
-      </div>
+  } else if (result.data.data.length === 0) {
+    legacy = (
+      <EdgeState variant="empty" title="No RPCs registered yet" description="The registry is reachable but empty — no RPC endpoints are configured." endpoint="GET /api/v1/rpcs" onRetry={load} retrying={retrying} ghost="table" ghostColumns={RPC_COLUMNS} />
     );
-  }
-
-  return (
-    <div className="p-8 space-y-6 min-h-screen text-foreground">
-      <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold tracking-tight text-foreground">RPC Health &amp; Registry</h1>
-        <div className="flex items-center gap-2 bg-success/10 text-success px-3 py-1.5 rounded-full border border-success/40">
-          <Activity size={16} className="motion-safe:animate-pulse" />
-          <span className="text-sm font-semibold tracking-wide">LIVE</span>
-        </div>
-      </div>
-
+  } else {
+    const rpcs = result.data.data;
+    legacy = (
       <div data-slot="card" className="bg-card text-card-foreground border border-border rounded-xl overflow-hidden shadow-2xl">
         <table className="w-full text-left border-collapse">
           <thead>
@@ -109,6 +94,22 @@ export default function RpcHealthPage() {
           </tbody>
         </table>
       </div>
+    );
+  }
+
+  return (
+    <div className="p-8 space-y-6 min-h-screen text-foreground">
+      <div className="flex justify-between items-center">
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">RPC Health &amp; Registry</h1>
+        <div className="flex items-center gap-2 bg-success/10 text-success px-3 py-1.5 rounded-full border border-success/40">
+          <Activity size={16} className="motion-safe:animate-pulse" />
+          <span className="text-sm font-semibold tracking-wide">LIVE</span>
+        </div>
+      </div>
+
+      <RpcSyncPanel />
+
+      {legacy}
     </div>
   );
 }
