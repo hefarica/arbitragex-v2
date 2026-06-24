@@ -187,6 +187,11 @@ export function useOmniOpportunities({
         clearInterval(pollingTimerRef.current);
         pollingTimerRef.current = null;
       }
+      // R8 fail-honest: once this stream consumer unmounts the live socket is
+      // gone, so reset the SSOT status. Keeps the global header indicator
+      // truthful (reads IDLE) instead of a stale LIVE/STALE on other pages.
+      usingPollingRef.current = false;
+      setWsStatus("DISCONNECTED");
     };
   }, [edgeUrl, startPolling, setWsStatus, addOpportunity]);
 

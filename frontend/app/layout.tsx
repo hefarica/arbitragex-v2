@@ -6,7 +6,8 @@ import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import { SiteHeader } from "@/components/site-header";
 import { AppSidebar } from "@/components/app-sidebar";
-// import { AnimatedBg } from "@/components/animated-bg";
+import { PageBreadcrumb } from "@/components/PageBreadcrumb";
+import { HeroSphere } from "@/components/HeroSphere";
 import { ThemeScript } from "@/components/theme-toggle";
 import { SystemGuardBanner } from "@/components/SystemGuardBanner";
 import { Web3Provider } from "@/app/providers/Web3Provider";
@@ -90,7 +91,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         <meta name="google" content="notranslate" />
       </head>
       <body className="min-h-dvh bg-background font-sans antialiased notranslate" translate="no">
-        {/* <AnimatedBg /> */}
+        <HeroSphere />
         <a
           href="#main"
           className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:border focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:shadow-md focus:outline-none focus:ring-2 focus:ring-ring"
@@ -118,6 +119,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
                   breathing room around the sidebar.
                 */}
                 <div className="mx-auto w-full max-w-[1800px] px-4 py-8 lg:px-10 lg:py-10">
+                  <PageBreadcrumb />
                   {children}
                 </div>
               </main>
