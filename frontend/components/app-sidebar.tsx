@@ -90,7 +90,7 @@ export function SidebarContents({
     <>
       {NAV_SECTIONS.map(({ group, title }) => (
         <div key={group}>
-          <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
+          <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-gradient-primary">
             {title}
           </div>
           <NavList group={group} credsNeedsAttention={credsNeedsAttention} {...(onNavigate ? { onNavigate } : {})} />

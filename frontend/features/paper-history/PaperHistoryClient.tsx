@@ -11,9 +11,11 @@
  * Zero-Mocks: all data from /api/paper/history; no fabricated defaults.
  */
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { AlertCircleIcon, FlaskConicalIcon, TrendingUpIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { fmtMoney, fmtTime } from "@/lib/formatters";
 
@@ -176,8 +178,19 @@ export function PaperHistoryClient({ initialData }: Props) {
       {data.summary && <SummaryStrip summary={data.summary} />}
 
       {rows.length === 0 ? (
-        <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground" data-testid="paper-history-empty">
-          No paper trade runs recorded yet. Set <code className="font-mono text-xs">ARBX_PAPER_ARCHIVER_MODE=on</code> to enable the archiver.
+        <div className="flex flex-col items-center justify-center gap-3 rounded-lg border p-10 text-center" data-testid="paper-history-empty">
+          <FlaskConicalIcon className="size-9 text-muted-foreground/40" aria-hidden />
+          <div>
+            <p className="font-medium text-foreground">No paper trade runs yet</p>
+            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+              Runs accumulate while the system operates in paper-mode. If nothing
+              appears after the scanner warms up, enable the archiver with{" "}
+              <code className="font-mono text-xs">ARBX_PAPER_ARCHIVER_MODE=on</code>.
+            </p>
+          </div>
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/live-readiness">View live readiness</Link>
+          </Button>
         </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border" data-testid="paper-history-table">

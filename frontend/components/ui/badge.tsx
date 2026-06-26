@@ -15,6 +15,7 @@ const badgeVariants = cva(
         success: "border-transparent bg-success/15 text-success [a&]:hover:bg-success/20",
         warning: "border-transparent bg-warning/15 text-warning [a&]:hover:bg-warning/25",
         info: "border-transparent bg-info/15 text-info [a&]:hover:bg-info/25",
+        glass: "badge-glass",
         outline: "text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
       },
     },
