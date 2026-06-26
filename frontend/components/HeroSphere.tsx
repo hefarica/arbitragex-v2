@@ -5,21 +5,22 @@ import { useEffect, useRef } from "react";
 /**
  * HeroSphere — animated particle globe inspired by the aethir.com hero, rendered
  * to a fixed, behind-content <canvas>. A point-cloud sphere (fibonacci
- * distribution) rotates slowly around its axis with a soft radial glow.
+ * distribution) rotates slowly around its axis with a soft radial glow. Pure
+ * point cloud — no connecting lines (matches the reference aesthetic).
  *
  * Theme-aware (operator request):
- *   - DARK theme  → particles render in a LIGHT colour (pale blue-white).
- *   - LIGHT theme → particles render in ROYAL BLUE.
- * The colour is read from the `--sphere-rgb` CSS variable (defined per theme in
- * globals.css) and re-read when the `.dark` class on <html> toggles, so it tracks
- * the theme switch live.
+ *   - DARK theme  → particles render in a LIGHT colour (pale blue-white) at a
+ *     higher peak opacity so the globe reads on the navy backdrop.
+ *   - LIGHT theme → particles render in ROYAL BLUE at a slightly lower peak
+ *     opacity so it stays an accent on white.
+ * Colour is read from the `--sphere-rgb` CSS variable (per theme in globals.css)
+ * and re-read when the `.dark` class on <html> toggles.
  *
  * Performance: one rAF loop, devicePixelRatio capped at 2, points precomputed,
- * dots drawn as fillRect (cheaper than arc). Honors prefers-reduced-motion by
- * painting a single static frame.
+ * dots drawn as fillRect. Honors prefers-reduced-motion (single static frame).
  */
 
-const POINT_COUNT = 1100;
+const POINT_COUNT = 1500;
 
 export function HeroSphere() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -36,23 +37,24 @@ export function HeroSphere() {
     const pts = new Array<{ x: number; y: number; z: number }>(POINT_COUNT);
     const golden = Math.PI * (3 - Math.sqrt(5));
     for (let i = 0; i < POINT_COUNT; i++) {
-      const y = 1 - (i / (POINT_COUNT - 1)) * 2; // 1 → -1
+      const y = 1 - (i / (POINT_COUNT - 1)) * 2;
       const r = Math.sqrt(Math.max(0, 1 - y * y));
       const theta = golden * i;
       pts[i] = { x: Math.cos(theta) * r, y, z: Math.sin(theta) * r };
     }
 
-    // Theme colour, read from CSS var "--sphere-rgb" ("r g b"). Falls back to a
-    // pale blue (dark-theme default) if the var is missing.
+    // Theme: particle colour + whether the dark theme is active (controls the
+    // peak opacity). Both re-read on a `.dark` class toggle.
     let rgb = "206 224 255";
-    const readColour = () => {
-      const v = getComputedStyle(document.documentElement)
-        .getPropertyValue("--sphere-rgb")
-        .trim();
+    let isDark = true;
+    const readTheme = () => {
+      const root = document.documentElement;
+      const v = getComputedStyle(root).getPropertyValue("--sphere-rgb").trim();
       if (v) rgb = v;
+      isDark = root.classList.contains("dark");
     };
-    readColour();
-    const themeObserver = new MutationObserver(readColour);
+    readTheme();
+    const themeObserver = new MutationObserver(readTheme);
     themeObserver.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["class"],
@@ -70,8 +72,6 @@ export function HeroSphere() {
       h = canvas.clientHeight;
       canvas.width = Math.max(1, Math.floor(w * dpr));
       canvas.height = Math.max(1, Math.floor(h * dpr));
-      // Globe sits to the right and slightly high — partially off-screen, like
-      // the reference composition.
       radius = Math.min(Math.max(w, h) * 0.42, Math.max(w, h));
       cx = w * 0.82;
       cy = h * 0.4;
@@ -81,16 +81,21 @@ export function HeroSphere() {
 
     let angle = 0;
     let raf = 0;
-    const tilt = -0.45; // fixed X-axis tilt
+    const tilt = -0.45;
 
     const render = () => {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
+      // Operator-tuned: brighter on the dark theme, moderate on light.
+      const peak = isDark ? 0.7 : 0.5;
+      const floor = isDark ? 0.1 : 0.07;
+      const glowPeak = isDark ? 0.22 : 0.14;
+
       // Soft radial glow behind the globe.
       const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius * 1.25);
-      glow.addColorStop(0, `rgb(${rgb} / 0.18)`);
-      glow.addColorStop(0.55, `rgb(${rgb} / 0.05)`);
+      glow.addColorStop(0, `rgb(${rgb} / ${glowPeak})`);
+      glow.addColorStop(0.55, `rgb(${rgb} / ${(glowPeak * 0.28).toFixed(3)})`);
       glow.addColorStop(1, `rgb(${rgb} / 0)`);
       ctx.fillStyle = glow;
       ctx.fillRect(0, 0, w, h);
@@ -103,10 +108,8 @@ export function HeroSphere() {
 
       for (let i = 0; i < pts.length; i++) {
         const p = pts[i]!;
-        // rotate around Y
         const x = p.x * cosA - p.z * sinA;
         const zr = p.x * sinA + p.z * cosA;
-        // tilt around X
         const y = p.y * cosT - zr * sinT;
         const z = p.y * sinT + zr * cosT;
 
@@ -114,15 +117,15 @@ export function HeroSphere() {
         const sx = cx + x * radius * persp;
         const sy = cy + y * radius * persp;
 
-        const depth = (z + 1) / 2; // 0 back → 1 front
-        ctx.globalAlpha = 0.06 + depth * 0.5;
-        const size = 0.6 + depth * 1.6;
+        const depth = (z + 1) / 2;
+        ctx.globalAlpha = floor + depth * (peak - floor);
+        const size = 0.7 + depth * 1.7;
         ctx.fillRect(sx - size / 2, sy - size / 2, size, size);
       }
       ctx.globalAlpha = 1;
 
       if (!reduceMotion) {
-        angle += 0.0015;
+        angle += 0.0015; // velocity unchanged (operator: do not touch)
         raf = requestAnimationFrame(render);
       }
     };
@@ -137,7 +140,7 @@ export function HeroSphere() {
 
   return (
     <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-      <canvas ref={canvasRef} className="h-full w-full opacity-70" />
+      <canvas ref={canvasRef} className="h-full w-full" />
     </div>
   );
 }
