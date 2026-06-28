@@ -31,7 +31,9 @@ pub const DEFAULT_LIVE_CHAINS: &[u64] = &[11_155_111];
 pub enum LiveExecDenied {
     #[error("live execution is disabled (ARBX_LIVE_EXEC_ENABLED != 'true') — default-deny")]
     NotEnabled,
-    #[error("mainnet (chain_id=1) live broadcast is physically refused in the testnet-first phase")]
+    #[error(
+        "mainnet (chain_id=1) live broadcast is physically refused in the testnet-first phase"
+    )]
     MainnetRefused,
     #[error("chain_id {got} is not in the live-execution allowlist {allowed:?}")]
     ChainNotAllowed { got: u64, allowed: Vec<u64> },
