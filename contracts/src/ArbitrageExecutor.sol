@@ -55,6 +55,14 @@ error ZeroGrossProfit();
 ///      capital-retention guarantee assumes a faithful 1:1 pull, so such tokens are
 ///      rejected fail-closed instead of silently leaking the executor's own balance.
 error FlashFundedPullMismatch();
+/// @dev SC-13 (independent adversarial review): thrown when the flash-funded round trip
+///      would NOT leave this contract holding exactly its pre-call working capital B —
+///      i.e. the OUTBOUND return of (principal + profit) shorted the executor (e.g. an
+///      outbound-lossy / rebasing tokenIn that skims the sender). Symmetric to
+///      FlashFundedPullMismatch on the pull leg: makes the capital-retention identity
+///      fail-closed on the RETURN leg too, so a compromised EXECUTOR_ROLE key can never
+///      leak B even through an exotic (and explicitly unsupported) token.
+error FlashFundedCapitalRetentionViolation();
 /// @dev Thrown when profit < minProfit (slippage guard).
 error InsufficientProfit();
 /// @dev Thrown when the ETH balance is zero on withdrawETH.
@@ -294,6 +302,17 @@ contract ArbitrageExecutor is
         // balanceAfter - preCallBalance, so this contract's own working capital is never
         // forwarded — only this call's pulled principal and the route profit.
         IERC20(tokenIn).safeTransfer(msg.sender, amountIn + profit);
+
+        // Defense-in-depth (independent SC-13 review): make the capital-retention identity
+        // fail-closed on the OUTBOUND leg too. The pull is already guarded
+        // (FlashFundedPullMismatch); here we assert that after returning principal + profit
+        // this contract again holds EXACTLY its pre-call working capital B. For every
+        // supported faithful 1:1 token this is a no-op (balance == balBeforePull by
+        // construction). It only reverts the unsupported outbound-lossy / rebasing case —
+        // where the return transfer shorted the executor — rather than silently leaking B.
+        if (IERC20(tokenIn).balanceOf(address(this)) != balBeforePull) {
+            revert FlashFundedCapitalRetentionViolation();
+        }
     }
 
     /// @dev Shared, gated route core for both the self-funded (executeArbitrage) and
