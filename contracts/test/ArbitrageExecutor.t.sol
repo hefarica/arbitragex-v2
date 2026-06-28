@@ -39,6 +39,29 @@ contract MockProfitRouter {
     }
 }
 
+/// @dev Router that PULLS `pullAmount` of tokenIn from the caller (the executor) via
+///      transferFrom — exercising the executor's ephemeral SC-12 per-router allowance —
+///      then mints `mintBack` to the executor to simulate swap output. If `pullAmount`
+///      exceeds the granted allowance the transferFrom reverts, the low-level
+///      router.call returns false, and executeArbitrage reverts SwapFailed. Used to
+///      prove the spend cap actually binds.
+contract MockPullRouter {
+    MockERC20 public token;
+    uint256 public pullAmount;
+    uint256 public mintBack;
+
+    constructor(address _token, uint256 _pull, uint256 _mintBack) {
+        token = MockERC20(_token);
+        pullAmount = _pull;
+        mintBack = _mintBack;
+    }
+
+    fallback() external {
+        token.transferFrom(msg.sender, address(this), pullAmount);
+        token.mint(msg.sender, mintBack);
+    }
+}
+
 /// @dev Router that does nothing — balance unchanged → no gross profit
 contract MockZeroProfitRouter {
     fallback() external {}
@@ -626,35 +649,101 @@ contract ArbitrageExecutorTest is Test {
     }
 
     // -----------------------------------------------------------------------
-    // testSC5_ExecuteArbitrage_RevertsWhenRouterNotInAllowanceManager
+    // testSC12_ExecuteArbitrage_NotGatedByAllowanceManagerRegistry
     //
-    // When AllowanceManager is set but router has NO allowance for tokenIn,
-    // executeArbitrage must revert with RouterAllowanceNotGranted.
+    // SC-12 (2026-06-28): the AllowanceManager isApproved registry is NO LONGER a
+    // spend gate (it conferred no real authority over this contract's balance). With
+    // it set but the router NOT present in it, executeArbitrage must still proceed —
+    // spend safety comes from the executor's own exact, ephemeral per-router allowance.
+    // (Was: testSC5_ExecuteArbitrage_RevertsWhenRouterNotInAllowanceManager, which
+    // asserted the removed false-assurance gate.)
     // -----------------------------------------------------------------------
-    function testSC5_ExecuteArbitrage_RevertsWhenRouterNotInAllowanceManager() public {
+    function testSC12_ExecuteArbitrage_NotGatedByAllowanceManagerRegistry() public {
         uint256 amountIn = 1_000e18;
+        uint256 profit   = 50e18;
 
         AllowanceManager am = _deployAllowanceManager();
         executor.setAllowanceManager(address(am));
 
-        // Deploy router — approved in ArbitrageExecutor but NOT in AllowanceManager
-        MockProfitRouter router = new MockProfitRouter(address(token), address(executor), 50e18);
+        MockProfitRouter router = new MockProfitRouter(address(token), address(executor), profit);
         executor.setRouterApproval(address(router), true);
-        // Deliberately: do NOT call am.grantAllowance(...)
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+        // Deliberately do NOT call am.grantAllowance(...): router is absent from the registry.
+        assertFalse(am.isApproved(address(token), address(router)), "router must be absent from AM registry");
 
         token.mint(address(executor), amountIn);
 
         address[] memory routers = new address[](1);
         routers[0] = address(router);
         bytes[] memory payloads = new bytes[](1);
-        payloads[0] = "";
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(RouterAllowanceNotGranted.selector, address(router), address(token))
-        );
+        // Must SUCCEED despite the router being absent from the AllowanceManager registry.
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, profit, routers, payloads);
+
+        assertGe(token.balanceOf(address(executor)), amountIn + profit, "profit must land");
+        // No standing tokenIn allowance to the router survives the call (ephemeral + reset).
+        assertEq(token.allowance(address(executor), address(router)), 0, "allowance residue must be zero");
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-12 spend cap: an approved router can pull AT MOST `amountIn` of tokenIn.
+    // Exact-cap path — pulling exactly amountIn succeeds and leaves zero residue.
+    // -----------------------------------------------------------------------
+    function testSC12_SpendCap_ExactAmountInPullSucceeds() public {
+        uint256 amountIn = 1_000e18;
+        uint256 mintBack = 1_050e18; // router returns more than it pulled -> net profit
+
+        MockPullRouter router = new MockPullRouter(address(token), amountIn, mintBack);
+        executor.setRouterApproval(address(router), true);
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+        token.mint(address(executor), amountIn);
+
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
 
         vm.prank(executorRole);
         executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
+
+        assertEq(token.balanceOf(address(router)), amountIn, "router pulled exactly amountIn");
+        assertEq(token.balanceOf(address(executor)), mintBack, "executor net = mintBack");
+        assertEq(token.allowance(address(executor), address(router)), 0, "zero allowance residue");
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-12 spend cap (the core hardening): over-pull is blocked even when the
+    // executor HOLDS more than amountIn — the cap, not the balance, bounds the spend.
+    // A router (or a compromised EXECUTOR_ROLE / surprising whitelisted selector)
+    // cannot move more than the declared amountIn of tokenIn per hop.
+    // -----------------------------------------------------------------------
+    function testSC12_SpendCap_OverPullIsBlocked() public {
+        uint256 amountIn = 1_000e18;
+
+        // Router attempts to pull amountIn + 1 — one wei beyond the ephemeral allowance.
+        MockPullRouter router = new MockPullRouter(address(token), amountIn + 1, 5_000e18);
+        executor.setRouterApproval(address(router), true);
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+        // Fund the executor with FAR more than amountIn so only the cap stops the over-pull.
+        token.mint(address(executor), amountIn * 3);
+
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
+
+        // transferFrom(amountIn + 1) exceeds the granted allowance -> router reverts ->
+        // low-level call returns false -> SwapFailed; the whole tx reverts.
+        vm.prank(executorRole);
+        vm.expectRevert(SwapFailed.selector);
+        executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
+
+        // The executor's balance is fully intact and no allowance lingers.
+        assertEq(token.balanceOf(address(executor)), amountIn * 3, "executor balance untouched");
+        assertEq(token.balanceOf(address(router)), 0, "router pulled nothing");
+        assertEq(token.allowance(address(executor), address(router)), 0, "no residual allowance after revert");
     }
 
     // -----------------------------------------------------------------------
