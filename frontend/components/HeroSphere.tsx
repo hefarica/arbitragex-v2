@@ -52,6 +52,10 @@ export function HeroSphere() {
       const v = getComputedStyle(root).getPropertyValue("--sphere-rgb").trim();
       if (v) rgb = v;
       isDark = root.classList.contains("dark");
+      // Light theme: `multiply` so the royal-blue particles SATURATE against the
+      // white backdrop (semi-transparent blue over white otherwise reads washed-out
+      // pale blue). Dark theme: normal compositing — the pale dots already read on navy.
+      canvas.style.mixBlendMode = isDark ? "normal" : "multiply";
     };
     readTheme();
     const themeObserver = new MutationObserver(readTheme);
@@ -87,10 +91,11 @@ export function HeroSphere() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
-      // Operator-tuned: brighter on the dark theme, moderate on light.
-      const peak = isDark ? 0.7 : 0.5;
+      // Operator-tuned: brighter on dark; on light, higher peak + glow paired with
+      // mix-blend:multiply (approach A) so the blue reads BOLD on white, not flat.
+      const peak = isDark ? 0.7 : 0.78;
       const floor = isDark ? 0.1 : 0.07;
-      const glowPeak = isDark ? 0.22 : 0.14;
+      const glowPeak = isDark ? 0.22 : 0.22;
 
       // Soft radial glow behind the globe.
       const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius * 1.25);
