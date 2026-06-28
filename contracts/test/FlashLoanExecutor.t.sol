@@ -593,4 +593,51 @@ contract FlashLoanExecutorTest is Test {
         vm.expectRevert(FL_NoProviderConfigured.selector);
         mockVault.triggerFlashLoan(address(flashExec), IERC20(address(token)), 1_000e18, "");
     }
+
+    // =========================================================================
+    // Decision-free hardening (re-discovered post-burst): the requestFlashLoan
+    // EXECUTOR_ROLE gate + revoke lifecycle + referralCode max boundary. The
+    // access gate had ZERO explicit revert coverage (only an invariant try/catch
+    // swallow). Tests only — no src change.
+    // =========================================================================
+
+    // requestFlashLoan is onlyRole(EXECUTOR_ROLE): an attacker without the role
+    // cannot trigger a flash loan — the gate rejects before any pool call.
+    function testRequestFlashLoan_RevertsForNonExecutor() public {
+        vm.expectRevert(); // AccessControlUnauthorizedAccount (missing EXECUTOR_ROLE)
+        vm.prank(attacker);
+        flashExec.requestFlashLoan(address(token), 100e18, "");
+        assertEq(pool.lastAmount(), 0, "no pool call must have happened");
+    }
+
+    // EXECUTOR_ROLE revoke lifecycle: a holder can request, but once admin revokes
+    // the role the same caller is blocked and the request never reaches the pool.
+    function testExecutorRole_RevokeBlocksRequestFlashLoan() public {
+        // executorRole (granted in setUp) can request — legacy pool path records it.
+        vm.prank(executorRole);
+        flashExec.requestFlashLoan(address(token), 100e18, "");
+        assertEq(pool.lastAmount(), 100e18, "executor request must reach the pool");
+
+        // Admin (DEFAULT_ADMIN_ROLE) revokes EXECUTOR_ROLE.
+        flashExec.revokeRole(flashExec.EXECUTOR_ROLE(), executorRole);
+
+        // The same caller can no longer request.
+        vm.expectRevert();
+        vm.prank(executorRole);
+        flashExec.requestFlashLoan(address(token), 200e18, "");
+        // The blocked request must not have reached the pool (lastAmount unchanged).
+        assertEq(pool.lastAmount(), 100e18, "revoked caller must not reach the pool");
+    }
+
+    // The uint16 referralCode (packed into slot 1 with arbitrageExecutor) survives
+    // the full legacy path at its maximum value type(uint16).max.
+    function testRequestFlashLoan_MaxReferralCodeReachesPool() public {
+        flashExec.setReferralCode(type(uint16).max); // admin-only
+
+        vm.prank(executorRole);
+        flashExec.requestFlashLoan(address(token), 100e18, "");
+
+        assertEq(flashExec.referralCode(), type(uint16).max, "stored referralCode == max");
+        assertEq(pool.lastReferralCode(), type(uint16).max, "max referralCode must reach the pool");
+    }
 }
