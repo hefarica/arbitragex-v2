@@ -67,6 +67,29 @@ contract MockZeroProfitRouter {
     fallback() external {}
 }
 
+/// @dev Fee-on-transfer ERC20: every non-mint/burn transfer skims a 1% fee to a sink,
+///      so the recipient receives less than `value`. Used to prove the SC-13 flash-funded
+///      pull guard rejects deflationary tokens fail-closed.
+contract MockFeeOnTransferERC20 is ERC20 {
+    address private constant SINK = address(0xdead);
+
+    constructor() ERC20("FeeToken", "FEE") {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        if (from == address(0) || to == address(0)) {
+            super._update(from, to, value); // mint / burn: no fee
+            return;
+        }
+        uint256 fee = value / 100; // 1%
+        super._update(from, SINK, fee);
+        super._update(from, to, value - fee);
+    }
+}
+
 /// @dev Malicious router that attempts to re-enter executeArbitrage.
 /// Uses only primitive-type storage to avoid nested calldata array copy
 /// (which requires via_ir; we keep via_ir = false per foundry.toml).
@@ -761,6 +784,142 @@ contract ArbitrageExecutorTest is Test {
         assertEq(token.balanceOf(address(executor)), amountIn * 3, "executor balance untouched");
         assertEq(token.balanceOf(address(router)), 0, "router pulled nothing");
         assertEq(token.allowance(address(executor), address(router)), 0, "no residual allowance after revert");
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-13: executeArbitrageFlashFunded — caller-funded round trip.
+    // Closes the §7 fund-handoff gap: the executor PULLS the borrowed principal from
+    // the caller, runs the gated route, and RETURNS principal + profit to the caller
+    // so a flash-loan wrapper can repay. These exercise the executor entrypoint in
+    // isolation; the end-to-end FlashLoanExecutor round trip lives in
+    // FlashLoanRoundTrip.t.sol.
+    // -----------------------------------------------------------------------
+
+    /// @dev helper: deploy + approve a MockProfitRouter that mints `profit` to the executor.
+    function _approvedProfitRouter(uint256 profit) internal returns (address[] memory routers, bytes[] memory payloads) {
+        MockProfitRouter router = new MockProfitRouter(address(token), address(executor), profit);
+        executor.setRouterApproval(address(router), true);
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+        routers = new address[](1);
+        routers[0] = address(router);
+        payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
+    }
+
+    function testSC13_FlashFunded_PullsPrincipalAndReturnsPrincipalPlusProfit() public {
+        uint256 amountIn = 1_000e18;
+        uint256 profit   = 50e18;
+
+        address funder = makeAddr("funder");
+        executor.grantRole(executor.EXECUTOR_ROLE(), funder);
+        token.mint(funder, amountIn); // the "borrowed" principal lives with the caller
+
+        (address[] memory routers, bytes[] memory payloads) = _approvedProfitRouter(profit);
+
+        vm.startPrank(funder);
+        token.approve(address(executor), amountIn);
+        executor.executeArbitrageFlashFunded(bytes32(0), address(token), address(token), amountIn, 10e18, routers, payloads);
+        vm.stopPrank();
+
+        // Caller got principal + profit back; executor netted to zero; approval fully consumed.
+        assertEq(token.balanceOf(funder), amountIn + profit, "caller receives principal + profit");
+        assertEq(token.balanceOf(address(executor)), 0, "executor holds nothing after returning proceeds");
+        assertEq(token.allowance(funder, address(executor)), 0, "principal approval fully consumed");
+    }
+
+    /// @dev The critical safety property: the executor's OWN pre-call capital B is
+    ///      provably retained — the flash-funded path forwards only (balanceAfter - B).
+    function testSC13_FlashFunded_PreservesExecutorOwnCapital() public {
+        uint256 B        = 500e18; // executor's own working capital
+        uint256 amountIn = 1_000e18;
+        uint256 profit   = 50e18;
+
+        token.mint(address(executor), B);
+
+        address funder = makeAddr("funder");
+        executor.grantRole(executor.EXECUTOR_ROLE(), funder);
+        token.mint(funder, amountIn);
+
+        (address[] memory routers, bytes[] memory payloads) = _approvedProfitRouter(profit);
+
+        vm.startPrank(funder);
+        token.approve(address(executor), amountIn);
+        executor.executeArbitrageFlashFunded(bytes32(0), address(token), address(token), amountIn, 10e18, routers, payloads);
+        vm.stopPrank();
+
+        assertEq(token.balanceOf(address(executor)), B, "executor's own capital B is untouched");
+        assertEq(token.balanceOf(funder), amountIn + profit, "caller still receives principal + profit");
+    }
+
+    function testSC13_FlashFunded_RevertsWithoutApproval() public {
+        uint256 amountIn = 1_000e18;
+        address funder = makeAddr("funder");
+        executor.grantRole(executor.EXECUTOR_ROLE(), funder);
+        token.mint(funder, amountIn); // funded but NOT approved
+
+        (address[] memory routers, bytes[] memory payloads) = _approvedProfitRouter(50e18);
+
+        vm.prank(funder);
+        vm.expectRevert(); // ERC20InsufficientAllowance on the safeTransferFrom pull
+        executor.executeArbitrageFlashFunded(bytes32(0), address(token), address(token), amountIn, 10e18, routers, payloads);
+    }
+
+    function testSC13_FlashFunded_UnprofitableRouteReverts_PrincipalRefunded() public {
+        uint256 amountIn = 1_000e18;
+        address funder = makeAddr("funder");
+        executor.grantRole(executor.EXECUTOR_ROLE(), funder);
+        token.mint(funder, amountIn);
+
+        MockZeroProfitRouter router = new MockZeroProfitRouter();
+        executor.setRouterApproval(address(router), true);
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
+
+        vm.startPrank(funder);
+        token.approve(address(executor), amountIn);
+        vm.expectRevert(ZeroGrossProfit.selector);
+        executor.executeArbitrageFlashFunded(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
+        vm.stopPrank();
+
+        // Atomic revert rolls back the pull: the caller keeps its principal, executor holds nothing.
+        assertEq(token.balanceOf(funder), amountIn, "principal refunded on revert");
+        assertEq(token.balanceOf(address(executor)), 0, "executor holds nothing after revert");
+    }
+
+    /// @dev Fail-closed: a fee-on-transfer tokenIn credits less than amountIn on the pull,
+    ///      which would break the capital-retention identity — so the guard reverts.
+    function testSC13_FlashFunded_FeeOnTransferTokenReverts() public {
+        MockFeeOnTransferERC20 feeToken = new MockFeeOnTransferERC20();
+        executor.setTokenApproval(address(feeToken), true);
+
+        uint256 amountIn = 1_000e18;
+        address funder = makeAddr("funder");
+        executor.grantRole(executor.EXECUTOR_ROLE(), funder);
+        feeToken.mint(funder, amountIn);
+
+        // Router array is well-formed but never reached — the pull guard reverts first.
+        address[] memory routers = new address[](1);
+        routers[0] = makeAddr("unreachableRouter");
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
+
+        vm.startPrank(funder);
+        feeToken.approve(address(executor), amountIn);
+        vm.expectRevert(FlashFundedPullMismatch.selector);
+        executor.executeArbitrageFlashFunded(bytes32(0), address(feeToken), address(feeToken), amountIn, 0, routers, payloads);
+        vm.stopPrank();
+    }
+
+    function testSC13_FlashFunded_OnlyExecutorRole() public {
+        uint256 amountIn = 1_000e18;
+        (address[] memory routers, bytes[] memory payloads) = _approvedProfitRouter(50e18);
+
+        vm.prank(stranger); // no EXECUTOR_ROLE
+        vm.expectRevert();
+        executor.executeArbitrageFlashFunded(bytes32(0), address(token), address(token), amountIn, 10e18, routers, payloads);
     }
 
     // -----------------------------------------------------------------------
