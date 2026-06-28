@@ -1,0 +1,49 @@
+name: Spec Drift Gate
+
+# FASE 4 Inc 2 — a minimal, deterministic guardrail that keeps apis/openapi.yaml
+# and apis/asyncapi.yaml reconciled with runtime truth. It does NOT re-inventory
+# the whole surface; it prevents the highest-value regressions FASE 4 proved were
+# real (leaked staging IP, wrong admin auth header, fictional raw-WS channels) and
+# checks document integrity. Intentionally avoids `npm ci` (the root lockfile is
+# regenerated at install time, not committed) and adds no repo dependencies.
+
+on:
+  pull_request:
+    paths:
+      - "apis/**"
+      - "scripts/check-spec-drift.js"
+      - "scripts/validate_specs.py"
+      - ".github/workflows/spec-drift-gate.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apis/**"
+      - "scripts/check-spec-drift.js"
+      - "scripts/validate_specs.py"
+      - ".github/workflows/spec-drift-gate.yml"
+
+jobs:
+  spec-drift:
+    name: Spec Drift Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Anti-regression drift assertions (pure Node, no deps)
+        run: node scripts/check-spec-drift.js
+
+      - name: Structural validation (pyyaml)
+        run: |
+          python -m pip install --quiet "pyyaml==6.0.2"
+          python scripts/validate_specs.py
+
+      - name: OpenAPI 3.1 deep lint (redocly, major-pinned)
+        run: npx --yes @redocly/cli@1 lint apis/openapi.yaml
