@@ -29,6 +29,7 @@ import { DexPath } from "@/components/DexPath";
 import { StrategyBadge } from "@/components/StrategyBadge";
 import { StatusPill } from "@/components/StatusPill";
 import { CrossChainSlot } from "@/components/CrossChainSlot";
+import { DegradedBanner } from "@/components/DegradedBanner";
 import {
   formatProfitUSD,
   formatPctOrDash,
@@ -337,6 +338,18 @@ export default function OpportunitiesClient({
             <p className="text-sm">Manual refresh failed: {errorMsg}</p>
           </div>
         </div>
+      )}
+
+      {/* R8 fail-honest: the server-rendered initial snapshot failed and the live
+          feed has not yet taken over — say so, rather than letting the empty
+          "scanning" state below imply a healthy first paint. Clears as soon as
+          the WebSocket connects (LIVE) or degrades to HTTP polling (POLLING). */}
+      {initialSnapshot.source === "server-fetch-failed" && feedStatus !== "LIVE" && feedStatus !== "POLLING" && (
+        <DegradedBanner
+          title="Initial server snapshot unavailable — waiting for the live feed"
+          reason="server-side fetch of /api/opportunities/live failed"
+          endpoint="GET /api/opportunities/live"
+        />
       )}
 
       {(feedStatus === 'LIVE' || feedStatus === 'POLLING' || feedStatus === 'CONNECTING') && opportunities.length === 0 && (
