@@ -53,16 +53,17 @@ jobs:
           forge install foundry-rs/forge-std@b090968353a209833d4a6f1383230477e96d8438 --no-git --no-commit
 
       - name: forge build (with sizes)
-        # BLOCKING: a build failure must fail CI. Scoped to src+test; the deploy
-        # scripts have separate pre-existing compile errors (view-mutability and a
-        # shadowed param in DeployMultichain/DeployCrucible) tracked as a follow-up.
-        run: forge build --sizes --skip 'script/**'
+        # BLOCKING: a build failure must fail CI. Compiles the FULL project including
+        # script/ — the deploy scripts now compile cleanly (their view-mutability,
+        # shadowed-param, console2 overload and stack-too-deep issues were fixed), so
+        # they are no longer quarantined behind --skip.
+        run: forge build --sizes
 
       - name: forge test (verbose)
         # BLOCKING: test failures now fail CI. Previously masked by `|| true`, which
         # let a stub DeterministicFactory test plus 33 red tests sit on main under a
-        # green check. Scoped to src+test; scripts excluded as in the build step.
-        run: forge test -vv --skip 'script/**'
+        # green check. Compiles + runs the full project (scripts included).
+        run: forge test -vv
         env:
           # forge test skips fork tests without RPC; mainnet/sepolia fork tests
           # are skipped automatically when these are absent.
@@ -111,13 +112,13 @@ jobs:
           forge install foundry-rs/forge-std@b090968353a209833d4a6f1383230477e96d8438 --no-git --no-commit
 
       - name: forge build
-        run: forge build --sizes --skip 'script/**'
+        run: forge build --sizes
 
       - name: forge fork test (testFork_*)
         # continue-on-error: RPC hiccups (rate-limit, latency spike) must not
         # block merge.  The job is informational; a hard block is reserved for
         # the unit-test job above.
         continue-on-error: true
-        run: forge test --fork-url $MAINNET_RPC_URL --match-test "testFork_" --skip 'script/**' -vvv
+        run: forge test --fork-url $MAINNET_RPC_URL --match-test "testFork_" -vvv
         env:
           MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}

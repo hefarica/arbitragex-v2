@@ -344,12 +344,14 @@ contract DeployCrucible is Script {
     // -------------------------------------------------------------------------
     // Logging final del deployment
     // -------------------------------------------------------------------------
-    function _logDeployment() internal view {
+    function _logDeployment() internal {
         console2.log("");
         console2.log("============================================================");
         console2.log("  CRUCIBLE DEPLOY COMPLETE");
         console2.log("============================================================");
-        console2.log("Chain           :", deployment.chainName, "(", deployment.chainId, ")");
+        console2.log(
+            string.concat("Chain           : ", deployment.chainName, " (", vm.toString(deployment.chainId), ")")
+        );
         console2.log("Gas Sponsor     :", deployment.gasSponsor);
         console2.log("Execution Signer:", deployment.executionSigner);
         console2.log("Cold Treasury   :", deployment.coldTreasury);
