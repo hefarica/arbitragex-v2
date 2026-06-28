@@ -26,8 +26,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub enum BuildError {
     #[error("unsupported strategy: {0:?}")]
     UnsupportedStrategy(StrategyKind),
-    #[error("chain {0} not supported in S5")]
-    UnsupportedChain(u64),
     #[error("live execution denied: {0}")]
     LiveExecDenied(String),
     #[error("dex '{0}' not in catalog")]
@@ -67,11 +65,11 @@ pub async fn build_and_sign(
     target_block_offset: u64,
 ) -> Result<SignedBundle, BuildError> {
     // M1 (2026-06-28): physical broadcast barrier — default-deny + testnet-only.
-    // Was `if opp.chain_id != 1 { UnsupportedChain }` — i.e. MAINNET-ONLY, the
-    // inverse of safe. Now live execution must be explicitly enabled AND target an
-    // allowlisted testnet; mainnet (chain_id=1) is physically refused. Re-read per
-    // call (un-bypassable) so a paper_mode flip at runtime still cannot reach
-    // mainnet. See live_exec_policy.
+    // Was a hard `chain_id != 1` reject — i.e. MAINNET-ONLY, the inverse of safe.
+    // Now live execution must be explicitly enabled AND target an allowlisted
+    // testnet; mainnet (chain_id=1) is physically refused. Re-read per call
+    // (un-bypassable) so a paper_mode flip at runtime still cannot reach mainnet.
+    // See live_exec_policy.
     crate::live_exec_policy::LiveExecPolicy::from_env()
         .assert_broadcast_allowed(opp.chain_id)
         .map_err(|e| BuildError::LiveExecDenied(e.to_string()))?;
