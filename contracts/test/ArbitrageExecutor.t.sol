@@ -1033,13 +1033,15 @@ contract ArbitrageExecutorTest is Test {
     // =========================================================================
 
     // -----------------------------------------------------------------------
-    // testInit_RevertWhen_Reinitialized
+    // testInit_Reinit_GrantsAttackerNoRoles
     //
-    // Anti-takeover: the live proxy was already initialized in setUp(); a second
-    // initialize() must revert (OZ InvalidInitialization) so an attacker cannot
-    // re-run it to re-grant ADMIN_ROLE/UPGRADER_ROLE to themselves.
+    // Complements #200's testInit_DoubleInitializeReverts (which asserts only the
+    // revert) by proving the SECURITY property: a failed re-init of the live proxy
+    // leaks NO privilege — the caller gains neither ADMIN_ROLE nor UPGRADER_ROLE.
+    // (The bare-impl lock is already covered by #200's
+    // testInit_BareImplementationIsLocked, so it is intentionally not duplicated here.)
     // -----------------------------------------------------------------------
-    function testInit_RevertWhen_Reinitialized() public {
+    function testInit_Reinit_GrantsAttackerNoRoles() public {
         address attacker = makeAddr("attacker");
         vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("InvalidInitialization()"))));
         executor.initialize(attacker);
@@ -1047,19 +1049,6 @@ contract ArbitrageExecutorTest is Test {
         // The failed re-init must not have granted the attacker any privilege.
         assertFalse(executor.hasRole(executor.ADMIN_ROLE(), attacker), "attacker must not hold ADMIN_ROLE");
         assertFalse(executor.hasRole(executor.UPGRADER_ROLE(), attacker), "attacker must not hold UPGRADER_ROLE");
-    }
-
-    // -----------------------------------------------------------------------
-    // testInit_ImplementationCannotBeInitialized
-    //
-    // The constructor calls _disableInitializers(), so the raw logic contract
-    // (not behind the proxy) can never be initialized + seized via the
-    // uninitialized-implementation vector.
-    // -----------------------------------------------------------------------
-    function testInit_ImplementationCannotBeInitialized() public {
-        ArbitrageExecutor impl = new ArbitrageExecutor();
-        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("InvalidInitialization()"))));
-        impl.initialize(address(this));
     }
 
     // -----------------------------------------------------------------------
