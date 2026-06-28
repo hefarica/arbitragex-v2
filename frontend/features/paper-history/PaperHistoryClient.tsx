@@ -10,6 +10,7 @@
  * Ghost Protocol: capital_exposure_usd = 0.0000000000 (never displayed here).
  * Zero-Mocks: all data from /api/paper/history; no fabricated defaults.
  */
+import * as React from "react";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { FlaskConicalIcon, TrendingUpIcon } from "lucide-react";
@@ -137,7 +138,7 @@ interface Props {
   initialData: PaperSnapshot;
 }
 
-export function PaperHistoryClient({ initialData }: Props) {
+export function PaperHistoryClient({ initialData }: Props): React.ReactElement {
   const [data, setData] = useState<PaperSnapshot>(initialData);
   const [degradedReason, setDegradedReason] = useState<string | null>(initialData.initialError ?? null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
