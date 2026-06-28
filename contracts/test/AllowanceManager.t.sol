@@ -285,6 +285,22 @@ contract AllowanceManagerTest is Test {
     }
 
     // -----------------------------------------------------------------------
+    // Malicious init: the proxy initializes exactly once, and the bare
+    // implementation is permanently locked by the constructor's
+    // _disableInitializers(). Both must revert on a second / direct initialize.
+    // -----------------------------------------------------------------------
+    function testInit_DoubleInitializeReverts() public {
+        vm.expectRevert(); // Initializable: InvalidInitialization
+        manager.initialize(admin);
+    }
+
+    function testInit_BareImplementationIsLocked() public {
+        AllowanceManager impl = new AllowanceManager();
+        vm.expectRevert(); // _disableInitializers() in the constructor locks the impl
+        impl.initialize(admin);
+    }
+
+    // -----------------------------------------------------------------------
     // SC-08: testUpgrade_OnlyUpgrader_CanUpgrade
     // A non-UPGRADER_ROLE address must not be able to upgrade the proxy.
     // -----------------------------------------------------------------------

@@ -318,6 +318,76 @@ contract FlashLoanExecutorTest is Test {
     }
 
     // -----------------------------------------------------------------------
+    // Malicious init: the proxy initializes exactly once, and the bare
+    // implementation is permanently locked by the constructor's
+    // _disableInitializers(). Both must revert on a second / direct initialize.
+    // -----------------------------------------------------------------------
+    function testInit_DoubleInitializeReverts() public {
+        vm.expectRevert(); // Initializable: InvalidInitialization
+        flashExec.initialize(admin, address(pool), address(arbExec));
+    }
+
+    function testInit_BareImplementationIsLocked() public {
+        FlashLoanExecutor impl = new FlashLoanExecutor();
+        vm.expectRevert(); // _disableInitializers() in the constructor locks the impl
+        impl.initialize(admin, address(pool), address(arbExec));
+    }
+
+    // -----------------------------------------------------------------------
+    // receiveFlashLoan array edges. The callback reads tokens[0]/amounts[0]/
+    // feeAmounts[0] after authenticating the Vault. Empty or shorter arrays
+    // therefore revert on out-of-bounds access; a multi-element array is silently
+    // TRUNCATED to element 0 (length is not validated — a length==1 guard is a
+    // deferred src hardening, documented here so the truncation is not mistaken
+    // for multi-asset support).
+    // -----------------------------------------------------------------------
+    function testReceiveFlashLoan_EmptyArraysRevert() public {
+        flashExec.setFlashLoanProvider(address(mockVault)); // satisfy Layer-3 guard
+        IERC20[] memory tokens = new IERC20[](0);
+        uint256[] memory amounts = new uint256[](0);
+        uint256[] memory feeAmounts = new uint256[](0);
+        vm.prank(address(mockVault));
+        vm.expectRevert(); // out-of-bounds: tokens[0] on an empty array
+        flashExec.receiveFlashLoan(tokens, amounts, feeAmounts, "");
+    }
+
+    function testReceiveFlashLoan_ShorterAmountsArrayReverts() public {
+        flashExec.setFlashLoanProvider(address(mockVault));
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(token));
+        uint256[] memory amounts = new uint256[](0); // mismatched length
+        uint256[] memory feeAmounts = new uint256[](1);
+        feeAmounts[0] = 0;
+        vm.prank(address(mockVault));
+        vm.expectRevert(); // out-of-bounds: amounts[0] on an empty array
+        flashExec.receiveFlashLoan(tokens, amounts, feeAmounts, "");
+    }
+
+    function testReceiveFlashLoan_MultiElementArrayProcessesOnlyFirst() public {
+        flashExec.setFlashLoanProvider(address(mockVault));
+        uint256 first = 1_000e18;
+        uint256 second = 2_000e18;
+
+        IERC20[] memory tokens = new IERC20[](2);
+        tokens[0] = IERC20(address(token));
+        tokens[1] = IERC20(address(token));
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = first;
+        amounts[1] = second;
+        uint256[] memory feeAmounts = new uint256[](2);
+        feeAmounts[0] = 0;
+        feeAmounts[1] = 0;
+
+        uint256 vaultBefore = token.balanceOf(address(mockVault));
+        vm.prank(address(mockVault));
+        flashExec.receiveFlashLoan(tokens, amounts, feeAmounts, "");
+
+        // Only element 0 is processed: the Vault is repaid `first`, never first+second.
+        assertTrue(arbExec.wasCalled(), "arbitrageExecutor invoked once");
+        assertEq(token.balanceOf(address(mockVault)) - vaultBefore, first, "only amounts[0] repaid (rest truncated)");
+    }
+
+    // -----------------------------------------------------------------------
     // SC-08: testUpgrade_OnlyUpgrader_CanUpgrade
     // A non-UPGRADER_ROLE address must not be able to upgrade the proxy.
     // -----------------------------------------------------------------------
