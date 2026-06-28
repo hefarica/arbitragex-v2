@@ -342,7 +342,10 @@ contract ArbitrageExecutorTest is Test {
 
         // tokenOut represents the intermediate token (e.g. ETH in USDC→ETH→USDC)
         MockERC20 tokenOut = new MockERC20();
-        // tokenOut approval not needed — it's only passed for observability metadata
+        // M8 (audit 2026-05-10): when tokenOut != tokenIn the intermediate token must
+        // be in approvedTokens, otherwise executeArbitrage reverts TokenNotApproved
+        // before any router dispatch. (The original comment here predated M8.)
+        executor.setTokenApproval(address(tokenOut), true);
 
         token.mint(address(executor), amountIn);
 

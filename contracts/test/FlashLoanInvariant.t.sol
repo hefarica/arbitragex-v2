@@ -346,9 +346,12 @@ contract FlashLoanInvariantTest is Test {
         proxy = new ERC1967Proxy(address(impl), initData);
         flashExec = FlashLoanExecutor(payable(address(proxy)));
 
-        // Grant roles
+        // Grant roles. NB: hoist EXECUTOR_ROLE() out of the call — Foundry binds
+        // vm.prank to the next external call, which would otherwise be EXECUTOR_ROLE(),
+        // leaving grantRole to run as the test contract (no admin role).
+        bytes32 execRoleId = flashExec.EXECUTOR_ROLE();
         vm.prank(admin);
-        flashExec.grantRole(flashExec.EXECUTOR_ROLE(), execRole);
+        flashExec.grantRole(execRoleId, execRole);
 
         // Configurar Balancer Vault como el zeroFeeProvider para que
         // receiveFlashLoan acepte callbacks desde el provider
@@ -358,6 +361,13 @@ contract FlashLoanInvariantTest is Test {
         // Configurar provider zero-fee
         vm.prank(admin);
         flashExec.setFlashLoanProvider(address(zeroFeeProvider));
+
+        // Exclude the shared mock token from the invariant fuzz target set. Without
+        // this, Foundry fuzzes FLMockERC20.mint directly and drives totalSupply to
+        // ~uint256.max, making the self-contained token.mint(...) inside each
+        // invariant_* overflow (panic 0x11). Targeting the executor proxy instead is
+        // not viable — it exposes only fallback(), yielding "No contracts to fuzz".
+        excludeContract(address(token));
     }
 
     // =========================================================================
