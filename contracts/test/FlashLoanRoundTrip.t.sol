@@ -289,6 +289,56 @@ contract FlashLoanRoundTripTest is Test {
         assertEq(token.balanceOf(address(executor)), 0, "executor netted to zero");
         assertEq(token.balanceOf(address(fl)), profit - premium, "borrower keeps profit - premium");
     }
+
+    // Hygiene: when the encoded route deploys LESS than the full borrowed amount, the
+    // FlashLoanExecutor->ArbitrageExecutor allowance granted in the callback is only
+    // partially consumed — and must be cleared to zero before the callback returns.
+    function testRoundTrip_ResidualExecutorAllowanceCleared() public {
+        uint256 amount   = 10_000e18;
+        uint256 amountIn = 6_000e18; // route deploys less than the full loan
+        uint256 profit   = 100e18;
+
+        (address[] memory routers, bytes[] memory payloads) = _wireProfitRouter(profit);
+        bytes memory params = _flashParams(amountIn, 1e18, routers, payloads); // amountIn < amount
+
+        vm.prank(executorRole);
+        flashExec.requestFlashLoan(address(token), amount, params);
+
+        // The callback granted `amount` but the executor pulled only `amountIn`; the
+        // residual (amount - amountIn) allowance is now cleared.
+        assertEq(token.allowance(address(flashExec), address(executor)), 0, "residual executor allowance cleared");
+        assertEq(token.balanceOf(address(provider)), LIQUIDITY, "provider repaid");
+    }
+
+    // Fail-closed: if the round trip does not leave enough to repay principal + premium,
+    // the callback reverts with the named FL_RepaymentShortfall (not an opaque pull
+    // failure), and the whole flash loan rolls back atomically.
+    function testRoundTrip_Aave_RepaymentShortfall_RevertsNamed() public {
+        uint256 amount = 10_000e18;
+        uint256 premiumBps = 50;                       // 0.5%
+        uint256 premium = (amount * premiumBps) / 10_000; // 50e18
+        uint256 profit = 10e18;                        // LESS than premium -> shortfall
+
+        RTAavePool aave = new RTAavePool(premiumBps);
+        token.mint(address(aave), LIQUIDITY);
+
+        FlashLoanExecutor flImpl = new FlashLoanExecutor();
+        FlashLoanExecutor fl = FlashLoanExecutor(address(new ERC1967Proxy(
+            address(flImpl),
+            abi.encodeWithSelector(FlashLoanExecutor.initialize.selector, admin, address(aave), address(executor))
+        )));
+        executor.grantRole(executor.EXECUTOR_ROLE(), address(fl));
+        fl.grantRole(fl.EXECUTOR_ROLE(), executorRole);
+
+        (address[] memory routers, bytes[] memory payloads) = _wireProfitRouter(profit);
+        bytes memory params = _flashParams(amount, 0, routers, payloads); // minProfit=0 so the route itself succeeds
+
+        vm.prank(executorRole);
+        vm.expectRevert(FL_RepaymentShortfall.selector);
+        fl.requestFlashLoan(address(token), amount, params);
+
+        assertEq(token.balanceOf(address(aave)), LIQUIDITY, "aave liquidity intact after shortfall revert");
+    }
 }
 
 // =============================================================================
