@@ -1,130 +1,240 @@
 asyncapi: '2.6.0'
 info:
-  title: arbitragex-v2 WebSocket API
-  version: 0.1.0
+  title: ArbitrageX v2 — Real-time API (Socket.IO)
+  version: 0.2.0
   description: |
-    Real-time WebSocket channels for ArbitrageX V2.
-    Delivers opportunity streams, execution updates, and system events.
+    Real-time operator/observer streams for ArbitrageX V2.
+
+    SOURCE OF TRUTH (FASE 4): reconciled against
+    `backend/api-server/src/websocket.ts` (and its tests), not aspiration.
+
+    Transport reality:
+      - The transport is **Socket.IO** (engine.io over WebSocket), mounted on the
+        SAME HTTP server/process as the REST api-server — there is NO separate
+        raw-`ws` server on `:8081` and NO `/ws/*` URL channels.
+      - There is a single **default `/` namespace** (no `io.of(...)` custom
+        namespaces). Segmentation is by **rooms**, which a client joins by
+        emitting a `subscribe:<room>` control message.
+      - **Every connection is admin-token gated** at the Socket.IO handshake
+        (`io.use`): a socket without a valid token is rejected before `connection`.
+
+    Modeling note: AsyncAPI 2.6 has no `/ws/*` addresses for this system, so each
+    channel key below is the **Socket.IO event name**. `publish` operations are
+    control messages the CLIENT sends (client → server); `subscribe` operations
+    are data events the SERVER emits to a room (server → client).
+
+    There is intentionally NO execution stream and NO system/guard/killswitch
+    stream over WebSocket — that data is HTTP-only (see openapi.yaml).
   contact:
     name: ArbitrageX SRE
     email: sre@arbitragex.io
 servers:
-  local:
-    url: ws://localhost:8081
+  default:
+    url: /
     protocol: ws
-    description: Local development WebSocket
-  staging:
-    url: ws://195.201.235.70:8081
-    protocol: ws
-    description: Staging WebSocket
-  production:
-    url: wss://ws.arbitragex-v2.io
-    protocol: wss
-    description: Production WebSocket (TLS)
+    description: >
+      Socket.IO endpoint co-located with the api-server HTTP server (default
+      '/' namespace). Transport is Socket.IO over WebSocket; the concrete public
+      origin is environment-specific and not committed.
+    security:
+      - AdminToken: []
+defaultContentType: application/json
 channels:
-  opportunities:
-    address: /ws/opportunities
-    description: Real-time arbitrage opportunity feed
-    parameters:
-      chain:
-        description: Filter by chain ID (optional)
-        schema:
-          type: string
-    messages:
-      opportunity:
-        name: OpportunityEvent
-        contentType: application/json
-        payload:
-          type: object
-          required:
-            - event
-            - data
-            - ts
-          properties:
-            event:
-              type: string
-              enum: [opportunity.discovered, opportunity.expired, opportunity.updated]
-            data:
-              type: object
-              properties:
-                id: { type: string, format: uuid }
-                chain: { type: string }
-                tokenIn: { type: string }
-                tokenOut: { type: string }
-                profitBps: { type: integer }
-                dexA: { type: string }
-                dexB: { type: string }
-            ts:
-              type: string
-              format: date-time
-  executions:
-    address: /ws/executions
-    description: Trade execution lifecycle events
-    messages:
-      execution:
-        name: ExecutionEvent
-        contentType: application/json
-        payload:
-          type: object
-          required:
-            - event
-            - executionId
-            - ts
-          properties:
-            event:
-              type: string
-              enum: [execution.pending, execution.submitted, execution.confirmed, execution.failed, execution.reverted]
-            executionId:
-              type: string
-              format: uuid
-            txHash:
-              type: string
-            chain:
-              type: string
-            gasUsed:
-              type: string
-            effectiveProfitBps:
-              type: integer
-            revertReason:
-              type: string
-            ts:
-              type: string
-              format: date-time
-  system:
-    address: /ws/system
-    description: System-level events and guard-state changes
-    messages:
-      system:
-        name: SystemEvent
-        contentType: application/json
-        payload:
-          type: object
-          required:
-            - event
-            - ts
-          properties:
-            event:
-              type: string
-              enum:
-                - system.guard.opened
-                - system.guard.closed
-                - system.guard.half_opened
-                - system.killswitch.activated
-                - system.killswitch.deactivated
-                - system.config.changed
-                - system.heartbeat
-            reason:
-              type: string
-            triggeredBy:
-              type: string
-            configVersion:
-              type: string
-            ts:
-              type: string
-              format: date-time
+  # ───────────────────────── Client → server control messages ─────────────────────────
+  'subscribe:opportunities':
+    description: Control message — join the `opportunities` room (fed by PG LISTEN opportunities_channel). No payload.
+    publish:
+      operationId: joinOpportunities
+      summary: Join the opportunities room
+      message:
+        $ref: '#/components/messages/EmptyControl'
+  'subscribe:convergence':
+    description: Control message — join the `convergence` room (SED convergence signals). No payload.
+    publish:
+      operationId: joinConvergence
+      summary: Join the convergence room
+      message:
+        $ref: '#/components/messages/EmptyControl'
+  'subscribe:telemetry':
+    description: Control message — join the `telemetry` room (cartridge telemetry, Redis arbx:cartridge:telemetry). No payload.
+    publish:
+      operationId: joinTelemetry
+      summary: Join the cartridge-telemetry room
+      message:
+        $ref: '#/components/messages/EmptyControl'
+  'subscribe:route_discovery':
+    description: Control message — join the `route_discovery` room (Redis arbx:route_discovery:telemetry, observe-only). No payload.
+    publish:
+      operationId: joinRouteDiscovery
+      summary: Join the route-discovery room
+      message:
+        $ref: '#/components/messages/EmptyControl'
+  'subscribe:runtime_ack':
+    description: >
+      Control message — join the admin-gated `runtime_ack` room. Defense-in-depth:
+      the handler re-checks the per-socket capability flag set at the handshake;
+      if absent it emits `error {code:unauthorized}` instead of joining.
+    publish:
+      operationId: joinRuntimeAck
+      summary: Join the runtime_ack room (admin only)
+      message:
+        $ref: '#/components/messages/EmptyControl'
+  'subscribe:metrics':
+    description: >
+      Control message — join the `metrics` room. NOTE: this room is currently
+      DORMANT — clients may join, but the server emits nothing to it.
+    publish:
+      operationId: joinMetrics
+      summary: Join the (dormant) metrics room
+      message:
+        $ref: '#/components/messages/EmptyControl'
+
+  # ───────────────────────── Server → client data events ─────────────────────────
+  'new_opportunity':
+    description: Server emits to room `opportunities`. Fed by PostgreSQL NOTIFY on opportunities_channel.
+    subscribe:
+      operationId: onNewOpportunity
+      summary: Receive a newly detected opportunity
+      message:
+        $ref: '#/components/messages/NewOpportunity'
+  'convergence_signal':
+    description: Server emits to room `convergence`. Fed by Redis arbx:signals:convergence.
+    subscribe:
+      operationId: onConvergenceSignal
+      summary: Receive an SED convergence signal
+      message:
+        $ref: '#/components/messages/ConvergenceSignal'
+  'telemetry':
+    description: Server emits to room `telemetry`. Cartridge telemetry (loose, cartridge-authored shape).
+    subscribe:
+      operationId: onTelemetry
+      summary: Receive cartridge telemetry
+      message:
+        $ref: '#/components/messages/CartridgeTelemetry'
+  'route_discovery_telemetry':
+    description: >
+      Server emits to room `route_discovery`. Five event types share an `event`
+      discriminator (tick | route_candidate | strategy_applicability | rejected |
+      route_intent.emitted). Observe-only — never triggers execution.
+    subscribe:
+      operationId: onRouteDiscoveryTelemetry
+      summary: Receive route-discovery telemetry
+      message:
+        $ref: '#/components/messages/RouteDiscoveryTelemetry'
+  'runtime_ack':
+    description: >
+      Server emits to the admin-gated room `runtime_ack` after a first-time
+      POST /api/system/runtime-ack insert. Deduped inserts do NOT re-broadcast.
+    subscribe:
+      operationId: onRuntimeAck
+      summary: Receive a runtime acknowledgement
+      message:
+        $ref: '#/components/messages/RuntimeAck'
+  'error':
+    description: Server emits to a single socket when a gated subscribe is refused.
+    subscribe:
+      operationId: onError
+      summary: Receive a structured socket error
+      message:
+        $ref: '#/components/messages/SocketError'
 components:
   securitySchemes:
     AdminToken:
-      type: apiKey
+      type: httpApiKey
       in: header
-      name: x-admin-token
+      name: x-arbx-admin-token
+      description: >
+        Required at the Socket.IO handshake (io.use gate). May be supplied as the
+        Socket.IO `auth.token`, a `token` query parameter, or the
+        `X-ArbX-Admin-Token` header. A missing/invalid token rejects the
+        connection. The `runtime_ack` room is additionally gated per-socket.
+  messages:
+    EmptyControl:
+      name: control
+      title: Empty control message
+      summary: A subscribe:* control message carries no payload.
+      contentType: application/json
+      payload:
+        type: 'null'
+    NewOpportunity:
+      name: new_opportunity
+      title: New opportunity
+      contentType: application/json
+      payload:
+        type: object
+        description: >
+          Parsed JSON from the opportunities PG NOTIFY. Not strictly schematized
+          at the WS layer (typed `any` in code); mirrors an opportunities row.
+        additionalProperties: true
+    ConvergenceSignal:
+      name: convergence_signal
+      title: SED convergence signal
+      contentType: application/json
+      payload:
+        type: object
+        additionalProperties: true
+        properties:
+          entropy_snapshot: { type: object, additionalProperties: true }
+          pipeline_latency_ms: { type: number }
+          opportunities_detected: { type: integer }
+          simulations_run: { type: integer }
+          simulations_success: { type: integer }
+          timestamp: { type: string }
+          schema_version: { type: [string, integer] }
+    CartridgeTelemetry:
+      name: telemetry
+      title: Cartridge telemetry
+      contentType: application/json
+      payload:
+        type: object
+        description: >
+          Loose, cartridge-authored telemetry (LOOSE validation in code — only a
+          JSON object is required; authors add arbitrary fields).
+        additionalProperties: true
+    RouteDiscoveryTelemetry:
+      name: route_discovery_telemetry
+      title: Route-discovery telemetry
+      contentType: application/json
+      payload:
+        type: object
+        required: [event]
+        additionalProperties: true
+        properties:
+          event:
+            type: string
+            enum: [tick, route_candidate, strategy_applicability, rejected, route_intent.emitted]
+    RuntimeAck:
+      name: runtime_ack
+      title: Runtime acknowledgement broadcast
+      contentType: application/json
+      payload:
+        type: object
+        description: >
+          RuntimeAckBroadcast. `layer` and `status` are constrained enums
+          (8 layers / 6 statuses) validated by isValidRuntimeAck; exact members
+          are defined by the RuntimeAckBroadcast type and not enumerated here to
+          avoid drift.
+        required: [event_id, resource, layer, status]
+        additionalProperties: true
+        properties:
+          event_id: { type: string }
+          resource: { type: string }
+          chain_id: { type: integer }
+          idempotency_key: { type: string }
+          config_hash_before: { type: [string, "null"] }
+          config_hash_after: { type: [string, "null"] }
+          worker_id: { type: string }
+          layer: { type: string, description: One of 8 layers (constrained enum). }
+          status: { type: string, description: One of 6 statuses (constrained enum). }
+          latency_ms: { type: number }
+          error: { type: [string, "null"] }
+    SocketError:
+      name: error
+      title: Socket error
+      contentType: application/json
+      payload:
+        type: object
+        required: [code]
+        properties:
+          code: { type: string, example: unauthorized }
+          room: { type: string, example: runtime_ack }
