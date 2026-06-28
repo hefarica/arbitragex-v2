@@ -7,9 +7,9 @@ on:
   # the filtered paths (workflow-only, Rust-only, docs-only PRs) → GitHub reports it
   # "Expected — Waiting for status" forever → the PR is permanently un-mergeable in
   # strict mode. Same deadlock class already fixed for dockerfile-audit (f949450).
-  # The typecheck/test steps are advisory (continue-on-error) until M4, so always
-  # running is cheap and never spuriously blocks. DO NOT re-add a `paths:` filter
-  # while this job is a required check.
+  # The typecheck/test steps are now BLOCKING (FASE 1, omega/audit-fixes-20260628):
+  # both are green on main, so always running is correct and never spuriously
+  # blocks. DO NOT re-add a `paths:` filter while this job is a required check.
   push:
     branches: [main]
   pull_request:
@@ -35,10 +35,16 @@ jobs:
           cache: npm
 
       - name: Install all workspace dependencies
-        # Single npm ci at root resolves all workspaces:
-        #   shared-ts, backend/api-server, backend/selector-api,
-        #   edge/worker, edge/dev-local, frontend
-        run: npm install
+        # Single root install resolves all workspaces (shared-ts, api-server,
+        # selector-api, edge/*, frontend). `rm -f package-lock.json` first is the
+        # repo's established workaround for the npm optional-deps bug
+        # (https://github.com/npm/cli/issues/4828): with a cross-platform
+        # package-lock present, npm skips the platform-native rollup binary
+        # (@rollup/rollup-linux-x64-gnu) and vitest crashes "Cannot find module".
+        # ci.yml + frontend-build.yml already use this; matched here so the
+        # now-BLOCKING test step actually runs (it was failing under the old
+        # `npm install`, silently masked by the removed continue-on-error).
+        run: rm -f package-lock.json && npm install
 
       - name: Build @arbx/shared
         # M2 Capa1 Fase 7 — order fix. Dependent workspaces
@@ -51,25 +57,20 @@ jobs:
         run: npm run -w @arbx/shared build
 
       - name: Typecheck all workspaces
-        # M2 Capa1 Fase 7 (P1-5) part 1: surfacing-only.
-        # Before M2 this step was effectively masked: every workspace
-        # depending on @arbx/shared failed with "Cannot find module
-        # @arbx/shared" before reaching the real type errors. The order
-        # fix above stops that mask; the step now reports 5 real type
-        # errors in @arbx/api-server (registry-engine.ts, admin-promote-
-        # mainnet.ts, operator.ts). Those belong to Capa 3 (Backend) and
-        # are tracked for M4. Hard gate flip happens in M4 once cleared.
-        # NEVER add continue-on-error to typescript.yml's TEST step without
-        # also documenting the M4 dependency.
+        # M4 hard-gate flip (FASE 1, omega/audit-fixes-20260628). The 5
+        # pre-existing @arbx/api-server type errors (registry-engine.ts,
+        # admin-promote-mainnet.ts, operator.ts) are CLEARED on main —
+        # verified `npm run typecheck --workspaces --if-present` exits 0 across
+        # all 6 workspaces (shared, selector-api, api-server, edge/*, frontend).
+        # The order-fix above (build @arbx/shared) is what makes this real.
+        # This is now a BLOCKING gate: typecheck failures fail the required check.
         run: npm run typecheck --workspaces --if-present
-        continue-on-error: true
 
       - name: Unit tests (workspaces)
         # Vitest tests for shared-ts, api-server, selector-api, edge/*, frontend.
-        # M2 Capa1 Fase 7 (P1-5) part 2: tests stay advisory until M4 (Capa 3
-        # Backend) clears the 5 pre-existing api-server type errors that the
-        # order-fix above just stopped masking. Once typecheck is green,
-        # remove `continue-on-error` here to make tests a hard gate too.
-        # Tracking: M4 spec Capa 3 — clear @arbx/api-server tsc errors.
+        # M4 hard-gate flip (FASE 1): typecheck is green, so tests are now a
+        # BLOCKING gate too. Verified `npm test --workspaces --if-present` exits 0
+        # — 671 tests pass (shared 32, selector-api 51, api-server 320,
+        # edge-dev-local 24, frontend 244; edge-worker has none). No live services
+        # needed (the api-server ioredis ETIMEDOUT is a non-fatal no-Redis warning).
         run: npm test --workspaces --if-present
-        continue-on-error: true
