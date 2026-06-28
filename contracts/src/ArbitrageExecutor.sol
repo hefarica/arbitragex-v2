@@ -243,15 +243,24 @@ contract ArbitrageExecutor is
     ///      least amountIn) -> run the same gated route as executeArbitrage -> transfer
     ///      `amountIn + profit` back to msg.sender so it can repay the loan and keep the
     ///      net. This contract forwards ONLY what the call added: the amount returned
-    ///      equals (balanceAfter - preCallBalance) by construction, so this contract's
-    ///      own working capital B is provably retained — a compromised EXECUTOR_ROLE key
-    ///      cannot drain B through this path. The same SC-12 spend cap, A5 router/selector
-    ///      allowlist, net-profit gate, pause, and reentrancy guard apply.
+    ///      equals (balanceAfter - preCallBalance) by construction, so this contract's own
+    ///      working capital B (in tokenIn) is provably retained. Retention is enforced by
+    ///      the net-profit gate (ZeroGrossProfit/minProfit) plus the exact `amountIn +
+    ///      profit` return — NOT by the per-hop spend cap, which authorizes up to
+    ///      N*amountIn of gross intra-route tokenIn outflow that is recovered-or-reverted.
+    ///      A compromised EXECUTOR_ROLE key therefore cannot drain B here. The identity is
+    ///      tokenIn-scoped: any OTHER token this contract happens to hold is protected only
+    ///      by the approvedRouters/approvedSelectors allowlist and the absence of a standing
+    ///      allowance, not by this math. The same A5 allowlist, pause, and reentrancy guard apply.
     ///
     ///      Caller requirements: msg.sender holds EXECUTOR_ROLE and has approved >=
     ///      amountIn of tokenIn to this contract (FlashLoanExecutor already does the
-    ///      forceApprove). minProfit SHOULD be >= the flash-loan premium so an
-    ///      unprofitable route reverts before the caller attempts repayment.
+    ///      forceApprove). This contract is LOAN-AGNOSTIC — it never sees the flash-loan
+    ///      premium; covering it is the CALLER's responsibility, so minProfit SHOULD be set
+    ///      >= premium. If it is not, this contract still cannot lose money (B is retained);
+    ///      the provider's own atomic repayment revert is the final backstop. Protection of
+    ///      the return-leg transfer against pausable/blocklist tokens is EVM atomicity, not
+    ///      the pull-side FlashFundedPullMismatch guard.
     /// @param routeHash  Opaque route identifier for off-chain correlation (event only).
     /// @param tokenIn    Input/output token of the circular route; pulled from msg.sender.
     /// @param tokenOut   Intermediate token (== tokenIn for simple circular arb).

@@ -214,6 +214,13 @@ contract DeployMainnet is Script {
         {
             // --- ArbitrageExecutor ---
             ArbitrageExecutor ae = ArbitrageExecutor(payable(address(proxyAE)));
+            // SC-13 (flash-loan fund-handoff): the flash path calls
+            // ArbitrageExecutor.executeArbitrageFlashFunded (onlyExecutor) with
+            // FlashLoanExecutor as msg.sender, so the wrapper itself MUST hold
+            // EXECUTOR_ROLE. Grant it now, while the deployer still holds
+            // DEFAULT_ADMIN_ROLE — after the atomic handoff just below, this grant
+            // could only be made via a multisig + 24h-timelock action.
+            ae.grantRole(ae.EXECUTOR_ROLE(), address(proxyFL));
             ae.grantRole(ae.DEFAULT_ADMIN_ROLE(), timelockProxy);
             ae.revokeRole(ae.DEFAULT_ADMIN_ROLE(), deployer);
 
@@ -253,6 +260,9 @@ contract DeployMainnet is Script {
         console2.log("       ArbitrageExecutor.grantRole(EXECUTOR_ROLE, <signer>)");
         console2.log("[ ] 3. Grant EXECUTOR_ROLE on FlashLoanExecutor to off-chain signer:");
         console2.log("       FlashLoanExecutor.grantRole(EXECUTOR_ROLE, <signer>)");
+        console2.log("[x] 3b.(SC-13, DONE IN-SCRIPT) FlashLoanExecutor proxy holds EXECUTOR_ROLE on");
+        console2.log("       ArbitrageExecutor (required by executeArbitrageFlashFunded). Granted");
+        console2.log("       atomically pre-handoff; any change now needs multisig + 24h timelock.");
         console2.log("[ ] 4. Approve tokenIn tokens:");
         console2.log("       ArbitrageExecutor.setTokenApproval(<WETH|USDC|...>, true)");
         console2.log("[ ] 5. Approve routers:");

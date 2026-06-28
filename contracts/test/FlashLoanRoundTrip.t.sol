@@ -79,6 +79,25 @@ contract RTBalancerProvider is IFlashLoanProvider {
     function maxFlashLoan(address) external pure override returns (uint256) { return type(uint256).max; }
 }
 
+/// @dev Aave-V3-style pool that charges a premium (e.g. 0.05% = 5 bps). Disburses the
+///      loan, invokes executeOperation, then PULLS amount+premium back (the receiver
+///      forceApproves it). Exercises the legacy Aave path with a non-zero premium —
+///      proving the flash-funded round trip leaves the borrower able to repay principal
+///      + premium and keep profit - premium.
+contract RTAavePool {
+    uint256 public immutable premiumBps;
+    constructor(uint256 _premiumBps) { premiumBps = _premiumBps; }
+
+    function flashLoanSimple(address receiver, address asset, uint256 amount, bytes calldata params, uint16) external {
+        uint256 premium = (amount * premiumBps) / 10_000;
+        uint256 balBefore = IERC20(asset).balanceOf(address(this));
+        IERC20(asset).transfer(receiver, amount); // disburse
+        FlashLoanExecutor(receiver).executeOperation(asset, amount, premium, receiver, params);
+        IERC20(asset).transferFrom(receiver, address(this), amount + premium); // collect repayment
+        require(IERC20(asset).balanceOf(address(this)) == balBefore + premium, "aave: not repaid with premium");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -218,6 +237,57 @@ contract FlashLoanRoundTripTest is Test {
         flashExec.requestFlashLoan(address(token), amount, params);
 
         assertEq(token.balanceOf(address(provider)), LIQUIDITY, "provider intact");
+    }
+
+    // M-1 regression guard (from adversarial review): the SC-13 flash path REQUIRES the
+    // FlashLoanExecutor proxy to hold EXECUTOR_ROLE on the executor. If the deploy omits
+    // that grant, the flash loan must revert atomically (NotExecutor -> bubbled), not
+    // silently misbehave. setUp grants it; here we revoke it to simulate the missing grant.
+    function testRoundTrip_RevertsIfWrapperLacksExecutorRole() public {
+        executor.revokeRole(executor.EXECUTOR_ROLE(), address(flashExec));
+
+        uint256 amount = 10_000e18;
+        (address[] memory routers, bytes[] memory payloads) = _wireProfitRouter(200e18);
+        bytes memory params = _flashParams(amount, 1e18, routers, payloads);
+
+        vm.prank(executorRole);
+        vm.expectRevert(); // executor reverts NotExecutor -> FL_ArbitrageExecutionFailed -> bubbles
+        flashExec.requestFlashLoan(address(token), amount, params);
+
+        assertEq(token.balanceOf(address(provider)), LIQUIDITY, "provider intact");
+        assertEq(token.balanceOf(address(flashExec)), 0, "flash executor holds nothing");
+    }
+
+    // Aave-path round trip with a non-zero premium (0.05%). Proves the flash-funded entry
+    // works on the legacy Aave path too, that repayment of principal+premium succeeds, and
+    // that the borrower nets profit - premium. Uses a dedicated FlashLoanExecutor wired to
+    // the Aave pool (flashLoanProvider unset -> legacy path).
+    function testRoundTrip_Aave_PremiumPath_RepaysAndNets() public {
+        uint256 amount = 10_000e18;
+        uint256 premiumBps = 5;                       // 0.05%
+        uint256 premium = (amount * premiumBps) / 10_000; // 5e18
+        uint256 profit = 200e18;                      // must exceed premium
+
+        RTAavePool aave = new RTAavePool(premiumBps);
+        token.mint(address(aave), LIQUIDITY);
+
+        FlashLoanExecutor flImpl = new FlashLoanExecutor();
+        FlashLoanExecutor fl = FlashLoanExecutor(address(new ERC1967Proxy(
+            address(flImpl),
+            abi.encodeWithSelector(FlashLoanExecutor.initialize.selector, admin, address(aave), address(executor))
+        )));
+        executor.grantRole(executor.EXECUTOR_ROLE(), address(fl));
+        fl.grantRole(fl.EXECUTOR_ROLE(), executorRole);
+
+        (address[] memory routers, bytes[] memory payloads) = _wireProfitRouter(profit);
+        bytes memory params = _flashParams(amount, premium + 1, routers, payloads); // minProfit > premium
+
+        vm.prank(executorRole);
+        fl.requestFlashLoan(address(token), amount, params);
+
+        assertEq(token.balanceOf(address(aave)), LIQUIDITY + premium, "aave repaid principal + premium");
+        assertEq(token.balanceOf(address(executor)), 0, "executor netted to zero");
+        assertEq(token.balanceOf(address(fl)), profit - premium, "borrower keeps profit - premium");
     }
 }
 
