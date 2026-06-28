@@ -54,8 +54,11 @@ error ZeroGrossProfit();
 error InsufficientProfit();
 /// @dev Thrown when the ETH balance is zero on withdrawETH.
 error ZeroBalance();
-/// @dev Thrown when AllowanceManager is set and the router has no live allowance for tokenIn.
-///      Only raised when allowanceManager != address(0) (i.e. integration is active).
+/// @dev DEPRECATED (SC-12, 2026-06-28): no longer raised. The AllowanceManager
+///      isApproved registry was removed from the spend-safety path (it conferred no
+///      actual spend authority over this contract's balance). Declaration retained
+///      for ABI/selector stability. Spend control is now the executor's own exact,
+///      ephemeral per-router allowance (see executeArbitrage).
 error RouterAllowanceNotGranted(address router, address token);
 /// @dev Thrown when a router's calldata payload is shorter than 4 bytes (no selector).
 ///      SECURITY (A5): any call with fewer than 4 bytes cannot carry a valid selector and
@@ -97,11 +100,12 @@ contract ArbitrageExecutor is
     // slot 1
     /// @notice Set of ERC-20 tokens approved as tokenIn for arbitrage routes.
     mapping(address => bool) public approvedTokens;
-    // slot 2 — SC-5: optional AllowanceManager integration.
-    /// @notice Optional AllowanceManager reference. When non-zero, executeArbitrage
-    ///         additionally verifies that each router has a live allowance in the
-    ///         AllowanceManager for tokenIn before calling it.
-    ///         Backward-compatible: address(0) = check disabled (default post-deploy).
+    // slot 2 — SC-5: AllowanceManager reference (retained for storage layout).
+    /// @notice Optional AllowanceManager reference, kept for backward compatibility
+    ///         and as an external approval REGISTRY only.
+    ///         SC-12 (2026-06-28): this is NO LONGER a spend gate — executeArbitrage
+    ///         does not consult it. Spend control is enforced by the executor's own
+    ///         exact, ephemeral per-router allowance. Slot retained (append-only UUPS).
     IAllowanceManager public allowanceManager;
     // slot 3 — A5: per-router function-selector whitelist.
     /// @notice Per-router whitelist of allowed 4-byte function selectors.
@@ -182,6 +186,16 @@ contract ArbitrageExecutor is
     ///      - balanceAfter <= balanceBefore (ZeroGrossProfit)
     ///      - profit < minProfit (InsufficientProfit)
     ///
+    ///      SPEND CONTROL (SC-12, 2026-06-28): before each router call the executor
+    ///      grants that router an exact, ephemeral tokenIn allowance of `amountIn`
+    ///      and resets it to zero immediately after — so an approved router can pull
+    ///      at most `amountIn` of tokenIn PER HOP and no standing allowance survives.
+    ///      This bounds spend per hop, NOT per route: an N-hop route authorizes up to
+    ///      N*amountIn of gross tokenIn outflow. Route-level loss is bounded separately
+    ///      by the ZeroGrossProfit/minProfit balance gate below — the route must end in
+    ///      a net tokenIn gain >= minProfit or the entire tx reverts atomically.
+    ///      The AllowanceManager registry is no longer consulted as a spend gate.
+    ///
     ///      BREAKING CHANGE NOTE (SC-05, 2026-05-08):
     ///      tokenOut was added to this signature. Any external caller (e.g. relays-client)
     ///      must pass the intermediate token explicitly. Current paper-trade deploy has no
@@ -217,21 +231,16 @@ contract ArbitrageExecutor is
         uint256 balanceBefore = IERC20(tokenIn).balanceOf(address(this));
         if (balanceBefore < amountIn) revert InsufficientBalance();
 
-        // SC-5: cache allowanceManager to avoid repeated SLOAD inside the loop.
-        IAllowanceManager _am = allowanceManager;
-        bool checkAllowance = address(_am) != address(0);
-
+        // SC-12 (executor self-cap, 2026-06-28): on-chain spend control is enforced
+        // by an exact, ephemeral per-router allowance below (forceApprove amountIn →
+        // call → reset to 0). The AllowanceManager isApproved registry is deliberately
+        // NOT consulted here: an allowance held by the AllowanceManager confers no
+        // spend authority over THIS contract's balance, so gating on it was false
+        // assurance. Router/selector allowlisting (approvedRouters / approvedSelectors)
+        // is retained as defense-in-depth.
         for (uint256 i = 0; i < routers.length;) {
             address router = routers[i];
             if (!approvedRouters[router]) revert RouterNotApproved(router);
-
-            // SC-5: if AllowanceManager is wired, verify the router holds a live
-            // allowance for tokenIn before we dispatch the call.  This is a
-            // defense-in-depth gate — tokens are NOT pulled from AllowanceManager;
-            // they must already be in this contract.  Skipped when _am == address(0).
-            if (checkAllowance && !_am.isApproved(tokenIn, router)) {
-                revert RouterAllowanceNotGranted(router, tokenIn);
-            }
 
             // A5: selector whitelist gate.
             // Require payload to carry at least 4 bytes (a valid ABI selector).
@@ -250,8 +259,10 @@ contract ArbitrageExecutor is
                 revert AE_RouterSelectorNotApproved(router, selector);
             }
 
-            (bool success, ) = router.call(pld);
-            if (!success) revert SwapFailed();
+            // SC-12: exact, ephemeral, bounded allowance around the swap dispatch.
+            // Extracted to _boundedRouterCall to keep this function under the EVM
+            // stack limit; see that helper for the approve → call → reset lifecycle.
+            _boundedRouterCall(tokenIn, router, amountIn, pld);
 
             unchecked { ++i; }
         }
@@ -264,6 +275,30 @@ contract ArbitrageExecutor is
 
         // SC-05 fix: emit tokenOut (intermediate token) so indexers can identify the route.
         emit ArbitrageExecuted(routeHash, tokenIn, tokenOut, profit);
+    }
+
+    /// @dev SC-12 spend control. Grant `router` an EXACT, ephemeral tokenIn allowance
+    ///      bounded by `amountIn`, dispatch the swap calldata, then reset the allowance
+    ///      to zero. Consequences:
+    ///        - an approved router can pull AT MOST `amountIn` of tokenIn per hop
+    ///          (PER-HOP bound; route-level loss is bounded by the ZeroGrossProfit/
+    ///          minProfit gate in executeArbitrage, not by this per-hop cap);
+    ///        - no standing allowance survives the call (reset to 0 on success; the
+    ///          whole tx reverts on failure, so nothing is left granted either way).
+    ///      forceApprove zeroes a non-zero current allowance first, so this is safe for
+    ///      approve-race tokens (e.g. USDT). Extracted to its own frame purely to keep
+    ///      executeArbitrage under the EVM stack limit; it performs no validation of its
+    ///      own — callers must have already enforced router/selector allowlisting.
+    function _boundedRouterCall(
+        address tokenIn,
+        address router,
+        uint256 amountIn,
+        bytes calldata pld
+    ) internal {
+        IERC20(tokenIn).forceApprove(router, amountIn);
+        (bool success, ) = router.call(pld);
+        if (!success) revert SwapFailed();
+        IERC20(tokenIn).forceApprove(router, 0);
     }
 
     /// @notice Approve or revoke a router address for use in routes.
@@ -286,15 +321,13 @@ contract ArbitrageExecutor is
     // SC-5: AllowanceManager integration
     // -------------------------------------------------------------------------
 
-    /// @notice Wire this executor to an AllowanceManager instance.
-    ///         When set (non-zero), executeArbitrage will verify that each router
-    ///         has a live allowance in the AllowanceManager for tokenIn before
-    ///         calling it. Pass address(0) to disable the check.
-    /// @dev    Backward-compatible: existing deployments default to address(0).
-    ///         The AllowanceManager is NOT called for fund transfers — tokens must
-    ///         still be deposited in ArbitrageExecutor before execution. The check
-    ///         is a safety gate only: it ensures the router is in the AllowanceManager's
-    ///         approved set before we let it touch our funds.
+    /// @notice Wire this executor to an AllowanceManager instance (external approval
+    ///         REGISTRY only). Pass address(0) to clear it.
+    /// @dev    SC-12 (2026-06-28): setting this NO LONGER affects executeArbitrage's
+    ///         spend safety — the executor enforces its own exact, ephemeral per-router
+    ///         allowance regardless of this value. Retained for backward compatibility
+    ///         and off-chain registry/observability use; it does not custody or move
+    ///         this contract's funds and is not a spend gate.
     /// @param _am  AllowanceManager proxy address (IAllowanceManager). Pass
     ///             address(0) to clear the integration.
     function setAllowanceManager(address _am) external onlyRole(ADMIN_ROLE) {
