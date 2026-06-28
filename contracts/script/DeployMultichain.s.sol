@@ -88,7 +88,7 @@ contract DeployMultichain is Script {
 
     /// @notice Default entrypoint — predicts all addresses without deploying.
     /// @dev Override of Script.run(). Safe to call without --broadcast.
-    function run() external view override {
+    function run() external view {
         predictAll();
     }
 
@@ -167,13 +167,13 @@ contract DeployMultichain is Script {
 
     /// @notice Predict a single contract address. Reduces stack depth in predictChain.
     function _predict(
-        DeterministicFactory _factory,
+        DeterministicFactory _factoryInstance,
         bytes memory _creationCode,
         bytes memory _ctorArgs,
         uint256 _chainId,
         string memory _name
     ) internal view returns (address) {
-        return _factory.predictAddress(
+        return _factoryInstance.predictAddress(
             _buildBytecode(_creationCode, _ctorArgs),
             _chainId,
             _name

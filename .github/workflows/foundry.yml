@@ -34,7 +34,6 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly
-        continue-on-error: true
 
       - name: forge install dependencies || true
         # contracts/lib/ is gitignored (contracts/.gitignore: lib/).
@@ -44,15 +43,27 @@ jobs:
         #   forge-std/                => lib/forge-std/src/
         # --no-git avoids nested .git repos; --no-commit avoids dirty worktree.
         run: |
-          forge install OpenZeppelin/openzeppelin-contracts --no-git --no-commit || true
-          forge install OpenZeppelin/openzeppelin-contracts-upgradeable --no-git --no-commit || true
-          forge install foundry-rs/forge-std --no-git --no-commit || true
+          # Pinned to the same commits as .gitmodules — the versions the contracts
+          # actually compile against (OZ 5.6.1 / OZ-upgradeable 5.1.0 / forge-std 1.16.1).
+          # Unpinned `forge install` pulled a newer openzeppelin-contracts-upgradeable
+          # in which ReentrancyGuardUpgradeable is no longer under contracts/utils/,
+          # so `forge build` failed — masked until now by `|| true`.
+          forge install OpenZeppelin/openzeppelin-contracts@cd05883078060e0cd8a7bd36636944570dbe1722 --no-git --no-commit
+          forge install OpenZeppelin/openzeppelin-contracts-upgradeable@fa525310e45f91eb20a6d3baa2644be8e0adba31 --no-git --no-commit
+          forge install foundry-rs/forge-std@b090968353a209833d4a6f1383230477e96d8438 --no-git --no-commit
 
       - name: forge build (with sizes)
-        run: forge build --sizes || true
+        # BLOCKING: a build failure must fail CI. Compiles the FULL project including
+        # script/ — the deploy scripts now compile cleanly (their view-mutability,
+        # shadowed-param, console2 overload and stack-too-deep issues were fixed), so
+        # they are no longer quarantined behind --skip.
+        run: forge build --sizes
 
       - name: forge test (verbose)
-        run: forge test -vv || true
+        # BLOCKING: test failures now fail CI. Previously masked by `|| true`, which
+        # let a stub DeterministicFactory test plus 33 red tests sit on main under a
+        # green check. Compiles + runs the full project (scripts included).
+        run: forge test -vv
         env:
           # forge test skips fork tests without RPC; mainnet/sepolia fork tests
           # are skipped automatically when these are absent.
@@ -88,16 +99,20 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly
-        continue-on-error: true
 
       - name: forge install dependencies || true
         run: |
-          forge install OpenZeppelin/openzeppelin-contracts --no-git --no-commit || true
-          forge install OpenZeppelin/openzeppelin-contracts-upgradeable --no-git --no-commit || true
-          forge install foundry-rs/forge-std --no-git --no-commit || true
+          # Pinned to the same commits as .gitmodules — the versions the contracts
+          # actually compile against (OZ 5.6.1 / OZ-upgradeable 5.1.0 / forge-std 1.16.1).
+          # Unpinned `forge install` pulled a newer openzeppelin-contracts-upgradeable
+          # in which ReentrancyGuardUpgradeable is no longer under contracts/utils/,
+          # so `forge build` failed — masked until now by `|| true`.
+          forge install OpenZeppelin/openzeppelin-contracts@cd05883078060e0cd8a7bd36636944570dbe1722 --no-git --no-commit
+          forge install OpenZeppelin/openzeppelin-contracts-upgradeable@fa525310e45f91eb20a6d3baa2644be8e0adba31 --no-git --no-commit
+          forge install foundry-rs/forge-std@b090968353a209833d4a6f1383230477e96d8438 --no-git --no-commit
 
       - name: forge build
-        run: forge build --sizes || true
+        run: forge build --sizes
 
       - name: forge fork test (testFork_*)
         # continue-on-error: RPC hiccups (rate-limit, latency spike) must not
