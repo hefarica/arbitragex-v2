@@ -90,6 +90,36 @@ contract MockFeeOnTransferERC20 is ERC20 {
     }
 }
 
+/// @dev Sender-pays fee-on-send ERC20: the recipient always receives `value` IN FULL, but
+///      when the configured `feeFrom` account is the SENDER, an extra 1% is skimmed from it
+///      on top. So an INBOUND pull (funder -> executor) is faithful (credits exactly amountIn
+///      -> passes the SC-13 pull guard), while only the OUTBOUND return (executor -> caller)
+///      shorts the executor below its own capital B — exercising the symmetric outbound
+///      capital-retention guard. Models the "asymmetric token" the independent review flagged.
+contract MockOutboundFeeERC20 is ERC20 {
+    address private constant SINK = address(0xdead);
+    address public feeFrom;
+
+    constructor() ERC20("OutFeeToken", "OFEE") {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function setFeeFrom(address account) external {
+        feeFrom = account;
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        super._update(from, to, value); // faithful main move: recipient gets `value` in full
+        // Sender-pays surcharge ONLY when the configured account sends on a real transfer.
+        if (feeFrom != address(0) && from == feeFrom && to != address(0)) {
+            uint256 fee = value / 100; // extra 1% skimmed from the sender
+            if (fee > 0) super._update(from, SINK, fee);
+        }
+    }
+}
+
 /// @dev Malicious router that attempts to re-enter executeArbitrage.
 /// Uses only primitive-type storage to avoid nested calldata array copy
 /// (which requires via_ir; we keep via_ir = false per foundry.toml).
@@ -1017,6 +1047,48 @@ contract ArbitrageExecutorTest is Test {
         vm.prank(stranger); // no EXECUTOR_ROLE
         vm.expectRevert();
         executor.executeArbitrageFlashFunded(bytes32(0), address(token), address(token), amountIn, 10e18, routers, payloads);
+    }
+
+    /// @dev Defense-in-depth (independent SC-13 review): the capital-retention identity was
+    ///      enforced only on the INBOUND pull (FlashFundedPullMismatch). A token that is
+    ///      faithful on the pull but shorts the SENDER on the OUTBOUND return (executor ->
+    ///      caller) would leak the executor's own working capital B. The symmetric outbound
+    ///      guard fail-closes that: the executor would end below B, so the call reverts and
+    ///      rolls back, leaving B intact and the caller's principal refunded.
+    function testSC13_FlashFunded_OutboundLossyTokenReverts() public {
+        MockOutboundFeeERC20 outFee = new MockOutboundFeeERC20();
+        outFee.setFeeFrom(address(executor)); // surcharge applies ONLY when the executor sends
+        executor.setTokenApproval(address(outFee), true);
+
+        uint256 B        = 500e18;   // executor's own working capital
+        uint256 amountIn = 1_000e18;
+        uint256 profit   = 50e18;
+
+        outFee.mint(address(executor), B);
+
+        address funder = makeAddr("funder");
+        executor.grantRole(executor.EXECUTOR_ROLE(), funder);
+        outFee.mint(funder, amountIn);
+
+        // Mint-only profit router pointed at the fee token: nothing leaves the executor during
+        // the route, so ONLY the final outbound return triggers the sender-pays surcharge.
+        MockProfitRouter router = new MockProfitRouter(address(outFee), address(executor), profit);
+        executor.setRouterApproval(address(router), true);
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
+
+        vm.startPrank(funder);
+        outFee.approve(address(executor), amountIn);
+        vm.expectRevert(FlashFundedCapitalRetentionViolation.selector);
+        executor.executeArbitrageFlashFunded(bytes32(0), address(outFee), address(outFee), amountIn, 10e18, routers, payloads);
+        vm.stopPrank();
+
+        // Atomic revert: B retained exactly, caller principal refunded — no silent leak of B.
+        assertEq(outFee.balanceOf(address(executor)), B, "executor retains exactly B after fail-closed revert");
+        assertEq(outFee.balanceOf(funder), amountIn, "caller principal refunded on revert");
     }
 
     // -----------------------------------------------------------------------
