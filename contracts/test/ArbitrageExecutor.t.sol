@@ -136,6 +136,38 @@ contract MaliciousReentrantRouter {
     }
 }
 
+/// @dev Malicious router that re-enters executeArbitrageFlashFunded mid-route.
+/// Holds EXECUTOR_ROLE in the test so the re-entrant call passes onlyExecutor and
+/// reaches the nonReentrant guard — proving the guard (not just the role gate) blocks
+/// re-entry even for a caller that legitimately holds EXECUTOR_ROLE.
+contract MaliciousReentrantFlashRouter {
+    ArbitrageExecutor public target;
+    address public tokenIn;
+    uint256 public amountIn;
+    bool private _attacking;
+
+    constructor(address _target) {
+        target = ArbitrageExecutor(payable(_target));
+    }
+
+    function setParams(address _tokenIn, uint256 _amountIn) external {
+        tokenIn = _tokenIn;
+        amountIn = _amountIn;
+    }
+
+    fallback() external {
+        if (!_attacking) {
+            _attacking = true;
+            address[] memory r = new address[](1);
+            r[0] = address(this);
+            bytes[] memory p = new bytes[](1);
+            p[0] = "";
+            // Re-enter the flash entrypoint — must revert ReentrancyGuardReentrantCall.
+            target.executeArbitrageFlashFunded(bytes32(0), tokenIn, tokenIn, amountIn, 0, r, p);
+        }
+    }
+}
+
 /// @dev Minimal V2 implementation for upgrade state-preservation test.
 ///      Adds a marker function; no new state variables.
 contract ArbitrageExecutorV2 is ArbitrageExecutor {
@@ -886,6 +918,71 @@ contract ArbitrageExecutorTest is Test {
 
         // Atomic revert rolls back the pull: the caller keeps its principal, executor holds nothing.
         assertEq(token.balanceOf(funder), amountIn, "principal refunded on revert");
+        assertEq(token.balanceOf(address(executor)), 0, "executor holds nothing after revert");
+    }
+
+    /// @dev B-retention proven when the principal ACTUALLY moves out and back. The other
+    ///      SC-13 happy paths use a mint-only router (tokenIn never leaves the executor),
+    ///      so their B-assertion holds somewhat vacuously. Here MockPullRouter pulls the
+    ///      full amountIn out of the executor (via the ephemeral SC-12 allowance) and mints
+    ///      back more — yet the executor must still end holding EXACTLY its own capital B.
+    function testSC13_FlashFunded_PreservesCapital_WithPullingRouter() public {
+        uint256 B        = 500e18;
+        uint256 amountIn = 1_000e18;
+        uint256 mintBack = 1_050e18; // router pulls amountIn out, mints mintBack back (profit = 50)
+
+        token.mint(address(executor), B);
+
+        address funder = makeAddr("funder");
+        executor.grantRole(executor.EXECUTOR_ROLE(), funder);
+        token.mint(funder, amountIn);
+
+        MockPullRouter router = new MockPullRouter(address(token), amountIn, mintBack);
+        executor.setRouterApproval(address(router), true);
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
+
+        vm.startPrank(funder);
+        token.approve(address(executor), amountIn);
+        executor.executeArbitrageFlashFunded(bytes32(0), address(token), address(token), amountIn, 10e18, routers, payloads);
+        vm.stopPrank();
+
+        assertEq(token.balanceOf(address(executor)), B, "executor retains exactly B even when principal flows out and back");
+        assertEq(token.balanceOf(funder), mintBack, "caller receives principal + profit (= mintBack)");
+        assertEq(token.allowance(address(executor), address(router)), 0, "no residual router allowance");
+    }
+
+    /// @dev Re-entrancy via the NEW flash entrypoint is blocked by the shared nonReentrant
+    ///      guard — even when the re-entrant caller holds EXECUTOR_ROLE (so it clears
+    ///      onlyExecutor and actually reaches the guard). The inner revert surfaces as a
+    ///      failed router call (SwapFailed); the whole call reverts and principal is refunded.
+    function testSC13_FlashFunded_ReentrancyBlocked() public {
+        uint256 amountIn = 1_000e18;
+
+        address funder = makeAddr("funder");
+        executor.grantRole(executor.EXECUTOR_ROLE(), funder);
+        token.mint(funder, amountIn);
+
+        MaliciousReentrantFlashRouter router = new MaliciousReentrantFlashRouter(address(executor));
+        router.setParams(address(token), amountIn);
+        executor.grantRole(executor.EXECUTOR_ROLE(), address(router)); // so re-entry reaches nonReentrant, not onlyExecutor
+        executor.setRouterApproval(address(router), true);
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
+
+        vm.startPrank(funder);
+        token.approve(address(executor), amountIn);
+        vm.expectRevert(SwapFailed.selector); // re-entrant call reverts -> router.call returns false -> SwapFailed
+        executor.executeArbitrageFlashFunded(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
+        vm.stopPrank();
+
+        assertEq(token.balanceOf(funder), amountIn, "principal refunded after re-entrancy blocked");
         assertEq(token.balanceOf(address(executor)), 0, "executor holds nothing after revert");
     }
 
