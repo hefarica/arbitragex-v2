@@ -520,6 +520,9 @@ contract DeployMultichain is Script {
         console2.log("[ ] 1. Wire ArbitrageExecutor proxy to AllowanceManager proxy");
         console2.log("[ ] 2. Grant EXECUTOR_ROLE to executionSigner on ArbitrageExecutor");
         console2.log("[ ] 3. Grant EXECUTOR_ROLE to executionSigner on FlashLoanExecutor");
+        console2.log("[ ] 3b.(SC-13) Grant EXECUTOR_ROLE to the FlashLoanExecutor PROXY on");
+        console2.log("       ArbitrageExecutor -- the flash path needs the wrapper itself to hold it.");
+        console2.log("       Do this BEFORE step 7 (admin -> timelock), or it needs a timelock action.");
         console2.log("[ ] 4. Approve tokens and routers on ArbitrageExecutor");
         console2.log("[ ] 5. Grant allowances via AllowanceManager");
         console2.log("[ ] 6. Update FlashLoanExecutor proxy with correct ArbitrageExecutor proxy");

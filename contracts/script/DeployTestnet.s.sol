@@ -158,6 +158,8 @@ contract DeployTestnet is Script {
         console2.log("=== Post-Deploy Checklist ===");
         console2.log("[ ] grantRole(EXECUTOR_ROLE, <signer>) on ArbitrageExecutor");
         console2.log("[ ] grantRole(EXECUTOR_ROLE, <signer>) on FlashLoanExecutor");
+        console2.log("[ ] (SC-13) grantRole(EXECUTOR_ROLE, FlashLoanExecutor proxy) on ArbitrageExecutor");
+        console2.log("       -- the flash path needs the WRAPPER (not just the signer) to hold EXECUTOR_ROLE");
         console2.log("[ ] setTokenApproval(<tokenIn>, true) on ArbitrageExecutor");
         console2.log("[ ] setRouterApproval(<router>, true) on ArbitrageExecutor");
         console2.log("[ ] batchGrantAllowance(...) on AllowanceManager if needed");
