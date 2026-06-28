@@ -47,7 +47,11 @@ jobs:
           node-version: "20"
           cache: npm
       - name: Install dependencies
-        run: npm install
+        # `rm -f package-lock.json`: npm optional-deps bug workaround
+        # (https://github.com/npm/cli/issues/4828) so the platform-native rollup
+        # binary installs and vitest runs (matches ci.yml/frontend-build.yml).
+        # Required for the now-BLOCKING test step (was masked by continue-on-error).
+        run: rm -f package-lock.json && npm install
       - name: Build @arbx/shared
         # Dependent workspaces (selector-api, api-server, edge/*) resolve
         # @arbx/shared from `shared-ts/dist/`. Typecheck fails with

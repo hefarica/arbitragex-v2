@@ -35,10 +35,16 @@ jobs:
           cache: npm
 
       - name: Install all workspace dependencies
-        # Single npm ci at root resolves all workspaces:
-        #   shared-ts, backend/api-server, backend/selector-api,
-        #   edge/worker, edge/dev-local, frontend
-        run: npm install
+        # Single root install resolves all workspaces (shared-ts, api-server,
+        # selector-api, edge/*, frontend). `rm -f package-lock.json` first is the
+        # repo's established workaround for the npm optional-deps bug
+        # (https://github.com/npm/cli/issues/4828): with a cross-platform
+        # package-lock present, npm skips the platform-native rollup binary
+        # (@rollup/rollup-linux-x64-gnu) and vitest crashes "Cannot find module".
+        # ci.yml + frontend-build.yml already use this; matched here so the
+        # now-BLOCKING test step actually runs (it was failing under the old
+        # `npm install`, silently masked by the removed continue-on-error).
+        run: rm -f package-lock.json && npm install
 
       - name: Build @arbx/shared
         # M2 Capa1 Fase 7 — order fix. Dependent workspaces
