@@ -12,11 +12,12 @@
  */
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { AlertCircleIcon, FlaskConicalIcon, TrendingUpIcon } from "lucide-react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { FlaskConicalIcon, TrendingUpIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DegradedBanner } from "@/components/DegradedBanner";
+import { SourceMeta } from "@/components/SourceMeta";
 import { fmtMoney, fmtTime } from "@/lib/formatters";
 
 const POLL_INTERVAL_MS = 15_000;
@@ -63,6 +64,9 @@ interface PaperSummaryResponse {
 interface PaperSnapshot {
   history: PaperHistoryResponse | null;
   summary: PaperSummaryResponse | null;
+  /** Set by the Server Component when the SSR snapshot fetch failed, so the
+   *  client shows a degraded banner on first paint instead of a healthy empty. */
+  initialError?: string | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -135,7 +139,8 @@ interface Props {
 
 export function PaperHistoryClient({ initialData }: Props) {
   const [data, setData] = useState<PaperSnapshot>(initialData);
-  const [pollError, setPollError] = useState<string | null>(null);
+  const [degradedReason, setDegradedReason] = useState<string | null>(initialData.initialError ?? null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -147,12 +152,29 @@ export function PaperHistoryClient({ initialData }: Props) {
           fetch("/api/paper/history/summary?hours=24", { cache: "no-store", headers: { accept: "application/json" } }),
         ]);
         if (!alive) return;
-        const history = histRes.ok ? await histRes.json() : null;
-        const summary = sumRes.ok ? await sumRes.json() : null;
+        // Fail-honest (RULE 00): an HTTP error status (e.g. 503 db_unavailable) is
+        // NOT a network throw — it never reaches catch{}. Capture the verbatim
+        // upstream reason and PRESERVE the last good snapshot; nulling it would
+        // render a failing DB as the healthy "No paper trade runs yet" panel.
+        if (!histRes.ok || !sumRes.ok) {
+          const bad = !histRes.ok ? histRes : sumRes;
+          let reason = `HTTP ${bad.status}`;
+          try {
+            const body = await bad.json();
+            // backend returns { ok:false, reason, error } on 503
+            const detail = [body?.reason, body?.error].filter(Boolean).join(": ");
+            if (detail) reason = detail;
+          } catch { /* non-JSON body — keep the HTTP status */ }
+          if (alive) setDegradedReason(reason);
+          return; // keep last-good `data`
+        }
+        const history = await histRes.json();
+        const summary = await sumRes.json();
         setData({ history, summary });
-        setPollError(null);
+        setDegradedReason(null);
+        setLastUpdatedAt(Date.now());
       } catch (e) {
-        if (alive) setPollError((e as Error).message);
+        if (alive) setDegradedReason((e as Error).message);
       }
     };
 
@@ -167,17 +189,28 @@ export function PaperHistoryClient({ initialData }: Props) {
 
   return (
     <div className="space-y-6" data-testid="paper-history-panel">
-      {pollError && (
-        <Alert variant="destructive">
-          <AlertCircleIcon />
-          <AlertTitle>Poll error</AlertTitle>
-          <AlertDescription><code className="font-mono text-xs">{pollError}</code></AlertDescription>
-        </Alert>
+      {degradedReason && (
+        <DegradedBanner
+          title={
+            data.history || data.summary
+              ? "Degraded — showing last known paper history"
+              : "Paper history unavailable"
+          }
+          reason={degradedReason}
+          endpoint="GET /api/paper/history"
+        />
       )}
+
+      <div className="flex justify-end">
+        <SourceMeta source={data.history?.source ?? "postgres"} at={lastUpdatedAt} pollMs={POLL_INTERVAL_MS} />
+      </div>
 
       {data.summary && <SummaryStrip summary={data.summary} />}
 
       {rows.length === 0 ? (
+        // Only a genuine (non-degraded) empty shows the "no runs yet" panel; a
+        // degraded/failed fetch is explained by the DegradedBanner above instead.
+        !degradedReason && (
         <div className="flex flex-col items-center justify-center gap-3 rounded-lg border p-10 text-center" data-testid="paper-history-empty">
           <FlaskConicalIcon className="size-9 text-muted-foreground/40" aria-hidden />
           <div>
@@ -192,6 +225,7 @@ export function PaperHistoryClient({ initialData }: Props) {
             <Link href="/live-readiness">View live readiness</Link>
           </Button>
         </div>
+        )
       ) : (
         <div className="overflow-x-auto rounded-lg border" data-testid="paper-history-table">
           <table className="w-full text-sm">
