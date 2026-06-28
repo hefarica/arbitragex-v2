@@ -47,6 +47,11 @@ error FL_NoProviderConfigured();
 /// @dev Thrown when receiveFlashLoan is called but balancerVault has not been set.
 /// SECURITY (audit A4, 2026-05-10): prevents calls before the vault is configured.
 error FL_BalancerVaultNotSet();
+/// @dev Hygiene (2026-06-28): thrown when, after the arbitrage call returns, this
+///      contract does not hold enough of the asset to repay principal + premium.
+///      Surfaces a clear, named, fail-closed error instead of an opaque transfer/pull
+///      failure from the provider. Repayment was never attempted when this reverts.
+error FL_RepaymentShortfall();
 
 interface IAaveV3Pool {
     function flashLoanSimple(
@@ -346,8 +351,15 @@ contract FlashLoanExecutor is
         (bool success, ) = arbitrageExecutor.call(userData);
         if (!success) revert FL_ArbitrageExecutionFailed();
 
-        // 3. Repay Balancer Vault (amount + fee = amount + 0 = amount)
+        // 2b. Hygiene (defense-in-depth): clear any residual executor allowance the
+        // arbitrage call did not consume (e.g. a route that pulled less than `amount`).
+        // No standing allowance should outlive the callback.
+        asset.forceApprove(arbitrageExecutor, 0);
+
+        // 3. Repay Balancer Vault (amount + fee = amount + 0 = amount). Fail-closed with a
+        // clear named error if the round trip did not leave enough to repay.
         uint256 amountOwed = amount + premium;
+        if (asset.balanceOf(address(this)) < amountOwed) revert FL_RepaymentShortfall();
         asset.forceApprove(msg.sender, amountOwed);
         asset.safeTransfer(msg.sender, amountOwed);
 
@@ -372,8 +384,14 @@ contract FlashLoanExecutor is
         (bool success, ) = arbitrageExecutor.call(params);
         if (!success) revert FL_ArbitrageExecutionFailed();
 
-        // 3. Repay Aave (amount + premium)
+        // 2b. Hygiene (defense-in-depth): clear any residual executor allowance the
+        // arbitrage call did not consume. No standing allowance should outlive the callback.
+        IERC20(asset).forceApprove(arbitrageExecutor, 0);
+
+        // 3. Repay Aave (amount + premium). Fail-closed with a clear named error if the
+        // round trip did not leave enough, instead of an opaque transferFrom failure.
         uint256 amountToOwe = amount + premium;
+        if (IERC20(asset).balanceOf(address(this)) < amountToOwe) revert FL_RepaymentShortfall();
         IERC20(asset).forceApprove(address(aavePool), amountToOwe);
 
         // SC-06: signal successful completion to off-chain monitors
