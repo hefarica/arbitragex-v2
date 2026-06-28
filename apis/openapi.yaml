@@ -18,12 +18,13 @@ info:
     The paths below are the PUBLIC (edge) paths. Read endpoints are open; write
     and admin endpoints require the `x-arbx-admin-token` header (see security).
 
-    Scope of this increment (FASE 4 Inc 1): the operator/read surface plus the
-    kill-switch. The full admin-write surface (chains, topology, trading-config,
-    cartridge lifecycle, credentials, relays, blacklist, circuit-breakers,
-    scoring) is real but intentionally documented in a follow-up (Inc 1b), and
-    several response bodies are described as open objects where the runtime shape
-    is loose/honest-empty rather than fabricating a field list.
+    Scope (FASE 4 Inc 1 + Inc 1b): the operator/read surface, the kill-switch, and
+    the edge-exposed admin-write surface (session, trading-config, cartridge
+    lifecycle, wallet-topology, chains). api-server-internal admin routes
+    (blacklist, circuit-breakers, relays, scoring, credentials) are NOT edge-public
+    and are intentionally excluded from this public contract. Several request/
+    response bodies are documented as open objects where the runtime shape is
+    owned by api-server and was not verified field-by-field (no spec fiction).
   contact:
     name: ArbitrageX SRE
     email: sre@arbitragex.io
@@ -504,6 +505,198 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/ListEnvelope" } } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "503": { $ref: "#/components/responses/Unavailable" }
+
+  # ─── Admin write surface (FASE 4 Inc 1b) — every operation x-arbx-admin-token gated ───
+  # Request/response bodies are documented as open objects where the runtime shape
+  # is owned by api-server and was not verified field-by-field (no spec fiction).
+  /admin/session:
+    post:
+      tags: [Admin]
+      summary: Establish an admin session (httpOnly cookie)
+      description: >
+        Edge-only. Validates the supplied admin token (by probing the upstream
+        kill-switch with a sentinel body) and, on success, sets the
+        `arbx_admin_session` httpOnly cookie. Returns `{ ok, expires_at }`.
+      operationId: postAdminSession
+      security: [{ AdminToken: [] }]
+      responses:
+        "200": { description: Session established, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/session/logout:
+    post:
+      tags: [Admin]
+      summary: Clear the admin session cookie
+      description: Edge-only; clears the admin session cookies (no upstream call).
+      operationId: postAdminSessionLogout
+      security: [{ AdminToken: [] }]
+      responses:
+        "200": { description: Session cleared }
+  /admin/trading-config/{chain_id}:
+    put:
+      tags: [Admin]
+      summary: Update per-chain trading config (hot-reloads the searcher)
+      operationId: putTradingConfig
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: chain_id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: true, description: "trading_config payload (shape owned by api-server)" } } }
+      responses:
+        "200": { description: Updated config, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /admin/cartridge-filters/{chain_id}:
+    put:
+      tags: [Admin]
+      summary: Update per-chain cartridge filters
+      operationId: putCartridgeFilters
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: chain_id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: true } } }
+      responses:
+        "200": { description: Updated filters, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /admin/cartridges:
+    post:
+      tags: [Admin]
+      summary: Create a strategy-forge cartridge
+      operationId: postCartridge
+      security: [{ AdminToken: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: true } } }
+      responses:
+        "200": { description: Created cartridge, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /admin/cartridges/{slug}/pause:
+    post:
+      tags: [Admin]
+      summary: Pause a cartridge
+      operationId: pauseCartridge
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Paused }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /admin/cartridges/{slug}/resume:
+    post:
+      tags: [Admin]
+      summary: Resume a cartridge
+      operationId: resumeCartridge
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Resumed }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /admin/cartridges/{slug}:
+    delete:
+      tags: [Admin]
+      summary: Delete a cartridge
+      operationId: deleteCartridge
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/admin/topology/snapshot:
+    get:
+      tags: [Admin]
+      summary: Wallet-topology snapshot (admin-gated read)
+      operationId: getTopologySnapshot
+      security: [{ AdminToken: [] }]
+      responses:
+        "200": { description: Snapshot, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/admin/topology/mutations:
+    post:
+      tags: [Admin]
+      summary: Apply wallet-topology mutations
+      operationId: postTopologyMutations
+      security: [{ AdminToken: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: true } } }
+      responses:
+        "200": { description: Applied, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/admin/chains:
+    get:
+      tags: [Admin]
+      summary: List configured chains (admin)
+      operationId: getAdminChains
+      security: [{ AdminToken: [] }]
+      responses:
+        "200": { description: Chains, content: { application/json: { schema: { $ref: "#/components/schemas/ListEnvelope" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Admin]
+      summary: Add a chain
+      operationId: postAdminChain
+      security: [{ AdminToken: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: true } } }
+      responses:
+        "200": { description: Added, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/admin/chains/{chain_id}:
+    get:
+      tags: [Admin]
+      summary: Get a chain (admin)
+      operationId: getAdminChain
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: chain_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: Chain, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [Admin]
+      summary: Update a chain
+      operationId: putAdminChain
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: chain_id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: true } } }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [Admin]
+      summary: Remove a chain
+      operationId: deleteAdminChain
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: chain_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: Removed }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/admin/chains/{chain_id}/probe:
+    post:
+      tags: [Admin]
+      summary: Probe a chain's RPC health
+      operationId: probeAdminChain
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: chain_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: Probe result, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 components:
   securitySchemes:
     AdminToken:
