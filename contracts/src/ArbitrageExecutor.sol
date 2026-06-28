@@ -50,6 +50,11 @@ error InsufficientBalance();
 error SwapFailed();
 /// @dev Thrown when the route produces no gross profit (balanceAfter <= balanceBefore).
 error ZeroGrossProfit();
+/// @dev SC-13: thrown when the flash-funded pull does not credit EXACTLY amountIn
+///      (e.g. a fee-on-transfer / rebasing tokenIn). The caller-funded round trip's
+///      capital-retention guarantee assumes a faithful 1:1 pull, so such tokens are
+///      rejected fail-closed instead of silently leaking the executor's own balance.
+error FlashFundedPullMismatch();
 /// @dev Thrown when profit < minProfit (slippage guard).
 error InsufficientProfit();
 /// @dev Thrown when the ETH balance is zero on withdrawETH.
@@ -219,6 +224,85 @@ contract ArbitrageExecutor is
         address[] calldata routers,
         bytes[] calldata payload
     ) external onlyExecutor whenNotPaused nonReentrant {
+        // Self-funded path: this contract must already hold >= amountIn of tokenIn
+        // (operator-provisioned working capital), and any net profit accrues to (stays
+        // in) this contract. Behaviour unchanged since SC-12; the gated route core is
+        // shared with the flash-funded path via _runRoute.
+        _runRoute(routeHash, tokenIn, tokenOut, amountIn, minProfit, routers, payload);
+    }
+
+    /// @notice Execute an arbitrage route funded by the CALLER for the duration of the
+    ///         call (e.g. a flash loan), returning principal + profit to the caller.
+    /// @dev SC-13 (flash-loan fund-handoff, 2026-06-28). Closes the gap where a flash-
+    ///      loan provider wrapper (FlashLoanExecutor) approved this contract for the
+    ///      borrowed amount but the funds were never pulled — so executeArbitrage saw a
+    ///      zero balance, reverted InsufficientBalance, and flash-funded arbitrage could
+    ///      not execute on any provider path.
+    ///
+    ///      Flow: pull `amountIn` of tokenIn from msg.sender (who MUST have approved at
+    ///      least amountIn) -> run the same gated route as executeArbitrage -> transfer
+    ///      `amountIn + profit` back to msg.sender so it can repay the loan and keep the
+    ///      net. This contract forwards ONLY what the call added: the amount returned
+    ///      equals (balanceAfter - preCallBalance) by construction, so this contract's
+    ///      own working capital B is provably retained — a compromised EXECUTOR_ROLE key
+    ///      cannot drain B through this path. The same SC-12 spend cap, A5 router/selector
+    ///      allowlist, net-profit gate, pause, and reentrancy guard apply.
+    ///
+    ///      Caller requirements: msg.sender holds EXECUTOR_ROLE and has approved >=
+    ///      amountIn of tokenIn to this contract (FlashLoanExecutor already does the
+    ///      forceApprove). minProfit SHOULD be >= the flash-loan premium so an
+    ///      unprofitable route reverts before the caller attempts repayment.
+    /// @param routeHash  Opaque route identifier for off-chain correlation (event only).
+    /// @param tokenIn    Input/output token of the circular route; pulled from msg.sender.
+    /// @param tokenOut   Intermediate token (== tokenIn for simple circular arb).
+    /// @param amountIn   Principal pulled from msg.sender at the start of the call.
+    /// @param minProfit  Minimum acceptable net profit in tokenIn units.
+    /// @param routers    Approved router addresses, one per swap step.
+    /// @param payload    Encoded calldata for each swap step (length must equal routers).
+    function executeArbitrageFlashFunded(
+        bytes32 routeHash,
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        uint256 minProfit,
+        address[] calldata routers,
+        bytes[] calldata payload
+    ) external onlyExecutor whenNotPaused nonReentrant {
+        // Pull the borrowed principal from the caller (it has approved exactly amountIn).
+        // Fail-closed on fee-on-transfer / rebasing tokens: the capital-retention identity
+        // (return == balanceAfter - preCallBalance) and the `amountIn + profit` return both
+        // assume the pull credits EXACTLY amountIn. If the received amount differs, revert
+        // rather than leak this contract's own balance to transfer fees or overstate profit.
+        uint256 balBeforePull = IERC20(tokenIn).balanceOf(address(this));
+        IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+        if (IERC20(tokenIn).balanceOf(address(this)) != balBeforePull + amountIn) {
+            revert FlashFundedPullMismatch();
+        }
+
+        uint256 profit = _runRoute(routeHash, tokenIn, tokenOut, amountIn, minProfit, routers, payload);
+
+        // Return principal + profit to the caller. By construction this equals
+        // balanceAfter - preCallBalance, so this contract's own working capital is never
+        // forwarded — only this call's pulled principal and the route profit.
+        IERC20(tokenIn).safeTransfer(msg.sender, amountIn + profit);
+    }
+
+    /// @dev Shared, gated route core for both the self-funded (executeArbitrage) and
+    ///      flash-funded (executeArbitrageFlashFunded) entrypoints. Assumes this contract
+    ///      already holds >= amountIn of tokenIn (pre-provisioned, or just pulled by the
+    ///      flash-funded wrapper). Enforces token approval, the SC-12 per-router spend
+    ///      cap, the A5 router/selector allowlist, and the net-profit gate; returns the
+    ///      realised profit in tokenIn units. Moves no funds in/out of this contract
+    ///      beyond the per-hop router swaps — the caller decides custody of the profit.
+    function _runRoute(
+        bytes32 routeHash,
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        uint256 minProfit,
+        address[] calldata routers,
+        bytes[] calldata payload
+    ) internal returns (uint256 profit) {
         if (routers.length != payload.length) revert LengthMismatch();
         if (!approvedTokens[tokenIn]) revert TokenNotApproved(tokenIn);
 
@@ -270,7 +354,7 @@ contract ArbitrageExecutor is
         uint256 balanceAfter = IERC20(tokenIn).balanceOf(address(this));
         if (balanceAfter <= balanceBefore) revert ZeroGrossProfit();
 
-        uint256 profit = balanceAfter - balanceBefore;
+        profit = balanceAfter - balanceBefore;
         if (profit < minProfit) revert InsufficientProfit();
 
         // SC-05 fix: emit tokenOut (intermediate token) so indexers can identify the route.
