@@ -1009,4 +1009,124 @@ contract ArbitrageExecutorTest is Test {
         assertFalse(executor.approvedSelectors(router, sel2), "sel2 must be revoked");
         assertFalse(executor.approvedSelectors(router, sel3), "sel3 must be revoked");
     }
+
+    // =========================================================================
+    // Proxy/init takeover guards + admin-only kill-switch / sweep / ETH rescue
+    // (decision-free hardening — tests only, no src change)
+    // =========================================================================
+
+    // -----------------------------------------------------------------------
+    // testInit_RevertWhen_Reinitialized
+    //
+    // Anti-takeover: the live proxy was already initialized in setUp(); a second
+    // initialize() must revert (OZ InvalidInitialization) so an attacker cannot
+    // re-run it to re-grant ADMIN_ROLE/UPGRADER_ROLE to themselves.
+    // -----------------------------------------------------------------------
+    function testInit_RevertWhen_Reinitialized() public {
+        address attacker = makeAddr("attacker");
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("InvalidInitialization()"))));
+        executor.initialize(attacker);
+
+        // The failed re-init must not have granted the attacker any privilege.
+        assertFalse(executor.hasRole(executor.ADMIN_ROLE(), attacker), "attacker must not hold ADMIN_ROLE");
+        assertFalse(executor.hasRole(executor.UPGRADER_ROLE(), attacker), "attacker must not hold UPGRADER_ROLE");
+    }
+
+    // -----------------------------------------------------------------------
+    // testInit_ImplementationCannotBeInitialized
+    //
+    // The constructor calls _disableInitializers(), so the raw logic contract
+    // (not behind the proxy) can never be initialized + seized via the
+    // uninitialized-implementation vector.
+    // -----------------------------------------------------------------------
+    function testInit_ImplementationCannotBeInitialized() public {
+        ArbitrageExecutor impl = new ArbitrageExecutor();
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("InvalidInitialization()"))));
+        impl.initialize(address(this));
+    }
+
+    // -----------------------------------------------------------------------
+    // testPause_OnlyAdmin
+    //
+    // The kill-switch (pause/unpause) is onlyRole(ADMIN_ROLE). A stranger — and,
+    // critically, a compromised EXECUTOR_ROLE key — must not be able to toggle it
+    // in either direction; only the admin can.
+    // -----------------------------------------------------------------------
+    function testPause_OnlyAdmin() public {
+        // stranger cannot pause
+        vm.expectRevert();
+        vm.prank(stranger);
+        executor.pause();
+
+        // a compromised EXECUTOR_ROLE key cannot pause (freeze) the contract
+        vm.expectRevert();
+        vm.prank(executorRole);
+        executor.pause();
+
+        // admin (address(this), holds ADMIN_ROLE) can pause
+        executor.pause();
+        assertTrue(executor.paused(), "admin pause must take effect");
+
+        // a compromised EXECUTOR_ROLE key cannot unpause either
+        vm.expectRevert();
+        vm.prank(executorRole);
+        executor.unpause();
+
+        // admin can unpause
+        executor.unpause();
+        assertFalse(executor.paused(), "admin unpause must take effect");
+    }
+
+    // -----------------------------------------------------------------------
+    // testEmergencyWithdraw_OnlyAdmin_SweepsAndEmits
+    //
+    // emergencyWithdraw(token) is onlyRole(ADMIN_ROLE); it sweeps the full ERC20
+    // balance to msg.sender and emits EmergencyWithdrawn(token, amount). Verifies
+    // the sweep conserves funds, the event fires, and a stranger is blocked.
+    // -----------------------------------------------------------------------
+    function testEmergencyWithdraw_OnlyAdmin_SweepsAndEmits() public {
+        uint256 amount = 1_000e18;
+        token.mint(address(executor), amount);
+
+        // EmergencyWithdrawn(token, amount) — both fields non-indexed → check data only.
+        vm.expectEmit(false, false, false, true, address(executor));
+        emit ArbitrageExecutor.EmergencyWithdrawn(address(token), amount);
+
+        // admin (address(this)) sweeps the full balance to itself
+        executor.emergencyWithdraw(address(token));
+        assertEq(token.balanceOf(address(this)), amount, "admin must receive the full swept balance");
+        assertEq(token.balanceOf(address(executor)), 0, "executor token balance must be zero after sweep");
+
+        // stranger is blocked
+        token.mint(address(executor), amount);
+        vm.expectRevert();
+        vm.prank(stranger);
+        executor.emergencyWithdraw(address(token));
+    }
+
+    // -----------------------------------------------------------------------
+    // testWithdrawETH_RevertWhen_ZeroAddress
+    //
+    // withdrawETH reverts ZeroAddress() when the recipient is address(0). ETH is
+    // funded first so only the address guard (checked before the balance guard)
+    // can fire — the existing happy-path/non-admin test never exercises this.
+    // -----------------------------------------------------------------------
+    function testWithdrawETH_RevertWhen_ZeroAddress() public {
+        vm.deal(address(executor), 1 ether);
+        vm.expectRevert(ZeroAddress.selector);
+        executor.withdrawETH(payable(address(0)));
+    }
+
+    // -----------------------------------------------------------------------
+    // testWithdrawETH_RevertWhen_ZeroBalance
+    //
+    // withdrawETH reverts ZeroBalance() when the contract holds no ETH (the
+    // existing test always pre-funds the contract before withdrawing).
+    // -----------------------------------------------------------------------
+    function testWithdrawETH_RevertWhen_ZeroBalance() public {
+        address payable r = payable(makeAddr("ethRecipient"));
+        assertEq(address(executor).balance, 0, "precondition: executor holds no ETH");
+        vm.expectRevert(ZeroBalance.selector);
+        executor.withdrawETH(r);
+    }
 }
