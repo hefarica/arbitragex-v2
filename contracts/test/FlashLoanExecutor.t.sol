@@ -155,6 +155,37 @@ contract FlashLoanExecutorTest is Test {
     }
 
     // -----------------------------------------------------------------------
+    // testReceiveFlashLoan_Balancer_HappyPath_RepaysVault
+    //
+    // Balancer V2 callback happy path (0% fee): called by the authorised Vault, the
+    // executor invokes the arbitrageExecutor and repays the loan to the Vault. Closes
+    // the gap noted in the audit (FlashLoanExecutor.t.sol had only revert-path
+    // receiveFlashLoan tests, no success round-trip).
+    // -----------------------------------------------------------------------
+    function testReceiveFlashLoan_Balancer_HappyPath_RepaysVault() public {
+        uint256 amount = 1_000e18;
+
+        // receiveFlashLoan's Layer-3 guard requires a provider to be configured.
+        flashExec.setFlashLoanProvider(address(mockVault));
+
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(token));
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = amount;
+        uint256[] memory feeAmounts = new uint256[](1);
+        feeAmounts[0] = 0; // Balancer V2 = 0 fee
+
+        uint256 vaultBefore = token.balanceOf(address(mockVault));
+
+        // Called by the authorised Balancer Vault (msg.sender == balancerVault).
+        vm.prank(address(mockVault));
+        flashExec.receiveFlashLoan(tokens, amounts, feeAmounts, "");
+
+        assertTrue(arbExec.wasCalled(), "arbitrageExecutor must be invoked");
+        assertEq(token.balanceOf(address(mockVault)) - vaultBefore, amount, "vault must be repaid the loan");
+    }
+
+    // -----------------------------------------------------------------------
     // testReceiveFlashLoan_RejectsUnauthorized
     // SC-3: expect FL_UnauthorizedCaller custom error instead of string
     // -----------------------------------------------------------------------
