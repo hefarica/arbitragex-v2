@@ -119,7 +119,7 @@ contract ArbitrageExecutorFuzzTest is Test {
         uint256 extraMinProfit
     ) public {
         amountIn      = bound(amountIn,      MIN_AMOUNT, MAX_AMOUNT);
-        grossProfit   = bound(grossProfit,   1,          MAX_AMOUNT);
+        grossProfit   = bound(grossProfit,   1,          MAX_AMOUNT - 1);
         // minProfit is strictly greater than grossProfit
         extraMinProfit = bound(extraMinProfit, 1, MAX_AMOUNT - grossProfit);
         uint256 minProfit = grossProfit + extraMinProfit;
@@ -128,11 +128,14 @@ contract ArbitrageExecutorFuzzTest is Test {
 
         FuzzProfitRouter router = new FuzzProfitRouter(address(token), address(executor), grossProfit);
         executor.setRouterApproval(address(router), true);
+        // A5 (2026-05-10): the swap loop now requires a >=4-byte payload whose selector
+        // is whitelisted per router. The mock router routes any selector to fallback().
+        executor.setRouterSelectorApproval(address(router), bytes4(0x12345678), true);
 
         address[] memory routers  = new address[](1);
         routers[0] = address(router);
         bytes[] memory payloads = new bytes[](1);
-        payloads[0] = "";
+        payloads[0] = hex"12345678";
 
         vm.expectRevert(InsufficientProfit.selector);
         vm.prank(execRole);
@@ -162,7 +165,7 @@ contract ArbitrageExecutorFuzzTest is Test {
         address[] memory routers  = new address[](1);
         routers[0] = address(router);
         bytes[] memory payloads = new bytes[](1);
-        payloads[0] = "";
+        payloads[0] = hex"12345678";
 
         vm.expectRevert(InsufficientBalance.selector);
         vm.prank(execRole);
@@ -189,11 +192,14 @@ contract ArbitrageExecutorFuzzTest is Test {
 
         FuzzProfitRouter router = new FuzzProfitRouter(address(token), address(executor), grossProfit);
         executor.setRouterApproval(address(router), true);
+        // A5 (2026-05-10): the swap loop now requires a >=4-byte payload whose selector
+        // is whitelisted per router. The mock router routes any selector to fallback().
+        executor.setRouterSelectorApproval(address(router), bytes4(0x12345678), true);
 
         address[] memory routers  = new address[](1);
         routers[0] = address(router);
         bytes[] memory payloads = new bytes[](1);
-        payloads[0] = "";
+        payloads[0] = hex"12345678";
 
         vm.prank(execRole);
         executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, minProfit, routers, payloads);
@@ -218,11 +224,14 @@ contract ArbitrageExecutorFuzzTest is Test {
 
         FuzzProfitRouter router = new FuzzProfitRouter(address(token), address(executor), grossProfit);
         executor.setRouterApproval(address(router), true);
+        // A5 (2026-05-10): the swap loop now requires a >=4-byte payload whose selector
+        // is whitelisted per router. The mock router routes any selector to fallback().
+        executor.setRouterSelectorApproval(address(router), bytes4(0x12345678), true);
 
         address[] memory routers  = new address[](1);
         routers[0] = address(router);
         bytes[] memory payloads = new bytes[](1);
-        payloads[0] = "";
+        payloads[0] = hex"12345678";
 
         // Must not revert
         vm.prank(execRole);

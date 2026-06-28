@@ -246,6 +246,11 @@ contract ExecutorInvariantTest is Test {
 
     address internal admin;
     address internal execRole;
+    /// @dev tokenA's address, cached in setUp. Foundry binds vm.prank/vm.expectRevert
+    ///      to the NEXT external call; passing tokenAAddr inline as a
+    ///      call argument consumed the cheatcode on tokenA() instead of executeArbitrage,
+    ///      silently neutering every negative-path assertion in this suite.
+    address internal tokenAAddr;
 
     // Ghost variables
     uint256 internal ghost_initialBalance;
@@ -273,10 +278,12 @@ contract ExecutorInvariantTest is Test {
         // Desplegar handler (stop prank temporarily for deployment)
         vm.stopPrank();
         handler = new ExecutorHandler(executor, admin, execRole);
+        ExecutorHandler _h = handler;
+        tokenAAddr = address(_h.tokenA());
         vm.startPrank(admin);
 
         // Configurar approved tokens
-        executor.setTokenApproval(address(handler.tokenA()), true);
+        executor.setTokenApproval(tokenAAddr, true);
         executor.setTokenApproval(address(handler.tokenB()), true);
 
         // Configurar approved routers y selectors
@@ -352,7 +359,7 @@ contract ExecutorInvariantTest is Test {
         vm.expectRevert();
         vm.prank(execRole);
         executor.executeArbitrage(
-            bytes32(0), address(handler.tokenA()), address(handler.tokenA()),
+            bytes32(0), tokenAAddr, tokenAAddr,
             0, 0, routers, payloads
         );
 
@@ -377,8 +384,8 @@ contract ExecutorInvariantTest is Test {
         if (!executor.approvedRouters(address(router))) {
             executor.setRouterApproval(address(router), true);
         }
-        if (!executor.approvedTokens(address(handler.tokenA()))) {
-            executor.setTokenApproval(address(handler.tokenA()), true);
+        if (!executor.approvedTokens(tokenAAddr)) {
+            executor.setTokenApproval(tokenAAddr, true);
         }
         vm.stopPrank();
 
@@ -396,7 +403,7 @@ contract ExecutorInvariantTest is Test {
         );
         vm.prank(execRole);
         executor.executeArbitrage(
-            bytes32(0), address(handler.tokenA()), address(handler.tokenA()),
+            bytes32(0), tokenAAddr, tokenAAddr,
             100e18, 0, routers, payloads
         );
     }
@@ -446,8 +453,8 @@ contract ExecutorInvariantTest is Test {
         if (!executor.approvedRouters(address(reentrant))) {
             executor.setRouterApproval(address(reentrant), true);
         }
-        if (!executor.approvedTokens(address(handler.tokenA()))) {
-            executor.setTokenApproval(address(handler.tokenA()), true);
+        if (!executor.approvedTokens(tokenAAddr)) {
+            executor.setTokenApproval(tokenAAddr, true);
         }
         bytes4 sel = bytes4(keccak256("swapExactTokensForTokens(uint256,uint256,address[],address,uint256)"));
         if (!executor.approvedSelectors(address(reentrant), sel)) {
@@ -463,7 +470,7 @@ contract ExecutorInvariantTest is Test {
         payloads[0] = abi.encodeWithSelector(sel, 100e18, 0, new address[](0), address(executor), block.timestamp);
 
         try executor.executeArbitrage(
-            bytes32(0), address(handler.tokenA()), address(handler.tokenA()),
+            bytes32(0), tokenAAddr, tokenAAddr,
             100e18, 0, routers, payloads
         ) {
             // Puede tener exito si el router no llego a reentrar
@@ -478,8 +485,9 @@ contract ExecutorInvariantTest is Test {
     /// @notice INVARIANT I7 — ADMIN_ROLE sin EXECUTOR_ROLE no puede ejecutar.
     function invariant_I7_adminCannotExecuteWithoutRole() public {
         address newAdmin = makeAddr("newAdmin");
+        bytes32 adminRole = executor.ADMIN_ROLE();
         vm.prank(admin);
-        executor.grantRole(executor.ADMIN_ROLE(), newAdmin);
+        executor.grantRole(adminRole, newAdmin);
         assertFalse(executor.hasRole(executor.EXECUTOR_ROLE(), newAdmin), "I7 SETUP");
 
         address[] memory routers = new address[](0);
@@ -488,7 +496,7 @@ contract ExecutorInvariantTest is Test {
         vm.expectRevert(NotExecutor.selector);
         vm.prank(newAdmin);
         executor.executeArbitrage(
-            bytes32(0), address(handler.tokenA()), address(handler.tokenA()),
+            bytes32(0), tokenAAddr, tokenAAddr,
             0, 0, routers, payloads
         );
     }
@@ -516,7 +524,7 @@ contract ExecutorInvariantTest is Test {
         uint256 balanceBBefore = handler.tokenB().balanceOf(address(executor));
 
         vm.prank(admin);
-        executor.emergencyWithdraw(address(handler.tokenA()));
+        executor.emergencyWithdraw(tokenAAddr);
 
         uint256 balanceBAfter = handler.tokenB().balanceOf(address(executor));
         assertEq(
@@ -562,8 +570,8 @@ contract ExecutorInvariantTest is Test {
         if (!executor.approvedRouters(address(noop))) {
             executor.setRouterApproval(address(noop), true);
         }
-        if (!executor.approvedTokens(address(handler.tokenA()))) {
-            executor.setTokenApproval(address(handler.tokenA()), true);
+        if (!executor.approvedTokens(tokenAAddr)) {
+            executor.setTokenApproval(tokenAAddr, true);
         }
         vm.stopPrank();
 
@@ -575,7 +583,7 @@ contract ExecutorInvariantTest is Test {
         vm.expectRevert(InsufficientBalance.selector);
         vm.prank(execRole);
         executor.executeArbitrage(
-            bytes32(0), address(handler.tokenA()), address(handler.tokenA()),
+            bytes32(0), tokenAAddr, tokenAAddr,
             amountIn, 0, routers, payloads
         );
     }
@@ -585,14 +593,14 @@ contract ExecutorInvariantTest is Test {
         uint256 amountIn, uint256 grossProfit, uint256 extraMinProfit
     ) public {
         amountIn = bound(amountIn, 1, type(uint128).max);
-        grossProfit = bound(grossProfit, 1, type(uint128).max);
+        grossProfit = bound(grossProfit, 1, type(uint128).max - 1);
         extraMinProfit = bound(extraMinProfit, 1, type(uint128).max - grossProfit);
         uint256 minProfit = grossProfit + extraMinProfit;
 
         handler.tokenA().mint(address(executor), amountIn);
 
         ProfitRouter router = new ProfitRouter(
-            address(handler.tokenA()), address(executor), grossProfit
+            tokenAAddr, address(executor), grossProfit
         );
         vm.startPrank(admin);
         executor.setRouterApproval(address(router), true);
@@ -610,7 +618,7 @@ contract ExecutorInvariantTest is Test {
         vm.expectRevert(InsufficientProfit.selector);
         vm.prank(execRole);
         executor.executeArbitrage(
-            bytes32(0), address(handler.tokenA()), address(handler.tokenA()),
+            bytes32(0), tokenAAddr, tokenAAddr,
             amountIn, minProfit, routers, payloads
         );
     }
@@ -626,7 +634,7 @@ contract ExecutorInvariantTest is Test {
         vm.expectRevert(NotExecutor.selector);
         vm.prank(caller);
         executor.executeArbitrage(
-            bytes32(0), address(handler.tokenA()), address(handler.tokenA()),
+            bytes32(0), tokenAAddr, tokenAAddr,
             0, 0, routers, payloads
         );
     }
@@ -641,8 +649,8 @@ contract ExecutorInvariantTest is Test {
         if (!executor.approvedRouters(address(noop))) {
             executor.setRouterApproval(address(noop), true);
         }
-        if (!executor.approvedTokens(address(handler.tokenA()))) {
-            executor.setTokenApproval(address(handler.tokenA()), true);
+        if (!executor.approvedTokens(tokenAAddr)) {
+            executor.setTokenApproval(tokenAAddr, true);
         }
         vm.stopPrank();
 
@@ -654,7 +662,7 @@ contract ExecutorInvariantTest is Test {
         vm.expectRevert(ZeroGrossProfit.selector);
         vm.prank(execRole);
         executor.executeArbitrage(
-            bytes32(0), address(handler.tokenA()), address(handler.tokenA()),
+            bytes32(0), tokenAAddr, tokenAAddr,
             amountIn, 0, routers, payloads
         );
     }
@@ -669,10 +677,11 @@ contract ExecutorInvariantTest is Test {
             routers[i] = address(handler.noopRouter());
         }
 
-        vm.expectRevert(LengthMismatch.selector);
+        address tokenA = tokenAAddr;
         vm.prank(execRole);
+        vm.expectRevert(LengthMismatch.selector);
         executor.executeArbitrage(
-            bytes32(0), address(handler.tokenA()), address(handler.tokenA()),
+            bytes32(0), tokenA, tokenA,
             0, 0, routers, payloads
         );
     }
@@ -683,8 +692,8 @@ contract ExecutorInvariantTest is Test {
         vm.assume(!executor.approvedRouters(randomRouter));
 
         vm.startPrank(admin);
-        if (!executor.approvedTokens(address(handler.tokenA()))) {
-            executor.setTokenApproval(address(handler.tokenA()), true);
+        if (!executor.approvedTokens(tokenAAddr)) {
+            executor.setTokenApproval(tokenAAddr, true);
         }
         vm.stopPrank();
 
@@ -696,7 +705,7 @@ contract ExecutorInvariantTest is Test {
         vm.expectRevert(abi.encodeWithSelector(RouterNotApproved.selector, randomRouter));
         vm.prank(execRole);
         executor.executeArbitrage(
-            bytes32(0), address(handler.tokenA()), address(handler.tokenA()),
+            bytes32(0), tokenAAddr, tokenAAddr,
             0, 0, routers, payloads
         );
     }
@@ -712,7 +721,7 @@ contract ExecutorInvariantTest is Test {
         );
         if (!ok || data.length < 32) {
             // Crear uno temporal
-            router = new ProfitRouter(address(handler.tokenA()), address(executor), 1e18);
+            router = new ProfitRouter(tokenAAddr, address(executor), 1e18);
             vm.startPrank(admin);
             if (!executor.approvedRouters(address(router))) {
                 executor.setRouterApproval(address(router), true);
@@ -726,8 +735,8 @@ contract ExecutorInvariantTest is Test {
         if (!executor.approvedRouters(address(router))) {
             executor.setRouterApproval(address(router), true);
         }
-        if (!executor.approvedTokens(address(handler.tokenA()))) {
-            executor.setTokenApproval(address(handler.tokenA()), true);
+        if (!executor.approvedTokens(tokenAAddr)) {
+            executor.setTokenApproval(tokenAAddr, true);
         }
         vm.stopPrank();
 
@@ -739,7 +748,7 @@ contract ExecutorInvariantTest is Test {
         vm.expectRevert(abi.encodeWithSelector(AE_PayloadTooShort.selector, address(router)));
         vm.prank(execRole);
         executor.executeArbitrage(
-            bytes32(0), address(handler.tokenA()), address(handler.tokenA()),
+            bytes32(0), tokenAAddr, tokenAAddr,
             amountIn, 0, routers, payloads
         );
     }
@@ -754,7 +763,7 @@ contract ExecutorInvariantTest is Test {
         vm.expectRevert(NotExecutor.selector);
         vm.prank(caller);
         executor.executeArbitrage(
-            bytes32(0), address(handler.tokenA()), address(handler.tokenA()),
+            bytes32(0), tokenAAddr, tokenAAddr,
             0, 0, routers, payloads
         );
     }

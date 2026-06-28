@@ -34,7 +34,6 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly
-        continue-on-error: true
 
       - name: forge install dependencies || true
         # contracts/lib/ is gitignored (contracts/.gitignore: lib/).
@@ -49,10 +48,16 @@ jobs:
           forge install foundry-rs/forge-std --no-git --no-commit || true
 
       - name: forge build (with sizes)
-        run: forge build --sizes || true
+        # BLOCKING: a build failure must fail CI. Scoped to src+test; the deploy
+        # scripts have separate pre-existing compile errors (view-mutability and a
+        # shadowed param in DeployMultichain/DeployCrucible) tracked as a follow-up.
+        run: forge build --sizes --skip 'script/**'
 
       - name: forge test (verbose)
-        run: forge test -vv || true
+        # BLOCKING: test failures now fail CI. Previously masked by `|| true`, which
+        # let a stub DeterministicFactory test plus 33 red tests sit on main under a
+        # green check. Scoped to src+test; scripts excluded as in the build step.
+        run: forge test -vv --skip 'script/**'
         env:
           # forge test skips fork tests without RPC; mainnet/sepolia fork tests
           # are skipped automatically when these are absent.
@@ -88,7 +93,6 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly
-        continue-on-error: true
 
       - name: forge install dependencies || true
         run: |
@@ -97,13 +101,13 @@ jobs:
           forge install foundry-rs/forge-std --no-git --no-commit || true
 
       - name: forge build
-        run: forge build --sizes || true
+        run: forge build --sizes --skip 'script/**'
 
       - name: forge fork test (testFork_*)
         # continue-on-error: RPC hiccups (rate-limit, latency spike) must not
         # block merge.  The job is informational; a hard block is reserved for
         # the unit-test job above.
         continue-on-error: true
-        run: forge test --fork-url $MAINNET_RPC_URL --match-test "testFork_" -vvv
+        run: forge test --fork-url $MAINNET_RPC_URL --match-test "testFork_" --skip 'script/**' -vvv
         env:
           MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
