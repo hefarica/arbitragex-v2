@@ -10,10 +10,11 @@
  * Zero-Mocks: all data from /api/route-discovery/*; no fabricated defaults.
  */
 import { useEffect, useState } from "react";
-import { AlertCircleIcon, RadarIcon, ZapIcon, NetworkIcon } from "lucide-react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { RadarIcon, ZapIcon, NetworkIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { DegradedBanner } from "@/components/DegradedBanner";
+import { SourceMeta } from "@/components/SourceMeta";
 
 const POLL_INTERVAL_MS = 8_000;
 
@@ -111,6 +112,7 @@ interface Props {
 export function RoutesDiscoveryClient({ initialData }: Props) {
   const [data, setData] = useState<DiscoverySnapshot>(initialData);
   const [pollError, setPollError] = useState<string | null>(null);
+  const [lastOk, setLastOk] = useState<number | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -122,10 +124,19 @@ export function RoutesDiscoveryClient({ initialData }: Props) {
           fetch("/api/route-discovery/status", { cache: "no-store", headers: { accept: "application/json" } }),
         ]);
         if (!alive) return;
-        const routes = routesRes.ok ? await routesRes.json() : null;
-        const status = statusRes.ok ? await statusRes.json() : null;
+        // Fail-honest (RULE 00): an HTTP error status is NOT a network throw, so
+        // it never reaches catch{}. Surface it verbatim and PRESERVE the last good
+        // snapshot — nulling it here would render an upstream failure as a healthy
+        // "no routes discovered yet" empty box.
+        if (!routesRes.ok || !statusRes.ok) {
+          setPollError(`edge poll failed — routes HTTP ${routesRes.status}, status HTTP ${statusRes.status}`);
+          return;
+        }
+        const routes = await routesRes.json();
+        const status = await statusRes.json();
         setData({ routes: routes?.data ?? null, status });
         setPollError(null);
+        setLastOk(Date.now());
       } catch (e) {
         if (alive) setPollError((e as Error).message);
       }
@@ -144,12 +155,23 @@ export function RoutesDiscoveryClient({ initialData }: Props) {
   return (
     <div className="space-y-6" data-testid="routes-discovery-panel">
       {pollError && (
-        <Alert variant="destructive">
-          <AlertCircleIcon />
-          <AlertTitle>Poll error</AlertTitle>
-          <AlertDescription><code className="font-mono text-xs">{pollError}</code></AlertDescription>
-        </Alert>
+        <DegradedBanner
+          title="Route-discovery poll failed — showing last known routes"
+          reason={pollError}
+          endpoint="GET /api/route-discovery/routes"
+        />
       )}
+
+      {data.status && data.status.ok === false && (
+        <DegradedBanner
+          title="Route-discovery worker degraded"
+          reason={data.status.mode || "status not ok"}
+          endpoint="GET /api/route-discovery/status"
+          lastOk={data.status.updated_at}
+        />
+      )}
+
+      <SourceMeta source="edge" at={lastOk} pollMs={POLL_INTERVAL_MS} className="px-1" />
 
       {/* Status strip */}
       {tick && (
