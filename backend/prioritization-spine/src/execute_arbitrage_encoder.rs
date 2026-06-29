@@ -79,17 +79,18 @@ pub const REQUEST_FLASH_LOAN_SELECTOR: [u8; 4] = [0x51, 0x07, 0xd6, 0x1e];
 /// logic in ONE place (DRY); see the module docs.
 ///
 /// The function pre-encodes BOTH leg payloads (forward + backward swap)
-/// at the call site. For a real multi-hop arbitrage this is incorrect at
-/// the byte level — the backward payload's `amountIn` slot is set to
-/// `min_profit_wei` as a non-zero sentinel rather than the (unknown)
-/// intermediate amount of `token_out`. This calldata is therefore
-/// SIMULATION-ONLY for the self-funded path: the contract's swap will revert if
-/// the router receives an `amountIn` it cannot honour, and the orchestrator
-/// records `SIM_REVERT` honestly. The full multi-step orchestrator that reads
+/// at the call site. The backward payload's `amountIn` slot is the explicit
+/// `backward_amount_in` parameter: callers that know the real intermediate
+/// amount of `token_out` (the leg-1 input produced by the forward swap) pass
+/// it; the SIMULATION-ONLY callers pass `min_profit_wei` as a non-zero
+/// sentinel instead (the intermediate is unknown at encode time, so that
+/// calldata's router call will almost certainly revert and the orchestrator
+/// records `SIM_REVERT` honestly). The full multi-step orchestrator that reads
 /// the intermediate amount between legs lands in Phase A.3.c.2.
 fn encode_execute_arbitrage_body(
     selector: [u8; 4],
     ctx: &RoundTripContext,
+    backward_amount_in: U256,
     route_hash: [u8; 32],
     min_profit_wei: U256,
     executor_address: Address,
@@ -104,13 +105,14 @@ fn encode_execute_arbitrage_body(
     if forward_payload.is_empty() {
         return Err(ExecuteArbitrageEncodeError::EmptyForwardCalldata);
     }
-    // Backward payload — note the SIMULATION-ONLY caveat above: the
-    // intermediate amount of token_out is unknown here. We use
-    // `min_profit_wei` as a non-zero placeholder so the calldata is not
-    // structurally empty. The contract's router call will almost
-    // certainly revert; the orchestrator records that revert honestly.
+    // Backward payload — `backward_amount_in` is the leg-1 swap amountIn. The
+    // intermediate-aware caller passes the real `token_out` amount produced by
+    // the forward swap; the SIMULATION-ONLY callers pass `min_profit_wei` as a
+    // non-zero sentinel (the intermediate is unknown at encode time, so the
+    // contract's router call will almost certainly revert and the orchestrator
+    // records that revert honestly).
     let backward_payload = encode_v2_swap_exact_tokens_for_tokens(
-        min_profit_wei,
+        backward_amount_in,
         U256::zero(),
         &ctx.backward_path,
         executor_address,
@@ -159,6 +161,8 @@ pub fn build_execute_arbitrage_calldata(
     encode_execute_arbitrage_body(
         EXECUTE_ARBITRAGE_SELECTOR,
         ctx,
+        // SENTINEL backward amount — preserves the self-funded sim path bytes.
+        min_profit_wei,
         route_hash,
         min_profit_wei,
         executor_address,
@@ -184,6 +188,8 @@ pub fn build_execute_arbitrage_flash_funded_calldata(
     encode_execute_arbitrage_body(
         EXECUTE_ARBITRAGE_FLASH_FUNDED_SELECTOR,
         ctx,
+        // SENTINEL backward amount — preserves the flash-funded sim path bytes.
+        min_profit_wei,
         route_hash,
         min_profit_wei,
         executor_address,
@@ -237,6 +243,45 @@ pub fn build_flash_funded_broadcast_calldata(
 ) -> Result<Vec<u8>, ExecuteArbitrageEncodeError> {
     let inner = build_execute_arbitrage_flash_funded_calldata(
         ctx,
+        route_hash,
+        min_profit_wei,
+        executor_address,
+    )?;
+    // asset = the borrowed token = token_in; amount = amountIn (both from ctx).
+    Ok(build_request_flash_loan_calldata(
+        ctx.token_in,
+        ctx.amount_in,
+        &inner,
+    ))
+}
+
+/// Build the full FLASH-FUNDED broadcast calldata with an EXPLICIT backward-leg
+/// amount — the intermediate-aware sibling of
+/// [`build_flash_funded_broadcast_calldata`].
+///
+/// Identical wrapping (outer `requestFlashLoan` `0x5107d61e` around inner
+/// `executeArbitrageFlashFunded` `0xdde0bf51`, asset/amount derived from ctx,
+/// `minProfit = min_profit_wei`) EXCEPT the inner backward-leg swap `amountIn`
+/// is the supplied `backward_amount_in` — the REAL intermediate `token_out`
+/// produced by the forward swap — instead of the `min_profit_wei` sentinel. The
+/// forward leg is unchanged (`ctx.amount_in`).
+///
+/// Passing `backward_amount_in = min_profit_wei` reproduces
+/// [`build_flash_funded_broadcast_calldata`] byte-for-byte (proved by
+/// `tests::with_intermediate_sentinel_equals_legacy_broadcast`). This is the
+/// foundation for carry-validated-calldata (O1): the off-chain encodes leg-1
+/// with the on-chain intermediate delta that the reworked contract approves.
+pub fn build_flash_funded_broadcast_calldata_with_intermediate(
+    ctx: &RoundTripContext,
+    backward_amount_in: U256,
+    route_hash: [u8; 32],
+    min_profit_wei: U256,
+    executor_address: Address,
+) -> Result<Vec<u8>, ExecuteArbitrageEncodeError> {
+    let inner = encode_execute_arbitrage_body(
+        EXECUTE_ARBITRAGE_FLASH_FUNDED_SELECTOR,
+        ctx,
+        backward_amount_in,
         route_hash,
         min_profit_wei,
         executor_address,
@@ -480,5 +525,119 @@ mod tests {
         assert_eq!(inner_routers.len(), 2, "expected 2 routers");
         let inner_payloads = inner_decoded[6].clone().into_array().expect("inner arg 6 is bytes[]");
         assert_eq!(inner_payloads.len(), 2, "expected 2 payload legs");
+    }
+
+    /// Decode the inner backward-leg swap payload's `amountIn` (the first arg of
+    /// `swapExactTokensForTokens`) out of the wrapped broadcast calldata.
+    ///
+    /// Layers: outer `requestFlashLoan(address,uint256,bytes)` → inner
+    /// `executeArbitrageFlashFunded(...)` arg 6 `bytes[]` → leg-1 (index 1)
+    /// `swapExactTokensForTokens(uint256 amountIn, uint256, address[], address, uint256)`.
+    fn decode_backward_leg_amount_in(outer: &[u8]) -> U256 {
+        let outer_types = [ParamType::Address, ParamType::Uint(256), ParamType::Bytes];
+        let outer_decoded = decode(&outer_types, &outer[4..]).expect("outer must ABI-decode");
+        let inner = outer_decoded[2].clone().into_bytes().expect("params is bytes");
+
+        let inner_types = [
+            ParamType::FixedBytes(32),
+            ParamType::Address,
+            ParamType::Address,
+            ParamType::Uint(256),
+            ParamType::Uint(256),
+            ParamType::Array(Box::new(ParamType::Address)),
+            ParamType::Array(Box::new(ParamType::Bytes)),
+        ];
+        let inner_decoded = decode(&inner_types, &inner[4..]).expect("inner must ABI-decode");
+        let payloads = inner_decoded[6].clone().into_array().expect("inner arg 6 is bytes[]");
+        assert_eq!(payloads.len(), 2, "expected forward + backward legs");
+        let backward_leg = payloads[1].clone().into_bytes().expect("backward leg is bytes");
+
+        // swapExactTokensForTokens args after its 4-byte selector: arg 0 = amountIn.
+        let swap_types = [
+            ParamType::Uint(256),
+            ParamType::Uint(256),
+            ParamType::Array(Box::new(ParamType::Address)),
+            ParamType::Address,
+            ParamType::Uint(256),
+        ];
+        let swap_decoded =
+            decode(&swap_types, &backward_leg[4..]).expect("backward swap must ABI-decode");
+        swap_decoded[0].clone().into_uint().expect("swap arg 0 is amountIn")
+    }
+
+    /// The intermediate-aware broadcast encoder puts the REAL backward amount in
+    /// the leg-1 swap `amountIn` (NOT the `min_profit_wei` sentinel), while
+    /// preserving the outer `0x5107d61e` and inner `0xdde0bf51` selectors.
+    #[test]
+    fn with_intermediate_encodes_real_backward_amount() {
+        let (ctx, route_hash, min_profit_wei, executor_address) = fixture();
+        // A distinct intermediate amount (≠ min_profit_wei, ≠ amount_in).
+        let backward_amount_in = U256::from(123_456_789_u64);
+        assert_ne!(
+            backward_amount_in, min_profit_wei,
+            "test requires intermediate ≠ sentinel to be meaningful"
+        );
+
+        let outer = build_flash_funded_broadcast_calldata_with_intermediate(
+            &ctx,
+            backward_amount_in,
+            route_hash,
+            min_profit_wei,
+            executor_address,
+        )
+        .expect("intermediate-aware broadcast encoder should produce calldata");
+
+        // Outer + inner selectors unchanged.
+        assert_eq!(REQUEST_FLASH_LOAN_SELECTOR, outer[0..4], "outer selector");
+        let outer_types = [ParamType::Address, ParamType::Uint(256), ParamType::Bytes];
+        let outer_decoded = decode(&outer_types, &outer[4..]).expect("outer must ABI-decode");
+        let inner = outer_decoded[2].clone().into_bytes().expect("params is bytes");
+        assert_eq!(
+            EXECUTE_ARBITRAGE_FLASH_FUNDED_SELECTOR,
+            inner[0..4],
+            "inner selector"
+        );
+
+        // The backward leg carries the REAL intermediate amount, not the sentinel.
+        let encoded_backward = decode_backward_leg_amount_in(&outer);
+        assert_eq!(
+            encoded_backward, backward_amount_in,
+            "backward leg amountIn must equal the supplied intermediate"
+        );
+        assert_ne!(
+            encoded_backward, min_profit_wei,
+            "backward leg amountIn must NOT be the min_profit_wei sentinel"
+        );
+    }
+
+    /// Refactor-preservation lock: feeding the sentinel (`min_profit_wei`) as the
+    /// intermediate makes the new encoder BYTE-IDENTICAL to the legacy
+    /// `build_flash_funded_broadcast_calldata` — proving the `backward_amount_in`
+    /// threading did not change the existing sentinel path.
+    #[test]
+    fn with_intermediate_sentinel_equals_legacy_broadcast() {
+        let (ctx, route_hash, min_profit_wei, executor_address) = fixture();
+
+        let legacy = build_flash_funded_broadcast_calldata(
+            &ctx,
+            route_hash,
+            min_profit_wei,
+            executor_address,
+        )
+        .expect("legacy broadcast encoder should produce calldata");
+
+        let via_intermediate = build_flash_funded_broadcast_calldata_with_intermediate(
+            &ctx,
+            min_profit_wei, // pass the sentinel as the intermediate
+            route_hash,
+            min_profit_wei,
+            executor_address,
+        )
+        .expect("intermediate-aware encoder should produce calldata");
+
+        assert_eq!(
+            legacy, via_intermediate,
+            "passing the sentinel as the intermediate must reproduce the legacy bytes exactly"
+        );
     }
 }
