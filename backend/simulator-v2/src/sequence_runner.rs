@@ -75,6 +75,14 @@ pub enum SequenceError {
     BalanceReadReverted(String),
     #[error("balanceOf halted: {0}")]
     BalanceReadHalted(String),
+    #[error("getAmountsOut output too short ({len} bytes, expected a uint256[] header)")]
+    AmountsOutDecodeFailed { len: usize },
+    #[error("getAmountsOut returned an empty array")]
+    AmountsOutEmptyArray,
+    #[error("getAmountsOut reverted: {0}")]
+    AmountsOutReverted(String),
+    #[error("getAmountsOut halted: {0}")]
+    AmountsOutHalted(String),
 }
 
 impl SequenceError {
@@ -86,6 +94,10 @@ impl SequenceError {
             Self::BalanceDecodeFailed { .. } => "balance_decode_failed",
             Self::BalanceReadReverted(_) => "balance_read_reverted",
             Self::BalanceReadHalted(_) => "balance_read_halted",
+            Self::AmountsOutDecodeFailed { .. } => "amounts_out_decode_failed",
+            Self::AmountsOutEmptyArray => "amounts_out_empty_array",
+            Self::AmountsOutReverted(_) => "amounts_out_reverted",
+            Self::AmountsOutHalted(_) => "amounts_out_halted",
         }
     }
 }
@@ -348,6 +360,70 @@ impl SequenceContext {
         Ok(amount)
     }
 
+    /// Quote the forward leg via a non-committing `getAmountsOut(amountIn,
+    /// path)` `transact()` against `router`, returning the LAST element of the
+    /// returned `uint256[]` (the final output amount of the path — i.e. the
+    /// intermediate `token_out` produced by swapping `amount_in` of the first
+    /// token along `path`).
+    ///
+    /// This MIRRORS `read_balance`: a non-committing `transact()` (it does NOT
+    /// bump `gas_used_total`, does NOT increment `successful_calls`, and does
+    /// NOT mutate the CacheDB), so calling it before the committed forward swap
+    /// does not perturb the reserves that swap subsequently reads — both read
+    /// the same forked state.
+    ///
+    /// Fail-closed on every adverse path (revert / halt / too-short return /
+    /// empty array) with a dedicated `SequenceError` variant.
+    pub fn read_amounts_out(
+        &mut self,
+        router: Address,
+        amount_in: U256,
+        path: &[Address],
+    ) -> Result<U256, SequenceError> {
+        let calldata = build_get_amounts_out_calldata(amount_in, path);
+
+        self.evm.env.tx = TxEnv {
+            caller: router,
+            transact_to: TransactTo::Call(router),
+            data: Bytes::copy_from_slice(&calldata),
+            value: U256::ZERO,
+            gas_price: U256::ZERO,
+            gas_limit: 5_000_000,
+            nonce: None,
+            chain_id: None,
+            ..TxEnv::default()
+        };
+
+        let result = self
+            .evm
+            .transact()
+            .map_err(|e| SequenceError::TransactInfra(format!("{e}")))?;
+
+        let amount = match result.result {
+            ExecutionResult::Success { output, .. } => {
+                let bytes = output.into_data();
+                decode_amounts_out_last(&bytes)?
+            }
+            ExecutionResult::Revert { output, .. } => {
+                return Err(SequenceError::AmountsOutReverted(decode_revert_reason(
+                    &output,
+                )));
+            }
+            ExecutionResult::Halt { reason, .. } => {
+                return Err(SequenceError::AmountsOutHalted(format!("{reason:?}")));
+            }
+        };
+
+        debug!(
+            event = "sequence_runner.read_amounts_out",
+            router = ?router,
+            amount_in = %amount_in,
+            path_len = path.len(),
+            amount_out = %amount,
+        );
+        Ok(amount)
+    }
+
     /// Consume the context and return a `SequenceResult` summary. The
     /// trace hash is `[0; 32]` if zero successful calls were committed —
     /// the caller treats that as a structural failure (no SIM_SUCCESS).
@@ -407,6 +483,81 @@ pub fn build_balance_of_calldata(account: Address) -> Vec<u8> {
     padded[12..32].copy_from_slice(account.as_slice());
     calldata.extend_from_slice(&padded);
     calldata
+}
+
+/// Build UniswapV2-style `getAmountsOut(uint256,address[])` calldata
+/// (selector `0xd06ca61f`, cast-verified). ABI head: `amountIn` (word 0) +
+/// the offset to the dynamic `address[]` data (word 1 = `0x40`); tail: the
+/// array length then each path address (left-padded to 32 bytes). Exposed for
+/// the orchestrator's anti-fraud guards + tests.
+pub fn build_get_amounts_out_calldata(amount_in: U256, path: &[Address]) -> Vec<u8> {
+    let mut calldata: Vec<u8> = Vec::with_capacity(4 + 32 * (3 + path.len()));
+    // selector 0xd06ca61f
+    calldata.extend_from_slice(&[0xd0, 0x6c, 0xa6, 0x1f]);
+    // word 0: amountIn (uint256, big-endian).
+    calldata.extend_from_slice(&amount_in.to_be_bytes::<32>());
+    // word 1: offset to the address[] tail = 0x40 (two head words precede it).
+    let mut offset = [0u8; 32];
+    offset[31] = 0x40;
+    calldata.extend_from_slice(&offset);
+    // tail word 0: array length.
+    let mut len = [0u8; 32];
+    len[24..32].copy_from_slice(&(path.len() as u64).to_be_bytes());
+    calldata.extend_from_slice(&len);
+    // tail words 1..: each address left-padded to 32 bytes.
+    for addr in path {
+        let mut padded = [0u8; 32];
+        padded[12..32].copy_from_slice(addr.as_slice());
+        calldata.extend_from_slice(&padded);
+    }
+    calldata
+}
+
+/// Decode the ABI-encoded `uint256[]` return blob of `getAmountsOut` and
+/// return its LAST element (the final output amount of the path). Layout:
+/// word 0 = offset to the array data, then `[length, elem_0, elem_1, …]` at
+/// that offset. Fails closed on a too-short header or an empty array.
+fn decode_amounts_out_last(bytes: &[u8]) -> Result<U256, SequenceError> {
+    // Need at least the offset word + the length word reachable at that offset.
+    if bytes.len() < 64 {
+        return Err(SequenceError::AmountsOutDecodeFailed { len: bytes.len() });
+    }
+    // word 0: offset to the array data (in bytes, from the start of the blob).
+    let data_offset = U256::from_be_slice(&bytes[0..32]);
+    // Offsets are bounded by the blob length in any well-formed return; reject
+    // anything that would index past the buffer (fail closed, no panic).
+    let data_offset: usize = match usize::try_from(data_offset) {
+        Ok(o) => o,
+        Err(_) => return Err(SequenceError::AmountsOutDecodeFailed { len: bytes.len() }),
+    };
+    let len_end = match data_offset.checked_add(32) {
+        Some(e) => e,
+        None => return Err(SequenceError::AmountsOutDecodeFailed { len: bytes.len() }),
+    };
+    if bytes.len() < len_end {
+        return Err(SequenceError::AmountsOutDecodeFailed { len: bytes.len() });
+    }
+    let array_len = U256::from_be_slice(&bytes[data_offset..len_end]);
+    let array_len: usize = match usize::try_from(array_len) {
+        Ok(n) => n,
+        Err(_) => return Err(SequenceError::AmountsOutDecodeFailed { len: bytes.len() }),
+    };
+    if array_len == 0 {
+        return Err(SequenceError::AmountsOutEmptyArray);
+    }
+    // Last element starts at data_offset + 32 (length word) + 32*(len-1).
+    let last_start = match len_end.checked_add(32usize.saturating_mul(array_len - 1)) {
+        Some(s) => s,
+        None => return Err(SequenceError::AmountsOutDecodeFailed { len: bytes.len() }),
+    };
+    let last_end = match last_start.checked_add(32) {
+        Some(e) => e,
+        None => return Err(SequenceError::AmountsOutDecodeFailed { len: bytes.len() }),
+    };
+    if bytes.len() < last_end {
+        return Err(SequenceError::AmountsOutDecodeFailed { len: bytes.len() });
+    }
+    Ok(U256::from_be_slice(&bytes[last_start..last_end]))
 }
 
 // ---------------------------------------------------------------------------
@@ -495,6 +646,82 @@ mod tests {
         assert_ne!(build_balance_of_calldata(a), build_balance_of_calldata(b),);
     }
 
+    /// `getAmountsOut(uint256,address[])` selector is the cast-verified
+    /// 0xd06ca61f, and the ABI head/tail layout is exactly: amountIn, offset
+    /// (0x40), length, then each padded path address.
+    #[test]
+    fn build_get_amounts_out_calldata_layout_and_selector() {
+        let token_a = Address::from([0xaau8; 20]);
+        let token_b = Address::from([0xbbu8; 20]);
+        let amount_in = U256::from(1_000_000u64);
+        let calldata = build_get_amounts_out_calldata(amount_in, &[token_a, token_b]);
+
+        // Selector (cast sig "getAmountsOut(uint256,address[])" == 0xd06ca61f).
+        assert_eq!(&calldata[0..4], &[0xd0, 0x6c, 0xa6, 0x1f]);
+        // 4 selector + 4 words (amountIn, offset, length, 2 addrs) = 4 + 32*4.
+        assert_eq!(calldata.len(), 4 + 32 * 4);
+        // word 0: amountIn.
+        assert_eq!(&calldata[4..36], &amount_in.to_be_bytes::<32>());
+        // word 1: offset == 0x40.
+        let mut expected_offset = [0u8; 32];
+        expected_offset[31] = 0x40;
+        assert_eq!(&calldata[36..68], &expected_offset);
+        // word 2: array length == 2.
+        let mut expected_len = [0u8; 32];
+        expected_len[31] = 2;
+        assert_eq!(&calldata[68..100], &expected_len);
+        // word 3 / word 4: padded path addresses.
+        assert_eq!(&calldata[100..112], &[0u8; 12]);
+        assert_eq!(&calldata[112..132], token_a.as_slice());
+        assert_eq!(&calldata[132..144], &[0u8; 12]);
+        assert_eq!(&calldata[144..164], token_b.as_slice());
+    }
+
+    /// `decode_amounts_out_last` decodes a hand-built `uint256[]` return blob
+    /// (offset 0x20, length 3, three elements) to its LAST element.
+    #[test]
+    fn decode_amounts_out_last_returns_final_element() {
+        let elems = [
+            U256::from(1_000_000u64),
+            U256::from(2_500u64),
+            U256::from(987_654_321u64), // the final output amount of the path.
+        ];
+        let mut blob: Vec<u8> = Vec::new();
+        // word 0: offset to the array data == 0x20.
+        let mut offset = [0u8; 32];
+        offset[31] = 0x20;
+        blob.extend_from_slice(&offset);
+        // array length == 3.
+        let mut len = [0u8; 32];
+        len[31] = elems.len() as u8;
+        blob.extend_from_slice(&len);
+        // the elements.
+        for e in &elems {
+            blob.extend_from_slice(&e.to_be_bytes::<32>());
+        }
+        let last = decode_amounts_out_last(&blob).expect("well-formed uint256[] decodes");
+        assert_eq!(last, U256::from(987_654_321u64));
+    }
+
+    /// `decode_amounts_out_last` fails closed on a too-short header and on an
+    /// empty array (no panic, dedicated error variants).
+    #[test]
+    fn decode_amounts_out_last_fails_closed() {
+        // Too short: only the offset word, no length reachable.
+        assert!(matches!(
+            decode_amounts_out_last(&[0u8; 16]),
+            Err(SequenceError::AmountsOutDecodeFailed { .. })
+        ));
+        // Empty array: offset word == 0x20, length word (bytes 32..64) stays
+        // zero → empty.
+        let mut blob = vec![0u8; 64];
+        blob[31] = 0x20;
+        assert!(matches!(
+            decode_amounts_out_last(&blob),
+            Err(SequenceError::AmountsOutEmptyArray)
+        ));
+    }
+
     /// `decode_revert_reason` parses an ABI-encoded `Error(string)`.
     #[test]
     fn decode_revert_reason_parses_error_string() {
@@ -546,6 +773,22 @@ mod tests {
         assert_eq!(
             SequenceError::BalanceReadHalted("x".into()).reason_tag(),
             "balance_read_halted"
+        );
+        assert_eq!(
+            SequenceError::AmountsOutDecodeFailed { len: 0 }.reason_tag(),
+            "amounts_out_decode_failed"
+        );
+        assert_eq!(
+            SequenceError::AmountsOutEmptyArray.reason_tag(),
+            "amounts_out_empty_array"
+        );
+        assert_eq!(
+            SequenceError::AmountsOutReverted("x".into()).reason_tag(),
+            "amounts_out_reverted"
+        );
+        assert_eq!(
+            SequenceError::AmountsOutHalted("x".into()).reason_tag(),
+            "amounts_out_halted"
         );
     }
 

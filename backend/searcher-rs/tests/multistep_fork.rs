@@ -215,8 +215,12 @@ async fn multistep_fork_round_trip_weth_usdc() {
         max_steps: 16,
     };
 
-    // 1. Plan construction must succeed before any REVM dispatch.
-    let plan_result = build_multistep_plan(&ctx, &config, flashloan_executor);
+    // 1. Plan construction must succeed before any REVM dispatch. The
+    //    `backward_amount_in` (leg-1 swap amountIn) is the real forward-quoted
+    //    intermediate at run time; this pure plan-builder assertion passes a
+    //    fixed non-zero stand-in.
+    let backward_amount_in = U256::from(3_000_000_000u64);
+    let plan_result = build_multistep_plan(&ctx, &config, flashloan_executor, backward_amount_in);
     match plan_result {
         Ok(plan) => {
             assert_eq!(
@@ -345,7 +349,8 @@ fn build_multistep_plan_smoke_builds_four_step_plan() {
         max_steps: 16,
     };
 
-    let plan = build_multistep_plan(&ctx, &config, flashloan_executor)
+    let backward_amount_in = U256::from(3_000_000_000u64);
+    let plan = build_multistep_plan(&ctx, &config, flashloan_executor, backward_amount_in)
         .expect("pure plan builder must succeed with valid inputs");
     assert_eq!(plan.steps.len(), 4);
     assert_eq!(plan.flashloan_executor, flashloan_executor);

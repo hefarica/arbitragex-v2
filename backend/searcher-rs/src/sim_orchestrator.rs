@@ -362,6 +362,9 @@ pub fn execute_round_trip_revm(
                 intermediate_amount_out: None,
                 gas_used_total: result.gas_used,
                 fail_reason: None,
+                // Self-funded executeArbitrage path carries no wrapped-flash
+                // calldata; the carry is wrapped-flash-only.
+                wrapped_calldata: None,
             }
         }
         Err(SimError::Reverted(reason)) => {

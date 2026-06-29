@@ -58,6 +58,14 @@ pub struct SimulationOutcome {
     pub intermediate_amount_out: Option<U256>,
     pub gas_used_total: u64,
     pub fail_reason: Option<String>,
+    /// The exact wrapped-flash broadcast calldata (outer `requestFlashLoan`
+    /// 0x5107d61e wrapping inner `executeArbitrageFlashFunded` 0xdde0bf51) that
+    /// the sim VALIDATED, with leg-1 encoded against the REAL forward-quoted
+    /// intermediate. `Some(bytes)` ONLY on a passing wrapped-flash outcome from
+    /// `sim_multistep::execute_multistep_revm`; `None` for every other
+    /// producer / failure path (so the broadcast path can only ever replay
+    /// calldata that the sim actually proved out).
+    pub wrapped_calldata: Option<Vec<u8>>,
 }
 
 impl SimulationOutcome {
@@ -68,6 +76,7 @@ impl SimulationOutcome {
             intermediate_amount_out: None,
             gas_used_total: 0,
             fail_reason: Some(reason.into()),
+            wrapped_calldata: None,
         }
     }
 }

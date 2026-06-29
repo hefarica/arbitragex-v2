@@ -84,7 +84,7 @@ use crate::sim_prefund::{
     build_role_grant_override, executor_role_id, PrefundError, StorageOverride,
 };
 use ethers::types::{Address, U256};
-use prioritization_spine::execute_arbitrage_encoder::build_flash_funded_broadcast_calldata;
+use prioritization_spine::execute_arbitrage_encoder::build_flash_funded_broadcast_calldata_with_intermediate;
 use prioritization_spine::round_trip_executor::{RoundTripContext, SimulationOutcome};
 use std::sync::Arc;
 use thiserror::Error;
@@ -331,10 +331,19 @@ pub struct MultiStepPlan {
 /// resolves it from `resolve_flashloan_executor_address(chain_id)` (env
 /// `FLASHLOAN_EXECUTOR_<chain_id>`); unit tests pass a literal address so this
 /// builder stays a pure, env-free function.
+///
+/// `backward_amount_in` is the REAL intermediate `token_out` amount the forward
+/// leg produces — quoted by `execute_multistep_revm` via `getAmountsOut` BEFORE
+/// the plan is built — and is encoded as the leg-1 (backward) swap `amountIn`
+/// inside the wrapped flash calldata. The reworked contract approves the
+/// on-chain intermediate delta, but the opaque V2 backward payload still
+/// carries its own `amountIn`, so it MUST be the real forward-quoted
+/// intermediate (NOT the old `min_profit_wei` sentinel).
 pub fn build_multistep_plan(
     ctx: &RoundTripContext,
     config: &MultiStepExecutionConfig,
     flashloan_executor: Address,
+    backward_amount_in: U256,
 ) -> Result<MultiStepPlan, MultiStepError> {
     config.validate()?;
     validate_context(ctx)?;
@@ -351,13 +360,17 @@ pub fn build_multistep_plan(
     // single `caller → FLE` `EXECUTOR_ROLE` bit is seeded (Step A), which needs
     // no per-token storage layout.
 
-    // Encode the OUTER wrapped flash calldata ONCE (R1 encoder): outer
-    // `requestFlashLoan(asset, amount, params)` (0x5107d61e) wrapping inner
-    // `executeArbitrageFlashFunded(...)` (0xdde0bf51). asset/amount derive from
-    // ctx; the inner per-leg swap recipient is `config.executor_address` (the
-    // AE that holds funds between legs).
-    let flash_calldata = build_flash_funded_broadcast_calldata(
+    // Encode the OUTER wrapped flash calldata ONCE (O1 intermediate-aware
+    // encoder): outer `requestFlashLoan(asset, amount, params)` (0x5107d61e)
+    // wrapping inner `executeArbitrageFlashFunded(...)` (0xdde0bf51). asset/amount
+    // derive from ctx; the inner per-leg swap recipient is
+    // `config.executor_address` (the AE that holds funds between legs). The leg-1
+    // (backward) swap `amountIn` is `backward_amount_in` — the REAL intermediate
+    // `token_out` the forward leg produces (quoted via getAmountsOut by the
+    // executor BEFORE this builder runs) — NOT the old `min_profit_wei` sentinel.
+    let flash_calldata = build_flash_funded_broadcast_calldata_with_intermediate(
         ctx,
+        backward_amount_in,
         config.route_hash,
         config.min_profit_wei,
         config.executor_address,
@@ -536,15 +549,13 @@ pub fn execute_multistep_revm(
             }
         };
 
-    // 1. Validate config + context + build the wrapped flash plan.
-    let plan = match build_multistep_plan(ctx, config, flashloan_executor) {
-        Ok(p) => p,
-        Err(e) => return failed_with(e),
-    };
-
-    // 2. Resolve LazyDb. Reuse the simulator's pinned block when available;
-    //    otherwise fall back to `None` (LazyDb resolves "latest" once and
-    //    memoizes — same convention SimulatorV2 uses).
+    // 1. Resolve LazyDb FIRST. The SequenceContext must exist BEFORE the plan is
+    //    built, because the plan's wrapped-flash calldata encodes the leg-1
+    //    backward `amountIn` from the REAL intermediate quoted off the forward
+    //    leg — and that quote is a REVM `getAmountsOut` view call. Reuse the
+    //    simulator's pinned block when available; otherwise fall back to `None`
+    //    (LazyDb resolves "latest" once and memoizes — same convention
+    //    SimulatorV2 uses).
     let lazy = match simulator_v2::LazyDb::new(&simulator.rpc_url, None) {
         Ok(db) => db,
         Err(e) => {
@@ -553,12 +564,52 @@ pub fn execute_multistep_revm(
         }
     };
     let pinned_block = lazy.pinned_block_number();
-
-    // 3. Drive the SequenceContext through the plan steps: the role override +
-    //    the FLE pre-read, then the single wrapped `requestFlashLoan` dispatch
-    //    (the inner provider callback + round-trip swaps execute inside it),
-    //    then the FLE post-read for the retained-spread profit accounting.
     let mut sctx = SequenceContext::new(lazy, config.chain_id, pinned_block);
+
+    // 2. QUOTE the forward leg via a NON-COMMITTING `getAmountsOut` view call on
+    //    the forward router. This is the REAL intermediate `token_out` the
+    //    forward swap of `amount_in` produces — the leg-1 (backward) swap
+    //    `amountIn`. Because `read_amounts_out` uses `transact()` (not
+    //    `transact_commit`), it does NOT mutate the CacheDB: it does not perturb
+    //    the reserves the subsequent COMMITTED leg-0 swap reads — both read the
+    //    same forked state at the pinned block. Fail-closed on quote error or a
+    //    zero quote (a zero intermediate means no real forward output).
+    let forward_router_alloy = ethers_addr_to_alloy(ctx.forward_router);
+    let amount_in_alloy = ethers_u256_to_alloy(ctx.amount_in);
+    let forward_path_alloy: Vec<simulator_v2::AlloyAddress> =
+        ctx.forward_path.iter().map(|a| ethers_addr_to_alloy(*a)).collect();
+    let intermediate_alloy =
+        match sctx.read_amounts_out(forward_router_alloy, amount_in_alloy, &forward_path_alloy) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(event = "multistep.forward_quote_failed", error = %e);
+                return SimulationOutcome::failed(format!(
+                    "multistep_forward_quote_failed:{}",
+                    e.reason_tag()
+                ));
+            }
+        };
+    if intermediate_alloy.is_zero() {
+        warn!(event = "multistep.forward_quote_zero");
+        return SimulationOutcome::failed("multistep_forward_quote_failed:zero_intermediate".to_string());
+    }
+    let backward_amount_in = alloy_u256_to_ethers(intermediate_alloy);
+
+    // 3. Validate config + context + build the wrapped flash plan with the REAL
+    //    forward-quoted intermediate encoded as the leg-1 backward `amountIn`.
+    let plan = match build_multistep_plan(ctx, config, flashloan_executor, backward_amount_in) {
+        Ok(p) => p,
+        Err(e) => return failed_with(e),
+    };
+
+    // Capture the VALIDATED wrapped-flash calldata — the exact `ExecuteCall`
+    // bytes (== `build_flash_funded_broadcast_calldata_with_intermediate`
+    // output) — so a passing outcome can carry it to the broadcast path. Only
+    // attached on SIM_SUCCESS below; every failure path leaves it `None`.
+    let validated_wrapped_calldata: Option<Vec<u8>> = plan.steps.iter().find_map(|s| match s {
+        MultiStepEntry::ExecuteCall { calldata, .. } => Some(calldata.clone()),
+        _ => None,
+    });
 
     debug!(
         event = "multistep.start",
@@ -567,6 +618,7 @@ pub fn execute_multistep_revm(
         token_in = ?plan.token_in,
         token_out = ?plan.token_out,
         amount_in_wei = %plan.amount_in,
+        backward_amount_in_wei = %backward_amount_in,
         steps_count = plan.steps.len(),
         paper_mode = config.paper_mode,
     );
@@ -752,6 +804,9 @@ pub fn execute_multistep_revm(
             .map(alloy_u256_to_ethers),
         gas_used_total: result.gas_used_total,
         fail_reason: None,
+        // Carry the VALIDATED wrapped-flash calldata (leg-1 encoded with the
+        // real forward-quoted intermediate) ONLY on this passing outcome.
+        wrapped_calldata: validated_wrapped_calldata,
     }
 }
 
@@ -801,6 +856,15 @@ mod tests {
     /// tests (the builder is pure; the executor resolves this from env).
     fn fle() -> Address {
         addr("0x00000000000000000000000000000000000feF1e")
+    }
+
+    /// An explicit, non-sentinel backward-leg `amountIn` used by the plan-builder
+    /// tests — stands in for the REAL forward-quoted intermediate that
+    /// `execute_multistep_revm` produces via `getAmountsOut`. Deliberately
+    /// distinct from `valid_config().min_profit_wei` (1) so the byte-parity test
+    /// proves the encoder threads THIS value (not the old sentinel) into leg-1.
+    fn backward_amount_in_fixture() -> U256 {
+        U256::from(3_000_000_000u64)
     }
 
     fn valid_config() -> MultiStepExecutionConfig {
@@ -945,7 +1009,7 @@ mod tests {
     #[test]
     fn build_plan_happy_path_step_layout() {
         let ctx = valid_ctx();
-        let plan = build_multistep_plan(&ctx, &valid_config(), fle())
+        let plan = build_multistep_plan(&ctx, &valid_config(), fle(), backward_amount_in_fixture())
             .expect("valid inputs should build a plan");
         // Wrapped flash plan (4 steps — NO ERC-20 prefund):
         //   1. ApplyStorage  (caller → FLE EXECUTOR_ROLE grant)
@@ -1008,7 +1072,8 @@ mod tests {
     fn build_plan_dispatches_wrapped_flash_to_fle() {
         let cfg = valid_config();
         let ctx = valid_ctx();
-        let plan = build_multistep_plan(&ctx, &cfg, fle()).unwrap();
+        let backward_amount_in = backward_amount_in_fixture();
+        let plan = build_multistep_plan(&ctx, &cfg, fle(), backward_amount_in).unwrap();
 
         let (to, calldata) = plan
             .steps
@@ -1025,10 +1090,14 @@ mod tests {
         assert_ne!(to, ctx.forward_router);
         assert_ne!(to, ctx.backward_router);
 
-        // BYTE-PARITY: the dispatched calldata is EXACTLY the R1 encoder output
-        // (outer requestFlashLoan wrapping inner executeArbitrageFlashFunded).
-        let expected = build_flash_funded_broadcast_calldata(
+        // BYTE-PARITY: the dispatched calldata is EXACTLY the O1 intermediate-aware
+        // encoder output (outer requestFlashLoan wrapping inner
+        // executeArbitrageFlashFunded), with leg-1 encoded against the EXPLICIT
+        // `backward_amount_in` (the real forward-quoted intermediate) — NOT the
+        // old `min_profit_wei` sentinel.
+        let expected = build_flash_funded_broadcast_calldata_with_intermediate(
             &ctx,
+            backward_amount_in,
             cfg.route_hash,
             cfg.min_profit_wei,
             cfg.executor_address,
@@ -1036,7 +1105,22 @@ mod tests {
         .expect("encoder must produce flash calldata");
         assert_eq!(
             calldata, expected,
-            "dispatch calldata must be byte-identical to build_flash_funded_broadcast_calldata"
+            "dispatch calldata must be byte-identical to build_flash_funded_broadcast_calldata_with_intermediate for the quoted intermediate"
+        );
+
+        // And the sentinel-encoded variant must DIFFER (proves the new
+        // intermediate is actually threaded into leg-1, not the old sentinel).
+        let sentinel_encoded = build_flash_funded_broadcast_calldata_with_intermediate(
+            &ctx,
+            cfg.min_profit_wei,
+            cfg.route_hash,
+            cfg.min_profit_wei,
+            cfg.executor_address,
+        )
+        .expect("encoder must produce flash calldata");
+        assert_ne!(
+            calldata, sentinel_encoded,
+            "dispatch calldata must NOT equal the min_profit_wei-sentinel encoding"
         );
 
         // Outer selector = requestFlashLoan (0x5107d61e).
@@ -1065,7 +1149,7 @@ mod tests {
     fn build_plan_seeds_only_caller_fle_role_not_ae() {
         let cfg = valid_config();
         let ctx = valid_ctx();
-        let plan = build_multistep_plan(&ctx, &cfg, fle()).unwrap();
+        let plan = build_multistep_plan(&ctx, &cfg, fle(), backward_amount_in_fixture()).unwrap();
 
         let expected_slot = caller_fle_executor_role_slot(ctx.caller);
 
@@ -1105,7 +1189,9 @@ mod tests {
     #[test]
     fn build_plan_ends_with_fle_post_balance_read() {
         let ctx = valid_ctx();
-        let plan = build_multistep_plan(&ctx, &valid_config(), fle()).unwrap();
+        let plan =
+            build_multistep_plan(&ctx, &valid_config(), fle(), backward_amount_in_fixture())
+                .unwrap();
         // The plan must end with a ReadBalance of the FLE's token_in balance
         // (the post-flash leg of the retained-spread measurement).
         let last = plan.steps.last().unwrap();
@@ -1128,8 +1214,13 @@ mod tests {
 
     #[test]
     fn build_plan_rejects_zero_flashloan_executor() {
-        let err =
-            build_multistep_plan(&valid_ctx(), &valid_config(), Address::zero()).unwrap_err();
+        let err = build_multistep_plan(
+            &valid_ctx(),
+            &valid_config(),
+            Address::zero(),
+            backward_amount_in_fixture(),
+        )
+        .unwrap_err();
         assert_eq!(err, MultiStepError::InvalidFlashLoanExecutor);
     }
 
@@ -1137,7 +1228,8 @@ mod tests {
     fn build_plan_rejects_max_steps_too_low() {
         let mut config = valid_config();
         config.max_steps = 2; // Plan needs 4; reject.
-        let err = build_multistep_plan(&valid_ctx(), &config, fle()).unwrap_err();
+        let err = build_multistep_plan(&valid_ctx(), &config, fle(), backward_amount_in_fixture())
+            .unwrap_err();
         assert_eq!(err, MultiStepError::InvalidStepCount);
     }
 
@@ -1145,7 +1237,8 @@ mod tests {
     fn build_plan_propagates_paper_mode_failure() {
         let mut config = valid_config();
         config.paper_mode = false;
-        let err = build_multistep_plan(&valid_ctx(), &config, fle()).unwrap_err();
+        let err = build_multistep_plan(&valid_ctx(), &config, fle(), backward_amount_in_fixture())
+            .unwrap_err();
         assert_eq!(err, MultiStepError::PaperModeRequired);
     }
 
