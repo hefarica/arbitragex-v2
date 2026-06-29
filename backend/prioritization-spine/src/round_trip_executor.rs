@@ -38,6 +38,7 @@
 //! See `docs/superpowers/plans/2026-05-05-revm-real-implementation.md`.
 
 use ethers::types::{Address, Bytes, U256};
+use serde::{Deserialize, Serialize};
 
 use crate::swap_encoder::{encode_erc20_balance_of, encode_v2_swap_exact_tokens_for_tokens};
 
@@ -74,7 +75,13 @@ impl SimulationOutcome {
 /// Bundle of inputs the orchestrator needs to plan + execute a round trip.
 /// All addresses are caller-supplied (typically resolved by the scanner from
 /// PG pool metadata before invoking the simulator).
-#[derive(Debug, Clone)]
+///
+/// `Serialize`/`Deserialize` are derived so this context can be embedded in the
+/// M2 carrier-B [`crate::validated_plan::ValidatedPlan`] record (persisted by
+/// `opp.id` at sim-validate time and re-read by the broadcast path). ethers'
+/// `Address`/`U256` provide their own serde impls; the derive is purely
+/// additive and does not change the sim path's behaviour.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundTripContext {
     pub caller: Address,
     pub token_in: Address,

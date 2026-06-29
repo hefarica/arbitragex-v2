@@ -16,6 +16,7 @@ pub mod strategy_config_gate;
 pub mod strategy_scores_db;
 pub mod swap_encoder;
 pub mod types;
+pub mod validated_plan;
 
 pub use bayesian_allocator::{Allocation, AllocationSource, BayesianAllocator, BetaPosterior};
 pub use config_aware::{ConfigAwareEvaluator, ConfigGateOutcome, NetworkSignals};
@@ -30,3 +31,4 @@ pub use scoring::*;
 pub use strategy_config_gate::{GateOutcome, StrategyConfigGate};
 pub use strategy_scores_db::{StrategyFailRate, StrategyScoresCache};
 pub use types::*;
+pub use validated_plan::ValidatedPlan;
