@@ -716,7 +716,7 @@ pub fn execute_multistep_revm(
                     value_wei: 0,
                     gas_price_wei: gas_price_u128,
                     gas_limit,
-                    label: *label,
+                    label,
                 };
                 let outcome = match sctx.call(seq_call) {
                     Ok(o) => o,
