@@ -111,7 +111,8 @@ pub async fn build_and_sign(
     let deadline = U256::from(now_secs() + 120);
 
     // M2 carry-through: prefer the exact sim-validated calldata when present.
-    let (to_addr, data) = select_to_and_data(opp, exec_payload, signer.address, amount_in, deadline)?;
+    let (to_addr, data) =
+        select_to_and_data(opp, exec_payload, signer.address, amount_in, deadline)?;
     if exec_payload.is_none() {
         tracing::debug!(
             event = "bundle_builder.direct_router_fallback",
@@ -216,10 +217,13 @@ fn select_to_and_data(
         RouterKind::UniswapV2 | RouterKind::Sushi => {
             encode_v2(token_in, token_out, amount_in, recipient, deadline)
         }
-        RouterKind::UniswapV3 => {
-            encode_v3(token_in, token_out, amount_in, recipient, deadline)
+        RouterKind::UniswapV3 => encode_v3(token_in, token_out, amount_in, recipient, deadline),
+        _ => {
+            return Err(BuildError::UnknownRouter(format!(
+                "{:?}",
+                router_entry.kind
+            )))
         }
-        _ => return Err(BuildError::UnknownRouter(format!("{:?}", router_entry.kind))),
     };
     Ok((Address::from(router_entry.address), data))
 }
@@ -227,7 +231,8 @@ fn select_to_and_data(
 /// Decode a `0x`-prefixed (or bare) hex string into bytes.
 fn decode_hex_0x(s: &str) -> Result<Vec<u8>, BuildError> {
     let cleaned = s.trim_start_matches("0x").trim_start_matches("0X");
-    hex::decode(cleaned).map_err(|e| BuildError::InvalidExecPayload(format!("bad calldata hex: {e}")))
+    hex::decode(cleaned)
+        .map_err(|e| BuildError::InvalidExecPayload(format!("bad calldata hex: {e}")))
 }
 
 fn keccak256_bytes(b: &Bytes) -> [u8; 32] {
