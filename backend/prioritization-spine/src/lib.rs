@@ -23,7 +23,12 @@ pub use config_aware::{ConfigAwareEvaluator, ConfigGateOutcome, NetworkSignals};
 pub use decision::*;
 pub use errors::*;
 pub use evidence::*;
-pub use execute_arbitrage_encoder::{build_execute_arbitrage_calldata, EXECUTE_ARBITRAGE_SELECTOR};
+pub use execute_arbitrage_encoder::{
+    build_execute_arbitrage_calldata, build_execute_arbitrage_flash_funded_calldata,
+    build_flash_funded_broadcast_calldata, build_request_flash_loan_calldata,
+    ExecuteArbitrageEncodeError, EXECUTE_ARBITRAGE_FLASH_FUNDED_SELECTOR,
+    EXECUTE_ARBITRAGE_SELECTOR, REQUEST_FLASH_LOAN_SELECTOR,
+};
 pub use feedback::{AdaptiveSignal, FeedbackChannel, SIGNAL_TTL};
 pub use gates::*;
 pub use route_plan::{RouteLeg, RoutePlan};

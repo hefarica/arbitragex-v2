@@ -1,10 +1,24 @@
-//! `executeArbitrage` calldata encoder — single source of truth.
+//! `executeArbitrage` / `executeArbitrageFlashFunded` calldata encoders —
+//! single source of truth.
 //!
 //! Promoted out of `searcher-rs/src/sim_orchestrator.rs` (M2 T1) so that both
 //! the simulation path (searcher-rs) and, later, the broadcast path
-//! (relays-client) encode the deployed `ArbitrageExecutor.executeArbitrage(...)`
-//! calldata from ONE implementation. The emitted bytes are identical to the
-//! previous searcher-rs-local encoder.
+//! (relays-client) encode the deployed `ArbitrageExecutor` calldata from ONE
+//! implementation. The emitted bytes are identical to the previous
+//! searcher-rs-local encoder.
+//!
+//! ## Self-funded vs flash-funded (M2 flash R1)
+//!
+//! The operator's live execution path is FLASH-FUNDED: the broadcast tx is
+//! `EOA → FlashLoanExecutor.requestFlashLoan(asset, amount, params)` where
+//! `params = executeArbitrageFlashFunded(...)`. The inner
+//! `executeArbitrageFlashFunded(bytes32,address,address,uint256,uint256,address[],bytes[])`
+//! (selector `0xdde0bf51`) takes the IDENTICAL 7 args as the existing
+//! self-funded `executeArbitrage(...)` (selector `0x76d81cdf`), and the per-leg
+//! swap payloads keep `recipient = the executor` (the executor holds funds
+//! between legs in both modes). The inner flash calldata is therefore
+//! byte-identical to the self-funded calldata EXCEPT the 4-byte selector — so
+//! both selectors reuse ONE encoding body via [`encode_execute_arbitrage_body`].
 //!
 //! The function is intentionally decoupled from searcher-rs's
 //! `RoundTripExecutionConfig`: it takes the three config fields it actually
@@ -20,7 +34,7 @@ use thiserror::Error;
 use crate::round_trip_executor::RoundTripContext;
 use crate::swap_encoder::encode_v2_swap_exact_tokens_for_tokens;
 
-/// Encoder error for [`build_execute_arbitrage_calldata`].
+/// Encoder error for the `executeArbitrage*` builders.
 ///
 /// Mirrors the single failure mode the encoder can hit on its own; callers map
 /// it onto their domain error type (the sim path maps it to
@@ -38,21 +52,43 @@ pub enum ExecuteArbitrageEncodeError {
 /// `tests::execute_arbitrage_selector_matches_known_hash`.
 pub const EXECUTE_ARBITRAGE_SELECTOR: [u8; 4] = [0x76, 0xd8, 0x1c, 0xdf];
 
-/// Build the calldata for a single `executeArbitrage(...)` invocation
-/// against the deployed `ArbitrageExecutor` contract.
+/// First 4 bytes of `keccak256("executeArbitrageFlashFunded(bytes32,address,address,uint256,uint256,address[],bytes[])")`.
+///
+/// Verified against `contracts/src/ArbitrageExecutor.sol:279-287`. Identical
+/// 7-arg layout to [`EXECUTE_ARBITRAGE_SELECTOR`]; only the selector differs.
+/// Validated in `tests::execute_arbitrage_flash_funded_selector_matches_known_hash`.
+pub const EXECUTE_ARBITRAGE_FLASH_FUNDED_SELECTOR: [u8; 4] = [0xdd, 0xe0, 0xbf, 0x51];
+
+/// First 4 bytes of `keccak256("requestFlashLoan(address,uint256,bytes)")`.
+///
+/// Verified against `contracts/src/FlashLoanExecutor.sol:270`. The flash
+/// provider is internal to the FlashLoanExecutor (no provider arg). Validated
+/// in `tests::request_flash_loan_selector_matches_known_hash`.
+pub const REQUEST_FLASH_LOAN_SELECTOR: [u8; 4] = [0x51, 0x07, 0xd6, 0x1e];
+
+/// Shared inner body for both `executeArbitrage` (self-funded) and
+/// `executeArbitrageFlashFunded` (flash-funded).
+///
+/// Both deployed entrypoints take the IDENTICAL 7 args
+/// `(bytes32 routeHash, address tokenIn, address tokenOut, uint256 amountIn,
+/// uint256 minProfit, address[] routers, bytes[] payload)` and both keep the
+/// per-leg swap `recipient = executor_address` (the executor holds funds
+/// between legs). The ONLY difference is the 4-byte selector — so this helper
+/// builds the full `selector ++ abi(args)` calldata and the public builders
+/// just pass their selector. This keeps the payload-building + ABI-encoding
+/// logic in ONE place (DRY); see the module docs.
 ///
 /// The function pre-encodes BOTH leg payloads (forward + backward swap)
 /// at the call site. For a real multi-hop arbitrage this is incorrect at
 /// the byte level — the backward payload's `amountIn` slot is set to
 /// `min_profit_wei` as a non-zero sentinel rather than the (unknown)
 /// intermediate amount of `token_out`. This calldata is therefore
-/// SIMULATION-ONLY: the contract's swap will revert if the router
-/// receives an `amountIn` it cannot honour, and the orchestrator records
-/// `SIM_REVERT` honestly.
-///
-/// The full multi-step orchestrator that reads the intermediate amount
-/// between legs lands in Phase A.3.c.2.
-pub fn build_execute_arbitrage_calldata(
+/// SIMULATION-ONLY for the self-funded path: the contract's swap will revert if
+/// the router receives an `amountIn` it cannot honour, and the orchestrator
+/// records `SIM_REVERT` honestly. The full multi-step orchestrator that reads
+/// the intermediate amount between legs lands in Phase A.3.c.2.
+fn encode_execute_arbitrage_body(
+    selector: [u8; 4],
     ctx: &RoundTripContext,
     route_hash: [u8; 32],
     min_profit_wei: U256,
@@ -81,7 +117,8 @@ pub fn build_execute_arbitrage_calldata(
         ctx.deadline,
     );
 
-    // ABI-encode the executeArbitrage(...) arguments.
+    // ABI-encode the executeArbitrage(...) / executeArbitrageFlashFunded(...)
+    // arguments (identical 7-arg layout for both entrypoints).
     let routers = vec![
         Token::Address(ctx.forward_router),
         Token::Address(ctx.backward_router),
@@ -101,34 +138,125 @@ pub fn build_execute_arbitrage_calldata(
     ]);
 
     let mut calldata = Vec::with_capacity(4 + args.len());
-    calldata.extend_from_slice(&EXECUTE_ARBITRAGE_SELECTOR);
+    calldata.extend_from_slice(&selector);
     calldata.extend_from_slice(&args);
     Ok(calldata)
+}
+
+/// Build the calldata for a single self-funded `executeArbitrage(...)`
+/// invocation against the deployed `ArbitrageExecutor` contract
+/// (selector `0x76d81cdf`).
+///
+/// Thin wrapper over [`encode_execute_arbitrage_body`] with the self-funded
+/// selector. See that helper for the SIMULATION-ONLY caveat on the backward
+/// leg.
+pub fn build_execute_arbitrage_calldata(
+    ctx: &RoundTripContext,
+    route_hash: [u8; 32],
+    min_profit_wei: U256,
+    executor_address: Address,
+) -> Result<Vec<u8>, ExecuteArbitrageEncodeError> {
+    encode_execute_arbitrage_body(
+        EXECUTE_ARBITRAGE_SELECTOR,
+        ctx,
+        route_hash,
+        min_profit_wei,
+        executor_address,
+    )
+}
+
+/// Build the INNER calldata for a single flash-funded
+/// `executeArbitrageFlashFunded(...)` invocation against the deployed
+/// `ArbitrageExecutor` contract (selector `0xdde0bf51`).
+///
+/// Same inputs and body as [`build_execute_arbitrage_calldata`] — the emitted
+/// bytes are byte-identical EXCEPT the 4-byte selector (proved by
+/// `tests::flash_funded_inner_equals_self_funded_except_selector`). This is the
+/// `params` that gets wrapped by [`build_request_flash_loan_calldata`] for the
+/// outer `requestFlashLoan` broadcast; callers that want the full wrapped
+/// broadcast calldata should use [`build_flash_funded_broadcast_calldata`].
+pub fn build_execute_arbitrage_flash_funded_calldata(
+    ctx: &RoundTripContext,
+    route_hash: [u8; 32],
+    min_profit_wei: U256,
+    executor_address: Address,
+) -> Result<Vec<u8>, ExecuteArbitrageEncodeError> {
+    encode_execute_arbitrage_body(
+        EXECUTE_ARBITRAGE_FLASH_FUNDED_SELECTOR,
+        ctx,
+        route_hash,
+        min_profit_wei,
+        executor_address,
+    )
+}
+
+/// Build the OUTER `requestFlashLoan(address asset, uint256 amount, bytes params)`
+/// calldata against the deployed `FlashLoanExecutor` contract
+/// (selector `0x5107d61e`).
+///
+/// The flash provider (Balancer adapter / Aave) is internal to the
+/// FlashLoanExecutor, so there is NO provider arg here. `inner_params` is the
+/// inner `executeArbitrageFlashFunded(...)` calldata that the executor forwards
+/// to the `ArbitrageExecutor` inside the flash callback. This is the calldata
+/// broadcast with `.to() = FlashLoanExecutor`.
+pub fn build_request_flash_loan_calldata(
+    asset: Address,
+    amount: U256,
+    inner_params: &[u8],
+) -> Vec<u8> {
+    let args = encode(&[
+        Token::Address(asset),
+        Token::Uint(amount),
+        Token::Bytes(inner_params.to_vec()),
+    ]);
+    let mut calldata = Vec::with_capacity(4 + args.len());
+    calldata.extend_from_slice(&REQUEST_FLASH_LOAN_SELECTOR);
+    calldata.extend_from_slice(&args);
+    calldata
+}
+
+/// Build the full FLASH-FUNDED broadcast calldata — the single entry the sim
+/// and the relays-client will both call (later increments).
+///
+/// Composes the two layers:
+///   1. `inner  = executeArbitrageFlashFunded(...)` (selector `0xdde0bf51`) via
+///      [`build_execute_arbitrage_flash_funded_calldata`].
+///   2. `outer  = requestFlashLoan(asset, amount, inner)` (selector
+///      `0x5107d61e`) via [`build_request_flash_loan_calldata`].
+///
+/// The borrowed `asset` is the round trip's `token_in` (the leg-0 input that is
+/// also the leg-1 output — i.e. the token the flash loan funds and repays), and
+/// `amount` is `ctx.amount_in`. Both are derived from `ctx`; no extra
+/// `ValidatedPlan` field is required. Returns the OUTER `requestFlashLoan`
+/// calldata to broadcast with `.to() = FlashLoanExecutor`.
+pub fn build_flash_funded_broadcast_calldata(
+    ctx: &RoundTripContext,
+    route_hash: [u8; 32],
+    min_profit_wei: U256,
+    executor_address: Address,
+) -> Result<Vec<u8>, ExecuteArbitrageEncodeError> {
+    let inner = build_execute_arbitrage_flash_funded_calldata(
+        ctx,
+        route_hash,
+        min_profit_wei,
+        executor_address,
+    )?;
+    // asset = the borrowed token = token_in; amount = amountIn (both from ctx).
+    Ok(build_request_flash_loan_calldata(
+        ctx.token_in,
+        ctx.amount_in,
+        &inner,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethers::abi::{decode, ParamType};
+    use std::str::FromStr;
 
-    #[test]
-    fn execute_arbitrage_selector_matches_known_hash() {
-        use ethers::utils::keccak256;
-        let signature =
-            b"executeArbitrage(bytes32,address,address,uint256,uint256,address[],bytes[])";
-        let hash = keccak256(signature);
-        assert_eq!(EXECUTE_ARBITRAGE_SELECTOR, hash[..4]);
-    }
-
-    /// Output-contract lock for the M2 broadcast path: the encoder must emit a
-    /// well-formed `executeArbitrage(bytes32,address,address,uint256,uint256,address[],bytes[])`
-    /// call whose ABI-decoded fields match the inputs. This guards both the
-    /// selector (0x76d81cdf — NOT the `executeArbitrageFlashFunded` 0xdde0bf51
-    /// sibling) and the argument layout the deployed contract relies on.
-    #[test]
-    fn build_calldata_matches_execute_arbitrage_abi() {
-        use ethers::abi::{decode, ParamType};
-        use std::str::FromStr;
-
+    /// Build a deterministic 2-token round trip context shared across tests.
+    fn fixture() -> (RoundTripContext, [u8; 32], U256, Address) {
         let token_in = Address::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
             .expect("valid token_in address");
         let token_out = Address::from_str("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
@@ -156,6 +284,44 @@ mod tests {
         let min_profit_wei = U256::from(1);
         let executor_address = Address::from_str("0x2222222222222222222222222222222222222222")
             .expect("valid executor address");
+
+        (ctx, route_hash, min_profit_wei, executor_address)
+    }
+
+    #[test]
+    fn execute_arbitrage_selector_matches_known_hash() {
+        use ethers::utils::keccak256;
+        let signature =
+            b"executeArbitrage(bytes32,address,address,uint256,uint256,address[],bytes[])";
+        let hash = keccak256(signature);
+        assert_eq!(EXECUTE_ARBITRAGE_SELECTOR, hash[..4]);
+    }
+
+    #[test]
+    fn execute_arbitrage_flash_funded_selector_matches_known_hash() {
+        use ethers::utils::keccak256;
+        let signature =
+            b"executeArbitrageFlashFunded(bytes32,address,address,uint256,uint256,address[],bytes[])";
+        let hash = keccak256(signature);
+        assert_eq!(EXECUTE_ARBITRAGE_FLASH_FUNDED_SELECTOR, hash[..4]);
+    }
+
+    #[test]
+    fn request_flash_loan_selector_matches_known_hash() {
+        use ethers::utils::keccak256;
+        let signature = b"requestFlashLoan(address,uint256,bytes)";
+        let hash = keccak256(signature);
+        assert_eq!(REQUEST_FLASH_LOAN_SELECTOR, hash[..4]);
+    }
+
+    /// Output-contract lock for the M2 broadcast path: the encoder must emit a
+    /// well-formed `executeArbitrage(bytes32,address,address,uint256,uint256,address[],bytes[])`
+    /// call whose ABI-decoded fields match the inputs. This guards both the
+    /// selector (0x76d81cdf — NOT the `executeArbitrageFlashFunded` 0xdde0bf51
+    /// sibling) and the argument layout the deployed contract relies on.
+    #[test]
+    fn build_calldata_matches_execute_arbitrage_abi() {
+        let (ctx, route_hash, min_profit_wei, executor_address) = fixture();
 
         let calldata =
             build_execute_arbitrage_calldata(&ctx, route_hash, min_profit_wei, executor_address)
@@ -209,5 +375,110 @@ mod tests {
             let leg_bytes = leg.clone().into_bytes().expect("payload leg is bytes");
             assert!(!leg_bytes.is_empty(), "payload leg {i} must be non-empty");
         }
+    }
+
+    /// The shared body proof: the flash-funded inner calldata is byte-identical
+    /// to the self-funded calldata EXCEPT the leading 4-byte selector. Locks the
+    /// DRY refactor — both selectors run through `encode_execute_arbitrage_body`.
+    #[test]
+    fn flash_funded_inner_equals_self_funded_except_selector() {
+        let (ctx, route_hash, min_profit_wei, executor_address) = fixture();
+
+        let self_funded =
+            build_execute_arbitrage_calldata(&ctx, route_hash, min_profit_wei, executor_address)
+                .expect("self-funded encoder should produce calldata");
+        let flash_funded = build_execute_arbitrage_flash_funded_calldata(
+            &ctx,
+            route_hash,
+            min_profit_wei,
+            executor_address,
+        )
+        .expect("flash-funded encoder should produce calldata");
+
+        // The two selectors differ.
+        assert_ne!(
+            EXECUTE_ARBITRAGE_SELECTOR, EXECUTE_ARBITRAGE_FLASH_FUNDED_SELECTOR,
+            "self-funded and flash-funded selectors must differ"
+        );
+        assert_eq!(self_funded[0..4], EXECUTE_ARBITRAGE_SELECTOR);
+        assert_eq!(flash_funded[0..4], EXECUTE_ARBITRAGE_FLASH_FUNDED_SELECTOR);
+
+        // ...but the encoded argument tails are byte-identical (shared body).
+        assert_eq!(
+            self_funded[4..],
+            flash_funded[4..],
+            "inner flash calldata must match self-funded calldata except the selector"
+        );
+    }
+
+    /// Full wrapped-contract lock: `build_flash_funded_broadcast_calldata`
+    /// returns the OUTER `requestFlashLoan(address,uint256,bytes)` calldata, with
+    /// asset/amount derived from ctx, wrapping the inner
+    /// `executeArbitrageFlashFunded(...)` whose 7 args ABI-decode correctly.
+    #[test]
+    fn flash_funded_broadcast_wraps_request_flash_loan() {
+        let (ctx, route_hash, min_profit_wei, executor_address) = fixture();
+
+        let outer = build_flash_funded_broadcast_calldata(
+            &ctx,
+            route_hash,
+            min_profit_wei,
+            executor_address,
+        )
+        .expect("broadcast encoder should produce calldata");
+
+        // Outer selector is requestFlashLoan (0x5107d61e).
+        assert_eq!(REQUEST_FLASH_LOAN_SELECTOR, outer[0..4]);
+
+        // Decode the outer requestFlashLoan(address asset, uint256 amount, bytes params).
+        let outer_types = [ParamType::Address, ParamType::Uint(256), ParamType::Bytes];
+        let outer_decoded =
+            decode(&outer_types, &outer[4..]).expect("outer calldata must ABI-decode");
+        assert_eq!(outer_decoded.len(), 3, "requestFlashLoan has 3 args");
+
+        // asset == ctx.token_in (the borrowed/repaid token), amount == ctx.amount_in.
+        let asset = outer_decoded[0].clone().into_address().expect("asset is address");
+        assert_eq!(asset, ctx.token_in, "borrowed asset must be token_in");
+        let amount = outer_decoded[1].clone().into_uint().expect("amount is uint256");
+        assert_eq!(amount, ctx.amount_in, "borrowed amount must be amount_in");
+
+        // The inner params are the executeArbitrageFlashFunded calldata.
+        let inner = outer_decoded[2].clone().into_bytes().expect("params is bytes");
+        assert_eq!(
+            EXECUTE_ARBITRAGE_FLASH_FUNDED_SELECTOR,
+            inner[0..4],
+            "inner params must be executeArbitrageFlashFunded (0xdde0bf51)"
+        );
+
+        // Decode the inner tail against the same 7-arg executeArbitrage layout.
+        let inner_types = [
+            ParamType::FixedBytes(32),
+            ParamType::Address,
+            ParamType::Address,
+            ParamType::Uint(256),
+            ParamType::Uint(256),
+            ParamType::Array(Box::new(ParamType::Address)),
+            ParamType::Array(Box::new(ParamType::Bytes)),
+        ];
+        let inner_decoded =
+            decode(&inner_types, &inner[4..]).expect("inner calldata must ABI-decode");
+        assert_eq!(inner_decoded.len(), 7, "inner has 7 executeArbitrage args");
+
+        let inner_route_hash =
+            inner_decoded[0].clone().into_fixed_bytes().expect("inner arg 0 is bytes32");
+        assert_eq!(inner_route_hash.as_slice(), &route_hash[..]);
+        let inner_token_in = inner_decoded[1].clone().into_address().expect("inner arg 1 is address");
+        assert_eq!(inner_token_in, ctx.token_in);
+        let inner_token_out =
+            inner_decoded[2].clone().into_address().expect("inner arg 2 is address");
+        assert_eq!(inner_token_out, ctx.token_out);
+        let inner_amount_in = inner_decoded[3].clone().into_uint().expect("inner arg 3 is uint256");
+        assert_eq!(inner_amount_in, ctx.amount_in);
+        let inner_min_profit = inner_decoded[4].clone().into_uint().expect("inner arg 4 is uint256");
+        assert_eq!(inner_min_profit, min_profit_wei);
+        let inner_routers = inner_decoded[5].clone().into_array().expect("inner arg 5 is address[]");
+        assert_eq!(inner_routers.len(), 2, "expected 2 routers");
+        let inner_payloads = inner_decoded[6].clone().into_array().expect("inner arg 6 is bytes[]");
+        assert_eq!(inner_payloads.len(), 2, "expected 2 payload legs");
     }
 }
