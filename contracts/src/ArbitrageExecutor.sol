@@ -90,6 +90,22 @@ error ZeroIntermediate();
 ///      the per-hop input-token / intermediate accounting is defined only for 1 and 2 legs.
 ///      Fail-closed: refuse to dispatch a route shape whose spend safety is not modelled.
 error UnsupportedRouteLength(uint256 length);
+/// @dev (HIGH, execution-core audit 2026-06-29) Thrown when a cross-DEX 2-leg route ends with
+///      this contract holding LESS tokenOut than it held before the route — i.e. the route
+///      drained pre-existing tokenOut working capital B_out. The tokenIn-only profit/retention
+///      gate (ZeroGrossProfit/minProfit) does NOT see a tokenOut shortfall, and leg-1's
+///      delta-approval alone does NOT stop a sender-surcharge / reflection / deflationary
+///      tokenOut from skimming the executor on its outbound transferFrom. This symmetric guard
+///      mirrors FlashFundedCapitalRetentionViolation (tokenIn) for tokenOut: fail-closed so a
+///      compromised EXECUTOR_ROLE key cannot leak B_out through an exotic tokenOut.
+error TokenOutRetentionViolation();
+/// @dev (LOW, execution-core audit 2026-06-29) Thrown when a 2-leg (cross-DEX) route is
+///      submitted with tokenIn == tokenOut. The off-chain never emits this shape: cross-DEX
+///      routes have two DISTINCT tokens, and circular routes are a single leg. The 2-leg
+///      tokenOut-delta accounting (snapshot tokenOut, approve only the produced intermediate)
+///      is undefined when tokenOut aliases tokenIn, so the shape is rejected fail-closed,
+///      keeping the route-shape gate provably exhaustive.
+error AliasedTwoLegRoute();
 
 /// @title ArbitrageExecutor — UUPS-upgradeable on-chain arbitrage executor
 /// @notice Executes atomic multi-hop circular arbitrage routes.
@@ -358,6 +374,15 @@ contract ArbitrageExecutor is
         // TokenNotApproved; routers/payload LengthMismatch) keep their expected errors.
         if (routers.length > 2) revert UnsupportedRouteLength(routers.length);
 
+        // (LOW, execution-core audit 2026-06-29) Aliased-shape gate. A 2-leg route with
+        // tokenIn == tokenOut is a shape the off-chain never emits: cross-DEX routes carry
+        // two DISTINCT tokens, circular routes are a single leg. The 2-leg tokenOut-delta
+        // accounting below (snapshot tokenOut, approve only the produced intermediate) is
+        // undefined when tokenOut aliases tokenIn, so reject it fail-closed with a NAMED
+        // error here — making the route-shape gate provably exhaustive rather than relying
+        // on an incidental ZeroIntermediate revert from the aliased delta computation.
+        if (routers.length == 2 && tokenOut == tokenIn) revert AliasedTwoLegRoute();
+
         uint256 balanceBefore = IERC20(tokenIn).balanceOf(address(this));
         if (balanceBefore < amountIn) revert InsufficientBalance();
 
@@ -366,8 +391,13 @@ contract ArbitrageExecutor is
         // → call → reset to 0) for EACH leg's correct INPUT token:
         //   - Leg 0 spends `tokenIn`, exactly `amountIn`.
         //   - Leg 1 (cross-DEX) spends `tokenOut`, exactly the INTERMEDIATE delta that
-        //     leg 0 produced — never the executor's full tokenOut balance — so any
-        //     pre-existing tokenOut working capital is preserved (SC-13, tokenOut-scoped).
+        //     leg 0 produced — never the executor's full tokenOut balance. The delta-
+        //     approval BOUNDS what the router may pull, but it does NOT by itself preserve
+        //     pre-existing tokenOut working capital B_out: a sender-surcharge / reflection /
+        //     deflationary tokenOut can skim the executor on leg-1's outbound transferFrom,
+        //     draining B_out with no revert. tokenOut retention is therefore ENFORCED by the
+        //     post-leg1 TokenOutRetentionViolation guard below (HIGH, execution-core audit
+        //     2026-06-29), the tokenOut-scoped mirror of FlashFundedCapitalRetentionViolation.
         // The AllowanceManager isApproved registry is deliberately NOT consulted: an
         // allowance held by the AllowanceManager confers no spend authority over THIS
         // contract's balance. Router/selector allowlisting (approvedRouters /
@@ -392,6 +422,21 @@ contract ArbitrageExecutor is
 
                 // Leg 1: input token is tokenOut, exact amount = the intermediate delta.
                 _validateAndCall(tokenOut, routers[1], intermediate, payload[1]);
+
+                // (HIGH, execution-core audit 2026-06-29) Symmetric tokenOut capital-retention
+                // guard. The profit/retention gate below is tokenIn-scoped and never sees a
+                // tokenOut shortfall; leg-1's delta-approval alone does NOT stop a sender-
+                // surcharge / reflection / deflationary tokenOut from skimming the executor on
+                // its outbound transferFrom (the recipient gets the full intermediate, the
+                // executor is additionally debited a fee, draining pre-existing B_out with no
+                // revert). Assert the executor's tokenOut balance did not fall below its
+                // pre-route snapshot. Fail-closed exactly like FlashFundedCapitalRetentionViolation
+                // (tokenIn). A FAITHFUL leg-1 consumes at most `intermediate`, so balance ends
+                // >= tokenOutBefore (equality when fully consumed) — the guard fires ONLY on a
+                // real tokenOut shortfall, never on a supported route.
+                if (IERC20(tokenOut).balanceOf(address(this)) < tokenOutBefore) {
+                    revert TokenOutRetentionViolation();
+                }
             }
         }
 
@@ -455,8 +500,13 @@ contract ArbitrageExecutor is
     ///          whole tx reverts on failure, so nothing is left granted either way).
     ///      (1a) `inputToken`/`exactAmount` are the LEG's input token and exact amount:
     ///      (tokenIn, amountIn) for leg 0; (tokenOut, intermediate-delta) for leg 1 — the
-    ///      backward leg therefore approves only the tokenOut this route produced, never
-    ///      pre-existing tokenOut working capital, and never an unbounded allowance.
+    ///      backward leg therefore approves only the tokenOut this route produced, and never
+    ///      an unbounded allowance. This delta-approval BOUNDS the router's pull but does NOT
+    ///      by itself preserve pre-existing tokenOut working capital B_out: a sender-surcharge
+    ///      / reflection / deflationary tokenOut can still skim the executor on leg-1's
+    ///      outbound transferFrom. B_out retention is ENFORCED separately by the post-leg1
+    ///      TokenOutRetentionViolation guard in _runRoute (HIGH, execution-core audit
+    ///      2026-06-29) — the tokenOut-scoped mirror of FlashFundedCapitalRetentionViolation.
     ///      forceApprove zeroes a non-zero current allowance first, so this is safe for
     ///      approve-race tokens (e.g. USDT). Extracted to its own frame purely to keep
     ///      executeArbitrage under the EVM stack limit; it performs no validation of its

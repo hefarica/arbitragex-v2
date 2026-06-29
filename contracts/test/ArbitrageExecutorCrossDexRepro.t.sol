@@ -59,6 +59,39 @@ contract ReproCrossDexRouter {
     }
 }
 
+/// @dev Sender-surcharge ("reflection"/deflationary-on-send) ERC20: the RECIPIENT always
+///      receives `value` IN FULL, but when the configured `feeFrom` account is the SENDER an
+///      EXTRA `feeBps` is skimmed from it on top of the main move. Mirrors MockOutboundFeeERC20
+///      in ArbitrageExecutor.t.sol. As a cross-DEX tokenOut this is the HIGH-finding token:
+///      leg-1's outbound transferFrom(executor -> router) of the intermediate delivers the
+///      router its full amount, but additionally debits the executor `feeBps` — draining
+///      pre-existing tokenOut working capital B_out with NO revert in the faithful accounting.
+contract ReproSenderSurchargeToken is ERC20 {
+    address private constant SINK = address(0xdead);
+    address public feeFrom;
+    uint256 public feeBps; // e.g. 100 = 1%
+
+    constructor(string memory s) ERC20(s, s) {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function setSurcharge(address account, uint256 bps) external {
+        feeFrom = account;
+        feeBps = bps;
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        super._update(from, to, value); // faithful main move: recipient gets `value` in full
+        // Sender-pays surcharge ONLY when the configured account sends on a real transfer.
+        if (feeFrom != address(0) && from == feeFrom && to != address(0) && feeBps > 0) {
+            uint256 fee = (value * feeBps) / 10_000;
+            if (fee > 0) super._update(from, SINK, fee);
+        }
+    }
+}
+
 /// @dev Single-token circular router: pulls tokenIn, returns more tokenIn. This is the
 ///      ONLY shape `_runRoute` supports (the hop spends tokenIn). Positive control.
 contract ReproCircularRouter {
@@ -362,5 +395,96 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
         vm.prank(executorRole);
         vm.expectRevert(ZeroGrossProfit.selector);
         executor.executeArbitrage(bytes32(0), address(tokenIn), address(tokenOut), amountIn, 0, routers, payloads);
+    }
+
+    // =========================================================================
+    // HIGH (execution-core audit): symmetric tokenOut capital-retention guard
+    // =========================================================================
+
+    /// HIGH repro: the cross-DEX 2-leg path measured profit + capital retention ONLY in
+    /// tokenIn. Leg 1 approves the tokenOut delta the route produced — which preserves a
+    /// FAITHFUL tokenOut's pre-existing B_out. But a SENDER-SURCHARGE tokenOut makes leg-1's
+    /// outbound transferFrom(executor -> router) of `intermediate` additionally debit the
+    /// executor a fee, draining B_out with NO revert in the tokenIn-only accounting. This
+    /// asserts the route now REVERTS TokenOutRetentionViolation and B_out is fully retained.
+    ///
+    /// Red→green: before the post-leg1 guard this route did NOT revert and the executor lost
+    /// `fee` of its pre-existing tokenOut B_out; with the guard it fail-closes and rolls back.
+    function test_Security_TokenOutSenderSurchargeReverts() public {
+        ReproToken tokenIn = new ReproToken("IN");
+        ReproSenderSurchargeToken tokenOut = new ReproSenderSurchargeToken("OUT");
+        // Surcharge applies ONLY when the EXECUTOR is the sender (its outbound leg-1 transfer).
+        tokenOut.setSurcharge(address(executor), 100); // 1%
+
+        uint256 amountIn = 1_000e18;
+        uint256 intermediate = 900e18; // tokenOut produced by leg 0
+        uint256 finalOut = 1_100e18; // tokenIn from leg 1 (+100 tokenIn profit)
+        uint256 B_out = 500e18; // executor's OWN tokenOut working capital — must be retained
+
+        ReproCrossDexRouter routerA =
+            new ReproCrossDexRouter(address(tokenIn), address(tokenOut), amountIn, intermediate);
+        ReproCrossDexRouter routerB =
+            new ReproCrossDexRouter(address(tokenOut), address(tokenIn), intermediate, finalOut);
+
+        tokenIn.mint(address(executor), amountIn);
+        tokenOut.mint(address(executor), B_out); // B_out — must be retained on revert
+        tokenOut.mint(address(routerA), intermediate);
+        tokenIn.mint(address(routerB), finalOut);
+
+        executor.setTokenApproval(address(tokenIn), true);
+        executor.setTokenApproval(address(tokenOut), true);
+        executor.setRouterApproval(address(routerA), true);
+        executor.setRouterApproval(address(routerB), true);
+        executor.setRouterSelectorApproval(address(routerA), SWAP_SELECTOR, true);
+        executor.setRouterSelectorApproval(address(routerB), SWAP_SELECTOR, true);
+
+        address[] memory routers = new address[](2);
+        routers[0] = address(routerA);
+        routers[1] = address(routerB);
+        bytes[] memory payloads = new bytes[](2);
+        payloads[0] = abi.encodePacked(SWAP_SELECTOR);
+        payloads[1] = abi.encodePacked(SWAP_SELECTOR);
+
+        // Leg-1's outbound surcharge would drain `fee` of B_out; the post-leg1 guard catches
+        // the executor's tokenOut balance falling below its pre-route snapshot and reverts.
+        vm.prank(executorRole);
+        vm.expectRevert(TokenOutRetentionViolation.selector);
+        executor.executeArbitrage(bytes32(0), address(tokenIn), address(tokenOut), amountIn, 0, routers, payloads);
+
+        // Atomic revert: B_out retained EXACTLY — no silent leak of pre-existing tokenOut.
+        assertEq(tokenOut.balanceOf(address(executor)), B_out, "tokenOut working capital B_out leaked");
+        // tokenIn principal untouched (route rolled back).
+        assertEq(tokenIn.balanceOf(address(executor)), amountIn, "tokenIn principal not restored on revert");
+    }
+
+    /// (LOW) Aliased 2-leg shape: a 2-router route declared with tokenIn == tokenOut is a
+    /// shape the off-chain never emits (cross-DEX routes have distinct tokens; circular routes
+    /// are 1 leg). The 2-leg tokenOut-delta accounting is undefined for an aliased token, so it
+    /// is rejected fail-closed with a named revert — making the route-shape gate exhaustive.
+    function test_Security_AliasedTwoLegSameTokenReverts() public {
+        ReproToken tokenIn = new ReproToken("IN");
+
+        uint256 amountIn = 1_000e18;
+        tokenIn.mint(address(executor), amountIn);
+        executor.setTokenApproval(address(tokenIn), true);
+
+        ReproCircularRouter rA = new ReproCircularRouter(address(tokenIn), amountIn, amountIn);
+        ReproCircularRouter rB = new ReproCircularRouter(address(tokenIn), amountIn, amountIn);
+        executor.setRouterApproval(address(rA), true);
+        executor.setRouterApproval(address(rB), true);
+        executor.setRouterSelectorApproval(address(rA), SWAP_SELECTOR, true);
+        executor.setRouterSelectorApproval(address(rB), SWAP_SELECTOR, true);
+
+        address[] memory routers = new address[](2);
+        routers[0] = address(rA);
+        routers[1] = address(rB);
+        bytes[] memory payloads = new bytes[](2);
+        payloads[0] = abi.encodePacked(SWAP_SELECTOR);
+        payloads[1] = abi.encodePacked(SWAP_SELECTOR);
+
+        // tokenIn == tokenOut on a 2-leg route: rejected before any swap dispatches.
+        vm.prank(executorRole);
+        vm.expectRevert(AliasedTwoLegRoute.selector);
+        executor.executeArbitrage(bytes32(0), address(tokenIn), address(tokenIn), amountIn, 0, routers, payloads);
     }
 }
