@@ -21,6 +21,6 @@ jobs:
           fi
       - name: Trigger No-Regression
         if: env.TRIGGER_P9 == 'true'
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4
         with:
           event-type: trigger-no-regression
