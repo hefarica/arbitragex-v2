@@ -19,12 +19,12 @@ Este documento rige la actuaciÃ³n de todo agente en el ecosistema ArbitrageX. 
 
 | URL | FunciÃ³n |
 |-----|---------|
-| `http://195.201.235.70:5173/operations` | PMI/EVM KPIs + **Pipeline Funnel** + S-curve |
-| `http://195.201.235.70:5173/strategies` | Tabs: Capital&Risk Â· CatÃ¡logo Â· MEV Services Â· Tokens Â· **SimulaciÃ³n** Â· AuditorÃ­a |
-| `http://195.201.235.70:5173/opportunities` | Live opps (50 latest, polling) |
-| `http://195.201.235.70:8787/api/scanner/heartbeat?chain_id=1` | Heartbeat snapshot JSON |
-| `http://195.201.235.70:8787/api/health` | Health + uptime |
-| `http://195.201.235.70:8787/api/trading-config?chain_id=1` | Config snapshot |
+| `http://<VPS_IP>:5173/operations` | PMI/EVM KPIs + **Pipeline Funnel** + S-curve |
+| `http://<VPS_IP>:5173/strategies` | Tabs: Capital&Risk Â· CatÃ¡logo Â· MEV Services Â· Tokens Â· **SimulaciÃ³n** Â· AuditorÃ­a |
+| `http://<VPS_IP>:5173/opportunities` | Live opps (50 latest, polling) |
+| `http://<VPS_IP>:8787/api/scanner/heartbeat?chain_id=1` | Heartbeat snapshot JSON |
+| `http://<VPS_IP>:8787/api/health` | Health + uptime |
+| `http://<VPS_IP>:8787/api/trading-config?chain_id=1` | Config snapshot |
 
 ---
 
@@ -128,7 +128,7 @@ Razones posibles:
 
 ### Ver heartbeat live
 ```bash
-curl -s http://195.201.235.70:8787/api/scanner/heartbeat?chain_id=1 | jq
+curl -s http://<VPS_IP>:8787/api/scanner/heartbeat?chain_id=1 | jq
 ```
 
 ### Update token prices â€” automatic via cascade (default), manual as fallback
@@ -150,7 +150,7 @@ El worker `price_worker` (en `searcher-rs`) puebla
 necesita HSET manual en flujo normal. Verifica salud en heartbeat:
 
 ```bash
-curl -s http://195.201.235.70:8787/api/scanner/heartbeat?chain_id=1 | \
+curl -s http://<VPS_IP>:8787/api/scanner/heartbeat?chain_id=1 | \
   jq '{alchemy:.price_alchemy_hits, coingecko:.price_coingecko_hits, misses:.price_cache_misses, errors:.price_worker_errors}'
 ```
 

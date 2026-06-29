@@ -3,7 +3,7 @@
 
 **Date:** 2026-05-16
 **Agent:** Antigravity (OMEGA Master Cortex)
-**Target:** VPS `195.201.235.70` & `hefarica/arbitragex-v2` PR #90
+**Target:** VPS `<VPS_IP>` & `hefarica/arbitragex-v2` PR #90
 
 ### 1. Authentication Status
 - **GitHub Auth:** OK
@@ -42,7 +42,7 @@ The following 6 secrets were set using the real verified values from the VPS han
 
 ### 6. VPS Public Key Installation
 - **Status:** INSTALLED
-- The public key `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAGghEp3KrzknMwhxmILYU4oY0u5JAom3SSDjE8DQrH0 github-actions-deploy@arbitragex-v2` was appended to `~/.ssh/authorized_keys` on `195.201.235.70`.
+- The public key `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAGghEp3KrzknMwhxmILYU4oY0u5JAom3SSDjE8DQrH0 github-actions-deploy@arbitragex-v2` was appended to `~/.ssh/authorized_keys` on `<VPS_IP>`.
 - Verified via SSH `grep`.
 
 ### 7. Observability & CI/CD Integrity (PR #90)

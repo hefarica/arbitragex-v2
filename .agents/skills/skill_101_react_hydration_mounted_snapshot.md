@@ -34,7 +34,7 @@ Para garantizar una hidratación determinista y perfecta, el primer render del c
    ```
 
 ## 4. Doctrina de Despliegue Estricto en VPS (Next.js)
-El código Next.js empaquetado en el VPS (`195.201.235.70`) **no se actualiza por arte de magia**. Un arreglo local no sirve de nada si no se compila en producción.
+El código Next.js empaquetado en el VPS (`<VPS_IP>`) **no se actualiza por arte de magia**. Un arreglo local no sirve de nada si no se compila en producción.
 
 1. **Commit y Push:** Los cambios deben subir al repositorio (`git push origin main`).
 2. **Pull y Build en Producción:** El VPS debe descargar los cambios y destruir la caché del build de Next.js.
@@ -43,7 +43,7 @@ El código Next.js empaquetado en el VPS (`195.201.235.70`) **no se actualiza po
    ```
 3. **Verificación Forense:** NUNCA asumir que el despliegue funcionó sin validar:
    - Validar que la imagen es reciente: `docker inspect arbitragex-v2-frontend-1 --format "{{.Created}}"`
-   - Validar que el navegador solicita nuevos *Chunks* de JavaScript mediante un *Hard Refresh* (`Ctrl+F5`) o verificando el código fuente: `curl -s http://195.201.235.70:5173/opportunities | grep -oE 'page-[a-f0-9]+\.js'`
+   - Validar que el navegador solicita nuevos *Chunks* de JavaScript mediante un *Hard Refresh* (`Ctrl+F5`) o verificando el código fuente: `curl -s http://<VPS_IP>:5173/opportunities | grep -oE 'page-[a-f0-9]+\.js'`
 
 ---
 ESTADO DE LA SKILL:

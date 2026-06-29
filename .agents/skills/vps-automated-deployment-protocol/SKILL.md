@@ -1,7 +1,7 @@
 # VPS Automated Deployment Protocol
 
 ## Propósito
-Estandarizar el acceso remoto y el control de despliegue sobre el VPS productivo de ArbitrageX (`195.201.235.70`). Esta skill sirve como la puerta de enlace segura y automatizada para empujar cambios del motor (ej. `searcher-rs`) a producción.
+Estandarizar el acceso remoto y el control de despliegue sobre el VPS productivo de ArbitrageX (`<VPS_IP>`). Esta skill sirve como la puerta de enlace segura y automatizada para empujar cambios del motor (ej. `searcher-rs`) a producción.
 
 ## Conocimiento Esencial (Memoria Inyectada)
 - El entorno remoto cuenta con un alias SSH configurado localmente llamado `arbx`.

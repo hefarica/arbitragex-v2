@@ -1479,7 +1479,7 @@ backend/searcher-rs/src/main.rs:171:    topology_reload::init_topology_metrics()
 17:  group: deploy-arbx
 18:  cancel-in-progress: false
 21:  contents: read
-24:  VPS_HOST: 195.201.235.70
+24:  VPS_HOST: <VPS_IP>
 25:  REPO_PATH: /opt/arbitragex-v2
 26:  TARGET_SHA: 6c922106fb6db30152d011ef109da78af16ece23
 27:  GITHUB_REMOTE: https://github.com/hefarica/arbitragex-v2.git
@@ -1500,7 +1500,7 @@ backend/searcher-rs/src/main.rs:171:    topology_reload::init_topology_metrics()
 16:  group: deploy-arbx
 17:  cancel-in-progress: false
 20:  contents: read
-23:  VPS_HOST: 195.201.235.70
+23:  VPS_HOST: <VPS_IP>
 24:  REPO_PATH: /opt/arbitragex-v2
 25:  TARGET_SHA: 6c922106fb6db30152d011ef109da78af16ece23
 26:  GITHUB_REMOTE: https://github.com/hefarica/arbitragex-v2.git
@@ -1540,7 +1540,7 @@ backend/searcher-rs/src/main.rs:171:    topology_reload::init_topology_metrics()
 13:on:
 14:  workflow_dispatch:
 17:  contents: read
-20:  VPS_HOST: 195.201.235.70
+20:  VPS_HOST: <VPS_IP>
 22:jobs:
 23:  wiring-audit:
 25:    runs-on: ubuntu-latest
@@ -1644,7 +1644,7 @@ backend/searcher-rs/src/main.rs:171:    topology_reload::init_topology_metrics()
 15:  group: deploy-arbx-edge
 16:  cancel-in-progress: false
 19:  contents: read
-22:  VPS_HOST: 195.201.235.70
+22:  VPS_HOST: <VPS_IP>
 23:  COMPOSE_FILE: docker/compose.prod.yml
 25:jobs:
 26:  deploy-edge:
@@ -1664,7 +1664,7 @@ backend/searcher-rs/src/main.rs:171:    topology_reload::init_topology_metrics()
 14:  group: deploy-arbx-edge
 15:  cancel-in-progress: false
 18:  contents: read
-21:  VPS_HOST: 195.201.235.70
+21:  VPS_HOST: <VPS_IP>
 22:  COMPOSE_FILE: docker/compose.prod.yml
 24:jobs:
 25:  deploy-edge:
@@ -1685,7 +1685,7 @@ backend/searcher-rs/src/main.rs:171:    topology_reload::init_topology_metrics()
 22:  cancel-in-progress: false
 25:  contents: read
 28:  TARGET_SHA: 6c922106fb6db30152d011ef109da78af16ece23
-29:  VPS_HOST: 195.201.235.70
+29:  VPS_HOST: <VPS_IP>
 30:  COMPOSE_FILE: docker/compose.prod.yml
 31:  REPO_PATH: /opt/arbitragex-v2
 33:jobs:
@@ -1750,7 +1750,7 @@ backend/searcher-rs/src/main.rs:171:    topology_reload::init_topology_metrics()
 2:on:
 3:  workflow_dispatch: {}
 5:  contents: read
-7:  VPS_HOST: 195.201.235.70
+7:  VPS_HOST: <VPS_IP>
 8:jobs:
 9:  diag:
 10:    runs-on: ubuntu-latest
@@ -1856,7 +1856,7 @@ backend/searcher-rs/src/main.rs:171:    topology_reload::init_topology_metrics()
 46:  actions: read
 52:  group: vps-${{ github.workflow }}-${{ github.ref }}
 53:  cancel-in-progress: false
-56:  VPS_HOST: "195.201.235.70"
+56:  VPS_HOST: "<VPS_IP>"
 57:  VPS_USER: "root"
 58:  VPS_WORKDIR: "/opt/arbitragex-v2"
 59:  ARTIFACT_DIR: "audit_artifact"
@@ -1903,7 +1903,7 @@ backend/searcher-rs/src/main.rs:171:    topology_reload::init_topology_metrics()
 67:  actions: read
 73:  group: vps-${{ github.workflow }}-${{ github.ref }}
 74:  cancel-in-progress: false
-77:  VPS_HOST: "195.201.235.70"
+77:  VPS_HOST: "<VPS_IP>"
 78:  VPS_USER: "root"
 79:  VPS_WORKDIR: "/opt/arbitragex-v2"
 80:  LOCK_FILE: "/tmp/arbitragex_deploy.lock"
@@ -2019,7 +2019,7 @@ backend/searcher-rs/src/main.rs:171:    topology_reload::init_topology_metrics()
 3:on:
 4:  workflow_dispatch:
 7:  contents: read
-10:  VPS_HOST: 195.201.235.70
+10:  VPS_HOST: <VPS_IP>
 12:jobs:
 13:  probe:
 14:    runs-on: ubuntu-latest
@@ -2031,7 +2031,7 @@ backend/searcher-rs/src/main.rs:171:    topology_reload::init_topology_metrics()
 3:on:
 4:  workflow_dispatch:
 7:  contents: read
-10:  VPS_HOST: 195.201.235.70
+10:  VPS_HOST: <VPS_IP>
 12:jobs:
 13:  probe:
 14:    runs-on: ubuntu-latest
@@ -2081,7 +2081,7 @@ backend/searcher-rs/src/main.rs:171:    topology_reload::init_topology_metrics()
 34:  actions: read
 37:  group: sync-vps-metadata
 38:  cancel-in-progress: false
-41:  VPS_HOST: 195.201.235.70
+41:  VPS_HOST: <VPS_IP>
 42:  VPS_USER: root
 43:  VPS_PATH: /opt/arbitragex-v2
 45:jobs:
@@ -2144,7 +2144,7 @@ backend/searcher-rs/src/main.rs:171:    topology_reload::init_topology_metrics()
 2:on:
 3:  workflow_dispatch: {}
 6:  contents: read
-9:  VPS_HOST: 195.201.235.70
+9:  VPS_HOST: <VPS_IP>
 11:jobs:
 12:  verify:
 13:    runs-on: ubuntu-latest

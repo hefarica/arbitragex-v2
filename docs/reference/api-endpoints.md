@@ -8,7 +8,7 @@
 
 | Environment | URL |
 |------------|-----|
-| Production (VPS) | `http://195.201.235.70:8080` |
+| Production (VPS) | `http://<VPS_IP>:8080` |
 | Edge (CF Worker) | `https://api.arbitragex.io` |
 | Local dev | `http://localhost:8080` |
 
@@ -716,7 +716,7 @@ The API server exposes a WebSocket gateway for real-time opportunity updates.
 #### Connection
 
 ```javascript
-const socket = io('ws://195.201.235.70:8080');
+const socket = io('ws://<VPS_IP>:8080');
 
 socket.on('connect', () => {
   console.log('Connected to ArbitrageX WSS');
