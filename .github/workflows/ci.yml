@@ -83,10 +83,17 @@ jobs:
         with:
           submodules: recursive
       - uses: foundry-rs/foundry-toolchain@v1
-      - run: forge test
+      # NOTE: foundry.yml ("Foundry CI") is the GATING contracts check — its
+      # `forge build` + `forge test -vv` are BLOCKING (un-rigged in PR #191).
+      # The two steps below are advisory duplicates kept for at-a-glance signal
+      # in this aggregate workflow; they intentionally do not gate (foundry.yml
+      # does). This mirrors the lint-and-test-rust pattern above (rust.yml gates).
+      - name: forge test (advisory — foundry.yml is the gating check)
+        run: forge test
         working-directory: contracts
         continue-on-error: true
-      - run: forge fmt --check
+      - name: forge fmt --check (advisory — style only, not gated anywhere)
+        run: forge fmt --check
         working-directory: contracts
         continue-on-error: true
 
