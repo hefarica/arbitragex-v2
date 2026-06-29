@@ -1,6 +1,6 @@
 ---
 name: arbx-skills
-description: 'Consolidated knowledge base and operating manual for ArbitrageX v2 (Rust hot-path + TypeScript control-plane + Cloudflare Workers + Next.js MEV/arbitrage platform on VPS 195.201.235.70, ssh alias arbx, repo hefarica/arbitragex-v2). Invoke at the start of any ArbitrageX session and whenever the operator types /arbx-skills, /arbx-skills gates, or /arbx-skills full. Encodes the security invariants, the 12 doctrinal gates, the paper-shadow operational truth (real blockers and what 0 paper trades means), the CI/CD and .env deploy pipelines, the credential-sourcing map, and the Windows/SSH/Excel/CI gotchas, so a fresh session avoids re-discovering facts, leaking secrets, breaking the live system, or flipping paper_mode.'
+description: 'Consolidated knowledge base and operating manual for ArbitrageX v2 (Rust hot-path + TypeScript control-plane + Cloudflare Workers + Next.js MEV/arbitrage platform on VPS <VPS_IP>, ssh alias arbx, repo hefarica/arbitragex-v2). Invoke at the start of any ArbitrageX session and whenever the operator types /arbx-skills, /arbx-skills gates, or /arbx-skills full. Encodes the security invariants, the 12 doctrinal gates, the paper-shadow operational truth (real blockers and what 0 paper trades means), the CI/CD and .env deploy pipelines, the credential-sourcing map, and the Windows/SSH/Excel/CI gotchas, so a fresh session avoids re-discovering facts, leaking secrets, breaking the live system, or flipping paper_mode.'
 ---
 
 # ArbitrageX v2 — Consolidated Skill (arbx-skills)
@@ -42,7 +42,7 @@ credential sources, and the environment traps are all captured here and in the t
 - **What it is**: paper-shadow MEV/arbitrage pipeline. Detection (searcher-rs) → price enrich
   (token-enricher → Redis) → scoring (advisory) → simulation (anvil fork via sim-ctl) → emit paper
   trade only when `rejection_reason=None`.
-- **Where it lives**: VPS `195.201.235.70` = ssh alias `arbx`, deploy path `/opt/arbitragex-v2`
+- **Where it lives**: VPS `<VPS_IP>` = ssh alias `arbx`, deploy path `/opt/arbitragex-v2`
   (git checkout of `main`). Repo `github.com/hefarica/arbitragex-v2`. Local working repo:
   `C:\Users\HFRC\Desktop\arbitragex_v2_productivo_full`.
 - **Current truth** (keep updated): paper-shadow infra is healthy; the audit doc dated 2026-06-14 is

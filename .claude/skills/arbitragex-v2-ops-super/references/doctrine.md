@@ -29,7 +29,7 @@ ESTRICTAMENTE PROHIBIDO inyectar, generar o servir datos falsos, hardcodeados, s
 - NO se hace: NO Docker Desktop, NO servicios de produccion, NO UI funcional con datos reales
 
 **VPS (Produccion - Hetzner CX43):**
-- IP: `195.201.235.70`
+- IP: `<VPS_IP>`
 - SSH Alias: `arbx`
 - Ruta: `/opt/arbitragex-v2`
 - OS: Ubuntu, 8 vCPU, 16 GB RAM, 160 GB SSD
@@ -56,7 +56,7 @@ docker compose -f docker/compose.prod.yml up -d --build
 
 ### RULE 02 — Infrastructure Strictness and Routing
 
-- REST -> Edge Worker (`NEXT_PUBLIC_EDGE_URL`, puerto 8787 / `edge-arbx.ape-tv.net`)
+- REST -> Edge Worker (`NEXT_PUBLIC_EDGE_URL`, puerto 8787 / `<VPS_HOST>`)
 - WebSocket -> api-server DIRECTO (`NEXT_PUBLIC_WS_URL`, puerto 8080). NUNCA via Edge
 - No-Hardcode: En produccion, FAIL-FAST si falta configuracion
 - `SIM_SIGNER_ADDRESS` debe estar en `.env`. Si falta -> Crash on Boot
