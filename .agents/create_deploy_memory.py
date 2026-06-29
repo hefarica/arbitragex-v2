@@ -9,7 +9,7 @@ os.makedirs(ki_artifacts_dir, exist_ok=True)
 
 metadata = {
     "title": "ArbitrageX VPS Deployment Protocol",
-    "summary": "Protocolo de despliegue en producción sobre el VPS 195.201.235.70 usando el alias SSH 'arbx'. Incluye comandos exactos para construir y reiniciar contenedores con Docker Compose, garantizando el flujo de trabajo CI/CD manual en la IP productiva.",
+    "summary": "Protocolo de despliegue en producción sobre el VPS <VPS_IP> usando el alias SSH 'arbx'. Incluye comandos exactos para construir y reiniciar contenedores con Docker Compose, garantizando el flujo de trabajo CI/CD manual en la IP productiva.",
     "created_at": datetime.now().isoformat(),
     "last_accessed": datetime.now().isoformat(),
     "references": ["Conversation ID: 244c566e-eec7-46fc-bc7f-f02aa3d61d9e"]
@@ -21,7 +21,7 @@ with open(os.path.join(ki_dir, "metadata.json"), "w", encoding="utf-8") as f:
 ki_artifact_content = """# ArbitrageX VPS Deployment Protocol
 
 ## Contexto Operativo
-- **IP del Servidor**: `195.201.235.70`
+- **IP del Servidor**: `<VPS_IP>`
 - **Ruta del Repositorio en VPS**: `/opt/arbitragex-v2`
 - **Alias SSH**: `arbx` (Configurado en `~/.ssh/config` del host de desarrollo, usa clave RSA/Ed25519 para acceso sin password).
 - **Mecanismo**: Docker Compose (`docker/compose.dev.yml`)
@@ -74,7 +74,7 @@ with open(os.path.join(skill_dir, "manifest.json"), "w", encoding="utf-8") as f:
 skill_content = """# VPS Automated Deployment Protocol
 
 ## Propósito
-Estandarizar el acceso remoto y el control de despliegue sobre el VPS productivo de ArbitrageX (`195.201.235.70`). Esta skill sirve como la puerta de enlace segura y automatizada para empujar cambios del motor (ej. `searcher-rs`) a producción.
+Estandarizar el acceso remoto y el control de despliegue sobre el VPS productivo de ArbitrageX (`<VPS_IP>`). Esta skill sirve como la puerta de enlace segura y automatizada para empujar cambios del motor (ej. `searcher-rs`) a producción.
 
 ## Conocimiento Esencial (Memoria Inyectada)
 - El entorno remoto cuenta con un alias SSH configurado localmente llamado `arbx`.

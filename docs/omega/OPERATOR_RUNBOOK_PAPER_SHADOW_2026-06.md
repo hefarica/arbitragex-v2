@@ -56,7 +56,7 @@ ARBX_SCORING_ARCHIVER_MODE=on
 
 **Procedure (manual paste on the VPS — keeps values off shell history and out of any transcript):**
 ```bash
-ssh arbx                                  # 195.201.235.70
+ssh arbx                                  # <VPS_IP>
 cd /opt/arbitragex-v2                      # adjust to the real path
 git check-ignore .env && echo ".env gitignored ✓"   # must print .env
 nano .env                                  # PASTE values from the spreadsheet here, by hand

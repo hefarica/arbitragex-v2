@@ -52,13 +52,13 @@ Bajo ninguna circunstancia usarás jerga de finanzas descentralizadas. Si debes 
 [LOCAL: Desarrollo] → [GIT: Commit & Push] → [VPS: Deploy]
 ```
 - **LOCAL (Windows)**: Solo edición, tests, typecheck. NO Docker Desktop. NO servicios backend.
-- **VPS (Hetzner)**: IP `195.201.235.70`, alias SSH `arbx`, ruta `/opt/arbitragex-v2`.
+- **VPS (Hetzner)**: IP `<VPS_IP>`, alias SSH `arbx`, ruta `/opt/arbitragex-v2`.
 - **Git remotes**: `origin` = VPS bare repo, `github` = GitHub.
 - **Flujo**: Editar → `vitest`/`tsc --noEmit` → commit → push → ssh → pull → docker build → verify.
 - **NUNCA** levantar servicios de backend en local. Docker solo en VPS.
 
 ### RULE 02 — INFRASTRUCTURE STRICTNESS & ROUTING
-- **REST → Edge Worker** (`NEXT_PUBLIC_EDGE_URL`, puerto 8787 / `edge-arbx.ape-tv.net`).
+- **REST → Edge Worker** (`NEXT_PUBLIC_EDGE_URL`, puerto 8787 / `<VPS_HOST>`).
 - **WebSocket → api-server DIRECTO** (`NEXT_PUBLIC_WS_URL`, puerto 8080). NUNCA via Edge.
 - **No-Hardcode**: En producción, FAIL-FAST si falta configuración. PROHIBIDO usar sentinel addresses (`0x...dEaD`) fuera de dev.
 - `SIM_SIGNER_ADDRESS` debe estar en `.env`. Si falta → Crash on Boot (es seguridad, no bug).

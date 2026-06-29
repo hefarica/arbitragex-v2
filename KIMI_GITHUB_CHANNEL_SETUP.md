@@ -308,13 +308,13 @@ curl -fsS http://127.0.0.1:5173           # Frontend
 ### URL pública
 
 ```
-https://edge-arbx.ape-tv.net
+https://<VPS_HOST>
 ```
 
 **NO usar como gate autoritativo:**
 
 ```
-http://195.201.235.70/status
+http://<VPS_IP>/status
 ```
 
 Responde 401 por Basic Auth. Es solo warning, no gate.
@@ -374,7 +374,7 @@ Todos rotados con `System.Security.Cryptography.RandomNumberGenerator` (criptogr
 
 | Campo | Valor |
 |---|---|
-| VPS Host | `195.201.235.70` |
+| VPS Host | `<VPS_IP>` |
 | SSH User | `root` |
 | SSH Port | `22` |
 | Deploy Path | `/opt/arbitragex-v2` |
@@ -382,7 +382,7 @@ Todos rotados con `System.Security.Cryptography.RandomNumberGenerator` (criptogr
 | API Server | `127.0.0.1:8080` |
 | Edge Worker | `127.0.0.1:8787` |
 | Frontend | `127.0.0.1:5173` |
-| Public URL | `https://edge-arbx.ape-tv.net` |
+| Public URL | `https://<VPS_HOST>` |
 
 ---
 

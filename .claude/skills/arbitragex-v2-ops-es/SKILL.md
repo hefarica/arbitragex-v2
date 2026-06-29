@@ -13,7 +13,7 @@ Este skill documenta todo el conocimiento operacional del proyecto **ArbitrageX-
 
 | Componente | Acceso | Estado |
 |-----------|--------|--------|
-| **VPS Principal** | `195.201.235.70` (Hetzner CX43, Falkenstein) | Producción |
+| **VPS Principal** | `<VPS_IP>` (Hetzner CX43, Falkenstein) | Producción |
 | **SSH Key** | Almacenada en Manus secrets (ED25519) | Seguro |
 | **GitHub Token** | Almacenado en Manus secrets (ghp_...) | Seguro |
 | **API Base URL** | `https://arbitragex.example.com` | Activo |
@@ -26,7 +26,7 @@ Este skill documenta todo el conocimiento operacional del proyecto **ArbitrageX-
 El acceso SSH utiliza una clave ED25519 almacenada de forma segura en Manus secrets. Todos los secretos se manejan sin exponerlos en el skill.
 
 ```bash
-ssh -i ~/.ssh/arbitragex_ed25519 ubuntu@195.201.235.70
+ssh -i ~/.ssh/arbitragex_ed25519 ubuntu@<VPS_IP>
 ```
 
 ### GitHub Token
@@ -252,7 +252,7 @@ try {
 
 5. **Desplegar a producción**
    ```bash
-   ssh ubuntu@195.201.235.70
+   ssh ubuntu@<VPS_IP>
    cd /opt/arbitragex-v2
    git pull origin main
    docker-compose pull
