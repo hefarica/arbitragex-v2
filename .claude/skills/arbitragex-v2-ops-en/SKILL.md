@@ -12,9 +12,9 @@ Complete operational knowledge for managing the ArbitrageX-v2 MEV searcher infra
 
 | Component | Access | Status |
 |---|---|---|
-| **VPS** | SSH: `195.201.235.70` (Hetzner CX43) | Running |
+| **VPS** | SSH: `<VPS_IP>` (Hetzner CX43) | Running |
 | **GitHub** | `hefarica/arbitragex-v2` | Main branch |
-| **Frontend** | `https://edge-arbx.ape-tv.net` | Cloudflare Tunnel |
+| **Frontend** | `https://<VPS_HOST>` | Cloudflare Tunnel |
 | **API** | `http://127.0.0.1:8080` (internal) | Docker network |
 | **Searcher-RS** | `http://127.0.0.1:9001/health` | Rhai cartridge runtime |
 
@@ -26,12 +26,12 @@ Complete operational knowledge for managing the ArbitrageX-v2 MEV searcher infra
 
 **Connection:**
 ```bash
-ssh -i ~/.ssh/hetzner_arbx root@195.201.235.70
+ssh -i ~/.ssh/hetzner_arbx root@<VPS_IP>
 ```
 
 **Key Details:**
 - User: `root`
-- Host: `195.201.235.70` (Falkenstein, Germany)
+- Host: `<VPS_IP>` (Falkenstein, Germany)
 - Specs: 8 vCPU, 16 GB RAM, 160 GB SSD
 - SSH Key: ED25519 (stored securely)
 
@@ -241,7 +241,7 @@ REDIS_URL=redis://redis:6379
 RPC_WS_1=wss://eth-mainnet.g.alchemy.com/v2/KEY
 RPC_HTTP_1=https://eth-mainnet.g.alchemy.com/v2/KEY
 ARBX_CONFIG_PATH=/app/configs/app.toml
-NEXT_PUBLIC_EDGE_URL=https://edge-arbx.ape-tv.net
+NEXT_PUBLIC_EDGE_URL=https://<VPS_HOST>
 ```
 
 ## Monitoring

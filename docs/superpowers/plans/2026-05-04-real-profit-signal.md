@@ -20,7 +20,7 @@ Este documento rige la actuaciÃ³n de todo agente en el ecosistema ArbitrageX. 
 
 ## Context recap (for someone reading this plan cold)
 
-- ArbitrageX v2 is a Rust-based MEV searcher running on a VPS at `195.201.235.70`. Production HEAD is `abe70cc` on `main` (which is the spec commit; no implementation yet for this sub-project).
+- ArbitrageX v2 is a Rust-based MEV searcher running on a VPS at `<VPS_IP>`. Production HEAD is `abe70cc` on `main` (which is the spec commit; no implementation yet for this sub-project).
 - The searcher already ingests Ethereum mempool via WebSocket and decodes Uniswap V2/V3 calldata. It builds an `Opportunity` per pending tx, runs it through a config-aware spine evaluator, persists to Postgres `opportunities`, and publishes to Redis stream `arbx:opps:detected`.
 - **The bug**: `scanner.rs:268` sets `expected_amount_out = amount_in` (zero spread) so `gross_profit = 0` always. Every opportunity gets gated as not-viable and persists with `risk_score=0`. Operator sees data but no profitable opps.
 - **The fix (this plan)**: replace `expected_amount_out = amount_in` with a real V2 CPMM calculation against fresh on-chain reserves of the pool involved in the pending swap, then compare against alternative pools of the same pair to surface the spread.

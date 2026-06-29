@@ -30,7 +30,7 @@ This runbook describes the procedure for checking Vault seal status, unsealing V
 
 ```bash
 # SSH into the VPS
-ssh operator@195.201.235.70
+ssh operator@<VPS_IP>
 
 # Check Vault container status
 cd /opt/arbitragex-v2

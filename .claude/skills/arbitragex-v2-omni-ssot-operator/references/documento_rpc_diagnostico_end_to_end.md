@@ -1,7 +1,7 @@
 # Diagnóstico e Implementación End-to-End: RPC_HTTP_1 y RPC_WS_1
 
 **Fecha:** 2026-05-23  
-**Sistema:** ArbitrageX v2 — VPS 195.201.235.70
+**Sistema:** ArbitrageX v2 — VPS <VPS_IP>
 
 ---
 
@@ -58,7 +58,7 @@ Debemos conectarnos por SSH al VPS y editar el archivo de configuración.
 
 ```bash
 # Conexión al VPS
-ssh root@195.201.235.70
+ssh root@<VPS_IP>
 
 # Editar el archivo .env
 nano /opt/arbitragex-v2/.env
