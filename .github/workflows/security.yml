@@ -155,12 +155,16 @@ jobs:
         # npm ci so package-lock.json is the source of truth.
         run: npm install
 
-      - name: npm audit (prod deps, high+)
-        # --omit=dev excludes devDependencies, --audit-level=high fails on
-        # high/critical advisories. Moderate prod advisories surface as warnings
-        # in the run log but do not fail the merge.
-        # NEVER add continue-on-error here — that defeats the gate.
-        run: npm audit --omit=dev --audit-level=high || true
+      - name: npm audit (prod deps, high+) — REAL gate
+        # Was `npm audit --omit=dev --audit-level=high || true`, whose `|| true`
+        # defeated the gate entirely (directly contradicting the line above it).
+        # Now a real, expiring, documented gate: FAILS on any high/critical prod
+        # advisory whose package is NOT in .github/npm-audit-allowlist.json.
+        # Known frontend-wallet/framework debt is allowlisted with a plan + a
+        # shared expiry (mirrors the cargo-audit RUSTSEC_IGNORES discipline);
+        # NEW highs in any other package now fail the merge. NEVER add
+        # continue-on-error here — that would re-defeat the gate.
+        run: node scripts/npm-audit-gate.mjs
 
       - name: npm audit (informational — dev deps, all levels)
         # Dev/test deps. Non-blocking; surfaces what's known so an operator
