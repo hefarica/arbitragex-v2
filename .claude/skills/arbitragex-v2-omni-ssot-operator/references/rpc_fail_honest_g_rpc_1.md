@@ -43,7 +43,7 @@ Ejecutar solo con acceso autorizado al VPS y después de recibir las URLs reales
 ### Paso 1: Inyección en `.env`
 
 ```bash
-ssh root@195.201.235.70
+ssh root@<VPS_IP>
 nano /opt/arbitragex-v2/.env
 ```
 

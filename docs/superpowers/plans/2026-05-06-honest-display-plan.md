@@ -2253,9 +2253,9 @@ test("opportunities page shows enriched tokens or honest fallback", async ({ pag
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-EDGE_URL="${EDGE_URL:-http://195.201.235.70:8787}"
-FRONT_URL="${FRONT_URL:-http://195.201.235.70:5173}"
-METRICS_URL="${METRICS_URL:-http://195.201.235.70:9100/metrics}"
+EDGE_URL="${EDGE_URL:-http://<VPS_IP>:8787}"
+FRONT_URL="${FRONT_URL:-http://<VPS_IP>:5173}"
+METRICS_URL="${METRICS_URL:-http://<VPS_IP>:9100/metrics}"
 
 echo "1. Verify response shape includes token_in_info and chain_id_out"
 curl -fsS "$EDGE_URL/api/opportunities/live" \
@@ -2331,7 +2331,7 @@ exit  # back to local
 bash automation/scripts/smoke-honest-display.sh
 ```
 
-- [ ] **Step 13.6: Visually verify in browser at http://195.201.235.70:5173/opportunities**
+- [ ] **Step 13.6: Visually verify in browser at http://<VPS_IP>:5173/opportunities**
 
 Spec Â§9.4 metric checklist (each must be âœ…):
 

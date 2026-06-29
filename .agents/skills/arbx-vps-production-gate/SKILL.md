@@ -9,7 +9,7 @@ description: Barrera de protección para evitar despliegues accidentales, reinic
 Establecer un flujo estricto e inquebrantable de autorización y validación previa antes de interactuar con el entorno de producción (VPS).
 
 ## When to use
-Antes de ejecutar CUALQUIER comando que modifique el estado de la máquina VPS (`195.201.235.70`).
+Antes de ejecutar CUALQUIER comando que modifique el estado de la máquina VPS (`<VPS_IP>`).
 
 ## Comandos Permitidos SIN Aprobación Previa (Solo Lectura)
 - `git status`, `git log`, `git diff`

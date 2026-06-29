@@ -31,8 +31,8 @@ $env:ARBX_ADMIN_TOKEN="<token>"; npm run test:live:all
 ### Target override
 
 ```bash
-ARBX_FRONTEND_URL=https://edge-arbx.ape-tv.net   # default (CF public)
-ARBX_FRONTEND_URL=http://195.201.235.70:8787     # raw VPS edge
+ARBX_FRONTEND_URL=https://<VPS_HOST>   # default (CF public)
+ARBX_FRONTEND_URL=http://<VPS_IP>:8787     # raw VPS edge
 ARBX_FRONTEND_URL=http://localhost:5173          # local next dev
 ```
 
