@@ -45,7 +45,7 @@ const ARBX_EDGE_TOKEN = requireEnv("ARBX_EDGE_TOKEN");
 // externally-visible https host, forwarded so Next builds https-correct absolute
 // URLs (no Mixed Content).
 const FRONTEND_URL = process.env["FRONTEND_URL"] ?? "http://frontend:5173";
-const PUBLIC_EDGE_HOST = process.env["PUBLIC_EDGE_HOST"] ?? "edge-arbx.ape-tv.net";
+const PUBLIC_EDGE_HOST = process.env["PUBLIC_EDGE_HOST"] ?? "<VPS_HOST>";
 
 // Very naive in-memory rate-limit (per-IP, 60s window, 120 req).
 const WINDOW_MS = 60_000;
@@ -70,7 +70,7 @@ app.disable("x-powered-by");
 // DEV-LOCAL CORS: allowlist localhost / 127.0.0.1 / *.ape-tv.net via regex, PLUS any
 // EXACT origin in the operator-configured ALLOWED_ORIGINS env (comma-separated). This
 // covers the public VPS frontend served from a raw-IP origin (e.g.
-// http://195.201.235.70:5173) that the regex deliberately does not match. The IP is
+// http://<VPS_IP>:5173) that the regex deliberately does not match. The IP is
 // NEVER hardcoded in code — the operator supplies origins via env (RULE 00 / no-hardcode);
 // the env is already set on the edge container. Production uses CF Workers CORS.
 const CORS_ENV_ORIGINS = (process.env["ALLOWED_ORIGINS"] ?? "")
