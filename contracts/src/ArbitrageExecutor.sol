@@ -80,6 +80,12 @@ error AE_PayloadTooShort(address router);
 /// @dev Thrown when the selector extracted from a payload is not in the per-router whitelist.
 ///      SECURITY (A5): closes the arbitrary-function-call surface on approved routers.
 error AE_RouterSelectorNotApproved(address router, bytes4 selector);
+/// @dev Thrown when a circular route ends holding LESS of the intermediate token (tokenOut)
+///      than it started with — i.e. standing tokenOut inventory was drained. The net-profit
+///      gate measures tokenIn only and is blind to a tokenOut loss; this guard is symmetric
+///      to FlashFundedCapitalRetentionViolation (which protects tokenIn) and fail-closes any
+///      net tokenOut drain a per-hop balanceOf-bounded allowance would otherwise permit.
+error TokenOutRetentionViolation();
 
 /// @title ArbitrageExecutor — UUPS-upgradeable on-chain arbitrage executor
 /// @notice Executes atomic multi-hop circular arbitrage routes.
@@ -343,6 +349,17 @@ contract ArbitrageExecutor is
         uint256 balanceBefore = IERC20(tokenIn).balanceOf(address(this));
         if (balanceBefore < amountIn) revert InsufficientBalance();
 
+        // Snapshot the pre-route balance of the intermediate (tokenOut) token. Used for BOTH
+        // (a) the per-hop DELTA CAP in _dispatchHop — intermediate legs approve only the
+        // route-CREATED amount (currentBalance - tokenOutBefore), never the executor's
+        // STANDING tokenOut inventory; and (b) the post-loop tokenOut RETENTION assertion
+        // (defense-in-depth, symmetric to SC-13's tokenIn guard). For the single-token
+        // circular case (tokenOut == tokenIn) the baseline is the principal balance, so a
+        // later same-token hop is likewise bounded to route-created gains, never working
+        // capital B. Both close a standing-inventory drain the tokenIn-only net-profit gate
+        // below cannot see (it measures tokenIn only).
+        uint256 tokenOutBefore = tokenOut == tokenIn ? balanceBefore : IERC20(tokenOut).balanceOf(address(this));
+
         // SC-12 (executor self-cap, 2026-06-28): on-chain spend control is enforced
         // by an exact, ephemeral per-router allowance below (forceApprove amountIn →
         // call → reset to 0). The AllowanceManager isApproved registry is deliberately
@@ -350,33 +367,27 @@ contract ArbitrageExecutor is
         // spend authority over THIS contract's balance, so gating on it was false
         // assurance. Router/selector allowlisting (approvedRouters / approvedSelectors)
         // is retained as defense-in-depth.
+        // Each hop is validated + dispatched in its own frame (_dispatchHop) so this
+        // function stays under the EVM stack limit. _dispatchHop enforces the router
+        // allowlist + A5 selector gate and applies the per-hop bounded, ephemeral
+        // allowance of the token actually SOLD at that hop.
         for (uint256 i = 0; i < routers.length;) {
-            address router = routers[i];
-            if (!approvedRouters[router]) revert RouterNotApproved(router);
-
-            // A5: selector whitelist gate.
-            // Require payload to carry at least 4 bytes (a valid ABI selector).
-            // Then verify the extracted selector is approved for this specific router.
-            // Defense-in-depth above EXECUTOR_ROLE compromise: even a compromised key
-            // cannot invoke transferFrom/withdraw/setOwner on an approved router unless
-            // the operator has explicitly whitelisted that selector.
-            bytes calldata pld = payload[i];
-            if (pld.length < 4) revert AE_PayloadTooShort(router);
-            bytes4 selector;
-            // Extract the leading 4 bytes without a memory allocation (gas-optimal).
-            assembly {
-                selector := calldataload(pld.offset)
-            }
-            if (!approvedSelectors[router][selector]) {
-                revert AE_RouterSelectorNotApproved(router, selector);
-            }
-
-            // SC-12: exact, ephemeral, bounded allowance around the swap dispatch.
-            // Extracted to _boundedRouterCall to keep this function under the EVM
-            // stack limit; see that helper for the approve → call → reset lifecycle.
-            _boundedRouterCall(tokenIn, router, amountIn, pld);
-
+            _dispatchHop(i, tokenIn, tokenOut, amountIn, tokenOutBefore, routers[i], payload[i]);
             unchecked { ++i; }
+        }
+
+        // tokenOut retention (defense-in-depth backstop): a circular tokenIn->tokenOut->tokenIn
+        // route converts the intermediate fully back to tokenIn, so it MUST end holding no LESS
+        // tokenOut than it started. The per-hop delta cap already makes this structurally true
+        // (intermediate hops approve only route-created tokenOut, never standing inventory), so
+        // on honest routes this is a no-op. It is retained as (a) the guarantee that bounds the
+        // multi-hop "self-mint tokenOut to inflate a later hop's cap" vector to route-created
+        // funds only — note tokenOutBefore is the STALE pre-loop baseline, not recomputed per
+        // hop — and (b) the safety net should a future refactor ever weaken the delta cap. A net
+        // decrease means standing tokenOut was drained -> fail-closed (the tokenIn-only profit
+        // gate below is blind to a tokenOut loss).
+        if (tokenOut != tokenIn && IERC20(tokenOut).balanceOf(address(this)) < tokenOutBefore) {
+            revert TokenOutRetentionViolation();
         }
 
         uint256 balanceAfter = IERC20(tokenIn).balanceOf(address(this));
@@ -389,28 +400,64 @@ contract ArbitrageExecutor is
         emit ArbitrageExecuted(routeHash, tokenIn, tokenOut, profit);
     }
 
-    /// @dev SC-12 spend control. Grant `router` an EXACT, ephemeral tokenIn allowance
-    ///      bounded by `amountIn`, dispatch the swap calldata, then reset the allowance
-    ///      to zero. Consequences:
-    ///        - an approved router can pull AT MOST `amountIn` of tokenIn per hop
-    ///          (PER-HOP bound; route-level loss is bounded by the ZeroGrossProfit/
-    ///          minProfit gate in executeArbitrage, not by this per-hop cap);
-    ///        - no standing allowance survives the call (reset to 0 on success; the
-    ///          whole tx reverts on failure, so nothing is left granted either way).
-    ///      forceApprove zeroes a non-zero current allowance first, so this is safe for
-    ///      approve-race tokens (e.g. USDT). Extracted to its own frame purely to keep
-    ///      executeArbitrage under the EVM stack limit; it performs no validation of its
-    ///      own — callers must have already enforced router/selector allowlisting.
-    function _boundedRouterCall(
+    /// @dev Validate and dispatch a single route hop in its own stack frame (extracted
+    ///      from _runRoute's loop to keep that function under the EVM stack limit).
+    ///      Enforces the router allowlist + the A5 selector whitelist, then applies an
+    ///      EXACT, ephemeral allowance of the token actually SOLD at this hop around the
+    ///      swap call:
+    ///        - hop 0 sells the principal (tokenIn), capped at `amountIn` — bounds spend
+    ///          over this contract's tokenIn-denominated working capital;
+    ///        - later hops sell the intermediate (tokenOut), capped at the route-CREATED
+    ///          delta (current balance minus the pre-route baseline `tokenOutBefore`), so a
+    ///          standing tokenOut inventory is NEVER granted to a router — closing a drain
+    ///          surface the tokenIn-only net-profit gate cannot see;
+    ///        - route-level loss is still bounded by the ZeroGrossProfit/minProfit gate
+    ///          (tokenIn) plus the post-loop tokenOut retention assertion in _runRoute;
+    ///        - no standing allowance survives (reset to 0 on success; the whole tx
+    ///          reverts on failure, so nothing is left granted either way).
+    ///      Without the per-hop sold token, a genuine 2-router arb's return leg (which
+    ///      sells tokenOut) reverted SwapFailed because only tokenIn was ever approved.
+    ///      forceApprove zeroes a non-zero current allowance first (USDT-safe). Supported
+    ///      route shapes: 1-hop (tokenIn==tokenOut) and 2-token circular
+    ///      tokenIn->tokenOut->tokenIn; a 3+ token route (tokenIn->X->Y->tokenIn) is
+    ///      fail-safe — the offending hop approves the wrong token, the router pull reverts
+    ///      SwapFailed, and the whole tx rolls back (a capability gap, not a leak).
+    function _dispatchHop(
+        uint256 hopIndex,
         address tokenIn,
-        address router,
+        address tokenOut,
         uint256 amountIn,
+        uint256 tokenOutBefore,
+        address router,
         bytes calldata pld
     ) internal {
-        IERC20(tokenIn).forceApprove(router, amountIn);
+        if (!approvedRouters[router]) revert RouterNotApproved(router);
+
+        // A5: selector whitelist gate. Require >= 4 bytes (a valid ABI selector), then
+        // verify the extracted selector is approved for THIS router. Defense-in-depth
+        // above EXECUTOR_ROLE compromise: even a compromised key cannot invoke
+        // transferFrom/withdraw/setOwner on an approved router unless the operator has
+        // explicitly whitelisted that selector.
+        if (pld.length < 4) revert AE_PayloadTooShort(router);
+        bytes4 selector;
+        // Extract the leading 4 bytes without a memory allocation (gas-optimal).
+        assembly {
+            selector := calldataload(pld.offset)
+        }
+        if (!approvedSelectors[router][selector]) {
+            revert AE_RouterSelectorNotApproved(router, selector);
+        }
+
+        // Approve the per-hop SOLD token only, bounded to the in-flight amount: hop 0 sells
+        // the principal (tokenIn) capped at amountIn; later hops sell the intermediate
+        // (tokenOut) capped at the route-CREATED delta (current balance minus tokenOutBefore),
+        // so the executor's STANDING tokenOut inventory is never approved or exposed.
+        address soldToken = hopIndex == 0 ? tokenIn : tokenOut;
+        uint256 approveAmount = hopIndex == 0 ? amountIn : (IERC20(tokenOut).balanceOf(address(this)) - tokenOutBefore);
+        IERC20(soldToken).forceApprove(router, approveAmount);
         (bool success, ) = router.call(pld);
         if (!success) revert SwapFailed();
-        IERC20(tokenIn).forceApprove(router, 0);
+        IERC20(soldToken).forceApprove(router, 0);
     }
 
     /// @notice Approve or revoke a router address for use in routes.
