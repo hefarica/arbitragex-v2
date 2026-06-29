@@ -278,6 +278,33 @@ pub fn resolve_executor_address(chain_id: u64) -> Result<Address, ExecutorAddrEr
     Ok(addr)
 }
 
+/// Resolve the deployed `FlashLoanExecutor` proxy address for a chain from the
+/// `FLASHLOAN_EXECUTOR_<chain_id>` environment variable, parsed to a non-zero
+/// `Address`. This is the `.to()` target of the M2 flash-funded
+/// `requestFlashLoan` transaction (sim R3 + broadcast R4).
+///
+/// NO hardcoded fallback addresses; NO test/dummy defaults. Every chain that
+/// participates in the flash-loan wire must export this env var explicitly.
+/// Missing, invalid, or zero values all reject fail-closed with a typed
+/// `ExecutorAddrError` variant (reused: its variants carry only `chain_id` /
+/// `value`, so they are env-key-agnostic and apply identically here).
+pub fn resolve_flashloan_executor_address(chain_id: u64) -> Result<Address, ExecutorAddrError> {
+    let key = format!("FLASHLOAN_EXECUTOR_{chain_id}");
+    let raw = match std::env::var(&key) {
+        Ok(v) if !v.trim().is_empty() => v,
+        _ => return Err(ExecutorAddrError::Missing { chain_id }),
+    };
+    let value = raw.trim();
+    let addr = Address::from_str(value).map_err(|_| ExecutorAddrError::Invalid {
+        chain_id,
+        value: value.to_string(),
+    })?;
+    if addr == Address::zero() {
+        return Err(ExecutorAddrError::Zero { chain_id });
+    }
+    Ok(addr)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,5 +478,53 @@ mod tests {
             Address::from_str("0x1234567890123456789012345678901234567890").unwrap()
         );
         std::env::remove_var("EXECUTOR_8996");
+    }
+
+    // ---- resolve_flashloan_executor_address fail-closed matrix -----------------
+    // Distinct chain_ids (8995..8992) from the executor matrix above so the
+    // FLASHLOAN_EXECUTOR_<chain_id> env keys never race a parallel test.
+
+    /// Unset `FLASHLOAN_EXECUTOR_<chain_id>` rejects with `Missing` (no default).
+    #[test]
+    fn flashloan_executor_missing_rejected() {
+        std::env::remove_var("FLASHLOAN_EXECUTOR_8995");
+        let err = resolve_flashloan_executor_address(8995).unwrap_err();
+        assert_eq!(err, ExecutorAddrError::Missing { chain_id: 8995 });
+    }
+
+    /// A non-address env value rejects with `Invalid` carrying the raw value.
+    #[test]
+    fn flashloan_executor_invalid_rejected() {
+        std::env::set_var("FLASHLOAN_EXECUTOR_8994", "not_an_address");
+        let err = resolve_flashloan_executor_address(8994).unwrap_err();
+        assert!(matches!(err, ExecutorAddrError::Invalid { chain_id: 8994, .. }));
+        std::env::remove_var("FLASHLOAN_EXECUTOR_8994");
+    }
+
+    /// The zero address rejects with `Zero` (never a valid executor).
+    #[test]
+    fn flashloan_executor_zero_rejected() {
+        std::env::set_var(
+            "FLASHLOAN_EXECUTOR_8993",
+            "0x0000000000000000000000000000000000000000",
+        );
+        let err = resolve_flashloan_executor_address(8993).unwrap_err();
+        assert_eq!(err, ExecutorAddrError::Zero { chain_id: 8993 });
+        std::env::remove_var("FLASHLOAN_EXECUTOR_8993");
+    }
+
+    /// A valid non-zero address parses and round-trips.
+    #[test]
+    fn flashloan_executor_valid_resolves() {
+        std::env::set_var(
+            "FLASHLOAN_EXECUTOR_8992",
+            "0x1234567890123456789012345678901234567890",
+        );
+        let addr = resolve_flashloan_executor_address(8992).unwrap();
+        assert_eq!(
+            addr,
+            Address::from_str("0x1234567890123456789012345678901234567890").unwrap()
+        );
+        std::env::remove_var("FLASHLOAN_EXECUTOR_8992");
     }
 }
