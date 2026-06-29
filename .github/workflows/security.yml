@@ -96,6 +96,20 @@ jobs:
           #                                     token-enricher, sed-core).
           #                                     Plan: sqlx 0.7→0.8 dedicated migration sprint
           #                                     (dependabot.yml blocks major bump audit 2026-05-10).
+          #
+          # HIGH (vulnerable path NOT REACHABLE in our build — operator-approved 2026-06-29):
+          #   RUSTSEC-2026-0189  rmcp 0.3.2     DNS rebinding in the Streamable HTTP SERVER transport.
+          #                                     Exposure: rmcp is pulled in ONLY by the dev-only
+          #                                     `mcp-sim-engine` tool, which serves over STDIO
+          #                                     (`transport::stdio`) with features
+          #                                     ["server","transport-io","macros"] — the vulnerable
+          #                                     `transport-streamable-http-server` feature is NOT
+          #                                     enabled, so the affected code is not compiled. It is
+          #                                     also dev-only (no Dockerfile; not in any production
+          #                                     deploy). The advisory does not apply to this build.
+          #                                     Plan: re-evaluate on the rmcp 0.3→1.x migration (a
+          #                                     major bump for the dev tool); remediate if the HTTP
+          #                                     server transport is ever adopted.
           RUSTSEC_IGNORES: >-
             --ignore RUSTSEC-2026-0002
             --ignore RUSTSEC-2024-0388
@@ -112,6 +126,7 @@ jobs:
             --ignore RUSTSEC-2026-0104
             --ignore RUSTSEC-2024-0363
             --ignore RUSTSEC-2026-0173
+            --ignore RUSTSEC-2026-0189
 
   gitleaks:
     name: gitleaks (secrets scan)
