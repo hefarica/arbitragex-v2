@@ -76,6 +76,14 @@
 //! `tokio::task::spawn_blocking` so the tokio worker thread is never
 //! parked on a blocking call — cs-validator finding 2026-05-12 applied.
 
+// Dead within searcher-rs (the production producer validates via
+// `sim_multistep::execute_multistep_revm` — see the module doc above);
+// retained ONLY for the `mcp-sim-engine` sibling crate's self-funded tool.
+// Allow dead_code so the searcher-rs clippy gate (`-D warnings`) stays green
+// without deleting that crate's API surface (a follow-up may migrate or
+// remove the obsolete self-funded `executeArbitrage` sim entirely).
+#![allow(dead_code)]
+
 use ethers::types::{Address, U256};
 use prioritization_spine::round_trip_executor::{RoundTripContext, SimulationOutcome};
 use thiserror::Error;
