@@ -62,8 +62,13 @@
 //! 1. Returns `SimulationOutcome::passed = true` ONLY after real REVM
 //!    execution with `gas_used_total > 0`, a non-zero trace hash, >= 1
 //!    committed call (the single wrapped `requestFlashLoan` dispatch — the
-//!    forward/backward legs execute INSIDE the contract callback), and
-//!    `net_profit_wei > 0`. No PASS is fabricated.
+//!    forward/backward legs execute INSIDE the contract callback), and a
+//!    positive GROSS `retained_spread` (`fle_post - fle_pre > 0`). No PASS is
+//!    fabricated. The sim is PRICES-FREE and does NOT subtract gas (token_in
+//!    units vs native wei are not comparable, and the sim has no USD prices);
+//!    the NET-of-gas-in-USD gate is the price-aware downstream
+//!    `compute_profit_usd` consumer's job and MUST run before any LIVE
+//!    broadcast.
 //! 2. NEVER applies storage overrides outside paper mode. The config gate
 //!    is `paper_mode == true && enable_storage_cheats == true`; either flag
 //!    flipped rejects with the corresponding typed error.
@@ -230,9 +235,14 @@ pub struct MultiStepExecutionConfig {
     /// trace hash. Defensive against simulator-v2 contract changes that
     /// might silently return zeros.
     pub require_trace_hash: bool,
-    /// Anti-fraud: a successful outcome MUST have `net_profit_wei > 0`.
-    /// Disabling this would let zero-profit simulations bubble up as
-    /// SIM_SUCCESS — never appropriate for the production hot path.
+    /// Anti-fraud: a successful outcome MUST have a positive GROSS retained
+    /// spread (`retained_spread = fle_post - fle_pre > 0`, == the contract's
+    /// `profit - premium`). This is the prices-free invariant the sim CAN
+    /// verify; it does NOT subtract gas (token_in units vs native wei are not
+    /// comparable, and the sim has no USD prices). The net-of-gas-in-USD gate
+    /// is the DOWNSTREAM `compute_profit_usd` consumer's job and MUST run before
+    /// any LIVE broadcast. Disabling this would let zero-spread simulations
+    /// bubble up as SIM_SUCCESS — never appropriate for the production hot path.
     pub require_positive_net_profit: bool,
     /// Defensive cap on the multi-step plan length (forward leg + backward
     /// leg = 2 swaps; with auxiliary balance reads + allowance applications
@@ -508,20 +518,28 @@ fn validate_context(ctx: &RoundTripContext) -> Result<(), MultiStepError> {
 ///      (the inner provider callback + round-trip swaps run inside it).
 ///   2. Both FLE token_in reads (`fle_token_in_pre` / `fle_token_in_post`) are
 ///      present and `fle_post ≥ fle_pre` (a loss fails closed).
-///   3. `retained_spread = fle_post - fle_pre > 0`. This equals the contract's
-///      `profit - premium` — the gain the FLE actually keeps. (The caller's
-///      token_in balance is unchanged by the flow and is NOT measured.)
+///   3. `retained_spread = fle_post - fle_pre > 0` (the GROSS, prices-free
+///      economic gate). This equals the contract's `profit - premium` — the
+///      gain the FLE actually keeps. (The caller's token_in balance is
+///      unchanged by the flow and is NOT measured.)
 ///   4. `gas_used_total > 0`.
 ///   5. Combined trace hash != `[0; 32]`.
 ///   6. At least ONE call committed (the wrapped flash dispatch).
-///   7. `net_profit_wei = retained_spread - gas_cost > 0`.
 ///
-/// UNITS CAVEAT (flagged for the follow-up adversarial pass): `retained_spread`
-/// is in `token_in` units, while `gas_cost` is in native wei. The subtraction in
-/// (7) therefore conflates units whenever `token_in != WETH`. This rework makes
-/// the SPREAD MEASUREMENT correct (the right account, the right delta) but keeps
-/// the existing net-of-gas structure; a token_in→wei normalisation is a separate
-/// follow-up.
+/// GROSS-vs-NET (deliberate, prices-free): the sim gates on the GROSS
+/// `retained_spread` and does NOT subtract gas. `retained_spread` is in
+/// `token_in` smallest units while gas cost is native wei — the two are NOT
+/// comparable unless `token_in == WETH`, and the pure REVM sim has NO
+/// token_in/ETH USD prices, so it CANNOT correctly compute net-of-gas. The
+/// NET-of-gas-in-USD profitability decision is the price-aware DOWNSTREAM
+/// layer's responsibility, via
+/// `prioritization_spine::round_trip_executor::compute_profit_usd` (which takes
+/// token_in decimals + token_in_price_usd + eth_price_usd plus the
+/// `gas_used_total` / `gas_price_wei` this outcome carries). That downstream
+/// net-USD gate MUST be enforced before any LIVE broadcast — a required M5-era
+/// wiring, tracked. `simulated_profit_token_in` on the passing outcome is the
+/// GROSS `retained_spread` (the documented token_in delta), NOT a
+/// gas-subtracted value.
 ///
 /// The `.to()` of the dispatch is the deployed `FlashLoanExecutor`, resolved
 /// from `resolve_flashloan_executor_address(config.chain_id)` (env
@@ -751,26 +769,29 @@ pub fn execute_multistep_revm(
     // contract itself reverts `FL_RepaymentShortfall` when `profit < premium`,
     // so this branch should already have been caught upstream as a call revert.
     if fle_post_alloy < fle_pre_alloy {
-        return SimulationOutcome::failed("multistep_net_profit_non_positive".to_string());
+        return SimulationOutcome::failed("multistep_gross_spread_non_positive".to_string());
     }
     let retained_spread_alloy = fle_post_alloy - fle_pre_alloy;
-    if retained_spread_alloy.is_zero() {
-        return SimulationOutcome::failed("multistep_net_profit_non_positive".to_string());
-    }
 
-    // gas_cost = gas_used_total × gas_price_wei. Saturating arithmetic.
-    // UNITS CAVEAT (flagged for the adversarial pass): `retained_spread_alloy`
-    // is in token_in units while `gas_cost_alloy` is native wei — this
-    // subtraction conflates units when token_in != WETH. The spread measurement
-    // is now correct; the token_in→wei normalisation is a separate follow-up.
-    let gas_price_alloy = ethers_u256_to_alloy(config.gas_price_wei);
-    let gas_cost_alloy =
-        simulator_v2::AlloyU256::from(result.gas_used_total).saturating_mul(gas_price_alloy);
-    let net_profit_alloy = if retained_spread_alloy > gas_cost_alloy {
-        retained_spread_alloy - gas_cost_alloy
-    } else {
-        return SimulationOutcome::failed("multistep_net_profit_non_positive".to_string());
-    };
+    // ECONOMIC GATE (GROSS, prices-free). The sim deliberately gates on the
+    // GROSS retained_spread (token_in units) and does NOT subtract gas here:
+    // `retained_spread` is in token_in smallest units while gas cost is native
+    // wei, so the two are NOT comparable unless token_in == WETH. The pure REVM
+    // sim has NO token_in/ETH USD prices, so it CANNOT correctly compute
+    // net-of-gas — that is the price-aware DOWNSTREAM layer's job, via
+    // `prioritization_spine::round_trip_executor::compute_profit_usd`
+    // (token_in decimals + token_in_price_usd + eth_price_usd + the
+    // gas_used_total / gas_price_wei carried below).
+    //
+    // `retained_spread > 0` is the honest invariant the prices-free sim CAN
+    // verify: the FLE retained more token_in than the flash premium — which the
+    // contract itself enforces by reverting `FL_RepaymentShortfall` when
+    // `profit < premium`. The DOWNSTREAM net-of-gas-in-USD profitability gate
+    // (compute_profit_usd > 0) MUST be enforced before any LIVE broadcast — a
+    // required M5-era wiring, tracked.
+    if retained_spread_alloy.is_zero() {
+        return SimulationOutcome::failed("multistep_gross_spread_non_positive".to_string());
+    }
 
     // 5. Anti-fraud guards on the success path.
     if result.gas_used_total == 0 {
@@ -796,13 +817,19 @@ pub fn execute_multistep_revm(
 
     SimulationOutcome {
         passed: true,
-        simulated_profit_token_in: alloy_u256_to_ethers(net_profit_alloy),
+        // GROSS token_in delta (== contract `profit - premium`), exactly what
+        // the field is documented to hold. NET-of-gas-in-USD is deferred to the
+        // price-aware downstream layer via `compute_profit_usd`.
+        simulated_profit_token_in: alloy_u256_to_ethers(retained_spread_alloy),
         intermediate_amount_out: result
             .reads
             .get("intermediate_token_out_balance")
             .copied()
             .map(alloy_u256_to_ethers),
         gas_used_total: result.gas_used_total,
+        // Carry the gas price used so the downstream price-aware layer can
+        // compute the net-of-gas USD via `compute_profit_usd`.
+        gas_price_wei: config.gas_price_wei,
         fail_reason: None,
         // Carry the VALIDATED wrapped-flash calldata (leg-1 encoded with the
         // real forward-quoted intermediate) ONLY on this passing outcome.

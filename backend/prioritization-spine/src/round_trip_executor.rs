@@ -47,16 +47,29 @@ use crate::swap_encoder::{encode_erc20_balance_of, encode_v2_swap_exact_tokens_f
 /// it failed and we have a diagnostic `fail_reason`.
 ///
 /// `simulated_profit_token_in` is the raw `final_balance - initial_balance`
-/// in token_in units (NOT USD). Negative scenarios are represented as
-/// `passed=true, simulated_profit_token_in=0` because the math returns
-/// a wrapped underflow on revert; converting to signed would mask the
-/// actual sim outcome. Caller computes USD via `compute_profit_usd`.
+/// in token_in units (NOT USD), i.e. the GROSS token_in delta. Negative
+/// scenarios are represented as `passed=true, simulated_profit_token_in=0`
+/// because the math returns a wrapped underflow on revert; converting to
+/// signed would mask the actual sim outcome.
+///
+/// The sim is intentionally PRICES-FREE: it carries the gross token_in delta
+/// plus the gas it measured (`gas_used_total` + `gas_price_wei`), and the
+/// price-aware downstream layer computes net-of-gas USD via
+/// `compute_profit_usd` (which also takes token_in decimals/price + eth price).
+/// The NET-of-gas-in-USD profitability decision is the DOWNSTREAM consumer's
+/// responsibility — and that downstream net-USD gate MUST be enforced before
+/// any LIVE broadcast.
 #[derive(Debug, Clone)]
 pub struct SimulationOutcome {
     pub passed: bool,
     pub simulated_profit_token_in: U256,
     pub intermediate_amount_out: Option<U256>,
     pub gas_used_total: u64,
+    /// The gas price (wei) the simulator used. Carried (alongside
+    /// `gas_used_total`) so the price-aware downstream layer can compute the
+    /// gas cost in USD via `compute_profit_usd`. `U256::zero()` on failure /
+    /// producers that do not measure gas.
+    pub gas_price_wei: U256,
     pub fail_reason: Option<String>,
     /// The exact wrapped-flash broadcast calldata (outer `requestFlashLoan`
     /// 0x5107d61e wrapping inner `executeArbitrageFlashFunded` 0xdde0bf51) that
@@ -75,6 +88,7 @@ impl SimulationOutcome {
             simulated_profit_token_in: U256::zero(),
             intermediate_amount_out: None,
             gas_used_total: 0,
+            gas_price_wei: U256::zero(),
             fail_reason: Some(reason.into()),
             wrapped_calldata: None,
         }

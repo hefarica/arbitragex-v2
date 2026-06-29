@@ -368,6 +368,9 @@ pub fn execute_round_trip_revm(
                 simulated_profit_token_in: profit_u256,
                 intermediate_amount_out: None,
                 gas_used_total: result.gas_used,
+                // Carry the gas price used so the price-aware downstream layer
+                // can compute net-of-gas USD via `compute_profit_usd`.
+                gas_price_wei: config.gas_price_wei,
                 fail_reason: None,
                 // Self-funded executeArbitrage path carries no wrapped-flash
                 // calldata; the carry is wrapped-flash-only.
