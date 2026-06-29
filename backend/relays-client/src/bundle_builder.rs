@@ -356,16 +356,22 @@ mod tests {
             to: to_hex.to_string(),
             selector: "0x76d81cdf".to_string(),
         };
-        let (to, data) = select_to_and_data(
+        let Ok((to, data)) = select_to_and_data(
             &opp,
             Some(&payload),
             Address::zero(),
             U256::from(1u8),
             U256::from(123u64),
-        )
-        .expect("exec_payload path must succeed");
-        assert_eq!(to, parse_addr(to_hex).unwrap(), "to must be the carried executor");
-        let expected = hex::decode(calldata_hex.trim_start_matches("0x")).unwrap();
+        ) else {
+            panic!("exec_payload path must succeed");
+        };
+        let Ok(want_to) = parse_addr(to_hex) else {
+            panic!("test to_hex must be a valid address");
+        };
+        assert_eq!(to, want_to, "to must be the carried executor");
+        let Ok(expected) = hex::decode(calldata_hex.trim_start_matches("0x")) else {
+            panic!("test calldata_hex must be valid hex");
+        };
         assert_eq!(
             data.as_ref(),
             expected.as_slice(),
