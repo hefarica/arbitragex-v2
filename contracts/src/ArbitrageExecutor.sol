@@ -80,6 +80,16 @@ error AE_PayloadTooShort(address router);
 /// @dev Thrown when the selector extracted from a payload is not in the per-router whitelist.
 ///      SECURITY (A5): closes the arbitrary-function-call surface on approved routers.
 error AE_RouterSelectorNotApproved(address router, bytes4 selector);
+/// @dev (1a, 2026-06-29) Thrown when a cross-DEX 2-leg route's forward leg produced zero
+///      intermediate tokenOut, so the backward leg would have nothing to approve/spend.
+///      Fail-closed: a swap that yielded no intermediate is a broken/empty route and must
+///      revert rather than proceed with a zero-amount backward approval.
+error ZeroIntermediate();
+/// @dev (1a, 2026-06-29) Thrown when routers.length > 2. The off-chain only ever produces
+///      1-leg (circular) or 2-leg (cross-DEX) routes; longer routes are unsupported because
+///      the per-hop input-token / intermediate accounting is defined only for 1 and 2 legs.
+///      Fail-closed: refuse to dispatch a route shape whose spend safety is not modelled.
+error UnsupportedRouteLength(uint256 length);
 
 /// @title ArbitrageExecutor — UUPS-upgradeable on-chain arbitrage executor
 /// @notice Executes atomic multi-hop circular arbitrage routes.
@@ -340,43 +350,49 @@ contract ArbitrageExecutor is
         // Fail-closed: unapproved intermediate tokens revert before any state change.
         if (tokenOut != tokenIn && !approvedTokens[tokenOut]) revert TokenNotApproved(tokenOut);
 
+        // (1a, 2026-06-29) Route-shape gate. The off-chain only ever produces 1-leg
+        // (circular) or 2-leg (cross-DEX) routes; the per-hop input-token accounting
+        // below is defined only for those shapes. Longer routes revert fail-closed.
+        // NOTE: this length restriction is placed AFTER the token-approval checks above
+        // so existing revert-ordering tests (empty-routers + unapproved tokenOut ->
+        // TokenNotApproved; routers/payload LengthMismatch) keep their expected errors.
+        if (routers.length > 2) revert UnsupportedRouteLength(routers.length);
+
         uint256 balanceBefore = IERC20(tokenIn).balanceOf(address(this));
         if (balanceBefore < amountIn) revert InsufficientBalance();
 
-        // SC-12 (executor self-cap, 2026-06-28): on-chain spend control is enforced
-        // by an exact, ephemeral per-router allowance below (forceApprove amountIn →
-        // call → reset to 0). The AllowanceManager isApproved registry is deliberately
-        // NOT consulted here: an allowance held by the AllowanceManager confers no
-        // spend authority over THIS contract's balance, so gating on it was false
-        // assurance. Router/selector allowlisting (approvedRouters / approvedSelectors)
-        // is retained as defense-in-depth.
-        for (uint256 i = 0; i < routers.length;) {
-            address router = routers[i];
-            if (!approvedRouters[router]) revert RouterNotApproved(router);
+        // SC-12 (executor self-cap) + (1a) approve-per-hop. On-chain spend control is
+        // enforced by an exact, ephemeral per-router allowance (forceApprove exactAmount
+        // → call → reset to 0) for EACH leg's correct INPUT token:
+        //   - Leg 0 spends `tokenIn`, exactly `amountIn`.
+        //   - Leg 1 (cross-DEX) spends `tokenOut`, exactly the INTERMEDIATE delta that
+        //     leg 0 produced — never the executor's full tokenOut balance — so any
+        //     pre-existing tokenOut working capital is preserved (SC-13, tokenOut-scoped).
+        // The AllowanceManager isApproved registry is deliberately NOT consulted: an
+        // allowance held by the AllowanceManager confers no spend authority over THIS
+        // contract's balance. Router/selector allowlisting (approvedRouters /
+        // approvedSelectors) is retained as defense-in-depth and applied to BOTH legs.
+        if (routers.length > 0) {
+            // Leg 0: input token is tokenIn, exact amount = amountIn.
+            // When there is a second leg, snapshot tokenOut before leg 0 so we can
+            // approve leg 1 EXACTLY the intermediate this route created.
+            uint256 tokenOutBefore =
+                routers.length == 2 ? IERC20(tokenOut).balanceOf(address(this)) : 0;
 
-            // A5: selector whitelist gate.
-            // Require payload to carry at least 4 bytes (a valid ABI selector).
-            // Then verify the extracted selector is approved for this specific router.
-            // Defense-in-depth above EXECUTOR_ROLE compromise: even a compromised key
-            // cannot invoke transferFrom/withdraw/setOwner on an approved router unless
-            // the operator has explicitly whitelisted that selector.
-            bytes calldata pld = payload[i];
-            if (pld.length < 4) revert AE_PayloadTooShort(router);
-            bytes4 selector;
-            // Extract the leading 4 bytes without a memory allocation (gas-optimal).
-            assembly {
-                selector := calldataload(pld.offset)
+            _validateAndCall(tokenIn, routers[0], amountIn, payload[0]);
+
+            if (routers.length == 2) {
+                // Intermediate produced by leg 0 (tokenOut delta). Approving exactly this
+                // delta lets the backward leg pull the tokenOut it needs while preserving
+                // any pre-existing tokenOut working capital. Fail-closed if leg 0 produced
+                // no intermediate.
+                uint256 intermediate =
+                    IERC20(tokenOut).balanceOf(address(this)) - tokenOutBefore;
+                if (intermediate == 0) revert ZeroIntermediate();
+
+                // Leg 1: input token is tokenOut, exact amount = the intermediate delta.
+                _validateAndCall(tokenOut, routers[1], intermediate, payload[1]);
             }
-            if (!approvedSelectors[router][selector]) {
-                revert AE_RouterSelectorNotApproved(router, selector);
-            }
-
-            // SC-12: exact, ephemeral, bounded allowance around the swap dispatch.
-            // Extracted to _boundedRouterCall to keep this function under the EVM
-            // stack limit; see that helper for the approve → call → reset lifecycle.
-            _boundedRouterCall(tokenIn, router, amountIn, pld);
-
-            unchecked { ++i; }
         }
 
         uint256 balanceAfter = IERC20(tokenIn).balanceOf(address(this));
@@ -389,28 +405,73 @@ contract ArbitrageExecutor is
         emit ArbitrageExecuted(routeHash, tokenIn, tokenOut, profit);
     }
 
-    /// @dev SC-12 spend control. Grant `router` an EXACT, ephemeral tokenIn allowance
-    ///      bounded by `amountIn`, dispatch the swap calldata, then reset the allowance
+    /// @dev (1a) Per-leg A5 router/selector/payload validation, then dispatch the bounded
+    ///      swap. Enforces the SAME gates the original single-loop body did, now applied to
+    ///      each leg with its OWN input token + exact amount:
+    ///        - approvedRouters[router]                       (RouterNotApproved)
+    ///        - payload >= 4 bytes                            (AE_PayloadTooShort)
+    ///        - approvedSelectors[router][selector]           (AE_RouterSelectorNotApproved)
+    ///      then calls _boundedRouterCall for the exact, ephemeral approve → call → reset.
+    ///      Extracted to its own frame to keep _runRoute under the EVM stack limit.
+    /// @param inputToken  The token this leg spends (tokenIn for leg 0, tokenOut for leg 1).
+    /// @param router      Approved router to dispatch this leg to.
+    /// @param exactAmount Exact, ephemeral allowance to grant for this leg (amountIn for
+    ///                    leg 0, the intermediate delta for leg 1) — never unbounded.
+    /// @param pld         Calldata for the swap (must carry a whitelisted 4-byte selector).
+    function _validateAndCall(
+        address inputToken,
+        address router,
+        uint256 exactAmount,
+        bytes calldata pld
+    ) internal {
+        if (!approvedRouters[router]) revert RouterNotApproved(router);
+
+        // A5: selector whitelist gate.
+        // Require payload to carry at least 4 bytes (a valid ABI selector), then verify
+        // the extracted selector is approved for this specific router. Defense-in-depth
+        // above EXECUTOR_ROLE compromise: even a compromised key cannot invoke
+        // transferFrom/withdraw/setOwner on an approved router unless the operator has
+        // explicitly whitelisted that selector.
+        if (pld.length < 4) revert AE_PayloadTooShort(router);
+        bytes4 selector;
+        // Extract the leading 4 bytes without a memory allocation (gas-optimal).
+        assembly {
+            selector := calldataload(pld.offset)
+        }
+        if (!approvedSelectors[router][selector]) {
+            revert AE_RouterSelectorNotApproved(router, selector);
+        }
+
+        _boundedRouterCall(inputToken, router, exactAmount, pld);
+    }
+
+    /// @dev SC-12 spend control. Grant `router` an EXACT, ephemeral `inputToken` allowance
+    ///      bounded by `exactAmount`, dispatch the swap calldata, then reset the allowance
     ///      to zero. Consequences:
-    ///        - an approved router can pull AT MOST `amountIn` of tokenIn per hop
+    ///        - an approved router can pull AT MOST `exactAmount` of `inputToken` per hop
     ///          (PER-HOP bound; route-level loss is bounded by the ZeroGrossProfit/
     ///          minProfit gate in executeArbitrage, not by this per-hop cap);
     ///        - no standing allowance survives the call (reset to 0 on success; the
     ///          whole tx reverts on failure, so nothing is left granted either way).
+    ///      (1a) `inputToken`/`exactAmount` are the LEG's input token and exact amount:
+    ///      (tokenIn, amountIn) for leg 0; (tokenOut, intermediate-delta) for leg 1 — the
+    ///      backward leg therefore approves only the tokenOut this route produced, never
+    ///      pre-existing tokenOut working capital, and never an unbounded allowance.
     ///      forceApprove zeroes a non-zero current allowance first, so this is safe for
     ///      approve-race tokens (e.g. USDT). Extracted to its own frame purely to keep
     ///      executeArbitrage under the EVM stack limit; it performs no validation of its
-    ///      own — callers must have already enforced router/selector allowlisting.
+    ///      own — callers (via _validateAndCall) must have already enforced
+    ///      router/selector allowlisting.
     function _boundedRouterCall(
-        address tokenIn,
+        address inputToken,
         address router,
-        uint256 amountIn,
+        uint256 exactAmount,
         bytes calldata pld
     ) internal {
-        IERC20(tokenIn).forceApprove(router, amountIn);
+        IERC20(inputToken).forceApprove(router, exactAmount);
         (bool success, ) = router.call(pld);
         if (!success) revert SwapFailed();
-        IERC20(tokenIn).forceApprove(router, 0);
+        IERC20(inputToken).forceApprove(router, 0);
     }
 
     /// @notice Approve or revoke a router address for use in routes.

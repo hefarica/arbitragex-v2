@@ -78,6 +78,29 @@ contract ReproCircularRouter {
     }
 }
 
+/// @dev Cross-DEX router that pulls STRICTLY LESS input than it was approved for, then
+///      delivers the output. Used to prove the leg-1 ephemeral allowance is RESET to 0 by
+///      the executor (not merely consumed by the router's transferFrom): even though this
+///      router leaves part of its allowance unspent, the executor must zero it after the call.
+contract ReproUnderspendRouter {
+    IERC20 public immutable inputToken;
+    IERC20 public immutable outputToken;
+    uint256 public immutable pullAmount; // < the approved (intermediate) amount
+    uint256 public immutable outputAmount;
+
+    constructor(address inToken, address outToken, uint256 pullAmt, uint256 outAmt) {
+        inputToken = IERC20(inToken);
+        outputToken = IERC20(outToken);
+        pullAmount = pullAmt;
+        outputAmount = outAmt;
+    }
+
+    fallback() external {
+        inputToken.transferFrom(msg.sender, address(this), pullAmount);
+        outputToken.transfer(msg.sender, outputAmount);
+    }
+}
+
 contract ArbitrageExecutorCrossDexReproTest is Test {
     ArbitrageExecutor internal executor;
     address internal admin;
@@ -97,15 +120,17 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
         executor.grantRole(executor.EXECUTOR_ROLE(), executorRole);
     }
 
-    /// ROOT CAUSE: a real cross-DEX 2-router round trip reverts at the BACKWARD leg,
-    /// because the executor only ever grants an allowance for `tokenIn`, never `tokenOut`.
-    function test_RootCause_CrossDexTwoRouter_RevertsAtBackwardLeg() public {
+    /// TARGET SPEC (1a): a real cross-DEX 2-router round trip COMPLETES. Leg 0 approves
+    /// tokenIn (amountIn); leg 1 approves the tokenOut INTERMEDIATE produced by leg 0
+    /// (its on-chain delta), so the backward router can pull the tokenOut it needs and
+    /// returns more tokenIn. The executor's tokenIn balance rises by (finalOut - amountIn).
+    function test_CrossDexTwoRouter_Succeeds() public {
         ReproToken tokenIn = new ReproToken("IN");
         ReproToken tokenOut = new ReproToken("OUT");
 
         uint256 amountIn = 1_000e18;
         uint256 intermediate = 900e18; // tokenOut received from the forward leg
-        uint256 finalOut = 1_100e18; // tokenIn received from the backward leg (would be +100 profit)
+        uint256 finalOut = 1_100e18; // tokenIn received from the backward leg (+100 profit)
 
         // Forward router A: pull tokenIn(amountIn) -> deliver tokenOut(intermediate).
         ReproCrossDexRouter routerA =
@@ -134,11 +159,16 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
         payloads[0] = abi.encodePacked(SWAP_SELECTOR);
         payloads[1] = abi.encodePacked(SWAP_SELECTOR);
 
-        // Forward leg succeeds (spends tokenIn, approved). Backward leg pulls tokenOut,
-        // which the executor never approved to routerB -> transferFrom reverts -> SwapFailed.
+        uint256 balBefore = tokenIn.balanceOf(address(executor));
+
+        // Leg 0 approves tokenIn(amountIn); leg 1 approves the tokenOut delta (intermediate)
+        // produced by leg 0 -> backward router pulls it -> round trip completes.
         vm.prank(executorRole);
-        vm.expectRevert(SwapFailed.selector);
         executor.executeArbitrage(bytes32(0), address(tokenIn), address(tokenOut), amountIn, 0, routers, payloads);
+
+        // tokenIn balance rose by exactly (finalOut - amountIn) = +100; no tokenOut left over.
+        assertEq(tokenIn.balanceOf(address(executor)), balBefore + (finalOut - amountIn));
+        assertEq(tokenOut.balanceOf(address(executor)), 0);
     }
 
     /// POSITIVE CONTROL: the ONLY shape `_runRoute` supports — a single hop that spends
@@ -170,5 +200,167 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
 
         // The route pulled amountIn and returned returnAmount, so the executor retains the proceeds.
         assertEq(tokenIn.balanceOf(address(executor)), returnAmount);
+    }
+
+    // =========================================================================
+    // (1a) SECURITY GATE TESTS for the reworked _runRoute
+    // =========================================================================
+
+    /// SC-13 (tokenOut working-capital retention): the executor pre-holds B_out of tokenOut
+    /// as working capital. A cross-DEX route must consume ONLY the intermediate IT produced
+    /// (leg-0 delta), leaving the pre-existing B_out untouched. Proves the backward leg
+    /// approves the route's own delta, NOT the executor's full tokenOut balance.
+    function test_Security_TokenOutWorkingCapitalRetained() public {
+        ReproToken tokenIn = new ReproToken("IN");
+        ReproToken tokenOut = new ReproToken("OUT");
+
+        uint256 amountIn = 1_000e18;
+        uint256 intermediate = 900e18; // tokenOut produced by leg 0
+        uint256 finalOut = 1_100e18; // tokenIn from leg 1 (+100 profit)
+        uint256 preExistingTokenOut = 500e18; // executor's OWN tokenOut working capital B_out
+
+        ReproCrossDexRouter routerA =
+            new ReproCrossDexRouter(address(tokenIn), address(tokenOut), amountIn, intermediate);
+        ReproCrossDexRouter routerB =
+            new ReproCrossDexRouter(address(tokenOut), address(tokenIn), intermediate, finalOut);
+
+        tokenIn.mint(address(executor), amountIn);
+        tokenOut.mint(address(executor), preExistingTokenOut); // B_out — must be retained
+        tokenOut.mint(address(routerA), intermediate);
+        tokenIn.mint(address(routerB), finalOut);
+
+        executor.setTokenApproval(address(tokenIn), true);
+        executor.setTokenApproval(address(tokenOut), true);
+        executor.setRouterApproval(address(routerA), true);
+        executor.setRouterApproval(address(routerB), true);
+        executor.setRouterSelectorApproval(address(routerA), SWAP_SELECTOR, true);
+        executor.setRouterSelectorApproval(address(routerB), SWAP_SELECTOR, true);
+
+        address[] memory routers = new address[](2);
+        routers[0] = address(routerA);
+        routers[1] = address(routerB);
+        bytes[] memory payloads = new bytes[](2);
+        payloads[0] = abi.encodePacked(SWAP_SELECTOR);
+        payloads[1] = abi.encodePacked(SWAP_SELECTOR);
+
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(tokenIn), address(tokenOut), amountIn, 0, routers, payloads);
+
+        // Backward leg approved only the leg-0 delta (intermediate), so it pulled exactly
+        // that and the pre-existing B_out is fully retained.
+        assertEq(tokenOut.balanceOf(address(executor)), preExistingTokenOut, "tokenOut working capital B_out leaked");
+        // tokenIn ends at finalOut (principal amountIn was spent then finalOut returned);
+        // i.e. profit = finalOut - amountIn = +100, unaffected by the extra tokenOut capital.
+        assertEq(tokenIn.balanceOf(address(executor)), finalOut);
+    }
+
+    /// (1a) Route-length gate: routers.length > 2 reverts fail-closed with UnsupportedRouteLength.
+    function test_Security_RouteLengthAboveTwoReverts() public {
+        ReproToken tokenIn = new ReproToken("IN");
+        tokenIn.mint(address(executor), 1_000e18);
+        executor.setTokenApproval(address(tokenIn), true);
+
+        // 3 routers (approved as tokenIn would be irrelevant — length gate fires first).
+        ReproCircularRouter r = new ReproCircularRouter(address(tokenIn), 1, 1);
+        executor.setRouterApproval(address(r), true);
+        executor.setRouterSelectorApproval(address(r), SWAP_SELECTOR, true);
+
+        address[] memory routers = new address[](3);
+        routers[0] = address(r);
+        routers[1] = address(r);
+        routers[2] = address(r);
+        bytes[] memory payloads = new bytes[](3);
+        payloads[0] = abi.encodePacked(SWAP_SELECTOR);
+        payloads[1] = abi.encodePacked(SWAP_SELECTOR);
+        payloads[2] = abi.encodePacked(SWAP_SELECTOR);
+
+        vm.prank(executorRole);
+        vm.expectRevert(abi.encodeWithSelector(UnsupportedRouteLength.selector, uint256(3)));
+        executor.executeArbitrage(bytes32(0), address(tokenIn), address(tokenIn), 1_000e18, 0, routers, payloads);
+    }
+
+    /// SC-12 (leg-1 exact ephemeral allowance reset): after a cross-DEX route the executor's
+    /// tokenOut allowance to the backward router is 0 — even when the router UNDERSPENDS its
+    /// approval. Proves the executor itself resets the leg-1 allowance (not just consumption).
+    function test_Security_Leg1EphemeralAllowanceResetToZero() public {
+        ReproToken tokenIn = new ReproToken("IN");
+        ReproToken tokenOut = new ReproToken("OUT");
+
+        uint256 amountIn = 1_000e18;
+        uint256 intermediate = 900e18; // tokenOut produced by leg 0 = leg-1 approval
+        uint256 pulledByB = 400e18; // routerB deliberately pulls LESS than approved
+        uint256 finalOut = 1_100e18;
+
+        ReproCrossDexRouter routerA =
+            new ReproCrossDexRouter(address(tokenIn), address(tokenOut), amountIn, intermediate);
+        // Underspend router: approved `intermediate` but only pulls `pulledByB`.
+        ReproUnderspendRouter routerB =
+            new ReproUnderspendRouter(address(tokenOut), address(tokenIn), pulledByB, finalOut);
+
+        tokenIn.mint(address(executor), amountIn);
+        tokenOut.mint(address(routerA), intermediate);
+        tokenIn.mint(address(routerB), finalOut);
+
+        executor.setTokenApproval(address(tokenIn), true);
+        executor.setTokenApproval(address(tokenOut), true);
+        executor.setRouterApproval(address(routerA), true);
+        executor.setRouterApproval(address(routerB), true);
+        executor.setRouterSelectorApproval(address(routerA), SWAP_SELECTOR, true);
+        executor.setRouterSelectorApproval(address(routerB), SWAP_SELECTOR, true);
+
+        address[] memory routers = new address[](2);
+        routers[0] = address(routerA);
+        routers[1] = address(routerB);
+        bytes[] memory payloads = new bytes[](2);
+        payloads[0] = abi.encodePacked(SWAP_SELECTOR);
+        payloads[1] = abi.encodePacked(SWAP_SELECTOR);
+
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(tokenIn), address(tokenOut), amountIn, 0, routers, payloads);
+
+        // Leg-1 allowance was reset to 0 by the executor despite the router underspending it.
+        assertEq(tokenOut.allowance(address(executor), address(routerB)), 0, "leg-1 tokenOut allowance not reset");
+        // Leg-0 allowance to routerA is also 0 (defense-in-depth).
+        assertEq(tokenIn.allowance(address(executor), address(routerA)), 0, "leg-0 tokenIn allowance not reset");
+    }
+
+    /// Profit gate (no silent loss): a cross-DEX route that nets a LOSS (finalOut < amountIn)
+    /// reverts ZeroGrossProfit — the round trip cannot complete at a loss.
+    function test_Security_CrossDexNetLossReverts() public {
+        ReproToken tokenIn = new ReproToken("IN");
+        ReproToken tokenOut = new ReproToken("OUT");
+
+        uint256 amountIn = 1_000e18;
+        uint256 intermediate = 900e18;
+        uint256 finalOut = 950e18; // < amountIn -> net LOSS of 50
+
+        ReproCrossDexRouter routerA =
+            new ReproCrossDexRouter(address(tokenIn), address(tokenOut), amountIn, intermediate);
+        ReproCrossDexRouter routerB =
+            new ReproCrossDexRouter(address(tokenOut), address(tokenIn), intermediate, finalOut);
+
+        tokenIn.mint(address(executor), amountIn);
+        tokenOut.mint(address(routerA), intermediate);
+        tokenIn.mint(address(routerB), finalOut);
+
+        executor.setTokenApproval(address(tokenIn), true);
+        executor.setTokenApproval(address(tokenOut), true);
+        executor.setRouterApproval(address(routerA), true);
+        executor.setRouterApproval(address(routerB), true);
+        executor.setRouterSelectorApproval(address(routerA), SWAP_SELECTOR, true);
+        executor.setRouterSelectorApproval(address(routerB), SWAP_SELECTOR, true);
+
+        address[] memory routers = new address[](2);
+        routers[0] = address(routerA);
+        routers[1] = address(routerB);
+        bytes[] memory payloads = new bytes[](2);
+        payloads[0] = abi.encodePacked(SWAP_SELECTOR);
+        payloads[1] = abi.encodePacked(SWAP_SELECTOR);
+
+        // finalOut (950) < amountIn (1000): balanceAfter <= balanceBefore -> ZeroGrossProfit,
+        // the whole tx reverts atomically (no silent loss, no partial state).
+        vm.prank(executorRole);
+        vm.expectRevert(ZeroGrossProfit.selector);
+        executor.executeArbitrage(bytes32(0), address(tokenIn), address(tokenOut), amountIn, 0, routers, payloads);
     }
 }
