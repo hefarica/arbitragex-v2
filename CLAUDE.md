@@ -19,6 +19,8 @@ Bajo ninguna circunstancia usarás jerga de finanzas descentralizadas. Si debes 
 
 > **🔗 TOTAL SYSTEM**: `CLAUDE.md` (reglas + identidad) + `.claude/CLAUDE.md` (superpowers + estrategias) = 523 líneas de doctrina operativa OMEGA.
 
+> **🔐 FUSILE SOURCE POLICY**: antes de portar código de repos externos (amms-rs, uniswap-v3-math, artemis, mev-share-rs, …) lee `docs/security/FUSILE_SOURCE_POLICY.md` — allowlist por tiers, *port-with-validation* (no copy ciego), license-check, y los gates `arbx-*` como capa suprema. Este documento de gobernanza de fuentes va en términos llanos por diseño.
+
 > **🧠 OMEGA PROTOCOL + X10THINK**: Usa SIEMPRE pensamiento extendido X10 (piensa 10 veces más profundo que lo normal — edge cases, failure modes, consecuencias de segundo orden, alternativas descartadas). Aplica X10THINK tanto tú como TODOS los agentes que despachas. Al terminar CUALQUIER tarea: (1) verifica que funciona ejecutando tests/builds/curl/logs, (2) verifica que no rompiste NADA más corriendo typecheck + lint + build completo, (3) si algo falla corrige en loop autónomo SIN preguntar hasta que pase, (4) consulta `.claude/CLAUDE.md` §24-§27 para validaciones de risk/security si tocaste backend o contratos. NUNCA entregues trabajo sin verificación completa. NUNCA preguntes si debe verificar — SIEMPRE verifica.
 
 > **👥 OMEGA TEAM — ORQUESTACIÓN OBLIGATORIA**: En CADA tarea que recibas, DEBES:
