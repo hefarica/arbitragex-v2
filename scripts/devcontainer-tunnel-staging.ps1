@@ -7,7 +7,7 @@ Este script no contiene secretos. Requiere que tu Windows tenga un alias SSH lla
 Ejemplos:
   .\scripts\devcontainer-tunnel-staging.ps1
   .\scripts\devcontainer-tunnel-staging.ps1 -SshTarget arbx
-  .\scripts\devcontainer-tunnel-staging.ps1 -SshTarget root@195.201.235.70
+  .\scripts\devcontainer-tunnel-staging.ps1 -SshTarget root@<VPS_IP>
 #>
 param(
   [string]$SshTarget = "arbx"

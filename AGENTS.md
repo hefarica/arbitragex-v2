@@ -73,8 +73,8 @@ Usa pensamiento extendido en cada respuesta. Al terminar CUALQUIER tarea:
 
 ## INFRAESTRUCTURA
 
-- VPS: `195.201.235.70` (alias `arbx`), ruta `/opt/arbitragex-v2`.
-- Frontend: `https://edge-arbx.ape-tv.net`
+- VPS: `<VPS_IP>` (alias `arbx`), ruta `/opt/arbitragex-v2`.
+- Frontend: `https://<VPS_HOST>`
 - Admin token: usar variable de entorno `ARBX_ADMIN_TOKEN`.
 - Paper trade: `ARBX_PAPER_TRADE=true` por defecto.
 

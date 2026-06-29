@@ -97,7 +97,7 @@ La vista también muestra mensajes de límite de créditos en la tarea fuente. E
 
 URL revisada: https://manus.im/share/OmFVJGiNPRh8XFOoWOYT05
 
-El tercer enlace corresponde a una tarea titulada **¿Qué necesita este repositorio para operar en vivo?**. La vista pública muestra un resultado técnico de diagnóstico end-to-end para **ArbitrageX v2** en el VPS `195.201.235.70`, centrado en las variables `RPC_HTTP_1` y `RPC_WS_1`.
+El tercer enlace corresponde a una tarea titulada **¿Qué necesita este repositorio para operar en vivo?**. La vista pública muestra un resultado técnico de diagnóstico end-to-end para **ArbitrageX v2** en el VPS `<VPS_IP>`, centrado en las variables `RPC_HTTP_1` y `RPC_WS_1`.
 
 | Categoría | Contenido observado |
 |---|---|

@@ -3,7 +3,7 @@
 # OMEGA F-11 Paper Shadow – Daily Monitoring System
 # ════════════════════════════════════════════════════════════════════════════
 # Author:      Omega Trading Systems
-# VPS:         195.201.235.70
+# VPS:         <VPS_IP>
 # Schedule:    23:55 UTC daily via cron
 # Purpose:     Evaluate 4 safety criteria. When 14 consecutive "green days"
 #              are reached, declare the system LIVE-ready.
