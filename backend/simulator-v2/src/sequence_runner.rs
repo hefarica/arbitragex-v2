@@ -658,8 +658,8 @@ mod tests {
 
         // Selector (cast sig "getAmountsOut(uint256,address[])" == 0xd06ca61f).
         assert_eq!(&calldata[0..4], &[0xd0, 0x6c, 0xa6, 0x1f]);
-        // 4 selector + 4 words (amountIn, offset, length, 2 addrs) = 4 + 32*4.
-        assert_eq!(calldata.len(), 4 + 32 * 4);
+        // 4 selector + 5 words (amountIn, offset, length, addr1, addr2) = 4 + 32*5.
+        assert_eq!(calldata.len(), 4 + 32 * 5);
         // word 0: amountIn.
         assert_eq!(&calldata[4..36], &amount_in.to_be_bytes::<32>());
         // word 1: offset == 0x40.
