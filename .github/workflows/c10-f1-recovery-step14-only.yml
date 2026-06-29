@@ -14,7 +14,7 @@ jobs:
       TARGET_SHA: 1019447ecfc32af027de40eea668b948e0919412
       PRE_HEAD: 99cc24db12cebf9b47845ca779eba3c2a7f47f13
       PRE_SYNC_STASH: C10-F1-pre-sync-25900368867-20260515T043257Z
-      VPS_HOST: 195.201.235.70
+      VPS_HOST: ${{ secrets.VPS_HOST }}
       VPS_USER: root
       VPS_PATH: /opt/arbitragex-v2
     steps:

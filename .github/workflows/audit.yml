@@ -25,18 +25,18 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/arbx_key
           chmod 600 ~/.ssh/arbx_key
-          ssh-keyscan -H 195.201.235.70 >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Prepare report directory
         run: mkdir -p audit_report
 
       - name: "[F1] Censo exacto — docker ps -a"
         run: |
-          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 \
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@${{ secrets.VPS_HOST }} \
             'docker ps -a --format "table {{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" 2>&1' \
             | tee audit_report/01_docker_ps_all.txt
 
-          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 \
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@${{ secrets.VPS_HOST }} \
             'echo "=== TOTAL CONTAINERS ==="; docker ps -a -q | wc -l; \
              echo "=== RUNNING ==="; docker ps -q | wc -l; \
              echo "=== STOPPED/EXITED ==="; docker ps -a -q -f status=exited | wc -l; \
@@ -45,7 +45,7 @@ jobs:
 
       - name: "[F2] Anatomía detallada — docker inspect por contenedor"
         run: |
-          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 << 'REMOTE_SCRIPT'
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@${{ secrets.VPS_HOST }} << 'REMOTE_SCRIPT'
             echo "=== ANATOMÍA NODO POR NODO ==="
             for cid in $(docker ps -a -q); do
               name=$(docker inspect --format '{{.Name}}' $cid | sed 's|^/||')
@@ -75,7 +75,7 @@ jobs:
 
       - name: "[F2b] Captura completa de anatomía"
         run: |
-          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 'bash -s' > audit_report/02_container_anatomy.txt << 'REMOTE_SCRIPT'
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@${{ secrets.VPS_HOST }} 'bash -s' > audit_report/02_container_anatomy.txt << 'REMOTE_SCRIPT'
             for cid in $(docker ps -a -q); do
               name=$(docker inspect --format '{{.Name}}' $cid | sed 's|^/||')
               echo ""
@@ -101,7 +101,7 @@ jobs:
 
       - name: "[F3] Mapa de redes Docker"
         run: |
-          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 'bash -s' > audit_report/03_networks.txt << 'REMOTE_SCRIPT'
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@${{ secrets.VPS_HOST }} 'bash -s' > audit_report/03_networks.txt << 'REMOTE_SCRIPT'
             echo "=== TODAS LAS REDES ==="
             docker network ls
             echo ""
@@ -121,7 +121,7 @@ jobs:
 
       - name: "[F4] Inventario de volúmenes persistentes"
         run: |
-          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 'bash -s' > audit_report/04_volumes.txt << 'REMOTE_SCRIPT'
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@${{ secrets.VPS_HOST }} 'bash -s' > audit_report/04_volumes.txt << 'REMOTE_SCRIPT'
             echo "=== TODOS LOS VOLÚMENES ==="
             docker volume ls
             echo ""
@@ -146,7 +146,7 @@ jobs:
 
       - name: "[F5] docker-compose.yml activo + estado del repo"
         run: |
-          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 'bash -s' > audit_report/05_compose_and_repo.txt << 'REMOTE_SCRIPT'
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@${{ secrets.VPS_HOST }} 'bash -s' > audit_report/05_compose_and_repo.txt << 'REMOTE_SCRIPT'
             echo "=== UBICACIÓN DEL PROYECTO ==="
             ls -la /opt/arbitragex-v2/ 2>/dev/null || echo "NOT_FOUND: /opt/arbitragex-v2"
             echo ""
@@ -178,7 +178,7 @@ jobs:
 
       - name: "[F6] Recursos del host + uso actual"
         run: |
-          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 'bash -s' > audit_report/06_host_resources.txt << 'REMOTE_SCRIPT'
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@${{ secrets.VPS_HOST }} 'bash -s' > audit_report/06_host_resources.txt << 'REMOTE_SCRIPT'
             echo "=== CPU ==="
             nproc
             cat /proc/cpuinfo | grep "model name" | head -1
@@ -205,7 +205,7 @@ jobs:
 
       - name: "[F7] Probes HTTP del estado actual"
         run: |
-          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 'bash -s' > audit_report/07_http_probes.txt << 'REMOTE_SCRIPT'
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@${{ secrets.VPS_HOST }} 'bash -s' > audit_report/07_http_probes.txt << 'REMOTE_SCRIPT'
             echo "=== HTTP PROBES (estado actual) ==="
             for path in / /api/health /chains /executions /opportunities /apex/allocator /omega-s5/core /metrics; do
               code=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://localhost$path 2>&1)
@@ -218,7 +218,7 @@ jobs:
 
       - name: "[F8] docker-compose.yml RAW (contenido completo)"
         run: |
-          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 'bash -s' > audit_report/08_compose_raw.txt << 'REMOTE_SCRIPT'
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@${{ secrets.VPS_HOST }} 'bash -s' > audit_report/08_compose_raw.txt << 'REMOTE_SCRIPT'
             cd /opt/arbitragex-v2 || exit 0
             for f in docker-compose.yml docker/compose.prod.yml docker-compose.prod.yml compose.yml docker/compose.yml; do
               if [ -f "$f" ]; then
@@ -244,7 +244,7 @@ jobs:
             echo "# Ω-S5++ FORENSIC AUDIT REPORT — VPS arbx"
             echo ""
             echo "**Timestamp:** $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo "**Target:** root@195.201.235.70 (arbx-v2-clean)"
+            echo "**Target:** root@${{ secrets.VPS_HOST }} (arbx-v2-clean)"
             echo "**Mode:** READ-ONLY (zero mutations)"
             echo ""
             echo "## Files included"

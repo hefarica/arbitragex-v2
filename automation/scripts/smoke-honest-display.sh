@@ -9,16 +9,16 @@
 #   METRICS_URL=http://localhost:9004/metrics bash automation/scripts/smoke-honest-display.sh
 #
 # Environment overrides (all optional):
-#   EDGE_URL      — base URL of the edge API  (default: http://195.201.235.70:8787)
-#   FRONT_URL     — base URL of the frontend  (default: http://195.201.235.70:5173)
+#   EDGE_URL      — base URL of the edge API  (default: http://${VPS_IP}:8787)
+#   FRONT_URL     — base URL of the frontend  (default: http://${VPS_IP}:5173)
 #   METRICS_URL   — Prometheus /metrics URL   (default: http://localhost:9004/metrics)
 #                   Port 9004 is the token-enricher metrics port (Task 8).
 #                   Port 9100 is Node Exporter and is NOT the enricher.
 
 set -euo pipefail
 
-EDGE_URL="${EDGE_URL:-http://195.201.235.70:8787}"
-FRONT_URL="${FRONT_URL:-http://195.201.235.70:5173}"
+EDGE_URL="${EDGE_URL:-http://${VPS_IP}:8787}"
+FRONT_URL="${FRONT_URL:-http://${VPS_IP}:5173}"
 METRICS_URL="${METRICS_URL:-http://localhost:9004/metrics}"
 
 echo "=== Honest Display Smoke Test ==="

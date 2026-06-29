@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      VPS_HOST: 195.201.235.70
+      VPS_HOST: ${{ secrets.VPS_HOST }}
       VPS_USER: root
       VPS_PATH: /opt/arbitragex-v2
       REPO_SLUG: hefarica/arbitragex-v2

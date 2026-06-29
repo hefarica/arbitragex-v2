@@ -4,7 +4,7 @@
 # Workflow: hardened-vps-deploy.yml
 # Proyecto: arbitragex-v2
 # Operador: Hector Fabio Riascos Castro, Ingenio Pichichi
-# VPS: 195.201.235.70 — /opt/arbitragex-v2
+# VPS: ${{ secrets.VPS_HOST }} — /opt/arbitragex-v2
 #
 # Principios: fail-closed, least-privilege, deterministic, signed manifest,
 #             dry-run obligatorio, locks, rollback validado, artifact, health gates,
@@ -74,7 +74,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  VPS_HOST: "195.201.235.70"
+  VPS_HOST: "${{ secrets.VPS_HOST }}"
   VPS_USER: "root"
   VPS_WORKDIR: "/opt/arbitragex-v2"
   LOCK_FILE: "/tmp/arbitragex_deploy.lock"
