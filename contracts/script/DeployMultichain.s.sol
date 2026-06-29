@@ -180,6 +180,23 @@ contract DeployMultichain is Script {
         );
     }
 
+    /// @notice AdminTimelock constructor args — the SINGLE SOURCE shared by
+    ///         predictChain (CREATE2 prediction) and deployOnChain (actual deploy),
+    ///         so the predicted address matches the deployed one byte-for-byte
+    ///         (SC-16 determinism fix). minDelay=86400, proposers & executors =
+    ///         [MULTISIG_ADDRESS], admin = the deployer EOA. Requires
+    ///         MULTISIG_ADDRESS + DEPLOYER_PRIVATE_KEY in env for BOTH predict and
+    ///         deploy (you cannot predict the timelock address without them).
+    function _adminTimelockCtorArgs() internal view returns (bytes memory) {
+        address multisig = vm.envAddress("MULTISIG_ADDRESS");
+        address admin = vm.addr(vm.envUint("DEPLOYER_PRIVATE_KEY"));
+        address[] memory proposers = new address[](1);
+        proposers[0] = multisig;
+        address[] memory executors = new address[](1);
+        executors[0] = multisig;
+        return abi.encode(uint256(86_400), proposers, executors, admin);
+    }
+
     // -------------------------------------------------------------------------
     // Prediction functions (view — no state change, no gas cost)
     // -------------------------------------------------------------------------
@@ -222,10 +239,7 @@ contract DeployMultichain is Script {
         d.arbitrageExecutor   = _predict(f, type(ArbitrageExecutor).creationCode,    "",                              c, "ArbitrageExecutor");
         d.flashLoanExecutor   = _predict(f, type(FlashLoanExecutor).creationCode,    "",                              c, "FlashLoanExecutor");
         d.allowanceManager    = _predict(f, type(AllowanceManager).creationCode,     "",                              c, "AllowanceManager");
-        d.adminTimelock       = _predict(f, type(AdminTimelock).creationCode,        abi.encode(uint256(86400),
-                                                                                       _toArray(_factoryAddr),
-                                                                                       _toArray(_factoryAddr),
-                                                                                       _factoryAddr),               c, "AdminTimelock");
+        d.adminTimelock       = _predict(f, type(AdminTimelock).creationCode, _adminTimelockCtorArgs(), c, "AdminTimelock");
     }
 
     /// @notice Helper: wrap a single address into a 1-element array.
@@ -436,6 +450,10 @@ contract DeployMultichain is Script {
         // 5. Deploy ArbitrageExecutor (UUPS implementation via CREATE2)
         //      + ERC1967 proxy (standard deploy, not CREATE2)
         // ------------------------------------------------------------------
+        // Captured at function scope so the FlashLoanExecutor proxy (block 6) can
+        // be initialized pointing at the AE PROXY (with state), not the stateless
+        // implementation. (SC-16 fix: removes the manual post-deploy re-point.)
+        address aeProxy;
         {
             bytes memory implCode = type(ArbitrageExecutor).creationCode;
             d.arbitrageExecutor = factory.deploy(implCode, _chainId, "ArbitrageExecutor");
@@ -446,7 +464,8 @@ contract DeployMultichain is Script {
                 d.arbitrageExecutor,
                 abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, deployer)
             );
-            console2.log("ArbitrageExecutor proxy:", address(proxy));
+            aeProxy = address(proxy);
+            console2.log("ArbitrageExecutor proxy:", aeProxy);
         }
 
         // ------------------------------------------------------------------
@@ -458,16 +477,17 @@ contract DeployMultichain is Script {
             d.flashLoanExecutor = factory.deploy(implCode, _chainId, "FlashLoanExecutor");
             console2.log("FlashLoanExecutor impl:", d.flashLoanExecutor);
 
-            // Deploy proxy — needs arbitrageExecutor proxy address
-            // We use the implementation address as a placeholder; the proxy
-            // will be updated post-deploy to point at the correct AE proxy.
+            // Deploy proxy — initialized with the AE PROXY address (captured in
+            // block 5), so the flash-loan -> ArbitrageExecutor handoff targets the
+            // proxy (with state), NOT the stateless implementation. No post-deploy
+            // re-point needed.
             ERC1967Proxy proxy = new ERC1967Proxy(
                 d.flashLoanExecutor,
                 abi.encodeWithSelector(
                     FlashLoanExecutor.initialize.selector,
                     deployer,
                     aavePool,
-                    d.arbitrageExecutor // placeholder — update post-deploy
+                    aeProxy
                 )
             );
             console2.log("FlashLoanExecutor proxy:", address(proxy));
@@ -493,14 +513,12 @@ contract DeployMultichain is Script {
         // 8. Deploy AdminTimelock (non-UUPS — CREATE2 deterministic)
         // ------------------------------------------------------------------
         {
-            address[] memory proposers = new address[](1);
-            proposers[0] = multisig;
-            address[] memory executors = new address[](1);
-            executors[0] = multisig;
-
+            // SC-16: ctor args come from the shared _adminTimelockCtorArgs() helper
+            // so the deployed address matches predictChain's CREATE2 prediction
+            // byte-for-byte (proposers/executors=[multisig], admin=deployer).
             bytes memory code = _buildBytecode(
                 type(AdminTimelock).creationCode,
-                abi.encode(uint256(86_400), proposers, executors, deployer)
+                _adminTimelockCtorArgs()
             );
             d.adminTimelock = factory.deploy(code, _chainId, "AdminTimelock");
             console2.log("AdminTimelock       :", d.adminTimelock);
@@ -525,9 +543,10 @@ contract DeployMultichain is Script {
         console2.log("       Do this BEFORE step 7 (admin -> timelock), or it needs a timelock action.");
         console2.log("[ ] 4. Approve tokens and routers on ArbitrageExecutor");
         console2.log("[ ] 5. Grant allowances via AllowanceManager");
-        console2.log("[ ] 6. Update FlashLoanExecutor proxy with correct ArbitrageExecutor proxy");
-        console2.log("[ ] 7. Transfer admin roles to AdminTimelock");
-        console2.log("[ ] 8. Verify all contracts on block explorer");
+        console2.log("    (FlashLoanExecutor proxy is initialized with the AE PROXY at deploy time");
+        console2.log("     -- no post-deploy re-point needed; SC-16 fix.)");
+        console2.log("[ ] 6. Transfer admin roles to AdminTimelock");
+        console2.log("[ ] 7. Verify all contracts on block explorer");
     }
 
     // -------------------------------------------------------------------------
