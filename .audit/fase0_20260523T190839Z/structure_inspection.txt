@@ -186,7 +186,7 @@ tests/e2e
 ./docs/runbooks/redis-governance.md:24:- Switch to `rediss://`.
 ./docs/runbooks/redis-governance.md:27:- Enable AUTH (`requirepass`) in `redis.conf`.
 ./docs/runbooks/redis-governance.md:104:enforce the `arbx:` prefix on string literals matching `redis://`-like
-./docs/runbooks/kill-switch-activation.md:67:redis-cli -h 195.201.235.70 -p 6379
+./docs/runbooks/kill-switch-activation.md:67:redis-cli -h <VPS_IP> -p 6379
 ./docs/omega_s5_plus/OMEGA_S5_PLUS_IMPLEMENTATION_PLAN.md:103:app.use("/api", mountAdminRegistries(db, redis));
 ./docs/omega_s5_plus/OMEGA_S5_PLUS_IMPLEMENTATION_PLAN.md:104:app.use("/api/system", mountSystemManifest(db, redis));
 ./docs/omega_s5_plus/OMEGA_S5_PLUS_IMPLEMENTATION_PLAN.md:119:let _h = coord.spawn(std::env::var("REDIS_URL").unwrap()).await?;

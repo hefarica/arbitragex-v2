@@ -16,7 +16,7 @@ El documento **Diagnóstico e Implementación End-to-End: RPC_HTTP_1 y RPC_WS_1*
 
 | Documento | Fecha visible | Sistema visible | Contenido clave |
 |---|---|---|---|
-| Diagnóstico e Implementación End-to-End: `RPC_HTTP_1` y `RPC_WS_1` | 2026-05-23 | ArbitrageX v2 — VPS 195.201.235.70 | R8 Fail-Honest, `paper_mode`, `.env`, Docker Compose, formato G-RPC-1, reinicio seguro y verificación de logs. |
+| Diagnóstico e Implementación End-to-End: `RPC_HTTP_1` y `RPC_WS_1` | 2026-05-23 | ArbitrageX v2 — VPS <VPS_IP> | R8 Fail-Honest, `paper_mode`, `.env`, Docker Compose, formato G-RPC-1, reinicio seguro y verificación de logs. |
 
 ## Contenido doctrinal incorporado
 

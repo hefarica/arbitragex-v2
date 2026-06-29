@@ -24,7 +24,7 @@ Usa pensamiento extendido. Al terminar CUALQUIER tarea: (1) verifica que funcion
 - Frontend: Next.js 14, React, TypeScript strict, Tailwind, shadcn/ui
 - Backend: Node.js Express + Rust (searcher-rs, tokio, alloy, revm)
 - DB: PostgreSQL 15, Redis 7.2
-- Deploy: Docker Compose, VPS 195.201.235.70 (alias arbx)
+- Deploy: Docker Compose, VPS <VPS_IP> (alias arbx)
 
 ## PATRÓN C-S-E
 Compose (Bellman-Ford grafo tokens) → Simulate (revm 19.0 + alloy on-chain) → Execute (Flashbots bundle atómico).

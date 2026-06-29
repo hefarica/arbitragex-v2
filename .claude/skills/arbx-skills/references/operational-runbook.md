@@ -11,7 +11,7 @@ relative dates to absolute when reasoning; verify any file/flag still exists bef
   `token-enricher`, `selector-api`, the `prioritization-spine` crate) · TypeScript control-plane
   (`api-server`, Express, dual-path `/api` + `/api/v1`) · Cloudflare Workers edge (`edge`) ·
   Next.js frontend (`frontend`, QuantumX dark theme).
-- **VPS**: `195.201.235.70` (Hetzner) = ssh alias **`arbx`** (native Windows OpenSSH at
+- **VPS**: `<VPS_IP>` (Hetzner) = ssh alias **`arbx`** (native Windows OpenSSH at
   `C:\Windows\System32\OpenSSH`). Deploy path `/opt/arbitragex-v2` = a git checkout of `main`.
   Stack runs via `docker compose -f docker/compose.prod.yml` (21 containers).
 - **Repos / remotes**:

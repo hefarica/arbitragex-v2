@@ -11,7 +11,7 @@
  *     cd frontend && npx playwright test e2e/opportunities-honest-display.spec.ts
  *
  *   Production:
- *     cd frontend && E2E_BASE_URL=http://195.201.235.70:5173/opportunities npx playwright test
+ *     cd frontend && E2E_BASE_URL=http://<VPS_IP>:5173/opportunities npx playwright test
  *
  * NOTE on data-status selector:
  *   In OpportunitiesClient.tsx, `data-status={opp.status}` is on the Route <td>

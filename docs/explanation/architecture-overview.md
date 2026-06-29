@@ -6,7 +6,7 @@
 
 ## Introduction
 
-ArbitrageX v2 is a decentralized finance (DeFi) MEV arbitrage platform designed to detect, simulate, and execute atomic arbitrage opportunities across multiple decentralized exchanges (DEXs) on Ethereum mainnet and L2 chains. The platform operates on a single VPS (195.201.235.70) using Docker Compose, comprising 21 containers organized into a four-layer pipeline.
+ArbitrageX v2 is a decentralized finance (DeFi) MEV arbitrage platform designed to detect, simulate, and execute atomic arbitrage opportunities across multiple decentralized exchanges (DEXs) on Ethereum mainnet and L2 chains. The platform operates on a single VPS (<VPS_IP>) using Docker Compose, comprising 21 containers organized into a four-layer pipeline.
 
 This document explains the platform's architecture, the design principles behind it, and how the components work together to form a cohesive system.
 

@@ -5,7 +5,7 @@
 > **Doctrinal Maturity**: 88% → 100% (target)
 > **Paper Mode**: **ENABLED** (zero capital at risk)
 > **Kill-Switch**: **ARMED** (fail-closed)
-> **Deployment**: 195.201.235.70 (Docker Compose, 21 containers)
+> **Deployment**: <VPS_IP> (Docker Compose, 21 containers)
 
 ---
 
