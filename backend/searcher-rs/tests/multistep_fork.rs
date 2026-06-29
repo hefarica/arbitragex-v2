@@ -25,12 +25,13 @@
 //! 1. The multi-step REVM executor reaches `sequence_runner` against real
 //!    chain state (no PASS fabrication path possible).
 //! 2. CacheDB<LazyDb> persists state between steps.
-//! 3. `ApplyStorage` writes the caller→FLE EXECUTOR_ROLE bit + token_in
-//!    balance/allowance overrides (paper-only).
+//! 3. `ApplyStorage` writes ONLY the caller→FLE EXECUTOR_ROLE bit (paper-only).
+//!    NO ERC-20 prefund override — the FLE's capital comes from the flash loan.
 //! 4. The SINGLE wrapped `requestFlashLoan` dispatch (caller → FlashLoanExecutor)
 //!    runs the REAL provider callback + inner executeArbitrageFlashFunded
 //!    against forked bytecode; gas_used > 0 or a real revert reason is captured.
-//! 5. Final balance read produces the value the profit accounting uses.
+//! 5. The FLE pre/post token_in balance reads produce the retained-spread
+//!    (`fle_post - fle_pre`) value the profit accounting uses.
 //! 6. ANY outcome (SIM_SUCCESS / SIM_REVERT / SIM_REJECTED / SIM_ERROR)
 //!    carries a typed reason; no path can produce success with zero gas,
 //!    zero trace_hash, or non-positive net_profit.
@@ -48,57 +49,14 @@ use std::str::FromStr;
 
 use ethers::types::{Address, U256};
 use prioritization_spine::round_trip_executor::RoundTripContext;
-use searcher_rs::sim_multistep::{build_multistep_plan, MultiStepError, MultiStepExecutionConfig};
-use searcher_rs::sim_prefund::{Erc20StorageLayout, Erc20StorageLayoutProvider};
-use std::collections::HashMap;
+use searcher_rs::sim_multistep::{build_multistep_plan, MultiStepExecutionConfig};
 
 // ---------------------------------------------------------------------------
-// Test-only storage layout provider
+// NOTE (M2 flash R5 — Gap A dissolved): the wrapped-flash sim no longer takes
+// an `Erc20StorageLayoutProvider`. The FLE's capital comes from the flash loan,
+// not a caller prefund, so there is no per-token storage layout to supply. The
+// former `FixtureLayoutProvider` (WETH/USDC slot fixtures) has been removed.
 // ---------------------------------------------------------------------------
-
-/// In-memory provider populated from environment / hardcoded mainnet
-/// constants for the test route. Production uses a PG-backed registry.
-struct FixtureLayoutProvider {
-    layouts: HashMap<(u64, Address), Erc20StorageLayout>,
-}
-
-impl FixtureLayoutProvider {
-    /// Mainnet WETH (`0xc02a…cc2`) layout:
-    ///   * `balanceOf` mapping at slot 3 (verified via Foundry `cast storage`).
-    ///   * No standard allowance; the test forces allowance via slot 4
-    ///     which holds the canonical OZ allowance mapping for WETH9.
-    ///
-    /// Mainnet USDC (`0xa0b8…b48`) is a proxy; slot indices match the
-    /// OpenZeppelin upgradeable storage convention for v2 implementation
-    /// (balances at slot 9, allowances at slot 10). Operators should
-    /// verify against the live deployment before relying on these.
-    fn mainnet_fixture() -> Self {
-        let mut layouts = HashMap::new();
-        // WETH9 — non-OZ canonical layout:
-        layouts.insert(
-            (1, addr("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")),
-            Erc20StorageLayout {
-                balance_base_slot: ethers::types::U256::from(3u64),
-                allowance_base_slot: ethers::types::U256::from(4u64),
-            },
-        );
-        // USDC (FiatTokenV2_2 proxy) — OZ upgradeable layout:
-        layouts.insert(
-            (1, addr("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")),
-            Erc20StorageLayout {
-                balance_base_slot: ethers::types::U256::from(9u64),
-                allowance_base_slot: ethers::types::U256::from(10u64),
-            },
-        );
-        Self { layouts }
-    }
-}
-
-impl Erc20StorageLayoutProvider for FixtureLayoutProvider {
-    fn layout(&self, chain_id: u64, token: &Address) -> Option<Erc20StorageLayout> {
-        self.layouts.get(&(chain_id, *token)).copied()
-    }
-}
 
 fn addr(s: &str) -> Address {
     Address::from_str(s).expect("valid hex address")
@@ -257,15 +215,15 @@ async fn multistep_fork_round_trip_weth_usdc() {
         max_steps: 16,
     };
 
-    let provider = FixtureLayoutProvider::mainnet_fixture();
-
     // 1. Plan construction must succeed before any REVM dispatch.
-    let plan_result = build_multistep_plan(&ctx, &config, flashloan_executor, &provider);
+    let plan_result = build_multistep_plan(&ctx, &config, flashloan_executor);
     match plan_result {
         Ok(plan) => {
-            assert!(
-                plan.steps.len() >= 4,
-                "expected wrapped flash plan (>=4 steps, got {})",
+            assert_eq!(
+                plan.steps.len(),
+                4,
+                "expected wrapped flash plan (4 steps: role + FLE pre-read + \
+                 flash call + FLE post-read, got {})",
                 plan.steps.len()
             );
             eprintln!(
@@ -275,17 +233,9 @@ async fn multistep_fork_round_trip_weth_usdc() {
                 plan.amount_in
             );
         }
-        Err(MultiStepError::PrefundFailed(e)) => {
-            eprintln!(
-                "A.4 plan FAILED at prefund: {e:?}. \
-                 This is BLOCKED — check that FixtureLayoutProvider has the \
-                 storage layout for WETH+USDC at chain_id=1."
-            );
-            panic!("prefund layout missing — fix FixtureLayoutProvider before re-run");
-        }
         Err(e) => {
             panic!(
-                "A.4 plan construction failed with non-prefund error: {e:?}. \
+                "A.4 plan construction failed: {e:?}. \
                  This indicates a regression in build_multistep_plan."
             );
         }
@@ -307,27 +257,20 @@ async fn multistep_fork_round_trip_weth_usdc() {
         .clone()
         .expect("RPC_HTTP_1 present (missing check already passed)");
     let simulator = std::sync::Arc::new(simulator_v2::SimulatorV2::new(rpc_url));
-    let provider_arc: std::sync::Arc<
-        dyn searcher_rs::sim_prefund::Erc20StorageLayoutProvider + Send + Sync,
-    > = std::sync::Arc::new(provider);
     let ctx_owned = ctx.clone();
     let config_owned = config.clone();
     let outcome = tokio::task::spawn_blocking(move || {
-        searcher_rs::sim_multistep::execute_multistep_revm(
-            &ctx_owned,
-            simulator,
-            &config_owned,
-            provider_arc.as_ref(),
-        )
+        searcher_rs::sim_multistep::execute_multistep_revm(&ctx_owned, simulator, &config_owned)
     })
     .await
     .expect("spawn_blocking joined");
 
     // Anti-fraud / fail-honest guards on the outcome:
     //   * `execute_multistep_revm` returns `passed = true` ONLY after a real
-    //     round trip (gas > 0, non-zero trace hash, >= 2 committed calls, and
-    //     net_profit > 0). We re-assert gas + profit here so a future drift
-    //     that fabricates a pass trips immediately.
+    //     round trip (gas > 0, non-zero trace hash, >= 1 committed call [the
+    //     single wrapped flash dispatch], retained_spread > 0, and net_profit
+    //     > 0). We re-assert gas + profit here so a future drift that fabricates
+    //     a pass trips immediately.
     //   * A non-passing outcome (SIM_REVERT / SIM_REJECTED) is an ACCEPTABLE
     //     fork-validation result — it proves the system reached REVM and
     //     rejected honestly — but it MUST carry a typed `fail_reason`.
@@ -368,13 +311,44 @@ async fn multistep_fork_round_trip_weth_usdc() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn fixture_layout_provider_returns_layout_for_mainnet_weth() {
-    let p = FixtureLayoutProvider::mainnet_fixture();
+fn build_multistep_plan_smoke_builds_four_step_plan() {
+    // Pure plan builder — no RPC, no provider, no env. Confirms the new
+    // (provider-free) signature builds the 4-step wrapped-flash plan.
     let weth = addr("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
-    let layout = p.layout(1, &weth).expect("WETH layout must exist");
-    // Sanity: balance slot is 3 (known WETH9 layout); allowance slot is 4.
-    assert_eq!(layout.balance_base_slot, U256::from(3u64));
-    assert_eq!(layout.allowance_base_slot, U256::from(4u64));
+    let usdc = addr("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+    let univ2 = addr("0x7a250d5630b4cf539739df2c5dacb4c659f2488d");
+    let sushi = addr("0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f");
+    let flashloan_executor = addr("0x00000000000000000000000000000000000fef1e");
+
+    let ctx = RoundTripContext {
+        caller: addr("0x1234567890123456789012345678901234567890"),
+        token_in: weth,
+        token_out: usdc,
+        amount_in: U256::from(10u64).pow(U256::from(18u64)),
+        forward_router: univ2,
+        forward_path: vec![weth, usdc],
+        backward_router: sushi,
+        backward_path: vec![usdc, weth],
+        deadline: U256::from(u64::MAX),
+    };
+    let config = MultiStepExecutionConfig {
+        chain_id: 1,
+        executor_address: addr("0xabcabcabcabcabcabcabcabcabcabcabcabcabca"),
+        route_hash: [0u8; 32],
+        min_profit_wei: U256::from(1u64),
+        gas_price_wei: U256::from(25_000_000_000u64),
+        gas_limit_per_step: 30_000_000,
+        paper_mode: true,
+        enable_storage_cheats: true,
+        require_trace_hash: true,
+        require_positive_net_profit: true,
+        max_steps: 16,
+    };
+
+    let plan = build_multistep_plan(&ctx, &config, flashloan_executor)
+        .expect("pure plan builder must succeed with valid inputs");
+    assert_eq!(plan.steps.len(), 4);
+    assert_eq!(plan.flashloan_executor, flashloan_executor);
 }
 
 #[test]
