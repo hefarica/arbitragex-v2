@@ -1845,6 +1845,40 @@ async fn decode_and_score_tx<'a>(
     )
     .await
     .into_snapshot();
+
+    // O4 follow-up — resolve the net-USD-of-gas gate inputs from the SAME price
+    // cascade the evaluator uses (live snapshot → operator config → stablecoins),
+    // BEFORE `snapshot_map` is moved into `with_cache` below. The gate (in
+    // `dispatch_orchestrator_and_classify`) rejects a gross-positive-but-gas-losing
+    // plan before it is persisted/broadcast. These are `Option<f64>`: a miss makes
+    // the gate FAIL-CLOSED (no plan persisted) — never persist on price-unavailable.
+    //
+    //   - `gate_token_in_decimals`: token_in ERC-20 decimals (from the Redis token
+    //     meta; default 18 only when meta is unknown, matching `amount_in_decimals`).
+    //   - `gate_token_in_price_usd`: USD per unit of token_in, by its symbol.
+    //   - `gate_eth_price_usd`: USD per ETH — the operator's base token price when
+    //     base_token_symbol is WETH/ETH, else resolved as "WETH" via the cascade.
+    let gate_token_in_decimals: u8 = meta_in.as_ref().map(|m| m.decimals).unwrap_or(18);
+    let (gate_token_in_price_usd, gate_eth_price_usd) = {
+        use shared_rs::price_oracle::{
+            CascadePriceOracle, ConfigPriceOracle, PriceOracle, RedisCachedPriceOracle,
+        };
+        // The two oracles are different concrete types, so each box must be
+        // coerced to the trait object explicitly (the `vec!` element type is
+        // fixed by the first element otherwise).
+        let live: Box<dyn PriceOracle + Send + Sync> =
+            Box::new(RedisCachedPriceOracle::from_snapshot(snapshot_map.clone()));
+        let cfg_oracle: Box<dyn PriceOracle + Send + Sync> = Box::new(ConfigPriceOracle::new(&cfg));
+        let cascade = CascadePriceOracle::new(vec![live, cfg_oracle]);
+        let token_in_price = cascade.price_usd(&token_in_for_gate);
+        // ETH price for gas-cost conversion. `WETH`/`ETH` resolve via the cascade
+        // (live snapshot, then the operator's base token price).
+        let eth_price = cascade
+            .price_usd("WETH")
+            .or_else(|| cascade.price_usd("ETH"));
+        (token_in_price, eth_price)
+    };
+
     let evaluator = ConfigAwareEvaluator::with_cache(&cfg, signals, snapshot_map);
 
     // 2026-05-11: Operator demanded the literal die. The strategy kind now
@@ -2108,6 +2142,9 @@ async fn decode_and_score_tx<'a>(
                 simulator_arc,
                 client.chain_id,
                 &candidate,
+                gate_token_in_decimals,
+                gate_token_in_price_usd,
+                gate_eth_price_usd,
             )
             .await
         } else {
@@ -2607,6 +2644,14 @@ async fn dispatch_orchestrator_and_classify(
     simulator: Arc<simulator_v2::SimulatorV2>,
     chain_id: u64,
     candidate: &prioritization_spine::types::OpportunityCandidate,
+    // O4 follow-up — net-USD-of-gas pre-live gate inputs. Resolved by the caller
+    // (where `cfg`/`meta_in`/price snapshot are in scope). `token_in_decimals` is
+    // the token_in ERC-20 decimals; the two prices are `Option` because the
+    // operator config / live feed may not have them — `None` (or any non-finite /
+    // non-positive value) makes the gate FAIL-CLOSED (no plan persisted).
+    token_in_decimals: u8,
+    token_in_price_usd: Option<f64>,
+    eth_price_usd: Option<f64>,
 ) -> (
     String,
     String,
@@ -2740,6 +2785,64 @@ async fn dispatch_orchestrator_and_classify(
                 );
             }
         };
+        // ── NET-USD-OF-GAS PRE-LIVE GATE (O4 follow-up) ────────────────────
+        // The wrapped-flash sim gates SIM_SUCCESS on GROSS `retained_spread`
+        // (token_in units) and is intentionally prices-free — it never subtracts
+        // gas. So a gross-positive but NET-negative (gas-losing) arb reaches HERE
+        // having "passed" the sim. Before persisting (→ broadcast) we MUST reject
+        // any plan whose gross spread does not cover gas in a consistent USD unit.
+        //
+        // `outcome.simulated_profit_token_in` is the gross token_in delta
+        // (`final - initial`), so `net_usd_viable` calls `compute_profit_usd` with
+        // `initial=0, final=gross` → `net_usd = gross_spread_usd - gas_usd`.
+        //
+        // FAIL-CLOSED: a missing/non-finite/non-positive price (feed down, unpriced
+        // token) makes `net_usd_viable` return false. We treat that EXACTLY like a
+        // net-negative outcome — no plan is persisted — so a price-unavailable path
+        // can never re-open the gas-losing-broadcast hole. Observer-only: this only
+        // ever PREVENTS a persist; it adds no signer/broadcast surface.
+        let net_viable = prioritization_spine::round_trip_executor::net_usd_viable(
+            outcome.simulated_profit_token_in,
+            token_in_decimals,
+            token_in_price_usd.unwrap_or(0.0),
+            outcome.gas_used_total,
+            outcome.gas_price_wei,
+            eth_price_usd.unwrap_or(0.0),
+        );
+        if !net_viable {
+            let price_unavailable = !matches!(token_in_price_usd, Some(p) if p.is_finite() && p > 0.0)
+                || !matches!(eth_price_usd, Some(p) if p.is_finite() && p > 0.0);
+            c.round_trip_executor_net_usd_rejected_total
+                .fetch_add(1, Relaxed);
+            let (reason, sentinel) = if price_unavailable {
+                (
+                    "net_usd_price_unavailable",
+                    "fail_closed:net_usd_price_unavailable",
+                )
+            } else {
+                ("net_usd_non_positive", "fail_closed:net_usd_non_positive")
+            };
+            tracing::warn!(
+                event = "net_usd_gate.rejected",
+                chain_id,
+                route_fingerprint = %candidate.route_fingerprint,
+                reason,
+                gross_token_in = %outcome.simulated_profit_token_in,
+                token_in_decimals,
+                token_in_price_usd = ?token_in_price_usd,
+                eth_price_usd = ?eth_price_usd,
+                gas_used_total = outcome.gas_used_total,
+                gas_price_wei = %outcome.gas_price_wei,
+                "net-USD-of-gas gate rejected a gross-positive plan before persist (no broadcast)"
+            );
+            return (
+                reason.to_string(),
+                sentinel.to_string(),
+                "SIM_DISABLED_FAIL_CLOSED".to_string(),
+                None,
+            );
+        }
+
         c.round_trip_executor_success_total.fetch_add(1, Relaxed);
         c.simulator_revm_success.fetch_add(1, Relaxed);
         // SIM_SUCCESS — build the ValidatedPlan carrying the EXACT validated
