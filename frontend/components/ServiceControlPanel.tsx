@@ -5,10 +5,11 @@
  *
  * Per-service start/stop controls dispatched to the edge.
  *
- * R8 (Fail-Honest): If the api-server endpoint returns 404 the component
- * surfaces a toast "endpoint not yet implemented" rather than silently
- * swallowing the error. The backend endpoint (POST /api/v1/admin/services/:name/stop|start)
- * is not yet implemented; that gap is honest and visible to the operator.
+ * R8 (Fail-Honest): If the api-server endpoint returns 404 (route missing) or
+ * 501 (admin-gated stub, control-plane not wired) the component surfaces an
+ * actionable toast rather than silently swallowing the error. The backend
+ * endpoint (POST /api/v1/admin/services/:name/stop|start) is not yet
+ * implemented; that gap is honest and visible to the operator.
  *
  * R1 (Mounted Snapshot Pattern): No localStorage / window access outside
  * useEffect. Component is pure client — imported only by Client Components.
@@ -68,6 +69,17 @@ async function dispatchServiceControl(
   if (res.status === 404) {
     throw new Error(
       `endpoint not yet implemented (backend Sprint TBD) — POST /api/v1/admin/services/${service}/${action} → 404`,
+    );
+  }
+  if (res.status === 501) {
+    // The api-server mounts this as an admin-gated 501 stub by design: the
+    // control plane (docker socket vs systemd unit vs k8s) is an operator
+    // strategy decision that is not yet wired. Surface an actionable runbook
+    // hint instead of the raw stub JSON body (R8 fail-honest, not silent).
+    throw new Error(
+      `Service control plane not wired (HTTP 501). ${service} ${action} must be performed ` +
+        `on the host via the deploy runbook (docker compose / systemd). This button activates ` +
+        `once POST /api/v1/admin/services/:name/${action} replaces the stub.`,
     );
   }
   if (!res.ok) {
@@ -131,7 +143,7 @@ export function ServiceControlPanel({ liveStatus = {} }: ServiceControlPanelProp
         <p className="text-xs text-muted-foreground">
           Start/stop managed ArbX services via the edge control plane.{" "}
           <span className="text-warning font-medium">
-            Backend endpoint not yet implemented — actions surface a toast if 404.
+            Backend endpoint not yet implemented — actions surface an honest toast (404/501).
           </span>
         </p>
       </CardHeader>

@@ -39,9 +39,85 @@ contract MockProfitRouter {
     }
 }
 
+/// @dev Router that PULLS `pullAmount` of tokenIn from the caller (the executor) via
+///      transferFrom — exercising the executor's ephemeral SC-12 per-router allowance —
+///      then mints `mintBack` to the executor to simulate swap output. If `pullAmount`
+///      exceeds the granted allowance the transferFrom reverts, the low-level
+///      router.call returns false, and executeArbitrage reverts SwapFailed. Used to
+///      prove the spend cap actually binds.
+contract MockPullRouter {
+    MockERC20 public token;
+    uint256 public pullAmount;
+    uint256 public mintBack;
+
+    constructor(address _token, uint256 _pull, uint256 _mintBack) {
+        token = MockERC20(_token);
+        pullAmount = _pull;
+        mintBack = _mintBack;
+    }
+
+    fallback() external {
+        token.transferFrom(msg.sender, address(this), pullAmount);
+        token.mint(msg.sender, mintBack);
+    }
+}
+
 /// @dev Router that does nothing — balance unchanged → no gross profit
 contract MockZeroProfitRouter {
     fallback() external {}
+}
+
+/// @dev Fee-on-transfer ERC20: every non-mint/burn transfer skims a 1% fee to a sink,
+///      so the recipient receives less than `value`. Used to prove the SC-13 flash-funded
+///      pull guard rejects deflationary tokens fail-closed.
+contract MockFeeOnTransferERC20 is ERC20 {
+    address private constant SINK = address(0xdead);
+
+    constructor() ERC20("FeeToken", "FEE") {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        if (from == address(0) || to == address(0)) {
+            super._update(from, to, value); // mint / burn: no fee
+            return;
+        }
+        uint256 fee = value / 100; // 1%
+        super._update(from, SINK, fee);
+        super._update(from, to, value - fee);
+    }
+}
+
+/// @dev Sender-pays fee-on-send ERC20: the recipient always receives `value` IN FULL, but
+///      when the configured `feeFrom` account is the SENDER, an extra 1% is skimmed from it
+///      on top. So an INBOUND pull (funder -> executor) is faithful (credits exactly amountIn
+///      -> passes the SC-13 pull guard), while only the OUTBOUND return (executor -> caller)
+///      shorts the executor below its own capital B — exercising the symmetric outbound
+///      capital-retention guard. Models the "asymmetric token" the independent review flagged.
+contract MockOutboundFeeERC20 is ERC20 {
+    address private constant SINK = address(0xdead);
+    address public feeFrom;
+
+    constructor() ERC20("OutFeeToken", "OFEE") {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function setFeeFrom(address account) external {
+        feeFrom = account;
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        super._update(from, to, value); // faithful main move: recipient gets `value` in full
+        // Sender-pays surcharge ONLY when the configured account sends on a real transfer.
+        if (feeFrom != address(0) && from == feeFrom && to != address(0)) {
+            uint256 fee = value / 100; // extra 1% skimmed from the sender
+            if (fee > 0) super._update(from, SINK, fee);
+        }
+    }
 }
 
 /// @dev Malicious router that attempts to re-enter executeArbitrage.
@@ -86,6 +162,38 @@ contract MaliciousReentrantRouter {
             // Attempt re-entry — must revert with ReentrancyGuardReentrantCall
             // tokenOut == tokenIn is valid for circular arb; used here as observability metadata
             target.executeArbitrage(routeHash, tokenIn, tokenIn, amountIn, minProfit, reentrantRouters, reentrantPayloads);
+        }
+    }
+}
+
+/// @dev Malicious router that re-enters executeArbitrageFlashFunded mid-route.
+/// Holds EXECUTOR_ROLE in the test so the re-entrant call passes onlyExecutor and
+/// reaches the nonReentrant guard — proving the guard (not just the role gate) blocks
+/// re-entry even for a caller that legitimately holds EXECUTOR_ROLE.
+contract MaliciousReentrantFlashRouter {
+    ArbitrageExecutor public target;
+    address public tokenIn;
+    uint256 public amountIn;
+    bool private _attacking;
+
+    constructor(address _target) {
+        target = ArbitrageExecutor(payable(_target));
+    }
+
+    function setParams(address _tokenIn, uint256 _amountIn) external {
+        tokenIn = _tokenIn;
+        amountIn = _amountIn;
+    }
+
+    fallback() external {
+        if (!_attacking) {
+            _attacking = true;
+            address[] memory r = new address[](1);
+            r[0] = address(this);
+            bytes[] memory p = new bytes[](1);
+            p[0] = "";
+            // Re-enter the flash entrypoint — must revert ReentrancyGuardReentrantCall.
+            target.executeArbitrageFlashFunded(bytes32(0), tokenIn, tokenIn, amountIn, 0, r, p);
         }
     }
 }
@@ -342,7 +450,10 @@ contract ArbitrageExecutorTest is Test {
 
         // tokenOut represents the intermediate token (e.g. ETH in USDC→ETH→USDC)
         MockERC20 tokenOut = new MockERC20();
-        // tokenOut approval not needed — it's only passed for observability metadata
+        // M8 (audit 2026-05-10): when tokenOut != tokenIn the intermediate token must
+        // be in approvedTokens, otherwise executeArbitrage reverts TokenNotApproved
+        // before any router dispatch. (The original comment here predated M8.)
+        executor.setTokenApproval(address(tokenOut), true);
 
         token.mint(address(executor), amountIn);
 
@@ -475,6 +586,23 @@ contract ArbitrageExecutorTest is Test {
         vm.expectRevert();
         vm.prank(stranger);
         executor.withdrawETH(recipient);
+    }
+
+    // -----------------------------------------------------------------------
+    // Malicious init: the proxy initializes exactly once, and the bare
+    // implementation is permanently locked by the constructor's
+    // _disableInitializers(). Both must revert on a second / direct initialize.
+    // -----------------------------------------------------------------------
+    function testInit_DoubleInitializeReverts() public {
+        // executor (the proxy) was already initialized in setUp.
+        vm.expectRevert(); // Initializable: InvalidInitialization
+        executor.initialize(admin);
+    }
+
+    function testInit_BareImplementationIsLocked() public {
+        ArbitrageExecutor impl = new ArbitrageExecutor();
+        vm.expectRevert(); // _disableInitializers() in the constructor locks the impl
+        impl.initialize(admin);
     }
 
     // -----------------------------------------------------------------------
@@ -623,35 +751,344 @@ contract ArbitrageExecutorTest is Test {
     }
 
     // -----------------------------------------------------------------------
-    // testSC5_ExecuteArbitrage_RevertsWhenRouterNotInAllowanceManager
+    // testSC12_ExecuteArbitrage_NotGatedByAllowanceManagerRegistry
     //
-    // When AllowanceManager is set but router has NO allowance for tokenIn,
-    // executeArbitrage must revert with RouterAllowanceNotGranted.
+    // SC-12 (2026-06-28): the AllowanceManager isApproved registry is NO LONGER a
+    // spend gate (it conferred no real authority over this contract's balance). With
+    // it set but the router NOT present in it, executeArbitrage must still proceed —
+    // spend safety comes from the executor's own exact, ephemeral per-router allowance.
+    // (Was: testSC5_ExecuteArbitrage_RevertsWhenRouterNotInAllowanceManager, which
+    // asserted the removed false-assurance gate.)
     // -----------------------------------------------------------------------
-    function testSC5_ExecuteArbitrage_RevertsWhenRouterNotInAllowanceManager() public {
+    function testSC12_ExecuteArbitrage_NotGatedByAllowanceManagerRegistry() public {
         uint256 amountIn = 1_000e18;
+        uint256 profit   = 50e18;
 
         AllowanceManager am = _deployAllowanceManager();
         executor.setAllowanceManager(address(am));
 
-        // Deploy router — approved in ArbitrageExecutor but NOT in AllowanceManager
-        MockProfitRouter router = new MockProfitRouter(address(token), address(executor), 50e18);
+        MockProfitRouter router = new MockProfitRouter(address(token), address(executor), profit);
         executor.setRouterApproval(address(router), true);
-        // Deliberately: do NOT call am.grantAllowance(...)
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+        // Deliberately do NOT call am.grantAllowance(...): router is absent from the registry.
+        assertFalse(am.isApproved(address(token), address(router)), "router must be absent from AM registry");
 
         token.mint(address(executor), amountIn);
 
         address[] memory routers = new address[](1);
         routers[0] = address(router);
         bytes[] memory payloads = new bytes[](1);
-        payloads[0] = "";
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(RouterAllowanceNotGranted.selector, address(router), address(token))
-        );
+        // Must SUCCEED despite the router being absent from the AllowanceManager registry.
+        vm.prank(executorRole);
+        executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, profit, routers, payloads);
+
+        assertGe(token.balanceOf(address(executor)), amountIn + profit, "profit must land");
+        // No standing tokenIn allowance to the router survives the call (ephemeral + reset).
+        assertEq(token.allowance(address(executor), address(router)), 0, "allowance residue must be zero");
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-12 spend cap: an approved router can pull AT MOST `amountIn` of tokenIn.
+    // Exact-cap path — pulling exactly amountIn succeeds and leaves zero residue.
+    // -----------------------------------------------------------------------
+    function testSC12_SpendCap_ExactAmountInPullSucceeds() public {
+        uint256 amountIn = 1_000e18;
+        uint256 mintBack = 1_050e18; // router returns more than it pulled -> net profit
+
+        MockPullRouter router = new MockPullRouter(address(token), amountIn, mintBack);
+        executor.setRouterApproval(address(router), true);
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+        token.mint(address(executor), amountIn);
+
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
 
         vm.prank(executorRole);
         executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
+
+        assertEq(token.balanceOf(address(router)), amountIn, "router pulled exactly amountIn");
+        assertEq(token.balanceOf(address(executor)), mintBack, "executor net = mintBack");
+        assertEq(token.allowance(address(executor), address(router)), 0, "zero allowance residue");
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-12 spend cap (the core hardening): over-pull is blocked even when the
+    // executor HOLDS more than amountIn — the cap, not the balance, bounds the spend.
+    // A router (or a compromised EXECUTOR_ROLE / surprising whitelisted selector)
+    // cannot move more than the declared amountIn of tokenIn per hop.
+    // -----------------------------------------------------------------------
+    function testSC12_SpendCap_OverPullIsBlocked() public {
+        uint256 amountIn = 1_000e18;
+
+        // Router attempts to pull amountIn + 1 — one wei beyond the ephemeral allowance.
+        MockPullRouter router = new MockPullRouter(address(token), amountIn + 1, 5_000e18);
+        executor.setRouterApproval(address(router), true);
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+        // Fund the executor with FAR more than amountIn so only the cap stops the over-pull.
+        token.mint(address(executor), amountIn * 3);
+
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
+
+        // transferFrom(amountIn + 1) exceeds the granted allowance -> router reverts ->
+        // low-level call returns false -> SwapFailed; the whole tx reverts.
+        vm.prank(executorRole);
+        vm.expectRevert(SwapFailed.selector);
+        executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
+
+        // The executor's balance is fully intact and no allowance lingers.
+        assertEq(token.balanceOf(address(executor)), amountIn * 3, "executor balance untouched");
+        assertEq(token.balanceOf(address(router)), 0, "router pulled nothing");
+        assertEq(token.allowance(address(executor), address(router)), 0, "no residual allowance after revert");
+    }
+
+    // -----------------------------------------------------------------------
+    // SC-13: executeArbitrageFlashFunded — caller-funded round trip.
+    // Closes the §7 fund-handoff gap: the executor PULLS the borrowed principal from
+    // the caller, runs the gated route, and RETURNS principal + profit to the caller
+    // so a flash-loan wrapper can repay. These exercise the executor entrypoint in
+    // isolation; the end-to-end FlashLoanExecutor round trip lives in
+    // FlashLoanRoundTrip.t.sol.
+    // -----------------------------------------------------------------------
+
+    /// @dev helper: deploy + approve a MockProfitRouter that mints `profit` to the executor.
+    function _approvedProfitRouter(uint256 profit) internal returns (address[] memory routers, bytes[] memory payloads) {
+        MockProfitRouter router = new MockProfitRouter(address(token), address(executor), profit);
+        executor.setRouterApproval(address(router), true);
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+        routers = new address[](1);
+        routers[0] = address(router);
+        payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
+    }
+
+    function testSC13_FlashFunded_PullsPrincipalAndReturnsPrincipalPlusProfit() public {
+        uint256 amountIn = 1_000e18;
+        uint256 profit   = 50e18;
+
+        address funder = makeAddr("funder");
+        executor.grantRole(executor.EXECUTOR_ROLE(), funder);
+        token.mint(funder, amountIn); // the "borrowed" principal lives with the caller
+
+        (address[] memory routers, bytes[] memory payloads) = _approvedProfitRouter(profit);
+
+        vm.startPrank(funder);
+        token.approve(address(executor), amountIn);
+        executor.executeArbitrageFlashFunded(bytes32(0), address(token), address(token), amountIn, 10e18, routers, payloads);
+        vm.stopPrank();
+
+        // Caller got principal + profit back; executor netted to zero; approval fully consumed.
+        assertEq(token.balanceOf(funder), amountIn + profit, "caller receives principal + profit");
+        assertEq(token.balanceOf(address(executor)), 0, "executor holds nothing after returning proceeds");
+        assertEq(token.allowance(funder, address(executor)), 0, "principal approval fully consumed");
+    }
+
+    /// @dev The critical safety property: the executor's OWN pre-call capital B is
+    ///      provably retained — the flash-funded path forwards only (balanceAfter - B).
+    function testSC13_FlashFunded_PreservesExecutorOwnCapital() public {
+        uint256 B        = 500e18; // executor's own working capital
+        uint256 amountIn = 1_000e18;
+        uint256 profit   = 50e18;
+
+        token.mint(address(executor), B);
+
+        address funder = makeAddr("funder");
+        executor.grantRole(executor.EXECUTOR_ROLE(), funder);
+        token.mint(funder, amountIn);
+
+        (address[] memory routers, bytes[] memory payloads) = _approvedProfitRouter(profit);
+
+        vm.startPrank(funder);
+        token.approve(address(executor), amountIn);
+        executor.executeArbitrageFlashFunded(bytes32(0), address(token), address(token), amountIn, 10e18, routers, payloads);
+        vm.stopPrank();
+
+        assertEq(token.balanceOf(address(executor)), B, "executor's own capital B is untouched");
+        assertEq(token.balanceOf(funder), amountIn + profit, "caller still receives principal + profit");
+    }
+
+    function testSC13_FlashFunded_RevertsWithoutApproval() public {
+        uint256 amountIn = 1_000e18;
+        address funder = makeAddr("funder");
+        executor.grantRole(executor.EXECUTOR_ROLE(), funder);
+        token.mint(funder, amountIn); // funded but NOT approved
+
+        (address[] memory routers, bytes[] memory payloads) = _approvedProfitRouter(50e18);
+
+        vm.prank(funder);
+        vm.expectRevert(); // ERC20InsufficientAllowance on the safeTransferFrom pull
+        executor.executeArbitrageFlashFunded(bytes32(0), address(token), address(token), amountIn, 10e18, routers, payloads);
+    }
+
+    function testSC13_FlashFunded_UnprofitableRouteReverts_PrincipalRefunded() public {
+        uint256 amountIn = 1_000e18;
+        address funder = makeAddr("funder");
+        executor.grantRole(executor.EXECUTOR_ROLE(), funder);
+        token.mint(funder, amountIn);
+
+        MockZeroProfitRouter router = new MockZeroProfitRouter();
+        executor.setRouterApproval(address(router), true);
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
+
+        vm.startPrank(funder);
+        token.approve(address(executor), amountIn);
+        vm.expectRevert(ZeroGrossProfit.selector);
+        executor.executeArbitrageFlashFunded(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
+        vm.stopPrank();
+
+        // Atomic revert rolls back the pull: the caller keeps its principal, executor holds nothing.
+        assertEq(token.balanceOf(funder), amountIn, "principal refunded on revert");
+        assertEq(token.balanceOf(address(executor)), 0, "executor holds nothing after revert");
+    }
+
+    /// @dev B-retention proven when the principal ACTUALLY moves out and back. The other
+    ///      SC-13 happy paths use a mint-only router (tokenIn never leaves the executor),
+    ///      so their B-assertion holds somewhat vacuously. Here MockPullRouter pulls the
+    ///      full amountIn out of the executor (via the ephemeral SC-12 allowance) and mints
+    ///      back more — yet the executor must still end holding EXACTLY its own capital B.
+    function testSC13_FlashFunded_PreservesCapital_WithPullingRouter() public {
+        uint256 B        = 500e18;
+        uint256 amountIn = 1_000e18;
+        uint256 mintBack = 1_050e18; // router pulls amountIn out, mints mintBack back (profit = 50)
+
+        token.mint(address(executor), B);
+
+        address funder = makeAddr("funder");
+        executor.grantRole(executor.EXECUTOR_ROLE(), funder);
+        token.mint(funder, amountIn);
+
+        MockPullRouter router = new MockPullRouter(address(token), amountIn, mintBack);
+        executor.setRouterApproval(address(router), true);
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
+
+        vm.startPrank(funder);
+        token.approve(address(executor), amountIn);
+        executor.executeArbitrageFlashFunded(bytes32(0), address(token), address(token), amountIn, 10e18, routers, payloads);
+        vm.stopPrank();
+
+        assertEq(token.balanceOf(address(executor)), B, "executor retains exactly B even when principal flows out and back");
+        assertEq(token.balanceOf(funder), mintBack, "caller receives principal + profit (= mintBack)");
+        assertEq(token.allowance(address(executor), address(router)), 0, "no residual router allowance");
+    }
+
+    /// @dev Re-entrancy via the NEW flash entrypoint is blocked by the shared nonReentrant
+    ///      guard — even when the re-entrant caller holds EXECUTOR_ROLE (so it clears
+    ///      onlyExecutor and actually reaches the guard). The inner revert surfaces as a
+    ///      failed router call (SwapFailed); the whole call reverts and principal is refunded.
+    function testSC13_FlashFunded_ReentrancyBlocked() public {
+        uint256 amountIn = 1_000e18;
+
+        address funder = makeAddr("funder");
+        executor.grantRole(executor.EXECUTOR_ROLE(), funder);
+        token.mint(funder, amountIn);
+
+        MaliciousReentrantFlashRouter router = new MaliciousReentrantFlashRouter(address(executor));
+        router.setParams(address(token), amountIn);
+        executor.grantRole(executor.EXECUTOR_ROLE(), address(router)); // so re-entry reaches nonReentrant, not onlyExecutor
+        executor.setRouterApproval(address(router), true);
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
+
+        vm.startPrank(funder);
+        token.approve(address(executor), amountIn);
+        vm.expectRevert(SwapFailed.selector); // re-entrant call reverts -> router.call returns false -> SwapFailed
+        executor.executeArbitrageFlashFunded(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
+        vm.stopPrank();
+
+        assertEq(token.balanceOf(funder), amountIn, "principal refunded after re-entrancy blocked");
+        assertEq(token.balanceOf(address(executor)), 0, "executor holds nothing after revert");
+    }
+
+    /// @dev Fail-closed: a fee-on-transfer tokenIn credits less than amountIn on the pull,
+    ///      which would break the capital-retention identity — so the guard reverts.
+    function testSC13_FlashFunded_FeeOnTransferTokenReverts() public {
+        MockFeeOnTransferERC20 feeToken = new MockFeeOnTransferERC20();
+        executor.setTokenApproval(address(feeToken), true);
+
+        uint256 amountIn = 1_000e18;
+        address funder = makeAddr("funder");
+        executor.grantRole(executor.EXECUTOR_ROLE(), funder);
+        feeToken.mint(funder, amountIn);
+
+        // Router array is well-formed but never reached — the pull guard reverts first.
+        address[] memory routers = new address[](1);
+        routers[0] = makeAddr("unreachableRouter");
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
+
+        vm.startPrank(funder);
+        feeToken.approve(address(executor), amountIn);
+        vm.expectRevert(FlashFundedPullMismatch.selector);
+        executor.executeArbitrageFlashFunded(bytes32(0), address(feeToken), address(feeToken), amountIn, 0, routers, payloads);
+        vm.stopPrank();
+    }
+
+    function testSC13_FlashFunded_OnlyExecutorRole() public {
+        uint256 amountIn = 1_000e18;
+        (address[] memory routers, bytes[] memory payloads) = _approvedProfitRouter(50e18);
+
+        vm.prank(stranger); // no EXECUTOR_ROLE
+        vm.expectRevert();
+        executor.executeArbitrageFlashFunded(bytes32(0), address(token), address(token), amountIn, 10e18, routers, payloads);
+    }
+
+    /// @dev Defense-in-depth (independent SC-13 review): the capital-retention identity was
+    ///      enforced only on the INBOUND pull (FlashFundedPullMismatch). A token that is
+    ///      faithful on the pull but shorts the SENDER on the OUTBOUND return (executor ->
+    ///      caller) would leak the executor's own working capital B. The symmetric outbound
+    ///      guard fail-closes that: the executor would end below B, so the call reverts and
+    ///      rolls back, leaving B intact and the caller's principal refunded.
+    function testSC13_FlashFunded_OutboundLossyTokenReverts() public {
+        MockOutboundFeeERC20 outFee = new MockOutboundFeeERC20();
+        outFee.setFeeFrom(address(executor)); // surcharge applies ONLY when the executor sends
+        executor.setTokenApproval(address(outFee), true);
+
+        uint256 B        = 500e18;   // executor's own working capital
+        uint256 amountIn = 1_000e18;
+        uint256 profit   = 50e18;
+
+        outFee.mint(address(executor), B);
+
+        address funder = makeAddr("funder");
+        executor.grantRole(executor.EXECUTOR_ROLE(), funder);
+        outFee.mint(funder, amountIn);
+
+        // Mint-only profit router pointed at the fee token: nothing leaves the executor during
+        // the route, so ONLY the final outbound return triggers the sender-pays surcharge.
+        MockProfitRouter router = new MockProfitRouter(address(outFee), address(executor), profit);
+        executor.setRouterApproval(address(router), true);
+        executor.setRouterSelectorApproval(address(router), MOCK_SELECTOR, true);
+        address[] memory routers = new address[](1);
+        routers[0] = address(router);
+        bytes[] memory payloads = new bytes[](1);
+        payloads[0] = abi.encodePacked(MOCK_SELECTOR);
+
+        vm.startPrank(funder);
+        outFee.approve(address(executor), amountIn);
+        vm.expectRevert(FlashFundedCapitalRetentionViolation.selector);
+        executor.executeArbitrageFlashFunded(bytes32(0), address(outFee), address(outFee), amountIn, 10e18, routers, payloads);
+        vm.stopPrank();
+
+        // Atomic revert: B retained exactly, caller principal refunded — no silent leak of B.
+        assertEq(outFee.balanceOf(address(executor)), B, "executor retains exactly B after fail-closed revert");
+        assertEq(outFee.balanceOf(funder), amountIn, "caller principal refunded on revert");
     }
 
     // -----------------------------------------------------------------------
@@ -916,5 +1353,114 @@ contract ArbitrageExecutorTest is Test {
         assertFalse(executor.approvedSelectors(router, sel1), "sel1 must be revoked");
         assertFalse(executor.approvedSelectors(router, sel2), "sel2 must be revoked");
         assertFalse(executor.approvedSelectors(router, sel3), "sel3 must be revoked");
+    }
+
+    // =========================================================================
+    // Proxy/init takeover guards + admin-only kill-switch / sweep / ETH rescue
+    // (decision-free hardening — tests only, no src change)
+    // =========================================================================
+
+    // -----------------------------------------------------------------------
+    // testInit_Reinit_GrantsAttackerNoRoles
+    //
+    // Complements #200's testInit_DoubleInitializeReverts (which asserts only the
+    // revert) by proving the SECURITY property: a failed re-init of the live proxy
+    // leaks NO privilege — the caller gains neither ADMIN_ROLE nor UPGRADER_ROLE.
+    // (The bare-impl lock is already covered by #200's
+    // testInit_BareImplementationIsLocked, so it is intentionally not duplicated here.)
+    // -----------------------------------------------------------------------
+    function testInit_Reinit_GrantsAttackerNoRoles() public {
+        address attacker = makeAddr("attacker");
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("InvalidInitialization()"))));
+        executor.initialize(attacker);
+
+        // The failed re-init must not have granted the attacker any privilege.
+        assertFalse(executor.hasRole(executor.ADMIN_ROLE(), attacker), "attacker must not hold ADMIN_ROLE");
+        assertFalse(executor.hasRole(executor.UPGRADER_ROLE(), attacker), "attacker must not hold UPGRADER_ROLE");
+    }
+
+    // -----------------------------------------------------------------------
+    // testPause_OnlyAdmin
+    //
+    // The kill-switch (pause/unpause) is onlyRole(ADMIN_ROLE). A stranger — and,
+    // critically, a compromised EXECUTOR_ROLE key — must not be able to toggle it
+    // in either direction; only the admin can.
+    // -----------------------------------------------------------------------
+    function testPause_OnlyAdmin() public {
+        // stranger cannot pause
+        vm.expectRevert();
+        vm.prank(stranger);
+        executor.pause();
+
+        // a compromised EXECUTOR_ROLE key cannot pause (freeze) the contract
+        vm.expectRevert();
+        vm.prank(executorRole);
+        executor.pause();
+
+        // admin (address(this), holds ADMIN_ROLE) can pause
+        executor.pause();
+        assertTrue(executor.paused(), "admin pause must take effect");
+
+        // a compromised EXECUTOR_ROLE key cannot unpause either
+        vm.expectRevert();
+        vm.prank(executorRole);
+        executor.unpause();
+
+        // admin can unpause
+        executor.unpause();
+        assertFalse(executor.paused(), "admin unpause must take effect");
+    }
+
+    // -----------------------------------------------------------------------
+    // testEmergencyWithdraw_OnlyAdmin_SweepsAndEmits
+    //
+    // emergencyWithdraw(token) is onlyRole(ADMIN_ROLE); it sweeps the full ERC20
+    // balance to msg.sender and emits EmergencyWithdrawn(token, amount). Verifies
+    // the sweep conserves funds, the event fires, and a stranger is blocked.
+    // -----------------------------------------------------------------------
+    function testEmergencyWithdraw_OnlyAdmin_SweepsAndEmits() public {
+        uint256 amount = 1_000e18;
+        token.mint(address(executor), amount);
+
+        // EmergencyWithdrawn(token, amount) — both fields non-indexed → check data only.
+        vm.expectEmit(false, false, false, true, address(executor));
+        emit ArbitrageExecutor.EmergencyWithdrawn(address(token), amount);
+
+        // admin (address(this)) sweeps the full balance to itself
+        executor.emergencyWithdraw(address(token));
+        assertEq(token.balanceOf(address(this)), amount, "admin must receive the full swept balance");
+        assertEq(token.balanceOf(address(executor)), 0, "executor token balance must be zero after sweep");
+
+        // stranger is blocked
+        token.mint(address(executor), amount);
+        vm.expectRevert();
+        vm.prank(stranger);
+        executor.emergencyWithdraw(address(token));
+    }
+
+    // -----------------------------------------------------------------------
+    // testWithdrawETH_RevertWhen_ZeroAddress
+    //
+    // withdrawETH reverts ZeroAddress() when the recipient is address(0). ETH is
+    // funded first so only the address guard (checked before the balance guard)
+    // can fire — the existing happy-path/non-admin test never exercises this.
+    // -----------------------------------------------------------------------
+    function testWithdrawETH_RevertWhen_ZeroAddress() public {
+        vm.deal(address(executor), 1 ether);
+        vm.expectRevert(ZeroAddress.selector);
+        executor.withdrawETH(payable(address(0)));
+    }
+
+    // -----------------------------------------------------------------------
+    // testWithdrawETH_RevertWhen_ZeroBalance
+    //
+    // withdrawETH reverts ZeroBalance() when the contract holds no ETH (the
+    // existing test always pre-funds the contract before withdrawing).
+    // -----------------------------------------------------------------------
+    function testWithdrawETH_RevertWhen_ZeroBalance() public {
+        address payable r = payable(makeAddr("ethRecipient"));
+        assertEq(address(executor).balance, 0, "precondition: executor holds no ETH");
+        vm.expectRevert(ZeroBalance.selector);
+        executor.withdrawETH(r);
     }
 }

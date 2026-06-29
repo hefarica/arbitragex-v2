@@ -11,7 +11,15 @@ function isActive(pathname: string, item: NavItem): boolean {
   return pathname === item.href || pathname.startsWith(item.href + "/");
 }
 
-function NavList({ group, onNavigate }: { group: NavItem["group"]; onNavigate?: () => void }) {
+function NavList({
+  group,
+  credsNeedsAttention = 0,
+  onNavigate,
+}: {
+  group: NavItem["group"];
+  credsNeedsAttention?: number;
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
   const items = NAV_ITEMS.filter((i) => i.group === group);
   return (
@@ -19,6 +27,7 @@ function NavList({ group, onNavigate }: { group: NavItem["group"]; onNavigate?: 
       {items.map((item) => {
         const Icon = item.icon;
         const active = isActive(pathname, item);
+        const showCredsBadge = item.href === "/settings/credentials" && credsNeedsAttention > 0;
         return (
           <li key={item.href}>
             <Link
@@ -33,9 +42,19 @@ function NavList({ group, onNavigate }: { group: NavItem["group"]; onNavigate?: 
             >
               <Icon className={cn("size-4 shrink-0", active && "text-primary")} />
               <span className="truncate">{item.label}</span>
-              {active && (
+              {/* Credentials "needs attention" badge (invalid + untested), server-resolved.
+                  Falls back to the active-page dot when there's nothing to flag. */}
+              {showCredsBadge ? (
+                <span
+                  className="ml-auto inline-flex min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-semibold text-warning-foreground"
+                  title={`${credsNeedsAttention} credential${credsNeedsAttention === 1 ? "" : "s"} need attention`}
+                  aria-label={`${credsNeedsAttention} credentials need attention`}
+                >
+                  {credsNeedsAttention}
+                </span>
+              ) : active ? (
                 <span className="ml-auto size-1.5 rounded-full bg-primary" aria-hidden />
-              )}
+              ) : null}
             </Link>
           </li>
         );
@@ -44,42 +63,54 @@ function NavList({ group, onNavigate }: { group: NavItem["group"]; onNavigate?: 
   );
 }
 
-export function AppSidebar() {
+export function AppSidebar({
+  paperMode = true,
+  credsNeedsAttention = 0,
+}: { paperMode?: boolean; credsNeedsAttention?: number } = {}) {
   return (
     <aside className="hidden lg:flex lg:flex-col lg:gap-6 lg:sticky lg:top-16 lg:self-start lg:h-[calc(100dvh-4rem)] lg:w-64 lg:shrink-0 lg:border-r lg:bg-sidebar lg:px-3 lg:py-6">
-      <SidebarContents />
+      <SidebarContents paperMode={paperMode} credsNeedsAttention={credsNeedsAttention} />
     </aside>
   );
 }
 
-export function SidebarContents({ onNavigate }: { onNavigate?: () => void } = {}) {
+const NAV_SECTIONS: { group: NavItem["group"]; title: string }[] = [
+  { group: "pipeline", title: "Pipeline" },
+  { group: "control", title: "Risk & Control" },
+  { group: "setup", title: "Configuration" },
+  { group: "omega", title: "Omega S5" },
+];
+
+export function SidebarContents({
+  paperMode = true,
+  credsNeedsAttention = 0,
+  onNavigate,
+}: { paperMode?: boolean; credsNeedsAttention?: number; onNavigate?: () => void } = {}) {
   return (
     <>
-      <div>
-        <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
-          Observe
+      {NAV_SECTIONS.map(({ group, title }) => (
+        <div key={group}>
+          <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-gradient-primary">
+            {title}
+          </div>
+          <NavList group={group} credsNeedsAttention={credsNeedsAttention} {...(onNavigate ? { onNavigate } : {})} />
         </div>
-        <NavList group="observe" {...(onNavigate ? { onNavigate } : {})} />
-      </div>
-      <div>
-        <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
-          Control
-        </div>
-        <NavList group="control" {...(onNavigate ? { onNavigate } : {})} />
-      </div>
-      <div>
-        <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
-          Setup
-        </div>
-        <NavList group="setup" {...(onNavigate ? { onNavigate } : {})} />
-      </div>
+      ))}
       <div className="mt-auto rounded-md border bg-card/40 p-3 text-xs text-muted-foreground">
         <div className="flex items-center gap-2 font-medium text-foreground">
-          <span className="size-1.5 rounded-full bg-success" aria-hidden />
-          paper-mode
+          <span
+            className={cn(
+              "size-1.5 rounded-full",
+              paperMode ? "bg-success" : "bg-destructive animate-pulse",
+            )}
+            aria-hidden
+          />
+          {paperMode ? "paper-mode" : "⚠ LIVE TRADING"}
         </div>
         <p className="mt-1 leading-relaxed">
-          Executions are simulated only. No capital at risk until S9.
+          {paperMode
+            ? "Executions are simulated only. No capital at risk until S9."
+            : "LIVE CAPITAL EXECUTION ENABLED. Kill-switch armed."}
         </p>
       </div>
     </>

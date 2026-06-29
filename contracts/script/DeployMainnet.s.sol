@@ -119,36 +119,52 @@ contract DeployMainnet is Script {
         // 1. ArbitrageExecutor — UUPS proxy
         //    Admin = deployer. Grant EXECUTOR_ROLE post-deploy to signer.
         // ----------------------------------------------------------------
-        ArbitrageExecutor implAE = new ArbitrageExecutor();
-        ERC1967Proxy proxyAE = new ERC1967Proxy(
-            address(implAE),
-            abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, deployer)
-        );
+        // Each implementation local is scoped in its own block so it is freed
+        // before the next deploy — this keeps run() under the EVM stack limit
+        // (it previously hit "stack too deep") without enabling project-wide
+        // via_ir, which would change src/ codegen and gas. Behavior is identical.
+        ERC1967Proxy proxyAE;
+        {
+            ArbitrageExecutor implAE = new ArbitrageExecutor();
+            console2.log("ArbitrageExecutor impl  :", address(implAE));
+            proxyAE = new ERC1967Proxy(
+                address(implAE),
+                abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, deployer)
+            );
+        }
 
         // ----------------------------------------------------------------
         // 2. AllowanceManager — UUPS proxy
         //    Admin = deployer. Wire to ArbitrageExecutor post-deploy.
         // ----------------------------------------------------------------
-        AllowanceManager implAM = new AllowanceManager();
-        ERC1967Proxy proxyAM = new ERC1967Proxy(
-            address(implAM),
-            abi.encodeWithSelector(AllowanceManager.initialize.selector, deployer)
-        );
+        ERC1967Proxy proxyAM;
+        {
+            AllowanceManager implAM = new AllowanceManager();
+            console2.log("AllowanceManager impl   :", address(implAM));
+            proxyAM = new ERC1967Proxy(
+                address(implAM),
+                abi.encodeWithSelector(AllowanceManager.initialize.selector, deployer)
+            );
+        }
 
         // ----------------------------------------------------------------
         // 3. FlashLoanExecutor — UUPS proxy
         //    Points to: Aave V3 mainnet pool + ArbitrageExecutor proxy.
         // ----------------------------------------------------------------
-        FlashLoanExecutor implFL = new FlashLoanExecutor();
-        ERC1967Proxy proxyFL = new ERC1967Proxy(
-            address(implFL),
-            abi.encodeWithSelector(
-                FlashLoanExecutor.initialize.selector,
-                deployer,
-                aavePool,
-                address(proxyAE)
-            )
-        );
+        ERC1967Proxy proxyFL;
+        {
+            FlashLoanExecutor implFL = new FlashLoanExecutor();
+            console2.log("FlashLoanExecutor impl  :", address(implFL));
+            proxyFL = new ERC1967Proxy(
+                address(implFL),
+                abi.encodeWithSelector(
+                    FlashLoanExecutor.initialize.selector,
+                    deployer,
+                    aavePool,
+                    address(proxyAE)
+                )
+            );
+        }
 
         // ----------------------------------------------------------------
         // 4. AdminTimelock — SC-10
@@ -157,22 +173,26 @@ contract DeployMainnet is Script {
         //    The deployer EOA is the initial TimelockController admin only so it
         //    can renounce after the timelock is wired — admin is renounced below.
         // ----------------------------------------------------------------
-        address[] memory proposers = new address[](1);
-        proposers[0] = multisig;
-        address[] memory executors = new address[](1);
-        executors[0] = multisig;
+        ERC1967Proxy proxyTL;
+        {
+            address[] memory proposers = new address[](1);
+            proposers[0] = multisig;
+            address[] memory executors = new address[](1);
+            executors[0] = multisig;
 
-        AdminTimelock implTL = new AdminTimelock();
-        ERC1967Proxy proxyTL = new ERC1967Proxy(
-            address(implTL),
-            abi.encodeWithSelector(
-                AdminTimelock.initialize.selector,
-                uint256(86_400), // 24h — mainnet standard
-                proposers,
-                executors,
-                deployer
-            )
-        );
+            AdminTimelock implTL = new AdminTimelock();
+            console2.log("AdminTimelock impl      :", address(implTL));
+            proxyTL = new ERC1967Proxy(
+                address(implTL),
+                abi.encodeWithSelector(
+                    AdminTimelock.initialize.selector,
+                    uint256(86_400), // 24h — mainnet standard
+                    proposers,
+                    executors,
+                    deployer
+                )
+            );
+        }
 
         // ----------------------------------------------------------------
         // M10 (audit 2026-05-10): Atomic admin transfer to timelock.
@@ -189,20 +209,31 @@ contract DeployMainnet is Script {
         // ----------------------------------------------------------------
         address timelockProxy = address(proxyTL);
 
-        // --- ArbitrageExecutor ---
-        ArbitrageExecutor ae = ArbitrageExecutor(payable(address(proxyAE)));
-        ae.grantRole(ae.DEFAULT_ADMIN_ROLE(), timelockProxy);
-        ae.revokeRole(ae.DEFAULT_ADMIN_ROLE(), deployer);
+        // Scoped so the executor/manager casts are freed before the output
+        // section below — keeps run() under the EVM stack limit.
+        {
+            // --- ArbitrageExecutor ---
+            ArbitrageExecutor ae = ArbitrageExecutor(payable(address(proxyAE)));
+            // SC-13 (flash-loan fund-handoff): the flash path calls
+            // ArbitrageExecutor.executeArbitrageFlashFunded (onlyExecutor) with
+            // FlashLoanExecutor as msg.sender, so the wrapper itself MUST hold
+            // EXECUTOR_ROLE. Grant it now, while the deployer still holds
+            // DEFAULT_ADMIN_ROLE — after the atomic handoff just below, this grant
+            // could only be made via a multisig + 24h-timelock action.
+            ae.grantRole(ae.EXECUTOR_ROLE(), address(proxyFL));
+            ae.grantRole(ae.DEFAULT_ADMIN_ROLE(), timelockProxy);
+            ae.revokeRole(ae.DEFAULT_ADMIN_ROLE(), deployer);
 
-        // --- AllowanceManager ---
-        AllowanceManager am = AllowanceManager(payable(address(proxyAM)));
-        am.grantRole(am.DEFAULT_ADMIN_ROLE(), timelockProxy);
-        am.revokeRole(am.DEFAULT_ADMIN_ROLE(), deployer);
+            // --- AllowanceManager ---
+            AllowanceManager am = AllowanceManager(payable(address(proxyAM)));
+            am.grantRole(am.DEFAULT_ADMIN_ROLE(), timelockProxy);
+            am.revokeRole(am.DEFAULT_ADMIN_ROLE(), deployer);
 
-        // --- FlashLoanExecutor ---
-        FlashLoanExecutor fl = FlashLoanExecutor(payable(address(proxyFL)));
-        fl.grantRole(fl.DEFAULT_ADMIN_ROLE(), timelockProxy);
-        fl.revokeRole(fl.DEFAULT_ADMIN_ROLE(), deployer);
+            // --- FlashLoanExecutor ---
+            FlashLoanExecutor fl = FlashLoanExecutor(payable(address(proxyFL)));
+            fl.grantRole(fl.DEFAULT_ADMIN_ROLE(), timelockProxy);
+            fl.revokeRole(fl.DEFAULT_ADMIN_ROLE(), deployer);
+        }
 
         console2.log("Admin transferred to timelock:", timelockProxy);
         console2.log("Deployer admin revoked from all contracts:", deployer);
@@ -220,10 +251,7 @@ contract DeployMainnet is Script {
         console2.log("AdminTimelock proxy     :", address(proxyTL));
         console2.log("");
         console2.log("=== Implementation Addresses (for --verify --watch) ===");
-        console2.log("ArbitrageExecutor impl  :", address(implAE));
-        console2.log("AllowanceManager impl   :", address(implAM));
-        console2.log("FlashLoanExecutor impl  :", address(implFL));
-        console2.log("AdminTimelock impl      :", address(implTL));
+        console2.log("(logged above next to each proxy deploy)");
         console2.log("");
         console2.log("=== MANDATORY Post-Deploy Checklist ===");
         console2.log("[ ] 1. Wire AllowanceManager:");
@@ -232,6 +260,9 @@ contract DeployMainnet is Script {
         console2.log("       ArbitrageExecutor.grantRole(EXECUTOR_ROLE, <signer>)");
         console2.log("[ ] 3. Grant EXECUTOR_ROLE on FlashLoanExecutor to off-chain signer:");
         console2.log("       FlashLoanExecutor.grantRole(EXECUTOR_ROLE, <signer>)");
+        console2.log("[x] 3b.(SC-13, DONE IN-SCRIPT) FlashLoanExecutor proxy holds EXECUTOR_ROLE on");
+        console2.log("       ArbitrageExecutor (required by executeArbitrageFlashFunded). Granted");
+        console2.log("       atomically pre-handoff; any change now needs multisig + 24h timelock.");
         console2.log("[ ] 4. Approve tokenIn tokens:");
         console2.log("       ArbitrageExecutor.setTokenApproval(<WETH|USDC|...>, true)");
         console2.log("[ ] 5. Approve routers:");

@@ -49,7 +49,7 @@ use bigdecimal::{BigDecimal, RoundingMode};
 use ethers::types::{Address, U256};
 use prioritization_spine::round_trip_executor::RoundTripContext;
 use prioritization_spine::types::OpportunityCandidate;
-use shared_rs::chains::{routers_for_chain, RouterKind};
+use shared_rs::chains::{routers_for_chain, ExecutorAddrError, RouterKind};
 // `HashMap` is only used by the test-only `InMemoryTokenDecimalsProvider`.
 #[cfg(test)]
 use std::collections::HashMap;
@@ -255,21 +255,22 @@ impl RouteEncodingConfig {
 /// Look up `EXECUTOR_<chain_id>` env var and parse to a non-zero `Address`.
 /// NO hardcoded fallback addresses; NO test/dummy defaults. Every chain that
 /// participates in the simulator wire must export this env var explicitly.
+///
+/// The resolution logic lives in `shared_rs::chains::resolve_executor_address`
+/// so that `relays-client` and other crates resolve the SAME executor address
+/// from the SAME source. This is a thin wrapper that maps the shared
+/// `ExecutorAddrError` back to the local `SimEncoderError` variants so the
+/// scanner sees byte-identical behaviour (same variants, same `reason_tag()`).
 pub fn parse_executor_address(chain_id: u64) -> Result<Address, SimEncoderError> {
-    let key = format!("EXECUTOR_{chain_id}");
-    let raw = match std::env::var(&key) {
-        Ok(v) if !v.trim().is_empty() => v,
-        _ => return Err(SimEncoderError::MissingExecutorAddress { chain_id }),
-    };
-    let value = raw.trim();
-    let addr = Address::from_str(value).map_err(|_| SimEncoderError::InvalidExecutorAddress {
-        chain_id,
-        value: value.to_string(),
-    })?;
-    if addr == Address::zero() {
-        return Err(SimEncoderError::ZeroExecutorAddress { chain_id });
-    }
-    Ok(addr)
+    shared_rs::chains::resolve_executor_address(chain_id).map_err(|e| match e {
+        ExecutorAddrError::Missing { chain_id } => {
+            SimEncoderError::MissingExecutorAddress { chain_id }
+        }
+        ExecutorAddrError::Invalid { chain_id, value } => {
+            SimEncoderError::InvalidExecutorAddress { chain_id, value }
+        }
+        ExecutorAddrError::Zero { chain_id } => SimEncoderError::ZeroExecutorAddress { chain_id },
+    })
 }
 
 /// Parse a 20-byte EVM address from a string. Validates non-zero.

@@ -7,12 +7,12 @@ PR=90
 
 ## Valores reales confirmados
 
-VPS_SSH_HOST=195.201.235.70
+VPS_SSH_HOST=<VPS_IP>
 VPS_SSH_USER=root
 VPS_SSH_PORT=22
 VPS_DEPLOY_PATH=/opt/arbitragex-v2
-VPS_HEALTH_URL=http://195.201.235.70/status
-VPS_PUBLIC_URL=http://195.201.235.70
+VPS_HEALTH_URL=http://<VPS_IP>/status
+VPS_PUBLIC_URL=http://<VPS_IP>
 VPS_COMPOSE_FILE=docker/compose.prod.yml
 
 ## Estado Git en VPS

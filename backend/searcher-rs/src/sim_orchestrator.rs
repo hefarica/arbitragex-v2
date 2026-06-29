@@ -53,12 +53,16 @@
 //! `tokio::task::spawn_blocking` so the tokio worker thread is never
 //! parked on a blocking call — cs-validator finding 2026-05-12 applied.
 
-use ethers::abi::{encode, Token};
 use ethers::types::{Address, U256};
 use prioritization_spine::round_trip_executor::{RoundTripContext, SimulationOutcome};
-use prioritization_spine::swap_encoder::encode_v2_swap_exact_tokens_for_tokens;
 use thiserror::Error;
 use tracing::{debug, warn};
+
+// The promoted encoder is only invoked from the `v2-simulator` REVM path and
+// from this module's tests; gate the import so a `--no-default-features` build
+// stays free of unused-import warnings (mirrors the `Arc` import below).
+#[cfg(any(feature = "v2-simulator", test))]
+use prioritization_spine::execute_arbitrage_encoder::build_execute_arbitrage_calldata;
 
 #[cfg(feature = "v2-simulator")]
 use std::sync::Arc;
@@ -233,83 +237,6 @@ pub fn validate_context(ctx: &RoundTripContext) -> Result<(), RoundTripExecution
 }
 
 // ---------------------------------------------------------------------------
-// executeArbitrage calldata builder
-// ---------------------------------------------------------------------------
-
-/// First 4 bytes of `keccak256("executeArbitrage(bytes32,address,address,uint256,uint256,address[],bytes[])")`.
-///
-/// Verified against `contracts/src/ArbitrageExecutor.sol:199-207`. The
-/// selector is computed once at build time and validated in
-/// `tests::execute_arbitrage_selector_matches_known_hash`.
-pub const EXECUTE_ARBITRAGE_SELECTOR: [u8; 4] = [0x76, 0xd8, 0x1c, 0xdf];
-
-/// Build the calldata for a single `executeArbitrage(...)` invocation
-/// against the deployed `ArbitrageExecutor` contract.
-///
-/// The function pre-encodes BOTH leg payloads (forward + backward swap)
-/// at the call site. For a real multi-hop arbitrage this is incorrect at
-/// the byte level — the backward payload's `amountIn` slot is set to
-/// `min_profit_wei` as a non-zero sentinel rather than the (unknown)
-/// intermediate amount of `token_out`. This calldata is therefore
-/// SIMULATION-ONLY: the contract's swap will revert if the router
-/// receives an `amountIn` it cannot honour, and the orchestrator records
-/// `SIM_REVERT` honestly.
-///
-/// The full multi-step orchestrator that reads the intermediate amount
-/// between legs lands in Phase A.3.c.2.
-pub fn build_execute_arbitrage_calldata(
-    ctx: &RoundTripContext,
-    config: &RoundTripExecutionConfig,
-) -> Result<Vec<u8>, RoundTripExecutionError> {
-    let forward_payload = encode_v2_swap_exact_tokens_for_tokens(
-        ctx.amount_in,
-        U256::zero(), // amountOutMin=0 for sim; downstream gates enforce slippage
-        &ctx.forward_path,
-        config.executor_address, // recipient = the executor contract holding funds
-        ctx.deadline,
-    );
-    if forward_payload.is_empty() {
-        return Err(RoundTripExecutionError::EmptyForwardCalldata);
-    }
-    // Backward payload — note the SIMULATION-ONLY caveat above: the
-    // intermediate amount of token_out is unknown here. We use
-    // `min_profit_wei` as a non-zero placeholder so the calldata is not
-    // structurally empty. The contract's router call will almost
-    // certainly revert; the orchestrator records that revert honestly.
-    let backward_payload = encode_v2_swap_exact_tokens_for_tokens(
-        config.min_profit_wei,
-        U256::zero(),
-        &ctx.backward_path,
-        config.executor_address,
-        ctx.deadline,
-    );
-
-    // ABI-encode the executeArbitrage(...) arguments.
-    let routers = vec![
-        Token::Address(ctx.forward_router),
-        Token::Address(ctx.backward_router),
-    ];
-    let payloads = vec![
-        Token::Bytes(forward_payload.to_vec()),
-        Token::Bytes(backward_payload.to_vec()),
-    ];
-    let args = encode(&[
-        Token::FixedBytes(config.route_hash.to_vec()),
-        Token::Address(ctx.token_in),
-        Token::Address(ctx.token_out),
-        Token::Uint(ctx.amount_in),
-        Token::Uint(config.min_profit_wei),
-        Token::Array(routers),
-        Token::Array(payloads),
-    ]);
-
-    let mut calldata = Vec::with_capacity(4 + args.len());
-    calldata.extend_from_slice(&EXECUTE_ARBITRAGE_SELECTOR);
-    calldata.extend_from_slice(&args);
-    Ok(calldata)
-}
-
-// ---------------------------------------------------------------------------
 // REVM orchestrator
 // ---------------------------------------------------------------------------
 
@@ -340,7 +267,17 @@ pub fn execute_round_trip_revm(
         return failed_with(e);
     }
 
-    let calldata = match build_execute_arbitrage_calldata(ctx, config) {
+    // The encoder lives in `prioritization-spine` (single source of truth).
+    // Map its spine-local error back to the orchestrator's error type so the
+    // sim path's `fail_reason` semantics stay identical to before the move.
+    let calldata = match build_execute_arbitrage_calldata(
+        ctx,
+        config.route_hash,
+        config.min_profit_wei,
+        config.executor_address,
+    )
+    .map_err(|_| RoundTripExecutionError::EmptyForwardCalldata)
+    {
         Ok(c) => c,
         Err(e) => return failed_with(e),
     };
@@ -450,6 +387,7 @@ fn failed_with(e: RoundTripExecutionError) -> SimulationOutcome {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use prioritization_spine::execute_arbitrage_encoder::EXECUTE_ARBITRAGE_SELECTOR;
     use std::str::FromStr;
 
     fn addr(s: &str) -> Address {
@@ -619,25 +557,33 @@ mod tests {
     }
 
     // ── calldata builder tests ─────────────────────────────────────────────
-
-    #[test]
-    fn execute_arbitrage_selector_matches_known_hash() {
-        use ethers::utils::keccak256;
-        let signature =
-            b"executeArbitrage(bytes32,address,address,uint256,uint256,address[],bytes[])";
-        let hash = keccak256(signature);
-        assert_eq!(EXECUTE_ARBITRAGE_SELECTOR, hash[..4]);
-    }
+    // The selector self-test lives with the encoder in
+    // `prioritization_spine::execute_arbitrage_encoder`. These tests exercise
+    // the sim path's use of the promoted encoder through the shared signature.
 
     #[test]
     fn calldata_starts_with_correct_selector() {
-        let calldata = build_execute_arbitrage_calldata(&valid_ctx(), &valid_config()).unwrap();
+        let cfg = valid_config();
+        let calldata = build_execute_arbitrage_calldata(
+            &valid_ctx(),
+            cfg.route_hash,
+            cfg.min_profit_wei,
+            cfg.executor_address,
+        )
+        .unwrap();
         assert_eq!(&calldata[..4], &EXECUTE_ARBITRAGE_SELECTOR);
     }
 
     #[test]
     fn calldata_is_non_empty() {
-        let calldata = build_execute_arbitrage_calldata(&valid_ctx(), &valid_config()).unwrap();
+        let cfg = valid_config();
+        let calldata = build_execute_arbitrage_calldata(
+            &valid_ctx(),
+            cfg.route_hash,
+            cfg.min_profit_wei,
+            cfg.executor_address,
+        )
+        .unwrap();
         // Selector (4) + 7 statics × 32 bytes (head) + at least the dynamic
         // arrays' offsets and lengths. Bound is loose.
         assert!(calldata.len() > 4 + 7 * 32);
@@ -645,7 +591,14 @@ mod tests {
 
     #[test]
     fn calldata_encodes_route_hash_correctly() {
-        let calldata = build_execute_arbitrage_calldata(&valid_ctx(), &valid_config()).unwrap();
+        let cfg = valid_config();
+        let calldata = build_execute_arbitrage_calldata(
+            &valid_ctx(),
+            cfg.route_hash,
+            cfg.min_profit_wei,
+            cfg.executor_address,
+        )
+        .unwrap();
         // First 32 bytes after the selector are the routeHash word.
         assert_eq!(&calldata[4..36], &[1u8; 32]);
     }

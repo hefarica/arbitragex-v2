@@ -115,9 +115,22 @@ contract MockCurvePool {
     uint256 public constant MOCK_RATE = 1010; // 1.01 USDC per DAI (10 bps gain)
     uint256 public constant MOCK_DENOMINATOR = 1000;
 
-    function exchange(int128, int128, uint256 dx, uint256 min_dy) external returns (uint256 dy) {
+    // Coins registered by index, mirroring a real Curve pool. Without this the mock
+    // only returned a number; the adapter then had no tokenOut to forward and held
+    // residual tokenIn. A real exchange() pulls tokenIn and pays tokenOut to msg.sender.
+    address[2] public coins;
+
+    function setCoins(address c0, address c1) external {
+        coins[0] = c0;
+        coins[1] = c1;
+    }
+
+    function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) external returns (uint256 dy) {
         dy = (dx * MOCK_RATE) / MOCK_DENOMINATOR;
         require(dy >= min_dy, "MockCurvePool: slippage");
+        // Pull tokenIn (the adapter approved us) and pay tokenOut, as a real pool does.
+        MockERC20Adapter(coins[uint256(uint128(i))]).transferFrom(msg.sender, address(this), dx);
+        MockERC20Adapter(coins[uint256(uint128(j))]).transfer(msg.sender, dy);
     }
 
     function get_dy(int128, int128, uint256 dx) external pure returns (uint256) {
@@ -466,6 +479,9 @@ contract CurveAdapterTest is Test {
         dai = new MockERC20Adapter();
         usdc = new MockERC20Adapter();
         adapter = new CurveAdapter();
+
+        // Register coins so exchange() can move funds by index (i=0 dai, j=1 usdc).
+        pool.setCoins(address(dai), address(usdc));
 
         // Seed the pool with USDC so it can "pay out" on exchange
         usdc.mint(address(pool), 100_000e18);

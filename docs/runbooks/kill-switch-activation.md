@@ -32,7 +32,7 @@ Activate the kill-switch immediately when any of the following conditions are ob
 ```bash
 # Set environment
 export ARBX_ADMIN_TOKEN="<your-admin-token>"
-export API_URL="http://195.201.235.70:8080"
+export API_URL="http://<VPS_IP>:8080"
 
 # Arm the kill-switch with mandatory reason
 curl -s -X POST "${API_URL}/admin/killswitch" \
@@ -64,7 +64,7 @@ If the API server is down but Redis is accessible:
 
 ```bash
 # Connect to Redis
-redis-cli -h 195.201.235.70 -p 6379
+redis-cli -h <VPS_IP> -p 6379
 
 # Arm the kill-switch
 SET arbx:killswitch:enabled '{"enabled":true,"reason":"Emergency arm via Redis — API down","triggered_by":"operator:john-doe","updated_at":"2026-05-17T14:32:00Z"}'
@@ -128,7 +128,7 @@ Within 5 seconds of activation, the `arbx_execution_total{status="submitted"}` c
 
 ```bash
 # Query Prometheus
-curl -s "http://195.201.235.70:9090/api/v1/query?query=arbx_execution_total%7Bstatus%3D%22refused%22%7D" | jq '.data.result[0].value[1]'
+curl -s "http://<VPS_IP>:9090/api/v1/query?query=arbx_execution_total%7Bstatus%3D%22refused%22%7D" | jq '.data.result[0].value[1]'
 ```
 
 ## How to Deactivate

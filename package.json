@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "ArbitrageX v2 — npm workspace root (shared-ts, services, frontend, edge).",
+  "packageManager": "npm@10.8.2",
   "workspaces": [
     "shared-ts",
     "backend/selector-api",

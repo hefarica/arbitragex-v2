@@ -198,29 +198,45 @@ contract MockArbitrageExecutor {
     }
 }
 
-/// @dev Mock ArbitrageExecutor malicioso que intenta reentrar.
+/// @dev Mock ArbitrageExecutor malicioso que intenta reentrar durante el callback.
+///      `reentrySucceeded` stays false iff the re-entrant requestFlashLoan reverted
+///      (as it must — requestFlashLoan is EXECUTOR_ROLE-gated and this mock holds no
+///      role). `mintBack` lets the outer loan still repay if needed. setTarget/setToken/
+///      setMintBack break the constructor circular dependency (the executor needs this
+///      mock's address at init, before this mock can know the executor's address).
 contract MockReentrantArbitrageExecutor {
     FlashLoanExecutor public target;
     FLMockERC20 public token;
     bool public attacked;
     uint256 public attackCount;
+    bool public reentrySucceeded;
+    uint256 public mintBack;
 
     constructor(address _target) {
         target = FlashLoanExecutor(_target);
     }
+
+    function setTarget(address _t) external { target = FlashLoanExecutor(_t); }
+    function setToken(address _t) external { token = FLMockERC20(_t); }
+    function setMintBack(uint256 _m) external { mintBack = _m; }
 
     fallback() external {
         if (!attacked) {
             attacked = true;
             attackCount++;
 
-            // Intentar reentrar en el FlashLoanExecutor durante el callback
-            // Esto deberia ser bloqueado si hay reentrancy guard
+            // Attempt to re-enter the executor during the callback. MUST be blocked:
+            // requestFlashLoan is EXECUTOR_ROLE-gated and this mock holds no role.
             try target.requestFlashLoan(address(token), 1000, "") {
-                // No deberia llegar aqui
+                reentrySucceeded = true; // would signal a missing guard — must NOT happen
             } catch {
-                // Revert esperado
+                // expected: re-entry blocked
             }
+        }
+        // Optionally mint profit back to the caller (the FlashLoanExecutor) so the
+        // outer loan can repay (not required for a 0-fee loan already disbursed).
+        if (mintBack > 0 && address(token) != address(0)) {
+            token.mint(msg.sender, mintBack);
         }
     }
 }
@@ -346,9 +362,12 @@ contract FlashLoanInvariantTest is Test {
         proxy = new ERC1967Proxy(address(impl), initData);
         flashExec = FlashLoanExecutor(payable(address(proxy)));
 
-        // Grant roles
+        // Grant roles. NB: hoist EXECUTOR_ROLE() out of the call — Foundry binds
+        // vm.prank to the next external call, which would otherwise be EXECUTOR_ROLE(),
+        // leaving grantRole to run as the test contract (no admin role).
+        bytes32 execRoleId = flashExec.EXECUTOR_ROLE();
         vm.prank(admin);
-        flashExec.grantRole(flashExec.EXECUTOR_ROLE(), execRole);
+        flashExec.grantRole(execRoleId, execRole);
 
         // Configurar Balancer Vault como el zeroFeeProvider para que
         // receiveFlashLoan acepte callbacks desde el provider
@@ -358,6 +377,58 @@ contract FlashLoanInvariantTest is Test {
         // Configurar provider zero-fee
         vm.prank(admin);
         flashExec.setFlashLoanProvider(address(zeroFeeProvider));
+
+        // Exclude the shared mock token from the invariant fuzz target set. Without
+        // this, Foundry fuzzes FLMockERC20.mint directly and drives totalSupply to
+        // ~uint256.max, making the self-contained token.mint(...) inside each
+        // invariant_* overflow (panic 0x11). Targeting the executor proxy instead is
+        // not viable — it exposes only fallback(), yielding "No contracts to fuzz".
+        excludeContract(address(token));
+    }
+
+    // =========================================================================
+    // Reentrancy: a malicious arbitrageExecutor that re-enters during the callback
+    // is BLOCKED, and the outer loan still repays. This WIRES
+    // MockReentrantArbitrageExecutor as the LIVE executor — previously it was
+    // constructed (with target=address(0)) but never used, so reentrancy was never
+    // actually exercised (the prior invariant_I6 try/catch passed either way).
+    // =========================================================================
+    function test_ReentrantExecutorIsBlocked_LoanStillRepays() public {
+        uint256 amount = 1_000e18;
+
+        // Provider that calls back the NEW executor (0% fee, Balancer-style).
+        MockZeroFeeProvider provider2 = new MockZeroFeeProvider(address(0));
+        provider2.setToken(address(token));
+
+        // FlashLoanExecutor whose arbitrageExecutor IS the malicious reentrant mock.
+        FlashLoanExecutor impl2 = new FlashLoanExecutor();
+        bytes memory initData2 = abi.encodeWithSelector(
+            FlashLoanExecutor.initialize.selector, admin, address(aavePool), address(reentrantArbExec)
+        );
+        FlashLoanExecutor flashExec2 =
+            FlashLoanExecutor(payable(address(new ERC1967Proxy(address(impl2), initData2))));
+
+        // Point the mock back at this executor (closes the constructor circular dep).
+        // mintBack left 0: the 0-fee loan repays from the already-disbursed amount.
+        reentrantArbExec.setTarget(address(flashExec2));
+        reentrantArbExec.setToken(address(token));
+
+        bytes32 execRoleId = flashExec2.EXECUTOR_ROLE();
+        vm.startPrank(admin);
+        flashExec2.grantRole(execRoleId, execRole);
+        flashExec2.setBalancerVault(address(provider2));
+        flashExec2.setFlashLoanProvider(address(provider2));
+        vm.stopPrank();
+
+        // If reentrancy were NOT blocked, or the loan failed to repay, this reverts.
+        vm.prank(execRole);
+        flashExec2.requestFlashLoan(address(token), amount, abi.encodeWithSignature("noop()"));
+
+        // The malicious executor's callback ran and attempted re-entry...
+        assertTrue(reentrantArbExec.attacked(), "executor callback must have executed");
+        assertEq(reentrantArbExec.attackCount(), 1, "exactly one attack attempt");
+        // ...but the re-entrant requestFlashLoan was blocked (EXECUTOR_ROLE gate).
+        assertFalse(reentrantArbExec.reentrySucceeded(), "re-entry must be blocked");
     }
 
     // =========================================================================

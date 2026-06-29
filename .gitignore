@@ -104,3 +104,5 @@ OMEGA_S5_*_DELIVERY*.zip
 scripts/extract-skills.js
 .claude/skills/skill-667-applied-education-technology-and-learning-sciences/
 .claude/skills/arbitragex-omega-supreme-agent/references/567-skills-catalog.md
+.env.enc
+ArbitrageX_Secrets_Config.xlsx

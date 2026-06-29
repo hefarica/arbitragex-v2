@@ -27,7 +27,7 @@ Kimi receives a fully operational GitHub channel. No infrastructure needs to be 
 | Bootstrap script | ✅ Ready | `kimi_github_channel_bootstrap.sh` |
 | 13 CI/CD workflows | ✅ Active | Already in `.github/workflows/` |
 | 16 GitHub Actions secrets | ✅ Configured | Rotated with cryptographic RNG |
-| VPS SSH public key | ✅ Installed | On `195.201.235.70` |
+| VPS SSH public key | ✅ Installed | On `<VPS_IP>` |
 | deploy-vps.yml | ✅ Hardened | Internal healthcheck via SSH |
 | PR #90 | ✅ 13/13 GREEN | Blocked only by review requirement |
 
@@ -177,7 +177,7 @@ mergeStateStatus:   BLOCKED
 reviewDecision:     REVIEW_REQUIRED
 mergeable:          MERGEABLE
 Secrets:            16/16 configured (9 rotated with crypto RNG)
-VPS SSH Key:        Installed on 195.201.235.70
+VPS SSH Key:        Installed on <VPS_IP>
 Deploy workflow:    Hardened with internal SSH healthcheck
 ```
 

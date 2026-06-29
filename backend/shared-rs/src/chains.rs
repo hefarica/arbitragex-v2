@@ -5,6 +5,9 @@
 //! change extremely rarely and have strong audit requirements. Any addition
 //! must be reviewed.
 
+use ethers::types::Address;
+use std::str::FromStr;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RouterKind {
     UniswapV2,
@@ -231,6 +234,50 @@ pub fn router_addresses_hex_for_chain(chain_id: u64) -> Vec<String> {
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// Executor address resolution
+// ---------------------------------------------------------------------------
+
+/// Typed error for `resolve_executor_address`. Mirrors the three executor
+/// rejection paths so callers can map each variant to a stable, fail-closed
+/// reason. No silent fallbacks: a missing, unparsable, or zero env value each
+/// produces a distinct error variant.
+#[derive(Debug, thiserror::Error, PartialEq)]
+pub enum ExecutorAddrError {
+    #[error("EXECUTOR_{chain_id} env var not set")]
+    Missing { chain_id: u64 },
+
+    #[error("EXECUTOR_{chain_id} env var value cannot parse as address: {value}")]
+    Invalid { chain_id: u64, value: String },
+
+    #[error("EXECUTOR_{chain_id} env var resolves to the zero address")]
+    Zero { chain_id: u64 },
+}
+
+/// Resolve the deployed `ArbitrageExecutor` proxy address for a chain from the
+/// `EXECUTOR_<chain_id>` environment variable, parsed to a non-zero `Address`.
+///
+/// NO hardcoded fallback addresses; NO test/dummy defaults. Every chain that
+/// participates in the executor wire must export this env var explicitly.
+/// Missing, invalid, or zero values all reject fail-closed with a typed
+/// `ExecutorAddrError` variant.
+pub fn resolve_executor_address(chain_id: u64) -> Result<Address, ExecutorAddrError> {
+    let key = format!("EXECUTOR_{chain_id}");
+    let raw = match std::env::var(&key) {
+        Ok(v) if !v.trim().is_empty() => v,
+        _ => return Err(ExecutorAddrError::Missing { chain_id }),
+    };
+    let value = raw.trim();
+    let addr = Address::from_str(value).map_err(|_| ExecutorAddrError::Invalid {
+        chain_id,
+        value: value.to_string(),
+    })?;
+    if addr == Address::zero() {
+        return Err(ExecutorAddrError::Zero { chain_id });
+    }
+    Ok(addr)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,5 +405,51 @@ mod tests {
                 "unknown chain_id={chain_id} should fall back to reorg_buffer=12, got {buf}",
             );
         }
+    }
+
+    // ---- resolve_executor_address fail-closed matrix --------------------------
+
+    /// Unset `EXECUTOR_<chain_id>` rejects with `Missing` (no hardcoded default).
+    #[test]
+    fn executor_missing_rejected() {
+        std::env::remove_var("EXECUTOR_8999");
+        let err = resolve_executor_address(8999).unwrap_err();
+        assert_eq!(err, ExecutorAddrError::Missing { chain_id: 8999 });
+    }
+
+    /// A non-address env value rejects with `Invalid` carrying the raw value.
+    #[test]
+    fn executor_invalid_rejected() {
+        std::env::set_var("EXECUTOR_8998", "not_an_address");
+        let err = resolve_executor_address(8998).unwrap_err();
+        assert!(matches!(err, ExecutorAddrError::Invalid { chain_id: 8998, .. }));
+        std::env::remove_var("EXECUTOR_8998");
+    }
+
+    /// The zero address rejects with `Zero` (never a valid executor).
+    #[test]
+    fn executor_zero_rejected() {
+        std::env::set_var(
+            "EXECUTOR_8997",
+            "0x0000000000000000000000000000000000000000",
+        );
+        let err = resolve_executor_address(8997).unwrap_err();
+        assert_eq!(err, ExecutorAddrError::Zero { chain_id: 8997 });
+        std::env::remove_var("EXECUTOR_8997");
+    }
+
+    /// A valid non-zero address parses and round-trips.
+    #[test]
+    fn executor_valid_resolves() {
+        std::env::set_var(
+            "EXECUTOR_8996",
+            "0x1234567890123456789012345678901234567890",
+        );
+        let addr = resolve_executor_address(8996).unwrap();
+        assert_eq!(
+            addr,
+            Address::from_str("0x1234567890123456789012345678901234567890").unwrap()
+        );
+        std::env::remove_var("EXECUTOR_8996");
     }
 }

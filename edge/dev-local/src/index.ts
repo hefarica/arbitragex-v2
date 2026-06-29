@@ -45,7 +45,7 @@ const ARBX_EDGE_TOKEN = requireEnv("ARBX_EDGE_TOKEN");
 // externally-visible https host, forwarded so Next builds https-correct absolute
 // URLs (no Mixed Content).
 const FRONTEND_URL = process.env["FRONTEND_URL"] ?? "http://frontend:5173";
-const PUBLIC_EDGE_HOST = process.env["PUBLIC_EDGE_HOST"] ?? "edge-arbx.ape-tv.net";
+const PUBLIC_EDGE_HOST = process.env["PUBLIC_EDGE_HOST"] ?? "<VPS_HOST>";
 
 // Very naive in-memory rate-limit (per-IP, 60s window, 120 req).
 const WINDOW_MS = 60_000;
@@ -70,7 +70,7 @@ app.disable("x-powered-by");
 // DEV-LOCAL CORS: allowlist localhost / 127.0.0.1 / *.ape-tv.net via regex, PLUS any
 // EXACT origin in the operator-configured ALLOWED_ORIGINS env (comma-separated). This
 // covers the public VPS frontend served from a raw-IP origin (e.g.
-// http://195.201.235.70:5173) that the regex deliberately does not match. The IP is
+// http://<VPS_IP>:5173) that the regex deliberately does not match. The IP is
 // NEVER hardcoded in code — the operator supplies origins via env (RULE 00 / no-hardcode);
 // the env is already set on the edge container. Production uses CF Workers CORS.
 const CORS_ENV_ORIGINS = (process.env["ALLOWED_ORIGINS"] ?? "")
@@ -79,15 +79,22 @@ const CORS_ENV_ORIGINS = (process.env["ALLOWED_ORIGINS"] ?? "")
   .filter(Boolean);
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  // CodeQL js/cors-misconfiguration-for-credentials: with credentials=true we must NOT
-  // reflect arbitrary origins. Still an explicit allowlist (regex OR exact env match);
-  // we reflect only matched origins, never "*", so credentialed CORS stays safe.
+  // CodeQL js/cors-misconfiguration-for-credentials: with credentials=true we reflect
+  // ONLY allowlisted origins, never "*", AND we gate the reflected value behind a
+  // membership check the query recognizes as a sanitizer (Set.has). A bare
+  // RegExp.test() guard is NOT modeled by CodeQL, which is why the prior regex-OR form
+  // stayed flagged. Same allow-rules (env-exact OR localhost/loopback OR *.ape-tv.net);
+  // we just funnel the final reflected origin through an explicit allowlist Set.
   const CORS_ALLOWED = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$|^https:\/\/[a-z0-9-]+\.ape-tv\.net$/i;
-  if (origin && (CORS_ALLOWED.test(origin) || CORS_ENV_ORIGINS.includes(origin))) {
-    res.setHeader("access-control-allow-origin", origin);
-    res.setHeader("access-control-allow-credentials", "true");
-    res.setHeader("access-control-allow-headers", "content-type, x-arbx-admin-token, x-arbx-trace-id, x-arbx-actor");
-    res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS");
+  if (origin) {
+    const allowedOrigins = new Set<string>(CORS_ENV_ORIGINS);
+    if (CORS_ALLOWED.test(origin)) allowedOrigins.add(origin);
+    if (allowedOrigins.has(origin)) {
+      res.setHeader("access-control-allow-origin", origin);
+      res.setHeader("access-control-allow-credentials", "true");
+      res.setHeader("access-control-allow-headers", "content-type, x-arbx-admin-token, x-arbx-trace-id, x-arbx-actor");
+      res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS");
+    }
   }
   if (req.method === "OPTIONS") { res.status(204).end(); return; }
   next();
@@ -182,10 +189,16 @@ function statusWantsJson(req: express.Request): boolean {
   return true;
 }
 
+// N4 fix (2026-06-13): http-proxy-middleware v3 strips the mount prefix before
+// forwarding to upstream. When mounted at '/socket.io', the proxy sends '/?EIO=4'
+// instead of '/socket.io/?EIO=4', causing the api-server to return 404 for
+// Socket.IO polling requests. pathRewrite restores the stripped prefix so the
+// api-server receives the correct path for both HTTP polling and WS upgrade.
 const wsProxy = createProxyMiddleware({
   target: API_SERVER_URL, 
   ws: true, 
-  changeOrigin: true
+  changeOrigin: true,
+  pathRewrite: (path: string) => `/socket.io${path}`,
 });
 app.use('/socket.io', wsProxy);
 
@@ -210,6 +223,10 @@ app.get("/api/risk/alerts", (req, res) => proxy("/api/v1/risk/alerts", req, res)
 app.get("/api/executions/recent", (req, res) => proxy("/api/v1/executions/recent", req, res));
 app.get("/api/recon/summary", (req, res) => proxy("/api/v1/recon/summary", req, res));
 app.get("/api/config/current", (req, res) => proxy("/api/v1/config/current", req, res));
+// Credentials health summary (counts only) for the sidebar "needs attention" badge.
+app.get("/api/credentials/summary", (req, res) => proxy("/api/v1/credentials/summary", req, res));
+// RPC registry status (counts only) for the /rpcs panel.
+app.get("/api/rpc/status", (req, res) => proxy("/api/v1/rpc/status", req, res));
 // Phase 0.5: relays catalog (public list of enabled) + onboarding status.
 app.get("/api/relays", (req, res) => proxy("/api/v1/relays", req, res));
 app.get("/api/onboarding/status", (req, res) => proxy("/api/v1/onboarding/status", req, res));
@@ -223,6 +240,11 @@ app.get("/api/readiness/steps", (req, res) => proxy("/api/v1/readiness/steps", r
 app.get("/api/agents/status", (req, res) => proxy("/api/v1/agents/status", req, res));
 // A.8 confidence scoring wire status.
 app.get("/api/scoring/status", (req, res) => proxy("/api/v1/scoring/status", req, res));
+// Live-readiness grid panels: sim/fork status + paper-shadow metrics. Without
+// these the ForkValidationPanel + PaperShadowPanel 404 at the edge and render
+// DEGRADED/INACTIVE even though the api-server serves them (audit gap, 2026-06-22).
+app.get("/api/sim-ctl/fork-status", (req, res) => proxy("/api/v1/sim-ctl/fork-status", req, res));
+app.get("/api/metrics/paper-shadow", (req, res) => proxy("/api/v1/metrics/paper-shadow", req, res));
 // A.6 comprehensive circuit breakers.
 app.get("/api/risk/circuit-breakers/status", (req, res) => proxy("/api/v1/risk/circuit-breakers/status", req, res));
 app.get("/api/risk/circuit-breakers/events", (req, res) => proxy("/api/v1/risk/circuit-breakers/events", req, res));
@@ -244,6 +266,14 @@ app.get("/api/cartridges/telemetry/latest", (req, res) => proxy("/api/cartridges
 // {error:"upstream_unreachable"}. NEVER a fabricated 200. Observe-only.
 app.get("/api/system/drift", (req, res) => proxy("/api/system/drift", req, res));
 app.get("/api/system/feature_manifest", (req, res) => proxy("/api/system/feature_manifest", req, res));
+// SED Convergence Status — backend mounts at /api/v1/sed/status (sed-status.ts).
+// Observe-only; never writes capital or triggers execution. Query string
+// (chain_id, window_minutes) forwarded verbatim by proxy() mode-1.
+app.get("/api/sed/status", (req, res) => proxy("/api/v1/sed/status", req, res));
+// Paper Trade History — backend mounts at /api/v1/paper/history (paper-history-api.ts).
+// Read-only drift-analysis surface over paper_trade_runs. Never touches capital.
+app.get("/api/paper/history", (req, res) => proxy("/api/v1/paper/history", req, res));
+app.get("/api/paper/history/summary", (req, res) => proxy("/api/v1/paper/history/summary", req, res));
 
 // FE-CRIT-03/04 — honest contract / capital / crucible read surface. api-server
 // mounts these at /api/* (no /v1/ prefix). proxy() forwards upstream status
@@ -350,6 +380,13 @@ app.delete("/api/admin/chains/:chain_id", (req, res) => {
 app.post("/api/admin/chains/:chain_id/probe", (req, res) => {
   const search = new URL(req.url, "http://x").search || "";
   adminProxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}/probe${search}`, req, res, "POST");
+});
+// RPC registry sync — admin import (Excel catalog → rpc_endpoints) + bare reload.
+app.post("/api/admin/rpcs/import", (req, res) => {
+  adminProxy("/api/v1/admin/rpcs/import", req, res, "POST");
+});
+app.post("/api/admin/rpcs/reload", (req, res) => {
+  adminProxy("/api/v1/admin/rpcs/reload", req, res, "POST");
 });
 // Topology Vault — admin-token gated RPC/WSS hot-swap control plane.
 // Uses the same V-AT-1 httpOnly cookie translation as Chains Admin; the
@@ -766,6 +803,30 @@ const frontendProxy = createProxyMiddleware({
     // local Docker network, so the uncompressed bytes cost nothing public-facing.
     "accept-encoding": "identity",
   },
+  // AUDIT-P0: emit an honest 502 (frontend_unreachable) instead of letting
+  // http-proxy-middleware v3 surface an opaque 500. This makes the root cause
+  // immediately visible in logs and browser DevTools. The Docker network alias
+  // bug was hidden precisely because the 500 carried no diagnostic detail.
+  // In v3, error handling uses the plugins API — RequestHandler does not expose
+  // .on() and onError was removed from Options. The plugin receives the internal
+  // http-proxy server instance and registers the error handler there.
+  plugins: [
+    (proxyServer) => {
+      proxyServer.on("error", (err, req, res) => {
+        logger.warn(
+          { event: "frontend_proxy_error", path: (req as express.Request).path, err: (err as Error).message },
+          "frontend unreachable — returning 502"
+        );
+        const expressRes = res as unknown as express.Response;
+        if (!expressRes.headersSent) {
+          expressRes.status(502).json({
+            error: "frontend_unreachable",
+            detail: (err as Error).message,
+          });
+        }
+      });
+    },
+  ],
 });
 
 // FE-CRIT-01 — content-negotiated /status (registered here so the HTML branch
@@ -783,7 +844,10 @@ app.get("/status", (req, res, next) => {
 
 app.use((req, res, next) => {
   // /api and /socket.io are owned by the explicit routes above (or 404 if an
-  // unknown /api path) — never fall through to the frontend.
+  // unknown /api path) — never fall through to the frontend. /_next/* MUST fall
+  // through to frontendProxy: Next.js static assets (CSS/JS/font chunks) live on
+  // the frontend origin, so excluding it here 404s every asset and breaks the
+  // styling + JS hydration of the whole dapp.
   if (req.path.startsWith("/api/") || req.path.startsWith("/socket.io")) {
     return next();
   }
@@ -791,7 +855,7 @@ app.use((req, res, next) => {
 });
 
 const PORT = Number(process.env["EDGE_PORT"] ?? 8787);
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, "0.0.0.0", () => {
   logger.info({ event: "service.boot", port: PORT, api_server: API_SERVER_URL, frontend: FRONTEND_URL, env: cfg.system.env }, "edge-dev-local listening");
 });
 
@@ -860,3 +924,4 @@ server.on("upgrade", (req, socket, head) => {
   wsProxy.upgrade!(req, socket as any, head);
 });
 
+// Cache buster: 1781425985

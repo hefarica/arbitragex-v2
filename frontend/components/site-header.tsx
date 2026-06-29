@@ -11,9 +11,10 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { SidebarContents } from "@/components/app-sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { QuantumLogo } from "@/components/quantum-logo";
+import { WebSocketIndicator } from "@/components/WebSocketIndicator";
 import { cn } from "@/lib/utils";
 
-export function SiteHeader() {
+export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
@@ -50,7 +51,7 @@ export function SiteHeader() {
               </SheetTitle>
             </SheetHeader>
             <div className="flex flex-col gap-6 px-3 pb-6">
-              <SidebarContents onNavigate={() => setMobileOpen(false)} />
+              <SidebarContents paperMode={paperMode} onNavigate={() => setMobileOpen(false)} />
             </div>
           </SheetContent>
         </Sheet>
@@ -72,11 +73,12 @@ export function SiteHeader() {
           </div>
         </Link>
 
-        <Badge variant="info" className="hidden sm:inline-flex">
-          <span className="size-1.5 rounded-full bg-info" aria-hidden /> ghost-protocol
+        <Badge variant="glass" className="hidden sm:inline-flex">
+          <span className="size-1.5 rounded-full bg-current opacity-80" aria-hidden /> ghost-protocol
         </Badge>
 
         <div className="ml-auto flex items-center gap-2">
+          <WebSocketIndicator />
           <code className="hidden md:inline-flex rounded-md border bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground">
             {isMounted ? getApiBaseUrl() : "—"}
           </code>

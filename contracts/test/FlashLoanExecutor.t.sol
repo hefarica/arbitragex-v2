@@ -155,6 +155,37 @@ contract FlashLoanExecutorTest is Test {
     }
 
     // -----------------------------------------------------------------------
+    // testReceiveFlashLoan_Balancer_HappyPath_RepaysVault
+    //
+    // Balancer V2 callback happy path (0% fee): called by the authorised Vault, the
+    // executor invokes the arbitrageExecutor and repays the loan to the Vault. Closes
+    // the gap noted in the audit (FlashLoanExecutor.t.sol had only revert-path
+    // receiveFlashLoan tests, no success round-trip).
+    // -----------------------------------------------------------------------
+    function testReceiveFlashLoan_Balancer_HappyPath_RepaysVault() public {
+        uint256 amount = 1_000e18;
+
+        // receiveFlashLoan's Layer-3 guard requires a provider to be configured.
+        flashExec.setFlashLoanProvider(address(mockVault));
+
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(token));
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = amount;
+        uint256[] memory feeAmounts = new uint256[](1);
+        feeAmounts[0] = 0; // Balancer V2 = 0 fee
+
+        uint256 vaultBefore = token.balanceOf(address(mockVault));
+
+        // Called by the authorised Balancer Vault (msg.sender == balancerVault).
+        vm.prank(address(mockVault));
+        flashExec.receiveFlashLoan(tokens, amounts, feeAmounts, "");
+
+        assertTrue(arbExec.wasCalled(), "arbitrageExecutor must be invoked");
+        assertEq(token.balanceOf(address(mockVault)) - vaultBefore, amount, "vault must be repaid the loan");
+    }
+
+    // -----------------------------------------------------------------------
     // testReceiveFlashLoan_RejectsUnauthorized
     // SC-3: expect FL_UnauthorizedCaller custom error instead of string
     // -----------------------------------------------------------------------
@@ -284,6 +315,76 @@ contract FlashLoanExecutorTest is Test {
         flashExec.requestFlashLoan(address(token), 100e18, "");
 
         assertEq(pool.lastReferralCode(), 55, "pool must receive the configured referral code");
+    }
+
+    // -----------------------------------------------------------------------
+    // Malicious init: the proxy initializes exactly once, and the bare
+    // implementation is permanently locked by the constructor's
+    // _disableInitializers(). Both must revert on a second / direct initialize.
+    // -----------------------------------------------------------------------
+    function testInit_DoubleInitializeReverts() public {
+        vm.expectRevert(); // Initializable: InvalidInitialization
+        flashExec.initialize(admin, address(pool), address(arbExec));
+    }
+
+    function testInit_BareImplementationIsLocked() public {
+        FlashLoanExecutor impl = new FlashLoanExecutor();
+        vm.expectRevert(); // _disableInitializers() in the constructor locks the impl
+        impl.initialize(admin, address(pool), address(arbExec));
+    }
+
+    // -----------------------------------------------------------------------
+    // receiveFlashLoan array edges. The callback reads tokens[0]/amounts[0]/
+    // feeAmounts[0] after authenticating the Vault. Empty or shorter arrays
+    // therefore revert on out-of-bounds access; a multi-element array is silently
+    // TRUNCATED to element 0 (length is not validated — a length==1 guard is a
+    // deferred src hardening, documented here so the truncation is not mistaken
+    // for multi-asset support).
+    // -----------------------------------------------------------------------
+    function testReceiveFlashLoan_EmptyArraysRevert() public {
+        flashExec.setFlashLoanProvider(address(mockVault)); // satisfy Layer-3 guard
+        IERC20[] memory tokens = new IERC20[](0);
+        uint256[] memory amounts = new uint256[](0);
+        uint256[] memory feeAmounts = new uint256[](0);
+        vm.prank(address(mockVault));
+        vm.expectRevert(); // out-of-bounds: tokens[0] on an empty array
+        flashExec.receiveFlashLoan(tokens, amounts, feeAmounts, "");
+    }
+
+    function testReceiveFlashLoan_ShorterAmountsArrayReverts() public {
+        flashExec.setFlashLoanProvider(address(mockVault));
+        IERC20[] memory tokens = new IERC20[](1);
+        tokens[0] = IERC20(address(token));
+        uint256[] memory amounts = new uint256[](0); // mismatched length
+        uint256[] memory feeAmounts = new uint256[](1);
+        feeAmounts[0] = 0;
+        vm.prank(address(mockVault));
+        vm.expectRevert(); // out-of-bounds: amounts[0] on an empty array
+        flashExec.receiveFlashLoan(tokens, amounts, feeAmounts, "");
+    }
+
+    function testReceiveFlashLoan_MultiElementArrayProcessesOnlyFirst() public {
+        flashExec.setFlashLoanProvider(address(mockVault));
+        uint256 first = 1_000e18;
+        uint256 second = 2_000e18;
+
+        IERC20[] memory tokens = new IERC20[](2);
+        tokens[0] = IERC20(address(token));
+        tokens[1] = IERC20(address(token));
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = first;
+        amounts[1] = second;
+        uint256[] memory feeAmounts = new uint256[](2);
+        feeAmounts[0] = 0;
+        feeAmounts[1] = 0;
+
+        uint256 vaultBefore = token.balanceOf(address(mockVault));
+        vm.prank(address(mockVault));
+        flashExec.receiveFlashLoan(tokens, amounts, feeAmounts, "");
+
+        // Only element 0 is processed: the Vault is repaid `first`, never first+second.
+        assertTrue(arbExec.wasCalled(), "arbitrageExecutor invoked once");
+        assertEq(token.balanceOf(address(mockVault)) - vaultBefore, first, "only amounts[0] repaid (rest truncated)");
     }
 
     // -----------------------------------------------------------------------
@@ -491,5 +592,52 @@ contract FlashLoanExecutorTest is Test {
         // Layer 3 (flashLoanProvider == address(0)) must fire FL_NoProviderConfigured.
         vm.expectRevert(FL_NoProviderConfigured.selector);
         mockVault.triggerFlashLoan(address(flashExec), IERC20(address(token)), 1_000e18, "");
+    }
+
+    // =========================================================================
+    // Decision-free hardening (re-discovered post-burst): the requestFlashLoan
+    // EXECUTOR_ROLE gate + revoke lifecycle + referralCode max boundary. The
+    // access gate had ZERO explicit revert coverage (only an invariant try/catch
+    // swallow). Tests only — no src change.
+    // =========================================================================
+
+    // requestFlashLoan is onlyRole(EXECUTOR_ROLE): an attacker without the role
+    // cannot trigger a flash loan — the gate rejects before any pool call.
+    function testRequestFlashLoan_RevertsForNonExecutor() public {
+        vm.expectRevert(); // AccessControlUnauthorizedAccount (missing EXECUTOR_ROLE)
+        vm.prank(attacker);
+        flashExec.requestFlashLoan(address(token), 100e18, "");
+        assertEq(pool.lastAmount(), 0, "no pool call must have happened");
+    }
+
+    // EXECUTOR_ROLE revoke lifecycle: a holder can request, but once admin revokes
+    // the role the same caller is blocked and the request never reaches the pool.
+    function testExecutorRole_RevokeBlocksRequestFlashLoan() public {
+        // executorRole (granted in setUp) can request — legacy pool path records it.
+        vm.prank(executorRole);
+        flashExec.requestFlashLoan(address(token), 100e18, "");
+        assertEq(pool.lastAmount(), 100e18, "executor request must reach the pool");
+
+        // Admin (DEFAULT_ADMIN_ROLE) revokes EXECUTOR_ROLE.
+        flashExec.revokeRole(flashExec.EXECUTOR_ROLE(), executorRole);
+
+        // The same caller can no longer request.
+        vm.expectRevert();
+        vm.prank(executorRole);
+        flashExec.requestFlashLoan(address(token), 200e18, "");
+        // The blocked request must not have reached the pool (lastAmount unchanged).
+        assertEq(pool.lastAmount(), 100e18, "revoked caller must not reach the pool");
+    }
+
+    // The uint16 referralCode (packed into slot 1 with arbitrageExecutor) survives
+    // the full legacy path at its maximum value type(uint16).max.
+    function testRequestFlashLoan_MaxReferralCodeReachesPool() public {
+        flashExec.setReferralCode(type(uint16).max); // admin-only
+
+        vm.prank(executorRole);
+        flashExec.requestFlashLoan(address(token), 100e18, "");
+
+        assertEq(flashExec.referralCode(), type(uint16).max, "stored referralCode == max");
+        assertEq(pool.lastReferralCode(), type(uint16).max, "max referralCode must reach the pool");
     }
 }

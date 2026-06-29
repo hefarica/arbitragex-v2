@@ -6,6 +6,7 @@ import { ScoredOpportunitiesArchiver } from "./routes/scored-opportunities-archi
 import { RouteDiscoveryOutcomeSink, outcomeSinkEnabled } from "./routes/route-discovery-outcome-sink.js";
 import { OpportunitiesBridgeArchiver, opportunitiesBridgeEnabled } from "./routes/opportunities-bridge-archiver.js";
 import { buildRouteDiscoveryOutcomesRouter } from "./routes/route-discovery-outcomes-api.js";
+import { buildPaperHistoryRouter } from "./routes/paper-history-api.js";
 import { buildOperatorRouter } from "./routes/operator.js";
 import { buildCartridgeForgeRouter } from "./routes/cartridge-forge.js";
 import { z } from "zod";
@@ -100,6 +101,11 @@ import { mountReadinessExtras } from "./routes/readiness-extras.js";
 import { mountReadinessSteps } from "./routes/readiness-steps.js";
 import { mountAgentsStatus } from "./routes/agents-status.js";
 import { mountScoringStatus } from "./routes/scoring-status.js";
+import { mountPaperShadowMetrics } from "./routes/paper-shadow-metrics.js";
+import { mountForkStatus } from "./routes/fork-status.js";
+import { mountRpcRegistry } from "./routes/rpc-registry.js";
+import { mountOpportunitySimulate } from "./routes/opportunity-simulate.js";
+import { mountAlertmanagerWebhook } from "./routes/alertmanager-webhook.js";
 import { mountRiskCircuitBreakers } from "./routes/risk-circuit-breakers.js";
 import { mountAdminChains } from "./routes/admin-chains.js";
 import { mountSedStatus } from "./routes/sed-status.js";
@@ -528,6 +534,24 @@ mountAdminChains(app, {
   logger,
 });
 
+// ── Code-brechas (paper-shadow) — real handlers that SHADOW the A8 stubs and add
+// the two missing live-readiness panel endpoints. Mounted here (well before
+// mountStubs at the bottom of this file) so Express dispatches these real handlers
+// instead of the 501 stubs. All fail-honest; paper-safe; zero capital.
+// See docs/superpowers/specs/2026-06-14-arbx-code-brechas-design.md
+mountPaperShadowMetrics(app, { pool, logger });
+mountForkStatus(app, { logger });
+mountOpportunitySimulate(app, { logger });
+// RPC registry sync (Excel catalog → rpc_endpoints): public status + admin import/reload.
+// status is counts-only (ungated); import/reload are requireAdminToken-gated.
+mountRpcRegistry(app, { pool, redis, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN, logger });
+mountAlertmanagerWebhook(app, {
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
+  writeAudit,
+  logger,
+});
+
 app.use(buildTopologyVaultRouter({
   redis,
   requireAdminToken,
@@ -551,6 +575,9 @@ app.use(buildCartridgesRouter(cartridgeTelemetryCache));
 // table (the shadow outcomes the sink persists, incl. the Paso 9 `reason`). This is
 // the missing READ side for that passive sink. NO-ACTIVE: pure SELECT, never writes.
 app.use(buildRouteDiscoveryOutcomesRouter(pool));
+// FASE OMEGA SHADOW — paper_trade_runs read-side (drift-analysis surface).
+// 100% read-only / NO-ACTIVE: pure SELECT, never touches capital or execution.
+app.use(buildPaperHistoryRouter(pool));
 
 // Enterprise-audit follow-up: mount control-plane routers that were built but never
 // mounted, gating auth INTERNALLY. operator (requireOperatorRole per route; relative
@@ -681,9 +708,9 @@ app.get("/api/v1/recon/summary", async (req, res) => {
     const [agg, top, anomalies] = await Promise.all([
       p.query(
         `SELECT COUNT(*)::int AS total,
-                SUM(CASE WHEN status='included' THEN 1 ELSE 0 END)::int AS included,
-                SUM(CASE WHEN status='reverted' THEN 1 ELSE 0 END)::int AS reverted,
-                SUM(CASE WHEN status='dropped'  THEN 1 ELSE 0 END)::int AS dropped,
+                COALESCE(SUM(CASE WHEN status='included' THEN 1 ELSE 0 END), 0)::int AS included,
+                COALESCE(SUM(CASE WHEN status='reverted' THEN 1 ELSE 0 END), 0)::int AS reverted,
+                COALESCE(SUM(CASE WHEN status='dropped'  THEN 1 ELSE 0 END), 0)::int AS dropped,
                 AVG(CASE WHEN status='included' AND actual_profit_usd IS NOT NULL
                          THEN actual_profit_usd END)::float           AS avg_pnl_included_usd,
                 AVG(CASE WHEN confirmed_at IS NOT NULL
@@ -877,6 +904,10 @@ app.put("/admin/relays/:id", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, re
   );
   await writeAudit("relay.update", actor, "relay", req.params.id ?? "",
                    existing, parsed.data, req.ip ?? null, (req as any).traceId ?? null, reqUA(req));
+  // Respond with the updated row. Without this the handler completed the UPDATE +
+  // audit but never sent a response, so the request hung until the proxy/client
+  // timed out (the relay-catalog admin flow was silently dead).
+  res.status(200).json(q.rows[0]);
 });
 
 // Paper mode admin endpoint.
@@ -1551,3 +1582,4 @@ const shutdown = async (sig: string) => {
 };
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
+// Cache buster: 1781425985

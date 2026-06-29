@@ -7,15 +7,19 @@ pragma solidity ^0.8.20;
 // Parent contracts (Initializable, AccessControlUpgradeable, UUPSUpgradeable)
 // all use ERC-7201 namespaced slots — they do NOT occupy linear slot space.
 //
-// This contract's OWN variables start at linear slot 0:
+// This contract's OWN variables start at linear slot 0. NOTE THE PACKING: the
+// 2-byte uint16 referralCode shares slot 1 with the 20-byte arbitrageExecutor
+// address, so the real layout is FOUR slots (0..3), not five. This is the true
+// packed layout, verified by test/StorageLayout.t.sol (vm.load slot pins):
 //   slot 0: aavePool            (IAaveV3Pool — address, 20 bytes)  ← legacy compat
-//   slot 1: arbitrageExecutor   (address, 20 bytes)
-//   slot 2: referralCode        (uint16, 2 bytes)
-//   slot 3: flashLoanProvider   (address, 20 bytes) ← SC-1: multi-provider support
-//   slot 4: balancerVault       (address, 20 bytes) ← A4 audit 2026-05-10
+//   slot 1: arbitrageExecutor   (address, 20 bytes, bits 0..159)
+//           + referralCode      (uint16, 2 bytes, bits 160..175 — PACKED into slot 1)
+//   slot 2: flashLoanProvider   (address, 20 bytes) ← SC-1: multi-provider support
+//   slot 3: balancerVault       (address, 20 bytes) ← A4 audit 2026-05-10
 //
 // CRITICAL: When adding new state variables in V2, V3, etc., you MUST append
-// them AFTER slot 4.  NEVER insert variables between existing ones — that
+// them AFTER slot 3 (balancerVault).  NEVER insert variables between existing
+// ones — that
 // would corrupt the storage layout and brick all proxies pointing at this impl.
 // =============================================================================
 
@@ -43,6 +47,11 @@ error FL_NoProviderConfigured();
 /// @dev Thrown when receiveFlashLoan is called but balancerVault has not been set.
 /// SECURITY (audit A4, 2026-05-10): prevents calls before the vault is configured.
 error FL_BalancerVaultNotSet();
+/// @dev Hygiene (2026-06-28): thrown when, after the arbitrage call returns, this
+///      contract does not hold enough of the asset to repay principal + premium.
+///      Surfaces a clear, named, fail-closed error instead of an opaque transfer/pull
+///      failure from the provider. Repayment was never attempted when this reverts.
+error FL_RepaymentShortfall();
 
 interface IAaveV3Pool {
     function flashLoanSimple(
@@ -79,21 +88,21 @@ contract FlashLoanExecutor is
     // as the Aave fallback when no IFlashLoanProvider adapter is configured).
     /// @notice Aave V3 lending pool address that will call executeOperation.
     IAaveV3Pool public aavePool;
-    // slot 1
+    // slot 1 (low 160 bits; referralCode is PACKED into this same slot at bits 160..175)
     /// @notice ArbitrageExecutor proxy address that receives the delegated execution call.
     address public arbitrageExecutor;
-    // slot 2 — SC-8: operator-configurable referral code for Aave flash loans.
+    // slot 1 (PACKED with arbitrageExecutor, bits 160..175) — SC-8: operator-configurable referral code.
     /// @notice Aave referral code passed to flashLoanSimple. Defaults to 0.
     ///         Set via setReferralCode() to enable referral rewards if applicable.
     uint16 public referralCode;
-    // slot 3 — SC-1: pluggable IFlashLoanProvider adapter.
+    // slot 2 — SC-1: pluggable IFlashLoanProvider adapter.
     /// @notice Active flash loan provider adapter. When set (non-zero),
     ///         requestFlashLoan delegates to this adapter instead of calling
     ///         aavePool.flashLoanSimple() directly. Use setFlashLoanProvider()
     ///         to configure Balancer (0% fee), dYdX (0% fee), or any custom adapter.
     ///         When zero, falls back to aavePool directly (legacy behavior).
     address public flashLoanProvider;
-    // slot 4 — A4 (audit 2026-05-10): Balancer V2 Vault address used to authenticate
+    // slot 3 — A4 (audit 2026-05-10): Balancer V2 Vault address used to authenticate
     // receiveFlashLoan callbacks. Must equal the actual Balancer Vault that sends the
     // callback. address(0) disables the Balancer flash path entirely.
     /// @notice Balancer V2 Vault address. Must be the actual Vault that calls
@@ -153,7 +162,7 @@ contract FlashLoanExecutor is
         aavePool = IAaveV3Pool(_aavePool);
         arbitrageExecutor = _arbitrageExecutor;
         referralCode = 0;
-        // slot 3: flashLoanProvider defaults to address(0) — uses legacy aavePool path
+        // slot 2: flashLoanProvider defaults to address(0) — uses legacy aavePool path
     }
 
     // -------------------------------------------------------------------------
@@ -342,8 +351,15 @@ contract FlashLoanExecutor is
         (bool success, ) = arbitrageExecutor.call(userData);
         if (!success) revert FL_ArbitrageExecutionFailed();
 
-        // 3. Repay Balancer Vault (amount + fee = amount + 0 = amount)
+        // 2b. Hygiene (defense-in-depth): clear any residual executor allowance the
+        // arbitrage call did not consume (e.g. a route that pulled less than `amount`).
+        // No standing allowance should outlive the callback.
+        asset.forceApprove(arbitrageExecutor, 0);
+
+        // 3. Repay Balancer Vault (amount + fee = amount + 0 = amount). Fail-closed with a
+        // clear named error if the round trip did not leave enough to repay.
         uint256 amountOwed = amount + premium;
+        if (asset.balanceOf(address(this)) < amountOwed) revert FL_RepaymentShortfall();
         asset.forceApprove(msg.sender, amountOwed);
         asset.safeTransfer(msg.sender, amountOwed);
 
@@ -368,8 +384,14 @@ contract FlashLoanExecutor is
         (bool success, ) = arbitrageExecutor.call(params);
         if (!success) revert FL_ArbitrageExecutionFailed();
 
-        // 3. Repay Aave (amount + premium)
+        // 2b. Hygiene (defense-in-depth): clear any residual executor allowance the
+        // arbitrage call did not consume. No standing allowance should outlive the callback.
+        IERC20(asset).forceApprove(arbitrageExecutor, 0);
+
+        // 3. Repay Aave (amount + premium). Fail-closed with a clear named error if the
+        // round trip did not leave enough, instead of an opaque transferFrom failure.
         uint256 amountToOwe = amount + premium;
+        if (IERC20(asset).balanceOf(address(this)) < amountToOwe) revert FL_RepaymentShortfall();
         IERC20(asset).forceApprove(address(aavePool), amountToOwe);
 
         // SC-06: signal successful completion to off-chain monitors

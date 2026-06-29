@@ -47,21 +47,25 @@ jobs:
           node-version: "20"
           cache: npm
       - name: Install dependencies
-        run: npm install
+        # `rm -f package-lock.json`: npm optional-deps bug workaround
+        # (https://github.com/npm/cli/issues/4828) so the platform-native rollup
+        # binary installs and vitest runs (matches ci.yml/frontend-build.yml).
+        # Required for the now-BLOCKING test step (was masked by continue-on-error).
+        run: rm -f package-lock.json && npm install
       - name: Build @arbx/shared
         # Dependent workspaces (selector-api, api-server, edge/*) resolve
         # @arbx/shared from `shared-ts/dist/`. Typecheck fails with
         # "Cannot find module '@arbx/shared'" if dist/ doesn't exist.
         run: npm run -w @arbx/shared build
       - name: Typecheck all workspaces
-        # M2 Capa1 Fase 7 (P1-5): mirrors typescript.yml. Advisory until
-        # M4 (Capa 3 Backend) clears the 5 pre-existing api-server type
-        # errors (registry-engine.ts exactOptionalPropertyTypes drift,
-        # admin-promote-mainnet.ts missing .js extensions + Redis namespace,
-        # operator.ts missing .js extension). Flip to hard gate in M4.
+        # M4 hard-gate flip (FASE 1, omega/audit-fixes-20260628). The 5
+        # pre-existing api-server type errors (registry-engine.ts
+        # exactOptionalPropertyTypes drift, admin-promote-mainnet.ts missing
+        # .js extensions + Redis namespace, operator.ts missing .js extension)
+        # are CLEARED on main — `npm run typecheck --workspaces` exits 0.
+        # Now a BLOCKING gate.
         run: npm run typecheck --workspaces --if-present
-        continue-on-error: true
       - name: Run tests
-        # M2 Capa1 Fase 7: same M4 dependency as typecheck above.
+        # M4 hard-gate flip (FASE 1): typecheck green → tests blocking too.
+        # Verified `npm test --workspaces --if-present` exits 0 (671 tests pass).
         run: npm test --workspaces --if-present
-        continue-on-error: true

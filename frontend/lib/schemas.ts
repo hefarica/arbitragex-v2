@@ -154,6 +154,9 @@ export const ExecutionsRecentSchema = z.object({
 export const ReconSummarySchema = z.object({
   window_hours: z.number(),
   totals: z.object({
+    // FIX (2026-06-13): Backend now uses COALESCE(SUM(...), 0) so these fields
+    // are always numbers, never null. The schema stays as z.number() to match
+    // the TypeScript types expected by AttemptsBreakdown and ReconKpiGrid.
     total: z.number(),
     included: z.number(),
     reverted: z.number(),
@@ -188,6 +191,7 @@ export const ReconSummarySchema = z.object({
 
 export const ReconTimeseriesPointSchema = z.object({
   bucket_start: z.string(),
+  // FIX (2026-06-13): Backend now uses COALESCE(SUM(...), 0) for these fields.
   attempts: z.number(),
   included: z.number(),
   reverted: z.number(),

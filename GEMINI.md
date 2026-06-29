@@ -75,14 +75,14 @@ relays-client  = 3005
 searcher-rs    = 9001
 frontend       = 5173
 edge worker    = 8787
-Cloudflare     = https://edge-arbx.ape-tv.net
+Cloudflare     = https://<VPS_HOST>
 ```
 
 Regla de exposición:
 ```text
 Los servicios productivos están bindeados a 127.0.0.1.
 No abrir 0.0.0.0.
-No usar 195.201.235.70:5173 como prueba de frontend público.
+No usar <VPS_IP>:5173 como prueba de frontend público.
 El acceso externo correcto pasa por Cloudflare Tunnel / Edge.
 ```
 
@@ -273,7 +273,7 @@ GET http://localhost:8080/api/v1/strategies/runtime-status?chain_id=1
 
 Endpoint Edge:
 ```text
-GET https://edge-arbx.ape-tv.net/api/strategies/runtime-status?chain_id=1
+GET https://<VPS_HOST>/api/strategies/runtime-status?chain_id=1
 ```
 
 Debe reportar:
@@ -397,8 +397,8 @@ ssh arbx "curl -s http://localhost:8080/api/v1/strategies/runtime-status?chain_i
 
 Edge:
 ```bash
-curl -s "https://edge-arbx.ape-tv.net/api/strategies/runtime-status?chain_id=1" | jq
-curl -s "https://edge-arbx.ape-tv.net/api/opportunities/live?viable_only=false&max_age_seconds=300" | jq
+curl -s "https://<VPS_HOST>/api/strategies/runtime-status?chain_id=1" | jq
+curl -s "https://<VPS_HOST>/api/opportunities/live?viable_only=false&max_age_seconds=300" | jq
 ```
 
 Redis:
@@ -429,7 +429,7 @@ Validar:
 ssh arbx 'docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"'
 ssh arbx 'curl -I http://localhost:5173/operations'
 ssh arbx 'curl -s http://localhost:8080/api/v1/strategies/runtime-status?chain_id=1 | jq'
-curl -s "https://edge-arbx.ape-tv.net/api/strategies/runtime-status?chain_id=1" | jq
+curl -s "https://<VPS_HOST>/api/strategies/runtime-status?chain_id=1" | jq
 ```
 
 ---
@@ -652,8 +652,8 @@ Infra:
 - PostgreSQL 15
 - Redis 7.2
 - Docker Compose
-- VPS: `195.201.235.70` alias `arbx`
-- Frontend: `edge-arbx.ape-tv.net`
+- VPS: `<VPS_IP>` alias `arbx`
+- Frontend: `<VPS_HOST>`
 - Paper trade por defecto
 
 ---
@@ -1481,7 +1481,7 @@ Crea la integración real que lo obtiene, o registra la observation exacta que e
 
 ## 33. R9 — WEBSOCKET DOCTRINE
 
-WebSocket connections MUST NOT be made against the Edge Worker (`edge-arbx.ape-tv.net`).
+WebSocket connections MUST NOT be made against the Edge Worker (`<VPS_HOST>`).
 Cloudflare Workers do NOT support WebSocket upgrade on the free/pro tier without Durable Objects.
 
 Reglas:

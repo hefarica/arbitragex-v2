@@ -1,8 +1,10 @@
+pub mod bayesian_allocator;
 pub mod config_aware;
 pub mod decision;
 pub mod erc20_storage;
 pub mod errors;
 pub mod evidence;
+pub mod execute_arbitrage_encoder;
 pub mod feedback;
 pub mod gates;
 pub mod lazy_db;
@@ -15,10 +17,12 @@ pub mod strategy_scores_db;
 pub mod swap_encoder;
 pub mod types;
 
+pub use bayesian_allocator::{Allocation, AllocationSource, BayesianAllocator, BetaPosterior};
 pub use config_aware::{ConfigAwareEvaluator, ConfigGateOutcome, NetworkSignals};
 pub use decision::*;
 pub use errors::*;
 pub use evidence::*;
+pub use execute_arbitrage_encoder::{build_execute_arbitrage_calldata, EXECUTE_ARBITRAGE_SELECTOR};
 pub use feedback::{AdaptiveSignal, FeedbackChannel, SIGNAL_TTL};
 pub use gates::*;
 pub use route_plan::{RouteLeg, RoutePlan};

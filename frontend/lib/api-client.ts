@@ -109,14 +109,14 @@ function formatSchemaIssues(err: z.ZodError): string {
 async function getValidated<T>(
   path: string,
   schema: z.ZodType<T>,
-  opts: { timeoutMs?: number; retries?: number } = {},
+  opts: { timeoutMs?: number; retries?: number; extraHeaders?: Record<string, string> } = {},
 ): Promise<Result<T>> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const retries = opts.retries ?? DEFAULT_RETRIES;
   const url = `${getApiBaseUrl()}${path}`;
   const init: RequestInit = {
     next: { revalidate: 0 },
-    headers: { accept: "application/json" },
+    headers: { accept: "application/json", ...(opts.extraHeaders ?? {}) },
     // V-AT-1: browser sends the arbx_admin_session httpOnly cookie cross-port
     // so admin-gated GETs (e.g. /api/admin/chains) authenticate. Public GETs
     // ignore the cookie upstream; no harm in always including credentials.
@@ -527,7 +527,12 @@ export function getAuditLogs(limit = 50, cursor?: string, action?: string, actor
   if (action) url.searchParams.set("action", action);
   if (actor) url.searchParams.set("actor", actor);
   if (targetKind) url.searchParams.set("target_kind", targetKind);
-  return getValidated(url.pathname + url.search, S.AuditLogsResponseSchema);
+  // V-AT-2: SSR server components cannot rely on the httpOnly cookie (no browser
+  // session). Pass the admin token from the server-side env var so the edge
+  // adminProxy authenticates via x-arbx-admin-token header.
+  const adminToken = typeof window === "undefined" ? process.env.ARBX_ADMIN_TOKEN : undefined;
+  const extraHeaders: Record<string, string> = adminToken ? { "x-arbx-admin-token": adminToken } : {};
+  return getValidated(url.pathname + url.search, S.AuditLogsResponseSchema, { extraHeaders });
 }
 
 // ─────── DeFi data (via edge proxy → api-server defiRouter) ───────

@@ -17,6 +17,10 @@ import { AgentTeamsPanel } from "@/features/readiness/AgentTeamsPanel";
 import { ConfidenceScoringPanel } from "@/features/readiness/ConfidenceScoringPanel";
 import { RiskCircuitPanel } from "@/features/risk/RiskCircuitPanel";
 import { LiveReadinessStepper } from "@/components/ReadinessStepper";
+import { ForkValidationPanel } from "@/components/ForkValidationPanel";
+import { PaperShadowPanel } from "@/components/PaperShadowPanel";
+import { DegradedBanner } from "@/components/DegradedBanner";
+import { SourceMeta } from "@/components/SourceMeta";
 
 // ─── Aesthetic helpers ───────────────────────────────────────────────────
 
@@ -128,7 +132,7 @@ function GroupSection({
   );
 }
 
-function StatusBanner({ report }: { report: ReadinessReport }) {
+function StatusBanner({ report, fetchedAt }: { report: ReadinessReport; fetchedAt: number | null }) {
   const { summary, flip_blocked } = report;
   const bar = progressBar(summary.green, summary.total);
   const verified_at = new Date(report.generated_at).toLocaleString(undefined, {
@@ -157,8 +161,9 @@ function StatusBanner({ report }: { report: ReadinessReport }) {
             {flip_blocked ? "flip blocked" : "ready to flip"}
           </span>
         </div>
-        <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/60 tabular-nums">
-          verified {verified_at}
+        <div className="flex flex-col items-end gap-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground/60 tabular-nums">
+          <span>verified {verified_at}</span>
+          <SourceMeta source="api-server" at={fetchedAt} pollMs={30_000} />
         </div>
       </div>
 
@@ -243,6 +248,7 @@ export default function LiveReadinessPage() {
   const [report, setReport] = useState<ReadinessReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
 
   async function refresh() {
     setLoading(true);
@@ -254,6 +260,7 @@ export default function LiveReadinessPage() {
     }
     setError(null);
     setReport(r.data);
+    setFetchedAt(Date.now());
   }
 
   useEffect(() => {
@@ -292,7 +299,7 @@ export default function LiveReadinessPage() {
 
       <LiveReadinessStepper className="mb-6" />
 
-      {error && (
+      {error && !report && (
         <div className="mb-6 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3">
           <div className="font-mono text-[10px] uppercase tracking-widest text-destructive">
             verifier error
@@ -315,7 +322,14 @@ export default function LiveReadinessPage() {
 
       {report && grouped && (
         <>
-          <StatusBanner report={report} />
+          {error && (
+            <DegradedBanner
+              title="Readiness verifier erroring — gate below is the last known result"
+              reason={error}
+              endpoint="GET /api/readiness"
+            />
+          )}
+          <StatusBanner report={report} fetchedAt={fetchedAt} />
           <div className="space-y-0">
             {GROUP_ORDER.map((g) => (
               <GroupSection key={g} group={g} items={grouped[g] ?? []} />
@@ -333,6 +347,14 @@ export default function LiveReadinessPage() {
       <div className="mt-10 space-y-6 border-t border-border/40 pt-8">
         <GoNoGoPanel />
         <BlockersPanel />
+        {/* Simulation/fork status + paper-shadow accumulation — consume the two
+            endpoints wired in feat/code-brechas-paper-shadow. Fail-honest:
+            ForkValidationPanel renders DEGRADED on 404 (sim-ctl not ready);
+            PaperShadowPanel renders INACTIVE with 0 trades until accumulation. */}
+        <div className="grid gap-6 lg:grid-cols-2">
+          <ForkValidationPanel />
+          <PaperShadowPanel />
+        </div>
         <AgentTeamsPanel />
         <ConfidenceScoringPanel />
         <RiskCircuitPanel />
