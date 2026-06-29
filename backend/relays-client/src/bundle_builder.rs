@@ -1,15 +1,16 @@
 //! Bundle builder — constructs a signed EIP-1559 transaction for the
 //! observed opportunity, wrapped as a Flashbots bundle.
 //!
-//! M2 flash R4 (2026-06-28): the broadcast tx is the OUTER wrapped flash call
+//! M2 flash O3 (2026-06-29): the broadcast tx is the OUTER wrapped flash call
 //! `FlashLoanExecutor.requestFlashLoan(0x5107d61e)` whose payload is
-//! `executeArbitrageFlashFunded(0xdde0bf51)`. The calldata is produced by the
-//! SINGLE shared encoder `prioritization_spine::build_flash_funded_broadcast_calldata`
-//! from the `ValidatedPlan` (carrier-B) that sim-ctl validated — so the bytes
-//! broadcast here are byte-identical to what was simulated (sim↔exec parity).
-//! The raw per-router `encode_v2`/`encode_v3` swap path was DELETED: it
-//! broadcast an unfunded swap straight at a router, which is not what the
-//! system simulates and not what can repay a flash loan.
+//! `executeArbitrageFlashFunded(0xdde0bf51)`. The calldata is the EXACT
+//! `ValidatedPlan.wrapped_calldata` that sim-ctl validated — broadcast VERBATIM,
+//! NOT re-encoded from `ctx`. A re-encode cannot carry the runtime intermediate
+//! `token_out` amount the sim resolved, so the broadcast bytes are now the same
+//! bytes the sim approved (true sim↔broadcast byte-parity). The raw per-router
+//! `encode_v2`/`encode_v3` swap path was DELETED: it broadcast an unfunded swap
+//! straight at a router, which is not what the system simulates and not what can
+//! repay a flash loan.
 //!
 //! Safety:
 //!   - M1 `LiveExecPolicy::assert_broadcast_allowed` is the FIRST statement —
@@ -35,7 +36,7 @@ use anyhow::Result;
 use ethers::core::types::transaction::eip2718::TypedTransaction;
 use ethers::prelude::*;
 use ethers::signers::Signer as EthersSigner;
-use prioritization_spine::{build_flash_funded_broadcast_calldata, ValidatedPlan};
+use prioritization_spine::{ValidatedPlan, REQUEST_FLASH_LOAN_SELECTOR};
 use shared_rs::chains::resolve_flashloan_executor_address;
 use shared_rs::contracts::{Opportunity, StrategyKind};
 use shared_rs::rpc_failover::AlloyHttpProvider;
@@ -84,9 +85,11 @@ pub struct SignedBundle {
 /// `FlashLoanExecutor.requestFlashLoan(executeArbitrageFlashFunded(...))`.
 ///
 /// `plan` is the carrier-B `ValidatedPlan` read from Redis by the caller
-/// (`arbx:validated_plan:<opp.id>`). Its `ctx`/`route_hash`/`min_profit_wei`/
-/// `executor_address` are the EXACT inputs sim-ctl validated, so the encoder
-/// reproduces byte-identical calldata.
+/// (`arbx:validated_plan:<opp.id>`). Its `wrapped_calldata` is the EXACT
+/// sim-validated wrapped-flash bytes; `build_and_sign` broadcasts them VERBATIM
+/// (true sim↔broadcast byte-parity), fail-closed if empty or not the
+/// `requestFlashLoan` (0x5107d61e) entrypoint. `ctx.amount_in` still bounds the
+/// spend cap.
 ///
 /// `provider` is the alloy 1.0 HTTP provider (used for `get_block` to read the
 /// current base fee AND `estimate_gas` on the built tx). The signing path
@@ -133,17 +136,15 @@ pub async fn build_and_sign(
     let to: Address = resolve_flashloan_executor_address(opp.chain_id)
         .map_err(|e| BuildError::LiveExecDenied(e.to_string()))?;
 
-    // Build the wrapped flash calldata from the validated plan via the SINGLE
-    // shared encoder. Returns the OUTER `requestFlashLoan(0x5107d61e)` calldata
-    // whose payload is `executeArbitrageFlashFunded(0xdde0bf51)`. asset/amount
-    // derive from `plan.ctx` inside the encoder.
-    let data_vec: Vec<u8> = build_flash_funded_broadcast_calldata(
-        &plan.ctx,
-        plan.route_hash,
-        plan.min_profit_wei,
-        plan.executor_address,
-    )
-    .map_err(|e| BuildError::EncodeFailed(e.to_string()))?;
+    // Broadcast the EXACT sim-validated wrapped-flash bytes VERBATIM — no
+    // re-encode from `ctx`. `plan.wrapped_calldata` is the OUTER
+    // `requestFlashLoan(0x5107d61e)` calldata (payload
+    // `executeArbitrageFlashFunded(0xdde0bf51)`) the sim approved; it carries the
+    // runtime intermediate `token_out` amount a re-encode could not reproduce, so
+    // sending these bytes is true sim↔broadcast byte-parity. Fail-closed if the
+    // bytes are empty (plan not validated) or do not start with the
+    // `requestFlashLoan` selector (not the wrapped-flash entrypoint).
+    let data_vec: Vec<u8> = verbatim_broadcast_calldata(plan)?;
     let data = Bytes::from(data_vec.clone());
 
     let nonce = nonce_mgr
@@ -245,12 +246,39 @@ fn amount_in_to_eth(amount: U256) -> f64 {
     (wei as f64) / 1e18_f64
 }
 
+/// Extract the VERBATIM broadcast calldata from a `ValidatedPlan`, fail-closed.
+///
+/// Returns the sim-validated `plan.wrapped_calldata` bytes UNCHANGED — these are
+/// what `build_and_sign` puts in `tx.data` (true sim↔broadcast byte-parity).
+/// Errors (no bytes returned → no broadcast) when:
+///   - `wrapped_calldata` is empty → the plan was never validated (the producer
+///     fills it ONLY on SIM_SUCCESS).
+///   - the prefix is not the `requestFlashLoan` selector (0x5107d61e) → the bytes
+///     are not the wrapped-flash entrypoint we can confirm.
+fn verbatim_broadcast_calldata(plan: &ValidatedPlan) -> Result<Vec<u8>, BuildError> {
+    let data_vec = plan.wrapped_calldata.clone();
+    if data_vec.is_empty() {
+        return Err(BuildError::EncodeFailed(
+            "wrapped_calldata empty — plan not validated".into(),
+        ));
+    }
+    if data_vec.len() < 4 || data_vec[0..4] != REQUEST_FLASH_LOAN_SELECTOR {
+        return Err(BuildError::EncodeFailed(
+            "wrapped_calldata selector is not requestFlashLoan (0x5107d61e)".into(),
+        ));
+    }
+    Ok(data_vec)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)] // test module — panics are acceptable
 mod tests {
     use super::*;
     use prioritization_spine::round_trip_executor::RoundTripContext;
-    use prioritization_spine::REQUEST_FLASH_LOAN_SELECTOR;
+    use prioritization_spine::{
+        build_flash_funded_broadcast_calldata,
+        build_flash_funded_broadcast_calldata_with_intermediate,
+    };
     use std::str::FromStr;
 
     fn weth() -> Address {
@@ -274,18 +302,30 @@ mod tests {
             backward_path: vec![usdc(), weth()],
             deadline: U256::from(1_700_000_000u64),
         };
+        let route_hash = [0x11u8; 32];
+        let min_profit_wei = U256::from(1u64);
+        let executor_address =
+            Address::from_str("0x2222222222222222222222222222222222222222").unwrap();
+        // Sim-validated wrapped-flash bytes the producer carries for VERBATIM
+        // broadcast. We build them with an EXPLICIT intermediate backward amount
+        // (the runtime `token_out` a re-encode could not reproduce), so the
+        // fixture mirrors what the sim path actually persists — outer
+        // requestFlashLoan (0x5107d61e) wrapping executeArbitrageFlashFunded.
+        let intermediate = U256::from(1_234_567u64);
+        let wrapped_calldata = build_flash_funded_broadcast_calldata_with_intermediate(
+            &ctx,
+            intermediate,
+            route_hash,
+            min_profit_wei,
+            executor_address,
+        )
+        .expect("encode wrapped flash calldata for fixture");
         ValidatedPlan {
             ctx,
-            route_hash: [0x11u8; 32],
-            min_profit_wei: U256::from(1u64),
-            executor_address: Address::from_str("0x2222222222222222222222222222222222222222")
-                .unwrap(),
-            // Sim-validated wrapped-flash bytes the producer carries for verbatim
-            // broadcast. `build_and_sign` still re-encodes from ctx today (the
-            // verbatim-broadcast switch is a later M2 increment), so this fixture
-            // value is unused by the current encode path — present only to satisfy
-            // the (now non-optional) carrier field.
-            wrapped_calldata: vec![0x51, 0x07, 0xd6, 0x1e],
+            route_hash,
+            min_profit_wei,
+            executor_address,
+            wrapped_calldata,
         }
     }
 
@@ -299,31 +339,73 @@ mod tests {
         assert!(amount_in_to_eth(small) < 1.0);
     }
 
-    /// The shared encoder produces the OUTER wrapped flash calldata whose first
-    /// four bytes are the `requestFlashLoan` selector (0x5107d61e). This is the
-    /// exact byte sequence `build_and_sign` puts in `tx.data`, so locking it
-    /// here guarantees the broadcast targets the wrapped flash entrypoint and
-    /// never a raw router swap.
+    /// TRUE sim↔broadcast byte-parity: the bytes `build_and_sign` puts in
+    /// `tx.data` are `plan.wrapped_calldata` VERBATIM — no re-encode. We assert
+    /// the exact production extractor (`verbatim_broadcast_calldata`, the source
+    /// of `data_vec`) returns the plan's bytes byte-for-byte, and that those
+    /// bytes carry the OUTER `requestFlashLoan` selector (0x5107d61e). To prove
+    /// it is NOT a re-encode from ctx, the fixture's `wrapped_calldata` was built
+    /// with an explicit runtime intermediate, so it DIFFERS from what a legacy
+    /// `build_flash_funded_broadcast_calldata(&ctx, ...)` re-encode would yield.
     #[test]
-    fn calldata_outer_selector_is_request_flash_loan() {
+    fn broadcast_calldata_equals_plan_wrapped_calldata_verbatim() {
         let plan = fixture_plan();
-        let data = build_flash_funded_broadcast_calldata(
+        let data_vec = verbatim_broadcast_calldata(&plan).expect("validated plan yields bytes");
+        // Byte-for-byte equality with the carried, sim-validated bytes.
+        assert_eq!(
+            data_vec, plan.wrapped_calldata,
+            "tx.data must equal plan.wrapped_calldata byte-for-byte (verbatim broadcast)"
+        );
+        // The carried bytes are the wrapped flash entrypoint (0x5107d61e).
+        assert!(data_vec.len() >= 4, "calldata must carry a 4-byte selector");
+        assert_eq!(
+            REQUEST_FLASH_LOAN_SELECTOR,
+            data_vec[0..4],
+            "outer selector must be requestFlashLoan (0x5107d61e)"
+        );
+        // Proof it is VERBATIM, not a re-encode: the legacy ctx-only re-encode
+        // (min_profit_wei sentinel backward amount) differs from the carried
+        // intermediate-aware bytes, so the broadcast can only match by sending
+        // the carried bytes verbatim.
+        let legacy_reencode = build_flash_funded_broadcast_calldata(
             &plan.ctx,
             plan.route_hash,
             plan.min_profit_wei,
             plan.executor_address,
         )
-        .expect("encode wrapped flash calldata");
-        assert!(data.len() >= 4, "calldata must carry a 4-byte selector");
-        // Array-first ordering (matches the encoder's own tests): [u8;4]
-        // implements PartialEq<[u8]>, so the slice goes on the right.
-        assert_eq!(
-            REQUEST_FLASH_LOAN_SELECTOR,
-            data[0..4],
-            "outer selector must be requestFlashLoan (0x5107d61e)"
+        .expect("legacy re-encode");
+        assert_ne!(
+            data_vec, legacy_reencode,
+            "verbatim bytes must NOT equal a ctx-only re-encode (carries runtime intermediate)"
         );
-        // Sanity: 0x5107d61e in literal bytes.
-        assert_eq!([0x51u8, 0x07, 0xd6, 0x1e], data[0..4]);
+    }
+
+    /// Fail-closed: an empty `wrapped_calldata` (plan never validated) yields NO
+    /// broadcast bytes — `verbatim_broadcast_calldata` errors, so `build_and_sign`
+    /// returns before building/signing any tx.
+    #[test]
+    fn empty_wrapped_calldata_fails_closed_no_broadcast() {
+        let mut plan = fixture_plan();
+        plan.wrapped_calldata = Vec::new();
+        let err = verbatim_broadcast_calldata(&plan)
+            .expect_err("empty wrapped_calldata must fail-closed (no broadcast)");
+        assert!(matches!(err, BuildError::EncodeFailed(_)));
+    }
+
+    /// Fail-closed: `wrapped_calldata` whose prefix is NOT the `requestFlashLoan`
+    /// selector (0x5107d61e) is not the wrapped-flash entrypoint — refuse to
+    /// broadcast.
+    #[test]
+    fn wrong_selector_wrapped_calldata_fails_closed_no_broadcast() {
+        let mut plan = fixture_plan();
+        // A non-0x5107d61e prefix (e.g. a raw router swap selector) + payload.
+        plan.wrapped_calldata = vec![0xde, 0xad, 0xbe, 0xef, 0x00, 0x01];
+        let err = verbatim_broadcast_calldata(&plan)
+            .expect_err("wrong selector must fail-closed (no broadcast)");
+        assert!(matches!(err, BuildError::EncodeFailed(_)));
+        // A too-short (<4 byte) payload is also rejected.
+        plan.wrapped_calldata = vec![0x51, 0x07];
+        assert!(verbatim_broadcast_calldata(&plan).is_err());
     }
 
     /// FLE resolution is fail-closed: with `FLASHLOAN_EXECUTOR_<chain_id>` unset,
