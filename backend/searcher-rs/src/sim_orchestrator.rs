@@ -25,6 +25,13 @@
 //! false-validate the flash path: they exercise a different, self-funded
 //! function). They are therefore intentionally LEFT AS-IS, not silently deleted.
 //!
+//! The PRODUCTION producer (`scanner::dispatch_orchestrator_and_classify`) no
+//! longer calls `execute_round_trip_revm`: it validates via the wrapped-flash
+//! `sim_multistep::execute_multistep_revm` and carries the sim-validated calldata
+//! in `ValidatedPlan.wrapped_calldata` (broadcast verbatim — byte-parity). This
+//! module's `execute_round_trip_revm` / `RoundTripExecutionConfig` are retained
+//! ONLY for `mcp-sim-engine`'s self-funded round-trip tool.
+//!
 //! For most real candidates the simulated `executeArbitrage` call will REVERT
 //! today because:
 //!

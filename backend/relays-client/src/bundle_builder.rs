@@ -280,6 +280,12 @@ mod tests {
             min_profit_wei: U256::from(1u64),
             executor_address: Address::from_str("0x2222222222222222222222222222222222222222")
                 .unwrap(),
+            // Sim-validated wrapped-flash bytes the producer carries for verbatim
+            // broadcast. `build_and_sign` still re-encodes from ctx today (the
+            // verbatim-broadcast switch is a later M2 increment), so this fixture
+            // value is unused by the current encode path — present only to satisfy
+            // the (now non-optional) carrier field.
+            wrapped_calldata: vec![0x51, 0x07, 0xd6, 0x1e],
         }
     }
 

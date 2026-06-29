@@ -31,6 +31,14 @@ pub struct ValidatedPlan {
     pub route_hash: [u8; 32],
     pub min_profit_wei: U256,
     pub executor_address: Address,
+    /// The EXACT sim-validated wrapped-flash calldata
+    /// (`build_flash_funded_broadcast_calldata_with_intermediate` output: outer
+    /// `requestFlashLoan` 0x5107d61e wrapping inner `executeArbitrageFlashFunded`
+    /// 0xdde0bf51). Produced by `sim_multistep::execute_multistep_revm` and filled
+    /// from `SimulationOutcome.wrapped_calldata` ONLY on SIM_SUCCESS. The broadcast
+    /// path sends these bytes VERBATIM — real byte-parity, not a re-encode. serde
+    /// round-trips `Vec<u8>` as a JSON array of byte values.
+    pub wrapped_calldata: Vec<u8>,
 }
 
 #[cfg(test)]
@@ -66,6 +74,10 @@ mod tests {
             route_hash: [0x11u8; 32],
             min_profit_wei: U256::from(1u64),
             executor_address: addr("0x2222222222222222222222222222222222222222"),
+            // Non-trivial, non-uniform bytes (a plausible wrapped-flash calldata
+            // prefix: requestFlashLoan 0x5107d61e) so the round-trip test catches
+            // truncation / reordering in the byte-array serde path.
+            wrapped_calldata: vec![0x51, 0x07, 0xd6, 0x1e, 0xde, 0xad, 0xbe, 0xef],
         }
     }
 
@@ -94,6 +106,12 @@ mod tests {
             "executor_address must survive the JSON round trip"
         );
         assert_eq!(decoded.min_profit_wei, original.min_profit_wei);
+
+        // wrapped_calldata is broadcast VERBATIM, so it MUST survive byte-for-byte.
+        assert_eq!(
+            decoded.wrapped_calldata, original.wrapped_calldata,
+            "wrapped_calldata (broadcast verbatim) must survive the JSON round trip"
+        );
 
         // RoundTripContext (field-by-field — no PartialEq derive on it).
         assert_eq!(decoded.ctx.caller, original.ctx.caller);
