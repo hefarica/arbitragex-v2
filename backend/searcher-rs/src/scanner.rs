@@ -2095,7 +2095,7 @@ async fn decode_and_score_tx<'a>(
     // SimulatorV2 in hand, dispatch `execute_round_trip_revm` synchronously on
     // a blocking tokio thread. cs-validator finding 2026-05-12: REVM is
     // synchronous; running it on the tokio worker would park the event loop.
-    let (fail_closed_reason, trace_hash_sentinel, sim_status_str) =
+    let (fail_closed_reason, trace_hash_sentinel, sim_status_str, validated_plan) =
         if let (EncoderGateOutcome::EncoderOk(ctx), Some(simulator_arc)) =
             (&gate_outcome, simulator_v2.cloned())
         {
@@ -2112,8 +2112,54 @@ async fn decode_and_score_tx<'a>(
                 fcr.to_string(),
                 ths.to_string(),
                 "SIM_DISABLED_FAIL_CLOSED".to_string(),
+                None,
             )
         };
+
+    // M2 carrier-B (producer): when the simulator validated the round trip
+    // (SIM_SUCCESS), persist the validated plan to Redis keyed by `opp.id` so the
+    // broadcast path (relays-client, a later increment) re-encodes byte-identical
+    // `executeArbitrage` calldata. `opportunity.id` is the SAME Uuid that the
+    // emitted Opportunity carries through `arbx:opps:detected` → relays-client's
+    // `submit_engine`, so the broadcast side reads back exactly this record.
+    //
+    // Observer-only: this is a Redis SET, never a signer/broadcast. Fail-SOFT —
+    // a Redis hiccup logs a warn and continues; the broadcast side fails-CLOSED
+    // if the plan is absent (that asymmetry is the safety guarantee).
+    if let Some(plan) = validated_plan {
+        let key = format!("arbx:validated_plan:{}", opportunity.id);
+        match serde_json::to_string(&plan) {
+            Ok(plan_json) => {
+                // TTL 300s comfortably covers the detect→broadcast window
+                // (longer than the 180s pending-tx backstop in submit_engine).
+                // Fully-qualified trait call: `AsyncCommands` is not imported at
+                // module scope (matches the `redis::AsyncCommands::get` call site
+                // elsewhere in this file).
+                let set: Result<(), redis::RedisError> =
+                    redis::AsyncCommands::set_ex(redis, &key, plan_json, 300u64).await;
+                match set {
+                    Ok(()) => info!(
+                        event = "validated_plan.persisted",
+                        opp_id = %opportunity.id,
+                        key = %key,
+                    ),
+                    Err(e) => warn!(
+                        event = "validated_plan.persist_failed",
+                        opp_id = %opportunity.id,
+                        key = %key,
+                        error = %e,
+                        "fail-soft: ValidatedPlan persist failed; observer pipeline continues"
+                    ),
+                }
+            }
+            Err(e) => warn!(
+                event = "validated_plan.serialize_failed",
+                opp_id = %opportunity.id,
+                error = %e,
+                "fail-soft: could not serialize ValidatedPlan; skipping persist"
+            ),
+        }
+    }
 
     final_evidence.simulation_status = sim_status_str.clone();
     final_evidence.simulation_trace_hash = Some(trace_hash_sentinel.clone());
@@ -2527,13 +2573,22 @@ fn bump_encoder_gate_counter(outcome: &EncoderGateOutcome) {
 /// `SimulationOutcome.passed=true` is the ONLY path that admits SIM_SUCCESS.
 /// On false the simulation_status stays SIM_DISABLED_FAIL_CLOSED and the
 /// fail_reason's tag prefix routes to the right A.3.c counter.
+///
+/// Returns `(fail_closed_reason, trace_hash_sentinel, sim_status_str, validated_plan)`.
+/// The 4th element is `Some(ValidatedPlan)` ONLY on `SIM_SUCCESS` and `None` on
+/// every fail-closed / early-return path. It carries the EXACT validated inputs
+/// (`ctx`, `route_hash`, `min_profit_wei`, `executor_address`) the sim encoder
+/// used, so the caller can persist them under `arbx:validated_plan:<opp.id>` for
+/// the M2 carrier-B broadcast path to reproduce byte-identical calldata. This is
+/// a pure observer-side record: the searcher only WRITES it; it never signs or
+/// broadcasts.
 #[cfg(feature = "v2-simulator")]
 async fn dispatch_orchestrator_and_classify(
     ctx: prioritization_spine::round_trip_executor::RoundTripContext,
     simulator: Arc<simulator_v2::SimulatorV2>,
     chain_id: u64,
     candidate: &prioritization_spine::types::OpportunityCandidate,
-) -> (String, String, String) {
+) -> (String, String, String, Option<prioritization_spine::ValidatedPlan>) {
     use std::sync::atomic::Ordering::Relaxed;
     let c = counters();
     c.round_trip_executor_started_total.fetch_add(1, Relaxed);
@@ -2549,6 +2604,7 @@ async fn dispatch_orchestrator_and_classify(
                 "missing_executor".to_string(),
                 "fail_closed:missing_executor".to_string(),
                 "SIM_DISABLED_FAIL_CLOSED".to_string(),
+                None,
             );
         }
     };
@@ -2567,14 +2623,29 @@ async fn dispatch_orchestrator_and_classify(
     // Uses keccak256 (already a workspace dep via ethers).
     let route_hash: [u8; 32] = ethers::utils::keccak256(candidate.route_fingerprint.as_bytes());
 
+    let min_profit_wei = ethers::types::U256::from(1u64);
     let orch_config = crate::sim_orchestrator::RoundTripExecutionConfig {
         chain_id,
         executor_address: executor,
         gas_limit: 30_000_000,
         gas_price_wei,
         route_hash,
-        min_profit_wei: ethers::types::U256::from(1u64),
+        min_profit_wei,
         paper_mode: true,
+    };
+
+    // M2 carrier-B (producer): pre-build the ValidatedPlan from the EXACT inputs
+    // the sim path encodes from, BEFORE `ctx`/`orch_config` are moved into the
+    // blocking closure below. We only RETURN it (Some) on SIM_SUCCESS; the caller
+    // persists it to Redis keyed by `opp.id`. `route_hash`/`min_profit_wei`/
+    // `executor` are Copy; `ctx` is cloned (cheap, sim-side only). Building it
+    // here — not after the move — keeps the parity guarantee: the broadcast path
+    // re-encodes from these identical bytes.
+    let validated_plan = prioritization_spine::ValidatedPlan {
+        ctx: ctx.clone(),
+        route_hash,
+        min_profit_wei,
+        executor_address: executor,
     };
 
     // Run REVM on a blocking thread.
@@ -2591,6 +2662,7 @@ async fn dispatch_orchestrator_and_classify(
                 format!("spawn_blocking_failed:{e}"),
                 "fail_closed:spawn_blocking_failed".to_string(),
                 "SIM_DISABLED_FAIL_CLOSED".to_string(),
+                None,
             );
         }
     };
@@ -2617,10 +2689,13 @@ async fn dispatch_orchestrator_and_classify(
     if outcome.passed {
         c.round_trip_executor_success_total.fetch_add(1, Relaxed);
         c.simulator_revm_success.fetch_add(1, Relaxed);
+        // SIM_SUCCESS — hand the validated plan back to the caller, which has the
+        // `opp.id` + Redis handle to persist it (M2 carrier-B producer).
         return (
             "round_trip_success".to_string(),
             "orchestrator_success".to_string(),
             "SIM_SUCCESS".to_string(),
+            Some(validated_plan),
         );
     }
 
@@ -2652,6 +2727,7 @@ async fn dispatch_orchestrator_and_classify(
         reason,
         "fail_closed:orchestrator_rejected".to_string(),
         "SIM_DISABLED_FAIL_CLOSED".to_string(),
+        None,
     )
 }
 
