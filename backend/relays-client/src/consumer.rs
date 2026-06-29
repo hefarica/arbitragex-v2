@@ -5,7 +5,7 @@ use crate::submit_engine::SubmitEngine;
 use anyhow::{Context, Result};
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
-use shared_rs::contracts::Opportunity;
+use shared_rs::contracts::SimulatedOpportunity;
 use sqlx::postgres::PgPool;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
@@ -108,7 +108,7 @@ impl Consumer {
                 .await?;
             return Ok(());
         };
-        let opp: Opportunity = match serde_json::from_str(&json) {
+        let sim: SimulatedOpportunity = match serde_json::from_str(&json) {
             Ok(o) => o,
             Err(e) => {
                 warn!(event = "relays_consumer.parse_err", id = %id, error = %e);
@@ -119,8 +119,13 @@ impl Consumer {
                 return Ok(());
             }
         };
+        // M2 carry-through: the simulated-stream message MAY carry the exact
+        // executeArbitrage calldata the simulator validated. When present it is
+        // signed verbatim downstream (provable byte-parity); when absent the
+        // legacy direct-router encoding is used.
+        let opp = &sim.opportunity;
 
-        let result = self.engine.execute(&opp).await;
+        let result = self.engine.execute(opp, sim.exec_payload.as_ref()).await;
         debug!(event = "relays_consumer.executed", opp = %opp.id, status = ?result.status);
 
         if let Err(e) = persist_execution(&self.pool, &result, opp.chain_id as i64).await {

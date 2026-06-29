@@ -89,7 +89,9 @@ async fn execute_handler(
             )
         }
     };
-    let result = st.engine.execute(&opp).await;
+    // Manual HTTP execute path does not carry a sim-computed exec_payload →
+    // None (legacy direct-router encoding, still M1-gated).
+    let result = st.engine.execute(&opp, None).await;
     let body = serde_json::to_value(result).unwrap_or_else(
         |e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}),
     );

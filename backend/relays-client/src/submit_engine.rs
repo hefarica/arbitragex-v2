@@ -16,7 +16,7 @@ use redis::AsyncCommands as _;
 use shared_rs::rpc_failover::AlloyHttpProvider;
 use shared_rs::{
     config::AppConfig,
-    contracts::{ExecutionResult, ExecutionStatus, Opportunity},
+    contracts::{ExecPayload, ExecutionResult, ExecutionStatus, Opportunity},
     killswitch::KillSwitchClient,
     paper_mode::PaperModeClient,
     pre_execute_checklist::{
@@ -69,7 +69,11 @@ pub struct SubmitEngine {
 }
 
 impl SubmitEngine {
-    pub async fn execute(&self, opp: &Opportunity) -> ExecutionResult {
+    pub async fn execute(
+        &self,
+        opp: &Opportunity,
+        exec_payload: Option<&ExecPayload>,
+    ) -> ExecutionResult {
         // Hoisted here so it is in scope for both the pre-execute checklist
         // (PreExecuteContext.our_address) and the post-broadcast pending-tx
         // tracker (CODE-4: SET/DEL arbx:pending_tx:<addr>).
@@ -271,6 +275,7 @@ impl SubmitEngine {
         // 4. Build + sign.
         let bundle = match build_and_sign(
             opp,
+            exec_payload,
             signer.as_ref(),
             provider.as_ref(),
             nonce.as_ref(),

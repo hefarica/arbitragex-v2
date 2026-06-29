@@ -61,6 +61,39 @@ pub struct Opportunity {
     pub trace_id: Uuid,
 }
 
+/// Pre-computed execution payload carried from the simulation path to the
+/// broadcast path so relays-client signs the EXACT `executeArbitrage(...)`
+/// calldata the simulator validated — giving provable sim↔broadcast byte-parity.
+///
+/// Absent for opportunities that bypassed the executor-routed sim path (legacy /
+/// direct-router). The simulation path cannot be re-derived at broadcast time
+/// because sim's deadline is `now+60` (time-dependent) and the emitted
+/// `Opportunity` drops the routing detail — so the bytes must be carried, not
+/// recomputed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExecPayload {
+    /// `0x`-hex of the exact `executeArbitrage(...)` calldata the simulator built.
+    pub calldata_hex: String,
+    /// `0x`-hex of the `ArbitrageExecutor` proxy this calldata targets (tx `.to`).
+    pub to: String,
+    /// `0x`-hex of the 4-byte selector (e.g. `0x76d81cdf`) — cheap sanity tag.
+    pub selector: String,
+}
+
+/// Wire form of an opportunity on the `arbx:opps:simulated` stream: the
+/// canonical [`Opportunity`] plus an OPTIONAL carried [`ExecPayload`].
+///
+/// `#[serde(flatten)]` makes the JSON an `Opportunity` object with an extra
+/// optional `exec_payload` key, so producers/consumers that predate this field
+/// remain wire-compatible (missing key → `None`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulatedOpportunity {
+    #[serde(flatten)]
+    pub opportunity: Opportunity,
+    #[serde(default)]
+    pub exec_payload: Option<ExecPayload>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SimulatorKind {

@@ -6,6 +6,14 @@
 //!
 //! Safety: `max_value_eth` cap enforced here. BuildError::ValueExceedsCap
 //! must propagate to a risk_event (severity=critical) in the caller.
+//!
+//! M2 carry-through (2026-06-29): when the simulation path attaches the exact
+//! `executeArbitrage(...)` calldata it validated (as `Opportunity`'s carried
+//! `exec_payload`), the broadcast path signs THOSE bytes verbatim — giving
+//! provable sim↔broadcast byte-parity. Re-encoding here can never byte-match
+//! sim because sim's deadline is `now+60` (time-dependent) and the emitted
+//! `Opportunity` drops the routing detail. When no `exec_payload` is carried,
+//! we fall back to the legacy direct-router swap encoding (still M1-gated).
 
 use crate::nonce_manager::NonceManager;
 use crate::signer::Signer;
@@ -18,7 +26,7 @@ use ethers::core::types::transaction::eip2718::TypedTransaction;
 use ethers::prelude::*;
 use ethers::signers::Signer as EthersSigner;
 use shared_rs::chains::{routers_for_chain, RouterKind};
-use shared_rs::contracts::{Opportunity, StrategyKind};
+use shared_rs::contracts::{ExecPayload, Opportunity, StrategyKind};
 use shared_rs::rpc_failover::AlloyHttpProvider;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -34,6 +42,8 @@ pub enum BuildError {
     InvalidAmount(String),
     #[error("invalid address: {0}")]
     InvalidAddress(String),
+    #[error("invalid exec_payload: {0}")]
+    InvalidExecPayload(String),
     #[error("value {value_eth} ETH exceeds max_value_eth {cap_eth}")]
     ValueExceedsCap { value_eth: f64, cap_eth: f64 },
     #[error("provider error: {0}")]
@@ -56,8 +66,13 @@ pub struct SignedBundle {
 ///
 /// `provider` is the alloy 1.0 HTTP provider (used only for `get_block` to
 /// read the current base fee). The signing path remains ethers (signer.wallet).
+///
+/// `exec_payload`: when `Some`, the carried `executeArbitrage` calldata from the
+/// simulation path is signed verbatim (`.to` = the carried executor address).
+/// When `None`, the legacy direct-router encoding is used (back-compat).
 pub async fn build_and_sign(
     opp: &Opportunity,
+    exec_payload: Option<&ExecPayload>,
     signer: &Signer,
     provider: &AlloyHttpProvider,
     nonce_mgr: &NonceManager,
@@ -76,8 +91,6 @@ pub async fn build_and_sign(
     if !matches!(opp.strategy_kind, StrategyKind::DexArb) {
         return Err(BuildError::UnsupportedStrategy(opp.strategy_kind.clone()));
     }
-    let token_in = parse_addr(&opp.token_in)?;
-    let token_out = parse_addr(&opp.token_out)?;
     let amount_in = U256::from_dec_str(&opp.amount_in_wei)
         .map_err(|_| BuildError::InvalidAmount(opp.amount_in_wei.clone()))?;
 
@@ -92,26 +105,20 @@ pub async fn build_and_sign(
         });
     }
 
-    let router_entry = routers_for_chain(opp.chain_id)
-        .iter()
-        .find(|r| r.name.starts_with(&opp.dex_a) || r.kind.as_str() == opp.dex_a)
-        .ok_or_else(|| BuildError::UnknownRouter(opp.dex_a.clone()))?;
-
+    // Deadline is only consumed by the direct-router fallback encoder; the
+    // carried `executeArbitrage` calldata already has its own deadline baked in
+    // (from sim time) and is signed verbatim.
     let deadline = U256::from(now_secs() + 120);
-    let data = match router_entry.kind {
-        RouterKind::UniswapV2 | RouterKind::Sushi => {
-            encode_v2(token_in, token_out, amount_in, signer.address, deadline)
-        }
-        RouterKind::UniswapV3 => {
-            encode_v3(token_in, token_out, amount_in, signer.address, deadline)
-        }
-        _ => {
-            return Err(BuildError::UnknownRouter(format!(
-                "{:?}",
-                router_entry.kind
-            )))
-        }
-    };
+
+    // M2 carry-through: prefer the exact sim-validated calldata when present.
+    let (to_addr, data) = select_to_and_data(opp, exec_payload, signer.address, amount_in, deadline)?;
+    if exec_payload.is_none() {
+        tracing::debug!(
+            event = "bundle_builder.direct_router_fallback",
+            opp_id = %opp.id,
+            "no exec_payload carried — using legacy direct-router encoding"
+        );
+    }
 
     let nonce = nonce_mgr
         .next(opp.chain_id, signer.address)
@@ -141,7 +148,7 @@ pub async fn build_and_sign(
     let target_block = latest_block.header.number + target_block_offset;
 
     let tx = Eip1559TransactionRequest::new()
-        .to(Address::from(router_entry.address))
+        .to(to_addr)
         .from(signer.address)
         .value(value_wei)
         .data(data)
@@ -169,6 +176,58 @@ pub async fn build_and_sign(
         nonce,
         value_wei,
     })
+}
+
+/// Decide the transaction `to` address + calldata.
+///
+/// When `exec_payload` is `Some`, the simulation path already built and
+/// validated the exact `executeArbitrage(...)` calldata — it is signed VERBATIM
+/// so broadcast bytes equal sim bytes (provable parity). When `None`, fall back
+/// to the legacy direct-router swap encoding (`recipient` + `deadline` are only
+/// used by the fallback).
+///
+/// Pure (no I/O) so the parity guarantee is unit-testable without a network.
+fn select_to_and_data(
+    opp: &Opportunity,
+    exec_payload: Option<&ExecPayload>,
+    recipient: Address,
+    amount_in: U256,
+    deadline: U256,
+) -> Result<(Address, Bytes), BuildError> {
+    if let Some(p) = exec_payload {
+        let to = parse_addr(&p.to)?;
+        let data = decode_hex_0x(&p.calldata_hex)?;
+        if data.len() < 4 {
+            return Err(BuildError::InvalidExecPayload(
+                "calldata shorter than a 4-byte selector".to_string(),
+            ));
+        }
+        return Ok((to, Bytes::from(data)));
+    }
+
+    // Fallback: legacy direct-router encoding.
+    let token_in = parse_addr(&opp.token_in)?;
+    let token_out = parse_addr(&opp.token_out)?;
+    let router_entry = routers_for_chain(opp.chain_id)
+        .iter()
+        .find(|r| r.name.starts_with(&opp.dex_a) || r.kind.as_str() == opp.dex_a)
+        .ok_or_else(|| BuildError::UnknownRouter(opp.dex_a.clone()))?;
+    let data = match router_entry.kind {
+        RouterKind::UniswapV2 | RouterKind::Sushi => {
+            encode_v2(token_in, token_out, amount_in, recipient, deadline)
+        }
+        RouterKind::UniswapV3 => {
+            encode_v3(token_in, token_out, amount_in, recipient, deadline)
+        }
+        _ => return Err(BuildError::UnknownRouter(format!("{:?}", router_entry.kind))),
+    };
+    Ok((Address::from(router_entry.address), data))
+}
+
+/// Decode a `0x`-prefixed (or bare) hex string into bytes.
+fn decode_hex_0x(s: &str) -> Result<Vec<u8>, BuildError> {
+    let cleaned = s.trim_start_matches("0x").trim_start_matches("0X");
+    hex::decode(cleaned).map_err(|e| BuildError::InvalidExecPayload(format!("bad calldata hex: {e}")))
 }
 
 fn keccak256_bytes(b: &Bytes) -> [u8; 32] {
@@ -246,6 +305,28 @@ fn encode_v3(
 mod tests {
     use super::*;
 
+    fn test_opp(dex_a: &str, chain_id: u64) -> Opportunity {
+        Opportunity {
+            id: uuid::Uuid::nil(),
+            chain_id,
+            strategy_kind: StrategyKind::DexArb,
+            dex_a: dex_a.to_string(),
+            dex_b: None,
+            pair_symbol: "T/U".to_string(),
+            token_in: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string(),
+            token_out: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".to_string(),
+            amount_in_wei: "1000".to_string(),
+            expected_profit_usd: None,
+            net_expected_profit_usd: None,
+            roi_pct: None,
+            risk_score: None,
+            block_number: None,
+            rejection_reason: None,
+            detected_at: chrono::Utc::now(),
+            trace_id: uuid::Uuid::nil(),
+        }
+    }
+
     #[test]
     fn value_cap_triggers_on_huge_amount() {
         // Direct cap check — doesn't need network.
@@ -260,5 +341,73 @@ mod tests {
         assert!(parse_addr("nope").is_err());
         assert!(parse_addr("0x123").is_err());
         assert!(parse_addr("0xC02aaa39b223FE8D0A0e5C4F27eAD9083C756Cc2").is_ok());
+    }
+
+    /// Provable parity: when sim attaches the executeArbitrage calldata, the
+    /// broadcast path signs exactly those bytes — no re-encoding.
+    #[test]
+    fn exec_payload_is_replayed_verbatim() {
+        let opp = test_opp("uniswap_v2", 1);
+        let calldata_hex =
+            "0x76d81cdf00000000000000000000000000000000000000000000000000000000deadbeef";
+        let to_hex = "0x2222222222222222222222222222222222222222";
+        let payload = ExecPayload {
+            calldata_hex: calldata_hex.to_string(),
+            to: to_hex.to_string(),
+            selector: "0x76d81cdf".to_string(),
+        };
+        let (to, data) = select_to_and_data(
+            &opp,
+            Some(&payload),
+            Address::zero(),
+            U256::from(1u8),
+            U256::from(123u64),
+        )
+        .expect("exec_payload path must succeed");
+        assert_eq!(to, parse_addr(to_hex).unwrap(), "to must be the carried executor");
+        let expected = hex::decode(calldata_hex.trim_start_matches("0x")).unwrap();
+        assert_eq!(
+            data.as_ref(),
+            expected.as_slice(),
+            "calldata must be replayed verbatim (byte-parity with sim)"
+        );
+    }
+
+    /// A too-short carried calldata (no selector) is rejected, not signed.
+    #[test]
+    fn exec_payload_too_short_is_rejected() {
+        let opp = test_opp("uniswap_v2", 1);
+        let payload = ExecPayload {
+            calldata_hex: "0xabcd".to_string(), // 2 bytes < 4-byte selector
+            to: "0x2222222222222222222222222222222222222222".to_string(),
+            selector: "0xabcdef00".to_string(),
+        };
+        let r = select_to_and_data(
+            &opp,
+            Some(&payload),
+            Address::zero(),
+            U256::from(1u8),
+            U256::from(123u64),
+        );
+        assert!(matches!(r, Err(BuildError::InvalidExecPayload(_))));
+    }
+
+    /// With no carried calldata and an unknown dex, the fallback path is taken
+    /// (proven by the UnknownRouter error from the catalogue lookup) — i.e. it
+    /// does NOT silently reuse any carried bytes.
+    #[test]
+    fn no_exec_payload_takes_direct_router_fallback() {
+        let opp = test_opp("totally_unknown_dex_xyz", 1);
+        let r = select_to_and_data(
+            &opp,
+            None,
+            Address::zero(),
+            U256::from(1000u64),
+            U256::from(123u64),
+        );
+        assert!(
+            matches!(r, Err(BuildError::UnknownRouter(_))),
+            "expected fallback to the router catalogue, got {r:?}"
+        );
     }
 }
