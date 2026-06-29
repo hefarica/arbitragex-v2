@@ -904,6 +904,10 @@ app.put("/admin/relays/:id", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, re
   );
   await writeAudit("relay.update", actor, "relay", req.params.id ?? "",
                    existing, parsed.data, req.ip ?? null, (req as any).traceId ?? null, reqUA(req));
+  // Respond with the updated row. Without this the handler completed the UPDATE +
+  // audit but never sent a response, so the request hung until the proxy/client
+  // timed out (the relay-catalog admin flow was silently dead).
+  res.status(200).json(q.rows[0]);
 });
 
 // Paper mode admin endpoint.
