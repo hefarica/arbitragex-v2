@@ -34,8 +34,8 @@ Use extended thinking on every response. After completing ANY task:
 - Frontend: Next.js 14 App Router, React, TypeScript strict, Tailwind, shadcn/ui
 - Backend: Node.js Express + Rust (searcher-rs, tokio, alloy, revm)
 - Database: PostgreSQL 15, Redis 7.2
-- Deploy: Docker Compose, VPS 195.201.235.70 (alias arbx)
-- Frontend URL: https://edge-arbx.ape-tv.net
+- Deploy: Docker Compose, VPS <VPS_IP> (alias arbx)
+- Frontend URL: https://<VPS_HOST>
 
 ## Architecture — C-S-E Pattern
 1. **Compose**: Token graph with Bellman-Ford (negative cycles = opportunities).

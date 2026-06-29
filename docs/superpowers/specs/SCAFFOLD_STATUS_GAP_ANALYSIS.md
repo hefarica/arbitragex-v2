@@ -66,7 +66,7 @@ El siguiente diagrama muestra el estado actual de los componentes, indicando qu�
 | **Simulador (Anvil)** | Configurar `ANVIL_FORK_URL` en el `.env` para que `sim-ctl` pueda bifurcar el estado real. | 🔴 Bloqueante |
 | **Tokens y Pools** | Popular la base de datos con tokens (WETH, USDC, USDT) y pools iniciales (Uniswap V2/V3) para que los workers tengan qué sincronizar. | 🟡 Parcial |
 | **API CEX (Para APEX)** | Configurar API Keys de Binance/Bybit si se desea evaluar las estrategias CEX-DEX y Funding Rate. | 🟡 Opcional |
-| **Reinicio VPS** | El VPS (195.201.235.70) actualmente no responde en el puerto 8080. Requiere reinicio de los contenedores Docker con el nuevo `.env`. | 🔴 Bloqueante |
+| **Reinicio VPS** | El VPS (<VPS_IP>) actualmente no responde en el puerto 8080. Requiere reinicio de los contenedores Docker con el nuevo `.env`. | 🔴 Bloqueante |
 
 ---
 

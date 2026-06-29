@@ -13,7 +13,7 @@
 
 Esta skill se activa **automática e incondicionalmente** cuando el agente enfrente CUALQUIERA de estas situaciones:
 
-- Corrección de un bug crítico en producción (VPS 195.201.235.70).
+- Corrección de un bug crítico en producción (VPS <VPS_IP>).
 - Modificación de archivos en `frontend/app/`, `edge/dev-local/`, `backend/api-server/`, `backend/searcher-rs/`, `docker/`, `nginx`.
 - Reconstrucción o redespliegue de contenedores Docker.
 - Diagnóstico de errores de consola del navegador en la URL pública.
@@ -43,7 +43,7 @@ Esta skill se activa **automática e incondicionalmente** cuando el agente enfre
 **Causa arquitectónica:** Componentes marcados `"use client"` evaluaban expresiones no determinísticas directamente en el primer ciclo de renderizado:
 
 - `Date.now()` producía timestamps diferentes en servidor vs cliente.
-- `getApiBaseUrl()` resolvía a `http://edge:8787` en el servidor (Docker DNS) pero a `https://edge-arbx.ape-tv.net` en el navegador.
+- `getApiBaseUrl()` resolvía a `http://edge:8787` en el servidor (Docker DNS) pero a `https://<VPS_HOST>` en el navegador.
 - Estado de WebSocket (`feedStatus`) se inicializaba con valores que dependían del entorno de ejecución.
 - `SiteHeader` en `layout.tsx` contenía la misma violación, contaminando TODAS las rutas.
 

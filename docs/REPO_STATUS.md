@@ -19,7 +19,7 @@ Next steps toward live operations:
 - Deploy contracts via `contracts/DEPLOY.md`
 - Initialize Vault: `bash scripts/vault-operator-init.sh`
 
-## VPS Status (195.201.235.70)
+## VPS Status (<VPS_IP>)
 
 - api-server: ✅ UP (uptime ~28h at last check)
 - frontend: ✅ UP (Next.js — QuantumX Control Plane)

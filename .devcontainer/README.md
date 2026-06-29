@@ -48,7 +48,7 @@ Si quieres que el Frontend local consuma Edge/API/WS de staging, abre una ventan
 El script asume que tienes un alias SSH llamado `arbx`. Si no lo tienes, puedes pasar un destino explícito:
 
 ```powershell
-.\scripts\devcontainer-tunnel-staging.ps1 -SshTarget root@195.201.235.70
+.\scripts\devcontainer-tunnel-staging.ps1 -SshTarget root@<VPS_IP>
 ```
 
 Mientras esa ventana permanezca abierta, el Frontend usará estas rutas locales:
