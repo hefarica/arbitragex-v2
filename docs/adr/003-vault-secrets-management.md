@@ -21,7 +21,7 @@ ArbitrageX v2 manages multiple classes of secrets that must be protected at rest
 
 ### Threat Model
 
-1. **VPS compromise**: The production host (195.201.235.70) is a single VPS. Physical access is controlled by the provider; logical access must be hardened.
+1. **VPS compromise**: The production host (<VPS_IP>) is a single VPS. Physical access is controlled by the provider; logical access must be hardened.
 2. **Container escape**: A compromised service container could read environment variables or mounted files from other containers.
 3. **Credential leakage in logs**: Secrets must never appear in application logs, Docker logs, or crash dumps.
 4. **Rotation requirement**: After any personnel change or suspected breach, all T0/T1 secrets must be rotatable within 15 minutes.
@@ -35,7 +35,7 @@ We will use **HashiCorp Vault** with the integrated file storage backend, TLS te
 
 ```mermaid
 flowchart TB
-    subgraph Host["VPS Host (195.201.235.70)"]
+    subgraph Host["VPS Host (<VPS_IP>)"]
         subgraph DockerNet["Docker Bridge: arbx-net"]
             V["vault<br/>(HashiCorp Vault)"]
             VA["vault-agent<br/>(template renderer)"]

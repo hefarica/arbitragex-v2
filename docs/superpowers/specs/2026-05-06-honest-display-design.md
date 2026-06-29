@@ -21,7 +21,7 @@ Este documento rige la actuaciÃ³n de todo agente en el ecosistema ArbitrageX. 
 
 ### Por quÃ© existe este sub-proyecto
 
-AuditorÃ­a 2026-05-06 (response live `http://195.201.235.70:5173/opportunities`):
+AuditorÃ­a 2026-05-06 (response live `http://<VPS_IP>:5173/opportunities`):
 
 - 50 opportunities reales detectadas por `searcher-rs` desde mempool de Ethereum mainnet (datos verificables: WETH `0xc02aaaâ€¦`, UUIDs, timestamps actuales).
 - **Pero la UI muestra**:
