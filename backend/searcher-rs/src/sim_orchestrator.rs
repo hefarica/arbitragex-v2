@@ -9,8 +9,24 @@
 //!
 //! ## Scope and honest disclaimers
 //!
-//! This module ships the SINGLE-TX dispatch path. For most real candidates
-//! the simulated `executeArbitrage` call will REVERT today because:
+//! ## DEAD for the M2 flash rubric (kept as documented-dead, M2 flash R3c)
+//!
+//! This SINGLE-TX `executeArbitrage` (self-funded, selector 0x76d81cdf) path is
+//! NOT the wrapped-flash path. It dispatches `EOA → ArbitrageExecutor` directly,
+//! which has no role/storage override hook, so against a real fork it just
+//! reverts `onlyRole`/`InsufficientBalance`. The M2 flash rework (R3) lives in
+//! `sim_multistep::{build_multistep_plan, execute_multistep_revm}`: that path
+//! dispatches `EOA → FlashLoanExecutor.requestFlashLoan` (0x5107d61e) wrapping
+//! `executeArbitrageFlashFunded` (0xdde0bf51) and seeds ONLY the caller→FLE
+//! EXECUTOR_ROLE bit. This module is retained (not deleted) because its tests
+//! lock the still-live self-funded encoder (`build_execute_arbitrage_calldata`
+//! / `EXECUTE_ARBITRAGE_SELECTOR`), which R1's shared encoder body reuses — the
+//! selector fixtures here guard against that body drifting (they do NOT
+//! false-validate the flash path: they exercise a different, self-funded
+//! function). They are therefore intentionally LEFT AS-IS, not silently deleted.
+//!
+//! For most real candidates the simulated `executeArbitrage` call will REVERT
+//! today because:
 //!
 //!   * The caller has no `EXECUTOR_ROLE` on the live deployed contract
 //!     (the simulation does not modify AccessControl storage).

@@ -20,27 +20,29 @@
 //! cargo test -p searcher-rs --test multistep_fork --all-features -- --ignored --nocapture
 //! ```
 //!
-//! ## What the test validates
+//! ## What the test validates (WRAPPED FLASH path — M2 flash R3)
 //!
-//! 1. The multi-step REVM executor (A.3.c.3) reaches `sequence_runner`
-//!    against real chain state (no PASS fabrication path possible).
+//! 1. The multi-step REVM executor reaches `sequence_runner` against real
+//!    chain state (no PASS fabrication path possible).
 //! 2. CacheDB<LazyDb> persists state between steps.
-//! 3. `ApplyStorage` writes balance + allowance overrides.
-//! 4. Forward swap executes against a real V2 router; gas_used > 0 or
-//!    a real revert reason is captured.
-//! 5. `ReadBalance` after forward returns the post-swap balance.
-//! 6. `AmountSource::FromReadLabel` resolves to that real intermediate
-//!    amount (NEVER a placeholder).
-//! 7. Backward swap dispatches with the resolved real amount.
-//! 8. Final balance read produces the value the profit accounting uses.
-//! 9. ANY outcome (SIM_SUCCESS / SIM_REVERT / SIM_REJECTED / SIM_ERROR)
+//! 3. `ApplyStorage` writes the caller→FLE EXECUTOR_ROLE bit + token_in
+//!    balance/allowance overrides (paper-only).
+//! 4. The SINGLE wrapped `requestFlashLoan` dispatch (caller → FlashLoanExecutor)
+//!    runs the REAL provider callback + inner executeArbitrageFlashFunded
+//!    against forked bytecode; gas_used > 0 or a real revert reason is captured.
+//! 5. Final balance read produces the value the profit accounting uses.
+//! 6. ANY outcome (SIM_SUCCESS / SIM_REVERT / SIM_REJECTED / SIM_ERROR)
 //!    carries a typed reason; no path can produce success with zero gas,
 //!    zero trace_hash, or non-positive net_profit.
 //!
 //! A SIM_REVERT outcome is an ACCEPTABLE pass condition for the fork
 //! validation — it proves the system reaches REVM and rejects honestly.
-//! A SIM_SUCCESS outcome proves the full round-trip arbitrage produces
-//! a real positive net profit on the chosen route.
+//! A SIM_SUCCESS outcome proves the full flash-funded round trip produces
+//! a real positive net profit. The end-to-end SIM_SUCCESS validation is
+//! DEFERRED to the M5 deployed-testnet run (operator decision): the pinned
+//! fork must carry the FLE→AE EXECUTOR_ROLE, approvedRouters / approvedTokens /
+//! approvedSelectors, a funded flash provider, AND a caller with ETH for gas
+//! (see the caller-gas note in `sim_multistep.rs`).
 
 use std::str::FromStr;
 
@@ -110,6 +112,7 @@ fn addr(s: &str) -> Address {
 struct PrereqStatus {
     rpc_http_1: Option<String>,
     executor_1: Option<String>,
+    flashloan_executor_1: Option<String>,
     sim_gas_price: Option<String>,
 }
 
@@ -118,6 +121,7 @@ impl PrereqStatus {
         Self {
             rpc_http_1: std::env::var("RPC_HTTP_1").ok(),
             executor_1: std::env::var("EXECUTOR_1").ok(),
+            flashloan_executor_1: std::env::var("FLASHLOAN_EXECUTOR_1").ok(),
             sim_gas_price: std::env::var("SIM_ORCHESTRATOR_GAS_PRICE_WEI").ok(),
         }
     }
@@ -139,6 +143,14 @@ impl PrereqStatus {
             .is_none()
         {
             m.push("EXECUTOR_1");
+        }
+        if self
+            .flashloan_executor_1
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .is_none()
+        {
+            m.push("FLASHLOAN_EXECUTOR_1");
         }
         if self
             .sim_gas_price
@@ -220,9 +232,22 @@ async fn multistep_fork_round_trip_weth_usdc() {
         .and_then(|s| U256::from_dec_str(s).ok())
         .expect("SIM_ORCHESTRATOR_GAS_PRICE_WEI must parse as decimal U256");
 
+    // `executor_address` is the deployed ArbitrageExecutor (inner
+    // executeArbitrageFlashFunded target / per-leg swap recipient).
+    let arbitrage_executor = caller;
+    // `.to()` of the wrapped flash dispatch — the deployed FlashLoanExecutor.
+    let flashloan_executor = match prereqs.flashloan_executor_1.as_deref() {
+        Some(s) => Address::from_str(s.trim()).expect("FLASHLOAN_EXECUTOR_1 must parse"),
+        None => unreachable!("missing check passed"),
+    };
+
     let config = MultiStepExecutionConfig {
         chain_id: 1,
-        executor_address: caller,
+        executor_address: arbitrage_executor,
+        // Operator-supplied route identity + net-profit gate for the inner
+        // executeArbitrageFlashFunded args. Fixed sentinels for the fork run.
+        route_hash: [0u8; 32],
+        min_profit_wei: U256::from(1u64),
         gas_price_wei,
         gas_limit_per_step: 30_000_000,
         paper_mode: true,
@@ -235,12 +260,12 @@ async fn multistep_fork_round_trip_weth_usdc() {
     let provider = FixtureLayoutProvider::mainnet_fixture();
 
     // 1. Plan construction must succeed before any REVM dispatch.
-    let plan_result = build_multistep_plan(&ctx, &config, &provider);
+    let plan_result = build_multistep_plan(&ctx, &config, flashloan_executor, &provider);
     match plan_result {
         Ok(plan) => {
             assert!(
-                plan.steps.len() >= 5,
-                "expected canonical 7-step plan (got {})",
+                plan.steps.len() >= 4,
+                "expected wrapped flash plan (>=4 steps, got {})",
                 plan.steps.len()
             );
             eprintln!(
@@ -357,15 +382,18 @@ fn prereq_status_reports_missing_when_env_is_empty() {
     // Save and clear known env vars for the duration of this test.
     let prev_rpc = std::env::var("RPC_HTTP_1").ok();
     let prev_exec = std::env::var("EXECUTOR_1").ok();
+    let prev_fle = std::env::var("FLASHLOAN_EXECUTOR_1").ok();
     let prev_gas = std::env::var("SIM_ORCHESTRATOR_GAS_PRICE_WEI").ok();
     std::env::remove_var("RPC_HTTP_1");
     std::env::remove_var("EXECUTOR_1");
+    std::env::remove_var("FLASHLOAN_EXECUTOR_1");
     std::env::remove_var("SIM_ORCHESTRATOR_GAS_PRICE_WEI");
 
     let prereqs = PrereqStatus::collect();
     let missing = prereqs.missing();
     assert!(missing.contains(&"RPC_HTTP_1"));
     assert!(missing.contains(&"EXECUTOR_1"));
+    assert!(missing.contains(&"FLASHLOAN_EXECUTOR_1"));
     assert!(missing.contains(&"SIM_ORCHESTRATOR_GAS_PRICE_WEI"));
 
     // Restore env vars for any subsequent tests.
@@ -374,6 +402,9 @@ fn prereq_status_reports_missing_when_env_is_empty() {
     }
     if let Some(v) = prev_exec {
         std::env::set_var("EXECUTOR_1", v);
+    }
+    if let Some(v) = prev_fle {
+        std::env::set_var("FLASHLOAN_EXECUTOR_1", v);
     }
     if let Some(v) = prev_gas {
         std::env::set_var("SIM_ORCHESTRATOR_GAS_PRICE_WEI", v);
