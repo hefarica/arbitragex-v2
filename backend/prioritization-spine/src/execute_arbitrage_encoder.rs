@@ -390,7 +390,10 @@ mod tests {
         assert_eq!(decoded.len(), 7, "expected 7 top-level args");
 
         // routeHash
-        let decoded_route_hash = decoded[0].clone().into_fixed_bytes().expect("arg 0 is bytes32");
+        let decoded_route_hash = decoded[0]
+            .clone()
+            .into_fixed_bytes()
+            .expect("arg 0 is bytes32");
         assert_eq!(decoded_route_hash.as_slice(), &route_hash[..]);
 
         // tokenIn / tokenOut
@@ -407,9 +410,19 @@ mod tests {
 
         // routers == [forward_router, backward_router]
         let decoded_routers = decoded[5].clone().into_array().expect("arg 5 is address[]");
-        assert_eq!(decoded_routers.len(), 2, "expected 2 routers (forward, backward)");
-        let router_0 = decoded_routers[0].clone().into_address().expect("router 0 is address");
-        let router_1 = decoded_routers[1].clone().into_address().expect("router 1 is address");
+        assert_eq!(
+            decoded_routers.len(),
+            2,
+            "expected 2 routers (forward, backward)"
+        );
+        let router_0 = decoded_routers[0]
+            .clone()
+            .into_address()
+            .expect("router 0 is address");
+        let router_1 = decoded_routers[1]
+            .clone()
+            .into_address()
+            .expect("router 1 is address");
         assert_eq!(router_0, ctx.forward_router);
         assert_eq!(router_1, ctx.backward_router);
 
@@ -482,13 +495,22 @@ mod tests {
         assert_eq!(outer_decoded.len(), 3, "requestFlashLoan has 3 args");
 
         // asset == ctx.token_in (the borrowed/repaid token), amount == ctx.amount_in.
-        let asset = outer_decoded[0].clone().into_address().expect("asset is address");
+        let asset = outer_decoded[0]
+            .clone()
+            .into_address()
+            .expect("asset is address");
         assert_eq!(asset, ctx.token_in, "borrowed asset must be token_in");
-        let amount = outer_decoded[1].clone().into_uint().expect("amount is uint256");
+        let amount = outer_decoded[1]
+            .clone()
+            .into_uint()
+            .expect("amount is uint256");
         assert_eq!(amount, ctx.amount_in, "borrowed amount must be amount_in");
 
         // The inner params are the executeArbitrageFlashFunded calldata.
-        let inner = outer_decoded[2].clone().into_bytes().expect("params is bytes");
+        let inner = outer_decoded[2]
+            .clone()
+            .into_bytes()
+            .expect("params is bytes");
         assert_eq!(
             EXECUTE_ARBITRAGE_FLASH_FUNDED_SELECTOR,
             inner[0..4],
@@ -509,21 +531,40 @@ mod tests {
             decode(&inner_types, &inner[4..]).expect("inner calldata must ABI-decode");
         assert_eq!(inner_decoded.len(), 7, "inner has 7 executeArbitrage args");
 
-        let inner_route_hash =
-            inner_decoded[0].clone().into_fixed_bytes().expect("inner arg 0 is bytes32");
+        let inner_route_hash = inner_decoded[0]
+            .clone()
+            .into_fixed_bytes()
+            .expect("inner arg 0 is bytes32");
         assert_eq!(inner_route_hash.as_slice(), &route_hash[..]);
-        let inner_token_in = inner_decoded[1].clone().into_address().expect("inner arg 1 is address");
+        let inner_token_in = inner_decoded[1]
+            .clone()
+            .into_address()
+            .expect("inner arg 1 is address");
         assert_eq!(inner_token_in, ctx.token_in);
-        let inner_token_out =
-            inner_decoded[2].clone().into_address().expect("inner arg 2 is address");
+        let inner_token_out = inner_decoded[2]
+            .clone()
+            .into_address()
+            .expect("inner arg 2 is address");
         assert_eq!(inner_token_out, ctx.token_out);
-        let inner_amount_in = inner_decoded[3].clone().into_uint().expect("inner arg 3 is uint256");
+        let inner_amount_in = inner_decoded[3]
+            .clone()
+            .into_uint()
+            .expect("inner arg 3 is uint256");
         assert_eq!(inner_amount_in, ctx.amount_in);
-        let inner_min_profit = inner_decoded[4].clone().into_uint().expect("inner arg 4 is uint256");
+        let inner_min_profit = inner_decoded[4]
+            .clone()
+            .into_uint()
+            .expect("inner arg 4 is uint256");
         assert_eq!(inner_min_profit, min_profit_wei);
-        let inner_routers = inner_decoded[5].clone().into_array().expect("inner arg 5 is address[]");
+        let inner_routers = inner_decoded[5]
+            .clone()
+            .into_array()
+            .expect("inner arg 5 is address[]");
         assert_eq!(inner_routers.len(), 2, "expected 2 routers");
-        let inner_payloads = inner_decoded[6].clone().into_array().expect("inner arg 6 is bytes[]");
+        let inner_payloads = inner_decoded[6]
+            .clone()
+            .into_array()
+            .expect("inner arg 6 is bytes[]");
         assert_eq!(inner_payloads.len(), 2, "expected 2 payload legs");
     }
 
@@ -536,7 +577,10 @@ mod tests {
     fn decode_backward_leg_amount_in(outer: &[u8]) -> U256 {
         let outer_types = [ParamType::Address, ParamType::Uint(256), ParamType::Bytes];
         let outer_decoded = decode(&outer_types, &outer[4..]).expect("outer must ABI-decode");
-        let inner = outer_decoded[2].clone().into_bytes().expect("params is bytes");
+        let inner = outer_decoded[2]
+            .clone()
+            .into_bytes()
+            .expect("params is bytes");
 
         let inner_types = [
             ParamType::FixedBytes(32),
@@ -548,9 +592,15 @@ mod tests {
             ParamType::Array(Box::new(ParamType::Bytes)),
         ];
         let inner_decoded = decode(&inner_types, &inner[4..]).expect("inner must ABI-decode");
-        let payloads = inner_decoded[6].clone().into_array().expect("inner arg 6 is bytes[]");
+        let payloads = inner_decoded[6]
+            .clone()
+            .into_array()
+            .expect("inner arg 6 is bytes[]");
         assert_eq!(payloads.len(), 2, "expected forward + backward legs");
-        let backward_leg = payloads[1].clone().into_bytes().expect("backward leg is bytes");
+        let backward_leg = payloads[1]
+            .clone()
+            .into_bytes()
+            .expect("backward leg is bytes");
 
         // swapExactTokensForTokens args after its 4-byte selector: arg 0 = amountIn.
         let swap_types = [
@@ -562,7 +612,10 @@ mod tests {
         ];
         let swap_decoded =
             decode(&swap_types, &backward_leg[4..]).expect("backward swap must ABI-decode");
-        swap_decoded[0].clone().into_uint().expect("swap arg 0 is amountIn")
+        swap_decoded[0]
+            .clone()
+            .into_uint()
+            .expect("swap arg 0 is amountIn")
     }
 
     /// The intermediate-aware broadcast encoder puts the REAL backward amount in
@@ -591,7 +644,10 @@ mod tests {
         assert_eq!(REQUEST_FLASH_LOAN_SELECTOR, outer[0..4], "outer selector");
         let outer_types = [ParamType::Address, ParamType::Uint(256), ParamType::Bytes];
         let outer_decoded = decode(&outer_types, &outer[4..]).expect("outer must ABI-decode");
-        let inner = outer_decoded[2].clone().into_bytes().expect("params is bytes");
+        let inner = outer_decoded[2]
+            .clone()
+            .into_bytes()
+            .expect("params is bytes");
         assert_eq!(
             EXECUTE_ARBITRAGE_FLASH_FUNDED_SELECTOR,
             inner[0..4],

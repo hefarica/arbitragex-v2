@@ -449,7 +449,10 @@ mod tests {
     fn executor_invalid_rejected() {
         std::env::set_var("EXECUTOR_8998", "not_an_address");
         let err = resolve_executor_address(8998).unwrap_err();
-        assert!(matches!(err, ExecutorAddrError::Invalid { chain_id: 8998, .. }));
+        assert!(matches!(
+            err,
+            ExecutorAddrError::Invalid { chain_id: 8998, .. }
+        ));
         std::env::remove_var("EXECUTOR_8998");
     }
 
@@ -497,7 +500,10 @@ mod tests {
     fn flashloan_executor_invalid_rejected() {
         std::env::set_var("FLASHLOAN_EXECUTOR_8994", "not_an_address");
         let err = resolve_flashloan_executor_address(8994).unwrap_err();
-        assert!(matches!(err, ExecutorAddrError::Invalid { chain_id: 8994, .. }));
+        assert!(matches!(
+            err,
+            ExecutorAddrError::Invalid { chain_id: 8994, .. }
+        ));
         std::env::remove_var("FLASHLOAN_EXECUTOR_8994");
     }
 

@@ -594,8 +594,11 @@ pub fn execute_multistep_revm(
     //    zero quote (a zero intermediate means no real forward output).
     let forward_router_alloy = ethers_addr_to_alloy(ctx.forward_router);
     let amount_in_alloy = ethers_u256_to_alloy(ctx.amount_in);
-    let forward_path_alloy: Vec<simulator_v2::AlloyAddress> =
-        ctx.forward_path.iter().map(|a| ethers_addr_to_alloy(*a)).collect();
+    let forward_path_alloy: Vec<simulator_v2::AlloyAddress> = ctx
+        .forward_path
+        .iter()
+        .map(|a| ethers_addr_to_alloy(*a))
+        .collect();
     let intermediate_alloy =
         match sctx.read_amounts_out(forward_router_alloy, amount_in_alloy, &forward_path_alloy) {
             Ok(v) => v,
@@ -609,7 +612,9 @@ pub fn execute_multistep_revm(
         };
     if intermediate_alloy.is_zero() {
         warn!(event = "multistep.forward_quote_zero");
-        return SimulationOutcome::failed("multistep_forward_quote_failed:zero_intermediate".to_string());
+        return SimulationOutcome::failed(
+            "multistep_forward_quote_failed:zero_intermediate".to_string(),
+        );
     }
     let backward_amount_in = alloy_u256_to_ethers(intermediate_alloy);
 
@@ -1113,7 +1118,10 @@ mod tests {
 
         // .to() == FLE, and NOT the AE / routers.
         assert_eq!(to, fle(), "dispatch .to() must be the FlashLoanExecutor");
-        assert_ne!(to, cfg.executor_address, "dispatch .to() must NOT be the AE");
+        assert_ne!(
+            to, cfg.executor_address,
+            "dispatch .to() must NOT be the AE"
+        );
         assert_ne!(to, ctx.forward_router);
         assert_ne!(to, ctx.backward_router);
 
@@ -1199,7 +1207,10 @@ mod tests {
         );
         let role = role_overrides[0];
         assert_eq!(role.token, fle(), "role override must target the FLE");
-        assert_eq!(role.slot, expected_slot, "role slot must be the cast-verified member slot");
+        assert_eq!(
+            role.slot, expected_slot,
+            "role slot must be the cast-verified member slot"
+        );
         assert_eq!(role.value, U256::one(), "role bit seeded to 1 (true)");
 
         // No role override targets the AE — the FLE→AE EXECUTOR_ROLE is forked.
@@ -1216,9 +1227,8 @@ mod tests {
     #[test]
     fn build_plan_ends_with_fle_post_balance_read() {
         let ctx = valid_ctx();
-        let plan =
-            build_multistep_plan(&ctx, &valid_config(), fle(), backward_amount_in_fixture())
-                .unwrap();
+        let plan = build_multistep_plan(&ctx, &valid_config(), fle(), backward_amount_in_fixture())
+            .unwrap();
         // The plan must end with a ReadBalance of the FLE's token_in balance
         // (the post-flash leg of the retained-spread measurement).
         let last = plan.steps.last().unwrap();

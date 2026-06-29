@@ -2607,7 +2607,12 @@ async fn dispatch_orchestrator_and_classify(
     simulator: Arc<simulator_v2::SimulatorV2>,
     chain_id: u64,
     candidate: &prioritization_spine::types::OpportunityCandidate,
-) -> (String, String, String, Option<prioritization_spine::ValidatedPlan>) {
+) -> (
+    String,
+    String,
+    String,
+    Option<prioritization_spine::ValidatedPlan>,
+) {
     use std::sync::atomic::Ordering::Relaxed;
     let c = counters();
     c.round_trip_executor_started_total.fetch_add(1, Relaxed);

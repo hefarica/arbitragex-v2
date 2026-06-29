@@ -27,7 +27,8 @@ pub use execute_arbitrage_encoder::{
     build_execute_arbitrage_calldata, build_execute_arbitrage_flash_funded_calldata,
     build_flash_funded_broadcast_calldata, build_flash_funded_broadcast_calldata_with_intermediate,
     build_request_flash_loan_calldata, ExecuteArbitrageEncodeError,
-    EXECUTE_ARBITRAGE_FLASH_FUNDED_SELECTOR, EXECUTE_ARBITRAGE_SELECTOR, REQUEST_FLASH_LOAN_SELECTOR,
+    EXECUTE_ARBITRAGE_FLASH_FUNDED_SELECTOR, EXECUTE_ARBITRAGE_SELECTOR,
+    REQUEST_FLASH_LOAN_SELECTOR,
 };
 pub use feedback::{AdaptiveSignal, FeedbackChannel, SIGNAL_TTL};
 pub use gates::*;
