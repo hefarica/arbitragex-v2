@@ -298,6 +298,13 @@ pub struct ScannerCounters {
     /// returning `JoinError` (panic inside the orchestrator). Should
     /// always be zero.
     pub round_trip_executor_spawn_blocking_failed_total: AtomicU64,
+    /// O4 follow-up — the wrapped-flash sim PASSED on GROSS spread but the
+    /// net-USD-of-gas pre-live gate rejected the plan before persist: either
+    /// the gross spread did not cover gas in USD (`net_usd_non_positive`) or
+    /// the token_in / ETH price was unavailable so net-of-gas could not be
+    /// computed honestly (`net_usd_price_unavailable` — fail-closed). No plan
+    /// is persisted / broadcast for either case.
+    pub round_trip_executor_net_usd_rejected_total: AtomicU64,
 }
 
 /// Per-chain counter registry. Lazy-initialises `Arc<ScannerCounters>` on
