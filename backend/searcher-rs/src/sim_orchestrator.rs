@@ -9,8 +9,31 @@
 //!
 //! ## Scope and honest disclaimers
 //!
-//! This module ships the SINGLE-TX dispatch path. For most real candidates
-//! the simulated `executeArbitrage` call will REVERT today because:
+//! ## DEAD for the M2 flash rubric (kept as documented-dead, M2 flash R3c)
+//!
+//! This SINGLE-TX `executeArbitrage` (self-funded, selector 0x76d81cdf) path is
+//! NOT the wrapped-flash path. It dispatches `EOA → ArbitrageExecutor` directly,
+//! which has no role/storage override hook, so against a real fork it just
+//! reverts `onlyRole`/`InsufficientBalance`. The M2 flash rework (R3) lives in
+//! `sim_multistep::{build_multistep_plan, execute_multistep_revm}`: that path
+//! dispatches `EOA → FlashLoanExecutor.requestFlashLoan` (0x5107d61e) wrapping
+//! `executeArbitrageFlashFunded` (0xdde0bf51) and seeds ONLY the caller→FLE
+//! EXECUTOR_ROLE bit. This module is retained (not deleted) because its tests
+//! lock the still-live self-funded encoder (`build_execute_arbitrage_calldata`
+//! / `EXECUTE_ARBITRAGE_SELECTOR`), which R1's shared encoder body reuses — the
+//! selector fixtures here guard against that body drifting (they do NOT
+//! false-validate the flash path: they exercise a different, self-funded
+//! function). They are therefore intentionally LEFT AS-IS, not silently deleted.
+//!
+//! The PRODUCTION producer (`scanner::dispatch_orchestrator_and_classify`) no
+//! longer calls `execute_round_trip_revm`: it validates via the wrapped-flash
+//! `sim_multistep::execute_multistep_revm` and carries the sim-validated calldata
+//! in `ValidatedPlan.wrapped_calldata` (broadcast verbatim — byte-parity). This
+//! module's `execute_round_trip_revm` / `RoundTripExecutionConfig` are retained
+//! ONLY for `mcp-sim-engine`'s self-funded round-trip tool.
+//!
+//! For most real candidates the simulated `executeArbitrage` call will REVERT
+//! today because:
 //!
 //!   * The caller has no `EXECUTOR_ROLE` on the live deployed contract
 //!     (the simulation does not modify AccessControl storage).
@@ -52,6 +75,14 @@
 //! thread). The scanner hot path wraps this orchestrator in
 //! `tokio::task::spawn_blocking` so the tokio worker thread is never
 //! parked on a blocking call — cs-validator finding 2026-05-12 applied.
+
+// Dead within searcher-rs (the production producer validates via
+// `sim_multistep::execute_multistep_revm` — see the module doc above);
+// retained ONLY for the `mcp-sim-engine` sibling crate's self-funded tool.
+// Allow dead_code so the searcher-rs clippy gate (`-D warnings`) stays green
+// without deleting that crate's API surface (a follow-up may migrate or
+// remove the obsolete self-funded `executeArbitrage` sim entirely).
+#![allow(dead_code)]
 
 use ethers::types::{Address, U256};
 use prioritization_spine::round_trip_executor::{RoundTripContext, SimulationOutcome};
@@ -345,7 +376,13 @@ pub fn execute_round_trip_revm(
                 simulated_profit_token_in: profit_u256,
                 intermediate_amount_out: None,
                 gas_used_total: result.gas_used,
+                // Carry the gas price used so the price-aware downstream layer
+                // can compute net-of-gas USD via `compute_profit_usd`.
+                gas_price_wei: config.gas_price_wei,
                 fail_reason: None,
+                // Self-funded executeArbitrage path carries no wrapped-flash
+                // calldata; the carry is wrapped-flash-only.
+                wrapped_calldata: None,
             }
         }
         Err(SimError::Reverted(reason)) => {

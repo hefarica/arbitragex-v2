@@ -8,6 +8,8 @@ description = "ArbitrageX v2 — private execution via Flashbots/builders. S1: /
 
 [dependencies]
 shared-rs.workspace = true
+# M2-core: shared executeArbitrage calldata encoder (sim↔exec parity, single source of truth).
+prioritization-spine = { workspace = true }
 tokio.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
