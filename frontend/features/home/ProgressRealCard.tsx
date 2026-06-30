@@ -1,42 +1,38 @@
 "use client";
 
 /**
- * ProgressRealCard — workspace-verified progress milestones for the operator.
+ * ProgressRealCard — workspace progress for the operator, split into two
+ * SEMANTICALLY DISTINCT sections so a viewer can never confuse a hand-edited
+ * doctrine number for a live measurement (the bug this refactor fixes):
  *
- * Source of truth (per directive Fase 2/3 — "datos reales o estado blocked
- * honesto documentado como 'workspace verified'"):
+ *   ── SECTION 1: LIVE RUNTIME (auto-refreshed, measured) ──────────────────
+ *      Derived on every mount from the backend and fail-honest (R8): never
+ *      green by default, "Unavailable" when an endpoint is unreachable.
+ *        - Readiness gates green = summary.green / summary.total from
+ *          GET /api/readiness (17 live verifiers; the denominator is read
+ *          from summary.total, NEVER hardcoded). This is the real progress
+ *          meter — it moves as gates actually flip green.
+ *        - GO live   = readiness.flip_blocked (true ⇒ NO-GO).
+ *        - engine    = /api/strategies/runtime-status strategies[].engine_loaded.
  *
- *   1. Pre-live simulation completion (A.1 … A.4 phase tracker)
- *      ─────────────────────────────────────────────────────────
- *      These are PROJECT DOCTRINE values, not backend metrics. Each percentage
- *      moves only when a milestone commit lands. Hardcoding here is honest
- *      because the card is labelled "Workspace verified — doctrinal milestone";
- *      no backend exists today that emits a meaningful aggregate.
+ *   ── SECTION 2: DOCTRINAL MILESTONES (manual, hand-edited) ───────────────
+ *      PROJECT DOCTRINE values, NOT backend metrics. They move ONLY when a
+ *      human bumps the constant on a milestone-completing commit, so they are
+ *      labelled "manual" and stamped with MILESTONES_LAST_UPDATED. Honest by
+ *      construction: the UI tells you they are manual and how stale they are.
+ *      The P0/P1/A.4/A.5/Capital tiles are likewise manual doctrine — they are
+ *      grouped here, NOT next to the live tiles, so they cannot masquerade as
+ *      runtime status.
  *
- *   2. Full-system completion (incl. circuit breakers, private relay no-submit,
- *      paper-shadow runtime, confidence scoring, GO/NO-GO formal)
- *      ─────────────────────────────────────────────────────────
- *      Same doctrine — projected against the A.1 … A.10 roadmap.
- *
- *   3. Live/blocked state of A.4 fork validation + A.5 paper-shadow
- *      ─────────────────────────────────────────────────────────
- *      DERIVED from /api/readiness (flip_blocked) + /api/strategies/runtime-status
- *      (engine_loaded). When these endpoints are unreachable, the card renders
- *      "unavailable" — NEVER green by default (R8 fail-honest).
- *
- *   4. Frontend integration percentage
- *      ─────────────────────────────────────────────────────────
- *      Workspace-verified: counts the components/endpoints surfaced in the
- *      adaptive integration plan (12 panels target, 2 delivered post-P1).
+ * Why not wire A.4/A.5/Capital to the backend? Their authoritative backend
+ * source (/api/readiness/blockers doctrinalBlockers, /api/readiness/decision)
+ * is itself a hardcoded milestone literal — fetching it would only disguise a
+ * hardcode as live data (arbx-no-hardcode-doctrine). So they stay honest
+ * manual doctrine until a real runtime verifier emits them.
  *
  * Hard rules (CLAUDE.md §24 + arbx-mev-ethics-gate):
- *   - The "Live trading" tile is statically OFF. There is no code path in
- *     this binary that submits a transaction. Flipping this to "ON" requires
- *     a code change + test failure: SystemGuardBanner.test.tsx alarms.
- *   - "Capital exposure" is $0. Phase 4 onboarding verifies signer balance.
- *   - "GO live" reads readiness.flip_blocked: if any of the 16 readiness
- *     items is red/yellow/pending, flip_blocked = true → NO-GO. The card
- *     never overrides the backend's blocked verdict.
+ *   - "Live trading" tile is statically OFF; no tx-submitting code path exists.
+ *   - "Capital exposure" is $0 (manual invariant; no signer funded).
  */
 
 import * as React from "react";
@@ -50,14 +46,21 @@ import { getReadiness, getRuntimeStatus } from "@/lib/api-client";
 // ─────────────────────────────────────────────────────────────────────────
 // Doctrinal milestones (workspace verified, not backend-emitted)
 //
-// Updating these requires:
+// Updating these requires, IN THE SAME COMMIT:
 //   1. A milestone-completing commit (e.g. "A.5 paper-shadow PASS").
-//   2. Bump the relevant percentage HERE in the same commit.
-//   3. The CHANGELOG references the new percentage.
+//   2. Bump the relevant percentage HERE.
+//   3. Bump MILESTONES_LAST_UPDATED to the commit date.
 //
 // This is the SINGLE PLACE in the codebase where milestone completion %
 // is recorded. Do NOT scatter copies across pages.
+//
+// MILESTONES_LAST_UPDATED is the git date of the most recent edit to the
+// constants below (git blame: 85/58/100 → 2026-05-13 c06bd04;
+// 80 → 2026-06-14 413ad79). It is a COMMITTED constant, never Date.now() —
+// a runtime timestamp would falsely imply these were re-verified on load.
 // ─────────────────────────────────────────────────────────────────────────
+
+const MILESTONES_LAST_UPDATED = "2026-06-14";
 
 const PRE_LIVE_PCT = 85;
 const PRE_LIVE_DETAIL =
@@ -72,6 +75,10 @@ const FULL_SYSTEM_DETAIL =
   "A.8 confidence scoring, A.9 GO/NO-GO formal.";
 
 const FE_AUDIT_PCT = 100;
+const FE_AUDIT_DETAIL =
+  "Self-assessed (not measured coverage): routes, components, hooks, schemas, " +
+  "edge contract — all mapped read-only in FASE 0.";
+
 const FE_INTEGRATION_PCT = 80; // code-brechas: 4 endpoints wired + panels rendered + nav/home/sidebar/gate
 const FE_INTEGRATION_DETAIL =
   "Code brechas closed: /api/metrics/paper-shadow + /api/sim-ctl/fork-status endpoints, with " +
@@ -87,6 +94,9 @@ type RuntimeProbe =
       kind: "ready";
       flipBlocked: boolean | null;
       engineLoaded: boolean | null;
+      readinessGreen: number | null;
+      readinessTotal: number | null;
+      readinessGeneratedAt: string | null;
       readinessError: string | null;
       runtimeError: string | null;
     };
@@ -95,9 +105,15 @@ async function probe(): Promise<RuntimeProbe> {
   const [rd, rs] = await Promise.allSettled([getReadiness(), getRuntimeStatus(1)]);
 
   let flipBlocked: boolean | null = null;
+  let readinessGreen: number | null = null;
+  let readinessTotal: number | null = null;
+  let readinessGeneratedAt: string | null = null;
   let readinessError: string | null = null;
   if (rd.status === "fulfilled" && rd.value.ok) {
     flipBlocked = rd.value.data.flip_blocked;
+    readinessGreen = rd.value.data.summary.green;
+    readinessTotal = rd.value.data.summary.total;
+    readinessGeneratedAt = rd.value.data.generated_at;
   } else if (rd.status === "fulfilled" && !rd.value.ok) {
     readinessError = rd.value.error.slice(0, 80);
   } else if (rd.status === "rejected") {
@@ -114,7 +130,16 @@ async function probe(): Promise<RuntimeProbe> {
     runtimeError = (rs.reason as Error)?.message?.slice(0, 80) ?? "unknown";
   }
 
-  return { kind: "ready", flipBlocked, engineLoaded, readinessError, runtimeError };
+  return {
+    kind: "ready",
+    flipBlocked,
+    engineLoaded,
+    readinessGreen,
+    readinessTotal,
+    readinessGeneratedAt,
+    readinessError,
+    runtimeError,
+  };
 }
 
 export function ProgressRealCard() {
@@ -136,16 +161,12 @@ export function ProgressRealCard() {
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle className="flex items-center gap-2">
-              Workspace progress
-              <Badge variant="outline" className="font-mono text-[10px]">
-                doctrinal · workspace-verified
-              </Badge>
-            </CardTitle>
+            <CardTitle>Workspace progress</CardTitle>
             <CardDescription>
-              Milestone tracker. Percentages move only on milestone-completing
-              commits. Live state derives from <code className="font-mono text-[11px]">/api/readiness</code>{" "}
-              + <code className="font-mono text-[11px]">/api/strategies/runtime-status</code>.
+              Two sections. <strong>Live runtime</strong> is read live from the backend on
+              each page load.{" "}
+              <strong>Doctrinal milestones</strong> are manual values, hand-edited on
+              milestone-completing commits — not live telemetry.
             </CardDescription>
           </div>
           <Badge variant="destructive" className="font-mono text-[10px] uppercase">
@@ -154,58 +175,163 @@ export function ProgressRealCard() {
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="space-y-5">
-        <ProgressRow
-          label="Pre-live simulation honesty"
-          pct={PRE_LIVE_PCT}
-          detail={PRE_LIVE_DETAIL}
-          tone="info"
-        />
-        <ProgressRow
-          label="Full system to live-minimum"
-          pct={FULL_SYSTEM_PCT}
-          detail={FULL_SYSTEM_DETAIL}
-          tone="info"
-        />
-        <ProgressRow
-          label="Frontend forensic audit"
-          pct={FE_AUDIT_PCT}
-          detail="Routes, components, hooks, schemas, edge contract — all mapped read-only in FASE 0."
-          tone="success"
-        />
-        <ProgressRow
-          label="Frontend integration applied"
-          pct={FE_INTEGRATION_PCT}
-          detail={FE_INTEGRATION_DETAIL}
-          tone="info"
-        />
+      <CardContent className="space-y-6">
+        {/* ── SECTION 1: LIVE RUNTIME (measured, auto-refreshed, fail-honest) ── */}
+        <section data-slot="live-runtime-section" className="space-y-4">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold">Live runtime</h3>
+            <Badge variant="outline" className="font-mono text-[10px]">
+              <ShieldCheckIcon className="mr-1 inline size-3 text-success" />
+              live · on load
+            </Badge>
+          </div>
 
-        <div className="grid grid-cols-2 gap-2 border-t pt-4 sm:grid-cols-3 lg:grid-cols-6">
-          <RuntimeTile label="P0 banner" value="PASS" tone="success" />
-          <RuntimeTile label="P1 progress + evidence" value="IN PROGRESS" tone="info" />
-          <RuntimeTile label="A.4 fork" value="BLOCKED" tone="warning" />
-          <RuntimeTile label="A.5 paper-shadow" value="NO-GO" tone="warning" />
-          <RuntimeTile label="Capital exposure" value="$0" tone="success" />
-          <RuntimeTile
-            label="GO live"
-            value={
-              state.kind === "loading"
-                ? "Loading…"
-                : state.flipBlocked === null
-                  ? "Unavailable"
-                  : state.flipBlocked
-                    ? "NO-GO"
-                    : "open?"
-            }
-            tone={
-              state.kind === "ready" && state.flipBlocked === false ? "danger" : "warning"
-            }
+          <LiveReadinessRow state={state} />
+
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <RuntimeTile
+              label="GO live"
+              value={
+                state.kind === "loading"
+                  ? "Loading…"
+                  : state.flipBlocked === null
+                    ? "Unavailable"
+                    : state.flipBlocked
+                      ? "NO-GO"
+                      : "open?"
+              }
+              tone={
+                state.kind === "ready" && state.flipBlocked === false ? "danger" : "warning"
+              }
+            />
+          </div>
+
+          <RuntimeDerived state={state} />
+        </section>
+
+        {/* ── SECTION 2: DOCTRINAL MILESTONES (manual, hand-edited) ── */}
+        <section data-slot="doctrinal-milestones-section" className="space-y-4 border-t pt-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold">Doctrinal milestones</h3>
+            <Badge variant="outline" className="font-mono text-[10px]">
+              doctrinal · manual · workspace-verified
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Manual values — hand-edited, they move only on milestone-completing commits (not
+            live telemetry). Last updated {MILESTONES_LAST_UPDATED}.
+          </p>
+
+          <ProgressRow
+            label="Pre-live simulation honesty"
+            pct={PRE_LIVE_PCT}
+            detail={PRE_LIVE_DETAIL}
+            tone="info"
           />
-        </div>
+          <ProgressRow
+            label="Full system to live-minimum"
+            pct={FULL_SYSTEM_PCT}
+            detail={FULL_SYSTEM_DETAIL}
+            tone="info"
+          />
+          <ProgressRow
+            label="Frontend forensic audit"
+            pct={FE_AUDIT_PCT}
+            detail={FE_AUDIT_DETAIL}
+            tone="info"
+          />
+          <ProgressRow
+            label="Frontend integration applied"
+            pct={FE_INTEGRATION_PCT}
+            detail={FE_INTEGRATION_DETAIL}
+            tone="info"
+          />
 
-        <RuntimeDerived state={state} />
+          <div className="grid grid-cols-2 gap-2 border-t pt-4 sm:grid-cols-3 lg:grid-cols-5">
+            <RuntimeTile label="P0 banner" value="PASS" tone="success" />
+            <RuntimeTile label="P1 progress + evidence" value="IN PROGRESS" tone="info" />
+            <RuntimeTile label="A.4 fork" value="BLOCKED" tone="warning" />
+            <RuntimeTile label="A.5 paper-shadow" value="NO-GO" tone="warning" />
+            <RuntimeTile label="Capital exposure" value="$0" tone="success" />
+          </div>
+        </section>
       </CardContent>
     </Card>
+  );
+}
+
+// ── Live readiness aggregate: N of M green from /api/readiness summary ──
+// Fail-honest: shows "Loading…" before the probe resolves and "Unavailable"
+// (with no progress fill) when the endpoint errors — it NEVER fabricates a
+// count. The denominator is summary.total (live), never a hardcoded 16/17.
+function LiveReadinessRow({ state }: { state: RuntimeProbe }) {
+  if (state.kind === "loading") {
+    return <ReadinessRow value="Loading…" detail="Querying /api/readiness…" />;
+  }
+  if (
+    state.readinessError !== null ||
+    state.readinessGreen === null ||
+    state.readinessTotal === null ||
+    state.readinessTotal === 0
+  ) {
+    return (
+      <ReadinessRow
+        value="Unavailable"
+        tone="warning"
+        detail={
+          state.readinessError
+            ? `readiness endpoint error: ${state.readinessError}`
+            : "readiness endpoint returned no summary"
+        }
+      />
+    );
+  }
+  const pct = Math.round((100 * state.readinessGreen) / state.readinessTotal);
+  return (
+    <ReadinessRow
+      value={`${state.readinessGreen} of ${state.readinessTotal} green`}
+      pct={pct}
+      detail={`Live — verified by the readiness endpoint${
+        state.readinessGeneratedAt ? ` · as of ${state.readinessGeneratedAt}` : ""
+      }`}
+    />
+  );
+}
+
+function ReadinessRow({
+  value,
+  detail,
+  pct = null,
+  tone = "live",
+}: {
+  value: string;
+  detail: string;
+  pct?: number | null;
+  tone?: "live" | "warning";
+}) {
+  return (
+    <div data-slot="live-readiness-row" className="space-y-1.5">
+      <div className="flex items-baseline justify-between text-sm">
+        <span className="font-medium">Readiness gates green</span>
+        <span
+          className={`font-mono tabular-nums ${
+            tone === "warning" ? "text-amber-600 dark:text-amber-400" : "text-foreground"
+          }`}
+        >
+          {value}
+          {pct !== null && <span className="ml-1 text-muted-foreground">· {pct}%</span>}
+        </span>
+      </div>
+      {pct !== null ? (
+        <Progress value={pct} aria-label={`Readiness gates: ${pct}% green`} />
+      ) : (
+        <div
+          className="h-2 w-full rounded-full border border-dashed border-muted-foreground/30"
+          aria-hidden
+        />
+      )}
+      <p className="text-xs leading-relaxed text-muted-foreground">{detail}</p>
+    </div>
   );
 }
 

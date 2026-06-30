@@ -68,6 +68,31 @@ describe("ProgressRealCard", () => {
     expect(html).toContain("$0");
   });
 
+  // ── Honesty refactor: live runtime vs manual doctrine must be unambiguous ──
+
+  it("separates a live-runtime section from a doctrinal-milestone section", () => {
+    expect(html).toMatch(/Live runtime/i);
+    expect(html).toMatch(/Doctrinal milestones/i);
+  });
+
+  it("labels the milestone percentages as MANUAL with a real last-updated date", () => {
+    // The four bars are hand-edited constants — the UI must say so and show
+    // when they were last touched (git date of the most recent constant edit).
+    expect(html).toMatch(/manual/i);
+    expect(html).toContain("2026-06-14");
+  });
+
+  it("renders a live readiness aggregate row sourced from /api/readiness", () => {
+    expect(html).toMatch(/Readiness gates/i);
+  });
+
+  it("fail-honest: never fabricates a readiness count before live data arrives", () => {
+    // Under renderToStaticMarkup the probe useEffect never runs, so there is
+    // no live readiness payload. The live row MUST show a loading/unavailable
+    // placeholder — it must NOT print a synthetic "N of M green" number.
+    expect(html).not.toMatch(/\d+\s+of\s+\d+\s+green/i);
+  });
+
   it("renders the loading runtime probe on initial server render", () => {
     expect(html).toMatch(/Loading runtime probe/i);
   });
