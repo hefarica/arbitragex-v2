@@ -14,7 +14,10 @@ beforeAll(async () => {
       POSTGRES_DB: "arbitragex",
     })
     .withExposedPorts(5432)
-    .withWaitStrategy(Wait.forLogMessage("database system is ready to accept connections"))
+    // Postgres logs "ready to accept connections" TWICE (bootstrap temp server,
+    // then the real one). Matching the 1st caused `read ECONNRESET` when PG
+    // restarted under the just-opened pool. Wait for the 2nd occurrence.
+    .withWaitStrategy(Wait.forLogMessage("database system is ready to accept connections", 2))
     .start();
   pool = new Pool({
     host: container.getHost(),
