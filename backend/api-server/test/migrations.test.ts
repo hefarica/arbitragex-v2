@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { GenericContainer, StartedTestContainer } from "testcontainers";
+import { GenericContainer, StartedTestContainer, Wait } from "testcontainers";
 import { Pool } from "pg";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -14,6 +14,7 @@ beforeAll(async () => {
       POSTGRES_DB: "arbitragex",
     })
     .withExposedPorts(5432)
+    .withWaitStrategy(Wait.forLogMessage("database system is ready to accept connections"))
     .start();
   pool = new Pool({
     host: container.getHost(),
