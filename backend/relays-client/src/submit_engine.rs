@@ -12,6 +12,7 @@ use crate::relay_flashbots::FlashbotsClient;
 use crate::signer::Signer;
 use crate::tracker::{wait_for_inclusion, InclusionOutcome};
 use chrono::Utc;
+use prioritization_spine::ValidatedPlan;
 use redis::AsyncCommands as _;
 use shared_rs::rpc_failover::AlloyHttpProvider;
 use shared_rs::{
@@ -268,9 +269,66 @@ impl SubmitEngine {
 
         // 3. Paper mode — already computed above (C1 fix: moved before checklist).
 
-        // 4. Build + sign.
+        // 3.5. M2 carrier-B read (2b) — FAIL-CLOSED ValidatedPlan gate.
+        //
+        // The wrapped flash tx broadcast by `build_and_sign` is encoded from the
+        // EXACT inputs sim-ctl validated (`arbx:validated_plan:<opp.id>`, written
+        // by searcher-rs on SIM_SUCCESS, TTL 300s). We read it back here so the
+        // broadcast reproduces byte-identical calldata (sim↔exec parity).
+        //
+        // SAFETY GUARANTEE: fail CLOSED. If the key is ABSENT (sim never
+        // validated this opp, or the plan TTL'd out) or does NOT parse, we do
+        // NOT broadcast — there is no validated plan to honor, so emitting any
+        // tx would be unvalidated capital. We return Dropped with an explicit
+        // reason + a structured warn. The producer side is intentionally
+        // fail-SOFT (a Redis hiccup there just skips persist); this read being
+        // fail-CLOSED is the asymmetry that makes "broadcast ⇒ validated" hold.
+        let validated_plan: ValidatedPlan = {
+            let plan_key = format!("arbx:validated_plan:{}", opp.id);
+            let mut redis_conn = self.redis.clone();
+            let raw: Option<String> = match redis_conn.get::<_, Option<String>>(&plan_key).await {
+                Ok(v) => v,
+                Err(e) => {
+                    // Treat a Redis read error as ABSENT → fail-closed. We cannot
+                    // prove the plan exists, so we must not broadcast.
+                    warn!(
+                        event = "submit.validated_plan_read_error",
+                        opp_id = %opp.id,
+                        key = %plan_key,
+                        error = %e,
+                        "ValidatedPlan read failed — fail-closed, no broadcast"
+                    );
+                    return Self::dropped(opp, "validated_plan_missing");
+                }
+            };
+            let Some(plan_json) = raw else {
+                warn!(
+                    event = "submit.validated_plan_missing",
+                    opp_id = %opp.id,
+                    key = %plan_key,
+                    "no ValidatedPlan in Redis — fail-closed, no broadcast"
+                );
+                return Self::dropped(opp, "validated_plan_missing");
+            };
+            match serde_json::from_str::<ValidatedPlan>(&plan_json) {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!(
+                        event = "submit.validated_plan_parse_error",
+                        opp_id = %opp.id,
+                        key = %plan_key,
+                        error = %e,
+                        "ValidatedPlan failed to parse — fail-closed, no broadcast"
+                    );
+                    return Self::dropped(opp, "validated_plan_parse_error");
+                }
+            }
+        };
+
+        // 4. Build + sign the wrapped flash tx from the validated plan.
         let bundle = match build_and_sign(
             opp,
+            &validated_plan,
             signer.as_ref(),
             provider.as_ref(),
             nonce.as_ref(),
