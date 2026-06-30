@@ -138,7 +138,7 @@ jobs:
           # Full history required: gitleaks scans all commits, not just the tip.
           fetch-depth: 0
 
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         # Non-blocking while leaked-PAT rotation + history scrub is pending
         # (tracked separately). Scan still RUNS and reports findings.
         continue-on-error: true
