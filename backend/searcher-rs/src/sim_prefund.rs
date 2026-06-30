@@ -220,6 +220,125 @@ pub fn allowance_slot(owner: Address, spender: Address, allowance_base_slot: U25
 }
 
 // ---------------------------------------------------------------------------
+// OpenZeppelin v5 AccessControl role-member slot (ERC-7201 namespaced)
+// (M2 flash R3a)
+// ---------------------------------------------------------------------------
+//
+// Both `FlashLoanExecutor` and `ArbitrageExecutor` inherit OZ v5.1.0
+// `AccessControlUpgradeable` (verified: `import
+// "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol"`
+// at FlashLoanExecutor.sol:26 / ArbitrageExecutor.sol:24; OZ-upgradeable
+// `contracts/package.json` reports version 5.1.0).
+//
+// OZ v5 moved AccessControl storage into an ERC-7201 *namespace* (away from
+// the v4 fixed-slot `_roles` at slot 0). The contract declares:
+//
+//   struct RoleData { mapping(address account => bool) hasRole; bytes32 adminRole; }
+//   struct AccessControlStorage { mapping(bytes32 role => RoleData) _roles; }
+//   bytes32 private constant AccessControlStorageLocation =
+//       0x02dd7bc7dec4dceedda775e58dd541e08a116c6c53815c0bd028192f7b626800;
+//   // == keccak256(abi.encode(uint256(keccak256(
+//   //    "openzeppelin.storage.AccessControl")) - 1)) & ~bytes32(uint256(0xff))
+//
+// `hasRole(role, account)` reads `$._roles[role].hasRole[account]`. The slot
+// chain is therefore:
+//
+//   base       = AccessControlStorageLocation                       (the ERC-7201 namespace; `_roles` is field 0 → offset 0)
+//   role_slot  = keccak256(abi.encode(role,    base))               (`_roles[role]`; `.hasRole` is field 0 of RoleData → same slot)
+//   member     = keccak256(abi.encode(account, role_slot))          (`.hasRole[account]`)
+//
+// Seeding `member = 1` makes `hasRole(role, account) == true`.
+//
+// This is verified independently with foundry `cast` — see
+// `tests::access_control_role_member_slot_matches_cast` which pins the exact
+// (EXECUTOR_ROLE, fixed-account) → slot bytes that `cast index` produced. A
+// wrong slot would silently FAIL to grant the role (the override would land on
+// an unrelated slot), so the cast cross-check is mandatory, not cosmetic.
+
+/// OZ v5 `AccessControlUpgradeable` ERC-7201 namespace base — the storage slot
+/// of the `AccessControlStorage` struct, whose field 0 is the
+/// `mapping(bytes32 => RoleData) _roles`. Equals the contract's
+/// `AccessControlStorageLocation` constant verbatim (re-derived + asserted in
+/// `tests::erc7201_access_control_base_matches_oz`).
+pub const OZ_ACCESS_CONTROL_STORAGE_BASE: [u8; 32] = [
+    0x02, 0xdd, 0x7b, 0xc7, 0xde, 0xc4, 0xdc, 0xee, 0xdd, 0xa7, 0x75, 0xe5, 0x8d, 0xd5, 0x41, 0xe0,
+    0x8a, 0x11, 0x6c, 0x6c, 0x53, 0x81, 0x5c, 0x0b, 0xd0, 0x28, 0x19, 0x2f, 0x7b, 0x62, 0x68, 0x00,
+];
+
+/// `keccak256("EXECUTOR_ROLE")` — the `bytes32` role id used by both
+/// `FlashLoanExecutor.EXECUTOR_ROLE` and `ArbitrageExecutor.EXECUTOR_ROLE`
+/// (`bytes32 public constant EXECUTOR_ROLE = keccak256("EXECUTOR_ROLE")`).
+/// Computed at call time (not hardcoded) so a future selector/string change
+/// is caught by recompilation rather than a stale constant.
+pub fn executor_role_id() -> [u8; 32] {
+    keccak256(b"EXECUTOR_ROLE")
+}
+
+/// Compute the storage slot of `_roles[role].hasRole[account]` for an OZ v5
+/// `AccessControlUpgradeable` contract (ERC-7201 namespaced).
+///
+/// Slot chain (see module comment above for the OZ struct layout):
+///   role_slot = keccak256(abi.encode(role, base))      // `_roles[role]` (== `.hasRole` slot)
+///   member    = keccak256(abi.encode(account, role_slot))
+///
+/// `role` and `base` are 32-byte words; `account` is left-padded to 32 bytes.
+/// This is the slot to override with `1` to grant `role` to `account`.
+pub fn access_control_role_member_slot(role: [u8; 32], account: Address) -> [u8; 32] {
+    // Step 1: role_slot = keccak256(role || base). Both operands are already
+    // 32 bytes (bytes32), so abi.encode is a plain concatenation — no padding.
+    let mut step1 = [0u8; 64];
+    step1[0..32].copy_from_slice(&role);
+    step1[32..64].copy_from_slice(&OZ_ACCESS_CONTROL_STORAGE_BASE);
+    let role_slot = keccak256(step1);
+    // Step 2: member = keccak256(account || role_slot). `account` is a 20-byte
+    // address left-padded to 32 (bytes 12..32 hold the address).
+    let mut step2 = [0u8; 64];
+    step2[12..32].copy_from_slice(account.as_bytes());
+    step2[32..64].copy_from_slice(&role_slot);
+    keccak256(step2)
+}
+
+/// Build the single `StorageOverride` that grants `role` to `account` on the
+/// AccessControl contract at `contract`, by seeding
+/// `_roles[role].hasRole[account] = 1` (true).
+///
+/// Used by the multistep flash sim (R3b) to seed ONLY the `caller → FLE`
+/// `EXECUTOR_ROLE` bit (the `requestFlashLoan` `onlyRole` gate) so the REAL
+/// `requestFlashLoan → provider callback → executeArbitrageFlashFunded` flow
+/// can execute on a fork where that one role grant may not yet be live. The
+/// `FLE → AE` `EXECUTOR_ROLE` is NOT seeded here — it comes from real forked
+/// storage (granted on-chain at deploy).
+///
+/// `paper_mode` MUST be true; this is a storage cheat and the function refuses
+/// to participate in any live path (mirrors `build_prefund_plan`).
+pub fn build_role_grant_override(
+    contract: Address,
+    role: [u8; 32],
+    account: Address,
+    paper_mode: bool,
+) -> Result<StorageOverride, PrefundError> {
+    if !paper_mode {
+        return Err(PrefundError::PaperModeRequired);
+    }
+    if contract == Address::zero() {
+        return Err(PrefundError::ZeroTokenAddress);
+    }
+    if account == Address::zero() {
+        return Err(PrefundError::ZeroAccountAddress);
+    }
+    let slot = access_control_role_member_slot(role, account);
+    Ok(StorageOverride {
+        // `StorageOverride.token` is the generic "contract whose storage we
+        // override" field (named `token` for its original ERC-20 use); here it
+        // is the AccessControl contract (the FlashLoanExecutor).
+        token: contract,
+        slot,
+        value: U256::one(),
+        purpose: "access_control_role_grant",
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -380,6 +499,131 @@ mod tests {
         let bal = balance_of_slot(acc, U256::zero());
         let allow = allowance_slot(acc, spender, U256::one());
         assert_ne!(bal, allow);
+    }
+
+    // ── OZ v5 AccessControl role-member slot (R3a) ─────────────────────────
+
+    /// `executor_role_id()` equals `keccak256("EXECUTOR_ROLE")` and matches the
+    /// value `cast keccak "EXECUTOR_ROLE"` prints
+    /// (0xd8aa0f3194971a2a116679f7c2090f6939c8d4e01a2a8d7e41d55e5351469e63).
+    #[test]
+    fn executor_role_id_matches_cast_keccak() {
+        let expected: [u8; 32] = [
+            0xd8, 0xaa, 0x0f, 0x31, 0x94, 0x97, 0x1a, 0x2a, 0x11, 0x66, 0x79, 0xf7, 0xc2, 0x09,
+            0x0f, 0x69, 0x39, 0xc8, 0xd4, 0xe0, 0x1a, 0x2a, 0x8d, 0x7e, 0x41, 0xd5, 0x5e, 0x53,
+            0x51, 0x46, 0x9e, 0x63,
+        ];
+        assert_eq!(executor_role_id(), expected);
+    }
+
+    /// The hardcoded ERC-7201 base equals the value re-derived in-test from the
+    /// OZ formula
+    /// `keccak256(abi.encode(uint256(keccak256("openzeppelin.storage.AccessControl")) - 1)) & ~0xff`,
+    /// which itself equals the OZ contract's `AccessControlStorageLocation`
+    /// (0x02dd7bc7dec4dceedda775e58dd541e08a116c6c53815c0bd028192f7b626800).
+    #[test]
+    fn erc7201_access_control_base_matches_oz() {
+        // inner = keccak256("openzeppelin.storage.AccessControl")
+        let inner = keccak256(b"openzeppelin.storage.AccessControl");
+        // val = uint256(inner) - 1  (wrapping; inner is never 0)
+        let minus_one = U256::from_big_endian(&inner) - U256::one();
+        // abi.encode(uint256) = 32-byte big-endian word
+        let mut enc = [0u8; 32];
+        minus_one.to_big_endian(&mut enc);
+        // hashed = keccak256(enc); then mask off the low byte (& ~0xff)
+        let mut hashed = keccak256(enc);
+        hashed[31] = 0x00;
+        assert_eq!(
+            hashed, OZ_ACCESS_CONTROL_STORAGE_BASE,
+            "ERC-7201 namespace base must equal OZ AccessControlStorageLocation"
+        );
+    }
+
+    /// THE cast cross-check (mandatory): the helper output for a fixed
+    /// (EXECUTOR_ROLE, account) pair must equal the slot independently computed
+    /// with foundry:
+    ///   ROLE=$(cast keccak "EXECUTOR_ROLE")
+    ///   BASE=0x02dd7bc7dec4dceedda775e58dd541e08a116c6c53815c0bd028192f7b626800
+    ///   ROLE_SLOT=$(cast index bytes32 "$ROLE" "$BASE")
+    ///   cast index address 0x1234567890123456789012345678901234567890 "$ROLE_SLOT"
+    ///   # => 0x1d2cf3c14c2b95a6e1f8d3b57a4891c1b935ac70e3cf396a9ee2d90221c1906a
+    /// A wrong slot would silently fail to grant the role, so this pins the
+    /// exact bytes.
+    #[test]
+    fn access_control_role_member_slot_matches_cast() {
+        let account = addr("0x1234567890123456789012345678901234567890");
+        let slot = access_control_role_member_slot(executor_role_id(), account);
+        let expected: [u8; 32] = [
+            0x1d, 0x2c, 0xf3, 0xc1, 0x4c, 0x2b, 0x95, 0xa6, 0xe1, 0xf8, 0xd3, 0xb5, 0x7a, 0x48,
+            0x91, 0xc1, 0xb9, 0x35, 0xac, 0x70, 0xe3, 0xcf, 0x39, 0x6a, 0x9e, 0xe2, 0xd9, 0x02,
+            0x21, 0xc1, 0x90, 0x6a,
+        ];
+        assert_eq!(
+            slot, expected,
+            "role-member slot must match foundry `cast index` output"
+        );
+    }
+
+    /// Different accounts at the same role produce different member slots.
+    #[test]
+    fn access_control_role_member_slot_differs_per_account() {
+        let role = executor_role_id();
+        let a = addr("0x1111111111111111111111111111111111111111");
+        let b = addr("0x2222222222222222222222222222222222222222");
+        assert_ne!(
+            access_control_role_member_slot(role, a),
+            access_control_role_member_slot(role, b)
+        );
+    }
+
+    /// Different roles for the same account produce different member slots.
+    #[test]
+    fn access_control_role_member_slot_differs_per_role() {
+        let account = addr("0x1234567890123456789012345678901234567890");
+        let executor = executor_role_id();
+        let admin = [0u8; 32]; // DEFAULT_ADMIN_ROLE
+        assert_ne!(
+            access_control_role_member_slot(executor, account),
+            access_control_role_member_slot(admin, account)
+        );
+    }
+
+    /// `build_role_grant_override` seeds the member slot to 1 (true), targets
+    /// the supplied contract, and carries the stable purpose label.
+    #[test]
+    fn build_role_grant_override_seeds_member_bit() {
+        let fle = addr("0x000000000000000000000000000000000000fef1");
+        let caller = addr("0x1234567890123456789012345678901234567890");
+        let over = build_role_grant_override(fle, executor_role_id(), caller, true).unwrap();
+        assert_eq!(over.token, fle);
+        assert_eq!(over.value, U256::one());
+        assert_eq!(over.purpose, "access_control_role_grant");
+        // The slot is the cast-verified member slot for this (role, account).
+        let expected = access_control_role_member_slot(executor_role_id(), caller);
+        assert_eq!(over.slot, expected);
+    }
+
+    /// `build_role_grant_override` refuses live mode and zero inputs.
+    #[test]
+    fn build_role_grant_override_rejection_paths() {
+        let fle = addr("0x000000000000000000000000000000000000fef1");
+        let caller = addr("0x1234567890123456789012345678901234567890");
+        let role = executor_role_id();
+        // Live mode rejected.
+        assert_eq!(
+            build_role_grant_override(fle, role, caller, false).unwrap_err(),
+            PrefundError::PaperModeRequired
+        );
+        // Zero contract rejected.
+        assert_eq!(
+            build_role_grant_override(Address::zero(), role, caller, true).unwrap_err(),
+            PrefundError::ZeroTokenAddress
+        );
+        // Zero account rejected.
+        assert_eq!(
+            build_role_grant_override(fle, role, Address::zero(), true).unwrap_err(),
+            PrefundError::ZeroAccountAddress
+        );
     }
 
     // ── build_prefund_plan happy path ──────────────────────────────────────

@@ -122,7 +122,10 @@ export function buildOperationsRouter(deps: Deps): Router {
       });
     } catch (err) {
       deps.logger.warn({ event: "operations.kpi_failed", err: String(err) });
-      res.status(500).json({ error: "internal" });
+      // Fail-honest: a query/compute failure here is transient (DB hiccup) →
+      // 503 (retryable/degraded), not a silent 500. Cause is in the logger
+      // above; body stays detail-free because these are public-mirror routes.
+      res.status(503).json({ error: "query_failed" });
     }
   };
 
@@ -178,7 +181,10 @@ export function buildOperationsRouter(deps: Deps): Router {
       res.status(200).json({ chain_id: chainId, bucket_minutes: bucketMin, buckets });
     } catch (err) {
       deps.logger.warn({ event: "operations.scurve_failed", err: String(err) });
-      res.status(500).json({ error: "internal" });
+      // Fail-honest: a query/compute failure here is transient (DB hiccup) →
+      // 503 (retryable/degraded), not a silent 500. Cause is in the logger
+      // above; body stays detail-free because these are public-mirror routes.
+      res.status(503).json({ error: "query_failed" });
     }
   };
 
@@ -221,7 +227,10 @@ export function buildOperationsRouter(deps: Deps): Router {
       res.status(200).json({ chain_id: chainId, rows });
     } catch (err) {
       deps.logger.warn({ event: "operations.variance_failed", err: String(err) });
-      res.status(500).json({ error: "internal" });
+      // Fail-honest: a query/compute failure here is transient (DB hiccup) →
+      // 503 (retryable/degraded), not a silent 500. Cause is in the logger
+      // above; body stays detail-free because these are public-mirror routes.
+      res.status(503).json({ error: "query_failed" });
     }
   };
 
