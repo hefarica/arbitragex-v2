@@ -1,0 +1,31 @@
+{
+  "function": "calc_univ2_amount_out",
+  "source": "Uniswap v2-periphery UniswapV2Library.getAmountOut: amountOut = (amountIn*997*reserveOut) / (reserveIn*1000 + amountIn*997). expected_out_wei computed by exact 256-bit integer arithmetic (the canonical on-chain result).",
+  "kind": "canonical numeric reference values (facts); no code copied",
+  "note": "Amounts/reserves in wei (1e18 = 1 token). The repo fn works in normalized f64 units, so the test divides wei by 1e18 before calling it; for realistic trades f64 matches the exact integer result to ~1e-16 relative. Dust trades (sub-1e-6 token output) lose precision under f64 normalization and are intentionally excluded.",
+  "fee_pct": 0.003,
+  "rel_tolerance": 1e-9,
+  "vectors": [
+    {
+      "label": "1 token in, 1000/2,000,000 pool",
+      "amount_in_wei": "1000000000000000000",
+      "reserve_in_wei": "1000000000000000000000",
+      "reserve_out_wei": "2000000000000000000000000",
+      "expected_out_wei": "1992013962079806432986"
+    },
+    {
+      "label": "5 token in, 10/20,000 pool",
+      "amount_in_wei": "5000000000000000000",
+      "reserve_in_wei": "10000000000000000000",
+      "reserve_out_wei": "20000000000000000000000",
+      "expected_out_wei": "6653319986653319986653"
+    },
+    {
+      "label": "100 token in (large, high impact), 1000/2,000,000 pool",
+      "amount_in_wei": "100000000000000000000",
+      "reserve_in_wei": "1000000000000000000000",
+      "reserve_out_wei": "2000000000000000000000000",
+      "expected_out_wei": "181322178776029826316268"
+    }
+  ]
+}
