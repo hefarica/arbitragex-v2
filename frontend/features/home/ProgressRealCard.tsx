@@ -2,33 +2,36 @@
 
 /**
  * ProgressRealCard — workspace progress for the operator, split into two
- * SEMANTICALLY DISTINCT sections so a viewer can never confuse a hand-edited
- * doctrine number for a live measurement (the bug this refactor fixes):
+ * SEMANTICALLY DISTINCT sections so a hand-edited doctrine number can never be
+ * confused for a live measurement:
  *
- *   ── SECTION 1: LIVE RUNTIME (auto-refreshed, measured) ──────────────────
- *      Derived on every mount from the backend and fail-honest (R8): never
- *      green by default, "Unavailable" when an endpoint is unreachable.
- *        - Readiness gates green = summary.green / summary.total from
- *          GET /api/readiness (17 live verifiers; the denominator is read
- *          from summary.total, NEVER hardcoded). This is the real progress
- *          meter — it moves as gates actually flip green.
- *        - GO live   = readiness.flip_blocked (true ⇒ NO-GO).
- *        - engine    = /api/strategies/runtime-status strategies[].engine_loaded.
+ *   ── SECTION 1: LIVE RUNTIME (auto-derived, measured, fail-honest) ───────
+ *      A thin composer over THREE already-wired endpoints; a value only moves
+ *      when a real backend field moves, and absence renders text — never a
+ *      fabricated number (R8). Auto-derived rows:
+ *        - Readiness gates green = summary.green / summary.total (denominator
+ *          read from summary.total, never hardcoded) — GET /api/readiness.
+ *        - Per-group readiness ratios (6 groups) — client groupBy on items[].
+ *        - Scanner-heartbeat engines K/S + candidates_1h + rejections_1h +
+ *          pg/redis source health — GET /api/strategies/runtime-status.
+ *          NB: engine_loaded is INFERRED from a Redis scanner-heartbeat key,
+ *          so it is labelled "scanner heartbeat", not "engine registered".
+ *        - GO live = readiness.flip_blocked.
  *
  *   ── SECTION 2: DOCTRINAL MILESTONES (manual, hand-edited) ───────────────
- *      PROJECT DOCTRINE values, NOT backend metrics. They move ONLY when a
- *      human bumps the constant on a milestone-completing commit, so they are
- *      labelled "manual" and stamped with MILESTONES_LAST_UPDATED. Honest by
- *      construction: the UI tells you they are manual and how stale they are.
- *      The P0/P1/A.4/A.5/Capital tiles are likewise manual doctrine — they are
- *      grouped here, NOT next to the live tiles, so they cannot masquerade as
- *      runtime status.
+ *      The 4 bars + P0/P1/A.4/A.5/Capital tiles have NO machine-readable
+ *      source (re-verified: PACKAGE_MANIFEST, app.toml, feature_manifest,
+ *      STATUS_REPORT — none map to them). They are PROJECT DOCTRINE that moves
+ *      ONLY when a human bumps the constant on a milestone-completing commit,
+ *      so they are labelled "manual" and stamped MILESTONES_LAST_UPDATED.
+ *      Auto-deriving them would require a new per-bar verifier set or a typed
+ *      milestones manifest carrying real evidence — until then they stay here,
+ *      visually separate from the live section, never auto-bumped.
  *
- * Why not wire A.4/A.5/Capital to the backend? Their authoritative backend
- * source (/api/readiness/blockers doctrinalBlockers, /api/readiness/decision)
- * is itself a hardcoded milestone literal — fetching it would only disguise a
- * hardcode as live data (arbx-no-hardcode-doctrine). So they stay honest
- * manual doctrine until a real runtime verifier emits them.
+ * Not derivable today (DESIGN-ONLY, never faked): CI / last-deploy state —
+ * needs a new endpoint + a GitHub token (actions:read); and a workflow
+ * "success" is not proof of a live deploy (the VPS ref can advance without a
+ * rebuild), so no CI badge is rendered.
  *
  * Hard rules (CLAUDE.md §24 + arbx-mev-ethics-gate):
  *   - "Live trading" tile is statically OFF; no tx-submitting code path exists.
@@ -44,15 +47,68 @@ import { Badge } from "@/components/ui/badge";
 import { getReadiness, getRuntimeStatus } from "@/lib/api-client";
 
 // ─────────────────────────────────────────────────────────────────────────
-// Doctrinal milestones (workspace verified, not backend-emitted)
+// Auto-derive engine — pure derivation over already-fetched endpoints.
+// Exported for direct unit testing (the engine's logic, not its markup).
+// A number only moves when a real endpoint field moves; absence is rendered
+// as text by the callers, never as a fabricated value (fail-honest).
+// ─────────────────────────────────────────────────────────────────────────
+
+export type ReadinessGroupRatio = { group: string; label: string; green: number; total: number };
+
+const READINESS_GROUP_LABELS: Record<string, string> = {
+  security_compliance: "Security & compliance",
+  audit_trail: "Audit trail",
+  risk_doctrines: "Risk doctrines",
+  tokens_strategies: "Tokens & strategies",
+  contracts: "Contracts",
+  operations: "Operations",
+};
+const READINESS_GROUP_ORDER = Object.keys(READINESS_GROUP_LABELS);
+
+export function groupReadiness(
+  items: ReadonlyArray<{ group: string; status: string }>,
+): ReadinessGroupRatio[] {
+  const counts = new Map<string, { green: number; total: number }>();
+  for (const it of items) {
+    const e = counts.get(it.group) ?? { green: 0, total: 0 };
+    e.total += 1;
+    if (it.status === "green") e.green += 1;
+    counts.set(it.group, e);
+  }
+  // Stable known order first; then any unknown group the backend may add later.
+  const known = READINESS_GROUP_ORDER.filter((g) => counts.has(g));
+  const unknown = [...counts.keys()].filter((g) => !READINESS_GROUP_ORDER.includes(g));
+  return [...known, ...unknown].map((group) => {
+    const c = counts.get(group)!;
+    return { group, label: READINESS_GROUP_LABELS[group] ?? group, green: c.green, total: c.total };
+  });
+}
+
+export type RuntimeSummary = {
+  enginesLoaded: number;
+  enginesTotal: number;
+  candidates1h: number;
+  rejections1h: number;
+};
+
+export function summarizeRuntime(
+  strategies: ReadonlyArray<{ engine_loaded: boolean; candidates_1h: number; rejections_1h: number }>,
+): RuntimeSummary {
+  return {
+    enginesLoaded: strategies.filter((s) => s.engine_loaded).length,
+    enginesTotal: strategies.length,
+    candidates1h: strategies.reduce((n, s) => n + s.candidates_1h, 0),
+    rejections1h: strategies.reduce((n, s) => n + s.rejections_1h, 0),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Doctrinal milestones (workspace verified, NOT backend-emitted)
 //
 // Updating these requires, IN THE SAME COMMIT:
 //   1. A milestone-completing commit (e.g. "A.5 paper-shadow PASS").
 //   2. Bump the relevant percentage HERE.
 //   3. Bump MILESTONES_LAST_UPDATED to the commit date.
-//
-// This is the SINGLE PLACE in the codebase where milestone completion %
-// is recorded. Do NOT scatter copies across pages.
 //
 // MILESTONES_LAST_UPDATED is the git date of the most recent edit to the
 // constants below (git blame: 85/58/100 → 2026-05-13 c06bd04;
@@ -93,11 +149,14 @@ type RuntimeProbe =
   | {
       kind: "ready";
       flipBlocked: boolean | null;
-      engineLoaded: boolean | null;
       readinessGreen: number | null;
       readinessTotal: number | null;
+      readinessGroups: ReadinessGroupRatio[] | null;
       readinessGeneratedAt: string | null;
       readinessError: string | null;
+      runtime: RuntimeSummary | null;
+      sourcePostgres: string | null;
+      sourceRedis: string | null;
       runtimeError: string | null;
     };
 
@@ -107,23 +166,31 @@ async function probe(): Promise<RuntimeProbe> {
   let flipBlocked: boolean | null = null;
   let readinessGreen: number | null = null;
   let readinessTotal: number | null = null;
+  let readinessGroups: ReadinessGroupRatio[] | null = null;
   let readinessGeneratedAt: string | null = null;
   let readinessError: string | null = null;
   if (rd.status === "fulfilled" && rd.value.ok) {
-    flipBlocked = rd.value.data.flip_blocked;
-    readinessGreen = rd.value.data.summary.green;
-    readinessTotal = rd.value.data.summary.total;
-    readinessGeneratedAt = rd.value.data.generated_at;
+    const d = rd.value.data;
+    flipBlocked = d.flip_blocked;
+    readinessGreen = d.summary.green;
+    readinessTotal = d.summary.total;
+    readinessGroups = groupReadiness(d.items);
+    readinessGeneratedAt = d.generated_at;
   } else if (rd.status === "fulfilled" && !rd.value.ok) {
     readinessError = rd.value.error.slice(0, 80);
   } else if (rd.status === "rejected") {
     readinessError = (rd.reason as Error)?.message?.slice(0, 80) ?? "unknown";
   }
 
-  let engineLoaded: boolean | null = null;
+  let runtime: RuntimeSummary | null = null;
+  let sourcePostgres: string | null = null;
+  let sourceRedis: string | null = null;
   let runtimeError: string | null = null;
   if (rs.status === "fulfilled" && rs.value.ok) {
-    engineLoaded = rs.value.data.strategies.some((s) => s.engine_loaded);
+    const d = rs.value.data;
+    runtime = summarizeRuntime(d.strategies);
+    sourcePostgres = d.source.postgres;
+    sourceRedis = d.source.redis;
   } else if (rs.status === "fulfilled" && !rs.value.ok) {
     runtimeError = rs.value.error.slice(0, 80);
   } else if (rs.status === "rejected") {
@@ -133,11 +200,14 @@ async function probe(): Promise<RuntimeProbe> {
   return {
     kind: "ready",
     flipBlocked,
-    engineLoaded,
     readinessGreen,
     readinessTotal,
+    readinessGroups,
     readinessGeneratedAt,
     readinessError,
+    runtime,
+    sourcePostgres,
+    sourceRedis,
     runtimeError,
   };
 }
@@ -164,7 +234,7 @@ export function ProgressRealCard() {
             <CardTitle>Workspace progress</CardTitle>
             <CardDescription>
               Two sections. <strong>Live runtime</strong> is read live from the backend on
-              each page load.{" "}
+              each page load (auto-derived, fail-honest).{" "}
               <strong>Doctrinal milestones</strong> are manual values, hand-edited on
               milestone-completing commits — not live telemetry.
             </CardDescription>
@@ -176,7 +246,7 @@ export function ProgressRealCard() {
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* ── SECTION 1: LIVE RUNTIME (measured, auto-refreshed, fail-honest) ── */}
+        {/* ── SECTION 1: LIVE RUNTIME (auto-derived, fail-honest) ── */}
         <section data-slot="live-runtime-section" className="space-y-4">
           <div className="flex items-center gap-2">
             <h3 className="text-sm font-semibold">Live runtime</h3>
@@ -187,6 +257,8 @@ export function ProgressRealCard() {
           </div>
 
           <LiveReadinessRow state={state} />
+          <ReadinessGroups state={state} />
+          <RuntimeEvidence state={state} />
 
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             <RuntimeTile
@@ -261,9 +333,9 @@ export function ProgressRealCard() {
 }
 
 // ── Live readiness aggregate: N of M green from /api/readiness summary ──
-// Fail-honest: shows "Loading…" before the probe resolves and "Unavailable"
-// (with no progress fill) when the endpoint errors — it NEVER fabricates a
-// count. The denominator is summary.total (live), never a hardcoded 16/17.
+// Fail-honest: "Loading…" before the probe resolves and "Unavailable" (no
+// progress fill) on error — never fabricates a count; denominator is
+// summary.total (live), never a hardcoded 16/17.
 function LiveReadinessRow({ state }: { state: RuntimeProbe }) {
   if (state.kind === "loading") {
     return <ReadinessRow value="Loading…" detail="Querying /api/readiness…" />;
@@ -335,6 +407,88 @@ function ReadinessRow({
   );
 }
 
+// ── Per-group readiness ratios (auto-derived, client groupBy on items[]) ──
+// Fail-honest: renders nothing until live items arrive — the global row above
+// already shows Loading/Unavailable; we never fabricate per-group ratios.
+function ReadinessGroups({ state }: { state: RuntimeProbe }) {
+  if (state.kind === "loading" || state.readinessGroups === null || state.readinessGroups.length === 0) {
+    return null;
+  }
+  return (
+    <div data-slot="readiness-groups" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+      {state.readinessGroups.map((g) => {
+        const allGreen = g.green === g.total;
+        return (
+          <div key={g.group} className="rounded-md border bg-muted/20 px-2.5 py-1.5">
+            <div className="text-[11px] text-muted-foreground">{g.label}</div>
+            <div
+              className={`font-mono text-sm font-semibold tabular-nums ${
+                allGreen ? "text-success" : "text-foreground"
+              }`}
+            >
+              {g.green}/{g.total} green
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Runtime evidence (auto-derived from /api/strategies/runtime-status) ──
+// engine_loaded is INFERRED from a Redis scanner-heartbeat key → labelled
+// "scanner heartbeat", not "engine registered". Fail-honest on error.
+function RuntimeEvidence({ state }: { state: RuntimeProbe }) {
+  if (state.kind === "loading") {
+    return (
+      <p className="text-xs text-muted-foreground">Querying /api/strategies/runtime-status…</p>
+    );
+  }
+  if (state.runtimeError !== null || state.runtime === null) {
+    return (
+      <p
+        className="inline-flex items-center gap-1 text-xs text-destructive"
+        title={state.runtimeError ?? undefined}
+      >
+        <AlertTriangleIcon className="size-3" />
+        runtime-status unavailable
+      </p>
+    );
+  }
+  const r = state.runtime;
+  return (
+    <div
+      data-slot="runtime-evidence"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs"
+    >
+      <span>
+        Scanner heartbeat: {r.enginesLoaded}/{r.enginesTotal} engines
+      </span>
+      <span className="text-muted-foreground/60">·</span>
+      <span>Candidates 1h: {r.candidates1h}</span>
+      <span className="text-muted-foreground/60">·</span>
+      <span>Rejections 1h: {r.rejections1h}</span>
+      <SourcePill label="pg" value={state.sourcePostgres} />
+      <SourcePill label="redis" value={state.sourceRedis} />
+    </div>
+  );
+}
+
+function SourcePill({ label, value }: { label: string; value: string | null }) {
+  const ok = value === "ok";
+  return (
+    <span
+      className={`rounded border px-1.5 py-0.5 text-[10px] ${
+        ok
+          ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
+          : "border-amber-500/40 text-amber-700 dark:text-amber-300"
+      }`}
+    >
+      {label}:{value ?? "unavailable"}
+    </span>
+  );
+}
+
 function ProgressRow({
   label,
   pct,
@@ -392,45 +546,21 @@ function RuntimeDerived({ state }: { state: RuntimeProbe }) {
   if (state.kind === "loading") {
     return <p className="text-xs text-muted-foreground">Loading runtime probe…</p>;
   }
-
-  const pieces: React.ReactNode[] = [];
-  if (state.readinessError) {
-    pieces.push(
-      <span key="rd" title={state.readinessError} className="inline-flex items-center gap-1 text-destructive">
-        <AlertTriangleIcon className="size-3" />
-        readiness unavailable
-      </span>,
-    );
-  } else if (state.flipBlocked === null) {
-    pieces.push(<span key="rd-null">readiness: no flip_blocked field</span>);
-  } else {
-    pieces.push(
-      <span key="rd-ok" className="inline-flex items-center gap-1">
-        <ShieldCheckIcon className="size-3 text-success" />
-        readiness loaded · flip_blocked = {String(state.flipBlocked)}
-      </span>,
-    );
-  }
-  if (state.runtimeError) {
-    pieces.push(
-      <span key="rs" title={state.runtimeError} className="inline-flex items-center gap-1 text-destructive">
-        <AlertTriangleIcon className="size-3" />
-        runtime-status unavailable
-      </span>,
-    );
-  } else if (state.engineLoaded === null) {
-    pieces.push(<span key="rs-null">runtime-status: no strategies array</span>);
-  } else {
-    pieces.push(
-      <span key="rs-ok" className="inline-flex items-center gap-1">
-        <ShieldCheckIcon className="size-3 text-success" />
-        engine {state.engineLoaded ? "loaded" : "not loaded"}
-      </span>,
-    );
-  }
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-3 text-xs text-muted-foreground">
-      {pieces}
+      {state.readinessError ? (
+        <span title={state.readinessError} className="inline-flex items-center gap-1 text-destructive">
+          <AlertTriangleIcon className="size-3" />
+          readiness unavailable
+        </span>
+      ) : state.flipBlocked === null ? (
+        <span>readiness: no flip_blocked field</span>
+      ) : (
+        <span className="inline-flex items-center gap-1">
+          <ShieldCheckIcon className="size-3 text-success" />
+          readiness loaded · flip_blocked = {String(state.flipBlocked)}
+        </span>
+      )}
     </div>
   );
 }

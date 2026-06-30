@@ -17,7 +17,7 @@
 import React from "react";
 import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ProgressRealCard } from "../ProgressRealCard";
+import { ProgressRealCard, groupReadiness, summarizeRuntime } from "../ProgressRealCard";
 
 const html = renderToStaticMarkup(<ProgressRealCard />);
 
@@ -102,5 +102,46 @@ describe("ProgressRealCard", () => {
     // Full system must not be at 100%. If a future commit sets it to 100,
     // a milestone-level review is required before merge.
     expect(html).not.toMatch(/Full system to live-minimum[\s\S]{0,200}100%/i);
+  });
+});
+
+// ── Auto-derive engine: pure derivation functions (the workspace progress engine) ──
+
+describe("groupReadiness (auto-derived per-group readiness ratios)", () => {
+  it("counts green/total per readiness group from real items", () => {
+    const out = groupReadiness([
+      { group: "operations", status: "green" },
+      { group: "operations", status: "red" },
+      { group: "contracts", status: "yellow" },
+      { group: "security_compliance", status: "green" },
+    ]);
+    expect(out.find((g) => g.group === "operations")).toMatchObject({ green: 1, total: 2 });
+    expect(out.find((g) => g.group === "contracts")).toMatchObject({ green: 0, total: 1 });
+    expect(out.find((g) => g.group === "security_compliance")).toMatchObject({ green: 1, total: 1 });
+  });
+
+  it("fail-honest: empty items yields no groups (never fabricates a ratio)", () => {
+    expect(groupReadiness([])).toEqual([]);
+  });
+});
+
+describe("summarizeRuntime (auto-derived runtime evidence)", () => {
+  it("counts heartbeat-loaded engines and sums 1h candidates/rejections from real strategies", () => {
+    expect(
+      summarizeRuntime([
+        { engine_loaded: true, candidates_1h: 3, rejections_1h: 2 },
+        { engine_loaded: false, candidates_1h: 0, rejections_1h: 0 },
+        { engine_loaded: true, candidates_1h: 5, rejections_1h: 5 },
+      ]),
+    ).toMatchObject({ enginesLoaded: 2, enginesTotal: 3, candidates1h: 8, rejections1h: 7 });
+  });
+
+  it("fail-honest: empty strategies yields honest zeros (0 engines, not a fabricated number)", () => {
+    expect(summarizeRuntime([])).toMatchObject({
+      enginesLoaded: 0,
+      enginesTotal: 0,
+      candidates1h: 0,
+      rejections1h: 0,
+    });
   });
 });
