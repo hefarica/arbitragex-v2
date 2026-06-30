@@ -38,7 +38,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  VPS_HOST: ${{ secrets.VPS_HOST }}
+  VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
   VPS_USER: root
   VPS_PATH: /opt/arbitragex-v2
 

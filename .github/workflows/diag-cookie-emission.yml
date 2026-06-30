@@ -4,7 +4,7 @@ on:
 permissions:
   contents: read
 env:
-  VPS_HOST: ${{ secrets.VPS_HOST }}
+  VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
 jobs:
   diag:
     runs-on: ubuntu-latest
