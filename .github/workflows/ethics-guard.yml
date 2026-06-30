@@ -1,0 +1,38 @@
+name: ethics-guard
+
+# Blocks re-introduction of prohibited fail-honest / safety anti-patterns:
+# fabricated live-readiness certs, fake-validation markers, and in-CI tx signing.
+# Real gate — fails the build on any match; fails closed if the checker can't run.
+# Logic lives in scripts/ethics-guard.sh (single source of truth).
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'backend/**'
+      - 'contracts/**'
+      - 'scripts/**'
+      - 'automation/**'
+      - '.github/workflows/**'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'backend/**'
+      - 'contracts/**'
+      - 'scripts/**'
+      - 'automation/**'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+jobs:
+  ethics-guard:
+    name: ethics-guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run ethics-guard (fail-closed)
+        run: bash scripts/ethics-guard.sh .
