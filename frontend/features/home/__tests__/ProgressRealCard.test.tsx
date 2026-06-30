@@ -17,7 +17,12 @@
 import React from "react";
 import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ProgressRealCard, groupReadiness, summarizeRuntime } from "../ProgressRealCard";
+import {
+  ProgressRealCard,
+  groupReadiness,
+  summarizeRuntime,
+  summarizeDecision,
+} from "../ProgressRealCard";
 
 const html = renderToStaticMarkup(<ProgressRealCard />);
 
@@ -143,5 +148,38 @@ describe("summarizeRuntime (auto-derived runtime evidence)", () => {
       candidates1h: 0,
       rejections1h: 0,
     });
+  });
+});
+
+describe("summarizeDecision (auto-derived go/no-go decision evidence)", () => {
+  it("passes through paper_mode / go_a5 / reasons / next_action from a real decision", () => {
+    expect(
+      summarizeDecision({
+        paper_mode: true,
+        go_a5: false,
+        reasons: ["A.4 fork not executed"],
+        next_action: "run A.4 fork validation",
+      }),
+    ).toMatchObject({
+      paperMode: true,
+      goA5: false,
+      reasons: ["A.4 fork not executed"],
+      nextAction: "run A.4 fork validation",
+    });
+  });
+
+  it("fail-honest: null decision yields nulls + empty reasons (never fabricates a verdict)", () => {
+    expect(summarizeDecision(null)).toMatchObject({
+      paperMode: null,
+      goA5: null,
+      reasons: [],
+      nextAction: null,
+    });
+  });
+});
+
+describe("ProgressRealCard decision evidence (SSR fail-honest)", () => {
+  it("queries the decision endpoint and shows no fabricated trade-mode/A.5 verdict at static render", () => {
+    expect(html).toMatch(/Querying \/api\/readiness\/decision/i);
   });
 });

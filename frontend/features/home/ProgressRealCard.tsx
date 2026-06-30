@@ -44,7 +44,7 @@ import { ShieldOffIcon, ShieldCheckIcon, AlertTriangleIcon } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { getReadiness, getRuntimeStatus } from "@/lib/api-client";
+import { getReadiness, getRuntimeStatus, getReadinessDecision } from "@/lib/api-client";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Auto-derive engine — pure derivation over already-fetched endpoints.
@@ -99,6 +99,31 @@ export function summarizeRuntime(
     enginesTotal: strategies.length,
     candidates1h: strategies.reduce((n, s) => n + s.candidates_1h, 0),
     rejections1h: strategies.reduce((n, s) => n + s.rejections_1h, 0),
+  };
+}
+
+export type DecisionSummary = {
+  paperMode: boolean | null;
+  goA5: boolean | null;
+  reasons: string[];
+  nextAction: string | null;
+};
+
+// paper_mode + go_a5 are genuinely dynamic decision fields; reasons/next_action
+// are the live "why blocked / what next". verdict is intentionally excluded —
+// it is hardcoded NO_GO server-side, so it is not a live signal. Null input
+// (endpoint unavailable) yields nulls + empty reasons — never a fabricated verdict.
+export function summarizeDecision(
+  decision:
+    | { paper_mode: boolean; go_a5: boolean; reasons: string[]; next_action: string }
+    | null,
+): DecisionSummary {
+  if (!decision) return { paperMode: null, goA5: null, reasons: [], nextAction: null };
+  return {
+    paperMode: decision.paper_mode,
+    goA5: decision.go_a5,
+    reasons: decision.reasons,
+    nextAction: decision.next_action,
   };
 }
 
@@ -158,10 +183,16 @@ type RuntimeProbe =
       sourcePostgres: string | null;
       sourceRedis: string | null;
       runtimeError: string | null;
+      decision: DecisionSummary;
+      decisionError: string | null;
     };
 
 async function probe(): Promise<RuntimeProbe> {
-  const [rd, rs] = await Promise.allSettled([getReadiness(), getRuntimeStatus(1)]);
+  const [rd, rs, dc] = await Promise.allSettled([
+    getReadiness(),
+    getRuntimeStatus(1),
+    getReadinessDecision(),
+  ]);
 
   let flipBlocked: boolean | null = null;
   let readinessGreen: number | null = null;
@@ -197,6 +228,16 @@ async function probe(): Promise<RuntimeProbe> {
     runtimeError = (rs.reason as Error)?.message?.slice(0, 80) ?? "unknown";
   }
 
+  let decision: DecisionSummary = summarizeDecision(null);
+  let decisionError: string | null = null;
+  if (dc.status === "fulfilled" && dc.value.ok) {
+    decision = summarizeDecision(dc.value.data);
+  } else if (dc.status === "fulfilled" && !dc.value.ok) {
+    decisionError = dc.value.error.slice(0, 80);
+  } else if (dc.status === "rejected") {
+    decisionError = (dc.reason as Error)?.message?.slice(0, 80) ?? "unknown";
+  }
+
   return {
     kind: "ready",
     flipBlocked,
@@ -209,6 +250,8 @@ async function probe(): Promise<RuntimeProbe> {
     sourcePostgres,
     sourceRedis,
     runtimeError,
+    decision,
+    decisionError,
   };
 }
 
@@ -259,6 +302,7 @@ export function ProgressRealCard() {
           <LiveReadinessRow state={state} />
           <ReadinessGroups state={state} />
           <RuntimeEvidence state={state} />
+          <DecisionEvidence state={state} />
 
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             <RuntimeTile
@@ -485,6 +529,77 @@ function SourcePill({ label, value }: { label: string; value: string | null }) {
       }`}
     >
       {label}:{value ?? "unavailable"}
+    </span>
+  );
+}
+
+// ── Decision evidence (auto-derived from /api/readiness/decision) ──
+// Trade mode (paper_mode) + A.5 (go_a5) are dynamic; reasons/next_action are
+// the live "why blocked / what next". verdict is NOT shown (hardcoded NO_GO
+// server-side → not a live signal). Fail-honest: text on loading/error.
+function DecisionEvidence({ state }: { state: RuntimeProbe }) {
+  if (state.kind === "loading") {
+    return <p className="text-xs text-muted-foreground">Querying /api/readiness/decision…</p>;
+  }
+  const { decision, decisionError } = state;
+  const { paperMode, goA5, reasons, nextAction } = decision;
+  if (decisionError !== null || paperMode === null) {
+    return (
+      <p
+        className="inline-flex items-center gap-1 text-xs text-destructive"
+        title={decisionError ?? undefined}
+      >
+        <AlertTriangleIcon className="size-3" />
+        decision unavailable
+      </p>
+    );
+  }
+  return (
+    <div data-slot="decision-evidence" className="space-y-1.5">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <DecisionBadge
+          label="Trade mode"
+          value={paperMode ? "PAPER" : "LIVE"}
+          tone={paperMode ? "ok" : "danger"}
+        />
+        <DecisionBadge
+          label="A.5"
+          value={goA5 === null ? "—" : goA5 ? "GO" : "blocked"}
+          tone={goA5 ? "ok" : "warn"}
+        />
+      </div>
+      {(reasons.length > 0 || nextAction) && (
+        <div className="text-xs text-muted-foreground">
+          {reasons.length > 0 && (
+            <ul className="list-inside list-disc space-y-0.5">
+              {reasons.slice(0, 5).map((r) => (
+                <li key={r}>{r}</li>
+              ))}
+            </ul>
+          )}
+          {nextAction && <p className="mt-1">Next: {nextAction}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DecisionBadge({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "ok" | "warn" | "danger";
+}) {
+  const accent =
+    tone === "ok" ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
+    : tone === "danger" ? "border-destructive/40 text-destructive"
+    : "border-amber-500/40 text-amber-700 dark:text-amber-300";
+  return (
+    <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${accent}`}>
+      {label}: {value}
     </span>
   );
 }
