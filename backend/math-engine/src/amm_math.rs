@@ -34,28 +34,6 @@ pub fn calc_univ2_price_impact(amount_in: f64, reserve_in: f64, fee_pct: f64) ->
     amount_in_with_fee / (reserve_in + amount_in_with_fee)
 }
 
-/// Aproximación simplificada de matemática de Ticks para UniV3.
-/// En la realidad on-chain se usaría Q64.96. Esto es para estimación rápida pre-trade.
-pub fn approx_univ3_amount_out(
-    amount_in: f64,
-    liquidity_active: f64,
-    current_sqrt_price_x96: f64,
-    _target_sqrt_price_x96: f64, // simplified
-    _fee_pct: f64,
-) -> f64 {
-    // ESTO ES UN PLACEHOLDER MATEMÁTICO para cálculos de alto nivel off-chain.
-    // La ejecución on-chain usa `getAmountOut` del Quoter.
-    if liquidity_active <= 0.0 || current_sqrt_price_x96 <= 0.0 {
-        return 0.0;
-    }
-    // Implementación mínima para satisfacer el type checker y estructura
-    let mut amount_out = amount_in * 0.99; // Dummy logic
-    if amount_out < 0.0 {
-        amount_out = 0.0;
-    }
-    amount_out
-}
-
 /// Approximates the V3 price impact for a swap **within the current tick range**.
 ///
 /// # Mathematical derivation
@@ -641,5 +619,116 @@ mod tests {
             at_negative < at_zero,
             "negative tick must produce smaller sqrtPriceX96"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// External canonical vectors (#216)
+// ---------------------------------------------------------------------------
+//
+// Validates the AMM math that is actually USED on the gate path against
+// independently-sourced canonical reference values (numeric facts, not copied
+// code):
+//   - V3 TickMath getSqrtRatioAtTick: 0xKitsune/uniswap-v3-math@11c7e78
+//     (hard-checked there against Uniswap v3-core Solidity TickMath).
+//   - V2 getAmountOut: Uniswap v2-periphery UniswapV2Library.getAmountOut,
+//     expected outputs computed by exact 256-bit integer arithmetic.
+//
+// Also PINS a documented limitation: `tick_to_sqrt_price_x96` returns u128, but
+// canonical sqrtPriceX96 is uint160 — for |tick| beyond ~443_636 the value
+// exceeds u128::MAX and the fn saturates. That saturation is asserted, not
+// hidden, so a future widening to U256 will trip this test deliberately.
+//
+// NOTE: `calc_univ3_price_impact_pct` and `..._with_distribution` are bespoke
+// first-order approximations with no external counterpart in amms-rs /
+// uniswap-v3-math (those compute amount-out, not this impact metric), so they
+// are intentionally NOT vector-checked here — a self-referential vector would
+// prove nothing. Their correctness is covered by the derivation-based unit
+// tests above.
+#[cfg(test)]
+mod external_vectors {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn load(name: &str) -> serde_json::Value {
+        let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("test_vectors")
+            .join(name);
+        let s = std::fs::read_to_string(&p)
+            .unwrap_or_else(|e| panic!("read vectors {p:?}: {e}"));
+        serde_json::from_str(&s).expect("vector json must parse")
+    }
+
+    /// `tick_to_sqrt_price_x96` (f64 approximation) vs canonical TickMath.
+    /// Within the u128-representable range the f64 approximation is accurate to
+    /// < 2e-10 relative; beyond it the fn must saturate to u128::MAX.
+    #[test]
+    fn v3_tickmath_matches_canonical() {
+        let doc = load("uniswap_v3_tickmath.json");
+        let tol = doc["rel_tolerance"].as_f64().expect("rel_tolerance");
+        let vectors = doc["vectors"].as_array().expect("vectors array");
+        let mut checked = 0usize;
+        let mut saturated = 0usize;
+        for v in vectors {
+            let tick = v["tick"].as_i64().expect("tick") as i32;
+            let exp_str = v["sqrt_price_x96"].as_str().expect("sqrt_price_x96");
+            let got = tick_to_sqrt_price_x96(tick);
+            match exp_str.parse::<u128>() {
+                Ok(expected) => {
+                    let rel = (got as f64 - expected as f64).abs() / expected as f64;
+                    assert!(
+                        rel < tol,
+                        "tick {tick}: rel err {rel:e} exceeds tol {tol:e} (got {got}, expected {expected})"
+                    );
+                }
+                Err(_) => {
+                    // Canonical value exceeds u128::MAX → documented saturation limit.
+                    assert_eq!(
+                        got,
+                        u128::MAX,
+                        "tick {tick}: canonical sqrtPriceX96 exceeds u128::MAX; fn must saturate"
+                    );
+                    saturated += 1;
+                }
+            }
+            checked += 1;
+        }
+        assert!(checked >= 15, "expected >= 15 tick vectors, got {checked}");
+        assert!(
+            saturated >= 1,
+            "expected >= 1 over-u128 vector pinning the saturation limit, got {saturated}"
+        );
+    }
+
+    /// `calc_univ2_amount_out` (f64) vs canonical Uniswap V2 getAmountOut (exact int).
+    #[test]
+    fn v2_get_amount_out_matches_canonical() {
+        let doc = load("uniswap_v2_getamountout.json");
+        let tol = doc["rel_tolerance"].as_f64().expect("rel_tolerance");
+        let fee = doc["fee_pct"].as_f64().expect("fee_pct");
+        let vectors = doc["vectors"].as_array().expect("vectors array");
+        const E18: f64 = 1e18;
+        let to_norm = |v: &serde_json::Value, k: &str| -> f64 {
+            v[k].as_str()
+                .unwrap_or_else(|| panic!("{k} string"))
+                .parse::<u128>()
+                .unwrap_or_else(|_| panic!("{k} u128")) as f64
+                / E18
+        };
+        let mut checked = 0usize;
+        for v in vectors {
+            let ain = to_norm(v, "amount_in_wei");
+            let rin = to_norm(v, "reserve_in_wei");
+            let rout = to_norm(v, "reserve_out_wei");
+            let exp = to_norm(v, "expected_out_wei");
+            let got = calc_univ2_amount_out(ain, rin, rout, fee);
+            let rel = (got - exp).abs() / exp;
+            assert!(
+                rel < tol,
+                "v2 getAmountOut rel err {rel:e} exceeds tol {tol:e} (got {got}, expected {exp})"
+            );
+            checked += 1;
+        }
+        assert!(checked >= 3, "expected >= 3 v2 vectors, got {checked}");
     }
 }
