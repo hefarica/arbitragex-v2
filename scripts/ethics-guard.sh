@@ -12,6 +12,10 @@
 #   E3  Transaction signing inside CI (--private-key / --broadcast in any
 #       .github/workflows file). CI must be keyless; broadcasting belongs to the
 #       operator/KMS plane.
+#   E4  Transaction signing/broadcast inside a CI-INVOKED script — a workflow `run:`s a
+#       *.sh that itself uses --private-key/--broadcast. Closes the hidden-broadcast gap
+#       E3 (yaml-only) misses (e.g. a deploy script called from a workflow). Operator-only
+#       scripts that no workflow references are NOT flagged (they may legitimately sign).
 #
 # DEFERRED (documented, NOT enforced in v1): continue-on-error:true / "|| true"
 # on security jobs — pervasive on current main (6 workflows + 20 files). Enforcing
@@ -70,6 +74,28 @@ fi
 if [ -d "$WF_DIR" ]; then
   check "E3-ci-signing" "Transaction signing/broadcast inside CI (--private-key/--broadcast) — CI must be keyless; use the operator/KMS plane" \
     --include='*.yml' --include='*.yaml' '(^|[^A-Za-z0-9_-])--(private-key|broadcast)([^A-Za-z0-9_-]|$)' "$WF_DIR"
+fi
+
+# E4 — signing/broadcast inside a CI-INVOKED script. A workflow that `run:`s a *.sh which
+# itself broadcasts/signs slips past E3 (which only reads the *.yml). Resolve every *.sh
+# path literally referenced in a workflow file, then grep ONLY those scripts for
+# --private-key/--broadcast. Operator-only scripts (never referenced by a workflow) are
+# deliberately NOT flagged — they may legitimately sign on the operator/KMS plane.
+if [ -d "$WF_DIR" ]; then
+  refs="$(grep -rhoE '[A-Za-z0-9_./-]+\.sh' "$WF_DIR" 2>/dev/null | sed 's#^\./##' | sort -u)"
+  for sp in $refs; do
+    case "$sp" in *ethics-guard*) continue ;; esac
+    [ -f "$sp" ] || continue
+    hits="$(grep -nE '(^|[^A-Za-z0-9_-])--(private-key|broadcast)([^A-Za-z0-9_-]|$)' "$sp" 2>/dev/null || true)"
+    [ -z "$hits" ] && continue
+    FAIL=1
+    while IFS= read -r m; do
+      [ -z "$m" ] && continue
+      ln="${m%%:*}"
+      echo "::error file=${sp},line=${ln}::[ethics-guard:E4-ci-script-signing] CI-invoked script signs/broadcasts (--private-key/--broadcast) — CI must be keyless; deploy/canary belong to the operator/KMS plane"
+      echo "  ✗ [E4-ci-script-signing] ${sp}:${ln}"
+    done <<< "$hits"
+  done
 fi
 
 if [ "$FAIL" -ne 0 ]; then
