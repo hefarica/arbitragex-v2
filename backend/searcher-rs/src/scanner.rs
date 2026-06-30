@@ -1772,7 +1772,7 @@ async fn decode_and_score_tx<'a>(
             opportunity.dex_a, opportunity.token_in, opportunity.token_out
         ),
         pool_addresses: vec![],
-        token_addresses: vec![token_in_for_gate, token_out_for_gate],
+        token_addresses: vec![token_in_for_gate.clone(), token_out_for_gate],
         dex_adapters: vec![opportunity.dex_a.clone()],
         amount_in: amount_in_f64,
         expected_amount_out: expected_amount_out_f64,
