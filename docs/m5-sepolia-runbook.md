@@ -1,6 +1,6 @@
 # M5 — Sepolia Deploy Runbook + Operator Checklist
 
-> **Status:** DRAFT (pre-execution). Execute ONLY after an explicit operator GO **and** after PR #224 + #228 are merged to `main` with `main` CI green.
+> **Status:** READY for operator review. Execute ONLY after an explicit operator GO. Code preconditions are MET on `main` (CI green): **PR #224 merged** (executor cross-DEX `_runRoute` + carry-validated-calldata + the `ZeroIntermediate` test) and **PR #246 merged** (net-USD-of-gas pre-live gate). (PR #228 was **closed** — its rmcp allowlist already landed via #223.)
 > **Mode:** observer-only validation. NO mainnet, NO real capital, NO broadcast enablement.
 > **Chain:** Sepolia (`chain_id = 11155111`).
 
@@ -12,14 +12,14 @@ This runbook makes the M2 fix (executor cross-DEX `_runRoute` + carry-validated-
 
 1. **`DeployTestnet.s.sol` performs NO in-script grants** — unlike `DeployMainnet.s.sol` (which does the SC-13 `FLE→AE` grant in-script). On Sepolia **every** role grant + approval is a **manual** post-deploy step (Sections 2–4).
 2. **`setRouterSelectorApproval` is absent from all three deploy-script checklists** — but the red Foundry repro proved a cross-DEX 2-leg route reverts `AE_RouterSelectorNotApproved` unless **both** routers' swap selectors are whitelisted (Section 4).
-3. **The e2e fork harness `multistep_fork.rs` is hard-coded to chain 1** (`RPC_HTTP_1` / `EXECUTOR_1` / `FLASHLOAN_EXECUTOR_1`). For Sepolia, either point those chain-1 env names at the Sepolia fork (Section 7, option A) or parameterise the harness (small follow-up).
+3. **The e2e fork harness `multistep_fork.rs` is MAINNET-SPECIFIC — not merely chain-1-env** (verified 2026-06-30). Beyond the `RPC_HTTP_1` / `EXECUTOR_1` / `FLASHLOAN_EXECUTOR_1` env names, it hard-codes **mainnet token/router addresses** (WETH `0xc02a…`, USDC `0xa0b8…`, UniV2 `0x7a25…`, Sushi `0xd9e1…` — lines ~200-203), **mainnet ERC20 storage layouts** (lines ~76-90, keyed to chain 1) and `chain_id: 1` (line ~224). **Re-pointing the env at Sepolia is NOT sufficient** — the test would still drive mainnet addresses against Sepolia and fail. A.4 on Sepolia requires adding a **Sepolia fixture** (Sepolia token/router addresses + their on-chain storage slots), which can only be authored **after** the deploy. See Section 7.
 
 ---
 
 ## Section 0 — Preconditions (secrets / credentials / balances)
 
 ```
-[ ] PR #224 merged + PR #228 merged + main CI green
+[x] PR #224 merged (DONE) + PR #246 net-USD merged (DONE) + main CI green   (#228 closed — allowlist already on main via #223)
 [ ] DEPLOYER_PRIVATE_KEY  — testnet deployer key (NOT mainnet). Holds DEFAULT_ADMIN/ADMIN_ROLE initially.
 [ ] SEPOLIA_RPC           — Sepolia RPC URL (Alchemy/Infura). chain_id 11155111.
 [ ] ETHERSCAN_API_KEY     — for --verify on Sepolia Etherscan.
@@ -130,17 +130,26 @@ cast call $AE  "approvedSelectors(address,bytes4)(bool)" $RA $SEL --rpc-url $SEP
 ## Section 7 — E2E: real `SIM_SUCCESS` on a fork
 
 Harness: `backend/searcher-rs/tests/multistep_fork.rs` (`#[ignore]` by default).
-⚠️ Hard-coded to chain 1 env names. Two options:
 
-**Option A — point chain-1 env at the Sepolia fork:**
+🔴 **The harness is MAINNET-SPECIFIC (verified) — re-pointing env is NOT enough.** It hard-codes
+mainnet token/router addresses (lines ~200-203), mainnet ERC20 storage layouts (lines ~76-90),
+and `chain_id: 1` (line ~224). A Sepolia run needs a **Sepolia fixture**: the Sepolia test-token
+addresses (tokenIn/tokenOut), the Sepolia router addresses, and the **on-chain storage slots**
+(`balanceOf` / `allowance` base slots) for each Sepolia token — all deployment-specific, so they
+can only be filled in **after** Section 1 (read slots with `cast storage` on the live tokens).
+
 ```bash
-export RPC_HTTP_1="$SEPOLIA_RPC"  EXECUTOR_1=$AE  FLASHLOAN_EXECUTOR_1=$FLE
-export SIM_ORCHESTRATOR_GAS_PRICE_WEI=<real Sepolia gwei in wei>
-# (run in WSL2 with build-essential, or any linux toolchain)
+# 1) After the deploy, set the chain-11155111 env the producer/searcher reads:
+export RPC_HTTP_11155111="$SEPOLIA_RPC"  EXECUTOR_11155111=$AE  FLASHLOAN_EXECUTOR_11155111=$FLE
+export SIM_ORCHESTRATOR_GAS_PRICE_WEI=<real Sepolia gwei in wei>  SIM_ORCHESTRATOR_MODE=<mode>
+# 2) Add a Sepolia fixture to multistep_fork.rs (S3/S4 follow-up — NOT a chain-id one-liner):
+#    - FixtureLayoutProvider: insert (11155111, <sepolia_token>) -> {balance_slot, allowance_slot}
+#      discover slots: cast storage <token> <slotGuess> --rpc-url $SEPOLIA_RPC
+#    - RoundTripContext: Sepolia tokenIn/tokenOut/forward_router/backward_router
+#    - MultiStepExecutionConfig { chain_id: 11155111, ... }
+# 3) Run (WSL2 with build-essential, or any linux toolchain):
 cargo test -p searcher-rs --test multistep_fork -- --ignored --nocapture
 ```
-
-**Option B —** parameterise the harness to `chain_id` (small follow-up PR).
 
 **Success** = `SimulationOutcome.passed` with `retained_spread > 0`, `trace_hash != 0`, `gas_used > 0`, and the wrapped bytes equal `build_flash_funded_broadcast_calldata_with_intermediate(...)` (byte-parity). Repeat **≥10** simulations (program M5 criterion).
 
@@ -168,13 +177,13 @@ changes go through its 60s delay.
 
 ---
 
-## Operator checklist (copy/paste — execute ONLY after GO + #224/#228 merged)
+## Operator checklist (copy/paste — execute ONLY after explicit GO; #224 + #246 already merged)
 
 ```
 ## M5 SEPOLIA — OPERATOR CHECKLIST
 
 PRE
-[ ] #224 merged · #228 merged · main CI green
+[x] #224 merged · #246 net-USD merged · main CI green   (#228 closed — allowlist via #223)
 [ ] AAVE_POOL_ADDRESS Sepolia CONFIRMED (.code.length>0)
 [ ] DEPLOYER_PRIVATE_KEY (testnet) + SEPOLIA_RPC + ETHERSCAN_API_KEY exported
 [ ] deployer + signer funded with Sepolia ETH
@@ -200,7 +209,7 @@ VERIFY ON-CHAIN
 
 E2E
 [ ] export EXECUTOR_11155111=AE  FLASHLOAN_EXECUTOR_11155111=FLE  RPC_HTTP_11155111=SEPOLIA_RPC
-[ ] run multistep_fork (pointed at Sepolia) → SIM_SUCCESS with spread>0, byte-parity
+[ ] add Sepolia fixture to multistep_fork.rs (token addrs + storage slots, Section 7) → run → SIM_SUCCESS spread>0, byte-parity
 [ ] ≥10 real simulations OK
 
 GATE
@@ -210,4 +219,4 @@ GATE
 
 ---
 
-*Generated as a draft for operator review. The net-USD-of-gas pre-live gate (branch `omega/m2-net-usd-gate`) and the chain-1→chain_id harness generalisation are tracked follow-ups, not part of this runbook's execution.*
+*Finalized for operator review (2026-06-30). The net-USD-of-gas pre-live gate landed as **PR #246** (merged to `main`). The fork-harness Sepolia work (Section 7) is a deployment-dependent S3/S4 follow-up: it needs the live Sepolia token addresses + their storage slots, so it is authored **after** Section 1 — it is NOT a chain-id one-liner. This runbook stays observer-only: NO mainnet, NO real capital, NO broadcast/signer enablement; M5 executes only under an explicit operator GO with a protected (KMS/HSM/hardware) testnet key, never from CI.*
