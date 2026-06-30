@@ -487,4 +487,46 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
         vm.expectRevert(AliasedTwoLegRoute.selector);
         executor.executeArbitrage(bytes32(0), address(tokenIn), address(tokenIn), amountIn, 0, routers, payloads);
     }
+
+    /// (1a) Zero-intermediate gate: a 2-leg cross-DEX route whose FORWARD router delivers
+    /// ZERO tokenOut (the leg-0 delta == 0) reverts ZeroIntermediate BEFORE leg-1 dispatch.
+    /// Closes the one route-shape gate branch (`_runRoute`: `if (intermediate == 0) revert
+    /// ZeroIntermediate()`) that lacked a direct red->green assertion — the aliased test above
+    /// hits AliasedTwoLegRoute first, so it never exercises this guard. Here tokenIn != tokenOut
+    /// and the route is well-formed up to the forward leg producing no output.
+    function test_Security_ZeroIntermediateReverts() public {
+        ReproToken tokenIn = new ReproToken("IN");
+        ReproToken tokenOut = new ReproToken("OUT");
+
+        uint256 amountIn = 1_000e18;
+
+        // Forward router A: pulls tokenIn(amountIn) but delivers ZERO tokenOut -> the
+        // executor's tokenOut balance delta (the intermediate) is 0.
+        ReproCrossDexRouter routerA = new ReproCrossDexRouter(address(tokenIn), address(tokenOut), amountIn, 0);
+        // Backward router B is well-formed but MUST NEVER be reached (the guard fires on the
+        // leg-0 delta, before leg-1 dispatch).
+        ReproCrossDexRouter routerB = new ReproCrossDexRouter(address(tokenOut), address(tokenIn), 1, 1_100e18);
+
+        tokenIn.mint(address(executor), amountIn); // routerA delivers 0 tokenOut -> needs no inventory
+
+        executor.setTokenApproval(address(tokenIn), true);
+        executor.setTokenApproval(address(tokenOut), true);
+        executor.setRouterApproval(address(routerA), true);
+        executor.setRouterApproval(address(routerB), true);
+        executor.setRouterSelectorApproval(address(routerA), SWAP_SELECTOR, true);
+        executor.setRouterSelectorApproval(address(routerB), SWAP_SELECTOR, true);
+
+        address[] memory routers = new address[](2);
+        routers[0] = address(routerA);
+        routers[1] = address(routerB);
+        bytes[] memory payloads = new bytes[](2);
+        payloads[0] = abi.encodePacked(SWAP_SELECTOR);
+        payloads[1] = abi.encodePacked(SWAP_SELECTOR);
+
+        // Forward leg produces a 0 tokenOut delta -> ZeroIntermediate, fail-closed, before
+        // any leg-1 approval/dispatch.
+        vm.prank(executorRole);
+        vm.expectRevert(ZeroIntermediate.selector);
+        executor.executeArbitrage(bytes32(0), address(tokenIn), address(tokenOut), amountIn, 0, routers, payloads);
+    }
 }
