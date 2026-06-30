@@ -1772,7 +1772,7 @@ async fn decode_and_score_tx<'a>(
             opportunity.dex_a, opportunity.token_in, opportunity.token_out
         ),
         pool_addresses: vec![],
-        token_addresses: vec![token_in_for_gate, token_out_for_gate],
+        token_addresses: vec![token_in_for_gate.clone(), token_out_for_gate],
         dex_adapters: vec![opportunity.dex_a.clone()],
         amount_in: amount_in_f64,
         expected_amount_out: expected_amount_out_f64,
@@ -1845,6 +1845,40 @@ async fn decode_and_score_tx<'a>(
     )
     .await
     .into_snapshot();
+
+    // O4 follow-up — resolve the net-USD-of-gas gate inputs from the SAME price
+    // cascade the evaluator uses (live snapshot → operator config → stablecoins),
+    // BEFORE `snapshot_map` is moved into `with_cache` below. The gate (in
+    // `dispatch_orchestrator_and_classify`) rejects a gross-positive-but-gas-losing
+    // plan before it is persisted/broadcast. These are `Option<f64>`: a miss makes
+    // the gate FAIL-CLOSED (no plan persisted) — never persist on price-unavailable.
+    //
+    //   - `gate_token_in_decimals`: token_in ERC-20 decimals (from the Redis token
+    //     meta; default 18 only when meta is unknown, matching `amount_in_decimals`).
+    //   - `gate_token_in_price_usd`: USD per unit of token_in, by its symbol.
+    //   - `gate_eth_price_usd`: USD per ETH — the operator's base token price when
+    //     base_token_symbol is WETH/ETH, else resolved as "WETH" via the cascade.
+    let gate_token_in_decimals: u8 = meta_in.as_ref().map(|m| m.decimals).unwrap_or(18);
+    let (gate_token_in_price_usd, gate_eth_price_usd) = {
+        use shared_rs::price_oracle::{
+            CascadePriceOracle, ConfigPriceOracle, PriceOracle, RedisCachedPriceOracle,
+        };
+        // The two oracles are different concrete types, so each box must be
+        // coerced to the trait object explicitly (the `vec!` element type is
+        // fixed by the first element otherwise).
+        let live: Box<dyn PriceOracle + Send + Sync> =
+            Box::new(RedisCachedPriceOracle::from_snapshot(snapshot_map.clone()));
+        let cfg_oracle: Box<dyn PriceOracle + Send + Sync> = Box::new(ConfigPriceOracle::new(&cfg));
+        let cascade = CascadePriceOracle::new(vec![live, cfg_oracle]);
+        let token_in_price = cascade.price_usd(&token_in_for_gate);
+        // ETH price for gas-cost conversion. `WETH`/`ETH` resolve via the cascade
+        // (live snapshot, then the operator's base token price).
+        let eth_price = cascade
+            .price_usd("WETH")
+            .or_else(|| cascade.price_usd("ETH"));
+        (token_in_price, eth_price)
+    };
+
     let evaluator = ConfigAwareEvaluator::with_cache(&cfg, signals, snapshot_map);
 
     // 2026-05-11: Operator demanded the literal die. The strategy kind now
@@ -2065,9 +2099,9 @@ async fn decode_and_score_tx<'a>(
     //     from the hot path. Every candidate with a simulator + provider in
     //     hand attempts a real encoder dispatch; outcome maps to typed
     //     counters and reasons. The system STILL stays in
-    //     `SIM_DISABLED_FAIL_CLOSED` — the next phase (`execute_round_trip`
-    //     REVM orchestrator) is the only remaining gate before SIM_SUCCESS
-    //     can be emitted.
+    //     `SIM_DISABLED_FAIL_CLOSED` — the next phase (the WRAPPED FLASH
+    //     `sim_multistep::execute_multistep_revm` producer) is the only
+    //     remaining gate before SIM_SUCCESS can be emitted.
     //
     // Dispatch outcomes today (all map to `SIM_DISABLED_FAIL_CLOSED`):
     //   * No simulator for chain → reason `no_simulator_for_chain`.
@@ -2092,10 +2126,14 @@ async fn decode_and_score_tx<'a>(
     bump_encoder_gate_counter(&gate_outcome);
 
     // Phase A.3.c — if the encoder produced a RoundTripContext AND we have a
-    // SimulatorV2 in hand, dispatch `execute_round_trip_revm` synchronously on
-    // a blocking tokio thread. cs-validator finding 2026-05-12: REVM is
-    // synchronous; running it on the tokio worker would park the event loop.
-    let (fail_closed_reason, trace_hash_sentinel, sim_status_str) =
+    // SimulatorV2 in hand, dispatch the WRAPPED FLASH sim
+    // (`sim_multistep::execute_multistep_revm`, via
+    // `dispatch_orchestrator_and_classify`) synchronously on a blocking tokio
+    // thread. cs-validator finding 2026-05-12: REVM is synchronous; running it on
+    // the tokio worker would park the event loop. The producer validates the EXACT
+    // wrapped-flash entrypoint that gets broadcast and carries its validated bytes
+    // in `wrapped_calldata` — broadcast verbatim, real byte-parity.
+    let (fail_closed_reason, trace_hash_sentinel, sim_status_str, validated_plan) =
         if let (EncoderGateOutcome::EncoderOk(ctx), Some(simulator_arc)) =
             (&gate_outcome, simulator_v2.cloned())
         {
@@ -2104,6 +2142,9 @@ async fn decode_and_score_tx<'a>(
                 simulator_arc,
                 client.chain_id,
                 &candidate,
+                gate_token_in_decimals,
+                gate_token_in_price_usd,
+                gate_eth_price_usd,
             )
             .await
         } else {
@@ -2112,8 +2153,54 @@ async fn decode_and_score_tx<'a>(
                 fcr.to_string(),
                 ths.to_string(),
                 "SIM_DISABLED_FAIL_CLOSED".to_string(),
+                None,
             )
         };
+
+    // M2 carrier-B (producer): when the simulator validated the round trip
+    // (SIM_SUCCESS), persist the validated plan to Redis keyed by `opp.id` so the
+    // broadcast path (relays-client, a later increment) re-encodes byte-identical
+    // `executeArbitrage` calldata. `opportunity.id` is the SAME Uuid that the
+    // emitted Opportunity carries through `arbx:opps:detected` → relays-client's
+    // `submit_engine`, so the broadcast side reads back exactly this record.
+    //
+    // Observer-only: this is a Redis SET, never a signer/broadcast. Fail-SOFT —
+    // a Redis hiccup logs a warn and continues; the broadcast side fails-CLOSED
+    // if the plan is absent (that asymmetry is the safety guarantee).
+    if let Some(plan) = validated_plan {
+        let key = format!("arbx:validated_plan:{}", opportunity.id);
+        match serde_json::to_string(&plan) {
+            Ok(plan_json) => {
+                // TTL 300s comfortably covers the detect→broadcast window
+                // (longer than the 180s pending-tx backstop in submit_engine).
+                // Fully-qualified trait call: `AsyncCommands` is not imported at
+                // module scope (matches the `redis::AsyncCommands::get` call site
+                // elsewhere in this file).
+                let set: Result<(), redis::RedisError> =
+                    redis::AsyncCommands::set_ex(redis, &key, plan_json, 300u64).await;
+                match set {
+                    Ok(()) => info!(
+                        event = "validated_plan.persisted",
+                        opp_id = %opportunity.id,
+                        key = %key,
+                    ),
+                    Err(e) => warn!(
+                        event = "validated_plan.persist_failed",
+                        opp_id = %opportunity.id,
+                        key = %key,
+                        error = %e,
+                        "fail-soft: ValidatedPlan persist failed; observer pipeline continues"
+                    ),
+                }
+            }
+            Err(e) => warn!(
+                event = "validated_plan.serialize_failed",
+                opp_id = %opportunity.id,
+                error = %e,
+                "fail-soft: could not serialize ValidatedPlan; skipping persist"
+            ),
+        }
+    }
 
     final_evidence.simulation_status = sim_status_str.clone();
     final_evidence.simulation_trace_hash = Some(trace_hash_sentinel.clone());
@@ -2354,9 +2441,10 @@ pub(crate) enum EncoderGateOutcome {
     /// surfaces it.
     NoProvider,
     /// Encoder ran successfully; the produced `RoundTripContext` is the
-    /// next-phase input for `sim_orchestrator::execute_round_trip_revm`.
-    /// Phase A.3.c lifts this from a fail-closed marker to a real REVM
-    /// dispatch via `tokio::task::spawn_blocking` in `decode_and_score_tx`.
+    /// next-phase input for the WRAPPED FLASH producer
+    /// `sim_multistep::execute_multistep_revm`. Phase A.3.c lifts this from a
+    /// fail-closed marker to a real REVM dispatch via
+    /// `tokio::task::spawn_blocking` in `decode_and_score_tx`.
     EncoderOk(prioritization_spine::round_trip_executor::RoundTripContext),
     /// Encoder rejected the candidate with a typed reason. The tag matches
     /// `SimEncoderError::reason_tag()` verbatim.
@@ -2513,27 +2601,63 @@ fn bump_encoder_gate_counter(outcome: &EncoderGateOutcome) {
 }
 
 // ---------------------------------------------------------------------------
-// Phase A.3.c — orchestrator dispatch helper
+// Phase A.3.c — wrapped-flash producer (M2 core-broadcast-parity)
 // ---------------------------------------------------------------------------
 
-/// Dispatch the REVM orchestrator on a blocking tokio thread, classify the
-/// returned `SimulationOutcome`, and produce the (fail_closed_reason,
-/// trace_hash_sentinel, simulation_status) triple consumed by the hot path.
+/// Dispatch the WRAPPED FLASH REVM sim (`sim_multistep::execute_multistep_revm`)
+/// on a blocking tokio thread, classify the returned `SimulationOutcome`, and
+/// produce the (fail_closed_reason, trace_hash_sentinel, simulation_status)
+/// triple consumed by the hot path.
+///
+/// This is the PRODUCER: it validates the EXACT wrapped-flash entrypoint that the
+/// broadcast path sends (`requestFlashLoan` 0x5107d61e wrapping
+/// `executeArbitrageFlashFunded` 0xdde0bf51) — NOT the self-funded single-tx
+/// `executeArbitrage` path. An adversarial audit proved the old self-funded
+/// `execute_round_trip_revm` validated a DIFFERENT entrypoint than what gets
+/// broadcast; this wiring closes that gap.
 ///
 /// The function is async so it can await the spawn_blocking join handle.
 /// Returns owned Strings because the orchestrator may bubble up dynamic
 /// REVM revert reasons that don't fit a &'static str.
 ///
-/// `SimulationOutcome.passed=true` is the ONLY path that admits SIM_SUCCESS.
+/// `SimulationOutcome.passed=true` is the ONLY path that admits SIM_SUCCESS, and
+/// even then ONLY if the outcome carries the validated `wrapped_calldata` bytes
+/// (fail-closed otherwise — no plan is persisted without them).
 /// On false the simulation_status stays SIM_DISABLED_FAIL_CLOSED and the
 /// fail_reason's tag prefix routes to the right A.3.c counter.
+///
+/// Returns `(fail_closed_reason, trace_hash_sentinel, sim_status_str, validated_plan)`.
+/// The 4th element is `Some(ValidatedPlan)` ONLY on `SIM_SUCCESS` and `None` on
+/// every fail-closed / early-return path. It carries the EXACT validated inputs
+/// (`ctx`, `route_hash`, `min_profit_wei`, `executor_address`) PLUS the
+/// sim-validated `wrapped_calldata` — the exact bytes the broadcast path sends
+/// VERBATIM (real byte-parity, not a re-encode). The caller persists them under
+/// `arbx:validated_plan:<opp.id>`. This is a pure observer-side record: the
+/// searcher only WRITES it; it never signs or broadcasts.
+///
+/// FAIL-CLOSED until M5: the wrapped-flash sim needs the deployed fixed contract
+/// at the forked block to reach SIM_SUCCESS, so until M5 no plan is persisted and
+/// nothing is broadcast — the desired no-false-greens behavior.
 #[cfg(feature = "v2-simulator")]
 async fn dispatch_orchestrator_and_classify(
     ctx: prioritization_spine::round_trip_executor::RoundTripContext,
     simulator: Arc<simulator_v2::SimulatorV2>,
     chain_id: u64,
     candidate: &prioritization_spine::types::OpportunityCandidate,
-) -> (String, String, String) {
+    // O4 follow-up — net-USD-of-gas pre-live gate inputs. Resolved by the caller
+    // (where `cfg`/`meta_in`/price snapshot are in scope). `token_in_decimals` is
+    // the token_in ERC-20 decimals; the two prices are `Option` because the
+    // operator config / live feed may not have them — `None` (or any non-finite /
+    // non-positive value) makes the gate FAIL-CLOSED (no plan persisted).
+    token_in_decimals: u8,
+    token_in_price_usd: Option<f64>,
+    eth_price_usd: Option<f64>,
+) -> (
+    String,
+    String,
+    String,
+    Option<prioritization_spine::ValidatedPlan>,
+) {
     use std::sync::atomic::Ordering::Relaxed;
     let c = counters();
     c.round_trip_executor_started_total.fetch_add(1, Relaxed);
@@ -2549,6 +2673,7 @@ async fn dispatch_orchestrator_and_classify(
                 "missing_executor".to_string(),
                 "fail_closed:missing_executor".to_string(),
                 "SIM_DISABLED_FAIL_CLOSED".to_string(),
+                None,
             );
         }
     };
@@ -2567,19 +2692,43 @@ async fn dispatch_orchestrator_and_classify(
     // Uses keccak256 (already a workspace dep via ethers).
     let route_hash: [u8; 32] = ethers::utils::keccak256(candidate.route_fingerprint.as_bytes());
 
-    let orch_config = crate::sim_orchestrator::RoundTripExecutionConfig {
+    let min_profit_wei = ethers::types::U256::from(1u64);
+    // M2 core-broadcast-parity: validate the WRAPPED FLASH path that gets
+    // broadcast — NOT the self-funded single-tx `executeArbitrage` path. The
+    // wrapped-flash sim quotes the forward leg (getAmountsOut), encodes leg-1 with
+    // the real intermediate, runs the REAL `requestFlashLoan → callback →
+    // executeArbitrageFlashFunded` flow, and on SIM_SUCCESS returns the validated
+    // wrapped calldata in `outcome.wrapped_calldata`. That makes this producer
+    // FAIL-CLOSED until M5 (the wrapped-flash sim needs the deployed fixed
+    // contract at the forked block → no SIM_SUCCESS, no plan, no broadcast — the
+    // desired no-false-greens behavior).
+    let ms_config = crate::sim_multistep::MultiStepExecutionConfig {
         chain_id,
         executor_address: executor,
-        gas_limit: 30_000_000,
-        gas_price_wei,
         route_hash,
-        min_profit_wei: ethers::types::U256::from(1u64),
+        min_profit_wei,
+        gas_price_wei,
+        gas_limit_per_step: 30_000_000,
         paper_mode: true,
+        enable_storage_cheats: true,
+        require_trace_hash: true,
+        require_positive_net_profit: true,
+        // The wrapped-flash plan is 4 steps (role grant + FLE pre-read + flash
+        // dispatch + FLE post-read). 8 is a comfortable defensive ceiling.
+        max_steps: 8,
     };
 
-    // Run REVM on a blocking thread.
+    // Pre-snapshot the EXACT inputs the sim path encodes from, BEFORE `ctx`/
+    // `ms_config` are moved into the blocking closure below. `route_hash`/
+    // `min_profit_wei`/`executor` are Copy; `ctx` is cloned (cheap, sim-side
+    // only). The ValidatedPlan is built only on SIM_SUCCESS, where the
+    // sim-validated `wrapped_calldata` bytes are also available (the broadcast
+    // path sends THOSE bytes verbatim — real byte-parity).
+    let plan_ctx = ctx.clone();
+
+    // Run the WRAPPED FLASH REVM sim on a blocking thread.
     let outcome = match tokio::task::spawn_blocking(move || {
-        crate::sim_orchestrator::execute_round_trip_revm(&ctx, simulator, &orch_config)
+        crate::sim_multistep::execute_multistep_revm(&ctx, simulator, &ms_config)
     })
     .await
     {
@@ -2591,6 +2740,7 @@ async fn dispatch_orchestrator_and_classify(
                 format!("spawn_blocking_failed:{e}"),
                 "fail_closed:spawn_blocking_failed".to_string(),
                 "SIM_DISABLED_FAIL_CLOSED".to_string(),
+                None,
             );
         }
     };
@@ -2615,12 +2765,102 @@ async fn dispatch_orchestrator_and_classify(
     );
 
     if outcome.passed {
+        // FAIL-CLOSED defense: a passing wrapped-flash outcome MUST carry the
+        // sim-validated wrapped calldata (the bytes the broadcast sends verbatim).
+        // `execute_multistep_revm`'s contract guarantees `Some` on `passed=true`,
+        // but we never persist a plan without its bytes — a plan missing them
+        // would let the broadcast path proceed with no validated payload, which is
+        // exactly the divergence this carrier exists to prevent. Treat absence as
+        // NOT a success (no SIM_SUCCESS, no plan persisted).
+        let wrapped_calldata = match outcome.wrapped_calldata {
+            Some(bytes) if !bytes.is_empty() => bytes,
+            _ => {
+                c.round_trip_executor_antifraud_rejected_total
+                    .fetch_add(1, Relaxed);
+                return (
+                    "wrapped_calldata_missing".to_string(),
+                    "fail_closed:wrapped_calldata_missing".to_string(),
+                    "SIM_DISABLED_FAIL_CLOSED".to_string(),
+                    None,
+                );
+            }
+        };
+        // ── NET-USD-OF-GAS PRE-LIVE GATE (O4 follow-up) ────────────────────
+        // The wrapped-flash sim gates SIM_SUCCESS on GROSS `retained_spread`
+        // (token_in units) and is intentionally prices-free — it never subtracts
+        // gas. So a gross-positive but NET-negative (gas-losing) arb reaches HERE
+        // having "passed" the sim. Before persisting (→ broadcast) we MUST reject
+        // any plan whose gross spread does not cover gas in a consistent USD unit.
+        //
+        // `outcome.simulated_profit_token_in` is the gross token_in delta
+        // (`final - initial`), so `net_usd_viable` calls `compute_profit_usd` with
+        // `initial=0, final=gross` → `net_usd = gross_spread_usd - gas_usd`.
+        //
+        // FAIL-CLOSED: a missing/non-finite/non-positive price (feed down, unpriced
+        // token) makes `net_usd_viable` return false. We treat that EXACTLY like a
+        // net-negative outcome — no plan is persisted — so a price-unavailable path
+        // can never re-open the gas-losing-broadcast hole. Observer-only: this only
+        // ever PREVENTS a persist; it adds no signer/broadcast surface.
+        let net_viable = prioritization_spine::round_trip_executor::net_usd_viable(
+            outcome.simulated_profit_token_in,
+            token_in_decimals,
+            token_in_price_usd.unwrap_or(0.0),
+            outcome.gas_used_total,
+            outcome.gas_price_wei,
+            eth_price_usd.unwrap_or(0.0),
+        );
+        if !net_viable {
+            let price_unavailable = !matches!(token_in_price_usd, Some(p) if p.is_finite() && p > 0.0)
+                || !matches!(eth_price_usd, Some(p) if p.is_finite() && p > 0.0);
+            c.round_trip_executor_net_usd_rejected_total
+                .fetch_add(1, Relaxed);
+            let (reason, sentinel) = if price_unavailable {
+                (
+                    "net_usd_price_unavailable",
+                    "fail_closed:net_usd_price_unavailable",
+                )
+            } else {
+                ("net_usd_non_positive", "fail_closed:net_usd_non_positive")
+            };
+            tracing::warn!(
+                event = "net_usd_gate.rejected",
+                chain_id,
+                route_fingerprint = %candidate.route_fingerprint,
+                reason,
+                gross_token_in = %outcome.simulated_profit_token_in,
+                token_in_decimals,
+                token_in_price_usd = ?token_in_price_usd,
+                eth_price_usd = ?eth_price_usd,
+                gas_used_total = outcome.gas_used_total,
+                gas_price_wei = %outcome.gas_price_wei,
+                "net-USD-of-gas gate rejected a gross-positive plan before persist (no broadcast)"
+            );
+            return (
+                reason.to_string(),
+                sentinel.to_string(),
+                "SIM_DISABLED_FAIL_CLOSED".to_string(),
+                None,
+            );
+        }
+
         c.round_trip_executor_success_total.fetch_add(1, Relaxed);
         c.simulator_revm_success.fetch_add(1, Relaxed);
+        // SIM_SUCCESS — build the ValidatedPlan carrying the EXACT validated
+        // wrapped-flash bytes and hand it back to the caller, which has the
+        // `opp.id` + Redis handle to persist it (M2 carrier-B producer). The
+        // broadcast path reads `wrapped_calldata` back and sends it verbatim.
+        let validated_plan = prioritization_spine::ValidatedPlan {
+            ctx: plan_ctx,
+            route_hash,
+            min_profit_wei,
+            executor_address: executor,
+            wrapped_calldata,
+        };
         return (
             "round_trip_success".to_string(),
             "orchestrator_success".to_string(),
             "SIM_SUCCESS".to_string(),
+            Some(validated_plan),
         );
     }
 
@@ -2652,6 +2892,7 @@ async fn dispatch_orchestrator_and_classify(
         reason,
         "fail_closed:orchestrator_rejected".to_string(),
         "SIM_DISABLED_FAIL_CLOSED".to_string(),
+        None,
     )
 }
 

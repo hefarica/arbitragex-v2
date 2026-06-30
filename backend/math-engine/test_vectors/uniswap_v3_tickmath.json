@@ -1,0 +1,27 @@
+{
+  "function": "tick_to_sqrt_price_x96",
+  "source": "0xKitsune/uniswap-v3-math@11c7e78ac463d9402119158f2f0f36ee9da8d69e src/tick_math.rs::test_get_sqrt_ratio_at_tick_values (values themselves are validated there against Uniswap v3-core Solidity TickMath.getSqrtRatioAtTick).",
+  "kind": "canonical numeric reference values (facts); no code copied",
+  "note": "sqrt_price_x96 are canonical uint160 integers as decimal strings. The repo fn tick_to_sqrt_price_x96 returns u128; values above u128::MAX (340282366920938463463374607431768211455, reached around |tick|>=443636) MUST saturate to u128::MAX. tick=0 == 2^96 == 79228162514264337593543950336.",
+  "rel_tolerance": 1e-9,
+  "vectors": [
+    { "tick": -887272, "sqrt_price_x96": "4295128739" },
+    { "tick": -887271, "sqrt_price_x96": "4295343490" },
+    { "tick": 0, "sqrt_price_x96": "79228162514264337593543950336" },
+    { "tick": 50, "sqrt_price_x96": "79426470787362580746886972461" },
+    { "tick": 100, "sqrt_price_x96": "79625275426524748796330556128" },
+    { "tick": 250, "sqrt_price_x96": "80224679980005306637834519095" },
+    { "tick": 500, "sqrt_price_x96": "81233731461783161732293370115" },
+    { "tick": 1000, "sqrt_price_x96": "83290069058676223003182343270" },
+    { "tick": 2500, "sqrt_price_x96": "89776708723587163891445672585" },
+    { "tick": 3000, "sqrt_price_x96": "92049301871182272007977902845" },
+    { "tick": 4000, "sqrt_price_x96": "96768528593268422080558758223" },
+    { "tick": 5000, "sqrt_price_x96": "101729702841318637793976746270" },
+    { "tick": 50000, "sqrt_price_x96": "965075977353221155028623082916" },
+    { "tick": 150000, "sqrt_price_x96": "143194173941309278083010301478497" },
+    { "tick": 250000, "sqrt_price_x96": "21246587762933397357449903968194344" },
+    { "tick": 500000, "sqrt_price_x96": "5697689776495288729098254600827762987878" },
+    { "tick": 738203, "sqrt_price_x96": "847134979253254120489401328389043031315994541" },
+    { "tick": 887272, "sqrt_price_x96": "1461446703485210103287273052203988822378723970342" }
+  ]
+}
