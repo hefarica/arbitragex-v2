@@ -65,38 +65,50 @@ contract DeployTestnet is Script {
         // ----------------------------------------------------------------
         // 1. ArbitrageExecutor — UUPS proxy
         // ----------------------------------------------------------------
-        ArbitrageExecutor implAE = new ArbitrageExecutor();
-        ERC1967Proxy proxyAE = new ERC1967Proxy(
-            address(implAE),
-            abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, deployer)
-        );
-        address arbitrageExecutorProxy = address(proxyAE);
+        // Each impl+proxy is block-scoped (keeping only the proxy address) so the
+        // impl/proxy locals free before the next deploy — keeps run() under the EVM
+        // stack limit without project-wide via_ir. Behavior is identical.
+        address arbitrageExecutorProxy;
+        {
+            ArbitrageExecutor implAE = new ArbitrageExecutor();
+            console2.log("ArbitrageExecutor impl  :", address(implAE));
+            arbitrageExecutorProxy = address(new ERC1967Proxy(
+                address(implAE),
+                abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, deployer)
+            ));
+        }
 
         // ----------------------------------------------------------------
         // 2. AllowanceManager — UUPS proxy
         // ----------------------------------------------------------------
-        AllowanceManager implAM = new AllowanceManager();
-        ERC1967Proxy proxyAM = new ERC1967Proxy(
-            address(implAM),
-            abi.encodeWithSelector(AllowanceManager.initialize.selector, deployer)
-        );
-        address allowanceManagerProxy = address(proxyAM);
+        address allowanceManagerProxy;
+        {
+            AllowanceManager implAM = new AllowanceManager();
+            console2.log("AllowanceManager impl   :", address(implAM));
+            allowanceManagerProxy = address(new ERC1967Proxy(
+                address(implAM),
+                abi.encodeWithSelector(AllowanceManager.initialize.selector, deployer)
+            ));
+        }
 
         // ----------------------------------------------------------------
         // 3. FlashLoanExecutor — UUPS proxy
         //    Points to: aavePool + arbitrageExecutorProxy
         // ----------------------------------------------------------------
-        FlashLoanExecutor implFL = new FlashLoanExecutor();
-        ERC1967Proxy proxyFL = new ERC1967Proxy(
-            address(implFL),
-            abi.encodeWithSelector(
-                FlashLoanExecutor.initialize.selector,
-                deployer,
-                aavePool,
-                arbitrageExecutorProxy
-            )
-        );
-        address flashLoanExecutorProxy = address(proxyFL);
+        address flashLoanExecutorProxy;
+        {
+            FlashLoanExecutor implFL = new FlashLoanExecutor();
+            console2.log("FlashLoanExecutor impl  :", address(implFL));
+            flashLoanExecutorProxy = address(new ERC1967Proxy(
+                address(implFL),
+                abi.encodeWithSelector(
+                    FlashLoanExecutor.initialize.selector,
+                    deployer,
+                    aavePool,
+                    arbitrageExecutorProxy
+                )
+            ));
+        }
 
         // ----------------------------------------------------------------
         // 4. AdminTimelock — SC-10
@@ -107,23 +119,26 @@ contract DeployTestnet is Script {
         //    executors  = [deployer]  (replace with multisig post-config)
         //    admin      = deployer    (renounce after transferring roles)
         // ----------------------------------------------------------------
-        address[] memory proposers = new address[](1);
-        proposers[0] = deployer;
-        address[] memory executors = new address[](1);
-        executors[0] = deployer;
+        address adminTimelockProxy;
+        {
+            address[] memory proposers = new address[](1);
+            proposers[0] = deployer;
+            address[] memory executors = new address[](1);
+            executors[0] = deployer;
 
-        AdminTimelock implTL = new AdminTimelock();
-        ERC1967Proxy proxyTL = new ERC1967Proxy(
-            address(implTL),
-            abi.encodeWithSelector(
-                AdminTimelock.initialize.selector,
-                uint256(60),  // 60s — testnet iteration speed
-                proposers,
-                executors,
-                deployer
-            )
-        );
-        address adminTimelockProxy = address(proxyTL);
+            AdminTimelock implTL = new AdminTimelock();
+            console2.log("AdminTimelock impl      :", address(implTL));
+            adminTimelockProxy = address(new ERC1967Proxy(
+                address(implTL),
+                abi.encodeWithSelector(
+                    AdminTimelock.initialize.selector,
+                    uint256(60),  // 60s — testnet iteration speed
+                    proposers,
+                    executors,
+                    deployer
+                )
+            ));
+        }
 
         vm.stopBroadcast();
 
@@ -138,14 +153,13 @@ contract DeployTestnet is Script {
         console2.log("AdminTimelock proxy     :", adminTimelockProxy);
         console2.log("");
         console2.log("=== Implementation Addresses (for verify --watch) ===");
-        console2.log("ArbitrageExecutor impl  :", address(implAE));
-        console2.log("AllowanceManager impl   :", address(implAM));
-        console2.log("FlashLoanExecutor impl  :", address(implFL));
-        console2.log("AdminTimelock impl      :", address(implTL));
+        console2.log("(logged above next to each proxy deploy)");
         console2.log("");
         console2.log("=== Post-Deploy Checklist ===");
         console2.log("[ ] grantRole(EXECUTOR_ROLE, <signer>) on ArbitrageExecutor");
         console2.log("[ ] grantRole(EXECUTOR_ROLE, <signer>) on FlashLoanExecutor");
+        console2.log("[ ] (SC-13) grantRole(EXECUTOR_ROLE, FlashLoanExecutor proxy) on ArbitrageExecutor");
+        console2.log("       -- the flash path needs the WRAPPER (not just the signer) to hold EXECUTOR_ROLE");
         console2.log("[ ] setTokenApproval(<tokenIn>, true) on ArbitrageExecutor");
         console2.log("[ ] setRouterApproval(<router>, true) on ArbitrageExecutor");
         console2.log("[ ] batchGrantAllowance(...) on AllowanceManager if needed");

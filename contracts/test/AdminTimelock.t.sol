@@ -234,4 +234,92 @@ contract AdminTimelockTest is Test {
             "operation must be Done after execution"
         );
     }
+
+    // =========================================================================
+    // Decision-free hardening: init takeover guards + proposer gate + delay floor
+    // + cancel path (tests only — no src change). These pin the defensive contract
+    // the timelock exists to provide; none were covered by the SC-10/A9 tests above.
+    // =========================================================================
+
+    // -----------------------------------------------------------------------
+    // testInit_Reinit_Reverts
+    // Anti-takeover: re-initializing the live proxy must revert. A timelock that
+    // could be re-initialized would let an attacker reset proposers/executors and
+    // bypass the whole delay model.
+    // -----------------------------------------------------------------------
+    function testInit_Reinit_Reverts() public {
+        address[] memory empty = new address[](0);
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("InvalidInitialization()"))));
+        tl.initialize(MIN_DELAY, empty, empty, address(this));
+    }
+
+    // -----------------------------------------------------------------------
+    // testInit_BareImplementationIsLocked
+    // The constructor calls _disableInitializers(), so the raw logic contract
+    // (not behind the proxy) can never be initialized + seized.
+    // -----------------------------------------------------------------------
+    function testInit_BareImplementationIsLocked() public {
+        AdminTimelock impl = new AdminTimelock();
+        address[] memory empty = new address[](0);
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("InvalidInitialization()"))));
+        impl.initialize(MIN_DELAY, empty, empty, address(this));
+    }
+
+    // -----------------------------------------------------------------------
+    // testSchedule_OnlyProposer
+    // Only PROPOSER_ROLE may schedule. A stranger (and, implicitly, a compromised
+    // EOA without PROPOSER_ROLE) is blocked by AccessControl before any timing logic.
+    // -----------------------------------------------------------------------
+    function testSchedule_OnlyProposer() public {
+        bytes memory callData = abi.encodeWithSelector(TimelockTarget.increment.selector);
+        vm.expectRevert(); // AccessControlUnauthorizedAccount (missing PROPOSER_ROLE)
+        vm.prank(makeAddr("stranger"));
+        tl.schedule(address(target), 0, callData, bytes32(0), bytes32(0), MIN_DELAY);
+    }
+
+    // -----------------------------------------------------------------------
+    // testSchedule_RevertWhen_DelayBelowMin
+    // schedule() must reject a delay below minDelay — the floor cannot be bypassed
+    // at schedule time even by a legitimate proposer.
+    // -----------------------------------------------------------------------
+    function testSchedule_RevertWhen_DelayBelowMin() public {
+        bytes memory callData = abi.encodeWithSelector(TimelockTarget.increment.selector);
+        vm.expectRevert(); // TimelockInsufficientDelay(delay, minDelay)
+        vm.prank(proposer);
+        tl.schedule(address(target), 0, callData, bytes32(0), bytes32(0), MIN_DELAY - 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // testCancel_ByCanceller_AndStrangerBlocked
+    // The cancel path is the operator's defense: a CANCELLER (proposers hold
+    // CANCELLER_ROLE by OZ convention) can cancel a still-waiting malicious op
+    // before its delay elapses; a stranger cannot.
+    // -----------------------------------------------------------------------
+    function testCancel_ByCanceller_AndStrangerBlocked() public {
+        bytes memory callData = abi.encodeWithSelector(TimelockTarget.increment.selector);
+        bytes32 salt = keccak256("cancel-test");
+
+        vm.prank(proposer);
+        tl.schedule(address(target), 0, callData, bytes32(0), salt, MIN_DELAY);
+        bytes32 opId = tl.hashOperation(address(target), 0, callData, bytes32(0), salt);
+        assertEq(
+            uint8(tl.getOperationState(opId)),
+            uint8(TimelockControllerUpgradeable.OperationState.Waiting),
+            "op must be Waiting after schedule"
+        );
+
+        // A stranger (no CANCELLER_ROLE) cannot cancel.
+        vm.expectRevert();
+        vm.prank(makeAddr("stranger"));
+        tl.cancel(opId);
+
+        // The proposer (holds CANCELLER_ROLE) cancels → operation returns to Unset.
+        vm.prank(proposer);
+        tl.cancel(opId);
+        assertEq(
+            uint8(tl.getOperationState(opId)),
+            uint8(TimelockControllerUpgradeable.OperationState.Unset),
+            "op must be Unset after cancel"
+        );
+    }
 }

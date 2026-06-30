@@ -10,6 +10,7 @@ import { ClearAdminTokenButton } from "@/components/clear-admin-token";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/page-header";
+import { SourceMeta } from "@/components/SourceMeta";
 import { adminTokenExpiresInMs, fmtRemaining, getAdminToken, setAdminToken } from "@/lib/admin-token";
 import { getStatus, toggleKillswitch, type KillSwitchState } from "@/lib/api-client";
 
@@ -22,6 +23,7 @@ export default function KillSwitchPage() {
   const [reason, setReason] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [lastOutcome, setLastOutcome] = useState<string | null>(null);
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
 
   useEffect(() => {
     const t = getAdminToken();
@@ -39,6 +41,7 @@ export default function KillSwitchPage() {
     if (!r.ok) { setError(r.error); return; }
     setError(null);
     setState(r.data.killswitch);
+    setFetchedAt(Date.now());
   }
 
   async function onToggle(next: boolean) {
@@ -72,7 +75,11 @@ export default function KillSwitchPage() {
         lede="Arming blocks every hot-path service from submitting new executions within ≤ 5 s. This is the first step of every incident runbook. Every toggle is recorded in the audit log."
       />
 
-      {loading && <p className="text-sm text-muted-foreground">loading current state…</p>}
+      {loading && !state && (
+        <p className="mb-6 inline-flex items-center gap-2 text-sm text-muted-foreground" role="status" aria-busy>
+          <RefreshCwIcon className="size-3.5 motion-safe:animate-spin" aria-hidden /> loading current kill-switch state…
+        </p>
+      )}
 
       {state && (
         <Alert variant={state.enabled ? "destructive" : "success"} className="mb-6">
@@ -86,6 +93,7 @@ export default function KillSwitchPage() {
               updated {new Date(state.updated_at).toLocaleString()}
               {state.triggered_by && <> · by <code className="font-mono">{state.triggered_by}</code></>}
             </div>
+            <SourceMeta source="api-server" at={fetchedAt} className="mt-1.5" />
           </AlertDescription>
         </Alert>
       )}

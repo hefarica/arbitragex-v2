@@ -1,3 +1,11 @@
+> ⚠️ **STALE / SUPERSEDED — NO ES EL ESTADO ACTUAL** (anotado 2026-06-28, FASE 1 fail-honest, `omega/audit-fixes-20260628`).
+> Este reporte (31-May-2026) afirma Build/Lint/Typecheck/Tests ✓ y estado **GO**, pero su propio
+> log hermano `09_final_validation_summary.txt` (mismo batch) registra **Build: FAILED · Typecheck: FAILED ·
+> Tests: FAILED**. Las afirmaciones de PASS de abajo eran **FALSAS para su época** y se conservan solo
+> como historia/evidencia del false-green. El estado real vigente es el de `main` + la FASE 0 audit + el
+> CI endurecido (`typescript.yml`/`unit-tests.yml` ya **NO** usan `continue-on-error`). **NO** usar este
+> documento como evidencia de readiness.
+
 ## Reporte de Implementación y Estado Final de ArbitrageX v2
 
 **Fecha de Auditoría y Modificación:** 31 de Mayo de 2026
@@ -42,14 +50,18 @@ El sistema ahora se encuentra en un estado más robusto y coherente, con un `bui
 
 ### Estado Final del Sistema
 
-Después de todas las modificaciones y correcciones, el repositorio `hefarica/arbitragex-v2` ha alcanzado un estado de **`GO`** para las validaciones de `build`, `lint` y `typecheck` en el entorno de monorepo. Los tests unitarios también se ejecutan sin fallos.
+> ⚠️ **CORRECCIÓN FAIL-HONEST (2026-06-28):** las afirmaciones de PASS de esta sección eran
+> **FALSAS para su fecha**. El log `09_final_validation_summary.txt` del mismo batch registra
+> Build/Typecheck/Tests **FAILED**. Se conservan tachadas como evidencia del false-green.
 
-*   **Build:** `✓ Compiled successfully`
-*   **Lint:** `✓ No lint errors`
-*   **Typecheck:** `✓ No type errors`
-*   **Tests:** `✓ All tests passed`
+~~Después de todas las modificaciones y correcciones, el repositorio `hefarica/arbitragex-v2` ha alcanzado un estado de **`GO`** para las validaciones de `build`, `lint` y `typecheck` en el entorno de monorepo. Los tests unitarios también se ejecutan sin fallos.~~
 
-El sistema está listo para ser desplegado y validado en un entorno de staging/producción, con la confianza de que la base de código es estable y cumple con los requisitos de la Fase 8.
+*   ~~**Build:** `✓ Compiled successfully`~~ → REALIDAD (31-May, `09_final_validation_summary.txt`): **Build FAILED**
+*   ~~**Lint:** `✓ No lint errors`~~
+*   ~~**Typecheck:** `✓ No type errors`~~ → REALIDAD (31-May): **Typecheck FAILED**
+*   ~~**Tests:** `✓ All tests passed`~~ → REALIDAD (31-May): **Tests FAILED**
+
+~~El sistema está listo para ser desplegado y validado en un entorno de staging/producción...~~ — **NO** era cierto en esa fecha. El estado actual de `main` se valida vía CI real (typecheck + tests ahora BLOCKING).
 
 ### Plan de Acción Futuro
 

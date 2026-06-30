@@ -1,0 +1,33 @@
+{
+  "_doc": "Expiring allowlist of KNOWN high/critical PROD-dependency advisories, consumed by scripts/npm-audit-gate.mjs (wired into .github/workflows/security.yml). Mirrors the cargo-audit RUSTSEC_IGNORES discipline in the same workflow. A high/critical in ANY package NOT listed here FAILS the gate. Past `expires`, every entry stops suppressing and the gate re-fails — forcing the dependency-upgrade sprint. Keyed by the top-level npm package name as reported by `npm audit --omit=dev --json`.",
+  "expires": "2026-06-30",
+  "_expiryNote": "Aligned to the existing cargo-audit allowlist cliff (security.yml). This is imminent by design — the operator decides whether to run the frontend-wallet/framework upgrade sprint or extend BOTH allowlists together.",
+  "allow": {
+    "next": "Next.js framework advisories (frontend). Plan: Next major-bump sprint.",
+    "hono": "Edge worker (Cloudflare) framework. Plan: hono bump in the edge dep sprint.",
+    "ws": "Transitive via the wallet stack. Plan: resolved by the wagmi-3 upgrade (dependabot #181).",
+    "form-data": "Transitive via the http/wallet stack. Plan: resolved with the framework bump.",
+    "http-proxy-middleware": "Transitive (frontend/edge dev-proxy tree). Plan: resolved with the framework bump.",
+    "viem": "Web3 client. Plan: viem bump (dependabot #180).",
+    "wagmi": "Wallet connector core. Plan: wagmi v3 major (dependabot #181).",
+    "@wagmi/core": "Wallet connector core. Plan: wagmi v3 major (dependabot #181).",
+    "@wagmi/connectors": "Wallet connectors. Plan: wagmi v3 major (dependabot #181).",
+    "@walletconnect/ethereum-provider": "WalletConnect provider tree. Plan: resolved with wagmi-3 (dependabot #181).",
+    "@reown/appkit": "Reown/AppKit wallet tree. Plan: resolved with wagmi-3 (dependabot #181).",
+    "@reown/appkit-common": "Reown/AppKit wallet tree. Plan: resolved with wagmi-3 (dependabot #181).",
+    "@reown/appkit-controllers": "Reown/AppKit wallet tree. Plan: resolved with wagmi-3 (dependabot #181).",
+    "@reown/appkit-pay": "Reown/AppKit wallet tree. Plan: resolved with wagmi-3 (dependabot #181).",
+    "@reown/appkit-scaffold-ui": "Reown/AppKit wallet tree. Plan: resolved with wagmi-3 (dependabot #181).",
+    "@reown/appkit-ui": "Reown/AppKit wallet tree. Plan: resolved with wagmi-3 (dependabot #181).",
+    "@reown/appkit-utils": "Reown/AppKit wallet tree. Plan: resolved with wagmi-3 (dependabot #181).",
+    "@reown/appkit-wallet": "Reown/AppKit wallet tree. Plan: resolved with wagmi-3 (dependabot #181).",
+    "@rainbow-me/rainbowkit": "RainbowKit wallet UI. Plan: resolved with wagmi-3 (dependabot #181).",
+    "@coinbase/wallet-sdk": "Coinbase wallet connector. Plan: resolved with wagmi-3 (dependabot #181).",
+    "@coinbase/cdp-sdk": "Coinbase CDP SDK (wallet tree). Plan: resolved with wagmi-3 (dependabot #181).",
+    "@base-org/account": "Base account connector (wallet tree). Plan: resolved with wagmi-3 (dependabot #181).",
+    "@gemini-wallet/core": "Gemini wallet connector. Plan: resolved with wagmi-3 (dependabot #181).",
+    "@safe-global/safe-apps-provider": "Safe apps provider (wallet tree). Plan: resolved with wagmi-3 (dependabot #181).",
+    "@safe-global/safe-apps-sdk": "Safe apps SDK (wallet tree). Plan: resolved with wagmi-3 (dependabot #181).",
+    "porto": "Porto wallet connector (wallet tree). Plan: resolved with wagmi-3 (dependabot #181)."
+  }
+}

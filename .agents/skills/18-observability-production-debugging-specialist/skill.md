@@ -4,7 +4,7 @@
 Instrumentar la aplicación React/Next.js para tener visibilidad atómica en Producción. Integrar trazabilidad (OpenTelemetry, Sentry, Datadog), métricas de Core Web Vitals (Next.js Analytics), recolectar registros de error detallados (Source Maps decodificados) y generar alertas de salud en tiempo real.
 
 ## 2. Aplicación directa en ARBITRAGEX
-Si el frontend del VPS (195.201.235.70) colapsa, tira errores 500 silenciosos, o la hidratación falla masivamente para un operador externo, los logs en consola del navegador están perdidos. Se necesita capturarlos (Sentry / Datadog) o enviar los errores de React a un endpoint de logs de servidor (Loki/Promtail) para analizarlos en Grafana sin acceder al PC del usuario.
+Si el frontend del VPS (<VPS_IP>) colapsa, tira errores 500 silenciosos, o la hidratación falla masivamente para un operador externo, los logs en consola del navegador están perdidos. Se necesita capturarlos (Sentry / Datadog) o enviar los errores de React a un endpoint de logs de servidor (Loki/Promtail) para analizarlos en Grafana sin acceder al PC del usuario.
 
 ## 3. Problemas que resuelve
 - "Funciona en mi máquina, pero en producción arroja pantalla blanca".

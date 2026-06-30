@@ -19,6 +19,8 @@ Bajo ninguna circunstancia usarás jerga de finanzas descentralizadas. Si debes 
 
 > **🔗 TOTAL SYSTEM**: `CLAUDE.md` (reglas + identidad) + `.claude/CLAUDE.md` (superpowers + estrategias) = 523 líneas de doctrina operativa OMEGA.
 
+> **🔐 FUSILE SOURCE POLICY**: antes de portar código de repos externos (amms-rs, uniswap-v3-math, artemis, mev-share-rs, …) lee `docs/security/FUSILE_SOURCE_POLICY.md` — allowlist por tiers, *port-with-validation* (no copy ciego), license-check, y los gates `arbx-*` como capa suprema. Este documento de gobernanza de fuentes va en términos llanos por diseño.
+
 > **🧠 OMEGA PROTOCOL + X10THINK**: Usa SIEMPRE pensamiento extendido X10 (piensa 10 veces más profundo que lo normal — edge cases, failure modes, consecuencias de segundo orden, alternativas descartadas). Aplica X10THINK tanto tú como TODOS los agentes que despachas. Al terminar CUALQUIER tarea: (1) verifica que funciona ejecutando tests/builds/curl/logs, (2) verifica que no rompiste NADA más corriendo typecheck + lint + build completo, (3) si algo falla corrige en loop autónomo SIN preguntar hasta que pase, (4) consulta `.claude/CLAUDE.md` §24-§27 para validaciones de risk/security si tocaste backend o contratos. NUNCA entregues trabajo sin verificación completa. NUNCA preguntes si debe verificar — SIEMPRE verifica.
 
 > **👥 OMEGA TEAM — ORQUESTACIÓN OBLIGATORIA**: En CADA tarea que recibas, DEBES:
@@ -50,13 +52,13 @@ Bajo ninguna circunstancia usarás jerga de finanzas descentralizadas. Si debes 
 [LOCAL: Desarrollo] → [GIT: Commit & Push] → [VPS: Deploy]
 ```
 - **LOCAL (Windows)**: Solo edición, tests, typecheck. NO Docker Desktop. NO servicios backend.
-- **VPS (Hetzner)**: IP `195.201.235.70`, alias SSH `arbx`, ruta `/opt/arbitragex-v2`.
+- **VPS (Hetzner)**: IP `<VPS_IP>`, alias SSH `arbx`, ruta `/opt/arbitragex-v2`.
 - **Git remotes**: `origin` = VPS bare repo, `github` = GitHub.
 - **Flujo**: Editar → `vitest`/`tsc --noEmit` → commit → push → ssh → pull → docker build → verify.
 - **NUNCA** levantar servicios de backend en local. Docker solo en VPS.
 
 ### RULE 02 — INFRASTRUCTURE STRICTNESS & ROUTING
-- **REST → Edge Worker** (`NEXT_PUBLIC_EDGE_URL`, puerto 8787 / `edge-arbx.ape-tv.net`).
+- **REST → Edge Worker** (`NEXT_PUBLIC_EDGE_URL`, puerto 8787 / `<VPS_HOST>`).
 - **WebSocket → api-server DIRECTO** (`NEXT_PUBLIC_WS_URL`, puerto 8080). NUNCA via Edge.
 - **No-Hardcode**: En producción, FAIL-FAST si falta configuración. PROHIBIDO usar sentinel addresses (`0x...dEaD`) fuera de dev.
 - `SIM_SIGNER_ADDRESS` debe estar en `.env`. Si falta → Crash on Boot (es seguridad, no bug).

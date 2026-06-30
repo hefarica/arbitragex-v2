@@ -11,11 +11,11 @@ Este archivo actúa como memoria técnica persistente para el agente. Su funció
 **Fecha del aprendizaje:** 3 de Mayo de 2026 (Sesión 1 — ~04:30 CST)
 
 **Qué ocurrió:**
-El dashboard del operador en `http://195.201.235.70:5173/opportunities` presentaba una cascada de errores React (#425, #418, #423). La aplicación caía de SSR a un costoso Client-Side Rendering completo. La interfaz parpadeaba y mostraba overlays de error.
+El dashboard del operador en `http://<VPS_IP>:5173/opportunities` presentaba una cascada de errores React (#425, #418, #423). La aplicación caía de SSR a un costoso Client-Side Rendering completo. La interfaz parpadeaba y mostraba overlays de error.
 
 **Qué salió mal:**
 1. El componente `opportunities/page.tsx` evaluaba `Date.now()`, estado de WebSocket y URLs resueltas por entorno directamente en el ciclo de renderizado.
-2. El componente `SiteHeader` en `layout.tsx` llamaba a `getApiBaseUrl()`, que resolvía a `http://edge:8787` en servidor y `https://edge-arbx.ape-tv.net` en cliente.
+2. El componente `SiteHeader` en `layout.tsx` llamaba a `getApiBaseUrl()`, que resolvía a `http://edge:8787` en servidor y `https://<VPS_HOST>` en cliente.
 3. El despliegue al VPS se hizo sin `--env-file .env`, causando que `NEXT_PUBLIC_EDGE_URL` cayera al fallback `http://localhost:8787`.
 
 **Causa raíz:**
@@ -635,7 +635,7 @@ Concurrencia entre dos procesos Next.js sobre el mismo `.next/` directory.
 **Fecha del aprendizaje:** 9 de Mayo de 2026 (sesión visual stack, reportado vía screenshot WhatsApp del operador desde mobile Chrome Android)
 
 **Qué ocurrió:**
-Operador accedió a `http://195.201.235.70:5173/strategies` desde Chrome móvil Android. Vio el error boundary de la app (`error.tsx`) con mensaje "Algo se rompió" y diagnóstico técnico:
+Operador accedió a `http://<VPS_IP>:5173/strategies` desde Chrome móvil Android. Vio el error boundary de la app (`error.tsx`) con mensaje "Algo se rompió" y diagnóstico técnico:
 ```
 Failed to execute 'removeChild' on 'Node':
 The node to be removed is not a child of this node.

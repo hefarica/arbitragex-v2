@@ -15,7 +15,7 @@ ArbitrageX-v2 es un sistema de arbitraje descentralizado multi-chain con motor d
 
 | Componente | Detalle |
 |-----------|---------|
-| VPS Producción | Hetzner CX43, `195.201.235.70`, Falkenstein DE |
+| VPS Producción | Hetzner CX43, `<VPS_IP>`, Falkenstein DE |
 | OS | Ubuntu, 8 vCPU, 16 GB RAM, 160 GB SSD |
 | SSH Alias | `arbx` |
 | Ruta VPS | `/opt/arbitragex-v2` |

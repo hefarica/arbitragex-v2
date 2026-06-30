@@ -285,6 +285,22 @@ contract AllowanceManagerTest is Test {
     }
 
     // -----------------------------------------------------------------------
+    // Malicious init: the proxy initializes exactly once, and the bare
+    // implementation is permanently locked by the constructor's
+    // _disableInitializers(). Both must revert on a second / direct initialize.
+    // -----------------------------------------------------------------------
+    function testInit_DoubleInitializeReverts() public {
+        vm.expectRevert(); // Initializable: InvalidInitialization
+        manager.initialize(admin);
+    }
+
+    function testInit_BareImplementationIsLocked() public {
+        AllowanceManager impl = new AllowanceManager();
+        vm.expectRevert(); // _disableInitializers() in the constructor locks the impl
+        impl.initialize(admin);
+    }
+
+    // -----------------------------------------------------------------------
     // SC-08: testUpgrade_OnlyUpgrader_CanUpgrade
     // A non-UPGRADER_ROLE address must not be able to upgrade the proxy.
     // -----------------------------------------------------------------------
@@ -326,5 +342,91 @@ contract AllowanceManagerTest is Test {
         // Verify admin role (internal storage) is preserved.
         assertTrue(managerV2.hasRole(managerV2.ADMIN_ROLE(), admin), "ADMIN_ROLE must survive upgrade");
         assertTrue(managerV2.hasRole(managerV2.UPGRADER_ROLE(), admin), "UPGRADER_ROLE must survive upgrade");
+    }
+
+    // =========================================================================
+    // Decision-free hardening (re-discovered post-burst): cap boundary, pause/
+    // unpause access negatives, event emission, the SC-5 view layer, and batch
+    // atomicity. None of these names/coverage existed (#200 added only init
+    // guards). Tests only — no src change.
+    // =========================================================================
+
+    // grantAllowance at exactly MAX_SAFE_ALLOWANCE must SUCCEED — the cap is
+    // inclusive (src uses strict `>` for the reject). Complements the cap+1 reject.
+    function testGrantAllowance_AtSafeCapExactSucceeds() public {
+        uint256 cap = manager.MAX_SAFE_ALLOWANCE();
+        manager.grantAllowance(address(token), spender, cap);
+        assertEq(token.allowance(address(manager), spender), cap, "exact cap must be allowed");
+    }
+
+    // pause() is onlyRole(ADMIN_ROLE): a stranger cannot trip the kill-switch.
+    function testPause_RoleEnforced() public {
+        bytes4 selector = bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)"));
+        vm.expectRevert(abi.encodeWithSelector(selector, stranger, manager.ADMIN_ROLE()));
+        vm.prank(stranger);
+        manager.pause();
+    }
+
+    // unpause() is onlyRole(ADMIN_ROLE): a stranger cannot lift the kill-switch.
+    function testUnpause_RoleEnforced() public {
+        manager.pause(); // admin pauses first
+        bytes4 selector = bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)"));
+        vm.expectRevert(abi.encodeWithSelector(selector, stranger, manager.ADMIN_ROLE()));
+        vm.prank(stranger);
+        manager.unpause();
+    }
+
+    // grantAllowance emits AllowanceGranted(token, spender, amount) — 2 indexed + data.
+    function testGrantAllowance_EmitsEvent() public {
+        vm.expectEmit(true, true, false, true, address(manager));
+        emit AllowanceManager.AllowanceGranted(address(token), spender, 1_000e18);
+        manager.grantAllowance(address(token), spender, 1_000e18);
+    }
+
+    // revokeAllowance emits AllowanceRevoked(token, spender) — 2 indexed, no data.
+    function testRevokeAllowance_EmitsEvent() public {
+        manager.grantAllowance(address(token), spender, 1_000e18);
+        vm.expectEmit(true, true, false, false, address(manager));
+        emit AllowanceManager.AllowanceRevoked(address(token), spender);
+        manager.revokeAllowance(address(token), spender);
+    }
+
+    // The SC-5 view layer (isApproved/getAllowance) feeds ArbitrageExecutor's AM
+    // integration and was entirely untested — it must reflect real token state
+    // across grant -> revoke.
+    function testViews_ReflectGrantAndRevoke() public {
+        assertFalse(manager.isApproved(address(token), spender), "not approved before grant");
+        assertEq(manager.getAllowance(address(token), spender), 0, "zero allowance before grant");
+
+        manager.grantAllowance(address(token), spender, 500e18);
+        assertTrue(manager.isApproved(address(token), spender), "approved after grant");
+        assertEq(manager.getAllowance(address(token), spender), 500e18, "allowance reflects grant");
+
+        manager.revokeAllowance(address(token), spender);
+        assertFalse(manager.isApproved(address(token), spender), "not approved after revoke");
+        assertEq(manager.getAllowance(address(token), spender), 0, "zero allowance after revoke");
+    }
+
+    // batchGrantAllowance is atomic: one invalid tuple reverts the WHOLE batch,
+    // leaving earlier valid tuples unset (no partial application).
+    function testBatchGrant_InvalidElementRevertsWholeBatch() public {
+        MockERC20AM token2 = new MockERC20AM();
+        address spender2 = makeAddr("spender2");
+
+        address[] memory tokens = new address[](2);
+        tokens[0] = address(token);
+        tokens[1] = address(token2);
+        address[] memory spenders = new address[](2);
+        spenders[0] = spender;
+        spenders[1] = spender2;
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = 500e18;
+        amounts[1] = 0; // invalid second tuple -> AM_ZeroAmount
+
+        vm.expectRevert(AM_ZeroAmount.selector);
+        manager.batchGrantAllowance(tokens, spenders, amounts);
+
+        // Atomic rollback: the valid first tuple must NOT have been applied.
+        assertEq(token.allowance(address(manager), spender), 0, "element[0] must roll back on batch revert");
     }
 }

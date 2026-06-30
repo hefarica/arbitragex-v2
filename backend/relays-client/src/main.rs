@@ -14,6 +14,7 @@
 
 mod bundle_builder;
 mod consumer;
+mod live_exec_policy;
 mod multi_relay;
 mod nonce_manager;
 mod persistence;
@@ -152,6 +153,36 @@ async fn main() -> anyhow::Result<()> {
         .find(|c| c.enabled)
         .map(|c| c.chain_id)
         .unwrap_or(1);
+    // M1 (2026-06-28): default-deny + testnet-only live-execution barrier.
+    // relays-client is the ONLY binary that can sign+broadcast; unlike searcher-rs
+    // (hard capital-key boot panic) it was gated only by soft flags, so an env
+    // mistake could broadcast mainnet. Assert fail-fast at boot that a LIVE
+    // (paper_mode=false) node may only target an allowlisted testnet — mainnet is
+    // physically refused. The same policy is re-checked on every build_and_sign
+    // call (the runtime barrier that also catches paper_mode flipped AFTER boot).
+    {
+        let policy = live_exec_policy::LiveExecPolicy::from_env();
+        let live_mode = !paper_mode.is_enabled().await;
+        info!(
+            event = "live_exec.policy",
+            enabled = policy.enabled,
+            allowed_chains = ?policy.allowed_chains,
+            chain_id,
+            live_mode,
+            "M1 live-execution policy resolved (default-deny, testnet-only; mainnet refused)"
+        );
+        if live_mode {
+            if let Err(e) = policy.assert_broadcast_allowed(chain_id) {
+                anyhow::bail!(
+                    "M1 live-exec lockout: paper_mode=false but broadcasting on chain_id={chain_id} \
+                     is refused — {e}. Live execution is default-deny + testnet-only: set \
+                     ARBX_LIVE_EXEC_ENABLED=true and target an allowlisted testnet (default Sepolia \
+                     11155111). Mainnet (chain_id=1) is physically refused in this phase."
+                );
+            }
+        }
+    }
+
     let signer = match Signer::from_env(chain_id)? {
         Some(s) => {
             info!(event = "signer.loaded", address = %s.address, chain_id = s.chain_id);

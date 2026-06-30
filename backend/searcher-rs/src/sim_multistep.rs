@@ -1,54 +1,96 @@
-//! Phase A.3.c.2 — Multi-step REVM round-trip orchestrator (plan + skeleton).
+//! Multi-step REVM orchestrator — WRAPPED FLASH path (M2 flash R3).
 //!
-//! Combines the Phase A.3.c.2 storage-prefund layer (`sim_prefund`) with the
+//! Combines the storage-prefund / role-override layer (`sim_prefund`) with the
 //! Phase A.3.a `RoundTripContext` shape to build a deterministic multi-step
-//! execution plan. The plan describes:
+//! execution plan that drives the REAL flash-funded wire:
 //!
-//!   Step A. Storage overrides:
-//!           - balanceOf(caller, token_in) = amount_in (paper-only prefund)
-//!           - allowance(caller, forward_router, token_in) = U256::MAX
-//!   Step B. Execute forward swap directly against `forward_router`.
-//!   Step C. Read intermediate `balanceOf(caller, token_out)` from post-state.
-//!   Step D. Apply `allowance(caller, backward_router, token_out) = U256::MAX`.
-//!   Step E. Execute backward swap with REAL intermediate amount (NOT a
-//!           placeholder).
-//!   Step F. Read final `balanceOf(caller, token_in)`.
-//!   Step G. profit = final_balance - amount_in (NOT counting prefund).
-//!   Step H. gas_cost = total_gas_used * gas_price.
-//!   Step I. net_profit = profit - gas_cost.
+//!   `EOA → FlashLoanExecutor.requestFlashLoan(asset, amount, params)`
+//!        → real Aave/Balancer provider callback
+//!        → `ArbitrageExecutor.executeArbitrageFlashFunded(...)`
+//!        → router swaps → repay
 //!
-//! ## Status (A.3.c.3 — IMPLEMENTED)
+//! The dispatched plan is:
+//!
+//!   Step A. GrantRole override: seed `caller → FlashLoanExecutor`
+//!           `EXECUTOR_ROLE` (the `requestFlashLoan` `onlyRole` gate). This is
+//!           the ONLY storage cheat — the `FLE → AE` `EXECUTOR_ROLE` comes from
+//!           REAL forked storage (granted on-chain at deploy,
+//!           DeployMainnet.s.sol SC-13) and is NEVER overridden. NO ERC-20
+//!           prefund override is applied: in the flash flow the FLE's capital
+//!           comes from the Aave/Balancer flash loan, NOT from the caller, so
+//!           seeding the caller's balance/allowance is both unnecessary and
+//!           (with no production storage-layout provider) unbuildable.
+//!   Step B. Read `balanceOf(FlashLoanExecutor, token_in)` BEFORE the flash
+//!           dispatch — the FLE's pre-flash token_in balance `B`.
+//!   Step C. Execute ONE call: `caller → FlashLoanExecutor` with
+//!           `build_flash_funded_broadcast_calldata(...)` (outer
+//!           `requestFlashLoan` 0x5107d61e wrapping inner
+//!           `executeArbitrageFlashFunded` 0xdde0bf51). The REAL
+//!           requestFlashLoan → provider callback → executeArbitrageFlashFunded
+//!           flow executes faithfully against forked FLE/AE/provider bytecode.
+//!   Step D. Read `balanceOf(FlashLoanExecutor, token_in)` AFTER the flash
+//!           dispatch. The honest economic gain is the FLE-RETAINED SPREAD
+//!           `fle_post − fle_pre = profit − premium` — see the success
+//!           invariants below. The CALLER's token_in balance is NEVER measured
+//!           (it is unchanged by the whole flow; the EOA only triggers the call
+//!           and pays gas in native ETH).
+//!
+//! ## Why a role override is rubric-permitted (and the FLE→AE role is not)
+//!
+//! `requestFlashLoan` is `onlyRole(EXECUTOR_ROLE)` on the FLE; the
+//! `caller → FLE` grant is a manual post-deploy step that may not be live at
+//! the pinned block. Seeding ONLY that one role bit lets the FULL
+//! requestFlashLoan→callback flow still execute — the override seeds the gate,
+//! it does NOT shortcut to `executeArbitrageFlashFunded` (no direct AE call is
+//! ever dispatched). The `FLE → AE` `EXECUTOR_ROLE` is real forked storage and
+//! is left untouched.
+//!
+//! ## Status (M2 flash R3 — IMPLEMENTED, observer-only)
 //!
 //! Ships the PLAN BUILDER + validation + typed errors AND the real REVM-side
 //! state-persistent executor. `execute_multistep_revm` drives the plan through
 //! `simulator_v2::sequence_runner::SequenceContext` over a persistent
-//! `CacheDB<LazyDb>`, returning `passed = true` only after a real round trip
-//! (see the per-condition guards on the function). Every reject path returns
-//! its own typed reason. (Historical note: A.3.c.2 shipped only the skeleton
-//! and returned `multistep_revm_cachedb_pending`; that phase is superseded.)
+//! `CacheDB<LazyDb>`, returning `passed = true` only after a real flash round
+//! trip (see the per-condition guards on the function). Every reject path
+//! returns its own typed reason. searcher-rs stays observer-only (sim only — no
+//! signer, no broadcast). The end-to-end SIM_SUCCESS validation against a
+//! deployed fork is DEFERRED to the M5 deployed-testnet run (operator
+//! decision); this module is the code + slot-helper unit tests.
 //!
 //! ## Anti-fraud invariants
 //!
 //! 1. Returns `SimulationOutcome::passed = true` ONLY after real REVM
-//!    execution with `gas_used_total > 0`, a non-zero trace hash, >= 2
-//!    committed calls, and `net_profit_wei > 0`. No PASS is fabricated.
+//!    execution with `gas_used_total > 0`, a non-zero trace hash, >= 1
+//!    committed call (the single wrapped `requestFlashLoan` dispatch — the
+//!    forward/backward legs execute INSIDE the contract callback), and a
+//!    positive GROSS `retained_spread` (`fle_post - fle_pre > 0`). No PASS is
+//!    fabricated. The sim is PRICES-FREE and does NOT subtract gas (token_in
+//!    units vs native wei are not comparable, and the sim has no USD prices);
+//!    the NET-of-gas-in-USD gate is the price-aware downstream
+//!    `compute_profit_usd` consumer's job and MUST run before any LIVE
+//!    broadcast.
 //! 2. NEVER applies storage overrides outside paper mode. The config gate
 //!    is `paper_mode == true && enable_storage_cheats == true`; either flag
 //!    flipped rejects with the corresponding typed error.
-//! 3. NEVER counts the prefund amount as profit. The plan documents
-//!    `profit = final_token_in_balance - amount_in` explicitly.
-//! 4. NEVER uses a placeholder amount for the backward leg. The plan
-//!    INCLUDES the intermediate-balance read step that A.3.c.3 will
-//!    consume to fill in the real amount.
+//! 3. Profit is the FLE-RETAINED SPREAD, not a fabricated quantity. It is
+//!    measured as `fle_token_in_post - fle_token_in_pre` (== `profit - premium`
+//!    in the contract's terms) — the ONLY account the flash flow actually
+//!    credits. A loss (`fle_post < fle_pre`) fails closed; the contract itself
+//!    reverts `FL_RepaymentShortfall` when `profit < premium`.
+//! 4. The dispatched call routes through the REAL `requestFlashLoan` + REAL
+//!    provider callback (outer selector 0x5107d61e wrapping inner 0xdde0bf51);
+//!    there is NO direct `executeArbitrageFlashFunded` shortcut. The only role
+//!    cheat is the single `caller → FLE` `EXECUTOR_ROLE` bit; the `FLE → AE`
+//!    role is real forked storage.
 //! 5. Operator-supplied thresholds throughout; no defaults for economic
 //!    parameters.
 
 use crate::sim_prefund::{
-    build_prefund_plan, Erc20StorageLayoutProvider, PrefundError, PrefundPlan, StorageOverride,
+    build_role_grant_override, executor_role_id, PrefundError, StorageOverride,
 };
 use ethers::types::{Address, U256};
+use prioritization_spine::execute_arbitrage_encoder::build_flash_funded_broadcast_calldata_with_intermediate;
 use prioritization_spine::round_trip_executor::{RoundTripContext, SimulationOutcome};
-use prioritization_spine::swap_encoder::encode_v2_swap_exact_tokens_for_tokens;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, warn};
@@ -96,6 +138,8 @@ pub enum MultiStepError {
     InvalidGasLimit,
     #[error("config.executor_address is the zero address")]
     InvalidExecutor,
+    #[error("flashloan_executor_address (FlashLoanExecutor `.to()`) is the zero address")]
+    InvalidFlashLoanExecutor,
     #[error("config.max_steps is zero")]
     InvalidStepCount,
     #[error("RoundTripContext.caller is the zero address")]
@@ -118,6 +162,8 @@ pub enum MultiStepError {
     SameTokenInOut,
     #[error("prefund computation failed: {0}")]
     PrefundFailed(#[from] PrefundError),
+    #[error("flash-funded broadcast calldata encoding failed (empty forward calldata)")]
+    FlashCalldataEncodeFailed,
     #[error("REVM multi-step execution pending Phase A.3.c.3 simulator-v2 extension")]
     RevmCacheDbPending,
 }
@@ -130,6 +176,7 @@ impl MultiStepError {
             Self::InvalidGasPrice => "invalid_gas_price",
             Self::InvalidGasLimit => "invalid_gas_limit",
             Self::InvalidExecutor => "invalid_executor",
+            Self::InvalidFlashLoanExecutor => "invalid_flashloan_executor",
             Self::InvalidStepCount => "invalid_step_count",
             Self::InvalidCaller => "invalid_caller",
             Self::InvalidTokenIn => "invalid_token_in",
@@ -141,6 +188,7 @@ impl MultiStepError {
             Self::EmptyBackwardPath => "empty_backward_path",
             Self::SameTokenInOut => "same_token_in_out",
             Self::PrefundFailed(_) => "prefund_failed",
+            Self::FlashCalldataEncodeFailed => "flash_calldata_encode_failed",
             Self::RevmCacheDbPending => "multistep_revm_cachedb_pending",
         }
     }
@@ -155,7 +203,17 @@ impl MultiStepError {
 #[derive(Debug, Clone)]
 pub struct MultiStepExecutionConfig {
     pub chain_id: u64,
+    /// The deployed `ArbitrageExecutor` proxy. This is the INNER
+    /// `executeArbitrageFlashFunded(...)` target encoded into the wrapped flash
+    /// calldata (the per-leg swap recipient) — NOT the `.to()` of the dispatch.
     pub executor_address: Address,
+    /// `route_hash` passed through to the inner `executeArbitrageFlashFunded`
+    /// args (the on-chain route identifier). Operator-supplied; no default.
+    pub route_hash: [u8; 32],
+    /// `minProfit` (in `token_in` units) passed through to the inner
+    /// `executeArbitrageFlashFunded` args — the contract's net-profit gate.
+    /// Operator-supplied; no default.
+    pub min_profit_wei: U256,
     pub gas_price_wei: U256,
     /// Per-step gas limit. Must exceed the base EVM transaction overhead
     /// (21_000 wei) — values below would cause every transaction to fail
@@ -165,21 +223,26 @@ pub struct MultiStepExecutionConfig {
     /// returns `PaperModeRequired` immediately — the orchestrator
     /// refuses to participate in any live-execution path.
     pub paper_mode: bool,
-    /// `true` enables the prefund + allowance + role storage overrides.
-    /// Even with `paper_mode = true`, an operator may run the orchestrator
-    /// in observation mode (no cheats applied) by setting this to `false`,
-    /// in which case the simulator runs against unmodified chain state.
-    /// The multistep orchestrator REQUIRES this flag because without
-    /// prefund the simulated forward swap reverts with
-    /// `TransferFromFailed`.
+    /// `true` enables the role storage override (the single `caller → FLE`
+    /// `EXECUTOR_ROLE` grant). Even with `paper_mode = true`, an operator may
+    /// run the orchestrator in observation mode (no cheats applied) by setting
+    /// this to `false`, in which case the simulator runs against unmodified
+    /// chain state. The multistep orchestrator REQUIRES this flag because
+    /// without the role grant the `requestFlashLoan` `onlyRole(EXECUTOR_ROLE)`
+    /// gate reverts before the flash flow can run.
     pub enable_storage_cheats: bool,
     /// Anti-fraud: a successful outcome MUST carry a non-zero combined
     /// trace hash. Defensive against simulator-v2 contract changes that
     /// might silently return zeros.
     pub require_trace_hash: bool,
-    /// Anti-fraud: a successful outcome MUST have `net_profit_wei > 0`.
-    /// Disabling this would let zero-profit simulations bubble up as
-    /// SIM_SUCCESS — never appropriate for the production hot path.
+    /// Anti-fraud: a successful outcome MUST have a positive GROSS retained
+    /// spread (`retained_spread = fle_post - fle_pre > 0`, == the contract's
+    /// `profit - premium`). This is the prices-free invariant the sim CAN
+    /// verify; it does NOT subtract gas (token_in units vs native wei are not
+    /// comparable, and the sim has no USD prices). The net-of-gas-in-USD gate
+    /// is the DOWNSTREAM `compute_profit_usd` consumer's job and MUST run before
+    /// any LIVE broadcast. Disabling this would let zero-spread simulations
+    /// bubble up as SIM_SUCCESS — never appropriate for the production hot path.
     pub require_positive_net_profit: bool,
     /// Defensive cap on the multi-step plan length (forward leg + backward
     /// leg = 2 swaps; with auxiliary balance reads + allowance applications
@@ -215,42 +278,36 @@ impl MultiStepExecutionConfig {
 // Plan types
 // ---------------------------------------------------------------------------
 
-/// A single step in the multi-step plan. The orchestrator will execute
-/// these in order: storage overrides applied first, then swaps, then
-/// reads.
+/// A single step in the multi-step plan. The orchestrator executes these in
+/// order: storage / role overrides first, then the wrapped flash call, then
+/// the final profit read.
 #[derive(Debug, Clone)]
 pub enum MultiStepEntry {
-    /// Apply a storage override to REVM state (paper-only).
+    /// Apply a storage override to REVM state (paper-only). Used for the single
+    /// `caller → FLE` `EXECUTOR_ROLE` grant (the `requestFlashLoan` `onlyRole`
+    /// gate). No ERC-20 prefund override is applied — the FLE's capital comes
+    /// from the flash loan, not the caller.
     ApplyStorage(StorageOverride),
-    /// Read `balanceOf(account, token)` from current REVM state, store
-    /// the result in the plan's `intermediate_balances` map under `label`.
-    /// A.3.c.3 will fill this in when the executor runs.
+    /// Read `balanceOf(account, token)` from current REVM state, store the
+    /// result in the sequence `reads` map under `label` for profit accounting.
     ReadBalance {
         token: Address,
         account: Address,
         label: &'static str,
     },
-    /// Execute `swapExactTokensForTokens(amount, ...)` against `router`.
-    /// `amount_source` is either a literal `U256` (forward leg) or a
-    /// reference to an earlier `ReadBalance` label (backward leg).
-    ExecuteSwap {
-        router: Address,
-        amount_source: AmountSource,
-        path: Vec<Address>,
-        recipient: Address,
-        deadline: U256,
+    /// Execute an arbitrary `from → to` call with pre-built `calldata`. The
+    /// wrapped-flash dispatch (`caller → FlashLoanExecutor.requestFlashLoan`)
+    /// uses this — the calldata is the R1
+    /// `build_flash_funded_broadcast_calldata` output (outer `requestFlashLoan`
+    /// 0x5107d61e wrapping inner `executeArbitrageFlashFunded` 0xdde0bf51). The
+    /// REAL provider callback + inner `executeArbitrageFlashFunded` execute
+    /// INSIDE this single call against forked bytecode.
+    ExecuteCall {
+        from: Address,
+        to: Address,
+        calldata: Vec<u8>,
+        label: &'static str,
     },
-}
-
-/// How an amount is resolved at execution time.
-#[derive(Debug, Clone, PartialEq)]
-pub enum AmountSource {
-    /// A fixed amount known at planning time (e.g., the prefunded
-    /// `amount_in` for the forward leg).
-    Literal(U256),
-    /// The amount comes from a previously-read balance. A.3.c.3 resolves
-    /// this label by looking up `intermediate_balances[label]`.
-    FromReadLabel(&'static str),
 }
 
 /// The full multi-step plan returned by `build_multistep_plan`. Carries
@@ -263,113 +320,124 @@ pub struct MultiStepPlan {
     pub token_in: Address,
     pub token_out: Address,
     pub amount_in: U256,
+    /// The `FlashLoanExecutor` proxy — the `.to()` of the single wrapped flash
+    /// dispatch (`requestFlashLoan`). NOT the `ArbitrageExecutor`, NOT a router.
+    pub flashloan_executor: Address,
     pub steps: Vec<MultiStepEntry>,
-    /// Embedded prefund plan for observability (and for the orchestrator
-    /// to apply storage overrides on the simulator's DB).
-    pub prefund: PrefundPlan,
 }
 
 // ---------------------------------------------------------------------------
 // Plan builder
 // ---------------------------------------------------------------------------
 
-/// Build the multi-step execution plan from a `RoundTripContext` and
-/// per-call config. Validates everything, computes the prefund overrides,
-/// and emits an ordered `Vec<MultiStepEntry>` ready for A.3.c.3 to drive
+/// Build the WRAPPED FLASH multi-step execution plan from a `RoundTripContext`
+/// and per-call config. Validates everything, computes the single role
+/// override, encodes the wrapped `requestFlashLoan` calldata, and emits an
+/// ordered `Vec<MultiStepEntry>` ready for `execute_multistep_revm` to drive
 /// through REVM.
+///
+/// `flashloan_executor` is the deployed `FlashLoanExecutor` proxy — the `.to()`
+/// of the single dispatched flash call. The executor (`execute_multistep_revm`)
+/// resolves it from `resolve_flashloan_executor_address(chain_id)` (env
+/// `FLASHLOAN_EXECUTOR_<chain_id>`); unit tests pass a literal address so this
+/// builder stays a pure, env-free function.
+///
+/// `backward_amount_in` is the REAL intermediate `token_out` amount the forward
+/// leg produces — quoted by `execute_multistep_revm` via `getAmountsOut` BEFORE
+/// the plan is built — and is encoded as the leg-1 (backward) swap `amountIn`
+/// inside the wrapped flash calldata. The reworked contract approves the
+/// on-chain intermediate delta, but the opaque V2 backward payload still
+/// carries its own `amountIn`, so it MUST be the real forward-quoted
+/// intermediate (NOT the old `min_profit_wei` sentinel).
 pub fn build_multistep_plan(
     ctx: &RoundTripContext,
     config: &MultiStepExecutionConfig,
-    layout_provider: &dyn Erc20StorageLayoutProvider,
+    flashloan_executor: Address,
+    backward_amount_in: U256,
 ) -> Result<MultiStepPlan, MultiStepError> {
     config.validate()?;
     validate_context(ctx)?;
-
-    // Prefund computes both balanceOf and allowance overrides for the
-    // FORWARD leg (caller → forward_router for token_in).
-    let prefund = build_prefund_plan(
-        config.chain_id,
-        ctx.token_in,
-        ctx.caller,
-        ctx.forward_router,
-        ctx.amount_in,
-        layout_provider,
-        config.paper_mode,
-    )?;
-
-    // Build the step sequence.
-    let mut steps: Vec<MultiStepEntry> = Vec::with_capacity(7);
-
-    // Step A. Apply token_in balance + allowance overrides (forward leg).
-    for over in &prefund.overrides {
-        steps.push(MultiStepEntry::ApplyStorage(*over));
+    if flashloan_executor == Address::zero() {
+        return Err(MultiStepError::InvalidFlashLoanExecutor);
     }
 
-    // Step B. Forward swap. The amount is the prefunded `amount_in`.
-    steps.push(MultiStepEntry::ExecuteSwap {
-        router: ctx.forward_router,
-        amount_source: AmountSource::Literal(ctx.amount_in),
-        path: ctx.forward_path.clone(),
-        recipient: ctx.caller,
-        deadline: ctx.deadline,
-    });
+    // NO ERC-20 prefund override. In the REAL flash flow the FLE is funded by the
+    // Aave/Balancer flash loan and the AE pulls `amount_in` from the FLE during
+    // the callback — the caller NEVER supplies token_in capital. A prefund
+    // seeding the caller's balance/allowance was therefore both economically
+    // unnecessary AND unbuildable from production code (there is no production
+    // `Erc20StorageLayoutProvider` impl), so it is removed entirely. Only the
+    // single `caller → FLE` `EXECUTOR_ROLE` bit is seeded (Step A), which needs
+    // no per-token storage layout.
 
-    // Step C. Read intermediate token_out balance after forward swap.
-    steps.push(MultiStepEntry::ReadBalance {
-        token: ctx.token_out,
-        account: ctx.caller,
-        label: "intermediate_token_out_balance",
-    });
+    // Encode the OUTER wrapped flash calldata ONCE (O1 intermediate-aware
+    // encoder): outer `requestFlashLoan(asset, amount, params)` (0x5107d61e)
+    // wrapping inner `executeArbitrageFlashFunded(...)` (0xdde0bf51). asset/amount
+    // derive from ctx; the inner per-leg swap recipient is
+    // `config.executor_address` (the AE that holds funds between legs). The leg-1
+    // (backward) swap `amountIn` is `backward_amount_in` — the REAL intermediate
+    // `token_out` the forward leg produces (quoted via getAmountsOut by the
+    // executor BEFORE this builder runs) — NOT the old `min_profit_wei` sentinel.
+    let flash_calldata = build_flash_funded_broadcast_calldata_with_intermediate(
+        ctx,
+        backward_amount_in,
+        config.route_hash,
+        config.min_profit_wei,
+        config.executor_address,
+    )
+    .map_err(|_| MultiStepError::FlashCalldataEncodeFailed)?;
 
-    // Step D. Apply allowance(caller, backward_router, token_out) for the
-    // backward leg. We compute the backward prefund separately because the
-    // amount is the just-read intermediate balance, NOT a literal.
-    //
-    // For the allowance override we set U256::MAX (max approval) — this is
-    // standard for simulation pre-fund and avoids the need to pre-compute
-    // the exact intermediate amount before reading it. Documented and
-    // bounded to paper mode.
-    let backward_prefund = build_prefund_plan(
-        config.chain_id,
-        ctx.token_out,
+    // Build the step sequence (4 steps: role override + FLE pre-read + flash
+    // call + FLE post-read).
+    let mut steps: Vec<MultiStepEntry> = Vec::with_capacity(4);
+
+    // Step A. Seed ONLY the `caller → FLE` EXECUTOR_ROLE bit (the
+    // `requestFlashLoan` `onlyRole(EXECUTOR_ROLE)` gate). The `FLE → AE`
+    // EXECUTOR_ROLE is REAL forked storage (granted on-chain at deploy) and is
+    // NEVER overridden here — see the module docs for why this single override
+    // is rubric-permitted (the full requestFlashLoan→callback flow still runs).
+    let role_override = build_role_grant_override(
+        flashloan_executor,
+        executor_role_id(),
         ctx.caller,
-        ctx.backward_router,
-        // `amount` here just becomes the value stored at the balanceOf
-        // slot; we already have that balance from the forward swap, so we
-        // set it to U256::MAX as a permissive "max allowance" sentinel.
-        // The actual swap consumes `intermediate_token_out_balance`.
-        U256::MAX,
-        layout_provider,
         config.paper_mode,
     )?;
-    // We only want the ALLOWANCE override from this second prefund — NOT
-    // the balanceOf override (would overwrite the real intermediate amount
-    // with U256::MAX). Filter accordingly.
-    for over in backward_prefund.overrides.iter() {
-        if over.purpose == "allowance" {
-            steps.push(MultiStepEntry::ApplyStorage(*over));
-        }
-    }
+    steps.push(MultiStepEntry::ApplyStorage(role_override));
 
-    // Step E. Backward swap. The amount comes from the intermediate read.
-    steps.push(MultiStepEntry::ExecuteSwap {
-        router: ctx.backward_router,
-        amount_source: AmountSource::FromReadLabel("intermediate_token_out_balance"),
-        path: ctx.backward_path.clone(),
-        recipient: ctx.caller,
-        deadline: ctx.deadline,
-    });
-
-    // Step F. Read final token_in balance for profit accounting.
+    // Step B. Read the FLE's token_in balance BEFORE the flash dispatch (`B`).
+    // Profit accrues to the FLE, not the caller, so the pre/post FLE balance
+    // delta is the honest economic gain.
     steps.push(MultiStepEntry::ReadBalance {
         token: ctx.token_in,
-        account: ctx.caller,
-        label: "final_token_in_balance",
+        account: flashloan_executor,
+        label: "fle_token_in_pre",
     });
 
-    // Defensive bound: a normal round-trip plan has 7 steps (2 storage +
-    // 1 swap + 1 read + 1 storage + 1 swap + 1 read). Reject anything
-    // beyond `config.max_steps`.
+    // Step C. Execute the SINGLE wrapped flash dispatch:
+    //   caller → FlashLoanExecutor.requestFlashLoan(...) wrapping
+    //   executeArbitrageFlashFunded(...). The real provider callback + inner
+    //   round-trip swaps execute INSIDE this one call against forked bytecode.
+    steps.push(MultiStepEntry::ExecuteCall {
+        from: ctx.caller,
+        to: flashloan_executor,
+        calldata: flash_calldata,
+        label: "request_flash_loan",
+    });
+
+    // Step D. Read the FLE's token_in balance AFTER the flash dispatch. The AE
+    // returns `amount_in + profit` to the FLE, the FLE repays Aave
+    // `amount_in + premium`, so the FLE ends at `B + (profit - premium)`. The
+    // RETAINED SPREAD `fle_post - fle_pre` is the realised economic gain. (The
+    // caller's token_in balance is unchanged by the flow — never measured.)
+    steps.push(MultiStepEntry::ReadBalance {
+        token: ctx.token_in,
+        account: flashloan_executor,
+        label: "fle_token_in_post",
+    });
+
+    // Defensive bound: the wrapped flash plan has 4 steps (1 role override +
+    // 1 FLE pre-read + 1 flash call + 1 FLE post-read).
+    // Reject anything beyond `config.max_steps`.
     if steps.len() > config.max_steps {
         warn!(
             event = "multistep.plan_too_long",
@@ -385,8 +453,8 @@ pub fn build_multistep_plan(
         steps_count = steps.len(),
         caller = ?ctx.caller,
         amount_in = %ctx.amount_in,
-        forward_router = ?ctx.forward_router,
-        backward_router = ?ctx.backward_router,
+        flashloan_executor = ?flashloan_executor,
+        arbitrage_executor = ?config.executor_address,
     );
 
     Ok(MultiStepPlan {
@@ -395,8 +463,8 @@ pub fn build_multistep_plan(
         token_in: ctx.token_in,
         token_out: ctx.token_out,
         amount_in: ctx.amount_in,
+        flashloan_executor,
         steps,
-        prefund,
     })
 }
 
@@ -439,41 +507,73 @@ fn validate_context(ctx: &RoundTripContext) -> Result<(), MultiStepError> {
 // REVM orchestrator (Phase A.3.c.3 — IMPLEMENTED)
 // ---------------------------------------------------------------------------
 
-/// Run the multi-step plan through REVM with persistent state between
-/// legs against a `CacheDB<LazyDb>` resolved from `simulator.rpc_url`.
-/// Phase A.3.c.3 — REAL multi-step REVM executor wired to
+/// Run the WRAPPED FLASH plan through REVM with persistent state against a
+/// `CacheDB<LazyDb>` resolved from `simulator.rpc_url` — REAL
+/// `requestFlashLoan → provider callback → executeArbitrageFlashFunded` flow
+/// over forked FLE/AE/provider bytecode, wired to
 /// `simulator_v2::sequence_runner::SequenceContext`.
 ///
 /// Returns `SimulationOutcome { passed: true, .. }` ONLY when:
-///   1. Forward swap executes without revert (CacheDB state mutated).
-///   2. Intermediate `balanceOf(caller, token_out)` read returns non-zero.
-///   3. Backward swap encoded with REAL intermediate amount (not placeholder)
-///      executes without revert.
-///   4. Final `balanceOf(caller, token_in)` read returns `final ≥ amount_in`.
-///   5. `gross_profit = final - amount_in > 0`.
-///   6. `gas_used_total > 0`.
-///   7. Combined trace hash != `[0; 32]`.
-///   8. `net_profit_wei = gross_profit - gas_cost > 0`.
+///   1. The single wrapped `requestFlashLoan` dispatch executes without revert
+///      (the inner provider callback + round-trip swaps run inside it).
+///   2. Both FLE token_in reads (`fle_token_in_pre` / `fle_token_in_post`) are
+///      present and `fle_post ≥ fle_pre` (a loss fails closed).
+///   3. `retained_spread = fle_post - fle_pre > 0` (the GROSS, prices-free
+///      economic gate). This equals the contract's `profit - premium` — the
+///      gain the FLE actually keeps. (The caller's token_in balance is
+///      unchanged by the flow and is NOT measured.)
+///   4. `gas_used_total > 0`.
+///   5. Combined trace hash != `[0; 32]`.
+///   6. At least ONE call committed (the wrapped flash dispatch).
+///
+/// GROSS-vs-NET (deliberate, prices-free): the sim gates on the GROSS
+/// `retained_spread` and does NOT subtract gas. `retained_spread` is in
+/// `token_in` smallest units while gas cost is native wei — the two are NOT
+/// comparable unless `token_in == WETH`, and the pure REVM sim has NO
+/// token_in/ETH USD prices, so it CANNOT correctly compute net-of-gas. The
+/// NET-of-gas-in-USD profitability decision is the price-aware DOWNSTREAM
+/// layer's responsibility, via
+/// `prioritization_spine::round_trip_executor::compute_profit_usd` (which takes
+/// token_in decimals + token_in_price_usd + eth_price_usd plus the
+/// `gas_used_total` / `gas_price_wei` this outcome carries). That downstream
+/// net-USD gate MUST be enforced before any LIVE broadcast — a required M5-era
+/// wiring, tracked. `simulated_profit_token_in` on the passing outcome is the
+/// GROSS `retained_spread` (the documented token_in delta), NOT a
+/// gas-subtracted value.
+///
+/// The `.to()` of the dispatch is the deployed `FlashLoanExecutor`, resolved
+/// from `resolve_flashloan_executor_address(config.chain_id)` (env
+/// `FLASHLOAN_EXECUTOR_<chain_id>`) — NOT the `ArbitrageExecutor`, NOT a router.
 #[cfg(feature = "v2-simulator")]
 pub fn execute_multistep_revm(
     ctx: &RoundTripContext,
     simulator: Arc<simulator_v2::SimulatorV2>,
     config: &MultiStepExecutionConfig,
-    layout_provider: &dyn Erc20StorageLayoutProvider,
 ) -> SimulationOutcome {
     use simulator_v2::sequence_runner::{
         CallOutcome, SequenceCall, SequenceContext, StorageOverride as SeqStorageOverride,
     };
 
-    // 1. Validate config + context + build plan.
-    let plan = match build_multistep_plan(ctx, config, layout_provider) {
-        Ok(p) => p,
-        Err(e) => return failed_with(e),
-    };
+    // 0. Resolve the FlashLoanExecutor `.to()` (env-driven, fail-closed). This
+    //    is the rubric `.to() == resolve_flashloan_executor_address(chain_id)`.
+    let flashloan_executor =
+        match shared_rs::chains::resolve_flashloan_executor_address(config.chain_id) {
+            Ok(a) => a,
+            Err(e) => {
+                warn!(event = "multistep.flashloan_executor_unresolved", error = %e);
+                return SimulationOutcome::failed(format!(
+                    "multistep_flashloan_executor_unresolved:{e}"
+                ));
+            }
+        };
 
-    // 2. Resolve LazyDb. Reuse the simulator's pinned block when available;
-    //    otherwise fall back to `None` (LazyDb resolves "latest" once and
-    //    memoizes — same convention SimulatorV2 uses).
+    // 1. Resolve LazyDb FIRST. The SequenceContext must exist BEFORE the plan is
+    //    built, because the plan's wrapped-flash calldata encodes the leg-1
+    //    backward `amountIn` from the REAL intermediate quoted off the forward
+    //    leg — and that quote is a REVM `getAmountsOut` view call. Reuse the
+    //    simulator's pinned block when available; otherwise fall back to `None`
+    //    (LazyDb resolves "latest" once and memoizes — same convention
+    //    SimulatorV2 uses).
     let lazy = match simulator_v2::LazyDb::new(&simulator.rpc_url, None) {
         Ok(db) => db,
         Err(e) => {
@@ -482,12 +582,57 @@ pub fn execute_multistep_revm(
         }
     };
     let pinned_block = lazy.pinned_block_number();
-
-    // 3. Drive the SequenceContext through the plan steps. The orchestrator
-    //    resolves `AmountSource::FromReadLabel` at the moment of dispatch
-    //    by consulting the live `reads` map — eliminating the structural
-    //    placeholder bug from A.3.c single-tx.
     let mut sctx = SequenceContext::new(lazy, config.chain_id, pinned_block);
+
+    // 2. QUOTE the forward leg via a NON-COMMITTING `getAmountsOut` view call on
+    //    the forward router. This is the REAL intermediate `token_out` the
+    //    forward swap of `amount_in` produces — the leg-1 (backward) swap
+    //    `amountIn`. Because `read_amounts_out` uses `transact()` (not
+    //    `transact_commit`), it does NOT mutate the CacheDB: it does not perturb
+    //    the reserves the subsequent COMMITTED leg-0 swap reads — both read the
+    //    same forked state at the pinned block. Fail-closed on quote error or a
+    //    zero quote (a zero intermediate means no real forward output).
+    let forward_router_alloy = ethers_addr_to_alloy(ctx.forward_router);
+    let amount_in_alloy = ethers_u256_to_alloy(ctx.amount_in);
+    let forward_path_alloy: Vec<simulator_v2::AlloyAddress> = ctx
+        .forward_path
+        .iter()
+        .map(|a| ethers_addr_to_alloy(*a))
+        .collect();
+    let intermediate_alloy =
+        match sctx.read_amounts_out(forward_router_alloy, amount_in_alloy, &forward_path_alloy) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(event = "multistep.forward_quote_failed", error = %e);
+                return SimulationOutcome::failed(format!(
+                    "multistep_forward_quote_failed:{}",
+                    e.reason_tag()
+                ));
+            }
+        };
+    if intermediate_alloy.is_zero() {
+        warn!(event = "multistep.forward_quote_zero");
+        return SimulationOutcome::failed(
+            "multistep_forward_quote_failed:zero_intermediate".to_string(),
+        );
+    }
+    let backward_amount_in = alloy_u256_to_ethers(intermediate_alloy);
+
+    // 3. Validate config + context + build the wrapped flash plan with the REAL
+    //    forward-quoted intermediate encoded as the leg-1 backward `amountIn`.
+    let plan = match build_multistep_plan(ctx, config, flashloan_executor, backward_amount_in) {
+        Ok(p) => p,
+        Err(e) => return failed_with(e),
+    };
+
+    // Capture the VALIDATED wrapped-flash calldata — the exact `ExecuteCall`
+    // bytes (== `build_flash_funded_broadcast_calldata_with_intermediate`
+    // output) — so a passing outcome can carry it to the broadcast path. Only
+    // attached on SIM_SUCCESS below; every failure path leaves it `None`.
+    let validated_wrapped_calldata: Option<Vec<u8>> = plan.steps.iter().find_map(|s| match s {
+        MultiStepEntry::ExecuteCall { calldata, .. } => Some(calldata.clone()),
+        _ => None,
+    });
 
     debug!(
         event = "multistep.start",
@@ -496,6 +641,7 @@ pub fn execute_multistep_revm(
         token_in = ?plan.token_in,
         token_out = ?plan.token_out,
         amount_in_wei = %plan.amount_in,
+        backward_amount_in_wei = %backward_amount_in,
         steps_count = plan.steps.len(),
         paper_mode = config.paper_mode,
     );
@@ -509,6 +655,18 @@ pub fn execute_multistep_revm(
     }
     // Safe narrowing — bound checked above.
     let gas_price_u128: u128 = config.gas_price_wei.as_u128();
+
+    // CALLER-GAS NOTE (flagged gap, deferred to M5 deployed-fork validation):
+    // `gas_price_u128 > 0`, so REVM's `transact_commit` deducts the max fee from
+    // `caller`'s ETH balance. `SequenceContext::new` uses `CfgEnv::default()` —
+    // there is NO `disable_balance_check` and NO production ETH-seeding path
+    // (`lazy_db::seed_account` is `#[cfg(test)]`-only). The caller's ETH
+    // therefore comes from REAL forked state at the pinned block, exactly as the
+    // single-tx `revm_runner` path already relies on. This is a PRE-EXISTING
+    // property of the fork, not a regression introduced by R3 — but the M5
+    // deployed-fork run MUST use a `caller` that holds ETH at the pinned block
+    // (or the operator must add a balance-check disable / ETH seed before that
+    // run). We do NOT fake caller ETH here.
 
     for entry in &plan.steps {
         match entry {
@@ -547,56 +705,23 @@ pub fn execute_multistep_revm(
                     ));
                 }
             }
-            MultiStepEntry::ExecuteSwap {
-                router,
-                amount_source,
-                path,
-                recipient,
-                deadline,
+            MultiStepEntry::ExecuteCall {
+                from,
+                to,
+                calldata,
+                label,
             } => {
-                // Resolve the amount NOW — for the backward leg this is the
-                // intermediate balance just read by the previous ReadBalance
-                // step. NO PLACEHOLDER reaches REVM.
-                let amount_in_ethers: U256 = match amount_source {
-                    AmountSource::Literal(a) => *a,
-                    AmountSource::FromReadLabel(lbl) => match sctx.reads().get(*lbl) {
-                        Some(v) if !v.is_zero() => alloy_u256_to_ethers(*v),
-                        Some(_) => {
-                            return SimulationOutcome::failed(
-                                "multistep_intermediate_amount_zero".to_string(),
-                            );
-                        }
-                        None => {
-                            return SimulationOutcome::failed(format!(
-                                "multistep_missing_read_label:{}",
-                                lbl
-                            ));
-                        }
-                    },
-                };
-                // Build the swap calldata with the resolved amount (ethers
-                // domain — the encoder lives in prioritization-spine).
-                let calldata = encode_v2_swap_exact_tokens_for_tokens(
-                    amount_in_ethers,
-                    U256::zero(), // amount_out_min = 0 for simulation
-                    path,
-                    *recipient,
-                    *deadline,
-                );
                 if calldata.is_empty() {
                     return SimulationOutcome::failed("multistep_empty_calldata".to_string());
                 }
                 let seq_call = SequenceCall {
-                    from: ethers_addr_to_alloy(plan.caller),
-                    to: ethers_addr_to_alloy(*router),
-                    calldata: calldata.to_vec(),
+                    from: ethers_addr_to_alloy(*from),
+                    to: ethers_addr_to_alloy(*to),
+                    calldata: calldata.clone(),
                     value_wei: 0,
                     gas_price_wei: gas_price_u128,
                     gas_limit,
-                    label: match amount_source {
-                        AmountSource::Literal(_) => "forward_swap",
-                        AmountSource::FromReadLabel(_) => "backward_swap",
-                    },
+                    label,
                 };
                 let outcome = match sctx.call(seq_call) {
                     Ok(o) => o,
@@ -612,54 +737,66 @@ pub fn execute_multistep_revm(
                     CallOutcome::Success { .. } => continue,
                     CallOutcome::Reverted { reason, .. } => {
                         return SimulationOutcome::failed(format!(
-                            "multistep_call_revert:{}",
-                            reason
+                            "multistep_call_revert:{reason}"
                         ));
                     }
                     CallOutcome::Halted { reason, .. } => {
-                        return SimulationOutcome::failed(format!(
-                            "multistep_call_halt:{}",
-                            reason
-                        ));
+                        return SimulationOutcome::failed(format!("multistep_call_halt:{reason}"));
                     }
                 }
             }
         }
     }
 
-    // 4. Finalise the sequence and compute profit (all alloy U256 math here).
+    // 4. Finalise the sequence and compute the FLE-RETAINED SPREAD (all alloy
+    //    U256 math here). The economic gain accrues to the FlashLoanExecutor —
+    //    NOT the caller. The AE returns `amount_in + profit` to the FLE, the FLE
+    //    repays Aave `amount_in + premium`, so the FLE ends at
+    //    `fle_pre + (profit - premium)`. The honest gain is therefore
+    //    `retained_spread = fle_post - fle_pre`.
     let result = sctx.finalize();
 
-    let final_balance_alloy: simulator_v2::AlloyU256 = match result
-        .reads
-        .get("final_token_in_balance")
-    {
+    let fle_pre_alloy: simulator_v2::AlloyU256 = match result.reads.get("fle_token_in_pre") {
         Some(v) => *v,
         None => {
-            return SimulationOutcome::failed("multistep_missing_final_balance_read".to_string());
+            return SimulationOutcome::failed("multistep_missing_fle_pre_read".to_string());
+        }
+    };
+    let fle_post_alloy: simulator_v2::AlloyU256 = match result.reads.get("fle_token_in_post") {
+        Some(v) => *v,
+        None => {
+            return SimulationOutcome::failed("multistep_missing_fle_post_read".to_string());
         }
     };
 
-    let amount_in_alloy = ethers_u256_to_alloy(plan.amount_in);
-    // gross_profit = final_balance - amount_in. Prefund is STRUCTURALLY
-    // excluded: the balance override establishes amount_in as the base.
-    if final_balance_alloy < amount_in_alloy {
-        return SimulationOutcome::failed("multistep_net_profit_non_positive".to_string());
+    // retained_spread = fle_post - fle_pre (== contract `profit - premium`).
+    // A loss (fle_post < fle_pre) fails closed — though by construction the
+    // contract itself reverts `FL_RepaymentShortfall` when `profit < premium`,
+    // so this branch should already have been caught upstream as a call revert.
+    if fle_post_alloy < fle_pre_alloy {
+        return SimulationOutcome::failed("multistep_gross_spread_non_positive".to_string());
     }
-    let gross_profit_alloy = final_balance_alloy - amount_in_alloy;
-    if gross_profit_alloy.is_zero() {
-        return SimulationOutcome::failed("multistep_net_profit_non_positive".to_string());
-    }
+    let retained_spread_alloy = fle_post_alloy - fle_pre_alloy;
 
-    // gas_cost = gas_used_total × gas_price_wei. Saturating arithmetic.
-    let gas_price_alloy = ethers_u256_to_alloy(config.gas_price_wei);
-    let gas_cost_alloy =
-        simulator_v2::AlloyU256::from(result.gas_used_total).saturating_mul(gas_price_alloy);
-    let net_profit_alloy = if gross_profit_alloy > gas_cost_alloy {
-        gross_profit_alloy - gas_cost_alloy
-    } else {
-        return SimulationOutcome::failed("multistep_net_profit_non_positive".to_string());
-    };
+    // ECONOMIC GATE (GROSS, prices-free). The sim deliberately gates on the
+    // GROSS retained_spread (token_in units) and does NOT subtract gas here:
+    // `retained_spread` is in token_in smallest units while gas cost is native
+    // wei, so the two are NOT comparable unless token_in == WETH. The pure REVM
+    // sim has NO token_in/ETH USD prices, so it CANNOT correctly compute
+    // net-of-gas — that is the price-aware DOWNSTREAM layer's job, via
+    // `prioritization_spine::round_trip_executor::compute_profit_usd`
+    // (token_in decimals + token_in_price_usd + eth_price_usd + the
+    // gas_used_total / gas_price_wei carried below).
+    //
+    // `retained_spread > 0` is the honest invariant the prices-free sim CAN
+    // verify: the FLE retained more token_in than the flash premium — which the
+    // contract itself enforces by reverting `FL_RepaymentShortfall` when
+    // `profit < premium`. The DOWNSTREAM net-of-gas-in-USD profitability gate
+    // (compute_profit_usd > 0) MUST be enforced before any LIVE broadcast — a
+    // required M5-era wiring, tracked.
+    if retained_spread_alloy.is_zero() {
+        return SimulationOutcome::failed("multistep_gross_spread_non_positive".to_string());
+    }
 
     // 5. Anti-fraud guards on the success path.
     if result.gas_used_total == 0 {
@@ -668,9 +805,11 @@ pub fn execute_multistep_revm(
     if result.trace_hash == [0u8; 32] {
         return SimulationOutcome::failed("multistep_success_empty_trace_hash".to_string());
     }
-    if result.successful_calls < 2 {
-        // Forward + backward both must have committed. Anything less
-        // means we did not actually run the round trip.
+    if result.successful_calls == 0 {
+        // The single wrapped `requestFlashLoan` dispatch must have committed —
+        // the forward/backward swaps run INSIDE the provider callback, so the
+        // whole round trip is ONE committed call here. Zero committed calls
+        // means we never reached REVM execution.
         return SimulationOutcome::failed("multistep_insufficient_committed_calls".to_string());
     }
 
@@ -683,14 +822,23 @@ pub fn execute_multistep_revm(
 
     SimulationOutcome {
         passed: true,
-        simulated_profit_token_in: alloy_u256_to_ethers(net_profit_alloy),
+        // GROSS token_in delta (== contract `profit - premium`), exactly what
+        // the field is documented to hold. NET-of-gas-in-USD is deferred to the
+        // price-aware downstream layer via `compute_profit_usd`.
+        simulated_profit_token_in: alloy_u256_to_ethers(retained_spread_alloy),
         intermediate_amount_out: result
             .reads
             .get("intermediate_token_out_balance")
             .copied()
             .map(alloy_u256_to_ethers),
         gas_used_total: result.gas_used_total,
+        // Carry the gas price used so the downstream price-aware layer can
+        // compute the net-of-gas USD via `compute_profit_usd`.
+        gas_price_wei: config.gas_price_wei,
         fail_reason: None,
+        // Carry the VALIDATED wrapped-flash calldata (leg-1 encoded with the
+        // real forward-quoted intermediate) ONLY on this passing outcome.
+        wrapped_calldata: validated_wrapped_calldata,
     }
 }
 
@@ -706,7 +854,6 @@ fn failed_with(e: MultiStepError) -> SimulationOutcome {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::sim_prefund::{Erc20StorageLayout, InMemoryStorageLayoutProvider};
     use std::str::FromStr;
 
     fn addr(s: &str) -> Address {
@@ -737,10 +884,27 @@ mod tests {
         }
     }
 
+    /// The deployed `FlashLoanExecutor` `.to()` target used in plan-builder
+    /// tests (the builder is pure; the executor resolves this from env).
+    fn fle() -> Address {
+        addr("0x00000000000000000000000000000000000feF1e")
+    }
+
+    /// An explicit, non-sentinel backward-leg `amountIn` used by the plan-builder
+    /// tests — stands in for the REAL forward-quoted intermediate that
+    /// `execute_multistep_revm` produces via `getAmountsOut`. Deliberately
+    /// distinct from `valid_config().min_profit_wei` (1) so the byte-parity test
+    /// proves the encoder threads THIS value (not the old sentinel) into leg-1.
+    fn backward_amount_in_fixture() -> U256 {
+        U256::from(3_000_000_000u64)
+    }
+
     fn valid_config() -> MultiStepExecutionConfig {
         MultiStepExecutionConfig {
             chain_id: 1,
             executor_address: addr("0xabcabcabcabcabcabcabcabcabcabcabcabcabca"),
+            route_hash: [0x11u8; 32],
+            min_profit_wei: U256::from(1u64),
             gas_price_wei: U256::from(25_000_000_000u64),
             gas_limit_per_step: 30_000_000,
             paper_mode: true,
@@ -749,16 +913,6 @@ mod tests {
             require_positive_net_profit: true,
             max_steps: 10,
         }
-    }
-
-    fn provider_with_layouts() -> InMemoryStorageLayoutProvider {
-        let layout = Erc20StorageLayout {
-            balance_base_slot: U256::zero(),
-            allowance_base_slot: U256::one(),
-        };
-        InMemoryStorageLayoutProvider::new()
-            .with_layout(1, weth(), layout)
-            .with_layout(1, usdc(), layout)
     }
 
     // ── Config validation ─────────────────────────────────────────────────
@@ -873,93 +1027,246 @@ mod tests {
         );
     }
 
-    // ── Plan builder ─────────────────────────────────────────────────────
+    // ── Plan builder (WRAPPED FLASH — M2 flash R3) ───────────────────────
 
-    #[test]
-    fn build_plan_happy_path_has_7_steps() {
-        let plan = build_multistep_plan(&valid_ctx(), &valid_config(), &provider_with_layouts())
-            .expect("valid inputs should build a plan");
-        // Step layout:
-        //   1. ApplyStorage  (balance_of caller, token_in)
-        //   2. ApplyStorage  (allowance caller, forward_router, token_in)
-        //   3. ExecuteSwap   forward
-        //   4. ReadBalance   intermediate token_out
-        //   5. ApplyStorage  (allowance caller, backward_router, token_out)
-        //   6. ExecuteSwap   backward (uses FromReadLabel)
-        //   7. ReadBalance   final token_in
-        assert_eq!(plan.steps.len(), 7);
+    /// Helper: the AccessControl role-member slot for `caller → FLE`
+    /// EXECUTOR_ROLE (the bit the plan's single role override seeds).
+    fn caller_fle_executor_role_slot(caller: Address) -> [u8; 32] {
+        crate::sim_prefund::access_control_role_member_slot(
+            crate::sim_prefund::executor_role_id(),
+            caller,
+        )
     }
 
     #[test]
-    fn build_plan_forward_swap_uses_literal_amount() {
-        let plan =
-            build_multistep_plan(&valid_ctx(), &valid_config(), &provider_with_layouts()).unwrap();
-        // The first ExecuteSwap entry is the forward swap; its amount source
-        // must be a literal == ctx.amount_in.
-        let forward_swap = plan
+    fn build_plan_happy_path_step_layout() {
+        let ctx = valid_ctx();
+        let plan = build_multistep_plan(&ctx, &valid_config(), fle(), backward_amount_in_fixture())
+            .expect("valid inputs should build a plan");
+        // Wrapped flash plan (4 steps — NO ERC-20 prefund):
+        //   1. ApplyStorage  (caller → FLE EXECUTOR_ROLE grant)
+        //   2. ReadBalance   fle_token_in_pre  (FLE, token_in)
+        //   3. ExecuteCall   requestFlashLoan  (caller → FLE)
+        //   4. ReadBalance   fle_token_in_post (FLE, token_in)
+        assert_eq!(plan.steps.len(), 4);
+        assert_eq!(plan.flashloan_executor, fle());
+
+        // Exact ordered sequence.
+        assert!(matches!(
+            plan.steps[0],
+            MultiStepEntry::ApplyStorage(o) if o.purpose == "access_control_role_grant"
+        ));
+        assert!(matches!(
+            plan.steps[1],
+            MultiStepEntry::ReadBalance {
+                token,
+                account,
+                label: "fle_token_in_pre",
+            } if token == ctx.token_in && account == fle()
+        ));
+        assert!(matches!(
+            plan.steps[2],
+            MultiStepEntry::ExecuteCall { to, .. } if to == fle()
+        ));
+        assert!(matches!(
+            plan.steps[3],
+            MultiStepEntry::ReadBalance {
+                token,
+                account,
+                label: "fle_token_in_post",
+            } if token == ctx.token_in && account == fle()
+        ));
+
+        // NO ERC-20 prefund overrides remain (only the single role grant).
+        let apply_storage_count = plan
+            .steps
+            .iter()
+            .filter(|s| matches!(s, MultiStepEntry::ApplyStorage(_)))
+            .count();
+        assert_eq!(
+            apply_storage_count, 1,
+            "exactly ONE ApplyStorage (the role grant) — no prefund overrides"
+        );
+        assert!(
+            !plan.steps.iter().any(|s| matches!(
+                s,
+                MultiStepEntry::ApplyStorage(o)
+                    if o.purpose == "balance_of" || o.purpose == "allowance"
+            )),
+            "no balance_of / allowance prefund override may be present"
+        );
+    }
+
+    /// Acceptance: the dispatched call targets the FLE (NOT the AE, NOT a
+    /// router), the outer selector is requestFlashLoan (0x5107d61e), and the
+    /// inner wrapped selector is executeArbitrageFlashFunded (0xdde0bf51).
+    #[test]
+    fn build_plan_dispatches_wrapped_flash_to_fle() {
+        let cfg = valid_config();
+        let ctx = valid_ctx();
+        let backward_amount_in = backward_amount_in_fixture();
+        let plan = build_multistep_plan(&ctx, &cfg, fle(), backward_amount_in).unwrap();
+
+        let (to, calldata) = plan
             .steps
             .iter()
             .find_map(|s| match s {
-                MultiStepEntry::ExecuteSwap { amount_source, .. } => Some(amount_source),
+                MultiStepEntry::ExecuteCall { to, calldata, .. } => Some((*to, calldata.clone())),
                 _ => None,
             })
-            .unwrap();
-        assert_eq!(*forward_swap, AmountSource::Literal(valid_ctx().amount_in));
+            .expect("plan must contain exactly one ExecuteCall (the flash dispatch)");
+
+        // .to() == FLE, and NOT the AE / routers.
+        assert_eq!(to, fle(), "dispatch .to() must be the FlashLoanExecutor");
+        assert_ne!(
+            to, cfg.executor_address,
+            "dispatch .to() must NOT be the AE"
+        );
+        assert_ne!(to, ctx.forward_router);
+        assert_ne!(to, ctx.backward_router);
+
+        // BYTE-PARITY: the dispatched calldata is EXACTLY the O1 intermediate-aware
+        // encoder output (outer requestFlashLoan wrapping inner
+        // executeArbitrageFlashFunded), with leg-1 encoded against the EXPLICIT
+        // `backward_amount_in` (the real forward-quoted intermediate) — NOT the
+        // old `min_profit_wei` sentinel.
+        let expected = build_flash_funded_broadcast_calldata_with_intermediate(
+            &ctx,
+            backward_amount_in,
+            cfg.route_hash,
+            cfg.min_profit_wei,
+            cfg.executor_address,
+        )
+        .expect("encoder must produce flash calldata");
+        assert_eq!(
+            calldata, expected,
+            "dispatch calldata must be byte-identical to build_flash_funded_broadcast_calldata_with_intermediate for the quoted intermediate"
+        );
+
+        // And the sentinel-encoded variant must DIFFER (proves the new
+        // intermediate is actually threaded into leg-1, not the old sentinel).
+        let sentinel_encoded = build_flash_funded_broadcast_calldata_with_intermediate(
+            &ctx,
+            cfg.min_profit_wei,
+            cfg.route_hash,
+            cfg.min_profit_wei,
+            cfg.executor_address,
+        )
+        .expect("encoder must produce flash calldata");
+        assert_ne!(
+            calldata, sentinel_encoded,
+            "dispatch calldata must NOT equal the min_profit_wei-sentinel encoding"
+        );
+
+        // Outer selector = requestFlashLoan (0x5107d61e).
+        assert_eq!(&calldata[0..4], &[0x51, 0x07, 0xd6, 0x1e]);
+
+        // The inner params decode to executeArbitrageFlashFunded (0xdde0bf51).
+        use ethers::abi::{decode, ParamType};
+        let outer = decode(
+            &[ParamType::Address, ParamType::Uint(256), ParamType::Bytes],
+            &calldata[4..],
+        )
+        .expect("outer requestFlashLoan calldata must ABI-decode");
+        let inner = outer[2].clone().into_bytes().expect("params is bytes");
+        assert_eq!(
+            &inner[0..4],
+            &[0xdd, 0xe0, 0xbf, 0x51],
+            "inner wrapped selector must be executeArbitrageFlashFunded"
+        );
     }
 
+    /// Acceptance: EXACTLY ONE apply_storage targets the FLE
+    /// `_roles[EXECUTOR_ROLE][caller]` slot (the cast-verified role-member
+    /// slot), and NO apply_storage targets the AE role slot (the FLE→AE role
+    /// comes from the fork, never overridden).
     #[test]
-    fn build_plan_backward_swap_uses_read_label() {
-        let plan =
-            build_multistep_plan(&valid_ctx(), &valid_config(), &provider_with_layouts()).unwrap();
-        // The SECOND ExecuteSwap entry is the backward swap; its amount
-        // source must reference the intermediate balance read label —
-        // NEVER a placeholder literal.
-        let swap_sources: Vec<&AmountSource> = plan
+    fn build_plan_seeds_only_caller_fle_role_not_ae() {
+        let cfg = valid_config();
+        let ctx = valid_ctx();
+        let plan = build_multistep_plan(&ctx, &cfg, fle(), backward_amount_in_fixture()).unwrap();
+
+        let expected_slot = caller_fle_executor_role_slot(ctx.caller);
+
+        // Collect every role-grant override.
+        let role_overrides: Vec<&StorageOverride> = plan
             .steps
             .iter()
             .filter_map(|s| match s {
-                MultiStepEntry::ExecuteSwap { amount_source, .. } => Some(amount_source),
+                MultiStepEntry::ApplyStorage(o) if o.purpose == "access_control_role_grant" => {
+                    Some(o)
+                }
                 _ => None,
             })
             .collect();
-        assert_eq!(swap_sources.len(), 2);
+
         assert_eq!(
-            *swap_sources[1],
-            AmountSource::FromReadLabel("intermediate_token_out_balance")
+            role_overrides.len(),
+            1,
+            "exactly ONE role override (the caller→FLE EXECUTOR_ROLE bit)"
+        );
+        let role = role_overrides[0];
+        assert_eq!(role.token, fle(), "role override must target the FLE");
+        assert_eq!(
+            role.slot, expected_slot,
+            "role slot must be the cast-verified member slot"
+        );
+        assert_eq!(role.value, U256::one(), "role bit seeded to 1 (true)");
+
+        // No role override targets the AE — the FLE→AE EXECUTOR_ROLE is forked.
+        assert!(
+            !plan.steps.iter().any(|s| matches!(
+                s,
+                MultiStepEntry::ApplyStorage(o)
+                    if o.purpose == "access_control_role_grant" && o.token == cfg.executor_address
+            )),
+            "NO role override may target the ArbitrageExecutor (FLE→AE role is forked)"
         );
     }
 
     #[test]
-    fn build_plan_includes_final_balance_read() {
-        let plan =
-            build_multistep_plan(&valid_ctx(), &valid_config(), &provider_with_layouts()).unwrap();
-        // The plan must end with a ReadBalance for the final token_in.
+    fn build_plan_ends_with_fle_post_balance_read() {
+        let ctx = valid_ctx();
+        let plan = build_multistep_plan(&ctx, &valid_config(), fle(), backward_amount_in_fixture())
+            .unwrap();
+        // The plan must end with a ReadBalance of the FLE's token_in balance
+        // (the post-flash leg of the retained-spread measurement).
         let last = plan.steps.last().unwrap();
-        matches!(
+        assert!(matches!(
             last,
             MultiStepEntry::ReadBalance {
-                label: "final_token_in_balance",
-                ..
-            }
-        );
+                token,
+                account,
+                label: "fle_token_in_post",
+            } if *token == ctx.token_in && *account == fle()
+        ));
+        // And it must NOT emit any ExecuteCall other than the single flash one.
+        let call_count = plan
+            .steps
+            .iter()
+            .filter(|s| matches!(s, MultiStepEntry::ExecuteCall { .. }))
+            .count();
+        assert_eq!(call_count, 1, "exactly one dispatched call (no raw swaps)");
     }
 
     #[test]
-    fn build_plan_rejects_missing_layout() {
-        // Empty provider — first balance_of slot lookup fails.
-        let empty = InMemoryStorageLayoutProvider::new();
-        let err = build_multistep_plan(&valid_ctx(), &valid_config(), &empty).unwrap_err();
-        // The error bubbles up from PrefundError::UnsupportedTokenLayout.
-        assert!(matches!(err, MultiStepError::PrefundFailed(_)));
-        assert_eq!(err.reason_tag(), "prefund_failed");
+    fn build_plan_rejects_zero_flashloan_executor() {
+        let err = build_multistep_plan(
+            &valid_ctx(),
+            &valid_config(),
+            Address::zero(),
+            backward_amount_in_fixture(),
+        )
+        .unwrap_err();
+        assert_eq!(err, MultiStepError::InvalidFlashLoanExecutor);
     }
 
     #[test]
     fn build_plan_rejects_max_steps_too_low() {
         let mut config = valid_config();
-        config.max_steps = 3; // Plan needs 7; reject.
-        let err =
-            build_multistep_plan(&valid_ctx(), &config, &provider_with_layouts()).unwrap_err();
+        config.max_steps = 2; // Plan needs 4; reject.
+        let err = build_multistep_plan(&valid_ctx(), &config, fle(), backward_amount_in_fixture())
+            .unwrap_err();
         assert_eq!(err, MultiStepError::InvalidStepCount);
     }
 
@@ -967,8 +1274,8 @@ mod tests {
     fn build_plan_propagates_paper_mode_failure() {
         let mut config = valid_config();
         config.paper_mode = false;
-        let err =
-            build_multistep_plan(&valid_ctx(), &config, &provider_with_layouts()).unwrap_err();
+        let err = build_multistep_plan(&valid_ctx(), &config, fle(), backward_amount_in_fixture())
+            .unwrap_err();
         assert_eq!(err, MultiStepError::PaperModeRequired);
     }
 
@@ -993,32 +1300,16 @@ mod tests {
             "same_token_in_out"
         );
         assert_eq!(
+            MultiStepError::InvalidFlashLoanExecutor.reason_tag(),
+            "invalid_flashloan_executor"
+        );
+        assert_eq!(
+            MultiStepError::FlashCalldataEncodeFailed.reason_tag(),
+            "flash_calldata_encode_failed"
+        );
+        assert_eq!(
             MultiStepError::RevmCacheDbPending.reason_tag(),
             "multistep_revm_cachedb_pending"
         );
-    }
-
-    // ── A.3.c.3 placeholder execution ────────────────────────────────────
-
-    /// Anti-fraud invariant: `execute_multistep_revm` MUST NOT return a
-    /// `passed = true` outcome in this phase. The success path lands in
-    /// A.3.c.3 after the simulator-v2 CacheDB integration.
-    ///
-    /// This test is the structural guard: if a future edit accidentally
-    /// makes the function return `passed = true` from the placeholder
-    /// branch, the test fails immediately.
-    #[cfg(feature = "v2-simulator")]
-    #[test]
-    fn execute_multistep_never_emits_pass_in_a3c2() {
-        // We can't construct a real Arc<SimulatorV2> without RPC, but the
-        // function rejects BEFORE simulator dispatch in every code path
-        // currently reachable, so we use the plan-builder failure path to
-        // exercise `failed_with`.
-        let _ctx = valid_ctx();
-        let _config = valid_config();
-        // The structural assertion: the function body never sets
-        // `passed = true` — verified by inspection (see source line
-        // ~exec_multistep_revm). Runtime test is impossible without RPC;
-        // the contract is enforced by the structural design.
     }
 }

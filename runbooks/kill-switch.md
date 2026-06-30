@@ -55,7 +55,7 @@ ETA: <expected resolution or "TBD">
 | Environment | URL | Admin Token Source |
 |-------------|-----|---------------------|
 | Production  | `https://api.arbitragex-v2.io` | `VAULT_PATH=secret/arbitragex/admin/prod` |
-| Staging     | `http://195.201.235.70:8080` | `VAULT_PATH=secret/arbitragex/admin/staging` |
+| Staging     | `http://<VPS_IP>:8080` | `VAULT_PATH=secret/arbitragex/admin/staging` |
 | Local       | `http://localhost:8080` | `.env` file `ADMIN_TOKEN` |
 
 ### Step 4 — Execute Activation (1:00)

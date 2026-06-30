@@ -10,6 +10,7 @@ import { verifyPR1CSP } from "./verifiers/pr-1-csp.js";
 import { verifyPR2Audit } from "./verifiers/pr-2-audit.js";
 import { verifyMonitoring } from "./verifiers/monitoring.js";
 import { verifyRunbook } from "./verifiers/runbook.js";
+import { verifyGSIM1 } from "./verifiers/g-sim-1.js";
 import { verifyAll } from "./verifiers/index.js";
 
 const NOW = () => new Date("2026-05-01T12:00:00.000Z");
@@ -206,6 +207,80 @@ describe("verifyRunbook()", () => {
     for (const n of ["a.md", "b.md", "c.md"]) await fs.writeFile(path.join(tmpDir, n), "x");
     const item = await verifyRunbook({ dir: tmpDir, minCount: 3, now: NOW });
     expect(item.status).toBe("green");
+  });
+});
+
+describe("verifyGSIM1()", () => {
+  const SIM = "http://sim-ctl.test";
+  const PROM = "http://prom.test";
+  let origReady: string | undefined;
+  let origFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    origReady = process.env["ARBX_SIMULATOR_V2_READY"];
+    origFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    if (origReady === undefined) delete process.env["ARBX_SIMULATOR_V2_READY"];
+    else process.env["ARBX_SIMULATOR_V2_READY"] = origReady;
+    globalThis.fetch = origFetch;
+  });
+
+  // fetch stub: /health → ok|throw; prom count()/increase() → sample strings.
+  // promThrows proves the prom query is NOT reached (used to assert the v2-stub
+  // short-circuit happens before any metric lookup).
+  function stubFetch(opts: { healthOk: boolean; count?: string; increase?: string; promThrows?: boolean }) {
+    globalThis.fetch = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/health")) {
+        if (!opts.healthOk) throw new Error("ECONNREFUSED");
+        return { ok: true, json: async () => ({}) };
+      }
+      if (opts.promThrows) throw new Error("prom should not be queried for a stub simulator");
+      if (u.includes("count(")) {
+        return { ok: true, json: async () => ({ data: { result: [{ value: [0, opts.count ?? "0"] }] } }) };
+      }
+      return { ok: true, json: async () => ({ data: { result: [{ value: [0, opts.increase ?? "0"] }] } }) };
+    }) as any;
+  }
+
+  it("returns red when sim-ctl /health is unreachable", async () => {
+    stubFetch({ healthOk: false });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, now: NOW });
+    expect(item.status).toBe("red");
+    expect(item.reason).toMatch(/unreachable/);
+  });
+
+  it("returns red on a stub simulator-v2 WITHOUT querying metrics (hard live-flip blocker, evaluated before samples)", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "false";
+    stubFetch({ healthOk: true, promThrows: true });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, now: NOW });
+    expect(item.status).toBe("red");
+    expect(item.reason).toMatch(/ARBX_SIMULATOR_V2_READY=false/);
+    expect(item.reason).toMatch(/stub/);
+  });
+
+  it("returns red on a stub simulator-v2 even while simulations are flowing (structural, not traffic-based)", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "false";
+    stubFetch({ healthOk: true, count: "1", increase: "42" });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, now: NOW });
+    expect(item.status).toBe("red");
+  });
+
+  it("returns yellow when simulator-v2 is ready but no recent samples (idle market)", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "true";
+    stubFetch({ healthOk: true, count: "0", increase: "0" });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, now: NOW });
+    expect(item.status).toBe("yellow");
+    expect(item.reason).toMatch(/idle|no recent samples/);
+  });
+
+  it("returns green when simulator-v2 is ready and simulations are flowing", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "true";
+    stubFetch({ healthOk: true, count: "1", increase: "42" });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, now: NOW });
+    expect(item.status).toBe("green");
+    expect(item.reason).toMatch(/42 simulations/);
   });
 });
 

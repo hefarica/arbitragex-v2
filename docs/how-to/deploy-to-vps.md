@@ -40,7 +40,7 @@ Recommended providers: Hetzner (CX41), DigitalOcean (General Purpose 4vCPU/16GB)
 
 ```bash
 # SSH into the VPS (replace with your actual IP)
-ssh root@195.201.235.70
+ssh root@<VPS_IP>
 
 # Update system packages
 apt update && apt upgrade -y
@@ -169,7 +169,7 @@ In your GitHub repository, add these secrets under **Settings > Secrets and vari
 
 | Secret Name | Description |
 |-------------|-------------|
-| `VPS_HOST` | `195.201.235.70` |
+| `VPS_HOST` | `<VPS_IP>` |
 | `VPS_USER` | `operator` |
 | `VPS_SSH_KEY` | Private SSH key for the operator user |
 | `ARBX_ADMIN_TOKEN` | Generated admin token |
@@ -210,7 +210,7 @@ If GitHub Actions is not configured, deploy manually:
 
 ```bash
 # SSH into VPS
-ssh operator@195.201.235.70
+ssh operator@<VPS_IP>
 
 cd /opt/arbitragex-v2
 
@@ -312,7 +312,7 @@ curl -s -u admin:$GRAFANA_ADMIN_PASSWORD http://localhost:3000/api/health | jq .
 Open the Platform Overview dashboard:
 ```bash
 # Via SSH tunnel (recommended)
-ssh -L 3000:localhost:3000 operator@195.201.235.70
+ssh -L 3000:localhost:3000 operator@<VPS_IP>
 # Then open http://localhost:3000 in your browser
 ```
 

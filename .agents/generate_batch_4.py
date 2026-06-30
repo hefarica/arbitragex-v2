@@ -226,7 +226,7 @@ Aplica estricto Data Shaping:
 Instrumentar la aplicación React/Next.js para tener visibilidad atómica en Producción. Integrar trazabilidad (OpenTelemetry, Sentry, Datadog), métricas de Core Web Vitals (Next.js Analytics), recolectar registros de error detallados (Source Maps decodificados) y generar alertas de salud en tiempo real.
 
 ## 2. Aplicación directa en ARBITRAGEX
-Si el frontend del VPS (195.201.235.70) colapsa, tira errores 500 silenciosos, o la hidratación falla masivamente para un operador externo, los logs en consola del navegador están perdidos. Se necesita capturarlos (Sentry / Datadog) o enviar los errores de React a un endpoint de logs de servidor (Loki/Promtail) para analizarlos en Grafana sin acceder al PC del usuario.
+Si el frontend del VPS (<VPS_IP>) colapsa, tira errores 500 silenciosos, o la hidratación falla masivamente para un operador externo, los logs en consola del navegador están perdidos. Se necesita capturarlos (Sentry / Datadog) o enviar los errores de React a un endpoint de logs de servidor (Loki/Promtail) para analizarlos en Grafana sin acceder al PC del usuario.
 
 ## 3. Problemas que resuelve
 - "Funciona en mi máquina, pero en producción arroja pantalla blanca".
@@ -441,7 +441,7 @@ Instrucciones estrictas:
 Empaquetar, construir y desplegar la aplicación React/Next.js de forma inmutable, escalable y observable. Dominar Docker multi-stage builds específicos para NodeJS, inyección de variables de entorno en Build-time vs Runtime (`NEXT_PUBLIC_`), gestión de procesos con `tini` y monitoreo de memoria base (Standalone output).
 
 ## 2. Aplicación directa en ARBITRAGEX
-El error que impidió a la aplicación conectarse usando `edge-arbx.ape-tv.net` e insistió en buscar `localhost:8787` ocurrió debido a fallos al entender en qué fase se embeben las variables `NEXT_PUBLIC_`. Esta skill garantiza despliegues atómicos sin fugas, asegurando que la imagen de Docker contenga todo lo precompilado correctamente, y que la aplicación Node.js sobreviva en el VPS (IP `195.201.235.70`).
+El error que impidió a la aplicación conectarse usando `<VPS_HOST>` e insistió en buscar `localhost:8787` ocurrió debido a fallos al entender en qué fase se embeben las variables `NEXT_PUBLIC_`. Esta skill garantiza despliegues atómicos sin fugas, asegurando que la imagen de Docker contenga todo lo precompilado correctamente, y que la aplicación Node.js sobreviva en el VPS (IP `<VPS_IP>`).
 
 ## 3. Problemas que resuelve
 - Build-time vs Runtime Env Variables: Errores persistentes de localhost en producción.

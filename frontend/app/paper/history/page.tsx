@@ -21,16 +21,16 @@ export const metadata = {
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-async function fetchJson<T>(edgeUrl: string, path: string): Promise<T | null> {
+async function fetchJson<T>(edgeUrl: string, path: string): Promise<{ data: T | null; error: string | null }> {
   try {
     const res = await fetch(`${edgeUrl}${path}`, {
       cache: "no-store",
       headers: { accept: "application/json" },
     });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch {
-    return null;
+    if (!res.ok) return { data: null, error: `HTTP ${res.status}` };
+    return { data: (await res.json()) as T, error: null };
+  } catch (e) {
+    return { data: null, error: (e as Error).message };
   }
 }
 
@@ -42,7 +42,15 @@ export default async function PaperHistoryPage() {
     fetchJson(EDGE_URL, "/api/paper/history/summary?hours=24"),
   ]);
 
-  const initialData = { history, summary };
+  // Fail-honest: thread an SSR fetch-failure sentinel so the client shows a
+  // degraded banner on first paint instead of the healthy "no runs yet" empty.
+  const initialError = history.error
+    ? `history ${history.error}`
+    : summary.error
+    ? `summary ${summary.error}`
+    : null;
+
+  const initialData = { history: history.data, summary: summary.data, initialError };
 
   return (
     <>

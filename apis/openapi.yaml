@@ -1,11 +1,30 @@
 openapi: 3.1.0
 info:
-  title: arbitragex-v2 API
-  version: 0.1.0
+  title: ArbitrageX v2 — Public Operator API
+  version: 0.2.0
   description: |
-    Operational and administrative API for the ArbitrageX V2 trading system.
-    Provides health probes, configuration, opportunity feeds, execution
-    telemetry, risk metrics, and the emergency kill-switch.
+    Public operator/observer surface of the ArbitrageX V2 console.
+
+    SOURCE OF TRUTH (FASE 4): this document is reconciled against the running
+    code, not aspiration. The effective public contract is co-owned by:
+      - `edge/worker` (Cloudflare Worker) — the public entry point. It exposes a
+        mostly `/v1`-less path set and proxies to the internal api-server,
+        rewriting paths (e.g. public `GET /api/opportunities/live` →
+        upstream `GET /api/v1/opportunities/live`) and renaming a few
+        (public `GET /api/killswitch/status` → upstream `GET /admin/killswitch/status`).
+      - `backend/api-server` — the HTTP/data backend. Its own `/api/v1/*` and
+        `/admin/*` paths are internal-shaped and are NOT the public contract.
+
+    The paths below are the PUBLIC (edge) paths. Read endpoints are open; write
+    and admin endpoints require the `x-arbx-admin-token` header (see security).
+
+    Scope (FASE 4 Inc 1 + Inc 1b): the operator/read surface, the kill-switch, and
+    the edge-exposed admin-write surface (session, trading-config, cartridge
+    lifecycle, wallet-topology, chains). api-server-internal admin routes
+    (blacklist, circuit-breakers, relays, scoring, credentials) are NOT edge-public
+    and are intentionally excluded from this public contract. Several request/
+    response bodies are documented as open objects where the runtime shape is
+    owned by api-server and was not verified field-by-field (no spec fiction).
   contact:
     name: ArbitrageX SRE
     email: sre@arbitragex.io
@@ -13,633 +32,777 @@ info:
     name: MIT
     identifier: MIT
 servers:
-  - url: http://localhost:8080
-    description: Local development
-  - url: http://195.201.235.70:8080
-    description: Staging / Canary
-  - url: https://api.arbitragex-v2.io
-    description: Production (TLS)
-security:
-  - AdminToken: []
+  - url: /
+    description: >
+      Public origin served by the edge worker (edge/worker), which proxies to
+      the internal api-server. The concrete public hostname is
+      environment-specific and intentionally not committed (the [env.production]
+      block in wrangler.toml is commented out); paths below are relative to it.
 tags:
   - name: Health
-    description: Liveness, readiness, and general health probes
-  - name: System
-    description: Runtime guard state and system-level telemetry
-  - name: Config
-    description: Runtime configuration and feature flags
+    description: Liveness and public health snapshot
   - name: Opportunities
-    description: Arbitrage opportunity discovery and listing
+    description: Live arbitrage opportunity feed (observe-only)
   - name: Executions
-    description: Trade execution logs and audit trail
+    description: Recent execution telemetry
   - name: Risk
-    description: Risk limits, exposure, and circuit-breaker status
+    description: Risk alerts and circuit-breaker status
+  - name: Recon
+    description: Reconciliation (PnL / attempts / revert) summaries
+  - name: Readiness
+    description: Paper→live readiness gate (observe-only)
+  - name: Operations
+    description: Operational KPI / S-curve / variance mirrors
+  - name: Strategies
+    description: Strategy catalog, runtime status, cartridges (read)
+  - name: Config
+    description: Effective runtime configuration (read)
+  - name: Wallet
+    description: Wallet posture — read-only, BROADCAST_DISABLED
+  - name: System
+    description: Feature manifest and config drift
   - name: Admin
-    description: Administrative operations including kill-switch
+    description: Operator-gated controls (x-arbx-admin-token)
 paths:
   /health:
     get:
-      tags:
-        - Health
-      summary: Comprehensive health check
-      description: Returns composite health of all subsystems.
+      tags: [Health]
+      summary: Liveness probe
+      description: Synthesized by the edge worker; never proxied.
       security: []
       operationId: getHealth
       responses:
         "200":
-          description: All subsystems healthy
+          description: Worker is alive
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/HealthResponse"
-        "503":
-          description: One or more subsystems degraded or down
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HealthResponse"
-  /ready:
+              schema: { $ref: "#/components/schemas/EdgeHealth" }
+  /status:
     get:
-      tags:
-        - Health
-      summary: Readiness probe
-      description: Indicates whether the process is ready to accept traffic.
+      tags: [Health]
+      summary: Public health snapshot
+      description: >
+        api-server upstream probes + kill-switch state. For browser `Accept:
+        text/html` the edge returns a 404 sentinel (handled by the SPA layer).
       security: []
-      operationId: getReady
+      operationId: getStatus
       responses:
         "200":
-          description: Ready
+          description: Health snapshot
           content:
-            text/plain:
-              schema:
-                type: string
-                example: ready
-        "503":
-          description: Not ready (initializing or shutting down)
-  /live:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusResponse" }
+  /api/opportunities/live:
     get:
-      tags:
-        - Health
-      summary: Liveness probe
-      description: Indicates whether the process is alive.
+      tags: [Opportunities]
+      summary: Live arbitrage opportunity feed
+      description: >
+        Edge `GET /api/opportunities/live` → upstream `GET /api/v1/opportunities/live`.
+        Observe-only. Item shape mirrors the opportunities store and is not
+        strictly schematized at this layer.
       security: []
-      operationId: getLive
-      responses:
-        "200":
-          description: Alive
-          content:
-            text/plain:
-              schema:
-                type: string
-                example: alive
-        "503":
-          description: Dead (should be restarted)
-  /api/system/guard-state:
-    get:
-      tags:
-        - System
-      summary: Get current guard state
-      description: Returns the current guard/circuit-breaker state of the system.
-      operationId: getGuardState
-      responses:
-        "200":
-          description: Current guard state
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/GuardState"
-  /api/config:
-    get:
-      tags:
-        - Config
-      summary: Get runtime configuration
-      description: Returns non-sensitive runtime configuration.
-      operationId: getConfig
-      responses:
-        "200":
-          description: Runtime configuration
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RuntimeConfig"
-    put:
-      tags:
-        - Config
-      summary: Update runtime configuration
-      description: Updates runtime configuration values dynamically.
-      operationId: updateConfig
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RuntimeConfigUpdate"
-      responses:
-        "200":
-          description: Configuration updated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RuntimeConfig"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-  /api/opportunities:
-    get:
-      tags:
-        - Opportunities
-      summary: List opportunities
-      description: Returns a list of current arbitrage opportunities.
-      operationId: listOpportunities
+      operationId: getOpportunitiesLive
       parameters:
-        - name: chain
+        - name: viable_only
           in: query
-          schema:
-            type: string
-          description: Filter by blockchain chain ID
-        - name: minProfitBps
-          in: query
-          schema:
-            type: integer
-            minimum: 0
-          description: Minimum profit in basis points
+          schema: { type: boolean }
         - name: limit
           in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-          description: Maximum number of results
+          schema: { type: integer, minimum: 1, maximum: 100 }
       responses:
         "200":
-          description: List of opportunities
+          description: Opportunity snapshot
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/OpportunityList"
-        "429":
-          $ref: "#/components/responses/RateLimited"
-  /api/executions:
+              schema: { $ref: "#/components/schemas/ListEnvelope" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /api/executions/recent:
     get:
-      tags:
-        - Executions
-      summary: List executions
-      description: Returns trade execution logs and audit trail.
-      operationId: listExecutions
+      tags: [Executions]
+      summary: Recent executions
+      description: Edge `/api/executions/recent` → upstream `/api/v1/executions/recent` (executions JOIN opportunities).
+      security: []
+      operationId: getExecutionsRecent
+      responses:
+        "200":
+          description: Recent executions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListEnvelope" }
+  /api/risk/alerts:
+    get:
+      tags: [Risk]
+      summary: Risk alerts feed
+      description: Edge `/api/risk/alerts` → upstream `/api/v1/risk/alerts` (risk_events).
+      security: []
+      operationId: getRiskAlerts
+      responses:
+        "200":
+          description: Risk alerts
+          content: { application/json: { schema: { $ref: "#/components/schemas/ListEnvelope" } } }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /api/risk/circuit-breakers/status:
+    get:
+      tags: [Risk]
+      summary: Circuit-breaker status (the real guard surface)
+      security: []
+      operationId: getCircuitBreakerStatus
+      responses:
+        "200":
+          description: Circuit-breaker status
+          content: { application/json: { schema: { type: object, additionalProperties: true } } }
+  /api/risk/circuit-breakers/events:
+    get:
+      tags: [Risk]
+      summary: Circuit-breaker events
+      security: []
+      operationId: getCircuitBreakerEvents
+      responses:
+        "200":
+          description: Circuit-breaker events
+          content: { application/json: { schema: { $ref: "#/components/schemas/ListEnvelope" } } }
+  /api/recon/summary:
+    get:
+      tags: [Recon]
+      summary: Reconciliation summary (PnL / attempts / revert)
+      security: []
+      operationId: getReconSummary
+      responses:
+        "200":
+          description: Recon summary
+          content: { application/json: { schema: { type: object, additionalProperties: true } } }
+  /api/recon/timeseries:
+    get:
+      tags: [Recon]
+      summary: Reconciliation time-series (bucketed)
+      security: []
+      operationId: getReconTimeseries
+      responses:
+        "200":
+          description: Bucketed recon series
+          content: { application/json: { schema: { type: object, additionalProperties: true } } }
+  /api/readiness:
+    get:
+      tags: [Readiness]
+      summary: Live-readiness gate (17 dynamically verified items)
+      description: Edge `/api/readiness` → upstream `/api/v1/readiness`. Observe-only; never a false green. `?force` bypasses cache.
+      security: []
+      operationId: getReadiness
       parameters:
-        - name: from
+        - name: force
           in: query
-          schema:
-            type: string
-            format: date-time
-          description: Start timestamp (ISO 8601)
-        - name: to
-          in: query
-          schema:
-            type: string
-            format: date-time
-          description: End timestamp (ISO 8601)
-        - name: status
-          in: query
-          schema:
-            type: string
-            enum:
-              - pending
-              - submitted
-              - confirmed
-              - failed
-              - reverted
-          description: Filter by execution status
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 500
-            default: 50
-          description: Maximum number of results
-        - name: cursor
-          in: query
-          schema:
-            type: string
-          description: Pagination cursor
+          schema: { type: boolean }
       responses:
         "200":
-          description: Paginated execution list
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ExecutionList"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "429":
-          $ref: "#/components/responses/RateLimited"
-  /admin/killswitch:
-    post:
-      tags:
-        - Admin
-      summary: Activate or deactivate kill switch
-      description: |
-        Emergency kill-switch. When activated, all trading operations are
-        immediately halted and no new transactions are submitted.
-        Requires admin token.
-      operationId: postKillswitch
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/KillSwitchRequest"
-      responses:
-        "200":
-          description: Kill-switch state changed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/KillSwitchResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "409":
-          description: Kill-switch already in requested state
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "429":
-          $ref: "#/components/responses/RateLimited"
+          description: Readiness report
+          content: { application/json: { schema: { type: object, additionalProperties: true } } }
+  /api/readiness/blockers:
     get:
-      tags:
-        - Admin
-      summary: Get kill-switch state
-      description: Returns the current kill-switch state.
-      operationId: getKillswitch
+      tags: [Readiness]
+      summary: Derived readiness blockers
+      security: []
+      operationId: getReadinessBlockers
+      responses:
+        "200": { description: Blockers, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/readiness/decision:
+    get:
+      tags: [Readiness]
+      summary: GO / NO-GO decision
+      security: []
+      operationId: getReadinessDecision
+      responses:
+        "200": { description: Decision, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/readiness/steps:
+    get:
+      tags: [Readiness]
+      summary: Readiness stepper state
+      security: []
+      operationId: getReadinessSteps
+      responses:
+        "200": { description: Steps, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/agents/status:
+    get:
+      tags: [Readiness]
+      summary: Agent-team verdicts
+      security: []
+      operationId: getAgentsStatus
+      responses:
+        "200": { description: Agents status, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/scoring/status:
+    get:
+      tags: [Readiness]
+      summary: Confidence-scoring status
+      security: []
+      operationId: getScoringStatus
+      responses:
+        "200": { description: Scoring status, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/scanner/heartbeat:
+    get:
+      tags: [Readiness]
+      summary: Scanner heartbeat snapshot
+      security: []
+      operationId: getScannerHeartbeat
+      responses:
+        "200": { description: Heartbeat present, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "404": { description: No heartbeat recorded yet }
+  /api/operations/kpi:
+    get:
+      tags: [Operations]
+      summary: Operations KPI mirror
+      security: []
+      operationId: getOperationsKpi
+      responses:
+        "200": { description: KPI, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/operations/scurve:
+    get:
+      tags: [Operations]
+      summary: Operations S-curve mirror
+      security: []
+      operationId: getOperationsScurve
+      responses:
+        "200": { description: S-curve, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/operations/variance:
+    get:
+      tags: [Operations]
+      summary: Operations variance mirror
+      security: []
+      operationId: getOperationsVariance
+      responses:
+        "200": { description: Variance, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/strategies/runtime-status:
+    get:
+      tags: [Strategies]
+      summary: Strategy runtime status
+      security: []
+      operationId: getStrategiesRuntimeStatus
+      responses:
+        "200": { description: Runtime status, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/strategy-catalog:
+    get:
+      tags: [Strategies]
+      summary: Strategy catalog
+      security: []
+      operationId: getStrategyCatalog
+      responses:
+        "200": { description: Catalog, content: { application/json: { schema: { $ref: "#/components/schemas/ListEnvelope" } } } }
+  /api/strategy-catalog/active:
+    get:
+      tags: [Strategies]
+      summary: Active strategies
+      security: []
+      operationId: getStrategyCatalogActive
+      responses:
+        "200": { description: Active strategies, content: { application/json: { schema: { $ref: "#/components/schemas/ListEnvelope" } } } }
+  /api/cartridges:
+    get:
+      tags: [Strategies]
+      summary: Strategy-forge cartridges (read)
+      security: []
+      operationId: getCartridges
+      responses:
+        "200": { description: Cartridges, content: { application/json: { schema: { $ref: "#/components/schemas/ListEnvelope" } } } }
+  /api/cartridge-filters:
+    get:
+      tags: [Strategies]
+      summary: Cartridge filters (read)
+      security: []
+      operationId: getCartridgeFilters
+      responses:
+        "200": { description: Filters, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/route-discovery-outcomes:
+    get:
+      tags: [Strategies]
+      summary: Route-discovery outcomes
+      security: []
+      operationId: getRouteDiscoveryOutcomes
+      responses:
+        "200": { description: Outcomes, content: { application/json: { schema: { $ref: "#/components/schemas/ListEnvelope" } } } }
+  /api/route-discovery-outcomes/summary:
+    get:
+      tags: [Strategies]
+      summary: Route-discovery outcomes summary
+      security: []
+      operationId: getRouteDiscoveryOutcomesSummary
+      responses:
+        "200": { description: Summary, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/dexes:
+    get:
+      tags: [Strategies]
+      summary: DEX registry (read)
+      security: []
+      operationId: getDexes
+      responses:
+        "200": { description: DEXes, content: { application/json: { schema: { $ref: "#/components/schemas/ListEnvelope" } } } }
+  /api/pools:
+    get:
+      tags: [Strategies]
+      summary: Pool registry (read)
+      security: []
+      operationId: getPools
+      responses:
+        "200": { description: Pools, content: { application/json: { schema: { $ref: "#/components/schemas/ListEnvelope" } } } }
+  /api/config/current:
+    get:
+      tags: [Config]
+      summary: Effective runtime configuration
+      description: Edge `/api/config/current` → upstream `/api/v1/config/current`. Secrets excluded.
+      security: []
+      operationId: getConfigCurrent
+      responses:
+        "200": { description: Effective config, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/metrics/paper-shadow:
+    get:
+      tags: [Operations]
+      summary: Paper-shadow metrics
+      security: []
+      operationId: getPaperShadowMetrics
+      responses:
+        "200": { description: Paper-shadow metrics, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/sim-ctl/fork-status:
+    get:
+      tags: [Operations]
+      summary: Fork-simulation control status
+      security: []
+      operationId: getForkStatus
+      responses:
+        "200": { description: Fork status, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/rpc/status:
+    get:
+      tags: [Operations]
+      summary: RPC endpoint status
+      security: []
+      operationId: getRpcStatus
+      responses:
+        "200": { description: RPC status, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/wallet/status:
+    get:
+      tags: [Wallet]
+      summary: Wallet status (read-only)
+      description: Read-only. The wallet surface is BROADCAST_DISABLED; intents return SIMULATION_REQUIRED.
+      security: []
+      operationId: getWalletStatus
+      responses:
+        "200": { description: Wallet status, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/wallet/safety:
+    get:
+      tags: [Wallet]
+      summary: Wallet safety posture (read-only)
+      security: []
+      operationId: getWalletSafety
+      responses:
+        "200": { description: Safety posture, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/contracts:
+    get:
+      tags: [System]
+      summary: Contract registry (honest-empty)
+      security: []
+      operationId: getContracts
+      responses:
+        "200": { description: Contracts, content: { application/json: { schema: { $ref: "#/components/schemas/ListEnvelope" } } } }
+  /api/capital-gates:
+    get:
+      tags: [System]
+      summary: Capital safety gates
+      security: []
+      operationId: getCapitalGates
+      responses:
+        "200": { description: Capital gates, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/system/feature_manifest:
+    get:
+      tags: [System]
+      summary: Feature manifest
+      security: []
+      operationId: getFeatureManifest
+      responses:
+        "200": { description: Feature manifest, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/system/drift:
+    get:
+      tags: [System]
+      summary: Config-hash drift report
+      security: []
+      operationId: getSystemDrift
+      responses:
+        "200": { description: Drift report, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /api/killswitch/status:
+    get:
+      tags: [Admin]
+      summary: Kill-switch state (read)
+      description: >
+        Edge `GET /api/killswitch/status` → upstream `GET /admin/killswitch/status`.
+        Admin-token gated.
+      operationId: getKillswitchStatus
+      security:
+        - AdminToken: []
       responses:
         "200":
           description: Kill-switch state
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/KillSwitchResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
+              schema: { $ref: "#/components/schemas/KillSwitchState" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503":
+          description: Kill-switch state unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/killswitch/{action}:
+    post:
+      tags: [Admin]
+      summary: Toggle the kill-switch (semantic action)
+      description: >
+        Edge `POST /api/killswitch/{action}` (activate|deactivate) → upstream
+        `POST /admin/killswitch` (mapped to `{enabled}`). Admin-token gated.
+      operationId: postKillswitchAction
+      security:
+        - AdminToken: []
+      parameters:
+        - name: action
+          in: path
+          required: true
+          schema: { type: string, enum: [activate, deactivate] }
+      responses:
+        "200":
+          description: New kill-switch state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KillSwitchState" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /admin/killswitch:
+    post:
+      tags: [Admin]
+      summary: Set the kill-switch (raw upstream contract)
+      description: >
+        The api-server's raw kill-switch write, also reachable at the edge as
+        `POST /admin/killswitch`. Admin-token gated. Body is `enabled` (NOT
+        `active`); `reason` and `triggered_by` are optional.
+      operationId: postKillswitch
+      security:
+        - AdminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KillSwitchRequest" }
+      responses:
+        "200":
+          description: New kill-switch state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KillSwitchState" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /admin/audit:
+    get:
+      tags: [Admin]
+      summary: Paginated audit log
+      operationId: getAdminAudit
+      security:
+        - AdminToken: []
+      responses:
+        "200":
+          description: Audit log page
+          content: { application/json: { schema: { $ref: "#/components/schemas/ListEnvelope" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  # ─── Admin write surface (FASE 4 Inc 1b) — every operation x-arbx-admin-token gated ───
+  # Request/response bodies are documented as open objects where the runtime shape
+  # is owned by api-server and was not verified field-by-field (no spec fiction).
+  /admin/session:
+    post:
+      tags: [Admin]
+      summary: Establish an admin session (httpOnly cookie)
+      description: >
+        Edge-only. Validates the supplied admin token (by probing the upstream
+        kill-switch with a sentinel body) and, on success, sets the
+        `arbx_admin_session` httpOnly cookie. Returns `{ ok, expires_at }`.
+      operationId: postAdminSession
+      security: [{ AdminToken: [] }]
+      responses:
+        "200": { description: Session established, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/session/logout:
+    post:
+      tags: [Admin]
+      summary: Clear the admin session cookie
+      description: Edge-only; clears the admin session cookies (no upstream call).
+      operationId: postAdminSessionLogout
+      security: [{ AdminToken: [] }]
+      responses:
+        "200": { description: Session cleared }
+  /admin/trading-config/{chain_id}:
+    put:
+      tags: [Admin]
+      summary: Update per-chain trading config (hot-reloads the searcher)
+      operationId: putTradingConfig
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: chain_id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: true, description: "trading_config payload (shape owned by api-server)" } } }
+      responses:
+        "200": { description: Updated config, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /admin/cartridge-filters/{chain_id}:
+    put:
+      tags: [Admin]
+      summary: Update per-chain cartridge filters
+      operationId: putCartridgeFilters
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: chain_id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: true } } }
+      responses:
+        "200": { description: Updated filters, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /admin/cartridges:
+    post:
+      tags: [Admin]
+      summary: Create a strategy-forge cartridge
+      operationId: postCartridge
+      security: [{ AdminToken: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: true } } }
+      responses:
+        "200": { description: Created cartridge, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /admin/cartridges/{slug}/pause:
+    post:
+      tags: [Admin]
+      summary: Pause a cartridge
+      operationId: pauseCartridge
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Paused }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /admin/cartridges/{slug}/resume:
+    post:
+      tags: [Admin]
+      summary: Resume a cartridge
+      operationId: resumeCartridge
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Resumed }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /admin/cartridges/{slug}:
+    delete:
+      tags: [Admin]
+      summary: Delete a cartridge
+      operationId: deleteCartridge
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/admin/topology/snapshot:
+    get:
+      tags: [Admin]
+      summary: Wallet-topology snapshot (admin-gated read)
+      operationId: getTopologySnapshot
+      security: [{ AdminToken: [] }]
+      responses:
+        "200": { description: Snapshot, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/admin/topology/mutations:
+    post:
+      tags: [Admin]
+      summary: Apply wallet-topology mutations
+      operationId: postTopologyMutations
+      security: [{ AdminToken: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: true } } }
+      responses:
+        "200": { description: Applied, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/admin/chains:
+    get:
+      tags: [Admin]
+      summary: List configured chains (admin)
+      operationId: getAdminChains
+      security: [{ AdminToken: [] }]
+      responses:
+        "200": { description: Chains, content: { application/json: { schema: { $ref: "#/components/schemas/ListEnvelope" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Admin]
+      summary: Add a chain
+      operationId: postAdminChain
+      security: [{ AdminToken: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: true } } }
+      responses:
+        "200": { description: Added, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/admin/chains/{chain_id}:
+    get:
+      tags: [Admin]
+      summary: Get a chain (admin)
+      operationId: getAdminChain
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: chain_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: Chain, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [Admin]
+      summary: Update a chain
+      operationId: putAdminChain
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: chain_id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: true } } }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [Admin]
+      summary: Remove a chain
+      operationId: deleteAdminChain
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: chain_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: Removed }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/admin/chains/{chain_id}/probe:
+    post:
+      tags: [Admin]
+      summary: Probe a chain's RPC health
+      operationId: probeAdminChain
+      security: [{ AdminToken: [] }]
+      parameters:
+        - { name: chain_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: Probe result, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 components:
   securitySchemes:
     AdminToken:
       type: apiKey
       in: header
-      name: x-admin-token
-      description: Admin authentication token
+      name: x-arbx-admin-token
+      description: >
+        Operator/admin token. Required by every write and admin-gated route
+        (HTTP and WebSocket). The edge also accepts the sentinel
+        `__session_active__` to mean "use the arbx_admin_session cookie".
   schemas:
-    HealthResponse:
+    EdgeHealth:
       type: object
-      required:
-        - status
-        - version
-        - checks
+      description: Worker-synthesized liveness body.
+      required: [ok, service]
       properties:
-        status:
-          type: string
-          enum:
-            - healthy
-            - degraded
-            - unhealthy
-        version:
-          type: string
-          example: 0.1.0
-        checks:
-          type: object
-          additionalProperties:
-            type: object
-            required:
-              - status
-            properties:
-              status:
-                type: string
-                enum:
-                  - pass
-                  - fail
-                  - warn
-              latencyMs:
-                type: integer
-              message:
-                type: string
-          example:
-            rpc_eth:
-              status: pass
-              latencyMs: 12
-            rpc_bsc:
-              status: warn
-              latencyMs: 450
-              message: high latency
-            db:
-              status: pass
-              latencyMs: 2
-    GuardState:
+        ok: { type: boolean }
+        service: { type: string }
+        env: { type: string }
+    StatusResponse:
       type: object
-      required:
-        - state
-        - since
-        - reason
+      description: api-server /status snapshot.
+      required: [ok, services, version]
       properties:
-        state:
-          type: string
-          enum:
-            - open
-            - half_open
-            - closed
-          description: Circuit-breaker state
-        since:
-          type: string
-          format: date-time
-        reason:
-          type: string
-        triggeredBy:
-          type: string
-          description: Component that triggered the guard
-    RuntimeConfig:
-      type: object
-      required:
-        - version
-        - updatedAt
-      properties:
-        version:
-          type: string
-        updatedAt:
-          type: string
-          format: date-time
-        features:
-          type: object
-          additionalProperties:
-            type: boolean
-        thresholds:
-          type: object
-          additionalProperties:
-            type: number
-        rpcEndpoints:
-          type: array
-          items:
-            type: object
-            properties:
-              chain:
-                type: string
-              url:
-                type: string
-                format: uri
-              priority:
-                type: integer
-    RuntimeConfigUpdate:
-      type: object
-      properties:
-        features:
-          type: object
-          additionalProperties:
-            type: boolean
-        thresholds:
-          type: object
-          additionalProperties:
-            type: number
-    Opportunity:
-      type: object
-      required:
-        - id
-        - chain
-        - tokenIn
-        - tokenOut
-        - profitBps
-        - timestamp
-      properties:
-        id:
-          type: string
-          format: uuid
-        chain:
-          type: string
-        tokenIn:
-          type: string
-        tokenOut:
-          type: string
-        amountIn:
-          type: string
-        expectedOut:
-          type: string
-        profitBps:
-          type: integer
-        dexA:
-          type: string
-        dexB:
-          type: string
-        timestamp:
-          type: string
-          format: date-time
-        ttlMs:
-          type: integer
-    OpportunityList:
-      type: object
-      required:
-        - items
-        - total
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/Opportunity"
-        total:
-          type: integer
-        nextCursor:
-          type: string
-    Execution:
-      type: object
-      required:
-        - id
-        - opportunityId
-        - status
-        - chain
-        - timestamp
-      properties:
-        id:
-          type: string
-          format: uuid
-        opportunityId:
-          type: string
-          format: uuid
-        status:
-          type: string
-          enum:
-            - pending
-            - submitted
-            - confirmed
-            - failed
-            - reverted
-        chain:
-          type: string
-        txHash:
-          type: string
-        gasUsed:
-          type: string
-        gasPrice:
-          type: string
-        effectiveProfitBps:
-          type: integer
-        revertReason:
-          type: string
-        timestamp:
-          type: string
-          format: date-time
-        confirmedAt:
-          type: string
-          format: date-time
-    ExecutionList:
-      type: object
-      required:
-        - items
-        - total
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/Execution"
-        total:
-          type: integer
-        nextCursor:
-          type: string
-    KillSwitchRequest:
-      type: object
-      required:
-        - active
-        - reason
-      properties:
-        active:
-          type: boolean
-        reason:
-          type: string
-          minLength: 1
-          maxLength: 500
-        durationMs:
-          type: integer
-          description: Optional auto-resume after N milliseconds
-          minimum: 1000
-    KillSwitchResponse:
-      type: object
-      required:
-        - active
-        - changedAt
-        - changedBy
-      properties:
-        active:
-          type: boolean
-        changedAt:
-          type: string
-          format: date-time
-        changedBy:
-          type: string
-        reason:
-          type: string
-        autoResumeAt:
-          type: string
-          format: date-time
-    Error:
-      type: object
-      required:
-        - code
-        - message
-      properties:
-        code:
-          type: string
-          description: Machine-readable error code
-        message:
-          type: string
-          description: Human-readable error description
-        details:
+        ok: { type: boolean }
+        services:
           type: object
           additionalProperties: true
-        requestId:
+          description: Per-upstream probe results.
+        killswitch:
+          type: object
+          additionalProperties: true
+        env: { type: string }
+        version: { type: string }
+        ts: { type: string, format: date-time }
+    ListEnvelope:
+      type: object
+      description: >
+        Generic list-bearing response. Exact item schema is endpoint-specific
+        and intentionally not fabricated here (FASE 4 documents shape only where
+        verified). Most list endpoints return either a bare array or
+        `{ data: [...] }` / `{ items: [...] }`.
+      additionalProperties: true
+    KillSwitchRequest:
+      type: object
+      description: Body for POST /admin/killswitch (verified against KillSwitchReq zod).
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+          description: true = armed (executions blocked); false = disabled.
+        reason:
           type: string
-          format: uuid
+          maxLength: 500
+          description: Optional — recorded in the audit log.
+        triggered_by:
+          type: string
+          maxLength: 200
+          description: Optional actor; defaults to the x-arbx-actor header.
+    KillSwitchState:
+      type: object
+      description: >
+        Current kill-switch state object (the raw upstream response). Field set
+        is the persisted state; documented as an open object because the runtime
+        shape is the stored record, not a fabricated contract.
+      additionalProperties: true
+      properties:
+        enabled: { type: boolean }
+        reason: { type: [string, "null"] }
+        triggered_by: { type: [string, "null"] }
+        updated_at: { type: string, format: date-time }
+    Error:
+      type: object
+      description: Error envelope. Note api-server gate errors use `{ error, details? }`.
+      properties:
+        error: { type: string }
+        code: { type: string }
+        message: { type: string }
+        details: { type: object, additionalProperties: true }
   responses:
     BadRequest:
-      description: Invalid request parameters
+      description: 'Invalid request — api-server returns { error: invalid_request, details }.'
       content:
         application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-          examples:
-            PROCESS_DOWN:
-              summary: Required process is down
-              value:
-                code: PROCESS_DOWN
-                message: Required dependency process is not running
-            NO_RPC_CONFIGURED:
-              summary: No RPC endpoint configured
-              value:
-                code: NO_RPC_CONFIGURED
-                message: No RPC endpoint configured for requested chain
+          schema: { $ref: "#/components/schemas/Error" }
     Unauthorized:
-      description: Missing or invalid authentication
+      description: Missing or invalid x-arbx-admin-token
       content:
         application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
+          schema: { $ref: "#/components/schemas/Error" }
           examples:
-            AUTH_UNAUTHORIZED:
-              summary: Unauthorized
-              value:
-                code: AUTH_UNAUTHORIZED
-                message: Missing or invalid x-admin-token header
-    Forbidden:
-      description: Insufficient permissions
+            missing_admin_token:
+              value: { error: missing_admin_token }
+    Unavailable:
+      description: Upstream dependency (DB/Redis) unavailable
       content:
         application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-    ValidationError:
-      description: Request validation failed
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
+          schema: { $ref: "#/components/schemas/Error" }
           examples:
-            VALIDATION_ERROR:
-              summary: Validation error
-              value:
-                code: VALIDATION_ERROR
-                message: Request body failed validation
-                details:
-                  field: reason
-                  issue: must not be empty
+            db_unavailable:
+              value: { error: db_unavailable }
     RateLimited:
-      description: Rate limit exceeded
-      headers:
-        Retry-After:
-          description: Seconds until retry is allowed
-          schema:
-            type: integer
+      description: Rate limit exceeded (edge or api-server)
       content:
         application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
+          schema: { $ref: "#/components/schemas/Error" }
           examples:
-            RATE_LIMITED:
-              summary: Rate limited
-              value:
-                code: RATE_LIMITED
-                message: Too many requests, retry after the indicated interval
-    InternalError:
-      description: Internal server error
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
-          examples:
-            PROCESS_UP_DEPENDENCY_DEGRADED:
-              summary: Dependency degraded
-              value:
-                code: PROCESS_UP_DEPENDENCY_DEGRADED
-                message: Process is running but a dependency is degraded
-            INTERNAL_ERROR:
-              summary: Generic internal error
-              value:
-                code: INTERNAL_ERROR
-                message: An unexpected internal error occurred
+            rate_limited:
+              value: { error: rate_limited }

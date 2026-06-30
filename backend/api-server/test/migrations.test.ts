@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { GenericContainer, StartedTestContainer } from "testcontainers";
+import { GenericContainer, StartedTestContainer, Wait } from "testcontainers";
 import { Pool } from "pg";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -14,6 +14,10 @@ beforeAll(async () => {
       POSTGRES_DB: "arbitragex",
     })
     .withExposedPorts(5432)
+    // Postgres logs "ready to accept connections" TWICE (bootstrap temp server,
+    // then the real one). Matching the 1st caused `read ECONNRESET` when PG
+    // restarted under the just-opened pool. Wait for the 2nd occurrence.
+    .withWaitStrategy(Wait.forLogMessage("database system is ready to accept connections", 2))
     .start();
   pool = new Pool({
     host: container.getHost(),
