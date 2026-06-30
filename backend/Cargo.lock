@@ -5442,6 +5442,7 @@ dependencies = [
  "ethers",
  "futures-util",
  "hex",
+ "prioritization-spine",
  "redis",
  "reqwest 0.12.28",
  "serde",

@@ -234,8 +234,11 @@ export function mountStrategyRuntimeStatus(
       });
 
     } catch (e) {
+      // Fail-honest: surface as 503 (degraded/retryable), not a silent 500.
+      // The inner PG path already returns 503; this backstop matches it. Cause
+      // is logged; body stays detail-free (no raw error leak to the client).
       deps.logger.warn({ event: "strategy_status.unhandled_error", err: (e as Error).message });
-      res.status(500).json({ error: "internal_error", detail: (e as Error).message });
+      res.status(503).json({ error: "runtime_status_unavailable" });
     }
   });
 
