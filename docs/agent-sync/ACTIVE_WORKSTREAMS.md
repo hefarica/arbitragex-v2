@@ -6,7 +6,7 @@
 
 | Workstream | PR(s) | State | Topic |
 |---|---|---|---|
-| **S4 — Sepolia M5 pipeline** | #229 `feat/m5-sepolia-validation` | DRAFT | manual Sepolia validation CI (fail-closed). Blocks FASE 5. |
+| **S4 — Sepolia M5 pipeline** | #229 `feat/m5-sepolia-validation` | **MERGED** (main `b2b7da04`, 2026-07-01, operator-authorized draft override) | manual Sepolia validation CI (fail-closed, dry-run default, `environment: sepolia-deploy`-gated). FASE 5 mechanism now on main; awaits operator secrets. |
 | **S5 — VPS IP scrub (P2-1)** | #226 `hardening/p0-ip-scrub-functions` | OPEN, +40/-40, 21 workflow files | env-ref the prod VPS IP in CI. Addresses dossier P2-1. |
 | **Dependency upgrades (→ P0-2)** | #181 wagmi 2→3 · #145 rmcp 0.3.2→2.0 · #175 siwe · #144 redis · #220 npm-minor · #233 cargo-minor | OPEN (dependabot) | resolve npm+cargo audit advisories behind the expired allowlist. Operator/S5 sequences the upgrade sprint. |
 | **Coordination/readiness docs** | #241 · #243 · #239 · #236 | OPEN/DRAFT | overlapping ledgers — consolidate (see LEDGER). |
