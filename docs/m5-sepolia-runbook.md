@@ -23,10 +23,10 @@ This runbook makes the M2 fix (executor cross-DEX `_runRoute` + carry-validated-
 [ ] DEPLOYER_PRIVATE_KEY  — testnet deployer key (NOT mainnet). Holds DEFAULT_ADMIN/ADMIN_ROLE initially.
 [ ] SEPOLIA_RPC           — Sepolia RPC URL (Alchemy/Infura). chain_id 11155111.
 [ ] ETHERSCAN_API_KEY     — for --verify on Sepolia Etherscan.
-[ ] AAVE_POOL_ADDRESS     — Aave V3 Sepolia Pool.
-                            CANDIDATE: 0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951
-                            ⚠️ PENDING MANUAL CONFIRMATION against https://aave.com/docs
-                            (testnet markets are redeployed; verify .code.length > 0 on-chain).
+[x] AAVE_POOL_ADDRESS      = 0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951  (Aave V3 Sepolia Pool)
+                            ✅ CONFIRMED on-chain 2026-07-01 (chainId 11155111): contract present
+                            (4847 bytes), ADDRESSES_PROVIDER 0x012bAC54348C0E635dCAc9D5FB99f06F24136C9A,
+                            getReservesList() = 9 reserves (see Section 6 for tokenIn candidates).
 [ ] EXECUTION_SIGNER      — the off-chain EOA that triggers requestFlashLoan ("the caller").
 [ ] Sepolia ETH faucet balance on deployer + signer (gas).
 ```
@@ -111,16 +111,28 @@ cast call $AE  "approvedSelectors(address,bytes4)(bool)" $RA $SEL --rpc-url $SEP
 
 ---
 
-## Section 6 — Aave Sepolia liquidity (PENDING manual confirmation)
+## Section 6 — Aave Sepolia liquidity (Pool ✅ CONFIRMED on-chain 2026-07-01)
+
+Pool `0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951` is a live Aave V3 Pool on Sepolia
+(`getReservesList()` verified). **9 reserves with faucet — `tokenIn` candidates for `flashLoanSimple`:**
 
 ```
-[ ] Confirm the Aave V3 Sepolia Pool has liquidity for TOKENIN (flashLoanSimple).
-    ⚠️ Cannot be verified offline. Typical Aave V3 Sepolia test-market assets with faucet:
-    WETH, USDC, DAI, LINK. Verify on-chain:
+WETH  0xC558DBdd856501FCd9aaF1E62eae57A9F0629a3c  (18)   <- liquid, recommended
+USDC  0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8  (6)    <- liquid, recommended
+DAI   0xFF34B3d4Aee8ddCd6F9AFFFB6Fe49bD371b8a357  (18)
+USDT  0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0  (6)
+WBTC  0x29f2D40B0605204364af54EC677bD022dA425d03  (8)
+LINK  0xf8Fb3713D459D7C1018BD0A49D19b4C44290EBE5  (18)
+AAVE  0x88541670E55cC00bEEFD87eB59EDd1b7C511AC9a  (18)
+EURS  0x6d906e526a4e2Ca02097BA9d0caA3c382F52278E  (2)
+GHO   0xc4bF5CbDaBE595361438F8c6a187bDc330539c60  (18)
+```
+
+```
+[ ] Confirm the chosen TOKENIN reserve holds enough underlying for the flash amount:
         cast call $AAVE_POOL_ADDRESS "getReserveData(address)" $TOKENIN --rpc-url $SEPOLIA_RPC
-    and that the aToken holds enough underlying. If no liquidity → flash loan reverts
-    (fail-closed) → choose another TOKENIN with Aave-Sepolia liquidity.
-[ ] Choose a cross-DEX pair (forward_router ≠ backward_router) whose tokens have real reserves on
+    If insufficient -> flash loan reverts (fail-closed) -> pick another (WETH/USDC are safest).
+[ ] Choose a cross-DEX pair (forward_router != backward_router) whose tokens have real reserves on
     Sepolia DEXes. If no real arb exists, the sim reverts ZeroGrossProfit (correct/honest) — to
     validate the PATH, use reserves that leave spread > premium.
 ```
