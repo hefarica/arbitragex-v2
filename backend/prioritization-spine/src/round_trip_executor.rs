@@ -38,6 +38,7 @@
 //! See `docs/superpowers/plans/2026-05-05-revm-real-implementation.md`.
 
 use ethers::types::{Address, Bytes, U256};
+use serde::{Deserialize, Serialize};
 
 use crate::swap_encoder::{encode_erc20_balance_of, encode_v2_swap_exact_tokens_for_tokens};
 
@@ -46,17 +47,38 @@ use crate::swap_encoder::{encode_erc20_balance_of, encode_v2_swap_exact_tokens_f
 /// it failed and we have a diagnostic `fail_reason`.
 ///
 /// `simulated_profit_token_in` is the raw `final_balance - initial_balance`
-/// in token_in units (NOT USD). Negative scenarios are represented as
-/// `passed=true, simulated_profit_token_in=0` because the math returns
-/// a wrapped underflow on revert; converting to signed would mask the
-/// actual sim outcome. Caller computes USD via `compute_profit_usd`.
+/// in token_in units (NOT USD), i.e. the GROSS token_in delta. Negative
+/// scenarios are represented as `passed=true, simulated_profit_token_in=0`
+/// because the math returns a wrapped underflow on revert; converting to
+/// signed would mask the actual sim outcome.
+///
+/// The sim is intentionally PRICES-FREE: it carries the gross token_in delta
+/// plus the gas it measured (`gas_used_total` + `gas_price_wei`), and the
+/// price-aware downstream layer computes net-of-gas USD via
+/// `compute_profit_usd` (which also takes token_in decimals/price + eth price).
+/// The NET-of-gas-in-USD profitability decision is the DOWNSTREAM consumer's
+/// responsibility — and that downstream net-USD gate MUST be enforced before
+/// any LIVE broadcast.
 #[derive(Debug, Clone)]
 pub struct SimulationOutcome {
     pub passed: bool,
     pub simulated_profit_token_in: U256,
     pub intermediate_amount_out: Option<U256>,
     pub gas_used_total: u64,
+    /// The gas price (wei) the simulator used. Carried (alongside
+    /// `gas_used_total`) so the price-aware downstream layer can compute the
+    /// gas cost in USD via `compute_profit_usd`. `U256::zero()` on failure /
+    /// producers that do not measure gas.
+    pub gas_price_wei: U256,
     pub fail_reason: Option<String>,
+    /// The exact wrapped-flash broadcast calldata (outer `requestFlashLoan`
+    /// 0x5107d61e wrapping inner `executeArbitrageFlashFunded` 0xdde0bf51) that
+    /// the sim VALIDATED, with leg-1 encoded against the REAL forward-quoted
+    /// intermediate. `Some(bytes)` ONLY on a passing wrapped-flash outcome from
+    /// `sim_multistep::execute_multistep_revm`; `None` for every other
+    /// producer / failure path (so the broadcast path can only ever replay
+    /// calldata that the sim actually proved out).
+    pub wrapped_calldata: Option<Vec<u8>>,
 }
 
 impl SimulationOutcome {
@@ -66,7 +88,9 @@ impl SimulationOutcome {
             simulated_profit_token_in: U256::zero(),
             intermediate_amount_out: None,
             gas_used_total: 0,
+            gas_price_wei: U256::zero(),
             fail_reason: Some(reason.into()),
+            wrapped_calldata: None,
         }
     }
 }
@@ -74,7 +98,13 @@ impl SimulationOutcome {
 /// Bundle of inputs the orchestrator needs to plan + execute a round trip.
 /// All addresses are caller-supplied (typically resolved by the scanner from
 /// PG pool metadata before invoking the simulator).
-#[derive(Debug, Clone)]
+///
+/// `Serialize`/`Deserialize` are derived so this context can be embedded in the
+/// M2 carrier-B [`crate::validated_plan::ValidatedPlan`] record (persisted by
+/// `opp.id` at sim-validate time and re-read by the broadcast path). ethers'
+/// `Address`/`U256` provide their own serde impls; the derive is purely
+/// additive and does not change the sim path's behaviour.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoundTripContext {
     pub caller: Address,
     pub token_in: Address,
@@ -183,6 +213,64 @@ pub fn compute_profit_usd(
 
 fn u256_to_f64_lossy(v: U256) -> f64 {
     v.to_string().parse::<f64>().unwrap_or(0.0)
+}
+
+/// Net-USD-of-gas viability gate (O4 follow-up — the pre-live profitability
+/// floor that the pure REVM sim deliberately does NOT enforce).
+///
+/// The wrapped-flash sim (`execute_multistep_revm`) gates SIM_SUCCESS on GROSS
+/// `retained_spread` (token_in units) — it carries the gross delta plus the gas
+/// it measured but, being prices-free, never subtracts gas. So a gross-positive
+/// but NET-negative (gas-losing) arb can pass the sim. This helper closes that
+/// hole: it converts the gross token_in spread to USD, subtracts the gas cost in
+/// USD (via [`compute_profit_usd`]), and returns `true` ONLY when the result is
+/// strictly positive.
+///
+/// Inputs:
+///   - `gross_token_in`: the GROSS token_in delta the sim retained
+///     (`SimulationOutcome.simulated_profit_token_in`, already `final - initial`).
+///   - `decimals`: token_in decimals (18 WETH, 6 USDC, 8 WBTC).
+///   - `token_in_price_usd`: USD per 1.0 unit of token_in.
+///   - `gas_used`: `SimulationOutcome.gas_used_total`.
+///   - `gas_price_wei`: `SimulationOutcome.gas_price_wei`.
+///   - `eth_price_usd`: USD per 1 ETH (for the gas-cost USD conversion).
+///
+/// FAIL-CLOSED: a non-finite or non-positive `token_in_price_usd` /
+/// `eth_price_usd` (price feed down / unpriced token) yields `false` — the gate
+/// treats "cannot price" as "not viable" so a price-unavailable path can never
+/// re-open the gas-losing-broadcast hole. The caller must NOT persist/broadcast
+/// a plan for which this returns `false`.
+///
+/// Modeled by calling `compute_profit_usd` with `initial_in = 0` and
+/// `final_in = gross_token_in`, so `final - initial = gross_token_in` and the
+/// returned figure is `gross_spread_usd - gas_usd` (net of gas).
+pub fn net_usd_viable(
+    gross_token_in: U256,
+    decimals: u8,
+    token_in_price_usd: f64,
+    gas_used: u64,
+    gas_price_wei: U256,
+    eth_price_usd: f64,
+) -> bool {
+    // Fail-closed on unusable prices: a missing / non-finite / non-positive
+    // price means we CANNOT compute net-of-gas honestly. Treat as not viable.
+    if !token_in_price_usd.is_finite()
+        || token_in_price_usd <= 0.0
+        || !eth_price_usd.is_finite()
+        || eth_price_usd <= 0.0
+    {
+        return false;
+    }
+    let net_usd = compute_profit_usd(
+        U256::zero(),
+        gross_token_in,
+        decimals,
+        token_in_price_usd,
+        gas_used,
+        gas_price_wei,
+        eth_price_usd,
+    );
+    net_usd > 0.0
 }
 
 // ─── Phase 5 SKELETON (validation deferred to fork tests) ───────────────────
@@ -297,6 +385,139 @@ mod tests {
             (net - 9.0).abs() < 0.1,
             "expected ~$9 net for USDC trade, got {net}"
         );
+    }
+
+    // ── net_usd_viable gate (O4 follow-up) ──────────────────────────────────
+
+    #[test]
+    fn net_usd_viable_weth_gross_positive_low_gas_passes() {
+        // +0.01 WETH gross spread @ $2500 = $25.00 gross.
+        // Gas: 200_000 × 25 gwei × $2500/ETH = $12.50. Net = +$12.50 → viable.
+        let gross = U256::from(10_000_000_000_000_000u64); // 0.01 WETH
+        let gas_price = U256::from(25_000_000_000u64); // 25 gwei
+        assert!(net_usd_viable(
+            gross, 18, 2500.0, 200_000, gas_price, 2500.0
+        ));
+    }
+
+    #[test]
+    fn net_usd_viable_weth_gross_positive_but_gas_exceeds_spread_rejects() {
+        // +0.001 WETH gross spread @ $2500 = $2.50 gross.
+        // Gas: 200_000 × 25 gwei × $2500/ETH = $12.50. Net = -$10.00 → NOT viable.
+        let gross = U256::from(1_000_000_000_000_000u64); // 0.001 WETH
+        let gas_price = U256::from(25_000_000_000u64);
+        assert!(!net_usd_viable(
+            gross, 18, 2500.0, 200_000, gas_price, 2500.0
+        ));
+    }
+
+    #[test]
+    fn net_usd_viable_usdc_six_decimals_gross_positive_passes() {
+        // USDC has 6 decimals. +50 USDC gross = 50_000_000 raw units @ $1 = $50.
+        // Gas: 100_000 × 20 gwei × $2500/ETH = 0.002 ETH × $2500 = $5.00.
+        // Net = +$45 → viable. (Guards the units-conflation case: a 6-decimal
+        // token must NOT be scaled by 1e18.)
+        let gross = U256::from(50_000_000u64); // 50 USDC
+        let gas_price = U256::from(20_000_000_000u64);
+        assert!(net_usd_viable(gross, 6, 1.0, 100_000, gas_price, 2500.0));
+    }
+
+    #[test]
+    fn net_usd_viable_usdc_tiny_spread_rejected_by_gas() {
+        // +1 USDC gross = $1.00. Gas $5.00 → net -$4.00 → NOT viable.
+        let gross = U256::from(1_000_000u64); // 1 USDC
+        let gas_price = U256::from(20_000_000_000u64);
+        assert!(!net_usd_viable(gross, 6, 1.0, 100_000, gas_price, 2500.0));
+    }
+
+    #[test]
+    fn net_usd_viable_wbtc_eight_decimals_gross_positive_passes() {
+        // WBTC has 8 decimals @ ~$60_000. +0.001 WBTC = 100_000 raw units = $60.
+        // Gas: 200_000 × 25 gwei × $2500/ETH = $12.50. Net = +$47.50 → viable.
+        // Guards the high-value/8-decimal conflation case.
+        let gross = U256::from(100_000u64); // 0.001 WBTC
+        let gas_price = U256::from(25_000_000_000u64);
+        assert!(net_usd_viable(
+            gross, 8, 60_000.0, 200_000, gas_price, 2500.0
+        ));
+    }
+
+    #[test]
+    fn net_usd_viable_cheap_token_huge_units_small_usd_rejected() {
+        // Cheap token: 18 decimals, $0.0001 each. A "big" 1000-token gross delta
+        // is only $0.10 gross. Gas $12.50 → net -$12.40 → NOT viable.
+        // Guards against a large raw-unit delta masquerading as profit.
+        let gross = U256::from(10u64).pow(U256::from(18u64)) * U256::from(1000u64); // 1000 tokens
+        let gas_price = U256::from(25_000_000_000u64);
+        assert!(!net_usd_viable(
+            gross, 18, 0.0001, 200_000, gas_price, 2500.0
+        ));
+    }
+
+    #[test]
+    fn net_usd_viable_zero_token_price_fails_closed() {
+        // Price unavailable (0.0) → cannot compute net-of-gas → fail-closed.
+        let gross = U256::from(10_000_000_000_000_000u64); // 0.01 WETH (gross-positive)
+        let gas_price = U256::from(25_000_000_000u64);
+        assert!(!net_usd_viable(gross, 18, 0.0, 200_000, gas_price, 2500.0));
+    }
+
+    #[test]
+    fn net_usd_viable_zero_eth_price_fails_closed() {
+        // ETH price unavailable → gas cost cannot be priced → fail-closed.
+        let gross = U256::from(10_000_000_000_000_000u64);
+        let gas_price = U256::from(25_000_000_000u64);
+        assert!(!net_usd_viable(gross, 18, 2500.0, 200_000, gas_price, 0.0));
+    }
+
+    #[test]
+    fn net_usd_viable_nan_or_inf_price_fails_closed() {
+        let gross = U256::from(10_000_000_000_000_000u64);
+        let gas_price = U256::from(25_000_000_000u64);
+        assert!(!net_usd_viable(
+            gross,
+            18,
+            f64::NAN,
+            200_000,
+            gas_price,
+            2500.0
+        ));
+        assert!(!net_usd_viable(
+            gross,
+            18,
+            2500.0,
+            200_000,
+            gas_price,
+            f64::INFINITY
+        ));
+        assert!(!net_usd_viable(
+            gross, 18, -2500.0, 200_000, gas_price, 2500.0
+        ));
+    }
+
+    #[test]
+    fn net_usd_viable_zero_gross_spread_rejected() {
+        // Zero gross spread with any gas → net = -gas < 0 → NOT viable.
+        let gas_price = U256::from(25_000_000_000u64);
+        assert!(!net_usd_viable(
+            U256::zero(),
+            18,
+            2500.0,
+            200_000,
+            gas_price,
+            2500.0
+        ));
+    }
+
+    #[test]
+    fn net_usd_viable_exactly_breakeven_rejected() {
+        // Gross USD == gas USD → net == 0 → strictly NOT viable (> 0 required).
+        // +0.005 WETH @ $2500 = $12.50; gas 200_000 × 25 gwei × $2500 = $12.50.
+        let gross = U256::from(5_000_000_000_000_000u64); // 0.005 WETH
+        let gas_price = U256::from(25_000_000_000u64);
+        assert!(!net_usd_viable(
+            gross, 18, 2500.0, 200_000, gas_price, 2500.0
+        ));
     }
 
     #[test]

@@ -10,21 +10,29 @@ const DEFAULT_PROM = process.env["PROMETHEUS_INTERNAL_URL"] ?? "http://prometheu
  * embedded simulator-v2) before it reaches relays-client. Bypassing
  * simulation = blind execution = capital at risk.
  *
- * Verification:
+ * This item lives in the LIVE-FLIP readiness panel (the gate between
+ * paper_mode=true and any future capital flip), so its severity is judged by
+ * the go-live lens, NOT the paper-shadow lens.
  *
- *   1. sim-ctl /health responds 2xx (the service is running).
+ * Verification (evaluated in this order — strongest blocker first):
  *
- *   2. arbx_simulation_total{status="pass"} OR {status="fail"} has any
- *      sample in the last 5m — proving simulations are actually flowing
- *      through, not just that the binary boots. NOTE: the metric must
- *      exist; absence of a value pair (no rate, no count) means no
- *      simulations have run, which is yellow not red — the platform may
- *      legitimately be idle in dev.
+ *   1. sim-ctl /health responds 2xx (the service is running). Unreachable =
+ *      red: opportunities would bypass simulation entirely.
  *
- *   3. simulator-v2 readiness flag (ARBX_SIMULATOR_V2_READY env) — if
- *      false, the v2 simulator is still stub (audit A3); the gate stays
- *      yellow until A3 closes (Sprint 4). Tier 1 sim-ctl alone is
- *      acceptable for paper-shadow but NOT for capital-real flip.
+ *   2. simulator-v2 readiness flag (ARBX_SIMULATOR_V2_READY env). If false,
+ *      the v2 simulator is still a stub (audit A3) — it cannot faithfully
+ *      validate the path that actually broadcasts, so for the capital-flip
+ *      gate this is a HARD blocker (red), regardless of how much Tier-1
+ *      sim-ctl traffic flows. (Corrected 2026-06-29: was yellow. A stub
+ *      emitting metrics is still a stub; yellow understated a structural
+ *      gap. Tier-1 sim-ctl alone is acceptable for paper-shadow operation
+ *      but NOT for the live flip this panel certifies.)
+ *
+ *   3. arbx_simulation_total has a recent sample (last 24h) — proving
+ *      simulations are actually flowing, not just that the binary boots.
+ *      Only meaningful once the real simulator (step 2) is in place. With a
+ *      real simulator but no recent samples the platform is simply idle
+ *      (quiet market / fresh boot) → yellow, not red.
  */
 export async function verifyGSIM1(opts?: {
   simCtlUrl?: string;
@@ -64,7 +72,24 @@ export async function verifyGSIM1(opts?: {
     };
   }
 
-  // Layer 2: simulations flowing (or dev-idle but metric series exists).
+  // Layer 2: the real simulator must exist. A stub simulator-v2 cannot
+  // faithfully validate the path that actually broadcasts, so for the live
+  // flip this gate certifies, a stub is a HARD blocker (red) — evaluated
+  // BEFORE the metric check so it is red even when the platform is idle and
+  // no simulations have flowed. This is the go-live lens, not a paper-shadow
+  // health light.
+  const v2_ready = process.env["ARBX_SIMULATOR_V2_READY"] === "true";
+  if (!v2_ready) {
+    return {
+      ...base,
+      status: "red",
+      reason:
+        "sim-ctl alive but ARBX_SIMULATOR_V2_READY=false — simulator-v2 is still a stub (audit A3); the mandatory-simulation gate is NOT satisfied for a capital flip. Hard blocker until the real fork-backed simulator validates the actual broadcast path.",
+      evidence: { kind: "endpoint", ref: `${simCtl}/health (alive) + ARBX_SIMULATOR_V2_READY=false` },
+    };
+  }
+
+  // Layer 3: with a real simulator in place, confirm simulations are flowing.
   const ctrl2 = new AbortController();
   const t2 = setTimeout(() => ctrl2.abort(), timeout);
   let series_present = 0;
@@ -92,44 +117,28 @@ export async function verifyGSIM1(opts?: {
     return {
       ...base,
       status: "yellow",
-      reason: `sim-ctl alive but cannot query simulation metrics from ${prom}`,
+      reason: `sim-ctl alive and simulator-v2 ready but cannot query simulation metrics from ${prom}`,
     };
   } finally {
     clearTimeout(t2);
   }
 
-  // Doctrine: simulation path is mandatory. The metric series existing OR
-  // sim-ctl being alive is sufficient evidence the path is wired — quiet
-  // markets are normal. Series present + service alive = paper-shadow gate
-  // satisfied for Tier-1. Tier-2 (simulator-v2) gate below.
   if (series_present === 0 && recent_count === 0) {
-    // Sim-ctl is up but no metric has ever been written. Could be a fresh
-    // boot before the first scan tick. Yellow rather than red — the wiring
-    // is OK, just hasn't seen traffic yet.
+    // Real simulator is ready, but no metric has been written recently. Could
+    // be a fresh boot before the first scan tick, or a quiet market. Yellow
+    // rather than red — the wiring is real, just hasn't seen traffic yet.
     return {
       ...base,
       status: "yellow",
-      reason: "sim-ctl alive but arbx_simulation_total has no samples yet — first scan tick pending",
-    };
-  }
-
-  // Layer 3: A3 — simulator-v2 readiness. Stub still in place is doctrinally yellow.
-  const v2_ready = process.env["ARBX_SIMULATOR_V2_READY"] === "true";
-
-  if (!v2_ready) {
-    // Acceptable for paper-shadow, blocks capital flip. Yellow not red.
-    return {
-      ...base,
-      status: "yellow",
-      reason: `sim-ctl alive (${recent_count} sims in last 24h) but ARBX_SIMULATOR_V2_READY=false — Tier-1 only, A3 stub blocks capital flip`,
-      evidence: { kind: "endpoint", ref: `${simCtl}/health + ${prom}/api/v1/query?query=arbx_simulation_total` },
+      reason:
+        "simulator-v2 ready and sim-ctl alive, but arbx_simulation_total has no recent samples — idle market / first scan tick pending",
     };
   }
 
   return {
     ...base,
     status: "green",
-    reason: `sim-ctl alive, ${recent_count} simulations in last 24h, simulator-v2 ready`,
+    reason: `sim-ctl alive, simulator-v2 ready, ${recent_count} simulations in last 24h`,
     evidence: { kind: "endpoint", ref: `${simCtl}/health + arbx_simulation_total` },
   };
 }
