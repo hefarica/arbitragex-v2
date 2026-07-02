@@ -16,7 +16,7 @@
 |---|---|---|
 | PAPER | ✅ closed | deployed + runtime-verified + webapp validated (fail-honest, live-flip BLOCKED) |
 | SHADOW | ✅ closed | observer-only, `live_allowed=false`, real opps rejected honestly |
-| SEPOLIA readiness | 🟡 gated | runbook merged (#231/#247), **M5 pipeline MERGED (#229 → main `b2b7da04`)**, env `sepolia-deploy` (reviewer=hefarica); waiting operator secrets/wallet/ETH → dry-run M5 |
+| SEPOLIA readiness | 🟡 gated | runbook merged (#231/#247), M5 pipeline MERGED (#229), env `sepolia-deploy` (reviewer=hefarica), `SEPOLIA_RPC_URL` secret set, **DRY-RUN PASSED (run 28568548667, forge build + DeployTestnet sim, no broadcast)**; LIVE waiting operator `DEPLOYER_PRIVATE_KEY`+wallet+ETH (+`ETHERSCAN_API_KEY` or verify=false) + env approval |
 | MAINNET readiness | 🔴 NO-GO | dossier #248: 3/18 met, 6 partial, 9 not-met, 5 P0 |
 
 ## Coordination artifacts (⚠️ proliferation — operator should consolidate)
