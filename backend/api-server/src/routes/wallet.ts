@@ -145,6 +145,11 @@ export interface SimResult {
   netProfitUsd: number;
   riskScore: number;
   gasEstimate: string; // wei
+  // Evidence metadata (simulator-v2 MVP): why the runtime could not produce complete evidence, and the
+  // list of fields it could not produce today. Surfaced for the operator; never affects allow (which
+  // stays false structurally). Optional so the existing DI contract/tests remain valid.
+  reason?: string | undefined;
+  missing?: string[] | undefined;
 }
 
 /** Deny-by-default verdict: allow only if every gate is green. */
@@ -275,11 +280,17 @@ export function mountWalletRoutes(app: Application, deps: WalletRoutesDeps): voi
     };
 
     const { allow, denied } = simulateVerdict(gates);
-    const reason = sim ? (allow ? null : "policy_denied") : "runtime_not_configured";
+    // Prefer the simulator's own honest evidence reason (e.g. calldata_not_produced) over the generic one.
+    const reason = sim
+      ? (sim.reason ?? (allow ? null : "policy_denied"))
+      : "runtime_not_configured";
+    const missing = sim?.missing ?? [];
 
     res.status(200).json({
       status: sim ? "ok" : "unavailable",
       reason,
+      runtime_configured: sim !== null,
+      missing,
       intent_id: id,
       state: (allow ? "SIMULATION_PASSED" : "SIMULATION_REQUIRED") as IntentState,
       simulated: sim !== null,

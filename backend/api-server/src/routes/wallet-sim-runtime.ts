@@ -39,6 +39,16 @@ type SimCtlResult = {
   calldata_hash?: unknown;
   route_hash?: unknown;
   risk_score?: unknown;
+  fail_reason?: unknown;
+};
+
+// The reason recorded when the simulator cannot produce a given field today.
+const REASON_FOR_MISSING: Record<string, string> = {
+  gas_estimate: "gas_estimate_failed",
+  calldataHash: "calldata_not_produced",
+  routeHash: "route_hash_not_produced",
+  net_profit_usd: "profit_not_produced",
+  risk_score: "risk_not_produced",
 };
 
 function asNumberString(v: unknown): string {
@@ -91,15 +101,35 @@ export function createForkSimulator(deps: ForkSimDeps): (input: SimulateInput) =
           : null;
       if (!r || typeof r !== "object") return null;
 
-      // Map only what the simulator truly produces. Missing fields default to deny-triggering values.
+      // Build honest evidence: map ONLY fields sim-ctl truly produces; every field it does NOT produce
+      // is recorded in `missing` with a specific reason — never fabricated, never echoed from the client.
+      const gasProduced = typeof r.gas_estimate_wei === "string" || typeof r.gas_estimate_wei === "number";
+      const calldataHash = typeof r.calldata_hash === "string" ? r.calldata_hash : ""; // sim's OWN, never client's
+      const routeHash = typeof r.route_hash === "string" ? r.route_hash : "";
+      const profitProduced = typeof r.simulated_profit_usd === "number";
+      const riskProduced = typeof r.risk_score === "number";
+
+      const missing: string[] = [];
+      if (!gasProduced) missing.push("gas_estimate");
+      if (!calldataHash) missing.push("calldataHash");
+      if (!routeHash) missing.push("routeHash");
+      if (!profitProduced) missing.push("net_profit_usd");
+      if (!riskProduced) missing.push("risk_score");
+
+      const failReason = typeof r.fail_reason === "string" && r.fail_reason.length > 0 ? r.fail_reason : undefined;
+      const firstMissing = missing[0];
+      const reason = failReason ?? (firstMissing ? REASON_FOR_MISSING[firstMissing] : undefined);
+
       return {
-        passed: r.passed === true,
-        // The simulation's OWN calldata hash — NOT the client's. Empty today → mismatch → deny.
-        calldataHash: typeof r.calldata_hash === "string" ? r.calldata_hash : "",
-        routeHash: typeof r.route_hash === "string" ? r.route_hash : "",
-        netProfitUsd: typeof r.simulated_profit_usd === "number" ? r.simulated_profit_usd : 0,
-        riskScore: typeof r.risk_score === "number" ? r.risk_score : 0,
+        // Wallet-level "passed" requires COMPLETE evidence — a partial simulation is NOT a pass.
+        passed: r.passed === true && missing.length === 0,
+        calldataHash,
+        routeHash,
+        netProfitUsd: profitProduced ? (r.simulated_profit_usd as number) : 0,
+        riskScore: riskProduced ? (r.risk_score as number) : 0,
         gasEstimate: asNumberString(r.gas_estimate_wei),
+        reason,
+        missing,
       };
     } catch (e) {
       deps.logger.warn({ event: "wallet.forksim.upstream_failed", err: (e as Error).message });

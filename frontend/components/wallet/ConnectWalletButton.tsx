@@ -44,7 +44,7 @@ export function ConnectWalletButton() {
   return (
     <div className="flex flex-col gap-2" data-testid="connect-wallet-button">
       <ConnectButton.Custom>
-        {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted: rkMounted }) => {
+        {({ account, chain, openAccountModal, openChainModal, mounted: rkMounted }) => {
           const ready = rkMounted;
           const connected = ready && account && chain;
           return (
@@ -52,10 +52,12 @@ export function ConnectWalletButton() {
               {...(!ready ? { "aria-hidden": true, style: { opacity: 0, pointerEvents: "none", userSelect: "none" } } : {})}
             >
               {!connected ? (
-                <Button type="button" variant="default" onClick={openConnectModal} data-testid="connect-open">
+                // The opaque RainbowKit connect modal is intentionally NOT the entry point here — the
+                // explicit onboarding guard (install→confirm→connect, read-only) below owns connection.
+                <Badge variant="secondary" data-testid="connect-hint">
                   <WalletIcon className="size-4" />
-                  Connect wallet
-                </Button>
+                  Conéctate desde el panel de acceso (abajo)
+                </Badge>
               ) : chain.unsupported ? (
                 <Button type="button" variant="destructive" onClick={openChainModal} data-testid="unsupported-chain-button">
                   Unsupported chain — switch
