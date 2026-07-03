@@ -111,6 +111,7 @@ import { mountAdminChains } from "./routes/admin-chains.js";
 import { mountSedStatus } from "./routes/sed-status.js";
 import { mountSystemManifest } from "./routes/system-manifest.js";
 import { mountWalletRoutes } from "./routes/wallet.js";
+import { createForkSimulator } from "./routes/wallet-sim-runtime.js";
 import { mountAuthSiwe } from "./routes/auth-siwe.js";
 import { mountOperatorSelfTest } from "./routes/operator-selftest.js";
 import { buildTopologyVaultRouter } from "./routes/topology-vault.js";
@@ -511,7 +512,14 @@ mountScoringStatus(app, { pool, logger });
 // HARD INVARIANTS: live OFF, capital_exposed 0, broadcast OFF, no signer/keys
 // server-side; every intent terminates at BROADCAST_DISABLED. Public, behind
 // the existing globalLimiter (applied above, before all data routes).
-mountWalletRoutes(app, { logger });
+mountWalletRoutes(app, {
+  logger,
+  // Read-only fork-sim adapter (fail-closed until simulator-v2 is ready + reachable) + REAL posture
+  // gates. None of these can flip live_gate_open/broadcast/allow — the endpoint forces those false.
+  forkSimulator: createForkSimulator({ logger }),
+  readiness: async () => ({ green: !(await verifyAll({ pool })).flip_blocked }),
+  killSwitch: async () => ({ off: !(await killSwitch.state()).enabled }),
+});
 mountAuthSiwe(app, { logger });
 // Operator Self-Test Center (PR-1+PR-2) — presence-only credential matrix +
 // 10-block checklist aggregator. READ-ONLY, public, behind the existing

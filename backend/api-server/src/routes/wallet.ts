@@ -162,7 +162,7 @@ export function simulateVerdict(g: SimulateGates): { allow: boolean; denied: str
   return { allow: denied.length === 0, denied };
 }
 
-interface SimulateInput extends IntentInput {
+export interface SimulateInput extends IntentInput {
   routeHash?: string | undefined;
   calldataHash?: string | undefined;
   policyId?: string | undefined;
