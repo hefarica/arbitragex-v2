@@ -1,0 +1,29 @@
+name: wallet-security-gate
+
+# Static enforcement of the browser-wallet HARD invariants. ethics-guard.yml excludes frontend/**,
+# so this is the dedicated gate for the connect/sign surface. Fails the check on any violation.
+
+on:
+  pull_request:
+    paths:
+      - "frontend/lib/web3/**"
+      - "frontend/components/wallet/**"
+      - "frontend/app/wallet/**"
+      - "frontend/hooks/useWallet*"
+      - "frontend/hooks/useTransaction*"
+      - "automation/tools/wallet-security-gate.sh"
+      - ".github/workflows/wallet-security.yml"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  wallet-security:
+    name: Wallet HARD invariants (no key / no seed / no FE broadcast / no blind sign)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run wallet-security-gate
+        run: bash automation/tools/wallet-security-gate.sh
