@@ -134,7 +134,7 @@ export interface SimulateGates {
   policyId: string | null;
   readiness_green: boolean;
   kill_switch_off: boolean;
-  live_gate_open: false; // structural — never true from this surface
+  live_gate_open: boolean; // this surface ALWAYS sets false (see endpoint) — structural deny
 }
 
 /** The result a real fork-simulation runtime would return (injected via deps). */
