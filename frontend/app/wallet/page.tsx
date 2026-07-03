@@ -14,6 +14,7 @@
 
 import { PageHeader } from "@/components/page-header";
 import { WalletSafetyBanner } from "@/components/wallet/WalletSafetyBanner";
+import { WalletModeBadge } from "@/components/wallet/WalletModeBadge";
 import { ConnectWalletButton } from "@/components/wallet/ConnectWalletButton";
 import { WalletStatusCard } from "@/components/wallet/WalletStatusCard";
 import { NetworkSwitcher } from "@/components/wallet/NetworkSwitcher";
@@ -36,6 +37,7 @@ export default function WalletPage() {
 
       <div className="space-y-6">
         <WalletSafetyBanner />
+        <WalletModeBadge />
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <WalletStatusCard />
