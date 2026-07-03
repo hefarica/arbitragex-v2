@@ -31,17 +31,6 @@ import "../script/DeployMainnet.s.sol";
 import "../src/AdminTimelock.sol";
 import "@openzeppelin/contracts/access/IAccessControl.sol";
 
-/// @dev Minimal contract to place at MULTISIG_ADDRESS / AAVE_V3_POOL so the
-///      script's `.code.length > 0` guards pass. No behavior needed — the script
-///      only ever reads the timelock roles from these addresses, it never calls
-///      into the multisig or the pool during run().
-contract CodeStub {
-    // A single no-op function guarantees non-empty runtime code.
-    function ping() external pure returns (bool) {
-        return true;
-    }
-}
-
 contract DeployMainnetTimelockAdminCustodyTest is Test {
     // DEFAULT_ADMIN_ROLE == 0x00 in OZ AccessControl.
     bytes32 internal constant DEFAULT_ADMIN_ROLE = 0x00;
@@ -61,18 +50,27 @@ contract DeployMainnetTimelockAdminCustodyTest is Test {
         script = new DeployMainnet();
 
         // Deployer EOA — deterministic key, funded above the 0.5 ETH gate.
-        deployerKey = 0xA11CE;
+        // IDENTICAL derivation to DeployMainnetRoleCustody.t.sol on purpose: vm.setEnv
+        // mutates the shared OS process env, which forge does NOT revert between suites.
+        // If the two DeployMainnet suites set MULTISIG_ADDRESS / DEPLOYER_PRIVATE_KEY /
+        // AAVE_V3_POOL to different values, the combined `forge test` run collides (one
+        // suite reads the other's env and trips a code/balance gate in its own fork).
+        // Using the SAME values makes the shared env harmless — whichever setUp wins,
+        // each suite has satisfied the gate (funded deployer / etched code) in its fork.
+        deployerKey = uint256(keccak256("arbx.test.mainnet-deployer"));
         deployer = vm.addr(deployerKey);
         vm.deal(deployer, 1 ether);
 
-        // Multisig must be a contract distinct from the deployer.
-        multisig = address(new CodeStub());
-        // Aave V3 pool guard only checks code.length > 0.
-        aavePool = address(new CodeStub());
+        // Multisig + Aave pool must be contracts (code.length > 0); neither is called
+        // during run(), so any nonempty runtime bytecode satisfies the gate.
+        multisig = makeAddr("multisig");
+        aavePool = makeAddr("aavePool");
+        vm.etch(multisig, hex"01");
+        vm.etch(aavePool, hex"01");
 
         // Satisfy the script's env-var gates.
         vm.setEnv("CONFIRM_MAINNET_DEPLOY", "true");
-        vm.setEnv("DEPLOYER_PRIVATE_KEY", vm.toString(bytes32(deployerKey)));
+        vm.setEnv("DEPLOYER_PRIVATE_KEY", vm.toString(deployerKey));
         vm.setEnv("MULTISIG_ADDRESS", vm.toString(multisig));
         vm.setEnv("AAVE_V3_POOL", vm.toString(aavePool));
 
