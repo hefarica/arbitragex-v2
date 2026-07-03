@@ -54,20 +54,35 @@ describe("createForkSimulator — fail-closed", () => {
     expect(await sim({ chain_id: 11155111 })).toBeNull();
   });
 
-  it("passing sim with MISSING fields maps to deny-triggering values (never echoes client calldataHash)", async () => {
+  it("real gas but MISSING calldata/route/profit/risk → passed=false (incomplete), honest missing[]+reason, never echoes client hash", async () => {
     const sim = createForkSimulator({
       ...CONFIGURED,
       fetchImpl: fakeFetch({ body: { result: { passed: true, gas_estimate_wei: "21000" } } }),
     });
     const r = await sim({ chain_id: 11155111, calldataHash: `0x${"cd".repeat(32)}` });
     expect(r).not.toBeNull();
-    expect(r!.passed).toBe(true);
+    // gas is REAL evidence; the rest is honestly absent.
     expect(r!.gasEstimate).toBe("21000");
-    // sim-ctl produced NO calldata/route/risk/profit → the sim's own values are empty/0 (deny-triggering).
-    expect(r!.calldataHash).toBe(""); // NOT the client's hash
+    // Wallet-level pass requires COMPLETE evidence → false even though sim-ctl said passed:true.
+    expect(r!.passed).toBe(false);
+    expect(r!.missing).toEqual(["calldataHash", "routeHash", "net_profit_usd", "risk_score"]);
+    expect(r!.reason).toBe("calldata_not_produced"); // first missing
+    // NEVER the client's hash.
+    expect(r!.calldataHash).toBe("");
     expect(r!.routeHash).toBe("");
     expect(r!.riskScore).toBe(0);
     expect(r!.netProfitUsd).toBe(0);
+  });
+
+  it("sim-ctl fail_reason wins over missing-field reason", async () => {
+    const sim = createForkSimulator({
+      ...CONFIGURED,
+      fetchImpl: fakeFetch({ body: { result: { passed: false, fail_reason: "sim_timeout" } } }),
+    });
+    const r = await sim({ chain_id: 1 });
+    expect(r!.passed).toBe(false);
+    expect(r!.reason).toBe("sim_timeout");
+    expect(r!.missing).toContain("gas_estimate");
   });
 });
 
@@ -143,6 +158,29 @@ describe("POST /api/wallet/simulate with wired adapter — deny-by-default", () 
     expect(r.body.kill_switch_off).toBe(false);
     expect(r.body.allow).toBe(false);
     expect(r.body.denied).toContain("kill_switch_off");
+  });
+
+  it("real adapter (partial evidence) surfaces runtime_configured + missing[] + reason, still allow=false", async () => {
+    const app = appWith({
+      logger,
+      readiness: async () => ({ green: true }),
+      killSwitch: async () => ({ off: true }),
+      forkSimulator: createForkSimulator({
+        logger,
+        simBase: "http://sim-ctl:3003",
+        v2Ready: true,
+        fetchImpl: fakeFetch({ body: { result: { passed: true, gas_estimate_wei: "21000" } } }),
+      }),
+    });
+    const r = await request(app).post("/api/wallet/simulate").send({ chain_id: 11155111, calldataHash: `0x${"cd".repeat(32)}` });
+    expect(r.body.runtime_configured).toBe(true);
+    expect(r.body.gas_estimate).toBe("21000"); // real evidence reached the endpoint
+    expect(r.body.missing).toEqual(["calldataHash", "routeHash", "net_profit_usd", "risk_score"]);
+    expect(r.body.reason).toBe("calldata_not_produced");
+    expect(r.body.simulation_passed).toBe(false); // incomplete evidence
+    expect(r.body.allow).toBe(false);
+    expect(r.body.live_gate_open).toBe(false);
+    expect(r.body.broadcast_allowed).toBe(false);
   });
 });
 
