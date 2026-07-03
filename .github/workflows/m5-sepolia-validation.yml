@@ -1,31 +1,18 @@
-name: M5 — Sepolia Validation (manual, fail-closed)
+name: M5 — Sepolia Validation (manual, CI-keyless)
 
-# A.4/M5 pipeline. MANUAL ONLY (workflow_dispatch). Sepolia testnet only — there
-# is NO mainnet path in this workflow. Deploy defaults to dry-run (simulation, no
-# broadcast); a live Sepolia broadcast requires mode=live + the confirm sentinel +
-# the `sepolia-deploy` environment (attach required-reviewers protection to it).
+# A.4/M5 pipeline. MANUAL ONLY (workflow_dispatch). Sepolia testnet only — there is NO mainnet path.
 #
-# DEPENDENCY: the A.4 fork validation runs whatever `multistep_fork` test is in the
-# checked-out ref. The WRAPPED-FLASH (HIGH-closing) validation only happens on a
-# main that includes PR #224; before that, it exercises the pre-#224 direct-router
-# path. (When #224 lands, the validate job may also need FLASHLOAN_EXECUTOR_1.)
+# CI IS KEYLESS. This workflow SIMULATES a Sepolia deploy (no signing, no on-chain send) and runs the
+# read-only A.4 fork validation. A real Sepolia deploy (signing + on-chain send) runs from the
+# operator/KMS plane, never from GitHub Actions — see docs/m5-sepolia-runbook.md.
+#
+# Governance: CI validates; the operator signs. CI never custodies or transmits keys.
+#
+# DEPENDENCY: the A.4 fork validation runs whatever `multistep_fork` test is in the checked-out ref.
 
 on:
   workflow_dispatch:
     inputs:
-      mode:
-        description: "dry_run = simulate (no broadcast) | live = broadcast to Sepolia"
-        type: choice
-        options: [dry_run, live]
-        default: dry_run
-      verify_contracts:
-        description: "Pass --verify (Etherscan) on a live deploy"
-        type: boolean
-        default: true
-      confirm_live:
-        description: "Type DEPLOY-SEPOLIA to authorize a LIVE broadcast (ignored for dry_run)"
-        type: string
-        default: ""
       run_fork_validation:
         description: "Run the A.4 fork validation (read-only; needs RPC_HTTP_1_ARCHIVE secret)"
         type: boolean
@@ -35,10 +22,9 @@ permissions:
   contents: read
 
 jobs:
-  # --- Dry-run deploy: simulation only, secretless (dummy key), no approval -----
-  deploy_dry_run:
-    name: Deploy (dry-run simulation)
-    if: ${{ inputs.mode == 'dry_run' }}
+  # --- Deploy SIMULATION: keyless, no on-chain send, no approval needed -------------
+  simulate_deploy:
+    name: Simulate DeployTestnet (keyless, no on-chain send)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,48 +34,14 @@ jobs:
       - name: Build contracts
         working-directory: contracts
         run: forge build
-      - name: Deploy DeployTestnet.s.sol (simulation, NO --broadcast)
+      - name: Simulate DeployTestnet.s.sol (no on-chain send)
         env:
           M5_MODE: dry_run
           SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
-          # Dummy key — simulation never signs/sends; a real deployer key is only
-          # used in the live job. Anvil's well-known test key (public, non-secret).
-          DEPLOYER_PRIVATE_KEY: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
           AAVE_POOL_ADDRESS: ${{ vars.AAVE_POOL_SEPOLIA || '0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951' }}
         run: bash scripts/deploy-m5.sh
 
-  # --- Live deploy: real broadcast, environment-protected + sentinel-gated ------
-  deploy_live:
-    name: Deploy (LIVE Sepolia broadcast)
-    if: ${{ inputs.mode == 'live' }}
-    runs-on: ubuntu-latest
-    environment: sepolia-deploy   # operator: attach required-reviewers protection
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: foundry-rs/foundry-toolchain@v1
-      - name: Build contracts
-        working-directory: contracts
-        run: forge build
-      - name: Deploy DeployTestnet.s.sol (LIVE --broadcast, gated)
-        env:
-          M5_MODE: live
-          M5_CONFIRM_LIVE: ${{ inputs.confirm_live }}
-          M5_VERIFY: ${{ inputs.verify_contracts }}
-          SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
-          DEPLOYER_PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
-          ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
-          AAVE_POOL_ADDRESS: ${{ vars.AAVE_POOL_SEPOLIA || '0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951' }}
-        run: bash scripts/deploy-m5.sh
-      - name: Upload broadcast artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: m5-sepolia-broadcast
-          path: contracts/broadcast/**/*.json
-          if-no-files-found: ignore
-
-  # --- A.4 fork validation: READ-ONLY mainnet fork sim, no broadcast ------------
+  # --- A.4 fork validation: READ-ONLY mainnet fork sim, no on-chain send ------------
   validate_fork:
     name: A.4 fork validation (read-only)
     if: ${{ inputs.run_fork_validation }}

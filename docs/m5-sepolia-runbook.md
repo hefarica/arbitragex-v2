@@ -3,6 +3,7 @@
 > **Status:** READY for operator review. Execute ONLY after an explicit operator GO. Code preconditions are MET on `main` (CI green): **PR #224 merged** (executor cross-DEX `_runRoute` + carry-validated-calldata + the `ZeroIntermediate` test) and **PR #246 merged** (net-USD-of-gas pre-live gate). (PR #228 was **closed** — its rmcp allowlist already landed via #223.)
 > **Mode:** observer-only validation. NO mainnet, NO real capital, NO broadcast enablement.
 > **Chain:** Sepolia (`chain_id = 11155111`).
+> **Plane (governance — CI keyless):** GitHub Actions (`m5-sepolia-validation.yml`) is **keyless** — it only **simulates** the deploy (no signing, no on-chain send) and runs the read-only A.4 fork validation. **The live deploy in Sections 1–5 below runs from the operator/KMS plane (your machine, local keystore/HSM), NEVER from CI.** No deployer signing key is ever a GitHub secret. *CI validates; the operator signs. CI never custodies or transmits keys.*
 
 This runbook makes the M2 fix (executor cross-DEX `_runRoute` + carry-validated-calldata) **executable on a real testnet** so the wrapped-flash sim can reach a genuine `SIM_SUCCESS` against a deployed, wired `FlashLoanExecutor` + `ArbitrageExecutor`.
 
