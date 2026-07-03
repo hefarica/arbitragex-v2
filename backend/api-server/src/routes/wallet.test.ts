@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
+import express from "express";
+import request from "supertest";
 
-import { __forTesting as wallet } from "./wallet.js";
+import { __forTesting as wallet, mountWalletRoutes } from "./wallet.js";
 import { __forTesting as siwe } from "./auth-siwe.js";
 
 /**
@@ -97,5 +99,122 @@ describe("SIWE session token (HMAC)", () => {
     const expired = { ...baseClaims, exp: Date.now() - 1 };
     const token = siwe.signSession(expired, secret);
     expect(siwe.verifySession(token, secret)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /api/wallet/simulate — deny-by-default verdict + fail-closed endpoint.
+// ---------------------------------------------------------------------------
+
+type Gates = Parameters<typeof wallet.simulateVerdict>[0];
+
+// A maximally-green gates object (incl. live_gate_open forced true) to exercise
+// the allow=true path. The ENDPOINT always forces live_gate_open=false.
+function gates(over: Record<string, unknown> = {}): Gates {
+  return {
+    simulation_passed: true,
+    calldata_hash_matches_sim: true,
+    net_profit_usd: 100,
+    risk_score: 90,
+    gas_estimate: "1000",
+    routeHash: `0x${"ab".repeat(32)}`,
+    calldataHash: `0x${"cd".repeat(32)}`,
+    policyId: "p1",
+    readiness_green: true,
+    kill_switch_off: true,
+    live_gate_open: true,
+    ...over,
+  } as unknown as Gates;
+}
+
+describe("simulate verdict — deny-by-default", () => {
+  it("allows only when EVERY gate is green", () => {
+    const r = wallet.simulateVerdict(gates());
+    expect(r.allow).toBe(true);
+    expect(r.denied).toEqual([]);
+  });
+
+  it("live_gate_open=false (structural) → deny", () => {
+    const r = wallet.simulateVerdict(gates({ live_gate_open: false }));
+    expect(r.allow).toBe(false);
+    expect(r.denied).toContain("live_gate_open");
+  });
+
+  it("readiness NO-GO → deny", () => {
+    expect(wallet.simulateVerdict(gates({ readiness_green: false })).denied).toContain("readiness_green");
+  });
+
+  it("kill-switch on → deny", () => {
+    expect(wallet.simulateVerdict(gates({ kill_switch_off: false })).denied).toContain("kill_switch_off");
+  });
+
+  it("calldata hash mismatch → deny", () => {
+    expect(wallet.simulateVerdict(gates({ calldata_hash_matches_sim: false })).denied).toContain(
+      "calldata_hash_matches_sim",
+    );
+  });
+
+  it("net_profit_usd <= 0 → deny", () => {
+    expect(wallet.simulateVerdict(gates({ net_profit_usd: 0 })).denied).toContain("net_profit_usd_positive");
+    expect(wallet.simulateVerdict(gates({ net_profit_usd: null })).denied).toContain("net_profit_usd_positive");
+  });
+
+  it("risk_score below minimum (or null) → deny", () => {
+    expect(wallet.simulateVerdict(gates({ risk_score: wallet.RISK_SCORE_MIN - 1 })).denied).toContain(
+      "risk_score_minimum",
+    );
+    expect(wallet.simulateVerdict(gates({ risk_score: null })).denied).toContain("risk_score_minimum");
+  });
+});
+
+describe("POST /api/wallet/simulate — fail-closed (no runtime wired)", () => {
+  const app = express();
+  app.use(express.json());
+  mountWalletRoutes(app, { logger: { warn: () => {}, info: () => {} } });
+
+  it("no fork-sim runtime → allow=false, reason=runtime_not_configured, broadcast disabled", async () => {
+    const r = await request(app)
+      .post("/api/wallet/simulate")
+      .send({ chain_id: 11155111, calldataHash: `0x${"cd".repeat(32)}`, policyId: "p1" });
+    expect(r.status).toBe(200);
+    expect(r.body.allow).toBe(false);
+    expect(r.body.reason).toBe("runtime_not_configured");
+    expect(r.body.simulation_passed).toBe(false);
+    expect(r.body.calldata_hash_matches_sim).toBe(false);
+    expect(r.body.live_gate_open).toBe(false);
+    // HARD posture always present + safe.
+    expect(r.body.broadcast_allowed).toBe(false);
+    expect(r.body.live_enabled).toBe(false);
+    expect(r.body.capital_exposed).toBe(0);
+    expect(r.body.broadcast).toBe(false);
+  });
+
+  it("even a PASSING fork-sim (readiness green, kill-switch off) still denies — live_gate_open is structural false", async () => {
+    const app2 = express();
+    app2.use(express.json());
+    mountWalletRoutes(app2, {
+      logger: { warn: () => {}, info: () => {} },
+      readiness: async () => ({ green: true }),
+      killSwitch: async () => ({ off: true }),
+      forkSimulator: async (i) => ({
+        passed: true,
+        calldataHash: i.calldataHash ?? "",
+        routeHash: `0x${"ab".repeat(32)}`,
+        netProfitUsd: 50,
+        riskScore: 90,
+        gasEstimate: "21000",
+      }),
+    });
+    const r = await request(app2)
+      .post("/api/wallet/simulate")
+      .send({ chain_id: 11155111, calldataHash: `0x${"cd".repeat(32)}` });
+    expect(r.body.simulation_passed).toBe(true);
+    expect(r.body.calldata_hash_matches_sim).toBe(true);
+    expect(r.body.readiness_green).toBe(true);
+    expect(r.body.kill_switch_off).toBe(true);
+    expect(r.body.live_gate_open).toBe(false);
+    expect(r.body.allow).toBe(false);
+    expect(r.body.denied).toContain("live_gate_open");
+    expect(r.body.broadcast_allowed).toBe(false);
   });
 });
