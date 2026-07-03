@@ -13,6 +13,13 @@ export interface WalletInstallRegistryEntry {
   /** The ONLY URL the guard may open for this wallet. Official site only. */
   installUrl: string;
   docsUrl?: string;
+  /**
+   * Best-effort RainbowKit/wagmi connector id, used ONLY as a fallback in resolveConnectorId. The
+   * AUTHORITATIVE match for an installed injected wallet is its EIP-6963 rdns (wagmi's mipd sets the
+   * discovered connector's id === rdns). Values here for wallets outside RainbowKit's default set
+   * (rabby/phantom/rainbow) are not guaranteed to be real connector ids — they only help if the wallet
+   * happens to also be a getDefaultConfig built-in; otherwise the rdns path is what connects them.
+   */
   connectorId?: string;
   expectedProviderFlags?: string[];
   supportedPlatforms: Array<"desktop" | "mobile" | "extension" | "walletconnect">;

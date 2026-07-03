@@ -75,6 +75,40 @@ describe("WalletConnectConfirm (SSR)", () => {
     expect(html).toContain("disabled");
     expect(html).toContain('aria-disabled="true"');
   });
+
+  it("fail-honest: when no connector resolves, disables connect + shows the reason (no dead button)", () => {
+    const html = renderToStaticMarkup(
+      <WalletConnectConfirm
+        entry={metamask}
+        connecting={false}
+        connectable={false}
+        reason="no_matching_connector"
+        onConnect={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(html).toContain("wallet-connect-unavailable");
+    expect(html).toContain("no_matching_connector");
+    expect(html).toContain("No disponible");
+    expect(html).toContain('aria-disabled="true"');
+  });
+
+  it("fail-honest for WalletConnect with no project id surfaces the WC-specific reason", () => {
+    const wc = getWalletEntry("walletconnect")!;
+    const html = renderToStaticMarkup(
+      <WalletConnectConfirm
+        entry={wc}
+        connecting={false}
+        connectable={false}
+        reason="walletconnect_project_id_missing"
+        onConnect={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(html).toContain("wallet-connect-unavailable");
+    expect(html).toContain("walletconnect_project_id_missing");
+    expect(html).toContain('aria-disabled="true"');
+  });
 });
 
 // ── Static source scan: the onboarding-guard surface this PR adds must be key-less,
@@ -118,7 +152,8 @@ describe("onboarding-guard surface — static security invariants", () => {
 
   it("never opens openConnectModal inside a useEffect (no auto-popup)", () => {
     for (const { name, src } of files) {
-      const effectBlocks = src.match(/useEffect\([\s\S]*?\)\s*;/g) ?? [];
+      // Tolerate both `useEffect(` and the namespaced `React.useEffect(` form (the guard uses the latter).
+      const effectBlocks = src.match(/(?:React\.)?useEffect\([\s\S]*?\)\s*;/g) ?? [];
       for (const block of effectBlocks) {
         expect(block.includes("openConnectModal"), `${name} useEffect must not open the connect modal`).toBe(false);
         expect(block.includes("connect("), `${name} useEffect must not auto-connect`).toBe(false);

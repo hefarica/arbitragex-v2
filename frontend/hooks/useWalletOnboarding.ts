@@ -23,6 +23,8 @@ export interface UseWalletOnboarding {
   selected: SupportedWalletId | null;
   entry: WalletInstallRegistryEntry | null;
   installed: boolean;
+  /** rdns of the announced EIP-6963 provider matched for the selected wallet (null if none). */
+  matchedRdns: string | null;
   select: (id: SupportedWalletId) => void;
   cancel: () => void;
 }
@@ -32,11 +34,23 @@ export function useWalletOnboarding(providers: EIP6963ProviderDetail[]): UseWall
 
   const entry = useMemo(() => (selected ? getWalletEntry(selected) ?? null : null), [selected]);
 
+  const availability = useMemo(
+    () => (selected && entry ? resolveWalletAvailability(selected, providers) : null),
+    [selected, entry, providers],
+  );
+
+  // "installed" is decided by EIP-6963 discovery (an announced injected provider) OR protocol connectors
+  // (WalletConnect). NOTE: non-extension paths that some wallets also offer — Coinbase's SDK/QR connector,
+  // Phantom mobile — are NOT surfaced here; when only those are available the flow routes to the install
+  // prompt (a fail-honest state, never a silent no-op). WalletConnect remains offered as the QR/protocol
+  // alternative. Expanding to SDK connectors would require verifying their exact wagmi connector ids first.
   const installed = useMemo(() => {
     if (!selected || !entry) return false;
     if (isProtocolConnector(selected)) return true; // no local install needed
-    return resolveWalletAvailability(selected, providers).installed;
-  }, [selected, entry, providers]);
+    return availability?.installed ?? false;
+  }, [selected, entry, availability]);
+
+  const matchedRdns = availability?.matchedRdns ?? null;
 
   const phase: OnboardingPhase = useMemo(() => {
     if (!selected || !entry) return "idle";
@@ -46,5 +60,5 @@ export function useWalletOnboarding(providers: EIP6963ProviderDetail[]): UseWall
   const select = useCallback((id: SupportedWalletId) => setSelected(id), []);
   const cancel = useCallback(() => setSelected(null), []);
 
-  return { phase, selected, entry, installed, select, cancel };
+  return { phase, selected, entry, installed, matchedRdns, select, cancel };
 }

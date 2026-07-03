@@ -11,11 +11,13 @@
  */
 
 import * as React from "react";
-import { useAccount, useConnect } from "wagmi";
+import { useAccount, useConnect, useConnectors } from "wagmi";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { WALLET_INSTALL_REGISTRY } from "@/lib/web3/wallet-registry";
+import { resolveConnectorId } from "@/lib/web3/wallet-discovery";
+import { walletConnectStatus } from "@/lib/web3/wagmiConfig";
 import { useWalletDiscovery } from "@/hooks/useWalletDiscovery";
 import { useWalletOnboarding } from "@/hooks/useWalletOnboarding";
 import { WalletInstallPrompt } from "./WalletInstallPrompt";
@@ -26,16 +28,30 @@ export function WalletOnboardingGuard() {
   React.useEffect(() => setMounted(true), []);
 
   const { providers, redetect } = useWalletDiscovery();
-  const { phase, entry, select, cancel } = useWalletOnboarding(providers);
-  const { connect, connectors, isPending } = useConnect();
+  const { phase, entry, matchedRdns, select, cancel } = useWalletOnboarding(providers);
+  // useConnectors() returns the LIVE list — including the EIP-6963 injected connectors that wagmi
+  // discovers dynamically (their id === the provider rdns). useConnect() drives the mutate + pending.
+  const connectors = useConnectors();
+  const { connect, isPending } = useConnect();
   const { isConnected } = useAccount();
 
-  // Explicit user-click connect ONLY. Match a wagmi connector by id (best-effort); never auto-connect.
+  // Resolve the exact live wagmi connector for the selected wallet (rdns-first). null → not connectable.
+  const resolvedId = entry
+    ? resolveConnectorId(entry, matchedRdns, connectors.map((c) => ({ id: c.id, name: c.name })))
+    : null;
+  // WalletConnect additionally requires a configured project id to actually work (fail-honest otherwise).
+  const wcOk = entry?.id === "walletconnect" ? walletConnectStatus().available : true;
+  const connectable = Boolean(resolvedId) && wcOk;
+  const connectReason: string | null = !wcOk
+    ? walletConnectStatus().reason
+    : resolvedId
+      ? null
+      : "no_matching_connector";
+
+  // Explicit user-click connect ONLY (never auto-connect). Uses the resolved connector or no-ops safely.
   const onConnect = (): void => {
-    if (!entry) return;
-    const c = connectors.find(
-      (x) => x.id === entry.connectorId || x.name.toLowerCase().includes(entry.name.toLowerCase()),
-    );
+    if (!resolvedId) return;
+    const c = connectors.find((x) => x.id === resolvedId);
     if (c) connect({ connector: c });
   };
 
@@ -70,7 +86,14 @@ export function WalletOnboardingGuard() {
         ) : phase === "install" && entry ? (
           <WalletInstallPrompt entry={entry} onRedetect={redetect} onCancel={cancel} />
         ) : phase === "connect" && entry ? (
-          <WalletConnectConfirm entry={entry} connecting={isPending} onConnect={onConnect} onCancel={cancel} />
+          <WalletConnectConfirm
+            entry={entry}
+            connecting={isPending}
+            connectable={connectable}
+            reason={connectReason}
+            onConnect={onConnect}
+            onCancel={cancel}
+          />
         ) : null}
       </CardContent>
     </Card>

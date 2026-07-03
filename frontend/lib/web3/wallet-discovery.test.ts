@@ -3,9 +3,16 @@ import {
   requestProviders,
   resolveWalletAvailability,
   isProtocolConnector,
+  resolveConnectorId,
   type EIP6963ProviderDetail,
 } from "./wallet-discovery";
-import { installUrlFor, isAllowedInstallUrl, WALLET_INSTALL_REGISTRY, allWalletIds } from "./wallet-registry";
+import {
+  installUrlFor,
+  isAllowedInstallUrl,
+  WALLET_INSTALL_REGISTRY,
+  allWalletIds,
+  getWalletEntry,
+} from "./wallet-registry";
 
 function detail(rdns: string, uuid: string, name = rdns): EIP6963ProviderDetail {
   return { info: { uuid, name, icon: "", rdns }, provider: {} };
@@ -92,5 +99,58 @@ describe("requestProviders — EIP-6963 collection", () => {
 
   it("SSR-safe: no target → empty", async () => {
     expect(await requestProviders({ target: null, timeoutMs: 5 })).toEqual([]);
+  });
+});
+
+describe("resolveConnectorId — registry ↔ live wagmi connector matching", () => {
+  const rabby = getWalletEntry("rabby")!; // connectorId "rabby", rdns [io.rabby, com.debank.rabby], "Rabby Wallet"
+  const mm = getWalletEntry("metamask")!; // connectorId "metaMask", rdns [io.metamask], "MetaMask"
+  const wc = getWalletEntry("walletconnect")!; // connectorId "walletConnect", rdns [], "WalletConnect"
+
+  it("rdns matched during discovery wins (EIP-6963 connector id === rdns)", () => {
+    const connectors = [
+      { id: "io.rabby", name: "Rabby" },
+      { id: "walletConnect", name: "WalletConnect" },
+    ];
+    expect(resolveConnectorId(rabby, "io.rabby", connectors)).toBe("io.rabby");
+  });
+
+  it("falls back to an allowlisted rdns when the discovery rdns is null", () => {
+    expect(resolveConnectorId(rabby, null, [{ id: "com.debank.rabby", name: "Rabby" }])).toBe("com.debank.rabby");
+  });
+
+  it("falls back to the RainbowKit built-in connectorId", () => {
+    const connectors = [
+      { id: "metaMask", name: "MetaMask" },
+      { id: "walletConnect", name: "WalletConnect" },
+    ];
+    expect(resolveConnectorId(mm, null, connectors)).toBe("metaMask");
+  });
+
+  it("falls back to case-insensitive name overlap ('Rabby Wallet' ↔ connector 'Rabby')", () => {
+    expect(resolveConnectorId(rabby, null, [{ id: "injected", name: "Rabby" }])).toBe("injected");
+  });
+
+  it("returns null when nothing matches → fail-honest, the UI must NOT offer a dead button", () => {
+    expect(resolveConnectorId(rabby, null, [{ id: "io.metamask", name: "MetaMask" }])).toBeNull();
+    expect(resolveConnectorId(rabby, null, [])).toBeNull();
+  });
+
+  it("does NOT false-match a connector with an empty/degenerate name (hostile self-attested metadata)", () => {
+    // `want.includes("")` is always true — without the empty/short-name guard an unnamed connector would
+    // resolve for ANY wallet, defeating the fail-honest guarantee. It must stay null.
+    expect(resolveConnectorId(rabby, null, [{ id: "evil", name: "" }])).toBeNull();
+    expect(resolveConnectorId(rabby, null, [{ id: "x", name: "ab" }])).toBeNull();
+    // rdns still wins even when a degenerate-named connector is also present.
+    expect(
+      resolveConnectorId(rabby, "io.rabby", [
+        { id: "evil", name: "" },
+        { id: "io.rabby", name: "Rabby" },
+      ]),
+    ).toBe("io.rabby");
+  });
+
+  it("WalletConnect resolves by its built-in connectorId", () => {
+    expect(resolveConnectorId(wc, null, [{ id: "walletConnect", name: "WalletConnect" }])).toBe("walletConnect");
   });
 });

@@ -17,14 +17,21 @@ import type { WalletInstallRegistryEntry } from "@/lib/web3/wallet-registry";
 export function WalletConnectConfirm({
   entry,
   connecting,
+  connectable = true,
+  reason = null,
   onConnect,
   onCancel,
 }: {
   entry: WalletInstallRegistryEntry;
   connecting: boolean;
+  /** False when no live wagmi connector resolves for this wallet → fail-honest, no dead button. */
+  connectable?: boolean;
+  /** Machine reason when not connectable (e.g. no_matching_connector / walletconnect_project_id_missing). */
+  reason?: string | null;
   onConnect: () => void;
   onCancel: () => void;
 }) {
+  const disabled = connecting || !connectable;
   return (
     <Card data-testid="wallet-connect-confirm">
       <CardHeader>
@@ -34,6 +41,13 @@ export function WalletConnectConfirm({
         <p className="text-sm">
           <strong>{entry.name}</strong> está instalada y disponible. ¿Deseas conectarla a la DApp?
         </p>
+
+        {!connectable && (
+          <Badge variant="warning" data-testid="wallet-connect-unavailable">
+            No hay un conector disponible para esta wallet en esta sesión{reason ? ` (${reason})` : ""}. No se
+            puede conectar todavía.
+          </Badge>
+        )}
 
         <div>
           <div className="mb-2 text-xs uppercase tracking-widest text-muted-foreground/70">Permisos</div>
@@ -52,11 +66,11 @@ export function WalletConnectConfirm({
             type="button"
             variant="default"
             onClick={onConnect}
-            disabled={connecting}
-            aria-disabled={connecting}
+            disabled={disabled}
+            aria-disabled={disabled}
             data-testid="wallet-connect"
           >
-            {connecting ? "Conectando…" : "Conectar wallet"}
+            {!connectable ? "No disponible" : connecting ? "Conectando…" : "Conectar wallet"}
           </Button>
           <Button type="button" variant="ghost" onClick={onCancel} data-testid="wallet-connect-cancel">
             Cancelar

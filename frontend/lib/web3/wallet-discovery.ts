@@ -93,3 +93,60 @@ export function isProtocolConnector(id: SupportedWalletId): boolean {
   const entry = getWalletEntry(id);
   return Boolean(entry && entry.rdnsAllowlist.length === 0);
 }
+
+/** Minimal shape of a live wagmi connector (from useConnectors) needed to match — id + name only. */
+export interface ConnectorMeta {
+  id: string;
+  name: string;
+}
+
+/**
+ * PURE. Resolve which live wagmi connector to use for a selected registry wallet.
+ *
+ * wagmi's `multiInjectedProviderDiscovery` (enabled by RainbowKit getDefaultConfig) converts each
+ * announced EIP-6963 provider into an `injected` connector whose `id` IS the provider's rdns (via the
+ * `mipd` library). So for a DETECTED wallet the precise link is rdns → connector.id. Priority:
+ *   1. the rdns matched during discovery (the exact detected wallet),
+ *   2. any rdns in the registry allowlist advertised as a connector id,
+ *   3. the registry's RainbowKit `connectorId` (metaMask / coinbaseWallet / walletConnect built-ins),
+ *   4. a case-insensitive name overlap (last resort, both directions).
+ *
+ * Returns the connector id to connect, or `null` when NOTHING matches — the UI must then render a
+ * fail-honest "not connectable" state instead of a dead button (never a silent no-op).
+ */
+export function resolveConnectorId(
+  entry: Pick<WalletInstallRegistryEntry, "connectorId" | "name" | "rdnsAllowlist">,
+  matchedRdns: string | null,
+  connectors: ConnectorMeta[],
+): string | null {
+  const find = (pred: (c: ConnectorMeta) => boolean): string | null => connectors.find(pred)?.id ?? null;
+
+  // 1. exact rdns matched during discovery.
+  if (matchedRdns) {
+    const byRdns = find((c) => lc(c.id) === lc(matchedRdns));
+    if (byRdns) return byRdns;
+  }
+  // 2. any allowlisted rdns advertised as a connector id.
+  for (const rdns of entry.rdnsAllowlist) {
+    const byAllow = find((c) => lc(c.id) === lc(rdns));
+    if (byAllow) return byAllow;
+  }
+  // 3. RainbowKit built-in connectorId.
+  if (entry.connectorId) {
+    const cid = entry.connectorId;
+    const byCid = find((c) => lc(c.id) === lc(cid));
+    if (byCid) return byCid;
+  }
+  // 4. case-insensitive name overlap — DEFENSIVE last resort. The install gate makes this unreachable in
+  //    the wired connect flow (rdns already matched by then); it exists only for robustness. Guard against
+  //    empty/degenerate names: a connector's name is self-attested (EIP-6963), so without this guard an
+  //    empty name would substring-match EVERY wallet (`want.includes("")` is always true) and defeat the
+  //    fail-honest guarantee. Require both names present and a meaningful (>=3 char) overlap.
+  const want = lc(entry.name);
+  if (want.length < 3) return null;
+  return find((c) => {
+    const have = lc(c.name);
+    if (have.length < 3) return false;
+    return have === want || have.includes(want) || want.includes(have);
+  });
+}
