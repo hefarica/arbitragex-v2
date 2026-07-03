@@ -1,31 +1,39 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# M5 — Sepolia deploy wrapper (gated). Reuses contracts/script/DeployTestnet.s.sol.
+# M5 — Sepolia SIMULATION wrapper (CI-keyless). Reuses contracts/script/DeployTestnet.s.sol.
 #
-# DOCTRINE (INVIOLABLE):
-#   * SEPOLIA TESTNET ONLY. There is NO mainnet path here. A hard chainId guard
-#     refuses to proceed unless the RPC reports chainId 11155111.
-#   * DRY-RUN BY DEFAULT (M5_MODE=dry_run): `forge script` WITHOUT --broadcast =
-#     pure simulation, nothing is signed or sent on-chain.
-#   * A LIVE broadcast (M5_MODE=live) ADDITIONALLY requires the explicit sentinel
-#     M5_CONFIRM_LIVE=DEPLOY-SEPOLIA. Absent/wrong sentinel → abort, no broadcast.
-#   * Secrets (DEPLOYER_PRIVATE_KEY/ETHERSCAN) come from the environment only;
-#     never hard-coded. The dry-run path uses a public dummy key for simulation.
+# DOCTRINE (INVIOLABLE): CI validates; the operator signs. CI never custodies or transmits keys.
+#   * SEPOLIA TESTNET ONLY. There is NO mainnet path here. A hard chainId guard refuses to proceed
+#     unless the RPC reports chainId 11155111.
+#   * SIMULATION ONLY. `forge script` runs without any broadcast flag — nothing is signed or sent.
+#   * NO LIVE PATH IN CI. A real Sepolia deploy (signing + on-chain send) runs from the operator/KMS
+#     plane, never from GitHub Actions. If a live mode is requested here, this script FAILS CLOSED.
+#   * NO SECRET KEY. The simulation derives a sender from a PUBLIC, well-known test key (Anvil
+#     account #0 — zero value on any real network). No deployer secret is read or accepted.
 #
 # Env:
-#   M5_MODE                dry_run (default) | live
-#   M5_CONFIRM_LIVE        must equal "DEPLOY-SEPOLIA" for a live broadcast
-#   M5_VERIFY              true|false — pass --verify on a live deploy (default true)
-#   SEPOLIA_RPC_URL        Sepolia RPC endpoint (required)
-#   DEPLOYER_PRIVATE_KEY   deployer key (required; dummy is fine for dry_run)
-#   AAVE_POOL_ADDRESS      Aave V3 Sepolia pool (required by DeployTestnet)
+#   M5_MODE               dry_run (default). Any other value is refused (operator-plane only).
+#   SEPOLIA_RPC_URL       Sepolia RPC endpoint (required)
+#   AAVE_POOL_ADDRESS     Aave V3 Sepolia pool (required by DeployTestnet)
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
 MODE="${M5_MODE:-dry_run}"
+
+# Fail closed on any non-simulation mode. Live signing/sending is operator/KMS plane only.
+if [ "${MODE}" != "dry_run" ]; then
+  echo "LIVE_DEPLOY_OPERATOR_PLANE_ONLY: mode='${MODE}' is refused. A live Sepolia deploy signs and" >&2
+  echo "  sends on-chain and therefore runs from the operator/KMS plane, never from CI. This CI job is" >&2
+  echo "  simulation-only and keyless. See docs/m5-sepolia-runbook.md (operator-plane deploy)." >&2
+  exit 1
+fi
+
 : "${SEPOLIA_RPC_URL:?SEPOLIA_RPC_URL not set}"
-: "${DEPLOYER_PRIVATE_KEY:?DEPLOYER_PRIVATE_KEY not set}"
 : "${AAVE_POOL_ADDRESS:?AAVE_POOL_ADDRESS not set}"
+
+# Public simulation sender — Anvil account #0. Zero value on any real network; NEVER a real deployer.
+# DeployTestnet.s.sol reads this via vm.envUint for the simulated sender only (no signing key custody).
+export DEPLOYER_PRIVATE_KEY="${DEPLOYER_PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "${SCRIPT_DIR}/../contracts" && pwd)"
@@ -38,23 +46,7 @@ if [ "${CHAIN_ID}" != "11155111" ]; then
 fi
 echo "M5: chainId 11155111 (Sepolia) confirmed."
 
-ARGS=(script script/DeployTestnet.s.sol --rpc-url "${SEPOLIA_RPC_URL}" -vvvv)
-
-if [ "${MODE}" = "live" ]; then
-  if [ "${M5_CONFIRM_LIVE:-}" != "DEPLOY-SEPOLIA" ]; then
-    echo "M5 ABORT: live mode requires M5_CONFIRM_LIVE=DEPLOY-SEPOLIA (got '${M5_CONFIRM_LIVE:-<empty>}'). No broadcast." >&2
-    exit 1
-  fi
-  echo "M5: LIVE Sepolia broadcast AUTHORIZED (sentinel + environment passed)."
-  ARGS+=(--broadcast)
-  if [ "${M5_VERIFY:-true}" = "true" ]; then
-    ARGS+=(--verify)
-  fi
-else
-  echo "M5: DRY-RUN — simulation only, NO --broadcast (nothing signed/sent)."
-fi
-
+echo "M5: SIMULATION only — no on-chain send, no signing key custody (CI is keyless)."
 cd "${CONTRACTS_DIR}"
-echo "M5: forge ${ARGS[*]}"
-forge "${ARGS[@]}"
-echo "M5 deploy step DONE (mode=${MODE})."
+forge script script/DeployTestnet.s.sol --rpc-url "${SEPOLIA_RPC_URL}" -vvvv
+echo "M5 simulation DONE (mode=dry_run)."
