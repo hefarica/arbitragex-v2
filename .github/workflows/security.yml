@@ -41,6 +41,22 @@ jobs:
         # warning instead of failing the gate. CI-tool bump only; no runtime impact.
         run: cargo install cargo-audit --version 0.22.1 --locked
 
+      - name: Enforce RUSTSEC allowlist expiry (fail-honest)
+        # The RUSTSEC_IGNORES expiry used to live only in a comment — past the
+        # date the job stayed GREEN (false green, observed 2026-07-01..03).
+        # Mechanized: once today (UTC) is past ALLOWLIST_EXPIRES this job FAILS
+        # until each --ignore below is re-justified or remediated. Keep this
+        # date in sync with the allowlist comment header below.
+        env:
+          ALLOWLIST_EXPIRES: "2026-07-31"
+        run: |
+          today="$(date -u +%F)"
+          if [[ "$today" > "$ALLOWLIST_EXPIRES" ]]; then
+            echo "::error::RUSTSEC_IGNORES allowlist expired ${ALLOWLIST_EXPIRES} (today ${today}) — re-justify or remediate each --ignore in security.yml"
+            exit 1
+          fi
+          echo "RUSTSEC_IGNORES allowlist valid until ${ALLOWLIST_EXPIRES} (today ${today})"
+
       - name: Run cargo audit
         working-directory: backend
         # Blocking — audit A6 (2026-05-10). No silent failures.
@@ -51,21 +67,41 @@ jobs:
           cargo audit --deny warnings \
             ${RUSTSEC_IGNORES:-}
         env:
-          # ── OMEGA-102 OPERATOR-APPROVED ALLOWLIST · 2026-05-16 ──
-          # Each entry below carries: ruta exacta · exposure analysis · plan · deadline.
-          # All ignores expire 2026-06-30 — past that date, this allowlist MUST be
-          # re-justified or the advisory remediated (operator: @hefarica).
-          # See docs/OMEGA-102-CARGO-AUDIT-ALLOWLIST.md for the per-advisory rationale.
+          # ── OMEGA-102 OPERATOR-APPROVED ALLOWLIST · 2026-05-16 · renewed 2026-07-03 ──
+          # Each entry below carries: ruta exacta (re-verified against backend/Cargo.lock
+          # on renewal 2026-07-03) · exposure analysis · plan.
+          # All ignores expire 2026-07-31 — ENFORCED by the "Enforce RUSTSEC allowlist
+          # expiry" step above (the previous comment-only expiry of 2026-06-30 was a
+          # false green). Past that date the job FAILS until each id is re-justified
+          # or remediated (operator: @hefarica).
           #
           # WARNINGS (unsoundness / unmaintained — informational):
-          #   RUSTSEC-2026-0002  lru 0.12.5     IterMut Stacked Borrows. Direct in backend/Cargo.toml:64.
-          #                                     Plan: bump 0.13 after benchmark sprint (per dependabot ignore).
-          #   RUSTSEC-2024-0388  derivative     unmaintained.
-          #   RUSTSEC-2025-0057  fxhash         unmaintained.
-          #   RUSTSEC-2024-0384  instant        unmaintained (via revm 3.5/parking_lot).
-          #   RUSTSEC-2024-0436  paste          unmaintained (per dependabot ignore 2026-05-10).
-          #   RUSTSEC-2025-0010  ring<0.17      unmaintained (transitive via rfc6979).
-          #   RUSTSEC-2025-0134  rustls-pemfile unmaintained.
+          #   RUSTSEC-2026-0002  lru 0.12.5     IterMut Stacked Borrows. Direct (prioritization-spine,
+          #                                     searcher-rs); workspace already carries lru 0.16.4
+          #                                     elsewhere, so the old plan ("bump 0.13 after benchmark
+          #                                     sprint") is stale — justification pending operator
+          #                                     review (renewed 2026-07-03).
+          #   RUSTSEC-2024-0388  derivative     unmaintained. Via ark-ff 0.3/0.4 ← ruint
+          #                                     (alloy-primitives chain). No remediation plan on file —
+          #                                     justification pending operator review (renewed 2026-07-03).
+          #   RUSTSEC-2025-0057  fxhash         unmaintained. Via hashers ← ethers-providers 2.0.14
+          #                                     (Cargo.lock). Resolved by the pending removal sprint for
+          #                                     deprecated ethers-rs 2.0.14.
+          #   RUSTSEC-2024-0384  instant        unmaintained. Via ethers-middleware/ethers-providers
+          #                                     2.0.14 (Cargo.lock — the earlier revm 3.5/parking_lot
+          #                                     attribution was stale). Resolved by the ethers-rs
+          #                                     removal sprint.
+          #   RUSTSEC-2024-0436  paste          unmaintained, no successor. Multiple roots
+          #                                     (alloy-primitives 1.6.0, ark-ff, rmcp 0.3.2,
+          #                                     sqlx-core 0.7.4, syn-solidity) — justification pending
+          #                                     operator review (renewed 2026-07-03).
+          #   RUSTSEC-2025-0010  ring<0.17      unmaintained. Single ring 0.16.20 instance via
+          #                                     jsonwebtoken 8.3.0 ← ethers-providers 2.0.14 (Cargo.lock
+          #                                     — the earlier rfc6979 attribution was stale). Resolved
+          #                                     by the ethers-rs removal sprint.
+          #   RUSTSEC-2025-0134  rustls-pemfile 1.0.4 unmaintained. Via reqwest 0.11.27 (rooted at
+          #                                     ethers-* 2.0.14) + sqlx-core 0.7.4. Resolved by the
+          #                                     ethers-rs removal + sqlx 0.8 sprints.
           #   RUSTSEC-2026-0173  proc-macro-error2 2.0.1  unmaintained. Published 2026-06-07.
           #                                               Transitive via alloy-sol-macro-expander→alloy-sol-types
           #                                               (shared-rs, searcher-rs, token-enricher, and 5 others).
@@ -74,28 +110,39 @@ jobs:
           #                                               alloy major bump sprint (not blocking security posture).
           #
           # NO FIX AVAILABLE:
-          #   RUSTSEC-2023-0071  rsa 0.9.10     Marvin timing sidechannel (5.9 medium).
-          #                                     Signer uses k256/secp256k1, not RSA. Track upstream.
+          #   RUSTSEC-2023-0071  rsa 0.9.10     Marvin timing sidechannel (5.9 medium). Via sqlx-mysql
+          #                                     0.7.4 (Cargo.lock); the MySQL driver is not used
+          #                                     (Postgres runtime) and the signer uses k256/secp256k1,
+          #                                     not RSA. No upstream fix; revisit on the sqlx 0.7→0.8
+          #                                     migration sprint.
           #
           # HIGH (transitive — blocked on upstream):
-          #   RUSTSEC-2024-0437  protobuf 2.28  Recursion crash. Via `prometheus` crate
-          #                                     (metric serialization, operator-controlled input).
-          #                                     Plan: upstream prometheus bump to protobuf>=3.7.2.
-          #   RUSTSEC-2025-0009  ring 0.16.20   AES panic. Via rfc6979→revm 3.5.
-          #                                     Plan: revm major bump scheduled separately.
+          #   RUSTSEC-2024-0437  protobuf 2.28  Recursion crash. Via `prometheus` crate (searcher-rs,
+          #                                     sed-core, shared-rs, token-enricher; metric
+          #                                     serialization, operator-controlled input).
+          #                                     Plan: upstream prometheus bump to protobuf>=3.7.2 —
+          #                                     still pending as of 2026-07-03.
+          #   RUSTSEC-2025-0009  ring 0.16.20   AES panic. Via jsonwebtoken 8.3.0 ← ethers-providers
+          #                                     2.0.14 (Cargo.lock — the earlier rfc6979→revm
+          #                                     attribution was stale). Resolved by the pending removal
+          #                                     sprint for deprecated ethers-rs 2.0.14.
           #   RUSTSEC-2026-0098  rustls-webpki  Name constraints URI bug.
           #   RUSTSEC-2026-0099  rustls-webpki  Wildcard cert bug.
           #   RUSTSEC-2026-0104  rustls-webpki  CRL parse panic.
-          #                                     (All 3 in rustls-webpki 0.101.7; workspace also has 0.103.12.)
-          #                                     Plan: bump remaining 0.101 consumer chain to rustls 0.23.
+          #                                     (All 3 in rustls-webpki 0.101.7 via rustls 0.21.12 ←
+          #                                     reqwest 0.11.27 (ethers-* 2.0.14, simulator-v2,
+          #                                     token-enricher) + sqlx-core 0.7.4; workspace also has
+          #                                     the fixed 0.103.13.) Resolved by the ethers-rs removal
+          #                                     + sqlx 0.8 sprints (both pending).
           #
           # HIGH (direct — blocked by dependabot policy):
           #   RUSTSEC-2024-0363  sqlx 0.7.4     Binary protocol truncating-cast misinterpretation.
           #                                     DIRECT dep in 8 workspace crates (shared-rs, searcher-rs,
           #                                     recon, prioritization-spine, relays-client, sim-ctl,
           #                                     token-enricher, sed-core).
-          #                                     Plan: sqlx 0.7→0.8 dedicated migration sprint
-          #                                     (dependabot.yml blocks major bump audit 2026-05-10).
+          #                                     Plan: sqlx 0.7→0.8 dedicated breaking-migration sprint
+          #                                     (dependabot.yml blocks major bump audit 2026-05-10) —
+          #                                     still pending as of 2026-07-03.
           #
           # HIGH (NOT exploitable in our usage — vulnerable transport not compiled):
           #   RUSTSEC-2026-0189  rmcp 0.3.2     DNS rebinding in the Streamable HTTP SERVER transport
@@ -107,8 +154,9 @@ jobs:
           #                                     server transport is neither compiled nor used, and the
           #                                     engine is a local shadow/read-only tool. cargo audit flags
           #                                     by crate version, not feature/usage → false-positive here.
-          #                                     Plan: remediate on the rmcp 0.3->1.x migration (breaking
-          #                                     SDK bump, separate sprint; no security urgency).
+          #                                     Plan: remediate on the rmcp 0.3→1.x migration
+          #                                     (dependabot #145; breaking SDK bump, separate sprint;
+          #                                     no security urgency).
           RUSTSEC_IGNORES: >-
             --ignore RUSTSEC-2026-0002
             --ignore RUSTSEC-2024-0388
