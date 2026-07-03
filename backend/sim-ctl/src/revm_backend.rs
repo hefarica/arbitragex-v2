@@ -132,6 +132,16 @@ impl SimulatorBackend for RevmBackend {
             gas_price_wei,
         };
 
+        // G-SIM-1 fail-closed: sim-ctl does not yet encode the real arbitrage route into the
+        // candidate (calldata above is `Vec::new()` — "route encoding lands as a follow-up task").
+        // An empty-calldata sim WOULD run and return net_profit=0 → passed=false, masquerading as a
+        // real "no-profit" result. That is fabricated evidence: it certifies nothing about the actual
+        // requestFlashLoan → executeArbitrage path. Refuse it explicitly until sim-ctl consumes the
+        // real route / wrapped_calldata, keeping ARBX_SIMULATOR_V2_READY honestly false.
+        if let Some(err) = empty_route_calldata_reject(&candidate.calldata) {
+            return Ok(translate_result(id, trace_id, Err(err)));
+        }
+
         // Dispatch sync REVM call off the tokio executor.
         let core = Arc::clone(&self.core);
         let result = tokio::task::spawn_blocking(move || core.simulate(&candidate))
@@ -147,6 +157,23 @@ impl SimulatorBackend for RevmBackend {
 }
 
 /// Translate `simulator_v2` result → `shared_rs::SimulationResult`.
+/// G-SIM-1 fail-closed guard. sim-ctl builds the REVM candidate with an EMPTY calldata
+/// (`Vec::new()`) because route encoding is a follow-up task, so an empty-calldata sim would
+/// masquerade as a real "no-profit" result — fabricated evidence. Until sim-ctl consumes the real
+/// route / wrapped_calldata, an empty calldata is rejected fail-closed with an explicit reason
+/// (`route_encoding_not_available`), never certified. Pure so it is unit-testable without a backend.
+fn empty_route_calldata_reject(calldata: &[u8]) -> Option<SimError> {
+    if calldata.is_empty() {
+        Some(SimError::Provider(
+            "route_encoding_not_available: sim-ctl candidate calldata is empty (route encoding is a \
+             follow-up task); refusing to certify an empty-calldata simulation (G-SIM-1 fail-closed)"
+                .to_string(),
+        ))
+    } else {
+        None
+    }
+}
+
 fn translate_result(
     opportunity_id: uuid::Uuid,
     trace_id: uuid::Uuid,
@@ -310,6 +337,38 @@ mod tests {
         assert_eq!(
             r.fail_reason.as_deref(),
             Some("revm_not_implemented_sprint4")
+        );
+    }
+
+    #[test]
+    fn empty_route_calldata_is_rejected_fail_closed() {
+        // Empty calldata → explicit route_encoding_not_available rejection, NOT a silent
+        // "no-profit" pass-through and NOT fabricated evidence.
+        match empty_route_calldata_reject(&[]) {
+            Some(SimError::Provider(msg)) => {
+                assert!(
+                    msg.contains("route_encoding_not_available"),
+                    "reject reason must name the real gap, got: {msg}"
+                );
+            }
+            other => panic!("expected Provider(route_encoding_not_available), got {other:?}"),
+        }
+        // Non-empty calldata → guard does not fire; the real sim proceeds.
+        assert!(empty_route_calldata_reject(&[0xde, 0xad, 0xbe, 0xef]).is_none());
+    }
+
+    #[test]
+    fn route_encoding_rejection_maps_to_fail_closed_result() {
+        let id = Uuid::new_v4();
+        let tid = Uuid::new_v4();
+        let err = empty_route_calldata_reject(&[]).expect("empty calldata must be rejected");
+        let r = translate_result(id, tid, Err(err));
+        assert!(!r.passed, "empty-calldata sim must never pass");
+        assert_eq!(r.revert_risk_pct, Some(100.0));
+        assert!(r.simulated_profit_usd.is_none(), "no fabricated profit");
+        assert!(
+            r.fail_reason.unwrap().contains("route_encoding_not_available"),
+            "fail_reason must surface the honest reason"
         );
     }
 
