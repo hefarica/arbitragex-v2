@@ -170,13 +170,11 @@ contract DeployMainnet is Script {
         // 4. AdminTimelock — SC-10
         //    24h minDelay on mainnet.
         //    M2 (audit 2026-05-10): proposer/executor = multisig (validated above).
-        //    NOTE (honest, 2026-07): the deployer EOA is the bootstrap
-        //    TimelockController admin and this script does NOT renounce it.
-        //    Renouncing (recommended in AdminTimelock.sol's header) is a manual
-        //    operator step after verifying multisig proposer/executor wiring
-        //    on-chain — it is NOT yet in the DEPLOY.md runbook. Until renounced,
-        //    the deployer can still grant timelock roles — a delayed (never
-        //    instant) bypass of the multisig; track as residual.
+        //    The deployer EOA is the initial TimelockController admin only so it
+        //    can renounce after the timelock is wired. OZ TimelockController grants
+        //    DEFAULT_ADMIN_ROLE to BOTH address(this) (self-administration) and the
+        //    `admin` arg (deployer); the deployer's copy is renounced below (M10),
+        //    leaving only the self-admin so governance runs through schedule+execute.
         // ----------------------------------------------------------------
         ERC1967Proxy proxyTL;
         {
@@ -257,10 +255,24 @@ contract DeployMainnet is Script {
             fl.revokeRole(fl.UPGRADER_ROLE(), deployer);
             fl.grantRole(fl.DEFAULT_ADMIN_ROLE(), timelockProxy);
             fl.revokeRole(fl.DEFAULT_ADMIN_ROLE(), deployer);
+
+            // --- AdminTimelock (self) ---
+            // OZ TimelockController grants DEFAULT_ADMIN_ROLE to the `admin` arg
+            // (deployer) at init as a bootstrap admin, IN ADDITION to the timelock's
+            // own self-administration (address(this)). Without this renounce the
+            // deployer EOA would keep DEFAULT_ADMIN_ROLE over the timelock itself and
+            // could grantRole(PROPOSER/EXECUTOR, deployer) instantly (a direct
+            // AccessControl call — it does NOT pass through the delay), defeating the
+            // multisig separation of duties. renounceRole drops the caller's own role;
+            // during broadcast msg.sender == deployer. The timelock's self-admin
+            // (address(this)) is untouched, so the multisig can still manage roles via
+            // schedule+execute targeting the timelock — it does not brick.
+            AdminTimelock tl = AdminTimelock(payable(timelockProxy));
+            tl.renounceRole(tl.DEFAULT_ADMIN_ROLE(), deployer);
         }
 
         console2.log("Admin + upgrader transferred to timelock:", timelockProxy);
-        console2.log("Deployer admin + upgrader revoked from all contracts:", deployer);
+        console2.log("Deployer admin + upgrader revoked from all contracts (incl. timelock):", deployer);
 
         vm.stopBroadcast();
 
@@ -298,8 +310,10 @@ contract DeployMainnet is Script {
         console2.log("[ ] 8. (Optional) Set Balancer Vault address if using Balancer flash loans:");
         console2.log("       FlashLoanExecutor.setBalancerVault(0xBA12222222228d8Ba445958a75a0704d566BF2C8)");
         console2.log("NOTE: Admin + upgrader atomically transferred to timelock (M10 + P0 fix 2026-07).");
-        console2.log("      Deployer EOA no longer holds DEFAULT_ADMIN_ROLE or UPGRADER_ROLE on any contract.");
-        console2.log("      Future admin actions AND upgrades require multisig + 24h timelock.");
+        console2.log("      Deployer EOA no longer holds DEFAULT_ADMIN_ROLE or UPGRADER_ROLE on any contract,");
+        console2.log("      including the AdminTimelock itself (bootstrap admin renounced in-script).");
+        console2.log("      The timelock retains self-administration (address(this)); future admin actions");
+        console2.log("      AND upgrades require multisig + 24h timelock (schedule+execute).");
         console2.log("[ ] 9. (SC-10) Verify admin + upgrader roles via Etherscan or cast:");
         console2.log("       cast call <proxyAE> 'hasRole(bytes32,address)' DEFAULT_ADMIN_ROLE <timelock>");
         console2.log("       cast call <proxyAE> 'hasRole(bytes32,address)' UPGRADER_ROLE <timelock>");
