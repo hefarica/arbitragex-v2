@@ -1,14 +1,10 @@
 {
   "_doc": "Expiring allowlist of KNOWN high/critical PROD-dependency advisories, consumed by scripts/npm-audit-gate.mjs (wired into .github/workflows/security.yml). Mirrors the cargo-audit RUSTSEC_IGNORES discipline in the same workflow. A high/critical in ANY package NOT listed here FAILS the gate. Past `expires`, every entry stops suppressing and the gate re-fails — forcing the dependency-upgrade sprint. Keyed by the top-level npm package name as reported by `npm audit --omit=dev --json`.",
-  "expires": "2026-06-30",
-  "_expiryNote": "Aligned to the existing cargo-audit allowlist cliff (security.yml). This is imminent by design — the operator decides whether to run the frontend-wallet/framework upgrade sprint or extend BOTH allowlists together.",
+  "expires": "2026-07-31",
+  "_expiryNote": "Renewed 2026-07-03, aligned to the cargo-audit allowlist cliff (security.yml — now mechanically ENFORCED there). Entries fixed at lockfile level on 2026-07-03 (next 15.5.20, hono 4.12.25+, http-proxy-middleware 3.0.7, form-data 4.0.6) were REMOVED so future highs in those packages block again. The operator decides whether to run the wagmi-3 sprint (dependabot #181) or extend BOTH allowlists together.",
   "allow": {
-    "next": "Next.js framework advisories (frontend). Plan: Next major-bump sprint.",
-    "hono": "Edge worker (Cloudflare) framework. Plan: hono bump in the edge dep sprint.",
-    "ws": "Transitive via the wallet stack. Plan: resolved by the wagmi-3 upgrade (dependabot #181).",
-    "form-data": "Transitive via the http/wallet stack. Plan: resolved with the framework bump.",
-    "http-proxy-middleware": "Transitive (frontend/edge dev-proxy tree). Plan: resolved with the framework bump.",
-    "viem": "Web3 client. Plan: viem bump (dependabot #180).",
+    "ws": "Only remaining vulnerable copies are ws@8.18.0 exact-pinned by nested viem@2.23.2 under @walletconnect/utils@2.21.0 / @reown/appkit* — frozen by @wagmi/connectors@6.2.0 exact pins. Everything reachable within semver was bumped to ws 8.21.0 on 2026-07-03 (api-server direct ws, ethers 6.17.0, socket.io/engine.io chain, top-level viem 2.54.2). Plan: resolved by the wagmi-3 upgrade (dependabot #181).",
+    "viem": "Top-level viem bumped to 2.54.2 (ws 8.21.0) on 2026-07-03; only the nested exact-pinned viem@2.23.2 copies under the @walletconnect 2.21.x subtree remain (flagged via their ws 8.18.0). Plan: resolved by the wagmi-3 upgrade (dependabot #181).",
     "wagmi": "Wallet connector core. Plan: wagmi v3 major (dependabot #181).",
     "@wagmi/core": "Wallet connector core. Plan: wagmi v3 major (dependabot #181).",
     "@wagmi/connectors": "Wallet connectors. Plan: wagmi v3 major (dependabot #181).",
