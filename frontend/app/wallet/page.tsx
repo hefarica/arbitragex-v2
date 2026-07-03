@@ -20,6 +20,7 @@ import { WalletStatusCard } from "@/components/wallet/WalletStatusCard";
 import { NetworkSwitcher } from "@/components/wallet/NetworkSwitcher";
 import { AccountPopover } from "@/components/wallet/AccountPopover";
 import { WalletIntentPanel } from "@/components/wallet/WalletIntentPanel";
+import { WalletOnboardingGuard } from "@/components/wallet/WalletOnboardingGuard";
 import { SiweAuthPanel } from "@/app/wallet/SiweAuthPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -38,6 +39,11 @@ export default function WalletPage() {
       <div className="space-y-6">
         <WalletSafetyBanner />
         <WalletModeBadge />
+
+        {/* Primary connect surface: explicit install→confirm→connect (read-only). Replaces the opaque
+            RainbowKit modal as the disconnected entry point; the header button below only surfaces
+            connected-state account/chain controls. */}
+        <WalletOnboardingGuard />
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <WalletStatusCard />
