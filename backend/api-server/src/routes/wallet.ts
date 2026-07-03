@@ -114,13 +114,81 @@ function intentId(): string {
 }
 
 // ---------------------------------------------------------------------------
+// /api/wallet/simulate contract. DENY-BY-DEFAULT: `allow` requires EVERY gate
+// green. `live_gate_open` is STRUCTURALLY false, so `allow` is always false from
+// this surface — the endpoint INFORMS the client policy engine; it authorizes
+// nothing. When no fork-simulation runtime is wired we are fail-closed:
+// simulation_passed=false, calldata_hash_matches_sim=false, reason=runtime_not_configured.
+// ---------------------------------------------------------------------------
+
+const RISK_SCORE_MIN = 60;
+
+export interface SimulateGates {
+  simulation_passed: boolean;
+  calldata_hash_matches_sim: boolean;
+  net_profit_usd: number | null;
+  risk_score: number | null;
+  gas_estimate: string | null; // wei string
+  routeHash: string | null;
+  calldataHash: string | null;
+  policyId: string | null;
+  readiness_green: boolean;
+  kill_switch_off: boolean;
+  live_gate_open: false; // structural — never true from this surface
+}
+
+/** The result a real fork-simulation runtime would return (injected via deps). */
+export interface SimResult {
+  passed: boolean;
+  calldataHash: string;
+  routeHash: string;
+  netProfitUsd: number;
+  riskScore: number;
+  gasEstimate: string; // wei
+}
+
+/** Deny-by-default verdict: allow only if every gate is green. */
+export function simulateVerdict(g: SimulateGates): { allow: boolean; denied: string[] } {
+  const checks: Array<[string, boolean]> = [
+    ["simulation_passed", g.simulation_passed === true],
+    ["calldata_hash_matches_sim", g.calldata_hash_matches_sim === true],
+    ["net_profit_usd_positive", (g.net_profit_usd ?? 0) > 0],
+    ["risk_score_minimum", g.risk_score !== null && g.risk_score >= RISK_SCORE_MIN],
+    ["readiness_green", g.readiness_green === true],
+    ["kill_switch_off", g.kill_switch_off === true],
+    ["live_gate_open", g.live_gate_open === true],
+  ];
+  const denied = checks.filter(([, ok]) => !ok).map(([n]) => n);
+  return { allow: denied.length === 0, denied };
+}
+
+interface SimulateInput extends IntentInput {
+  routeHash?: string | undefined;
+  calldataHash?: string | undefined;
+  policyId?: string | undefined;
+}
+
+function readSimulateInput(body: unknown): SimulateInput {
+  const base = readIntent(body);
+  if (!body || typeof body !== "object") return base;
+  const b = body as Record<string, unknown>;
+  const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+  return { ...base, routeHash: str(b.routeHash), calldataHash: str(b.calldataHash), policyId: str(b.policyId) };
+}
+
+/** Route deps. The runtime providers are OPTIONAL — absent → fail-closed (deny). */
+export interface WalletRoutesDeps {
+  logger: { warn: (obj: object, msg?: string) => void; info?: (obj: object, msg?: string) => void };
+  readiness?: () => Promise<{ green: boolean }>;
+  killSwitch?: () => Promise<{ off: boolean }>;
+  forkSimulator?: (input: SimulateInput) => Promise<SimResult | null>;
+}
+
+// ---------------------------------------------------------------------------
 // Route mounting.
 // ---------------------------------------------------------------------------
 
-export function mountWalletRoutes(
-  app: Application,
-  deps: { logger: { warn: (obj: object, msg?: string) => void; info?: (obj: object, msg?: string) => void } },
-): void {
+export function mountWalletRoutes(app: Application, deps: WalletRoutesDeps): void {
   // ----- GET /api/wallet/status -------------------------------------------
   app.get("/api/wallet/status", (_req: Request, res: Response) => {
     res.status(200).json({
@@ -154,25 +222,76 @@ export function mountWalletRoutes(
 
   // ----- POST /api/wallet/simulate ----------------------------------------
   // Simulation is the ONLY pre-flight; it can pass or fail but NEVER unlocks a
-  // broadcast. Without a real simulation runtime we are fail-honest: the intent
-  // remains SIMULATION_REQUIRED and the surface reports unavailable — we do not
-  // fabricate a "passed" simulation.
-  app.post("/api/wallet/simulate", (req: Request, res: Response) => {
-    const intent = readIntent(req.body);
+  // broadcast. Deny-by-default: `allow` needs every gate green, and live_gate_open
+  // is structurally false, so allow is always false here. Without a fork-sim
+  // runtime we are fail-closed (reason=runtime_not_configured) — never a fabricated
+  // "passed". Runtime providers (forkSimulator/readiness/killSwitch) are optional;
+  // absent or throwing → the corresponding gate is denied.
+  app.post("/api/wallet/simulate", async (req: Request, res: Response) => {
+    const input = readSimulateInput(req.body);
     const id = intentId();
-    deps.logger.info?.({ event: "wallet.simulate", id, kind: intent.kind ?? null, chain_id: intent.chain_id ?? null });
+    deps.logger.info?.({ event: "wallet.simulate", id, kind: input.kind ?? null, chain_id: input.chain_id ?? null });
+
+    let sim: SimResult | null = null;
+    if (deps.forkSimulator) {
+      try {
+        sim = await deps.forkSimulator(input);
+      } catch {
+        sim = null; // fail-closed on simulator error
+      }
+    }
+
+    let readiness_green = false;
+    if (deps.readiness) {
+      try {
+        readiness_green = (await deps.readiness()).green === true;
+      } catch {
+        readiness_green = false;
+      }
+    }
+
+    let kill_switch_off = false;
+    if (deps.killSwitch) {
+      try {
+        kill_switch_off = (await deps.killSwitch()).off === true;
+      } catch {
+        kill_switch_off = false;
+      }
+    }
+
+    const gates: SimulateGates = {
+      simulation_passed: sim?.passed === true,
+      calldata_hash_matches_sim:
+        !!sim && !!input.calldataHash && sim.calldataHash.toLowerCase() === input.calldataHash.toLowerCase(),
+      net_profit_usd: sim ? sim.netProfitUsd : null,
+      risk_score: sim ? sim.riskScore : null,
+      gas_estimate: sim ? sim.gasEstimate : null,
+      routeHash: sim ? sim.routeHash : null,
+      calldataHash: sim ? sim.calldataHash : null,
+      policyId: input.policyId ?? null,
+      readiness_green,
+      kill_switch_off,
+      live_gate_open: false,
+    };
+
+    const { allow, denied } = simulateVerdict(gates);
+    const reason = sim ? (allow ? null : "policy_denied") : "runtime_not_configured";
+
     res.status(200).json({
-      status: "unavailable",
-      reason: "wallet_simulation_runtime_not_configured",
+      status: sim ? "ok" : "unavailable",
+      reason,
       intent_id: id,
-      state: "SIMULATION_REQUIRED" as IntentState,
-      simulated: false,
+      state: (allow ? "SIMULATION_PASSED" : "SIMULATION_REQUIRED") as IntentState,
+      simulated: sim !== null,
+      ...gates,
+      allow, // deny-by-default; always false from this surface (live_gate_open structural false)
+      denied,
       ...SAFE_POSTURE,
       broadcast_allowed: false,
       broadcast_reason: BROADCAST_DISABLED_REASON,
-      message:
-        "No fork-simulation runtime is wired to this read-only surface. " +
-        "Even a passing simulation would NOT enable broadcast.",
+      message: sim
+        ? "Simulation ran. A passing simulation does NOT enable broadcast — live_gate_open is structurally false."
+        : "No fork-simulation runtime is wired. Even a passing simulation would NOT enable broadcast.",
       ts: new Date().toISOString(),
     });
   });
@@ -237,4 +356,7 @@ export const __forTesting = {
   INTENT_STATES,
   safetyGates,
   readIntent,
+  simulateVerdict,
+  readSimulateInput,
+  RISK_SCORE_MIN,
 };
