@@ -20,10 +20,34 @@ use std::sync::Arc;
 
 use ethers::types::{Address, U256};
 use prioritization_spine::round_trip_executor::SimulationOutcome;
-use shared_rs::candidates::{DecimalsMap, OpportunityCandidate};
+// NOTE: there are TWO `OpportunityCandidate` types — the shared contract
+// (`shared_rs::candidates::OpportunityCandidate`, used by the HTTP API) and
+// the encoder's input (`prioritization_spine::types::OpportunityCandidate`).
+// They are structurally similar but distinct types. We convert between them
+// (see `to_spine_candidate`) because the encoder expects the spine version.
+use shared_rs::candidates::{DecimalsMap, OpportunityCandidate as SharedOpportunityCandidate};
 use sim_core::sim_encoder::{
     build_round_trip_context_from_candidate, RouteEncodingConfig, TokenDecimalsProvider,
 };
+
+/// Convert the shared HTTP contract candidate → the encoder's spine candidate.
+///
+/// The shared type carries extra fields (opportunity_id, chain_id, decimals,
+/// block_number) that the encoder consumes separately (as function args, not
+/// struct fields). The 7 topology/profit fields map 1:1.
+fn to_spine_candidate(
+    candidate: &SharedOpportunityCandidate,
+) -> prioritization_spine::types::OpportunityCandidate {
+    prioritization_spine::types::OpportunityCandidate {
+        route_fingerprint: candidate.route_fingerprint.clone(),
+        pool_addresses: candidate.pool_addresses.clone(),
+        token_addresses: candidate.token_addresses.clone(),
+        dex_adapters: candidate.dex_adapters.clone(),
+        amount_in: candidate.amount_in,
+        expected_amount_out: candidate.expected_amount_out,
+        gross_profit: candidate.gross_profit,
+    }
+}
 
 /// Environment-driven config for the real simulation path.
 ///
@@ -121,12 +145,14 @@ impl TokenDecimalsProvider for CandidateDecimalsProvider {
 /// `gas_price_wei` is the live gas price (caller reads it from Redis).
 /// `simulator` is the shared `SimulatorV2` handle (has the RPC URL + CacheDB).
 pub async fn run_real_simulation(
-    candidate: OpportunityCandidate,
+    candidate: SharedOpportunityCandidate,
     simulator: Arc<simulator_v2::SimulatorV2>,
     env_config: &RealSimEnvConfig,
     gas_price_wei: U256,
 ) -> SimulationOutcome {
     let chain_id = candidate.chain_id;
+    // Convert to the encoder's spine candidate type (7 topology/profit fields).
+    let spine_candidate = to_spine_candidate(&candidate);
 
     // 1. Encoder config + decimals provider.
     let now_unix_ts = std::time::SystemTime::now()
@@ -144,7 +170,7 @@ pub async fn run_real_simulation(
 
     // 2. Encode candidate → RoundTripContext (SAME encoder searcher-rs uses).
     let ctx = match build_round_trip_context_from_candidate(
-        &candidate,
+        &spine_candidate,
         chain_id,
         env_config.executor_address,
         &decimals_provider,
@@ -177,7 +203,8 @@ pub async fn run_real_simulation(
         paper_mode: true,
         enable_storage_cheats: true,
         require_trace_hash: true,
-        require_positive_spread: true,
+        require_positive_net_profit: true,
+        max_steps: 8,
     };
 
     // 4. Dispatch the sync REVM call off the tokio executor.
@@ -199,11 +226,8 @@ pub async fn run_real_simulation(
 /// `route_hash` parameter expects. The fingerprint is already a stable
 /// lowercase string unique to the route topology.
 fn route_hash_from_fingerprint(fingerprint: &str) -> [u8; 32] {
-    use ethers::utils::keccak;
-    let hash = keccak(fingerprint.as_bytes());
-    let mut out = [0u8; 32];
-    out.copy_from_slice(hash.as_bytes());
-    out
+    use ethers::utils::keccak256;
+    keccak256(fingerprint.as_bytes())
 }
 
 #[cfg(test)]
