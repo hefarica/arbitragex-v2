@@ -18,12 +18,10 @@ import { EvmAddressSchema, ChainIdSchema, WeiAmountSchema, UsdDecimalSchema } fr
 /**
  * Decimals map: token address → decimals (0-255).
  */
-export const DecimalsMapSchema = z
-  .record(
-    EvmAddressSchema,
-    z.number().int().min(0).max(255),
-  )
-  .strict();
+export const DecimalsMapSchema = z.record(
+  EvmAddressSchema,
+  z.number().int().min(0).max(255),
+);
 export type DecimalsMap = z.infer<typeof DecimalsMapSchema>;
 
 /**
