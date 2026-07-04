@@ -367,7 +367,9 @@ mod tests {
         assert_eq!(r.revert_risk_pct, Some(100.0));
         assert!(r.simulated_profit_usd.is_none(), "no fabricated profit");
         assert!(
-            r.fail_reason.unwrap().contains("route_encoding_not_available"),
+            r.fail_reason
+                .unwrap()
+                .contains("route_encoding_not_available"),
             "fail_reason must surface the honest reason"
         );
     }

@@ -29,12 +29,11 @@ pub async fn fetch_route_metadata(
     pool: &PgPool,
     opportunity_id: Uuid,
 ) -> Result<Option<RouteMetadata>, sqlx::Error> {
-    let row: Option<(Json<RouteMetadata>,)> = sqlx::query_as(
-        "SELECT route_metadata FROM opportunities WHERE id = $1",
-    )
-    .bind(opportunity_id)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(Json<RouteMetadata>,)> =
+        sqlx::query_as("SELECT route_metadata FROM opportunities WHERE id = $1")
+            .bind(opportunity_id)
+            .fetch_optional(pool)
+            .await?;
 
     match row {
         None => Ok(None),
