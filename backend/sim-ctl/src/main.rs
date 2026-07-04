@@ -13,6 +13,7 @@ mod consumer;
 mod fork_manager;
 mod persistence;
 mod revm_backend;
+mod route_lookup;
 mod sim_engine;
 mod simulator_backend;
 mod tx_builder;
@@ -78,6 +79,11 @@ struct SimulateRequest {
     /// Optional: pre-enriched candidate. When provided, enrichment is skipped.
     #[serde(default)]
     candidate: Option<OpportunityCandidate>,
+    /// Opportunity ID for A3 path (sim-ctl PG lookup). When route_source =
+    /// simctl_lookup and candidate is None, sim-ctl queries PG for this ID.
+    /// Forwarded by api-server from the URL path param `/api/v1/opportunities/:id`.
+    #[serde(default)]
+    opportunity_id: Option<uuid::Uuid>,
 }
 
 #[derive(Clone)]
@@ -89,6 +95,10 @@ struct AppState {
     /// consumer-level backend abstraction lands in a follow-up sprint.
     engine: Arc<SimEngine>,
     env: String,
+    /// G-SIM-1 PR-B2b Fase 4 (A3): optional PG pool for autonomous route
+    /// metadata lookup. None when DATABASE_URL is absent (A3 path disabled;
+    /// caller falls back to A1/A2).
+    db_pool: Option<sqlx::PgPool>,
 }
 
 async fn simulate_handler(
@@ -149,26 +159,92 @@ async fn simulate_handler(
             (StatusCode::NOT_IMPLEMENTED, Json(body))
         }
         None => {
-            // Enrichment path selected but not yet implemented (Fases 2-4).
-            // `requires` is Vec<&'static str>, so use static literals per branch
-            // (source_str as a local &str would not satisfy the 'static bound).
-            let (source_tag, source_label) = match req.route_source {
-                RouteSource::PgMetadata => ("pg_metadata", "pg_metadata (A1)"),
-                RouteSource::SearcherApi => ("searcher_api", "searcher_api (A2)"),
-                RouteSource::SimctlLookup => ("simctl_lookup", "simctl_lookup (A3)"),
-            };
-            let payload = NotImplementedPayload::new(
-                vec![source_tag, "route_enrichment"],
-                "B2b",
-                format!(
-                    "Route source '{}' selected but enrichment not yet implemented (Fases 2-4 pending)",
-                    source_label
-                ),
-            );
-            let body = serde_json::to_value(payload).unwrap_or_else(
-                |e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}),
-            );
-            (StatusCode::NOT_IMPLEMENTED, Json(body))
+            // No pre-enriched candidate: route_source determines the enrichment path.
+            match req.route_source {
+                RouteSource::SimctlLookup => {
+                    // G-SIM-1 PR-B2b Fase 4 (A3): autonomous PG lookup.
+                    let opp_id = match req.opportunity_id {
+                        Some(id) => id,
+                        None => {
+                            let body = serde_json::json!({
+                                "error": "missing_opportunity_id",
+                                "detail": "route_source=simctl_lookup requires opportunity_id in the request body"
+                            });
+                            return (StatusCode::BAD_REQUEST, Json(body));
+                        }
+                    };
+                    let pool = match &st.db_pool {
+                        Some(p) => p,
+                        None => {
+                            let body = serde_json::json!({
+                                "error": "a3_unavailable",
+                                "detail": "sim-ctl has no PG pool (DATABASE_URL not configured); try route_source=pg_metadata or searcher_api"
+                            });
+                            return (StatusCode::SERVICE_UNAVAILABLE, Json(body));
+                        }
+                    };
+                    match route_lookup::fetch_route_metadata(pool, opp_id).await {
+                        Ok(Some(_route_metadata)) => {
+                            // TODO (B2c): construct OpportunityCandidate from
+                            // route_metadata + Opportunity fields, then wire
+                            // → sim-core encoder → execute_multistep_revm.
+                            // For now: return 200 with the fetched metadata to
+                            // prove the A3 path works end-to-end.
+                            let body = serde_json::json!({
+                                "route_source": "simctl_lookup",
+                                "opportunity_id": opp_id,
+                                "status": "route_metadata_fetched",
+                                "detail": "A3 lookup successful; candidate construction + simulation pending B2c"
+                            });
+                            (StatusCode::OK, Json(body))
+                        }
+                        Ok(None) => {
+                            let body = serde_json::json!({
+                                "error": "route_metadata_not_found",
+                                "opportunity_id": opp_id,
+                                "detail": "opportunity has no route_metadata or does not exist"
+                            });
+                            (StatusCode::NOT_FOUND, Json(body))
+                        }
+                        Err(e) => {
+                            warn!(
+                                event = "sim.a3_pg_error",
+                                opportunity_id = %opp_id,
+                                error = %e,
+                                "A3 route lookup PG error"
+                            );
+                            let body = serde_json::json!({
+                                "error": "pg_error",
+                                "opportunity_id": opp_id,
+                                "detail": e.to_string()
+                            });
+                            (StatusCode::INTERNAL_SERVER_ERROR, Json(body))
+                        }
+                    }
+                }
+                RouteSource::PgMetadata | RouteSource::SearcherApi => {
+                    // A1 and A2 are handled by api-server before reaching sim-ctl.
+                    // If sim-ctl receives these, the upstream didn't enrich —
+                    // return honest 501 with a pointer to the correct path.
+                    let (source_tag, source_label) = match req.route_source {
+                        RouteSource::PgMetadata => ("pg_metadata", "pg_metadata (A1)"),
+                        RouteSource::SearcherApi => ("searcher_api", "searcher_api (A2)"),
+                        RouteSource::SimctlLookup => unreachable!(),
+                    };
+                    let payload = NotImplementedPayload::new(
+                        vec![source_tag, "route_enrichment"],
+                        "B2b",
+                        format!(
+                            "Route source '{}' should be enriched by api-server before reaching sim-ctl; no candidate provided",
+                            source_label
+                        ),
+                    );
+                    let body = serde_json::to_value(payload).unwrap_or_else(
+                        |e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}),
+                    );
+                    (StatusCode::NOT_IMPLEMENTED, Json(body))
+                }
+            }
         }
     }
 }
@@ -361,10 +437,46 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // G-SIM-1 PR-B2b Fase 4 (A3): optional PG pool for autonomous route lookup.
+    // Best-effort: if DATABASE_URL is absent or connection fails, the A3 path
+    // stays disabled (db_pool = None) and the handler returns 503 for
+    // route_source=simctl_lookup. Fail-honest: no fabrication.
+    let db_pool = match std::env::var("DATABASE_URL") {
+        Ok(url) if !url.is_empty() => {
+            match shared_rs::db_pool::options_with_timeouts(
+                &shared_rs::db_pool::PoolConfig::from_env(2),
+            )
+            .connect(&url)
+            .await
+            {
+                Ok(p) => {
+                    info!(event = "sim.db_connected", "PG pool up for A3 route lookup");
+                    Some(p)
+                }
+                Err(e) => {
+                    warn!(
+                        event = "sim.db_connect_failed",
+                        error = %e,
+                        "continuing without PG pool (A3 path disabled)"
+                    );
+                    None
+                }
+            }
+        }
+        _ => {
+            warn!(
+                event = "sim.db_not_configured",
+                "DATABASE_URL absent; A3 route lookup path disabled"
+            );
+            None
+        }
+    };
+
     let state = Arc::new(AppState {
         backend,
         engine: engine.clone(),
         env: cfg.system.env.clone(),
+        db_pool,
     });
 
     // HTTP server
