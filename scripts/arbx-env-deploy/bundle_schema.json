@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ArbitrageX Config Bundle",
+  "$id": "https://arbitragex/v2/bundle.schema.json",
+  "type": "object",
+  "required": ["schema_version", "generated_at", "env_vars", "chains", "contract_addresses"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "env_vars": {
+      "type": "object",
+      "description": "key=value from .env Production. NEVER includes paper_mode/deployer/multisig (filtered).",
+      "additionalProperties": { "type": "string" }
+    },
+    "chains": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["chain_id", "name", "native_currency", "explorer_url", "rpc_http", "rpc_ws"],
+        "additionalProperties": false,
+        "properties": {
+          "chain_id": { "type": "integer", "minimum": 1 },
+          "name": { "type": "string" },
+          "native_currency": { "type": "string" },
+          "explorer_url": { "type": "string" },
+          "rpc_http": { "type": "string", "description": "multi-provider CSV: prov=url,prov=url" },
+          "rpc_ws": { "type": "string" },
+          "factories": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["dex_name", "address"],
+              "additionalProperties": false,
+              "properties": {
+                "dex_name": { "type": "string" },
+                "address": { "type": "string", "pattern": "^0x[a-fA-F0-9]{40}$" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "api_keys": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "From Tokens & Keys sheet (GoPlus, Tenderly, etc.) — excludes deployer keys."
+    },
+    "contract_addresses": {
+      "type": "object",
+      "description": "Proxy addresses (AE, FLE, AM, AdminTimelock) — filled after deploy.",
+      "additionalProperties": { "type": "string", "pattern": "^0x[a-fA-F0-9]{40}$" }
+    }
+  }
+}
