@@ -1,0 +1,136 @@
+# ops(paper) — configure EXECUTOR_1 tier-1 + arm paper-mode on the VPS.
+#
+# PAPER-SAFE, NEVER LIVE. Manual workflow_dispatch, dry_run=true by default.
+# Under a protected `paper-ops` environment (required reviewer = operator), this:
+#   1. upserts paper-safe env vars on the VPS .env (ARBX_TRADE_MODE=paper, RPC_HTTP_1,
+#      EXECUTOR_1 tier-1, SIM_ORCHESTRATOR_GAS_PRICE_WEI, SIM_ORCHESTRATOR_MODE=multistep),
+#   2. restarts api-server / searcher-rs / sim-ctl,
+#   3. POSTs the api-server admin route /admin/config/paper-mode {enabled:true,chain_id}
+#      (index.ts:930) to start paper-shadow accumulation (G-PAP-1),
+#   4. reads readiness (redacted) to prove the posture stays safe.
+#
+# It CANNOT activate live: it only toggles arbx:papermode:<chain_id> and never touches
+# live_gate / submit / private_relay / funds, and never calls /api/admin/activate-live.
+# It does NOT set the simulator-ready flag. Secrets are referenced BY NAME only; no values
+# in this file; nothing secret is printed (only presence + lengths). No shell tracing.
+
+name: "ops(paper): configure EXECUTOR_1 tier-1 and arm paper-mode"
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run only; set false to mutate VPS config"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      chain_id:
+        description: "Chain id to arm paper-mode for (numeric, e.g. 1)"
+        required: true
+        default: "1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-paper-mode
+  cancel-in-progress: false
+
+jobs:
+  paper-ops:
+    runs-on: ubuntu-latest
+    environment: paper-ops
+    env:
+      VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+      VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+      ADM_TOK: ${{ secrets.ARBX_ADMIN_TOKEN }}
+      RPC1: ${{ secrets.RPC_HTTP_1 }}
+      EXEC1: ${{ secrets.EXECUTOR_1_TIER1 }}
+      SIMGAS: ${{ secrets.SIM_ORCHESTRATOR_GAS_PRICE_WEI }}
+      DRY_RUN: ${{ github.event.inputs.dry_run }}
+      CHAIN_ID: ${{ github.event.inputs.chain_id }}
+    steps:
+      - name: Validate inputs + required secrets present (values never printed)
+        run: |
+          set -euo pipefail
+          case "$CHAIN_ID" in ''|*[!0-9]*) echo "::error::chain_id must be numeric"; exit 1;; esac
+          case "$DRY_RUN" in true|false) : ;; *) echo "::error::dry_run must be true|false"; exit 1;; esac
+          missing=0
+          for n in VPS_HOST VPS_KEY ADM_TOK RPC1 EXEC1 SIMGAS; do
+            v="${!n:-}"
+            if [ -z "$v" ]; then echo "::error::required secret for $n is MISSING"; missing=1; else echo "$n: present (len=${#v})"; fi
+          done
+          [ "$missing" -eq 0 ] || { echo "::error::add the missing repo secrets before running"; exit 1; }
+          echo "dry_run=$DRY_RUN chain_id=$CHAIN_ID (paper-safe; never live)"
+
+      - name: SSH connectivity check (no mutation)
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_KEY" > ~/.ssh/arbx_key
+          chmod 600 ~/.ssh/arbx_key
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@"$VPS_HOST" 'echo VPS_SSH_OK'
+
+      - name: DRY RUN — validate only, no mutation
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@"$VPS_HOST" CHAIN_ID="$CHAIN_ID" 'bash -s' << 'REMOTE'
+          set -euo pipefail
+          echo "=== DRY RUN — no .env write, no restart, no admin POST ==="
+          ENVFILE=""
+          for f in /opt/arbitragex-v2/.env "$HOME/arbitragex-v2/.env" /root/arbitragex-v2/.env; do [ -f "$f" ] && ENVFILE="$f" && break; done
+          echo "env file: ${ENVFILE:-<not found — set VPS_ENV_FILE or adjust candidates>}"
+          echo "keys WOULD upsert (names only): ARBX_TRADE_MODE RPC_HTTP_1 EXECUTOR_1 SIM_ORCHESTRATOR_GAS_PRICE_WEI SIM_ORCHESTRATOR_MODE"
+          if [ -n "$ENVFILE" ]; then
+            for k in ARBX_TRADE_MODE RPC_HTTP_1 EXECUTOR_1 SIM_ORCHESTRATOR_GAS_PRICE_WEI SIM_ORCHESTRATOR_MODE; do
+              if grep -q "^${k}=" "$ENVFILE" 2>/dev/null; then echo "  $k: present"; else echo "  $k: absent"; fi
+            done
+          fi
+          echo "WOULD restart: api-server searcher-rs sim-ctl"
+          echo "WOULD POST /admin/config/paper-mode {enabled:true, chain_id:${CHAIN_ID}}"
+          echo "=== readiness/decision (read-only) ==="
+          curl -fsS "http://localhost:8080/api/readiness/decision" | python3 -c "import json,sys;d=json.load(sys.stdin);print({k:d.get(k) for k in ['go_live','verdict','paper_mode','capital_exposure_usd','live_trading','submit_enabled','private_relay']})" || true
+          REMOTE
+
+      - name: APPLY — backup + upsert env + restart + arm paper-mode
+        if: ${{ github.event.inputs.dry_run == 'false' }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@"$VPS_HOST" \
+            ADMIN_TOKEN="$ADM_TOK" RPC_URL="$RPC1" EXECUTOR="$EXEC1" GASWEI="$SIMGAS" CHAIN_ID="$CHAIN_ID" 'bash -s' << 'REMOTE'
+          set -euo pipefail
+          ENVFILE=""
+          for f in /opt/arbitragex-v2/.env "$HOME/arbitragex-v2/.env" /root/arbitragex-v2/.env; do [ -f "$f" ] && ENVFILE="$f" && break; done
+          [ -n "$ENVFILE" ] || { echo "::error::.env not found on VPS"; exit 1; }
+          cp "$ENVFILE" "${ENVFILE}.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+          echo "backup written for env file (path not printed)."
+          upsert() { k="$1"; v="$2"; if grep -q "^${k}=" "$ENVFILE"; then sed -i "s|^${k}=.*|${k}=${v}|" "$ENVFILE"; else printf '%s=%s\n' "$k" "$v" >> "$ENVFILE"; fi; echo "upserted ${k} (value not printed)"; }
+          upsert ARBX_TRADE_MODE paper
+          upsert RPC_HTTP_1 "$RPC_URL"
+          upsert EXECUTOR_1 "$EXECUTOR"
+          upsert SIM_ORCHESTRATOR_GAS_PRICE_WEI "$GASWEI"
+          upsert SIM_ORCHESTRATOR_MODE multistep
+          cd "$(dirname "$ENVFILE")"
+          ( docker compose up -d api-server searcher-rs sim-ctl || docker-compose up -d api-server searcher-rs sim-ctl ) && echo "services restarted" || echo "::warning::compose restart returned non-zero"
+          sleep 5
+          echo "=== arm paper-mode (enabled:true) ==="
+          curl -fsS -X POST "http://localhost:8080/admin/config/paper-mode" \
+            -H "Content-Type: application/json" \
+            -H "x-arbx-admin-token: ${ADMIN_TOKEN}" \
+            -H "x-arbx-actor: ci-ops-paper-mode" \
+            -d "{\"enabled\":true,\"chain_id\":${CHAIN_ID}}"
+          echo
+          echo "=== readiness/decision (must stay safe) ==="
+          curl -fsS "http://localhost:8080/api/readiness/decision" | python3 -c "import json,sys;d=json.load(sys.stdin);print({k:d.get(k) for k in ['go_live','verdict','paper_mode','capital_exposure_usd','live_trading','submit_enabled','private_relay']})" || true
+          echo "=== relevant blockers ==="
+          curl -fsS "http://localhost:8080/api/readiness/blockers" | python3 -c "import json,sys;d=json.load(sys.stdin);[print(' ',b.get('id'),b.get('status')) for b in d.get('blockers',[]) if any(x in (b.get('id') or '') for x in ['executor_1','sim_orchestrator','g_pap','paper'])]" || true
+          REMOTE
+
+      - name: Reminder
+        if: always()
+        run: echo "LIVE stays NO-GO. This workflow cannot activate live and does not set ARBX_SIMULATOR_V2_READY. G-PAP-1 turns green only after >=7d real accumulation."
