@@ -24,6 +24,7 @@ COPY prioritization-spine ./prioritization-spine
 # simulator-v2: workspace member added in Sprint 4. Optional dep of searcher-rs
 # (feature `v2-simulator`); metadata resolution requires the path to exist.
 COPY simulator-v2 ./simulator-v2
+COPY sim-core ./sim-core
 # token-enricher: workspace member added later. Not a build target for
 # searcher-rs but cargo's workspace resolver requires every declared member
 # to have a readable manifest, otherwise `cargo build -p searcher-rs` errors
