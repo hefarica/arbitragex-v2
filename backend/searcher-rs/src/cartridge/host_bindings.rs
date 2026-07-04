@@ -559,7 +559,7 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
                 "path": path_strs,
             });
             let payload_str = payload.to_string();
-            let _ = ctx.rt_handle.block_on(async {
+            ctx.rt_handle.block_on(async {
                 let mut redis = ctx.redis.write().await;
                 let _: Result<(), _> = redis::AsyncCommands::set_ex(
                     &mut *redis,
