@@ -1,6 +1,7 @@
 "use client";
 
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { SimulateButton } from "@/components/SimulateButton";
 
 // ─── Inline types ─────────────────────────────────────────────────────────────
 // Mirrors the subset of OpportunityListItem used in OpportunitiesClient.tsx.
@@ -136,6 +137,17 @@ export function OpportunityDetailDialog({ opportunity, onClose }: Props) {
             )}
             <Row label="Detected At" value={new Date(opp.detected_at).toLocaleString()} />
             <Row label="Trace ID" value={opp.trace_id} />
+
+            {/* G-SIM-1 PR-B2b Fase 5 — on-demand simulation with route_source selector.
+                The three enrichment paths (A1/A2/A3) are selectable from the dropdown.
+                Result displays inline (loading/success/error). Until B2c wires the
+                sim-core encoder, this surfaces the honest "not_implemented" state. */}
+            <div className="mt-4 border-t border-border pt-4">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Simulation
+              </div>
+              <SimulateButton opportunityId={opp.id} />
+            </div>
           </div>
         )}
       </SheetContent>
