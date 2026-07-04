@@ -172,7 +172,14 @@ async fn simulate_handler(
 }
 
 /// Legacy simulation path for backward compatibility (pre-B2b schema).
-async fn simulate_legacy(st: Arc<AppState>, opp: Opportunity) -> impl IntoResponse {
+///
+/// Returns the concrete `(StatusCode, Json<Value>)` type (not `impl IntoResponse`)
+/// so the caller `simulate_handler` can unify this branch with its other return
+/// paths that use the same concrete tuple type.
+async fn simulate_legacy(
+    st: Arc<AppState>,
+    opp: Opportunity,
+) -> (StatusCode, Json<serde_json::Value>) {
     let sim = match st.backend.simulate(&opp).await {
         Ok(r) => r,
         Err(e) => {
