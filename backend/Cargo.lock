@@ -6601,6 +6601,7 @@ dependencies = [
 name = "sim-core"
 version = "0.1.0"
 dependencies = [
+ "bigdecimal 0.4.10",
  "ethers",
  "prioritization-spine",
  "shared-rs",

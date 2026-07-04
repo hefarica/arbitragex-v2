@@ -23,7 +23,9 @@ mod dedup;
 // Phase A.3.a: OpportunityCandidate → RoundTripContext encoder. Pure bridge
 // from the abstract candidate to the typed simulator input. NO REVM dispatch
 // here (that lands with execute_round_trip); only validation + payload pre-shaping.
-mod sim_encoder;
+// G-SIM-1 PR-B2a: moved to `sim-core`; re-exported so `crate::sim_encoder::*`
+// call sites in the binary (scanner.rs, sim_encoder_pg.rs) keep resolving.
+pub(crate) use sim_core::sim_encoder;
 // Phase A.3.b: PostgreSQL-backed `TokenDecimalsProvider` runtime impl. Holds
 // an LRU cache kept warm by a background refresh task; the trait method is
 // a pure cache lookup so the hot path never blocks on a PG query.

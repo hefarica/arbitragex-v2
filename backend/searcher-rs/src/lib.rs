@@ -53,7 +53,10 @@ pub mod lending_position_indexer;
 // Phase A.3.a: `OpportunityCandidate -> RoundTripContext` encoder. Exposed
 // here so integration tests can drive the encoder against real candidate
 // shapes without going through `decode_and_score_tx`.
-pub mod sim_encoder;
+// G-SIM-1 PR-B2a: moved VERBATIM to the shared `sim-core` crate; re-exported
+// so sim-ctl can consume the SAME encoder and every `crate::sim_encoder::*` /
+// `searcher_rs::sim_encoder::*` call site keeps compiling unchanged.
+pub use sim_core::sim_encoder;
 // Phase A.3.b: PostgreSQL-backed `TokenDecimalsProvider`. Exposed for
 // integration tests that want to drive the provider against a test DB.
 pub mod sim_encoder_pg;
