@@ -104,3 +104,13 @@ DB that already has them applied is a no-op.
 **Rollback policy for M3 migrations**: documented inline in each `.sql`
 header. None are automated. The dedupe archive table
 `runtime_ack_dedupe_archive_069` is preserved forever (forensic).
+
+---
+
+## G-SIM-1 PR-B2b Fase 2 (A1) — 2026-07-04
+
+| File                                    | Purpose                                                  |
+|-----------------------------------------|----------------------------------------------------------|
+| `099_opportunities_route_metadata.sql`  | Adds `route_metadata` JSONB column to `opportunities` storing complete route topology (`pool_addresses[]`, `token_addresses[]`, `dex_adapters[]`, `decimals{}`) for sim-ctl `OpportunityCandidate` reconstruction. GIN index on `pool_addresses`. Default `'{}'` for backward compat. |
+
+A1 enrichment path data-source foundation. Forward-only and idempotent.

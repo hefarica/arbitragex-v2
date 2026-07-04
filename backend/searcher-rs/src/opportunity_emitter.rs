@@ -448,9 +448,24 @@ impl OpportunityEmitter {
     /// the counter semantics honest: `db_persisted` is only incremented when
     /// the PG write actually succeeded.
     async fn try_insert_pg(&self, opp: &Opportunity) -> EmitOutcome {
+        self.try_insert_pg_with_route(opp, None).await
+    }
+
+    /// Same as [`try_insert_pg`] but persists complete route metadata alongside
+    /// the opportunity (G-SIM-1 PR-B2b Fase 2 A1).
+    ///
+    /// When `route` is `Some` and populated, the `route_metadata` JSONB column
+    /// is written with the full multi-hop topology so sim-ctl can reconstruct
+    /// an `OpportunityCandidate` via the A1 enrichment path. When `None` or
+    /// empty, the column defaults to `'{}'::jsonb` (same as legacy).
+    async fn try_insert_pg_with_route(
+        &self,
+        opp: &Opportunity,
+        route: Option<&shared_rs::candidates::RouteMetadata>,
+    ) -> EmitOutcome {
         match &self.pool {
             None => EmitOutcome::NoDbConfigured,
-            Some(pg) => match persistence::insert_opportunity(pg, opp).await {
+            Some(pg) => match persistence::insert_opportunity_with_route(pg, opp, route).await {
                 Ok(()) => {
                     counters().db_persisted.fetch_add(1, Ordering::Relaxed);
                     EmitOutcome::PersistedAndPublished

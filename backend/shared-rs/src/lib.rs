@@ -10,6 +10,7 @@
 //!
 //! Used by: searcher-rs, sim-ctl, relays-client, recon.
 
+pub mod candidates;
 pub mod chains;
 pub mod config;
 pub mod contracts;

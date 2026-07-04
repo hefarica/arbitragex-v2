@@ -26,6 +26,7 @@ use axum::{
 };
 use ethers::types::Address;
 use shared_rs::{
+    candidates::OpportunityCandidate,
     config::AppConfig,
     contracts::{NotImplementedPayload, Opportunity},
     health::{build_health_router, ServiceInfo},
@@ -48,6 +49,36 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 // DEV-ONLY sentinel "caller" address used when simulating a probe and no signer
 // is configured. Must NEVER be selected in staging/prod — guarded at use site.
 const DEV_SENTINEL_SIGNER: &str = "0x000000000000000000000000000000000000dEaD";
+
+/// Route source selector for triple-path enrichment (G-SIM-1 PR-B2b).
+///
+/// A1 = PG route_metadata (persistent, source of truth in opportunities table)
+/// A2 = searcher-rs HTTP API (memory, fast, cached)
+/// A3 = sim-ctl PG lookup (autonomous, independent)
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum RouteSource {
+    PgMetadata,
+    SearcherApi,
+    SimctlLookup,
+}
+
+/// Simulation request body with route source selector (G-SIM-1 PR-B2b Fase 1.2).
+///
+/// The frontend includes `route_source` to choose between the three enrichment
+/// paths (A1/A2/A3). Each path constructs the same `OpportunityCandidate` but
+/// fetches route metadata from a different source.
+///
+/// When `candidate` is provided (pre-enriched by frontend or api-server),
+/// sim-ctl skips enrichment and uses it directly. When null, sim-ctl enriches
+/// via the selected `route_source` path (implemented in Fases 2-4).
+#[derive(Debug, Clone, serde::Deserialize)]
+struct SimulateRequest {
+    route_source: RouteSource,
+    /// Optional: pre-enriched candidate. When provided, enrichment is skipped.
+    #[serde(default)]
+    candidate: Option<OpportunityCandidate>,
+}
 
 #[derive(Clone)]
 struct AppState {
@@ -73,22 +104,75 @@ async fn simulate_handler(
             "S4",
             format!("sim-ctl up but anvil not configured (env={})", st.env),
         );
-        // serde_json::to_value only fails on non-string map keys or NaN floats.
-        // NotImplementedPayload has no such fields; use unwrap_or to avoid panic.
         let body = serde_json::to_value(payload).unwrap_or_else(
             |e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}),
         );
         return (StatusCode::NOT_IMPLEMENTED, Json(body));
     }
-    let opp: Opportunity = match serde_json::from_value(body) {
-        Ok(o) => o,
+
+    // G-SIM-1 PR-B2b Fase 1.2: parse new SimulateRequest with route_source selector.
+    let req: SimulateRequest = match serde_json::from_value(body.clone()) {
+        Ok(r) => r,
         Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error":"invalid_body","detail":e.to_string()})),
-            );
+            // Fallback: try legacy Opportunity schema for backward compatibility.
+            let opp: Opportunity = match serde_json::from_value(body) {
+                Ok(o) => o,
+                Err(e2) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error":"invalid_body",
+                            "detail":format!("Neither SimulateRequest nor Opportunity: {} | {}", e, e2)
+                        })),
+                    );
+                }
+            };
+            // Legacy path: convert Opportunity → SimulateRequest with default route_source.
+            return simulate_legacy(st, opp).await;
         }
     };
+
+    // G-SIM-1 PR-B2b Fase 1.2: if candidate is pre-enriched, use it directly.
+    // Otherwise, return 501 for the selected route_source until Fases 2-4 land.
+    match req.candidate {
+        Some(_candidate) => {
+            // Pre-enriched path: simulate with the full OpportunityCandidate.
+            // TODO (B2c): wire candidate → sim-core encoder → execute_multistep_revm
+            let payload = NotImplementedPayload::new(
+                vec!["sim_core_encoder", "execute_multistep_revm"],
+                "B2c",
+                "OpportunityCandidate received but sim-core encoder not yet wired (Fase 1.2 stub)".into(),
+            );
+            let body = serde_json::to_value(payload).unwrap_or_else(
+                |e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}),
+            );
+            (StatusCode::NOT_IMPLEMENTED, Json(body))
+        }
+        None => {
+            // Enrichment path selected but not yet implemented (Fases 2-4).
+            let source_str = match req.route_source {
+                RouteSource::PgMetadata => "pg_metadata (A1)",
+                RouteSource::SearcherApi => "searcher_api (A2)",
+                RouteSource::SimctlLookup => "simctl_lookup (A3)",
+            };
+            let payload = NotImplementedPayload::new(
+                vec![source_str, "route_enrichment"],
+                "B2b",
+                format!(
+                    "Route source '{}' selected but enrichment not yet implemented (Fases 2-4 pending)",
+                    source_str
+                ),
+            );
+            let body = serde_json::to_value(payload).unwrap_or_else(
+                |e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}),
+            );
+            (StatusCode::NOT_IMPLEMENTED, Json(body))
+        }
+    }
+}
+
+/// Legacy simulation path for backward compatibility (pre-B2b schema).
+async fn simulate_legacy(st: Arc<AppState>, opp: Opportunity) -> impl IntoResponse {
     let sim = match st.backend.simulate(&opp).await {
         Ok(r) => r,
         Err(e) => {
