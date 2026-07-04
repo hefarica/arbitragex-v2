@@ -82,7 +82,7 @@ CONTRACT_KEYS = {"ARBITRAGE_EXECUTOR", "FLASHLOAN_EXECUTOR",
 def load_env_vars(wb):
     ws = wb[".env Production"]
     out = {}
-    for row in ws.iter_rows(min_row=2, max_col=2, values_only=True):
+    for row in ws.iter_rows(min_row=3, max_col=2, values_only=True):
         k = row[0]; v = row[1] if len(row) > 1 else None
         if not k or not isinstance(k, str): continue
         k = k.strip()
@@ -122,7 +122,7 @@ def load_api_keys(wb):
     if "Tokens & Keys" not in wb.sheetnames: return {}
     ws = wb["Tokens & Keys"]
     out = {}
-    for row in ws.iter_rows(min_row=2, max_col=2, values_only=True):
+    for row in ws.iter_rows(min_row=3, max_col=2, values_only=True):
         k = row[0]; v = row[1] if len(row) > 1 else None
         if k and v and str(k).strip() not in NEVER_SHIP:
             out[str(k).strip()] = str(v).strip()
@@ -132,7 +132,7 @@ def load_api_keys(wb):
 def load_contract_addresses(wb):
     ws = wb[".env Production"]
     out = {}
-    for row in ws.iter_rows(min_row=2, max_col=2, values_only=True):
+    for row in ws.iter_rows(min_row=3, max_col=2, values_only=True):
         k = row[0]; v = row[1] if len(row) > 1 else None
         if k and str(k).strip() in CONTRACT_KEYS and v:
             vs = str(v).strip()
