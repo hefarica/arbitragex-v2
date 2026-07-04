@@ -13,6 +13,7 @@ COPY recon ./recon
 COPY math-engine ./math-engine
 COPY prioritization-spine ./prioritization-spine
 COPY simulator-v2 ./simulator-v2
+COPY sim-core ./sim-core
 COPY token-enricher ./token-enricher
 COPY sed-core ./sed-core
 # mcp-sim-engine: workspace member (9a45a96); manifest required by the resolver

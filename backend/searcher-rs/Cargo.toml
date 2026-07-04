@@ -35,6 +35,12 @@ hex.workspace = true
 bigdecimal.workspace = true
 rand.workspace = true
 prioritization-spine = { workspace = true }
+# G-SIM-1 PR-B1 (Option B) — the REAL wrapped-flash multi-step REVM sim +
+# storage-override helpers now live here (extracted verbatim from this crate).
+# `default-features = false`: searcher-rs owns the `v2-simulator` gate and turns
+# sim-core's matching feature on ONLY through its own `v2-simulator` feature
+# (below), preserving the exact `#[cfg(feature = "v2-simulator")]` shape.
+sim-core = { workspace = true, default-features = false }
 math-engine = { workspace = true }
 async-trait.workspace = true
 arc-swap = "1"
@@ -62,7 +68,10 @@ sed-core = { path = "../sed-core", optional = true }
 
 [features]
 default = ["v2-simulator"]
-v2-simulator = ["dep:simulator-v2"]
+# Enabling searcher-rs's v2-simulator turns on the REVM sim in BOTH the local
+# simulator-v2 dep AND the extracted sim-core crate, so `execute_multistep_revm`
+# compiles under the SAME gate it always did.
+v2-simulator = ["dep:simulator-v2", "sim-core/v2-simulator"]
 paper-shadow = ["dep:lazy_static", "dep:sed-core", "sed-core?/filtration", "sed-core?/eigenstate", "sed-core?/metrics"]
 experimental-engines = []
 
