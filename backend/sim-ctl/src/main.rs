@@ -141,7 +141,7 @@ async fn simulate_handler(
             let payload = NotImplementedPayload::new(
                 vec!["sim_core_encoder", "execute_multistep_revm"],
                 "B2c",
-                "OpportunityCandidate received but sim-core encoder not yet wired (Fase 1.2 stub)".into(),
+                "OpportunityCandidate received but sim-core encoder not yet wired (Fase 1.2 stub)",
             );
             let body = serde_json::to_value(payload).unwrap_or_else(
                 |e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}),
@@ -150,17 +150,19 @@ async fn simulate_handler(
         }
         None => {
             // Enrichment path selected but not yet implemented (Fases 2-4).
-            let source_str = match req.route_source {
-                RouteSource::PgMetadata => "pg_metadata (A1)",
-                RouteSource::SearcherApi => "searcher_api (A2)",
-                RouteSource::SimctlLookup => "simctl_lookup (A3)",
+            // `requires` is Vec<&'static str>, so use static literals per branch
+            // (source_str as a local &str would not satisfy the 'static bound).
+            let (source_tag, source_label) = match req.route_source {
+                RouteSource::PgMetadata => ("pg_metadata", "pg_metadata (A1)"),
+                RouteSource::SearcherApi => ("searcher_api", "searcher_api (A2)"),
+                RouteSource::SimctlLookup => ("simctl_lookup", "simctl_lookup (A3)"),
             };
             let payload = NotImplementedPayload::new(
-                vec![source_str, "route_enrichment"],
+                vec![source_tag, "route_enrichment"],
                 "B2b",
                 format!(
                     "Route source '{}' selected but enrichment not yet implemented (Fases 2-4 pending)",
-                    source_str
+                    source_label
                 ),
             );
             let body = serde_json::to_value(payload).unwrap_or_else(
