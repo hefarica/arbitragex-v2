@@ -169,6 +169,12 @@ impl SubmitEngine {
                 our_address: &our_address,
                 pg: pg_pool,
                 redis: &mut redis_conn,
+                // Canonical per-chain paper-mode read (B0.2 / Package #3): the
+                // checklist reuses the SAME PaperModeClient as the engine's
+                // pre-checklist read at line 106 so check 2 sees per-chain
+                // arming (`arbx:papermode:<chain_id>`) instead of the legacy
+                // global-only read.
+                paper_mode_client: &self.paper_mode,
             };
 
             match pre_execute_checklist(&mut ctx).await {
