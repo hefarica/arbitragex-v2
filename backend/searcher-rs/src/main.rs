@@ -35,8 +35,12 @@ mod sim_orchestrator;
 // Phase A.3.c.2: ERC-20 storage prefund computation layer. Pure helpers +
 // provider trait + slot computation. Does NOT mutate REVM state; the A.3.c.3
 // multi-step orchestrator consumes the returned PrefundPlan and applies it.
-#[allow(dead_code)]
-mod sim_prefund;
+//
+// G-SIM-1 PR-B1 (Option B): moved VERBATIM to the shared `sim-core` crate;
+// re-exported here so `crate::sim_prefund::*` call sites in the binary keep
+// resolving unchanged.
+#[allow(unused_imports)]
+pub(crate) use sim_core::sim_prefund;
 // Phase OMEGA: Kelly Criterion + V3 concentrated liquidity math. Pure
 // position-sizing primitives consumed by the size_optimizer hot path.
 #[allow(dead_code)]
@@ -49,8 +53,12 @@ mod bayesian_filter;
 // Combines sim_prefund storage overrides with RoundTripContext to build
 // a deterministic multi-step execution plan. REVM CacheDB execution is
 // deferred to A.3.c.3; this module ships validation + plan + tests.
-#[allow(dead_code)]
-mod sim_multistep;
+//
+// G-SIM-1 PR-B1 (Option B): moved VERBATIM to the shared `sim-core` crate;
+// re-exported here so `crate::sim_multistep::*` call sites in the binary
+// (scanner.rs) keep resolving unchanged.
+#[allow(unused_imports)]
+pub(crate) use sim_core::sim_multistep;
 // B1.c (2026-05-13) — chain config hot-reload subscriber. Listens on Redis
 // pub/sub `arbx:config:chains:reload` for events from the api-server admin
 // endpoint.

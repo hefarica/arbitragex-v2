@@ -6164,6 +6164,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "shared-rs",
+ "sim-core",
  "simulator-v2",
  "sqlx",
  "thiserror 1.0.69",
@@ -6594,6 +6595,18 @@ checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
 dependencies = [
  "digest 0.10.7",
  "rand_core 0.6.4",
+]
+
+[[package]]
+name = "sim-core"
+version = "0.1.0"
+dependencies = [
+ "ethers",
+ "prioritization-spine",
+ "shared-rs",
+ "simulator-v2",
+ "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]

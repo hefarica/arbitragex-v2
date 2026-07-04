@@ -8,6 +8,10 @@ members = [
     "recon", "math-engine",
     "prioritization-spine",
     "simulator-v2",
+    # G-SIM-1 PR-B1 (Option B) — shared REAL sim path (wrapped-flash multi-step
+    # REVM orchestrator + storage-override helpers), extracted verbatim from
+    # searcher-rs so sim-ctl can later consume the SAME sim (no second encoder).
+    "sim-core",
     "token-enricher",
     # arbx-sim-engine — local MCP (stdio) server exposing the real searcher-rs
     # discovery/sizing kernels to Claude. Shadow/read-only; no capital/executor.
@@ -57,6 +61,7 @@ config        = { version = "0.14", default-features = false, features = ["toml"
 validator     = { version = "0.18", features = ["derive"] }
 shared-rs     = { path = "shared-rs" }
 prioritization-spine = { path = "prioritization-spine" }
+sim-core      = { path = "sim-core", default-features = false }
 math-engine   = { path = "math-engine" }
 ethers        = { version = "2", default-features = false, features = ["ws","rustls"] }
 # alloy 1.0 — workspace canonical (token-enricher pins this already, lock is stable)

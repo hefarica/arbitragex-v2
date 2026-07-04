@@ -63,7 +63,12 @@ pub mod sim_orchestrator;
 // Phase A.3.c.2: ERC-20 storage prefund computation. Exposed so integration
 // tests + the future A.3.c.3 multi-step orchestrator can consume the
 // `PrefundPlan` API to apply storage overrides on REVM state.
-pub mod sim_prefund;
+//
+// G-SIM-1 PR-B1 (Option B): the implementation moved VERBATIM to the shared
+// `sim-core` crate so sim-ctl can consume the SAME sim path. Re-exported here
+// so every existing `searcher_rs::sim_prefund::*` / `crate::sim_prefund::*`
+// call site keeps compiling unchanged.
+pub use sim_core::sim_prefund;
 // Phase OMEGA: Kelly Criterion + V3 concentrated liquidity math primitives.
 // Pure module exposed so size_optimizer + tests can consume Kelly sizing.
 pub mod kelly_sizing;
@@ -74,7 +79,14 @@ pub mod bayesian_filter;
 // Phase A.3.c.2: Multi-step REVM orchestrator. Exposed so integration
 // tests + the future A.3.c.3 REVM CacheDB executor can drive the plan
 // builder against fixtures and real chain state.
-pub mod sim_multistep;
+//
+// G-SIM-1 PR-B1 (Option B): the implementation moved VERBATIM to the shared
+// `sim-core` crate so sim-ctl can run the SAME wrapped-flash sim (SAME encoder,
+// SAME fail-closed guards, SAME `wrapped_calldata`) rather than a second
+// divergent encoder. Re-exported here so every existing
+// `searcher_rs::sim_multistep::*` / `crate::sim_multistep::*` call site keeps
+// compiling unchanged.
+pub use sim_core::sim_multistep;
 // B1.c: chain config hot-reload subscriber. Listens on the Redis pub/sub
 // channel `arbx:config:chains:reload` emitted by the api-server admin
 // endpoint when an operator mutates chains_runtime; tracks last-seen

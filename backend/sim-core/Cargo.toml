@@ -1,0 +1,23 @@
+[package]
+name = "sim-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ArbitrageX v2 — shared REAL simulation path (wrapped-flash multi-step REVM orchestrator + ERC-20/AccessControl storage-override helpers). Extracted verbatim from searcher-rs so sim-ctl can later consume the SAME sim without a second divergent encoder. Observer-only: no signer, no broadcast, paper-mode gated."
+
+[dependencies]
+shared-rs = { workspace = true }
+prioritization-spine = { workspace = true }
+ethers = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# REAL REVM simulator backing `execute_multistep_revm`. Feature-gated identically
+# to searcher-rs so the extracted fn keeps the SAME `#[cfg(feature = "v2-simulator")]`
+# compilation shape (no behavior change).
+simulator-v2 = { path = "../simulator-v2", optional = true }
+
+[features]
+default = ["v2-simulator"]
+v2-simulator = ["dep:simulator-v2"]
