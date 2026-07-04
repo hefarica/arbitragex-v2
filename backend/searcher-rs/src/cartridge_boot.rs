@@ -107,6 +107,7 @@ impl CartridgeMode {
 pub fn spawn_cartridge_runtime(
     chain_id: u64,
     redis: redis::aio::ConnectionManager,
+    rpc_pool: Option<Arc<shared_rs::rpc_failover::HttpRpcPool>>,
     cancel: CancellationToken,
     mode: CartridgeMode,
 ) -> Option<Arc<CartridgeRunner>> {
@@ -136,6 +137,17 @@ pub fn spawn_cartridge_runtime(
         block_number: Arc::new(AtomicU64::new(0)),
         base_fee_gwei: Arc::new(AtomicU64::new(0)),
         telemetry_channel: CARTRIDGE_TELEMETRY_CHANNEL.to_owned(),
+        // simulate_swap RPC plumbing — read-only failover pool (None ⇒ V2 cached-
+        // reserves path only; no RPC attempted). Token bucket (max=10, refill
+        // 10/sec) + 100ms min-interval floor bound a runaway cartridge loop.
+        rpc_pool,
+        rpc_budget: Arc::new(std::sync::Mutex::new(
+            crate::cartridge::host_bindings::RpcBudget::new(10, 10),
+        )),
+        rpc_min_interval_ns: Arc::new(AtomicU64::new(
+            crate::cartridge::host_bindings::SIM_SWAP_RPC_MIN_INTERVAL_NS,
+        )),
+        rpc_last_call_ns: Arc::new(AtomicU64::new(0)),
     };
 
     // Build the runner BEFORE spawning so we can share the Arc with both the

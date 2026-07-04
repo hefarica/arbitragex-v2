@@ -706,6 +706,7 @@ pub async fn run_chain(
         crate::cartridge_boot::spawn_cartridge_runtime(
             chain_id,
             redis.clone(),
+            v3_rpc_pool.clone(),
             cancel.clone(),
             cartridge_mode,
         )
@@ -1936,6 +1937,13 @@ async fn decode_and_score_tx<'a>(
         price_impact_pct: None,
     };
 
+    // G-SIM-1 B2b step 6: capture route topology for A1 enrichment path.
+    // Persisted alongside the opportunity so sim-ctl can reconstruct an
+    // OpportunityCandidate without a second divergent encoder. Decimals are
+    // EMPTY here (resolved separately); the A1 path fails honest until a
+    // follow-up threads them in. See build_route_metadata_from_plan doc.
+    let route_metadata = persistence::build_route_metadata_from_plan(&route_plan);
+
     let gate_outcome = evaluator.evaluate_with_route_plan(
         &candidate,
         Some(&route_plan),
@@ -1976,7 +1984,13 @@ async fn decode_and_score_tx<'a>(
                 .gate_token_not_allowed
                 .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
-                if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
+                if let Err(e) = persistence::insert_opportunity_with_route(
+                    pool,
+                    &opportunity,
+                    Some(&route_metadata),
+                )
+                .await
+                {
                     chain_counters(client.chain_id)
                         .db_errors
                         .fetch_add(1, Ordering::Relaxed);
@@ -2013,7 +2027,13 @@ async fn decode_and_score_tx<'a>(
                 .gate_strategy_disabled
                 .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
-                if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
+                if let Err(e) = persistence::insert_opportunity_with_route(
+                    pool,
+                    &opportunity,
+                    Some(&route_metadata),
+                )
+                .await
+                {
                     chain_counters(client.chain_id)
                         .db_errors
                         .fetch_add(1, Ordering::Relaxed);
@@ -2055,7 +2075,13 @@ async fn decode_and_score_tx<'a>(
                 .gate_strategy_disabled
                 .fetch_add(1, Ordering::Relaxed);
             if let Some(pool) = db {
-                if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
+                if let Err(e) = persistence::insert_opportunity_with_route(
+                    pool,
+                    &opportunity,
+                    Some(&route_metadata),
+                )
+                .await
+                {
                     chain_counters(client.chain_id)
                         .db_errors
                         .fetch_add(1, Ordering::Relaxed);

@@ -28,3 +28,9 @@ sqlx.workspace = true
 bigdecimal.workspace = true
 async-trait.workspace = true
 simulator-v2 = { path = "../simulator-v2" }
+# G-SIM-1 B2c: REAL simulation path. sim-core provides execute_multistep_revm
+# (wrapped-flash REVM orchestrator) + sim_encoder (OpportunityCandidate →
+# RoundTripContext). prioritization-spine provides RoundTripContext +
+# SimulationOutcome types. Both are observer-only (no signer, no broadcast).
+sim-core = { path = "../sim-core" }
+prioritization-spine = { workspace = true }
