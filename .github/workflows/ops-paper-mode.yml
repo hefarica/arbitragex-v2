@@ -94,7 +94,7 @@ jobs:
           echo "WOULD restart: api-server searcher-rs sim-ctl"
           echo "WOULD POST /admin/config/paper-mode {enabled:true, chain_id:${CHAIN_ID}}"
           echo "=== readiness/decision (read-only) ==="
-          curl -fsS "http://localhost:8080/api/readiness/decision" | python3 -c "import json,sys;d=json.load(sys.stdin);print({k:d.get(k) for k in ['go_live','verdict','paper_mode','capital_exposure_usd','live_trading','submit_enabled','private_relay']})" || true
+          curl -fsS "http://localhost:8080/api/v1/readiness/decision" | python3 -c "import json,sys;d=json.load(sys.stdin);print({k:d.get(k) for k in ['go_live','verdict','paper_mode','capital_exposure_usd','live_trading','submit_enabled','private_relay']})" || true
           REMOTE
 
       - name: APPLY — backup + upsert env + restart + arm paper-mode
@@ -125,10 +125,20 @@ jobs:
             -H "x-arbx-actor: ci-ops-paper-mode" \
             -d "{\"enabled\":true,\"chain_id\":${CHAIN_ID}}"
           echo
-          echo "=== readiness/decision (must stay safe) ==="
-          curl -fsS "http://localhost:8080/api/readiness/decision" | python3 -c "import json,sys;d=json.load(sys.stdin);print({k:d.get(k) for k in ['go_live','verdict','paper_mode','capital_exposure_usd','live_trading','submit_enabled','private_relay']})" || true
-          echo "=== relevant blockers ==="
-          curl -fsS "http://localhost:8080/api/readiness/blockers" | python3 -c "import json,sys;d=json.load(sys.stdin);[print(' ',b.get('id'),b.get('status')) for b in d.get('blockers',[]) if any(x in (b.get('id') or '') for x in ['executor_1','sim_orchestrator','g_pap','paper'])]" || true
+          echo "=== readiness/decision (MANDATORY fail-closed safe-posture gate) ==="
+          curl -fsS "http://localhost:8080/api/v1/readiness/decision" | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          want = {'go_live': False, 'paper_mode': True, 'capital_exposure_usd': 0, 'live_trading': False, 'submit_enabled': False, 'private_relay': False}
+          print('readiness:', {k: d.get(k) for k in list(want) + ['verdict']})
+          bad = ['%s=%r (want %r)' % (k, d.get(k), v) for k, v in want.items() if d.get(k) != v]
+          if bad:
+              print('::error::UNSAFE POSTURE after apply (fail-closed): ' + '; '.join(bad))
+              sys.exit(1)
+          print('safe posture confirmed: paper-mode armed, live remains NO-GO')
+          "
+          echo "=== relevant blockers (informational) ==="
+          curl -fsS "http://localhost:8080/api/v1/readiness/blockers" | python3 -c "import json,sys;d=json.load(sys.stdin);[print(' ',b.get('id'),b.get('status')) for b in d.get('blockers',[]) if any(x in (b.get('id') or '') for x in ['executor_1','sim_orchestrator','g_pap','paper'])]" || true
           REMOTE
 
       - name: Reminder
