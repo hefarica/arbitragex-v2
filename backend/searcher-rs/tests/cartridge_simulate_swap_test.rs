@@ -31,9 +31,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use rhai::{Dynamic, Map};
-use searcher_rs::cartridge::host_bindings::{
-    HostContext, RpcBudget, SIM_SWAP_RPC_MIN_INTERVAL_NS,
-};
+use searcher_rs::cartridge::host_bindings::{HostContext, RpcBudget, SIM_SWAP_RPC_MIN_INTERVAL_NS};
 use searcher_rs::cartridge::runner::CartridgeRunner;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
@@ -96,8 +94,7 @@ fn build_payload(opportunity) {
 
 /// Returns a Redis `ConnectionManager`, or `None` when Redis is unreachable (graceful skip).
 async fn try_redis() -> Option<redis::aio::ConnectionManager> {
-    let url =
-        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379/".to_string());
+    let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379/".to_string());
     let client = redis::Client::open(url).ok()?;
     client.get_connection_manager().await.ok()
 }
@@ -236,7 +233,10 @@ async fn simulate_swap_returns_real_amount_out_from_v2_cached_reserves() {
         .expect("probe cartridge must compile + validate");
 
     // (lo, hi) — the pool_index key convention (lexicographic). TOKEN_IN < TOKEN_OUT.
-    let pool_index_key = format!("arbx:pool_index:{}:{}:{}", CHAIN_ID, TOKEN_IN_HEX, TOKEN_OUT_HEX);
+    let pool_index_key = format!(
+        "arbx:pool_index:{}:{}:{}",
+        CHAIN_ID, TOKEN_IN_HEX, TOKEN_OUT_HEX
+    );
     // Reserves: r0 (token_in reserves) = 1000 WETH, r1 (token_out reserves) = 2_000_000 USDC.
     // token0_addr = TOKEN_IN_HEX ⇒ token0_is_lo = true ⇒ reserve_in = r0, reserve_out = r1.
     let pool_reserves_key = format!("arbx:pool_reserves:{}:{}", CHAIN_ID, POOL_HEX);
@@ -264,13 +264,9 @@ async fn simulate_swap_returns_real_amount_out_from_v2_cached_reserves() {
         let amount_in = "1000000000000000000"; // 1 WETH
         let cache_key = format!(
             "arbx:sim_cache:{}:{}:{}_{}",
-            CHAIN_ID,
-            amount_in,
-            TOKEN_IN_HEX,
-            TOKEN_OUT_HEX
+            CHAIN_ID, amount_in, TOKEN_IN_HEX, TOKEN_OUT_HEX
         );
-        let _: Result<(), _> =
-            redis::AsyncCommands::del(&mut seed, &[cache_key.as_str()]).await;
+        let _: Result<(), _> = redis::AsyncCommands::del(&mut seed, &[cache_key.as_str()]).await;
     }
 
     // Drop the write handle before the binding reads (HostContext uses its own RwLock).
@@ -299,7 +295,10 @@ async fn simulate_swap_returns_real_amount_out_from_v2_cached_reserves() {
         .expect("metadata must carry sim_quoter")
         .as_str()
         .expect("sim_quoter must be a string");
-    let sim_error = result.metadata.get("sim_error").map(|v| v.as_str().unwrap_or(""));
+    let sim_error = result
+        .metadata
+        .get("sim_error")
+        .map(|v| v.as_str().unwrap_or(""));
 
     // REAL success — the V2 cached-reserves branch priced the path.
     assert!(
@@ -343,21 +342,20 @@ async fn simulate_swap_returns_controlled_error_when_reserves_missing() {
         .expect("probe cartridge must compile + validate");
 
     // Ensure NO pool_index entry exists for this pair (delete any stale seed).
-    let pool_index_key =
-        format!("arbx:pool_index:{}:{}:{}", CHAIN_ID, TOKEN_IN_HEX, TOKEN_OUT_HEX);
+    let pool_index_key = format!(
+        "arbx:pool_index:{}:{}:{}",
+        CHAIN_ID, TOKEN_IN_HEX, TOKEN_OUT_HEX
+    );
     let amount_in = "1000000000000000000";
     let cache_key = format!(
         "arbx:sim_cache:{}:{}:{}_{}",
-        CHAIN_ID, amount_in,
-        TOKEN_IN_HEX, TOKEN_OUT_HEX
+        CHAIN_ID, amount_in, TOKEN_IN_HEX, TOKEN_OUT_HEX
     );
     {
         let mut seed = conn.clone();
-        let _: Result<(), _> = redis::AsyncCommands::del(
-            &mut seed,
-            &[pool_index_key.as_str(), cache_key.as_str()],
-        )
-        .await;
+        let _: Result<(), _> =
+            redis::AsyncCommands::del(&mut seed, &[pool_index_key.as_str(), cache_key.as_str()])
+                .await;
     }
 
     let pool_data = make_pool_data(amount_in);
@@ -392,7 +390,10 @@ async fn simulate_swap_returns_controlled_error_when_reserves_missing() {
     // Documented failure tag for the no-RPC-pool + no-V2-data path. (Other tags like
     // `path_too_short`/`amount_parse` are impossible with this probe's inputs.)
     assert!(
-        matches!(sim_error, "v3_quote_failed" | "v2_reserves_missing" | "no_rpc_pool"),
+        matches!(
+            sim_error,
+            "v3_quote_failed" | "v2_reserves_missing" | "no_rpc_pool"
+        ),
         "expected a documented controlled-failure tag, got `{sim_error}`"
     );
     // The OLD stub MUST NOT surface here.

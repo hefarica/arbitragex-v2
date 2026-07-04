@@ -471,9 +471,7 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
                 amount_in,
                 path_strs.join("_")
             );
-            let cur_block = ctx
-                .block_number
-                .load(std::sync::atomic::Ordering::Relaxed);
+            let cur_block = ctx.block_number.load(std::sync::atomic::Ordering::Relaxed);
 
             // ── 1. cache read + block-number guard (reject stale quotes) ──────────
             // A quote cached at block N is INVALID at N+1 (the active tick may have
@@ -489,8 +487,7 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
             });
             if let Some(j) = cached_json.as_deref() {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(j) {
-                    let cached_block =
-                        v.get("block").and_then(|b| b.as_u64()).unwrap_or(0);
+                    let cached_block = v.get("block").and_then(|b| b.as_u64()).unwrap_or(0);
                     if cached_block + 1 >= cur_block {
                         return json_value_to_dynamic(&v);
                     }
@@ -827,7 +824,10 @@ async fn simulate_swap_compute(
                     let reqs = reqs.clone();
                     async move {
                         crate::amm_math::v3_quote_exact_in_multicall(
-                            provider, quoter_addr, multicall_addr, reqs,
+                            provider,
+                            quoter_addr,
+                            multicall_addr,
+                            reqs,
                         )
                         .await
                     }
@@ -874,7 +874,10 @@ async fn simulate_swap_compute(
         let pool_key = format!("arbx:pool_index:{}:{}:{}", ctx.chain_id, lo, hi);
         let pool_json: Option<String> = {
             let mut redis = ctx.redis.write().await;
-            redis::AsyncCommands::get(&mut *redis, &pool_key).await.ok().flatten()
+            redis::AsyncCommands::get(&mut *redis, &pool_key)
+                .await
+                .ok()
+                .flatten()
         };
         let pool_addr = pool_json
             .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
@@ -889,8 +892,7 @@ async fn simulate_swap_compute(
                 .ok()
                 .flatten()
         };
-        let rsv = reserves_json
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())?;
+        let rsv = reserves_json.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())?;
         let r0 = rsv
             .get("r0")
             .and_then(|v| v.as_str())
@@ -927,8 +929,7 @@ async fn simulate_swap_compute(
             }
         };
 
-        let out =
-            crate::amm_math::v2_amount_out(leg_amount, reserve_in, reserve_out, 30u32);
+        let out = crate::amm_math::v2_amount_out(leg_amount, reserve_in, reserve_out, 30u32);
         if out.is_zero() {
             return Some((U256::zero(), "v2_reserves_missing".to_string()));
         }
@@ -1065,7 +1066,7 @@ mod tests {
     #[test]
     fn rpc_budget_caps_at_max() {
         let mut b = RpcBudget::new(3, 1_000_000); // huge refill rate
-        // drain fully
+                                                  // drain fully
         assert!(b.acquire());
         assert!(b.acquire());
         assert!(b.acquire());
