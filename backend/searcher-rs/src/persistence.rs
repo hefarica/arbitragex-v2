@@ -4,7 +4,8 @@
 //! for compilation. Types are hand-bound.
 
 use anyhow::Context;
-use shared_rs::candidates::RouteMetadata;
+use prioritization_spine::route_plan::RoutePlan;
+use shared_rs::candidates::{DecimalsMap, RouteMetadata};
 use shared_rs::contracts::{Opportunity, StrategyKind};
 use sqlx::{postgres::PgPool, types::BigDecimal};
 use std::str::FromStr;
@@ -106,4 +107,62 @@ pub async fn insert_opportunity_with_route(
     .await
     .context("insert opportunity")?;
     Ok(())
+}
+
+/// Build a `RouteMetadata` from a scanner `RoutePlan` (G-SIM-1 B2b step 6).
+///
+/// Extracts the multi-hop topology from the route plan's legs:
+/// - `token_addresses`: ordered path [token_in_leg0, token_out_leg0==token_in_leg1, ...]
+/// - `pool_addresses`: one per leg (pool_address → factory_address fallback → skip if both empty)
+/// - `dex_adapters`: one per leg (dex_name)
+/// - `decimals`: EMPTY — the scanner resolves decimals separately via `TokenDecimalsProvider`.
+///   The A1 enrichment path will reject with MissingDecimals until a follow-up
+///   threads the resolved decimals into this builder. Fail-honest: better to
+///   persist topology without decimals than fabricate them.
+///
+/// Returns `RouteMetadata::empty()` when the plan has no legs (defensive).
+pub fn build_route_metadata_from_plan(plan: &RoutePlan) -> RouteMetadata {
+    if plan.legs.is_empty() {
+        return RouteMetadata::empty();
+    }
+
+    let mut pool_addresses = Vec::with_capacity(plan.legs.len());
+    let mut dex_adapters = Vec::with_capacity(plan.legs.len());
+    let mut token_addresses: Vec<String> = Vec::with_capacity(plan.legs.len() + 1);
+
+    for (i, leg) in plan.legs.iter().enumerate() {
+        // First leg seeds token_addresses with token_in; subsequent legs append token_out.
+        if i == 0 {
+            token_addresses.push(leg.token_in.clone());
+        }
+        token_addresses.push(leg.token_out.clone());
+
+        // pool_address → factory_address fallback. Both may be empty/None at
+        // scan time (calldata decoder doesn't resolve the pool yet). Skip the
+        // entry only when BOTH are absent — keeps pool_addresses length aligned
+        // with dex_adapters for validate().
+        let pool = leg
+            .pool_address
+            .clone()
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                if !leg.factory_address.is_empty() {
+                    Some(leg.factory_address.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+        pool_addresses.push(pool);
+        dex_adapters.push(leg.dex_name.clone());
+    }
+
+    RouteMetadata {
+        pool_addresses,
+        token_addresses,
+        dex_adapters,
+        // decimals intentionally empty — resolved separately by the scanner's
+        // TokenDecimalsProvider in a follow-up. See doc comment above.
+        decimals: DecimalsMap::new(),
+    }
 }
