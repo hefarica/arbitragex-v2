@@ -21,8 +21,8 @@ the gate.
 - [x] **#268** — Fase 3 A2: searcher-rs route API + api-server client
 - [x] **#269** — Fase 4 A3: sim-ctl autonomous PG route lookup
 - [x] **#270** — Fase 5: frontend route_source selector + sidebar
-- [ ] **#271** — B2c: wire `execute_multistep_revm` (REAL multi-step REVM sim)
-- [ ] **#272** — Step 6: scanner→emitter route capture wire
+- [x] **#271** — B2c: wire `execute_multistep_revm` (REAL multi-step REVM sim)
+- [x] **#272** — Step 6: scanner→emitter route capture wire
 
 ## Environment variables the flip DEPENDS on (VPS `.env`)
 
