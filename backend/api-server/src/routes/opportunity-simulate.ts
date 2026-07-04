@@ -17,7 +17,7 @@
  */
 
 import type { Request, Response } from "express";
-import { fetchRouteFromSearcher } from "./searcher-route-client";
+import { fetchRouteFromSearcher } from "./searcher-route-client.js";
 
 interface Deps {
   logger: { warn: (obj: object, msg?: string) => void };
@@ -58,7 +58,9 @@ export function mountOpportunitySimulate(app: import("express").Express, deps: D
       }
 
       // A2 enrichment: fetch route metadata from searcher-rs.
-      let enrichedBody = { ...reqBody, opportunity_id: id };
+      // Typed as Record<string, unknown> so we can attach route_metadata (A2)
+      // without TS narrowing the inferred type to just { opportunity_id }.
+      let enrichedBody: Record<string, unknown> = { ...reqBody, opportunity_id: id };
       if (routeSource === "searcher_api") {
         const routeResp = await fetchRouteFromSearcher(id);
         if (routeResp === null) {

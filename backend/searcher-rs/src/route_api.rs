@@ -74,7 +74,10 @@ async fn route_handler(
     Path(opp_id): Path<Uuid>,
 ) -> impl IntoResponse {
     match fetch_route_metadata(&st.pool, opp_id).await {
-        Ok(Some(resp)) => (StatusCode::OK, Json(serde_json::to_value(resp).unwrap_or_default())),
+        Ok(Some(resp)) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(resp).unwrap_or_default()),
+        ),
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
@@ -110,12 +113,11 @@ async fn fetch_route_metadata(
     pool: &PgPool,
     opp_id: Uuid,
 ) -> Result<Option<RouteMetadataResponse>, sqlx::Error> {
-    let row: Option<(serde_json::Value,)> = sqlx::query_as(
-        "SELECT route_metadata FROM opportunities WHERE id = $1",
-    )
-    .bind(opp_id)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(serde_json::Value,)> =
+        sqlx::query_as("SELECT route_metadata FROM opportunities WHERE id = $1")
+            .bind(opp_id)
+            .fetch_optional(pool)
+            .await?;
 
     match row {
         None => Ok(None),
