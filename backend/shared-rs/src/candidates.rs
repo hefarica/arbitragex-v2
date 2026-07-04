@@ -99,7 +99,7 @@ impl DecimalsMap {
         let missing: Vec<String> = addresses
             .iter()
             .filter(|addr| !self.map.contains_key(&addr.to_lowercase()))
-            .map(|addr| addr.clone())
+            .cloned()
             .collect();
 
         if missing.is_empty() {
