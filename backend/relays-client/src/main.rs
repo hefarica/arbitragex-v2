@@ -480,6 +480,7 @@ async fn main() -> anyhow::Result<()> {
                 redis: redis_mgr_for_engine,
             },
             consumer_name: std::env::var("HOSTNAME").unwrap_or_else(|_| "relay-1".into()),
+            dlq: consumer::DlqConfig::from_env(),
         };
         tokio::spawn(async move {
             if let Err(e) = consumer.run().await {
