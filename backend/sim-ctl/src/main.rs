@@ -13,7 +13,9 @@ mod consumer;
 mod fork_manager;
 mod persistence;
 mod revm_backend;
+mod route_lookup;
 mod sim_engine;
+mod sim_runner;
 mod simulator_backend;
 mod tx_builder;
 
@@ -78,6 +80,11 @@ struct SimulateRequest {
     /// Optional: pre-enriched candidate. When provided, enrichment is skipped.
     #[serde(default)]
     candidate: Option<OpportunityCandidate>,
+    /// Opportunity ID for A3 path (sim-ctl PG lookup). When route_source =
+    /// simctl_lookup and candidate is None, sim-ctl queries PG for this ID.
+    /// Forwarded by api-server from the URL path param `/api/v1/opportunities/:id`.
+    #[serde(default)]
+    opportunity_id: Option<uuid::Uuid>,
 }
 
 #[derive(Clone)]
@@ -89,6 +96,20 @@ struct AppState {
     /// consumer-level backend abstraction lands in a follow-up sprint.
     engine: Arc<SimEngine>,
     env: String,
+    /// G-SIM-1 PR-B2b Fase 4 (A3): optional PG pool for autonomous route
+    /// metadata lookup. None when DATABASE_URL is absent (A3 path disabled;
+    /// caller falls back to A1/A2).
+    db_pool: Option<sqlx::PgPool>,
+    /// G-SIM-1 B2c: shared `SimulatorV2` handle for the REAL multi-step path.
+    /// `None` when the backend is anvil (real-sim path disabled).
+    simulator: Option<Arc<simulator_v2::SimulatorV2>>,
+    /// G-SIM-1 B2c: env-driven config for the real sim (executor address, gas
+    /// limit, min profit). `None` when `ARBITRAGE_EXECUTOR` is unset — the
+    /// real-sim path returns a typed 501 in that case.
+    real_sim_env: Option<sim_runner::RealSimEnvConfig>,
+    /// G-SIM-1 B2c: Redis connection for reading live gas_price_wei.
+    /// `None` when REDIS_URL is absent (real-sim returns a typed 501).
+    redis: Option<Arc<tokio::sync::Mutex<redis::aio::ConnectionManager>>>,
 }
 
 async fn simulate_handler(
@@ -135,41 +156,199 @@ async fn simulate_handler(
     // G-SIM-1 PR-B2b Fase 1.2: if candidate is pre-enriched, use it directly.
     // Otherwise, return 501 for the selected route_source until Fases 2-4 land.
     match req.candidate {
-        Some(_candidate) => {
-            // Pre-enriched path: simulate with the full OpportunityCandidate.
-            // TODO (B2c): wire candidate → sim-core encoder → execute_multistep_revm
-            let payload = NotImplementedPayload::new(
-                vec!["sim_core_encoder", "execute_multistep_revm"],
-                "B2c",
-                "OpportunityCandidate received but sim-core encoder not yet wired (Fase 1.2 stub)",
-            );
-            let body = serde_json::to_value(payload).unwrap_or_else(
-                |e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}),
-            );
-            (StatusCode::NOT_IMPLEMENTED, Json(body))
+        Some(candidate) => {
+            // G-SIM-1 B2c: REAL multi-step REVM simulation path.
+            // Requires: simulator handle (SIM_BACKEND=revm), RealSimEnvConfig
+            // (ARBITRAGE_EXECUTOR set), and Redis (gas_price_wei). Fail-honest
+            // 501 for any missing prerequisite.
+            let simulator = match &st.simulator {
+                Some(s) => s.clone(),
+                None => {
+                    let body = serde_json::json!({
+                        "error": "real_sim_unavailable",
+                        "detail": "SIM_BACKEND!=revm — real multi-step REVM path requires SIM_BACKEND=revm"
+                    });
+                    return (StatusCode::NOT_IMPLEMENTED, Json(body));
+                }
+            };
+            let env_config = match &st.real_sim_env {
+                Some(c) => c.clone(),
+                None => {
+                    let body = serde_json::json!({
+                        "error": "real_sim_env_missing",
+                        "detail": "ARBITRAGE_EXECUTOR env var required for real simulation"
+                    });
+                    return (StatusCode::NOT_IMPLEMENTED, Json(body));
+                }
+            };
+            let redis = match &st.redis {
+                Some(r) => r.clone(),
+                None => {
+                    let body = serde_json::json!({
+                        "error": "gas_price_unavailable",
+                        "detail": "REDIS_URL not configured — cannot read live gas_price_wei"
+                    });
+                    return (StatusCode::SERVICE_UNAVAILABLE, Json(body));
+                }
+            };
+
+            // Read live gas_price_wei from Redis (same key scheme as RevmBackend).
+            let gas_price_wei = match read_gas_price(&redis, candidate.chain_id).await {
+                Ok(g) => g,
+                Err(e) => {
+                    let body = serde_json::json!({
+                        "error": "gas_price_read_failed",
+                        "detail": e
+                    });
+                    return (StatusCode::SERVICE_UNAVAILABLE, Json(body));
+                }
+            };
+
+            // Dispatch the REAL multi-step REVM simulation.
+            let outcome =
+                sim_runner::run_real_simulation(candidate, simulator, &env_config, gas_price_wei)
+                    .await;
+
+            // Map SimulationOutcome → JSON response with wrapped_calldata.
+            let response = serde_json::json!({
+                "passed": outcome.passed,
+                "gas_used_total": outcome.gas_used_total,
+                "gas_price_wei": outcome.gas_price_wei.to_string(),
+                "simulated_profit_token_in": outcome.simulated_profit_token_in.to_string(),
+                "intermediate_amount_out": outcome.intermediate_amount_out.map(|v| v.to_string()),
+                "fail_reason": outcome.fail_reason,
+                "wrapped_calldata": outcome.wrapped_calldata.as_ref().map(|bytes| format!("0x{}", hex::encode(bytes))),
+            });
+            let status = if outcome.passed {
+                StatusCode::OK
+            } else {
+                StatusCode::OK // 200 with passed=false — honest result, not an HTTP error
+            };
+            (status, Json(response))
         }
         None => {
-            // Enrichment path selected but not yet implemented (Fases 2-4).
-            // `requires` is Vec<&'static str>, so use static literals per branch
-            // (source_str as a local &str would not satisfy the 'static bound).
-            let (source_tag, source_label) = match req.route_source {
-                RouteSource::PgMetadata => ("pg_metadata", "pg_metadata (A1)"),
-                RouteSource::SearcherApi => ("searcher_api", "searcher_api (A2)"),
-                RouteSource::SimctlLookup => ("simctl_lookup", "simctl_lookup (A3)"),
-            };
-            let payload = NotImplementedPayload::new(
-                vec![source_tag, "route_enrichment"],
-                "B2b",
-                format!(
-                    "Route source '{}' selected but enrichment not yet implemented (Fases 2-4 pending)",
-                    source_label
-                ),
-            );
-            let body = serde_json::to_value(payload).unwrap_or_else(
-                |e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}),
-            );
-            (StatusCode::NOT_IMPLEMENTED, Json(body))
+            // No pre-enriched candidate: route_source determines the enrichment path.
+            match req.route_source {
+                RouteSource::SimctlLookup => {
+                    // G-SIM-1 PR-B2b Fase 4 (A3): autonomous PG lookup.
+                    let opp_id = match req.opportunity_id {
+                        Some(id) => id,
+                        None => {
+                            let body = serde_json::json!({
+                                "error": "missing_opportunity_id",
+                                "detail": "route_source=simctl_lookup requires opportunity_id in the request body"
+                            });
+                            return (StatusCode::BAD_REQUEST, Json(body));
+                        }
+                    };
+                    let pool = match &st.db_pool {
+                        Some(p) => p,
+                        None => {
+                            let body = serde_json::json!({
+                                "error": "a3_unavailable",
+                                "detail": "sim-ctl has no PG pool (DATABASE_URL not configured); try route_source=pg_metadata or searcher_api"
+                            });
+                            return (StatusCode::SERVICE_UNAVAILABLE, Json(body));
+                        }
+                    };
+                    match route_lookup::fetch_route_metadata(pool, opp_id).await {
+                        Ok(Some(_route_metadata)) => {
+                            // TODO (B2c): construct OpportunityCandidate from
+                            // route_metadata + Opportunity fields, then wire
+                            // → sim-core encoder → execute_multistep_revm.
+                            // For now: return 200 with the fetched metadata to
+                            // prove the A3 path works end-to-end.
+                            let body = serde_json::json!({
+                                "route_source": "simctl_lookup",
+                                "opportunity_id": opp_id,
+                                "status": "route_metadata_fetched",
+                                "detail": "A3 lookup successful; candidate construction + simulation pending B2c"
+                            });
+                            (StatusCode::OK, Json(body))
+                        }
+                        Ok(None) => {
+                            let body = serde_json::json!({
+                                "error": "route_metadata_not_found",
+                                "opportunity_id": opp_id,
+                                "detail": "opportunity has no route_metadata or does not exist"
+                            });
+                            (StatusCode::NOT_FOUND, Json(body))
+                        }
+                        Err(e) => {
+                            warn!(
+                                event = "sim.a3_pg_error",
+                                opportunity_id = %opp_id,
+                                error = %e,
+                                "A3 route lookup PG error"
+                            );
+                            let body = serde_json::json!({
+                                "error": "pg_error",
+                                "opportunity_id": opp_id,
+                                "detail": e.to_string()
+                            });
+                            (StatusCode::INTERNAL_SERVER_ERROR, Json(body))
+                        }
+                    }
+                }
+                RouteSource::PgMetadata | RouteSource::SearcherApi => {
+                    // A1 and A2 are handled by api-server before reaching sim-ctl.
+                    // If sim-ctl receives these, the upstream didn't enrich —
+                    // return honest 501 with a pointer to the correct path.
+                    let (source_tag, source_label) = match req.route_source {
+                        RouteSource::PgMetadata => ("pg_metadata", "pg_metadata (A1)"),
+                        RouteSource::SearcherApi => ("searcher_api", "searcher_api (A2)"),
+                        RouteSource::SimctlLookup => unreachable!(),
+                    };
+                    let payload = NotImplementedPayload::new(
+                        vec![source_tag, "route_enrichment"],
+                        "B2b",
+                        format!(
+                            "Route source '{}' should be enriched by api-server before reaching sim-ctl; no candidate provided",
+                            source_label
+                        ),
+                    );
+                    let body = serde_json::to_value(payload).unwrap_or_else(
+                        |e| serde_json::json!({"error":"serialisation_failure","detail":e.to_string()}),
+                    );
+                    (StatusCode::NOT_IMPLEMENTED, Json(body))
+                }
+            }
         }
+    }
+}
+
+/// Read live gas_price_wei from Redis for the REAL sim path (G-SIM-1 B2c).
+///
+/// Uses the same key scheme as `RevmBackend` (`gas_price_wei_key(chain_id)`,
+/// written by gas_oracle_worker every ~10s). Fail-honest: returns Err rather
+/// than fabricating gas_price_wei=0 (which would report gross as net).
+async fn read_gas_price(
+    redis: &Arc<tokio::sync::Mutex<redis::aio::ConnectionManager>>,
+    chain_id: u64,
+) -> Result<ethers::types::U256, String> {
+    use redis::AsyncCommands;
+    use shared_rs::pre_execute_checklist::gas_price_wei_key;
+
+    let key = gas_price_wei_key(chain_id);
+    let mut conn = redis.lock().await;
+    let val: Option<String> = conn
+        .get(&key)
+        .await
+        .map_err(|e| format!("Redis GET {key} failed: {e}"))?;
+    match val {
+        Some(s) => s
+            .parse::<ethers::types::U256>()
+            .map_err(|_| format!("gas_price_wei unparseable: {s:?}"))
+            .and_then(|v| {
+                if v == ethers::types::U256::zero() {
+                    Err("gas_price_wei is zero in Redis".into())
+                } else {
+                    Ok(v)
+                }
+            }),
+        None => Err(format!(
+            "gas_price_wei key {key} not in Redis — gas_oracle_worker not running or chain_id unknown"
+        )),
     }
 }
 
@@ -342,7 +521,7 @@ async fn main() -> anyhow::Result<()> {
                     "SIM_BACKEND=revm requires REDIS_URL — RevmBackend reads live gas_price_wei from Redis"
                 )
             })?;
-            let redis_client = redis::Client::open(redis_url)?;
+            let redis_client = redis::Client::open(redis_url.clone())?;
             let redis_conn = redis::aio::ConnectionManager::new(redis_client).await?;
             let b = RevmBackend::from_env(redis_conn)
                 .map_err(|e| anyhow::anyhow!("RevmBackend::from_env: {e}"))?;
@@ -361,10 +540,102 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // G-SIM-1 PR-B2b Fase 4 (A3): optional PG pool for autonomous route lookup.
+    // Best-effort: if DATABASE_URL is absent or connection fails, the A3 path
+    // stays disabled (db_pool = None) and the handler returns 503 for
+    // route_source=simctl_lookup. Fail-honest: no fabrication.
+    let db_pool = match std::env::var("DATABASE_URL") {
+        Ok(url) if !url.is_empty() => {
+            match shared_rs::db_pool::options_with_timeouts(
+                &shared_rs::db_pool::PoolConfig::from_env(2),
+            )
+            .connect(&url)
+            .await
+            {
+                Ok(p) => {
+                    info!(event = "sim.db_connected", "PG pool up for A3 route lookup");
+                    Some(p)
+                }
+                Err(e) => {
+                    warn!(
+                        event = "sim.db_connect_failed",
+                        error = %e,
+                        "continuing without PG pool (A3 path disabled)"
+                    );
+                    None
+                }
+            }
+        }
+        _ => {
+            warn!(
+                event = "sim.db_not_configured",
+                "DATABASE_URL absent; A3 route lookup path disabled"
+            );
+            None
+        }
+    };
+
+    // G-SIM-1 B2c: build the REAL multi-step sim path components.
+    // simulator: Option<Arc<SimulatorV2>> — only populated when SIM_BACKEND=revm,
+    // so the handler can call execute_multistep_revm. Uses the SAME REVM_RPC_URL
+    // the RevmBackend reads (both point at the same fork RPC).
+    let simulator: Option<Arc<simulator_v2::SimulatorV2>> =
+        if std::env::var("SIM_BACKEND").as_deref().unwrap_or("anvil") == "revm" {
+            let rpc_url = std::env::var("REVM_RPC_URL").unwrap_or_default();
+            if rpc_url.is_empty() {
+                warn!(
+                    event = "b2c.simulator_no_rpc",
+                    "REVM_RPC_URL empty — real-sim path disabled (B2c inactive)"
+                );
+                None
+            } else {
+                Some(Arc::new(simulator_v2::SimulatorV2::new(rpc_url)))
+            }
+        } else {
+            None
+        };
+
+    // real_sim_env: Option<RealSimEnvConfig> — best-effort load. None when
+    // ARBITRAGE_EXECUTOR is unset (real-sim returns a typed 501 in that case).
+    let real_sim_env = match sim_runner::RealSimEnvConfig::from_env() {
+        Ok(c) => {
+            info!(event = "b2c.env_loaded", "real-sim env config loaded");
+            Some(c)
+        }
+        Err(e) => {
+            warn!(event = "b2c.env_missing", error = %e, "real-sim path disabled");
+            None
+        }
+    };
+
+    // G-SIM-1 B2c: Redis handle for reading live gas_price_wei in the handler.
+    // Best-effort: None when REDIS_URL is absent (real-sim returns a typed 501).
+    let redis_handle: Option<Arc<tokio::sync::Mutex<redis::aio::ConnectionManager>>> =
+        match std::env::var("REDIS_URL") {
+            Ok(url) if !url.is_empty() => match redis::Client::open(url) {
+                Ok(client) => match redis::aio::ConnectionManager::new(client).await {
+                    Ok(cm) => Some(Arc::new(tokio::sync::Mutex::new(cm))),
+                    Err(e) => {
+                        warn!(event = "b2c.redis_cm_failed", error = %e, "gas_price_wei read disabled");
+                        None
+                    }
+                },
+                Err(e) => {
+                    warn!(event = "b2c.redis_client_failed", error = %e);
+                    None
+                }
+            },
+            _ => None,
+        };
+
     let state = Arc::new(AppState {
         backend,
         engine: engine.clone(),
         env: cfg.system.env.clone(),
+        db_pool,
+        simulator,
+        real_sim_env,
+        redis: redis_handle,
     });
 
     // HTTP server
