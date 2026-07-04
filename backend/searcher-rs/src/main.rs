@@ -928,6 +928,26 @@ async fn main() -> anyhow::Result<()> {
 
     // HTTP server.
     let app = build_health_router(ServiceInfo::new(SERVICE_NAME, SERVICE_VERSION));
+
+    // G-SIM-1 PR-B2b Fase 3 (A2): mount /route/:opp_id endpoint when DB pool is
+    // available. When DATABASE_URL is absent, the route API stays unmounted
+    // (fail-honest: no fabrication, api-server gets a connection refused and
+    // falls back to A1/A3).
+    let app = match &db_pool {
+        Some(pool) => {
+            let route_state = searcher_rs::route_api::RouteApiState { pool: pool.clone() };
+            let route_router = searcher_rs::route_api::route_router(route_state);
+            app.merge(route_router)
+        }
+        None => {
+            warn!(
+                event = "route_api.not_mounted",
+                "DB pool unavailable; /route/:opp_id endpoint disabled (A2 path inactive)"
+            );
+            app
+        }
+    };
+
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!(event = "http.listen", addr = %addr, "searcher-rs health/metrics bound");
