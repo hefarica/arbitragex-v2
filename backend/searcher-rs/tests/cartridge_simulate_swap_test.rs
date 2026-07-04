@@ -263,10 +263,11 @@ async fn simulate_swap_returns_real_amount_out_from_v2_cached_reserves() {
         // Clean any stale sim_cache entry from a prior run so the binding computes fresh.
         let amount_in = "1000000000000000000"; // 1 WETH
         let cache_key = format!(
-            "arbx:sim_cache:{}:{}:{}",
+            "arbx:sim_cache:{}:{}:{}_{}",
             CHAIN_ID,
             amount_in,
-            format!("{}_{}", TOKEN_IN_HEX, TOKEN_OUT_HEX)
+            TOKEN_IN_HEX,
+            TOKEN_OUT_HEX
         );
         let _: Result<(), _> =
             redis::AsyncCommands::del(&mut seed, &[cache_key.as_str()]).await;
@@ -346,9 +347,9 @@ async fn simulate_swap_returns_controlled_error_when_reserves_missing() {
         format!("arbx:pool_index:{}:{}:{}", CHAIN_ID, TOKEN_IN_HEX, TOKEN_OUT_HEX);
     let amount_in = "1000000000000000000";
     let cache_key = format!(
-        "arbx:sim_cache:{}:{}:{}",
+        "arbx:sim_cache:{}:{}:{}_{}",
         CHAIN_ID, amount_in,
-        format!("{}_{}", TOKEN_IN_HEX, TOKEN_OUT_HEX)
+        TOKEN_IN_HEX, TOKEN_OUT_HEX
     );
     {
         let mut seed = conn.clone();

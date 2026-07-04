@@ -1040,10 +1040,7 @@ mod tests {
     fn err_map_builds_structured_error() {
         let d = err_map("rate_limited");
         let m = d.cast::<Map>();
-        assert_eq!(
-            m.get("success").unwrap().clone().as_bool().unwrap(),
-            false
-        );
+        assert!(!m.get("success").unwrap().clone().as_bool().unwrap());
         assert_eq!(
             m.get("error").unwrap().clone().into_string().unwrap(),
             "rate_limited"
