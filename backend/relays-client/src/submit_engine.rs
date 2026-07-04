@@ -979,12 +979,13 @@ mod tests {
         let sim = sim_passing();
         let decision = SubmitEngine::classify_callbundle_result(Ok(sim.clone()));
         match decision {
-            CallBundleDecision::Proceed {
-                sim: passed_sim,
-            } => {
+            CallBundleDecision::Proceed { sim: passed_sim } => {
                 assert_eq!(passed_sim.total_gas_used, sim.total_gas_used);
                 assert_eq!(passed_sim.coinbase_diff_wei, sim.coinbase_diff_wei);
-                assert!(!passed_sim.any_failed(), "passing sim must not flag failure");
+                assert!(
+                    !passed_sim.any_failed(),
+                    "passing sim must not flag failure"
+                );
             }
             other => panic!("BE-05 passing re-sim must Proceed, got {other:?}"),
         }
