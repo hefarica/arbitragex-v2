@@ -6,14 +6,18 @@
  * index.ts, so Express dispatches it instead of the 501 stub. Public (no admin
  * gate), matching the stub: simulation is read-only and never touches capital.
  *
+ * G-SIM-1 PR-B2b: supports `route_source` selector (pg_metadata | searcher_api |
+ * simctl_lookup). When `searcher_api` is selected, enriches the request with
+ * route metadata from searcher-rs before forwarding to sim-ctl.
+ *
  * R8 fail-honest:
  *   - sim-ctl unreachable / timeout → 503 { error: "sim_unavailable" }.
- *   - If simulation.provider is still "not_implemented", sim-ctl returns its own
- *     honest non-2xx; we surface that status + body verbatim. A refusal here is
- *     CORRECT behavior (the provider isn't wired), not a bug to paper over.
+ *   - searcher-rs unreachable when route_source=searcher_api → 503 with clear
+ *     error (caller can retry with a different route_source).
  */
 
 import type { Request, Response } from "express";
+import { fetchRouteFromSearcher } from "./searcher-route-client";
 
 interface Deps {
   logger: { warn: (obj: object, msg?: string) => void };
@@ -28,6 +32,8 @@ const TIMEOUT_MS = 15_000;
 // Opportunity ids are uuids or stream ids (e.g. "169...-0"); keep it permissive but bounded.
 const ID_RE = /^[\w:.-]{1,128}$/;
 
+const VALID_ROUTE_SOURCES = new Set(["pg_metadata", "searcher_api", "simctl_lookup"]);
+
 export function mountOpportunitySimulate(app: import("express").Express, deps: Deps): void {
   app.post(
     "/api/v1/opportunities/:id/simulate",
@@ -38,16 +44,50 @@ export function mountOpportunitySimulate(app: import("express").Express, deps: D
         return;
       }
 
+      const reqBody = (req.body ?? {}) as Record<string, unknown>;
+      const routeSource = typeof reqBody["route_source"] === "string"
+        ? reqBody["route_source"]
+        : "simctl_lookup"; // default: let sim-ctl do its own lookup (A3)
+
+      if (!VALID_ROUTE_SOURCES.has(routeSource)) {
+        res.status(400).json({
+          error: "invalid_route_source",
+          detail: `route_source must be one of: ${[...VALID_ROUTE_SOURCES].join(", ")}`,
+        });
+        return;
+      }
+
+      // A2 enrichment: fetch route metadata from searcher-rs.
+      let enrichedBody = { ...reqBody, opportunity_id: id };
+      if (routeSource === "searcher_api") {
+        const routeResp = await fetchRouteFromSearcher(id);
+        if (routeResp === null) {
+          res.status(503).json({
+            error: "searcher_route_unavailable",
+            opportunity_id: id,
+            detail: "searcher-rs /route endpoint unreachable or returned 404; try route_source=pg_metadata or simctl_lookup",
+          });
+          return;
+        }
+        if (!routeResp.populated) {
+          res.status(422).json({
+            error: "route_metadata_empty",
+            opportunity_id: id,
+            detail: "searcher-rs found the opportunity but route_metadata is unpopulated",
+          });
+          return;
+        }
+        // Attach the route metadata so sim-ctl can build the OpportunityCandidate.
+        enrichedBody = { ...enrichedBody, route_metadata: routeResp.route_metadata };
+      }
+
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
       try {
-        const reqBody = (req.body ?? {}) as Record<string, unknown>;
         const upstream = await fetch(`${SIM_BASE}/simulate`, {
           method: "POST",
           headers: { "content-type": "application/json", accept: "application/json" },
-          // Validated path id wins: spread the body FIRST so a client-supplied
-          // opportunity_id cannot override the ID_RE-validated path param.
-          body: JSON.stringify({ ...reqBody, opportunity_id: id }),
+          body: JSON.stringify(enrichedBody),
           signal: ctrl.signal,
         });
 
@@ -62,6 +102,7 @@ export function mountOpportunitySimulate(app: import("express").Express, deps: D
         // Honest passthrough of sim-ctl's status + body.
         res.status(upstream.status).json({
           source: "sim-ctl",
+          route_source: routeSource,
           opportunity_id: id,
           result: parsed,
         });

@@ -25,6 +25,7 @@ pub mod pool_discovery;
 pub mod pool_sources;
 pub mod publisher;
 pub mod reserves;
+pub mod route_api;
 pub mod route_decoder;
 pub mod route_discovery;
 pub mod route_intent;
