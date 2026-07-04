@@ -417,44 +417,30 @@ impl SubmitEngine {
         // reaches the builder for inclusion, "latest" has advanced. A passing
         // simulation is necessary but not sufficient for on-chain success.
         //
-        // On endpoint failure: log + proceed. We must not drop valid bundles
-        // because the Flashbots simulation endpoint is temporarily unavailable.
-        // The existing on-chain inclusion check (step 7) remains the true gate.
+        // On endpoint failure: ABORT (fail-closed, OMEGA PHOENIX §4C#3). The
+        // bundle is dropped rather than broadcast un-re-simulated — see the
+        // `Err(e)` arm below. The on-chain inclusion check (step 7) remains the
+        // canonical gate for bundles that DO pass re-sim.
         if let Some(ref flashbots) = self.flashbots_for_callbundle {
             let target_block = bundle.target_block;
-            match flashbots
+            let sim_result = flashbots
                 .call_bundle(signer.as_ref(), &bundle.tx_raw_hex, target_block)
-                .await
-            {
-                Ok(sim) if sim.any_failed() => {
-                    let reasons: Vec<String> = sim
-                        .tx_results
-                        .iter()
-                        .filter_map(|t| t.error.clone().or_else(|| t.revert.clone()))
-                        .collect();
+                .await;
+            // Pure classifier (BE-05 fail-closed, OMEGA PHOENIX §4C#3): isolates
+            // the three-way re-sim decision so it is unit-testable without the
+            // I/O surfaces (Flashbots HTTP, Redis EWMA, broadcast). Side-effects
+            // (logging, EWMA write, ExecutionResult return) live in the arms.
+            match Self::classify_callbundle_result(sim_result) {
+                CallBundleDecision::Drop { reason } => {
                     warn!(
                         event = "be05.callbundle_reverted",
                         opp_id = %opp.id,
-                        reasons = ?reasons,
+                        reason = %reason,
                         "eth_callBundle shows revert — aborting broadcast to save gas"
                     );
-                    return ExecutionResult {
-                        opportunity_id: opp.id,
-                        status: ExecutionStatus::Dropped,
-                        tx_hash: None,
-                        relay_used: None,
-                        block_included: None,
-                        gas_used_wei: None,
-                        actual_profit_usd: None,
-                        error_message: Some(format!(
-                            "eth_callBundle_revert: {}",
-                            reasons.join("; ")
-                        )),
-                        submitted_at: Utc::now(),
-                        trace_id: opp.trace_id,
-                    };
+                    return Self::dropped(opp, &reason);
                 }
-                Ok(sim) => {
+                CallBundleDecision::Proceed { sim } => {
                     info!(
                         event = "be05.callbundle_passed",
                         opp_id = %opp.id,
@@ -524,18 +510,19 @@ impl SubmitEngine {
                         }
                     }
                 }
-                Err(e) => {
-                    // R8 fail-honest: if the safety check endpoint itself fails
-                    // (Flashbots outage, transient HTTP error), log and proceed.
-                    // Dropping ALL bundles during a Flashbots API hiccup is worse
-                    // than sending a bundle that might revert — the existing
-                    // wait_for_inclusion step surfaces on-chain reverts regardless.
+                CallBundleDecision::Abort { reason } => {
+                    // BE-05 fail-CLOSED: re-sim endpoint itself failed (Flashbots
+                    // outage, transient HTTP/RPC error). DROP the bundle instead
+                    // of broadcasting un-re-simulated — previously this was
+                    // fail-honest (warn + proceed) which spent gas on bundles
+                    // the safety check could not validate.
                     warn!(
                         event = "be05.callbundle_endpoint_error",
                         opp_id = %opp.id,
-                        error = %e,
-                        "eth_callBundle endpoint error — proceeding without re-sim"
+                        reason = %reason,
+                        "eth_callBundle endpoint error — aborting broadcast (fail-closed)"
                     );
+                    return Self::dropped(opp, &reason);
                 }
             }
         }
@@ -767,6 +754,59 @@ impl SubmitEngine {
             trace_id: opp.trace_id,
         }
     }
+
+    /// Pure classifier for the `eth_callBundle` re-sim result (BE-05).
+    ///
+    /// Maps the raw `Result<CallBundleResult, anyhow::Error>` into one of three
+    /// decisions so the `execute()` body can dispatch side-effects (logging,
+    /// EWMA write, ExecutionResult return) without re-deriving the logic. Kept
+    /// side-effect-free so it is directly unit-testable.
+    ///
+    /// - `Proceed`  → re-sim passed (no tx reverted): broadcast continues.
+    /// - `Drop`     → re-sim returned a revert: abort bundle, save gas.
+    /// - `Abort`    → re-sim endpoint itself failed (Flashbots outage / RPC
+    ///   error): DROP the bundle fail-closed (OMEGA PHOENIX §4C#3) instead of
+    ///   broadcasting un-re-simulated.
+    fn classify_callbundle_result(
+        sim_result: anyhow::Result<crate::relay_flashbots::CallBundleResult>,
+    ) -> CallBundleDecision {
+        match sim_result {
+            Ok(sim) if sim.any_failed() => {
+                let reasons: Vec<String> = sim
+                    .tx_results
+                    .iter()
+                    .filter_map(|t| t.error.clone().or_else(|| t.revert.clone()))
+                    .collect();
+                CallBundleDecision::Drop {
+                    reason: format!("eth_callBundle_revert: {}", reasons.join("; ")),
+                }
+            }
+            Ok(sim) => CallBundleDecision::Proceed { sim },
+            Err(e) => CallBundleDecision::Abort {
+                reason: format!("eth_callBundle_re-sim_unavailable: {e}"),
+            },
+        }
+    }
+}
+
+/// Three-way decision for the BE-05 `eth_callBundle` re-simulation step.
+///
+/// See [`SubmitEngine::classify_callbundle_result`] for the semantics. `Proceed`
+/// carries the passing `CallBundleResult` so the caller can extract EWMA inputs
+/// (coinbase_diff_wei); the other arms carry a fully-formed reason string that
+/// becomes the `ExecutionResult.error_message`.
+#[derive(Debug)]
+enum CallBundleDecision {
+    /// Re-sim passed — broadcast continues. Holds the result so the caller can
+    /// read `coinbase_diff_wei` for the relay-fee EWMA update.
+    Proceed {
+        sim: crate::relay_flashbots::CallBundleResult,
+    },
+    /// Re-sim returned a revert — drop the bundle to save gas.
+    Drop { reason: String },
+    /// Re-sim endpoint itself failed — drop the bundle fail-closed (do NOT
+    /// broadcast un-re-simulated). OMEGA PHOENIX §4C#3.
+    Abort { reason: String },
 }
 
 #[cfg(test)]
@@ -892,5 +932,115 @@ mod tests {
             (profit_paper - (-3.0)).abs() < f64::EPSILON,
             "paper: expected -3.0 (negative net), got {profit_paper}"
         );
+    }
+
+    // ─── BE-05 fail-closed (OMEGA PHOENIX §4C#3) ───────────────────────────
+    //
+    // Regression coverage for the eth_callBundle re-sim decision. The endpoint
+    // must NOT be mocked (no live HTTP) — the pure classifier is exercised
+    // directly. The contract: a bundle that the re-sim endpoint cannot confirm
+    // is DROPPED, never handed to the broadcaster.
+
+    use crate::relay_flashbots::{CallBundleResult, TxCallResult};
+
+    fn sim_passing() -> CallBundleResult {
+        CallBundleResult {
+            bundle_hash: Some("0xpass".into()),
+            coinbase_diff_wei: 1_000_000_000_000_000,
+            total_gas_used: 250_000,
+            tx_results: vec![TxCallResult {
+                tx_hash: "0xabc".into(),
+                gas_used: 250_000,
+                error: None,
+                revert: None,
+            }],
+        }
+    }
+
+    fn sim_reverted(reason: &str) -> CallBundleResult {
+        CallBundleResult {
+            bundle_hash: Some("0xrev".into()),
+            coinbase_diff_wei: 0,
+            total_gas_used: 100_000,
+            tx_results: vec![TxCallResult {
+                tx_hash: "0xabc".into(),
+                gas_used: 100_000,
+                error: None,
+                revert: Some(reason.into()),
+            }],
+        }
+    }
+
+    /// BE-05 success path: re-sim confirms (no revert) → classifier returns
+    /// `Proceed` and the bundle WOULD reach broadcast. The sim payload is
+    /// preserved so the caller can read coinbase_diff_wei for the EWMA update.
+    #[test]
+    fn be05_resim_passed_classifies_proceed() {
+        let sim = sim_passing();
+        let decision = SubmitEngine::classify_callbundle_result(Ok(sim.clone()));
+        match decision {
+            CallBundleDecision::Proceed {
+                sim: passed_sim,
+            } => {
+                assert_eq!(passed_sim.total_gas_used, sim.total_gas_used);
+                assert_eq!(passed_sim.coinbase_diff_wei, sim.coinbase_diff_wei);
+                assert!(!passed_sim.any_failed(), "passing sim must not flag failure");
+            }
+            other => panic!("BE-05 passing re-sim must Proceed, got {other:?}"),
+        }
+    }
+
+    /// BE-05 clean-reject path: re-sim returned a revert → classifier returns
+    /// `Drop`. Preserved from pre-fix behavior — only the endpoint-error path
+    /// changed. The reason carries the revert string for the ExecutionResult.
+    #[test]
+    fn be05_resim_reverted_classifies_drop() {
+        let sim = sim_reverted("INSUFFICIENT_OUTPUT_AMOUNT");
+        let decision = SubmitEngine::classify_callbundle_result(Ok(sim));
+        match decision {
+            CallBundleDecision::Drop { reason } => {
+                assert!(
+                    reason.contains("eth_callBundle_revert"),
+                    "Drop reason must identify the revert path, got: {reason}"
+                );
+                assert!(
+                    reason.contains("INSUFFICIENT_OUTPUT_AMOUNT"),
+                    "Drop reason must carry the revert string, got: {reason}"
+                );
+            }
+            other => panic!("BE-05 reverted re-sim must Drop, got {other:?}"),
+        }
+    }
+
+    /// BE-05 fail-CLOSED regression (the bug this package closes): when the
+    /// eth_callBundle endpoint itself errors (Flashbots outage / HTTP 5xx /
+    /// RPC error), the classifier MUST return `Abort` — NOT `Proceed`. The
+    /// `execute()` body maps `Abort` to `Self::dropped(...)`, so the bundle is
+    /// never handed to the broadcaster. Pre-fix this path fell through to the
+    /// multi-relay broadcast with only a warn log, spending gas on an
+    /// un-re-simulated bundle.
+    #[test]
+    fn be05_resim_endpoint_error_classifies_abort_not_proceed() {
+        let endpoint_err = anyhow::anyhow!("flashbots http 503: upstream timeout");
+        let decision = SubmitEngine::classify_callbundle_result(Err(endpoint_err));
+        match decision {
+            CallBundleDecision::Abort { reason } => {
+                assert!(
+                    reason.starts_with("eth_callBundle_re-sim_unavailable:"),
+                    "Abort reason must identify the unavailable-endpoint path, got: {reason}"
+                );
+                assert!(
+                    reason.contains("flashbots http 503"),
+                    "Abort reason must carry the underlying error, got: {reason}"
+                );
+            }
+            CallBundleDecision::Proceed { .. } => {
+                panic!(
+                    "BE-05 endpoint error must Abort (fail-closed), NOT Proceed — \
+                     broadcasting un-re-simulated bundles spends gas (OMEGA PHOENIX §4C#3)"
+                );
+            }
+            other => panic!("BE-05 endpoint error must Abort, got {other:?}"),
+        }
     }
 }
