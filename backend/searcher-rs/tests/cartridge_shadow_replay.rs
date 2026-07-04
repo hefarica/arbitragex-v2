@@ -150,6 +150,14 @@ async fn make_runner(conn: redis::aio::ConnectionManager) -> Arc<CartridgeRunner
         block_number: Arc::new(AtomicU64::new(0)),
         base_fee_gwei: Arc::new(AtomicU64::new(0)),
         telemetry_channel: "arbx:cartridge:telemetry".to_owned(),
+        rpc_pool: None,
+        rpc_budget: Arc::new(std::sync::Mutex::new(
+            searcher_rs::cartridge::host_bindings::RpcBudget::new(10, 10),
+        )),
+        rpc_min_interval_ns: Arc::new(AtomicU64::new(
+            searcher_rs::cartridge::host_bindings::SIM_SWAP_RPC_MIN_INTERVAL_NS,
+        )),
+        rpc_last_call_ns: Arc::new(AtomicU64::new(0)),
     };
     let runner = Arc::new(CartridgeRunner::new(host_ctx));
     runner
@@ -345,6 +353,14 @@ async fn host_binding_eval_does_not_panic_in_async_context() {
         block_number: Arc::new(AtomicU64::new(0)),
         base_fee_gwei: Arc::new(AtomicU64::new(0)),
         telemetry_channel: "arbx:cartridge:telemetry".to_owned(),
+        rpc_pool: None,
+        rpc_budget: Arc::new(std::sync::Mutex::new(
+            searcher_rs::cartridge::host_bindings::RpcBudget::new(10, 10),
+        )),
+        rpc_min_interval_ns: Arc::new(AtomicU64::new(
+            searcher_rs::cartridge::host_bindings::SIM_SWAP_RPC_MIN_INTERVAL_NS,
+        )),
+        rpc_last_call_ns: Arc::new(AtomicU64::new(0)),
     };
     let runner = Arc::new(CartridgeRunner::new(host_ctx));
     runner
