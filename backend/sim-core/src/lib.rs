@@ -34,3 +34,12 @@ pub mod sim_prefund;
 // sim_prefund's role override with RoundTripContext to build + drive the
 // deterministic wrapped-flash plan through REVM (feature `v2-simulator`).
 pub mod sim_multistep;
+
+// Phase A.3.a — OpportunityCandidate → RoundTripContext encoder. The SAME
+// route-encoding logic searcher-rs uses, extracted here (G-SIM-1 PR-B2a) so a
+// second consumer (`sim-ctl`) can build the SAME RoundTripContext instead of a
+// divergent encoder. Pure + fail-closed; no REVM dispatch, no signer, no
+// broadcast. searcher-rs re-exports this module so every existing
+// `crate::sim_encoder::*` / `searcher_rs::sim_encoder::*` call site keeps
+// compiling unchanged.
+pub mod sim_encoder;

@@ -12,6 +12,8 @@ prioritization-spine = { workspace = true }
 ethers = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+# Arbitrary-precision f64 → U256 wei conversion used by sim_encoder (PR-B2a).
+bigdecimal = { workspace = true }
 
 # REAL REVM simulator backing `execute_multistep_revm`. Feature-gated identically
 # to searcher-rs so the extracted fn keeps the SAME `#[cfg(feature = "v2-simulator")]`
