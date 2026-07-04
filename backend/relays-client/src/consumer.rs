@@ -95,7 +95,10 @@ pub fn build_dlq_fields(
         ("payload", original_json.to_string()),
         ("error", error_reason.to_string()),
         ("retries", deliveries.to_string()),
-        ("dlq_reason", "persist_execution_exhausted_retries".to_string()),
+        (
+            "dlq_reason",
+            "persist_execution_exhausted_retries".to_string(),
+        ),
     ]
 }
 
@@ -218,7 +221,8 @@ impl Consumer {
         if let Err(e) = persist_execution(&self.pool, &result, opp.chain_id as i64).await {
             // Bounded retry: count this failure and either leave the entry
             // unacked (retry on next claim) or route to the DLQ + XACK.
-            self.handle_persist_failure(&id, &json, &e.to_string()).await?;
+            self.handle_persist_failure(&id, &json, &e.to_string())
+                .await?;
             return Ok(());
         }
 
@@ -295,7 +299,11 @@ impl Consumer {
                        error = %error_reason);
                 let fields = build_dlq_fields(id, original_json, error_reason, deliveries);
                 let mut xadd = redis::cmd("XADD");
-                xadd.arg(DLQ_STREAM).arg("MAXLEN").arg("~").arg(10_000).arg("*");
+                xadd.arg(DLQ_STREAM)
+                    .arg("MAXLEN")
+                    .arg("~")
+                    .arg(10_000)
+                    .arg("*");
                 for (k, v) in &fields {
                     xadd.arg(k).arg(v);
                 }
