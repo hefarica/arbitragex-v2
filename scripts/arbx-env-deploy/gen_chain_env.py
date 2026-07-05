@@ -37,7 +37,11 @@ except ImportError:
 CHAIN_IDS = {
     "Ethereum Mainnet": 1, "Optimism": 10, "BSC Mainnet": 56, "Gnosis": 100,
     "Polygon Mainnet": 137, "Base": 8453, "Arbitrum One": 42161,
-    "Avalanche": 43114, "Linea": 59144, "Scroll": 534352, "Blast": 81457
+    "Avalanche": 43114, "Linea": 59144, "Scroll": 534352, "Blast": 81457,
+    # Testnets (public, keyless). Holesky deprecated (EF shutdown 2025-09) - kept for ref.
+    "Ethereum Sepolia": 11155111, "Ethereum Holesky": 17000,
+    "Polygon Amoy": 80002, "Arbitrum Sepolia": 421614,
+    "Optimism Sepolia": 11155420, "Base Sepolia": 84532,
 }
 CHAIN_META = {
     1:    ("ethereum", "ETH",   "https://etherscan.io",            12000),
@@ -50,7 +54,14 @@ CHAIN_META = {
     43114:("avalanche","AVAX",  "https://snowtrace.io",             2000),
     59144:("linea",    "ETH",   "https://lineascan.build",         12000),
     534352:("scroll",  "ETH",   "https://scrollscan.com",           3000),
-    81457:("blast",    "ETH",   "https://blastscan.io",             2000)
+    81457:("blast",    "ETH",   "https://blastscan.io",             2000),
+    # Testnets
+    11155111: ("sepolia",          "ETH",   "https://sepolia.etherscan.io",            12000),
+    17000:    ("holesky",          "ETH",   "https://holesky.etherscan.io",            12000),
+    80002:    ("polygon-amoy",     "MATIC", "https://amoy.polygonscan.com",             2000),
+    421614:   ("arbitrum-sepolia", "ETH",   "https://sepolia.arbiscan.io",               250),
+    11155420: ("optimism-sepolia", "ETH",   "https://optimism-sepolia.blockscout.com",  2000),
+    84532:    ("base-sepolia",     "ETH",   "https://sepolia.basescan.org",             2000),
 }
 # Factories per chain (dex_name -> router address) — canonical mainnet values.
 # FIX GAP 2: factories_seed.sql resolves dex_name -> dex_id UUID via subquery

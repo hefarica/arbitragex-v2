@@ -46,38 +46,54 @@ Private Function IsNeverShip(ByVal key As String) As Boolean
 End Function
 
 ' Constantes universales chainlist.org (NO config de operador - gate 6 no aplica).
-Private Function ChainIdFor(ByVal chainName As String) As Variant
+' Mainnets + testnets (Sepolia/Amoy reemplazan Mumbai/Holesky que estan deprecated).
+' Public para que SyncRpcCatalog.bas lo reutilice (DRY - un solo mapa de chains).
+Public Function ChainIdFor(ByVal chainName As String) As Variant
     Select Case Trim$(chainName)
-        Case "Ethereum Mainnet": ChainIdFor = 1
-        Case "Optimism":         ChainIdFor = 10
-        Case "BSC Mainnet":      ChainIdFor = 56
-        Case "Gnosis":           ChainIdFor = 100
-        Case "Polygon Mainnet":  ChainIdFor = 137
-        Case "Base":             ChainIdFor = 8453
-        Case "Arbitrum One":     ChainIdFor = 42161
-        Case "Avalanche":        ChainIdFor = 43114
-        Case "Linea":            ChainIdFor = 59144
-        Case "Blast":            ChainIdFor = 81457
-        Case "Scroll":           ChainIdFor = 534352
-        Case Else:               ChainIdFor = Empty
+        Case "Ethereum Mainnet":  ChainIdFor = 1
+        Case "Optimism":          ChainIdFor = 10
+        Case "BSC Mainnet":       ChainIdFor = 56
+        Case "Gnosis":            ChainIdFor = 100
+        Case "Polygon Mainnet":   ChainIdFor = 137
+        Case "Base":              ChainIdFor = 8453
+        Case "Arbitrum One":      ChainIdFor = 42161
+        Case "Avalanche":         ChainIdFor = 43114
+        Case "Linea":             ChainIdFor = 59144
+        Case "Blast":             ChainIdFor = 81457
+        Case "Scroll":            ChainIdFor = 534352
+        ' Testnets (publias, sin key - utiles para shadow/sim contra fork)
+        Case "Ethereum Sepolia":  ChainIdFor = 11155111
+        Case "Ethereum Holesky":  ChainIdFor = 17000    ' DEPRECATED (EF shutdown 2025-09) - queda solo para ref
+        Case "Polygon Amoy":      ChainIdFor = 80002    ' reemplaza Mumbai (deprecated)
+        Case "Arbitrum Sepolia":  ChainIdFor = 421614
+        Case "Optimism Sepolia":  ChainIdFor = 11155420
+        Case "Base Sepolia":      ChainIdFor = 84532
+        Case Else:                ChainIdFor = Empty
     End Select
 End Function
 
 ' Meta canonica por chain_id: name, native_currency, explorer_url (chainlist.org).
 Private Sub ChainMeta(ByVal cid As Long, ByRef nm As String, ByRef nat As String, ByRef expl As String)
     Select Case cid
-        Case 1:     nm = "ethereum":  nat = "ETH":  expl = "https://etherscan.io"
-        Case 10:    nm = "optimism":  nat = "ETH":  expl = "https://optimistic.etherscan.io"
-        Case 56:    nm = "bsc":       nat = "BNB":  expl = "https://bscscan.com"
-        Case 100:   nm = "gnosis":    nat = "xDAI": expl = "https://gnosisscan.io"
-        Case 137:   nm = "polygon":   nat = "MATIC":expl = "https://polygonscan.com"
-        Case 8453:  nm = "base":      nat = "ETH":  expl = "https://basescan.org"
-        Case 42161: nm = "arbitrum":  nat = "ETH":  expl = "https://arbiscan.io"
-        Case 43114: nm = "avalanche": nat = "AVAX": expl = "https://snowtrace.io"
-        Case 59144: nm = "linea":     nat = "ETH":  expl = "https://lineascan.build"
-        Case 81457: nm = "blast":     nat = "ETH":  expl = "https://blastscan.io"
-        Case 534352:nm = "scroll":    nat = "ETH":  expl = "https://scrollscan.com"
-        Case Else:  nm = "": nat = "": expl = ""
+        Case 1:       nm = "ethereum":          nat = "ETH":   expl = "https://etherscan.io"
+        Case 10:      nm = "optimism":          nat = "ETH":   expl = "https://optimistic.etherscan.io"
+        Case 56:      nm = "bsc":               nat = "BNB":   expl = "https://bscscan.com"
+        Case 100:     nm = "gnosis":            nat = "xDAI":  expl = "https://gnosisscan.io"
+        Case 137:     nm = "polygon":           nat = "MATIC": expl = "https://polygonscan.com"
+        Case 8453:    nm = "base":              nat = "ETH":   expl = "https://basescan.org"
+        Case 42161:   nm = "arbitrum":          nat = "ETH":   expl = "https://arbiscan.io"
+        Case 43114:   nm = "avalanche":         nat = "AVAX":  expl = "https://snowtrace.io"
+        Case 59144:   nm = "linea":             nat = "ETH":   expl = "https://lineascan.build"
+        Case 81457:   nm = "blast":             nat = "ETH":   expl = "https://blastscan.io"
+        Case 534352:  nm = "scroll":            nat = "ETH":   expl = "https://scrollscan.com"
+        ' Testnets
+        Case 11155111:nm = "sepolia":           nat = "ETH":   expl = "https://sepolia.etherscan.io"
+        Case 17000:   nm = "holesky":           nat = "ETH":   expl = "https://holesky.etherscan.io"
+        Case 80002:   nm = "polygon-amoy":      nat = "MATIC": expl = "https://amoy.polygonscan.com"
+        Case 421614:  nm = "arbitrum-sepolia":  nat = "ETH":   expl = "https://sepolia.arbiscan.io"
+        Case 11155420:nm = "optimism-sepolia":  nat = "ETH":   expl = "https://optimism-sepolia.blockscout.com"
+        Case 84532:   nm = "base-sepolia":      nat = "ETH":   expl = "https://sepolia.basescan.org"
+        Case Else:    nm = "": nat = "": expl = ""
     End Select
 End Sub
 
