@@ -13,6 +13,7 @@
 pub mod candidates;
 pub mod chains;
 pub mod config;
+pub mod config_bundle;
 pub mod contracts;
 pub mod db_pool;
 pub mod health;
