@@ -108,6 +108,7 @@ import { mountOpportunitySimulate } from "./routes/opportunity-simulate.js";
 import { mountAlertmanagerWebhook } from "./routes/alertmanager-webhook.js";
 import { mountRiskCircuitBreakers } from "./routes/risk-circuit-breakers.js";
 import { mountAdminChains } from "./routes/admin-chains.js";
+import { mountAdminConfigBundle } from "./routes/admin-config-bundle.js";
 import { mountSedStatus } from "./routes/sed-status.js";
 import { mountSystemManifest } from "./routes/system-manifest.js";
 import { mountWalletRoutes } from "./routes/wallet.js";
@@ -536,6 +537,16 @@ mountRiskCircuitBreakers(app, { pool, killSwitch, logger });
 mountAdminChains(app, {
   pool,
   redis,
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
+  writeAudit,
+  logger,
+});
+
+// Config bundle (Ruta 2 - HTTP upload). The Excel macro (ArbxBundleShipper.ShipBundle)
+// generates the .enc; this accepts the browser upload + triggers the importer binary.
+// SSH (Ruta 1) lands the same .enc on the same path via scp. One importer, two triggers.
+mountAdminConfigBundle(app, {
   requireAdminToken,
   adminToken: ARBX_ADMIN_TOKEN,
   writeAudit,

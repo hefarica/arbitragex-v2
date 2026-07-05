@@ -8,6 +8,7 @@ import { getDefiRpcs } from "@/lib/api-client";
 import type { DefiRpcsResponse } from "@/lib/schemas";
 import { EdgeState } from "@/components/EdgeState";
 import { RpcSyncPanel } from "@/components/RpcSyncPanel";
+import { BundleSyncPanel } from "@/components/BundleSyncPanel";
 
 const RPC_COLUMNS = ["Chain ID", "URL", "Type", "Status"];
 
@@ -108,6 +109,8 @@ export default function RpcHealthPage() {
       </div>
 
       <RpcSyncPanel />
+
+      <BundleSyncPanel />
 
       {legacy}
     </div>
