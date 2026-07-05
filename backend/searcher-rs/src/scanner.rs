@@ -1434,6 +1434,10 @@ async fn decode_and_score_tx<'a>(
     let amount_in_decimals: u8 = meta_in.as_ref().map(|m| m.decimals).unwrap_or(18);
     let amount_in_f64 =
         amm_math::wei_str_to_token_units(&opportunity.amount_in_wei, amount_in_decimals);
+    // PR 4b: amount_in is always known in token units here (real input amount
+    // converted via token decimals). No oracle gap applies — this is the same
+    // value already used downstream for candidate.amount_in. R8: not fabricated.
+    opportunity.amount_in_token = Some(amount_in_f64);
 
     let mut expected_amount_out_f64 = amount_in_f64;
     // R8 fail-honest: None = "we could not compute USD profit" (oracle gap,
@@ -1678,6 +1682,13 @@ async fn decode_and_score_tx<'a>(
                 let decimals_out = m_out.decimals as i32;
                 let scale = 10f64.powi(decimals_out);
                 expected_amount_out_f64 = u256_to_f64_lossy(hi) / scale;
+                // PR 4b: populate amount_out_* from the REAL best-quote aggregate.
+                // R8 fail-honest: only assigned inside `outs.len() >= 2`, where `hi`
+                // is a genuine observed quote. When fewer than 2 quotes landed, `hi`
+                // is undefined and these fields stay None on the Opportunity row —
+                // we do NOT fabricate a quote from the default fallback.
+                opportunity.amount_out_wei = Some(hi.to_string());
+                opportunity.amount_out_token = Some(expected_amount_out_f64);
                 let spread_token_out_f64 = u256_to_f64_lossy(gross_profit_token_out) / scale;
 
                 // USD pricing rules: only price in USD when token_out matches the
@@ -2265,6 +2276,21 @@ async fn decode_and_score_tx<'a>(
         None // R8: not computed — cascades from expected_profit_usd=None
     } else {
         Some(math_outcome.net_roi_pct)
+    };
+    // PR 4b: net_roi_pct mirrors math_outcome.net_roi_pct (post-fee ROI), and
+    // total_fees_usd = gross - net (gas + fees combined as per PR 4b spec). Both
+    // gated on !unknown_token_price to preserve R8: under the oracle gap the
+    // evaluator zeroes gross_profit_usd synthetically, so persisting gross-net
+    // would fabricate a fee figure. None in that case is the honest answer.
+    opportunity.net_roi_pct = if unknown_token_price {
+        None
+    } else {
+        Some(math_outcome.net_roi_pct)
+    };
+    opportunity.total_fees_usd = if unknown_token_price {
+        None
+    } else {
+        Some(math_outcome.gross_profit_usd - math_outcome.net_profit_usd)
     };
 
     if let Some(reason) = config_rejection {
