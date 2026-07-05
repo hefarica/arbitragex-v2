@@ -110,7 +110,7 @@ Public Sub RebuildChainBuilder()
     matrixEnd = MatrixEndRow(wsCb)
     maxCol = LastHeaderCol(wsCb)
     covStart = CoverageStartCol(wsCb, maxCol)
-    If covStart + 3 > maxCol Then maxCol = covStart + 3
+    If covStart + 6 > maxCol Then maxCol = covStart + 6
 
     ' 1. Snapshot existing matrix rows - ALL cols 1..maxCol (preserve operator data).
     Dim existing As Collection: Set existing = New Collection
@@ -268,10 +268,13 @@ Private Function CoverageStartCol(ws As Worksheet, lastHdr As Long) As Long
 End Function
 
 Private Sub EnsureCoverageHeaders(ws As Worksheet, covStart As Long)
+    ' cols covStart..covStart+3 = coverage (Flash Loan/Swap/Lending/Collateral-free).
+    ' cols covStart+4..covStart+6 = chain metadata (Primitivas / TVL floor / Min holders) — FASE 1.
     Dim hdrs As Variant
-    hdrs = Array("Flash Loan", "Flash Swap", "Lending", "Collateral-free (same-block)")
+    hdrs = Array("Flash Loan", "Flash Swap", "Lending", "Collateral-free (same-block)", _
+                 "Primitivas soportadas", "TVL floor (USD)", "Min holders")
     Dim i As Long
-    For i = 0 To 3
+    For i = 0 To 6
         If Len(Trim$(CStr(ws.Cells(3, covStart + i).Value))) = 0 Then
             ws.Cells(3, covStart + i).Value = hdrs(i)
         End If
@@ -316,7 +319,26 @@ Private Sub WriteCoverageAt(ws As Worksheet, row As Long, cid As Long, covStart 
     ws.Cells(row, covStart + 1).Value = CStr(cov(1))
     ws.Cells(row, covStart + 2).Value = CStr(cov(2))
     ws.Cells(row, covStart + 3).Value = CStr(cov(3))
+    ' FASE 1 chain metadata (cols covStart+4..+6): primitives CSV + TVL floor + min holders.
+    ws.Cells(row, covStart + 4).Value = ChainPrimitivesFor(cid)
+    ws.Cells(row, covStart + 5).Value = 50000   ' TVL floor default (conservative)
+    ws.Cells(row, covStart + 6).Value = 100     ' min holders default
 End Sub
+
+' Which flash/liquidity primitives are deployed+verified per chain. Mirrors migration 100
+' seed (the registry is the source of truth; this VBA mirror is for the operator-facing Excel).
+' Universal protocol metadata (chainlist.org-level), not operator config -> no-hardcode compliant.
+Private Function ChainPrimitivesFor(cid As Long) As String
+    Select Case cid
+        Case 1:                                ChainPrimitivesFor = "AaveV3,Balancer,UniswapV3,MakerDAO"
+        Case 10, 42161, 8453:                  ChainPrimitivesFor = "AaveV3,Balancer,UniswapV3"
+        Case 137, 43114:                       ChainPrimitivesFor = "AaveV3,Balancer,UniswapV3"
+        Case 100:                              ChainPrimitivesFor = "Balancer"
+        Case 56:                               ChainPrimitivesFor = "UniswapV3(pending)"
+        Case 59144, 534352, 81457:             ChainPrimitivesFor = "(deferred - FASE 4)"
+        Case Else:                             ChainPrimitivesFor = ""
+    End Select
+End Function
 
 Private Function CoverageFor(cid As Long) As Variant
     Select Case cid
