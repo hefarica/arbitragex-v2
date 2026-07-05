@@ -1,4 +1,5 @@
-import { AlertCircleIcon, InfoIcon } from "lucide-react";
+import { AlertCircleIcon, AlertTriangleIcon, InfoIcon } from "lucide-react";
+import Link from "next/link";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { FocusOnMount } from "@/components/focus-on-mount";
@@ -47,6 +48,24 @@ export default async function TradingConfigPage() {
         lede="Capital, token allowlist, yield thresholds, gas strategy. searcher-rs reads these in ≤1s; the system stays idle for any chain without a row."
         showRefresh
       />
+
+      {/* PR 3 (duplicity 2026-07-05) — /strategies is the CANONICAL editor (single
+          source of truth per the operator's consolidation contract). This legacy
+          form remains ONLY as a chain-level seed path; it no longer wipes
+          per-strategy overrides (PR 3 fix in trading-config-form.tsx). Do not
+          extend it — funnel all new fields to /strategies. */}
+      <Alert className="mb-6">
+        <AlertTriangleIcon />
+        <AlertTitle>Legacy form — use /strategies as the canonical editor</AlertTitle>
+        <AlertDescription>
+          This page edits <strong>chain-level fields only</strong> and exists for the seed
+          path. For the full canonical surface — per-strategy overrides (Engine Catalog),
+          simulation targets, token allowlist, DEX list, pools, relays — use{" "}
+          <Link href="/strategies" className="underline font-semibold">/strategies</Link>.
+          A Save here now <em>preserves</em> per-strategy config (PR 3 fix) but does not
+          expose it for editing.
+        </AlertDescription>
+      </Alert>
 
       {!initial.configured && (
         <Alert className="mb-6">

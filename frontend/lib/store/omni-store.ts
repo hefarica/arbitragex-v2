@@ -81,6 +81,15 @@ interface OpportunitySlice {
   addOpportunity: (opp: OmniOpportunity) => void;
   /** Clear all opportunities */
   clearOpportunities: () => void;
+  /**
+   * Merge a fresh snapshot into the store WITHOUT wiping existing entries.
+   * Dedups by stable route key (routeKey); preserves the original detected_at
+   * + id (age continuity + stable React key ⇒ no flash on re-detection);
+   * refreshes metrics from the latest snapshot; prepends genuinely-new routes.
+   * This is the poll/snapshot counterpart to addOpportunity (which serves the
+   * WebSocket single-event stream).
+   */
+  mergeSnapshot: (items: OmniOpportunity[]) => void;
   /** Update WS status (called by socket lifecycle) */
   setWsStatus: (status: WsStatus) => void;
 }
@@ -122,6 +131,100 @@ type OmniStoreState = RegistrySlice & OpportunitySlice & WalletSlice;
 
 /** Maximum opportunities to keep in memory (prevents memory leak) */
 const MAX_OPPORTUNITIES = 200;
+
+/**
+ * Stable route identity for dedup across snapshots. The API may emit a fresh
+ * detection id each cycle for the very same route; this key collapses them so
+ * mergeOpportunitySnapshots updates the row in place instead of re-adding it
+ * (the root cause of the "same trades flash as new every 5s" UX bug — see
+ * systematic-debugging Phase 1: the poll path wiped+repopulated the store, so
+ * React saw every row as new each cycle and re-ran the enter animation).
+ * Lowercased + strategy-scoped so a dex_arb and a flashloan_arb on the same
+ * pair stay distinct rows. Reused as the React list key in OpportunitiesClient
+ * (stable key ⇒ no remount ⇒ no flash).
+ */
+export function routeKey(o: OmniOpportunity): string {
+  const tin = (o.token_in || "").toLowerCase();
+  const tout = (o.token_out || "").toLowerCase();
+  const da = (o.dex_a || "").toLowerCase();
+  const db = (o.dex_b ?? "").toLowerCase();
+  return `${o.chain_id}:${o.strategy_kind}:${tin}:${tout}:${da}:${db}`;
+}
+
+/**
+ * Strategy "must be profitable" rule (operator decision 2026-07-05). A viable
+ * opportunity must be profitable — "negativo desaparece" / "mostrar las mayores
+ * a 0". An opp that the backend rejected as non-positive (ANY of the ~8
+ * non_positive_* tags across size_optimizer / sim_multistep / revm_backend /
+ * scanner / sim_encoder — all caught by the substring below) OR whose computed
+ * net is < 0 NEVER renders on the panel. This is a HARD, toggle-independent
+ * filter: the "Show all / Viable only" toggle (server-side viable_only param)
+ * controls only opps rejected for OTHER reasons (no price, no metadata,
+ * below-floor…); strategy-non-positive opps are dropped at the store whatever
+ * the toggle. net == null (cold-start, net not yet computed) is PRESERVED
+ * (R8: null ≠ zero, never dropped). net <= 0 (negative OR break-even) is
+ * DROPPED — the rule is strictly "show ABOVE 0" (operator decision 2026-07-05:
+ * "mostrar las por encima de 0").
+ */
+const NON_POSITIVE_REJECT = /non_positive/;
+
+function isStrategyNonPositive(o: OmniOpportunity): boolean {
+  // (1) Backend authority: any non_positive_* rejection tag (covers all ~8
+  //     variants — size_optimizer, sim_multistep, revm_backend, scanner,
+  //     sim_encoder — without enumerating them).
+  if (o.status === "rejected" && o.rejection_reason && NON_POSITIVE_REJECT.test(o.rejection_reason)) {
+    return true;
+  }
+  // (2) Defensive belt: live net <= 0 even before the status write flips. Priority
+  //     matches the card's net display: canonical spine → TS forward-sim.
+  //     net == null is PRESERVED (R8 cold-start) — the guard is `net != null`.
+  const net = o.net_expected_profit_usd ?? o.simulated_net_profit_usd;
+  return net != null && net <= 0;
+}
+
+/**
+ * Pure merge of a fresh snapshot into the existing opportunity list (testable
+ * without Zustand). Dedups by routeKey; on a match PRESERVES the original
+ * detected_at + id (age stays continuous, React key stays stable ⇒ no flash);
+ * refreshes every other field from the fresh detection; appends genuinely-new
+ * routes; KEEPS routes no longer in the snapshot (they age out visually + sink
+ * below fresh ones after the newest-first sort); DROPS strategy-non-positive
+ * opps (isStrategyNonPositive — HARD filter, toggle-independent, drop on
+ * receive); caps at `cap`. Empty incoming ⇒ existing returned unchanged (a
+ * momentary empty fetch must NOT wipe the feed).
+ */
+export function mergeOpportunitySnapshots(
+  existing: OmniOpportunity[],
+  incoming: OmniOpportunity[],
+  cap: number = MAX_OPPORTUNITIES,
+): OmniOpportunity[] {
+  if (incoming.length === 0) return existing;
+  const existingByKey = new Map<string, OmniOpportunity>();
+  for (const o of existing) existingByKey.set(routeKey(o), o);
+
+  const seenKeys = new Set<string>();
+  const merged: OmniOpportunity[] = [];
+  for (const item of incoming) {
+    const k = routeKey(item);
+    // Mark the route handled EVEN when we drop it as strategy-non-positive, so
+    // the existing-passthrough below skips the stale positive version of a
+    // route that just flipped negative (the flip case: it must DISAPPEAR).
+    seenKeys.add(k);
+    if (isStrategyNonPositive(item)) continue; // HARD filter — never renders
+    const prev = existingByKey.get(k);
+    merged.push(prev ? { ...item, detected_at: prev.detected_at, id: prev.id } : item);
+  }
+  for (const o of existing) {
+    if (seenKeys.has(routeKey(o))) continue;   // updated above, or dropped as non-positive
+    if (isStrategyNonPositive(o)) continue;     // belt-and-braces: never render non-positive
+    merged.push(o);
+  }
+  merged.sort(
+    (a, b) =>
+      (new Date(b.detected_at).getTime() || 0) - (new Date(a.detected_at).getTime() || 0),
+  );
+  return merged.slice(0, cap);
+}
 
 // =============================================================================
 // Omni-Store Implementation
@@ -230,6 +333,12 @@ export const useOmniStore = create<OmniStoreState>()(
         })),
 
       clearOpportunities: () => set({ opportunities: [], lastUpdate: null }),
+
+      mergeSnapshot: (items) =>
+        set((state) => ({
+          opportunities: mergeOpportunitySnapshots(state.opportunities, items),
+          lastUpdate: new Date().toISOString(),
+        })),
 
       setWsStatus: (status: WsStatus) => set({ wsStatus: status }),
 
