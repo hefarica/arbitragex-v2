@@ -188,61 +188,95 @@ def main():
 
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--xlsx", default="C:/Users/HFRC/Downloads/ArbitrageX_Unified_Config.xlsm")
+    ap.add_argument("--xlsx", default="C:/Users/HFRC/Downloads/ArbitrageX_Unified_Config.xlsm",
+                    help="Excel source (Python reads the 4 sheets). Default mode. "
+                         "Mutually exclusive with --json-in.")
+    ap.add_argument("--json-in", default=None,
+                    help="Pre-built bundle JSON file (the VBA macro writes this). Skips the "
+                         "Excel read - Python only encrypts. Mutually exclusive with --xlsx.")
     ap.add_argument("--public-key", default="C:/Users/HFRC/Downloads/arbx_bundle_public.pem")
     ap.add_argument("--schema", default=None, help="jsonschema file for pre-encrypt validation")
+    ap.add_argument("--out", default=None,
+                    help="Explicit output path for the .enc (so the VBA macro / browser upload "
+                         "can pick it up). If omitted, a shred-safe temp is used.")
     ap.add_argument("--vps-host", default="arbx")
     ap.add_argument("--dest", default="/opt/arbitragex-v2/config/arbx_config_bundle.json.enc")
-    ap.add_argument("--no-upload", action="store_true", help="encrypt only, skip scp (for testing)")
+    ap.add_argument("--no-upload", action="store_true",
+                    help="encrypt only, skip scp (VBA mode: the macro SCPs, or the operator "
+                         "uploads via the browser panel - Ruta 2)")
     args = ap.parse_args()
 
-    # 1. Build bundle + optional schema validation
-    bundle = build_bundle(args.xlsx)
-    bundle_json = json.dumps(bundle, indent=2).encode()
-    print(f"bundle: {len(bundle_json)} bytes | env_vars={len(bundle['env_vars'])} "
-          f"chains={len(bundle['chains'])} api_keys={len(bundle['api_keys'])} "
-          f"contract_addrs={len(bundle['contract_addresses'])}")
+    if args.json_in and args.xlsx != ap.get_default("xlsx"):
+        sys.exit("FATAL: --json-in and --xlsx are mutually exclusive (pass only one source).")
+
+    # 1. Get the bundle JSON: either the VBA macro built it (--json-in) or Python reads Excel.
+    if args.json_in:
+        with open(args.json_in, "rb") as f:
+            bundle_json = f.read()
+        bundle = json.loads(bundle_json)
+        print(f"bundle (json-in): {len(bundle_json)} bytes | source={args.json_in}")
+    else:
+        bundle = build_bundle(args.xlsx)
+        bundle_json = json.dumps(bundle, indent=2).encode()
+        print(f"bundle (xlsx): {len(bundle_json)} bytes | env_vars={len(bundle['env_vars'])} "
+              f"chains={len(bundle['chains'])} api_keys={len(bundle['api_keys'])} "
+              f"contract_addrs={len(bundle['contract_addresses'])}")
 
     if args.schema:
         import jsonschema
         jsonschema.validate(json.loads(bundle_json), json.load(open(args.schema)))
         print("schema validation: OK")
 
-    # Defence-in-depth: assert NEVER_SHIP absent.
-    leaked = [k for k in NEVER_SHIP if k in bundle["env_vars"]]
+    # Defence-in-depth (layer 2 of 3): assert NEVER_SHIP absent.
+    # Layer 1 = VBA macro skips these keys; layer 3 = Rust importer re-asserts post-decrypt.
+    leaked = [k for k in NEVER_SHIP if k in bundle.get("env_vars", {})]
     if leaked:
         sys.exit(f"FATAL: forbidden keys shipped: {leaked}")
 
-    # 2. Encrypt (in-memory, then write .enc)
+    # 2. Encrypt (in-memory)
     enc = hybrid_encrypt(bundle_json, args.public_key)
     print(f"hybrid encrypt (RSA-OAEP-4096 + AES-256-GCM): {len(enc)} bytes")
 
-    # 3. Shred-safe temp for the plaintext JSON (never on disk unencrypted)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as tmp:
-        tmp.write(bundle_json)
-        tmp_plain = tmp.name
+    # 3. Write the .enc: explicit --out path, else a shred-safe temp we own.
+    enc_path = args.out
+    tmp_plain = None
+    if enc_path is None:
+        # Park the plaintext in a temp so we can shred it (never on disk unencrypted otherwise).
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as tmp:
+            tmp.write(bundle_json)
+            tmp_plain = tmp.name
+        enc_path = tmp_plain + ".enc"
 
     try:
-        enc_path = tmp_plain + ".enc"
         with open(enc_path, "wb") as f:
             f.write(enc)
 
+        # sha256 fingerprint so the operator / VBA macro can eyeball key + payload continuity.
+        import hashlib
+        sha = hashlib.sha256(enc).hexdigest()
+        print(f"sha256({enc_path}): {sha}")
+
         if args.no_upload:
-            print(f"encrypted (no-upload mode): {enc_path}")
+            print(f"encrypted (no-upload): {enc_path}")
         else:
-            # 4. Upload via scp (reuses operator SSH)
             subprocess.run(["scp", enc_path, f"{args.vps_host}:{args.dest}"], check=True)
             print(f"uploaded -> {args.vps_host}:{args.dest}")
 
-        # 5. Shred the plaintext temp
-        shred(tmp_plain)
-        if args.no_upload:
-            pass  # keep enc_path for local testing
-        else:
+        # Shred the plaintext temp if WE created it (NOT the VBA's --json-in file -
+        # the macro owns that file's lifecycle and shreds it in its own step 4).
+        if tmp_plain is not None:
+            shred(tmp_plain)
+        # Clean the .enc temp if WE created it AND it was uploaded (keep if --out or --no-upload).
+        if tmp_plain is not None and not args.no_upload:
             os.unlink(enc_path)
-        print("plaintext shred OK — only the .enc on the VPS remains")
+        if tmp_plain is None:
+            print("plaintext was the caller's --json-in file (not shred by Python)")
+        else:
+            print("plaintext shred OK" + (
+                " - only the uploaded .enc on the VPS remains"
+                if not args.no_upload else f" - .enc kept at {enc_path}"))
     finally:
-        if os.path.exists(tmp_plain):
+        if tmp_plain is not None and os.path.exists(tmp_plain):
             shred(tmp_plain)
 
 
