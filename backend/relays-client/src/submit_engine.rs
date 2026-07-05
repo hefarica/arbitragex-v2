@@ -169,6 +169,7 @@ impl SubmitEngine {
                 our_address: &our_address,
                 pg: pg_pool,
                 redis: &mut redis_conn,
+                token_safety_floor: self.cfg.token_safety.min_acceptable_score,
             };
 
             match pre_execute_checklist(&mut ctx).await {

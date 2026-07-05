@@ -187,6 +187,9 @@ pub struct PreExecuteContext<'a> {
     /// Redis connection manager — used for kill_switch, paper_mode, gas_price_ts,
     /// mempool, and circuit_breaker checks.
     pub redis: &'a mut ConnectionManager,
+    /// Token-safety floor (0..100) from AppConfig.token_safety.min_acceptable_score.
+    /// Replaces the legacy TOKEN_SAFETY_FLOOR env — single canonical source. FASE 2.
+    pub token_safety_floor: i32,
 }
 
 // ---------------------------------------------------------------------------
@@ -226,7 +229,7 @@ pub async fn pre_execute_checklist(ctx: &mut PreExecuteContext<'_>) -> Result<()
     )?;
 
     // 8. Tokens in allowlist — every route token must be active + safe.
-    check_tokens_in_allowlist(ctx.pg, ctx.chain_id, ctx.route_tokens).await?;
+    check_tokens_in_allowlist(ctx.pg, ctx.chain_id, ctx.route_tokens, ctx.token_safety_floor).await?;
 
     // 9. Factories active — every route factory must be is_active.
     check_factories_active(ctx.pg, ctx.chain_id, ctx.route_factories).await?;
@@ -415,6 +418,7 @@ async fn check_tokens_in_allowlist(
     pg: &PgPool,
     chain_id: u64,
     route_tokens: &[String],
+    floor: i32,
 ) -> Result<(), ChecklistError> {
     for token_addr in route_tokens {
         // Tier a: tokens table — must be active.
@@ -448,12 +452,10 @@ async fn check_tokens_in_allowlist(
         .fetch_optional(pg)
         .await?;
 
-        // Default floor: 70 (matches app.toml `[token_safety] min_acceptable_score`).
-        // We read it from env to avoid a second DB round-trip per token.
-        let floor: i32 = std::env::var("TOKEN_SAFETY_FLOOR")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(70);
+        // FASE 2: floor from AppConfig.token_safety.min_acceptable_score (threaded
+        // via PreExecuteContext), NOT the TOKEN_SAFETY_FLOOR env. Single canonical
+        // source — closes the drift where env bypassed the TOML config.
+        let floor: i32 = floor;
 
         if let Some((score,)) = score_row {
             if score < floor {
