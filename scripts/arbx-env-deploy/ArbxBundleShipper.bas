@@ -105,7 +105,7 @@ Private Function FactoriesJson(ByVal cid As Long) As String
             f = "{""dex_name"":""UniswapV3"",""address"":""0x1F98431c8aD98523631AE4a59f267346ea31F984""}," & _
                 "{""dex_name"":""SushiSwap"",""address"":""0xc35DADB65012eC412f5fe79F3667b22B3A32B795""}"
         Case Else
-            FactoriesJson = ""
+            FactoriesJson = "[]"
             Exit Function
     End Select
     FactoriesJson = "[" & f & "]"
@@ -338,6 +338,8 @@ Public Sub ShipBundle()
     Close #ff
 
     ' 3. Shell the Python encryptor (--json-in mode: Python only encrypts, reads no Excel).
+    '    Wrap in 'cmd /c ... 2> log' so Python's stderr is captured (pythonw hides it
+    '    by default - the 2> redirect surfaces tracebacks for diagnosis).
     If Dir(PublicKeyPath()) = "" Then
         ShredFile tmpPath
         MsgBox "Falta la llave publica RSA-4096:" & vbCrLf & PublicKeyPath() & vbCrLf & _
@@ -345,17 +347,24 @@ Public Sub ShipBundle()
                vbCritical, "ArbX bundle"
         Exit Sub
     End If
-    cmd = "pythonw.exe """ & DeployDir() & "\encrypt_and_ship_bundle.py"" " & _
+    Dim stderrLog As String
+    stderrLog = DeployDir() & "\.arbx_bundle_stderr.log"
+    On Error Resume Next
+    Kill stderrLog
+    On Error GoTo fail
+    cmd = "cmd /c chcp 65001 > nul & pythonw.exe """ & DeployDir() & "\encrypt_and_ship_bundle.py"" " & _
           "--json-in """ & tmpPath & """ " & _
           "--public-key """ & PublicKeyPath() & """ " & _
-          "--out """ & encPath & """ --no-upload"
+          "--out """ & encPath & """ --no-upload 2> """ & stderrLog & """"
     Set sh = CreateObject("WScript.Shell")
     rc = sh.Run(cmd, 0, True)   ' hidden, synchronous
     If rc <> 0 Or Dir(encPath) = "" Then
+        Dim diag As String
+        diag = ReadTail(stderrLog, 500)
         ShredFile tmpPath
-        MsgBox "El encryptor Python fallo (exit " & rc & ")." & vbCrLf & _
-               "Verifica: pythonw en PATH; 'pip install openpyxl cryptography';" & vbCrLf & _
-               "la llave publica en " & PublicKeyPath(), vbCritical, "ArbX bundle"
+        MsgBox "El encryptor Python fallo (exit " & rc & ")." & vbCrLf & vbCrLf & _
+               IIf(Len(diag) > 0, "Python stderr:" & vbCrLf & diag & vbCrLf & vbCrLf, "") & _
+               "Log completo: " & stderrLog, vbCritical, "ArbX bundle"
         Exit Sub
     End If
 
@@ -403,3 +412,24 @@ Private Sub ShredFile(ByVal path As String)
     Kill path
     On Error GoTo 0
 End Sub
+
+' Read the last <=maxChars of a (UTF-8) stderr log as binary, so VBA's ANSI
+' auto-decode doesn't mangle the Python traceback. Returns "" if missing/empty.
+Private Function ReadTail(ByVal path As String, ByVal maxChars As Long) As String
+    Dim ff As Integer, bytes() As Byte, content As String
+    On Error Resume Next
+    If Dir(path) = "" Then ReadTail = "": Exit Function
+    ff = FreeFile
+    Open path For Binary Access Read As #ff
+    If LOF(ff) > 0 Then
+        ReDim bytes(0 To LOF(ff) - 1)
+        Get #ff, , bytes
+    End If
+    Close #ff
+    content = StrConv(bytes, vbUnicode)
+    If Len(content) > maxChars Then content = Right$(content, maxChars)
+    content = Replace(content, vbCrLf, vbLf)
+    content = Replace(content, vbCr, vbLf)
+    ReadTail = content
+    On Error GoTo 0
+End Function
