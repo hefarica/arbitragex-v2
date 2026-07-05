@@ -1,4 +1,4 @@
--- 100_opportunity_trade_math.sql
+-- 101_opportunity_trade_math.sql
 -- PR 4 (opportunities consolidation): persist the FULL trade math the scanner
 -- already computes (buy/sell price per DEX, amount_out, capital in/out, fees,
 -- pools) so /api/opportunities/live can serve it and the card v2 (PR 6) can

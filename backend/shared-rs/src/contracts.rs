@@ -59,7 +59,7 @@ pub struct Opportunity {
     pub rejection_reason: Option<String>,
     // ── PR 4: full trade math (all nullable; populated by scanner wiring PR 4b).
     //    Fail-honest None until then — the API serves null + the card shows "—".
-    //    See migration 100_opportunity_trade_math.sql. gross stays in
+    //    See migration 101_opportunity_trade_math.sql. gross stays in
     //    expected_profit_usd above; net in net_expected_profit_usd.
     #[serde(default)]
     pub buy_price_usd: Option<f64>,
