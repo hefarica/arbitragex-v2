@@ -37,7 +37,7 @@ except ImportError:
 CHAIN_IDS = {
     "Ethereum Mainnet": 1, "Optimism": 10, "BSC Mainnet": 56, "Gnosis": 100,
     "Polygon Mainnet": 137, "Base": 8453, "Arbitrum One": 42161,
-    "Avalanche": 43114, "Linea": 59144, "Scroll": 534352, "Blast": 81457,
+    "Avalanche": 43114, "Linea": 59144, "Scroll": 534352, "Blast": 81457
 }
 CHAIN_META = {
     1:    ("ethereum", "ETH",   "https://etherscan.io",            12000),
@@ -50,7 +50,7 @@ CHAIN_META = {
     43114:("avalanche","AVAX",  "https://snowtrace.io",             2000),
     59144:("linea",    "ETH",   "https://lineascan.build",         12000),
     534352:("scroll",  "ETH",   "https://scrollscan.com",           3000),
-    81457:("blast",    "ETH",   "https://blastscan.io",             2000),
+    81457:("blast",    "ETH",   "https://blastscan.io",             2000)
 }
 # Factories per chain (dex_name -> router address) — canonical mainnet values.
 # FIX GAP 2: factories_seed.sql resolves dex_name -> dex_id UUID via subquery
@@ -69,7 +69,7 @@ FACTORIES = {
     8453: {"UniswapV3": "0x33128a8fC17869897dcEA68d25cD9Ec44D11BbfA",
            "Aerodrome": "0x33360F37492Ea44090b89FF2cFF92Bc399938E1"},
     42161:{"UniswapV3": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
-           "SushiSwap": "0xc35DADB65012eC412f5fe79F3667b22B3A32B795"},
+           "SushiSwap": "0xc35DADB65012eC412f5fe79F3667b22B3A32B795"}
 }
 TOKENS_REF = {  # WNative + USDC-equivalent per chain
     1:    ("WETH", "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", "USDC", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
@@ -77,7 +77,7 @@ TOKENS_REF = {  # WNative + USDC-equivalent per chain
     137:  ("WMATIC","0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270", "USDC", "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"),
     8453: ("WETH", "0x4200000000000000000000000000000000000006", "USDC", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA20D63"),
     42161:("WETH", "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", "USDC", "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"),
-    56:   ("WBNB", "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", "BUSD", "0xe9e7CEA3DedC5394299B3f8f10F1Bb15Bb1b7b15"),
+    56:   ("WBNB", "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", "BUSD", "0xe9e7CEA3DedC5394299B3f8f10F1Bb15Bb1b7b15")
 }
 
 
