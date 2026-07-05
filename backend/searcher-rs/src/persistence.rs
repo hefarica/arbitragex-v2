@@ -48,6 +48,15 @@ pub async fn insert_opportunity_with_route(
     let amount_in_wei =
         BigDecimal::from_str(&o.amount_in_wei).context("amount_in_wei to BigDecimal")?;
 
+    // PR 4: amount_out_wei is optional (None until scanner wiring PR 4b). Parse
+    // to BigDecimal only when present + non-empty so sqlx binds NULL otherwise.
+    let amount_out_wei_bd = match &o.amount_out_wei {
+        Some(s) if !s.is_empty() => {
+            Some(BigDecimal::from_str(s).context("amount_out_wei to BigDecimal")?)
+        }
+        _ => None,
+    };
+
     // Serialize route_metadata to JSON. Validate first; on failure, log warn
     // and persist '{}' so the row still lands.
     let route_json: serde_json::Value = match route {
@@ -74,13 +83,21 @@ pub async fn insert_opportunity_with_route(
             token_in, token_out, amount_in_wei,
             expected_profit_usd, net_expected_profit_usd, roi_pct, risk_score,
             block_number, status, rejection_reason, trace_id, detected_at,
-            route_metadata
+            route_metadata,
+            buy_price_usd, sell_price_usd, amount_out_wei,
+            amount_in_token, amount_out_token, amount_in_usd, amount_out_usd,
+            start_value_usd, end_value_usd, net_roi_pct, total_fees_usd,
+            pool_buy, pool_sell
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9,
             $10, $11, $12, $13,
             $14, 'detected', $15, $16, $17,
-            $18
+            $18,
+            $19, $20, $21,
+            $22, $23, $24, $25,
+            $26, $27, $28, $29,
+            $30, $31
         )
         ON CONFLICT (id) DO NOTHING
         "#,
@@ -103,6 +120,20 @@ pub async fn insert_opportunity_with_route(
     .bind(o.trace_id)
     .bind(o.detected_at)
     .bind(route_json)
+    // PR 4 trade-math (all NULL until scanner wiring PR 4b populates them).
+    .bind(o.buy_price_usd)
+    .bind(o.sell_price_usd)
+    .bind(amount_out_wei_bd.as_ref())
+    .bind(o.amount_in_token)
+    .bind(o.amount_out_token)
+    .bind(o.amount_in_usd)
+    .bind(o.amount_out_usd)
+    .bind(o.start_value_usd)
+    .bind(o.end_value_usd)
+    .bind(o.net_roi_pct)
+    .bind(o.total_fees_usd)
+    .bind(o.pool_buy.as_deref())
+    .bind(o.pool_sell.as_deref())
     .execute(pool)
     .await
     .context("insert opportunity")?;

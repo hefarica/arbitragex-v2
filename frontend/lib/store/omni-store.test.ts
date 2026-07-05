@@ -48,6 +48,20 @@ function makeOpp(
     simulated_notes: null,
     confidence_score_bps: null,
     gas_used: null,
+    // PR 4: full trade math (null until scanner wiring PR 4b).
+    buy_price_usd: null,
+    sell_price_usd: null,
+    amount_out_wei: null,
+    amount_in_token: null,
+    amount_out_token: null,
+    amount_in_usd: null,
+    amount_out_usd: null,
+    start_value_usd: null,
+    end_value_usd: null,
+    net_roi_pct: null,
+    total_fees_usd: null,
+    pool_buy: null,
+    pool_sell: null,
     ...over,
   };
 }

@@ -155,7 +155,22 @@ SELECT
   o.trace_id,
   o.chain_id_out,
   o.bridge,
-  o.bridge_fee_usd::float               AS bridge_fee_usd
+  o.bridge_fee_usd::float               AS bridge_fee_usd,
+  -- PR 4: full trade math (all NULL until scanner wiring PR 4b populates from
+  -- real pool quotes). Null-safe: existing rows return NULL, card shows "—".
+  o.buy_price_usd::float                AS buy_price_usd,
+  o.sell_price_usd::float               AS sell_price_usd,
+  o.amount_out_wei::text                AS amount_out_wei,
+  o.amount_in_token::float              AS amount_in_token,
+  o.amount_out_token::float             AS amount_out_token,
+  o.amount_in_usd::float                AS amount_in_usd,
+  o.amount_out_usd::float               AS amount_out_usd,
+  o.start_value_usd::float              AS start_value_usd,
+  o.end_value_usd::float                AS end_value_usd,
+  o.net_roi_pct::float                  AS net_roi_pct,
+  o.total_fees_usd::float               AS total_fees_usd,
+  o.pool_buy,
+  o.pool_sell
 FROM opportunities o
 LEFT JOIN tokens ti
   ON  ti.chain_id = o.chain_id
@@ -435,6 +450,23 @@ function rowToOpportunity(
     simulated_target,
     simulated_at,
     simulated_notes:           simulated_notes.length ? simulated_notes : null,
+    // PR 4: full trade math (all null until scanner wiring PR 4b populates).
+    // Null-safe: missing columns / NULL DB values serialize as null (never
+    // fabricated). The card v2 renders "—" for these until PR 4b + PR 6b wire
+    // them through.
+    buy_price_usd:        row.buy_price_usd ?? null,
+    sell_price_usd:       row.sell_price_usd ?? null,
+    amount_out_wei:       row.amount_out_wei ?? null,
+    amount_in_token:      row.amount_in_token ?? null,
+    amount_out_token:     row.amount_out_token ?? null,
+    amount_in_usd:        row.amount_in_usd ?? null,
+    amount_out_usd:       row.amount_out_usd ?? null,
+    start_value_usd:      row.start_value_usd ?? null,
+    end_value_usd:        row.end_value_usd ?? null,
+    net_roi_pct:          row.net_roi_pct ?? null,
+    total_fees_usd:       row.total_fees_usd ?? null,
+    pool_buy:             row.pool_buy ?? null,
+    pool_sell:            row.pool_sell ?? null,
   };
 }
 

@@ -57,6 +57,41 @@ pub struct Opportunity {
     /// canonical set of values.
     #[serde(default)]
     pub rejection_reason: Option<String>,
+    // ── PR 4: full trade math (all nullable; populated by scanner wiring PR 4b).
+    //    Fail-honest None until then — the API serves null + the card shows "—".
+    //    See migration 100_opportunity_trade_math.sql. gross stays in
+    //    expected_profit_usd above; net in net_expected_profit_usd.
+    #[serde(default)]
+    pub buy_price_usd: Option<f64>,
+    #[serde(default)]
+    pub sell_price_usd: Option<f64>,
+    /// raw amount_out (token_out received) in wei as decimal string (mirrors
+    /// amount_in_wei). None until PR 4b (scanner computes and currently discards).
+    #[serde(default)]
+    pub amount_out_wei: Option<String>,
+    #[serde(default)]
+    pub amount_in_token: Option<f64>,
+    #[serde(default)]
+    pub amount_out_token: Option<f64>,
+    #[serde(default)]
+    pub amount_in_usd: Option<f64>,
+    #[serde(default)]
+    pub amount_out_usd: Option<f64>,
+    #[serde(default)]
+    pub start_value_usd: Option<f64>,
+    #[serde(default)]
+    pub end_value_usd: Option<f64>,
+    /// NET roi % (after costs) — distinct from `roi_pct` (gross/pre-cost spread).
+    #[serde(default)]
+    pub net_roi_pct: Option<f64>,
+    /// Sum of every fee component (gas + lp + slippage + flashloan + relay +
+    /// capital + failure_buffer + ops_overhead).
+    #[serde(default)]
+    pub total_fees_usd: Option<f64>,
+    #[serde(default)]
+    pub pool_buy: Option<String>,
+    #[serde(default)]
+    pub pool_sell: Option<String>,
     pub detected_at: DateTime<Utc>,
     pub trace_id: Uuid,
 }

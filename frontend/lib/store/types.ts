@@ -167,6 +167,22 @@ export interface OmniOpportunity {
   // === Confidence & Gas (UI display) ===
   confidence_score_bps: number | null;
   gas_used: number | null;
+
+  // === PR 4: Full Trade Math (all null until scanner wiring PR 4b populates
+  //               from real pool quotes; card v2 shows "—" meanwhile) ===
+  buy_price_usd: number | null;
+  sell_price_usd: number | null;
+  amount_out_wei: string | null;
+  amount_in_token: number | null;
+  amount_out_token: number | null;
+  amount_in_usd: number | null;
+  amount_out_usd: number | null;
+  start_value_usd: number | null;
+  end_value_usd: number | null;
+  net_roi_pct: number | null;
+  total_fees_usd: number | null;
+  pool_buy: string | null;
+  pool_sell: string | null;
 }
 
 // =============================================================================
@@ -254,5 +270,21 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
     confidence_score_bps:
       raw.confidence_score_bps != null ? Number(raw.confidence_score_bps) : null,
     gas_used: raw.gas_used != null ? Number(raw.gas_used) : null,
+
+    // PR 4: Full Trade Math (null-safe passthrough; null until scanner wiring
+    // PR 4b populates from real pool quotes).
+    buy_price_usd: raw.buy_price_usd != null ? Number(raw.buy_price_usd) : null,
+    sell_price_usd: raw.sell_price_usd != null ? Number(raw.sell_price_usd) : null,
+    amount_out_wei: raw.amount_out_wei != null ? String(raw.amount_out_wei) : null,
+    amount_in_token: raw.amount_in_token != null ? Number(raw.amount_in_token) : null,
+    amount_out_token: raw.amount_out_token != null ? Number(raw.amount_out_token) : null,
+    amount_in_usd: raw.amount_in_usd != null ? Number(raw.amount_in_usd) : null,
+    amount_out_usd: raw.amount_out_usd != null ? Number(raw.amount_out_usd) : null,
+    start_value_usd: raw.start_value_usd != null ? Number(raw.start_value_usd) : null,
+    end_value_usd: raw.end_value_usd != null ? Number(raw.end_value_usd) : null,
+    net_roi_pct: raw.net_roi_pct != null ? Number(raw.net_roi_pct) : null,
+    total_fees_usd: raw.total_fees_usd != null ? Number(raw.total_fees_usd) : null,
+    pool_buy: raw.pool_buy != null ? String(raw.pool_buy) : null,
+    pool_sell: raw.pool_sell != null ? String(raw.pool_sell) : null,
   };
 }
