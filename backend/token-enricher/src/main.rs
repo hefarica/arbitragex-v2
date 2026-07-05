@@ -74,6 +74,7 @@ use token_enricher::{
     multicall::{build_calls_for, pair_results, IMulticall3, MULTICALL3_ADDRESS},
     persistence::{needs_resolution, upsert_token, ResolvedToken},
     reconciliation::find_unresolved_tokens,
+    reserves_spot::{ReservesSpotConfig, ReservesSpotOracle},
     trustwallet::TrustWalletClient,
 };
 
@@ -523,6 +524,34 @@ async fn main() -> Result<()> {
         },
         Ok(None) => info!(event = "enricher.geckoterminal_disabled"),
         Err(e) => warn!(event = "enricher.geckoterminal_config_err", err = %e),
+    }
+
+    // --- 4g. Reserves spot-price oracle (optional, gated, detached) ---
+    // Peer of DexScreener/GeckoTerminal: derives USD prices for long-tail
+    // tokens from V2 pool reserves WITHOUT any external API. Reads
+    // `arbx:pool_reserves:<chain>:<addr>` (refreshed every ~5s by
+    // pool_sync_worker) + the existing `arbx:token_prices:<chain>` snapshot,
+    // applies the constant-product spot identity
+    //   price_unknown = price_known · (R_known / R_unknown) · 10^(dec_unknown − dec_known)
+    // and writes the derived prices into the SAME shared hash via HSETNX
+    // (never clobbers API-sourced prices). Default-OFF: runs only when
+    // ARBX_RESERVES_SPOT_ORACLE=active. Read-only/shadow — no HTTP, no
+    // signer, no broadcast. Paper-only (writes prices, not trades).
+    match ReservesSpotConfig::from_env(&enabled_chains) {
+        Ok(Some(cfg)) => match ReservesSpotOracle::new(cfg, pool.clone(), redis_url.clone()) {
+            Ok(oracle) => {
+                tokio::spawn(async move {
+                    oracle.run().await;
+                    warn!(
+                        event = "enricher.reserves_spot_task_exited",
+                        "Reserves spot oracle loop ended unexpectedly"
+                    );
+                });
+            }
+            Err(e) => warn!(event = "enricher.reserves_spot_init_err", err = %e),
+        },
+        Ok(None) => info!(event = "enricher.reserves_spot_disabled"),
+        Err(e) => warn!(event = "enricher.reserves_spot_config_err", err = %e),
     }
 
     // --- 5. Drain PEL (I1 — crash recovery before main loop) ---
