@@ -97,10 +97,11 @@ try {
         }
     }
 
-    # 4c. Seed the curated RPC catalog + sync chains into Chain Builder.
-    #     Headless (no MsgBox) - SeedRpcProviders is idempotent.
+    # 4c. Seed the curated RPC catalog, then FULL rebuild of Chain Builder
+    #     (matrix contiguous + all cols D-H + formatting + coverage I-L).
     $excel.Run('SeedRpcProviders')
-    Write-Host "SeedRpcProviders + SyncRpcToChainBuilder executed"
+    $excel.Run('RebuildChainBuilder')
+    Write-Host "SeedRpcProviders + RebuildChainBuilder executed"
 
     $wb.Save()
     Write-Host "saved $WbPath"
