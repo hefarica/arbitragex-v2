@@ -87,7 +87,8 @@ try {
         Write-Error "Could not find the 'RPC Providers' worksheet component"
     } else {
         $cm = $rpcComp.CodeModule
-        $existing = $cm.Lines(1, $cm.CountOfLines)
+        $lineCount = $cm.CountOfLines
+        $existing = if ($lineCount -gt 0) { $cm.Lines(1, $lineCount) } else { "" }
         if ($existing -match 'Sub Worksheet_Change') {
             Write-Host "Worksheet_Change already on RPC Providers (skipped)"
         } else {

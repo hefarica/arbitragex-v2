@@ -92,7 +92,7 @@ End Sub
 Public Sub SeedRpcProviders()
     Dim ws As Worksheet, existing As Object
     Dim lastRow As Long, r As Long, key As String, added As Long, nextRow As Long
-    Dim seed As Variant, entry As Variant
+    Dim seed As Collection, entry As Variant
 
     On Error GoTo fail
     Set ws = ThisWorkbook.Worksheets(RPC_SHEET)
@@ -106,54 +106,54 @@ Public Sub SeedRpcProviders()
     Next r
 
     ' 2. The curated catalog (chain, protocol, provider, url). chainlist.org verified.
-    seed = Array( _
-        Array("Ethereum Mainnet", "HTTP", "Ankr", "https://rpc.ankr.com/eth"), _
-        Array("Ethereum Mainnet", "HTTP", "MeowRPC", "https://eth.meowrpc.com"), _
-        Array("Ethereum Mainnet", "WSS", "Ankr", "wss://rpc.ankr.com/eth/ws"), _
-        Array("Ethereum Mainnet", "WSS", "BlockPI", "wss://ethereum.public.blockpi.network/v1/ws/public"), _
-        Array("Ethereum Sepolia", "HTTP", "Ankr", "https://rpc.ankr.com/eth_sepolia"), _
-        Array("Ethereum Sepolia", "HTTP", "Sepolia.org", "https://rpc.sepolia.org"), _
-        Array("Ethereum Sepolia", "WSS", "Ankr", "wss://rpc.ankr.com/eth_sepolia/ws"), _
-        Array("Ethereum Holesky", "HTTP", "Ankr", "https://rpc.ankr.com/eth_holesky"), _
-        Array("Ethereum Holesky", "HTTP", "Ethpandaops", "https://rpc.holesky.ethpandaops.io"), _
-        Array("BSC Mainnet", "HTTP", "Ankr", "https://rpc.ankr.com/bsc"), _
-        Array("BSC Mainnet", "HTTP", "Binance", "https://bsc-dataseed.binance.org/"), _
-        Array("BSC Mainnet", "HTTP", "MeowRPC", "https://bsc.meowrpc.com"), _
-        Array("BSC Mainnet", "WSS", "Ankr", "wss://rpc.ankr.com/bsc/ws"), _
-        Array("Polygon Mainnet", "HTTP", "Ankr", "https://rpc.ankr.com/polygon"), _
-        Array("Polygon Mainnet", "HTTP", "Polygon Labs", "https://polygon-rpc.com/"), _
-        Array("Polygon Mainnet", "HTTP", "MeowRPC", "https://polygon.meowrpc.com"), _
-        Array("Polygon Mainnet", "WSS", "Ankr", "wss://rpc.ankr.com/polygon/ws"), _
-        Array("Polygon Amoy", "HTTP", "Polygon Labs", "https://rpc-amoy.polygon.technology"), _
-        Array("Arbitrum One", "HTTP", "Ankr", "https://rpc.ankr.com/arbitrum"), _
-        Array("Arbitrum One", "HTTP", "Arbitrum Foundation", "https://arb1.arbitrum.io/rpc"), _
-        Array("Arbitrum One", "HTTP", "MeowRPC", "https://arbitrum.meowrpc.com"), _
-        Array("Arbitrum One", "WSS", "Ankr", "wss://rpc.ankr.com/arbitrum/ws"), _
-        Array("Arbitrum Sepolia", "HTTP", "Arbitrum Foundation", "https://sepolia-rollup.arbitrum.io/rpc"), _
-        Array("Arbitrum Sepolia", "HTTP", "Ankr", "https://rpc.ankr.com/arbitrum_sepolia"), _
-        Array("Optimism", "HTTP", "Ankr", "https://rpc.ankr.com/optimism"), _
-        Array("Optimism", "HTTP", "OP Labs", "https://mainnet.optimism.io"), _
-        Array("Optimism", "WSS", "Ankr", "wss://rpc.ankr.com/optimism/ws"), _
-        Array("Optimism Sepolia", "HTTP", "OP Labs", "https://sepolia.optimism.io"), _
-        Array("Optimism Sepolia", "HTTP", "Ankr", "https://rpc.ankr.com/optimism_sepolia"), _
-        Array("Base", "HTTP", "Ankr", "https://rpc.ankr.com/base"), _
-        Array("Base", "HTTP", "Base/Coinbase", "https://mainnet.base.org"), _
-        Array("Base", "WSS", "Ankr", "wss://rpc.ankr.com/base/ws"), _
-        Array("Base Sepolia", "HTTP", "Base", "https://sepolia.base.org"), _
-        Array("Base Sepolia", "HTTP", "Ankr", "https://rpc.ankr.com/base_sepolia"), _
-        Array("Avalanche", "HTTP", "Ankr", "https://rpc.ankr.com/avalanche"), _
-        Array("Avalanche", "HTTP", "Ava Labs", "https://api.avax.network/ext/bc/C/rpc"), _
-        Array("Avalanche", "WSS", "Ankr", "wss://rpc.ankr.com/avalanche/ws"), _
-        Array("Gnosis", "HTTP", "Ankr", "https://rpc.ankr.com/gnosis"), _
-        Array("Gnosis", "HTTP", "Gnosis Chain", "https://rpc.gnosischain.com"), _
-        Array("Gnosis", "WSS", "Ankr", "wss://rpc.ankr.com/gnosis/ws"), _
-        Array("Linea", "HTTP", "Linea", "https://rpc.linea.build"), _
-        Array("Linea", "HTTP", "Ankr", "https://rpc.ankr.com/linea"), _
-        Array("Scroll", "HTTP", "Scroll", "https://rpc.scroll.io"), _
-        Array("Scroll", "HTTP", "Ankr", "https://rpc.ankr.com/scroll"), _
-        Array("Blast", "HTTP", "Blast", "https://rpc.blast.io"), _
-        Array("Blast", "HTTP", "Ankr", "https://rpc.ankr.com/blast") _
-    )
+    '    Each Add is a standalone statement - avoids the VBA 25-line-continuation limit.
+    Set seed = New Collection
+    seed.Add Array("Ethereum Mainnet", "HTTP", "Ankr", "https://rpc.ankr.com/eth")
+    seed.Add Array("Ethereum Mainnet", "HTTP", "MeowRPC", "https://eth.meowrpc.com")
+    seed.Add Array("Ethereum Mainnet", "WSS", "Ankr", "wss://rpc.ankr.com/eth/ws")
+    seed.Add Array("Ethereum Mainnet", "WSS", "BlockPI", "wss://ethereum.public.blockpi.network/v1/ws/public")
+    seed.Add Array("Ethereum Sepolia", "HTTP", "Ankr", "https://rpc.ankr.com/eth_sepolia")
+    seed.Add Array("Ethereum Sepolia", "HTTP", "Sepolia.org", "https://rpc.sepolia.org")
+    seed.Add Array("Ethereum Sepolia", "WSS", "Ankr", "wss://rpc.ankr.com/eth_sepolia/ws")
+    seed.Add Array("Ethereum Holesky", "HTTP", "Ankr", "https://rpc.ankr.com/eth_holesky")
+    seed.Add Array("Ethereum Holesky", "HTTP", "Ethpandaops", "https://rpc.holesky.ethpandaops.io")
+    seed.Add Array("BSC Mainnet", "HTTP", "Ankr", "https://rpc.ankr.com/bsc")
+    seed.Add Array("BSC Mainnet", "HTTP", "Binance", "https://bsc-dataseed.binance.org/")
+    seed.Add Array("BSC Mainnet", "HTTP", "MeowRPC", "https://bsc.meowrpc.com")
+    seed.Add Array("BSC Mainnet", "WSS", "Ankr", "wss://rpc.ankr.com/bsc/ws")
+    seed.Add Array("Polygon Mainnet", "HTTP", "Ankr", "https://rpc.ankr.com/polygon")
+    seed.Add Array("Polygon Mainnet", "HTTP", "Polygon Labs", "https://polygon-rpc.com/")
+    seed.Add Array("Polygon Mainnet", "HTTP", "MeowRPC", "https://polygon.meowrpc.com")
+    seed.Add Array("Polygon Mainnet", "WSS", "Ankr", "wss://rpc.ankr.com/polygon/ws")
+    seed.Add Array("Polygon Amoy", "HTTP", "Polygon Labs", "https://rpc-amoy.polygon.technology")
+    seed.Add Array("Arbitrum One", "HTTP", "Ankr", "https://rpc.ankr.com/arbitrum")
+    seed.Add Array("Arbitrum One", "HTTP", "Arbitrum Foundation", "https://arb1.arbitrum.io/rpc")
+    seed.Add Array("Arbitrum One", "HTTP", "MeowRPC", "https://arbitrum.meowrpc.com")
+    seed.Add Array("Arbitrum One", "WSS", "Ankr", "wss://rpc.ankr.com/arbitrum/ws")
+    seed.Add Array("Arbitrum Sepolia", "HTTP", "Arbitrum Foundation", "https://sepolia-rollup.arbitrum.io/rpc")
+    seed.Add Array("Arbitrum Sepolia", "HTTP", "Ankr", "https://rpc.ankr.com/arbitrum_sepolia")
+    seed.Add Array("Optimism", "HTTP", "Ankr", "https://rpc.ankr.com/optimism")
+    seed.Add Array("Optimism", "HTTP", "OP Labs", "https://mainnet.optimism.io")
+    seed.Add Array("Optimism", "WSS", "Ankr", "wss://rpc.ankr.com/optimism/ws")
+    seed.Add Array("Optimism Sepolia", "HTTP", "OP Labs", "https://sepolia.optimism.io")
+    seed.Add Array("Optimism Sepolia", "HTTP", "Ankr", "https://rpc.ankr.com/optimism_sepolia")
+    seed.Add Array("Base", "HTTP", "Ankr", "https://rpc.ankr.com/base")
+    seed.Add Array("Base", "HTTP", "Base/Coinbase", "https://mainnet.base.org")
+    seed.Add Array("Base", "WSS", "Ankr", "wss://rpc.ankr.com/base/ws")
+    seed.Add Array("Base Sepolia", "HTTP", "Base", "https://sepolia.base.org")
+    seed.Add Array("Base Sepolia", "HTTP", "Ankr", "https://rpc.ankr.com/base_sepolia")
+    seed.Add Array("Avalanche", "HTTP", "Ankr", "https://rpc.ankr.com/avalanche")
+    seed.Add Array("Avalanche", "HTTP", "Ava Labs", "https://api.avax.network/ext/bc/C/rpc")
+    seed.Add Array("Avalanche", "WSS", "Ankr", "wss://rpc.ankr.com/avalanche/ws")
+    seed.Add Array("Gnosis", "HTTP", "Ankr", "https://rpc.ankr.com/gnosis")
+    seed.Add Array("Gnosis", "HTTP", "Gnosis Chain", "https://rpc.gnosischain.com")
+    seed.Add Array("Gnosis", "WSS", "Ankr", "wss://rpc.ankr.com/gnosis/ws")
+    seed.Add Array("Linea", "HTTP", "Linea", "https://rpc.linea.build")
+    seed.Add Array("Linea", "HTTP", "Ankr", "https://rpc.ankr.com/linea")
+    seed.Add Array("Scroll", "HTTP", "Scroll", "https://rpc.scroll.io")
+    seed.Add Array("Scroll", "HTTP", "Ankr", "https://rpc.ankr.com/scroll")
+    seed.Add Array("Blast", "HTTP", "Blast", "https://rpc.blast.io")
+    seed.Add Array("Blast", "HTTP", "Ankr", "https://rpc.ankr.com/blast")
 
     ' 3. Append only the (chain, provider) pairs not already present.
     nextRow = lastRow + 1
