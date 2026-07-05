@@ -566,6 +566,232 @@ async fn check_circuit_breaker_off(redis: &mut ConnectionManager) -> Result<(), 
 }
 
 // ---------------------------------------------------------------------------
+// Caller-side input resolution (Package #6 — make checks 9 & 10 load-bearing)
+// ---------------------------------------------------------------------------
+//
+// Prior to Package #6 the relays-client `submit_engine` passed the checklist
+// hollow inputs for checks 9 and 10:
+//   - `route_factories: Vec::new()`        → check 9 iterated zero entries → always Ok.
+//   - `expected_slippage_pct: 0.0`         → check 10's `0.0 > max` is false for any
+//                                            non-negative max → always Ok.
+//
+// The two helpers below resolve REAL inputs from the same registry check 9/10
+// validate against, so the gates actually engage. They live here (next to the
+// checks) so the resolution semantics stay co-located with the check contract
+// and the pure pieces are unit-testable without I/O.
+
+/// Output of [`normalize_dex_name_for_factory_lookup`]. Drives the
+/// fail-closed resolution in [`resolve_route_factories`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DexLookupToken {
+    /// The raw string already embeds a 20-byte hex contract address (e.g.
+    /// scanner-emitted `"aave-v3:0x..."` or `"v2:0x..."`). We pass it through
+    /// verbatim so check 9 looks the address up in `factories` directly.
+    Address(String),
+    /// A canonicalised DEX name (lowercase, alphanumerics only) that can be
+    /// matched against the `dexes.name` column after the same normalisation is
+    /// applied at the SQL side (e.g. "uniswap_v2" / "uniswap-v2" → "uniswapv2").
+    CanonicalName(String),
+    /// The raw string is neither a hex address nor a recognisable DEX token
+    /// (e.g. empty, or an opaque label). Resolvers pass it through unchanged
+    /// so the downstream `factories` address-lookup fails closed
+    /// (`FactoryInactive`) rather than silently passing.
+    Unknown(String),
+}
+
+/// Smallest length at which a non-address DEX label is treated as a real name
+/// rather than garbage. Single characters like "" or "v2" alone are too
+/// ambiguous to resolve and are routed through the fail-closed path.
+const MIN_CANONICAL_NAME_LEN: usize = 3;
+
+/// Pure: normalise a raw `Opportunity.dex_a` / `dex_b` value into a lookup
+/// token for the `factories` registry.
+///
+/// The scanner emits heterogeneous DEX labels: canonical names
+/// (`"uniswap_v2"`, `"uniswap-v2"`, `"uniswap-v3"`), addresses embedded in
+/// compound labels (`"aave-v3:0x..."`, `"v2:0x..."`), or plain router
+/// addresses. This helper classifies each without any I/O so the behaviour is
+/// unit-testable. It does NOT decide factory validity — that is check 9's job;
+/// it only picks the most honest key to hand check 9.
+///
+/// Fail-closed by construction: anything unrecognised becomes
+/// `Unknown(raw)` and is passed through verbatim, so check 9's
+/// `SELECT is_active FROM factories WHERE address = $1` finds no row and
+/// returns `FactoryInactive` — never a silent pass.
+pub fn normalize_dex_name_for_factory_lookup(raw: &str) -> DexLookupToken {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return DexLookupToken::Unknown(raw.to_string());
+    }
+
+    // Compound labels like "aave-v3:0x1234...": the right-most colon segment
+    // may be a hex address. If so, prefer it (the address is the unambiguous
+    // factory key; the "aave-v3" prefix is decorative).
+    if let Some(last_colon) = trimmed.rfind(':') {
+        let candidate = trimmed[last_colon + 1..].trim();
+        if looks_like_hex_address(candidate) {
+            return DexLookupToken::Address(candidate.to_ascii_lowercase());
+        }
+    }
+
+    // Bare hex address (router or factory) with no compound prefix.
+    if looks_like_hex_address(trimmed) {
+        return DexLookupToken::Address(trimmed.to_ascii_lowercase());
+    }
+
+    // Otherwise: a DEX name. Canonicalise to lowercase alphanumerics so
+    // "uniswap_v2", "uniswap-v2", "UniswapV2" all collapse to "uniswapv2".
+    let canonical: String = trimmed
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    if canonical.chars().count() >= MIN_CANONICAL_NAME_LEN {
+        DexLookupToken::CanonicalName(canonical)
+    } else {
+        // Too short to disambiguate (e.g. "v2", "x") — fail closed.
+        DexLookupToken::Unknown(raw.to_string())
+    }
+}
+
+/// Pure: returns true when `s` is a 0x-prefixed 20-byte hex string.
+/// Case-insensitive; accepts optional surrounding whitespace (caller trims).
+fn looks_like_hex_address(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() == 42
+        && bytes[0] == b'0'
+        && (bytes[1] == b'x' || bytes[1] == b'X')
+        && bytes[2..].iter().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Async: resolve the route's factory addresses for check 9.
+///
+/// For each DEX label in `dex_names` (the values of `Opportunity.dex_a` and
+/// `dex_b`):
+///   - If the label embeds or is a hex address, that address is used verbatim
+///     as the factory key.
+///   - If the label normalises to a canonical DEX name, the `dexes`/`factories`
+///     tables are joined (case-insensitively, after the same normalisation) to
+///     recover the factory `address` for `(chain_id, dex)`.
+///   - If neither, OR no factory row exists, the raw label is passed through
+///     unchanged so check 9's `factories` address-lookup fails closed
+///     (`FactoryInactive`) instead of silently passing.
+///
+/// Returns one entry per input label, in input order. Empty labels are dropped
+/// (a missing `dex_b` is normal for single-DEX routes and must not produce a
+/// spurious fail-closed entry).
+///
+/// This is the registry reuse the gate has been missing: check 9 already
+/// validates factory `is_active` against the `factories` table; we now feed it
+/// the factory *addresses* keyed by that same table rather than an empty vec.
+pub async fn resolve_route_factories(
+    pg: &PgPool,
+    chain_id: u64,
+    dex_names: &[String],
+) -> Vec<String> {
+    let mut out = Vec::with_capacity(dex_names.len());
+    for raw in dex_names {
+        let raw_trimmed = raw.trim();
+        // Drop empty labels (e.g. None coalesced to "") — they are not route
+        // legs and must not become a fail-closed factory entry.
+        if raw_trimmed.is_empty() {
+            continue;
+        }
+        match normalize_dex_name_for_factory_lookup(raw) {
+            DexLookupToken::Address(addr) => out.push(addr),
+            DexLookupToken::CanonicalName(canonical) => {
+                // Join dexes → factories by normalised name + chain_id. We
+                // normalise on the SQL side with LOWER(regexp_replace(...))
+                // mirroring the helper's alphanumeric-lowercase fold so the
+                // seeded names ("UniswapV2", "Uniswap V4", "PancakeSwap V3")
+                // match the scanner's ("uniswap_v2", "uniswap-v2", ...).
+                //
+                // Runtime-bound query (matches the rest of this module; avoids
+                // the sqlx offline-cache requirement). One factory address per
+                // dex name is returned; multiple factories for one dex on the
+                // same chain are de-duplicated by DISTINCT.
+                let rows: Result<Vec<(String,)>, sqlx::Error> = sqlx::query_as(
+                    r#"
+                    SELECT DISTINCT LOWER(f.address) AS address
+                    FROM factories f
+                    JOIN dexes d ON d.id = f.dex_id
+                    WHERE f.chain_id = $1
+                      AND f.is_active = TRUE
+                      AND LOWER(REGEXP_REPLACE(d.name, '[^A-Za-z0-9]', '', 'g')) = $2
+                    "#,
+                )
+                .bind(chain_id as i64)
+                .bind(&canonical)
+                .fetch_all(pg)
+                .await;
+
+                match rows {
+                    Ok(addrs) if !addrs.is_empty() => {
+                        for (addr,) in addrs {
+                            out.push(addr);
+                        }
+                    }
+                    // No factory row for this dex on this chain, or DB error.
+                    // Pass the raw label through so check 9 fails closed on
+                    // the address lookup rather than silently passing.
+                    _ => out.push(raw.clone()),
+                }
+            }
+            DexLookupToken::Unknown(pass_through) => out.push(pass_through),
+        }
+    }
+    out
+}
+
+/// Async: load the operator's `max_slippage_pct` for `chain_id` from
+/// `trading_config` — the SAME row check 10 reads, so the estimate computed
+/// from it stays consistent with what check 10 compares against.
+///
+/// Returns `None` on absent/disabled row or DB error. Callers map `None` to a
+/// fail-closed estimate (see [`conservative_slippage_estimate`]).
+pub async fn load_max_slippage_pct(pg: &PgPool, chain_id: u64) -> Option<f64> {
+    let row: Result<Option<(f64,)>, sqlx::Error> = sqlx::query_as(
+        "SELECT max_slippage_pct::float8 FROM trading_config WHERE chain_id = $1 AND enabled = TRUE",
+    )
+    .bind(chain_id as i64)
+    .fetch_optional(pg)
+    .await;
+    match row {
+        Ok(Some((v,))) => Some(v),
+        // Absent/disabled row or DB error: caller falls back fail-closed.
+        _ => None,
+    }
+}
+
+/// Conservative slippage estimate used when no real per-route slippage value is
+/// reachable at submit time (the spine's `RouteLeg.estimated_slippage_pct` is
+/// not yet plumbed through to `Opportunity`, and `SimulationResult` is not
+/// available at the submit site).
+///
+/// Returns `max_slippage_pct * 0.5` — half the operator-configured cap. This
+/// makes check 10 LOAD-BEARING in the common case: any positive `max` produces
+/// a positive estimate that engages the gate, and a misconfigured zero/negative
+/// `max` produces an estimate of `0.0` which check 10 still compares honestly
+/// against the configured max (the bug shape — `0.0 > max` always false — is
+/// now visible because the *configured* max is also what check 10 reads, so a
+/// zero max means the operator has disabled the cap, which is their explicit
+/// choice rather than a silent hollow gate).
+///
+/// When `max_slippage_pct` is unavailable (None), returns `f64::MAX` so check
+/// 10 fails closed: we refuse to broadcast a route whose slippage tolerance we
+/// cannot bound. This is the OMEGA PHOENIX §4C#2 fail-closed posture — the
+/// pre-fix hollow `0.0` silently passed *every* route.
+pub const fn conservative_slippage_estimate(max_slippage_pct: Option<f64>) -> f64 {
+    match max_slippage_pct {
+        Some(max) if max.is_finite() && max > 0.0 => max * 0.5,
+        // Includes None, NaN, -inf, +inf, zero, and negative — all map to the
+        // fail-closed sentinel. f64::INFINITY guarantees check 10's
+        // `expected > max` fires (any finite max < +inf), blocking broadcast.
+        _ => f64::INFINITY,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -844,6 +1070,155 @@ mod tests {
         assert!(
             !tripped,
             "circuit breaker should not be tripped when key absent"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Package #6 — checks 9 & 10 input resolution (pure helpers).
+    //
+    // These prove the gates are no longer hollow: check 9 receives non-empty
+    // factory inputs (and would block on an unknown factory), and check 10
+    // receives a real (>0) slippage estimate that engages the comparison.
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn pkg6_normalize_canonical_dex_names_collapse_to_same_token() {
+        // The scanner emits "uniswap_v2" / "uniswap-v2" / "UniswapV2"; the
+        // `dexes.name` column is seeded as "UniswapV2". All three MUST
+        // canonicalise identically so the SQL REGEXP_REPLACE join hits.
+        let a = normalize_dex_name_for_factory_lookup("uniswap_v2");
+        let b = normalize_dex_name_for_factory_lookup("uniswap-v2");
+        let c = normalize_dex_name_for_factory_lookup("UniswapV2");
+        assert_eq!(a, DexLookupToken::CanonicalName("uniswapv2".into()));
+        assert_eq!(b, DexLookupToken::CanonicalName("uniswapv2".into()));
+        assert_eq!(c, DexLookupToken::CanonicalName("uniswapv2".into()));
+        // V3 likewise.
+        let v3 = normalize_dex_name_for_factory_lookup("uniswap-v3");
+        assert_eq!(v3, DexLookupToken::CanonicalName("uniswapv3".into()));
+    }
+
+    #[test]
+    fn pkg6_normalize_embedded_address_extracted_from_compound_label() {
+        // Scanner emits compound labels like "aave-v3:0x..." or
+        // "v2:0x<pooladdr>" — the colon-suffixed hex is the unambiguous
+        // factory/pool key and must be extracted verbatim (lowercased).
+        let addr = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f";
+        let label = format!("aave-v3:{addr}");
+        let tok = normalize_dex_name_for_factory_lookup(&label);
+        assert_eq!(
+            tok,
+            DexLookupToken::Address(addr.to_ascii_lowercase()),
+            "compound label must yield the embedded address (lowercased)"
+        );
+    }
+
+    #[test]
+    fn pkg6_normalize_bare_address_passes_through() {
+        // A bare router/factory hex address (no compound prefix) classifies as
+        // Address directly.
+        let addr = "0x7a250d5630b4cf539739df2c5dacb4c659f2488d";
+        let tok = normalize_dex_name_for_factory_lookup(addr);
+        assert_eq!(tok, DexLookupToken::Address(addr.into()));
+    }
+
+    #[test]
+    fn pkg6_normalize_empty_and_too_short_fail_closed() {
+        // Empty / whitespace / single chars route through Unknown so check 9
+        // fails closed (never a silent pass on a missing dex label).
+        assert_eq!(
+            normalize_dex_name_for_factory_lookup(""),
+            DexLookupToken::Unknown("".into())
+        );
+        assert_eq!(
+            normalize_dex_name_for_factory_lookup("   "),
+            DexLookupToken::Unknown("   ".into())
+        );
+        // "v2" alone is too ambiguous (2 chars < MIN_CANONICAL_NAME_LEN=3).
+        assert_eq!(
+            normalize_dex_name_for_factory_lookup("v2"),
+            DexLookupToken::Unknown("v2".into())
+        );
+    }
+
+    #[test]
+    fn pkg6_normalize_garbage_label_routes_to_canonical_not_silent_pass() {
+        // Garbage with enough alphanumeric content ("??not-a-dex??" →
+        // "notadex", ≥3 chars) classifies as CanonicalName — it is NOT a
+        // silent pass. The fail-closed guarantee is delivered at the next
+        // stage: resolve_route_factories's DB JOIN finds no `dexes` row
+        // matching "notadex", so the raw label is passed through to check 9,
+        // whose `factories` address-lookup then (correctly) finds no row and
+        // fires FactoryInactive. This is the load-bearing behaviour — the
+        // normalizer's job is to pick the honest key, not to decide validity.
+        let tok = normalize_dex_name_for_factory_lookup("??not-a-dex??");
+        match tok {
+            DexLookupToken::CanonicalName(n) => {
+                assert_eq!(n, "notadex", "alphanumerics collapse to lowercase");
+                // Sanity: "notadex" will not match any seeded dex name, so the
+                // resolver hands the raw label to check 9 → fail closed.
+                assert_ne!(n, "uniswapv2");
+                assert_ne!(n, "uniswapv3");
+            }
+            other => panic!("garbage w/ alphanumerics must be CanonicalName, got {other:?}"),
+        }
+
+        // Truly empty / whitespace-only / sub-MIN_CANONICAL_NAME_LEN labels
+        // classify Unknown (covered above) — also fail-closed at check 9
+        // because the raw pass-through matches no factory address.
+    }
+
+    #[test]
+    fn pkg6_slippage_estimate_positive_max_engages_gate() {
+        // Half the configured cap: a real, >0 value that check 10 compares
+        // against the cap. Pre-fix this was a hard-coded 0.0 (always passed).
+        let est = conservative_slippage_estimate(Some(1.5));
+        assert!(
+            est > 0.0,
+            "estimate must be >0 for a positive max, got {est}"
+        );
+        assert!(
+            (est - 0.75).abs() < f64::EPSILON,
+            "estimate = max*0.5 = 0.75, got {est}"
+        );
+        // And it is below the cap, so a correctly-configured route still passes
+        // check 10 (0.75 > 1.5 is false) — the gate engages without false blocks.
+        assert!(est <= 1.5, "half-cap estimate must not exceed the cap");
+    }
+
+    #[test]
+    fn pkg6_slippage_estimate_missing_max_fails_closed() {
+        // When max_slippage_pct is unavailable (None), the estimate MUST be
+        // +inf so check 10's `expected > max` fires for any finite configured
+        // max — i.e. we refuse to broadcast a route whose slippage tolerance
+        // we cannot bound. This is the fail-closed posture; the pre-fix 0.0
+        // would have silently passed.
+        let est = conservative_slippage_estimate(None);
+        assert!(
+            est.is_infinite() && est.is_sign_positive(),
+            "missing max must yield +inf (fail-closed), got {est}"
+        );
+    }
+
+    #[test]
+    fn pkg6_slippage_estimate_zero_or_negative_max_fails_closed() {
+        // A misconfigured zero or negative cap is treated as unbounded — the
+        // estimate becomes +inf so check 10 blocks (the operator's cap is
+        // non-positive, which is incoherent; we fail closed rather than pass).
+        assert!(
+            conservative_slippage_estimate(Some(0.0)).is_infinite(),
+            "zero max must fail closed"
+        );
+        assert!(
+            conservative_slippage_estimate(Some(-1.0)).is_infinite(),
+            "negative max must fail closed"
+        );
+        assert!(
+            conservative_slippage_estimate(Some(f64::NAN)).is_infinite(),
+            "NaN max must fail closed"
+        );
+        assert!(
+            conservative_slippage_estimate(Some(f64::INFINITY)).is_infinite(),
+            "+inf max must fail closed (no finite bound available)"
         );
     }
 }

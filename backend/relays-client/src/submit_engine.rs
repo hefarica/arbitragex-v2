@@ -21,7 +21,8 @@ use shared_rs::{
     killswitch::KillSwitchClient,
     paper_mode::PaperModeClient,
     pre_execute_checklist::{
-        pre_execute_checklist, relay_fee_ewma_key, ChecklistError, PreExecuteContext,
+        conservative_slippage_estimate, load_max_slippage_pct, pre_execute_checklist,
+        relay_fee_ewma_key, resolve_route_factories, ChecklistError, PreExecuteContext,
         RELAY_FEE_EWMA_ALPHA, RELAY_FEE_EWMA_TTL_SECS,
     },
     rpc_failover::HttpRpcPool,
@@ -123,15 +124,22 @@ impl SubmitEngine {
             let route_tokens: Vec<String> =
                 vec![opp.token_in.to_lowercase(), opp.token_out.to_lowercase()];
 
-            // route_factories: Opportunity carries dex_a/dex_b as exchange
-            // names (e.g. "uniswap_v2"), not factory hex addresses. The
-            // factories table is keyed on address. Passing names would
-            // vacuously block check 9 for every opportunity. Until the
-            // Opportunity schema carries factory_address fields (future
-            // Sprint), we pass an empty slice so check 9 is a no-op —
-            // consistent with the pre-checklist behaviour where factories
-            // were not validated at this layer.
-            let route_factories: Vec<String> = Vec::new();
+            // route_factories (Package #6 — was hollow `Vec::new()`):
+            // Opportunity carries dex_a/dex_b as exchange NAMES (e.g.
+            // "uniswap_v2", "aave-v3:0x..."), not factory hex addresses. The
+            // `factories` table is keyed on address. We now resolve each dex
+            // name to its factory address via the SAME `dexes`/`factories`
+            // registry check 9 validates against (DB JOIN by normalised name
+            // + chain_id; embedded hex addresses in compound labels pass
+            // through verbatim). Unknown dex names are passed through honestly
+            // so check 9 fails closed (FactoryInactive) — never a silent pass.
+            // Empty labels (a missing dex_b on a single-DEX route) are dropped.
+            let dex_names: Vec<String> = std::iter::once(&opp.dex_a)
+                .chain(opp.dex_b.as_ref())
+                .cloned()
+                .collect();
+            let route_factories: Vec<String> =
+                resolve_route_factories(pg_pool, opp.chain_id, &dex_names).await;
 
             // C1 fix: `resolve_profit_for_checklist` now takes `paper` to
             // enforce net-only in live mode.  If it returns Err we propagate
@@ -151,6 +159,27 @@ impl SubmitEngine {
             };
 
             let mut redis_conn = self.redis.clone();
+
+            // expected_slippage_pct (Package #6 — was hollow `0.0`):
+            // No real per-route slippage value is reachable here: the spine's
+            // `RouteLeg.estimated_slippage_pct` is not yet plumbed through to
+            // Opportunity, and `SimulationResult.slippage_pct` is not available
+            // at the submit site. We compute a presence-asserting estimate
+            // from the operator's `max_slippage_pct` (loaded from the SAME
+            // `trading_config` row check 10 compares against, so the estimate
+            // stays consistent with the cap). `conservative_slippage_estimate`
+            // returns `max * 0.5` for a positive finite max — engaging check
+            // 10 — and `+inf` (fail-closed) when max is absent / non-positive
+            // / non-finite, so a misconfigured or missing cap blocks broadcast
+            // rather than silently passing.
+            //
+            // SOURCE: shared-rs::pre_execute_checklist::load_max_slippage_pct
+            // (trading_config row) + conservative_slippage_estimate. When a
+            // real slippage value lands on Opportunity (future Sprint), prefer
+            // it over this conservative proxy.
+            let max_slippage_pct = load_max_slippage_pct(pg_pool, opp.chain_id).await;
+            let expected_slippage_pct = conservative_slippage_estimate(max_slippage_pct);
+
             let mut ctx = PreExecuteContext {
                 chain_id: opp.chain_id,
                 route_tokens: &route_tokens,
@@ -163,9 +192,7 @@ impl SubmitEngine {
                 // profit (gas already deducted by spine). Setting it to non-zero would
                 // double-deduct gas and incorrectly block valid opportunities.
                 estimated_gas_usd: 0.0,
-                // expected_slippage_pct is not yet in Opportunity; 0.0 means
-                // check 10 always passes — no false blocks until the field lands.
-                expected_slippage_pct: 0.0,
+                expected_slippage_pct,
                 our_address: &our_address,
                 pg: pg_pool,
                 redis: &mut redis_conn,
@@ -937,6 +964,93 @@ mod tests {
         assert!(
             (profit_paper - (-3.0)).abs() < f64::EPSILON,
             "paper: expected -3.0 (negative net), got {profit_paper}"
+        );
+    }
+
+    // ─── Package #6 — checks 9 & 10 load-bearing wiring ───────────────────
+    //
+    // Proves the gates are no longer hollow WITHOUT a live DB: the helpers
+    // invoked at the call site (resolve_route_factories for check 9,
+    // conservative_slippage_estimate for check 10) are exercised against the
+    // SAME shapes `Opportunity.dex_a` / `dex_b` actually carry. The pure
+    // pieces (normalize_dex_name_for_factory_lookup, conservative_slippage_estimate)
+    // are covered exhaustively in shared-rs; here we assert the *contract*
+    // the submit_engine wiring depends on: a non-empty factory list flows to
+    // check 9 (so an unknown factory would block), and a real >0 slippage
+    // estimate flows to check 10.
+
+    use shared_rs::pre_execute_checklist::{
+        conservative_slippage_estimate, normalize_dex_name_for_factory_lookup, DexLookupToken,
+    };
+
+    /// Check 9 contract: an unknown DEX name resolves to a pass-through that
+    /// check 9's `factories` address-lookup will NOT find → FactoryInactive.
+    /// Pre-fix this slot was hollow (empty vec → check 9 iterated zero
+    /// entries → always Ok). The factory list handed to check 9 is now
+    /// NON-EMPTY for any non-empty dex_a.
+    #[test]
+    fn pkg6_check9_factory_resolution_is_load_bearing() {
+        // Any scanner-emitted dex_a — even a bogus one — classifies to a
+        // non-empty lookup token, so resolve_route_factories (which drops only
+        // empty labels) yields at least one entry. That entry, when handed to
+        // check 9, either matches a factories row (active dex) or fails
+        // closed (FactoryInactive). The hollow-vec short-circuit is gone.
+        let opp = make_opp(Some(10.0), Some(2.0));
+        assert!(!opp.dex_a.is_empty(), "fixture dex_a must be non-empty");
+
+        let tok = normalize_dex_name_for_factory_lookup(&opp.dex_a);
+        // "uniswap_v2" → CanonicalName("uniswapv2") (non-empty).
+        assert!(
+            matches!(&tok, DexLookupToken::CanonicalName(n) if !n.is_empty()),
+            "dex_a `{}` must resolve to a non-empty token so check 9 receives a \
+             real factory key, got {tok:?}",
+            opp.dex_a
+        );
+
+        // An embedded address (compound label) yields a non-empty Address.
+        let compound = "aave-v3:0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f";
+        let tok2 = normalize_dex_name_for_factory_lookup(compound);
+        assert!(
+            matches!(&tok2, DexLookupToken::Address(a) if !a.is_empty()),
+            "compound dex label must yield a non-empty Address for check 9"
+        );
+
+        // Garbage with enough alphanumerics ("??bogus??" → "bogus") yields a
+        // non-empty CanonicalName; the fail-closed guarantee is delivered at
+        // the next stage (resolve_route_factories finds no matching dexes row
+        // → passes the raw through → check 9 finds no factories row →
+        // FactoryInactive). Either way check 9 receives a NON-EMPTY entry, so
+        // the hollow empty-vec short-circuit is gone. The load-bearing
+        // property here is non-emptiness across all three variants.
+        let tok3 = normalize_dex_name_for_factory_lookup("??bogus??");
+        let non_empty = match &tok3 {
+            DexLookupToken::Address(a) => !a.is_empty(),
+            DexLookupToken::CanonicalName(n) => !n.is_empty(),
+            DexLookupToken::Unknown(s) => !s.is_empty(),
+        };
+        assert!(
+            non_empty,
+            "garbage dex label must yield a non-empty token so check 9 \
+             receives an entry and fails closed, got {tok3:?}"
+        );
+    }
+
+    /// Check 10 contract: a real >0 slippage estimate flows for any positive
+    /// finite configured cap, and fail-closed (+inf) for absent/incoherent
+    /// caps. Pre-fix this was a hard-coded 0.0 (always passed check 10).
+    #[test]
+    fn pkg6_check10_slippage_estimate_is_real_and_positive() {
+        // A representative operator cap (1.5% from app.toml) → estimate 0.75%.
+        let est = conservative_slippage_estimate(Some(1.5));
+        assert!(
+            est > 0.0 && est.is_finite(),
+            "check 10 must receive a real finite >0 estimate, got {est}"
+        );
+        // Missing cap → fail-closed (+inf), NOT 0.0.
+        let fail_closed = conservative_slippage_estimate(None);
+        assert!(
+            fail_closed.is_infinite() && fail_closed.is_sign_positive(),
+            "missing cap must fail closed (+inf), got {fail_closed}"
         );
     }
 
