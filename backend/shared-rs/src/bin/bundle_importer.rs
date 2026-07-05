@@ -284,7 +284,30 @@ async fn apply_db(
     report: &mut ApplyReport,
 ) -> Result<(), String> {
     for chain in &bundle.chains {
-        // chains_runtime upsert (matches admin-chains.ts schema).
+        // chains (INTEGER) vs chains_runtime/rpc_endpoints (BIGINT) — bind the right width.
+        let cid_i32: i32 = chain.chain_id as i32;
+        let cid_i64: i64 = chain.chain_id;
+
+        // 1. chains catalog upsert - FK target for rpc_endpoints + factories. MUST come first
+        //    (rpc_endpoints.chain_id REFERENCES chains.chain_id; without this row it FK-fails).
+        //    Schema per migration 021: (chain_id INT UNIQUE, name, native_currency, explorer_url, is_active).
+        sqlx::query(
+            "INSERT INTO chains (chain_id, name, native_currency, explorer_url, is_active)
+             VALUES ($1, $2, $3, $4, true)
+             ON CONFLICT (chain_id) DO UPDATE SET
+               name = EXCLUDED.name, native_currency = EXCLUDED.native_currency,
+               explorer_url = EXCLUDED.explorer_url, is_active = true, updated_at = NOW()",
+        )
+        .bind(cid_i32)
+        .bind(&chain.name)
+        .bind(&chain.native_currency)
+        .bind(&chain.explorer_url)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("chains catalog upsert chain {}: {e}", chain.chain_id))?;
+
+        // 2. chains_runtime upsert (runtime cache; searcher-rs reads this). Schema per migration 061:
+        //    (chain_id BIGINT UNIQUE, name, rpc_http_url, rpc_ws_url, native_currency, enabled).
         let http = first_provider(&chain.rpc_http);
         let ws = first_provider(&chain.rpc_ws);
         sqlx::query(
@@ -293,9 +316,10 @@ async fn apply_db(
              VALUES ($1, $2, $3, $4, $5, true)
              ON CONFLICT (chain_id) DO UPDATE
                SET name = EXCLUDED.name, rpc_http_url = EXCLUDED.rpc_http_url,
-                   rpc_ws_url = EXCLUDED.rpc_ws_url, native_currency = EXCLUDED.native_currency",
+                   rpc_ws_url = EXCLUDED.rpc_ws_url, native_currency = EXCLUDED.native_currency,
+                   updated_at = NOW()",
         )
-        .bind(chain.chain_id)
+        .bind(cid_i64)
         .bind(&chain.name)
         .bind(http)
         .bind(ws)
@@ -305,25 +329,31 @@ async fn apply_db(
         .map_err(|e| format!("chains_runtime upsert chain {}: {e}", chain.chain_id))?;
         report.chains_upserted += 1;
 
-        // rpc_endpoints upsert — one row per provider in the CSV (rpc_http="prov=url,prov=url").
-        for (prov, url) in iter_csv(&chain.rpc_http) {
-            upsert_rpc_endpoint(pool, chain.chain_id, "http", &prov, &url).await?;
+        // 3. rpc_endpoints upsert - one row per provider URL. Schema per migration 066:
+        //    (chain_id BIGINT, url TEXT, transport CHECK IN ('http','https','ws','wss','ipc'), ...)
+        //    UNIQUE (chain_id, url). transport derived from the URL scheme.
+        for (_, url) in iter_csv(&chain.rpc_http) {
+            let transport = transport_from_url(&url).unwrap_or("http");
+            upsert_rpc_endpoint(pool, cid_i64, &url, transport).await?;
             report.rpc_endpoints_upserted += 1;
         }
-        for (prov, url) in iter_csv(&chain.rpc_ws) {
-            upsert_rpc_endpoint(pool, chain.chain_id, "ws", &prov, &url).await?;
+        for (_, url) in iter_csv(&chain.rpc_ws) {
+            let transport = transport_from_url(&url).unwrap_or("ws");
+            upsert_rpc_endpoint(pool, cid_i64, &url, transport).await?;
             report.rpc_endpoints_upserted += 1;
         }
 
-        // factories upsert — FK via dexes.name subquery (UUID-independent, mirrors gen_chain_env.py).
+        // 4. factories upsert - FK via dexes.name subquery (UUID-independent, mirrors
+        //    gen_chain_env.py). SELECT-from-dexes returns no rows if the dex is absent ->
+        //    INSERT inserts nothing (silent skip), not an FK violation.
         for f in &chain.factories {
             sqlx::query(
                 "INSERT INTO factories (dex_id, chain_id, address)
-                 VALUES ((SELECT id FROM dexes WHERE name = $1), $2, $3)
+                 SELECT id, $2, $3 FROM dexes WHERE name = $1
                  ON CONFLICT (chain_id, address) DO NOTHING",
             )
             .bind(&f.dex_name)
-            .bind(chain.chain_id)
+            .bind(cid_i32)
             .bind(&f.address)
             .execute(pool)
             .await
@@ -337,24 +367,39 @@ async fn apply_db(
 async fn upsert_rpc_endpoint(
     pool: &sqlx::PgPool,
     chain_id: i64,
-    kind: &str,
-    prov: &str,
     url: &str,
+    transport: &str,
 ) -> Result<(), String> {
-    // rpc_endpoints schema mirrors migration 066 (chain_id, provider, url, kind, enabled).
+    // rpc_endpoints (migration 066): chain_id, url, transport — NO provider/kind/enabled columns.
     sqlx::query(
-        "INSERT INTO rpc_endpoints (chain_id, provider, url, kind, enabled)
-         VALUES ($1, $2, $3, $4, true)
-         ON CONFLICT (chain_id, url) DO UPDATE SET provider = EXCLUDED.provider, kind = EXCLUDED.kind",
+        "INSERT INTO rpc_endpoints (chain_id, url, transport)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (chain_id, url) DO UPDATE SET transport = EXCLUDED.transport",
     )
     .bind(chain_id)
-    .bind(prov)
     .bind(url)
-    .bind(kind)
+    .bind(transport)
     .execute(pool)
     .await
-    .map_err(|e| format!("rpc_endpoints upsert {prov} on chain {chain_id}: {e}"))?;
+    .map_err(|e| format!("rpc_endpoints upsert {url} on chain {chain_id}: {e}"))?;
     Ok(())
+}
+
+/// Derive the transport tag from the URL scheme. Matches the CHECK constraint on
+/// rpc_endpoints.transport ('http','https','ws','wss','ipc') and the RpcSyncPanel client logic.
+fn transport_from_url(url: &str) -> Option<&'static str> {
+    let s = url.trim().to_ascii_lowercase();
+    if s.starts_with("wss://") {
+        Some("wss")
+    } else if s.starts_with("ws://") {
+        Some("ws")
+    } else if s.starts_with("https://") {
+        Some("https")
+    } else if s.starts_with("http://") {
+        Some("http")
+    } else {
+        None
+    }
 }
 
 /// Extract the first provider's URL from a "prov=url,prov=url" CSV (chains_runtime.rpc_http_url
