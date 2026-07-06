@@ -627,6 +627,19 @@ body.is-interactive .cur-ring {
   }
 }
 
+/* ── Live Ticker (mockup parity) ────────────────────────────────────────── */
+.arbx-ticker {
+  overflow: hidden;
+}
+.arbx-ticker:hover .arbx-ticker-track {
+  animation-play-state: paused;
+}
+
+@keyframes arbx-tick {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
 /* ── Sphere Aura (mockup parity) ──────────────────────────────────────────
    Radial glow behind the HeroSphere particle globe. */
 .sphere-aura {

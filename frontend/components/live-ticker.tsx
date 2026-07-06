@@ -80,9 +80,27 @@ export function LiveTicker() {
   return (
     <div
       aria-label="Live Asimetría Topológica ticker"
-      className="arbx-ticker fixed bottom-0 left-0 right-0 z-[45] border-t border-border/60 bg-background/70 backdrop-blur-md supports-[backdrop-filter]:bg-background/50"
+      className="arbx-ticker fixed bottom-0 left-0 right-0 z-[45] border-t"
+      style={{
+        backgroundColor: 'var(--ticker-bg)',
+        borderColor: 'var(--border)',
+        backdropFilter: 'blur(12px) saturate(1.4)',
+        WebkitBackdropFilter: 'blur(12px) saturate(1.4)',
+        fontFamily: 'var(--font-data)',
+        fontSize: '12.5px',
+        letterSpacing: '0.08em',
+      }}
     >
-      <div className={hasItems ? "arbx-ticker-track flex items-center gap-10 py-2.5 whitespace-nowrap" : "flex items-center py-2.5"}>
+      <div
+        className={hasItems ? "arbx-ticker-track flex items-center whitespace-nowrap" : "flex items-center"}
+        style={hasItems ? {
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '2.5rem',
+          padding: '16px 0',
+          animation: 'arbx-tick 60s linear infinite',
+        } : {}}
+      >
         {!hasItems ? (
           <span className="data-label px-4 text-muted-foreground/70">
             sin Asimetría Topológica activa · observando manifolds
