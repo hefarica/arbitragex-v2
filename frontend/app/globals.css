@@ -47,6 +47,7 @@
 
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
+  --font-data: var(--font-space-mono), var(--font-geist-mono), ui-monospace, monospace;
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -61,10 +62,10 @@
   /* Particle-sphere accent — ROYAL BLUE in the light theme (HeroSphere). */
   --sphere-rgb: 36 74 235;
 
-  --background: oklch(1 0 0); /* #FFFFFF */
+  --background: oklch(0.985 0.004 240); /* wonderful white — faint cool tint */
   --foreground: oklch(0.18 0.04 260);
 
-  --card: oklch(1 0 0);
+  --card: oklch(1 0.003 240 / 0.65); /* airy glass over the wonderful-white base */
   --card-foreground: oklch(0.18 0.04 260);
 
   --popover: oklch(1 0 0 / 95%);
@@ -112,6 +113,17 @@
   --sidebar-accent-foreground: oklch(0.18 0.04 260);
   --sidebar-border: oklch(0.92 0.01 220);
   --sidebar-ring: oklch(0.25 0.05 260);
+
+  /* Wonderful-whites backdrop (operator: light theme, "blancos maravillosos").
+     Horizontal gradient, cooler/darker right — mirrors the dark sweep. */
+  --primary-2: oklch(0.55 0.20 240);
+  --bg-grad-1: oklch(0.99 0.004 240);   /* lightest white (left) */
+  --bg-grad-2: oklch(0.965 0.008 250);
+  --bg-grad-3: oklch(0.935 0.013 252);  /* coolest white (right) */
+  --glow-1: oklch(0.86 0.07 250 / 0.40);
+  --glow-2: oklch(0.92 0.04 232 / 0.32);
+  --glow-3: oklch(0.96 0.02 220 / 0.26);
+  --bg-grad: linear-gradient(90deg, var(--bg-grad-1) 0%, var(--bg-grad-2) 55%, var(--bg-grad-3) 100%);
 }
 
 /* Dark mode — "TradePro" premium fintech theme:
@@ -121,26 +133,27 @@
   /* Particle-sphere accent — LIGHT (pale blue-white) in the dark theme (HeroSphere). */
   --sphere-rgb: 206 224 255;
 
-  --background: oklch(0.14 0.04 230);
+  --background: oklch(0.14 0.05 264);
   --foreground: oklch(0.98 0.012 250);
 
-  --card: oklch(0.205 0.045 230 / 0.19); /* 81% transparent (25% more) teal glass over the moving aurora */
+  --card: oklch(0.205 0.06 263 / 0.19); /* 81% transparent royal-blue glass over the moving aurora */
   --card-foreground: oklch(0.98 0.012 250);
 
-  --popover: oklch(0.17 0.045 230 / 96%);
+  --popover: oklch(0.17 0.06 263 / 96%);
   --popover-foreground: oklch(0.98 0.012 250);
 
   /* Electric royal blue — the TradePro accent. */
   --primary: oklch(0.62 0.20 263);
+  --primary-2: oklch(0.78 0.14 235); /* gradient partner: light cyan-blue */
   --primary-foreground: oklch(0.99 0.008 250);
 
-  --secondary: oklch(0.23 0.045 230);
+  --secondary: oklch(0.23 0.06 263);
   --secondary-foreground: oklch(0.96 0.012 250);
 
-  --muted: oklch(0.22 0.045 230);
-  --muted-foreground: oklch(0.69 0.035 258);
+  --muted: oklch(0.22 0.06 263);
+  --muted-foreground: oklch(0.69 0.04 255);
 
-  --accent: oklch(0.32 0.075 263);
+  --accent: oklch(0.32 0.09 263);
   --accent-foreground: oklch(0.98 0.012 250);
 
   /* Red for destructive / sell-side. */
@@ -149,16 +162,16 @@
 
   /* Green for success / buy-side. */
   --success: oklch(0.70 0.17 152);
-  --success-foreground: oklch(0.14 0.035 265);
+  --success-foreground: oklch(0.14 0.05 263);
 
   --warning: oklch(0.80 0.16 80);
-  --warning-foreground: oklch(0.14 0.035 265);
+  --warning-foreground: oklch(0.14 0.05 263);
 
   --info: oklch(0.66 0.16 256);
-  --info-foreground: oklch(0.14 0.035 265);
+  --info-foreground: oklch(0.14 0.05 263);
 
-  --border: oklch(0.29 0.04 230);
-  --input: oklch(0.27 0.04 230);
+  --border: oklch(0.29 0.05 263);
+  --input: oklch(0.27 0.05 263);
   --ring: oklch(0.62 0.20 263);
 
   --chart-1: oklch(0.62 0.20 263);
@@ -167,14 +180,26 @@
   --chart-4: oklch(0.80 0.16 80);
   --chart-5: oklch(0.66 0.20 330);
 
-  --sidebar: oklch(0.16 0.045 230);
+  --sidebar: oklch(0.16 0.06 263);
   --sidebar-foreground: oklch(0.98 0.012 250);
   --sidebar-primary: oklch(0.62 0.20 263);
   --sidebar-primary-foreground: oklch(0.99 0.008 250);
-  --sidebar-accent: oklch(0.26 0.055 230);
+  --sidebar-accent: oklch(0.26 0.075 263);
   --sidebar-accent-foreground: oklch(0.98 0.012 250);
-  --sidebar-border: oklch(0.29 0.04 230);
+  --sidebar-border: oklch(0.29 0.05 263);
   --sidebar-ring: oklch(0.62 0.20 263);
+
+  /* Royal-blue → light-blue backdrop sweep (operator: azul rey vívido, degradado
+     horizontal con la derecha más oscura). Used by .dark body. */
+  --bg-grad-1: oklch(0.16 0.05 266);   /* darkest — royal deep (right) */
+  --bg-grad-2: oklch(0.24 0.11 258);   /* mid — royal */
+  --bg-grad-3: oklch(0.46 0.19 250);   /* lightest — sky blue (left) */
+  /* Aurora radial glows — vivid royal blue (the "alive" accent). */
+  --glow-1: oklch(0.55 0.24 263 / 0.45);
+  --glow-2: oklch(0.70 0.16 240 / 0.32);
+  --glow-3: oklch(0.84 0.09 220 / 0.28);
+  /* Horizontal gradient (darker right): lightest left → darkest right. */
+  --bg-grad: linear-gradient(90deg, var(--bg-grad-3) 0%, var(--bg-grad-2) 55%, var(--bg-grad-1) 100%);
 }
 
 @layer base {
@@ -191,6 +216,17 @@
   }
 }
 
+/* Premium data-label utility (operator: mono terminal aesthetic for numeric/status
+   labels — Space Mono, uppercase, wide tracking). Opt-in: applied only to new
+   components (ticker items, sidebar status-stack); NOT a sweeping refactor. */
+.data-label {
+  font-family: var(--font-data);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 10.5px;
+  line-height: 1.2;
+}
+
 /* ── TradePro premium glassmorphism (dark theme) ───────────────────────────
    Layered navy gradient backdrop + frosted-glass surfaces that let the
    gradient bleed through. Dark-scoped; the light theme stays flat/solid.
@@ -205,9 +241,15 @@
    canvas (-z-10), so the particle globe always reads on top of the moving
    geometry — "todo debe estar detrás de la esfera". The light theme gets the
    same geometry in light contrast (soft blue on white). Halted for reduced-motion. */
+html:not(.dark) body {
+  background-color: oklch(0.985 0.004 240);
+  background-image: var(--bg-grad);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
 .dark body {
-  background-color: oklch(0.13 0.04 230);
-  background-image: linear-gradient(180deg, oklch(0.155 0.05 225) 0%, oklch(0.125 0.038 228) 52%, oklch(0.11 0.032 230) 100%);
+  background-color: oklch(0.13 0.05 264);
+  background-image: var(--bg-grad);
   background-attachment: fixed;
   background-repeat: no-repeat;
 }
@@ -223,16 +265,16 @@ html:not(.dark) body::before {
 }
 .dark body::before {
   background-image:
-    radial-gradient(62% 52% at 50% -6%, oklch(0.45 0.11 200 / 0.42), transparent 62%),
-    radial-gradient(46% 38% at 88% 6%, oklch(0.40 0.10 180 / 0.28), transparent 60%),
-    radial-gradient(48% 40% at 10% 14%, oklch(0.42 0.09 225 / 0.26), transparent 60%);
+    radial-gradient(62% 52% at 50% -6%, var(--glow-1), transparent 62%),
+    radial-gradient(46% 38% at 88% 6%, var(--glow-2), transparent 60%),
+    radial-gradient(48% 40% at 10% 14%, var(--glow-3), transparent 60%);
 }
-/* Light theme — same geometry, light contrast: soft blue glows over the white base. */
+/* Light theme — same geometry, wonderful-white contrast: soft blue glows over the white base. */
 html:not(.dark) body::before {
   background-image:
-    radial-gradient(60% 50% at 50% -8%, oklch(0.72 0.16 263 / 0.48), transparent 62%),
-    radial-gradient(44% 38% at 90% 4%, oklch(0.68 0.14 296 / 0.34), transparent 60%),
-    radial-gradient(46% 40% at 8% 12%, oklch(0.70 0.12 232 / 0.32), transparent 60%);
+    radial-gradient(60% 50% at 50% -8%, var(--glow-1), transparent 62%),
+    radial-gradient(44% 38% at 90% 4%, var(--glow-2), transparent 60%),
+    radial-gradient(46% 40% at 8% 12%, var(--glow-3), transparent 60%);
 }
 @keyframes arbx-aurora-drift {
   0%   { transform: translate3d(0%, 0%, 0) scale(1); }

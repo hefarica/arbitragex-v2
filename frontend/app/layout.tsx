@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { headers } from "next/headers";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
+import { Space_Mono } from "next/font/google";
 
 import "./globals.css";
 import { SiteHeader } from "@/components/site-header";
@@ -12,6 +13,15 @@ import { ThemeScript } from "@/components/theme-toggle";
 import { SystemGuardBanner } from "@/components/SystemGuardBanner";
 import { Web3Provider } from "@/app/providers/Web3Provider";
 import { Toaster } from "sonner";
+
+// Premium data-label font (operator: mono terminal aesthetic for numeric/status labels).
+// Exposed as --font-space-mono on <html>; consumed via the --font-data token in globals.css.
+const spaceMono = Space_Mono({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  variable: "--font-space-mono",
+  display: "swap",
+});
 
 export const metadata = {
   title: "QuantumX — Control Plane",
@@ -83,7 +93,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     <html
       lang="en"
       translate="no"
-      className={`${GeistSans.variable} ${GeistMono.variable} notranslate`}
+      className={`${GeistSans.variable} ${GeistMono.variable} ${spaceMono.variable} notranslate`}
       suppressHydrationWarning
     >
       <head>
