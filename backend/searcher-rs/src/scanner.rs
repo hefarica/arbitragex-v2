@@ -720,6 +720,7 @@ pub async fn run_chain(
         crate::cartridge_boot::spawn_cartridge_runtime(
             chain_id,
             redis.clone(),
+            v3_rpc_pool.clone(),
             cancel.clone(),
             cartridge_mode,
         )

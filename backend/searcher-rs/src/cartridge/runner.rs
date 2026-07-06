@@ -671,6 +671,16 @@ mod tests {
             block_number: Arc::new(AtomicU64::new(12345678)),
             base_fee_gwei: Arc::new(AtomicU64::new(30_000)), // 30 gwei
             telemetry_channel: "arbx:cartridge:telemetry".to_owned(),
+            // Tests skip the live RPC path (rpc_pool=None ⇒ V2 cached-reserves
+            // only); fresh rate-limit budget + 100ms floor keep tests independent.
+            rpc_pool: None,
+            rpc_budget: Arc::new(std::sync::Mutex::new(
+                crate::cartridge::host_bindings::RpcBudget::new(10, 10),
+            )),
+            rpc_min_interval_ns: Arc::new(AtomicU64::new(
+                crate::cartridge::host_bindings::SIM_SWAP_RPC_MIN_INTERVAL_NS,
+            )),
+            rpc_last_call_ns: Arc::new(AtomicU64::new(0)),
         }
     }
 

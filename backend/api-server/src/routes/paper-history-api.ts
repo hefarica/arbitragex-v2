@@ -44,15 +44,18 @@ export function buildPaperHistoryRouter(pool: pg.Pool | null): Router {
     const limit  = clampInt(req.query.limit,  50, 1, 200);
     const offset = clampInt(req.query.offset,  0, 0, 1_000_000);
     try {
+      // NOTE: schema (mig 051) has no `sim_net_profit_usd`/`strategy` columns —
+      // those references made this SELECT throw → HTTP 503. `sim_net_profit_usd`
+      // is computed (expected − gas) and aliased so the response shape is
+      // unchanged; `strategy_kind` is the real column.
       const rows = await pool.query(
         `SELECT
            id,
            opportunity_id,
-           route_hash,
            sim_expected_profit_usd,
            sim_gas_cost_usd,
-           sim_net_profit_usd,
-           strategy,
+           (sim_expected_profit_usd - COALESCE(sim_gas_cost_usd, 0)) AS sim_net_profit_usd,
+           strategy_kind,
            chain_id,
            created_at
          FROM paper_trade_runs
@@ -84,13 +87,13 @@ export function buildPaperHistoryRouter(pool: pg.Pool | null): Router {
     try {
       const totals = await pool.query(
         `SELECT
-           count(*)::bigint                                          AS total,
-           count(*) FILTER (WHERE sim_net_profit_usd > 0)::bigint   AS profitable,
-           avg(sim_expected_profit_usd)                             AS avg_expected_profit_usd,
-           avg(sim_net_profit_usd)                                  AS avg_net_profit_usd,
-           sum(sim_gas_cost_usd)                                    AS total_gas_cost_usd,
-           count(DISTINCT strategy)::int                            AS strategies,
-           count(DISTINCT chain_id)::int                            AS chains
+           count(*)::bigint                                                              AS total,
+           count(*) FILTER (WHERE (sim_expected_profit_usd - COALESCE(sim_gas_cost_usd, 0)) > 0)::bigint AS profitable,
+           avg(sim_expected_profit_usd)                                                 AS avg_expected_profit_usd,
+           avg(sim_expected_profit_usd - COALESCE(sim_gas_cost_usd, 0))                 AS avg_net_profit_usd,
+           sum(sim_gas_cost_usd)                                                        AS total_gas_cost_usd,
+           count(DISTINCT strategy_kind)::int                                           AS strategies,
+           count(DISTINCT chain_id)::int                                                AS chains
          FROM paper_trade_runs
          WHERE created_at >= $1`,
         [since],

@@ -251,6 +251,8 @@ export function sanitizeDetail(msg: string): string {
 export interface RedisLike {
   ping(): Promise<string>;
   get(key: string): Promise<string | null>;
+  /** Optional: full ioredis client supports KEYS. Used to scan per-chain papermode keys. */
+  keys?(pattern: string): Promise<string[]>;
 }
 
 export interface ReadinessSummaryLike {
@@ -657,32 +659,86 @@ export async function probeSignals(ctx: ProbeCtx): Promise<SelfTestBlock> {
 // Block 9 — paper window (redis arbx:papermode + MIN(detected_at) age ≥ 7d).
 // ---------------------------------------------------------------------------
 
-function paperModeFromRedisOrEnv(raw: string | null, env: NodeJS.ProcessEnv): { enabled: boolean; source: string } {
-  if (raw !== null) {
-    try {
-      return { enabled: (JSON.parse(raw) as { enabled?: unknown }).enabled === true, source: "redis:arbx:papermode" };
-    } catch {
-      /* unparseable → fall through to env default */
+/**
+ * Parse a papermode redis value. Accepts JSON `{enabled:true}` (B0.2 writer)
+ * or bare legacy "1"/"true". Returns null when the value is absent/unparseable
+ * so the caller can fall through to the next source.
+ */
+function parsePaperEnabled(raw: string | null): boolean | null {
+  if (raw === null) return null;
+  try {
+    return (JSON.parse(raw) as { enabled?: unknown }).enabled === true;
+  } catch {
+    // bare key (legacy) — "1"/"true" = enabled, anything else = disabled
+    return raw === "1" || raw === "true";
+  }
+}
+
+/**
+ * Read the armed paper-mode state from Redis. Mirrors g-pap-1.ts:
+ *   1. legacy global `arbx:papermode` (read-only fallback)
+ *   2. per-chain `arbx:papermode:<chain_id>` keys (the writer since B0.2,
+ *      2026-05-13 — POST /admin/config/paper-mode arms per chain and no
+ *      longer writes the global key)
+ * TRUE if ANY source reports enabled=true (safe-side: never reports live
+ * unless we have positive evidence paper is OFF). Returns the source label
+ * for evidence. Returns {enabled:null} when redis is silent so the env
+ * default applies.
+ */
+async function paperModeFromRedis(redis: RedisLike): Promise<{ enabled: boolean | null; source: string }> {
+  // 1. legacy global key
+  const globalRaw = await withTimeout(redis.get("arbx:papermode"), PROBE_TIMEOUT_MS, "paper_redis_get_global");
+  const globalEnabled = parsePaperEnabled(globalRaw);
+  if (globalEnabled === true) {
+    return { enabled: true, source: "redis:arbx:papermode (legacy global)" };
+  }
+  // 2. per-chain keys (the real armed state for the configured chains)
+  if (typeof redis.keys === "function") {
+    const chainKeys = (await withTimeout(redis.keys("arbx:papermode:*"), PROBE_TIMEOUT_MS, "paper_redis_keys"))
+      .filter((k) => !k.endsWith(":changes") && k !== "arbx:papermode");
+    for (const k of chainKeys) {
+      const v = parsePaperEnabled(await withTimeout(redis.get(k), PROBE_TIMEOUT_MS, "paper_redis_get_chain"));
+      if (v === true) {
+        return { enabled: true, source: `redis:${k}` };
+      }
+    }
+    if (chainKeys.length > 0) {
+      // per-chain keys exist but none enabled → honest OFF (positive evidence)
+      return { enabled: false, source: `redis:arbx:papermode:* (${chainKeys.length} chain keys, all disabled)` };
     }
   }
-  const mode = env["ARBX_TRADE_MODE"];
-  return { enabled: mode === undefined || mode === "paper", source: "env_default" };
+  // redis silent → defer to env default
+  return { enabled: globalEnabled === false ? false : null, source: globalRaw !== null ? "redis:arbx:papermode (legacy global, disabled)" : "env_default" };
 }
 
 export async function probePaper(ctx: ProbeCtx): Promise<SelfTestBlock> {
   const link = "/executions";
-  let raw: string | null = null;
+  let redisEnabled: boolean | null = null;
+  let redisSource = "env_default";
   let redisNote = "";
   if (ctx.redis) {
     try {
-      raw = await withTimeout(ctx.redis.get("arbx:papermode"), PROBE_TIMEOUT_MS, "paper_redis_get");
+      const r = await paperModeFromRedis(ctx.redis);
+      redisEnabled = r.enabled;
+      redisSource = r.source;
     } catch (e) {
       redisNote = ` (redis read failed: ${sanitizeDetail((e as Error).message)}; using env default)`;
     }
   } else {
     redisNote = " (redis client not configured; using env default)";
   }
-  const paper = paperModeFromRedisOrEnv(raw, ctx.env);
+  // Resolve final enabled flag: positive redis evidence wins; otherwise env default.
+  let enabled: boolean;
+  let source: string;
+  if (redisEnabled !== null) {
+    enabled = redisEnabled;
+    source = redisSource;
+  } else {
+    const mode = ctx.env["ARBX_TRADE_MODE"];
+    enabled = mode === undefined || mode === "paper";
+    source = "env_default";
+  }
+  const paper = { enabled, source };
   if (!paper.enabled) {
     return block("paper", link, ctx, {
       status: "BLOCKED_REQUIRES_OPERATOR_CONFIG",

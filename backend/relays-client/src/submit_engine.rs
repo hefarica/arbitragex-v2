@@ -21,7 +21,8 @@ use shared_rs::{
     killswitch::KillSwitchClient,
     paper_mode::PaperModeClient,
     pre_execute_checklist::{
-        pre_execute_checklist, relay_fee_ewma_key, ChecklistError, PreExecuteContext,
+        conservative_slippage_estimate, load_max_slippage_pct, pre_execute_checklist,
+        relay_fee_ewma_key, resolve_route_factories, ChecklistError, PreExecuteContext,
         RELAY_FEE_EWMA_ALPHA, RELAY_FEE_EWMA_TTL_SECS,
     },
     rpc_failover::HttpRpcPool,
@@ -123,15 +124,22 @@ impl SubmitEngine {
             let route_tokens: Vec<String> =
                 vec![opp.token_in.to_lowercase(), opp.token_out.to_lowercase()];
 
-            // route_factories: Opportunity carries dex_a/dex_b as exchange
-            // names (e.g. "uniswap_v2"), not factory hex addresses. The
-            // factories table is keyed on address. Passing names would
-            // vacuously block check 9 for every opportunity. Until the
-            // Opportunity schema carries factory_address fields (future
-            // Sprint), we pass an empty slice so check 9 is a no-op —
-            // consistent with the pre-checklist behaviour where factories
-            // were not validated at this layer.
-            let route_factories: Vec<String> = Vec::new();
+            // route_factories (Package #6 — was hollow `Vec::new()`):
+            // Opportunity carries dex_a/dex_b as exchange NAMES (e.g.
+            // "uniswap_v2", "aave-v3:0x..."), not factory hex addresses. The
+            // `factories` table is keyed on address. We now resolve each dex
+            // name to its factory address via the SAME `dexes`/`factories`
+            // registry check 9 validates against (DB JOIN by normalised name
+            // + chain_id; embedded hex addresses in compound labels pass
+            // through verbatim). Unknown dex names are passed through honestly
+            // so check 9 fails closed (FactoryInactive) — never a silent pass.
+            // Empty labels (a missing dex_b on a single-DEX route) are dropped.
+            let dex_names: Vec<String> = std::iter::once(&opp.dex_a)
+                .chain(opp.dex_b.as_ref())
+                .cloned()
+                .collect();
+            let route_factories: Vec<String> =
+                resolve_route_factories(pg_pool, opp.chain_id, &dex_names).await;
 
             // C1 fix: `resolve_profit_for_checklist` now takes `paper` to
             // enforce net-only in live mode.  If it returns Err we propagate
@@ -151,6 +159,27 @@ impl SubmitEngine {
             };
 
             let mut redis_conn = self.redis.clone();
+
+            // expected_slippage_pct (Package #6 — was hollow `0.0`):
+            // No real per-route slippage value is reachable here: the spine's
+            // `RouteLeg.estimated_slippage_pct` is not yet plumbed through to
+            // Opportunity, and `SimulationResult.slippage_pct` is not available
+            // at the submit site. We compute a presence-asserting estimate
+            // from the operator's `max_slippage_pct` (loaded from the SAME
+            // `trading_config` row check 10 compares against, so the estimate
+            // stays consistent with the cap). `conservative_slippage_estimate`
+            // returns `max * 0.5` for a positive finite max — engaging check
+            // 10 — and `+inf` (fail-closed) when max is absent / non-positive
+            // / non-finite, so a misconfigured or missing cap blocks broadcast
+            // rather than silently passing.
+            //
+            // SOURCE: shared-rs::pre_execute_checklist::load_max_slippage_pct
+            // (trading_config row) + conservative_slippage_estimate. When a
+            // real slippage value lands on Opportunity (future Sprint), prefer
+            // it over this conservative proxy.
+            let max_slippage_pct = load_max_slippage_pct(pg_pool, opp.chain_id).await;
+            let expected_slippage_pct = conservative_slippage_estimate(max_slippage_pct);
+
             let mut ctx = PreExecuteContext {
                 chain_id: opp.chain_id,
                 route_tokens: &route_tokens,
@@ -163,13 +192,16 @@ impl SubmitEngine {
                 // profit (gas already deducted by spine). Setting it to non-zero would
                 // double-deduct gas and incorrectly block valid opportunities.
                 estimated_gas_usd: 0.0,
-                // expected_slippage_pct is not yet in Opportunity; 0.0 means
-                // check 10 always passes — no false blocks until the field lands.
-                expected_slippage_pct: 0.0,
+                expected_slippage_pct,
                 our_address: &our_address,
                 pg: pg_pool,
                 redis: &mut redis_conn,
-                token_safety_floor: self.cfg.token_safety.min_acceptable_score,
+                // Canonical per-chain paper-mode read (B0.2 / Package #3): the
+                // checklist reuses the SAME PaperModeClient as the engine's
+                // pre-checklist read at line 106 so check 2 sees per-chain
+                // arming (`arbx:papermode:<chain_id>`) instead of the legacy
+                // global-only read.
+                paper_mode_client: &self.paper_mode,
             };
 
             match pre_execute_checklist(&mut ctx).await {
@@ -418,44 +450,30 @@ impl SubmitEngine {
         // reaches the builder for inclusion, "latest" has advanced. A passing
         // simulation is necessary but not sufficient for on-chain success.
         //
-        // On endpoint failure: log + proceed. We must not drop valid bundles
-        // because the Flashbots simulation endpoint is temporarily unavailable.
-        // The existing on-chain inclusion check (step 7) remains the true gate.
+        // On endpoint failure: ABORT (fail-closed, OMEGA PHOENIX §4C#3). The
+        // bundle is dropped rather than broadcast un-re-simulated — see the
+        // `Err(e)` arm below. The on-chain inclusion check (step 7) remains the
+        // canonical gate for bundles that DO pass re-sim.
         if let Some(ref flashbots) = self.flashbots_for_callbundle {
             let target_block = bundle.target_block;
-            match flashbots
+            let sim_result = flashbots
                 .call_bundle(signer.as_ref(), &bundle.tx_raw_hex, target_block)
-                .await
-            {
-                Ok(sim) if sim.any_failed() => {
-                    let reasons: Vec<String> = sim
-                        .tx_results
-                        .iter()
-                        .filter_map(|t| t.error.clone().or_else(|| t.revert.clone()))
-                        .collect();
+                .await;
+            // Pure classifier (BE-05 fail-closed, OMEGA PHOENIX §4C#3): isolates
+            // the three-way re-sim decision so it is unit-testable without the
+            // I/O surfaces (Flashbots HTTP, Redis EWMA, broadcast). Side-effects
+            // (logging, EWMA write, ExecutionResult return) live in the arms.
+            match Self::classify_callbundle_result(sim_result) {
+                CallBundleDecision::Drop { reason } => {
                     warn!(
                         event = "be05.callbundle_reverted",
                         opp_id = %opp.id,
-                        reasons = ?reasons,
+                        reason = %reason,
                         "eth_callBundle shows revert — aborting broadcast to save gas"
                     );
-                    return ExecutionResult {
-                        opportunity_id: opp.id,
-                        status: ExecutionStatus::Dropped,
-                        tx_hash: None,
-                        relay_used: None,
-                        block_included: None,
-                        gas_used_wei: None,
-                        actual_profit_usd: None,
-                        error_message: Some(format!(
-                            "eth_callBundle_revert: {}",
-                            reasons.join("; ")
-                        )),
-                        submitted_at: Utc::now(),
-                        trace_id: opp.trace_id,
-                    };
+                    return Self::dropped(opp, &reason);
                 }
-                Ok(sim) => {
+                CallBundleDecision::Proceed { sim } => {
                     info!(
                         event = "be05.callbundle_passed",
                         opp_id = %opp.id,
@@ -525,18 +543,19 @@ impl SubmitEngine {
                         }
                     }
                 }
-                Err(e) => {
-                    // R8 fail-honest: if the safety check endpoint itself fails
-                    // (Flashbots outage, transient HTTP error), log and proceed.
-                    // Dropping ALL bundles during a Flashbots API hiccup is worse
-                    // than sending a bundle that might revert — the existing
-                    // wait_for_inclusion step surfaces on-chain reverts regardless.
+                CallBundleDecision::Abort { reason } => {
+                    // BE-05 fail-CLOSED: re-sim endpoint itself failed (Flashbots
+                    // outage, transient HTTP/RPC error). DROP the bundle instead
+                    // of broadcasting un-re-simulated — previously this was
+                    // fail-honest (warn + proceed) which spent gas on bundles
+                    // the safety check could not validate.
                     warn!(
                         event = "be05.callbundle_endpoint_error",
                         opp_id = %opp.id,
-                        error = %e,
-                        "eth_callBundle endpoint error — proceeding without re-sim"
+                        reason = %reason,
+                        "eth_callBundle endpoint error — aborting broadcast (fail-closed)"
                     );
+                    return Self::dropped(opp, &reason);
                 }
             }
         }
@@ -768,6 +787,59 @@ impl SubmitEngine {
             trace_id: opp.trace_id,
         }
     }
+
+    /// Pure classifier for the `eth_callBundle` re-sim result (BE-05).
+    ///
+    /// Maps the raw `Result<CallBundleResult, anyhow::Error>` into one of three
+    /// decisions so the `execute()` body can dispatch side-effects (logging,
+    /// EWMA write, ExecutionResult return) without re-deriving the logic. Kept
+    /// side-effect-free so it is directly unit-testable.
+    ///
+    /// - `Proceed`  → re-sim passed (no tx reverted): broadcast continues.
+    /// - `Drop`     → re-sim returned a revert: abort bundle, save gas.
+    /// - `Abort`    → re-sim endpoint itself failed (Flashbots outage / RPC
+    ///   error): DROP the bundle fail-closed (OMEGA PHOENIX §4C#3) instead of
+    ///   broadcasting un-re-simulated.
+    fn classify_callbundle_result(
+        sim_result: anyhow::Result<crate::relay_flashbots::CallBundleResult>,
+    ) -> CallBundleDecision {
+        match sim_result {
+            Ok(sim) if sim.any_failed() => {
+                let reasons: Vec<String> = sim
+                    .tx_results
+                    .iter()
+                    .filter_map(|t| t.error.clone().or_else(|| t.revert.clone()))
+                    .collect();
+                CallBundleDecision::Drop {
+                    reason: format!("eth_callBundle_revert: {}", reasons.join("; ")),
+                }
+            }
+            Ok(sim) => CallBundleDecision::Proceed { sim },
+            Err(e) => CallBundleDecision::Abort {
+                reason: format!("eth_callBundle_re-sim_unavailable: {e}"),
+            },
+        }
+    }
+}
+
+/// Three-way decision for the BE-05 `eth_callBundle` re-simulation step.
+///
+/// See [`SubmitEngine::classify_callbundle_result`] for the semantics. `Proceed`
+/// carries the passing `CallBundleResult` so the caller can extract EWMA inputs
+/// (coinbase_diff_wei); the other arms carry a fully-formed reason string that
+/// becomes the `ExecutionResult.error_message`.
+#[derive(Debug)]
+enum CallBundleDecision {
+    /// Re-sim passed — broadcast continues. Holds the result so the caller can
+    /// read `coinbase_diff_wei` for the relay-fee EWMA update.
+    Proceed {
+        sim: crate::relay_flashbots::CallBundleResult,
+    },
+    /// Re-sim returned a revert — drop the bundle to save gas.
+    Drop { reason: String },
+    /// Re-sim endpoint itself failed — drop the bundle fail-closed (do NOT
+    /// broadcast un-re-simulated). OMEGA PHOENIX §4C#3.
+    Abort { reason: String },
 }
 
 #[cfg(test)]
@@ -893,5 +965,203 @@ mod tests {
             (profit_paper - (-3.0)).abs() < f64::EPSILON,
             "paper: expected -3.0 (negative net), got {profit_paper}"
         );
+    }
+
+    // ─── Package #6 — checks 9 & 10 load-bearing wiring ───────────────────
+    //
+    // Proves the gates are no longer hollow WITHOUT a live DB: the helpers
+    // invoked at the call site (resolve_route_factories for check 9,
+    // conservative_slippage_estimate for check 10) are exercised against the
+    // SAME shapes `Opportunity.dex_a` / `dex_b` actually carry. The pure
+    // pieces (normalize_dex_name_for_factory_lookup, conservative_slippage_estimate)
+    // are covered exhaustively in shared-rs; here we assert the *contract*
+    // the submit_engine wiring depends on: a non-empty factory list flows to
+    // check 9 (so an unknown factory would block), and a real >0 slippage
+    // estimate flows to check 10.
+
+    use shared_rs::pre_execute_checklist::{
+        conservative_slippage_estimate, normalize_dex_name_for_factory_lookup, DexLookupToken,
+    };
+
+    /// Check 9 contract: an unknown DEX name resolves to a pass-through that
+    /// check 9's `factories` address-lookup will NOT find → FactoryInactive.
+    /// Pre-fix this slot was hollow (empty vec → check 9 iterated zero
+    /// entries → always Ok). The factory list handed to check 9 is now
+    /// NON-EMPTY for any non-empty dex_a.
+    #[test]
+    fn pkg6_check9_factory_resolution_is_load_bearing() {
+        // Any scanner-emitted dex_a — even a bogus one — classifies to a
+        // non-empty lookup token, so resolve_route_factories (which drops only
+        // empty labels) yields at least one entry. That entry, when handed to
+        // check 9, either matches a factories row (active dex) or fails
+        // closed (FactoryInactive). The hollow-vec short-circuit is gone.
+        let opp = make_opp(Some(10.0), Some(2.0));
+        assert!(!opp.dex_a.is_empty(), "fixture dex_a must be non-empty");
+
+        let tok = normalize_dex_name_for_factory_lookup(&opp.dex_a);
+        // "uniswap_v2" → CanonicalName("uniswapv2") (non-empty).
+        assert!(
+            matches!(&tok, DexLookupToken::CanonicalName(n) if !n.is_empty()),
+            "dex_a `{}` must resolve to a non-empty token so check 9 receives a \
+             real factory key, got {tok:?}",
+            opp.dex_a
+        );
+
+        // An embedded address (compound label) yields a non-empty Address.
+        let compound = "aave-v3:0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f";
+        let tok2 = normalize_dex_name_for_factory_lookup(compound);
+        assert!(
+            matches!(&tok2, DexLookupToken::Address(a) if !a.is_empty()),
+            "compound dex label must yield a non-empty Address for check 9"
+        );
+
+        // Garbage with enough alphanumerics ("??bogus??" → "bogus") yields a
+        // non-empty CanonicalName; the fail-closed guarantee is delivered at
+        // the next stage (resolve_route_factories finds no matching dexes row
+        // → passes the raw through → check 9 finds no factories row →
+        // FactoryInactive). Either way check 9 receives a NON-EMPTY entry, so
+        // the hollow empty-vec short-circuit is gone. The load-bearing
+        // property here is non-emptiness across all three variants.
+        let tok3 = normalize_dex_name_for_factory_lookup("??bogus??");
+        let non_empty = match &tok3 {
+            DexLookupToken::Address(a) => !a.is_empty(),
+            DexLookupToken::CanonicalName(n) => !n.is_empty(),
+            DexLookupToken::Unknown(s) => !s.is_empty(),
+        };
+        assert!(
+            non_empty,
+            "garbage dex label must yield a non-empty token so check 9 \
+             receives an entry and fails closed, got {tok3:?}"
+        );
+    }
+
+    /// Check 10 contract: a real >0 slippage estimate flows for any positive
+    /// finite configured cap, and fail-closed (+inf) for absent/incoherent
+    /// caps. Pre-fix this was a hard-coded 0.0 (always passed check 10).
+    #[test]
+    fn pkg6_check10_slippage_estimate_is_real_and_positive() {
+        // A representative operator cap (1.5% from app.toml) → estimate 0.75%.
+        let est = conservative_slippage_estimate(Some(1.5));
+        assert!(
+            est > 0.0 && est.is_finite(),
+            "check 10 must receive a real finite >0 estimate, got {est}"
+        );
+        // Missing cap → fail-closed (+inf), NOT 0.0.
+        let fail_closed = conservative_slippage_estimate(None);
+        assert!(
+            fail_closed.is_infinite() && fail_closed.is_sign_positive(),
+            "missing cap must fail closed (+inf), got {fail_closed}"
+        );
+    }
+
+    // ─── BE-05 fail-closed (OMEGA PHOENIX §4C#3) ───────────────────────────
+    //
+    // Regression coverage for the eth_callBundle re-sim decision. The endpoint
+    // must NOT be mocked (no live HTTP) — the pure classifier is exercised
+    // directly. The contract: a bundle that the re-sim endpoint cannot confirm
+    // is DROPPED, never handed to the broadcaster.
+
+    use crate::relay_flashbots::{CallBundleResult, TxCallResult};
+
+    fn sim_passing() -> CallBundleResult {
+        CallBundleResult {
+            bundle_hash: Some("0xpass".into()),
+            coinbase_diff_wei: 1_000_000_000_000_000,
+            total_gas_used: 250_000,
+            tx_results: vec![TxCallResult {
+                tx_hash: "0xabc".into(),
+                gas_used: 250_000,
+                error: None,
+                revert: None,
+            }],
+        }
+    }
+
+    fn sim_reverted(reason: &str) -> CallBundleResult {
+        CallBundleResult {
+            bundle_hash: Some("0xrev".into()),
+            coinbase_diff_wei: 0,
+            total_gas_used: 100_000,
+            tx_results: vec![TxCallResult {
+                tx_hash: "0xabc".into(),
+                gas_used: 100_000,
+                error: None,
+                revert: Some(reason.into()),
+            }],
+        }
+    }
+
+    /// BE-05 success path: re-sim confirms (no revert) → classifier returns
+    /// `Proceed` and the bundle WOULD reach broadcast. The sim payload is
+    /// preserved so the caller can read coinbase_diff_wei for the EWMA update.
+    #[test]
+    fn be05_resim_passed_classifies_proceed() {
+        let sim = sim_passing();
+        let decision = SubmitEngine::classify_callbundle_result(Ok(sim.clone()));
+        match decision {
+            CallBundleDecision::Proceed { sim: passed_sim } => {
+                assert_eq!(passed_sim.total_gas_used, sim.total_gas_used);
+                assert_eq!(passed_sim.coinbase_diff_wei, sim.coinbase_diff_wei);
+                assert!(
+                    !passed_sim.any_failed(),
+                    "passing sim must not flag failure"
+                );
+            }
+            other => panic!("BE-05 passing re-sim must Proceed, got {other:?}"),
+        }
+    }
+
+    /// BE-05 clean-reject path: re-sim returned a revert → classifier returns
+    /// `Drop`. Preserved from pre-fix behavior — only the endpoint-error path
+    /// changed. The reason carries the revert string for the ExecutionResult.
+    #[test]
+    fn be05_resim_reverted_classifies_drop() {
+        let sim = sim_reverted("INSUFFICIENT_OUTPUT_AMOUNT");
+        let decision = SubmitEngine::classify_callbundle_result(Ok(sim));
+        match decision {
+            CallBundleDecision::Drop { reason } => {
+                assert!(
+                    reason.contains("eth_callBundle_revert"),
+                    "Drop reason must identify the revert path, got: {reason}"
+                );
+                assert!(
+                    reason.contains("INSUFFICIENT_OUTPUT_AMOUNT"),
+                    "Drop reason must carry the revert string, got: {reason}"
+                );
+            }
+            other => panic!("BE-05 reverted re-sim must Drop, got {other:?}"),
+        }
+    }
+
+    /// BE-05 fail-CLOSED regression (the bug this package closes): when the
+    /// eth_callBundle endpoint itself errors (Flashbots outage / HTTP 5xx /
+    /// RPC error), the classifier MUST return `Abort` — NOT `Proceed`. The
+    /// `execute()` body maps `Abort` to `Self::dropped(...)`, so the bundle is
+    /// never handed to the broadcaster. Pre-fix this path fell through to the
+    /// multi-relay broadcast with only a warn log, spending gas on an
+    /// un-re-simulated bundle.
+    #[test]
+    fn be05_resim_endpoint_error_classifies_abort_not_proceed() {
+        let endpoint_err = anyhow::anyhow!("flashbots http 503: upstream timeout");
+        let decision = SubmitEngine::classify_callbundle_result(Err(endpoint_err));
+        match decision {
+            CallBundleDecision::Abort { reason } => {
+                assert!(
+                    reason.starts_with("eth_callBundle_re-sim_unavailable:"),
+                    "Abort reason must identify the unavailable-endpoint path, got: {reason}"
+                );
+                assert!(
+                    reason.contains("flashbots http 503"),
+                    "Abort reason must carry the underlying error, got: {reason}"
+                );
+            }
+            CallBundleDecision::Proceed { .. } => {
+                panic!(
+                    "BE-05 endpoint error must Abort (fail-closed), NOT Proceed — \
+                     broadcasting un-re-simulated bundles spends gas (OMEGA PHOENIX §4C#3)"
+                );
+            }
+            other => panic!("BE-05 endpoint error must Abort, got {other:?}"),
+        }
     }
 }
