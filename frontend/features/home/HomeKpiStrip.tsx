@@ -27,17 +27,29 @@ function Stat({
     : tone === "info" ? "text-info"
     : "text-muted-foreground";
   return (
-    <Card className="overflow-hidden">
-      <CardContent className="p-4">
-        <div className={`flex items-center gap-2 text-[11px] uppercase tracking-widest ${accent}`}>
+    <Card className="relative overflow-hidden" style={{ padding: '22px 24px' }}>
+      {/* Shimmer effect — premium data visualization (mockup parity) */}
+      <div className="shimmer" aria-hidden />
+      <div className="relative">
+        {/* mlabel - mockup parity: Space Mono, uppercase, wide tracking */}
+        <div className={`flex items-center gap-2 text-[10.5px] uppercase tracking-[0.14em] ${accent}`}
+             style={{ fontFamily: 'var(--font-data)', marginBottom: '12px' }}>
           {icon}
           <span>{label}</span>
         </div>
-        <div className="mt-2 font-mono text-2xl font-medium tracking-tight tabular-nums">
+        {/* Large number - mockup parity: 38px, Inter, semibold */}
+        <div className="font-sans text-[38px] font-semibold tracking-[-0.03em] leading-none"
+             style={{ color: tone === "success" ? 'var(--success)' : tone === "danger" ? 'var(--destructive)' : 'var(--foreground)' }}>
           {value}
         </div>
-        {hint && <div className="mt-0.5 text-xs text-muted-foreground">{hint}</div>}
-      </CardContent>
+        {/* Subtext - mockup parity: Space Mono, 11px */}
+        {hint && (
+          <div className="mt-2 text-[11px] tracking-[0.04em] text-muted-foreground"
+               style={{ fontFamily: 'var(--font-data)' }}>
+            {hint}
+          </div>
+        )}
+      </div>
     </Card>
   );
 }

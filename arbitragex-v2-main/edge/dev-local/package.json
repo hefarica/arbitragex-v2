@@ -1,0 +1,27 @@
+{
+  "name": "@arbx/edge-dev-local",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ArbitrageX v2 — DEV ONLY local edge equivalent (Express) for workflows without Cloudflare. Do NOT deploy to production.",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@arbx/shared": "*",
+    "express": "^4.19.2",
+    "http-proxy-middleware": "^3.0.5"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.30",
+    "tsx": "^4.7.2",
+    "typescript": "^5.4.5",
+    "vitest": "^1.5.0"
+  }
+}

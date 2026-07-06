@@ -1,0 +1,29 @@
+[package]
+name = "recon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ArbitrageX v2 — recon / PnL reconciliation. S6: consumer + aggregator + anomaly detector."
+
+[dependencies]
+shared-rs.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+sqlx.workspace = true
+bigdecimal.workspace = true
+redis.workspace = true
+ethers.workspace = true
+alloy.workspace = true
+futures-util.workspace = true
+hex.workspace = true

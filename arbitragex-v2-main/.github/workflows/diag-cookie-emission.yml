@@ -1,0 +1,86 @@
+name: Ω-S5++ Diag cookie emission (READ-ONLY)
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: read
+env:
+  VPS_HOST: 195.201.235.70
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/arbx_key
+          chmod 600 ~/.ssh/arbx_key
+          ssh-keyscan -H ${{ env.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+      - name: Diagnose
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set +e
+            ADMIN_TOKEN=$(grep -E '^ARBX_ADMIN_TOKEN=' /opt/arbitragex-v2/.env | cut -d= -f2-)
+
+            echo "═══ A — Edge image SHA (is fresh deploy actually running?) ═══"
+            docker inspect arbitragex-v2-edge-1 --format '{{.Image}}' 2>&1
+            docker inspect arbitragex-v2-edge-1 --format '{{.Created}}' 2>&1
+
+            echo ""
+            echo "═══ B — Edge index.js: do new routes use adminProxy? ═══"
+            docker exec arbitragex-v2-edge-1 sh -c "grep -n 'admin/chains' /app/edge/dev-local/dist/index.js 2>&1 | head -20" || \
+            docker exec arbitragex-v2-edge-1 sh -c "find /app -name 'index.js' -path '*dev-local*' | head -3"
+
+            echo ""
+            echo "═══ C — RAW Set-Cookie headers from POST /admin/session ═══"
+            curl -s -D - -o /dev/null -m 5 -X POST \
+              -H "content-type: application/json" \
+              -d "{\"token\":\"$ADMIN_TOKEN\"}" \
+              http://127.0.0.1:8787/admin/session 2>&1
+
+            echo ""
+            echo "═══ D — Send to localhost vs 127.0.0.1 (cookie domain rules) ═══"
+            curl -s -D - -o /dev/null -m 5 -X POST \
+              -H "content-type: application/json" \
+              -d "{\"token\":\"$ADMIN_TOKEN\"}" \
+              http://localhost:8787/admin/session 2>&1 | grep -i 'set-cookie'
+
+            echo ""
+            echo "═══ E — Cookie jar after capture (verbose) ═══"
+            rm -f /tmp/jar
+            curl -s -v -c /tmp/jar -o /dev/null -m 5 -X POST \
+              -H "content-type: application/json" \
+              -d "{\"token\":\"$ADMIN_TOKEN\"}" \
+              http://127.0.0.1:8787/admin/session 2>&1 | grep -iE 'set-cookie|cookie' | head -10
+            echo "--- jar content (raw) ---"
+            cat /tmp/jar 2>&1
+
+            echo ""
+            echo "═══ F — Manual replay: send cookie header explicitly ═══"
+            # Re-create session and capture Set-Cookie line, then replay literally
+            RAW=$(curl -s -D - -o /dev/null -m 5 -X POST \
+              -H "content-type: application/json" \
+              -d "{\"token\":\"$ADMIN_TOKEN\"}" \
+              http://127.0.0.1:8787/admin/session 2>&1)
+            SESSION_COOKIE_VAL=$(echo "$RAW" | grep -i 'set-cookie:.*arbx_admin_session=' | head -1 | sed -E 's/.*arbx_admin_session=([^;]+).*/\1/')
+            echo "Extracted session cookie length: ${#SESSION_COOKIE_VAL}"
+            if [ -n "$SESSION_COOKIE_VAL" ]; then
+              echo "Sending GET with explicit Cookie header..."
+              curl -s -o /dev/null -w "  http %{http_code}\n" -m 5 \
+                -H "Cookie: arbx_admin_session=$SESSION_COOKIE_VAL" \
+                http://127.0.0.1:8787/api/admin/chains
+            else
+              echo "❌ No arbx_admin_session cookie in response"
+            fi
+
+            echo ""
+            echo "═══ G — Frontend container is fresh? ═══"
+            docker inspect arbitragex-v2-frontend-1 --format 'image={{.Image}} created={{.Created}}' 2>&1
+
+            echo ""
+            echo "═══ H — Why 302 on /apex/allocator? ═══"
+            curl -s -D - -o /dev/null -m 5 http://127.0.0.1:3000/apex/allocator 2>&1 | head -15
+          REMOTE
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/arbx_key

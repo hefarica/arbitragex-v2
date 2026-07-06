@@ -1,0 +1,163 @@
+# ArbitrageX v2 — Canonical application config.
+# Validated at boot against configs/schemas/app.schema.json.
+# Secrets NEVER live here. Use env vars / docker secret / Vault.
+
+[system]
+env = "production-like"
+kill_switch_enabled_default = true   # fail-closed in non-dev
+service_name_prefix = "arbx"
+
+[risk]
+max_revert_rate_pct = 5.0
+max_execution_variance_pct = 20.0
+min_token_safety_score = 70
+simulation_required_for_new_routes = true
+max_gas_price_gwei = 200.0
+max_slippage_pct = 1.5
+
+[execution]
+private_only = true
+paper_mode = true                       # SAFETY DEFAULT. Only the operator flips this to false, manually, after review.
+max_parallel_executions = 8
+retry_limit = 2
+target_block_offset = 1
+max_inclusion_wait_blocks = 5
+max_value_eth = 1.0                     # hard cap per-bundle; exceeded → reject + risk_event critical
+flashbots_submit_timeout_ms = 5000
+priority_fee_increment_pct = 10
+
+[observability]
+prometheus_enabled = true
+structured_logs = true
+log_level = "info"
+
+[scoring]
+min_accept_score = 55.0
+weight_liquidity = 0.20
+weight_depth = 0.15
+weight_safety = 0.20
+weight_slippage = 0.15
+weight_gas = 0.15
+weight_risk = 0.15
+
+[token_safety]
+provider = "internal_only"          # "goplus" | "honeypot_is" | "internal_only"
+api_call_timeout_ms = 1500
+ttl_seconds_ok = 3600
+ttl_seconds_bad = 86400
+min_acceptable_score = 70
+
+[[circuit_breakers]]
+name = "token_safety_api"
+threshold = 5
+window_ms = 60000
+cooldown_ms = 120000
+
+[[circuit_breakers]]
+name = "db_writes"
+threshold = 10
+window_ms = 30000
+cooldown_ms = 60000
+
+[[circuit_breakers]]
+name = "stream_consumer"
+threshold = 20
+window_ms = 60000
+cooldown_ms = 30000
+
+[[circuit_breakers]]
+name = "sim_engine"
+threshold = 8
+window_ms = 60000
+cooldown_ms = 60000
+
+[simulation]
+provider = "not_implemented"            # "anvil" | "tenderly" | "not_implemented"
+fork_block = "latest"
+snapshot_pool_size = 4
+sim_timeout_ms = 3000
+reset_interval_s = 600
+gas_limit_safety_factor = 1.3
+max_slippage_for_pass_pct = 5.0
+probe_amount_fraction = 1.0
+
+[recon]
+pnl_source_default = "native_only"              # "native_only"|"oracle_chainlink"|"oracle_uniswap_twap"
+variance_threshold_pct = 20.0
+receipt_fetch_timeout_ms = 5000
+aggregator_interval_seconds = 300
+strategy_score_window_hours = 1
+anomaly_window_minutes = 15
+anomaly_min_samples = 10
+anomaly_revert_rate_pct = 50.0
+auto_trip_on_high_revert_rate = true
+
+# Chains are configurable: no hardcoding inside services.
+[[chains]]
+chain_id = 1
+name = "ethereum"
+enabled = true
+
+[[chains]]
+chain_id = 10
+name = "optimism"
+enabled = false
+
+[[chains]]
+chain_id = 137
+name = "polygon"
+enabled = false
+
+[[chains]]
+chain_id = 42161
+name = "arbitrum"
+enabled = false
+
+[[chains]]
+chain_id = 8453
+name = "base"
+enabled = false
+
+# Relay catalog skeleton.
+#
+# No-hardcode doctrine: endpoints + enabled flags are operator decisions, not
+# code defaults. The `endpoint = ""` placeholders below force the operator to
+# fill them explicitly.
+#
+# Three allowed population paths:
+#   1. Env overrides per relay (e.g. FLASHBOTS_RELAY_URL=wss://...)
+#   2. Editing this file in the `/config/relays` admin UI (reload on save).
+#   3. Post-Phase-0.5 R10: DB table `relays` replaces this block entirely; the
+#      loader reads from DB and this file becomes a migration seed only.
+#
+# `enabled=true` with an empty endpoint is REJECTED by the schema validator.
+
+[[relays]]
+name = "flashbots"
+enabled = false
+chains = [1]
+endpoint = ""
+
+[[relays]]
+name = "bloxroute"
+enabled = false
+chains = [1]
+endpoint = ""
+
+[[relays]]
+name = "eden"
+enabled = false
+chains = [1]
+endpoint = ""
+
+[[relays]]
+name = "beaver"
+enabled = false
+chains = [1]
+endpoint = ""
+
+[[relays]]
+name = "titan"
+enabled = false
+chains = [1]
+endpoint = ""

@@ -1,0 +1,59 @@
+$ npm run build --workspaces --if-present
+
+> @arbx/shared@0.1.0 build
+> tsc -p tsconfig.json
+
+
+> @arbx/selector-api@0.1.0 build
+> tsc -p tsconfig.json
+
+
+> @arbx/api-server@0.1.0 build
+> tsc -p tsconfig.json && node -e "const fs=require('node:fs');fs.mkdirSync('dist/services',{recursive:true});for(const f of ['uniswap-tokenlist.json','coingecko-coinslist.json']){fs.copyFileSync('src/services/'+f,'dist/services/'+f)}"
+
+
+> @arbx/edge-worker@0.1.0 build
+> tsc --noEmit -p tsconfig.json
+
+
+> @arbx/edge-dev-local@0.1.0 build
+> tsc -p tsconfig.json
+
+
+> @arbx/frontend@0.1.0 build
+> next build
+
+⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of /home/ubuntu/arbitragex-v2-latest-audit/pnpm-workspace.yaml as the root directory.
+ To silence this warning, set `turbopack.root` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopack#root-directory for more information.
+ Detected additional lockfiles: 
+   * /home/ubuntu/arbitragex-v2-latest-audit/frontend/pnpm-workspace.yaml
+
+▲ Next.js 16.2.6 (Turbopack)
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 8.9s
+  Running TypeScript ...
+Failed to type check.
+
+./app/dex-registry/DexRegistryClient.tsx:16:21
+Type error: Module '"@/lib/api/dexes"' has no exported member 'DEX'.
+
+  [90m14 |[0m   toggleDexActive,
+  [90m15 |[0m   [36mtype[0m [33mCreateDexFactory[0m,
+[31m[1m>[0m [90m16 |[0m   [36mtype[0m [33mDexRow[0m, [36mtype[0m [33mDEX[0m,
+  [90m   |[0m                     [31m[1m^[0m
+  [90m17 |[0m } [36mfrom[0m [32m"@/lib/api/dexes"[0m;
+  [90m18 |[0m [36mimport[0m { useOmniStore } [36mfrom[0m [32m"@/lib/store/omni-store"[0m;
+  [90m19 |[0m [36mimport[0m { getApiBaseUrl } [36mfrom[0m [32m"@/lib/api-client"[0m;
+Next.js build worker exited with code: 1 and signal: null
+npm error Lifecycle script `build` failed with error:
+npm error code 1
+npm error path /home/ubuntu/arbitragex-v2-latest-audit/frontend
+npm error workspace @arbx/frontend@0.1.0
+npm error location /home/ubuntu/arbitragex-v2-latest-audit/frontend
+npm error command failed
+npm error command sh -c next build
+[ELIFECYCLE] Command failed with exit code 1.
+Build failed

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arbitragex.v2/schemas/recon_report.schema.json",
+  "title": "ReconReport",
+  "description": "Produced by recon. Expected vs actual reconciliation for a single opportunity end-to-end.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "opportunity_id","expected_profit_usd","actual_profit_usd",
+    "variance_usd","variance_pct","created_at","trace_id"
+  ],
+  "properties": {
+    "opportunity_id":         { "type": "string", "format": "uuid" },
+    "expected_profit_usd":    { "type": "number" },
+    "actual_profit_usd":      { "type": "number" },
+    "variance_usd":           { "type": "number" },
+    "variance_pct":           { "type": "number" },
+    "actual_gas_used_wei":    { "type": ["string","null"], "pattern": "^[0-9]+$" },
+    "notes":                  { "type": ["string","null"] },
+    "created_at":             { "type": "string", "format": "date-time" },
+    "trace_id":               { "type": "string", "format": "uuid" }
+  }
+}

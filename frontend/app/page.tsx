@@ -49,28 +49,36 @@ export default async function Home() {
   const [status, recon] = await Promise.all([getStatus(), getReconSummary(1)]);
   return (
     <>
-      <div className="mb-8 space-y-2">
-        <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-muted-foreground">
-          <span className="size-1.5 rounded-full bg-primary" />
-          operator console
+      {/* Sphere aura — mockup parity: radial glow behind HeroSphere */}
+      <div className="sphere-aura" aria-hidden />
+
+      <div className="relative z-10">
+        {/* Hero section — mockup parity */}
+        <div className="mb-8 max-w-[980px]">
+          <div
+            className="mb-4 text-[10.5px] uppercase tracking-[0.14em]"
+            style={{ color: 'var(--primary)', fontFamily: 'var(--font-data)' }}
+          >
+            IA OMEGA · OBSERVE → SIMULATE → EXECUTE
+          </div>
+          <h1 className="mb-6 text-[clamp(2.4rem,4.6vw,4rem)] font-semibold leading-[1.03] tracking-[-0.04em]">
+            Convergencia estocástica.
+            <br />
+            <span style={{ color: 'var(--primary-2)' }}>Topological Yield</span> en milisegundos.
+          </h1>
+          <p className="max-w-[64ch] text-base leading-[1.6] text-muted-foreground">
+            El motor observa <b className="font-medium text-foreground">50 rutas de Liquidity Manifolds</b> en paralelo,
+            resuelve <b className="font-medium text-foreground">Asimetría Topológica</b> bajo <b className="font-medium text-foreground">Temporal Liquidity Superposition</b>,
+            y mantiene el capital expuesto en <b className="font-medium text-foreground">$0.00</b> hasta que cada gate
+            institucional esté en verde. Doctrina OMEGA: honestidad antes que teatro.
+          </p>
         </div>
-        <h1>Platform control plane.</h1>
-        <p className="max-w-2xl text-base text-muted-foreground">
-          Every view below consumes live edge endpoints. When an upstream is unhealthy
-          the page surfaces the error verbatim — it never synthesizes values.
-        </p>
-        <div className="flex flex-wrap gap-2 pt-2">
-          <Badge variant="info">paper-mode ON</Badge>
-          <Badge variant="outline">S1 – S6 merged</Badge>
-          <Badge variant="outline" className="font-mono">{getApiBaseUrl()}</Badge>
-        </div>
-      </div>
 
-      <HomeKpiStrip status={status} recon={recon} />
+        <HomeKpiStrip status={status} recon={recon} />
 
-      <ProgressRealCard />
+        <ProgressRealCard />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {TILES.map((t) => {
           const Icon = t.icon;
           return (
@@ -103,6 +111,7 @@ export default async function Home() {
             </Link>
           );
         })}
+        </div>
       </div>
     </>
   );

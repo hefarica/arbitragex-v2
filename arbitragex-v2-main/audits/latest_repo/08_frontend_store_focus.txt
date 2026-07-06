@@ -1,0 +1,171 @@
+# Foco Omni-Store y duplicidades frontend
+
+## Imports/uso real de useOmniStore y hooks exportados
+frontend/app/opportunities/OpportunitiesClient.tsx:11:import { useOmniStore } from "@/lib/store/omni-store";
+frontend/app/opportunities/OpportunitiesClient.tsx:92:  const opportunities = useOmniStore((state) => state.opportunities);
+frontend/app/opportunities/OpportunitiesClient.tsx:93:  const wsStatus = useOmniStore((state) => state.wsStatus);
+frontend/app/opportunities/OpportunitiesClient.tsx:94:  const clearOpportunities = useOmniStore((state) => state.clearOpportunities);
+frontend/app/opportunities/OpportunitiesClient.tsx:95:  const addOpportunity = useOmniStore((state) => state.addOpportunity);
+frontend/lib/store/omni-store.ts:12: * 1. NEVER use `const state = useOmniStore()` — subscribes to everything
+frontend/lib/store/omni-store.ts:13: * 2. ALWAYS use selectors: `useOmniStore((state) => state.opportunities)`
+frontend/lib/store/omni-store.ts:124:export const useOmniStore = create<OmniStoreState>()(
+frontend/lib/store/omni-store.ts:222:export const useOpportunities = () => useOmniStore((state) => state.opportunities);
+frontend/lib/store/omni-store.ts:225:export const useWsStatus = () => useOmniStore((state) => state.wsStatus);
+frontend/lib/store/omni-store.ts:228:export const useRegistryStatus = () => useOmniStore((state) => state.registryStatus);
+frontend/lib/store/omni-store.ts:232:  useOmniStore((state) => ({
+frontend/lib/store/useOmniOpportunities.ts:11: *   - Component → useOpportunities() (store selector)
+frontend/lib/store/useOmniOpportunities.ts:22:import { useOmniStore } from "./omni-store";
+frontend/lib/store/useOmniOpportunities.ts:57: *   const opportunities = useOmniStore((state) => state.opportunities);
+frontend/lib/store/useOmniOpportunities.ts:58: *   const wsStatus = useOmniStore((state) => state.wsStatus);
+frontend/lib/store/useOmniOpportunities.ts:68:  const addOpportunity = useOmniStore((state) => state.addOpportunity);
+frontend/lib/store/useOmniOpportunities.ts:69:  const setWsStatus = useOmniStore((state) => state.setWsStatus);
+frontend/lib/store/useOmniOpportunities.ts:70:  const clearOpportunities = useOmniStore((state) => state.clearOpportunities);
+
+## Archivos store
+frontend/lib/store/omni-store.ts
+frontend/lib/store/types.ts
+frontend/lib/store/useOmniOpportunities.ts
+frontend/lib/utils/rpc-parser-12-providers.ts
+
+## tsconfig include/exclude
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "DOM",
+      "DOM.Iterable",
+      "ES2022"
+    ],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    },
+    "noEmit": true
+  },
+  "include": [
+    "next-env.d.ts",
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "components/**/*.ts",
+    "components/**/*.tsx",
+    "features/**/*.ts",
+    "features/**/*.tsx",
+    "lib/**/*.ts",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    ".next",
+    "dist",
+    "e2e/**/*"
+  ]
+}
+
+## Validación puntual de omni-store con tsc show config inclusión
+
+## useState/fetch hotspots concretos
+--- frontend/app/opportunities/OpportunitiesClient.tsx
+lines=847
+useState=2
+useEffect=4
+fetch=2
+imports=2:import React, { useEffect, useState, useCallback, useRef } from "react";
+3:import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, EyeOff, Eye, AlertTriangle, Clock } from "lucide-react";
+4:import { sanitizeForDisplay } from "@/lib/omega-lexicon";
+5:import { toast } from "sonner";
+6:import { OpportunityDetailDialog, type OpportunityDetail } from "@/components/OpportunityDetailDialog";
+7:import { motion, AnimatePresence } from "framer-motion";
+10:import { useOmniOpportunities } from "@/lib/store/useOmniOpportunities";
+11:import { useOmniStore } from "@/lib/store/omni-store";
+12:import { mapToOmniOpportunity, type OmniOpportunity } from "@/lib/store/types";
+26:import { TokenChip } from "@/components/TokenChip";
+27:import { ChainBadge } from "@/components/ChainBadge";
+28:import { DexPath } from "@/components/DexPath";
+29:import { StrategyBadge } from "@/components/StrategyBadge";
+30:import { StatusPill } from "@/components/StatusPill";
+31:import { CrossChainSlot } from "@/components/CrossChainSlot";
+32:import {
+37:import { useUserPrefs } from "@/lib/user-prefs";
+--- frontend/app/dex-registry/DexRegistryClient.tsx
+lines=701
+useState=6
+useEffect=1
+fetch=0
+imports=3:import { useState, useEffect, useCallback, useMemo } from "react";
+4:import { AlertCircle, RefreshCw, ToggleLeft, ToggleRight, Database, Plus, Trash2, X } from "lucide-react";
+5:import { Badge } from "@/components/ui/badge";
+6:import { Button } from "@/components/ui/button";
+7:import { Input } from "@/components/ui/input";
+8:import { Label } from "@/components/ui/label";
+9:import { DexDetailDialog } from "@/components/DexDetailDialog";
+10:import { useChains, type ChainInfo } from "@/lib/chains";
+11:import {
+--- frontend/app/strategies/tabs/PoolsTab.tsx
+lines=473
+useState=5
+useEffect=2
+fetch=2
+imports=27:import { useEffect, useMemo, useState } from "react";
+29:import { Badge } from "@/components/ui/badge";
+30:import { Button } from "@/components/ui/button";
+31:import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+32:import { Input } from "@/components/ui/input";
+33:import {
+40:import {
+48:import { useChains } from "@/lib/chains";
+49:import { shortAddr } from "@/lib/format";
+--- frontend/app/wallets/WalletsClient.tsx
+lines=165
+useState=2
+useEffect=1
+fetch=0
+imports=3:import { useState, useEffect, useCallback } from "react";
+4:import { AlertCircle, RefreshCw, Wallet } from "lucide-react";
+5:import { Badge } from "@/components/ui/badge";
+6:import { WalletDetailDialog } from "@/components/WalletDetailDialog";
+7:import { getWallets, type WalletRow } from "@/lib/api/wallets";
+--- frontend/lib/useWebSocket.ts
+lines=241
+useState=1
+useEffect=2
+fetch=0
+imports=20:import { useEffect, useRef, useState, useCallback } from "react";
+--- frontend/lib/hooks/useOpportunitiesStream.ts
+lines=322
+useState=1
+useEffect=2
+fetch=1
+imports=18:import { useEffect, useRef, useState, useCallback, startTransition } from "react";
+19:import { io } from "socket.io-client";
+20:import {
+25:import { getAdminToken } from "@/lib/admin-token";
+--- frontend/lib/store/useOmniOpportunities.ts
+lines=187
+useState=0
+useEffect=3
+fetch=1
+imports=18:import { useEffect, useRef, useCallback, startTransition } from "react";
+19:import { io } from "socket.io-client";
+20:import { createOpportunitySocket, type WsStatus } from "@/features/opportunities/socket-lifecycle";
+21:import { getAdminToken } from "@/lib/admin-token";
+22:import { useOmniStore } from "./omni-store";
+23:import { mapToOmniOpportunity, type OmniOpportunity } from "./types";

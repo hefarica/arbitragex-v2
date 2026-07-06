@@ -1,0 +1,15 @@
+{
+  "name": "viem-websocket-resilience",
+  "version": "1.0.0",
+  "status": "active",
+  "source_urls": ["https://github.com/wevm/viem/issues/2563", "https://github.com/wevm/viem/issues/2325"],
+  "domains": ["Frontend", "TypeScript", "viem"],
+  "activation_triggers": ["WebSocket stuck", "viem client setup", "Stale data on UI"],
+  "forbidden_uses": [],
+  "project_path": "C:\\Users\\HFRC\\Desktop\\arbitragex_v2_productivo_full",
+  "skill_path": "C:\\Users\\HFRC\\Desktop\\arbitragex_v2_productivo_full\\.agents\\skills\\viem-websocket-resilience",
+  "safety_level": "controlled",
+  "requires_human_review": false,
+  "created_at": "2026-05-03T02:55:00Z",
+  "updated_at": "2026-05-03T02:55:00Z"
+}

@@ -25,8 +25,15 @@ export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
   }, []);
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
-      <div className="flex h-16 items-center gap-3 px-4 lg:px-6">
+    <header
+      className="sticky top-0 z-40 w-full border-b backdrop-blur-[14px] saturate-[1.3]"
+      style={{
+        backgroundColor: 'var(--header-bg)',
+        borderColor: 'var(--border)',
+        padding: '18px 40px',
+      }}
+    >
+      <div className="flex h-[calc(64px-36px)] items-center gap-6">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           {/*
            * NOTE: SheetTrigger WITHOUT asChild — Radix Dialog.Trigger already
@@ -65,7 +72,7 @@ export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
           </span>
           <div className="flex flex-col -space-y-0.5 leading-none">
             <span className="text-sm font-semibold tracking-tight">
-              Quantum<span className="text-primary">X</span>
+              Quantum<span className="text-primary wordmark-glow">X</span>
             </span>
             <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
               control plane

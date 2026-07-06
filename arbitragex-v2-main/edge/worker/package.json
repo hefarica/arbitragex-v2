@@ -1,0 +1,23 @@
+{
+  "name": "@arbx/edge-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ArbitrageX v2 — edge Worker (Cloudflare). JWT auth, rate-limit, read-cache, sanitization, proxy to api-server.",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "hono": "^4.12.18"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260510.1",
+    "typescript": "^5.4.5",
+    "vitest": "^1.5.0",
+    "wrangler": "^3.114.17"
+  }
+}

@@ -45,9 +45,9 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
-  --font-data: var(--font-space-mono), var(--font-geist-mono), ui-monospace, monospace;
+  --font-sans: var(--font-inter), 'Inter', ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-space-mono), 'Space Mono', ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
+  --font-data: var(--font-space-mono), 'Space Mono', ui-monospace, monospace;
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -62,42 +62,43 @@
   /* Particle-sphere accent — ROYAL BLUE in the light theme (HeroSphere). */
   --sphere-rgb: 36 74 235;
 
-  --background: oklch(0.985 0.004 240); /* wonderful white — faint cool tint */
+  --background: oklch(0.985 0.004 240);
   --foreground: oklch(0.18 0.04 260);
 
-  --card: oklch(1 0.003 240 / 0.65); /* airy glass over the wonderful-white base */
+  --card: oklch(1 0.003 240 / 0.55);
   --card-foreground: oklch(0.18 0.04 260);
 
   --popover: oklch(1 0 0 / 95%);
   --popover-foreground: oklch(0.18 0.04 260);
 
-  --primary: oklch(0.25 0.05 260);
+  --primary: oklch(0.50 0.22 263);
+  --primary-2: oklch(0.55 0.20 240);
   --primary-foreground: oklch(1 0 0);
 
   --secondary: oklch(0.96 0.015 220);
   --secondary-foreground: oklch(0.18 0.04 260);
 
   --muted: oklch(0.96 0.015 220);
-  --muted-foreground: oklch(0.45 0.025 220);
+  --muted-foreground: oklch(0.45 0.025 250);
 
   --accent: oklch(0.92 0.04 215);
   --accent-foreground: oklch(0.18 0.04 260);
 
-  --destructive: oklch(0.55 0.13 180);
+  --destructive: oklch(0.50 0.22 18);
   --destructive-foreground: oklch(1 0 0);
 
-  --success: oklch(0.62 0.17 145); /* Fluorescent Green */
+  --success: oklch(0.45 0.17 152);
   --success-foreground: oklch(1 0 0);
 
-  --warning: oklch(0.75 0.18 85);
+  --warning: oklch(0.55 0.16 75);
   --warning-foreground: oklch(0.18 0.04 260);
 
   --info: oklch(0.60 0.15 220);
   --info-foreground: oklch(1 0 0);
 
-  --border: oklch(0.92 0.01 220);
+  --border: oklch(0.30 0.04 260 / 0.14);
   --input: oklch(0.94 0.01 220);
-  --ring: oklch(0.25 0.05 260);
+  --ring: oklch(0.50 0.22 263);
 
   --chart-1: oklch(0.60 0.15 220);
   --chart-2: oklch(0.62 0.17 145);
@@ -120,10 +121,25 @@
   --bg-grad-1: oklch(0.99 0.004 240);   /* lightest white (left) */
   --bg-grad-2: oklch(0.965 0.008 250);
   --bg-grad-3: oklch(0.935 0.013 252);  /* coolest white (right) */
-  --glow-1: oklch(0.86 0.07 250 / 0.40);
-  --glow-2: oklch(0.92 0.04 232 / 0.32);
-  --glow-3: oklch(0.96 0.02 220 / 0.26);
   --bg-grad: linear-gradient(90deg, var(--bg-grad-1) 0%, var(--bg-grad-2) 55%, var(--bg-grad-3) 100%);
+  /* Aurora glows — exact mockup values */
+  --glow-1: oklch(0.78 0.13 258 / 0.40);
+  --glow-2: oklch(0.82 0.10 235 / 0.30);
+  --glow-3: oklch(0.88 0.07 220 / 0.24);
+  /* Mockup parity: grain, header, shadows */
+  --grain-opacity: 0.26;
+  --ticker-bg: oklch(0.99 0.004 240 / 0.70);
+  --header-bg: oklch(0.985 0.004 240 / 0.62);
+  --hairline: inset 0 1px 0 0 oklch(0.55 0.10 255 / 0.22);
+  --shadow: 0 10px 32px -16px oklch(0.40 0.10 255 / 0.22);
+  --xray-bg: oklch(0.97 0.012 250 / 0.94);
+
+  /* Wordmark glow — premium text shadow for QuantumX logo (mockup parity) */
+  --wordmark-glow: 0 0 18px oklch(0.50 0.22 263 / 0.30);
+
+  /* Easings — refined motion curves (mockup parity) */
+  --ease-expo: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-sharp: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* Dark mode — "TradePro" premium fintech theme:
@@ -133,46 +149,46 @@
   /* Particle-sphere accent — LIGHT (pale blue-white) in the dark theme (HeroSphere). */
   --sphere-rgb: 206 224 255;
 
-  --background: oklch(0.14 0.05 264);
+  --background: oklch(0.18 0.05 264);
   --foreground: oklch(0.98 0.012 250);
 
-  --card: oklch(0.205 0.06 263 / 0.19); /* 81% transparent royal-blue glass over the moving aurora */
+  --card: oklch(0.24 0.06 258 / 0.19);
   --card-foreground: oklch(0.98 0.012 250);
 
   --popover: oklch(0.17 0.06 263 / 96%);
   --popover-foreground: oklch(0.98 0.012 250);
 
   /* Electric royal blue — the TradePro accent. */
-  --primary: oklch(0.62 0.20 263);
-  --primary-2: oklch(0.78 0.14 235); /* gradient partner: light cyan-blue */
+  --primary: oklch(0.62 0.22 263);
+  --primary-2: oklch(0.78 0.14 235);
   --primary-foreground: oklch(0.99 0.008 250);
 
   --secondary: oklch(0.23 0.06 263);
   --secondary-foreground: oklch(0.96 0.012 250);
 
   --muted: oklch(0.22 0.06 263);
-  --muted-foreground: oklch(0.69 0.04 255);
+  --muted-foreground: oklch(0.69 0.04 250);
 
   --accent: oklch(0.32 0.09 263);
   --accent-foreground: oklch(0.98 0.012 250);
 
   /* Red for destructive / sell-side. */
-  --destructive: oklch(0.62 0.20 18);
+  --destructive: oklch(0.66 0.22 18);
   --destructive-foreground: oklch(0.99 0.008 250);
 
   /* Green for success / buy-side. */
-  --success: oklch(0.70 0.17 152);
+  --success: oklch(0.77 0.18 152);
   --success-foreground: oklch(0.14 0.05 263);
 
-  --warning: oklch(0.80 0.16 80);
+  --warning: oklch(0.82 0.16 80);
   --warning-foreground: oklch(0.14 0.05 263);
 
   --info: oklch(0.66 0.16 256);
   --info-foreground: oklch(0.14 0.05 263);
 
-  --border: oklch(0.29 0.05 263);
+  --border: oklch(0.70 0.10 250 / 0.16);
   --input: oklch(0.27 0.05 263);
-  --ring: oklch(0.62 0.20 263);
+  --ring: oklch(0.62 0.22 263);
 
   --chart-1: oklch(0.62 0.20 263);
   --chart-2: oklch(0.70 0.17 152);
@@ -194,12 +210,23 @@
   --bg-grad-1: oklch(0.16 0.05 266);   /* darkest — royal deep (right) */
   --bg-grad-2: oklch(0.24 0.11 258);   /* mid — royal */
   --bg-grad-3: oklch(0.46 0.19 250);   /* lightest — sky blue (left) */
-  /* Aurora radial glows — vivid royal blue (the "alive" accent). */
+  /* Aurora radial glows — vivid royal blue (the "alive" accent). Exact mockup values. */
   --glow-1: oklch(0.55 0.24 263 / 0.45);
   --glow-2: oklch(0.70 0.16 240 / 0.32);
   --glow-3: oklch(0.84 0.09 220 / 0.28);
   /* Horizontal gradient (darker right): lightest left → darkest right. */
   --bg-grad: linear-gradient(90deg, var(--bg-grad-3) 0%, var(--bg-grad-2) 55%, var(--bg-grad-1) 100%);
+
+  /* Mockup parity: grain, header, shadows, xray */
+  --grain-opacity: 0.5;
+  --ticker-bg: oklch(0.16 0.05 266 / 0.55);
+  --header-bg: oklch(0.18 0.05 264 / 0.40);
+  --hairline: inset 0 1px 0 0 oklch(0.98 0.012 250 / 0.16);
+  --shadow: 0 8px 30px -14px oklch(0.02 0.02 266 / 0.5);
+  --xray-bg: oklch(0.16 0.06 263 / 0.92);
+
+  /* Wordmark glow — dark theme intensified (mockup parity) */
+  --wordmark-glow: 0 0 22px oklch(0.62 0.22 263 / 0.55);
 }
 
 @layer base {
@@ -448,4 +475,187 @@ html:not(.dark) body::before {
 }
 ::-webkit-scrollbar-thumb {
   @apply bg-muted-foreground/20 rounded-full hover:bg-muted-foreground/40 transition-colors;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MOCKUP PREMIUM VISUAL ENHANCEMENTS (Phase 9 — 2026-07-06)
+   Refinements visuales quirúrgicos para parity con mockup-premium.html
+   Sin cambios estructurales, solo polish CSS.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Wordmark glow effect ───────────────────────────────────────────────── */
+.wordmark-glow {
+  text-shadow: var(--wordmark-glow);
+}
+
+/* ── Shimmer effect for stat cards (premium data visualization) ─────────── */
+.shimmer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    115deg,
+    transparent 30%,
+    color-mix(in oklab, var(--foreground) 14%, transparent) 50%,
+    transparent 70%
+  );
+  transform: translateX(-120%);
+  animation: shimmer-sweep 3.4s var(--ease-sharp) 1.2s infinite;
+}
+
+@keyframes shimmer-sweep {
+  0%,
+  80% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer {
+    animation: none;
+  }
+}
+
+/* ── Enhanced nav item hover glow (sidebar navigation) ──────────────────── */
+.nav-glow {
+  transition: color 180ms, background-color 180ms, text-shadow 180ms;
+}
+.nav-glow:hover {
+  text-shadow: 0 0 14px color-mix(in oklab, var(--primary-2) 80%, transparent);
+}
+.nav-glow:hover .nav-icon {
+  text-shadow: 0 0 12px var(--primary);
+}
+
+/* ── Film grain overlay (premium texture, opt-in via class) ─────────────── */
+.grain-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  opacity: var(--grain-opacity, 0.26);
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/></svg>");
+  transition: opacity 320ms var(--ease-expo);
+}
+.dark .grain-overlay {
+  opacity: var(--grain-opacity, 0.5);
+}
+
+/* ── X-Ray card hover effect (opportunity cards) ────────────────────────── */
+.xray-panel {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  clip-path: inset(100% 0 0 0);
+  transition: clip-path 320ms var(--ease-sharp);
+}
+.group:hover .xray-panel,
+[data-hoverable]:hover .xray-panel {
+  clip-path: inset(0 0 0 0);
+}
+
+/* Fade content on hover to reveal x-ray */
+.xray-fade {
+  transition: opacity 320ms;
+}
+.group:hover .xray-fade,
+[data-hoverable]:hover .xray-fade {
+  opacity: 0.35;
+}
+
+/* ── Hairline shadow utility (mockup parity) ───────────────────────────── */
+.hairline-shadow {
+  box-shadow: var(--hairline, inset 0 1px 0 0 oklch(0.98 0.012 250 / 0.16)),
+    var(--shadow, 0 8px 30px -14px oklch(0.02 0.02 266 / 0.5));
+}
+
+/* ── Custom cursor (desktop only, accessibility guarded) ────────────────── */
+@media (pointer: fine) {
+  .custom-cursor {
+    cursor: none;
+  }
+}
+
+.cur-dot,
+.cur-ring {
+  position: fixed;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 9999;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+}
+
+.cur-dot {
+  width: 7px;
+  height: 7px;
+  background: var(--primary-2);
+  mix-blend-mode: screen;
+  transition: transform 140ms var(--ease-expo);
+}
+
+.cur-ring {
+  width: 38px;
+  height: 38px;
+  border: 1.5px solid var(--primary);
+  opacity: 0.7;
+  transition: width 220ms var(--ease-sharp), height 220ms var(--ease-sharp),
+    opacity 220ms;
+}
+
+body.is-interactive .cur-dot {
+  transform: translate(-50%, -50%) scale(2.5);
+  background: var(--primary);
+}
+
+body.is-interactive .cur-ring {
+  width: 56px;
+  height: 56px;
+  opacity: 0.35;
+}
+
+/* Disable custom cursor on touch devices and reduced motion */
+@media (pointer: coarse), (prefers-reduced-motion: reduce) {
+  .cur-dot,
+  .cur-ring {
+    display: none !important;
+  }
+}
+
+/* ── Sphere Aura (mockup parity) ──────────────────────────────────────────
+   Radial glow behind the HeroSphere particle globe. */
+.sphere-aura {
+  position: absolute;
+  right: -120px;
+  top: -80px;
+  width: 540px;
+  height: 540px;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(
+    circle at 60% 40%,
+    color-mix(in oklab, var(--primary) 22%, transparent),
+    transparent 65%
+  );
+  filter: blur(20px);
+}
+
+/* ── Character animation (hero text reveal) ─────────────────────────────── */
+.char-reveal {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(110%) rotateX(-90deg);
+  animation: char-in 520ms var(--ease-sharp) forwards;
+}
+
+@keyframes char-in {
+  to {
+    opacity: 1;
+    transform: translateY(0) rotateX(0);
+  }
 }

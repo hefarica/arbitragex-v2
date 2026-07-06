@@ -1,0 +1,88 @@
+{
+  "uid": "arbx-platform-overview",
+  "title": "ArbitrageX — Platform Overview",
+  "tags": ["arbitragex", "platform"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Services up",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum(arbx_service_up)", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "green", "value": 5 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 2, "type": "stat", "title": "Kill-switch",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "max(arbx_killswitch_enabled)", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "disabled", "color": "green" }, "1": { "text": "ARMED", "color": "red" } } }
+          ],
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3, "type": "stat", "title": "Opportunities / min (last 5m)",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum(rate(arbx_opportunity_total{status=\"detected\"}[5m])) * 60", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "/min", "decimals": 1, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "gray", "value": null }, { "color": "blue", "value": 0.01 }] } } },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4, "type": "stat", "title": "Executions / hour (all statuses)",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum(rate(arbx_execution_total[5m])) * 3600", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "/h", "decimals": 1, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "gray", "value": null }, { "color": "blue", "value": 0.01 }] } } },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "HTTP request rate (by service)",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum by (service) (rate(arbx_http_requests_total[1m]))", "legendFormat": "{{service}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "lineInterpolation": "smooth", "lineWidth": 2, "fillOpacity": 10 } } }
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "HTTP 5xx rate (by service)",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum by (service) (rate(arbx_http_requests_total{status=~\"5..\"}[1m]))", "legendFormat": "{{service}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "lineInterpolation": "smooth", "lineWidth": 2, "fillOpacity": 20 }, "color": { "mode": "palette-classic" } } }
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "p95 request latency (by service)",
+      "gridPos": { "x": 0, "y": 12, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum by (service, le) (rate(arbx_http_request_duration_seconds_bucket[5m])))", "legendFormat": "{{service}} p95", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineInterpolation": "smooth", "lineWidth": 2 } } }
+    }
+  ]
+}

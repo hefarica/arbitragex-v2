@@ -617,7 +617,7 @@ async fn load_pools_from_pg(pg: &PgPool, chain_id: u64) -> anyhow::Result<Vec<Po
         });
     }
 
-    Ok(out);
+    Ok(out)
 }
 
 /// Extract `flags->>'classification'` (SAFE/WARN/DROP) from a cached

@@ -1,0 +1,4 @@
+?? .audit/
+?? monitoring/alertmanager/alertmanager.yml.backup.20260517T144000Z
+?? monitoring/vault/vault-config.hcl
+?? vault_init.json

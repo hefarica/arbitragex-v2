@@ -1,0 +1,194 @@
+name: Ω-S5++ APEX Acción A+ v2 — Alineación metadata Git (con fetch de objetos)
+
+# Diferencia vs v1: el objeto 6c92210 NO existe localmente en el VPS.
+# Solución: tras reapuntar origin a GitHub, hacer git fetch origin main
+# para descargar los objetos faltantes, ANTES de update-ref y reset --mixed.
+# Sigue cumpliendo: sin --hard, sin stash, sin tocar archivos físicos.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_sovereign:
+        description: 'Confirma "EJECUTA" para detonar'
+        required: true
+        default: 'EJECUTA'
+
+concurrency:
+  group: deploy-arbx
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: 195.201.235.70
+  REPO_PATH: /opt/arbitragex-v2
+  TARGET_SHA: 6c922106fb6db30152d011ef109da78af16ece23
+  GITHUB_REMOTE: https://github.com/hefarica/arbitragex-v2.git
+
+jobs:
+  action-a-plus-v2:
+    name: Acción A+ v2 — fetch + alignment
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/arbx_key
+          chmod 600 ~/.ssh/arbx_key
+          ssh-keyscan -H ${{ env.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: "[1] FOTO FORENSE — Pre-vuelo"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set +e
+            cd ${{ env.REPO_PATH }}
+            echo "═══ FOTO FORENSE — ESTADO ACTUAL ═══"
+            echo "── git remote -v ──"
+            git remote -v
+            echo ""
+            echo "── git rev-parse HEAD ──"
+            git rev-parse HEAD
+            echo ""
+            echo "── git status --short ──"
+            git status --short
+            echo ""
+            echo "── git stash list ──"
+            git stash list
+            echo ""
+            echo "── ¿Existe localmente el objeto TARGET_SHA? ──"
+            if git cat-file -e ${{ env.TARGET_SHA }} 2>/dev/null; then
+              echo "✅ El objeto ${{ env.TARGET_SHA }} ya existe localmente"
+            else
+              echo "⚠ El objeto ${{ env.TARGET_SHA }} NO existe localmente — requiere fetch"
+            fi
+          REMOTE
+
+      - name: "[2a] Fetch de objetos faltantes desde GitHub"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set -e
+            cd ${{ env.REPO_PATH }}
+            echo "═══ FETCH (solo objetos, no actualiza refs locales aún) ═══"
+            # El origin ya quedó reapuntado a GitHub por el run previo.
+            # Verificamos por si acaso:
+            CURRENT=$(git remote get-url origin)
+            echo "── origin actual: $CURRENT ──"
+            if [ "$CURRENT" != "${{ env.GITHUB_REMOTE }}" ]; then
+              git remote set-url origin ${{ env.GITHUB_REMOTE }}
+              echo "✅ origin reapuntado a ${{ env.GITHUB_REMOTE }}"
+            fi
+            echo ""
+            echo "── git fetch origin main (descargando objetos) ──"
+            # --no-tags para evitar arrastrar tags huérfanos
+            # depth limitado para minimizar tráfico
+            git fetch --no-tags --depth=50 origin main 2>&1 | tail -20
+            echo ""
+            echo "── Verificar que el objeto TARGET_SHA ya está local ──"
+            if git cat-file -e ${{ env.TARGET_SHA }} 2>/dev/null; then
+              echo "✅ Objeto ${{ env.TARGET_SHA }} descargado correctamente"
+              git log -1 --oneline ${{ env.TARGET_SHA }}
+            else
+              echo "❌ ABORT: TARGET_SHA sigue faltando tras fetch"
+              echo "── últimos commits en FETCH_HEAD ──"
+              git log -5 --oneline FETCH_HEAD
+              exit 1
+            fi
+          REMOTE
+
+      - name: "[2b] CORRECCIÓN DE METADATA — Acción A+ (refs + reset --mixed)"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set -e
+            cd ${{ env.REPO_PATH }}
+            echo "═══ CORRECCIÓN DE METADATA ═══"
+            echo ""
+            echo "── [2b.1] git update-ref refs/heads/main → TARGET_SHA ──"
+            git update-ref "refs/heads/main" "${{ env.TARGET_SHA }}"
+            echo "✅ refs/heads/main = ${{ env.TARGET_SHA }}"
+            echo ""
+            echo "── [2b.2] git symbolic-ref HEAD → refs/heads/main ──"
+            git symbolic-ref HEAD "refs/heads/main"
+            echo "✅ HEAD → refs/heads/main"
+            echo ""
+            echo "── [2b.3] git reset --mixed (sincroniza índice, working tree intacto) ──"
+            git reset --mixed "${{ env.TARGET_SHA }}"
+            echo "✅ índice sincronizado"
+          REMOTE
+
+      - name: "[3] VERIFICACIÓN DE ESTADO LIMPIO"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set +e
+            cd ${{ env.REPO_PATH }}
+            echo "═══ VERIFICACIÓN POST-CORRECCIÓN ═══"
+            echo ""
+            HEAD_NOW=$(git rev-parse HEAD)
+            echo "── git rev-parse HEAD: $HEAD_NOW ──"
+            if [ "$HEAD_NOW" = "${{ env.TARGET_SHA }}" ]; then
+              echo "✅ HEAD MATCH con TARGET_SHA"
+            else
+              echo "❌ HEAD MISMATCH — esperado: ${{ env.TARGET_SHA }}"
+              exit 1
+            fi
+            echo ""
+            echo "── git remote -v ──"
+            git remote -v
+            echo ""
+            echo "── git status --short (debe estar limpio o casi limpio) ──"
+            STATUS_OUT=$(git status --short)
+            if [ -z "$STATUS_OUT" ]; then
+              echo "✅ Working tree COMPLETAMENTE LIMPIO"
+            else
+              echo "$STATUS_OUT"
+              MOD=$(git diff --name-only | wc -l)
+              UNT=$(git ls-files --others --exclude-standard | wc -l)
+              echo ""
+              echo "Modified: $MOD | Untracked: $UNT"
+              echo "(Las 5 reparaciones y los 3 workflows ya NO deben aparecer)"
+            fi
+            echo ""
+            echo "── git log -1 --oneline (confirma mensaje del commit) ──"
+            git log -1 --oneline
+            echo ""
+            echo "── git stash list (debe seguir intacto) ──"
+            git stash list
+          REMOTE
+
+      - name: "[4] VERIFICACIÓN DE SUPERVIVENCIA EN PRODUCCIÓN"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set +e
+            echo "═══ SUPERVIVENCIA PRODUCTIVA ═══"
+            echo ""
+            echo "── docker ps ──"
+            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | head -20
+            echo ""
+            echo "── HTTP probes — puertos directos ──"
+            C1=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://localhost:5173/apex/allocator)
+            C2=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://localhost:5173/)
+            C3=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://localhost:8787/health)
+            echo "  http://localhost:5173/apex/allocator → $C1"
+            echo "  http://localhost:5173/               → $C2"
+            echo "  http://localhost:8787/health         → $C3"
+            echo ""
+            echo "── HTTP probes — vía nginx host :80 ──"
+            for p in / /api/health /chains /apex/allocator /omega-s5/core; do
+              code=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://localhost$p)
+              echo "  $code  http://localhost$p"
+            done
+            echo ""
+            FAIL=0
+            [ "$C1" != "200" ] && FAIL=1 && echo "❌ /apex/allocator no es 200"
+            [ "$C2" != "200" ] && FAIL=1 && echo "❌ / no es 200"
+            [ "$C3" != "200" ] && FAIL=1 && echo "❌ /health no es 200"
+            if [ "$FAIL" = "1" ]; then
+              exit 1
+            fi
+            echo "✅ Todos los endpoints críticos retornan 200"
+          REMOTE
+
+      - name: "[FINAL] Cleanup SSH key"
+        if: always()
+        run: rm -f ~/.ssh/arbx_key

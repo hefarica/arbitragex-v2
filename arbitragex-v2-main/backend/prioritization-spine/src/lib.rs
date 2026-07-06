@@ -1,0 +1,28 @@
+pub mod config_aware;
+pub mod decision;
+pub mod erc20_storage;
+pub mod errors;
+pub mod evidence;
+pub mod feedback;
+pub mod gates;
+pub mod lazy_db;
+pub mod round_trip_executor;
+pub mod route_plan;
+pub mod scoring;
+pub mod simulator;
+pub mod strategy_config_gate;
+pub mod strategy_scores_db;
+pub mod swap_encoder;
+pub mod types;
+
+pub use config_aware::{ConfigAwareEvaluator, ConfigGateOutcome, NetworkSignals};
+pub use decision::*;
+pub use errors::*;
+pub use evidence::*;
+pub use feedback::{AdaptiveSignal, FeedbackChannel, SIGNAL_TTL};
+pub use gates::*;
+pub use route_plan::{RouteLeg, RoutePlan};
+pub use scoring::*;
+pub use strategy_config_gate::{GateOutcome, StrategyConfigGate};
+pub use strategy_scores_db::{StrategyFailRate, StrategyScoresCache};
+pub use types::*;

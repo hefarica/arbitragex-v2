@@ -1,0 +1,130 @@
+asyncapi: '2.6.0'
+info:
+  title: arbitragex-v2 WebSocket API
+  version: 0.1.0
+  description: |
+    Real-time WebSocket channels for ArbitrageX V2.
+    Delivers opportunity streams, execution updates, and system events.
+  contact:
+    name: ArbitrageX SRE
+    email: sre@arbitragex.io
+servers:
+  local:
+    url: ws://localhost:8081
+    protocol: ws
+    description: Local development WebSocket
+  staging:
+    url: ws://195.201.235.70:8081
+    protocol: ws
+    description: Staging WebSocket
+  production:
+    url: wss://ws.arbitragex-v2.io
+    protocol: wss
+    description: Production WebSocket (TLS)
+channels:
+  opportunities:
+    address: /ws/opportunities
+    description: Real-time arbitrage opportunity feed
+    parameters:
+      chain:
+        description: Filter by chain ID (optional)
+        schema:
+          type: string
+    messages:
+      opportunity:
+        name: OpportunityEvent
+        contentType: application/json
+        payload:
+          type: object
+          required:
+            - event
+            - data
+            - ts
+          properties:
+            event:
+              type: string
+              enum: [opportunity.discovered, opportunity.expired, opportunity.updated]
+            data:
+              type: object
+              properties:
+                id: { type: string, format: uuid }
+                chain: { type: string }
+                tokenIn: { type: string }
+                tokenOut: { type: string }
+                profitBps: { type: integer }
+                dexA: { type: string }
+                dexB: { type: string }
+            ts:
+              type: string
+              format: date-time
+  executions:
+    address: /ws/executions
+    description: Trade execution lifecycle events
+    messages:
+      execution:
+        name: ExecutionEvent
+        contentType: application/json
+        payload:
+          type: object
+          required:
+            - event
+            - executionId
+            - ts
+          properties:
+            event:
+              type: string
+              enum: [execution.pending, execution.submitted, execution.confirmed, execution.failed, execution.reverted]
+            executionId:
+              type: string
+              format: uuid
+            txHash:
+              type: string
+            chain:
+              type: string
+            gasUsed:
+              type: string
+            effectiveProfitBps:
+              type: integer
+            revertReason:
+              type: string
+            ts:
+              type: string
+              format: date-time
+  system:
+    address: /ws/system
+    description: System-level events and guard-state changes
+    messages:
+      system:
+        name: SystemEvent
+        contentType: application/json
+        payload:
+          type: object
+          required:
+            - event
+            - ts
+          properties:
+            event:
+              type: string
+              enum:
+                - system.guard.opened
+                - system.guard.closed
+                - system.guard.half_opened
+                - system.killswitch.activated
+                - system.killswitch.deactivated
+                - system.config.changed
+                - system.heartbeat
+            reason:
+              type: string
+            triggeredBy:
+              type: string
+            configVersion:
+              type: string
+            ts:
+              type: string
+              format: date-time
+components:
+  securitySchemes:
+    AdminToken:
+      type: apiKey
+      in: header
+      name: x-admin-token

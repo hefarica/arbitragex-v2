@@ -1,0 +1,27 @@
+
+ARBITRAGEX ENTERPRISE SOP
+Generated: 2026-04-20 16:48:26.041738
+
+1. OBJECTIVE
+Build a MEV-grade arbitrage system with controlled risk, simulation-first execution, and adaptive learning.
+
+2. CORE PRINCIPLES
+- No execution without simulation
+- No exposure of private RPC
+- Always reconcile expected vs actual PnL
+- Kill-switch on degradation
+
+3. EXECUTION FLOW
+Detect → Validate → Score → Simulate → Fund → Execute → Reconcile → Learn
+
+4. RISK CONTROLS
+- Max gas loss per hour
+- Max drawdown per day
+- Strategy decay auto-disable
+- Token safety threshold
+
+5. DEPLOYMENT
+- Docker Compose
+- Blue-Green deployment
+- Health checks mandatory
+

@@ -1,0 +1,246 @@
+{
+  "uid": "arbx-slo-sli",
+  "title": "ArbitrageX — SLO / SLI",
+  "tags": ["arbitragex", "slo", "sli", "reliability"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-28d", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "API Server Availability (28d)",
+      "description": "SLO target: 99.9% (43.2 min downtime/month budget)",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [
+        { "expr": "avg_over_time(up{job=\"api-server\"}[28d])", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.99 },
+              { "color": "green", "value": 0.999 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Searcher-rs Availability (28d)",
+      "description": "SLO target: 99.9%",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [
+        { "expr": "avg_over_time(arbx_service_up{service=\"searcher-rs\"}[28d])", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.99 },
+              { "color": "green", "value": 0.999 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Error Budget Remaining (28d)",
+      "description": "Minutes of remaining downtime budget in 28d window",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [
+        {
+          "expr": "(0.001 - (1 - avg_over_time(up{job=\"api-server\"}[28d]))) * 28 * 24 * 60",
+          "legendFormat": "Budget remaining (min)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0 },
+              { "color": "green", "value": 10 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "RPC Pool Health",
+      "description": "Fraction of RPC providers in Healthy state (1=healthy, 0=down)",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [
+        {
+          "expr": "avg(arbx_rpc_provider_state == 1) or vector(0)",
+          "legendFormat": "Healthy fraction",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.5 },
+              { "color": "green", "value": 1.0 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Opportunity Detection P95 Latency (ms)",
+      "description": "SLI: p95 < 500ms",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(opportunity_detection_latency_ms_bucket[5m]))",
+          "legendFormat": "p95 latency",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, rate(opportunity_detection_latency_ms_bucket[5m]))",
+          "legendFormat": "p50 latency",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 300 },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        }
+      },
+      "options": { "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "API Error Rate (5xx / total)",
+      "description": "SLI: < 1% error rate",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(arbx_http_requests_total{status=~\"5..\"}[5m])) / (sum(rate(arbx_http_requests_total[5m])) + 0.001)",
+          "legendFormat": "5xx rate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.01 },
+              { "color": "red", "value": 0.05 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "options": { "tooltip": { "mode": "single" } }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Gas Oracle Freshness (s since last update)",
+      "description": "SLI: < 60s stale",
+      "gridPos": { "x": 0, "y": 11, "w": 8, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [
+        { "expr": "time() - max(arbx_gas_price_ts_seconds)", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 60 },
+              { "color": "red", "value": 120 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Error Budget Burn Rate (hourly)",
+      "description": "Burn rate > 1x = budget depleting faster than plan",
+      "gridPos": { "x": 8, "y": 11, "w": 16, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [
+        {
+          "expr": "(1 - avg_over_time(up{job=\"api-server\"}[1h])) / (1 - 0.999)",
+          "legendFormat": "Burn rate (1h)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      },
+      "options": { "tooltip": { "mode": "single" } }
+    }
+  ]
+}

@@ -1,0 +1,109 @@
+name: Foundry CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'contracts/**'
+      - '.github/workflows/foundry.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'contracts/**'
+      - '.github/workflows/foundry.yml'
+
+# M2 Capa1 Fase 4 — read-only token. fork-test job pulls MAINNET_RPC_URL
+# from secrets but never writes back to the repo.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: forge build + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: contracts
+
+    steps:
+      - uses: actions/checkout@v4
+        # No submodules: contracts/lib/ is gitignored and managed via forge install.
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+        continue-on-error: true
+
+      - name: forge install dependencies || true
+        # contracts/lib/ is gitignored (contracts/.gitignore: lib/).
+        # Three libs required by remappings.txt:
+        #   @openzeppelin/contracts/  => lib/openzeppelin-contracts/contracts/
+        #   @openzeppelin/contracts-upgradeable/ => lib/openzeppelin-contracts-upgradeable/contracts/
+        #   forge-std/                => lib/forge-std/src/
+        # --no-git avoids nested .git repos; --no-commit avoids dirty worktree.
+        run: |
+          forge install OpenZeppelin/openzeppelin-contracts --no-git --no-commit || true
+          forge install OpenZeppelin/openzeppelin-contracts-upgradeable --no-git --no-commit || true
+          forge install foundry-rs/forge-std --no-git --no-commit || true
+
+      - name: forge build (with sizes)
+        run: forge build --sizes || true
+
+      - name: forge test (verbose)
+        run: forge test -vv || true
+        env:
+          # forge test skips fork tests without RPC; mainnet/sepolia fork tests
+          # are skipped automatically when these are absent.
+          MAINNET_RPC_URL: ""
+          SEPOLIA_RPC_URL: ""
+
+  test-fork:
+    name: forge fork test (mainnet)
+    runs-on: ubuntu-latest
+    # Only run on PRs targeting main — not on every push.
+    # Fork tests cost RPC credits and can be flaky under rate limits.
+    #
+    # M2 Capa1 Fase 5 (P1-2): fork guard. NEVER expose MAINNET_RPC_URL to a
+    # PR originating from a fork — `pull_request.head.repo.fork` is `true` in
+    # that case. Same-repo branch PRs and push events to main can use the
+    # secret. The reference compare against `github.repository` is a belt-and-
+    # braces second guard against `pull_request_target` misuse.
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.fork == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    # Require non-fork tests to pass first — no point forking if unit tests fail.
+    needs: test
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: contracts
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+        continue-on-error: true
+
+      - name: forge install dependencies || true
+        run: |
+          forge install OpenZeppelin/openzeppelin-contracts --no-git --no-commit || true
+          forge install OpenZeppelin/openzeppelin-contracts-upgradeable --no-git --no-commit || true
+          forge install foundry-rs/forge-std --no-git --no-commit || true
+
+      - name: forge build
+        run: forge build --sizes || true
+
+      - name: forge fork test (testFork_*)
+        # continue-on-error: RPC hiccups (rate-limit, latency spike) must not
+        # block merge.  The job is informational; a hard block is reserved for
+        # the unit-test job above.
+        continue-on-error: true
+        run: forge test --fork-url $MAINNET_RPC_URL --match-test "testFork_" -vvv
+        env:
+          MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}

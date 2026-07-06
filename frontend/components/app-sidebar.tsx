@@ -131,6 +131,8 @@ function NavList({
                   !collapsed &&
                   "bg-primary/15 text-foreground border border-primary/30 shadow-[inset_0_0_0_1px_rgba(96,165,250,0.18),0_0_22px_-6px_rgba(37,99,235,0.45)]",
                 active && collapsed && "bg-primary/20 text-foreground",
+                // Enhanced hover glow (mockup parity)
+                !active && "nav-glow",
               )}
               aria-current={active ? "page" : undefined}
               aria-label={collapsed ? item.label : undefined}
@@ -142,7 +144,7 @@ function NavList({
                   className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r-full bg-primary shadow-[0_0_8px_rgba(59,130,246,0.6)]"
                 />
               )}
-              <Icon className={cn("size-4 shrink-0 transition-colors", active && "text-primary")} />
+              <Icon className={cn("size-4 shrink-0 transition-colors nav-icon", active && "text-primary")} />
               {!collapsed && <span className="truncate">{item.label}</span>}
               {showCredsBadge ? (
                 <span
@@ -192,13 +194,17 @@ export function AppSidebar({
   return (
     <aside
       className={cn(
-        "hidden lg:flex lg:flex-col lg:sticky lg:top-16 lg:self-start lg:h-[calc(100dvh-4rem)] lg:shrink-0 lg:z-30",
-        "lg:border-r lg:border-sidebar-border/15",
-        // Glassmorphism: semi-transparent sidebar so the gradient backdrop bleeds through.
-        "lg:bg-sidebar/30 lg:backdrop-blur-md",
+        "hidden lg:flex lg:flex-col lg:sticky lg:top-[calc(64px-36px+36px)] lg:self-start lg:h-[calc(100dvh-64px)] lg:shrink-0 lg:z-30",
+        // Mockup parity: exact sidebar styling from premium mockup
+        "lg:border-r lg:backdrop-blur-[14px] lg:saturate-[1.4]",
         collapsed ? "lg:w-[4.5rem]" : "lg:w-64",
         "transition-[width] duration-200 ease-out",
       )}
+      style={{
+        backgroundColor: 'var(--header-bg)',
+        borderColor: 'var(--border)',
+        padding: collapsed ? '22px 14px 14px' : '22px 14px 14px',
+      }}
     >
       {/* Collapse toggle — desktop only, sits at the top of the sidebar */}
       <button

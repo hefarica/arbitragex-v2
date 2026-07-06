@@ -1,0 +1,83 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/rust.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/rust.yml'
+
+# M2 Capa1 Fase 4 — read-only token.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: cargo check + clippy + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # `stable` follows the current Rust release. Alloy ecosystem moves
+          # fast: deps in lockfile require up to rustc 1.90 (ruint@1.18). Pinning
+          # to a specific minor would require rebumping every few months.
+          # If determinism is needed later, pin to a specific rustc and run
+          # `cargo update --precise` to downgrade deps that outgrow it.
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: cargo check (workspace)
+        run: cargo check --workspace --locked
+
+      # ─── R1 hard-gate (audit re-run #2, 2026-05-10) ────────────────────────
+      # Critical hot-path binaries (searcher-rs, relays-client) carry
+      # #![deny(clippy::unwrap_used, clippy::expect_used)] at crate root. The
+      # gating step below makes that promise enforceable at merge time. Any new
+      # unwrap/expect in production code under these crates fails the merge.
+      # Other crates use the workspace-wide advisory step further down.
+      - name: cargo clippy (gating — searcher-rs + relays-client)
+        run: cargo clippy -p searcher-rs -p relays-client --locked --all-targets -- -D warnings
+
+      - name: cargo fmt (check only — workspace advisory)
+        run: cargo fmt --all -- --check
+        # Advisory until the pre-existing fmt drift is rebased clean. Hard-gate
+        # version is already enforced for searcher-rs + relays-client below.
+        continue-on-error: true
+
+      - name: cargo fmt (gating — searcher-rs + relays-client)
+        run: cargo fmt -p searcher-rs -p relays-client -- --check
+
+      - name: cargo clippy (workspace advisory)
+        run: cargo clippy --workspace --locked -- -D warnings
+        # Advisory baseline. Workspace-wide deny is the goal; remove
+        # continue-on-error once the rest of the workspace is clean.
+        continue-on-error: true
+
+      - name: cargo test --lib (workspace)
+        # --lib runs only unit tests in lib targets, skipping integration tests
+        # that require a live PostgreSQL or Redis (not available in CI here).
+        # sqlx compile-time checked queries are excluded by DATABASE_URL stub.
+        run: cargo test --workspace --locked --lib
+        env:
+          # Satisfies sqlx offline-mode guard at compile time; no real DB needed.
+          DATABASE_URL: postgres://test:test@localhost/arbitragex_test
+          REDIS_URL: redis://localhost:6379
+          # Required by searcher-rs boot guard (RULE 02)
+          SIM_SIGNER_ADDRESS: "0x000000000000000000000000000000000000dead"

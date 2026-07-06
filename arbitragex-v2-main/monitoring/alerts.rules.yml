@@ -1,0 +1,261 @@
+groups:
+  - name: arbitragex-core
+    interval: 30s
+    rules:
+      - alert: ServiceDown
+        expr: arbx_service_up == 0
+        for: 1m
+        labels: { severity: critical, platform: arbitragex }
+        annotations:
+          summary: "{{ $labels.service }} is DOWN"
+          description: "Service {{ $labels.service }} reports arbx_service_up=0 for >= 1m."
+
+      - alert: KillSwitchActivated
+        expr: arbx_killswitch_enabled == 1
+        for: 0m
+        labels: { severity: warning, platform: arbitragex }
+        annotations:
+          summary: "Kill switch is ON"
+          description: "The global kill switch is armed. All executions are refused."
+
+      - alert: HighHTTP5xxRate
+        expr: |
+          (
+            sum by (service) (rate(arbx_http_requests_total{status=~"5.."}[5m]))
+          /
+            sum by (service) (rate(arbx_http_requests_total[5m]))
+          ) > 0.10
+        for: 5m
+        labels: { severity: warning, platform: arbitragex }
+        annotations:
+          summary: "Elevated 5xx on {{ $labels.service }}"
+          description: ">10% of requests are 5xx on {{ $labels.service }} for 5m."
+
+      - alert: LatencyP95High
+        expr: |
+          histogram_quantile(0.95,
+            sum by (service, le) (rate(arbx_http_request_duration_seconds_bucket[5m]))
+          ) > 1.0
+        for: 10m
+        labels: { severity: warning, platform: arbitragex }
+        annotations:
+          summary: "p95 latency > 1s on {{ $labels.service }}"
+          description: "Investigate {{ $labels.service }} slowdown."
+
+      - alert: NoOpportunitiesDetectedLongWindow
+        expr: increase(arbx_opportunity_total{status="detected"}[15m]) == 0
+        for: 15m
+        labels: { severity: info, platform: arbitragex }
+        annotations:
+          summary: "No opportunities detected in the last 15m"
+          description: "Searcher-rs may be idle or kill-switched; verify both."
+
+      - alert: RpcAllProvidersUnhealthy
+        expr: count(arbx_rpc_provider_state == 0) == 0 and count(arbx_rpc_provider_state) > 0
+        for: 2m
+        labels: { severity: critical, platform: arbitragex }
+        annotations:
+          summary: "All RPC providers unhealthy"
+          description: "Pool has providers configured but none are Healthy. Reads will fall back to Degraded if any; otherwise pool returns AllUnhealthy. See runbooks/rpc-down.md."
+
+      - alert: RpcCircuitBreakerOpen
+        expr: arbx_rpc_provider_state == 2
+        for: 1m
+        labels: { severity: warning, platform: arbitragex }
+        annotations:
+          summary: "RPC provider {{ $labels.provider }} circuit breaker OPEN"
+          description: "Provider {{ $labels.provider }} ({{ $labels.kind }}) tripped on sustained errors. Will half-open after 30s."
+
+      - alert: RpcSingleVendorPool
+        expr: count by (kind) (arbx_rpc_provider_state) < 2
+        for: 30m
+        labels: { severity: info, platform: arbitragex }
+        annotations:
+          summary: "RPC pool has < 2 providers ({{ $labels.kind }})"
+          description: "arbx-rpc-failover-discipline requires ≥2 vendors per chain. Add a backup in env RPC_HTTP_<chain_id> / RPC_WS_<chain_id> before flipping paper_mode=false."
+
+      - alert: RpcDriftDetected
+        expr: increase(arbx_rpc_pool_drift_detected_total[10m]) > 0
+        for: 0m
+        labels: { severity: warning, platform: arbitragex }
+        annotations:
+          summary: "RPC provider {{ $labels.provider }} drifted behind tip"
+          description: "Provider was demoted to Degraded for falling >2 blocks behind the tip for >60s. Investigate vendor health."
+
+  # MON-3: Disk space alerts for postgres and grafana volumes
+  - name: storage
+    rules:
+      - alert: PostgresDiskSpaceLow
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint=~"/var/lib/postgresql.*"}
+            / node_filesystem_size_bytes{mountpoint=~"/var/lib/postgresql.*"}
+          ) < 0.15
+        for: 5m
+        labels: { severity: warning, platform: arbitragex }
+        annotations:
+          summary: "Postgres volume has < 15% disk free"
+          description: "Mountpoint {{ $labels.mountpoint }} on {{ $labels.instance }} is below 15% free. Prune old data or expand volume."
+
+      - alert: GrafanaDiskSpaceLow
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint=~".*grafana.*"}
+            / node_filesystem_size_bytes{mountpoint=~".*grafana.*"}
+          ) < 0.15
+        for: 5m
+        labels: { severity: warning, platform: arbitragex }
+        annotations:
+          summary: "Grafana volume has < 15% disk free"
+          description: "Mountpoint {{ $labels.mountpoint }} on {{ $labels.instance }} is below 15% free."
+
+  # MON-4: Container restart / crash-loop alerts
+  - name: containers
+    rules:
+      - alert: ContainerRestartLoop
+        expr: |
+          increase(kube_pod_container_status_restarts_total{namespace="arbitragex"}[15m]) > 3
+        for: 3m
+        labels: { severity: critical, platform: arbitragex }
+        annotations:
+          summary: "Container {{ $labels.container }} is in a restart loop"
+          description: "Container {{ $labels.container }} in pod {{ $labels.pod }} restarted > 3 times in 15m. Check logs immediately."
+
+      - alert: ContainerExcessiveRestarts
+        expr: |
+          increase(kube_pod_container_status_restarts_total{namespace="arbitragex"}[1h]) > 5
+        for: 5m
+        labels: { severity: warning, platform: arbitragex }
+        annotations:
+          summary: "Container {{ $labels.container }} restarted > 5 times in 1h"
+          description: "Container {{ $labels.container }} in pod {{ $labels.pod }} had > 5 restarts in the past hour. Investigate root cause."
+
+      # Fallback for Docker Compose (no kube metrics) — uses cAdvisor container_last_seen
+      - alert: DockerContainerRestartLoop
+        expr: |
+          increase(container_start_time_seconds{name=~"arbitragex.*|searcher.*|api-server.*|postgres.*|redis.*"}[15m]) > 2
+        for: 3m
+        labels: { severity: critical, platform: arbitragex }
+        annotations:
+          summary: "Docker container {{ $labels.name }} restarting rapidly"
+          description: "Container {{ $labels.name }} has restarted > 2 times in 15m. Run: docker logs {{ $labels.name }} --tail 50"
+
+  # M4 (audit 2026-05-10): MEV operational signals — PnL / profit / sim-fail / gas-loss / variance
+  # Metrics marked TODO are not yet emitted by any service; rules become active once emission is wired.
+  # Existing emitted metrics used here: arbx_simulation_total, arbx_execution_total, arbx_killswitch_enabled.
+  - name: mev-signals
+    interval: 30s
+    rules:
+      # ── Simulation failure rate ────────────────────────────────────────────────
+      # Uses arbx_simulation_total{simulator, passed} emitted by shared-rs/metrics.rs (SIMULATIONS_TOTAL).
+      - alert: SimulationFailureRateHigh
+        expr: |
+          (
+            rate(arbx_simulation_total{passed="false"}[5m])
+            / clamp_min(rate(arbx_simulation_total[5m]), 1)
+          ) > 0.30
+        for: 5m
+        labels:
+          severity: warning
+          service: sim-ctl
+          platform: arbitragex
+        annotations:
+          summary: "Sim failure rate >30% over 5m"
+          description: "Routes are reverting in simulation at >30% rate. Check decoder accuracy, price oracle freshness, and RPC block lag."
+
+      # ── Gas wasted on reverted bundles ────────────────────────────────────────
+      # TODO: requires emission of arbx_revert_gas_wasted_usd (Counter, USD) from relays-client.
+      # Only meaningful post paper_mode=false; in paper-trade mode no gas is spent.
+      - alert: GasLossOnReverts
+        expr: increase(arbx_revert_gas_wasted_usd[1h]) > 100
+        for: 10m
+        labels:
+          severity: warning
+          service: relays-client
+          platform: arbitragex
+        annotations:
+          summary: "Lost >$100 in gas on reverted bundles over 1h"
+          description: "Bundles landing on-chain but reverting. Check sim accuracy vs real state, slippage guards, and front-run exposure. TODO: emit arbx_revert_gas_wasted_usd from relays-client."
+
+      # ── Net PnL going negative (rolling 1h) ───────────────────────────────────
+      # TODO: requires emission of arbx_realized_pnl_usd (Gauge, USD, signed) from recon.
+      # Negative value = net loss over the window; threshold -50 = $50/h loss tolerance.
+      - alert: NetPnLNegative1h
+        expr: sum_over_time(arbx_realized_pnl_usd[1h]) < -50
+        for: 15m
+        labels:
+          severity: critical
+          service: recon
+          platform: arbitragex
+        annotations:
+          summary: "Net PnL < -$50 over rolling 1h"
+          description: "Cumulative realized loss exceeds $50/h. Pause and investigate root cause before live execution. TODO: emit arbx_realized_pnl_usd from recon."
+
+      # ── Sim-vs-actual profit variance ─────────────────────────────────────────
+      # TODO: requires emission of:
+      #   arbx_sim_predicted_profit_usd (Gauge, USD) from sim-ctl
+      #   arbx_actual_profit_usd        (Gauge, USD) from recon
+      # >20% relative drift indicates stale decoder, oracle drift, or hidden gas costs.
+      - alert: SimVsActualVarianceHigh
+        expr: |
+          (
+            abs(
+              avg_over_time(arbx_sim_predicted_profit_usd[15m])
+              - avg_over_time(arbx_actual_profit_usd[15m])
+            )
+            / clamp_min(avg_over_time(arbx_sim_predicted_profit_usd[15m]), 1)
+          ) > 0.20
+        for: 15m
+        labels:
+          severity: warning
+          service: recon
+          platform: arbitragex
+        annotations:
+          summary: "Sim-vs-actual variance >20% over 15m"
+          description: "Simulation is over/underestimating realized profit by >20%. May indicate stale decoder, price oracle drift, or unreported gas costs. TODO: emit arbx_sim_predicted_profit_usd from sim-ctl and arbx_actual_profit_usd from recon."
+
+      # ── Bundle included with zero profit (sniped / front-run) ─────────────────
+      # TODO: requires emission of:
+      #   arbx_bundle_included_no_profit_total (Counter) from relays-client
+      #   arbx_bundle_included_total           (Counter) from relays-client
+      # >50% no-profit rate on included bundles = strong signal of front-running.
+      - alert: BundleSnipedRateHigh
+        expr: |
+          (
+            rate(arbx_bundle_included_no_profit_total[15m])
+            / clamp_min(rate(arbx_bundle_included_total[15m]), 1)
+          ) > 0.50
+        for: 10m
+        labels:
+          severity: warning
+          service: relays-client
+          platform: arbitragex
+        annotations:
+          summary: ">50% of included bundles netted zero profit over 15m"
+          description: "Possible front-running or sandwich attack on our bundles. Verify mempool privacy via Flashbots Protect / MEV Blocker. TODO: emit arbx_bundle_included_no_profit_total and arbx_bundle_included_total from relays-client."
+
+      # ── Kill-switch active (stricter, complementary to KillSwitchActivated) ───
+      # Uses the existing arbx_killswitch_enabled gauge already emitted by shared-rs.
+      # This rule fires if the switch stays armed >1m (investigation timeout).
+      - alert: KillSwitchTripped
+        expr: arbx_killswitch_enabled == 1
+        for: 1m
+        labels:
+          severity: critical
+          platform: arbitragex
+        annotations:
+          summary: "Kill-switch has been ACTIVE for >1m"
+          description: "All execution is paused. Determine root cause before clearing. Check docker logs searcher-rs and api-server for the triggering event."
+
+      # ── Paper mode disabled — forensic alert ──────────────────────────────────
+      # TODO: requires emission of arbx_paper_mode_active (Gauge, 1=paper 0=live) from searcher-rs/api-server.
+      # Fires the moment paper_mode flips to false. Must match runbook OPS-9 procedure.
+      - alert: PaperModeDisabled
+        expr: arbx_paper_mode_active == 0
+        for: 1m
+        labels:
+          severity: critical
+          platform: arbitragex
+        annotations:
+          summary: "paper_mode is FALSE — live on-chain execution is enabled"
+          description: "Verify this flip was intentional and runbook OPS-9 was followed. If unintentional, re-enable ARBX_PAPER_TRADE=true immediately. TODO: emit arbx_paper_mode_active from searcher-rs / api-server."

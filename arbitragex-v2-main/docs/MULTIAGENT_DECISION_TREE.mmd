@@ -1,0 +1,12 @@
+flowchart TD
+    A[Detector Agent] --> B[Validation Agent]
+    B --> C[Profitability Agent]
+    C --> D[Simulation Agent]
+    D --> E[Capital Structuring Agent]
+    E --> F[Execution Agent]
+    F --> G[Recon Agent]
+    G --> H[Learning Agent]
+    H --> B
+    B --> X[Discard]
+    C --> X
+    D --> X

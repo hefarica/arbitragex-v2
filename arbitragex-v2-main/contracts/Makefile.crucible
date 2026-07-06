@@ -1,0 +1,304 @@
+# ============================================================================
+# OMEGA CRUCIBLE — Testnet Deployment Makefile
+# Fase: Validacion antes de Mainnet
+# Redes: Holesky | Arbitrum Sepolia | Polygon Amoy
+# ============================================================================
+# INSTRUCCIONES:
+#   1. cp .env.crucible .env && editar .env con tus claves
+#   2. source .env
+#   3. make crucible
+#
+# COMANDOS PRINCIPALES:
+#   make build            — Compilar contratos
+#   make test             — Ejecutar tests
+#   make fuzz             — Fuzzing intensivo (10K runs)
+#   make deploy-all       — Deploy en las 3 testnets
+#   make verify-all       — Verificar contratos en explorers
+#   make crucible         — Pipeline completa: build + test + fuzz + deploy
+# ============================================================================
+
+.PHONY: build test fuzz fund-holesky fund-arbitrum-sepolia fund-amoy \
+        deploy-holesky deploy-arbitrum-sepolia deploy-amoy deploy-all \
+        verify-holesky verify-arbitrum-sepolia verify-amoy verify-all \
+        check-balances clean crucible help
+
+# ---------------------------------------------------------------------------
+# Compilacion
+# ---------------------------------------------------------------------------
+
+build:
+	@echo "=== Building Crucible contracts ==="
+	forge build --optimizer-runs 200 --force
+	@echo "[OK] Build complete"
+
+build-sizes: build
+	@echo "=== Contract sizes ==="
+	forge build --sizes
+
+# ---------------------------------------------------------------------------
+# Testing
+# ---------------------------------------------------------------------------
+
+test:
+	@echo "=== Running tests ==="
+	forge test -vvv
+	@echo "[OK] Tests passed"
+
+test-verbose:
+	@echo "=== Running tests (verbose) ==="
+	forge test -vvvv --gas-report
+
+# Fuzzing intensivo (10,000 runs)
+# Recomendado: ejecutar antes de cualquier deploy a testnet
+fuzz:
+	@echo "=== Running fuzz tests (10,000 runs) ==="
+	forge test --fuzz-runs 10000 -vvv
+	@echo "[OK] Fuzzing passed"
+
+# Fuzzing rapido (para CI)
+fuzz-fast:
+	@echo "=== Running fuzz tests (1,000 runs) ==="
+	forge test --fuzz-runs 1000 -vv
+
+# ---------------------------------------------------------------------------
+# Fondeo via faucets (manual)
+# ---------------------------------------------------------------------------
+
+fund-holesky:
+	@echo "============================================================"
+	@echo "  FUND HOLESKY GAS SPONSOR"
+	@echo "============================================================"
+	@echo "Direccion a fundar: $(GAS_SPONSOR_ADDRESS)"
+	@echo ""
+	@echo "Opciones de faucet:"
+	@echo "  1. Web (mas facil):"
+	@echo "     https://cloud.google.com/application/web3/faucet/ethereum/holesky"
+	@echo "     https://www.holeskyfaucet.io/"
+	@echo "  2. Mining faucet (mas eth):"
+	@echo "     https://holesky-faucet.pk910.de/"
+	@echo ""
+	@echo "Verificar balance:"
+	@echo "  cast balance $(GAS_SPONSOR_ADDRESS) --rpc-url $(RPC_HTTP_17000)"
+
+fund-arbitrum-sepolia:
+	@echo "============================================================"
+	@echo "  FUND ARBITRUM SEPOLIA GAS SPONSOR"
+	@echo "============================================================"
+	@echo "Direccion a fundar: $(GAS_SPONSOR_ADDRESS)"
+	@echo ""
+	@echo "IMPORTANTE: Arbitrum Sepolia necesita ETH en Sepolia primero."
+	@echo ""
+	@echo "Paso 1: Fundar Sepolia ETH:"
+	@echo "  https://sepoliafaucet.com/ (Alchemy - 0.5 ETH/dia)"
+	@echo "  https://cloud.google.com/application/web3/faucet/ethereum/sepolia"
+	@echo ""
+	@echo "Paso 2: Bridge Sepolia ETH -> Arbitrum Sepolia:"
+	@echo "  https://bridge.arbitrum.io/?destinationChain=arbitrum-sepolia&sourceChain=sepolia"
+	@echo ""
+	@echo "Paso 3 (alternativo): Faucet directo de Arbitrum Sepolia:"
+	@echo "  https://faucet.quicknode.com/arbitrum/sepolia"
+	@echo "  https://www.l2faucet.com/arbitrum"
+	@echo ""
+	@echo "Verificar balance:"
+	@echo "  cast balance $(GAS_SPONSOR_ADDRESS) --rpc-url $(RPC_HTTP_421614)"
+
+fund-amoy:
+	@echo "============================================================"
+	@echo "  FUND POLYGON AMOY GAS SPONSOR"
+	@echo "============================================================"
+	@echo "Direccion a fundar: $(GAS_SPONSOR_ADDRESS)"
+	@echo ""
+	@echo "Opciones de faucet:"
+	@echo "  1. Faucet oficial de Polygon:"
+	@echo "     https://faucet.polygon.technology/ (1 MATIC/cada 24h)"
+	@echo "  2. Alchemy faucet:"
+	@echo "     https://www.alchemy.com/faucets/polygon-amoy (5 MATIC/dia)"
+	@echo "  3. ThirdWeb faucet:"
+	@echo "     https://thirdweb.com/amoy (0.1 MATIC)"
+	@echo ""
+	@echo "Verificar balance:"
+	@echo "  cast balance $(GAS_SPONSOR_ADDRESS) --rpc-url $(RPC_HTTP_80002)"
+
+fund-all: fund-holesky fund-arbitrum-sepolia fund-amoy
+
+# ---------------------------------------------------------------------------
+# Verificacion de balances pre-deploy
+# ---------------------------------------------------------------------------
+
+check-balances:
+	@echo "=== Checking balances ==="
+	@echo ""
+	@echo "Holesky:"
+	@cast balance $(GAS_SPONSOR_ADDRESS) --rpc-url $(RPC_HTTP_17000) 2>/dev/null || echo "  [ERROR] No se pudo consultar balance"
+	@echo ""
+	@echo "Arbitrum Sepolia:"
+	@cast balance $(GAS_SPONSOR_ADDRESS) --rpc-url $(RPC_HTTP_421614) 2>/dev/null || echo "  [ERROR] No se pudo consultar balance"
+	@echo ""
+	@echo "Polygon Amoy:"
+	@cast balance $(GAS_SPONSOR_ADDRESS) --rpc-url $(RPC_HTTP_80002) 2>/dev/null || echo "  [ERROR] No se pudo consultar balance"
+
+# ---------------------------------------------------------------------------
+# Deploy en testnets (requiere source .env primero)
+# ---------------------------------------------------------------------------
+
+deploy-holesky: build
+	@echo "=== Deploying to Holesky ==="
+	forge script script/DeployCrucible.s.sol \
+		--rpc-url $(RPC_HTTP_17000) \
+		--private-key $(GAS_SPONSOR_PRIVATE_KEY) \
+		--broadcast \
+		-vvvv
+	@echo "[OK] Holesky deploy complete"
+
+deploy-arbitrum-sepolia: build
+	@echo "=== Deploying to Arbitrum Sepolia ==="
+	forge script script/DeployCrucible.s.sol \
+		--rpc-url $(RPC_HTTP_421614) \
+		--private-key $(GAS_SPONSOR_PRIVATE_KEY) \
+		--broadcast \
+		--legacy \
+		-vvvv
+	@echo "[OK] Arbitrum Sepolia deploy complete"
+
+deploy-amoy: build
+	@echo "=== Deploying to Polygon Amoy ==="
+	forge script script/DeployCrucible.s.sol \
+		--rpc-url $(RPC_HTTP_80002) \
+		--private-key $(GAS_SPONSOR_PRIVATE_KEY) \
+		--broadcast \
+		--legacy \
+		-vvvv
+	@echo "[OK] Polygon Amoy deploy complete"
+
+deploy-all: deploy-holesky deploy-arbitrum-sepolia deploy-amoy
+	@echo ""
+	@echo "============================================================"
+	@echo "  ALL TESTNET DEPLOYS COMPLETE"
+	@echo "============================================================"
+	@echo "Verificar contratos en los explorers correspondientes."
+	@echo "Ver: make verify-all"
+
+# ---------------------------------------------------------------------------
+# Verificacion de contratos en block explorers
+# ---------------------------------------------------------------------------
+
+verify-holesky:
+	@echo "============================================================"
+	@echo "  VERIFY HOLESKY CONTRACTS"
+	@echo "============================================================"
+	@echo "Explorer: $(EXPLORER_17000)"
+	@echo ""
+	@echo "NOTA: forge verify-contract usa ETHERSCAN_API_KEY."
+	@echo "Para Holesky, usar el mismo API key que Etherscan mainnet."
+	@echo ""
+	@echo "Comando (Factory):"
+	@echo "  forge verify-contract <FACTORY_ADDRESS> src/core/DeterministicFactory.sol:DeterministicFactory \\"
+	@echo "    --chain-id 17000 --etherscan-api-key $(ETHERSCAN_API_KEY)"
+	@echo ""
+	@echo "Comando (WalletTopology):"
+	@echo "  forge verify-contract <WALLET_TOPOLOGY_ADDRESS> src/core/WalletTopology.sol:WalletTopology \\"
+	@echo "    --chain-id 17000 --etherscan-api-key $(ETHERSCAN_API_KEY) \\"
+	@echo "    --constructor-args \"\$$(cast abi-encode \"constructor(address,address,address)\" $(GAS_SPONSOR_ADDRESS) $(EXECUTION_SIGNER_ADDRESS) $(COLD_TREASURY_ADDRESS))\""
+
+verify-arbitrum-sepolia:
+	@echo "============================================================"
+	@echo "  VERIFY ARBITRUM SEPOLIA CONTRACTS"
+	@echo "============================================================"
+	@echo "Explorer: $(EXPLORER_421614)"
+	@echo ""
+	@echo "Comando (Factory):"
+	@echo "  forge verify-contract <FACTORY_ADDRESS> src/core/DeterministicFactory.sol:DeterministicFactory \\"
+	@echo "    --chain-id 421614 --etherscan-api-key $(ARBISCAN_API_KEY)"
+	@echo ""
+	@echo "Comando (WalletTopology):"
+	@echo "  forge verify-contract <WALLET_TOPOLOGY_ADDRESS> src/core/WalletTopology.sol:WalletTopology \\"
+	@echo "    --chain-id 421614 --etherscan-api-key $(ARBISCAN_API_KEY) \\"
+	@echo "    --constructor-args \"\$$(cast abi-encode \"constructor(address,address,address)\" $(GAS_SPONSOR_ADDRESS) $(EXECUTION_SIGNER_ADDRESS) $(COLD_TREASURY_ADDRESS))\""
+
+verify-amoy:
+	@echo "============================================================"
+	@echo "  VERIFY POLYGON AMOY CONTRACTS"
+	@echo "============================================================"
+	@echo "Explorer: $(EXPLORER_80002)"
+	@echo ""
+	@echo "Comando (Factory):"
+	@echo "  forge verify-contract <FACTORY_ADDRESS> src/core/DeterministicFactory.sol:DeterministicFactory \\"
+	@echo "    --chain-id 80002 --etherscan-api-key $(POLYGONSCAN_API_KEY)"
+	@echo ""
+	@echo "Comando (WalletTopology):"
+	@echo "  forge verify-contract <WALLET_TOPOLOGY_ADDRESS> src/core/WalletTopology.sol:WalletTopology \\"
+	@echo "    --chain-id 80002 --etherscan-api-key $(POLYGONSCAN_API_KEY) \\"
+	@echo "    --constructor-args \"\$$(cast abi-encode \"constructor(address,address,address)\" $(GAS_SPONSOR_ADDRESS) $(EXECUTION_SIGNER_ADDRESS) $(COLD_TREASURY_ADDRESS))\""
+
+verify-all: verify-holesky verify-arbitrum-sepolia verify-amoy
+
+# ---------------------------------------------------------------------------
+# Limpieza
+# ---------------------------------------------------------------------------
+
+clean:
+	forge clean
+	rm -rf out/deployment_crucible_*.json
+
+# ---------------------------------------------------------------------------
+# Pipeline completa del Crucible
+# ---------------------------------------------------------------------------
+
+crucible: build test fuzz
+	@echo ""
+	@echo "============================================================"
+	@echo "  LOCAL VALIDATION COMPLETE"
+	@echo "============================================================"
+	@echo "Build   : OK"
+	@echo "Tests   : OK"
+	@echo "Fuzz    : OK"
+	@echo ""
+	@echo "SIGUIENTE PASO: Fondear wallets y deployar en testnets."
+	@echo "  1. make fund-all     (fundar via faucets)"
+	@echo "  2. make deploy-all   (deploy en 3 testnets)"
+	@echo "  3. make verify-all   (verificar en explorers)"
+	@echo ""
+	@echo "Ver guia completa: cat ../output/CRUCIBLE_FUNDS.md"
+	@echo "Ver checklist:     cat ../output/CRUCIBLE_CHECKLIST.md"
+
+# ---------------------------------------------------------------------------
+# Help
+# ---------------------------------------------------------------------------
+
+help:
+	@echo "OMEGA CRUCIBLE — Comandos disponibles:"
+	@echo ""
+	@echo "=== COMPILACION ==="
+	@echo "  make build          — Compilar contratos"
+	@echo "  make build-sizes    — Compilar y mostrar sizes"
+	@echo ""
+	@echo "=== TESTING ==="
+	@echo "  make test           — Ejecutar tests"
+	@echo "  make test-verbose   — Tests con gas report"
+	@echo "  make fuzz           — Fuzzing 10K runs (recomendado)"
+	@echo "  make fuzz-fast      — Fuzzing 1K runs (rapido)"
+	@echo ""
+	@echo "=== FONDEO ==="
+	@echo "  make fund-holesky          — Instrucciones faucet Holesky"
+	@echo "  make fund-arbitrum-sepolia — Instrucciones faucet Arbitrum Sepolia"
+	@echo "  make fund-amoy             — Instrucciones faucet Polygon Amoy"
+	@echo "  make fund-all              — Mostrar todas las instrucciones"
+	@echo "  make check-balances        — Verificar balances en 3 redes"
+	@echo ""
+	@echo "=== DEPLOY ==="
+	@echo "  make deploy-holesky          — Deploy en Holesky"
+	@echo "  make deploy-arbitrum-sepolia — Deploy en Arbitrum Sepolia"
+	@echo "  make deploy-amoy             — Deploy en Polygon Amoy"
+	@echo "  make deploy-all              — Deploy en las 3 testnets"
+	@echo ""
+	@echo "=== VERIFICACION ==="
+	@echo "  make verify-holesky          — Instrucciones verificacion Holesky"
+	@echo "  make verify-arbitrum-sepolia — Instrucciones verificacion Arbitrum"
+	@echo "  make verify-amoy             — Instrucciones verificacion Amoy"
+	@echo "  make verify-all              — Instrucciones todas"
+	@echo ""
+	@echo "=== PIPELINE ==="
+	@echo "  make crucible       — Pipeline completa: build + test + fuzz"
+	@echo "  make clean          — Limpiar artifacts y deployments"
+	@echo ""
+	@echo "Requiere: source .env (desde .env.crucible)"

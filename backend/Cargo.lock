@@ -6664,6 +6664,7 @@ dependencies = [
  "bigdecimal 0.4.10",
  "ethers",
  "prioritization-spine",
+ "rand 0.8.6",
  "shared-rs",
  "simulator-v2",
  "thiserror 1.0.69",

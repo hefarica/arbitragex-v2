@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arbitragex.v2/schemas/killswitch_state.schema.json",
+  "title": "KillSwitchState",
+  "description": "Canonical kill-switch payload stored at Redis key `arbx:killswitch` and published on `arbx:killswitch:changes`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["enabled","updated_at"],
+  "properties": {
+    "enabled":      { "type": "boolean" },
+    "reason":       { "type": ["string","null"] },
+    "triggered_by": { "type": ["string","null"] },
+    "updated_at":   { "type": "string", "format": "date-time" }
+  }
+}

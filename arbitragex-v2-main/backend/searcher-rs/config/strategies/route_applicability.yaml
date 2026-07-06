@@ -1,0 +1,68 @@
+# OMEGA Route Discovery — strategy applicability matrix (Phase 1, shadow-only).
+#
+# Declarative source of truth for which strategies apply to which route shapes.
+# Loaded at boot by StrategyApplicabilityEngine. If this file is missing or
+# invalid, the engine falls back to embedded SAFE defaults identical to the
+# values below. `shadow_only` is ALWAYS forced to true at load time — a config
+# can never enable execution (there is no active route-discovery mode).
+#
+# route_kind tokens: v2v2 | v2v3 | v3v2 | v3v3 | triangular
+version: 1
+
+discovery:
+  # Start tokens for the bounded DFS. Empty = every token in the live graph.
+  # When set, use lowercase 0x-prefixed addresses (e.g. WETH/USDC/USDT/DAI).
+  base_tokens: []
+  # Reject edges whose liquidity_hint is below this (0.0 disables the check).
+  min_liquidity_hint: 0.0
+  # Branching cap: max parallel pools explored between any two tokens.
+  max_pools_per_pair: 8
+  # Max cycle length in hops (2 = 2-cycles only; 3 = + triangulars).
+  max_depth: 3
+
+strategies:
+  # DEX cross-arb (2-cycle). Maps to granular dex_arb_v2v2/.../v3v3 labels.
+  dex_arb:
+    enabled: true
+    shadow_only: true
+    route_based: true
+    accepts: [v2v2, v2v3, v3v2, v3v3]
+    has_cartridge: true
+
+  # Triangular (3-cycle). Discovered from the live graph.
+  triangular_arb:
+    enabled: true
+    shadow_only: true
+    route_based: true
+    accepts: [triangular]
+    # Cartridge exists, but Phase-1 dispatch needs a triangular pool-data
+    # adapter; the dispatcher marks it dispatch_deferred until that ships.
+    has_cartridge: true
+
+  # Any base route wrapped in a flashloan capital source. No cartridge yet →
+  # surfaced as applicable in telemetry but NOT dispatched.
+  flashloan_arb:
+    enabled: true
+    shadow_only: true
+    route_based: true
+    accepts: [v2v2, v2v3, v3v2, v3v3, triangular]
+    has_cartridge: false
+
+  # Stablecoin-only profile of dex_arb. NOT a StrategyLabel — surfaced as a tag
+  # only. Disabled by default; enable + set token_allowlist to use.
+  stable_arb:
+    enabled: false
+    shadow_only: true
+    route_based: true
+    accepts: [v2v2, v2v3, v3v2, v3v3]
+    has_cartridge: false
+    token_allowlist: []
+
+  # Liquidations are discovered by health-factor scan, NOT by the DEX graph.
+  # route_based: false → every DEX route is rejected strategy_not_route_based.
+  liquidation:
+    enabled: false
+    shadow_only: true
+    route_based: false
+    accepts: []
+    has_cartridge: true

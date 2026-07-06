@@ -1,0 +1,75 @@
+name: TypeScript CI
+
+on:
+  # ALWAYS run on PR→main and push→main (NO `paths:` filter). Rationale: the job
+  # below ("tsc --noEmit (all workspaces)") is a REQUIRED status check under branch
+  # protection. A path-filtered required check NEVER runs on PRs that don't touch
+  # the filtered paths (workflow-only, Rust-only, docs-only PRs) → GitHub reports it
+  # "Expected — Waiting for status" forever → the PR is permanently un-mergeable in
+  # strict mode. Same deadlock class already fixed for dockerfile-audit (f949450).
+  # The typecheck/test steps are advisory (continue-on-error) until M4, so always
+  # running is cheap and never spuriously blocks. DO NOT re-add a `paths:` filter
+  # while this job is a required check.
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# M2 Capa1 Fase 4 — read-only token.
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    name: tsc --noEmit (all workspaces)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          # Root package-lock.json (lockfileVersion 3) covers all npm workspaces.
+          cache: npm
+
+      - name: Install all workspace dependencies
+        # Single npm ci at root resolves all workspaces:
+        #   shared-ts, backend/api-server, backend/selector-api,
+        #   edge/worker, edge/dev-local, frontend
+        run: npm install
+
+      - name: Build @arbx/shared
+        # M2 Capa1 Fase 7 — order fix. Dependent workspaces
+        # (selector-api, api-server, edge/*) resolve `@arbx/shared` from
+        # `shared-ts/dist/`. Without this step, every tsc invocation in
+        # those workspaces fails with "Cannot find module '@arbx/shared'"
+        # — which is what made every typescript.yml run fail on main
+        # pre-M2 (gh run list --workflow=typescript.yml: all reds were
+        # "Cannot find module @arbx/shared", masking real type errors).
+        run: npm run -w @arbx/shared build
+
+      - name: Typecheck all workspaces
+        # M2 Capa1 Fase 7 (P1-5) part 1: surfacing-only.
+        # Before M2 this step was effectively masked: every workspace
+        # depending on @arbx/shared failed with "Cannot find module
+        # @arbx/shared" before reaching the real type errors. The order
+        # fix above stops that mask; the step now reports 5 real type
+        # errors in @arbx/api-server (registry-engine.ts, admin-promote-
+        # mainnet.ts, operator.ts). Those belong to Capa 3 (Backend) and
+        # are tracked for M4. Hard gate flip happens in M4 once cleared.
+        # NEVER add continue-on-error to typescript.yml's TEST step without
+        # also documenting the M4 dependency.
+        run: npm run typecheck --workspaces --if-present
+        continue-on-error: true
+
+      - name: Unit tests (workspaces)
+        # Vitest tests for shared-ts, api-server, selector-api, edge/*, frontend.
+        # M2 Capa1 Fase 7 (P1-5) part 2: tests stay advisory until M4 (Capa 3
+        # Backend) clears the 5 pre-existing api-server type errors that the
+        # order-fix above just stopped masking. Once typecheck is green,
+        # remove `continue-on-error` here to make tests a hard gate too.
+        # Tracking: M4 spec Capa 3 — clear @arbx/api-server tsc errors.
+        run: npm test --workspaces --if-present
+        continue-on-error: true

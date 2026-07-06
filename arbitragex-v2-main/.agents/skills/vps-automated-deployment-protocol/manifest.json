@@ -1,0 +1,16 @@
+{
+  "skill_id": "vps-automated-deployment-protocol",
+  "name": "VPS Automated Deployment Protocol",
+  "version": "1.0.0",
+  "domain": "DevOps | CI/CD | Infraestructura",
+  "level": "Production",
+  "created_for_project": "arbitragex_v2_productivo_full",
+  "output_path": "C:\\Users\\HFRC\\Desktop\\arbitragex_v2_productivo_full\\.agents\\skills\\vps-automated-deployment-protocol",
+  "implementation_languages": [
+    "Bash",
+    "Docker"
+  ],
+  "requires_real_data": false,
+  "hardcode_allowed": true,
+  "mocks_allowed": false
+}

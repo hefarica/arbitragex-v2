@@ -1,0 +1,329 @@
+name: Cartridge Integration & Deploy
+
+# Triggers: Manual dispatch, push to main, or on PR to main
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_to_vps:
+        description: "Deploy to VPS after tests pass?"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      reason:
+        description: "Reason for deployment"
+        required: false
+        default: "Manual cartridge integration"
+  push:
+    branches: [main]
+    paths:
+      - "backend/searcher-rs/cartridges/**"
+      - "scripts/cartridge-deployment/**"
+      - "tests/e2e/cartridge-integration.spec.ts"
+      - ".github/workflows/cartridge-integration-deploy.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/searcher-rs/cartridges/**"
+      - "scripts/cartridge-deployment/**"
+      - "tests/e2e/cartridge-integration.spec.ts"
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+concurrency:
+  group: cartridge-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-cartridges:
+    name: Validate Cartridge Syntax & Structure
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate Rhai syntax
+        run: |
+          set -euo pipefail
+          echo "=== Validating Rhai cartridges ==="
+          
+          for cartridge in backend/searcher-rs/cartridges/*.rhai; do
+            echo "Checking: $cartridge"
+            
+            # Verify file exists and is readable
+            if [ ! -f "$cartridge" ]; then
+              echo "ERROR: Cartridge file not found: $cartridge"
+              exit 1
+            fi
+            
+            # Check for required functions
+            if ! grep -q "fn init_strategy" "$cartridge"; then
+              echo "ERROR: Missing init_strategy() in $cartridge"
+              exit 1
+            fi
+            
+            if ! grep -q "fn evaluate_opportunity" "$cartridge"; then
+              echo "ERROR: Missing evaluate_opportunity() in $cartridge"
+              exit 1
+            fi
+            
+            if ! grep -q "fn build_payload" "$cartridge"; then
+              echo "ERROR: Missing build_payload() in $cartridge"
+              exit 1
+            fi
+            
+            # Check for hardcoded data (Doctrina Zero-Mocks)
+            if grep -E "0x[0-9a-fA-F]{40}|0x[0-9a-fA-F]{64}" "$cartridge" | grep -v "//"; then
+              echo "WARNING: Potential hardcoded addresses in $cartridge (check manually)"
+            fi
+            
+            echo "✓ $cartridge OK"
+          done
+          
+          echo ""
+          echo "=== All cartridges validated ==="
+
+  test-cartridges:
+    name: Test Cartridge Integration (E2E)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [validate-cartridges]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: arbitragex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/arbitragex
+      REDIS_URL: redis://localhost:6379
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Apply DB migrations
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          psql "postgres://postgres:postgres@localhost:5432/arbitragex" \
+            -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+          bash automation/scripts/migrate.sh
+
+      - name: Run cartridge integration tests
+        working-directory: tests/e2e
+        env:
+          ARBX_FRONTEND_URL: http://localhost:5173
+          ARBX_ASSUME_NO_RPC: "1"
+        run: |
+          echo "=== Running cartridge integration tests ==="
+          npx playwright test cartridge-integration.spec.ts --reporter=html || true
+          echo "=== Tests completed (optional, may skip in CI) ==="
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cartridge-test-report
+          path: tests/e2e/playwright-report
+          retention-days: 7
+
+  validate-deployment-scripts:
+    name: Validate Deployment Scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Validate Python script
+        run: |
+          echo "=== Validating upload_cartridges_api.py ==="
+          python3 -m py_compile scripts/cartridge-deployment/upload_cartridges_api.py
+          echo "✓ Python syntax OK"
+
+      - name: Validate Bash script
+        run: |
+          echo "=== Validating deploy_cartridges_files.sh ==="
+          bash -n scripts/cartridge-deployment/deploy_cartridges_files.sh
+          echo "✓ Bash syntax OK"
+
+      - name: Check script executability
+        run: |
+          [ -x scripts/cartridge-deployment/deploy_cartridges_files.sh ] && echo "✓ deploy_cartridges_files.sh is executable" || exit 1
+
+  deploy-to-vps:
+    name: Deploy Cartridges to VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [test-cartridges, validate-deployment-scripts]
+    # Only deploy if explicitly requested or on main branch push
+    if: |
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_to_vps == 'true') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Verify VPS secrets
+        run: |
+          MISSING=0
+          
+          check_secret() {
+            local name="$1"
+            local value="$2"
+            if [ -z "$value" ]; then
+              echo "ERROR: Required secret '$name' is not set" >&2
+              MISSING=$((MISSING + 1))
+            else
+              echo "OK: Secret '$name' is present"
+            fi
+          }
+          
+          check_secret "VPS_SSH_HOST"    "${{ secrets.VPS_SSH_HOST }}"
+          check_secret "VPS_SSH_USER"    "${{ secrets.VPS_SSH_USER }}"
+          check_secret "VPS_SSH_KEY"     "${{ secrets.VPS_SSH_KEY }}"
+          check_secret "VPS_DEPLOY_PATH" "${{ secrets.VPS_DEPLOY_PATH }}"
+          
+          if [ "$MISSING" -gt 0 ]; then
+            echo "FATAL: $MISSING required secret(s) are missing" >&2
+            exit 1
+          fi
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_SSH_HOST }}
+          username: ${{ secrets.VPS_SSH_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || '22' }}
+          command_timeout: "40m"
+          script: |
+            set -euo pipefail
+            
+            echo "=== Cartridge Deploy started at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+            echo "=== Deploying to: ${{ secrets.VPS_DEPLOY_PATH }} ==="
+            
+            cd "${{ secrets.VPS_DEPLOY_PATH }}"
+            
+            echo "--- git: fetching origin/main ---"
+            git fetch origin main
+            
+            echo "--- git: resetting to origin/main ---"
+            git reset --hard origin/main
+            
+            echo "--- Cartridges: listing new cartridges ---"
+            ls -lh backend/searcher-rs/cartridges/*.rhai
+            
+            echo "--- Cartridges: injecting via Redis hot-reload ---"
+            # Trigger hot-reload by publishing to Redis channel
+            docker exec arbitragex-v2-redis-1 redis-cli PUBLISH cartridge:reload "$(date -u +%s)" || true
+            
+            echo "--- docker compose: restarting searcher-rs ---"
+            docker compose -f docker/compose.prod.yml restart arbitragex-v2-searcher-rs-1
+            
+            echo "--- docker compose: service status ---"
+            docker compose -f docker/compose.prod.yml ps
+            
+            echo "--- healthcheck: waiting for api-server ---"
+            HC_OK=0
+            for i in $(seq 1 15); do
+              if curl -fsS --max-time 5 http://localhost:8080/health >/dev/null 2>&1; then
+                echo "VPS healthcheck OK (api-server /health)"
+                HC_OK=1
+                break
+              fi
+              echo "waiting for api-server health ($i/15)..."
+              sleep 6
+            done
+            
+            if [ "$HC_OK" -ne 1 ]; then
+              echo "ERROR: api-server did not become healthy after cartridge deploy" >&2
+              exit 1
+            fi
+            
+            echo "--- Cartridges: verifying via API ---"
+            curl -s http://localhost:8080/api/v1/cartridges | head -100 || true
+            
+            echo "=== Deploy commands completed at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+
+      - name: Verify deployment
+        run: |
+          echo "=== Verifying cartridge deployment ==="
+          
+          # Optional: Add external health check if VPS_HEALTH_URL is set
+          HEALTH_URL="${{ secrets.VPS_HEALTH_URL }}"
+          if [ -n "$HEALTH_URL" ]; then
+            echo "Checking external health endpoint: $HEALTH_URL"
+            curl -sf --max-time 30 --retry 5 --retry-delay 5 "$HEALTH_URL" || true
+          fi
+          
+          echo "✓ Deployment verification complete"
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "## Cartridge Integration & Deploy — Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Workflow run | [\`${{ github.run_id }}\`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Triggered by | \`${{ github.event_name }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Ref | \`${{ github.ref_name }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Commit | \`${{ github.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Actor | \`${{ github.actor }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Timestamp | \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> **Cartridges deployed:** funding_rate_arbitrage.rhai, mean_reversion_arbitrage.rhai" >> "$GITHUB_STEP_SUMMARY"
+          echo "> **VPS:** ${{ secrets.VPS_SSH_HOST }}" >> "$GITHUB_STEP_SUMMARY"

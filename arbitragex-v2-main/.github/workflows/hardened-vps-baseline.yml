@@ -1,0 +1,178 @@
+name: Ω-S5++ C10-F2 H0 — Hardened VPS Baseline (audit-only / read-only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VPS_HOST: 195.201.235.70
+      VPS_USER: root
+      VPS_PATH: /opt/arbitragex-v2
+      EXPECTED_VPS_HEAD: "1019447ecfc32af027de40eea668b948e0919412"
+    steps:
+      - name: Step 1 — SSH setup
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          cat > ~/ssh_vps.sh <<'EOS'
+          #!/usr/bin/env bash
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o LogLevel=ERROR "$VPS_USER@$VPS_HOST" "$@"
+          EOS
+          chmod +x ~/ssh_vps.sh
+          mkdir -p /tmp/baseline
+
+      - name: Step 2 — Git state (read-only)
+        run: |
+          set -euo pipefail
+          ~/ssh_vps.sh "cd $VPS_PATH && git rev-parse HEAD" > /tmp/baseline/vps_head.txt
+          ~/ssh_vps.sh "cd $VPS_PATH && git rev-parse --abbrev-ref HEAD" > /tmp/baseline/vps_branch.txt
+          ~/ssh_vps.sh "cd $VPS_PATH && git status --porcelain=v1" > /tmp/baseline/vps_status.txt
+          ~/ssh_vps.sh "cd $VPS_PATH && git stash list" > /tmp/baseline/vps_stash_list.txt
+          ~/ssh_vps.sh "cd $VPS_PATH && git log -1 --pretty=format:'%H%n%an%n%ad%n%s' HEAD" > /tmp/baseline/vps_head_commit.txt
+          ~/ssh_vps.sh "cd $VPS_PATH && git remote -v" > /tmp/baseline/vps_remote.txt
+
+      - name: Step 3 — .env metadata (stat only — NO content)
+        run: |
+          set -euo pipefail
+          ~/ssh_vps.sh "stat -c '%a %s %U %G %y' $VPS_PATH/.env" > /tmp/baseline/vps_env_stat.txt || echo "NO_ENV" > /tmp/baseline/vps_env_stat.txt
+
+      - name: Step 4 — Docker state (read-only)
+        run: |
+          set -euo pipefail
+          ~/ssh_vps.sh "docker ps --format '{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}'" > /tmp/baseline/vps_docker_ps.txt
+          ~/ssh_vps.sh "docker images --format '{{.Repository}}|{{.Tag}}|{{.ID}}|{{.CreatedAt}}|{{.Size}}'" > /tmp/baseline/vps_docker_images.txt
+
+      - name: Step 5 — System resources
+        run: |
+          set -euo pipefail
+          ~/ssh_vps.sh "df -h /" > /tmp/baseline/vps_disk.txt
+          ~/ssh_vps.sh "free -m" > /tmp/baseline/vps_memory.txt
+          ~/ssh_vps.sh "uptime" > /tmp/baseline/vps_uptime.txt
+
+      - name: Step 6 — Health checks
+        run: |
+          set -euo pipefail
+          : > /tmp/baseline/vps_health.txt
+          EDGE=$(~/ssh_vps.sh "curl -sS -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:8787/health" || echo "000")
+          API=$(~/ssh_vps.sh "curl -sS -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:8080/health" || echo "000")
+          FRONT_API=$(~/ssh_vps.sh "curl -sS -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:5173/api/health" || echo "000")
+          FRONT_ROOT=$(~/ssh_vps.sh "curl -sS -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:5173/" || echo "000")
+          PROM=$(~/ssh_vps.sh "curl -sS -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:9090/-/ready" || echo "000")
+          {
+            echo "edge=$EDGE"
+            echo "api=$API"
+            echo "frontend_api=$FRONT_API"
+            echo "frontend_root=$FRONT_ROOT"
+            echo "prometheus=$PROM"
+          } > /tmp/baseline/vps_health.txt
+
+      - name: Step 7 — Build baseline.json
+        run: |
+          set -euo pipefail
+          VPS_HEAD=$(cat /tmp/baseline/vps_head.txt)
+          VPS_BRANCH=$(cat /tmp/baseline/vps_branch.txt)
+          VPS_ENV=$(cat /tmp/baseline/vps_env_stat.txt)
+          STASH_COUNT=$(wc -l < /tmp/baseline/vps_stash_list.txt | tr -d ' ')
+          STATUS_COUNT=$(wc -l < /tmp/baseline/vps_status.txt | tr -d ' ')
+          CONTAINER_COUNT=$(wc -l < /tmp/baseline/vps_docker_ps.txt | tr -d ' ')
+          MATCHES_EXPECTED="false"
+          [ "$VPS_HEAD" = "$EXPECTED_VPS_HEAD" ] && MATCHES_EXPECTED="true"
+          cat > /tmp/baseline/baseline.json <<JSON
+          {
+            "phase": "C10-F2 H0 Baseline Lock",
+            "run_id": "${{ github.run_id }}",
+            "captured_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "vps": {
+              "head": "$VPS_HEAD",
+              "branch": "$VPS_BRANCH",
+              "matches_expected_head": $MATCHES_EXPECTED,
+              "expected_head": "$EXPECTED_VPS_HEAD",
+              "status_count": $STATUS_COUNT,
+              "stash_count": $STASH_COUNT,
+              "container_count": $CONTAINER_COUNT,
+              "env_stat": "$VPS_ENV"
+            },
+            "repo": {
+              "main_head": "${{ github.sha }}"
+            }
+          }
+          JSON
+          cat /tmp/baseline/baseline.json
+
+      - name: Step 8 — Build baseline.md
+        run: |
+          set -euo pipefail
+          {
+            echo "# C10-F2 H0 — Baseline Lock"
+            echo ""
+            echo "- Run ID: ${{ github.run_id }}"
+            echo "- Captured UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "- Repo main HEAD: ${{ github.sha }}"
+            echo "- Expected VPS HEAD: $EXPECTED_VPS_HEAD"
+            echo ""
+            echo "## VPS State"
+            echo ""
+            echo "- HEAD: $(cat /tmp/baseline/vps_head.txt)"
+            echo "- Branch: $(cat /tmp/baseline/vps_branch.txt)"
+            echo "- .env stat: $(cat /tmp/baseline/vps_env_stat.txt)"
+            echo ""
+            echo "### git status"
+            echo '```'
+            cat /tmp/baseline/vps_status.txt
+            echo '```'
+            echo ""
+            echo "### stash list"
+            echo '```'
+            cat /tmp/baseline/vps_stash_list.txt
+            echo '```'
+            echo ""
+            echo "### docker ps"
+            echo '```'
+            cat /tmp/baseline/vps_docker_ps.txt
+            echo '```'
+            echo ""
+            echo "### docker images"
+            echo '```'
+            cat /tmp/baseline/vps_docker_images.txt
+            echo '```'
+            echo ""
+            echo "### disk / memory / uptime"
+            echo '```'
+            cat /tmp/baseline/vps_disk.txt
+            echo "---"
+            cat /tmp/baseline/vps_memory.txt
+            echo "---"
+            cat /tmp/baseline/vps_uptime.txt
+            echo '```'
+            echo ""
+            echo "### health"
+            echo '```'
+            cat /tmp/baseline/vps_health.txt
+            echo '```'
+          } > /tmp/baseline/baseline.md
+
+      - name: Step 9 — Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BASELINE_C10F2_${{ github.run_id }}
+          path: /tmp/baseline/
+          retention-days: 90
+
+      - name: Step 10 — Cleanup SSH
+        if: always()
+        run: |
+          set -euo pipefail
+          shred -u ~/.ssh/id_ed25519 2>/dev/null || rm -f ~/.ssh/id_ed25519 || true
+          rm -f ~/ssh_vps.sh || true

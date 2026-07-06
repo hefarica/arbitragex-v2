@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arbitragex.v2/schemas/execution_request.schema.json",
+  "title": "ExecutionRequest",
+  "description": "Produced by selector-api; instructs relays-client to build + submit a bundle.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "opportunity_id","simulation_id","relay_preference",
+    "max_gas_price_wei","deadline_block","trace_id"
+  ],
+  "properties": {
+    "opportunity_id":     { "type": "string", "format": "uuid" },
+    "simulation_id":      { "type": "string", "format": "uuid" },
+    "relay_preference": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
+    "max_gas_price_wei":  { "type": "string", "pattern": "^[0-9]+$" },
+    "deadline_block":     { "type": "integer", "minimum": 1 },
+    "trace_id":           { "type": "string", "format": "uuid" }
+  }
+}

@@ -1,0 +1,45 @@
+# ArbitrageX v2 — .dockerignore
+# Excludes build artifacts, secrets, and dev-only files from every Docker build
+# context to keep images lean and prevent accidental secret leakage.
+#
+# INF-4: Phase 3 INF batch — 2026-05-07
+
+# ── Rust build artifacts ──────────────────────────────────────────────────────
+**/target/
+
+# ── Node / Next.js artifacts ─────────────────────────────────────────────────
+**/node_modules/
+**/.next/
+**/dist/
+**/build/
+**/.cache/
+
+# ── Version control + IDE ────────────────────────────────────────────────────
+**/.git/
+**/.github/
+**/.vscode/
+**/.idea/
+**/.husky/
+
+# ── Secrets and environment files ────────────────────────────────────────────
+# NEVER copy .env or secrets into any image. If a service needs env at runtime,
+# inject via `docker compose --env-file` or Docker secrets.
+.env
+.env.*
+!.env.example
+
+# ── Logs and temp files ───────────────────────────────────────────────────────
+*.log
+*.tmp
+*.swp
+*.swo
+
+# ── macOS / Windows junk ─────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Test coverage artifacts ───────────────────────────────────────────────────
+**/coverage/
+**/.nyc_output/
+**/lcov.info

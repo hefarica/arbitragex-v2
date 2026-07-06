@@ -1,0 +1,42 @@
+{
+  "name": "@arbx/shared",
+  "version": "0.1.0",
+  "description": "ArbitrageX v2 — shared TS: config loader, kill-switch client, pino logger, prom-client metrics, express middleware.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./config": "./dist/config/index.js",
+    "./killswitch": "./dist/killswitch/index.js",
+    "./logging": "./dist/logging/index.js",
+    "./metrics": "./dist/metrics/index.js",
+    "./middleware": "./dist/middleware/index.js",
+    "./contracts": "./dist/contracts/index.js",
+    "./circuit_breaker": "./dist/circuit_breaker/index.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "echo 'lint placeholder for shared-ts'"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "ioredis": "^5.3.2",
+    "pino": "^9.0.0",
+    "pino-http": "^10.0.0",
+    "prom-client": "^15.1.0",
+    "smol-toml": "^1.2.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.30",
+    "express": "^4.19.2",
+    "typescript": "^5.4.5",
+    "vitest": "^1.5.0"
+  }
+}

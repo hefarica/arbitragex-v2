@@ -1,0 +1,13 @@
+[Unit]
+Description=Timer for ArbitrageX v2 Audit Log Retention
+
+[Timer]
+# Run daily at 03:00 AM local time
+OnCalendar=*-*-* 03:00:00
+# Add a random delay up to 30 minutes to avoid thundering herd if multiple jobs run
+RandomizedDelaySec=1800
+# If the machine is off during the time, run it immediately when it boots
+Persistent=true
+
+[Install]
+WantedBy=timers.target

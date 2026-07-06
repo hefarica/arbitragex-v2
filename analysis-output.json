@@ -1,0 +1,219 @@
+{
+  "htmlStructure": [
+    {"element": "html", "classes": ["dark"], "children": [
+      {"element": "head", "children": [
+        {"element": "meta", "attributes": ["charset=utf-8"]},
+        {"element": "meta", "attributes": ["name=viewport", "content=width=device-width,initial-scale=1"]},
+        {"element": "title", "content": "ArbitrageX Premium Enterprise Mockup"},
+        {"element": "link", "attributes": ["rel=preconnect", "href=https://fonts.googleapis.com"]},
+        {"element": "link", "attributes": ["rel=preconnect", "href=https://fonts.gstatic.com", "crossorigin"]},
+        {"element": "link", "attributes": ["href=https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap", "rel=stylesheet"]},
+        {"element": "style", "content": "CSS theme tokens and component styles"},
+        {"element": "script", "content": "Theme persistence check"}
+      ]},
+      {"element": "body", "children": [
+        {"element": "div", "classes": ["grain"], "description": "Film grain overlay effect"},
+        {"element": "div", "classes": ["sphere-wrap"], "children": [{"element": "canvas", "id": "sphere", "description": "HeroSphere 3D animation canvas"}]},
+        {"element": "div", "classes": ["cur-ring"], "description": "Custom cursor ring"},
+        {"element": "div", "classes": ["cur-dot"], "description": "Custom cursor dot"},
+        {"element": "div", "classes": ["ticker"], "attributes": ["aria-label=Live Asimetria Topologica feed"], "children": [{"element": "div", "classes": ["ticker-track"], "id": "ticker"}]},
+        {"element": "aside", "classes": ["sidebar"], "children": [
+          {"element": "div", "classes": ["brand"], "content": "ARBITRAGEX with styled E"},
+          {"element": "details", "classes": ["nav-section"], "attributes": ["data-nav=pipeline", "open"], "children": [
+            {"element": "summary", "content": "PIPELINE section with icon and chevron"},
+            {"element": "a", "classes": ["nav-item", "active"], "content": "Home"},
+            {"element": "a", "classes": ["nav-item"], "content": "System status"},
+            {"element": "a", "classes": ["nav-item"], "content": "Convergence signals"},
+            {"element": "a", "classes": ["nav-item"], "content": "Resolutions"},
+            {"element": "a", "classes": ["nav-item"], "content": "Entropy and alerts"},
+            {"element": "a", "classes": ["nav-item"], "content": "Recon and yield"},
+            {"element": "a", "classes": ["nav-item"], "content": "Convergence metrics"},
+            {"element": "a", "classes": ["nav-item"], "content": "SED Pipeline"}
+          ]},
+          {"element": "details", "classes": ["nav-section"], "attributes": ["data-nav=control"], "children": [
+            {"element": "summary", "content": "RISK AND CONTROL section"},
+            {"element": "a", "classes": ["nav-item"], "content": "Config"},
+            {"element": "a", "classes": ["nav-item"], "content": "Resolution engines"},
+            {"element": "a", "classes": ["nav-item"], "content": "Kill-switch"},
+            {"element": "a", "classes": ["nav-item"], "content": "Audit logs"},
+            {"element": "a", "classes": ["nav-item"], "content": "Live readiness"}
+          ]},
+          {"element": "details", "classes": ["nav-section"], "attributes": ["data-nav=config"], "children": [
+            {"element": "summary", "content": "CONFIGURATION section"},
+            {"element": "a", "classes": ["nav-item"], "content": "Credentials"},
+            {"element": "a", "classes": ["nav-item"], "content": "RPC registry"},
+            {"element": "a", "classes": ["nav-item"], "content": "Strategies"}
+          ]},
+          {"element": "details", "classes": ["nav-section"], "attributes": ["data-nav=omega"], "children": [
+            {"element": "summary", "content": "OMEGA S5 section"},
+            {"element": "a", "classes": ["nav-item"], "content": "Cartridge forge"},
+            {"element": "a", "classes": ["nav-item"], "content": "Lexicon"}
+          ]},
+          {"element": "div", "classes": ["sidebar-foot"], "children": [
+            {"element": "div", "classes": ["status-stack"], "children": [
+              {"element": "div", "classes": ["lat-row"], "children": [{"element": "span", "classes": ["badge", "lat"], "id": "latBadge", "children": [{"element": "span", "classes": ["dot"]}, {"element": "span", "id": "latVal", "content": "12ms"}, {"element": "span", "id": "latStatus", "content": "ONLINE"}]}]},
+              {"element": "div", "classes": ["dt-badge"], "children": [{"element": "span", "id": "dtVal", "content": "--"}]},
+              {"element": "div", "classes": ["status-row", "capital"], "children": [{"element": "span", "classes": ["mlabel"], "content": "Capital expuesto"}, {"element": "span", "classes": ["status-val"], "content": "$0.00"}]},
+              {"element": "div", "classes": ["upd-row"], "children": [{"element": "span", "classes": ["mlabel", "upd"], "content": "ult. actualiza: "}, {"element": "span", "id": "updVal", "content": "ahora"}]}
+            ]}
+          ]}
+        ]},
+        {"element": "div", "classes": ["content"], "children": [
+          {"element": "header", "classes": ["bar"], "children": [
+            {"element": "div", "classes": ["wordmark"], "content": "ARBITRAGEX with styled E"},
+            {"element": "div", "classes": ["tagline"], "content": "Quantum Research Terminal - Topological Yield Engine"},
+            {"element": "div", "classes": ["spacer"]},
+            {"element": "span", "classes": ["badge"], "children": [{"element": "span", "classes": ["dot"]}, {"element": "content", "text": "Paper - TLS Shadow"}]},
+            {"element": "span", "classes": ["badge", "cap"], "children": [{"element": "span", "classes": ["dot"]}, {"element": "content", "text": "Kill-switch <10ms"}]},
+            {"element": "button", "classes": ["toggle"], "id": "themeBtn", "children": [{"element": "span", "classes": ["sw"], "content": "◑"}, {"element": "span", "id": "themeLbl", "content": "DARK"}]}
+          ]},
+          {"element": "main", "children": [
+            {"element": "div", "classes": ["sphere-aura"]},
+            {"element": "section", "classes": ["hero"], "children": [
+              {"element": "div", "classes": ["mlabel"], "style": "color:var(--primary);margin-bottom:18px", "content": "IA OMEGA - OBSERVE SIMULATE EXECUTE"},
+              {"element": "h1", "id": "hero-title", "content": "Convergencia estocastica. Topological Yield en milisegundos."},
+              {"element": "p", "classes": ["lede"], "content": "Hero description paragraph"}
+            ]},
+            {"element": "section", "classes": ["stats"], "children": [
+              {"element": "div", "classes": ["stat"], "children": [{"element": "span", "classes": ["mlabel"], "content": "Topological Yield - 24h"}, {"element": "div", "classes": ["num", "pos"], "data-count": "0.42", "data-decimals": "2", "data-suffix": "%", "content": "0.00%"}, {"element": "div", "classes": ["sub"], "content": "proyectado - REVM verified"}, {"element": "div", "classes": ["shimmer"]}]},
+              {"element": "div", "classes": ["stat"], "children": [{"element": "span", "classes": ["mlabel"], "content": "Asimetrias detectadas"}, {"element": "div", "classes": ["num", "acc"], "data-count": "1284", "data-decimals": "0", "content": "0"}, {"element": "div", "classes": ["sub"], "content": "stream arbx:opps:detected"}]},
+              {"element": "div", "classes": ["stat"], "children": [{"element": "span", "classes": ["mlabel"], "content": "Capital expuesto"}, {"element": "div", "classes": ["num"], "data-count": "0", "data-decimals": "0", "data-prefix": "$", "data-suffix": ".00", "content": "$0.00"}, {"element": "div", "classes": ["sub"], "content": "paper-shadow - estructural"}]},
+              {"element": "div", "classes": ["stat"], "children": [{"element": "span", "classes": ["mlabel"], "content": "Decoherencia media"}, {"element": "div", "classes": ["num"], "data-count": "0.21", "data-decimals": "2", "data-suffix": "%", "content": "0.00%"}, {"element": "div", "classes": ["sub"], "content": "slippage proyectado"}]}
+            ]},
+            {"element": "div", "classes": ["sect-head"], "children": [{"element": "span", "classes": ["mlabel"], "content": "/ opportunities - live"}, {"element": "h2", "content": "Asimetrias Topologicas activas"}]},
+            {"element": "section", "classes": ["opps"], "id": "opps"},
+            {"element": "div", "classes": ["sect-head"], "children": [{"element": "span", "classes": ["mlabel"], "content": "/ live-readiness - doctrinal gate"}, {"element": "h2", "content": "The Gate Refusal"}]},
+            {"element": "section", "classes": ["gate"], "children": [
+              {"element": "div", "classes": ["l"], "children": [{"element": "h3", "content": "Habilitacion live - bloqueada por doctrina"}, {"element": "p", "content": "Gate description paragraph"}]},
+              {"element": "div", "classes": ["r"], "children": [
+                {"element": "div", "classes": ["verdict"], "content": "VEREDICTO - NO-GO"},
+                {"element": "div", "classes": ["checks"], "children": [
+                  {"element": "div", "classes": ["ck", "green"], "content": "Flash-loan discipline"},
+                  {"element": "div", "classes": ["ck", "green"], "content": "Simulation mandatory"},
+                  {"element": "div", "classes": ["ck", "green"], "content": "Net-profit gate"},
+                  {"element": "div", "classes": ["ck", "green"], "content": "RPC failover"},
+                  {"element": "div", "classes": ["ck", "green"], "content": "Token-safety screen"},
+                  {"element": "div", "classes": ["ck", "red"], "content": "KMS/HSM signer"},
+                  {"element": "div", "classes": ["ck", "green"], "content": "Risk limits"},
+                  {"element": "div", "classes": ["ck", "green"], "content": "MEV ethics"},
+                  {"element": "div", "classes": ["ck", "green"], "content": "Pre-execute checklist"},
+                  {"element": "div", "classes": ["ck", "red"], "content": "Crucible 72h/95%"},
+                  {"element": "div", "classes": ["ck", "green"], "content": "Pre-edit audit"},
+                  {"element": "div", "classes": ["ck", "red"], "content": "Contract atomicity"}
+                ]},
+                {"element": "div", "classes": ["lockbtn"], "content": "Activate live mode - LOCKED (3 gates red)"}
+              ]}
+            ]}
+          ]}
+        ]}
+      ]}
+    ]}
+  ],
+  "cssTokens": {
+    "light": {
+      "--bg": "oklch(0.985 0.004 240)",
+      "--bg-grad-1": "oklch(0.99 0.004 240)",
+      "--bg-grad-2": "oklch(0.965 0.008 250)",
+      "--bg-grad-3": "oklch(0.935 0.013 252)",
+      "--bg-grad": "linear-gradient(90deg, var(--bg-grad-1) 0%, var(--bg-grad-2) 55%, var(--bg-grad-3) 100%)",
+      "--primary": "oklch(0.50 0.22 263)",
+      "--primary-2": "oklch(0.55 0.20 240)",
+      "--border": "oklch(0.30 0.04 260 / 0.14)",
+      "--glow-1": "oklch(0.78 0.13 258 / 0.40)",
+      "--glow-2": "oklch(0.82 0.10 235 / 0.30)",
+      "--glow-3": "oklch(0.88 0.07 220 / 0.24)",
+      "--card": "oklch(1.000 0.003 240 / 0.55)",
+      "--fg": "oklch(0.18 0.04 260)",
+      "--muted": "oklch(0.45 0.025 250)",
+      "--success": "oklch(0.45 0.17 152)",
+      "--warning": "oklch(0.55 0.16 75)",
+      "--destructive": "oklch(0.50 0.22 18)",
+      "--sphere-rgb": "36 74 235",
+      "--sphere-blend": "multiply",
+      "--grain-opacity": "0.26",
+      "--ticker-bg": "oklch(0.99 0.004 240 / 0.70)",
+      "--header-bg": "oklch(0.985 0.004 240 / 0.62)",
+      "--hairline": "inset 0 1px 0 0 oklch(0.55 0.10 255 / 0.22)",
+      "--shadow": "0 10px 32px -16px oklch(0.40 0.10 255 / 0.22)",
+      "--xray-bg": "oklch(0.97 0.012 250 / 0.94)",
+      "--wordmark-glow": "0 0 18px oklch(0.50 0.22 263 / 0.30)"
+    },
+    "dark": {
+      "--bg": "oklch(0.18 0.05 264)",
+      "--bg-grad-1": "oklch(0.16 0.05 266)",
+      "--bg-grad-2": "oklch(0.24 0.11 258)",
+      "--bg-grad-3": "oklch(0.46 0.19 250)",
+      "--bg-grad": "linear-gradient(90deg, var(--bg-grad-3) 0%, var(--bg-grad-2) 55%, var(--bg-grad-1) 100%)",
+      "--primary": "oklch(0.62 0.22 263)",
+      "--primary-2": "oklch(0.78 0.14 235)",
+      "--border": "oklch(0.70 0.10 250 / 0.16)",
+      "--glow-1": "oklch(0.55 0.24 263 / 0.45)",
+      "--glow-2": "oklch(0.70 0.16 240 / 0.32)",
+      "--glow-3": "oklch(0.84 0.09 220 / 0.28)",
+      "--card": "oklch(0.24 0.06 258 / 0.19)",
+      "--fg": "oklch(0.98 0.012 250)",
+      "--muted": "oklch(0.69 0.04 250)",
+      "--success": "oklch(0.77 0.18 152)",
+      "--warning": "oklch(0.82 0.16 80)",
+      "--destructive": "oklch(0.66 0.22 18)",
+      "--sphere-rgb": "206 224 255",
+      "--sphere-blend": "normal",
+      "--grain-opacity": "0.5",
+      "--ticker-bg": "oklch(0.16 0.05 266 / 0.55)",
+      "--header-bg": "oklch(0.18 0.05 264 / 0.40)",
+      "--hairline": "inset 0 1px 0 0 oklch(0.98 0.012 250 / 0.16)",
+      "--shadow": "0 8px 30px -14px oklch(0.02 0.02 266 / 0.5)",
+      "--xray-bg": "oklch(0.16 0.06 263 / 0.92)",
+      "--wordmark-glow": "0 0 22px oklch(0.62 0.22 263 / 0.55)"
+    },
+    "easings": {
+      "--ease-expo": "cubic-bezier(0.22, 1, 0.36, 1)",
+      "--ease-sharp": "cubic-bezier(0.16, 1, 0.3, 1)"
+    },
+    "animations": [
+      {"name": "drift", "duration": "34s", "easing": "ease-in-out", "iteration": "infinite", "properties": ["transform: translate3d", "scale"]},
+      {"name": "charIn", "duration": "520ms", "easing": "var(--ease-sharp)", "properties": ["opacity", "transform: translateY", "rotateX"]},
+      {"name": "shine", "duration": "3.4s", "easing": "var(--ease-sharp)", "delay": "1.2s", "iteration": "infinite", "properties": ["transform: translateX"]},
+      {"name": "tick", "duration": "60s", "easing": "linear", "iteration": "infinite", "properties": ["transform: translateX"]},
+      {"name": "latpulse", "duration": "1.8s", "easing": "ease-in-out", "iteration": "infinite", "properties": ["opacity", "transform: scale"]}
+    ]
+  },
+  "components": [
+    {"name": "Film Grain Overlay", "selector": ".grain", "styles": ["position: fixed", "inset: 0", "z-index: 50", "pointer-events: none", "opacity: var(--grain-opacity)", "mix-blend-mode: overlay", "SVG noise background"]},
+    {"name": "HeroSphere Canvas", "selector": ".sphere-wrap, canvas#sphere", "styles": ["position: fixed", "inset: 0", "z-index: -10", "pointer-events: none", "Fibonacci sphere with 1400 points", "theme-aware RGB coloring"]},
+    {"name": "Custom Cursor", "selector": ".cur-dot, .cur-ring", "styles": ["position: fixed", "pointer-events: none", "z-index: 9999", "transform: translate(-50%,-50%)", "border-radius: 50%", "dot: 7px with mix-blend-mode screen", "ring: 38px border 1.5px"]},
+    {"name": "Live Ticker", "selector": ".ticker", "styles": ["position: fixed", "bottom: 0", "left: 0", "right: 0", "z-index: 40", "border-top: 1px solid var(--border)", "backdrop-filter: blur(12px)", "font-family: Space Mono", "animation: tick 60s linear infinite"]},
+    {"name": "Header Bar", "selector": "header.bar", "styles": ["position: sticky", "top: 0", "z-index: 39", "display: flex", "padding: 18px 40px", "backdrop-filter: blur(14px)", "border-bottom: 1px solid var(--border)"]},
+    {"name": "Wordmark", "selector": ".wordmark", "styles": ["font-family: Inter", "font-weight: 700", "font-size: 18px", "letter-spacing: -0.02em", ".x colored with text-shadow glow"]},
+    {"name": "Status Badges", "selector": ".badge", "styles": ["font-family: Space Mono", "font-size: 10.5px", "letter-spacing: 0.14em", "text-transform: uppercase", "padding: 6px 11px", "border-radius: 6px", "border: 1px solid", "display: inline-flex", "gap: 0.5rem"]},
+    {"name": "Theme Toggle", "selector": ".toggle", "styles": ["appearance: none", "display: inline-flex", "gap: 0.5rem", "font-family: Space Mono", "font-size: 10.5px", "letter-spacing: 0.14em", "text-transform: uppercase", "padding: 6px 11px", "border-radius: 6px", "backdrop-filter: blur(14px)", "border: 1px solid var(--border)"]},
+    {"name": "Sidebar Navigation", "selector": ".sidebar", "styles": ["position: fixed", "top: 0", "left: 0", "bottom: 56px", "width: 256px", "padding: 22px 14px 14px", "backdrop-filter: blur(14px)", "border-right: 1px solid var(--border)", "z-index: 38"]},
+    {"name": "Nav Sections (Details/Summary)", "selector": ".nav-section", "styles": ["Collapsible accordion using details element", "summary with ico and chevron", "nav-item links with hover glow effects", "active state with left border indicator"]},
+    {"name": "Status Stack", "selector": ".status-stack", "styles": ["display: flex", "flex-direction: column", "gap: 8px", "padding: 12px", "border-radius: 8px", "background: color-mix(in oklab, var(--fg) 5%, transparent)", "border: 1px solid var(--border)"]},
+    {"name": "Latency Badge", "selector": ".badge.lat", "styles": ["Online/offline toggle with pulsing dot animation", "click to toggle state", "persisted to localStorage"]},
+    {"name": "Hero Section", "selector": ".hero", "styles": ["max-width: 980px", "margin-bottom: 56px", "h1 with split-text character animation", ".lex colored span"]},
+    {"name": "Stats Grid", "selector": ".stats", "styles": ["display: grid", "grid-template-columns: repeat(4, 1fr)", "gap: 18px", "margin: 40px 0 56px"]},
+    {"name": "Stat Card", "selector": ".stat", "styles": ["padding: 22px 24px", "background: var(--card)", "backdrop-filter: blur(14px)", "border: 1px solid transparent", "border-radius: 10px", "box-shadow: var(--hairline), var(--shadow)", "shimmer animation overlay"]},
+    {"name": "Opportunity Cards", "selector": ".card", "styles": ["position: relative", "background: var(--card)", "backdrop-filter: blur(14px)", "border-radius: 12px", "padding: 20px 22px", "box-shadow: var(--hairline), var(--shadow)", "hover reveals x-ray panel"]},
+    {"name": "X-Ray Panel", "selector": ".xray", "styles": ["position: absolute", "left: 0", "right: 0", "bottom: 0", "padding: 18px 22px 20px", "background: linear-gradient(180deg, transparent, var(--xray-bg))", "clip-path: inset(100% 0 0 0)", "hover: clip-path: inset(0 0 0 0)"]},
+    {"name": "Gate Section", "selector": ".gate", "styles": ["margin-top: 56px", "padding: 28px 30px", "background: var(--card)", "border-radius: 12px", "display: grid", "grid-template-columns: 1.4fr 1fr", "gap: 32px"]},
+    {"name": "Sphere Aura", "selector": ".sphere-aura", "styles": ["position: absolute", "right: -120px", "top: -80px", "width: 540px", "height: 540px", "radial-gradient background", "filter: blur(20px)"]}
+  ],
+  "javascript": [
+    {"action": "Theme toggle with localStorage persistence", "event": "click", "target": "#themeBtn", "details": "Toggles dark class on html element, syncs label, stores preference"},
+    {"action": "Navigation state persistence", "event": "toggle/click", "target": ".nav-section, .nav-item", "details": "Persists open sections and active item to localStorage"},
+    {"action": "HeroSphere 3D animation", "event": "requestAnimationFrame", "target": "canvas#sphere", "details": "1400-point Fibonacci sphere, theme-aware coloring, rotation animation"},
+    {"action": "Custom cursor tracking", "event": "mousemove", "target": "document", "details": "Dot follows immediately, ring follows with 0.18 easing factor"},
+    {"action": "Interactive cursor states", "event": "mouseenter/mouseleave", "target": ".card, .stat, .lockbtn, .toggle", "details": "Expands cursor on interactive elements"},
+    {"action": "Split-text hero animation", "event": "DOMContentLoaded", "target": "#hero-title", "details": "Wraps each character in span with staggered animation delay"},
+    {"action": "Countup number animation", "event": "setTimeout 850ms", "target": "[data-count] elements", "details": "Animates numbers from 0 to target with easing"},
+    {"action": "Date/time ticker", "event": "setInterval 1000ms", "target": "#dtVal, #updVal", "details": "Updates datetime and last-update text"},
+    {"action": "Latency status toggle", "event": "click", "target": "#latBadge", "details": "Toggles online/offline state with visual feedback, persists to localStorage"},
+    {"action": "Ticker population", "event": "DOMContentLoaded", "target": "#ticker", "details": "Populates ticker with mock opportunity data, duplicated for seamless loop"},
+    {"action": "Opportunity cards generation", "event": "DOMContentLoaded", "target": "#opps", "details": "Generates X-ray cards with mock data"}
+  ],
+  "externalDeps": [
+    {"type": "Google Fonts", "url": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap", "fonts": ["Inter (400,500,600,700)", "Space Mono (400,700)"]},
+    {"type": "Inline SVG", "data": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/></svg>", "usage": "Film grain noise texture"}
+  ]
+}
