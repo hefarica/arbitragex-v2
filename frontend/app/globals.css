@@ -56,7 +56,7 @@
 
 /* PURE WHITE THEME (#FFFFFF) - PHASE 8 CONSOLIDATION */
 :root {
-  --radius: 1rem; /* iOS-style rounded corners */
+  --radius: 0.5rem; /* tightened per operator: less rounded, sharper panels */
 
   /* Particle-sphere accent — ROYAL BLUE in the light theme (HeroSphere). */
   --sphere-rgb: 36 74 235;
@@ -121,23 +121,23 @@
   /* Particle-sphere accent — LIGHT (pale blue-white) in the dark theme (HeroSphere). */
   --sphere-rgb: 206 224 255;
 
-  --background: oklch(0.14 0.035 265);
+  --background: oklch(0.14 0.04 230);
   --foreground: oklch(0.98 0.012 250);
 
-  --card: oklch(0.18 0.04 265);
+  --card: oklch(0.205 0.045 230 / 0.19); /* 81% transparent (25% more) teal glass over the moving aurora */
   --card-foreground: oklch(0.98 0.012 250);
 
-  --popover: oklch(0.17 0.04 265 / 96%);
+  --popover: oklch(0.17 0.045 230 / 96%);
   --popover-foreground: oklch(0.98 0.012 250);
 
   /* Electric royal blue — the TradePro accent. */
   --primary: oklch(0.62 0.20 263);
   --primary-foreground: oklch(0.99 0.008 250);
 
-  --secondary: oklch(0.23 0.04 265);
+  --secondary: oklch(0.23 0.045 230);
   --secondary-foreground: oklch(0.96 0.012 250);
 
-  --muted: oklch(0.22 0.04 265);
+  --muted: oklch(0.22 0.045 230);
   --muted-foreground: oklch(0.69 0.035 258);
 
   --accent: oklch(0.32 0.075 263);
@@ -157,8 +157,8 @@
   --info: oklch(0.66 0.16 256);
   --info-foreground: oklch(0.14 0.035 265);
 
-  --border: oklch(0.29 0.035 264);
-  --input: oklch(0.27 0.035 264);
+  --border: oklch(0.29 0.04 230);
+  --input: oklch(0.27 0.04 230);
   --ring: oklch(0.62 0.20 263);
 
   --chart-1: oklch(0.62 0.20 263);
@@ -167,13 +167,13 @@
   --chart-4: oklch(0.80 0.16 80);
   --chart-5: oklch(0.66 0.20 330);
 
-  --sidebar: oklch(0.16 0.04 266);
+  --sidebar: oklch(0.16 0.045 230);
   --sidebar-foreground: oklch(0.98 0.012 250);
   --sidebar-primary: oklch(0.62 0.20 263);
   --sidebar-primary-foreground: oklch(0.99 0.008 250);
-  --sidebar-accent: oklch(0.26 0.05 265);
+  --sidebar-accent: oklch(0.26 0.055 230);
   --sidebar-accent-foreground: oklch(0.98 0.012 250);
-  --sidebar-border: oklch(0.29 0.035 264);
+  --sidebar-border: oklch(0.29 0.04 230);
   --sidebar-ring: oklch(0.62 0.20 263);
 }
 
@@ -197,35 +197,96 @@
    This deliberately replicates the TradePro reference design at the operator's
    explicit request — a controlled gradient+glass system, not noise. */
 
-/* Gradient backdrop — electric-blue glow over deep navy, pinned to viewport so
-   panels float over it (the glass blur samples this fixed layer). */
+/* ── Animated aurora backdrop (operator request 2026-07-05) ─────────────────
+   The electric-blue radial glows were lifted off <body> onto a `body::before`
+   layer that drifts on a slow GPU-accelerated transform loop (the previous
+   static `background-attachment: fixed` paint is preserved for the base; only
+   the geometry moves). The ::before sits at z-index -20, BEHIND the HeroSphere
+   canvas (-z-10), so the particle globe always reads on top of the moving
+   geometry — "todo debe estar detrás de la esfera". The light theme gets the
+   same geometry in light contrast (soft blue on white). Halted for reduced-motion. */
 .dark body {
-  background-color: oklch(0.13 0.035 266);
-  background-image:
-    radial-gradient(58% 48% at 50% -8%, oklch(0.55 0.20 263 / 0.22), transparent 62%),
-    radial-gradient(40% 34% at 93% 3%, oklch(0.50 0.18 296 / 0.14), transparent 58%),
-    radial-gradient(42% 38% at 5% 8%, oklch(0.52 0.15 232 / 0.12), transparent 58%),
-    linear-gradient(180deg, oklch(0.155 0.045 266) 0%, oklch(0.125 0.032 267) 52%, oklch(0.11 0.028 268) 100%);
+  background-color: oklch(0.13 0.04 230);
+  background-image: linear-gradient(180deg, oklch(0.155 0.05 225) 0%, oklch(0.125 0.038 228) 52%, oklch(0.11 0.032 230) 100%);
   background-attachment: fixed;
   background-repeat: no-repeat;
+}
+.dark body::before,
+html:not(.dark) body::before {
+  content: "";
+  position: fixed;
+  inset: -30%; /* oversized so the larger drift transform never reveals an edge */
+  z-index: -20; /* behind HeroSphere (-z-10); body's own bg paints below this */
+  pointer-events: none;
+  background-repeat: no-repeat;
+  animation: arbx-aurora-drift 34s ease-in-out infinite;
+}
+.dark body::before {
+  background-image:
+    radial-gradient(62% 52% at 50% -6%, oklch(0.45 0.11 200 / 0.42), transparent 62%),
+    radial-gradient(46% 38% at 88% 6%, oklch(0.40 0.10 180 / 0.28), transparent 60%),
+    radial-gradient(48% 40% at 10% 14%, oklch(0.42 0.09 225 / 0.26), transparent 60%);
+}
+/* Light theme — same geometry, light contrast: soft blue glows over the white base. */
+html:not(.dark) body::before {
+  background-image:
+    radial-gradient(60% 50% at 50% -8%, oklch(0.72 0.16 263 / 0.48), transparent 62%),
+    radial-gradient(44% 38% at 90% 4%, oklch(0.68 0.14 296 / 0.34), transparent 60%),
+    radial-gradient(46% 40% at 8% 12%, oklch(0.70 0.12 232 / 0.32), transparent 60%);
+}
+@keyframes arbx-aurora-drift {
+  0%   { transform: translate3d(0%, 0%, 0) scale(1); }
+  25%  { transform: translate3d(6%, -4%, 0) scale(1.09); }
+  50%  { transform: translate3d(-5%, 5%, 0) scale(1.13); }
+  75%  { transform: translate3d(5%, 3%, 0) scale(1.07); }
+  100% { transform: translate3d(0%, 0%, 0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dark body::before,
+  html:not(.dark) body::before {
+    animation: none;
+  }
 }
 
 /* Frosted-glass cards — translucent navy + blur so the gradient shows through,
    with a hairline top highlight + soft drop shadow for the glass edge. */
 .dark [data-slot="card"] {
-  background-color: oklch(0.205 0.042 265 / 0.55);
-  backdrop-filter: blur(14px) saturate(1.35);
-  -webkit-backdrop-filter: blur(14px) saturate(1.35);
-  /* NOTE: intentionally do NOT set border-color here. Several pages put
-     data-slot="card" on raw divs that carry state borders (e.g. worker-health
-     uses `border-success/40` to signal "Kernel Bypass ACTIVE"). An attribute
-     selector (0,1,1) would clobber those single-class utilities (0,1,0) and
-     silently flatten the state signal. The glass edge comes from the inset
-     top-highlight in the box-shadow below — border tint is not needed. */
-  box-shadow:
-    inset 0 1px 0 0 oklch(0.92 0.04 260 / 0.07),
-    0 10px 34px -16px oklch(0.02 0.02 266 / 0.85);
+  background-color: oklch(0.205 0.045 230 / 0.19);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  border-width: 0;
+  /* Borderless silhouette — depth via stronger blur + soft shadow. */
+  box-shadow: 0 8px 30px -14px oklch(0.02 0.02 266 / 0.55);
 }
+
+/* Broad glass treatment — every .bg-card panel (shadcn Card + raw bg-card divs)
+   becomes borderless frosted glass: the translucent --card surface + backdrop blur
+   refracts the animated aurora behind it (operator: "todos los paneles, borderless,
+   con blur de profundidad"). */
+.dark .bg-card {
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  border-width: 0;
+  /* specular edge (inset top-highlight) = the liquid-glass refraction signature,
+     plus a soft depth shadow. Anti-pattern avoided: NO opaque bg behind — the
+     translucent --card + this blur refracts the animated aurora. */
+  box-shadow: inset 0 1px 0 0 oklch(0.98 0.012 250 / 0.16), 0 8px 30px -14px oklch(0.02 0.02 266 / 0.50);
+}
+
+/* Badges — same glass treatment as panels (operator: "paneles, badges, cards a todo").
+   All badges get blur + borderless + specular edge; the solid variants (default
+   bg-primary, secondary, destructive) are made translucent so they read as glass
+   tinted with their semantic colour, not as opaque chips. Status variants
+   (success/warning/info) are already /15 in badge.tsx — left as-is. */
+.dark [data-slot="badge"] {
+  backdrop-filter: blur(6px) saturate(1.35);
+  -webkit-backdrop-filter: blur(6px) saturate(1.35);
+  border-width: 0;
+  box-shadow: inset 0 1px 0 0 oklch(0.98 0.012 250 / 0.14);
+}
+.dark [data-slot="badge"].bg-primary { background-color: oklch(0.62 0.20 263 / 0.25); }
+.dark [data-slot="badge"].bg-secondary { background-color: oklch(0.23 0.045 230 / 0.25); }
+.dark [data-slot="badge"].bg-destructive { background-color: oklch(0.62 0.20 18 / 0.25); }
 
 /* Opt-in glass surface for non-Card panels (metric tiles, etc.).
    Solid in light theme, frosted in dark. */
@@ -233,20 +294,20 @@
   @apply bg-card;
 }
 .dark .glass-surface {
-  background-color: oklch(0.21 0.042 265 / 0.50);
-  backdrop-filter: blur(11px) saturate(1.3);
-  -webkit-backdrop-filter: blur(11px) saturate(1.3);
-  border-color: oklch(0.55 0.06 264 / 0.18);
+  background-color: oklch(0.21 0.045 230 / 0.19);
+  backdrop-filter: blur(8px) saturate(1.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.2);
+  border-color: oklch(0.55 0.06 264 / 0.05);
 }
 
 /* Glassmorphism Phase 8 - GPU Optimized (legacy utilities, retained) */
 .glass-panel {
-  @apply bg-background/60 backdrop-blur-md border border-white/20 shadow-sm;
+  @apply bg-background/19 backdrop-blur-lg shadow-sm;
   transform: translateZ(0);
 }
 
 .glass-card {
-  @apply bg-background/40 backdrop-blur-xl border border-white/10 shadow-lg transition-all duration-300;
+  @apply bg-background/19 backdrop-blur-lg shadow-lg transition-all duration-300;
   transform: translateZ(0);
 }
 
@@ -259,28 +320,20 @@
    Dark-scoped — the light theme stays flat. Reserve for interactive containers
    (accordion headers, inset submenus, floating pills) — NOT every view. */
 .dark .liquid-glass {
-  background-color: oklch(0.62 0.20 263 / 0.06);
-  background-image: linear-gradient(135deg, oklch(0.98 0.012 250 / 0.07), oklch(0.62 0.20 263 / 0.02));
-  backdrop-filter: blur(20px) saturate(1.8);
-  -webkit-backdrop-filter: blur(20px) saturate(1.8);
-  border: 1px solid oklch(0.72 0.16 258 / 0.18);
-  /* specular edge — the liquid-glass refraction signature */
-  box-shadow:
-    inset 0 1px 0 0 oklch(0.98 0.012 250 / 0.16),
-    inset 0 -1px 0 0 oklch(0.62 0.20 263 / 0.06),
-    0 8px 30px -12px oklch(0.02 0.02 266 / 0.55);
+  background-color: oklch(0.62 0.20 263 / 0.03);
+  background-image: linear-gradient(135deg, oklch(0.98 0.012 250 / 0.04), oklch(0.62 0.20 263 / 0.01));
+  backdrop-filter: blur(8px) saturate(1.3);
+  -webkit-backdrop-filter: blur(8px) saturate(1.3);
+  border: 1px solid oklch(0.72 0.16 258 / 0.05);
+  box-shadow: 0 4px 16px -10px oklch(0.02 0.02 266 / 0.30);
 }
-/* `.interactive()` — reacts to pointer; the tint deepens + the specular brightens. */
 .dark .liquid-glass-interactive {
   transition: box-shadow 200ms ease, border-color 200ms ease, background-color 200ms ease;
 }
 .dark .liquid-glass-interactive:hover {
-  border-color: oklch(0.72 0.16 258 / 0.34);
-  background-image: linear-gradient(135deg, oklch(0.98 0.012 250 / 0.10), oklch(0.62 0.20 263 / 0.04));
-  box-shadow:
-    inset 0 1px 0 0 oklch(0.98 0.012 250 / 0.22),
-    inset 0 -1px 0 0 oklch(0.62 0.20 263 / 0.10),
-    0 10px 36px -10px oklch(0.30 0.10 263 / 0.45);
+  border-color: oklch(0.72 0.16 258 / 0.12);
+  background-image: linear-gradient(135deg, oklch(0.98 0.012 250 / 0.06), oklch(0.62 0.20 263 / 0.02));
+  box-shadow: 0 6px 20px -10px oklch(0.30 0.10 263 / 0.25);
 }
 
 /* Premium gradient heading — theme-aware. Light theme: royal-blue ramp (reads on

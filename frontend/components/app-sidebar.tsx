@@ -193,9 +193,9 @@ export function AppSidebar({
     <aside
       className={cn(
         "hidden lg:flex lg:flex-col lg:sticky lg:top-16 lg:self-start lg:h-[calc(100dvh-4rem)] lg:shrink-0 lg:z-30",
-        "lg:border-r lg:border-sidebar-border/60",
+        "lg:border-r lg:border-sidebar-border/15",
         // Glassmorphism: semi-transparent sidebar so the gradient backdrop bleeds through.
-        "lg:bg-sidebar/70 lg:backdrop-blur-xl lg:supports-[backdrop-filter]:lg:bg-sidebar/55",
+        "lg:bg-sidebar/30 lg:backdrop-blur-md",
         collapsed ? "lg:w-[4.5rem]" : "lg:w-64",
         "transition-[width] duration-200 ease-out",
       )}
@@ -275,7 +275,7 @@ export function SidebarContents({
                 )}
               >
                 <SectionIcon className="size-3.5 shrink-0 text-primary/80 group-hover:text-primary" />
-                <span className="flex-1 text-left text-gradient-primary">{title}</span>
+                <span className="flex-1 text-left text-foreground">{title}</span>
                 <ChevronDownIcon
                   aria-hidden
                   className={cn(
