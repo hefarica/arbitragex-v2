@@ -205,6 +205,10 @@ pub async fn run_real_simulation(
         require_trace_hash: true,
         require_positive_net_profit: true,
         max_steps: 8,
+        // FASE 3: zero = no slot-2 override. The legacy sim_runner path trusts
+        // the fork's native slot 2. Wiring `select_provider_from_registry`
+        // here is a follow-up (requires the registry handle threaded through).
+        flash_loan_provider: ethers::types::Address::zero(),
     };
 
     // 4. Dispatch the sync REVM call off the tokio executor.

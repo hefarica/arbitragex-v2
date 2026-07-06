@@ -11,15 +11,24 @@
 //!
 //! The dispatched plan is:
 //!
-//!   Step A. GrantRole override: seed `caller → FlashLoanExecutor`
-//!           `EXECUTOR_ROLE` (the `requestFlashLoan` `onlyRole` gate). This is
-//!           the ONLY storage cheat — the `FLE → AE` `EXECUTOR_ROLE` comes from
-//!           REAL forked storage (granted on-chain at deploy,
-//!           DeployMainnet.s.sol SC-13) and is NEVER overridden. NO ERC-20
-//!           prefund override is applied: in the flash flow the FLE's capital
-//!           comes from the Aave/Balancer flash loan, NOT from the caller, so
-//!           seeding the caller's balance/allowance is both unnecessary and
-//!           (with no production storage-layout provider) unbuildable.
+//!   Step A.1. GrantRole override: seed `caller → FlashLoanExecutor`
+//!             `EXECUTOR_ROLE` (the `requestFlashLoan` `onlyRole` gate). This
+//!             is the FIRST storage cheat — the `FLE → AE` `EXECUTOR_ROLE`
+//!             comes from REAL forked storage (granted on-chain at deploy,
+//!             DeployMainnet.s.sol SC-13) and is NEVER overridden.
+//!   Step A.2. (FASE 3) FlashLoanProvider override: paint FLE storage slot 2
+//!             (`flashLoanProvider`) with the operator-chosen provider
+//!             address. This is the SECOND storage cheat — a FAITHFUL MIRROR
+//!             of real on-chain slot 2 at the pinned block (the operator
+//!             calls `setFlashLoanProvider(P)` on-chain before the fork pin).
+//!             It exists because `requestFlashLoan`'s calldata carries NO
+//!             provider parameter; the contract reads it from storage at
+//!             runtime. See `sim_prefund::build_flashloan_provider_override`
+//!             for the sim↔broadcast byte-parity contract.
+//!   NO ERC-20 prefund override is applied: in the flash flow the FLE's
+//!   capital comes from the Aave/Balancer flash loan, NOT from the caller, so
+//!   seeding the caller's balance/allowance is both unnecessary and (with no
+//!   production storage-layout provider) unbuildable.
 //!   Step B. Read `balanceOf(FlashLoanExecutor, token_in)` BEFORE the flash
 //!           dispatch — the FLE's pre-flash token_in balance `B`.
 //!   Step C. Execute ONE call: `caller → FlashLoanExecutor` with
@@ -79,14 +88,26 @@
 //!    reverts `FL_RepaymentShortfall` when `profit < premium`.
 //! 4. The dispatched call routes through the REAL `requestFlashLoan` + REAL
 //!    provider callback (outer selector 0x5107d61e wrapping inner 0xdde0bf51);
-//!    there is NO direct `executeArbitrageFlashFunded` shortcut. The only role
-//!    cheat is the single `caller → FLE` `EXECUTOR_ROLE` bit; the `FLE → AE`
-//!    role is real forked storage.
+//!    there is NO direct `executeArbitrageFlashFunded` shortcut. There are
+//!    exactly TWO storage cheats: (a) the single `caller → FLE`
+//!    `EXECUTOR_ROLE` bit (Step A.1), and (b) the FLE `flashLoanProvider`
+//!    slot-2 write (Step A.2, FASE 3) which is a FAITHFUL MIRROR of real
+//!    on-chain slot 2 at the pinned block — NEVER a fabrication. The
+//!    `FLE → AE` role is real forked storage and is NEVER overridden.
 //! 5. Operator-supplied thresholds throughout; no defaults for economic
 //!    parameters.
+//! 6. (FASE 3) The sim's slot-2 override MUST equal real on-chain slot 2 at
+//!    broadcast time. The `bundle_builder` sends `wrapped_calldata` VERBATIM
+//!    in `tx.data` (no re-encode, no provider injection), and
+//!    `requestFlashLoan`'s calldata carries NO provider parameter — the
+//!    contract reads `flashLoanProvider` from storage at runtime. So the
+//!    provider choice is realised SOLELY via fork/on-chain storage at slot 2.
+//!    A sim↔broadcast divergence here is exactly the bug class the byte-parity
+//!    contract exists to prevent.
 
 use crate::sim_prefund::{
-    build_role_grant_override, executor_role_id, PrefundError, StorageOverride,
+    build_flashloan_provider_override, build_role_grant_override, executor_role_id, PrefundError,
+    StorageOverride,
 };
 use ethers::types::{Address, U256};
 use prioritization_spine::execute_arbitrage_encoder::build_flash_funded_broadcast_calldata_with_intermediate;
@@ -248,6 +269,18 @@ pub struct MultiStepExecutionConfig {
     /// leg = 2 swaps; with auxiliary balance reads + allowance applications
     /// the canonical plan has ~5–7 steps).
     pub max_steps: usize,
+    /// FASE 3 — the chosen flash-loan provider's deployed address, painted
+    /// into `FlashLoanExecutor.flashLoanProvider` (storage slot 2) by the
+    /// Step A storage-override block. Operator-supplied; no default per
+    /// arbx-no-hardcode. The sim's slot-2 write MUST mirror real on-chain
+    /// slot 2 at the pinned block — the operator calls
+    /// `setFlashLoanProvider(P)` on-chain (DEFAULT_ADMIN_ROLE) before the
+    /// fork pin so both sim and broadcast route through P's callback. A
+    /// zero value is REJECTED by `validate()` so the sim never silently
+    /// paints slot 2 = 0 (which would route the FLE through the legacy
+    /// Aave branch against a fork where the operator DID configure a real
+    /// provider → sim↔broadcast divergence).
+    pub flash_loan_provider: Address,
 }
 
 impl MultiStepExecutionConfig {
@@ -270,6 +303,14 @@ impl MultiStepExecutionConfig {
         if self.max_steps == 0 {
             return Err(MultiStepError::InvalidStepCount);
         }
+        // NOTE: `flash_loan_provider` is NOT validated here. `Address::zero()`
+        // is the explicit "no slot-2 override wanted" sentinel — legacy paths
+        // (sim_runner, scanner, multistep_fork tests) that pre-date FASE 3 pass
+        // zero and `build_multistep_plan` simply skips the Step A.2 override,
+        // preserving the pre-FASE-3 4-step plan exactly. A non-zero value
+        // triggers the 5-step plan with the FLE slot-2 write. The upstream
+        // FASE 3 wiring (`select_provider_from_registry` → orchestrator) is
+        // responsible for supplying a real address when it wants the override.
         Ok(())
     }
 }
@@ -283,10 +324,12 @@ impl MultiStepExecutionConfig {
 /// the final profit read.
 #[derive(Debug, Clone)]
 pub enum MultiStepEntry {
-    /// Apply a storage override to REVM state (paper-only). Used for the single
-    /// `caller → FLE` `EXECUTOR_ROLE` grant (the `requestFlashLoan` `onlyRole`
-    /// gate). No ERC-20 prefund override is applied — the FLE's capital comes
-    /// from the flash loan, not the caller.
+    /// Apply a storage override to REVM state (paper-only). Used for the TWO
+    /// FLE storage cheats: (1) the `caller → FLE` `EXECUTOR_ROLE` grant (the
+    /// `requestFlashLoan` `onlyRole` gate), and (2) the FLE `flashLoanProvider`
+    /// slot-2 write (FASE 3 — a faithful mirror of real on-chain slot 2). No
+    /// ERC-20 prefund override is applied — the FLE's capital comes from the
+    /// flash loan, not the caller.
     ApplyStorage(StorageOverride),
     /// Read `balanceOf(account, token)` from current REVM state, store the
     /// result in the sequence `reads` map under `label` for profit accounting.
@@ -367,8 +410,9 @@ pub fn build_multistep_plan(
     // seeding the caller's balance/allowance was therefore both economically
     // unnecessary AND unbuildable from production code (there is no production
     // `Erc20StorageLayoutProvider` impl), so it is removed entirely. Only the
-    // single `caller → FLE` `EXECUTOR_ROLE` bit is seeded (Step A), which needs
-    // no per-token storage layout.
+    // `caller → FLE` `EXECUTOR_ROLE` bit (Step A.1) and the FLE slot-2
+    // `flashLoanProvider` write (Step A.2, FASE 3) are seeded — neither needs
+    // a per-token storage layout (slot 2 is a plain linear slot, not keccak).
 
     // Encode the OUTER wrapped flash calldata ONCE (O1 intermediate-aware
     // encoder): outer `requestFlashLoan(asset, amount, params)` (0x5107d61e)
@@ -387,9 +431,12 @@ pub fn build_multistep_plan(
     )
     .map_err(|_| MultiStepError::FlashCalldataEncodeFailed)?;
 
-    // Build the step sequence (4 steps: role override + FLE pre-read + flash
-    // call + FLE post-read).
-    let mut steps: Vec<MultiStepEntry> = Vec::with_capacity(4);
+    // Build the step sequence. The base plan is 4 steps (role override + FLE
+    // pre-read + flash call + FLE post-read). FASE 3 adds an OPTIONAL 5th
+    // step (the FLE slot-2 provider write) when `config.flash_loan_provider`
+    // is non-zero; zero means "no override" and the plan stays at 4 steps
+    // (legacy behavior, preserves sim_runner / scanner / multistep_fork).
+    let mut steps: Vec<MultiStepEntry> = Vec::with_capacity(5);
 
     // Step A. Seed ONLY the `caller → FLE` EXECUTOR_ROLE bit (the
     // `requestFlashLoan` `onlyRole(EXECUTOR_ROLE)` gate). The `FLE → AE`
@@ -403,6 +450,48 @@ pub fn build_multistep_plan(
         config.paper_mode,
     )?;
     steps.push(MultiStepEntry::ApplyStorage(role_override));
+
+    // Step A.2 (FASE 3, CONDITIONAL). Paint `FlashLoanExecutor.flashLoanProvider`
+    // (storage slot 2) to the operator-chosen provider address — but ONLY when
+    // a non-zero provider was supplied. `Address::zero()` is the explicit
+    // "no slot-2 override wanted" sentinel: legacy paths that pre-date FASE 3
+    // (sim_runner, scanner, multistep_fork tests) pass zero and the plan stays
+    // the pre-FASE-3 4-step shape (the fork's native slot 2 is trusted as-is,
+    // which for a fork where the operator never called `setFlashLoanProvider`
+    // is `address(0)` → the FLE takes the legacy Aave branch — correct).
+    //
+    // When a non-zero provider IS supplied: `requestFlashLoan`'s selector
+    // 0x5107d61e carries NO provider parameter — the contract reads
+    // `flashLoanProvider` from storage at runtime and branches on it
+    // (FlashLoanExecutor.sol: `address provider = flashLoanProvider;`). The
+    // calldata channel is SEALED (the wrapped bytes produced by
+    // `build_flash_funded_broadcast_calldata_with_intermediate` are broadcast
+    // VERBATIM by `bundle_builder`), and slot 2 is the ONLY channel through
+    // which the provider choice can be realised.
+    //
+    // SIM↔BROADCAST PARITY: the override MUST be a FAITHFUL MIRROR of real
+    // on-chain slot 2 at the pinned block. The operator calls
+    // `setFlashLoanProvider(P)` on-chain (DEFAULT_ADMIN_ROLE tx) BEFORE the
+    // fork pin so the fork natively sees slot 2 = P. The override is then
+    // either a no-op (writes the same value) or, if the on-chain call landed
+    // after the pin, a faithful correction that brings the fork in line. The
+    // FORBIDDEN pattern is painting slot 2 = P while on-chain slot 2 is still
+    // `address(0)` at broadcast time → the sim routes through P's callback
+    // (e.g. Balancer `receiveFlashLoan`) but the broadcast reverts on the
+    // legacy Aave branch (`aavePool.flashLoanSimple`) — exactly the divergence
+    // class the byte-parity contract exists to prevent. The downstream caller
+    // SHOULD add a sim-time observation reading fork slot 2 via
+    // `eth_getStorageAt(fle, 2)` and comparing it to
+    // `config.flash_loan_provider`; a mismatch emits a fail-honest observation
+    // tagged `flashloan_provider_sim_broadcast_mismatch` and refuses to pass.
+    if config.flash_loan_provider != Address::zero() {
+        let provider_override = build_flashloan_provider_override(
+            flashloan_executor,
+            config.flash_loan_provider,
+            config.paper_mode,
+        )?;
+        steps.push(MultiStepEntry::ApplyStorage(provider_override));
+    }
 
     // Step B. Read the FLE's token_in balance BEFORE the flash dispatch (`B`).
     // Profit accrues to the FLE, not the caller, so the pre/post FLE balance
@@ -435,9 +524,10 @@ pub fn build_multistep_plan(
         label: "fle_token_in_post",
     });
 
-    // Defensive bound: the wrapped flash plan has 4 steps (1 role override +
-    // 1 FLE pre-read + 1 flash call + 1 FLE post-read).
-    // Reject anything beyond `config.max_steps`.
+    // Defensive bound: the wrapped flash plan has 4 steps without the FASE 3
+    // provider override, 5 with it (1 role override + [1 FLE provider slot-2
+    // write] + 1 FLE pre-read + 1 flash call + 1 FLE post-read). Reject
+    // anything beyond `config.max_steps`.
     if steps.len() > config.max_steps {
         warn!(
             event = "multistep.plan_too_long",
@@ -912,6 +1002,9 @@ mod tests {
             require_trace_hash: true,
             require_positive_net_profit: true,
             max_steps: 10,
+            // FASE 3: Balancer Vault mainnet as the chosen provider. The plan
+            // builder paints this into FLE slot 2 via the new Step A.2 override.
+            flash_loan_provider: addr("0xba12222222228d8ba445958a75a0704d566bf2c8"),
         }
     }
 
@@ -1043,12 +1136,14 @@ mod tests {
         let ctx = valid_ctx();
         let plan = build_multistep_plan(&ctx, &valid_config(), fle(), backward_amount_in_fixture())
             .expect("valid inputs should build a plan");
-        // Wrapped flash plan (4 steps — NO ERC-20 prefund):
+        // Wrapped flash plan (5 steps — FASE 3 added the provider slot-2 write;
+        // NO ERC-20 prefund):
         //   1. ApplyStorage  (caller → FLE EXECUTOR_ROLE grant)
-        //   2. ReadBalance   fle_token_in_pre  (FLE, token_in)
-        //   3. ExecuteCall   requestFlashLoan  (caller → FLE)
-        //   4. ReadBalance   fle_token_in_post (FLE, token_in)
-        assert_eq!(plan.steps.len(), 4);
+        //   2. ApplyStorage  (FLE slot 2 = flashLoanProvider)        ← FASE 3
+        //   3. ReadBalance   fle_token_in_pre  (FLE, token_in)
+        //   4. ExecuteCall   requestFlashLoan  (caller → FLE)
+        //   5. ReadBalance   fle_token_in_post (FLE, token_in)
+        assert_eq!(plan.steps.len(), 5);
         assert_eq!(plan.flashloan_executor, fle());
 
         // Exact ordered sequence.
@@ -1058,6 +1153,10 @@ mod tests {
         ));
         assert!(matches!(
             plan.steps[1],
+            MultiStepEntry::ApplyStorage(o) if o.purpose == "flashloan_provider_slot"
+        ));
+        assert!(matches!(
+            plan.steps[2],
             MultiStepEntry::ReadBalance {
                 token,
                 account,
@@ -1065,11 +1164,11 @@ mod tests {
             } if token == ctx.token_in && account == fle()
         ));
         assert!(matches!(
-            plan.steps[2],
+            plan.steps[3],
             MultiStepEntry::ExecuteCall { to, .. } if to == fle()
         ));
         assert!(matches!(
-            plan.steps[3],
+            plan.steps[4],
             MultiStepEntry::ReadBalance {
                 token,
                 account,
@@ -1077,15 +1176,16 @@ mod tests {
             } if token == ctx.token_in && account == fle()
         ));
 
-        // NO ERC-20 prefund overrides remain (only the single role grant).
+        // FASE 3: exactly TWO ApplyStorage entries (the role grant + the FLE
+        // provider slot-2 write). Still NO ERC-20 prefund overrides.
         let apply_storage_count = plan
             .steps
             .iter()
             .filter(|s| matches!(s, MultiStepEntry::ApplyStorage(_)))
             .count();
         assert_eq!(
-            apply_storage_count, 1,
-            "exactly ONE ApplyStorage (the role grant) — no prefund overrides"
+            apply_storage_count, 2,
+            "exactly TWO ApplyStorage (role grant + provider slot) — no prefund overrides"
         );
         assert!(
             !plan.steps.iter().any(|s| matches!(
@@ -1095,6 +1195,80 @@ mod tests {
             )),
             "no balance_of / allowance prefund override may be present"
         );
+    }
+
+    /// FASE 3: the provider slot-2 override writes the EXACT left-padded
+    /// address from `config.flash_loan_provider` into FLE slot 2, and targets
+    /// the FLE (not the AE, not a router).
+    #[test]
+    fn build_plan_paints_fle_slot2_with_chosen_provider() {
+        let cfg = valid_config();
+        let ctx = valid_ctx();
+        let plan = build_multistep_plan(&ctx, &cfg, fle(), backward_amount_in_fixture()).unwrap();
+
+        let provider_over: &StorageOverride = plan
+            .steps
+            .iter()
+            .find_map(|s| match s {
+                MultiStepEntry::ApplyStorage(o) if o.purpose == "flashloan_provider_slot" => {
+                    Some(o)
+                }
+                _ => None,
+            })
+            .expect("plan must contain exactly one provider slot-2 override");
+
+        assert_eq!(
+            provider_over.token, fle(),
+            "provider override must target the FLE"
+        );
+        // Re-derive the expected value: 12 zero bytes + 20 address bytes → U256.
+        let mut expected_bytes = [0u8; 32];
+        expected_bytes[12..32].copy_from_slice(cfg.flash_loan_provider.as_bytes());
+        let expected = U256::from_big_endian(&expected_bytes);
+        assert_eq!(
+            provider_over.value, expected,
+            "slot-2 value must be the left-padded provider address"
+        );
+        assert_eq!(
+            provider_over.slot,
+            crate::sim_prefund::FLE_FLASHLOAN_PROVIDER_SLOT,
+            "slot must be FLE slot 2 (linear, not keccak)"
+        );
+
+        // The provider override targets the FLE — NEVER the AE.
+        assert_ne!(
+            provider_over.token, cfg.executor_address,
+            "provider override must NOT target the ArbitrageExecutor"
+        );
+    }
+
+    /// FASE 3: a zero `flash_loan_provider` is the "no slot-2 override wanted"
+    /// sentinel — the plan stays at the legacy 4-step shape and NO provider
+    /// slot-2 override is emitted. This preserves the pre-FASE-3 behavior of
+    /// sim_runner / scanner / multistep_fork tests that have no provider source.
+    #[test]
+    fn build_plan_zero_provider_skips_slot2_override() {
+        let ctx = valid_ctx();
+        let mut cfg = valid_config();
+        cfg.flash_loan_provider = Address::zero(); // sentinel: no override
+        let plan = build_multistep_plan(&ctx, &cfg, fle(), backward_amount_in_fixture())
+            .expect("zero provider is valid (no override applied)");
+        // Legacy 4-step plan: role + pre-read + flash + post-read.
+        assert_eq!(plan.steps.len(), 4);
+        assert!(
+            !plan.steps.iter().any(|s| matches!(
+                s,
+                MultiStepEntry::ApplyStorage(o) if o.purpose == "flashloan_provider_slot"
+            )),
+            "zero provider must NOT emit a slot-2 override"
+        );
+        // The single ApplyStorage is the role grant only.
+        let apply_storage_count = plan
+            .steps
+            .iter()
+            .filter(|s| matches!(s, MultiStepEntry::ApplyStorage(_)))
+            .count();
+        assert_eq!(apply_storage_count, 1);
     }
 
     /// Acceptance: the dispatched call targets the FLE (NOT the AE, NOT a

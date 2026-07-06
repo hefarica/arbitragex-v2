@@ -214,6 +214,11 @@ async fn shadow_v2_simple_swap_emits_dex_arb_v2v2_candidate() {
         token0: token_a,
         token1: token_b,
         fee_bps: Some(30),
+        // FASE 3: integration tests don't exercise the safety gate.
+        safety_score_t0: None,
+        safety_score_t1: None,
+        safety_classification_t0: None,
+        safety_classification_t1: None,
     });
     idx.add_pool(PoolRef {
         chain_id: CHAIN_ID,
@@ -223,6 +228,11 @@ async fn shadow_v2_simple_swap_emits_dex_arb_v2v2_candidate() {
         token0: token_a,
         token1: token_b,
         fee_bps: Some(30),
+        // FASE 3: integration tests don't exercise the safety gate.
+        safety_score_t0: None,
+        safety_score_t1: None,
+        safety_classification_t0: None,
+        safety_classification_t1: None,
     });
 
     let (orchestrator, emitter) = build_orchestrator_with_emitter(idx, cache).await;
@@ -300,6 +310,11 @@ async fn shadow_v2_same_fee_asymmetric_reserves_optimizer_decides() {
         token0: token_a,
         token1: token_b,
         fee_bps: Some(30),
+        // FASE 3: integration tests don't exercise the safety gate.
+        safety_score_t0: None,
+        safety_score_t1: None,
+        safety_classification_t0: None,
+        safety_classification_t1: None,
     });
     idx.add_pool(PoolRef {
         chain_id: CHAIN_ID,
@@ -309,6 +324,11 @@ async fn shadow_v2_same_fee_asymmetric_reserves_optimizer_decides() {
         token0: token_a,
         token1: token_b,
         fee_bps: Some(30),
+        // FASE 3: integration tests don't exercise the safety gate.
+        safety_score_t0: None,
+        safety_score_t1: None,
+        safety_classification_t0: None,
+        safety_classification_t1: None,
     });
 
     let (orchestrator, emitter) = build_orchestrator_with_emitter(idx, cache).await;
@@ -383,6 +403,11 @@ async fn shadow_missing_reserves_returns_specific_reject_reason() {
         token0: token_a,
         token1: token_b,
         fee_bps: Some(30),
+        // FASE 3: integration tests don't exercise the safety gate.
+        safety_score_t0: None,
+        safety_score_t1: None,
+        safety_classification_t0: None,
+        safety_classification_t1: None,
     });
     idx.add_pool(PoolRef {
         chain_id: CHAIN_ID,
@@ -392,6 +417,11 @@ async fn shadow_missing_reserves_returns_specific_reject_reason() {
         token0: token_a,
         token1: token_b,
         fee_bps: Some(30),
+        // FASE 3: integration tests don't exercise the safety gate.
+        safety_score_t0: None,
+        safety_score_t1: None,
+        safety_classification_t0: None,
+        safety_classification_t1: None,
     });
 
     let (orchestrator, emitter) = build_orchestrator_with_emitter(idx, cache).await;
@@ -487,6 +517,11 @@ async fn shadow_no_config_returns_no_config_reject() {
         token0: token_a,
         token1: token_b,
         fee_bps: Some(30),
+        // FASE 3: integration tests don't exercise the safety gate.
+        safety_score_t0: None,
+        safety_score_t1: None,
+        safety_classification_t0: None,
+        safety_classification_t1: None,
     });
     idx.add_pool(PoolRef {
         chain_id: CHAIN_ID,
@@ -496,6 +531,11 @@ async fn shadow_no_config_returns_no_config_reject() {
         token0: token_a,
         token1: token_b,
         fee_bps: Some(30),
+        // FASE 3: integration tests don't exercise the safety gate.
+        safety_score_t0: None,
+        safety_score_t1: None,
+        safety_classification_t0: None,
+        safety_classification_t1: None,
     });
 
     let (orchestrator, emitter) = build_orchestrator_with_emitter(idx, cache).await;

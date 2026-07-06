@@ -571,6 +571,16 @@ async fn pool_sync_watcher(
                 "BALANCER" => ProtocolType::Balancer,
                 _ => ProtocolType::Unknown,
             };
+            // FASE 3: hydrate cached token-safety fields so the graph
+            // builder's anti-rug edge penalty + DROP gate sees fresh scores
+            // for incrementally-synced pools. `None` (unscored) propagates
+            // fail-closed. token0/token1 here are NOT pre-sorted (unlike
+            // pool_discovery which sorts) — the _t0/_t1 suffix maps to the
+            // literal token0/token1 fields bound above.
+            let (safety_score_t0, safety_score_t1, safety_classification_t0, safety_classification_t1) =
+                crate::impact_index::lookup_token_safety(Some(&db), chain_id, token0, token1)
+                    .await;
+
             let pool_ref = PoolRef {
                 chain_id,
                 address,
@@ -579,6 +589,10 @@ async fn pool_sync_watcher(
                 token0,
                 token1,
                 fee_bps: fee_bps_opt.map(|f| f as u32),
+                safety_score_t0,
+                safety_score_t1,
+                safety_classification_t0,
+                safety_classification_t1,
             };
             idx.add_pool(pool_ref);
             last_created_at = row_ts;
@@ -2741,6 +2755,10 @@ async fn dispatch_orchestrator_and_classify(
         // The wrapped-flash plan is 4 steps (role grant + FLE pre-read + flash
         // dispatch + FLE post-read). 8 is a comfortable defensive ceiling.
         max_steps: 8,
+        // FASE 3: zero = no slot-2 override. The scanner path trusts the fork's
+        // native slot 2. Wiring `select_provider_from_registry` here is a
+        // follow-up (requires the registry handle threaded through).
+        flash_loan_provider: ethers::types::Address::zero(),
     };
 
     // Pre-snapshot the EXACT inputs the sim path encodes from, BEFORE `ctx`/
