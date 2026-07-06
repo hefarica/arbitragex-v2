@@ -20,6 +20,9 @@ bigdecimal = { workspace = true }
 # compilation shape (no behavior change).
 simulator-v2 = { path = "../simulator-v2", optional = true }
 
+# Monte Carlo validation support
+rand = "0.8"
+
 [features]
 default = ["v2-simulator"]
 v2-simulator = ["dep:simulator-v2"]

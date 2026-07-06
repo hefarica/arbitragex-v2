@@ -43,3 +43,7 @@ pub mod sim_multistep;
 // `crate::sim_encoder::*` / `searcher_rs::sim_encoder::*` call site keeps
 // compiling unchanged.
 pub mod sim_encoder;
+
+// Monte Carlo Validator — Validación estadística de convergencia para topologías
+// de reintentos con DLQ forzado. Modelo: retry como retraso puro del dado de absorción.
+pub mod monte_carlo_validator;
