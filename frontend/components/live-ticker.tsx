@@ -70,8 +70,25 @@ export function LiveTicker() {
     };
   }, []);
 
-  // Avoid SSR/CSR mismatch (Date.now + fetch are client-only) — render nothing on server.
-  if (!mounted) return null;
+  // Avoid SSR/CSR mismatch (Date.now + fetch are client-only) — render container on server, content on client.
+  if (!mounted) {
+    return (
+      <div
+        aria-label="Live Asimetría Topológica ticker"
+        className="arbx-ticker fixed bottom-0 left-0 right-0 z-[45] border-t"
+        style={{
+          backgroundColor: 'var(--ticker-bg)',
+          borderColor: 'var(--border)',
+          backdropFilter: 'blur(12px) saturate(1.4)',
+          WebkitBackdropFilter: 'blur(12px) saturate(1.4)',
+          fontFamily: 'var(--font-data)',
+          fontSize: '12.5px',
+          letterSpacing: '0.08em',
+          height: '48px',
+        }}
+      />
+    );
+  }
 
   const hasItems = items.length > 0;
   // Duplicate the list so the marquee translateX(-50%) loops seamlessly.
@@ -89,6 +106,9 @@ export function LiveTicker() {
         fontFamily: 'var(--font-data)',
         fontSize: '12.5px',
         letterSpacing: '0.08em',
+        height: '49px', // Mockup parity: 16px padding * 2 + line-height
+        display: 'flex',
+        alignItems: 'center',
       }}
     >
       <div
@@ -102,7 +122,7 @@ export function LiveTicker() {
         } : {}}
       >
         {!hasItems ? (
-          <span className="data-label px-4 text-muted-foreground/70">
+          <span className="tk px-4 text-muted-foreground/70" style={{ fontFamily: 'var(--font-data)' }}>
             sin Asimetría Topológica activa · observando manifolds
           </span>
         ) : (
@@ -110,19 +130,29 @@ export function LiveTicker() {
             const roi = r.roi_pct;
             const pos = typeof roi === "number" && roi >= 0;
             return (
-              <span key={i} className="data-label inline-flex items-center gap-2 px-1">
-                <span className="text-foreground font-bold">{pairLabel(r)}</span>
-                <span className="text-muted-foreground">
+              <span key={i} className="tk inline-flex items-center gap-[.55rem]"
+                style={{ color: 'var(--muted)' }}>
+                <b style={{ color: 'var(--fg)', fontWeight: 700 }}>{pairLabel(r)}</b>
+                <span> · </span>
+                <span>
                   {r.dex_a}
                   {r.dex_b ? ` → ${r.dex_b}` : ""}
                 </span>
+                <span> · </span>
                 {typeof roi === "number" && (
-                  <span className={pos ? "text-success" : "text-destructive"}>
-                    {pos ? "+" : ""}
-                    {roi.toFixed(2)}% {pos ? "▲" : "▼"}
-                  </span>
+                  <>
+                    <span className={pos ? "pos" : "neg"}
+                      style={{ color: pos ? 'var(--success)' : 'var(--destructive)' }}>
+                      {pos ? "+" : ""}{roi.toFixed(2)}%
+                    </span>
+                    <span className={`arr ${pos ? "pos" : "neg"}`}
+                      style={{ fontSize: '9px', color: pos ? 'var(--success)' : 'var(--destructive)' }}>
+                      {pos ? "▲" : "▼"}
+                    </span>
+                  </>
                 )}
-                <span className="text-muted-foreground/60">{fmtAgo(r.detected_at)}</span>
+                <span> · </span>
+                <span className="ago" style={{ opacity: 0.65 }}>{fmtAgo(r.detected_at)}</span>
               </span>
             );
           })

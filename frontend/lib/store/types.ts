@@ -167,6 +167,14 @@ export interface OmniOpportunity {
   // === Confidence & Gas (UI display) ===
   confidence_score_bps: number | null;
   gas_used: number | null;
+
+  // === FASE OMEGA — Hamiltonian Detection ===
+  /** True si la oportunidad fue detectada por el sistema Hamiltonian (cartuchos) */
+  hamiltonian_detected: boolean;
+  /** ID del cartucho que detectó la oportunidad (si aplica) */
+  cartridge_id: string | null;
+  /** Score de confianza del cartucho (0.0 - 1.0) */
+  cartridge_confidence: number | null;
 }
 
 // =============================================================================
@@ -254,5 +262,10 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
     confidence_score_bps:
       raw.confidence_score_bps != null ? Number(raw.confidence_score_bps) : null,
     gas_used: raw.gas_used != null ? Number(raw.gas_used) : null,
+
+    // FASE OMEGA — Hamiltonian Detection
+    hamiltonian_detected: Boolean(raw.hamiltonian_detected ?? false),
+    cartridge_id: raw.cartridge_id != null ? String(raw.cartridge_id) : null,
+    cartridge_confidence: raw.cartridge_confidence != null ? Number(raw.cartridge_confidence) : null,
   };
 }

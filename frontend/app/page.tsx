@@ -62,9 +62,18 @@ export default async function Home() {
             IA OMEGA · OBSERVE → SIMULATE → EXECUTE
           </div>
           <h1 className="mb-6 text-[clamp(2.4rem,4.6vw,4rem)] font-semibold leading-[1.03] tracking-[-0.04em]">
-            Convergencia estocástica.
+            {"Convergencia estocástica.".split("").map((char, i) => (
+              <span key={i} className="char" style={{ animationDelay: `${i * 25}ms` }}>{char === " " ? " " : char}</span>
+            ))}
             <br />
-            <span style={{ color: 'var(--primary-2)' }}>Topological Yield</span> en milisegundos.
+            <span style={{ color: 'var(--primary-2)' }}>
+              {"Topological Yield".split("").map((char, i) => (
+                <span key={i} className="char" style={{ animationDelay: `${(i + 20) * 25}ms` }}>{char === " " ? " " : char}</span>
+              ))}
+            </span>
+            {" en milisegundos.".split("").map((char, i) => (
+              <span key={i} className="char" style={{ animationDelay: `${(i + 37) * 25}ms` }}>{char === " " ? " " : char}</span>
+            ))}
           </h1>
           <p className="max-w-[64ch] text-base leading-[1.6] text-muted-foreground">
             El motor observa <b className="font-medium text-foreground">50 rutas de Liquidity Manifolds</b> en paralelo,
@@ -76,7 +85,8 @@ export default async function Home() {
 
         <HomeKpiStrip status={status} recon={recon} />
 
-        <ProgressRealCard />
+        {/* ProgressRealCard temporarily disabled - verify build stability before re-enabling */}
+        {/* <ProgressRealCard /> */}
 
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {TILES.map((t) => {

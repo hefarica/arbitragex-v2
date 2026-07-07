@@ -62,6 +62,10 @@
   /* Particle-sphere accent — ROYAL BLUE in the light theme (HeroSphere). */
   --sphere-rgb: 36 74 235;
 
+  /* Base color aliases (mockup parity) */
+  --bg: oklch(0.985 0.004 240);
+  --fg: oklch(0.18 0.04 260);
+
   --background: oklch(0.985 0.004 240);
   --foreground: oklch(0.18 0.04 260);
 
@@ -148,6 +152,10 @@
 .dark {
   /* Particle-sphere accent — LIGHT (pale blue-white) in the dark theme (HeroSphere). */
   --sphere-rgb: 206 224 255;
+
+  /* Base color aliases (mockup parity) */
+  --bg: oklch(0.18 0.05 264);
+  --fg: oklch(0.98 0.012 250);
 
   --background: oklch(0.18 0.05 264);
   --foreground: oklch(0.98 0.012 250);
@@ -310,6 +318,37 @@ html:not(.dark) body::before {
   75%  { transform: translate3d(5%, 3%, 0) scale(1.07); }
   100% { transform: translate3d(0%, 0%, 0) scale(1); }
 }
+
+/* Animation aliases (mockup parity) */
+@keyframes drift {
+  0%   { transform: translate3d(0%, 0%, 0) scale(1); }
+  25%  { transform: translate3d(6%, -4%, 0) scale(1.09); }
+  50%  { transform: translate3d(-5%, 5%, 0) scale(1.13); }
+  75%  { transform: translate3d(5%, 3%, 0) scale(1.07); }
+  100% { transform: translate3d(0%, 0%, 0) scale(1); }
+}
+
+@keyframes tick {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+@keyframes shine {
+  0%, 80% { transform: translateX(-120%); }
+  100%    { transform: translateX(120%); }
+}
+
+@keyframes charIn {
+  from {
+    opacity: 0;
+    transform: translateY(110%) rotateX(-90deg);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) rotateX(0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dark body::before,
   html:not(.dark) body::before {
@@ -500,7 +539,7 @@ html:not(.dark) body::before {
     transparent 70%
   );
   transform: translateX(-120%);
-  animation: shimmer-sweep 3.4s var(--ease-sharp) 1.2s infinite;
+  animation: shine 3.4s var(--ease-sharp) 1.2s infinite;
 }
 
 @keyframes shimmer-sweep {
@@ -531,6 +570,7 @@ html:not(.dark) body::before {
 }
 
 /* ── Film grain overlay (premium texture, opt-in via class) ─────────────── */
+.grain,
 .grain-overlay {
   position: fixed;
   inset: 0;
@@ -541,6 +581,7 @@ html:not(.dark) body::before {
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/></svg>");
   transition: opacity 320ms var(--ease-expo);
 }
+.dark .grain,
 .dark .grain-overlay {
   opacity: var(--grain-opacity, 0.5);
 }
@@ -640,6 +681,11 @@ body.is-interactive .cur-ring {
   to { transform: translateX(-50%); }
 }
 
+/* Ticker animation alias (mockup parity) */
+.ticker-track {
+  animation: tick 30s linear infinite;
+}
+
 /* ── Sphere Aura (mockup parity) ──────────────────────────────────────────
    Radial glow behind the HeroSphere particle globe. */
 .sphere-aura {
@@ -659,11 +705,18 @@ body.is-interactive .cur-ring {
 }
 
 /* ── Character animation (hero text reveal) ─────────────────────────────── */
+.char {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(110%) rotateX(-90deg);
+  animation: charIn 520ms var(--ease-sharp) forwards;
+}
+
 .char-reveal {
   display: inline-block;
   opacity: 0;
   transform: translateY(110%) rotateX(-90deg);
-  animation: char-in 520ms var(--ease-sharp) forwards;
+  animation: charIn 520ms var(--ease-sharp) forwards;
 }
 
 @keyframes char-in {

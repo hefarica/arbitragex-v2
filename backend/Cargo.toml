@@ -21,6 +21,9 @@ members = [
     # + kill-switch + 501 prereq); math bodies (filtration, eigenstate,
     # allocator, hedger) defer to Phase 2.
     "sed-core",
+    # FASE OMEGA — Vector 3: Flash Loan Core / Temporal Liquidity Superposition.
+    # Calcula r_flash y coordina ejecución atómica de operaciones con TLS.
+    "flash-loan-core",
 ]
 
 [workspace.package]

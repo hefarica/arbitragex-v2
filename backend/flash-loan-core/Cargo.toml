@@ -1,0 +1,15 @@
+[package]
+name = "flash-loan-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ArbitrageX v2 — Flash Loan Core / Temporal Liquidity Superposition (TLS) orchestrator. Calcula r_flash (rentabilidad neta post-flash-loan) y coordina ejecución atómica."
+
+[dependencies]
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { version = "1.6", features = ["v4"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

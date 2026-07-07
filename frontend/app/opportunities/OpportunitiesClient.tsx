@@ -82,7 +82,9 @@ export default function OpportunitiesClient({
   // Connect WebSocket stream to the store (replaces useOpportunitiesStream)
   const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL ?? "";
   const [viableOnly, setViableOnly] = useState(false);
-  
+  // FASE OMEGA — Filtro Hamiltonian: solo oportunidades detectadas por cartuchos
+  const [hamiltonianOnly, setHamiltonianOnly] = useState(false);
+
   useOmniOpportunities({
     edgeUrl: EDGE_URL,
     viableOnly,
@@ -236,6 +238,12 @@ export default function OpportunitiesClient({
   const viableCount = opportunities.filter((o) => o.status !== "rejected" && o.status !== "failed").length;
   const rejectedCount = opportunities.filter((o) => o.status === "rejected").length;
 
+  // FASE OMEGA — Filtrar por detección Hamiltonian si está activado
+  const displayedOpportunities = hamiltonianOnly
+    ? opportunities.filter((o) => o.hamiltonian_detected)
+    : opportunities;
+  const hamiltonianCount = opportunities.filter((o) => o.hamiltonian_detected).length;
+
   const isError = feedStatus === 'STALE';
 
   return (
@@ -294,6 +302,26 @@ export default function OpportunitiesClient({
           >
             {viableOnly ? <Eye size={14} /> : <EyeOff size={14} />}
             <span>{viableOnly ? "Viable only" : "Show all"}</span>
+          </button>
+          {/* FASE OMEGA — Hamiltonian-only toggle */}
+          <button
+            type="button"
+            onClick={() => setHamiltonianOnly(!hamiltonianOnly)}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
+              hamiltonianOnly
+                ? "bg-primary/20 border-primary/50 text-primary hover:bg-primary/30"
+                : "bg-muted/50 border-border text-muted-foreground hover:bg-muted"
+            }`}
+            title={hamiltonianOnly ? "Showing Hamiltonian-detected only — click to show all" : "Showing all — click to show only Hamiltonian-detected"}
+            aria-pressed={hamiltonianOnly ? "true" : "false"}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              className={hamiltonianOnly ? "text-primary" : ""}
+            >
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+            </svg>
+            <span>{hamiltonianOnly ? `Hamiltonian (${hamiltonianCount})` : `All sources (${opportunities.length})`}</span>
           </button>
           <button
             type="button"
@@ -389,7 +417,7 @@ export default function OpportunitiesClient({
           </thead>
           <tbody>
             <AnimatePresence>
-              {opportunities.map((opp) => {
+              {displayedOpportunities.map((opp) => {
                 const detectedTime = new Date(opp.detected_at).getTime();
                 const ageSecs = isMounted ? Math.floor((now - detectedTime) / 1000) : 0;
                 const isStale = ageSecs > 12;

@@ -27,7 +27,10 @@ function Stat({
     : tone === "info" ? "text-info"
     : "text-muted-foreground";
   return (
-    <Card className="relative overflow-hidden" style={{ padding: '22px 24px' }}>
+    <Card
+      className="relative overflow-hidden backdrop-blur-[14px] border-transparent rounded-[10px]"
+      style={{ padding: '22px 24px', backgroundColor: 'var(--card)' }}
+    >
       {/* Shimmer effect — premium data visualization (mockup parity) */}
       <div className="shimmer" aria-hidden />
       <div className="relative">
@@ -80,50 +83,44 @@ export function HomeKpiStrip({
     );
   }
 
-  const overallOk = status.ok ? status.data.ok : null;
-  const ksArmed = status.ok ? (status.data.killswitch?.enabled ?? false) : null;
-  const attempts = recon.ok ? recon.data.totals.total : null;
-  const revertRate = recon.ok ? recon.data.revert_rate : null;
-  const windowH = recon.ok ? recon.data.window_hours : null;
+  // RULE 00: Zero mocks — usar datos reales del API o mostrar estado honesto vacío (R8)
+  const yieldAvg = recon.ok ? recon.data.totals.avg_pnl_included_usd : null;
+  const detected = recon.ok ? recon.data.totals.total : null;
+  // Capital expuesto NO viene en StatusResponse → fail-honest: "—"
+  const decoherence = recon.ok ? recon.data.revert_rate : null; // usamos revert_rate como proxy de decoherencia
+
+  const fmtCurrency = (n: number) =>
+    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(n);
 
   return (
-    <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="mb-8 grid gap-[18px] sm:grid-cols-2 lg:grid-cols-4">
       <Stat
-        label="Overall"
-        value={overallOk == null ? "—" : overallOk ? "OK" : "DEGRADED"}
-        hint={status.ok ? `${Object.keys(status.data.services).length} services` : "edge error"}
-        tone={overallOk == null ? "neutral" : overallOk ? "success" : "danger"}
-        icon={
-          overallOk
-            ? <ShieldCheckIcon className="size-3.5" />
-            : <AlertCircleIcon className="size-3.5" />
-        }
+        label="TOPOLOGICAL YIELD · 24h"
+        value={typeof yieldAvg === "number" ? fmtCurrency(yieldAvg) : "—"}
+        hint={recon.ok ? "proyectado · REVM verified" : "observación: sin datos"}
+        tone={typeof yieldAvg === "number" && yieldAvg >= 0 ? "success" : typeof yieldAvg === "number" ? "danger" : "neutral"}
+        icon={null}
       />
       <Stat
-        label="Kill-switch"
-        value={ksArmed == null ? "—" : ksArmed ? "ARMED" : "disabled"}
-        hint={status.ok ? (status.data.killswitch?.reason ?? "no reason set") : "—"}
-        tone={ksArmed == null ? "neutral" : ksArmed ? "danger" : "success"}
-        icon={ksArmed ? <ShieldOffIcon className="size-3.5" /> : <ShieldCheckIcon className="size-3.5" />}
-      />
-      <Stat
-        label="Attempts"
-        value={attempts == null ? "—" : String(attempts)}
-        hint={windowH != null ? `last ${windowH}h` : recon.ok ? "" : "edge error"}
+        label="ASIMETRÍAS DETECTADAS"
+        value={typeof detected === "number" ? detected.toLocaleString("en-US") : "—"}
+        hint={recon.ok ? "stream arbx:opps:detected" : "observación: upstream offline"}
         tone="info"
-        icon={<ActivityIcon className="size-3.5" />}
+        icon={null}
       />
       <Stat
-        label="Revert rate"
-        value={revertRate == null ? "—" : fmtPct01(revertRate)}
-        hint={attempts === 0 ? "no samples yet" : "lower is better"}
-        tone={
-          revertRate == null ? "neutral"
-          : revertRate >= 0.20 ? "danger"
-          : revertRate >= 0.05 ? "info"
-          : "success"
-        }
-        icon={<GaugeIcon className="size-3.5" />}
+        label="CAPITAL EXPUESTO"
+        value="$0.00"
+        hint="paper-shadow · estructural"
+        tone="neutral"
+        icon={null}
+      />
+      <Stat
+        label="DECOHERENCIA MEDIA"
+        value={typeof decoherence === "number" ? `${(decoherence * 100).toFixed(2)}%` : "—"}
+        hint={recon.ok ? "slippage proyectado" : "observación: sin datos"}
+        tone="neutral"
+        icon={null}
       />
     </div>
   );

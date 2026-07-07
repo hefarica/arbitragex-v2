@@ -463,6 +463,18 @@ impl CartridgeRunner {
             .await
     }
 
+    /// ═══════════════════════════════════════════════════════════════════════════════
+    /// FASE OMEGA — Hamiltonian Data Vector Injection
+    /// ═══════════════════════════════════════════════════════════════════════════════
+    /// Lee una métrica de mercado desde Redis. Usado por `compute_market_state_vector`
+    /// para inyectar volatilidad, momentum, y presión del mempool en los cartuchos.
+    /// Fail-honest: devuelve `None` si la clave no existe o hay error de parseo.
+    pub async fn read_market_metric(&self, key: &str) -> Option<f64> {
+        let mut redis = self.host_ctx.redis.write().await;
+        let raw: Option<String> = redis::AsyncCommands::get(&mut *redis, key).await.ok()?;
+        raw?.parse::<f64>().ok()
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // Private helpers
     // ─────────────────────────────────────────────────────────────────────

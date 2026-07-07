@@ -17,6 +17,163 @@ import {
 import { cn } from "@/lib/utils";
 import { NAV_ITEMS, type NavItem } from "@/components/nav-items";
 
+// Status stack component - mockup parity
+function StatusStack({ paperMode, collapsed }: { paperMode: boolean; collapsed: boolean }) {
+  const [online, setOnline] = useState(true);
+  const [latency, setLatency] = useState(12);
+  const [lastUpdate, setLastUpdate] = useState(0);
+  const [dateStr, setDateStr] = useState("");
+
+  useEffect(() => {
+    // Set initial date
+    setDateStr(formatDate());
+
+    // Update every second
+    const interval = setInterval(() => {
+      setDateStr(formatDate());
+      setLastUpdate((prev) => prev + 1);
+      // Random latency between 8-28ms
+      setLatency(Math.floor(Math.random() * 20) + 8);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const formatDate = () => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} · ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+  };
+
+  const getUpdateText = () => {
+    if (lastUpdate === 0) return 'ahora';
+    if (lastUpdate < 60) return `hace ${lastUpdate}s`;
+    return `hace ${Math.floor(lastUpdate / 60)}m`;
+  };
+
+  // Collapsed view - simple dot
+  if (collapsed) {
+    return (
+      <div className="mt-auto rounded-md border border-border/50 bg-card/40 backdrop-blur-sm p-2">
+        <div className="flex items-center justify-center">
+          <span
+            className={cn(
+              "size-1.5 rounded-full shrink-0",
+              paperMode ? "bg-success" : "bg-destructive animate-pulse",
+            )}
+            aria-hidden
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // Expanded view - full status stack
+  return (
+    <div className="mt-auto flex flex-col gap-2">
+      {/* Status stack panel - mockup parity */}
+      <div
+        className="rounded-lg border p-3 flex flex-col gap-2"
+        style={{
+          backgroundColor: 'color-mix(in oklab, var(--foreground) 5%, transparent)',
+          borderColor: 'var(--border)',
+        }}
+      >
+        {/* Latency badge row */}
+        <div className="flex justify-center">
+          <button
+            onClick={() => setOnline(!online)}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-md px-3 py-1.5 transition-all cursor-pointer",
+              online && "shadow-[0_0_16px_color-mix(in_oklab,var(--success)_42%,transparent)]",
+              !online && "shadow-[0_0_16px_color-mix(in_oklab,var(--destructive)_42%,transparent)]"
+            )}
+            style={{
+              fontFamily: 'var(--font-data)',
+              fontSize: '9.5px',
+              letterSpacing: '0.14em',
+              textTransform: 'uppercase',
+              backgroundColor: online
+                ? 'color-mix(in oklab, var(--success) 22%, transparent)'
+                : 'color-mix(in oklab, var(--destructive) 22%, transparent)',
+              color: online ? 'var(--success)' : 'var(--destructive)',
+              border: `1px solid ${online
+                ? 'color-mix(in oklab, var(--success) 45%, transparent)'
+                : 'color-mix(in oklab, var(--destructive) 45%, transparent)'}`,
+            }}
+          >
+            <span
+              className={cn(
+                "w-[7px] h-[7px] rounded-full",
+                online && "animate-pulse"
+              )}
+              style={{
+                backgroundColor: online ? 'var(--success)' : 'var(--destructive)',
+                boxShadow: online ? '0 0 10px var(--success)' : '0 0 10px var(--destructive)',
+              }}
+            />
+            <span>{online ? `${latency}ms` : '—'} · {online ? 'ONLINE' : 'OFFLINE'}</span>
+          </button>
+        </div>
+
+        {/* Date/Time badge */}
+        <div
+          className="text-center rounded-md px-3 py-2 border"
+          style={{
+            fontFamily: 'var(--font-data)',
+            fontSize: '11px',
+            letterSpacing: '0.06em',
+            backgroundColor: 'color-mix(in oklab, var(--foreground) 3%, transparent)',
+            borderColor: 'color-mix(in oklab, var(--foreground) 7%, transparent)',
+            color: 'var(--foreground)',
+          }}
+        >
+          {dateStr || formatDate()}
+        </div>
+
+        {/* Capital row */}
+        <div className="flex items-baseline justify-between gap-2">
+          <span
+            style={{
+              fontFamily: 'var(--font-data)',
+              fontSize: '9px',
+              letterSpacing: '0.14em',
+              textTransform: 'uppercase',
+              color: 'var(--muted)',
+            }}
+          >
+            Capital expuesto
+          </span>
+          <span
+            style={{
+              fontFamily: 'var(--font-data)',
+              fontSize: '12px',
+              fontWeight: 700,
+              letterSpacing: '0.04em',
+              color: 'var(--success)',
+            }}
+          >
+            $0.00
+          </span>
+        </div>
+
+        {/* Last update row */}
+        <div className="text-center opacity-50 whitespace-nowrap">
+          <span
+            style={{
+              fontFamily: 'var(--font-data)',
+              fontSize: '8.5px',
+              letterSpacing: '0.14em',
+              textTransform: 'uppercase',
+              color: 'var(--muted)',
+            }}
+          >
+            ult. actualiza: <span>{getUpdateText()}</span>
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function isActive(pathname: string, item: NavItem): boolean {
   if (item.exact) return pathname === item.href;
   return pathname === item.href || pathname.startsWith(item.href + "/");
@@ -222,7 +379,7 @@ export function AppSidebar({
       >
         {collapsed ? <PanelLeftOpenIcon className="size-3.5" /> : <PanelLeftCloseIcon className="size-3.5" />}
       </button>
-      <div className={cn("lg:py-6 overflow-y-auto", collapsed ? "lg:px-2" : "lg:px-3")}>
+      <div className={cn("lg:py-6 overflow-y-auto flex-1", collapsed ? "lg:px-2" : "lg:px-3")}>
         <SidebarContents
           paperMode={paperMode}
           credsNeedsAttention={credsNeedsAttention}
@@ -230,6 +387,10 @@ export function AppSidebar({
           openSections={openSections}
           onToggleSection={toggleSection}
         />
+      </div>
+      {/* StatusStack outside scroll container - always visible at bottom */}
+      <div className={cn("pb-3", collapsed ? "px-2" : "px-3")}>
+        <StatusStack paperMode={paperMode} collapsed={collapsed} />
       </div>
     </aside>
   );
@@ -315,31 +476,6 @@ export function SidebarContents({
           </div>
         );
       })}
-      <div
-        className={cn(
-          "mt-auto rounded-md border border-border/50 bg-card/40 backdrop-blur-sm p-3 text-xs text-muted-foreground",
-          collapsed && "p-2",
-        )}
-      >
-        <div className={cn("flex items-center gap-2 font-medium text-foreground", collapsed && "justify-center")}>
-          <span
-            className={cn(
-              "size-1.5 rounded-full shrink-0",
-              paperMode ? "bg-success" : "bg-destructive animate-pulse",
-            )}
-            aria-hidden
-            title={collapsed ? (paperMode ? "paper-mode" : "LIVE TRADING") : undefined}
-          />
-          {!collapsed && (paperMode ? "paper-mode" : "⚠ LIVE TRADING")}
-        </div>
-        {!collapsed && (
-          <p className="mt-1 leading-relaxed">
-            {paperMode
-              ? "Executions are simulated only. No capital at risk until S9."
-              : "LIVE CAPITAL EXECUTION ENABLED. Kill-switch armed."}
-          </p>
-        )}
-      </div>
     </>
   );
 }

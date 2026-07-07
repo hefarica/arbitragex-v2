@@ -11,6 +11,7 @@ import { ThemeScript } from "@/components/theme-toggle";
 import { SystemGuardBanner } from "@/components/SystemGuardBanner";
 import { Web3Provider } from "@/app/providers/Web3Provider";
 import { Toaster } from "sonner";
+import { LiveTicker } from "@/components/live-ticker";
 
 // Mockup parity: Inter (sans-serif) + Space Mono (monospace) — exact font stack from premium mockup
 const inter = Inter({
@@ -105,7 +106,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       </head>
       <body className="min-h-dvh bg-background font-sans antialiased notranslate" translate="no">
         {/* Film grain overlay — premium texture (mockup parity) */}
-        <div className="grain-overlay" aria-hidden />
+        <div className="grain" aria-hidden />
         <HeroSphere />
         <a
           href="#main"
@@ -148,6 +149,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
             </div>
           </div>
         </Web3Provider>
+        <LiveTicker />
         <Toaster richColors position="top-right" />
       </body>
     </html>

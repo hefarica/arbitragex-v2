@@ -36,6 +36,8 @@ COPY sed-core ./sed-core
 # searcher-rs` fails "failed to load manifest for workspace member
 # /build/mcp-sim-engine". Same rationale as token-enricher/simulator-v2 above.
 COPY mcp-sim-engine ./mcp-sim-engine
+# FASE OMEGA — flash-loan-core: workspace member (Vector 3). Required by workspace resolver.
+COPY flash-loan-core ./flash-loan-core
 # --locked enforces reproducibility (Cargo.lock must match Cargo.toml).
 # --frozen would also enable --offline, which requires a pre-populated
 # ~/.cargo/registry index — not available in this fresh build context.

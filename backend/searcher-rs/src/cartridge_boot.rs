@@ -204,9 +204,14 @@ fn protocol_type_str(pt: ProtocolType) -> &'static str {
 /// key is omitted → `pool_data.reserves_source == ()` → reserve-dependent cartridges
 /// fail-honest (R8). Likewise `source_pool` is empty when `pool_hint` is None.
 /// Gas / block number stay host-binding-sourced (`get_base_fee`, `get_block_number`).
+///
+/// ## FASE OMEGA — Data Vector Injection
+/// Inyecta `market_state` completo con métricas de volatilidad, liquidez global,
+/// y estado del mempool para decisión hamiltoniana del cartucho.
 pub fn build_cartridge_pool_data(
     intent: &RouteIntent,
     reserves_source: Option<&crate::reserves::ReservesEntry>,
+    market_state: Option<&MarketStateVector>,
 ) -> rhai::Map {
     use rhai::Dynamic;
     let mut m = rhai::Map::new();
@@ -248,7 +253,107 @@ pub fn build_cartridge_pool_data(
         }
         m.insert("reserves_source".into(), Dynamic::from(rmap));
     }
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // FASE OMEGA — Hamiltonian Data Vector Injection
+    // ═══════════════════════════════════════════════════════════════════════════════
+    if let Some(ms) = market_state {
+        let mut market_map = rhai::Map::new();
+        market_map.insert("volatility".into(), Dynamic::from(ms.volatility));
+        market_map.insert("liquidity_depth".into(), Dynamic::from(ms.liquidity_depth));
+        market_map.insert("mempool_pressure".into(), Dynamic::from(ms.mempool_pressure));
+        market_map.insert("gas_trend".into(), Dynamic::from(ms.gas_trend));
+        market_map.insert("block_time_ms".into(), Dynamic::from(ms.block_time_ms as i64));
+        market_map.insert("price_momentum".into(), Dynamic::from(ms.price_momentum));
+        market_map.insert("spread_variance".into(), Dynamic::from(ms.spread_variance));
+        market_map.insert("timestamp_ms".into(), Dynamic::from(ms.timestamp_ms as i64));
+        m.insert("market_state".into(), Dynamic::from(market_map));
+    }
     m
+}
+
+/// Vector de estado de mercado para inyección hamiltoniana en cartuchos.
+/// Calculado por el scanner a partir de métricas on-chain y mempool.
+#[derive(Debug, Clone, Default)]
+pub struct MarketStateVector {
+    /// Volatilidad implícita del par (0.0 - 1.0)
+    pub volatility: f64,
+    /// Profundidad de liquidez agregada en USD
+    pub liquidity_depth: f64,
+    /// Presión del mempool (transacciones pendientes / bloque)
+    pub mempool_pressure: f64,
+    /// Tendencia de gas (diferencial vs últimos 10 bloques)
+    pub gas_trend: f64,
+    /// Tiempo entre bloques en ms
+    pub block_time_ms: u64,
+    /// Momentum de precio (dirección y magnitud)
+    pub price_momentum: f64,
+    /// Varianza del spread entre DEXs
+    pub spread_variance: f64,
+    /// Timestamp de cálculo
+    pub timestamp_ms: u64,
+}
+
+/// Computa el vector de estado de mercado para inyección hamiltoniana.
+/// Extrae métricas de Redis y calcula volatilidad, momentum, y presión.
+async fn compute_market_state_vector(
+    intent: &RouteIntent,
+    runner: Arc<CartridgeRunner>,
+) -> Option<MarketStateVector> {
+    let start = std::time::Instant::now();
+
+    // Extraer token pair del intent
+    let (token_in, token_out) = intent.legs.first().map(|leg| {
+        (format!("{:#x}", leg.token_in), format!("{:#x}", leg.token_out))
+    })?;
+
+    // Leer métricas de Redis (best-effort, fail-honest)
+    let volatility = runner.read_market_metric(&format!("arbx:market:{}:{}:volatility", token_in, token_out)).await
+        .unwrap_or(0.15); // Default 15% volatilidad
+
+    let liquidity_depth = runner.read_market_metric(&format!("arbx:market:{}:{}:liquidity", token_in, token_out)).await
+        .unwrap_or(0.0);
+
+    let mempool_pressure = runner.read_market_metric("arbx:global:mempool_pressure").await
+        .unwrap_or(0.5); // Default presión media
+
+    let gas_trend = runner.read_market_metric("arbx:global:gas_trend").await
+        .unwrap_or(0.0);
+
+    let price_momentum = runner.read_market_metric(&format!("arbx:market:{}:{}:momentum", token_in, token_out)).await
+        .unwrap_or(0.0);
+
+    let spread_variance = runner.read_market_metric(&format!("arbx:market:{}:{}:spread_var", token_in, token_out)).await
+        .unwrap_or(0.0);
+
+    let block_time_ms = runner.read_market_metric("arbx:global:block_time_ms").await
+        .map(|v| v as u64)
+        .unwrap_or(12_000); // Default 12s
+
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    tracing::debug!(
+        event = "market_state.computed",
+        tx_hash = %intent.tx_hash,
+        volatility = volatility,
+        liquidity_depth = liquidity_depth,
+        mempool_pressure = mempool_pressure,
+        elapsed_ms = start.elapsed().as_millis(),
+        "MarketStateVector calculado para inyección hamiltoniana"
+    );
+
+    Some(MarketStateVector {
+        volatility,
+        liquidity_depth,
+        mempool_pressure,
+        gas_trend,
+        block_time_ms,
+        price_momentum,
+        spread_variance,
+        timestamp_ms,
+    })
 }
 
 // ── FASE B — Shadow outcome emitter (gated off by default, NO-ACTIVE) ─────────
@@ -672,11 +777,13 @@ pub async fn shadow_evaluate_intent(
     // Enrich pool_data with the source pool's reserves so reserve-dependent cartridges
     // (e.g. dex_arb) can evaluate. Best-effort: None when the pool has no fresh reserves
     // in Redis (R8 fail-honest — the cartridge then returns no opportunity).
+    // FASE OMEGA: Inyecta MarketStateVector para decisión hamiltoniana.
     let reserves_source = match intent.legs.first().and_then(|l| l.pool_hint) {
         Some(p) => runner.read_pool_reserves(&format!("{:#x}", p)).await,
         None => None,
     };
-    let pool_data = build_cartridge_pool_data(&intent, reserves_source.as_ref());
+    let market_state = compute_market_state_vector(&intent, runner.clone()).await;
+    let pool_data = build_cartridge_pool_data(&intent, reserves_source.as_ref(), market_state.as_ref());
 
     for (id, _category) in pertinent {
         match runner.evaluate(&id, pool_data.clone()).await {
@@ -784,7 +891,7 @@ mod tests {
             DetectionSource::PublicMempool,
         )
         .expect("valid intent");
-        let m = build_cartridge_pool_data(&intent, None);
+        let m = build_cartridge_pool_data(&intent, None, None);
         assert_eq!(m.get("chain_id").unwrap().to_string(), "1");
         assert_eq!(m.get("amount_in").unwrap().to_string(), "1234");
         assert_eq!(m.get("protocol_type").unwrap().to_string(), "v2");
@@ -816,7 +923,7 @@ mod tests {
             DetectionSource::PublicMempool,
         )
         .expect("valid intent");
-        let m = build_cartridge_pool_data(&intent, None);
+        let m = build_cartridge_pool_data(&intent, None, None);
         assert_eq!(m.get("source_pool").unwrap().to_string(), "");
         assert_eq!(m.get("protocol_type").unwrap().to_string(), "unknown");
         // No reserves provided -> key absent -> Rhai sees () -> reserve-dependent cartridges fail-honest.
@@ -856,7 +963,7 @@ mod tests {
             blk: 18_500_000,
             ts: 1_714_857_600,
         };
-        let m = build_cartridge_pool_data(&intent, Some(&rs));
+        let m = build_cartridge_pool_data(&intent, Some(&rs), None);
         let rsrc = m
             .get("reserves_source")
             .expect("reserves_source must be present when provided")

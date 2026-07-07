@@ -115,6 +115,7 @@ import { createForkSimulator } from "./routes/wallet-sim-runtime.js";
 import { mountAuthSiwe } from "./routes/auth-siwe.js";
 import { mountOperatorSelfTest } from "./routes/operator-selftest.js";
 import { buildTopologyVaultRouter } from "./routes/topology-vault.js";
+import { mountExecution } from "./routes/execution.js";
 import {
   setupWebSocketGateway,
   broadcastOpportunity,
@@ -650,6 +651,11 @@ app.get("/api/v1/scanner/heartbeat", async (req, res) => {
     res.status(503).json({ error: "redis_read_failed", detail: (e as Error).message });
   }
 });
+
+// FASE OMEGA — Vector 2: Execution Vector Bridge
+// Endpoint POST /api/v1/execution que retorna 202 Accepted y encola la ejecución.
+// Shadow-safe: en modo paper/shadow, la ejecución se simula sin broadcast on-chain.
+mountExecution(app, { redis });
 
 app.get("/api/v1/risk/alerts", async (req, res) => {
   const p = requireDbPool();
