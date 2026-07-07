@@ -9,9 +9,7 @@
 //! - Registro en Shadow Ledger
 //! - Generación de hash de transacción
 
-use flash_loan_core::orchestrator::{
-    calculate_r_flash, RouteLeg, StepType, SimulationContext,
-};
+use flash_loan_core::orchestrator::{calculate_r_flash, RouteLeg, SimulationContext, StepType};
 
 /// Estado de mercado simulado (capturado de fuentes reales)
 struct MarketState {
@@ -93,8 +91,8 @@ fn build_execution_route(principal_eth: f64) -> Vec<RouteLeg> {
             target: "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F".to_string(),
             token_in: "0xA0b86a33E6441E6C7D3D4B4f6c7E8d9f0A1B2C3D".to_string(), // Token B
             token_out: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".to_string(), // WETH
-            amount: (principal_wei * 1015 / 1000).to_string(), // +1.5% spread
-            pool_fee_bps: 30, // 0.3%
+            amount: (principal_wei * 1015 / 1000).to_string(),                  // +1.5% spread
+            pool_fee_bps: 30,                                                   // 0.3%
         },
     ]
 }
@@ -104,9 +102,16 @@ fn execute_paper_trade() -> Result<PaperTradeRecord, Box<dyn std::error::Error>>
     // 1. CAPTURA DE ESTADO DE MERCADO
     let market = capture_market_state();
     println!("📊 MARKET STATE CAPTURED");
-    println!("   Spread: {} bps ({}%)", market.price_spread_bps, market.price_spread_bps as f64 / 100.0);
+    println!(
+        "   Spread: {} bps ({}%)",
+        market.price_spread_bps,
+        market.price_spread_bps as f64 / 100.0
+    );
     println!("   ETH Price: ${:.2}", market.native_price_usd);
-    println!("   Gas Price: {} gwei", market.gas_price_wei / 1_000_000_000);
+    println!(
+        "   Gas Price: {} gwei",
+        market.gas_price_wei / 1_000_000_000
+    );
     println!();
 
     // Validar spread > 1%
@@ -127,16 +132,26 @@ fn execute_paper_trade() -> Result<PaperTradeRecord, Box<dyn std::error::Error>>
     let principal_wei = (principal_eth * 1e18) as u128;
 
     println!("🛣️  EXECUTION ROUTE BUILT");
-    println!("   Principal: {} ETH (${:.2})", principal_eth, principal_eth * market.native_price_usd);
+    println!(
+        "   Principal: {} ETH (${:.2})",
+        principal_eth,
+        principal_eth * market.native_price_usd
+    );
     for (i, leg) in route.iter().enumerate() {
-        println!("   Step {}: {:?} via {} (fee: {} bps)",
-            i + 1, leg.step_type, leg.protocol, leg.pool_fee_bps);
+        println!(
+            "   Step {}: {:?} via {} (fee: {} bps)",
+            i + 1,
+            leg.step_type,
+            leg.protocol,
+            leg.pool_fee_bps
+        );
     }
     println!();
 
     // 4. CÁLCULO DE R_FLASH
     let min_profit_usd = 50.0; // Mínimo $50 de profit
-    let profitability = calculate_r_flash(&route, &principal_wei.to_string(), &ctx, min_profit_usd)?;
+    let profitability =
+        calculate_r_flash(&route, &principal_wei.to_string(), &ctx, min_profit_usd)?;
 
     println!("💰 PROFITABILITY CALCULATED");
     println!("   Calculation ID: {}", profitability.calculation_id);
@@ -186,24 +201,53 @@ fn main() {
             println!();
             println!("✅ PAPER TRADE EXECUTED SUCCESSFULLY");
             println!();
-            println!("═══════════════════════════════════════════════════════════════════════════════");
+            println!(
+                "═══════════════════════════════════════════════════════════════════════════════"
+            );
             println!("FINAL REPORT:");
-            println!("═══════════════════════════════════════════════════════════════════════════════");
+            println!(
+                "═══════════════════════════════════════════════════════════════════════════════"
+            );
             println!("Transaction Hash:    {}", record.tx_hash);
             println!("Gas Consumed:        {} units", record.gas_consumed);
-            println!("Gas Price:           {} gwei", record.market_state.gas_price_wei / 1_000_000_000);
-            println!("ETH Price:           ${:.2}", record.market_state.native_price_usd);
-            println!("Spread Detected:     {} bps ({}%)", record.market_state.price_spread_bps,
-                record.market_state.price_spread_bps as f64 / 100.0);
-            println!("Gross Yield:         ${:.4}", record.profitability.gross_yield_usd);
-            println!("Total Costs:         ${:.4}",
-                record.profitability.total_gas_cost_usd +
-                record.profitability.flash_fee_usd +
-                record.profitability.decoherencia_usd);
-            println!("───────────────────────────────────────────────────────────────────────────────");
+            println!(
+                "Gas Price:           {} gwei",
+                record.market_state.gas_price_wei / 1_000_000_000
+            );
+            println!(
+                "ETH Price:           ${:.2}",
+                record.market_state.native_price_usd
+            );
+            println!(
+                "Spread Detected:     {} bps ({}%)",
+                record.market_state.price_spread_bps,
+                record.market_state.price_spread_bps as f64 / 100.0
+            );
+            println!(
+                "Gross Yield:         ${:.4}",
+                record.profitability.gross_yield_usd
+            );
+            println!(
+                "Total Costs:         ${:.4}",
+                record.profitability.total_gas_cost_usd
+                    + record.profitability.flash_fee_usd
+                    + record.profitability.decoherencia_usd
+            );
+            println!(
+                "───────────────────────────────────────────────────────────────────────────────"
+            );
             println!("NET PROFIT (R_FLASH): ${:.4}", record.net_spread_usd);
-            println!("PROFITABLE:          {}", if record.profitability.is_profitable { "YES ✅" } else { "NO ❌" });
-            println!("═══════════════════════════════════════════════════════════════════════════════");
+            println!(
+                "PROFITABLE:          {}",
+                if record.profitability.is_profitable {
+                    "YES ✅"
+                } else {
+                    "NO ❌"
+                }
+            );
+            println!(
+                "═══════════════════════════════════════════════════════════════════════════════"
+            );
         }
         Err(e) => {
             eprintln!("❌ PAPER TRADE FAILED: {}", e);

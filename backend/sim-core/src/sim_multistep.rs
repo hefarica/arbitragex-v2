@@ -1218,7 +1218,8 @@ mod tests {
             .expect("plan must contain exactly one provider slot-2 override");
 
         assert_eq!(
-            provider_over.token, fle(),
+            provider_over.token,
+            fle(),
             "provider override must target the FLE"
         );
         // Re-derive the expected value: 12 zero bytes + 20 address bytes → U256.

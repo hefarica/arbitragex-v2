@@ -83,7 +83,9 @@ async fn apply_token_migrations(pool: &sqlx::PgPool) -> sqlx::Result<()> {
     sqlx::raw_sql(TEST_MIGRATION_001_ROLES)
         .execute(pool)
         .await?;
-    sqlx::raw_sql(MIGRATION_034_TOKENS_DDL).execute(pool).await?;
+    sqlx::raw_sql(MIGRATION_034_TOKENS_DDL)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -395,7 +397,7 @@ async fn needs_resolution_returns_true_for_null_resolved_via(
     sqlx::query(
         "INSERT INTO tokens (chain_id, address, symbol, decimals, resolved_via, resolved_at)
          VALUES (1, $1, 'TEST', 18, NULL, NOW())
-         ON CONFLICT (chain_id, address) DO NOTHING"
+         ON CONFLICT (chain_id, address) DO NOTHING",
     )
     .bind(format!("{:#x}", addr))
     .execute(&pool)

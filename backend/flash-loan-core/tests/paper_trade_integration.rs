@@ -5,9 +5,7 @@
 //! Test de integración E2E que valida el ciclo completo de paper trade
 //! con datos de mercado reales capturados de la DApp.
 
-use flash_loan_core::orchestrator::{
-    calculate_r_flash, RouteLeg, StepType, SimulationContext,
-};
+use flash_loan_core::orchestrator::{calculate_r_flash, RouteLeg, SimulationContext, StepType};
 
 /// Simula captura de estado de mercado REAL desde la DApp
 /// En producción, estos datos vienen de:
@@ -42,7 +40,7 @@ fn build_real_execution_route() -> Vec<RouteLeg> {
             token_in: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".to_string(), // WETH
             token_out: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".to_string(),
             amount: "50000000000000000000".to_string(), // 50 ETH
-            pool_fee_bps: 9, // Aave flash loan fee: 0.09%
+            pool_fee_bps: 9,                            // Aave flash loan fee: 0.09%
         },
         RouteLeg {
             step_type: StepType::Swap,
@@ -59,8 +57,8 @@ fn build_real_execution_route() -> Vec<RouteLeg> {
             target: "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F".to_string(), // SushiSwap Router
             token_in: "0xdAC17F958D2ee523a2206206994597C13D831ec7".to_string(), // USDT
             token_out: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".to_string(), // WETH
-            amount: "50000000000".to_string(), // ~$50,000 USDT
-            pool_fee_bps: 30, // 0.3% pool fee
+            amount: "50000000000".to_string(),                                // ~$50,000 USDT
+            pool_fee_bps: 30,                                                 // 0.3% pool fee
         },
     ]
 }
@@ -91,7 +89,11 @@ fn test_paper_trade_e2e_real_market_data() {
 
     println!("📊 MARKET STATE CAPTURED (Real Sources)");
     println!("   Source: searcher-rs WebSocket + Redis Stream");
-    println!("   Price Spread: {} bps ({}%)", spread_bps, spread_bps as f64 / 100.0);
+    println!(
+        "   Price Spread: {} bps ({}%)",
+        spread_bps,
+        spread_bps as f64 / 100.0
+    );
     println!("   ETH Price: ${:.2}", eth_price);
     println!("   Gas Price: {} gwei", gas_wei / 1_000_000_000);
     println!();
@@ -120,11 +122,20 @@ fn test_paper_trade_e2e_real_market_data() {
     let principal_eth = principal_wei as f64 / 1e18;
 
     println!("🛣️  EXECUTION ROUTE BUILT (Hamiltonian Detected)");
-    println!("   Principal: {} ETH (${:.2})", principal_eth, principal_eth * eth_price);
+    println!(
+        "   Principal: {} ETH (${:.2})",
+        principal_eth,
+        principal_eth * eth_price
+    );
     println!("   Steps:");
     for (i, leg) in route.iter().enumerate() {
-        println!("   {}. {:?} via {} (fee: {} bps)",
-            i + 1, leg.step_type, leg.protocol, leg.pool_fee_bps);
+        println!(
+            "   {}. {:?} via {} (fee: {} bps)",
+            i + 1,
+            leg.step_type,
+            leg.protocol,
+            leg.pool_fee_bps
+        );
     }
     println!();
 
@@ -132,12 +143,8 @@ fn test_paper_trade_e2e_real_market_data() {
     // FASE 4: CÁLCULO DE R_FLASH (Rentabilidad Neta)
     // ═══════════════════════════════════════════════════════════════════════════
     let min_profit_usd = 50.0; // Umbral mínimo: $50
-    let result = calculate_r_flash(
-        &route,
-        &principal_wei.to_string(),
-        &ctx,
-        min_profit_usd
-    ).expect("Cálculo de r_flash falló");
+    let result = calculate_r_flash(&route, &principal_wei.to_string(), &ctx, min_profit_usd)
+        .expect("Cálculo de r_flash falló");
 
     println!("💰 PROFITABILITY CALCULATED (Execution Core)");
     println!("   Calculation ID: {}", result.calculation_id);
@@ -181,31 +188,53 @@ fn test_paper_trade_e2e_real_market_data() {
     println!("Gas Consumed:        {} units", gas_consumed);
     println!("Gas Price:           {} gwei", gas_wei / 1_000_000_000);
     println!("ETH Price:           ${:.2}", eth_price);
-    println!("Spread Detected:     {} bps ({}%)", spread_bps, spread_bps as f64 / 100.0);
+    println!(
+        "Spread Detected:     {} bps ({}%)",
+        spread_bps,
+        spread_bps as f64 / 100.0
+    );
     println!("Gross Yield:         ${:.4}", result.gross_yield_usd);
-    println!("Total Costs:         ${:.4}",
-        result.total_gas_cost_usd + result.flash_fee_usd + result.decoherencia_usd);
+    println!(
+        "Total Costs:         ${:.4}",
+        result.total_gas_cost_usd + result.flash_fee_usd + result.decoherencia_usd
+    );
     println!("───────────────────────────────────────────────────────────────────────────────");
     println!("NET PROFIT (R_FLASH): ${:.4}", result.r_flash_usd);
-    println!("PROFITABLE:          {}", if result.is_profitable { "YES ✅" } else { "NO ❌" });
+    println!(
+        "PROFITABLE:          {}",
+        if result.is_profitable {
+            "YES ✅"
+        } else {
+            "NO ❌"
+        }
+    );
     println!("═══════════════════════════════════════════════════════════════════════════════\n");
 
     // ═══════════════════════════════════════════════════════════════════════════
     // VALIDACIONES DE ASSERT
     // ═══════════════════════════════════════════════════════════════════════════
-    assert!(result.flash_fee_usd >= 0.0, "Flash fee no puede ser negativo");
-    assert!(result.total_gas_cost_usd > 0.0, "Gas cost debe ser positivo");
-    assert!(result.r_flash_usd > 0.0 || !result.is_profitable, "R_FLASH debe ser positivo o no rentable");
+    assert!(
+        result.flash_fee_usd >= 0.0,
+        "Flash fee no puede ser negativo"
+    );
+    assert!(
+        result.total_gas_cost_usd > 0.0,
+        "Gas cost debe ser positivo"
+    );
+    assert!(
+        result.r_flash_usd > 0.0 || !result.is_profitable,
+        "R_FLASH debe ser positivo o no rentable"
+    );
     assert!(tx_hash.starts_with("0x"), "Hash debe empezar con 0x");
-    assert_eq!(tx_hash.len(), 66, "Hash debe tener 66 caracteres (0x + 64 hex)");
+    assert_eq!(
+        tx_hash.len(),
+        66,
+        "Hash debe tener 66 caracteres (0x + 64 hex)"
+    );
 
     // Verificar que el cálculo es reproducible
-    let result2 = calculate_r_flash(
-        &route,
-        &principal_wei.to_string(),
-        &ctx,
-        min_profit_usd
-    ).expect("Reproducción de cálculo falló");
+    let result2 = calculate_r_flash(&route, &principal_wei.to_string(), &ctx, min_profit_usd)
+        .expect("Reproducción de cálculo falló");
 
     assert!(
         (result.r_flash_usd - result2.r_flash_usd).abs() < f64::EPSILON,
@@ -221,13 +250,22 @@ fn test_paper_trade_with_different_market_conditions() {
         (120, 3000.0, 25_000_000_000u128, "Bull market, low gas"),
         (200, 2800.0, 50_000_000_000u128, "Bear market, high gas"),
         (150, 3200.0, 30_000_000_000u128, "Normal conditions"),
-        (500, 3500.0, 15_000_000_000u128, "High spread, low gas (ideal)"),
+        (
+            500,
+            3500.0,
+            15_000_000_000u128,
+            "High spread, low gas (ideal)",
+        ),
     ];
 
     for (spread_bps, eth_price, gas_wei, desc) in test_cases {
         println!("\n📊 Test Case: {}", desc);
-        println!("   Spread: {} bps, ETH: ${}, Gas: {} gwei",
-            spread_bps, eth_price, gas_wei / 1_000_000_000);
+        println!(
+            "   Spread: {} bps, ETH: ${}, Gas: {} gwei",
+            spread_bps,
+            eth_price,
+            gas_wei / 1_000_000_000
+        );
 
         if spread_bps <= 100 {
             println!("   ⚠️  Spread insuficiente, saltando...");
@@ -243,11 +281,12 @@ fn test_paper_trade_with_different_market_conditions() {
         let route = build_real_execution_route();
         let principal = "5000000000000000000";
 
-        match calculate_r_flash(&route, principal, &ctx, 50.0
-        ) {
+        match calculate_r_flash(&route, principal, &ctx, 50.0) {
             Ok(result) => {
-                println!("   ✅ R_FLASH: ${:.2} (Profitable: {})",
-                    result.r_flash_usd, result.is_profitable);
+                println!(
+                    "   ✅ R_FLASH: ${:.2} (Profitable: {})",
+                    result.r_flash_usd, result.is_profitable
+                );
             }
             Err(e) => {
                 println!("   ❌ Error: {}", e);

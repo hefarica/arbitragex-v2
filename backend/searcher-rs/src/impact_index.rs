@@ -608,12 +608,8 @@ async fn load_pools_from_pg(pg: &PgPool, chain_id: u64) -> anyhow::Result<Vec<Po
             fee_bps: fee_tier.map(|f| f as u32),
             safety_score_t0,
             safety_score_t1,
-            safety_classification_t0: safety_flags_t0
-                .as_ref()
-                .and_then(classification_from_flags),
-            safety_classification_t1: safety_flags_t1
-                .as_ref()
-                .and_then(classification_from_flags),
+            safety_classification_t0: safety_flags_t0.as_ref().and_then(classification_from_flags),
+            safety_classification_t1: safety_flags_t1.as_ref().and_then(classification_from_flags),
         });
     }
 

@@ -263,12 +263,18 @@ pub fn calculate_r_flash(
 /// Prioridad: Balancer (0 fee) > dYdX (0 fee) > Aave (9 bps) > Uniswap V3
 fn select_optimal_tls_provider(route: &[RouteLeg]) -> Result<TlsProvider, FlashOrchestratorError> {
     // Si la ruta incluye Balancer, usarlo (0 fee)
-    if route.iter().any(|leg| leg.protocol.to_lowercase().contains("balancer")) {
+    if route
+        .iter()
+        .any(|leg| leg.protocol.to_lowercase().contains("balancer"))
+    {
         return Ok(TlsProvider::BalancerV2);
     }
 
     // Si la ruta incluye dYdX, usarlo (0 fee)
-    if route.iter().any(|leg| leg.protocol.to_lowercase().contains("dydx")) {
+    if route
+        .iter()
+        .any(|leg| leg.protocol.to_lowercase().contains("dydx"))
+    {
         return Ok(TlsProvider::Dydx);
     }
 

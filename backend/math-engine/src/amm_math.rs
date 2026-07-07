@@ -654,8 +654,7 @@ mod external_vectors {
         let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("test_vectors")
             .join(name);
-        let s = std::fs::read_to_string(&p)
-            .unwrap_or_else(|e| panic!("read vectors {p:?}: {e}"));
+        let s = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read vectors {p:?}: {e}"));
         serde_json::from_str(&s).expect("vector json must parse")
     }
 

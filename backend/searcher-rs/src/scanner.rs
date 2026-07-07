@@ -577,9 +577,12 @@ async fn pool_sync_watcher(
             // fail-closed. token0/token1 here are NOT pre-sorted (unlike
             // pool_discovery which sorts) — the _t0/_t1 suffix maps to the
             // literal token0/token1 fields bound above.
-            let (safety_score_t0, safety_score_t1, safety_classification_t0, safety_classification_t1) =
-                crate::impact_index::lookup_token_safety(Some(&db), chain_id, token0, token1)
-                    .await;
+            let (
+                safety_score_t0,
+                safety_score_t1,
+                safety_classification_t0,
+                safety_classification_t1,
+            ) = crate::impact_index::lookup_token_safety(Some(&db), chain_id, token0, token1).await;
 
             let pool_ref = PoolRef {
                 chain_id,

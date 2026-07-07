@@ -660,10 +660,7 @@ impl PoolDiscoveryService {
         // FASE 3: hydrate cached token-safety fields so the graph builder's
         // anti-rug edge penalty + DROP gate sees fresh scores for
         // RPC-discovered pools. `None` (unscored) propagates fail-closed.
-        let (sorted_t0, sorted_t1) = (
-            std::cmp::min(e_t0, e_t1),
-            std::cmp::max(e_t0, e_t1),
-        );
+        let (sorted_t0, sorted_t1) = (std::cmp::min(e_t0, e_t1), std::cmp::max(e_t0, e_t1));
         let (safety_score_t0, safety_score_t1, safety_classification_t0, safety_classification_t1) =
             crate::impact_index::lookup_token_safety(
                 self.db.as_ref(),

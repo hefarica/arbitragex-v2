@@ -260,9 +260,15 @@ pub fn build_cartridge_pool_data(
         let mut market_map = rhai::Map::new();
         market_map.insert("volatility".into(), Dynamic::from(ms.volatility));
         market_map.insert("liquidity_depth".into(), Dynamic::from(ms.liquidity_depth));
-        market_map.insert("mempool_pressure".into(), Dynamic::from(ms.mempool_pressure));
+        market_map.insert(
+            "mempool_pressure".into(),
+            Dynamic::from(ms.mempool_pressure),
+        );
         market_map.insert("gas_trend".into(), Dynamic::from(ms.gas_trend));
-        market_map.insert("block_time_ms".into(), Dynamic::from(ms.block_time_ms as i64));
+        market_map.insert(
+            "block_time_ms".into(),
+            Dynamic::from(ms.block_time_ms as i64),
+        );
         market_map.insert("price_momentum".into(), Dynamic::from(ms.price_momentum));
         market_map.insert("spread_variance".into(), Dynamic::from(ms.spread_variance));
         market_map.insert("timestamp_ms".into(), Dynamic::from(ms.timestamp_ms as i64));
@@ -303,29 +309,52 @@ async fn compute_market_state_vector(
 
     // Extraer token pair del intent
     let (token_in, token_out) = intent.legs.first().map(|leg| {
-        (format!("{:#x}", leg.token_in), format!("{:#x}", leg.token_out))
+        (
+            format!("{:#x}", leg.token_in),
+            format!("{:#x}", leg.token_out),
+        )
     })?;
 
     // Leer métricas de Redis (best-effort, fail-honest)
-    let volatility = runner.read_market_metric(&format!("arbx:market:{}:{}:volatility", token_in, token_out)).await
+    let volatility = runner
+        .read_market_metric(&format!(
+            "arbx:market:{}:{}:volatility",
+            token_in, token_out
+        ))
+        .await
         .unwrap_or(0.15); // Default 15% volatilidad
 
-    let liquidity_depth = runner.read_market_metric(&format!("arbx:market:{}:{}:liquidity", token_in, token_out)).await
+    let liquidity_depth = runner
+        .read_market_metric(&format!("arbx:market:{}:{}:liquidity", token_in, token_out))
+        .await
         .unwrap_or(0.0);
 
-    let mempool_pressure = runner.read_market_metric("arbx:global:mempool_pressure").await
+    let mempool_pressure = runner
+        .read_market_metric("arbx:global:mempool_pressure")
+        .await
         .unwrap_or(0.5); // Default presión media
 
-    let gas_trend = runner.read_market_metric("arbx:global:gas_trend").await
+    let gas_trend = runner
+        .read_market_metric("arbx:global:gas_trend")
+        .await
         .unwrap_or(0.0);
 
-    let price_momentum = runner.read_market_metric(&format!("arbx:market:{}:{}:momentum", token_in, token_out)).await
+    let price_momentum = runner
+        .read_market_metric(&format!("arbx:market:{}:{}:momentum", token_in, token_out))
+        .await
         .unwrap_or(0.0);
 
-    let spread_variance = runner.read_market_metric(&format!("arbx:market:{}:{}:spread_var", token_in, token_out)).await
+    let spread_variance = runner
+        .read_market_metric(&format!(
+            "arbx:market:{}:{}:spread_var",
+            token_in, token_out
+        ))
+        .await
         .unwrap_or(0.0);
 
-    let block_time_ms = runner.read_market_metric("arbx:global:block_time_ms").await
+    let block_time_ms = runner
+        .read_market_metric("arbx:global:block_time_ms")
+        .await
         .map(|v| v as u64)
         .unwrap_or(12_000); // Default 12s
 
@@ -783,7 +812,8 @@ pub async fn shadow_evaluate_intent(
         None => None,
     };
     let market_state = compute_market_state_vector(&intent, runner.clone()).await;
-    let pool_data = build_cartridge_pool_data(&intent, reserves_source.as_ref(), market_state.as_ref());
+    let pool_data =
+        build_cartridge_pool_data(&intent, reserves_source.as_ref(), market_state.as_ref());
 
     for (id, _category) in pertinent {
         match runner.evaluate(&id, pool_data.clone()).await {

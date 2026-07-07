@@ -734,7 +734,10 @@ mod tests {
         let mut expected_bytes = [0u8; 32];
         expected_bytes[12..32].copy_from_slice(provider.as_bytes());
         let expected = U256::from_big_endian(&expected_bytes);
-        assert_eq!(over.value, expected, "value must be the left-padded address");
+        assert_eq!(
+            over.value, expected,
+            "value must be the left-padded address"
+        );
     }
 
     /// A different provider produces a different value (no accidental collision).
