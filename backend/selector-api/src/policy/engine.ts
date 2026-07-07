@@ -16,7 +16,7 @@ import { pairAllowed } from "./blacklist.js";
 export type RejectSeverity = "info" | "warning" | "critical";
 
 export type Decision =
-  | { kind: "accept"; score: number; reason: null; entropySignal?: EntropyScore }
+  | { kind: "accept"; score: number; reason: undefined; entropySignal?: EntropyScore | undefined }
   | { kind: "reject"; score: number | null; reason: string; severity: RejectSeverity };
 
 export type PrefilterInput = {
@@ -124,5 +124,5 @@ export function decide(input: DecideInput): Decision {
     }
   }
 
-  return { kind: "accept", score: scored.score, reason: null, entropySignal };
+  return { kind: "accept", score: scored.score, reason: undefined, entropySignal };
 }
