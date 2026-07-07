@@ -29,6 +29,8 @@ interface ExecutionRequest {
   tx_hash: string;
   /** ID del cartucho que evaluó la oportunidad */
   cartridge_id: string;
+  /** Confianza del cartucho (0.0 - 1.0), mínimo 0.5 requerido */
+  cartridge_confidence: number;
   /** Ruta de ejecución (array de pasos) */
   route: ExecutionStep[];
   /** Parámetros de simulación que validaron la oportunidad */
@@ -106,6 +108,14 @@ function validateExecutionRequest(body: unknown): { valid: true; data: Execution
 
   if (!req.cartridge_id || typeof req.cartridge_id !== "string") {
     return { valid: false, error: "Missing or invalid cartridge_id" };
+  }
+
+  if (typeof req.cartridge_confidence !== "number" || req.cartridge_confidence < 0 || req.cartridge_confidence > 1) {
+    return { valid: false, error: "Missing or invalid cartridge_confidence (must be 0.0 - 1.0)" };
+  }
+
+  if (req.cartridge_confidence < 0.5) {
+    return { valid: false, error: "cartridge_confidence must be >= 0.5" };
   }
 
   if (!Array.isArray(req.route) || req.route.length === 0) {

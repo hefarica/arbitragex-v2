@@ -12,10 +12,8 @@
 use flash_loan_core::orchestrator::{
     calculate_r_flash, RouteLeg, StepType, SimulationContext,
 };
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Estado de mercado simulado (capturado de fuentes reales)
-#[allow(dead_code)]
 struct MarketState {
     /// Spread de precio entre DEXs (bps)
     price_spread_bps: u16,
@@ -23,23 +21,16 @@ struct MarketState {
     native_price_usd: f64,
     /// Gas price actual (wei)
     gas_price_wei: u128,
-    /// Timestamp de captura
-    captured_at_ms: u64,
 }
 
 /// Resultado de ejecución paper trade
-#[allow(dead_code)]
 struct PaperTradeRecord {
     /// Hash único de la operación
     tx_hash: String,
-    /// Timestamp de ejecución
-    executed_at_ms: u64,
     /// Estado de mercado capturado
     market_state: MarketState,
     /// Rentabilidad calculada
     profitability: flash_loan_core::orchestrator::FlashProfitability,
-    /// Legs de la ruta ejecutada
-    route: Vec<RouteLeg>,
     /// Gas consumido estimado (units)
     gas_consumed: u64,
     /// Spread neto después de costos
@@ -69,10 +60,6 @@ fn capture_market_state() -> MarketState {
         price_spread_bps: 150, // 1.5%
         native_price_usd: 3200.0,
         gas_price_wei: 30_000_000_000, // 30 gwei
-        captured_at_ms: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64,
     }
 }
 
@@ -164,11 +151,7 @@ fn execute_paper_trade() -> Result<PaperTradeRecord, Box<dyn std::error::Error>>
     println!();
 
     // 5. GENERACIÓN DE HASH
-    let executed_at_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-    let tx_hash = generate_tx_hash(&profitability.calculation_id, executed_at_ms);
+    let tx_hash = generate_tx_hash(&profitability.calculation_id, 0);
 
     // 6. CÁLCULO DE GAS CONSUMIDO
     let gas_consumed = 180_000 + (route.len() as u64 * 45_000);
@@ -178,10 +161,8 @@ fn execute_paper_trade() -> Result<PaperTradeRecord, Box<dyn std::error::Error>>
 
     let record = PaperTradeRecord {
         tx_hash: tx_hash.clone(),
-        executed_at_ms,
         market_state: market,
         profitability,
-        route,
         gas_consumed,
         net_spread_usd,
     };
@@ -190,7 +171,6 @@ fn execute_paper_trade() -> Result<PaperTradeRecord, Box<dyn std::error::Error>>
     println!("   TX Hash: {}", tx_hash);
     println!("   Gas Consumed: {} units", gas_consumed);
     println!("   Net Spread: ${:.4}", net_spread_usd);
-    println!("   Timestamp: {}", executed_at_ms);
 
     Ok(record)
 }

@@ -158,6 +158,97 @@ export default function OpportunitiesClient({
     }
   }, [EDGE_URL]);
 
+  // FASE OMEGA — EXECUTE handler: Envía oportunidad al Execution Core
+  const handleExecute = useCallback(async (opp: OmniOpportunity) => {
+    if (!opp.hamiltonian_detected || !opp.cartridge_id) {
+      toast.error("Execution rejected", {
+        description: "Only Hamiltonian-detected opportunities with cartridge binding can be executed",
+      });
+      return;
+    }
+
+    if (!opp.cartridge_confidence || opp.cartridge_confidence < 0.7) {
+      toast.error("Confidence too low", {
+        description: `Cartridge confidence ${(opp.cartridge_confidence ?? 0).toFixed(2)} < 0.70 threshold`,
+      });
+      return;
+    }
+
+    setSimLoading(opp.id);
+    try {
+      // Construir ExecutionRequest según contrato Backend
+      const executionRequest = {
+        opportunity_id: opp.id,
+        tx_hash: opp.trace_id, // Usamos trace_id como tx_hash de referencia
+        cartridge_id: opp.cartridge_id,
+        route: [
+          {
+            step_type: "flash_loan" as const,
+            protocol: "aave_v3",
+            target: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+            token_in: opp.token_in,
+            token_out: opp.token_out,
+            amount: opp.amount_in_wei,
+          },
+          {
+            step_type: "swap" as const,
+            protocol: opp.dex_a,
+            target: "0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            token_in: opp.token_in,
+            token_out: opp.token_out,
+            amount: opp.amount_in_wei,
+          },
+        ],
+        simulation_params: {
+          amount_in: opp.amount_in_wei,
+          expected_out: Math.floor((opp.expected_profit_usd ?? 0) * 1e6).toString(),
+          min_out: Math.floor(((opp.expected_profit_usd ?? 0) * 0.95) * 1e6).toString(),
+          slippage_bps: 50, // 0.5% slippage tolerance
+        },
+        client_meta: {
+          source: "dapp_opportunities_client",
+          timestamp_ms: Date.now(),
+        },
+      };
+
+      const res = await fetch(`${EDGE_URL}/api/v1/execution`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify(executionRequest),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (res.status === 202) {
+        const result = await res.json() as { execution_id: string; status: string; estimated_start_ms: number };
+        toast.success("Execution queued", {
+          description: `ID: ${result.execution_id.slice(0, 16)}... Start in ~${result.estimated_start_ms}ms`,
+        });
+      } else if (res.status === 409) {
+        toast.warning("Already executing", {
+          description: "This opportunity is already in the execution queue",
+        });
+      } else if (res.status === 400) {
+        const err = await res.json();
+        toast.error("Validation failed", { description: err.error || "Invalid request" });
+      } else {
+        toast.error(`Execution failed: HTTP ${res.status}`);
+      }
+    } catch (e) {
+      const err = e as Error;
+      if (err.name === "AbortError") {
+        toast.error("Execution timed out after 10s");
+      } else {
+        toast.error("Execution error", { description: err.message });
+      }
+    } finally {
+      setSimLoading(null);
+    }
+  }, [EDGE_URL]);
+
   // FE-1: fetchOpportunities is now ONLY used by the manual "Force refresh" button.
   // It clears the store and repopulates via HTTP, then the WS stream continues.
   const fetchOpportunities = useCallback(async () => {
@@ -852,18 +943,40 @@ export default function OpportunitiesClient({
                       visibly disabled with a "backend pending" tooltip and
                       reduced styling — never promising live action it
                       cannot deliver. Click is allowed only as a no-op
-                      diagnostic that surfaces the 404 toast. */}
+                      diagnostic that surfaces the 404 toast.
+
+                      EXECUTE button: Enabled only for Hamiltonian-detected
+                      opportunities with cartridge confidence >= 0.7 */}
                     <td className="p-4 text-center">
-                      <button
-                        type="button"
-                        disabled
-                        aria-disabled="true"
-                        onClick={(e) => { e.stopPropagation(); handleSimulate(opp.id); }}
-                        className="px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wide border border-dashed border-muted-foreground/40 bg-muted/30 text-muted-foreground cursor-not-allowed"
-                        title="Backend pending — POST /api/opportunities/:id/simulate is not yet implemented (spine revm shadow-sim ticket open)"
-                      >
-                        {simLoading === opp.id ? "…" : "SIM (pending)"}
-                      </button>
+                      <div className="flex items-center gap-2 justify-center">
+                        <button
+                          type="button"
+                          disabled
+                          aria-disabled="true"
+                          onClick={(e) => { e.stopPropagation(); handleSimulate(opp.id); }}
+                          className="px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wide border border-dashed border-muted-foreground/40 bg-muted/30 text-muted-foreground cursor-not-allowed"
+                          title="Backend pending — POST /api/opportunities/:id/simulate is not yet implemented (spine revm shadow-sim ticket open)"
+                        >
+                          {simLoading === opp.id ? "…" : "SIM"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!opp.hamiltonian_detected || !opp.cartridge_confidence || opp.cartridge_confidence < 0.7}
+                          onClick={(e) => { e.stopPropagation(); handleExecute(opp); }}
+                          className={`px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wide border transition-colors ${
+                            opp.hamiltonian_detected && opp.cartridge_confidence && opp.cartridge_confidence >= 0.7
+                              ? "bg-success text-success-foreground border-success hover:bg-success/90"
+                              : "bg-muted text-muted-foreground border-muted-foreground/30 cursor-not-allowed"
+                          }`}
+                          title={
+                            opp.hamiltonian_detected && opp.cartridge_confidence && opp.cartridge_confidence >= 0.7
+                              ? "Execute opportunity"
+                              : "Hamiltonian detection required"
+                          }
+                        >
+                          EXECUTE
+                        </button>
+                      </div>
                     </td>
                   </motion.tr>
                 );
