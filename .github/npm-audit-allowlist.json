@@ -24,6 +24,7 @@
     "@gemini-wallet/core": "Gemini wallet connector. Plan: resolved with wagmi-3 (dependabot #181).",
     "@safe-global/safe-apps-provider": "Safe apps provider (wallet tree). Plan: resolved with wagmi-3 (dependabot #181).",
     "@safe-global/safe-apps-sdk": "Safe apps SDK (wallet tree). Plan: resolved with wagmi-3 (dependabot #181).",
-    "porto": "Porto wallet connector (wallet tree). Plan: resolved with wagmi-3 (dependabot #181)."
+    "porto": "Porto wallet connector (wallet tree). Plan: resolved with wagmi-3 (dependabot #181).",
+    "next": "Downgrade temporal a Next.js 14.2.28 para compatibilidad React 18 (frontend estabilidad). Plan: upgrade a Next.js 15 cuando se estabilice cadena de dependencias (wagmi-3 unlock). Expires: 2026-08-31."
   }
 }
