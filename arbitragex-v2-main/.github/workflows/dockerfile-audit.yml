@@ -1,0 +1,84 @@
+name: Dockerfile Audit
+
+# INF-8: Verify all Dockerfiles have correct COPY directives for workspace members.
+#
+# Required-check-safe (path-filter deadlock fix): the required status context
+# "audit Dockerfiles for complete COPY coverage" must be emitted on EVERY pull
+# request to main. With a path-filtered trigger, a PR that does not touch
+# Docker/Cargo/audit paths never produces the context, so a strict branch
+# protection rule waits forever ("Expected") and the PR can never merge.
+#
+# This workflow therefore ALWAYS runs on pull_request to main and uses an internal
+# guard to decide what to do:
+#   - relevant Docker/Cargo/audit paths changed -> run the REAL audit (unchanged, strict)
+#   - otherwise                                  -> exit success with an explicit skip note
+# Audit semantics are NOT relaxed when the audit applies.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# M2 Capa1 Fase 4 — read-only token; this workflow only runs a local audit script.
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: audit Dockerfiles for complete COPY coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect relevant path changes
+        id: detect
+        # SHAs passed via env (never interpolated into the script body) to avoid
+        # any GitHub Actions expression-injection surface.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            BASE="$PR_BASE_SHA"; HEAD="$PR_HEAD_SHA"
+          else
+            BASE="$PUSH_BEFORE"; HEAD="$PUSH_SHA"
+          fi
+          # If the base commit is unavailable (branch creation, unknown sha),
+          # run the real audit to stay on the safe/strict side.
+          if [ -z "$BASE" ] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "Base commit unavailable — running the real audit to be safe."
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CHANGED="$(git diff --name-only "$BASE" "$HEAD" 2>/dev/null || true)"
+          echo "Changed files in range:"
+          printf '%s\n' "$CHANGED"
+          if printf '%s\n' "$CHANGED" | grep -qE '(^|/)Dockerfile$|^backend/Cargo\.toml$|^backend/Cargo\.lock$|^automation/scripts/audit-dockerfiles\.sh$|^\.github/workflows/dockerfile-audit\.yml$'; then
+            echo "Relevant Docker/Cargo/audit paths changed — running the real audit."
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No relevant paths changed."
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip notice (no relevant paths changed)
+        if: steps.detect.outputs.relevant != 'true'
+        run: |
+          echo "Dockerfile audit skipped: no relevant paths changed; required context satisfied."
+
+      - name: Make audit script executable
+        if: steps.detect.outputs.relevant == 'true'
+        run: chmod +x automation/scripts/audit-dockerfiles.sh
+
+      - name: Run Dockerfile audit
+        if: steps.detect.outputs.relevant == 'true'
+        run: ./automation/scripts/audit-dockerfiles.sh

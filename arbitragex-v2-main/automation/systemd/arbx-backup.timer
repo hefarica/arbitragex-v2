@@ -1,0 +1,17 @@
+[Unit]
+Description=ArbitrageX v2 — daily backup timer
+Documentation=https://github.com/hefarica/arbitragex-v2/tree/main/docs/runbooks/db-restore.md
+Requires=arbx-backup.service
+
+[Timer]
+# 03:15 UTC daily. Low-traffic window across major regions. Offset 15 min
+# from the hour to avoid collisions with cleanup cronjobs.
+OnCalendar=*-*-* 03:15:00
+# Run if the system was down when the timer should have fired.
+Persistent=true
+# Small random delay so two identically-configured hosts don't DDoS B2.
+RandomizedDelaySec=300
+Unit=arbx-backup.service
+
+[Install]
+WantedBy=timers.target

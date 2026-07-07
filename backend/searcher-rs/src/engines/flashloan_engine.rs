@@ -43,7 +43,10 @@
 
 use crate::engines::StrategyCandidate;
 use crate::strategy_label::StrategyLabel;
+use ethers::types::Address;
 use shared_rs::trading_config::TradingConfigState;
+use sqlx::PgPool;
+use std::str::FromStr;
 use tracing::debug;
 
 // ---------------------------------------------------------------------------
@@ -260,6 +263,118 @@ fn select_provider(chain_id: u64, borrow_asset: &str) -> Option<FlashloanProvide
     }
 
     None
+}
+
+// ---------------------------------------------------------------------------
+// Registry-driven provider selection (FASE 3)
+// ---------------------------------------------------------------------------
+
+/// Select the best flash-loan provider for `(chain_id, asset, amount_usd)` by
+/// querying the `contract_registry` PG table — the FASE 3 source-of-truth for
+/// deployed flash-loan adapters.
+///
+/// This is the registry-driven counterpart to the static [`select_provider`].
+/// The legacy fn remains as a FALLBACK for unit tests + environments where the
+/// registry is empty (per FASE 3 spec: "registry may be empty in tests"). The
+/// caller (orchestrator) MUST try this fn first and fall back to
+/// [`select_provider`] only when it returns `None` — never silently substitute
+/// the static table without logging the fallback (RULE 00 / no-fabrication).
+///
+/// ### Query contract
+///
+/// ```sql,ignore
+/// SELECT address, metadata->>'fee_bps' AS fee_bps_raw, contract_kind
+/// FROM contract_registry
+/// WHERE chain_id = $1
+///   AND contract_kind LIKE 'flashloan_%'
+///   AND status IN ('active', 'pending_validation')
+///   AND LOWER(metadata->>'supported_assets') LIKE '%' || LOWER($asset) || '%'
+///   AND (metadata->>'max_depth_usd')::numeric >= $amount_usd
+/// ORDER BY (metadata->>'fee_bps')::int ASC NULLS LAST,
+///          (metadata->>'max_depth_usd')::numeric DESC NULLS LAST
+/// LIMIT 1
+/// ```
+///
+/// Returns the chosen provider's deployed `address` (H160 — the value the sim
+/// slot-2 override paints into `FlashLoanExecutor.flashLoanProvider`) plus its
+/// `fee_bps`. When `metadata->>'fee_bps'` is NULL, the fee falls back to the
+/// canonical per-kind constant (mirrors `FlashloanProvider::fee_bps()`) so the
+/// tie-breaker source-of-truth is preserved.
+///
+/// ### R8 fail-honest
+///
+/// An empty registry result, a PG error, a malformed address, or any
+/// `metadata` short-fall returns `None`. The caller MUST surface this as
+/// `flashloan_no_provider` (the existing rejection label) — never fabricate a
+/// provider. If a fallback to the static table is desired, it is the caller's
+/// explicit, logged decision.
+pub async fn select_provider_from_registry(
+    pg: &PgPool,
+    chain_id: u64,
+    asset: &str,
+    amount_usd: f64,
+) -> Option<(Address, u32)> {
+    use sqlx::Row;
+
+    // Normalise both sides: the engine already lowercases `borrow_asset`; the
+    // LIKE pattern lowercases the asset again so a mixed-case caller cannot
+    // miss a stored lowercase address.
+    let asset_lc = asset.to_ascii_lowercase();
+    let asset_pattern = format!("%{asset_lc}%");
+
+    let row = sqlx::query(
+        r#"
+        SELECT
+            address,
+            metadata->>'fee_bps'   AS fee_bps_raw,
+            contract_kind
+        FROM contract_registry
+        WHERE chain_id = $1
+          AND contract_kind LIKE 'flashloan_%'
+          AND status IN ('active', 'pending_validation')
+          AND LOWER(metadata->>'supported_assets') LIKE $2
+          AND (metadata->>'max_depth_usd')::numeric >= $3::numeric
+        ORDER BY
+            (metadata->>'fee_bps')::int   ASC NULLS LAST,
+            (metadata->>'max_depth_usd')::numeric DESC NULLS LAST
+        LIMIT 1
+        "#,
+    )
+    .bind(chain_id as i64)
+    .bind(asset_pattern)
+    .bind(amount_usd)
+    .fetch_optional(pg)
+    .await
+    .ok()??;
+
+    let addr_str: String = row.try_get("address").ok()?;
+    let address = Address::from_str(&addr_str).ok()?;
+    let kind: String = row.try_get("contract_kind").unwrap_or_default();
+    // `fee_bps_raw` is `Option<String>`: NULL in metadata OR a missing key.
+    // Fall back to the canonical per-kind constant so the ranking stays honest
+    // even when the operator leaves the column blank.
+    let fee_bps_raw: Option<String> = row.try_get("fee_bps_raw").ok().flatten();
+    let fee_bps = fee_bps_raw
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or_else(|| default_fee_bps_for_kind(&kind));
+    Some((address, fee_bps))
+}
+
+/// Canonical per-`contract_kind` fee fallback (bps) when
+/// `contract_registry.metadata->>'fee_bps'` is NULL. Mirrors the static
+/// `FlashloanProvider::fee_bps()` table so the registry-driven path never
+/// silently ranks a provider differently from its enum-encoded canonical fee.
+///
+/// `flashloan_uniswap_v3` is not in the legacy enum (V3 flash was not wired in
+/// the static table); its canonical fee is Uniswap's 0.05% (5 bps).
+fn default_fee_bps_for_kind(kind: &str) -> u32 {
+    match kind {
+        "flashloan_aave" => FlashloanProvider::AaveV3.fee_bps(),
+        "flashloan_balancer" => FlashloanProvider::BalancerVault.fee_bps(),
+        "flashloan_dydx" => FlashloanProvider::DyDxSolo.fee_bps(),
+        "flashloan_uniswap_v3" => 5, // Uniswap V3 flash: canonical 0.05% (5 bps)
+        _ => FlashloanProvider::AaveV3.fee_bps(), // conservative default
+    }
 }
 
 // ---------------------------------------------------------------------------

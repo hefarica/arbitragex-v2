@@ -1,0 +1,30 @@
+[package]
+name = "sim-ctl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ArbitrageX v2 — simulation controller. S1: /simulate returns 501 by design."
+
+[dependencies]
+shared-rs.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+redis.workspace = true
+ethers.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+sqlx.workspace = true
+bigdecimal.workspace = true
+async-trait.workspace = true
+simulator-v2 = { path = "../simulator-v2" }

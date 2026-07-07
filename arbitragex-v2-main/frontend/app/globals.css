@@ -1,0 +1,323 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* PURE WHITE THEME (#FFFFFF) - PHASE 8 CONSOLIDATION */
+:root {
+  --radius: 1rem; /* iOS-style rounded corners */
+
+  /* Particle-sphere accent — ROYAL BLUE in the light theme (HeroSphere). */
+  --sphere-rgb: 36 74 235;
+
+  --background: oklch(1 0 0); /* #FFFFFF */
+  --foreground: oklch(0.18 0.04 260);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0.04 260);
+
+  --popover: oklch(1 0 0 / 95%);
+  --popover-foreground: oklch(0.18 0.04 260);
+
+  --primary: oklch(0.25 0.05 260);
+  --primary-foreground: oklch(1 0 0);
+
+  --secondary: oklch(0.96 0.015 220);
+  --secondary-foreground: oklch(0.18 0.04 260);
+
+  --muted: oklch(0.96 0.015 220);
+  --muted-foreground: oklch(0.45 0.025 220);
+
+  --accent: oklch(0.92 0.04 215);
+  --accent-foreground: oklch(0.18 0.04 260);
+
+  --destructive: oklch(0.55 0.13 180);
+  --destructive-foreground: oklch(1 0 0);
+
+  --success: oklch(0.62 0.17 145); /* Fluorescent Green */
+  --success-foreground: oklch(1 0 0);
+
+  --warning: oklch(0.75 0.18 85);
+  --warning-foreground: oklch(0.18 0.04 260);
+
+  --info: oklch(0.60 0.15 220);
+  --info-foreground: oklch(1 0 0);
+
+  --border: oklch(0.92 0.01 220);
+  --input: oklch(0.94 0.01 220);
+  --ring: oklch(0.25 0.05 260);
+
+  --chart-1: oklch(0.60 0.15 220);
+  --chart-2: oklch(0.62 0.17 145);
+  --chart-3: oklch(0.45 0.18 260);
+  --chart-4: oklch(0.75 0.18 85);
+  --chart-5: oklch(0.65 0.20 330);
+
+  --sidebar: oklch(1 0 0);
+  --sidebar-foreground: oklch(0.18 0.04 260);
+  --sidebar-primary: oklch(0.25 0.05 260);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.96 0.02 220);
+  --sidebar-accent-foreground: oklch(0.18 0.04 260);
+  --sidebar-border: oklch(0.92 0.01 220);
+  --sidebar-ring: oklch(0.25 0.05 260);
+}
+
+/* Dark mode — "TradePro" premium fintech theme:
+   deep navy/indigo background + electric royal-blue primary + blue accents.
+   Green = success/buy, red = destructive/sell, amber = warning. */
+.dark {
+  /* Particle-sphere accent — LIGHT (pale blue-white) in the dark theme (HeroSphere). */
+  --sphere-rgb: 206 224 255;
+
+  --background: oklch(0.14 0.035 265);
+  --foreground: oklch(0.98 0.012 250);
+
+  --card: oklch(0.18 0.04 265);
+  --card-foreground: oklch(0.98 0.012 250);
+
+  --popover: oklch(0.17 0.04 265 / 96%);
+  --popover-foreground: oklch(0.98 0.012 250);
+
+  /* Electric royal blue — the TradePro accent. */
+  --primary: oklch(0.62 0.20 263);
+  --primary-foreground: oklch(0.99 0.008 250);
+
+  --secondary: oklch(0.23 0.04 265);
+  --secondary-foreground: oklch(0.96 0.012 250);
+
+  --muted: oklch(0.22 0.04 265);
+  --muted-foreground: oklch(0.69 0.035 258);
+
+  --accent: oklch(0.32 0.075 263);
+  --accent-foreground: oklch(0.98 0.012 250);
+
+  /* Red for destructive / sell-side. */
+  --destructive: oklch(0.62 0.20 18);
+  --destructive-foreground: oklch(0.99 0.008 250);
+
+  /* Green for success / buy-side. */
+  --success: oklch(0.70 0.17 152);
+  --success-foreground: oklch(0.14 0.035 265);
+
+  --warning: oklch(0.80 0.16 80);
+  --warning-foreground: oklch(0.14 0.035 265);
+
+  --info: oklch(0.66 0.16 256);
+  --info-foreground: oklch(0.14 0.035 265);
+
+  --border: oklch(0.29 0.035 264);
+  --input: oklch(0.27 0.035 264);
+  --ring: oklch(0.62 0.20 263);
+
+  --chart-1: oklch(0.62 0.20 263);
+  --chart-2: oklch(0.70 0.17 152);
+  --chart-3: oklch(0.70 0.15 258);
+  --chart-4: oklch(0.80 0.16 80);
+  --chart-5: oklch(0.66 0.20 330);
+
+  --sidebar: oklch(0.16 0.04 266);
+  --sidebar-foreground: oklch(0.98 0.012 250);
+  --sidebar-primary: oklch(0.62 0.20 263);
+  --sidebar-primary-foreground: oklch(0.99 0.008 250);
+  --sidebar-accent: oklch(0.26 0.05 265);
+  --sidebar-accent-foreground: oklch(0.98 0.012 250);
+  --sidebar-border: oklch(0.29 0.035 264);
+  --sidebar-ring: oklch(0.62 0.20 263);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+  }
+}
+
+/* ── TradePro premium glassmorphism (dark theme) ───────────────────────────
+   Layered navy gradient backdrop + frosted-glass surfaces that let the
+   gradient bleed through. Dark-scoped; the light theme stays flat/solid.
+   This deliberately replicates the TradePro reference design at the operator's
+   explicit request — a controlled gradient+glass system, not noise. */
+
+/* Gradient backdrop — electric-blue glow over deep navy, pinned to viewport so
+   panels float over it (the glass blur samples this fixed layer). */
+.dark body {
+  background-color: oklch(0.13 0.035 266);
+  background-image:
+    radial-gradient(58% 48% at 50% -8%, oklch(0.55 0.20 263 / 0.22), transparent 62%),
+    radial-gradient(40% 34% at 93% 3%, oklch(0.50 0.18 296 / 0.14), transparent 58%),
+    radial-gradient(42% 38% at 5% 8%, oklch(0.52 0.15 232 / 0.12), transparent 58%),
+    linear-gradient(180deg, oklch(0.155 0.045 266) 0%, oklch(0.125 0.032 267) 52%, oklch(0.11 0.028 268) 100%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+/* Frosted-glass cards — translucent navy + blur so the gradient shows through,
+   with a hairline top highlight + soft drop shadow for the glass edge. */
+.dark [data-slot="card"] {
+  background-color: oklch(0.205 0.042 265 / 0.55);
+  backdrop-filter: blur(14px) saturate(1.35);
+  -webkit-backdrop-filter: blur(14px) saturate(1.35);
+  /* NOTE: intentionally do NOT set border-color here. Several pages put
+     data-slot="card" on raw divs that carry state borders (e.g. worker-health
+     uses `border-success/40` to signal "Kernel Bypass ACTIVE"). An attribute
+     selector (0,1,1) would clobber those single-class utilities (0,1,0) and
+     silently flatten the state signal. The glass edge comes from the inset
+     top-highlight in the box-shadow below — border tint is not needed. */
+  box-shadow:
+    inset 0 1px 0 0 oklch(0.92 0.04 260 / 0.07),
+    0 10px 34px -16px oklch(0.02 0.02 266 / 0.85);
+}
+
+/* Opt-in glass surface for non-Card panels (metric tiles, etc.).
+   Solid in light theme, frosted in dark. */
+.glass-surface {
+  @apply bg-card;
+}
+.dark .glass-surface {
+  background-color: oklch(0.21 0.042 265 / 0.50);
+  backdrop-filter: blur(11px) saturate(1.3);
+  -webkit-backdrop-filter: blur(11px) saturate(1.3);
+  border-color: oklch(0.55 0.06 264 / 0.18);
+}
+
+/* Glassmorphism Phase 8 - GPU Optimized (legacy utilities, retained) */
+.glass-panel {
+  @apply bg-background/60 backdrop-blur-md border border-white/20 shadow-sm;
+  transform: translateZ(0);
+}
+
+.glass-card {
+  @apply bg-background/40 backdrop-blur-xl border border-white/10 shadow-lg transition-all duration-300;
+  transform: translateZ(0);
+}
+
+/* Premium gradient heading — theme-aware. Light theme: royal-blue ramp (reads on
+   white). Dark theme: white → electric royal-blue (reads on the navy backdrop). */
+.text-gradient-primary {
+  background-image: linear-gradient(
+    96deg,
+    oklch(0.32 0.10 263) 0%,
+    oklch(0.45 0.20 263) 55%,
+    oklch(0.55 0.22 263) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.dark .text-gradient-primary {
+  background-image: linear-gradient(
+    96deg,
+    oklch(0.98 0.012 250) 0%,
+    oklch(0.72 0.16 258) 52%,
+    oklch(0.62 0.20 263) 100%
+  );
+}
+
+/* Glassmorphism gradient label/tag — theme-correspondent. Light theme: royal-blue
+   frosted gradient; dark theme: pale-blue frosted gradient. Used by Badge
+   variant="glass" and any decorative .badge-glass tag. */
+.badge-glass {
+  border: 1px solid rgb(36 74 235 / 0.28);
+  background-image: linear-gradient(135deg, rgb(36 74 235 / 0.16), rgb(36 74 235 / 0.04));
+  backdrop-filter: blur(8px) saturate(1.4);
+  -webkit-backdrop-filter: blur(8px) saturate(1.4);
+  color: oklch(0.34 0.12 263);
+}
+.dark .badge-glass {
+  border-color: rgb(206 224 255 / 0.22);
+  background-image: linear-gradient(135deg, oklch(0.72 0.16 258 / 0.22), oklch(0.62 0.20 263 / 0.07));
+  color: oklch(0.93 0.03 250);
+}
+
+/* Remove all auroras, gradients and visual noise */
+.aurora-blob, .aurora-bg, .gradient-mesh, .noise-overlay {
+  display: none !important;
+  animation: none !important;
+}
+
+/* EdgeState — degraded-state scanline sweep over the ghost skeleton.
+   Defined globally (not injected per component instance). Motion-guarded. */
+@keyframes edgeScan {
+  0% { transform: translateY(0); opacity: 0; }
+  8% { opacity: 1; }
+  92% { opacity: 1; }
+  100% { transform: translateY(58vh); opacity: 0; }
+}
+.edge-scan {
+  background: linear-gradient(90deg, transparent, var(--primary), transparent);
+  box-shadow: 0 0 12px 1px var(--primary);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .edge-scan { animation: edgeScan 3.6s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+}
+
+/* Custom Scrollbar - Pure White Style */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-muted-foreground/20 rounded-full hover:bg-muted-foreground/40 transition-colors;
+}

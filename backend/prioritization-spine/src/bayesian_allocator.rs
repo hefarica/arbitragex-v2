@@ -102,8 +102,8 @@ impl BetaPosterior {
 pub struct Allocation {
     pub strategy_kind: String,
     pub chain_id: u64,
-    pub fraction: f64,            // Fracción del cap_usd_ceiling
-    pub usd_amount: f64,          // Monto absoluto en USD
+    pub fraction: f64,   // Fracción del cap_usd_ceiling
+    pub usd_amount: f64, // Monto absoluto en USD
     pub p_success_mean: f64,
     pub p_success_std: f64,
     pub kelly_fraction: f64,
@@ -382,17 +382,25 @@ mod tests {
                 });
             }
             let alloc = a.assign("k", 1, cap, y);
-            assert!(alloc.fraction >= 0.0, "fraction < 0 for case {:?}", (sr, n, cap, y));
+            assert!(
+                alloc.fraction >= 0.0,
+                "fraction < 0 for case {:?}",
+                (sr, n, cap, y)
+            );
             assert!(
                 alloc.fraction <= KELLY_FRACTION_CAP + 1e-9,
                 "fraction {} > KELLY cap {} for case {:?}",
-                alloc.fraction, KELLY_FRACTION_CAP, (sr, n, cap, y)
+                alloc.fraction,
+                KELLY_FRACTION_CAP,
+                (sr, n, cap, y)
             );
             assert!(alloc.usd_amount >= 0.0);
             assert!(
                 alloc.usd_amount <= cap + 1e-6,
                 "usd_amount {} > cap {} for case {:?}",
-                alloc.usd_amount, cap, (sr, n, cap, y)
+                alloc.usd_amount,
+                cap,
+                (sr, n, cap, y)
             );
         }
     }
@@ -471,7 +479,11 @@ mod tests {
             let mut p = BetaPosterior::new_prior();
             p.update(s, f);
             let m = p.mean();
-            assert!(m >= 0.0 && m <= 1.0, "mean {} out of [0,1] for ({s},{f})", m);
+            assert!(
+                m >= 0.0 && m <= 1.0,
+                "mean {} out of [0,1] for ({s},{f})",
+                m
+            );
             assert!(p.variance() >= 0.0);
             assert!(p.std_dev() >= 0.0);
         }

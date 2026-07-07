@@ -99,12 +99,13 @@ pub async fn needs_resolution(pool: &PgPool, chain_id: u64, address: Address) ->
     // Returns a boolean column: true iff the row is a failed token whose
     // resolved_at is more than 7 days in the past (server-side comparison).
     // fetch_optional returns None when the row does not exist.
+    // COALESCE handles NULL resolved_via (new tokens) by treating them as not-failed.
     let chain_id_i32 = i32::try_from(chain_id)
         .map_err(|_| anyhow::anyhow!("chain_id {chain_id} exceeds i32 range"))?;
     let row: Option<(bool,)> = sqlx::query_as(
         r#"
         SELECT
-          (resolved_via = 'failed' AND resolved_at < NOW() - INTERVAL '7 days') AS retry
+          COALESCE((resolved_via = 'failed' AND resolved_at < NOW() - INTERVAL '7 days'), false) AS retry
         FROM tokens
         WHERE chain_id = $1 AND address = $2
         "#,

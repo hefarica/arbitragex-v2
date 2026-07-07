@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arbitragex.v2/schemas/simulation_result.schema.json",
+  "title": "SimulationResult",
+  "description": "Output of sim-ctl after running an opportunity against a fork or simulation provider.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "opportunity_id","passed","simulator","simulated_at","trace_id"
+  ],
+  "properties": {
+    "opportunity_id":        { "type": "string", "format": "uuid" },
+    "passed":                { "type": "boolean" },
+    "gas_estimate_wei":      { "type": ["string","null"], "pattern": "^[0-9]+$" },
+    "gas_price_wei":         { "type": ["string","null"], "pattern": "^[0-9]+$" },
+    "slippage_pct":          { "type": ["number","null"] },
+    "revert_risk_pct":       { "type": ["number","null"] },
+    "simulated_profit_usd":  { "type": ["number","null"] },
+    "simulator":             {
+      "type": "string",
+      "enum": ["anvil","tenderly","hardhat","not_implemented"]
+    },
+    "fail_reason":           { "type": ["string","null"] },
+    "simulated_at":          { "type": "string", "format": "date-time" },
+    "trace_id":              { "type": "string", "format": "uuid" }
+  }
+}

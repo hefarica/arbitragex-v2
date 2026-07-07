@@ -1,0 +1,44 @@
+# ArbitrageX v2 — zero host-port-binding override.
+#
+# Use when the host's Docker refuses to bind ports to loopback (observed
+# with Docker 29.x + iptables-nft + kernel route_localnet=0 combinations).
+# Every service runs without host-port publication; inter-service traffic
+# goes over the docker bridge network via hostname DNS (postgres, redis,
+# api-server, edge, frontend, …). The operator reaches the UI from outside
+# via an SSH tunnel that targets the container IP on the bridge:
+#
+#   # Get live IPs:
+#   bash automation/scripts/print-ssh-tunnel.sh
+#
+#   # Copy the command it prints, e.g.:
+#   ssh -N -L 5173:172.18.0.11:5173 -L 8787:172.18.0.10:8787 arbx
+#
+# Then open http://localhost:5173 in the laptop browser.
+#
+# Usage:
+#   docker compose -f docker/compose.dev.yml \
+#                  -f docker/compose.noports.override.yml up -d
+#
+# WARNING: service-to-service DNS still works because compose creates the
+# arbx-net bridge and every service gets its DNS name. But NOTHING is
+# reachable from the host interface (0.0.0.0 or 127.0.0.1) — only via the
+# internal bridge IP range (172.18.0.0/16). That is the whole point of this
+# override: it sidesteps the port-binding bug at the cost of exposing
+# nothing directly.
+
+name: arbitragex-v2
+
+services:
+  prometheus:    { ports: [] }
+  grafana:       { ports: [] }
+  alertmanager:  { ports: [] }
+  loki:          { ports: [] }
+  frontend:      { ports: [] }
+  edge:          { ports: [] }
+  api-server:    { ports: [] }
+  sim-ctl:       { ports: [] }
+  relays-client: { ports: [] }
+  recon:         { ports: [] }
+  selector-api:  { ports: [] }
+  postgres:      { ports: [] }
+  redis:         { ports: [] }

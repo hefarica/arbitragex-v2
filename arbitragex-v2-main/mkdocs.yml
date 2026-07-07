@@ -1,0 +1,84 @@
+site_name: arbitragex-v2 — OMEGA Docs
+site_url: https://docs.arbitragex.local
+repo_url: https://github.com/hefarica/arbitragex-v2
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - search.share
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mermaid2:
+      arguments:
+        theme: dark
+  - awesome-pages
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+  - tables
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+  - Tutorials:
+    - tutorials/01-getting-started.md
+    - tutorials/02-first-paper-trade.md
+  - How-to:
+    - how-to/deploy-to-vps.md
+    - how-to/run-e2e-locally.md
+    - how-to/rotate-rpc.md
+    - how-to/add-new-strategy.md
+  - Reference:
+    - reference/api-rest.md
+    - reference/env-vars.md
+    - reference/metrics.md
+    - reference/error-taxonomy.md
+  - Explanation:
+    - explanation/architecture-overview.md
+    - explanation/doctrine-zero-mocks.md
+    - explanation/doctrine-r8-fail-honest.md
+    - explanation/doctrine-bi-eje-scoreboard.md
+    - explanation/topological-yield.md
+    - explanation/diagrams/c4-context.mmd
+    - explanation/diagrams/c4-container.mmd
+    - explanation/diagrams/sequence-arbitrage-flow.mmd
+    - explanation/diagrams/state-risk-gate.mmd
+  - ADRs:
+    - adrs/README.md
+    - adrs/0001-zero-mocks.md
+    - adrs/0002-r8-fail-honest.md
+    - adrs/0003-bi-eje-scoreboard.md
+    - adrs/0004-mkdocs-material-diataxis.md
+    - adrs/0005-six-canonical-workflows.md

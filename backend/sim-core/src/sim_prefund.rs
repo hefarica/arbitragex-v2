@@ -339,6 +339,89 @@ pub fn build_role_grant_override(
 }
 
 // ---------------------------------------------------------------------------
+// FlashLoanExecutor.flashLoanProvider slot-2 override (FASE 3)
+// ---------------------------------------------------------------------------
+//
+// `FlashLoanExecutor.sol` declares a packed linear storage layout for its OWN
+// state variables (the parent contracts — Initializable, AccessControlUpgradeable,
+// UUPSUpgradeable — all use ERC-7201 namespaced slots and do NOT occupy linear
+// space, so this contract's variables start at linear slot 0):
+//
+//   slot 0: aavePool         (address)
+//   slot 1: arbitrageExecutor (address, low 160 bits)
+//         + referralCode      (uint16,   bits 160..175)   PACKED
+//   slot 2: flashLoanProvider (address)  ← THIS OVERRIDE
+//   slot 3: balancerVault     (address)
+//
+// Slot 2 is single-occupant (no packing), so overwriting it wholesale is safe.
+// The slot index is `bytes32(uint256(2))` = 30 zero bytes, then 0x00, 0x02
+// (no keccak — a plain linear slot).
+//
+// The `requestFlashLoan` selector (0x5107d61e) has NO provider parameter in its
+// calldata; the contract reads `flashLoanProvider` from storage at runtime
+// (FlashLoanExecutor.sol `address provider = flashLoanProvider;`). The provider
+// choice therefore CANNOT be encoded into the broadcast bytes — slot 2 is the
+// ONLY channel. See `sim_multistep::build_multistep_plan` for the broadcast-path
+// invariant: the sim's slot-2 override MUST mirror real on-chain slot 2 at the
+// pinned block (the operator calls `setFlashLoanProvider(P)` on-chain BEFORE
+// the fork pin). A sim↔broadcast divergence here is exactly the bug class the
+// byte-parity contract exists to prevent.
+
+/// FlashLoanExecutor storage slot 2 — sole occupant is `flashLoanProvider`.
+/// `bytes32(uint256(2))` = 30 zero bytes, 0x00, 0x02.
+pub const FLE_FLASHLOAN_PROVIDER_SLOT: [u8; 32] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2,
+];
+
+/// Build the `StorageOverride` that paints `flashLoanProvider` (FLE storage
+/// slot 2) to `provider`. Used by the multistep flash sim (FASE 3) so the REAL
+/// `requestFlashLoan` dispatch routes through the operator-chosen provider's
+/// callback (Aave `executeOperation` vs Balancer `receiveFlashLoan` vs …) when
+/// the pinned fork block predates the on-chain `setFlashLoanProvider` call.
+///
+/// The override MUST be a FAITHFUL MIRROR of real on-chain slot 2 at broadcast
+/// time. If on-chain slot 2 is still `address(0)` at the pinned block, the FLE
+/// takes the legacy Aave branch (`aavePool.flashLoanSimple`) — the sim MUST
+/// also see slot 2 = 0 in that case (do NOT call this helper), so sim and
+/// broadcast agree. Anti-pattern (FORBIDDEN by byte-parity): painting slot 2 = P
+/// in the sim while on-chain slot 2 = 0 → the sim routes through P's callback
+/// but the broadcast reverts on the Aave path.
+///
+/// `paper_mode` MUST be true (mirrors `build_role_grant_override`). A zero
+/// `fle` rejects with `ZeroTokenAddress`; a zero `provider` rejects with
+/// `ZeroAccountAddress` (the provider is the account address being written).
+pub fn build_flashloan_provider_override(
+    fle: Address,
+    provider: Address,
+    paper_mode: bool,
+) -> Result<StorageOverride, PrefundError> {
+    if !paper_mode {
+        return Err(PrefundError::PaperModeRequired);
+    }
+    if fle == Address::zero() {
+        return Err(PrefundError::ZeroTokenAddress);
+    }
+    if provider == Address::zero() {
+        return Err(PrefundError::ZeroAccountAddress);
+    }
+    // A plain `address` in a full slot is stored right-aligned: the 20 address
+    // bytes occupy the low 160 bits, high 96 bits are zero. `U256::from_big_endian`
+    // over the 32-byte left-padded word reproduces Solidity's standard storage
+    // encoding exactly.
+    let mut value_bytes = [0u8; 32];
+    value_bytes[12..32].copy_from_slice(provider.as_bytes());
+    let value = U256::from_big_endian(&value_bytes);
+    Ok(StorageOverride {
+        // `StorageOverride.token` = the contract whose storage we override
+        // (named `token` for historical ERC-20 reasons); here it is the FLE.
+        token: fle,
+        slot: FLE_FLASHLOAN_PROVIDER_SLOT,
+        value,
+        purpose: "flashloan_provider_slot",
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -622,6 +705,73 @@ mod tests {
         // Zero account rejected.
         assert_eq!(
             build_role_grant_override(fle, role, Address::zero(), true).unwrap_err(),
+            PrefundError::ZeroAccountAddress
+        );
+    }
+
+    // ── FlashLoanExecutor.flashLoanProvider slot-2 override (FASE 3) ───────
+
+    /// The slot constant is `bytes32(uint256(2))` — 31 zero bytes then 0x02.
+    #[test]
+    fn fle_flashloan_provider_slot_is_linear_slot_2() {
+        assert_eq!(FLE_FLASHLOAN_PROVIDER_SLOT[0..31], [0u8; 31]);
+        assert_eq!(FLE_FLASHLOAN_PROVIDER_SLOT[31], 2);
+    }
+
+    /// `build_flashloan_provider_override` left-pads the 20-byte provider
+    /// address to the canonical 32-byte Solidity storage encoding (12 zero
+    /// bytes, then the address) and targets FLE slot 2.
+    #[test]
+    fn build_flashloan_provider_override_encodes_left_padded_address() {
+        let fle = addr("0x000000000000000000000000000000000000fef1");
+        // Balancer Vault mainnet as a realistic provider.
+        let provider = addr("0xba12222222228d8ba445958a75a0704d566bf2c8");
+        let over = build_flashloan_provider_override(fle, provider, true).unwrap();
+        assert_eq!(over.token, fle, "override targets the FLE");
+        assert_eq!(over.slot, FLE_FLASHLOAN_PROVIDER_SLOT, "targets slot 2");
+        assert_eq!(over.purpose, "flashloan_provider_slot");
+        // Re-derive the expected U256: 12 zero bytes + 20 address bytes.
+        let mut expected_bytes = [0u8; 32];
+        expected_bytes[12..32].copy_from_slice(provider.as_bytes());
+        let expected = U256::from_big_endian(&expected_bytes);
+        assert_eq!(
+            over.value, expected,
+            "value must be the left-padded address"
+        );
+    }
+
+    /// A different provider produces a different value (no accidental collision).
+    #[test]
+    fn build_flashloan_provider_override_value_differs_per_provider() {
+        let fle = addr("0x000000000000000000000000000000000000fef1");
+        let p_a = addr("0x000000000000000000000000000000000000a111");
+        let p_b = addr("0x000000000000000000000000000000000000b222");
+        let oa = build_flashloan_provider_override(fle, p_a, true).unwrap();
+        let ob = build_flashloan_provider_override(fle, p_b, true).unwrap();
+        assert_ne!(oa.value, ob.value, "different providers → different values");
+    }
+
+    /// `build_flashloan_provider_override` refuses live mode and zero inputs.
+    #[test]
+    fn build_flashloan_provider_override_rejection_paths() {
+        let fle = addr("0x000000000000000000000000000000000000fef1");
+        let provider = addr("0xba12222222228d8ba445958a75a0704d566bf2c8");
+        // Live mode rejected.
+        assert_eq!(
+            build_flashloan_provider_override(fle, provider, false).unwrap_err(),
+            PrefundError::PaperModeRequired
+        );
+        // Zero FLE rejected.
+        assert_eq!(
+            build_flashloan_provider_override(Address::zero(), provider, true).unwrap_err(),
+            PrefundError::ZeroTokenAddress
+        );
+        // Zero provider rejected — the FLE slot-2 override must paint a REAL
+        // provider address; a zero provider would corrupt the sim↔broadcast
+        // parity (on-chain slot 2 = 0 means "legacy Aave branch", which the
+        // sim must mirror by NOT applying this override at all).
+        assert_eq!(
+            build_flashloan_provider_override(fle, Address::zero(), true).unwrap_err(),
             PrefundError::ZeroAccountAddress
         );
     }

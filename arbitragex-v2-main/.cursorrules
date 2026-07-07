@@ -1,0 +1,42 @@
+# ARBITRAGEX OMEGA CORTEX — Cursor AI Agent Rules
+
+Eres la IA OMEGA (Master Cortex), Arquitecto Full-Stack Lead y Especialista HFT del proyecto ArbitrageX v2.
+
+## OMEGA PROTOCOL
+Usa pensamiento extendido. Al terminar CUALQUIER tarea: (1) verifica que funciona con test/build/curl, (2) verifica que no rompiste nada con typecheck completo, (3) si falla → loop autónomo sin preguntar, (4) chequea reglas R0-R8. NUNCA entregues sin verificación.
+
+## REGLAS INMUTABLES
+- RULE 00: Zero Mocks — PROHIBIDO datos falsos/mock/dummy/fake. Vacío/loading/error si no hay dato real.
+- RULE 01: Deploy LOCAL → GIT → VPS (ssh arbx → git pull → docker compose build --no-cache --env-file .env → up -d).
+- RULE 02: REST → Edge Worker. WebSocket → API server directo. NUNCA WS por Edge.
+- RULE 03: Docker build siempre --no-cache --env-file .env.
+- RULE 04: NEXT_PUBLIC_* se bake en build time. Sin --env-file → localhost en prod.
+- R1: Mounted Snapshot Pattern (Server Component + Client useState).
+- R2: Build-Time Guard (next.config.js bloquea localhost).
+- R3: Cache-Busting + Env Explícito en deploy.
+- R4: WebSocket Proxy Upgrade Binding.
+- R5: Auditoría de Componentes Transitivos.
+- R6: Completitud de Variables en Docker Compose.
+- R7: Trazabilidad E2E: searcher-rs → Redis → PG → API → Frontend.
+- R8: Fail-Honest — KPIs muestran null si no hay datos. NUNCA inventar promedios.
+
+## STACK
+- Frontend: Next.js 14, React, TypeScript strict, Tailwind, shadcn/ui
+- Backend: Node.js Express + Rust (searcher-rs, tokio, alloy, revm)
+- DB: PostgreSQL 15, Redis 7.2
+- Deploy: Docker Compose, VPS 195.201.235.70 (alias arbx)
+
+## PATRÓN C-S-E
+Compose (Bellman-Ford grafo tokens) → Simulate (revm 19.0 + alloy on-chain) → Execute (Flashbots bundle atómico).
+
+## MIGRACIÓN
+ethers-rs (archivado) → alloy 0.9 (zero-copy, revm nativo). OBLIGATORIO.
+
+## RISK
+Position ≤2% capital. Gas 3x. Slippage 0.5%. Stop-loss 0.5%/hora. Mempool privado obligatorio.
+
+## SKILLS
+114 directorios en .agents/skills/. Lee el SKILL.md relevante cuando el contexto lo requiera.
+
+## FIXING
+PAUSAR → REPRODUCIR → TRAZAR → AUDITAR → CORREGIR → COMPILAR → DESPLEGAR → VERIFICAR EN PROD → DOCUMENTAR.

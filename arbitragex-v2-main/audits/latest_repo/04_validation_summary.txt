@@ -1,0 +1,160 @@
+# Validaciones ejecutadas
+Fecha UTC: 2026-05-31T06:02:38Z
+
+## Entorno
+v22.13.0
+11.2.2
+
+## Instalación root pnpm --frozen-lockfile
+=== pnpm_install_root ===
+exit_code=0 duration_s=0 log=validation_logs/pnpm_install_root.log
+--- tail ---
+[WARN] The "workspaces" field in package.json is not supported by pnpm. Create a "pnpm-workspace.yaml" file instead.
+Already up to date
+
+Done in 510ms using pnpm v11.2.2
+
+=== root_lint ===
+exit_code=1 duration_s=1 log=validation_logs/root_lint.log
+--- tail ---
+[WARN] The "workspaces" field in package.json is not supported by pnpm. Create a "pnpm-workspace.yaml" file instead.
+[ERR_PNPM_NO_SCRIPT] Missing script: lint
+
+Command "lint" not found. Did you mean "pnpm run lint:all"?
+
+=== root_typecheck ===
+exit_code=1 duration_s=0 log=validation_logs/root_typecheck.log
+--- tail ---
+[WARN] The "workspaces" field in package.json is not supported by pnpm. Create a "pnpm-workspace.yaml" file instead.
+[ERR_PNPM_NO_SCRIPT] Missing script: typecheck
+
+Command "typecheck" not found. Did you mean "pnpm run typecheck:all"?
+
+=== root_build ===
+exit_code=1 duration_s=1 log=validation_logs/root_build.log
+--- tail ---
+[WARN] The "workspaces" field in package.json is not supported by pnpm. Create a "pnpm-workspace.yaml" file instead.
+[ERR_PNPM_NO_SCRIPT] Missing script: build
+
+Command "build" not found. Did you mean "pnpm run build:all"?
+
+=== frontend_lint ===
+exit_code=1 duration_s=6 log=validation_logs/frontend_lint.log
+--- tail ---
+? Verifying lockfile against supply-chain policies (653 entries)...
+✓ Lockfile passes supply-chain policies (653 entries in 4s)
+Lockfile is up to date, resolution step is skipped
+Progress: resolved 1, reused 0, downloaded 0, added 0
+Packages: +530
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Progress: resolved 530, reused 529, downloaded 1, added 530, done
+
+dependencies:
++ @radix-ui/react-dialog 1.1.15
++ @radix-ui/react-label 2.1.8
++ @radix-ui/react-separator 1.1.8
++ @radix-ui/react-slot 1.2.4
++ @radix-ui/react-switch 1.2.6
++ @tailwindcss/postcss 4.3.0
++ @tanstack/react-table 8.21.3
++ class-variance-authority 0.7.1
++ clsx 2.1.1
++ framer-motion 11.18.2
++ geist 1.7.1
++ lucide-react 1.16.0
++ next 16.2.6
++ next-themes 0.4.6
++ radix-ui 1.4.3
++ react 19.2.6
++ react-dom 19.2.6
++ recharts 2.15.4
++ socket.io-client 4.8.3
++ sonner 2.0.7
++ tailwind-merge 3.6.0
++ tailwindcss 4.3.0
++ tw-animate-css 1.4.0
++ zod 3.25.76
++ zustand 5.0.13
+
+devDependencies:
++ @types/node 20.19.41
++ @types/react 18.3.29
++ @types/react-dom 18.3.7
++ eslint 8.57.1
++ eslint-config-next 14.2.35
++ typescript 5.9.3
++ vitest 1.6.1
+
+[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: esbuild@0.21.5, sharp@0.34.5, unrs-resolver@1.12.2
+
+Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.
+[ERROR] Command failed with exit code 1: pnpm install
+
+pnpm: Command failed with exit code 1: pnpm install
+    at getFinalError (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:29448:14)
+    at makeError (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:31755:21)
+    at getSyncResult (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:33599:10)
+    at spawnSubprocessSync (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:33559:14)
+    at execaCoreSync (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:33489:23)
+    at callBoundExeca (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:36017:23)
+    at boundExeca (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:35994:49)
+    at sync (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:36149:14)
+    at runPnpmCli (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:213263:5)
+    at runDepsStatusCheck (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:214967:7)
+
+=== frontend_typecheck ===
+exit_code=1 duration_s=2 log=validation_logs/frontend_typecheck.log
+--- tail ---
+Lockfile is up to date, resolution step is skipped
+Already up to date
+
+[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: esbuild@0.21.5, sharp@0.34.5, unrs-resolver@1.12.2
+
+Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.
+[ERROR] Command failed with exit code 1: pnpm install
+
+pnpm: Command failed with exit code 1: pnpm install
+    at getFinalError (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:29448:14)
+    at makeError (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:31755:21)
+    at getSyncResult (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:33599:10)
+    at spawnSubprocessSync (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:33559:14)
+    at execaCoreSync (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:33489:23)
+    at callBoundExeca (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:36017:23)
+    at boundExeca (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:35994:49)
+    at sync (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:36149:14)
+    at runPnpmCli (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:213263:5)
+    at runDepsStatusCheck (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:214967:7)
+
+=== frontend_build ===
+exit_code=1 duration_s=2 log=validation_logs/frontend_build.log
+--- tail ---
+Lockfile is up to date, resolution step is skipped
+Already up to date
+
+[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: esbuild@0.21.5, sharp@0.34.5, unrs-resolver@1.12.2
+
+Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.
+[ERROR] Command failed with exit code 1: pnpm install
+
+pnpm: Command failed with exit code 1: pnpm install
+    at getFinalError (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:29448:14)
+    at makeError (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:31755:21)
+    at getSyncResult (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:33599:10)
+    at spawnSubprocessSync (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:33559:14)
+    at execaCoreSync (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:33489:23)
+    at callBoundExeca (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:36017:23)
+    at boundExeca (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:35994:49)
+    at sync (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:36149:14)
+    at runPnpmCli (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:213263:5)
+    at runDepsStatusCheck (file:///home/ubuntu/.nvm/versions/node/v22.13.0/lib/node_modules/pnpm/dist/pnpm.mjs:214967:7)
+
+=== cargo_fmt_check ===
+exit_code=127 duration_s=0 log=validation_logs/cargo_fmt_check.log
+--- tail ---
+bash: line 1: cargo: command not found
+
+=== cargo_check_workspace ===
+exit_code=127 duration_s=0 log=validation_logs/cargo_check_workspace.log
+--- tail ---
+bash: line 1: cargo: command not found
+

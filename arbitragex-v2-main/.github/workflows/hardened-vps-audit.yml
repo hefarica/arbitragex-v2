@@ -1,0 +1,563 @@
+# PROPUESTA C10-F2 — NO EJECUTAR hasta autorización explícita del operador
+# Nota: Este workflow es AUDIT-ONLY (solo lectura). No modifica estado en VPS.
+# Autorización requerida para activación: "Autorizo C10-F2-AUDIT-WORKFLOW-ACTIVATE bajo Cláusula 14"
+# Riesgo de activación: BAJO (solo lectura)
+#
+# Workflow: hardened-vps-audit.yml
+# Proyecto: arbitragex-v2
+# Operador: Hector Fabio Riascos Castro, Ingenio Pichichi
+# VPS: 195.201.235.70 — /opt/arbitragex-v2
+#
+# Uso:
+#   - Sin target_sha: audit del estado actual
+#   - Con target_sha: audit + diff vs target (para evaluar deploy futuro)
+#   - Con compare_to_baseline_run_id: comparar estado actual vs baseline anterior
+#
+# NUNCA: modifica archivos, nunca ejecuta git write ops, nunca toca containers
+
+name: "C10-F2 Hardened VPS Audit"
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: "SHA-1 de 40 chars para calcular diff vs HEAD actual (opcional). Dejar vacío para audit puro."
+        required: false
+        type: string
+        default: ""
+      compare_to_baseline_run_id:
+        description: "Run ID de un artifact AUDIT_ anterior para comparar estado (opcional)"
+        required: false
+        type: string
+        default: ""
+      include_container_logs:
+        description: "Incluir últimas 100 líneas de logs por container (filtradas de secrets)"
+        required: false
+        type: boolean
+        default: false
+  # B6: schedule cron REMOVIDO. La ejecución automática diaria requería autorización
+  # explícita que no existe en C10-F2 M1. Solo workflow_dispatch hasta nueva orden
+  # del operador. Reactivar schedule requiere amendment documentado.
+
+permissions:
+  # B4: Permisos mínimos. Audit no requiere write a ningún recurso del repo.
+  # contents:read → leer código del repo; actions:read → leer artifacts previos.
+  contents: read
+  actions: read
+
+concurrency:
+  # B5: Evitar dos audits simultáneos contra el mismo VPS desde la misma rama.
+  # cancel-in-progress:false — preferimos esperar a que termine para no perder
+  # el artifact AUDIT_<run_id> de un audit ya en curso.
+  group: vps-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  VPS_HOST: "195.201.235.70"
+  VPS_USER: "root"
+  VPS_WORKDIR: "/opt/arbitragex-v2"
+  ARTIFACT_DIR: "audit_artifact"
+
+jobs:
+  audit:
+    name: "VPS Audit — Read Only"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 1: Validate inputs si se proporcionaron
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "Validate: target_sha format if provided"
+        if: inputs.target_sha != ''
+        run: |
+          set -euo pipefail
+          TARGET_SHA="${{ inputs.target_sha }}"
+          if ! [[ "${TARGET_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::target_sha proporcionado no es un SHA-1 válido de 40 hex: '${TARGET_SHA}'"
+            exit 1
+          fi
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 2: Setup SSH
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "Setup: SSH key"
+        # B3: Inyección SSH segura. PROHIBIDO 'echo "${{ secrets... }}" > key'
+        # porque (1) expande el secret en el shell, (2) puede dejar el contenido
+        # en historial/logs si hay error, (3) 'echo' con shells variantes puede
+        # mangle newlines de claves PEM/OPENSSH. Patrón correcto: step-level env
+        # + printf '%s\n' sobre la variable. Patrón validado en c10-f1-recovery-step14-only.yml.
+        env:
+          # M3 hotfix 1/3: secret real en el repo es VPS_SSH_KEY (creado 2026-05-14T19:57:22Z).
+          # El nombre original VPS_SSH_PRIVATE_KEY no existía y se expandía como string vacío,
+          # produciendo 'error in libcrypto' y Permission denied. Validado vía gh api /actions/secrets.
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "${{ env.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: "Setup: Test SSH connectivity"
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ConnectTimeout=10 -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "echo 'SSH_OK' && hostname"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 3: Git State Audit
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "Audit: Git state (HEAD, status, stash list)"
+        id: git_state
+        run: |
+          set -euo pipefail
+          mkdir -p "${{ env.ARTIFACT_DIR }}"
+
+          GIT_STATE=$(ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "cd '${{ env.VPS_WORKDIR }}' && set -euo pipefail
+            echo '=== GIT HEAD ==='
+            git log -1 --format='hash=%H%nauthor=%an%ndate=%ai%nsubject=%s' HEAD
+            echo ''
+            echo '=== GIT STATUS ==='
+            git status --short
+            echo ''
+            echo '=== GIT STASH LIST ==='
+            git stash list
+            echo ''
+            echo '=== GIT REMOTE TRACKING ==='
+            git for-each-ref --format='%(refname:short) %(objectname:short) %(upstream:track)' refs/heads/")
+
+          echo "${GIT_STATE}" > "${{ env.ARTIFACT_DIR }}/git_state.txt"
+
+          # Extraer HEAD SHA para outputs
+          CURRENT_SHA=$(ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "cd '${{ env.VPS_WORKDIR }}' && git rev-parse HEAD")
+          echo "current_sha=${CURRENT_SHA}" >> "${GITHUB_OUTPUT}"
+
+          # Contar stashes
+          STASH_COUNT=$(echo "${GIT_STATE}" | grep -c "stash@{" || echo "0")
+          echo "stash_count=${STASH_COUNT}" >> "${GITHUB_OUTPUT}"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 4: .env stat (NO contenido — solo permisos/tamaño/propietario)
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "Audit: .env stat (no content)"
+        run: |
+          set -euo pipefail
+          mkdir -p "${{ env.ARTIFACT_DIR }}"
+
+          ENV_STAT=$(ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "cd '${{ env.VPS_WORKDIR }}' && set -euo pipefail
+            echo '=== .ENV STAT (PERMISSIONS/OWNER/SIZE ONLY — NO CONTENT) ==='
+            if [ -f .env ]; then
+              stat -c 'perms=%a owner=%U:%G size=%s bytes name=%n' .env
+            else
+              echo '.env NOT FOUND'
+            fi
+            echo ''
+            echo '=== OTHER .ENV* FILES ==='
+            find . -maxdepth 2 -name '.env*' -exec stat -c 'perms=%a owner=%U:%G size=%s bytes name=%n' {} \; 2>/dev/null || echo 'none'")
+
+          echo "${ENV_STAT}" > "${{ env.ARTIFACT_DIR }}/env_stat.txt"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 5: Docker state audit
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "Audit: Docker containers state"
+        id: docker_state
+        run: |
+          set -euo pipefail
+          mkdir -p "${{ env.ARTIFACT_DIR }}"
+
+          DOCKER_STATE=$(ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "set -euo pipefail
+            echo '=== DOCKER PS (ALL) ==='
+            docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.RunningFor}}'
+            echo ''
+            echo '=== RESTART COUNTS ==='
+            # B1: nombres reales con prefijo 'arbitragex-v2-' (auto-generado por
+            # docker compose), excepción 'omega-nginx-gateway' (container externo
+            # al stack compose principal).
+            for c in arbitragex-v2-edge-1 arbitragex-v2-frontend-1 arbitragex-v2-api-server-1 \
+                      omega-nginx-gateway arbitragex-v2-relays-client-1 arbitragex-v2-searcher-rs-1 \
+                      arbitragex-v2-recon-1 arbitragex-v2-selector-api-1 arbitragex-v2-token-enricher-1 \
+                      arbitragex-v2-sim-ctl-1 arbitragex-v2-postgres-1 arbitragex-v2-alertmanager-1 \
+                      arbitragex-v2-grafana-1 arbitragex-v2-promtail-1 arbitragex-v2-prometheus-1 \
+                      arbitragex-v2-redis-1 arbitragex-v2-loki-1; do
+              RC=\$(docker inspect \"\${c}\" --format '{{.RestartCount}}' 2>/dev/null || echo 'N/A')
+              STATUS=\$(docker inspect \"\${c}\" --format '{{.State.Status}}' 2>/dev/null || echo 'N/A')
+              echo \"\${c}: status=\${STATUS} restarts=\${RC}\"
+            done
+            echo ''
+            echo '=== DOCKER IMAGES (arbitragex) ==='
+            docker images --format 'table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}\t{{.Size}}' | grep -E 'arbitragex|REPOSITORY' || true")
+
+          echo "${DOCKER_STATE}" > "${{ env.ARTIFACT_DIR }}/docker_state.txt"
+
+          # Containers Up count
+          CONTAINERS_UP=$(ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "docker ps --format '{{.Names}}' | wc -l")
+          echo "containers_up=${CONTAINERS_UP}" >> "${GITHUB_OUTPUT}"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 6: Health checks 4/4
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "Audit: Health checks 4/4"
+        id: health_check
+        run: |
+          set -euo pipefail
+          mkdir -p "${{ env.ARTIFACT_DIR }}"
+
+          # B2: Endpoints reales validados contra el baseline C10-F2-H0 (Run 25905112399).
+          # Hot-path real: edge:8787/health, api:8080/health, frontend:5173 (con fallback),
+          # prometheus:9090/-/ready. El frontend usa /api/health con FALLBACK obligatorio
+          # a / porque algunas versiones del frontend no exponen /api/health.
+          # B12: La distinción hot-path vs observabilidad se evalua más abajo:
+          #   HOT-PATH (cuenta para PASS):  edge, api, frontend, prometheus
+          #   OBSERVABILIDAD (info only):   grafana, loki, alertmanager
+          # M3 hotfix 2/3: el step previo falló con exit 1 sin output observable.
+          # Causa probable: 'set -e' local + HEALTH=$(ssh ...) aborta el step si
+          # SSH retorna exit no-zero por cualquier razón remota (docker exec con
+          # contenedor en estado transitorio, curl -f con HTTP no-2xx escapando el
+          # ||, pipefail propagando errores intermedios). Doble red de seguridad:
+          #   1. Quitar 'set -euo pipefail' del shell remoto (cada $() ya tiene || echo).
+          #   2. Agregar '|| true' al HEALTH=$(ssh ...) para garantizar que el step
+          #      siga ejecutando aunque el SSH retorne no-zero. La evaluación del
+          #      veredicto se hace después con grep sobre el output capturado.
+          # Sin esto, NO podemos observar el health real → viola Dirac Light-Cone.
+          HEALTH=$(ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "echo '=== HEALTH CHECKS HOT-PATH ==='
+
+            # Edge (hot-path)
+            EDGE_CODE=\$(curl -sf --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/health 2>/dev/null || echo '000')
+            echo \"edge: HTTP \${EDGE_CODE} target=http://127.0.0.1:8787/health\"
+
+            # API server (hot-path)
+            API_CODE=\$(curl -sf --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health 2>/dev/null || echo '000')
+            echo \"api: HTTP \${API_CODE} target=http://127.0.0.1:8080/health\"
+
+            # Frontend (hot-path) con fallback obligatorio: /api/health → /
+            FRONTEND_CODE=\$(curl -sf --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:5173/api/health 2>/dev/null || echo '000')
+            FRONTEND_USED='api_health'
+            if [ \"\${FRONTEND_CODE}\" != '200' ]; then
+              FRONTEND_CODE=\$(curl -sf --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:5173/ 2>/dev/null || echo '000')
+              FRONTEND_USED='root_fallback'
+            fi
+            echo \"frontend: HTTP \${FRONTEND_CODE} target=http://127.0.0.1:5173 endpoint_used=\${FRONTEND_USED}\"
+
+            # Prometheus (hot-path — observabilidad crítica para detección)
+            PROM_CODE=\$(curl -sf --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:9090/-/ready 2>/dev/null || echo '000')
+            echo \"prometheus: HTTP \${PROM_CODE} target=http://127.0.0.1:9090/-/ready\"
+
+            echo ''
+            echo '=== HEALTH CHECKS DATA STORES (hot-path support) ==='
+
+            # PostgreSQL (hot-path support — datos críticos)
+            PG_STATUS=\$(docker exec arbitragex-v2-postgres-1 pg_isready -h localhost -p 5432 2>/dev/null | tail -1 || echo 'ERROR')
+            echo \"postgres: \${PG_STATUS}\"
+
+            # Redis (hot-path support — cache crítico)
+            REDIS_STATUS=\$(docker exec arbitragex-v2-redis-1 redis-cli ping 2>/dev/null || echo 'ERROR')
+            echo \"redis: \${REDIS_STATUS}\"
+
+            echo ''
+            echo '=== HEALTH CHECKS OBSERVABILIDAD SECUNDARIA (info only) ==='
+
+            # Grafana, Loki, Alertmanager — observabilidad secundaria.
+            # B12: su caída NO degrada el veredicto a FAIL si hot-path está OK.
+            GRAFANA_CODE=\$(curl -sf --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/health 2>/dev/null || echo '000')
+            echo \"grafana: HTTP \${GRAFANA_CODE} (observability_secondary)\"
+
+            LOKI_CODE=\$(curl -sf --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:3100/ready 2>/dev/null || echo '000')
+            echo \"loki: HTTP \${LOKI_CODE} (observability_secondary)\"
+
+            AM_CODE=\$(curl -sf --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:9093/-/healthy 2>/dev/null || echo '000')
+            echo \"alertmanager: HTTP \${AM_CODE} (observability_secondary)\"" || true)
+
+          echo "${HEALTH}" > "${{ env.ARTIFACT_DIR }}/health_checks.txt"
+          echo "=== HEALTH OUTPUT CAPTURED ==="
+          echo "${HEALTH}"
+          echo "=== END HEALTH OUTPUT ==="
+
+          # B12: Evaluación separada — hot-path real vs observabilidad secundaria.
+          # Hot-path: edge, api, frontend, prometheus, postgres, redis (6 checks).
+          # Observabilidad secundaria: grafana, loki, alertmanager (3 checks, info only).
+          EDGE_OK=$(echo "${HEALTH}" | grep -E "^edge: HTTP 200" | wc -l)
+          API_OK=$(echo "${HEALTH}" | grep -E "^api: HTTP 200" | wc -l)
+          FRONTEND_OK=$(echo "${HEALTH}" | grep -E "^frontend: HTTP (200|301|302)" | wc -l)
+          PROM_OK=$(echo "${HEALTH}" | grep -E "^prometheus: HTTP 200" | wc -l)
+          PG_OK=$(echo "${HEALTH}" | grep "postgres:" | grep -v "ERROR" | wc -l)
+          REDIS_OK=$(echo "${HEALTH}" | grep "redis:" | grep "PONG" | wc -l)
+
+          HOT_PATH_OK=$(( EDGE_OK + API_OK + FRONTEND_OK + PROM_OK + PG_OK + REDIS_OK ))
+          echo "hot_path_score=${HOT_PATH_OK}/6" >> "${GITHUB_OUTPUT}"
+
+          GRAFANA_OK=$(echo "${HEALTH}" | grep -E "^grafana: HTTP 200" | wc -l)
+          LOKI_OK=$(echo "${HEALTH}" | grep -E "^loki: HTTP (200|204)" | wc -l)
+          AM_OK=$(echo "${HEALTH}" | grep -E "^alertmanager: HTTP 200" | wc -l)
+          OBS_OK=$(( GRAFANA_OK + LOKI_OK + AM_OK ))
+          echo "observability_score=${OBS_OK}/3" >> "${GITHUB_OUTPUT}"
+
+          # Veredicto refinado B12:
+          #   PASS    = hot-path 6/6 Y observabilidad 3/3
+          #   PARTIAL = hot-path 6/6 pero observabilidad < 3/3 (sin capital, sin live)
+          #   BLOCKED = hot-path < 6/6 (cualquier degradación del hot-path)
+          #   FAIL    = hot-path ≤ 3/6 (sistema críticamente degradado)
+          echo "health_score=hot=${HOT_PATH_OK}/6 obs=${OBS_OK}/3" >> "${GITHUB_OUTPUT}"
+
+          if [ "${HOT_PATH_OK}" -eq 6 ] && [ "${OBS_OK}" -eq 3 ]; then
+            echo "health_status=PASS" >> "${GITHUB_OUTPUT}"
+          elif [ "${HOT_PATH_OK}" -eq 6 ] && [ "${OBS_OK}" -lt 3 ]; then
+            echo "health_status=PARTIAL" >> "${GITHUB_OUTPUT}"
+          elif [ "${HOT_PATH_OK}" -le 3 ]; then
+            echo "health_status=FAIL" >> "${GITHUB_OUTPUT}"
+          else
+            echo "health_status=BLOCKED" >> "${GITHUB_OUTPUT}"
+          fi
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 7: System resources
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "Audit: System resources (disk, memory, load)"
+        run: |
+          set -euo pipefail
+          mkdir -p "${{ env.ARTIFACT_DIR }}"
+
+          SYSRES=$(ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "set -euo pipefail
+            echo '=== DISK USAGE ==='
+            df -h '${{ env.VPS_WORKDIR }}'
+            echo ''
+            echo '=== DISK INODE USAGE ==='
+            df -i '${{ env.VPS_WORKDIR }}'
+            echo ''
+            echo '=== MEMORY ==='
+            free -m
+            echo ''
+            echo '=== LOAD AVERAGE ==='
+            uptime
+            echo ''
+            echo '=== TOP 10 PROCESSES BY CPU ==='
+            ps aux --sort=-%cpu | head -11")
+
+          echo "${SYSRES}" > "${{ env.ARTIFACT_DIR }}/system_resources.txt"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 8: Optional — Container logs (filtradas de secrets)
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "Audit: Container logs (filtered) — optional"
+        if: inputs.include_container_logs == true
+        run: |
+          set -euo pipefail
+          mkdir -p "${{ env.ARTIFACT_DIR }}/logs"
+
+          # B1: nombres reales con prefijo arbitragex-v2- (excepción omega-nginx-gateway)
+          for container in arbitragex-v2-edge-1 arbitragex-v2-frontend-1 arbitragex-v2-api-server-1 \
+                            omega-nginx-gateway arbitragex-v2-relays-client-1 arbitragex-v2-searcher-rs-1; do
+            ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+              "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+              "docker logs --tail 100 '${container}' 2>&1 | \
+               grep -v -iE '(password|secret|private_key|api_key|token|bearer|authorization)' | \
+               sed 's/0x[0-9a-fA-F]\{40,\}/0x[REDACTED]/g'" \
+            > "${{ env.ARTIFACT_DIR }}/logs/${container}_last100.txt" 2>&1 || true
+          done
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 9: Optional — Diff vs target_sha
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "Audit: Diff vs target_sha (if provided)"
+        if: inputs.target_sha != ''
+        id: diff_target
+        run: |
+          set -euo pipefail
+          mkdir -p "${{ env.ARTIFACT_DIR }}"
+          TARGET_SHA="${{ inputs.target_sha }}"
+          CURRENT_SHA="${{ steps.git_state.outputs.current_sha }}"
+
+          DIFF_RESULT=$(ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "cd '${{ env.VPS_WORKDIR }}' && set -euo pipefail
+            echo '=== FETCH FOR TARGET SHA ==='
+            git fetch origin --no-tags 2>&1 | head -10
+            echo ''
+            echo '=== VERIFY TARGET EXISTS ==='
+            if git cat-file -t '${TARGET_SHA}' 2>/dev/null | grep -q 'commit'; then
+              echo 'target_sha_exists=true'
+            else
+              echo 'target_sha_exists=false'
+              exit 0
+            fi
+            echo ''
+            echo '=== FILES CHANGED (${CURRENT_SHA:0:7} -> ${TARGET_SHA:0:7}) ==='
+            git diff --name-status '${CURRENT_SHA}' '${TARGET_SHA}' || true
+            echo ''
+            echo '=== DIFF STATS ==='
+            git diff --stat '${CURRENT_SHA}' '${TARGET_SHA}' || true
+            echo ''
+            echo '=== COMMITS BETWEEN ==='
+            git log --oneline '${CURRENT_SHA}..${TARGET_SHA}' 2>/dev/null | head -20 || true")
+
+          echo "${DIFF_RESULT}" > "${{ env.ARTIFACT_DIR }}/diff_vs_target.txt"
+
+          # Drift detection: ¿está el VPS por detrás, al día, o por delante?
+          if echo "${DIFF_RESULT}" | grep -q "target_sha_exists=true"; then
+            # M3 hotfix 3/3: con 'set -o pipefail' activo, si grep no encuentra
+            # matches retorna 1, el pipeline retorna 1, y '|| echo "0"' se EJECUTA
+            # pero APIla el output del 'wc -l' previo, produciendo un valor
+            # multiline (ej. "0\n0") que viola el formato de GITHUB_OUTPUT con
+            # 'Invalid format '0'' / 'Unable to process file command output'.
+            # Fix: capturar primero el grep (con || true para que pipefail no
+            # propague), luego contar y normalizar a entero único.
+            FILES_CHANGED_RAW=$(echo "${DIFF_RESULT}" | grep -cE "^[AMDRT]" || true)
+            # grep -c retorna número, pero si grep falla por SIGPIPE/no-match con
+            # pipefail puede salir como string vacío. Normalizamos.
+            FILES_CHANGED="${FILES_CHANGED_RAW:-0}"
+            # Asegurar que es un entero válido (single line, no whitespace).
+            FILES_CHANGED=$(echo "${FILES_CHANGED}" | tr -d '[:space:]')
+            case "${FILES_CHANGED}" in
+              ''|*[!0-9]*) FILES_CHANGED=0 ;;
+            esac
+            echo "drift_files_count=${FILES_CHANGED}" >> "${GITHUB_OUTPUT}"
+            if [ "${FILES_CHANGED}" -eq 0 ]; then
+              echo "drift_status=IN_SYNC" >> "${GITHUB_OUTPUT}"
+            else
+              echo "drift_status=BEHIND_${FILES_CHANGED}_FILES" >> "${GITHUB_OUTPUT}"
+            fi
+          else
+            echo "drift_status=TARGET_SHA_NOT_FOUND" >> "${GITHUB_OUTPUT}"
+          fi
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 10: Detect recent container restarts (anomaly detection)
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "Audit: Detect container restart anomalies"
+        id: restart_check
+        run: |
+          set -euo pipefail
+          mkdir -p "${{ env.ARTIFACT_DIR }}"
+
+          RESTART_REPORT=$(ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "set -euo pipefail
+            ANOMALIES=0
+            echo '=== RESTART COUNT REPORT ==='
+            # B1: nombres reales con prefijo arbitragex-v2- (excepción omega-nginx-gateway)
+            for c in arbitragex-v2-edge-1 arbitragex-v2-frontend-1 arbitragex-v2-api-server-1 \
+                      omega-nginx-gateway arbitragex-v2-relays-client-1 arbitragex-v2-searcher-rs-1 \
+                      arbitragex-v2-recon-1 arbitragex-v2-selector-api-1 arbitragex-v2-token-enricher-1 \
+                      arbitragex-v2-sim-ctl-1 arbitragex-v2-postgres-1 arbitragex-v2-alertmanager-1 \
+                      arbitragex-v2-grafana-1 arbitragex-v2-promtail-1 arbitragex-v2-prometheus-1 \
+                      arbitragex-v2-redis-1 arbitragex-v2-loki-1; do
+              RC=\$(docker inspect \"\${c}\" --format '{{.RestartCount}}' 2>/dev/null || echo 'N/A')
+              if [ \"\${RC}\" != 'N/A' ] && [ \"\${RC}\" -gt 3 ]; then
+                echo \"ANOMALY: \${c} has \${RC} restarts\"
+                ANOMALIES=\$(( ANOMALIES + 1 ))
+              else
+                echo \"OK: \${c} restarts=\${RC}\"
+              fi
+            done
+            echo \"TOTAL_ANOMALIES=\${ANOMALIES}\"")
+
+          echo "${RESTART_REPORT}" > "${{ env.ARTIFACT_DIR }}/restart_report.txt"
+          ANOMALIES=$(echo "${RESTART_REPORT}" | grep "TOTAL_ANOMALIES=" | cut -d= -f2)
+          echo "restart_anomalies=${ANOMALIES}" >> "${GITHUB_OUTPUT}"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 11: Generate audit summary and veredicto
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "Generate audit veredicto"
+        if: always()
+        run: |
+          set -euo pipefail || true
+          mkdir -p "${{ env.ARTIFACT_DIR }}"
+          RUN_ID="${{ github.run_id }}"
+          HEALTH="${{ steps.health_check.outputs.health_status || 'UNKNOWN' }}"
+          CONTAINERS="${{ steps.docker_state.outputs.containers_up || 'unknown' }}"
+          STASHES="${{ steps.git_state.outputs.stash_count || '0' }}"
+          RESTARTS="${{ steps.restart_check.outputs.restart_anomalies || '0' }}"
+          CURRENT_SHA="${{ steps.git_state.outputs.current_sha || 'unknown' }}"
+
+          cat > "${{ env.ARTIFACT_DIR }}/veredicto.txt" << EOF
+          AUDIT REPORT — ARBITRAGEX-V2
+          =============================
+          run_id: ${RUN_ID}
+          timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          vps: ${{ env.VPS_HOST }}
+
+          ESTADO GIT:
+            current_sha: ${CURRENT_SHA}
+            stash_count: ${STASHES}
+
+          ESTADO DOCKER:
+            containers_up: ${CONTAINERS}/17
+            restart_anomalies: ${RESTARTS}
+
+          HEALTH:
+            status: ${HEALTH}
+            score: ${{ steps.health_check.outputs.health_score || 'unknown' }}
+
+          DRIFT VS TARGET:
+            drift_status: ${{ steps.diff_target.outputs.drift_status || 'NO_TARGET_PROVIDED' }}
+
+          VEREDICTO FINAL:
+          EOF
+
+          # B12: Veredicto refinado.
+          # PASS    → hot-path 6/6 + obs 3/3 + restarts=0 + containers>=15
+          # PARTIAL → hot-path 6/6 pero obs degradada (sistema operativo en hot-path)
+          # BLOCKED → hot-path degradado pero no críticamente
+          # FAIL    → hot-path críticamente degradado
+          if [ "${HEALTH}" = "PASS" ] && [ "${RESTARTS}" = "0" ] && [ "${CONTAINERS}" -ge 15 ]; then
+            echo "PASS — VPS en estado saludable (hot-path 6/6 + obs 3/3)" >> "${{ env.ARTIFACT_DIR }}/veredicto.txt"
+          elif [ "${HEALTH}" = "PARTIAL" ]; then
+            echo "PARTIAL — Hot-path OK pero observabilidad secundaria degradada (sin capital, sin live)" >> "${{ env.ARTIFACT_DIR }}/veredicto.txt"
+          elif [ "${HEALTH}" = "BLOCKED" ]; then
+            echo "BLOCKED — Hot-path parcialmente degradado, revisar antes de cualquier deploy" >> "${{ env.ARTIFACT_DIR }}/veredicto.txt"
+          else
+            echo "FAIL — Estado VPS requiere atención inmediata (hot-path críticamente degradado)" >> "${{ env.ARTIFACT_DIR }}/veredicto.txt"
+          fi
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 12: Upload artifact AUDIT_<run_id>
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "Upload artifact AUDIT_${{ github.run_id }}"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "AUDIT_${{ github.run_id }}"
+          path: "${{ env.ARTIFACT_DIR }}/"
+          retention-days: 30
+          if-no-files-found: warn
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 13: Job summary
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "Summary — Audit result"
+        if: always()
+        run: |
+          HEALTH="${{ steps.health_check.outputs.health_status || 'UNKNOWN' }}"
+          HEALTH_SCORE="${{ steps.health_check.outputs.health_score || 'unknown' }}"
+          CONTAINERS="${{ steps.docker_state.outputs.containers_up || 'unknown' }}"
+          DRIFT="${{ steps.diff_target.outputs.drift_status || 'NO_TARGET_PROVIDED' }}"
+          RESTARTS="${{ steps.restart_check.outputs.restart_anomalies || '0' }}"
+
+          echo "### Audit Result" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Campo | Valor |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "|-------|-------|" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| VPS SHA actual | ${{ steps.git_state.outputs.current_sha || 'unknown' }} |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Containers Up | ${CONTAINERS}/17 |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Health | ${HEALTH} (${HEALTH_SCORE}) |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Restart anomalies | ${RESTARTS} |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Drift vs target | ${DRIFT} |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Artifact | AUDIT_${{ github.run_id }} |" >> "${GITHUB_STEP_SUMMARY}"

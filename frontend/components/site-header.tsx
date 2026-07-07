@@ -14,6 +14,74 @@ import { QuantumLogo } from "@/components/quantum-logo";
 import { WebSocketIndicator } from "@/components/WebSocketIndicator";
 import { cn } from "@/lib/utils";
 
+function PaperBadge({ active }: { active: boolean }) {
+  return (
+    <span
+      className="hidden sm:inline-flex items-center gap-2"
+      style={{
+        fontFamily: 'var(--font-data)',
+        fontSize: '10.5px',
+        letterSpacing: '0.14em',
+        textTransform: 'uppercase',
+        padding: '6px 11px',
+        borderRadius: '6px',
+        backgroundColor: active
+          ? 'color-mix(in oklab, var(--success) 16%, transparent)'
+          : 'color-mix(in oklab, var(--destructive) 16%, transparent)',
+        color: active ? 'var(--success)' : 'var(--destructive)',
+        border: `1px solid ${active
+          ? 'color-mix(in oklab, var(--success) 28%, transparent)'
+          : 'color-mix(in oklab, var(--destructive) 28%, transparent)'}`,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <span
+        style={{
+          width: '6px',
+          height: '6px',
+          borderRadius: '50%',
+          backgroundColor: active ? 'var(--success)' : 'var(--destructive)',
+          boxShadow: active ? '0 0 10px var(--success)' : '0 0 10px var(--destructive)',
+        }}
+        aria-hidden
+      />
+      Paper · TLS Shadow
+    </span>
+  );
+}
+
+function KillSwitchBadge() {
+  return (
+    <span
+      className="hidden md:inline-flex items-center gap-2"
+      style={{
+        fontFamily: 'var(--font-data)',
+        fontSize: '10.5px',
+        letterSpacing: '0.14em',
+        textTransform: 'uppercase',
+        padding: '6px 11px',
+        borderRadius: '6px',
+        backgroundColor: 'color-mix(in oklab, var(--primary) 16%, transparent)',
+        color: 'var(--primary)',
+        border: '1px solid color-mix(in oklab, var(--primary) 30%, transparent)',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <span
+        style={{
+          width: '6px',
+          height: '6px',
+          borderRadius: '50%',
+          backgroundColor: 'var(--primary)',
+          boxShadow: '0 0 10px var(--primary)',
+        }}
+        aria-hidden
+      />
+      Kill-switch &lt;10ms
+    </span>
+  );
+}
+
 export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
@@ -25,8 +93,15 @@ export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
   }, []);
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
-      <div className="flex h-16 items-center gap-3 px-4 lg:px-6">
+    <header
+      className="sticky top-0 z-40 w-full border-b backdrop-blur-[14px] saturate-[1.3]"
+      style={{
+        backgroundColor: 'var(--header-bg)',
+        borderColor: 'var(--border)',
+        padding: '18px 40px',
+      }}
+    >
+      <div className="flex h-[calc(64px-36px)] items-center gap-6">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           {/*
            * NOTE: SheetTrigger WITHOUT asChild — Radix Dialog.Trigger already
@@ -57,25 +132,31 @@ export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
         </Sheet>
 
         <Link href="/" className="flex items-center gap-2.5">
-          <span
-            aria-hidden
-            className="grid size-9 place-items-center rounded-lg bg-primary/10 shadow-sm ring-1 ring-primary/25"
-          >
-            <QuantumLogo className="size-7" />
-          </span>
           <div className="flex flex-col -space-y-0.5 leading-none">
-            <span className="text-sm font-semibold tracking-tight">
-              Quantum<span className="text-primary">X</span>
+            <span
+              className="text-[18px] font-bold tracking-[-0.02em]"
+              style={{ fontFamily: 'var(--font-sans)' }}
+            >
+              ARBITRAG<span style={{ color: 'var(--primary)', textShadow: 'var(--wordmark-glow)' }}>E</span>X
             </span>
-            <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-              control plane
+            <span
+              className="text-[9.5px] uppercase tracking-[0.18em] text-muted-foreground"
+              style={{
+                fontFamily: 'var(--font-data)',
+                borderLeft: '1px solid var(--border)',
+                paddingLeft: '1rem',
+                marginLeft: '-0.25rem',
+              }}
+            >
+              Quantum Research Terminal · Topological Yield Engine
             </span>
           </div>
         </Link>
 
-        <Badge variant="glass" className="hidden sm:inline-flex">
-          <span className="size-1.5 rounded-full bg-current opacity-80" aria-hidden /> ghost-protocol
-        </Badge>
+        <div className="hidden sm:flex items-center gap-2">
+          <PaperBadge active={paperMode} />
+          <KillSwitchBadge />
+        </div>
 
         <div className="ml-auto flex items-center gap-2">
           <WebSocketIndicator />

@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { headers } from "next/headers";
-import { GeistSans } from "geist/font/sans";
-import { GeistMono } from "geist/font/mono";
+import { Inter, Space_Mono } from "next/font/google";
 
 import "./globals.css";
 import { SiteHeader } from "@/components/site-header";
@@ -12,6 +11,21 @@ import { ThemeScript } from "@/components/theme-toggle";
 import { SystemGuardBanner } from "@/components/SystemGuardBanner";
 import { Web3Provider } from "@/app/providers/Web3Provider";
 import { Toaster } from "sonner";
+import { LiveTicker } from "@/components/live-ticker";
+
+// Mockup parity: Inter (sans-serif) + Space Mono (monospace) — exact font stack from premium mockup
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
+
+const spaceMono = Space_Mono({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  variable: "--font-space-mono",
+  display: "swap",
+});
 
 export const metadata = {
   title: "QuantumX — Control Plane",
@@ -83,7 +97,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     <html
       lang="en"
       translate="no"
-      className={`${GeistSans.variable} ${GeistMono.variable} notranslate`}
+      className={`${inter.variable} ${spaceMono.variable} notranslate`}
       suppressHydrationWarning
     >
       <head>
@@ -91,6 +105,8 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         <meta name="google" content="notranslate" />
       </head>
       <body className="min-h-dvh bg-background font-sans antialiased notranslate" translate="no">
+        {/* Film grain overlay — premium texture (mockup parity) */}
+        <div className="grain" aria-hidden />
         <HeroSphere />
         <a
           href="#main"
@@ -118,7 +134,14 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
                   centred reading line. Horizontal padding kept at lg:px-10 for
                   breathing room around the sidebar.
                 */}
-                <div className="mx-auto w-full max-w-[1800px] px-4 py-8 lg:px-10 lg:py-10">
+                {/* Mockup parity: max-width 1640px, padding 56px 40px 80px */}
+                <div
+                  className="mx-auto w-full"
+                  style={{
+                    maxWidth: '1640px',
+                    padding: '56px 40px 80px',
+                  }}
+                >
                   <PageBreadcrumb />
                   {children}
                 </div>
@@ -126,6 +149,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
             </div>
           </div>
         </Web3Provider>
+        <LiveTicker />
         <Toaster richColors position="top-right" />
       </body>
     </html>

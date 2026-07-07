@@ -724,6 +724,11 @@ mod tests {
                 ProtocolType::V3 => Some(500),
                 _ => None,
             },
+            // FASE 3: dex_engine tests don't exercise the safety gate.
+            safety_score_t0: None,
+            safety_score_t1: None,
+            safety_classification_t0: None,
+            safety_classification_t1: None,
         }
     }
 

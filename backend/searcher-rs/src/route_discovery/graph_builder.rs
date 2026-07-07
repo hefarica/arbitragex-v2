@@ -10,11 +10,22 @@
 //! `now_ts`).
 //!
 //! ## `log_weight` (Phase-2 forward-compat only)
-//! For **V2** we compute `−ln((1−fee)·rate)` per direction from reserves
-//! (cheap, exact). For **V3** the precise spot rate needs `sqrtPriceX96` tick
-//! math; per the plan's guardrail #8 we leave `log_weight = None` for V3 in
-//! Phase 1 rather than ship incomplete pricing. Phase 1 ranks on nothing — the
-//! weight is stored only so the Phase-2 MMBF can consume it without rebuilding.
+//! For **V2** we compute `−ln((1−fee)·rate) + safety_penalty` per direction
+//! from reserves (cheap, exact). `safety_penalty` (FASE 3) is
+//! `(1 − min(t0_score, t1_score)/100) × SAFETY_PENALTY_K`, derived from the
+//! `token_safety_cache`-hydrated `PoolRef.safety_score_*` fields, and pushes
+//! the MMBF cycle detector to demand a higher gross edge product for routes
+//! through lower-scoring tokens. Pools whose `min(t0_score, t1_score)` falls
+//! below `SAFETY_DROP_THRESHOLD` (50) are rejected outright as
+//! `token_safety_drop` — the edge never enters the graph (R8 fail-closed:
+//! unscored tokens count as 0, also DROP).
+//!
+//! For **V3** the precise spot rate needs `sqrtPriceX96` tick math; per the
+//! plan's guardrail #8 we leave `log_weight = None` for V3 in Phase 1 rather
+//! than ship incomplete pricing. FASE 3 applies the same DROP gate to V3
+//! (safety threshold only — no weight is computed for V3 edges). Phase 1
+//! ranks on nothing — the weight is stored only so the Phase-2 MMBF can
+//! consume it without rebuilding.
 
 use crate::impact_index::PoolRef;
 use crate::reserves::{
@@ -91,8 +102,31 @@ fn normalize(raw: f64, decimals: u8) -> f64 {
     raw / 10f64.powi(decimals as i32)
 }
 
-/// MMBF edge weight `−ln((1−fee)·rate)`. Returns `None` if the argument is
-/// non-positive (cannot take the log) — honest, never a sentinel.
+/// FASE 3 anti-rug safety penalty constant.
+///
+/// `safety_penalty = (1 - min(t0_score, t1_score) / 100) * SAFETY_PENALTY_K`
+/// is added to the V2 edge `log_weight` so the MMBF cycle detector
+/// (`sum_log_weight < 0`) demands a higher gross edge product to overcome
+/// the token-safety friction. A score of 100 (no friction) → penalty 0;
+/// a score approaching 50 (DROP threshold) → penalty approaches
+/// `0.5 * SAFETY_PENALTY_K`. The constant is a module-level tunable (not a
+/// `GraphBuildConfig` field) per the FASE 3 spec — start at `0.5`, adjust
+/// against telemetry (`route_discovery.safety_penalty_applied`).
+const SAFETY_PENALTY_K: f64 = 0.5;
+
+/// Score strictly below this threshold marks a pool as DROP-classified: the
+/// edge is NOT admitted into the graph at all (`build_edges_for_pool` returns
+/// `Err("token_safety_drop")`). Above the threshold the edge is admitted,
+/// with a penalty proportional to `(100 - score) / 100`.
+const SAFETY_DROP_THRESHOLD: i32 = 50;
+
+/// MMBF edge weight `−ln((1−fee)·rate) + safety_penalty`. Returns `None` if
+/// the argument is non-positive (cannot take the log) — honest, never a sentinel.
+///
+/// `safety_penalty` (FASE 3) is added to the raw `-ln((1-fee)*rate)` term so
+/// the MMBF cycle detector downweights routes through lower-scoring tokens.
+/// The penalty is symmetric in t0/t1 (computed by the caller from
+/// `min(t0_score, t1_score)`) — it does NOT vary per direction.
 ///
 /// Also returns `None` if the result is non-finite (`±∞`/`NaN`). Without this,
 /// an extreme-but-finite rate (e.g. a pathologically imbalanced pool, or a rate
@@ -100,10 +134,10 @@ fn normalize(raw: f64, decimals: u8) -> f64 {
 /// "infinitely profitable" edge that makes ANY cycle through it look like a
 /// guaranteed arb. R8 fail-honest: a weight we cannot compute finitely is
 /// `None` (edge keeps its topology, no Phase-2 weight), never a fabricated value.
-fn log_weight(fee: f64, rate: f64) -> Option<f64> {
+fn log_weight(fee: f64, rate: f64, safety_penalty: f64) -> Option<f64> {
     let arg = (1.0 - fee) * rate;
     if arg > 0.0 {
-        let w = -arg.ln();
+        let w = -arg.ln() + safety_penalty;
         if w.is_finite() {
             Some(w)
         } else {
@@ -130,6 +164,29 @@ pub fn build_edges_for_pool(
     if pool.token0 == pool.token1 || pool.token0.is_zero() || pool.token1.is_zero() {
         return Err("invalid_pool_shape".to_string());
     }
+
+    // FASE 3 — anti-rug safety gate + edge penalty.
+    //
+    // Token-safety scores (0..100) ride on `PoolRef` (hydrated from
+    // `token_safety_cache` by `impact_index::load_pools_from_pg` /
+    // `lookup_token_safety`). `None` = unscored → treated as score 0
+    // (fail-CLOSED: R8 doctrine — "None = no computation" — and the spec
+    // formula `min(t0,t1).unwrap_or(0)` both demand this). The gate is
+    // symmetric in t0/t1 (uses min) and applied BEFORE the protocol match,
+    // so BOTH V2 and V3 edges are DROP-gated. The penalty itself is only
+    // added to V2 `log_weight` (V3 carries no rate-derived weight —
+    // guardrail #8 — and stays `None`, so the penalty has no V3 surface
+    // to act on).
+    let t0_score = pool.safety_score_t0.unwrap_or(0);
+    let t1_score = pool.safety_score_t1.unwrap_or(0);
+    let min_score = t0_score.min(t1_score);
+    if min_score < SAFETY_DROP_THRESHOLD {
+        return Err("token_safety_drop".to_string());
+    }
+    // Penalty ∈ [0, 0.5*SAFETY_PENALTY_K) for admitted edges
+    // (score ∈ [50, 100] → (1 - score/100) ∈ (0, 0.5]).
+    let safety_penalty = (1.0 - min_score as f64 / 100.0) * SAFETY_PENALTY_K;
+
     let dec0 = meta0
         .ok_or_else(|| "missing_token_metadata".to_string())?
         .decimals;
@@ -166,8 +223,8 @@ pub fn build_edges_for_pool(
                 let fee = pool.fee_bps.map(|b| b as f64 / 10_000.0).unwrap_or(0.003);
                 (
                     n0 + n1,
-                    log_weight(fee, n1 / n0),
-                    log_weight(fee, n0 / n1),
+                    log_weight(fee, n1 / n0, safety_penalty),
+                    log_weight(fee, n0 / n1, safety_penalty),
                     r.ts,
                     r.blk,
                 )
@@ -327,6 +384,13 @@ mod tests {
             token0: addr(1),
             token1: addr(2),
             fee_bps: Some(30),
+            // FASE 3: score 100 = no penalty, no DROP. Keeps the pre-FASE-3
+            // log_weight assertions valid (penalty term = 0.0). Tests that
+            // exercise the gate construct a PoolRef with explicit low scores.
+            safety_score_t0: Some(100),
+            safety_score_t1: Some(100),
+            safety_classification_t0: None,
+            safety_classification_t1: None,
         }
     }
 
@@ -339,6 +403,10 @@ mod tests {
             token0: addr(1),
             token1: addr(2),
             fee_bps: Some(500),
+            safety_score_t0: Some(100),
+            safety_score_t1: Some(100),
+            safety_classification_t0: None,
+            safety_classification_t1: None,
         }
     }
 
@@ -539,9 +607,11 @@ mod tests {
         .unwrap_err();
         assert_eq!(err, "invalid_reserves");
         // And log_weight itself never returns a non-finite value.
-        assert_eq!(log_weight(0.003, f64::INFINITY), None);
-        assert_eq!(log_weight(0.003, 0.0), None);
-        assert!(log_weight(0.003, 1.0).unwrap().is_finite());
+        // (safety_penalty = 0.0 here — this is a pure log/rate math test,
+        // the penalty surface is exercised by the safety-gate tests below.)
+        assert_eq!(log_weight(0.003, f64::INFINITY, 0.0), None);
+        assert_eq!(log_weight(0.003, 0.0, 0.0), None);
+        assert!(log_weight(0.003, 1.0, 0.0).unwrap().is_finite());
     }
 
     #[test]
@@ -562,6 +632,97 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, "low_liquidity");
+    }
+
+    // ── FASE 3: anti-rug safety gate ──────────────────────────────────────
+
+    /// A pool whose lower-scoring token sits below SAFETY_DROP_THRESHOLD (50)
+    /// is rejected with `token_safety_drop` — the edge never enters the graph,
+    /// so the MMBF cannot route through a rug-risky pool. The gate is
+    /// symmetric: only the MIN of the two token scores matters.
+    #[test]
+    fn drop_classified_pool_rejected() {
+        let mut p = v2_pool();
+        // t0 = 80, t1 = 40 → min = 40 < 50 → DROP.
+        p.safety_score_t0 = Some(80);
+        p.safety_score_t1 = Some(40);
+        let err = build_edges_for_pool(
+            &p,
+            Some(&reserves(1000)),
+            None,
+            Some(&meta(6)),
+            Some(&meta(6)),
+            1000,
+            &GraphBuildConfig::default(),
+        )
+        .unwrap_err();
+        assert_eq!(err, "token_safety_drop");
+    }
+
+    /// R8 fail-CLOSED: an unscored token (None) is treated as score 0, which
+    /// trips the DROP gate. This is the spec's `min(t0,t1).unwrap_or(0)` —
+    /// unscored pools never silently enter the graph as zero-penalty edges.
+    #[test]
+    fn unscored_pool_fail_closed() {
+        let mut p = v2_pool();
+        p.safety_score_t0 = None; // unscored → 0
+        p.safety_score_t1 = Some(100);
+        let err = build_edges_for_pool(
+            &p,
+            Some(&reserves(1000)),
+            None,
+            Some(&meta(6)),
+            Some(&meta(6)),
+            1000,
+            &GraphBuildConfig::default(),
+        )
+        .unwrap_err();
+        assert_eq!(err, "token_safety_drop");
+    }
+
+    /// FASE 3 penalty direction: with identical reserves, a score-60 pool's
+    /// edge weight must be HIGHER (less attractive) than a score-100 pool's,
+    /// by exactly `(1 - 60/100) * SAFETY_PENALTY_K = 0.2`. Both are admitted
+    /// (≥50) — the penalty shifts the MMBF threshold without dropping the edge.
+    #[test]
+    fn safety_penalty_raises_log_weight_for_lower_score() {
+        let p100 = v2_pool(); // score 100 → penalty 0.0
+        let (e100_01, _e100_10) = build_edges_for_pool(
+            &p100,
+            Some(&reserves(1000)),
+            None,
+            Some(&meta(6)),
+            Some(&meta(6)),
+            1000,
+            &GraphBuildConfig::default(),
+        )
+        .unwrap();
+        let mut p60 = v2_pool();
+        p60.safety_score_t0 = Some(60);
+        p60.safety_score_t1 = Some(60); // min=60 → penalty (1-0.6)*0.5 = 0.2
+        let (e60_01, _e60_10) = build_edges_for_pool(
+            &p60,
+            Some(&reserves(1000)),
+            None,
+            Some(&meta(6)),
+            Some(&meta(6)),
+            1000,
+            &GraphBuildConfig::default(),
+        )
+        .unwrap();
+        let w100 = e100_01.log_weight.expect("score-100 edge has a weight");
+        let w60 = e60_01.log_weight.expect("score-60 edge has a weight");
+        // The lower-scoring edge is less attractive (higher log_weight).
+        assert!(
+            w60 > w100,
+            "score-60 weight {w60} must be > score-100 weight {w100}"
+        );
+        // And the delta is exactly the penalty term (0.2).
+        assert!(
+            (w60 - w100 - 0.2).abs() < 1e-9,
+            "weight delta {delta} must equal penalty 0.2",
+            delta = w60 - w100
+        );
     }
 
     #[test]

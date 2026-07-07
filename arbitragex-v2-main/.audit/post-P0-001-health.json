@@ -1,0 +1,21 @@
+957190bc6d60_arbitragex-v2-loki-1	running	Up 12 hours (healthy)
+arbitragex-v2-alertmanager-1	restarting	Restarting (1) 26 seconds ago
+arbitragex-v2-api-server-1	running	Up 12 hours (healthy)
+arbitragex-v2-edge-1	running	Up 12 hours (healthy)
+arbitragex-v2-frontend-1	running	Up 12 hours (healthy)
+arbitragex-v2-grafana-1	running	Up 12 hours (healthy)
+arbitragex-v2-minio-1	running	Up 12 hours (healthy)
+arbitragex-v2-postgres-1	running	Up 12 hours (healthy)
+arbitragex-v2-prometheus-1	running	Up 12 hours (healthy)
+arbitragex-v2-promtail-1	running	Up 12 hours (unhealthy)
+arbitragex-v2-redis-1	running	Up 12 hours (healthy)
+arbitragex-v2-relays-client-1	running	Up 12 hours (unhealthy)
+arbitragex-v2-searcher-rs-1	running	Up 12 hours (unhealthy)
+arbitragex-v2-selector-api-1	running	Up 12 hours (healthy)
+arbitragex-v2-sim-ctl-1	running	Up 12 hours (unhealthy)
+arbitragex-v2-thanos-query-1	running	Up 12 hours (healthy)
+arbitragex-v2-thanos-sidecar-1	running	Up 12 hours (healthy)
+arbitragex-v2-thanos-store-1	restarting	Restarting (1) 36 seconds ago
+arbitragex-v2-vault-1	restarting	Restarting (1) 46 seconds ago
+b94ce42e4506_arbitragex-v2-token-enricher-1	running	Up 12 hours (healthy)
+d1e3e3735c09_arbitragex-v2-recon-1	running	Up 12 hours (unhealthy)

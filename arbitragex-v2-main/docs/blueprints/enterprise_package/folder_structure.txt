@@ -1,0 +1,19 @@
+
+/backend
+  /searcher-rs
+  /selector-api
+  /sim-ctl
+  /relays-client
+  /recon
+
+/edge
+  /workers
+  /proxy
+
+/frontend
+  /dashboard
+  /metrics
+
+/automation
+  /deploy
+  /monitoring

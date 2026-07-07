@@ -83,6 +83,22 @@ impl TokenPairKey {
 ///
 /// Mirrors the columns the index needs from the `pools` PG table plus the
 /// derived fields (dex_name, protocol_type) from `factories` / `dexes`.
+///
+/// ## Anti-rug safety fields (FASE 3)
+///
+/// `safety_score_t0` / `safety_score_t1` carry the token-safety score
+/// (0..100) from the `token_safety_cache` PG table at the moment the pool
+/// descriptor was built. They feed the graph builder's anti-rug edge
+/// penalty + DROP gate (see `graph_builder::build_edges_for_pool`). They
+/// are `Option<i32>` (not `u8`) to align with the `INTEGER` PG column and
+/// to keep `None` distinguishable from `Some(0)` — `None` means
+/// "unscored", which the graph builder treats fail-CLOSED (score 0 →
+/// DROP). `safety_classification_t0/t1` mirror the
+/// `flags->>'classification'` SAFE/WARN/DROP label for telemetry.
+///
+/// `#[serde(default)]` on every new field keeps cached `PoolRef` JSON
+/// (Redis, snapshot logs) deserializable across the FASE 3 boundary —
+/// missing fields decode to `None` (R8 fail-honest, never fabricated).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoolRef {
     pub chain_id: u64,
@@ -92,6 +108,20 @@ pub struct PoolRef {
     pub token0: Address,
     pub token1: Address,
     pub fee_bps: Option<u32>,
+    /// Token-safety score (0..100) for `token0` from `token_safety_cache`.
+    /// `None` = unscored → graph builder treats as score 0 (fail-closed DROP).
+    #[serde(default)]
+    pub safety_score_t0: Option<i32>,
+    /// Token-safety score (0..100) for `token1` from `token_safety_cache`.
+    /// `None` = unscored → graph builder treats as score 0 (fail-closed DROP).
+    #[serde(default)]
+    pub safety_score_t1: Option<i32>,
+    /// `flags->>'classification'` (SAFE/WARN/DROP) for `token0`, if any.
+    #[serde(default)]
+    pub safety_classification_t0: Option<String>,
+    /// `flags->>'classification'` (SAFE/WARN/DROP) for `token1`, if any.
+    #[serde(default)]
+    pub safety_classification_t1: Option<String>,
 }
 
 /// Reference to a lending position known to the indexer.
@@ -463,7 +493,11 @@ impl ImpactIndex {
 async fn load_pools_from_pg(pg: &PgPool, chain_id: u64) -> anyhow::Result<Vec<PoolRef>> {
     // Use sqlx::query (not query!) to avoid offline data file requirement.
     // The join structure: pools → factories → dexes for dex_name/protocol_type,
-    // pools → tokens (x2) for token addresses.
+    // pools → tokens (x2) for token addresses. FASE 3 adds two LEFT JOINs on
+    // token_safety_cache (one per token) so the graph builder's anti-rug edge
+    // penalty + DROP gate can read the cached score without a second round-trip.
+    // LEFT JOIN (not INNER): unscored tokens stay in the index with `None`
+    // safety fields — R8 fail-honest, no fabrication.
     let rows = sqlx::query(
         r#"
         SELECT
@@ -473,12 +507,24 @@ async fn load_pools_from_pg(pg: &PgPool, chain_id: u64) -> anyhow::Result<Vec<Po
             d.protocol_type AS protocol_type,
             t0.address      AS token0_addr,
             t1.address      AS token1_addr,
-            p.fee_tier
+            p.fee_tier,
+            tsc0.safety_score    AS safety_score_t0,
+            tsc0.flags           AS safety_flags_t0,
+            tsc1.safety_score    AS safety_score_t1,
+            tsc1.flags           AS safety_flags_t1
         FROM pools p
         JOIN factories f  ON f.id = p.factory_id
         JOIN dexes    d  ON d.id = f.dex_id
         JOIN tokens   t0 ON t0.id = p.token0_id
         JOIN tokens   t1 ON t1.id = p.token1_id
+        LEFT JOIN token_safety_cache tsc0
+               ON tsc0.chain_id = p.chain_id
+              AND LOWER(tsc0.token_address) = LOWER(t0.address)
+              AND tsc0.ttl_expires_at > NOW()
+        LEFT JOIN token_safety_cache tsc1
+               ON tsc1.chain_id = p.chain_id
+              AND LOWER(tsc1.token_address) = LOWER(t1.address)
+              AND tsc1.ttl_expires_at > NOW()
         WHERE p.chain_id = $1
           AND p.is_active = TRUE
         "#,
@@ -542,6 +588,16 @@ async fn load_pools_from_pg(pg: &PgPool, chain_id: u64) -> anyhow::Result<Vec<Po
         let protocol_type = parse_protocol_type(&protocol_type_str);
         let fee_tier: Option<i32> = row.try_get("fee_tier").ok();
 
+        // FASE 3: token-safety fields from the LEFT JOINs. Both score and
+        // flags columns are nullable (LEFT JOIN + unscored tokens) — `None`
+        // propagates verbatim (R8 fail-honest: never fabricated).
+        let safety_score_t0: Option<i32> = row.try_get("safety_score_t0").ok().flatten();
+        let safety_score_t1: Option<i32> = row.try_get("safety_score_t1").ok().flatten();
+        let safety_flags_t0: Option<serde_json::Value> =
+            row.try_get("safety_flags_t0").ok().flatten();
+        let safety_flags_t1: Option<serde_json::Value> =
+            row.try_get("safety_flags_t1").ok().flatten();
+
         out.push(PoolRef {
             chain_id: chain_id_pg as u64,
             address,
@@ -550,10 +606,87 @@ async fn load_pools_from_pg(pg: &PgPool, chain_id: u64) -> anyhow::Result<Vec<Po
             token0,
             token1,
             fee_bps: fee_tier.map(|f| f as u32),
+            safety_score_t0,
+            safety_score_t1,
+            safety_classification_t0: safety_flags_t0.as_ref().and_then(classification_from_flags),
+            safety_classification_t1: safety_flags_t1.as_ref().and_then(classification_from_flags),
         });
     }
 
     Ok(out)
+}
+
+/// Extract `flags->>'classification'` (SAFE/WARN/DROP) from a cached
+/// `token_safety_cache.flags` JSONB value. Returns `None` when the object
+/// carries no `classification` key — R8 fail-honest (no fabrication).
+fn classification_from_flags(flags: &serde_json::Value) -> Option<String> {
+    flags
+        .as_object()
+        .and_then(|o| o.get("classification"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Look up the cached token-safety fields for a `(chain_id, token0, token1)`
+/// pair from `token_safety_cache`. Returns `(None, None, None, None)` when
+/// the DB pool is `None`, the table is absent, or no fresh row exists for
+/// either token — R8 fail-honest (no fabrication).
+///
+/// FASE 3 helper shared by the incremental production paths
+/// (`pool_discovery::hydrate_and_persist_pool` for RPC-discovered pools and
+/// `scanner::pool_sync_watcher` for new-pool sync) so both apply the same
+/// TTL freshness + classification contract as the boot-time loader
+/// (`load_pools_from_pg` inlines the same LEFT JOINs for one-shot efficiency).
+pub async fn lookup_token_safety(
+    pg: Option<&PgPool>,
+    chain_id: u64,
+    token0: Address,
+    token1: Address,
+) -> (Option<i32>, Option<i32>, Option<String>, Option<String>) {
+    let Some(pg) = pg else {
+        return (None, None, None, None);
+    };
+    let t0_str = format!("{:#x}", token0);
+    let t1_str = format!("{:#x}", token1);
+    // `(SELECT 1) AS dummy` guarantees exactly one row regardless of matches;
+    // the LEFT JOINs surface NULLs for unscored tokens (→ None).
+    let res = sqlx::query(
+        r#"
+        SELECT
+            tsc0.safety_score AS s0,
+            tsc0.flags        AS f0,
+            tsc1.safety_score AS s1,
+            tsc1.flags        AS f1
+        FROM (SELECT 1) AS dummy
+        LEFT JOIN token_safety_cache tsc0
+               ON tsc0.chain_id = $1
+              AND LOWER(tsc0.token_address) = LOWER($2)
+              AND tsc0.ttl_expires_at > NOW()
+        LEFT JOIN token_safety_cache tsc1
+               ON tsc1.chain_id = $1
+              AND LOWER(tsc1.token_address) = LOWER($3)
+              AND tsc1.ttl_expires_at > NOW()
+        "#,
+    )
+    .bind(chain_id as i64)
+    .bind(t0_str)
+    .bind(t1_str)
+    .fetch_one(pg)
+    .await;
+    let Ok(row) = res else {
+        return (None, None, None, None);
+    };
+    use sqlx::Row;
+    let s0: Option<i32> = row.try_get("s0").ok().flatten();
+    let s1: Option<i32> = row.try_get("s1").ok().flatten();
+    let f0: Option<serde_json::Value> = row.try_get("f0").ok().flatten();
+    let f1: Option<serde_json::Value> = row.try_get("f1").ok().flatten();
+    (
+        s0,
+        s1,
+        f0.as_ref().and_then(classification_from_flags),
+        f1.as_ref().and_then(classification_from_flags),
+    )
 }
 
 /// Maps the `dexes.protocol_type` string from PG to the `ProtocolType` enum.
@@ -674,6 +807,12 @@ mod tests {
             token0,
             token1,
             fee_bps: Some(30),
+            // FASE 3: tests don't exercise the safety gate; None = unscored.
+            // graph_builder's own tests set Some(100) explicitly.
+            safety_score_t0: None,
+            safety_score_t1: None,
+            safety_classification_t0: None,
+            safety_classification_t1: None,
         }
     }
 

@@ -51,3 +51,48 @@ psql $DATABASE_URL -f database/migrations/067_config_hash_registry_drift_runtime
 
 # Wire-up: see docs/OMEGA_S5_PLUS_IMPLEMENTATION_PLAN.md §3
 ```
+
+## API Endpoints
+
+### POST /api/v1/execution
+
+Submits a new execution request for asynchronous processing.
+
+**Request Body:** `ExecutionRequest`
+
+```json
+{
+  "strategy_id": "string",
+  "parameters": {
+    "key": "value"
+  },
+  "priority": "normal",
+  "callback_url": "string (optional)"
+}
+```
+
+**Responses:**
+
+| Status | Description |
+|--------|-------------|
+| `202 Accepted` | Execution request queued successfully |
+| `400 Bad Request` | Invalid request body or missing required fields |
+| `409 Conflict` | Execution already in progress for this strategy |
+| `503 Service Unavailable` | Execution engine temporarily unavailable |
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:8787/api/v1/execution \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "strategy_id": "holonomic-loop-v2",
+    "parameters": {
+      "token_in": "0x...",
+      "token_out": "0x...",
+      "amount": "1000000000000000000"
+    },
+    "priority": "high"
+  }'
+```

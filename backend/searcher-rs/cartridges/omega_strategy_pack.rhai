@@ -84,6 +84,24 @@ fn base_confidence(pool_data, net_profit) {
     let freshness = get_num(pool_data, "freshness_score", 0.50);
     let sim = get_num(pool_data, "simulation_score", 0.0);
 
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // FASE OMEGA — Hamiltonian Data Vector Injection
+    // Ajusta confianza basada en volatilidad de mercado inyectada por el scanner
+    // ═══════════════════════════════════════════════════════════════════════════════
+    let volatility_penalty = 0.0;
+    if has(pool_data, "market_state") {
+        let ms = pool_data["market_state"];
+        if has(ms, "volatility") {
+            let vol = ms["volatility"];
+            // Penaliza confianza en alta volatilidad (>30%)
+            if vol > 0.30 {
+                volatility_penalty = 0.15;
+            } else if vol > 0.20 {
+                volatility_penalty = 0.08;
+            }
+        }
+    }
+
     let profit_score = if net_profit > 10.0 {
         1.0
     } else if net_profit > 3.0 {
@@ -94,7 +112,14 @@ fn base_confidence(pool_data, net_profit) {
         0.35
     };
 
-    (profit_score * 0.40) + (liq * 0.25) + (freshness * 0.20) + (sim * 0.15)
+    let raw_confidence = (profit_score * 0.40) + (liq * 0.25) + (freshness * 0.20) + (sim * 0.15);
+
+    // Aplica penalización por volatilidad
+    if volatility_penalty > 0.0 {
+        raw_confidence - volatility_penalty
+    } else {
+        raw_confidence
+    }
 }
 
 // ─── CONTRATO UNIVERSAL ──────────────────────────────────────────────────────

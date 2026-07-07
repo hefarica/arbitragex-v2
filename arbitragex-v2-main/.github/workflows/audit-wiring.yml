@@ -1,0 +1,202 @@
+name: Ω-S5++ APEX Wiring Audit — Cableado post-c815ef9 (READ-ONLY)
+
+# Auditoría quirúrgica del estado actual del cableado tras el REPAIR:
+#   1. Remotes git en /opt/arbitragex-v2
+#   2. Estado del bare repo huérfano /opt/git/arbitragex-v2
+#   3. HEAD checked-out vs HEAD esperado (6c92210)
+#   4. Working tree status (¿quedaron archivos colgantes del rsync?)
+#   5. .env presence + tamaño
+#   6. SSH authorized_keys del root
+#   7. Inventario docker + healthcheck endpoints
+# Cero mutaciones. Solo lectura.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  VPS_HOST: 195.201.235.70
+
+jobs:
+  wiring-audit:
+    name: Wiring Audit (READ-ONLY)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/arbx_key
+          chmod 600 ~/.ssh/arbx_key
+          ssh-keyscan -H ${{ env.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: "[W1] Cableado git en /opt/arbitragex-v2"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set +e
+            echo "════ /opt/arbitragex-v2 — repo principal ════"
+            cd /opt/arbitragex-v2 || { echo "❌ no existe"; exit 0; }
+            echo "── git remote -v ──"
+            git remote -v
+            echo ""
+            echo "── HEAD actual ──"
+            git rev-parse HEAD
+            git log -1 --oneline
+            echo ""
+            echo "── git status -sb (primeras 30 líneas) ──"
+            git status -sb 2>&1 | head -30
+            echo ""
+            echo "── Archivos rastreados vs untracked ──"
+            echo "Tracked:    $(git ls-files | wc -l)"
+            echo "Untracked:  $(git ls-files --others --exclude-standard | wc -l)"
+            echo "Modified:   $(git diff --name-only | wc -l)"
+            echo "Staged:     $(git diff --cached --name-only | wc -l)"
+            echo ""
+            echo "── Tags locales (top 10) ──"
+            git tag -l 2>/dev/null | tail -10
+          REMOTE
+
+      - name: "[W2] Estado del bare repo /opt/git/arbitragex-v2"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set +e
+            echo "════ /opt/git/arbitragex-v2 — bare repo huérfano ════"
+            if [ ! -d /opt/git/arbitragex-v2 ]; then
+              echo "✅ NO EXISTE — bare repo limpiado"
+              exit 0
+            fi
+            cd /opt/git/arbitragex-v2
+            echo "── Es bare? ──"
+            git rev-parse --is-bare-repository
+            echo ""
+            echo "── git remote -v ──"
+            git remote -v 2>&1
+            echo ""
+            echo "── HEAD del bare ──"
+            git rev-parse HEAD 2>&1
+            echo ""
+            echo "── Refs principales ──"
+            git for-each-ref --format='%(refname) %(objectname:short)' refs/heads/ 2>&1 | head -10
+            echo ""
+            echo "── ¿Está referenciado por /opt/arbitragex-v2? ──"
+            grep -r "/opt/git/arbitragex-v2" /opt/arbitragex-v2/.git/config 2>&1 || echo "✅ NO referenciado"
+            echo ""
+            echo "── Tamaño del bare ──"
+            du -sh /opt/git/arbitragex-v2 2>&1
+          REMOTE
+
+      - name: "[W3] Verificar HEAD esperado y archivos del REPAIR"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set +e
+            cd /opt/arbitragex-v2
+            EXPECTED="6c922106fb6db30152d011ef109da78af16ece23"
+            ACTUAL=$(git rev-parse HEAD)
+            echo "════ HEAD verification ════"
+            echo "Expected: $EXPECTED"
+            echo "Actual:   $ACTUAL"
+            if [ "$ACTUAL" = "$EXPECTED" ]; then
+              echo "✅ MATCH"
+            else
+              echo "⚠ MISMATCH — el HEAD del repo VPS difiere del TARGET_SHA del workflow"
+              echo "(Nota: esto puede ser normal si rsync no aplicó cambios al index git)"
+            fi
+            echo ""
+            echo "════ Archivos del REPAIR (deben existir con tamaño > 0) ════"
+            for f in \
+              frontend/app/omega-s5/registry/'[entity]'/page.tsx \
+              frontend/features/drift/DriftPanel.tsx \
+              frontend/lib/drift/types.ts \
+              frontend/lib/drift/useDriftDetection.ts \
+              frontend/lib/statemachine/types.ts \
+              frontend/app/apex/allocator/page.tsx \
+              frontend/app/apex/allocator/AllocatorClient.tsx; do
+              if [ -f "$f" ]; then
+                LINES=$(wc -l < "$f")
+                SIZE=$(stat -c%s "$f")
+                echo "  ✅ $f — $LINES líneas, $SIZE bytes"
+              else
+                echo "  ❌ FALTA: $f"
+              fi
+            done
+          REMOTE
+
+      - name: "[W4] .env + secrets sensibles"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set +e
+            cd /opt/arbitragex-v2
+            echo "════ .env presence ════"
+            if [ -f .env ]; then
+              echo "✅ .env presente"
+              echo "Tamaño:      $(stat -c%s .env) bytes"
+              echo "Líneas:      $(wc -l < .env)"
+              echo "Última mod:  $(stat -c%y .env)"
+              echo "Permisos:    $(stat -c%a .env)"
+              echo "── Claves declaradas (nombres solamente, NUNCA valores) ──"
+              grep -E '^[A-Z_]+=' .env | cut -d= -f1 | sort -u
+            else
+              echo "❌ .env NO existe"
+            fi
+            echo ""
+            echo "════ Backups disponibles ════"
+            ls -lah /root/arbitragex-v2-backup-*/.env 2>&1 | head -5
+            echo ""
+            echo "════ pg_dumps recientes ════"
+            ls -lah /root/pre-deploy-pgdump-*.sql.gz 2>&1 | head -5
+          REMOTE
+
+      - name: "[W5] SSH authorized_keys + huellas"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set +e
+            echo "════ authorized_keys del root ════"
+            if [ -f /root/.ssh/authorized_keys ]; then
+              echo "Total keys: $(grep -c '^ssh-' /root/.ssh/authorized_keys)"
+              echo ""
+              echo "── Huellas SHA256 (sin exponer las keys) ──"
+              while IFS= read -r line; do
+                if [[ "$line" == ssh-* ]]; then
+                  comment=$(echo "$line" | awk '{for(i=3;i<=NF;i++) printf "%s ", $i; print ""}')
+                  fp=$(echo "$line" | ssh-keygen -lf - 2>/dev/null | awk '{print $2, $3}')
+                  echo "  $fp ($comment)"
+                fi
+              done < /root/.ssh/authorized_keys
+            else
+              echo "❌ no existe authorized_keys"
+            fi
+          REMOTE
+
+      - name: "[W6] Docker network + container topology"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set +e
+            echo "════ Containers running ════"
+            docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' | head -25
+            echo ""
+            echo "════ Networks ════"
+            docker network ls
+            echo ""
+            echo "════ Frontend image tags ════"
+            docker images arbitragex-v2-frontend --format 'table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}\t{{.Size}}'
+            echo ""
+            echo "════ Container actualmente sirviendo /apex/allocator ════"
+            docker inspect arbitragex-v2-frontend-1 --format '{{.Config.Image}} | imageID={{.Image}} | started={{.State.StartedAt}}'
+          REMOTE
+
+      - name: "[W7] Endpoints health (sanity check final)"
+        run: |
+          ssh -i ~/.ssh/arbx_key root@${{ env.VPS_HOST }} 'bash -s' << 'REMOTE'
+            set +e
+            echo "════ HTTP probes (vía nginx local :80) ════"
+            for p in / /api/health /chains /executions /opportunities /apex/allocator /omega-s5/core /omega-s5/registry/chain /omega-s5/registry/token; do
+              code=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://localhost$p)
+              echo "  $code  $p"
+            done
+          REMOTE
+
+      - name: "[FINAL] Cleanup"
+        if: always()
+        run: rm -f ~/.ssh/arbx_key

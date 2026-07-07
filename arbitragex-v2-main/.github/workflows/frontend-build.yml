@@ -1,0 +1,87 @@
+name: Frontend Build
+
+# M2 Capa1 Fase 6 (P1-3): production `next build` must pass in CI.
+# Until now CI only ran `tsc --noEmit` (via typescript.yml) — runtime
+# errors that surface only at build time (R2 guard, missing image refs,
+# server-component data fetches at static collection time) shipped to
+# main untested. This workflow plugs that hole.
+#
+# IMPORTANT: NO secrets. NO endpoints pointing to localhost (R2 guard
+# would throw). The CI builds with placeholder domains that satisfy the
+# build-time invariants without touching real infra.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - 'shared-ts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/frontend-build.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - 'shared-ts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/frontend-build.yml'
+
+# M2 Capa1 Fase 4 — read-only token.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: next build (production)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # CI-only placeholder domains. They are publicly resolvable, satisfy
+      # the next.config.js R2 build-time guard (no localhost/127.0.0.1) and
+      # never receive traffic — they exist only so `next build` can bake
+      # the env at build time. Real production values come from .env on
+      # the VPS at runtime via `docker compose up --build`.
+      NEXT_PUBLIC_EDGE_URL: https://edge.ci.invalid
+      NEXT_PUBLIC_WS_URL: wss://ws.ci.invalid
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install all workspace dependencies
+        # IMPORTANT: do NOT set NODE_ENV=production at the job level — that
+        # makes npm ci skip devDependencies (@types/*, vitest, typescript,
+        # next-cli compile deps), which then breaks the @arbx/shared tsc
+        # build later in this workflow. NODE_ENV is set on the build step
+        # itself so `next build` still produces a production bundle.
+        run: |
+          rm -f package-lock.json
+          npm install
+
+      - name: Build @arbx/shared
+        # frontend imports @arbx/shared from shared-ts/dist/. Missing dist/
+        # surfaces as "Cannot find module @arbx/shared" at build time.
+        run: npm run -w @arbx/shared build
+
+      - name: Typecheck frontend (defensive — typescript.yml runs the same)
+        run: npm run -w @arbx/frontend typecheck
+
+      - name: next build (frontend)
+        # NODE_ENV scoped to the build step — next build sets it itself
+        # internally, but pinning it here keeps the bake fully production-
+        # like without poisoning the install step above.
+        env:
+          NODE_ENV: production
+        run: npm run -w @arbx/frontend build
+
+      - name: Validate no-localhost guard fired
+        # Sanity check: the R2 guard in next.config.js must throw on
+        # localhost in production. Confirm by running a quick assertion
+        # script that exists in the workspace.
+        run: npm run -w @arbx/frontend validate:prod-api

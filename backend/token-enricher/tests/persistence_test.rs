@@ -83,7 +83,9 @@ async fn apply_token_migrations(pool: &sqlx::PgPool) -> sqlx::Result<()> {
     sqlx::raw_sql(TEST_MIGRATION_001_ROLES)
         .execute(pool)
         .await?;
-    sqlx::raw_sql(MIGRATION_034_TOKENS_DDL).execute(pool).await?;
+    sqlx::raw_sql(MIGRATION_034_TOKENS_DDL)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -370,6 +372,38 @@ async fn needs_resolution_returns_true_for_old_failed(pool: sqlx::PgPool) -> sql
     sqlx::query("UPDATE tokens SET resolved_at = NOW() - INTERVAL '8 days' WHERE chain_id=1")
         .execute(&pool)
         .await?;
+    assert!(
+        token_enricher::persistence::needs_resolution(&pool, 1, addr)
+            .await
+            .unwrap()
+    );
+    Ok(())
+}
+
+/// Token exists with NULL resolved_via (e.g., tokens inserted by migration
+/// but never enriched) → DOES need resolution.
+///
+/// This test validates the COALESCE fix: NULL resolved_via should be treated
+/// as "not failed", which means the token needs resolution (returns true).
+/// Before the fix, this would fail with a deserialization error because
+/// the SQL expression returned NULL instead of a boolean.
+#[sqlx::test(migrations = false)]
+async fn needs_resolution_returns_true_for_null_resolved_via(
+    pool: sqlx::PgPool,
+) -> sqlx::Result<()> {
+    apply_token_migrations(&pool).await?;
+    let addr = Address::from_str(&format!("0x{}", "5".repeat(40))).unwrap();
+    // Insert token directly with NULL resolved_via (simulating migration-inserted tokens)
+    sqlx::query(
+        "INSERT INTO tokens (chain_id, address, symbol, decimals, resolved_via, resolved_at)
+         VALUES (1, $1, 'TEST', 18, NULL, NOW())
+         ON CONFLICT (chain_id, address) DO NOTHING",
+    )
+    .bind(format!("{:#x}", addr))
+    .execute(&pool)
+    .await?;
+
+    // Should return true (needs resolution) - NULL resolved_via means not enriched yet
     assert!(
         token_enricher::persistence::needs_resolution(&pool, 1, addr)
             .await

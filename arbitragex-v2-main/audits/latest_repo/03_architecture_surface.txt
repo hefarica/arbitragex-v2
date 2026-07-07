@@ -1,0 +1,594 @@
+# Arquitectura end-to-end: superficies críticas
+
+## Frontend routes (app router)
+/admin/chains
+/admin/signin
+/admin/topology
+/apex/allocator
+/audit-logs
+/chains
+/config
+/config/trading
+/deploy-pipeline
+/dex-registry
+/executions
+/killswitch
+/live-readiness
+/omega-s5/adapters
+/omega-s5/core
+/omega-s5/crucible
+/omega-s5/drift
+/omega-s5/factory
+/omega-s5/operator
+/omega-s5/registry/[entity]
+/omega-s5/registry
+/omega-s5/wallets
+/onboarding/1-init
+/onboarding/2-connect
+/onboarding/3-advanced
+/onboarding/4-testing
+/onboarding/5-production
+/onboarding
+/operations
+/opportunities
+/
+/pools
+/recon
+/risk
+/rpcs
+/sed
+/settings/credentials
+/settings
+/status
+/strategies
+/wallets
+/worker-health
+
+## Frontend client components críticos
+frontend/app/admin/chains/ChainsAdminClient.tsx
+frontend/app/admin/topology/TopologyVaultClient.tsx
+frontend/app/admin/topology/page.tsx
+frontend/app/apex/allocator/AllocatorClient.tsx
+frontend/app/deploy-pipeline/DeployPipelineClient.tsx
+frontend/app/dex-registry/DexRegistryClient.tsx
+frontend/app/dex-registry/page.tsx
+frontend/app/live-readiness/page.tsx
+frontend/app/omega-s5/registry/[entity]/RegistryPageClient.tsx
+frontend/app/omega-s5/wallets/page.tsx
+frontend/app/operations/OperationsClient.tsx
+frontend/app/opportunities/OpportunitiesClient.tsx
+frontend/app/opportunities/loading.tsx
+frontend/app/opportunities/page.tsx
+frontend/app/pools/page.tsx
+frontend/app/recon/ReconClient.tsx
+frontend/app/settings/SettingsClient.tsx
+frontend/app/settings/credentials/CredentialsClient.tsx
+frontend/app/settings/credentials/page.tsx
+frontend/app/status/StatusClient.tsx
+frontend/app/strategies/StrategiesClient.tsx
+frontend/app/strategies/page.tsx
+frontend/app/strategies/tabs/AuditTab.tsx
+frontend/app/strategies/tabs/CapitalRiskTab.tsx
+frontend/app/strategies/tabs/DexesTab.tsx
+frontend/app/strategies/tabs/MevRelaysTab.tsx
+frontend/app/strategies/tabs/PoolsTab.tsx
+frontend/app/strategies/tabs/SimulationTab.tsx
+frontend/app/strategies/tabs/StrategyCatalogTab.tsx
+frontend/app/strategies/tabs/TokenAllowlistTab.tsx
+frontend/app/wallets/WalletsClient.tsx
+frontend/app/wallets/page.tsx
+frontend/lib/apex/api/client.ts
+frontend/lib/apex/hooks/useChains.ts
+frontend/lib/apex/realtime/streamClient.ts
+frontend/lib/apex/schemas/_primitives.ts
+frontend/lib/apex/schemas/chain.ts
+frontend/lib/apex/schemas/index.ts
+frontend/lib/apex/schemas/operational.ts
+frontend/lib/apex/schemas/realtime.ts
+frontend/lib/apex/schemas/runtime.ts
+frontend/lib/api-client-credentials.test.ts
+frontend/lib/api-client.test.ts
+frontend/lib/api-client.ts
+frontend/lib/api/dexes.ts
+frontend/lib/api/wallets.ts
+frontend/lib/drift/useDriftDetection.ts
+frontend/lib/drift/useOmniDrift.ts
+frontend/lib/hooks/useCapitalGates.ts
+frontend/lib/hooks/useContracts.ts
+frontend/lib/hooks/useConvergenceStream.ts
+frontend/lib/hooks/useCrucibleStatus.ts
+frontend/lib/hooks/useFeatureManifest.ts
+frontend/lib/hooks/useOpportunitiesStream.ts
+frontend/lib/operations-schemas.ts
+frontend/lib/operator/useOperator.ts
+frontend/lib/registries/index.ts
+frontend/lib/registries/schemas.ts
+frontend/lib/registries/useRegistry.ts
+frontend/lib/schemas.test.ts
+frontend/lib/schemas.ts
+frontend/lib/statemachine/__tests__/useRuntimeAckSocket.test.ts
+frontend/lib/statemachine/useActionState.ts
+frontend/lib/statemachine/useRuntimeAckSocket.ts
+frontend/lib/store/omni-store.ts
+frontend/lib/store/types.ts
+frontend/lib/store/useOmniOpportunities.ts
+frontend/lib/useWebSocket.ts
+
+## Backend Rust crates
+|backend
+math-engine|backend/math-engine
+prioritization-spine|backend/prioritization-spine
+recon|backend/recon
+relays-client|backend/relays-client
+searcher-rs|backend/searcher-rs
+sed-core|backend/sed-core
+shared-rs|backend/shared-rs
+sim-ctl|backend/sim-ctl
+simulator-v2|backend/simulator-v2
+token-enricher|backend/token-enricher
+
+## Backend Node/TS services
+edge/dev-local/package.json
+edge/dev-local/src/admin-session-limits.ts
+edge/dev-local/src/admin-session.test.ts
+edge/dev-local/src/admin-token-resolver.test.ts
+edge/dev-local/src/admin-token-resolver.ts
+edge/dev-local/src/audit-emit.test.ts
+edge/dev-local/src/audit-emit.ts
+edge/dev-local/src/index.ts
+edge/worker/package.json
+edge/worker/src/audit-emit.ts
+edge/worker/src/index.ts
+shared-ts/package.json
+shared-ts/src/__tests__/api-contracts.test.ts
+shared-ts/src/__tests__/metrics-naming.test.ts
+shared-ts/src/__tests__/security-headers.test.ts
+shared-ts/src/api-contracts.ts
+shared-ts/src/circuit_breaker/index.test.ts
+shared-ts/src/circuit_breaker/index.ts
+shared-ts/src/config/index.ts
+shared-ts/src/contracts/credentials.ts
+shared-ts/src/contracts/index.ts
+shared-ts/src/index.ts
+shared-ts/src/killswitch/index.ts
+shared-ts/src/killswitch/killswitch.test.ts
+shared-ts/src/logging/index.ts
+shared-ts/src/metrics/index.ts
+shared-ts/src/middleware/index.ts
+tests/e2e/killswitch.spec.ts
+tests/e2e/package.json
+tests/e2e/playwright.config.ts
+tests/e2e/rpc-down.spec.ts
+tests/e2e/smoke.spec.ts
+tests/primitives.test.ts
+tests/realtime.test.ts
+
+## API route declarations aproximadas
+edge/README.md:11:- Read cache in KV (2 s TTL for `/status` and `/api/opportunities/live`).
+edge/README.md:47:- proxy read-only paths only (`/status`, `/api/opportunities/live`, `/api/risk/alerts`)
+edge/dev-local/src/index.ts:70:    res.setHeader("access-control-allow-credentials", "true");
+edge/dev-local/src/index.ts:93:// /api/admin/chains and /admin/session, which arrive before the original
+edge/dev-local/src/index.ts:97:app.get("/health", healthHandler(SERVICE, VERSION, startedAt));
+edge/dev-local/src/index.ts:98:app.get("/metrics", metricsHandler);
+edge/dev-local/src/index.ts:105:    // query to paths that pre-built their own (e.g. /api/v1/trading-config
+edge/dev-local/src/index.ts:146:app.get("/status", (req, res) => proxy("/status", req, res));
+edge/dev-local/src/index.ts:148:// Proxied to api-server's /api/health which returns service/version/uptime JSON.
+edge/dev-local/src/index.ts:149:app.get("/api/health", (req, res) => proxy("/api/health", req, res));
+edge/dev-local/src/index.ts:150:app.get("/api/opportunities/live", (req, res) => proxy("/api/v1/opportunities/live", req, res));
+edge/dev-local/src/index.ts:151:app.get("/api/scanner/heartbeat", (req, res) => {
+edge/dev-local/src/index.ts:153:  proxy(`/api/v1/scanner/heartbeat?chain_id=${encodeURIComponent(chain)}`, req, res);
+edge/dev-local/src/index.ts:155:app.get("/api/strategies/runtime-status", (req, res) => {
+edge/dev-local/src/index.ts:157:  proxy(`/api/v1/strategies/runtime-status?chain_id=${encodeURIComponent(chain)}`, req, res);
+edge/dev-local/src/index.ts:159:app.get("/api/risk/alerts", (req, res) => proxy("/api/v1/risk/alerts", req, res));
+edge/dev-local/src/index.ts:161:app.get("/api/executions/recent", (req, res) => proxy("/api/v1/executions/recent", req, res));
+edge/dev-local/src/index.ts:162:app.get("/api/recon/summary", (req, res) => proxy("/api/v1/recon/summary", req, res));
+edge/dev-local/src/index.ts:163:app.get("/api/config/current", (req, res) => proxy("/api/v1/config/current", req, res));
+edge/dev-local/src/index.ts:165:app.get("/api/relays", (req, res) => proxy("/api/v1/relays", req, res));
+edge/dev-local/src/index.ts:166:app.get("/api/onboarding/status", (req, res) => proxy("/api/v1/onboarding/status", req, res));
+edge/dev-local/src/index.ts:167:app.get("/api/readiness", (req, res) => proxy("/api/v1/readiness", req, res));
+edge/dev-local/src/index.ts:168:// P2 readiness extras: derived blockers list and go/no-go decision.
+edge/dev-local/src/index.ts:169:app.get("/api/readiness/blockers", (req, res) => proxy("/api/v1/readiness/blockers", req, res));
+edge/dev-local/src/index.ts:170:app.get("/api/readiness/decision", (req, res) => proxy("/api/v1/readiness/decision", req, res));
+edge/dev-local/src/index.ts:172:app.get("/api/agents/status", (req, res) => proxy("/api/v1/agents/status", req, res));
+edge/dev-local/src/index.ts:174:app.get("/api/scoring/status", (req, res) => proxy("/api/v1/scoring/status", req, res));
+edge/dev-local/src/index.ts:176:app.get("/api/risk/circuit-breakers/status", (req, res) => proxy("/api/v1/risk/circuit-breakers/status", req, res));
+edge/dev-local/src/index.ts:177:app.get("/api/risk/circuit-breakers/events", (req, res) => proxy("/api/v1/risk/circuit-breakers/events", req, res));
+edge/dev-local/src/index.ts:183:app.get("/api/admin/chains", (req, res) => {
+edge/dev-local/src/index.ts:185:  adminProxy(`/api/v1/admin/chains${search}`, req, res, "GET");
+edge/dev-local/src/index.ts:187:app.get("/api/admin/chains/:chain_id", (req, res) => {
+edge/dev-local/src/index.ts:188:  adminProxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res, "GET");
+edge/dev-local/src/index.ts:190:app.post("/api/admin/chains", (req, res) => {
+edge/dev-local/src/index.ts:191:  adminProxy("/api/v1/admin/chains", req, res, "POST");
+edge/dev-local/src/index.ts:193:app.put("/api/admin/chains/:chain_id", (req, res) => {
+edge/dev-local/src/index.ts:194:  adminProxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res, "PUT");
+edge/dev-local/src/index.ts:196:app.delete("/api/admin/chains/:chain_id", (req, res) => {
+edge/dev-local/src/index.ts:197:  adminProxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}`, req, res, "DELETE");
+edge/dev-local/src/index.ts:199:app.post("/api/admin/chains/:chain_id/probe", (req, res) => {
+edge/dev-local/src/index.ts:201:  adminProxy(`/api/v1/admin/chains/${encodeURIComponent(req.params["chain_id"] ?? "")}/probe${search}`, req, res, "POST");
+edge/dev-local/src/index.ts:207:app.get("/api/admin/topology/snapshot", (req, res) => {
+edge/dev-local/src/index.ts:208:  adminProxy("/api/admin/topology/snapshot", req, res, "GET");
+edge/dev-local/src/index.ts:210:app.post("/api/admin/topology/mutations", (req, res) => {
+edge/dev-local/src/index.ts:211:  adminProxy("/api/admin/topology/mutations", req, res, "POST");
+edge/dev-local/src/index.ts:214:app.get("/api/trading-config", (req, res) => {
+edge/dev-local/src/index.ts:216:  proxy(`/api/v1/trading-config?chain_id=${encodeURIComponent(chain)}`, req, res);
+edge/dev-local/src/index.ts:219:app.get("/api/operations/kpi", (req, res) => {
+edge/dev-local/src/index.ts:221:  proxy(`/api/v1/operations/kpi?chain_id=${encodeURIComponent(chain)}`, req, res);
+edge/dev-local/src/index.ts:223:app.get("/api/operations/scurve", (req, res) => {
+edge/dev-local/src/index.ts:226:  proxy(`/api/v1/operations/scurve?chain_id=${encodeURIComponent(chain)}&bucket_minutes=${encodeURIComponent(bucket)}`, req, res);
+edge/dev-local/src/index.ts:228:app.get("/api/operations/variance", (req, res) => {
+edge/dev-local/src/index.ts:230:  proxy(`/api/v1/operations/variance?chain_id=${encodeURIComponent(chain)}`, req, res);
+edge/dev-local/src/index.ts:233:app.get("/api/strategy-catalog", (req, res) => proxy("/api/v1/strategy-catalog", req, res));
+edge/dev-local/src/index.ts:234:app.get("/api/strategy-catalog/active", (req, res) => {
+edge/dev-local/src/index.ts:236:  proxy(`/api/v1/strategy-catalog/active?chain_id=${encodeURIComponent(chain)}`, req, res);
+edge/dev-local/src/index.ts:239:app.get("/api/chains",  (req, res) => proxy("/api/chains", req, res));
+edge/dev-local/src/index.ts:240:app.get("/api/rpcs",    (req, res) => proxy("/api/rpcs", req, res));
+edge/dev-local/src/index.ts:241:// Phase 2 fix: /api/pools now maps to NEW route-finder /api/v1/pools (was old broken defi_pools).
+edge/dev-local/src/index.ts:242:app.get("/api/pools",   (req, res) => {
+edge/dev-local/src/index.ts:248:  proxy(`/api/v1/pools${qStr ? "?" + qStr : ""}`, req, res);
+edge/dev-local/src/index.ts:250:app.get("/api/metrics/defi", (req, res) => proxy("/api/metrics", req, res));
+edge/dev-local/src/index.ts:252:app.get("/api/dexes", (req, res) => {
+edge/dev-local/src/index.ts:254:  proxy(`/api/v1/dexes?chain_id=${encodeURIComponent(chain)}`, req, res);
+edge/dev-local/src/index.ts:256:app.get("/api/v1/pools", (req, res) => {
+edge/dev-local/src/index.ts:263:  proxy(`/api/v1/pools${qStr ? "?" + qStr : ""}`, req, res);
+edge/dev-local/src/index.ts:266:// 2026-05-10 audit follow-up: DEX Registry page calls /api/v1/dexes WITHOUT
+edge/dev-local/src/index.ts:269:app.get("/api/v1/dexes", (req, res) => {
+edge/dev-local/src/index.ts:275:  proxy(`/api/v1/dexes${qStr ? "?" + qStr : ""}`, req, res);
+edge/dev-local/src/index.ts:278:// PUT /api/v1/dexes/:id/active — admin toggle from /dex-registry.
+edge/dev-local/src/index.ts:284:app.get("/api/v1/wallets", (req, res) => {
+edge/dev-local/src/index.ts:285:  proxy("/api/v1/wallets", req, res);
+edge/dev-local/src/index.ts:287:app.get("/api/v1/wallets/:address/balances", (req, res) => {
+edge/dev-local/src/index.ts:289:  proxy(`/api/v1/wallets/${encodeURIComponent(addr)}/balances`, req, res);
+edge/dev-local/src/index.ts:291:app.get("/api/v1/wallets/:address/allowances", (req, res) => {
+edge/dev-local/src/index.ts:293:  proxy(`/api/v1/wallets/${encodeURIComponent(addr)}/allowances`, req, res);
+edge/dev-local/src/index.ts:314:app.post("/admin/session", async (req, res) => {
+edge/dev-local/src/index.ts:345:    const probe = await fetch(`${API_SERVER_URL}/admin/killswitch`, {
+edge/dev-local/src/index.ts:395:app.post("/admin/session/logout", (req, res) => {
+edge/dev-local/src/index.ts:445:app.post("/admin/killswitch",                 (req, res) => adminProxy("/admin/killswitch", req, res, "POST"));
+edge/dev-local/src/index.ts:447:// GET /api/killswitch/status — public read of killswitch state (admin-token gated).
+edge/dev-local/src/index.ts:448:app.get("/api/killswitch/status", (req, res) => {
+edge/dev-local/src/index.ts:449:  adminProxy("/admin/killswitch/status", req, res, "GET");
+edge/dev-local/src/index.ts:452:// POST /api/killswitch/:action — activate/deactivate killswitch.
+edge/dev-local/src/index.ts:453:// Maps semantic actions to the api-server's /admin/killswitch toggle.
+edge/dev-local/src/index.ts:454:app.post("/api/killswitch/:action", async (req, res) => {
+edge/dev-local/src/index.ts:467:  adminProxy("/admin/killswitch", req, res, "POST");
+edge/dev-local/src/index.ts:470:app.post("/admin/config/paper-mode",          (req, res) => adminProxy("/admin/config/paper-mode", req, res, "POST"));
+edge/dev-local/src/index.ts:471:app.post("/admin/onboarding/1/complete",      (req, res) => adminProxy("/admin/onboarding/1/complete", req, res, "POST"));
+edge/dev-local/src/index.ts:474:app.put("/api/v1/dexes/:id/active", (req, res) => {
+edge/dev-local/src/index.ts:476:  adminProxy(`/api/v1/dexes/${encodeURIComponent(id)}/active`, req, res, "PUT");
+edge/dev-local/src/index.ts:481:app.post("/api/v1/dexes", (req, res) => {
+edge/dev-local/src/index.ts:482:  adminProxy("/api/v1/dexes", req, res, "POST");
+edge/dev-local/src/index.ts:484:app.delete("/api/v1/dexes/:id", (req, res) => {
+edge/dev-local/src/index.ts:486:  adminProxy(`/api/v1/dexes/${encodeURIComponent(id)}`, req, res, "DELETE");
+edge/dev-local/src/index.ts:488:app.put("/admin/trading-config/:chain_id",    (req, res) => {
+edge/dev-local/src/index.ts:494:// Operator credentials — migration 057. List behind adminProxy so the
+edge/dev-local/src/index.ts:497:app.get("/api/credentials", (req, res) => adminProxy("/api/v1/credentials", req, res, "GET"));
+edge/dev-local/src/index.ts:498:app.post("/admin/credentials/test", (req, res) => adminProxy("/admin/credentials/test", req, res, "POST"));
+edge/dev-local/src/index.ts:499:app.put("/admin/credentials", (req, res) => adminProxy("/admin/credentials", req, res, "PUT"));
+edge/dev-local/src/index.ts:500:app.delete("/admin/credentials/:provider/:scope", (req, res) => {
+edge/dev-local/src/index.ts:504:    `/admin/credentials/${encodeURIComponent(provider)}/${encodeURIComponent(scope)}`,
+edge/dev-local/src/index.ts:512:app.get("/admin/audit", (req, res) => {
+edge/worker/src/index.ts:9: *   - KV-backed cache for `/status` and `/api/opportunities/live` (S1: 2 s TTL).
+edge/worker/src/index.ts:152:  // V-AT-1: must echo allow-credentials so the browser sends arbx_admin_session
+edge/worker/src/index.ts:155:  if (allowed && allowed !== "*") c.header("access-control-allow-credentials", "true");
+edge/worker/src/index.ts:257:app.get("/health", (c) => c.json({ ok: true, service: "edge-worker", env: c.env.ARBX_ENV }));
+edge/worker/src/index.ts:290:app.get("/status", (c) => proxy(c, "/status", "arbx:cache:status", 2));
+edge/worker/src/index.ts:291:app.get("/api/opportunities/live", (c) => proxy(c, "/api/v1/opportunities/live", "arbx:cache:opps", 2));
+edge/worker/src/index.ts:293:app.get("/api/risk/alerts", (c) => proxy(c, "/api/v1/risk/alerts"));
+edge/worker/src/index.ts:295:app.get("/api/executions/recent", (c) => proxy(c, "/api/v1/executions/recent", "arbx:cache:execs", 5));
+edge/worker/src/index.ts:296:app.get("/api/recon/summary",    (c) => proxy(c, "/api/v1/recon/summary",    "arbx:cache:recon", 10));
+edge/worker/src/index.ts:297:app.get("/api/recon/timeseries", (c) => proxy(c, "/api/v1/recon/timeseries", "arbx:cache:recon-ts", 15));
+edge/worker/src/index.ts:298:app.get("/api/config/current",   (c) => proxy(c, "/api/v1/config/current",   "arbx:cache:config", 30));
+edge/worker/src/index.ts:299:app.get("/api/readiness",        (c) => proxy(c, "/api/v1/readiness",        "arbx:cache:readiness", 15));
+edge/worker/src/index.ts:304:app.post("/admin/session", async (c) => {
+edge/worker/src/index.ts:323:  // Validate by probing api-server with a sentinel killswitch body.
+edge/worker/src/index.ts:324:  const probe = await fetch(`${c.env.API_SERVER_URL}/admin/killswitch`, {
+edge/worker/src/index.ts:358:app.post("/admin/session/logout", (c) => {
+edge/worker/src/index.ts:367:app.post("/admin/killswitch", async (c) => {
+edge/worker/src/index.ts:371:  const upstream = await fetch(`${c.env.API_SERVER_URL}/admin/killswitch`, {
+edge/worker/src/index.ts:386:// GET /api/killswitch/status — public read of killswitch state.
+edge/worker/src/index.ts:387:// Proxies to api-server's /admin/killswitch/status. 2s KV cache TTL.
+edge/worker/src/index.ts:388:app.get("/api/killswitch/status", async (c) => {
+edge/worker/src/index.ts:391:  const upstream = await fetch(`${c.env.API_SERVER_URL}/admin/killswitch/status`, {
+edge/worker/src/index.ts:405:// POST /api/killswitch/:action — activate/deactivate killswitch.
+edge/worker/src/index.ts:406:// Maps semantic actions to the api-server's /admin/killswitch toggle.
+edge/worker/src/index.ts:407:app.post("/api/killswitch/:action", async (c) => {
+edge/worker/src/index.ts:419:  const upstream = await fetch(`${c.env.API_SERVER_URL}/admin/killswitch`, {
+edge/worker/src/index.ts:435:app.get("/admin/audit", async (c) => {
+edge/worker/src/index.ts:457:app.get("/api/trading-config", async (c) => {
+edge/worker/src/index.ts:461:    `${c.env.API_SERVER_URL}/api/v1/trading-config?chain_id=${encodeURIComponent(chain)}`,
+edge/worker/src/index.ts:476:// Trading Config — admin upsert (PUT). Mirror of /admin/killswitch auth pattern.
+edge/worker/src/index.ts:477:app.put("/admin/trading-config/:chain_id", async (c) => {
+edge/worker/src/index.ts:499:app.get("/api/operations/kpi", async (c) => {
+edge/worker/src/index.ts:503:    `${c.env.API_SERVER_URL}/api/v1/operations/kpi?chain_id=${encodeURIComponent(chain)}`,
+edge/worker/src/index.ts:514:app.get("/api/operations/scurve", async (c) => {
+edge/worker/src/index.ts:519:    `${c.env.API_SERVER_URL}/api/v1/operations/scurve?chain_id=${encodeURIComponent(chain)}&bucket_minutes=${encodeURIComponent(bucket)}`,
+edge/worker/src/index.ts:530:app.get("/api/operations/variance", async (c) => {
+edge/worker/src/index.ts:534:    `${c.env.API_SERVER_URL}/api/v1/operations/variance?chain_id=${encodeURIComponent(chain)}`,
+edge/worker/src/index.ts:546:app.get("/api/dexes", (c) => proxy(c, "/api/v1/dexes", "arbx:cache:dexes", 30));
+edge/worker/src/index.ts:547:// /api/pools (frontend convention) and /api/v1/pools (backend convention) both proxy to same upstream.
+edge/worker/src/index.ts:548:app.get("/api/pools", (c) => proxy(c, "/api/v1/pools", "arbx:cache:pools", 30));
+edge/worker/src/index.ts:549:app.get("/api/v1/pools", (c) => proxy(c, "/api/v1/pools", "arbx:cache:pools", 30));
+edge/worker/src/index.ts:552:app.get("/api/strategy-catalog", async (c) => {
+edge/worker/src/index.ts:553:  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/strategy-catalog`, {
+edge/worker/src/index.ts:562:app.get("/api/strategy-catalog/active", async (c) => {
+edge/worker/src/index.ts:566:    `${c.env.API_SERVER_URL}/api/v1/strategy-catalog/active?chain_id=${encodeURIComponent(chain)}`,
+edge/worker/src/index.ts:578:app.get("/api/strategies/runtime-status", (c) => proxy(c, "/api/v1/strategies/runtime-status", "arbx:cache:strategy-runtime-status", 5));
+edge/worker/src/index.ts:584:app.get("/api/scanner/heartbeat", (c) => proxy(c, "/api/v1/scanner/heartbeat", "arbx:cache:scanner-hb", 5));
+edge/worker/src/index.ts:586:// Readiness extras (P2). Derived views over /api/v1/readiness:
+edge/worker/src/index.ts:587://   /api/readiness/blockers — flat list of redacted env + doctrinal blockers.
+edge/worker/src/index.ts:588://   /api/readiness/decision — go_live / go_a5 verdict + reasons + next_action.
+edge/worker/src/index.ts:589:// Same 15s KV TTL as /api/readiness so the operator sees coherent state.
+edge/worker/src/index.ts:590:app.get("/api/readiness/blockers", (c) => proxy(c, "/api/v1/readiness/blockers", "arbx:cache:readiness-blockers", 15));
+edge/worker/src/index.ts:591:app.get("/api/readiness/decision", (c) => proxy(c, "/api/v1/readiness/decision", "arbx:cache:readiness-decision", 15));
+edge/worker/src/index.ts:596:app.get("/api/agents/status", (c) => proxy(c, "/api/v1/agents/status", "arbx:cache:agents-status", 30));
+edge/worker/src/index.ts:600:app.get("/api/scoring/status", (c) => proxy(c, "/api/v1/scoring/status", "arbx:cache:scoring-status", 30));
+edge/worker/src/index.ts:603:// state can change at any moment; readiness verifier outcomes refresh every
+edge/worker/src/index.ts:605:app.get("/api/risk/circuit-breakers/status", (c) => proxy(c, "/api/v1/risk/circuit-breakers/status", "arbx:cache:cb-status", 15));
+edge/worker/src/index.ts:606:app.get("/api/risk/circuit-breakers/events", (c) => proxy(c, "/api/v1/risk/circuit-breakers/events", "arbx:cache:cb-events", 30));
+edge/worker/src/index.ts:609:// GET snapshot uses short cache (5s) since topology changes infrequently.
+edge/worker/src/index.ts:611:app.get("/api/admin/topology/snapshot", async (c) => {
+edge/worker/src/index.ts:614:  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/admin/topology/snapshot`, {
+edge/worker/src/index.ts:621:app.post("/api/admin/topology/mutations", async (c) => {
+edge/worker/src/index.ts:625:  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/admin/topology/mutations`, {
+edge/worker/src/index.ts:642:app.get("/api/admin/chains", async (c) => {
+edge/worker/src/index.ts:645:  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains${new URL(c.req.url).search}`, {
+edge/worker/src/index.ts:652:app.get("/api/admin/chains/:chain_id", async (c) => {
+edge/worker/src/index.ts:655:  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains/${encodeURIComponent(c.req.param("chain_id") ?? "")}`, {
+edge/worker/src/index.ts:662:app.post("/api/admin/chains", async (c) => {
+edge/worker/src/index.ts:666:  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains`, {
+edge/worker/src/index.ts:675:app.put("/api/admin/chains/:chain_id", async (c) => {
+edge/worker/src/index.ts:679:  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains/${encodeURIComponent(c.req.param("chain_id") ?? "")}`, {
+edge/worker/src/index.ts:688:app.delete("/api/admin/chains/:chain_id", async (c) => {
+edge/worker/src/index.ts:691:  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains/${encodeURIComponent(c.req.param("chain_id") ?? "")}`, {
+edge/worker/src/index.ts:699:app.post("/api/admin/chains/:chain_id/probe", async (c) => {
+edge/worker/src/index.ts:702:  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/admin/chains/${encodeURIComponent(c.req.param("chain_id") ?? "")}/probe${new URL(c.req.url).search}`, {
+backend/.dockerignore:23:*.credentials
+backend/api-server/package.json:5:  "description": "ArbitrageX v2 — api-server/gateway. Admin endpoints (killswitch, config) + upstream status aggregator.",
+backend/api-server/src/audit-events.test.ts:5: * - killswitch.armed / killswitch.disabled audit trail (2 tests)
+backend/api-server/src/audit-events.test.ts:53:  describe("killswitch audit trail", () => {
+backend/api-server/src/audit-events.test.ts:54:    it("1. killswitch.armed: writes audit row with before=disabled, after=enabled", async () => {
+backend/api-server/src/audit-events.test.ts:62:      const action = parsed.enabled ? "killswitch.armed" : "killswitch.disabled";
+backend/api-server/src/audit-events.test.ts:64:      await mockWriteAudit(action, "admin", "killswitch", "global",
+backend/api-server/src/audit-events.test.ts:68:        "killswitch.armed", "admin", "killswitch", "global",
+backend/api-server/src/audit-events.test.ts:74:    it("2. killswitch.disabled: writes audit row with before=enabled, after=disabled", async () => {
+backend/api-server/src/audit-events.test.ts:80:      const action = parsed.enabled ? "killswitch.armed" : "killswitch.disabled";
+backend/api-server/src/audit-events.test.ts:82:      await mockWriteAudit(action, "operator-x", "killswitch", "global",
+backend/api-server/src/audit-events.test.ts:86:        "killswitch.disabled", "operator-x", "killswitch", "global",
+backend/api-server/src/contract-isomorphism.test.ts:46:    "frontend_refresh", "readiness", "audit",
+backend/api-server/src/contract-isomorphism.test.ts:98:      "frontend_refresh", "readiness", "audit",
+backend/api-server/src/credentials/store.ts:2: * Persistence layer for service_credentials (migration 057).
+backend/api-server/src/credentials/store.ts:14: * provisioned — see docs/operations/credentials-encryption.md (todo).
+backend/api-server/src/credentials/store.ts:62: * List ALL credentials with masked secrets. Operator-facing endpoint.
+backend/api-server/src/credentials/store.ts:68:       FROM service_credentials
+backend/api-server/src/credentials/store.ts:86:       FROM service_credentials
+backend/api-server/src/credentials/store.ts:114:    `INSERT INTO service_credentials
+backend/api-server/src/credentials/store.ts:120:            secret_value           = COALESCE(EXCLUDED.secret_value, service_credentials.secret_value),
+backend/api-server/src/credentials/store.ts:148:    `DELETE FROM service_credentials WHERE provider = $1 AND scope = $2`,
+backend/api-server/src/credentials/validators.ts:158:    const r = await fetchWithTimeout(process.env.COINGECKO_BASE_URL || "https" + "://api.coingecko.com/api/v3/ping");
+backend/api-server/src/credentials/validators.ts:172:      process.env.COINGECKO_PRO_BASE_URL || "https" + "://pro-api.coingecko.com/api/v3/ping",
+backend/api-server/src/credentials/validators.ts:267:    const r = await fetchWithTimeout(`${process.env.BINANCE_BASE_URL || "https" + "://api.binance.com"}/api/v3/account?${query}&signature=${sig}`, {
+backend/api-server/src/credentials/validators.ts:290:    const path = "/api/v5/account/balance";
+backend/api-server/src/index.ts:6:import { verifyAll } from "./readiness/verifiers/index.js";
+backend/api-server/src/index.ts:7:import type { ReadinessReport } from "./readiness/types.js";
+backend/api-server/src/index.ts:50:  logger.warn({ err: e.message }, "killswitch pub/sub subscribe failed — will fall back to TTL poll");
+backend/api-server/src/index.ts:83:import { buildCredentialsRouter } from "./routes/credentials.js";
+backend/api-server/src/index.ts:90:import { mountReadinessExtras } from "./routes/readiness-extras.js";
+backend/api-server/src/index.ts:97:import { buildTopologyVaultRouter } from "./routes/topology-vault.js";
+backend/api-server/src/index.ts:136:app.get("/health", healthHandler(SERVICE, VERSION, startedAt));
+backend/api-server/src/index.ts:137:// REST convention alias — load balancers / external monitors expect /api/health.
+backend/api-server/src/index.ts:139:app.get("/api/health", healthHandler(SERVICE, VERSION, startedAt));
+backend/api-server/src/index.ts:140:app.get("/metrics", metricsHandler);
+backend/api-server/src/index.ts:143:app.get("/status", async (_req, res) => {
+backend/api-server/src/index.ts:151:    killswitch: ks,
+backend/api-server/src/index.ts:164:app.post("/admin/killswitch", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:178:  const action = parsed.data.enabled ? "killswitch.armed" : "killswitch.disabled";
+backend/api-server/src/index.ts:182:    action, actorHeader, "killswitch", "global",
+backend/api-server/src/index.ts:186:  logger.warn({ event: "admin.killswitch", actor: actorHeader, state: out }, "kill-switch toggled");
+backend/api-server/src/index.ts:190:/** Admin: read killswitch state. */
+backend/api-server/src/index.ts:191:app.get("/admin/killswitch/status", requireAdminToken(ARBX_ADMIN_TOKEN), async (_req, res) => {
+backend/api-server/src/index.ts:193:  if (!state) return res.status(503).json({ error: "killswitch_unavailable" });
+backend/api-server/src/index.ts:198:app.get("/admin/config", requireAdminToken(ARBX_ADMIN_TOKEN), (_req, res) => {
+backend/api-server/src/index.ts:227:app.post("/internal/audit/auth", requireEdgeToken(ARBX_EDGE_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:253:// concurrent admin + readiness + recon-timeseries load. Connection timeout added so
+backend/api-server/src/index.ts:315:app.post("/admin/blacklist/tokens", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:331:app.delete("/admin/blacklist/tokens/:chain/:addr", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:342:app.get("/admin/blacklist/tokens", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:351:app.get("/admin/circuit_breakers", requireAdminToken(ARBX_ADMIN_TOKEN), async (_req, res) => {
+backend/api-server/src/index.ts:362:app.post("/admin/circuit_breakers/:name/trip", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:371:app.post("/admin/circuit_breakers/:name/reset", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:378:app.get("/admin/scoring/weights", requireAdminToken(ARBX_ADMIN_TOKEN), (_req, res) => {
+backend/api-server/src/index.ts:390:app.get("/admin/audit", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:485:app.get("/api/v1/scanner/heartbeat", async (req, res) => {
+backend/api-server/src/index.ts:516:app.get("/api/v1/risk/alerts", async (req, res) => {
+backend/api-server/src/index.ts:533:      killswitch: ks,
+backend/api-server/src/index.ts:543:app.get("/api/v1/executions/recent", async (req, res) => {
+backend/api-server/src/index.ts:573:app.get("/api/v1/recon/summary", async (req, res) => {
+backend/api-server/src/index.ts:634:app.get("/api/v1/recon/timeseries", async (req, res) => {
+backend/api-server/src/index.ts:702:app.get("/admin/relays", requireAdminToken(ARBX_ADMIN_TOKEN), async (_req, res) => {
+backend/api-server/src/index.ts:713:app.post("/admin/relays", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:743:app.put("/admin/relays/:id", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:788:app.post("/admin/config/paper-mode", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:833:app.delete("/admin/relays/:id", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:846:app.get("/api/v1/relays", async (_req, res) => {
+backend/api-server/src/index.ts:859:app.get("/api/v1/onboarding/status", async (_req, res) => {
+backend/api-server/src/index.ts:881:app.post("/admin/onboarding/1/complete", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+backend/api-server/src/index.ts:930:// ── Operator credentials (migration 057 — RPC, CEX, Flashbots, etc.) ────
+backend/api-server/src/index.ts:940:app.get("/api/v1/config/current", async (_req, res) => {
+backend/api-server/src/index.ts:1009:// Live readiness checklist — 17 items verified dynamically (option C from spec).
+backend/api-server/src/index.ts:1017:let readinessCache: { report: ReadinessReport; expires: number } | null = null;
+backend/api-server/src/index.ts:1018:app.get("/api/v1/readiness", async (req, res) => {
+backend/api-server/src/index.ts:1021:  if (!force && readinessCache && now < readinessCache.expires) {
+backend/api-server/src/index.ts:1023:    res.status(200).json(readinessCache.report);
+backend/api-server/src/index.ts:1028:    readinessCache = { report, expires: now + READINESS_CACHE_MS };
+backend/api-server/src/index.ts:1032:    logger.error({ err: (e as Error).message }, "readiness verifyAll failed");
+backend/api-server/src/index.ts:1048:// `io` exists because POST /api/system/runtime-ack emits a WSS broadcast into
+backend/api-server/src/index.ts:1076:    "/api/system",
+backend/api-server/src/lib/registry-engine.ts:193:  router.get(base, async (req, res) => {
+
+## Contratos Solidity
+./contracts/foundry.toml
+./contracts/script/DeployCrucible.s.sol
+./contracts/script/DeployMainnet.s.sol
+./contracts/script/DeployMultichain.s.sol
+./contracts/script/DeployTestnet.s.sol
+./contracts/src/AdminTimelock.sol
+./contracts/src/AllowanceManager.sol
+./contracts/src/ArbitrageExecutor.sol
+./contracts/src/FlashLoanExecutor.sol
+./contracts/src/adapters/AaveV3CrossChainAdapter.sol
+./contracts/src/adapters/BalancerVaultAdapter.sol
+./contracts/src/adapters/CurveStableSwapAdapter.sol
+./contracts/src/adapters/MakerDssAdapter.sol
+./contracts/src/adapters/UniswapV2Adapter.sol
+./contracts/src/adapters/UniswapV3Adapter.sol
+./contracts/src/core/DeterministicFactory.sol
+./contracts/src/core/WalletTopology.sol
+./contracts/src/dexes/CurveAdapter.sol
+./contracts/src/dexes/GMXAdapter.sol
+./contracts/src/dexes/PancakeV3Adapter.sol
+./contracts/src/dexes/SynthetixAdapter.sol
+./contracts/src/flashloans/AaveV3FlashAdapter.sol
+./contracts/src/flashloans/BalancerFlashAdapter.sol
+./contracts/src/flashloans/DyDxFlashAdapter.sol
+./contracts/src/flashloans/UniV3FlashAdapter.sol
+./contracts/src/interfaces/IAllowanceManager.sol
+./contracts/src/interfaces/IDEXAdapter.sol
+./contracts/src/interfaces/IFlashLoanProvider.sol
+./contracts/test/AdminTimelock.t.sol
+./contracts/test/AllowanceManager.t.sol
+./contracts/test/AllowanceManagerFuzz.t.sol
+./contracts/test/ArbitrageExecutor.t.sol
+./contracts/test/ArbitrageExecutorFuzz.t.sol
+./contracts/test/DeterministicFactory.t.sol
+./contracts/test/ExecutorInvariant.t.sol
+./contracts/test/FlashLoanAdapters.t.sol
+./contracts/test/FlashLoanExecutor.t.sol
+./contracts/test/FlashLoanInvariant.t.sol
+./contracts/test/ForkExample.t.sol
+./docs/contracts/foundry.toml
+./docs/contracts/script/Deploy.s.sol
+./docs/contracts/src/adapters/UniswapV2Adapter.sol
+./docs/contracts/src/adapters/UniswapV3Adapter.sol
+./docs/contracts/src/core/Executor.sol
+./docs/contracts/src/interfaces/IExecutor.sol
+./docs/contracts/src/utils/FlashloanProvider.sol
+./docs/contracts/src/utils/SignatureValidator.sol
+./docs/contracts/test/Executor.invariants.t.sol
+
+## Docker/infra
+.github/CODEOWNERS
+.github/PULL_REQUEST_TEMPLATE.md
+.github/copilot-instructions.md
+.github/dependabot.yml
+.github/workflows/action-a-plus-v2.yml
+.github/workflows/action-a-plus.yml
+.github/workflows/audit-vps-wiring.yml
+.github/workflows/audit-wiring.yml
+.github/workflows/audit.yml
+.github/workflows/c10-f1-recovery-step14-only.yml
+.github/workflows/ci.yml
+.github/workflows/codeql.yml
+.github/workflows/deploy-edge-only-v2.yml
+.github/workflows/deploy-edge-only.yml
+.github/workflows/deploy-frontend.yml
+.github/workflows/deploy-vps.yml
+.github/workflows/deploy.yml
+.github/workflows/diag-cookie-emission.yml
+.github/workflows/docker-build.yml
+.github/workflows/dockerfile-audit.yml
+.github/workflows/dr-drill.yml
+.github/workflows/e2e.yml
+.github/workflows/foundry.yml
+.github/workflows/frontend-build.yml
+.github/workflows/hardened-vps-audit.yml
+.github/workflows/hardened-vps-baseline.yml
+.github/workflows/hardened-vps-deploy.yml
+.github/workflows/monitoring-config.yml
+.github/workflows/no-hardcode.yml
+.github/workflows/no-regression.yml
+.github/workflows/omega8-m3-grep-gates.yml
+.github/workflows/omega8-pii-gates.yml
+.github/workflows/paper-shadow.yml
+.github/workflows/probe-admin-session.yml
+.github/workflows/probe-cookies-deep.yml
+.github/workflows/rust.yml
+.github/workflows/security.yml
+.github/workflows/sync-vps-metadata.yml
+.github/workflows/typescript.yml
+.github/workflows/unit-tests.yml
+.github/workflows/verify-admin-session-wiring.yml
+config/opportunity_prioritization.yaml
+config/topology/staging.env.example
+configs/app.toml
+configs/backup-recipient.age.pub.example
+configs/nginx/nginx.conf
+configs/schemas/app.schema.json
+configs/schemas/execution_request.schema.json
+configs/schemas/execution_result.schema.json
+configs/schemas/killswitch_state.schema.json
+configs/schemas/opportunity.schema.json
+configs/schemas/recon_report.schema.json
+configs/schemas/simulation_result.schema.json
+configs/secrets.policy.md
+docker/compose.dev.yml
+docker/compose.loopback.override.yml
+docker/compose.noports.override.yml
+docker/compose.prod.yml
+docker/compose.staging.override.yml
+docker/nginx-proxy.conf
+monitoring/alertmanager/alertmanager.yml
+monitoring/alertmanager/alertmanager.yml.backup.20260517T144000Z
+monitoring/alerts.rules.yml
+monitoring/grafana/dashboards/README.md
+monitoring/grafana/dashboards/dashboards.yml
+monitoring/grafana/dashboards/database-metrics.json
+monitoring/grafana/dashboards/detection-pipeline.json
+monitoring/grafana/dashboards/execution-pipeline.json
+monitoring/grafana/dashboards/platform-overview.json
+monitoring/grafana/dashboards/recon-risk.json
+monitoring/grafana/dashboards/rpc-failover.json
+monitoring/grafana/dashboards/slo-sli.json
+monitoring/grafana/datasources/datasources.yml
+monitoring/grafana/provisioning/dashboards/api-red-dashboard.json
+monitoring/grafana/provisioning/dashboards/dashboards.yml
+monitoring/grafana/provisioning/datasources/datasources.yml
+monitoring/loki/loki-config.yml
+monitoring/prometheus/prometheus.edge.yml
+monitoring/prometheus/prometheus.prod.yml
+monitoring/prometheus/prometheus.yml
+monitoring/promtail/promtail-config.yml
+monitoring/thanos/objstore.yml
+monitoring/vault/generate-tls.sh
+monitoring/vault/vault-config.hcl
+
+## DB migrations últimas 30
+database/migrations/043_seed_multichain_dexes_factories.sql
+database/migrations/044_defillama_dex_reseed.sql
+database/migrations/045_dex_chain_metrics.sql
+database/migrations/046_chain_aware_min_profit_usd.sql
+database/migrations/047_be01_sprint_a_cost_components.sql
+database/migrations/048_be01_sprint_c_sanity_and_copied.sql
+database/migrations/049_h2_net_expected_profit.sql
+database/migrations/050_db_hardening_phase3.sql
+database/migrations/051_paper_trade_runs.sql
+database/migrations/052_audit_retention_min_guard.sql
+database/migrations/053_audit_pii_hardening.sql
+database/migrations/054_db_schema_audit.sql
+database/migrations/055_audit_log_pii_inet_to_cidr.sql
+database/migrations/056_strategy_configs.sql
+database/migrations/057_service_credentials.sql
+database/migrations/058_token_validations.sql
+database/migrations/059_pool_discovery_tables.sql
+database/migrations/060_risk_events_chain_id.sql
+database/migrations/061_chains_runtime.sql
+database/migrations/062_sed_core_migrations.sql
+database/migrations/063_sed_eigenstates_spectral_gap.sql
+database/migrations/066_omni_entity_registries.sql
+database/migrations/067_config_hash_registry_drift_runtime_ack.sql
+database/migrations/068_operator_parametrization_sovereignty.sql
+database/migrations/069_runtime_ack_idempotency_unique.sql
+database/migrations/070_audit_event_pii_hardening.sql
+database/migrations/071_capa2_p2_fixes.sql
+database/migrations/072_reconcile_tokens_schema.sql
+database/migrations/073_strategy_catalog_new_modules.sql
+database/migrations/074_strategy_catalog_apex_modules.sql

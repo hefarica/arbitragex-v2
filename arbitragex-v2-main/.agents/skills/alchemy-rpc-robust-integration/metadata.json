@@ -1,0 +1,15 @@
+{
+  "name": "alchemy-rpc-robust-integration",
+  "version": "1.0.0",
+  "status": "active",
+  "source_urls": ["https://www.alchemy.com/docs"],
+  "domains": ["RPC", "Infrastructure", "Web3"],
+  "activation_triggers": ["429 Too Many Requests", "WebSocket disconnected", "RPC implementation"],
+  "forbidden_uses": ["API key hardcoding", "Rate limit abuse"],
+  "project_path": "C:\\Users\\HFRC\\Desktop\\arbitragex_v2_productivo_full",
+  "skill_path": "C:\\Users\\HFRC\\Desktop\\arbitragex_v2_productivo_full\\.agents\\skills\\alchemy-rpc-robust-integration",
+  "safety_level": "controlled",
+  "requires_human_review": false,
+  "created_at": "2026-05-03T02:55:00Z",
+  "updated_at": "2026-05-03T02:55:00Z"
+}

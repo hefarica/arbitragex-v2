@@ -929,6 +929,11 @@ mod tests {
             token0,
             token1,
             fee_bps: Some(30),
+            // FASE 3: orchestrator tests don't exercise the safety gate.
+            safety_score_t0: None,
+            safety_score_t1: None,
+            safety_classification_t0: None,
+            safety_classification_t1: None,
         }
     }
 

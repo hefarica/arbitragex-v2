@@ -1,0 +1,29 @@
+# Dev configuration — Minio with default credentials from compose.dev.yml.
+# (Audit M12, 2026-05-10)
+#
+# IMPORTANT: This file is read by Thanos at runtime. It does NOT expand shell
+# variables (${VAR} syntax is not supported here). The values below are the
+# dev defaults matching compose.dev.yml MINIO_ROOT_USER/PASSWORD fallbacks.
+#
+# Production:
+#   - Use S3/GCS/Backblaze with rotating IAM credentials managed via Vault.
+#   - Before running docker compose up, render this file from a template:
+#       vault kv get -field=value arbx/prod/t0/minio_root_password → access_key/secret_key
+#   - The startup script in docs/operations/THANOS_SETUP.md performs this render.
+#   - MINIO_ROOT_PASSWORD is a T0 secret (docs/operations/SECRETS_POLICY.md).
+#
+# DO NOT deploy this file to production unchanged. The credentials below
+# (arbx_dev / changeme_dev_only_123) are publicly known dev placeholders.
+#
+# bucket `arbx-metrics` must be created in Minio before Thanos sidecar starts.
+# See docs/operations/THANOS_SETUP.md step 1.
+
+type: S3
+config:
+  bucket: arbx-metrics
+  endpoint: minio:9000
+  access_key: arbx_dev
+  secret_key: changeme_dev_only_123
+  insecure: true
+  # Thanos stores blocks as multipart objects; these are safe defaults.
+  part_size: 134217728  # 128 MiB

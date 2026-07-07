@@ -1,0 +1,22 @@
+# ArbitrageX v2 — backup recipient age public key (EXAMPLE).
+#
+# Paste your operator age public key below (format: age1...). Only the
+# corresponding age private key — kept offline by the operator — can decrypt
+# the backups produced by automation/scripts/backup-pg.sh.
+#
+# Generate your keypair:
+#   age-keygen -o arbx-backup.age.identity
+#   grep '^# public key:' arbx-backup.age.identity
+#
+# Store arbx-backup.age.identity OFFLINE (hardware key, offline laptop, paper
+# print). NEVER commit it. The public key below is safe to commit.
+#
+# Rotate the keypair annually or on suspected leak. After rotation, the old
+# backups stop being readable with the new key — keep the old identity until
+# you've proved all backups newer than the rotation are restorable.
+#
+# The deployed file at configs/backup-recipient.age.pub is read by the
+# operator's own deployment tooling and fed to backup-pg.sh via the
+# AGE_RECIPIENT env var.
+
+age1REPLACE_ME_WITH_OPERATOR_PUBLIC_KEY

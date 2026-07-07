@@ -1,0 +1,87 @@
+{
+  "uid": "arbx-execution",
+  "title": "ArbitrageX — Execution pipeline",
+  "tags": ["arbitragex", "execution", "selector", "sim", "relays"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Selector decisions / min",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum(rate(arbx_selector_decisions_total[5m])) * 60", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "/min", "decimals": 1 } },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 2, "type": "stat", "title": "Sim pass ratio (1h)",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum(rate(arbx_simulation_total{passed=\"true\"}[1h])) / clamp_min(sum(rate(arbx_simulation_total[1h])), 0.0001)", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 0.3 }, { "color": "green", "value": 0.6 }] } } },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3, "type": "stat", "title": "Executions submitted / hour",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum(rate(arbx_execution_total{status=\"submitted\"}[5m])) * 3600", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "/h", "decimals": 1 } },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4, "type": "stat", "title": "Revert rate (1h)",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum(rate(arbx_execution_total{status=\"reverted\"}[1h])) / clamp_min(sum(rate(arbx_execution_total{status=~\"included|reverted\"}[1h])), 0.0001)", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 0.05 }, { "color": "red", "value": 0.15 }] } } },
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Selector decisions — accept vs reject",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [
+        { "expr": "sum by (decision) (rate(arbx_selector_decisions_total[1m]))", "legendFormat": "{{decision}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "stacking": { "mode": "normal" }, "fillOpacity": 25 } } }
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Selector reject reasons",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum by (reason) (rate(arbx_selector_decisions_total{decision=\"reject\"}[5m]))", "legendFormat": "{{reason}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "stacking": { "mode": "normal" }, "fillOpacity": 25 } } }
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Simulation outcomes (pass / fail) — by simulator",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum by (simulator, passed) (rate(arbx_simulation_total[5m]))", "legendFormat": "{{simulator}} · {{passed}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "stacking": { "mode": "normal" }, "fillOpacity": 25 } } }
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Executions by status (by relay)",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [{ "expr": "sum by (relay, status) (rate(arbx_execution_total[5m]))", "legendFormat": "{{relay}} · {{status}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "lineInterpolation": "smooth", "fillOpacity": 15 } } }
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Selector consumer processing latency (p50/p95/p99)",
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "arbx-prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le) (rate(arbx_selector_consumer_processing_seconds_bucket[5m])))", "legendFormat": "p50", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(arbx_selector_consumer_processing_seconds_bucket[5m])))", "legendFormat": "p95", "refId": "B" },
+        { "expr": "histogram_quantile(0.99, sum by (le) (rate(arbx_selector_consumer_processing_seconds_bucket[5m])))", "legendFormat": "p99", "refId": "C" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineInterpolation": "smooth", "lineWidth": 2 } } }
+    }
+  ]
+}

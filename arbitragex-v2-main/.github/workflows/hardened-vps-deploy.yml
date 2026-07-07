@@ -1,0 +1,812 @@
+# PROPUESTA C10-F2 — NO EJECUTAR hasta autorización explícita del operador
+# Autorización requerida: "Autorizo C10-F2-DEPLOY-WORKFLOW-ACTIVATE bajo Cláusula 14"
+#
+# Workflow: hardened-vps-deploy.yml
+# Proyecto: arbitragex-v2
+# Operador: Hector Fabio Riascos Castro, Ingenio Pichichi
+# VPS: 195.201.235.70 — /opt/arbitragex-v2
+#
+# Principios: fail-closed, least-privilege, deterministic, signed manifest,
+#             dry-run obligatorio, locks, rollback validado, artifact, health gates,
+#             no secret leakage, no git pull, no reset --hard, no docker compose down
+
+name: "C10-F2 Hardened VPS Deploy"
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: "SHA-1 de 40 caracteres del commit a deployer (ej: abc123...40chars)"
+        required: true
+        type: string
+      change_type:
+        description: "Tipo de cambio clasificado (debe coincidir con el manifest)"
+        required: true
+        type: choice
+        options:
+          - workflows-only
+          - docs-only
+          - frontend-only
+          - edge-only
+          - api-server-only
+          - searcher-rs/hot-path
+          - docker/compose
+          - database/migrations
+          - infra/monitoring
+          - mixed-change
+          - secret/config-sensitive
+      approved_manifest_id:
+        description: "SHA-256 del manifest aprobado por el operador"
+        required: true
+        type: string
+      confirm_token:
+        description: "Token de confirmación — DEBE ser igual a target_sha para confirmar intención"
+        required: true
+        type: string
+      services_explicit_allow:
+        description: "CSV de containers autorizados para tocar (ej: api-server-1,frontend-1). Vacío = solo los del manifest."
+        required: false
+        type: string
+        default: ""
+      require_db_backup_done:
+        description: "Confirmar que el backup de BD fue realizado y verificado (requerido si change_type=database/migrations)"
+        required: false
+        type: boolean
+        default: false
+      require_hot_path_approval:
+        description: "Confirmar autorización hot-path del operador (requerido si change_type incluye hot-path)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  # B4: Permisos mínimos. Deploy NO modifica metadata del repo desde GitHub Actions.
+  # contents:read → checkout y leer config; actions:read → leer runs previos.
+  # Cualquier escritura ocurre dentro del VPS via SSH (fuera del scope del token).
+  contents: read
+  actions: read
+
+concurrency:
+  # B5: Solo un deploy a la vez por workflow+ref. cancel-in-progress:false porque
+  # un deploy parcial cancelado puede dejar el VPS en estado inconsistente. El
+  # lock interno (LOCK_FILE en /tmp del VPS) es la segunda línea de defensa.
+  group: vps-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  VPS_HOST: "195.201.235.70"
+  VPS_USER: "root"
+  VPS_WORKDIR: "/opt/arbitragex-v2"
+  LOCK_FILE: "/tmp/arbitragex_deploy.lock"
+  ARTIFACT_DIR: "deploy_artifact"
+  DEPLOY_TIMEOUT: "600"
+
+jobs:
+  validate-and-deploy:
+    name: "Validate Inputs + Hardened Deploy"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # B7 DOCUMENTADO (no configurado vía API). Antes del primer deploy real
+    # (M9 en la secuencia M1→M10), el operador DEBE crear manualmente en
+    # GitHub Settings → Environments el environment 'production' con:
+    #   • required_reviewers: Hector Fabio Riascos Castro (mínimo 1 reviewer)
+    #   • deployment_branches: solo 'main'
+    #   • wait_timer: 0 (no demora artificial — el reviewer es el gate)
+    # Y luego DESCOMENTAR la línea siguiente y abrir PR de activación.
+    # Mientras 'environment: production' no exista en GitHub, este workflow
+    # NO debe pasar M2 (audit-only). Es policy-as-code documentada, no auto-aplicada.
+    # environment: production
+
+    steps:
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 1: Validate Inputs
+      # Fail-closed: verificar todos los inputs antes de SSH
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "H0.1 — Validate: target_sha format (40-hex)"
+        id: validate_sha
+        run: |
+          set -euo pipefail
+          TARGET_SHA="${{ inputs.target_sha }}"
+          if ! [[ "${TARGET_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::target_sha no es un SHA-1 válido de 40 hex. Recibido: '${TARGET_SHA}'"
+            exit 1
+          fi
+          echo "target_sha_valid=true" >> "${GITHUB_OUTPUT}"
+          echo "sha7=${TARGET_SHA:0:7}" >> "${GITHUB_OUTPUT}"
+
+      - name: "H0.2 — Validate: confirm_token must equal target_sha"
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.confirm_token }}" != "${{ inputs.target_sha }}" ]; then
+            echo "::error::confirm_token ('${{ inputs.confirm_token }}') != target_sha ('${{ inputs.target_sha }}'). Deploy abortado — intención no confirmada."
+            exit 1
+          fi
+
+      - name: "H0.3 — Validate: approved_manifest_id format (64-hex SHA-256)"
+        run: |
+          set -euo pipefail
+          MANIFEST_ID="${{ inputs.approved_manifest_id }}"
+          if ! [[ "${MANIFEST_ID}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::approved_manifest_id no es un SHA-256 válido de 64 hex."
+            exit 1
+          fi
+
+      - name: "H0.4 — Validate: secret/config-sensitive SIEMPRE BLOQUEADO"
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.change_type }}" = "secret/config-sensitive" ]; then
+            echo "::error::change_type=secret/config-sensitive está BLOQUEADO. No se puede deployer secrets via workflow automatizado."
+            exit 1
+          fi
+
+      - name: "H0.5 — Validate: hot-path approval required"
+        run: |
+          set -euo pipefail
+          CHANGE_TYPE="${{ inputs.change_type }}"
+          case "${CHANGE_TYPE}" in
+            "searcher-rs/hot-path"|"api-server-only"|"docker/compose"|"mixed-change")
+              if [ "${{ inputs.require_hot_path_approval }}" != "true" ]; then
+                echo "::error::change_type='${CHANGE_TYPE}' requiere require_hot_path_approval=true. Obtener autorización del operador primero."
+                exit 1
+              fi
+              ;;
+          esac
+
+      - name: "H0.6 — Validate: db backup required for migrations"
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.change_type }}" = "database/migrations" ]; then
+            if [ "${{ inputs.require_db_backup_done }}" != "true" ]; then
+              echo "::error::change_type=database/migrations requiere require_db_backup_done=true. Confirmar backup antes de proceder."
+              exit 1
+            fi
+          fi
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 2: Setup SSH
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "Setup: SSH key"
+        # B3: Inyección SSH segura. Mismo patrón que audit.yml. Ver explicación allí.
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "${{ env.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: "Setup: Test SSH connectivity"
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o ConnectTimeout=10 -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "echo 'SSH_OK' && hostname && uptime"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 3: Acquire Execution Lock
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "H7.1 — Acquire execution lock on VPS"
+        id: acquire_lock
+        run: |
+          set -euo pipefail
+          RUN_ID="${{ github.run_id }}"
+          LOCK_CONTENT="${RUN_ID}|${{ github.run_attempt }}|$(date -u +%Y%m%dT%H%M%SZ)|${{ inputs.target_sha }}"
+
+          LOCK_RESULT=$(ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "set -euo pipefail
+            if [ -f '${{ env.LOCK_FILE }}' ]; then
+              EXISTING=\$(cat '${{ env.LOCK_FILE }}')
+              echo 'LOCK_ALREADY_EXISTS:\${EXISTING}'
+              exit 1
+            fi
+            echo '${LOCK_CONTENT}' > '${{ env.LOCK_FILE }}'
+            chmod 600 '${{ env.LOCK_FILE }}'
+            echo 'LOCK_ACQUIRED'")
+
+          if [[ "${LOCK_RESULT}" != "LOCK_ACQUIRED" ]]; then
+            echo "::error::Lock existente en VPS: ${LOCK_RESULT}. Deploy abortado por concurrencia. El operador debe eliminar el lock huérfano manualmente."
+            exit 1
+          fi
+          echo "lock_acquired=true" >> "${GITHUB_OUTPUT}"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 4: H0 Baseline Audit (estado VPS antes del deploy)
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "H0 — Baseline audit: read VPS state"
+        id: baseline_audit
+        run: |
+          set -euo pipefail
+          mkdir -p "${{ env.ARTIFACT_DIR }}"
+
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "cd '${{ env.VPS_WORKDIR }}' && set -euo pipefail
+            echo '=== HEAD ===' && git log -1 --format='%H %ai %s' HEAD
+            echo '=== STATUS ===' && git status --short
+            echo '=== STASH LIST ===' && git stash list
+            echo '=== .ENV STAT ===' && stat -c '%a %U %G %s %n' .env 2>/dev/null || echo '.env not found'
+            echo '=== DOCKER PS ===' && docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.RunningFor}}'
+            echo '=== DISK ===' && df -h '${{ env.VPS_WORKDIR }}'
+            echo '=== MEMORY ===' && free -m
+            echo '=== UPTIME ===' && uptime" \
+          > "${{ env.ARTIFACT_DIR }}/pre_state_raw.txt" 2>&1
+
+          # Extraer HEAD actual
+          CURRENT_SHA=$(ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "cd '${{ env.VPS_WORKDIR }}' && git rev-parse HEAD")
+          echo "current_vps_sha=${CURRENT_SHA}" >> "${GITHUB_OUTPUT}"
+
+          # Verificar que los containers están Up (básico)
+          CONTAINERS_UP=$(ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "docker ps --format '{{.Names}}' | wc -l")
+          echo "containers_up=${CONTAINERS_UP}" >> "${GITHUB_OUTPUT}"
+
+          echo "baseline_done=true" >> "${GITHUB_OUTPUT}"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 5: H1 Fetch + Verify target_sha
+      # Lección C10-F1: git fetch DEBE ejecutarse antes de update-ref
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "H1 — git fetch + verify target_sha exists"
+        id: fetch_verify
+        run: |
+          set -euo pipefail
+          TARGET_SHA="${{ inputs.target_sha }}"
+
+          FETCH_RESULT=$(ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "cd '${{ env.VPS_WORKDIR }}' && set -euo pipefail
+            git fetch origin --no-tags --prune 2>&1
+            # Verificar que target_sha existe localmente después del fetch
+            if git cat-file -t '${TARGET_SHA}' 2>/dev/null | grep -q 'commit'; then
+              echo 'FETCH_OK:target_exists'
+            else
+              echo 'FETCH_FAIL:target_not_found'
+              exit 1
+            fi")
+
+          if [[ "${FETCH_RESULT}" != *"FETCH_OK"* ]]; then
+            echo "::error::target_sha ${TARGET_SHA} no existe en el repo después de git fetch. Verificar que el commit existe en origin."
+            exit 1
+          fi
+
+          echo "fetch_ok=true" >> "${GITHUB_OUTPUT}"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 6: H6 Smart Gate — D+hash verify + stop gates
+      # Lección C10-F1: gate debe ser inteligente, verificar hashes para D
+      # ─────────────────────────────────────────────────────────────────────
+      # B10: Pre-step de enforcement técnico de services_forbidden.
+      # Validación antes de cualquier acción sobre VPS: services_explicit_allow
+      # NO debe contener ningún container listado como forbidden por el manifest.
+      # Aquí solo se valida la intersección input ↔ forbidden_static. El manifest
+      # real (con services_forbidden dinámico) se valida en H6 contra el JSON
+      # cargado desde el artifact MANIFEST_PROPOSAL_<run_id>.
+      - name: "B10 — Static forbidden services check (pre-gate)"
+        id: forbidden_check
+        run: |
+          set -euo pipefail
+          ALLOW="${{ inputs.services_explicit_allow }}"
+          # Lista estática de servicios que NUNCA deben aparecer en services_explicit_allow
+          # bajo C10-F2 M1→M10. Solo postgres y redis (datos críticos) y omega-nginx-gateway
+          # (externo). Si el manifest necesita tocarlos, requiere excepción explícita
+          # Cláusula 14 documentada en exception_name del manifest.
+          STATIC_FORBIDDEN="arbitragex-v2-postgres-1 arbitragex-v2-redis-1 omega-nginx-gateway"
+          if [ -z "${ALLOW}" ]; then
+            echo "services_explicit_allow vacío — OK (solo manifest controla)"
+            exit 0
+          fi
+          IFS=',' read -ra REQUESTED <<< "${ALLOW}"
+          for svc in "${REQUESTED[@]}"; do
+            svc_trim=$(echo "${svc}" | xargs)
+            for forbidden in ${STATIC_FORBIDDEN}; do
+              if [ "${svc_trim}" = "${forbidden}" ]; then
+                echo "::error::services_explicit_allow contiene container forbidden estático: '${svc_trim}'. Requiere excepción Cláusula 14 en el manifest."
+                exit 1
+              fi
+            done
+          done
+          echo "forbidden_check=clear" >> "${GITHUB_OUTPUT}"
+
+      - name: "H6 — Smart gate: stop gates + D+hash verification"
+        id: smart_gate
+        run: |
+          set -euo pipefail
+          TARGET_SHA="${{ inputs.target_sha }}"
+          CURRENT_SHA="${{ steps.baseline_audit.outputs.current_vps_sha }}"
+
+          GATE_RESULT=$(ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "cd '${{ env.VPS_WORKDIR }}' && set -euo pipefail
+
+            BLOCKED=false
+            REASON=''
+
+            # Obtener lista de archivos cambiados
+            while IFS=\$'\\t' read -r status filepath; do
+              # Stop gates por patrón
+              case \"\${filepath}\" in
+                .env|.env.*|*.pem|*.key|*.p12|*.pfx|*.crt|*.secret|*.token)
+                  BLOCKED=true; REASON=\"Secret file pattern: \${filepath}\"; break ;;
+                id_rsa|*/id_rsa|id_ed25519|*/id_ed25519|private.key|*/private.key)
+                  BLOCKED=true; REASON=\"Private key: \${filepath}\"; break ;;
+                secrets/*|.git/*|backups/*)
+                  BLOCKED=true; REASON=\"Protected directory: \${filepath}\"; break ;;
+                credentials|*/credentials)
+                  BLOCKED=true; REASON=\"Credentials materializable: \${filepath}\"; break ;;
+              esac
+
+              # D+hash verification: para archivos eliminados, verificar hash
+              if [ \"\${status}\" = \"D\" ]; then
+                BLOB_CURRENT=\$(git ls-tree HEAD -- \"\${filepath}\" | awk '{print \$3}')
+                if [ -z \"\${BLOB_CURRENT}\" ]; then
+                  BLOCKED=true; REASON=\"D+hash: no se puede verificar blob para \${filepath}\"; break
+                fi
+                echo \"D+hash OK for \${filepath}: blob=\${BLOB_CURRENT}\"
+              fi
+
+            done < <(git diff --name-status \"\${CURRENT_SHA}\" '${TARGET_SHA}')
+
+            if [ \"\${BLOCKED}\" = \"true\" ]; then
+              echo \"GATE_RESULT=BLOCKED\"
+              echo \"GATE_REASON=\${REASON}\"
+              exit 1
+            else
+              echo \"GATE_RESULT=CLEAR\"
+            fi")
+
+          if [[ "${GATE_RESULT}" != *"GATE_RESULT=CLEAR"* ]]; then
+            echo "::error::STOP GATE TRIGGERED. ${GATE_RESULT}"
+            exit 1
+          fi
+          echo "gate_clear=true" >> "${GITHUB_OUTPUT}"
+          echo "GATE_RESULT=CLEAR" > "${{ env.ARTIFACT_DIR }}/gate_result.txt"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 7: H5 Dry-Run
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "H5 — Dry-run: simulate deploy actions"
+        id: dry_run
+        run: |
+          set -euo pipefail
+          TARGET_SHA="${{ inputs.target_sha }}"
+          CHANGE_TYPE="${{ inputs.change_type }}"
+          CURRENT_SHA="${{ steps.baseline_audit.outputs.current_vps_sha }}"
+
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "cd '${{ env.VPS_WORKDIR }}' && set -euo pipefail
+            echo '=== DRY-RUN REPORT ==='
+            echo 'target_sha=${TARGET_SHA}'
+            echo 'change_type=${CHANGE_TYPE}'
+            echo 'current_vps_sha=${CURRENT_SHA}'
+            echo '=== FILES THAT WOULD BE SYNCED ==='
+            git diff --name-status '${CURRENT_SHA}' '${TARGET_SHA}'
+            echo '=== DIFF STATS ==='
+            git diff --stat '${CURRENT_SHA}' '${TARGET_SHA}'
+            echo '=== RSYNC DRY-RUN (exclude secrets) ==='
+            rsync -avz --dry-run --checksum \
+              --exclude='.env' --exclude='.env.*' \
+              --exclude='*.pem' --exclude='*.key' --exclude='*.p12' \
+              --exclude='*.pfx' --exclude='*.crt' --exclude='*.secret' \
+              --exclude='secrets/' --exclude='.git/' --exclude='backups/' \
+              --exclude='id_rsa' --exclude='id_ed25519' --exclude='private.key' \
+              . /tmp/dry_run_target/ 2>&1 | head -100 || true
+            echo '=== DRY-RUN COMPLETE ==='
+            echo 'would_update_ref=true'
+            echo 'would_deploy_type=${CHANGE_TYPE}'" \
+          > "${{ env.ARTIFACT_DIR }}/dry_run_output.txt" 2>&1
+
+          echo "dry_run_done=true" >> "${GITHUB_OUTPUT}"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 8: H7 Stash if dirty (pre-deploy)
+      # Nunca stash pop/apply/drop automático
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "H7.2 — Pre-deploy stash if working tree dirty"
+        id: pre_stash
+        run: |
+          set -euo pipefail
+          SHA7="${{ steps.validate_sha.outputs.sha7 }}"
+
+          STASH_RESULT=$(ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "cd '${{ env.VPS_WORKDIR }}' && set -euo pipefail
+            if [ -n \"\$(git status --porcelain)\" ]; then
+              git stash push -m 'pre-deploy-${SHA7}-run-${{ github.run_id }}'
+              echo 'STASH_CREATED'
+            else
+              echo 'WORKING_TREE_CLEAN'
+            fi")
+
+          echo "stash_result=${STASH_RESULT}" >> "${GITHUB_OUTPUT}"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 9: H8 Polymorphic Deploy
+      # Cada change_type tiene su propio action-set
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "H8 — Polymorphic deploy by change_type"
+        id: deploy
+        run: |
+          set -euo pipefail
+          TARGET_SHA="${{ inputs.target_sha }}"
+          CHANGE_TYPE="${{ inputs.change_type }}"
+          SHA7="${{ steps.validate_sha.outputs.sha7 }}"
+
+          # Construcción del script de deploy según tipo
+          case "${CHANGE_TYPE}" in
+
+            "workflows-only")
+              DEPLOY_SCRIPT="
+              set -euo pipefail
+              cd '${{ env.VPS_WORKDIR }}'
+              echo 'DEPLOY_TYPE=workflows-only'
+              git fetch origin --no-tags
+              git update-ref refs/heads/main '${TARGET_SHA}'
+              echo 'update-ref done: HEAD ahora apunta a ${TARGET_SHA}'
+              echo 'NO_RESTART_REQUIRED'
+              "
+              ;;
+
+            "docs-only")
+              DEPLOY_SCRIPT="
+              set -euo pipefail
+              cd '${{ env.VPS_WORKDIR }}'
+              echo 'DEPLOY_TYPE=docs-only'
+              git fetch origin --no-tags
+              git update-ref refs/heads/main '${TARGET_SHA}'
+              echo 'update-ref done: HEAD ahora apunta a ${TARGET_SHA}'
+              echo 'NO_RESTART_REQUIRED'
+              "
+              ;;
+
+            "frontend-only")
+              # B1: container names reales con prefijo arbitragex-v2-.
+              # Nota: 'docker compose build/up' usa nombre de SERVICIO del compose
+              # (sin prefijo, ej. 'frontend'), pero los inspects, exec y health
+              # checks usan el nombre real del CONTAINER ('arbitragex-v2-frontend-1').
+              DEPLOY_SCRIPT="
+              set -euo pipefail
+              cd '${{ env.VPS_WORKDIR }}'
+              echo 'DEPLOY_TYPE=frontend-only'
+              git fetch origin --no-tags
+              git update-ref refs/heads/main '${TARGET_SHA}'
+              docker compose build --no-cache frontend 2>&1 | tail -20
+              docker compose up --no-deps --remove-orphans -d frontend 2>&1
+              # omega-nginx-gateway es externo al stack, NO se reinicia desde compose.
+              echo 'DEPLOY_DONE'
+              "
+              ;;
+
+            "api-server-only")
+              DEPLOY_SCRIPT="
+              set -euo pipefail
+              cd '${{ env.VPS_WORKDIR }}'
+              echo 'DEPLOY_TYPE=api-server-only'
+              git fetch origin --no-tags
+              # Tag rollback antes de rebuild. Image tag usa nombre de servicio,
+              # container name (arbitragex-v2-api-server-1) NO se usa para tag.
+              docker tag api-server:current api-server:rollback-${SHA7} 2>/dev/null || true
+              git update-ref refs/heads/main '${TARGET_SHA}'
+              docker compose build --no-cache api-server 2>&1 | tail -30
+              docker compose up --no-deps --remove-orphans -d api-server 2>&1
+              echo 'DEPLOY_DONE'
+              "
+              ;;
+
+            "infra/monitoring")
+              DEPLOY_SCRIPT="
+              set -euo pipefail
+              cd '${{ env.VPS_WORKDIR }}'
+              echo 'DEPLOY_TYPE=infra/monitoring'
+              git fetch origin --no-tags
+              git update-ref refs/heads/main '${TARGET_SHA}'
+              docker compose up --no-deps --remove-orphans -d grafana 2>&1 || true
+              docker compose up --no-deps --remove-orphans -d prometheus 2>&1 || true
+              docker compose up --no-deps --remove-orphans -d loki 2>&1 || true
+              docker compose up --no-deps --remove-orphans -d promtail 2>&1 || true
+              docker compose up --no-deps --remove-orphans -d alertmanager 2>&1 || true
+              echo 'DEPLOY_DONE'
+              "
+              ;;
+
+            "edge-only"|"searcher-rs/hot-path"|"docker/compose"|"database/migrations"|"mixed-change")
+              # Estos tipos siempre requieren script específico generado por el manifest
+              # Si se llega aquí es porque el operador autorizó y el manifest tiene el script
+              # Por seguridad, estos casos requieren services_explicit_allow
+              if [ -z "${{ inputs.services_explicit_allow }}" ]; then
+                echo "::error::${CHANGE_TYPE} requiere services_explicit_allow no vacío. Deploy abortado."
+                exit 1
+              fi
+              DEPLOY_SCRIPT="
+              set -euo pipefail
+              cd '${{ env.VPS_WORKDIR }}'
+              echo 'DEPLOY_TYPE=${CHANGE_TYPE}'
+              echo 'SERVICES_ALLOW=${{ inputs.services_explicit_allow }}'
+              git fetch origin --no-tags
+              git update-ref refs/heads/main '${TARGET_SHA}'
+              # Rebuild y restart solo los servicios autorizados explícitamente
+              IFS=',' read -ra SVCS <<< '${{ inputs.services_explicit_allow }}'
+              for svc in \"\${SVCS[@]}\"; do
+                echo \"Processing: \${svc}\"
+                docker compose up --no-deps --remove-orphans -d \"\${svc}\" 2>&1 || true
+              done
+              echo 'DEPLOY_DONE'
+              "
+              ;;
+
+            *)
+              echo "::error::change_type desconocido: ${CHANGE_TYPE}"
+              exit 1
+              ;;
+          esac
+
+          # Ejecutar deploy script en VPS
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "${DEPLOY_SCRIPT}" \
+          > "${{ env.ARTIFACT_DIR }}/deploy_log.txt" 2>&1
+
+          echo "deploy_done=true" >> "${GITHUB_OUTPUT}"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 10: H9 Health Gates (4/4 checks × 30s intervalo)
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "H9 — Health gates: hot-path 6/6 + observabilidad 3/3 + no restart loop"
+        id: health_gates
+        run: |
+          set -euo pipefail
+          # B2: endpoints reales. B12: hot-path vs observabilidad.
+          # Hot-path (cuenta para PASS): edge, api, frontend(+fallback), prometheus, postgres, redis.
+          # Observabilidad secundaria (info): grafana, loki, alertmanager.
+          # B1: nombres reales con prefijo arbitragex-v2-.
+
+          HEALTH_RESULT=$(ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "set -euo pipefail
+            CHECKS_PASSED=0
+            HEALTH_LOG=''
+
+            for attempt in 1 2 3 4; do
+              echo \"Health check attempt \${attempt}/4\"
+              sleep \$(( attempt > 1 ? 30 : 0 ))
+
+              CONTAINERS_UP=\$(docker ps --format '{{.Names}}' | wc -l)
+              echo \"Containers Up: \${CONTAINERS_UP}\"
+
+              # B2 hot-path endpoints reales
+              EDGE_OK=0
+              curl -sf --max-time 5 http://127.0.0.1:8787/health > /dev/null 2>&1 && EDGE_OK=1 || true
+              API_OK=0
+              curl -sf --max-time 5 http://127.0.0.1:8080/health > /dev/null 2>&1 && API_OK=1 || true
+              # Frontend con fallback obligatorio: /api/health → /
+              FRONTEND_OK=0
+              if curl -sf --max-time 5 http://127.0.0.1:5173/api/health > /dev/null 2>&1; then
+                FRONTEND_OK=1
+              elif curl -sf --max-time 5 http://127.0.0.1:5173/ > /dev/null 2>&1; then
+                FRONTEND_OK=1
+              fi
+              PROM_OK=0
+              curl -sf --max-time 5 http://127.0.0.1:9090/-/ready > /dev/null 2>&1 && PROM_OK=1 || true
+              PG_OK=0
+              docker exec arbitragex-v2-postgres-1 pg_isready -h localhost -p 5432 > /dev/null 2>&1 && PG_OK=1 || true
+              REDIS_OK=0
+              docker exec arbitragex-v2-redis-1 redis-cli ping 2>/dev/null | grep -q PONG && REDIS_OK=1 || true
+
+              HOT_PATH_SCORE=\$(( EDGE_OK + API_OK + FRONTEND_OK + PROM_OK + PG_OK + REDIS_OK ))
+              echo \"Attempt \${attempt}: edge=\${EDGE_OK} api=\${API_OK} frontend=\${FRONTEND_OK} prom=\${PROM_OK} pg=\${PG_OK} redis=\${REDIS_OK} hot_path=\${HOT_PATH_SCORE}/6\"
+              HEALTH_LOG=\"\${HEALTH_LOG}|attempt\${attempt}:hot=\${HOT_PATH_SCORE}/6\"
+
+              # Hot-path debe estar 6/6 para considerar attempt como passed.
+              if [ \"\${HOT_PATH_SCORE}\" -eq 6 ] && [ \"\${CONTAINERS_UP}\" -ge 15 ]; then
+                CHECKS_PASSED=\$(( CHECKS_PASSED + 1 ))
+              fi
+            done
+
+            # B12 observabilidad secundaria (snapshot final, no atemptado)
+            GRAFANA_OK=0
+            curl -sf --max-time 5 http://127.0.0.1:3000/api/health > /dev/null 2>&1 && GRAFANA_OK=1 || true
+            LOKI_OK=0
+            curl -sf --max-time 5 http://127.0.0.1:3100/ready > /dev/null 2>&1 && LOKI_OK=1 || true
+            AM_OK=0
+            curl -sf --max-time 5 http://127.0.0.1:9093/-/healthy > /dev/null 2>&1 && AM_OK=1 || true
+            OBS_SCORE=\$(( GRAFANA_OK + LOKI_OK + AM_OK ))
+            echo \"Observability: grafana=\${GRAFANA_OK} loki=\${LOKI_OK} alertmanager=\${AM_OK} obs=\${OBS_SCORE}/3\"
+
+            # Verificar restart loops en hot-path containers (B1: prefijo arbitragex-v2-)
+            RESTART_ANOMALY=0
+            for c in arbitragex-v2-api-server-1 arbitragex-v2-frontend-1 arbitragex-v2-edge-1 \
+                      arbitragex-v2-postgres-1 arbitragex-v2-redis-1 arbitragex-v2-searcher-rs-1; do
+              RC=\$(docker inspect \"\${c}\" --format '{{.RestartCount}}' 2>/dev/null || echo 0)
+              if [ \"\${RC}\" -gt 3 ]; then
+                echo \"WARNING: \${c} has \${RC} restarts\"
+                RESTART_ANOMALY=1
+              fi
+            done
+
+            echo \"CHECKS_PASSED=\${CHECKS_PASSED}\"
+            echo \"OBS_SCORE=\${OBS_SCORE}\"
+            echo \"RESTART_ANOMALY=\${RESTART_ANOMALY}\"
+            echo \"HEALTH_LOG=\${HEALTH_LOG}\"")
+
+          echo "${HEALTH_RESULT}" > "${{ env.ARTIFACT_DIR }}/health_report.txt"
+
+          PASSED=$(echo "${HEALTH_RESULT}" | grep "CHECKS_PASSED=" | cut -d= -f2)
+          OBS=$(echo "${HEALTH_RESULT}" | grep "OBS_SCORE=" | cut -d= -f2)
+          RESTART=$(echo "${HEALTH_RESULT}" | grep "RESTART_ANOMALY=" | cut -d= -f2)
+
+          if [ "${RESTART:-0}" -eq 1 ]; then
+            echo "::error::Restart loop detectado en containers hot-path. Deploy marcado FAIL."
+            echo "health_status=FAIL" >> "${GITHUB_OUTPUT}"
+            exit 1
+          fi
+
+          # B12 veredicto:
+          #   PASS    = hot-path 4/4 attempts + obs 3/3
+          #   PARTIAL = hot-path 4/4 attempts pero obs < 3/3 (operativo, sin capital, sin live)
+          #   BLOCKED = hot-path ≥ 3/4 attempts pero < 4/4 (degradación leve)
+          #   FAIL    = hot-path < 3/4 attempts (no operativo)
+          if [ "${PASSED:-0}" -ge 4 ] && [ "${OBS:-0}" -eq 3 ]; then
+            echo "health_status=PASS" >> "${GITHUB_OUTPUT}"
+          elif [ "${PASSED:-0}" -ge 4 ] && [ "${OBS:-0}" -lt 3 ]; then
+            echo "health_status=PARTIAL" >> "${GITHUB_OUTPUT}"
+            echo "::warning::Hot-path OK pero observabilidad secundaria degradada (obs=${OBS}/3)."
+          elif [ "${PASSED:-0}" -ge 3 ]; then
+            echo "health_status=BLOCKED" >> "${GITHUB_OUTPUT}"
+            echo "::warning::Hot-path inestable: solo ${PASSED}/4 attempts con hot-path 6/6."
+            exit 1
+          else
+            echo "health_status=FAIL" >> "${GITHUB_OUTPUT}"
+            echo "::error::Hot-path críticamente degradado: solo ${PASSED}/4 attempts con hot-path 6/6."
+            exit 1
+          fi
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 11: H10 Read Post-State
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "H10.1 — Post-state: read VPS state after deploy"
+        if: always()
+        run: |
+          set -euo pipefail || true
+          mkdir -p "${{ env.ARTIFACT_DIR }}"
+
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+            "cd '${{ env.VPS_WORKDIR }}' && set -euo pipefail
+            echo '=== POST-DEPLOY HEAD ==='
+            git log -1 --format='%H %ai %s' HEAD
+            echo '=== POST-DEPLOY STATUS ==='
+            git status --short
+            echo '=== DOCKER PS POST ==='
+            docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.RunningFor}}'
+            echo '=== STASH LIST POST ==='
+            git stash list" \
+          > "${{ env.ARTIFACT_DIR }}/post_state_raw.txt" 2>&1 || true
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 12: H10 Generate Artifact (≥10 archivos)
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "H10.2 — Generate artifact files"
+        if: always()
+        run: |
+          set -euo pipefail || true
+          mkdir -p "${{ env.ARTIFACT_DIR }}"
+          RUN_ID="${{ github.run_id }}"
+          HEALTH="${{ steps.health_gates.outputs.health_status || 'UNKNOWN' }}"
+
+          # Manifest firmado (resumen)
+          cat > "${{ env.ARTIFACT_DIR }}/manifest.json" << EOF
+          {
+            "manifest_id": "${{ inputs.approved_manifest_id }}",
+            "target_sha": "${{ inputs.target_sha }}",
+            "current_vps_sha": "${{ steps.baseline_audit.outputs.current_vps_sha || 'unknown' }}",
+            "change_type": "${{ inputs.change_type }}",
+            "run_id": "${RUN_ID}",
+            "run_attempt": "${{ github.run_attempt }}",
+            "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          sha256sum "${{ env.ARTIFACT_DIR }}/manifest.json" > "${{ env.ARTIFACT_DIR }}/manifest.sha256"
+
+          # Services touched
+          cat > "${{ env.ARTIFACT_DIR }}/services_touched.json" << EOF
+          {
+            "change_type": "${{ inputs.change_type }}",
+            "services_explicit_allow": "${{ inputs.services_explicit_allow }}",
+            "run_id": "${RUN_ID}"
+          }
+          EOF
+
+          # Rollback plan
+          cat > "${{ env.ARTIFACT_DIR }}/rollback_plan.json" << EOF
+          {
+            "rollback_to_sha": "${{ steps.baseline_audit.outputs.current_vps_sha || 'unknown' }}",
+            "rollback_sha7": "${CURRENT_SHA:0:7}",
+            "deploy_run_id": "${RUN_ID}",
+            "strategy": "Ejecutar hardened-vps-rollback.yml con rollback_to_sha y rollback_artifact_run_id=${RUN_ID}"
+          }
+          EOF
+
+          # Pre-state JSON
+          cat > "${{ env.ARTIFACT_DIR }}/pre_state.json" << EOF
+          {
+            "sha": "${{ steps.baseline_audit.outputs.current_vps_sha || 'unknown' }}",
+            "containers_up": "${{ steps.baseline_audit.outputs.containers_up || 'unknown' }}",
+            "captured_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+
+          # Post-state JSON
+          cat > "${{ env.ARTIFACT_DIR }}/post_state.json" << EOF
+          {
+            "sha": "${{ inputs.target_sha }}",
+            "health_status": "${HEALTH}",
+            "captured_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+
+          # Veredicto
+          DEPLOY_OK="${{ steps.deploy.outputs.deploy_done || 'false' }}"
+          if [ "${HEALTH}" = "PASS" ] && [ "${DEPLOY_OK}" = "true" ]; then
+            VERDICT="PASS"
+          elif [ "${HEALTH}" = "PARTIAL" ] && [ "${DEPLOY_OK}" = "true" ]; then
+            VERDICT="PARTIAL — health gates parciales, revisar post_state"
+          else
+            VERDICT="FAIL — deploy_done=${DEPLOY_OK} health=${HEALTH}"
+          fi
+
+          echo "${VERDICT}" > "${{ env.ARTIFACT_DIR }}/veredicto.txt"
+          echo "run_id=${RUN_ID}" >> "${{ env.ARTIFACT_DIR }}/veredicto.txt"
+          echo "target_sha=${{ inputs.target_sha }}" >> "${{ env.ARTIFACT_DIR }}/veredicto.txt"
+          date -u >> "${{ env.ARTIFACT_DIR }}/veredicto.txt"
+
+          # Verificar que tenemos ≥10 archivos
+          COUNT=$(ls "${{ env.ARTIFACT_DIR }}" | wc -l)
+          echo "Artifact files: ${COUNT}"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 13: Release Lock (siempre, incluso en fallo)
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "Cleanup — Release execution lock"
+        if: always()
+        run: |
+          set -euo pipefail || true
+          if [ "${{ steps.acquire_lock.outputs.lock_acquired }}" = "true" ]; then
+            ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+              "${{ env.VPS_USER }}@${{ env.VPS_HOST }}" \
+              "rm -f '${{ env.LOCK_FILE }}' && echo 'LOCK_RELEASED'" || true
+          fi
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 14: Upload Artifact (siempre)
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "H10.3 — Upload artifact DEPLOY_${{ github.run_id }}"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "DEPLOY_${{ github.run_id }}"
+          path: "${{ env.ARTIFACT_DIR }}/"
+          retention-days: 90
+          if-no-files-found: warn
+
+      # ─────────────────────────────────────────────────────────────────────
+      # STEP 15: Final status summary
+      # ─────────────────────────────────────────────────────────────────────
+      - name: "Summary — Deploy result"
+        if: always()
+        run: |
+          HEALTH="${{ steps.health_gates.outputs.health_status || 'UNKNOWN' }}"
+          echo "### Deploy Result" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Campo | Valor |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "|-------|-------|" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| target_sha | ${{ inputs.target_sha }} |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| change_type | ${{ inputs.change_type }} |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| health_status | ${HEALTH} |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| artifact | DEPLOY_${{ github.run_id }} |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| run_id | ${{ github.run_id }} |" >> "${GITHUB_STEP_SUMMARY}"

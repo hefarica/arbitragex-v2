@@ -1,0 +1,49 @@
+name: no-hardcode
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# M2 Capa1 Fase 4 — read-only token.
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node (for dashboard verifier)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run no-hardcode lint
+        run: bash automation/tools/lint-no-hardcode.sh
+      - name: Verify dashboard metrics exist
+        run: bash automation/tools/verify-dashboard-metrics.sh
+      - name: Post-run advice on failure
+        if: failure()
+        run: |
+          cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ## no-hardcode doctrine violation
+
+          Your change introduces a value the doctrine forbids from living in code,
+          OR a Grafana dashboard references a metric that doesn't exist in
+          `backend/shared-rs/src/metrics.rs` / `shared-ts/src/metrics/index.ts`.
+
+          See `docs/governance/NO-HARDCODE-DOCTRINE.md` + the dashboard README.
+
+          Common fixes:
+          - Move credential/endpoint to an env var (`require_env`/`requireEnv`).
+          - Move it to the Vault-rendered `.env` template in `infra/vault-agent/templates/`.
+          - Move it to a DB-backed catalog (relays, scoring_weights, execution_policy, …).
+          - Canonical protocol constant? Add to `backend/shared-rs/src/chains.rs`
+            (or a new `tokens.rs`) WITH a byte-asserting test.
+          - Dashboard references unregistered metric? Either register the metric
+            in the service that emits it, or remove the panel.
+          EOF

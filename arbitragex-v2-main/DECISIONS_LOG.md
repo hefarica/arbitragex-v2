@@ -1,0 +1,13 @@
+# DECISIONS_LOG — ArbitrageX v2 Full-Convergence Program
+
+> **INTERNAL** (stays local; not pushed to the public repo). Append-only. Each decision: id, date, owner, decision, rationale.
+
+| ID | Date | Owner | Decision |
+|----|------|-------|----------|
+| **D-001 (G1)** | 2026-06-29 | hefarica | **Program proceeds toward REAL mainnet LIVE, behind gates.** Phases 6–7 (contracts/searcher capital-path) enter scope after P1–P5. The `arbx-*` gates remain law: simulation-mandatory + fail-closed, net-profit-gate, per-trade spend-cap, **sim↔broadcast calldata parity**, real killswitch, paper-trade-first, risk-limits. Aligns with memory `arbx-live-enablement-mandate`. Reconciles the §32-shadow-vs-live tension in favor of *gated* live. |
+| **D-002 (landing)** | 2026-06-29 | hefarica | **Claude is authorized to `git push` `hardening/*` branches + open PRs via `gh`** against `github.com/hefarica/arbitragex-v2`. Claude **does NOT merge** and **does NOT push to `main`** directly; the operator reviews/approves/merges on GitHub. |
+| **D-003 (G2)** | 2026-06-29 | hefarica/Claude | **Audit control docs stay LOCAL/INTERNAL** (`MASTER_AUDIT.md`, `DRIFT_REPORT.md`, `RECONCILIATION.md`, `IMPLEMENTATION_PLAN.md`, `DECISIONS_LOG.md`) — they map attack-surface + infra and must **not** be pushed to the public repo. Only hardening **code** PRs are pushed. |
+| **D-004 (G4 / `.env.edge`)** | 2026-06-29 | Claude (verified) | `.env.edge` values on `main` are **placeholders** (`ALCHEMY_KEY: placeholder`, `GAS_SPONSOR_PRIVATE_KEY=0x...`) → **no active secret leak**. Downgraded from "secrets incident" to "posture hygiene". Action: **untrack** `.env.edge` (PR1; `.gitignore .env.*` already covers it). **Key rotation NOT required**; operator to verify git history never held real values (optional `git filter-repo` purge of the `PAPER_MODE=false` template). |
+| **D-005 (G5)** | 2026-06-29 | hefarica | **Honest-red CI accepted over fake-green.** Note: Foundry `forge build/test` already un-rigged on `main` (#191). Remaining CI work = delete the **fabricated certification chain** (C1: `paper-shadow.yml` mock, `no-regression.yml` echo-cert, `dr-drill.yml` mock) and make `gitleaks`/`npm audit` blocking. |
+| **D-006 (G3 / Lexicón)** | 2026-06-29 | *pending* | Recommendation: **retire the CLAUDE.md "Lexicón Absoluto"** (physics-jargon) for engineering/audit work — it obstructs honest audit and was disregarded during Phase 0. Operator sign-off pending. |
+| **D-007 (provenance)** | 2026-06-29 | Claude | All implementation is based on a **fresh `main` clone @ bb46845** (`/c/tmp/arbx-reconcile`), NOT the stale local `(17)` working copy. The `(17)` copy is retained only as the home of these internal docs + the unpushed `price-validator` work. |

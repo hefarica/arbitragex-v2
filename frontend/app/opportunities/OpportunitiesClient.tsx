@@ -82,7 +82,9 @@ export default function OpportunitiesClient({
   // Connect WebSocket stream to the store (replaces useOpportunitiesStream)
   const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL ?? "";
   const [viableOnly, setViableOnly] = useState(false);
-  
+  // FASE OMEGA — Filtro Hamiltonian: solo oportunidades detectadas por cartuchos
+  const [hamiltonianOnly, setHamiltonianOnly] = useState(false);
+
   useOmniOpportunities({
     edgeUrl: EDGE_URL,
     viableOnly,
@@ -150,6 +152,97 @@ export default function OpportunitiesClient({
         toast.error("Simulation timed out after 8s");
       } else {
         toast.error("Simulation error", { description: err.message });
+      }
+    } finally {
+      setSimLoading(null);
+    }
+  }, [EDGE_URL]);
+
+  // FASE OMEGA — EXECUTE handler: Envía oportunidad al Execution Core
+  const handleExecute = useCallback(async (opp: OmniOpportunity) => {
+    if (!opp.hamiltonian_detected || !opp.cartridge_id) {
+      toast.error("Execution rejected", {
+        description: "Only Hamiltonian-detected opportunities with cartridge binding can be executed",
+      });
+      return;
+    }
+
+    if (!opp.cartridge_confidence || opp.cartridge_confidence < 0.7) {
+      toast.error("Confidence too low", {
+        description: `Cartridge confidence ${(opp.cartridge_confidence ?? 0).toFixed(2)} < 0.70 threshold`,
+      });
+      return;
+    }
+
+    setSimLoading(opp.id);
+    try {
+      // Construir ExecutionRequest según contrato Backend
+      const executionRequest = {
+        opportunity_id: opp.id,
+        tx_hash: opp.trace_id, // Usamos trace_id como tx_hash de referencia
+        cartridge_id: opp.cartridge_id,
+        route: [
+          {
+            step_type: "flash_loan" as const,
+            protocol: "aave_v3",
+            target: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+            token_in: opp.token_in,
+            token_out: opp.token_out,
+            amount: opp.amount_in_wei,
+          },
+          {
+            step_type: "swap" as const,
+            protocol: opp.dex_a,
+            target: "0xE592427A0AEce92De3Edee1F18E0157C05861564",
+            token_in: opp.token_in,
+            token_out: opp.token_out,
+            amount: opp.amount_in_wei,
+          },
+        ],
+        simulation_params: {
+          amount_in: opp.amount_in_wei,
+          expected_out: Math.floor((opp.expected_profit_usd ?? 0) * 1e6).toString(),
+          min_out: Math.floor(((opp.expected_profit_usd ?? 0) * 0.95) * 1e6).toString(),
+          slippage_bps: 50, // 0.5% slippage tolerance
+        },
+        client_meta: {
+          source: "dapp_opportunities_client",
+          timestamp_ms: Date.now(),
+        },
+      };
+
+      const res = await fetch(`${EDGE_URL}/api/v1/execution`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify(executionRequest),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (res.status === 202) {
+        const result = await res.json() as { execution_id: string; status: string; estimated_start_ms: number };
+        toast.success("Execution queued", {
+          description: `ID: ${result.execution_id.slice(0, 16)}... Start in ~${result.estimated_start_ms}ms`,
+        });
+      } else if (res.status === 409) {
+        toast.warning("Already executing", {
+          description: "This opportunity is already in the execution queue",
+        });
+      } else if (res.status === 400) {
+        const err = await res.json();
+        toast.error("Validation failed", { description: err.error || "Invalid request" });
+      } else {
+        toast.error(`Execution failed: HTTP ${res.status}`);
+      }
+    } catch (e) {
+      const err = e as Error;
+      if (err.name === "AbortError") {
+        toast.error("Execution timed out after 10s");
+      } else {
+        toast.error("Execution error", { description: err.message });
       }
     } finally {
       setSimLoading(null);
@@ -236,6 +329,12 @@ export default function OpportunitiesClient({
   const viableCount = opportunities.filter((o) => o.status !== "rejected" && o.status !== "failed").length;
   const rejectedCount = opportunities.filter((o) => o.status === "rejected").length;
 
+  // FASE OMEGA — Filtrar por detección Hamiltonian si está activado
+  const displayedOpportunities = hamiltonianOnly
+    ? opportunities.filter((o) => o.hamiltonian_detected)
+    : opportunities;
+  const hamiltonianCount = opportunities.filter((o) => o.hamiltonian_detected).length;
+
   const isError = feedStatus === 'STALE';
 
   return (
@@ -294,6 +393,26 @@ export default function OpportunitiesClient({
           >
             {viableOnly ? <Eye size={14} /> : <EyeOff size={14} />}
             <span>{viableOnly ? "Viable only" : "Show all"}</span>
+          </button>
+          {/* FASE OMEGA — Hamiltonian-only toggle */}
+          <button
+            type="button"
+            onClick={() => setHamiltonianOnly(!hamiltonianOnly)}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
+              hamiltonianOnly
+                ? "bg-primary/20 border-primary/50 text-primary hover:bg-primary/30"
+                : "bg-muted/50 border-border text-muted-foreground hover:bg-muted"
+            }`}
+            title={hamiltonianOnly ? "Showing Hamiltonian-detected only — click to show all" : "Showing all — click to show only Hamiltonian-detected"}
+            aria-pressed={hamiltonianOnly ? "true" : "false"}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              className={hamiltonianOnly ? "text-primary" : ""}
+            >
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+            </svg>
+            <span>{hamiltonianOnly ? `Hamiltonian (${hamiltonianCount})` : `All sources (${opportunities.length})`}</span>
           </button>
           <button
             type="button"
@@ -389,7 +508,7 @@ export default function OpportunitiesClient({
           </thead>
           <tbody>
             <AnimatePresence>
-              {opportunities.map((opp) => {
+              {displayedOpportunities.map((opp) => {
                 const detectedTime = new Date(opp.detected_at).getTime();
                 const ageSecs = isMounted ? Math.floor((now - detectedTime) / 1000) : 0;
                 const isStale = ageSecs > 12;
@@ -824,18 +943,40 @@ export default function OpportunitiesClient({
                       visibly disabled with a "backend pending" tooltip and
                       reduced styling — never promising live action it
                       cannot deliver. Click is allowed only as a no-op
-                      diagnostic that surfaces the 404 toast. */}
+                      diagnostic that surfaces the 404 toast.
+
+                      EXECUTE button: Enabled only for Hamiltonian-detected
+                      opportunities with cartridge confidence >= 0.7 */}
                     <td className="p-4 text-center">
-                      <button
-                        type="button"
-                        disabled
-                        aria-disabled="true"
-                        onClick={(e) => { e.stopPropagation(); handleSimulate(opp.id); }}
-                        className="px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wide border border-dashed border-muted-foreground/40 bg-muted/30 text-muted-foreground cursor-not-allowed"
-                        title="Backend pending — POST /api/opportunities/:id/simulate is not yet implemented (spine revm shadow-sim ticket open)"
-                      >
-                        {simLoading === opp.id ? "…" : "SIM (pending)"}
-                      </button>
+                      <div className="flex items-center gap-2 justify-center">
+                        <button
+                          type="button"
+                          disabled
+                          aria-disabled="true"
+                          onClick={(e) => { e.stopPropagation(); handleSimulate(opp.id); }}
+                          className="px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wide border border-dashed border-muted-foreground/40 bg-muted/30 text-muted-foreground cursor-not-allowed"
+                          title="Backend pending — POST /api/opportunities/:id/simulate is not yet implemented (spine revm shadow-sim ticket open)"
+                        >
+                          {simLoading === opp.id ? "…" : "SIM"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!opp.hamiltonian_detected || !opp.cartridge_confidence || opp.cartridge_confidence < 0.7}
+                          onClick={(e) => { e.stopPropagation(); handleExecute(opp); }}
+                          className={`px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wide border transition-colors ${
+                            opp.hamiltonian_detected && opp.cartridge_confidence && opp.cartridge_confidence >= 0.7
+                              ? "bg-success text-success-foreground border-success hover:bg-success/90"
+                              : "bg-muted text-muted-foreground border-muted-foreground/30 cursor-not-allowed"
+                          }`}
+                          title={
+                            opp.hamiltonian_detected && opp.cartridge_confidence && opp.cartridge_confidence >= 0.7
+                              ? "Execute opportunity"
+                              : "Hamiltonian detection required"
+                          }
+                        >
+                          EXECUTE
+                        </button>
+                      </div>
                     </td>
                   </motion.tr>
                 );

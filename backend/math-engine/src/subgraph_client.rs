@@ -431,8 +431,14 @@ mod tests {
         let q = build_ranking_query(SubgraphPoolKind::V2, 3, 0.0);
         assert!(q.contains("pairs("), "must query the pairs entity: {q}");
         assert!(q.contains("orderBy: reserveUSD"), "query: {q}");
-        assert!(q.contains(r#"reserveUSD_gt: "0""#), "zero floor → \"0\": {q}");
-        assert!(!q.contains("feeTier"), "V2 pairs have no feeTier field: {q}");
+        assert!(
+            q.contains(r#"reserveUSD_gt: "0""#),
+            "zero floor → \"0\": {q}"
+        );
+        assert!(
+            !q.contains("feeTier"),
+            "V2 pairs have no feeTier field: {q}"
+        );
     }
 
     #[test]
@@ -469,7 +475,11 @@ mod tests {
         assert_eq!(p.token1_decimals, 6);
         assert_eq!(p.token0_symbol, "WETH");
         assert_eq!(p.token1_symbol, "USDC");
-        assert!((p.tvl_usd - 12_345_678.9).abs() < 1.0, "tvl parsed: {}", p.tvl_usd);
+        assert!(
+            (p.tvl_usd - 12_345_678.9).abs() < 1.0,
+            "tvl parsed: {}",
+            p.tvl_usd
+        );
         assert_eq!(p.kind, SubgraphPoolKind::V3);
     }
 
@@ -489,7 +499,10 @@ mod tests {
         assert_eq!(pools.len(), 1);
         assert_eq!(pools[0].fee_tier, None, "V2 carries no feeTier");
         assert!((pools[0].tvl_usd - 999.5).abs() < 0.01);
-        assert_eq!(pools[0].address, "0xpair000000000000000000000000000000000001");
+        assert_eq!(
+            pools[0].address,
+            "0xpair000000000000000000000000000000000001"
+        );
     }
 
     #[test]
@@ -510,8 +523,15 @@ mod tests {
             ]}
         });
         let pools = parse_ranked_pools(&body, SubgraphPoolKind::V3);
-        assert_eq!(pools.len(), 1, "only the fully-formed row survives (fail-honest)");
-        assert_eq!(pools[0].address, "0xgood0000000000000000000000000000000000a3");
+        assert_eq!(
+            pools.len(),
+            1,
+            "only the fully-formed row survives (fail-honest)"
+        );
+        assert_eq!(
+            pools[0].address,
+            "0xgood0000000000000000000000000000000000a3"
+        );
     }
 
     #[test]

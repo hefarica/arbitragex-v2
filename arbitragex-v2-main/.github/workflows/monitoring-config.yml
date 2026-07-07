@@ -1,0 +1,72 @@
+name: Monitoring Config
+
+# M2 Capa1 Fase 10 (P2) — promtool validates Prometheus config + alert rules
+# on every PR that touches monitoring/. Without this, a typo in alerts.rules.yml
+# silently disables alerting until someone notices the missing notifications.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'monitoring/prometheus/**'
+      - 'monitoring/alerts.rules.yml'
+      - '.github/workflows/monitoring-config.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'monitoring/prometheus/**'
+      - 'monitoring/alerts.rules.yml'
+      - '.github/workflows/monitoring-config.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  promtool:
+    name: promtool check (config + rules)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install promtool
+        # The Prometheus tarball ships promtool. We pin to the same minor
+        # the prod container uses (compose.prod.yml: prom/prometheus:v2.55.1).
+        run: |
+          set -euo pipefail
+          VERSION=2.55.1
+          curl -sSLO "https://github.com/prometheus/prometheus/releases/download/v${VERSION}/prometheus-${VERSION}.linux-amd64.tar.gz"
+          tar -xzf "prometheus-${VERSION}.linux-amd64.tar.gz"
+          sudo install -m 0755 "prometheus-${VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
+          promtool --version
+
+      - name: Stage rule file at container path
+        # prometheus.yml + prometheus.prod.yml use the IN-CONTAINER absolute
+        # path `/etc/prometheus/alerts.rules.yml` (set by the volume mount
+        # in compose.prod.yml). promtool resolves rule_files against the
+        # filesystem at check time, so we make the path real on the CI
+        # runner by copying the repo-relative file there.
+        run: |
+          sudo mkdir -p /etc/prometheus
+          sudo cp monitoring/alerts.rules.yml /etc/prometheus/alerts.rules.yml
+
+      - name: Check alert rules
+        run: promtool check rules monitoring/alerts.rules.yml
+
+      - name: Check prometheus.yml (dev)
+        run: promtool check config monitoring/prometheus/prometheus.yml
+
+      - name: Check prometheus.prod.yml (prod)
+        run: promtool check config monitoring/prometheus/prometheus.prod.yml
+
+      - name: Check prometheus.edge.yml (edge profile)
+        # The edge profile is the variant that runs alongside the public worker.
+        # `|| true` is acceptable here only because the file may not exist yet
+        # in all branches; convert to hard gate once edge config is canonical.
+        run: |
+          if [ -f monitoring/prometheus/prometheus.edge.yml ]; then
+            promtool check config monitoring/prometheus/prometheus.edge.yml
+          else
+            echo "prometheus.edge.yml not present; skipping"
+          fi

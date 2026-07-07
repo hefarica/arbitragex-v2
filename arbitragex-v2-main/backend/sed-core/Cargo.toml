@@ -1,0 +1,121 @@
+[package]
+name = "sed-core"
+version = "1.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Sequential Equilibrium Dispatcher — quantitative mathematical orchestration layer"
+
+# Doctrine note (2026-05-13 — amended for V1.2 Holonomic Loop Resolution):
+#
+# Phase 1 scaffold shipped only types/ (typestate + kill-switch + 501
+# prereq). V1.2 amendment (ANEXOS_V1.2.md, 2026-05-13) introduces
+# `HolonomicLoopResolution` as a third sealed variant of
+# `PostResolutionTopology`. The constructor + supporting types
+# (`ClosedContourTrajectory`, `TopologicalYield`) carry math directly on
+# the typestate surface (closed-contour integral, vector norms over
+# transition points), so `nalgebra` is now a required dep — not feature-
+# gated. Phase 2 (filtration math kernels) layers `rand_distr` on top
+# behind the `filtration` feature.
+#
+# REVM 14.0 collision with workspace pin (3.5.0) remains deferred to a
+# future migration sprint; allocator/hedger phases will reintroduce it
+# per-feature when they land.
+
+[dependencies]
+# Workspace dependencies — match existing crates' style.
+serde = { workspace = true }
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+
+# B1.e V1.2 (2026-05-13) — Linear algebra required by the
+# HolonomicLoopResolution typestate (DVector<f64> for transition points
+# of closed-contour trajectories on liquidity manifolds). Not feature-
+# gated because the constructor lives in the default surface.
+nalgebra = { workspace = true }
+
+# B1.e V1.2 Phase 2 — Stochastic distributions for filtration kernels.
+# Optional because only the Markov jump / Poisson random measure path
+# under the `filtration` feature consumes it; default builds stay slim.
+rand_distr = { workspace = true, optional = true }
+
+# Phase 5 — Complex-valued eigenstates in the allocator.
+num-complex = { version = "0.4", optional = true }
+
+# Production Prometheus metrics recorder (optional — only needed in prod).
+prometheus = { workspace = true, optional = true }
+
+# Internal path dependency. shared-rs hosts KillSwitchClient + health
+# checking primitives that the SED gates integrate with.
+shared-rs = { workspace = true }
+
+[features]
+# Default ships the V1.1 + V1.2 typestate surface — bundle position
+# typestate (3 sealed variants now), kill-switch gate, 501 infra prereq,
+# closed-contour trajectory + topological yield. The math-bearing
+# modules (filtration, eigenstate, allocator, hedger) remain stub-only
+# in the default profile and graduate behind opt-in features.
+default = []
+
+# Phase 2 — stochastic wave filtration kernels (Markov jump process,
+# Poisson random measure, State Divergence Coefficient). Enables the
+# rand_distr dep + activates the filtration::markov_jump and
+# filtration::cdc_calculator submodules. See spec §3.1.
+filtration = ["dep:rand_distr"]
+
+# Phase 3 — eigenstate decomposition (effective Hamiltonian, Lanczos solver,
+# transition projector). Uses nalgebra (already a required dep) for
+# SymmetricEigen. The transition_projector::project_from_cdc() bridge to
+# Phase 2 is conditionally compiled under `filtration` — both features
+# must be active for the full pipeline.
+eigenstate = []
+
+# Combined feature for the full Phase 2 + Phase 3 pipeline:
+# PdmpEstimator → CdcCalculator → TransitionProjector → should_dispatch().
+eigenstate-full = ["filtration", "eigenstate"]
+
+# Phase 5 — Dirac Manifold Allocator (Pontryagin OCP, hyperbolic constraint,
+# DiracImpulse regularization). Requires num-complex for EigenState amplitudes.
+allocator = ["dep:num-complex"]
+
+# Phase 6 — Orthogonal Variance Hedger + Holonomic Loop Resolution +
+# Temporal Liquidity Superposition. Depends on allocator (Phase 5) for
+# LiquidityManifold, DiracImpulse, HyperbolicConstraint.
+hedger = ["allocator"]
+
+# Full pipeline: Phases 2 + 3 + 5 + 6.
+pipeline-full = ["filtration", "eigenstate", "allocator", "hedger"]
+
+# Metrics — trait-based observability (no external deps, just the API surface).
+metrics = []
+
+# Prometheus-backed metrics recorder for production.
+# Requires `metrics` (trait surface) + the `prometheus` crate dep.
+prometheus-metrics = ["metrics", "dep:prometheus"]
+
+# Persistence — DAO types for PostgreSQL (SQL templates only, no sqlx runtime).
+persistence = []
+
+# Paper-Shadow Mode — real data connectors (mempool WS, reserves, gas, Flashbots dry-run).
+# Requires shared-rs for config + RPC pool access. Capital exposed: STRICTLY 0.
+paper-shadow = ["allocator"]
+
+
+[lints.rust]
+# Future-proof: the math modules will contain todo!() bodies during
+# Phase 1-3 development. We allow them at crate level until each module
+# graduates to a real implementation. This matches the workspace's
+# overall "fail-honest no-fabrication" stance — todo!() panics at
+# runtime if a Phase-2+ caller reaches it, which is the desired
+# behavior (loudly surface incomplete paths) versus silently returning
+# stub data.
+unexpected_cfgs = "warn"
+
+[lints.clippy]
+# The lib.rs ships with stricter denies (unwrap_used, expect_used) per
+# the workspace doctrine; see src/lib.rs.

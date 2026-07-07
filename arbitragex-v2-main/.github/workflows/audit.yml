@@ -1,0 +1,263 @@
+name: Ω-S5++ APEX Forensic Audit — VPS arbx (READ-ONLY)
+
+# Reconocimiento topológico exhaustivo del clúster Docker en arbx.
+# DOCTRINA: Cero mutaciones. Solo comandos de lectura (docker ps, inspect, network, volume, df, cat).
+# Output: artifact ZIP con todos los reportes para análisis offline.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: audit-arbx
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  forensic-audit:
+    name: Forensic Audit (READ-ONLY)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/arbx_key
+          chmod 600 ~/.ssh/arbx_key
+          ssh-keyscan -H 195.201.235.70 >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Prepare report directory
+        run: mkdir -p audit_report
+
+      - name: "[F1] Censo exacto — docker ps -a"
+        run: |
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 \
+            'docker ps -a --format "table {{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" 2>&1' \
+            | tee audit_report/01_docker_ps_all.txt
+
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 \
+            'echo "=== TOTAL CONTAINERS ==="; docker ps -a -q | wc -l; \
+             echo "=== RUNNING ==="; docker ps -q | wc -l; \
+             echo "=== STOPPED/EXITED ==="; docker ps -a -q -f status=exited | wc -l; \
+             echo "=== CRASH-LOOP/RESTARTING ==="; docker ps -a -q -f status=restarting | wc -l' \
+            | tee audit_report/01_container_counts.txt
+
+      - name: "[F2] Anatomía detallada — docker inspect por contenedor"
+        run: |
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 << 'REMOTE_SCRIPT'
+            echo "=== ANATOMÍA NODO POR NODO ==="
+            for cid in $(docker ps -a -q); do
+              name=$(docker inspect --format '{{.Name}}' $cid | sed 's|^/||')
+              echo ""
+              echo "════════════════════════════════════════════════════════════════"
+              echo "CONTAINER: $name ($cid)"
+              echo "════════════════════════════════════════════════════════════════"
+              docker inspect $cid --format '
+              IMAGE:          {{.Config.Image}}
+              CMD:            {{.Config.Cmd}}
+              ENTRYPOINT:     {{.Config.Entrypoint}}
+              STATE:          {{.State.Status}} (running={{.State.Running}}, restarting={{.State.Restarting}})
+              STARTED_AT:     {{.State.StartedAt}}
+              RESTART_COUNT:  {{.RestartCount}}
+              RESTART_POLICY: {{.HostConfig.RestartPolicy.Name}}
+              HEALTHCHECK:    {{if .Config.Healthcheck}}{{.Config.Healthcheck.Test}}{{else}}NONE{{end}}
+              HEALTH_STATUS:  {{if .State.Health}}{{.State.Health.Status}}{{else}}N/A{{end}}
+              NETWORKS:       {{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}
+              PORTS:          {{range $p,$b := .NetworkSettings.Ports}}{{$p}} -> {{range $b}}{{.HostPort}}{{end}} {{end}}
+              MOUNTS:         {{range .Mounts}}{{.Type}}:{{.Name}}{{.Source}} -> {{.Destination}} (rw={{.RW}}); {{end}}
+              LABELS:         com.docker.compose.project={{index .Config.Labels "com.docker.compose.project"}}, service={{index .Config.Labels "com.docker.compose.service"}}
+              '
+            done
+          REMOTE_SCRIPT
+          tee audit_report/02_container_anatomy.txt
+        continue-on-error: true
+
+      - name: "[F2b] Captura completa de anatomía"
+        run: |
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 'bash -s' > audit_report/02_container_anatomy.txt << 'REMOTE_SCRIPT'
+            for cid in $(docker ps -a -q); do
+              name=$(docker inspect --format '{{.Name}}' $cid | sed 's|^/||')
+              echo ""
+              echo "════════════════════════════════════════════════════════════════"
+              echo "CONTAINER: $name ($cid)"
+              echo "════════════════════════════════════════════════════════════════"
+              docker inspect $cid --format 'IMAGE:          {{.Config.Image}}
+            CMD:            {{.Config.Cmd}}
+            ENTRYPOINT:     {{.Config.Entrypoint}}
+            STATE:          {{.State.Status}} running={{.State.Running}} restarting={{.State.Restarting}}
+            STARTED_AT:     {{.State.StartedAt}}
+            RESTART_COUNT:  {{.RestartCount}}
+            RESTART_POLICY: {{.HostConfig.RestartPolicy.Name}}
+            HEALTHCHECK:    {{if .Config.Healthcheck}}{{.Config.Healthcheck.Test}}{{else}}NONE{{end}}
+            HEALTH_STATUS:  {{if .State.Health}}{{.State.Health.Status}}{{else}}N/A{{end}}
+            NETWORKS:       {{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}
+            MOUNTS:         {{range .Mounts}}{{.Type}}:{{.Name}}{{.Source}} -> {{.Destination}} rw={{.RW}}; {{end}}
+            COMPOSE_PROJECT: {{index .Config.Labels "com.docker.compose.project"}}
+            COMPOSE_SERVICE: {{index .Config.Labels "com.docker.compose.service"}}
+            DEPENDS_ON:      {{index .Config.Labels "com.docker.compose.depends_on"}}'
+            done
+          REMOTE_SCRIPT
+
+      - name: "[F3] Mapa de redes Docker"
+        run: |
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 'bash -s' > audit_report/03_networks.txt << 'REMOTE_SCRIPT'
+            echo "=== TODAS LAS REDES ==="
+            docker network ls
+            echo ""
+            echo "=== INSPECT DE CADA RED (no-default) ==="
+            for net in $(docker network ls --filter type=custom --format '{{.Name}}'); do
+              echo ""
+              echo "──── RED: $net ────"
+              docker network inspect $net --format '
+            DRIVER:    {{.Driver}}
+            SCOPE:     {{.Scope}}
+            INTERNAL:  {{.Internal}}
+            SUBNET:    {{range .IPAM.Config}}{{.Subnet}}{{end}}
+            CONTAINERS:{{range $k,$v := .Containers}}
+              - {{$v.Name}} ({{$v.IPv4Address}}){{end}}'
+            done
+          REMOTE_SCRIPT
+
+      - name: "[F4] Inventario de volúmenes persistentes"
+        run: |
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 'bash -s' > audit_report/04_volumes.txt << 'REMOTE_SCRIPT'
+            echo "=== TODOS LOS VOLÚMENES ==="
+            docker volume ls
+            echo ""
+            echo "=== DETALLE DE CADA VOLUMEN ==="
+            for vol in $(docker volume ls -q); do
+              echo ""
+              echo "──── VOLUMEN: $vol ────"
+              docker volume inspect $vol --format '
+            DRIVER:     {{.Driver}}
+            MOUNTPOINT: {{.Mountpoint}}
+            LABELS:     {{.Labels}}
+            SCOPE:      {{.Scope}}'
+              if [ -d "/var/lib/docker/volumes/$vol/_data" ]; then
+                size=$(du -sh /var/lib/docker/volumes/$vol/_data 2>/dev/null | cut -f1)
+                echo "SIZE_ON_DISK: $size"
+              fi
+            done
+            echo ""
+            echo "=== USO TOTAL DOCKER ==="
+            docker system df -v
+          REMOTE_SCRIPT
+
+      - name: "[F5] docker-compose.yml activo + estado del repo"
+        run: |
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 'bash -s' > audit_report/05_compose_and_repo.txt << 'REMOTE_SCRIPT'
+            echo "=== UBICACIÓN DEL PROYECTO ==="
+            ls -la /opt/arbitragex-v2/ 2>/dev/null || echo "NOT_FOUND: /opt/arbitragex-v2"
+            echo ""
+            echo "=== GIT STATE ==="
+            cd /opt/arbitragex-v2 && git rev-parse HEAD && git log -1 --pretty=fuller && git status -s
+            echo ""
+            echo "=== ARCHIVOS COMPOSE PRESENTES ==="
+            find /opt/arbitragex-v2 -maxdepth 3 -name "*compose*.yml" -o -name "*compose*.yaml" 2>/dev/null
+            echo ""
+            echo "=== COMPOSE ACTIVO (docker compose config) ==="
+            cd /opt/arbitragex-v2
+            for f in docker-compose.yml docker/compose.prod.yml docker-compose.prod.yml compose.yml; do
+              if [ -f "$f" ]; then
+                echo "──── FILE: $f ────"
+                docker compose -f $f config 2>&1 | head -300
+                echo ""
+              fi
+            done
+            echo ""
+            echo "=== COMPOSE PS (proyecto activo) ==="
+            cd /opt/arbitragex-v2 && docker compose ps -a 2>&1 || true
+            for f in docker/compose.prod.yml docker-compose.prod.yml; do
+              if [ -f "$f" ]; then
+                echo "──── COMPOSE PS para $f ────"
+                docker compose -f $f ps -a 2>&1
+              fi
+            done
+          REMOTE_SCRIPT
+
+      - name: "[F6] Recursos del host + uso actual"
+        run: |
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 'bash -s' > audit_report/06_host_resources.txt << 'REMOTE_SCRIPT'
+            echo "=== CPU ==="
+            nproc
+            cat /proc/cpuinfo | grep "model name" | head -1
+            echo ""
+            echo "=== RAM ==="
+            free -h
+            echo ""
+            echo "=== DISCO ==="
+            df -h /
+            df -h /var/lib/docker 2>/dev/null || df -h /var
+            echo ""
+            echo "=== LOAD AVERAGE ==="
+            uptime
+            echo ""
+            echo "=== TOP 10 PROCESOS POR CPU ==="
+            ps aux --sort=-%cpu | head -11
+            echo ""
+            echo "=== TOP 10 PROCESOS POR RAM ==="
+            ps aux --sort=-%mem | head -11
+            echo ""
+            echo "=== DOCKER STATS (snapshot 1) ==="
+            timeout 3 docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}\t{{.BlockIO}}" 2>&1
+          REMOTE_SCRIPT
+
+      - name: "[F7] Probes HTTP del estado actual"
+        run: |
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 'bash -s' > audit_report/07_http_probes.txt << 'REMOTE_SCRIPT'
+            echo "=== HTTP PROBES (estado actual) ==="
+            for path in / /api/health /chains /executions /opportunities /apex/allocator /omega-s5/core /metrics; do
+              code=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://localhost$path 2>&1)
+              echo "  $path → HTTP $code"
+            done
+            echo ""
+            echo "=== LISTEN PORTS ==="
+            ss -tlnp 2>/dev/null | head -30
+          REMOTE_SCRIPT
+
+      - name: "[F8] docker-compose.yml RAW (contenido completo)"
+        run: |
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@195.201.235.70 'bash -s' > audit_report/08_compose_raw.txt << 'REMOTE_SCRIPT'
+            cd /opt/arbitragex-v2 || exit 0
+            for f in docker-compose.yml docker/compose.prod.yml docker-compose.prod.yml compose.yml docker/compose.yml; do
+              if [ -f "$f" ]; then
+                echo ""
+                echo "════════════════════════════════════════════════════════════════"
+                echo "FILE: $f"
+                echo "════════════════════════════════════════════════════════════════"
+                cat "$f"
+              fi
+            done
+            echo ""
+            echo "=== .env (claves visibles, valores enmascarados) ==="
+            if [ -f .env ]; then
+              sed 's/=.*/=<REDACTED>/' .env
+            else
+              echo "NO_ENV_FILE"
+            fi
+          REMOTE_SCRIPT
+
+      - name: Generate summary
+        run: |
+          {
+            echo "# Ω-S5++ FORENSIC AUDIT REPORT — VPS arbx"
+            echo ""
+            echo "**Timestamp:** $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "**Target:** root@195.201.235.70 (arbx-v2-clean)"
+            echo "**Mode:** READ-ONLY (zero mutations)"
+            echo ""
+            echo "## Files included"
+            ls -la audit_report/
+          } > audit_report/00_SUMMARY.md
+
+      - name: Upload audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: forensic-audit-report
+          path: audit_report/
+          retention-days: 7
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/arbx_key

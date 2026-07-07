@@ -360,8 +360,7 @@ impl GeckoTerminalOracle {
     }
 
     async fn connect_redis(&self) -> Result<redis::aio::MultiplexedConnection> {
-        let client =
-            redis::Client::open(self.redis_url.as_str()).context("redis::Client::open")?;
+        let client = redis::Client::open(self.redis_url.as_str()).context("redis::Client::open")?;
         client
             .get_multiplexed_async_connection()
             .await
@@ -485,11 +484,19 @@ impl GeckoTerminalOracle {
                 }
             }
             if priced_n == 0 && icons_n == 0 {
-                debug!(event = "geckoterminal.nothing_resolved", chain_id, considered = tokens.len());
+                debug!(
+                    event = "geckoterminal.nothing_resolved",
+                    chain_id,
+                    considered = tokens.len()
+                );
             } else {
                 info!(
                     event = "geckoterminal.chain_done",
-                    chain_id, slug, considered = tokens.len(), priced = priced_n, icons = icons_n,
+                    chain_id,
+                    slug,
+                    considered = tokens.len(),
+                    priced = priced_n,
+                    icons = icons_n,
                 );
             }
         }
@@ -655,10 +662,7 @@ mod tests {
             token_icon_key(1, "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
             "arbx:token-icons:1:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
         );
-        assert_eq!(
-            token_icon_key(137, "0xabc"),
-            "arbx:token-icons:137:0xabc"
-        );
+        assert_eq!(token_icon_key(137, "0xabc"), "arbx:token-icons:137:0xabc");
     }
 
     // --- is_http_url (mirrors reader isHttpUrl) ---
@@ -683,7 +687,10 @@ mod tests {
 
     #[test]
     fn parse_pos_f64_valid_and_invalid() {
-        assert_eq!(parse_pos_f64(&Some("1593.0455682772".into())), Some(1593.0455682772));
+        assert_eq!(
+            parse_pos_f64(&Some("1593.0455682772".into())),
+            Some(1593.0455682772)
+        );
         assert_eq!(parse_pos_f64(&Some(" 2.5 ".into())), Some(2.5));
         assert_eq!(parse_pos_f64(&Some("0".into())), None);
         assert_eq!(parse_pos_f64(&Some("-1.0".into())), None);
@@ -695,8 +702,14 @@ mod tests {
 
     #[test]
     fn config_off_when_gate_absent_or_other() {
-        assert!(GeckoTerminalConfig::from_values("", None, None, None, &[1]).unwrap().is_none());
-        assert!(GeckoTerminalConfig::from_values("off", None, None, None, &[1]).unwrap().is_none());
+        assert!(GeckoTerminalConfig::from_values("", None, None, None, &[1])
+            .unwrap()
+            .is_none());
+        assert!(
+            GeckoTerminalConfig::from_values("off", None, None, None, &[1])
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -712,9 +725,15 @@ mod tests {
 
     #[test]
     fn config_active_custom_values_case_insensitive() {
-        let cfg = GeckoTerminalConfig::from_values("ACTIVE", Some("25000"), Some("90000"), Some("7200"), &[1])
-            .unwrap()
-            .unwrap();
+        let cfg = GeckoTerminalConfig::from_values(
+            "ACTIVE",
+            Some("25000"),
+            Some("90000"),
+            Some("7200"),
+            &[1],
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(cfg.min_liquidity_usd, 25_000.0);
         assert_eq!(cfg.interval, Duration::from_millis(90_000));
         assert_eq!(cfg.icon_ttl_secs, 7_200);

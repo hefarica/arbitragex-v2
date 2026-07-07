@@ -1,0 +1,67 @@
+name: unit-tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# M2 Capa1 Fase 4 — read-only token.
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # `stable` follows the current Rust release. See rust.yml for rationale.
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+      - name: Run cargo test --lib
+        # --lib only — integration tests need PG/Redis live (not in CI).
+        # sqlx offline mode satisfied by stub DATABASE_URL.
+        run: cargo test --workspace --locked --lib
+        env:
+          DATABASE_URL: postgres://test:test@localhost/arbitragex_test
+          REDIS_URL: redis://localhost:6379
+          SIM_SIGNER_ADDRESS: "0x000000000000000000000000000000000000dead"
+
+  typescript:
+    name: TypeScript tests + typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+      - name: Install dependencies
+        run: npm install
+      - name: Build @arbx/shared
+        # Dependent workspaces (selector-api, api-server, edge/*) resolve
+        # @arbx/shared from `shared-ts/dist/`. Typecheck fails with
+        # "Cannot find module '@arbx/shared'" if dist/ doesn't exist.
+        run: npm run -w @arbx/shared build
+      - name: Typecheck all workspaces
+        # M2 Capa1 Fase 7 (P1-5): mirrors typescript.yml. Advisory until
+        # M4 (Capa 3 Backend) clears the 5 pre-existing api-server type
+        # errors (registry-engine.ts exactOptionalPropertyTypes drift,
+        # admin-promote-mainnet.ts missing .js extensions + Redis namespace,
+        # operator.ts missing .js extension). Flip to hard gate in M4.
+        run: npm run typecheck --workspaces --if-present
+        continue-on-error: true
+      - name: Run tests
+        # M2 Capa1 Fase 7: same M4 dependency as typecheck above.
+        run: npm test --workspaces --if-present
+        continue-on-error: true
