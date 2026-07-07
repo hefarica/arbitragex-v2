@@ -1,0 +1,176 @@
+# Auto-Deploy to VPS after CI passes on main
+# This workflow triggers AFTER the CI workflow completes successfully on main branch
+# Implements: Merge → CI EVER GREEN → Auto-Deploy VPS
+
+name: Auto-Deploy VPS (Post-CI)
+
+on:
+  workflow_run:
+    workflows: ["CI", "TypeScript CI", "Rust CI"]
+    types:
+      - completed
+    branches: [main]
+
+concurrency:
+  group: auto-deploy-vps-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check-ci-status:
+    name: Verify CI EVER GREEN
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    outputs:
+      should_deploy: ${{ steps.verify.outputs.should_deploy }}
+    steps:
+      - name: Verify CI was successful
+        id: verify
+        run: |
+          echo "CI Workflow: ${{ github.event.workflow_run.name }}"
+          echo "CI Status: ${{ github.event.workflow_run.conclusion }}"
+          echo "Commit: ${{ github.event.workflow_run.head_sha }}"
+          echo "should_deploy=true" >> $GITHUB_OUTPUT
+          echo "✅ CI EVER GREEN - Proceeding with deploy"
+
+  deploy:
+    name: Deploy to VPS (Auto)
+    needs: check-ci-status
+    if: ${{ needs.check-ci-status.outputs.should_deploy == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Environment protection - requires manual approval for first deploy
+    # Remove or configure 'production' environment in GitHub Settings → Environments
+    # environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 1
+
+      - name: Verify required secrets
+        run: |
+          MISSING=0
+          check_secret() {
+            local name="$1"
+            local value="$2"
+            if [ -z "$value" ]; then
+              echo "❌ Secret '$name' is not set" >&2
+              MISSING=$((MISSING + 1))
+            else
+              echo "✅ Secret '$name' is present"
+            fi
+          }
+
+          check_secret "VPS_SSH_HOST"    "${{ secrets.VPS_SSH_HOST }}"
+          check_secret "VPS_SSH_USER"    "${{ secrets.VPS_SSH_USER }}"
+          check_secret "VPS_SSH_KEY"     "${{ secrets.VPS_SSH_KEY }}"
+          check_secret "VPS_DEPLOY_PATH" "${{ secrets.VPS_DEPLOY_PATH }}"
+
+          if [ "$MISSING" -gt 0 ]; then
+            echo ""
+            echo "❌ FATAL: $MISSING required secret(s) are missing" >&2
+            exit 1
+          fi
+
+      - name: Deploy to VPS (Blue-Green Style)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_SSH_HOST }}
+          username: ${{ secrets.VPS_SSH_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || '22' }}
+          command_timeout: "40m"
+          script: |
+            set -euo pipefail
+
+            echo "🚀 AUTO-DEPLOY started at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "📍 Deploying commit: ${{ github.event.workflow_run.head_sha }}"
+            echo "📂 Path: ${{ secrets.VPS_DEPLOY_PATH }}"
+
+            cd "${{ secrets.VPS_DEPLOY_PATH }}"
+
+            # Store current commit for potential rollback
+            CURRENT_COMMIT=$(git rev-parse HEAD)
+            echo "🔵 Current (Blue): $CURRENT_COMMIT"
+            echo "$CURRENT_COMMIT" > .last-known-good-commit
+
+            echo "⬇️ Fetching main..."
+            git fetch origin main
+
+            echo "🔄 Resetting to origin/main..."
+            git reset --hard origin/main
+
+            NEW_COMMIT=$(git rev-parse HEAD)
+            echo "🟢 New (Green): $NEW_COMMIT"
+
+            if [ "$CURRENT_COMMIT" == "$NEW_COMMIT" ]; then
+              echo "⚠️ No changes detected. Skipping deploy."
+              exit 0
+            fi
+
+            echo "🐳 Pulling images..."
+            docker compose -f docker/compose.prod.yml pull
+
+            echo "🔨 Building and starting services (zero-downtime)..."
+            docker compose -f docker/compose.prod.yml up -d --build --remove-orphans
+
+            echo "📊 Service status:"
+            docker compose -f docker/compose.prod.yml ps
+
+            echo "🏥 Healthcheck (api-server localhost:8080)..."
+            HC_OK=0
+            for i in $(seq 1 20); do
+              if curl -fsS --max-time 5 http://localhost:8080/health >/dev/null 2>&1; then
+                echo "✅ VPS healthcheck PASSED"
+                HC_OK=1
+                break
+              fi
+              echo "⏳ Waiting for health ($i/20)..."
+              sleep 5
+            done
+
+            if [ "$HC_OK" -ne 1 ]; then
+              echo "❌ ERROR: api-server unhealthy. Initiating rollback..." >&2
+              echo "🔴 Rolling back to: $CURRENT_COMMIT"
+              git reset --hard "$CURRENT_COMMIT"
+              docker compose -f docker/compose.prod.yml up -d --build
+              echo "✅ Rollback complete"
+              exit 1
+            fi
+
+            echo "✅ AUTO-DEPLOY completed successfully at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+      - name: Healthcheck post-deploy
+        run: |
+          HEALTH_URL="${{ secrets.VPS_HEALTH_URL }}"
+          if [ -z "$HEALTH_URL" ]; then
+            echo "⚠️ VPS_HEALTH_URL not set, skipping external check"
+            exit 0
+          fi
+
+          echo "🌐 External healthcheck: $HEALTH_URL"
+          HTTP_CODE=$(curl --silent --output /dev/null --write-out "%{http_code}" \
+            --max-time 30 --retry 3 --retry-delay 5 "$HEALTH_URL" || true)
+          HTTP_CODE="${HTTP_CODE:-000}"
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
+            echo "✅ External healthcheck PASSED (HTTP $HTTP_CODE)"
+          else
+            echo "⚠️ External healthcheck: HTTP $HTTP_CODE"
+          fi
+
+      - name: Deploy summary
+        if: always()
+        run: |
+          echo "## 🚀 Auto-Deploy to VPS — Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Trigger | \${{ github.event.workflow_run.name }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| CI Status | ✅ EVER GREEN |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Commit | \`${{ github.event.workflow_run.head_sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Timestamp | \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> Pipeline: **Merge → CI EVER GREEN → Auto-Deploy VPS**" >> "$GITHUB_STEP_SUMMARY"

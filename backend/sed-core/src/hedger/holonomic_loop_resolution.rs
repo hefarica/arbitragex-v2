@@ -178,6 +178,12 @@ pub struct LiquidityEdge {
     pub log_price: f64,
 }
 
+impl Default for LiquidityGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LiquidityGraph {
     pub fn new() -> Self {
         Self {
@@ -214,6 +220,19 @@ impl LiquidityGraph {
         self.manifolds.insert(addr.clone(), manifold.clone());
     }
 
+    /// Contexto mutable para la búsqueda DFS de ciclos holonómicos.
+    /// Agrupa los estados transitorios para reducir la aridad de la función recursiva.
+    struct DfsContext<'a> {
+        /// Conjunto de tokens visitados en el camino actual
+        visited: &'a mut HashSet<String>,
+        /// Camino de aristas recorrido hasta el momento
+        path: &'a mut Vec<LiquidityEdge>,
+        /// Camino de precios acumulados
+        price_path: &'a mut Vec<f64>,
+        /// Resultados acumulados de ciclos encontrados
+        results: &'a mut Vec<ClosedContourTrajectory>,
+    }
+
     /// Búsqueda de ciclos holonómicos mediante DFS con límite de profundidad.
     pub fn find_holonomic_cycles(
         &self,
@@ -226,15 +245,19 @@ impl LiquidityGraph {
         let mut path = Vec::new();
         let mut price_path = Vec::new();
 
+        let mut ctx = DfsContext {
+            visited: &mut visited,
+            path: &mut path,
+            price_path: &mut price_path,
+            results: &mut results,
+        };
+
         self.dfs_cycles(
             start_token,
             start_token,
             max_depth,
             min_holonomy,
-            &mut visited,
-            &mut path,
-            &mut price_path,
-            &mut results,
+            &mut ctx,
         );
         results
     }
@@ -245,10 +268,7 @@ impl LiquidityGraph {
         start: &str,
         remaining_depth: usize,
         min_holonomy: f64,
-        visited: &mut HashSet<String>,
-        path: &mut Vec<LiquidityEdge>,
-        price_path: &mut Vec<f64>,
-        results: &mut Vec<ClosedContourTrajectory>,
+        ctx: &mut DfsContext<'_>,
     ) {
         if remaining_depth == 0 {
             return;
@@ -256,22 +276,22 @@ impl LiquidityGraph {
 
         if let Some(edges) = self.edges.get(current) {
             for edge in edges {
-                if path.len() == 1 && edge.to_token == start {
+                if ctx.path.len() == 1 && edge.to_token == start {
                     continue;
                 }
 
                 if edge.to_token == start
-                    && path.len() >= ClosedContourTrajectory::MIN_LOOP_SIZE - 1
+                    && ctx.path.len() >= ClosedContourTrajectory::MIN_LOOP_SIZE - 1
                 {
-                    price_path.push(edge.log_price.exp());
-                    let holonomy = price_path.iter().map(|p| p.ln()).sum::<f64>();
+                    ctx.price_path.push(edge.log_price.exp());
+                    let holonomy = ctx.price_path.iter().map(|p| p.ln()).sum::<f64>();
 
                     if holonomy.abs() > min_holonomy {
-                        let mut manifolds = Vec::with_capacity(path.len() + 1);
-                        let mut transitions = Vec::with_capacity(path.len() + 1);
-                        let mut prices = Vec::with_capacity(path.len() + 1);
+                        let mut manifolds = Vec::with_capacity(ctx.path.len() + 1);
+                        let mut transitions = Vec::with_capacity(ctx.path.len() + 1);
+                        let mut prices = Vec::with_capacity(ctx.path.len() + 1);
 
-                        for e in path.iter() {
+                        for e in ctx.path.iter() {
                             if let Some(m) = self.manifolds.get(&e.pool_address) {
                                 manifolds.push(m.clone());
                                 transitions.push(Vector2::new(m.token0_reserve, m.token1_reserve));
@@ -293,38 +313,35 @@ impl LiquidityGraph {
                             })
                             .sum();
 
-                        results.push(ClosedContourTrajectory {
+                        ctx.results.push(ClosedContourTrajectory {
                             manifolds,
                             transition_points: transitions,
                             relative_prices: prices,
                             contour_length,
-                            loop_cardinality: path.len() + 1,
+                            loop_cardinality: ctx.path.len() + 1,
                             start_token: start.to_string(),
                         });
                     }
-                    price_path.pop();
+                    ctx.price_path.pop();
                     continue;
                 }
 
-                if !visited.contains(&edge.to_token) {
-                    visited.insert(edge.to_token.clone());
-                    path.push(edge.clone());
-                    price_path.push(edge.log_price.exp());
+                if !ctx.visited.contains(&edge.to_token) {
+                    ctx.visited.insert(edge.to_token.clone());
+                    ctx.path.push(edge.clone());
+                    ctx.price_path.push(edge.log_price.exp());
 
                     self.dfs_cycles(
                         &edge.to_token,
                         start,
                         remaining_depth - 1,
                         min_holonomy,
-                        visited,
-                        path,
-                        price_path,
-                        results,
+                        ctx,
                     );
 
-                    path.pop();
-                    price_path.pop();
-                    visited.remove(&edge.to_token);
+                    ctx.path.pop();
+                    ctx.price_path.pop();
+                    ctx.visited.remove(&edge.to_token);
                 }
             }
         }
