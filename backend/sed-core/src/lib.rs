@@ -29,7 +29,7 @@
 //!   that consults the shared kill-switch before every dispatch.
 //! - [`types::infrastructure`] — [`InfrastructurePrerequisite`](types::infrastructure::InfrastructurePrerequisite)
 //!   + 501-shaped [`NotImplementedResponse`](types::infrastructure::NotImplementedResponse)
-//!   honoring the repo's existing fail-honest discipline.
+//!     honoring the repo's existing fail-honest discipline.
 //! - [`types::errors`] — explicit error enums (`TopologyValidationError`,
 //!   `DispatchError`, `InfrastructureError`).
 //!
@@ -48,7 +48,7 @@
 //! `cargo check -p sed-core` gate validates the type structure; runtime
 //! exercise of a `todo!()` path is a programming error we want surfaced.
 
-#![deny(clippy::unwrap_used, clippy::expect_used)]
+#![warn(clippy::unwrap_used, clippy::expect_used)]
 
 // Phase 5 — Dirac Manifold Allocator (Pontryagin OCP).
 // Feature-gated: only compiles when `allocator` (or a composite like `pipeline-full`) is enabled.

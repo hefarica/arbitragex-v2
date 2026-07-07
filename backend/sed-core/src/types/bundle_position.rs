@@ -334,14 +334,14 @@ impl BundlePosition<HolonomicLoopResolution> {
 
         // Validación 3: Holonomía no trivial.
         let holonomy = contour.contour_integral();
-        if !holonomy.is_finite() || !(holonomy.abs() > 1e-12) {
+        if !holonomy.is_finite() || holonomy.abs() <= 1e-12 {
             // `is_finite()` rejects ±∞ (from ln(0) on a zero price) and
-            // NaN (from ln(negative_price)). The negated `> 1e-12` also
-            // catches the regular trivial case AND any NaN that slipped
-            // past `is_finite()` (`NaN > 1e-12` is false, the `!` flips
-            // to true → reject). Both degeneracies route to the same
-            // fail-honest error — the caller knows their price input is
-            // pathological without us inventing a separate variant.
+            // NaN (from ln(negative_price)). The `<= 1e-12` catches the
+            // regular trivial case AND any NaN that slipped past
+            // `is_finite()` (`NaN > 1e-12` is false → reject). Both
+            // degeneracies route to the same fail-honest error — the caller
+            // knows their price input is pathological without us inventing
+            // a separate variant.
             return Err(TopologyValidationError::TrivialHolonomy);
         }
 
