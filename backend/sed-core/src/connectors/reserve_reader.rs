@@ -42,6 +42,7 @@ pub enum PoolType {
 /// On-chain reserve reader — reads pool state from real contracts.
 pub struct ReserveReader {
     /// RPC endpoint URL (from config, never hardcoded)
+    #[allow(dead_code)]
     rpc_url: String,
 }
 

@@ -27,6 +27,7 @@ pub struct SimulationResult {
 
 /// Flashbots dry-run simulator. NO signing capability.
 pub struct FlashbotsDryRun {
+    #[allow(dead_code)]
     relay_url: String,
 }
 

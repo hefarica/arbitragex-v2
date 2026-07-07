@@ -31,6 +31,7 @@ pub enum PriceSource {
 
 /// Price feed aggregator — reads real prices from multiple sources.
 pub struct PriceFeed {
+    #[allow(dead_code)]
     reserve_reader: ReserveReader,
 }
 

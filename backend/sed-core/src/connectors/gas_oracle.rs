@@ -31,6 +31,7 @@ impl GasPrice {
 
 /// Gas oracle — reads real gas prices via eth_gasPrice.
 pub struct GasOracle {
+    #[allow(dead_code)]
     rpc_url: String,
 }
 
