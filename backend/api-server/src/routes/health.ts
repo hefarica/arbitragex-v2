@@ -442,11 +442,11 @@ export function mountHealthRouter(deps: HealthDeps): Router {
   });
 
   /**
-   * GET /metrics/entropy
+   * GET /entropy
    * Retorna la entropía actual del sistema con su delta temporal.
    * FAIL-HONEST: entropy = null cuando no hay datos suficientes.
    */
-  router.get("/metrics/entropy", async (_req: Request, res: Response) => {
+  router.get("/entropy", async (_req: Request, res: Response) => {
     try {
       const entropyData = await calculateEntropy(deps.redis, deps.pool);
 
@@ -468,10 +468,10 @@ export function mountHealthRouter(deps: HealthDeps): Router {
   });
 
   /**
-   * GET /metrics/convergence
+   * GET /convergence
    * Retorna métricas detalladas de convergencia del sistema.
    */
-  router.get("/metrics/convergence", async (_req: Request, res: Response) => {
+  router.get("/convergence", async (_req: Request, res: Response) => {
     try {
       const convergenceData = await calculateConvergence(deps.redis);
       res.status(200).json({
@@ -487,10 +487,10 @@ export function mountHealthRouter(deps: HealthDeps): Router {
   });
 
   /**
-   * GET /metrics/topology
+   * GET /topology
    * Retorna métricas topológicas del ecosistema de variedades de liquidez.
    */
-  router.get("/metrics/topology", async (_req: Request, res: Response) => {
+  router.get("/topology", async (_req: Request, res: Response) => {
     try {
       const topologyData = await getTopologyMetrics(deps.redis, deps.pool);
       res.status(200).json({
