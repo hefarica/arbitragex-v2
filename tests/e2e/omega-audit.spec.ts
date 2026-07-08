@@ -12,10 +12,10 @@ import { io, Socket } from 'socket.io-client';
 
 // Configuration for the Math Guardian
 const CONFIG = {
-  frontendUrl: process.env['ARBX_FRONTEND_URL'] ?? 'http://localhost:5173',
-  apiUrl: process.env['ARBX_API_URL'] ?? 'http://localhost:8080',
-  maxFrontendLatencyMs: 2000,
-  maxBackendLatencyMs: 500,
+  frontendUrl: process.env['ARBX_FRONTEND_URL'] ?? 'http://edge:8787',
+  apiUrl: process.env['ARBX_API_URL'] ?? 'http://api-server:8080',
+  maxFrontendLatencyMs: 5000,
+  maxBackendLatencyMs: 2000,
   maxWebSocketWaitMs: 5000,
   retryAttempts: 3
 };
