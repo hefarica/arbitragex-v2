@@ -251,6 +251,12 @@ pub struct OrthogonalVarianceHedger {
     pub null_covariance_tolerance: f64,
 }
 
+impl Default for OrthogonalVarianceHedger {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OrthogonalVarianceHedger {
     pub const DEFAULT_TOLERANCE: f64 = 1e-9;
 
@@ -434,7 +440,7 @@ mod tests {
         assert!(hedge.hedged_state.entanglement_entropy >= 0.0);
         assert_eq!(hedge.covariance_matrix.nrows(), 2);
         assert_eq!(hedge.covariance_matrix.ncols(), 2);
-        assert!(hedge.compensation_vector.len() > 0);
+        assert!(!hedge.compensation_vector.is_empty());
         // Orthogonality error is bounded [0, 1]
         assert!(hedge.orthogonality_error >= 0.0);
         assert!(hedge.orthogonality_error <= 1.0 + 1e-9);

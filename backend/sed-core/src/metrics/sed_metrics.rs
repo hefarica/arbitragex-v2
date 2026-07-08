@@ -97,7 +97,7 @@ impl InMemoryMetricsRecorder {
         self.observations()
             .iter()
             .filter(|o| o.name == name)
-            .last()
+            .next_back()
             .map(|o| o.value)
     }
 

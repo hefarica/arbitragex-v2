@@ -66,8 +66,8 @@ pub enum TopologyValidationError {
 
     /// Validation 4 — `|contour.contour_integral() − yield.raw_holonomy|
     /// > 1e-9`. The contour-derived holonomy disagrees with the yield
-    /// struct's raw_holonomy field. Indicates a caller wired up two
-    /// inconsistent inputs.
+    /// > struct's raw_holonomy field. Indicates a caller wired up two
+    /// > inconsistent inputs.
     #[error("holonomy/yield mismatch: contour integral disagrees with yield.raw_holonomy")]
     HolonomyYieldMismatch,
 
@@ -80,7 +80,7 @@ pub enum TopologyValidationError {
     /// Validation 6 — `|raw_holonomy − network_friction − net_yield|
     /// > 1e-9`. The caller-supplied `net_yield` is inconsistent with
     /// the identity `net = raw − friction`. Indicates a stale or
-    /// hand-edited yield record.
+    /// > hand-edited yield record.
     #[error("friction deduction invalid: net_yield ≠ raw_holonomy − network_friction within 1e-9")]
     FrictionDeductionInvalid,
 }

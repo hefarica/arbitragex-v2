@@ -299,7 +299,7 @@ impl EnricherConsumer {
                 .iter()
                 .filter_map(|k| k.ids.last())
                 .map(|e| e.id.clone())
-                .last();
+                .next_back();
 
             let (triples, ids) = self.parse(reply);
             // Accumulate both — NO internal ACK here.

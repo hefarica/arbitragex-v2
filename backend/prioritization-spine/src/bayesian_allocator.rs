@@ -471,7 +471,7 @@ mod tests {
             let mut p = BetaPosterior::new_prior();
             p.update(s, f);
             let m = p.mean();
-            assert!(m >= 0.0 && m <= 1.0, "mean {} out of [0,1] for ({s},{f})", m);
+            assert!((0.0..=1.0).contains(&m), "mean {} out of [0,1] for ({s},{f})", m);
             assert!(p.variance() >= 0.0);
             assert!(p.std_dev() >= 0.0);
         }
