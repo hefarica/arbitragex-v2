@@ -74,8 +74,16 @@ impl EntangledState {
         }
     }
 
-    /// Aproximación de la entropía de von Neumann para estados puros.
-    /// S(ρ_A) ≈ −Σ λ_i² log(λ_i²) donde λ_i son valores singulares de la matriz de amplitud.
+    /// Entropía de von Neumann para estados puros: S(ρ_A) = −Tr(ρ_A log ρ_A).
+    ///
+    /// # Fundamento Matemático
+    /// Para estados puros |Ψ_AB⟩, la matriz de densidad reducida ρ_A = Tr_B(|Ψ⟩⟨Ψ|)
+    /// tiene eigenvalores λ_i (valores singulares de la matriz de amplitud). La entropía
+    /// es S = −Σ λ_i ln(λ_i) donde λ_i ≥ 0 y Σ λ_i = 1.
+    ///
+    /// # Implementación
+    /// Calculamos eigenvalores de ρ_A = A·A^T donde A_{ij} = amplitude[i*dim_b + j].
+    /// Los eigenvalues de ρ_A son λ_i (probabilidades normalizadas), no λ_i².
     fn compute_von_neumann_entropy(
         amplitude: &DVector<Complex64>,
         dim_a: usize,
@@ -85,20 +93,26 @@ impl EntangledState {
         let mut mat = DMatrix::zeros(dim_a, dim_b);
         for i in 0..dim_a {
             for j in 0..dim_b {
-                mat[(i, j)] = amplitude[i * dim_b + j].norm_sqr();
+                mat[(i, j)] = amplitude[i * dim_b + j];
             }
         }
 
-        // Valores singulares al cuadrado = eigenvalues de A·A^T
-        let ata = mat.clone() * mat.transpose();
-        let eigen = ata.symmetric_eigen();
+        // Matriz de densidad reducida: ρ_A = A·A^† (producto exterior)
+        let rho_a = &mat * mat.adjoint();
+        let eigen = rho_a.symmetric_eigen();
         let eigenvalues = eigen.eigenvalues.clone();
+
+        // Normalizar eigenvalores para garantizar Σ λ_i = 1 (probabilidades)
+        let sum: f64 = eigenvalues.iter().sum();
+        if sum < 1e-15 {
+            return 0.0; // Estado degenerado, entropía nula
+        }
 
         let mut entropy = 0.0;
         for lambda in eigenvalues.iter() {
-            let p = lambda.max(0.0);
+            let p = (lambda / sum).max(0.0);
             if p > 1e-15 {
-                entropy -= p * p.ln();
+                entropy -= p * p.ln(); // λ ln(λ) — forma canónica von Neumann
             }
         }
         entropy.max(0.0)

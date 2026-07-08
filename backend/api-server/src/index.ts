@@ -115,6 +115,7 @@ import { createForkSimulator } from "./routes/wallet-sim-runtime.js";
 import { mountAuthSiwe } from "./routes/auth-siwe.js";
 import { mountOperatorSelfTest } from "./routes/operator-selftest.js";
 import { buildTopologyVaultRouter } from "./routes/topology-vault.js";
+import { mountHealthRouter, setupMetricsWebSocket } from "./routes/health.js";
 import {
   setupWebSocketGateway,
   broadcastOpportunity,
@@ -1399,6 +1400,11 @@ const PORT = Number(process.env["API_PORT"] ?? 8080);
 const httpServer = createServer(app);
 const io = setupWebSocketGateway(httpServer);
 
+// OMEGA Health & Telemetry endpoints — léxico físico-matemático
+// Montar DESPUÉS de que pool/redis/io estén inicializados
+app.use("/api/v1/health", mountHealthRouter({ pool, redis, io }));
+app.use("/api/v1/metrics", mountHealthRouter({ pool, redis, io }));
+
 // OMEGA-7 PR-1: system manifest + runtime_ack handler. Must be mounted AFTER
 // `io` exists because POST /api/system/runtime-ack emits a WSS broadcast into
 // the `runtime_ack` room after a successful PostgreSQL INSERT (invariant
@@ -1467,6 +1473,10 @@ const routeDiscoveryTelemetrySubscriber = subscribeToRouteDiscoveryTelemetry(
   REDIS_URL,
   (m) => routeDiscoveryCache.record(m),
 );
+
+// OMEGA Health & Telemetry — WebSocket namespace para streaming de métricas
+// en tiempo real. Emite entropía, convergencia y métricas topológicas cada 5s.
+setupMetricsWebSocket(io, redis, pool);
 
 if (pool) {
   pool.connect().then(client => {
