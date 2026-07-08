@@ -337,13 +337,13 @@ export function mountHealthRouter(deps: HealthDeps): Router {
   const router = Router();
 
   /**
-   * GET /health
+   * GET /
    * Retorna el estado holístico del sistema OMEGA incluyendo:
    * - Estado de servicios críticos (searcher_rs, postgres, redis)
    * - Entropía termodinámica del sistema
    * - Métricas de convergencia y topología
    */
-  router.get("/health", async (_req: Request, res: Response) => {
+  router.get("/", async (_req: Request, res: Response) => {
     const timestamp = Math.floor(Date.now() / 1000);
 
     try {
