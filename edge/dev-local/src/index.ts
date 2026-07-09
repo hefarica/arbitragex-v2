@@ -209,6 +209,9 @@ app.use('/socket.io', wsProxy);
 // Health probe alias — REST convention for load balancers / external monitors.
 // Proxied to api-server's /api/health which returns service/version/uptime JSON.
 app.get("/api/health", (req, res) => proxy("/api/health", req, res));
+// FASE 1 P0: OMEGA Health & Telemetry routes
+app.get("/api/v1/health", (req, res) => proxy("/api/v1/health", req, res));
+app.get("/api/v1/metrics/entropy", (req, res) => proxy("/api/v1/metrics/entropy", req, res));
 app.get("/api/opportunities/live", (req, res) => proxy("/api/v1/opportunities/live", req, res));
 app.get("/api/scanner/heartbeat", (req, res) => {
   const chain = String(req.query["chain_id"] ?? 1);
