@@ -404,7 +404,11 @@ export function mountHealthRouter(deps: HealthDeps): Router {
       } else if (entropyValue !== null) {
         // Con datos: evaluar umbrales de entropía
         if (entropyValue > 0.9) mathGuardian = "warning";
-        if (entropyValue > 0.95 || convergenceData.variance > 0.5) mathGuardian = "failed";
+        if (entropyValue > 0.95) mathGuardian = "failed";
+        // Solo evaluar varianza si hay datos de convergencia significativos
+        if (convergenceData.variance > 0.5 && topologyData.loops_resolved > 0) {
+          mathGuardian = "failed";
+        }
       }
       // Sin datos de entropía pero servicios OK = passed (sistema funcional, esperando datos)
 
