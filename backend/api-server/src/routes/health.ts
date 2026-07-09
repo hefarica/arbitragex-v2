@@ -392,13 +392,21 @@ export function mountHealthRouter(deps: HealthDeps): Router {
       // Math Guardian: verificar invariantes matemáticos
       let mathGuardian: HealthResponse["math_guardian"] = "passed";
       const entropyValue = entropyData.entropy;
-      if (entropyValue !== null) {
+
+      // Verificar que todos los servicios críticos estén running
+      const criticalServicesRunning =
+        pgStatus.status === "running" &&
+        redisStatus.status === "running";
+
+      if (!criticalServicesRunning) {
+        // Servicios críticos caídos = failed
+        mathGuardian = "failed";
+      } else if (entropyValue !== null) {
+        // Con datos: evaluar umbrales de entropía
         if (entropyValue > 0.9) mathGuardian = "warning";
         if (entropyValue > 0.95 || convergenceData.variance > 0.5) mathGuardian = "failed";
-      } else {
-        // Sin datos de entropía = warning (no failed, es estado transitorio)
-        mathGuardian = "warning";
       }
+      // Sin datos de entropía pero servicios OK = passed (sistema funcional, esperando datos)
 
       const response: HealthResponse = {
         system_status: systemStatus,
