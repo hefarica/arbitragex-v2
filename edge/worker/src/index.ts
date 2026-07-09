@@ -394,6 +394,10 @@ app.get("/api/recon/timeseries", (c) => proxy(c, "/api/v1/recon/timeseries", "ar
 app.get("/api/config/current",   (c) => proxy(c, "/api/v1/config/current",   "arbx:cache:config", 30));
 app.get("/api/readiness",        (c) => proxy(c, "/api/v1/readiness",        "arbx:cache:readiness", 15));
 
+// FASE 1 P0: OMEGA Health & Telemetry routes
+app.get("/api/v1/health",          (c) => proxy(c, "/api/v1/health",          "arbx:cache:health", 5));
+app.get("/api/v1/metrics/entropy", (c) => proxy(c, "/api/v1/metrics/entropy", "arbx:cache:entropy", 5));
+
 // V-AT-1 hardening: httpOnly cookie session for the admin token.
 // POST /admin/session — validate token, set httpOnly cookie. Rate-limited (5/min/IP)
 // and protected by 401 lockout (10 consecutive failures → 15 min block).
