@@ -6,6 +6,7 @@
  */
 
 import express from "express";
+import { Redis } from "ioredis";
 import {
   createHttpLogger,
   createLogger,
@@ -793,6 +794,48 @@ app.get("/admin/audit", (req, res) => {
   }
   adminProxy(url.pathname + url.search, req, res, "GET");
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ULTRA-LOW-LATENCY HOT PATH (<30ms) — LECTURA DIRECTA DE REDIS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const REDIS_HOST = process.env["REDIS_HOST"] ?? "localhost";
+const REDIS_PORT = Number(process.env["REDIS_PORT"] ?? 6379);
+
+const redisClient = new Redis({
+  host: REDIS_HOST,
+  port: REDIS_PORT,
+  retryStrategy: (times: number) => Math.min(times * 50, 2000),
+  maxRetriesPerRequest: 3,
+});
+
+const sendFast = (res: express.Response, data: unknown, status = 200) => {
+  res.status(status).setHeader("content-type", "application/json");
+  res.setHeader("x-arbx-cache", "HOT_REDIS");
+  res.setHeader("x-arbx-latency-tier", "sub-30ms");
+  res.send(JSON.stringify(data));
+};
+
+app.get("/hot/v1/opportunities/live", async (req, res) => {
+  const start = Date.now();
+  try {
+    const items = await redisClient.xrevrange("arbx:hot:opps:*", "+", "-", "COUNT", 10);
+    sendFast(res, { opportunities: items, latency_ms: Date.now() - start });
+  } catch (e) {
+    res.status(503).json({ error: "redis_unavailable" });
+  }
+});
+
+app.get("/hot/v1/metrics/entropy", async (_req, res) => {
+  const start = Date.now();
+  try {
+    const entropy = await redisClient.get("arbx:metrics:entropy:current");
+    sendFast(res, { entropy: entropy ? Number(entropy) : null, latency_ms: Date.now() - start });
+  } catch (e) {
+    res.status(503).json({ error: "redis_unavailable" });
+  }
+});
+
 
 // ─── QUANTUM FULLSTACK SYMMETRY — SPA fallback to the Next.js frontend ────────
 // Everything NOT matched by an explicit /api, /admin, /status, /health, /metrics
