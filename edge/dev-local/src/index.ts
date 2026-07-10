@@ -799,12 +799,9 @@ app.get("/admin/audit", (req, res) => {
 // ULTRA-LOW-LATENCY HOT PATH (<30ms) — LECTURA DIRECTA DE REDIS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const REDIS_HOST = process.env["REDIS_HOST"] ?? "localhost";
-const REDIS_PORT = Number(process.env["REDIS_PORT"] ?? 6379);
+const REDIS_URL = process.env["REDIS_URL"] ?? "redis://localhost:6379";
 
-const redisClient = new Redis({
-  host: REDIS_HOST,
-  port: REDIS_PORT,
+const redisClient = new Redis(REDIS_URL, {
   retryStrategy: (times: number) => Math.min(times * 50, 2000),
   maxRetriesPerRequest: 3,
 });
