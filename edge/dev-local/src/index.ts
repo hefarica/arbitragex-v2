@@ -213,39 +213,18 @@ app.get("/api/health", (req, res) => proxy("/api/health", req, res));
 // ═══════════════════════════════════════════════════════════════════════════════
 // LATENCY-OPTIMIZED PASS-THROUGH PROXY (<30ms target)
 // Routes: /api/v1/health, /api/v1/metrics/entropy
-// Strategy: Direct stream piping via http-proxy-middleware (no body buffering)
+// Strategy: Direct passthrough using existing proxy helper (no body buffering)
 // This eliminates JSON serialization overhead and reduces memory pressure.
 // ═══════════════════════════════════════════════════════════════════════════════
-const healthProxy = createProxyMiddleware({
-  target: API_SERVER_URL,
-  changeOrigin: true,
-  logLevel: 'silent', // Disable I/O overhead for hot path
-  pathRewrite: { '^/api/v1/health': '/api/v1/health' }, // Identity rewrite
-  onProxyReq: (proxyReq) => {
-    // Inject edge token and trace ID for observability
-    proxyReq.setHeader('x-arbx-edge-token', ARBX_EDGE_TOKEN);
-    proxyReq.setHeader('accept', 'application/json');
-  },
-  proxyTimeout: 5000,
-  timeout: 5000,
+app.get('/api/v1/health', (req, res) => {
+  // Forward with edge token for auth
+  req.headers['x-arbx-edge-token'] = ARBX_EDGE_TOKEN;
+  proxy('/api/v1/health', req, res);
 });
-
-const entropyProxy = createProxyMiddleware({
-  target: API_SERVER_URL,
-  changeOrigin: true,
-  logLevel: 'silent',
-  pathRewrite: { '^/api/v1/metrics/entropy': '/api/v1/metrics/entropy' },
-  onProxyReq: (proxyReq) => {
-    proxyReq.setHeader('x-arbx-edge-token', ARBX_EDGE_TOKEN);
-    proxyReq.setHeader('accept', 'application/json');
-  },
-  proxyTimeout: 5000,
-  timeout: 5000,
+app.get('/api/v1/metrics/entropy', (req, res) => {
+  req.headers['x-arbx-edge-token'] = ARBX_EDGE_TOKEN;
+  proxy('/api/v1/metrics/entropy', req, res);
 });
-
-// Mount latency-optimized routes BEFORE generic handlers
-app.use('/api/v1/health', healthProxy);
-app.use('/api/v1/metrics/entropy', entropyProxy);
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/api/opportunities/live", (req, res) => proxy("/api/v1/opportunities/live", req, res));
