@@ -287,6 +287,39 @@ async function proxy(c: import("hono").Context<{ Bindings: Env }>, path: string,
   return c.body(body, upstream.status as 200 | 501 | 502);
 }
 
+/**
+ * LATENCY-OPTIMIZED PASS-THROUGH PROXY (sub-30ms target)
+ * Direct stream forwarding without body buffering.
+ * Use for hot-path routes like /api/v1/health and /api/v1/metrics/entropy
+ * where minimal latency is critical.
+ */
+async function proxyPassThrough(
+  c: import("hono").Context<{ Bindings: Env }>,
+  path: string,
+): Promise<Response> {
+  const incomingQs = new URL(c.req.url).search;
+  const upstreamPath = incomingQs ? `${path}${incomingQs}` : path;
+
+  const upstream = await fetch(`${c.env.API_SERVER_URL}${upstreamPath}`, {
+    headers: {
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+      "accept": "application/json",
+    },
+    cf: { cacheTtl: 0, cacheEverything: false },
+  });
+
+  // Pass-through: forward the response body stream directly without buffering
+  c.header("x-arbx-cache", "PASS");
+  return new Response(upstream.body, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers: {
+      "content-type": upstream.headers.get("content-type") ?? "application/json",
+    },
+  });
+}
+
 // FE-CRIT-01 — /status content-negotiation predicate. Returns true when the
 // caller wants the backend JSON (API client), false when it wants HTML (browser
 // navigation). JSON ⇐ Accept: application/json, ?format=json, or a CLI UA
@@ -394,9 +427,13 @@ app.get("/api/recon/timeseries", (c) => proxy(c, "/api/v1/recon/timeseries", "ar
 app.get("/api/config/current",   (c) => proxy(c, "/api/v1/config/current",   "arbx:cache:config", 30));
 app.get("/api/readiness",        (c) => proxy(c, "/api/v1/readiness",        "arbx:cache:readiness", 15));
 
-// FASE 1 P0: OMEGA Health & Telemetry routes
-app.get("/api/v1/health",          (c) => proxy(c, "/api/v1/health",          "arbx:cache:health", 5));
-app.get("/api/v1/metrics/entropy", (c) => proxy(c, "/api/v1/metrics/entropy", "arbx:cache:entropy", 5));
+// ═══════════════════════════════════════════════════════════════════════════════
+// LATENCY-OPTIMIZED ROUTES (<30ms target) - PASS-THROUGH PROXY
+// No KV cache, no body buffering. Direct stream forwarding for minimal latency.
+// ═══════════════════════════════════════════════════════════════════════════════
+app.get("/api/v1/health",          (c) => proxyPassThrough(c, "/api/v1/health"));
+app.get("/api/v1/metrics/entropy", (c) => proxyPassThrough(c, "/api/v1/metrics/entropy"));
+// ═══════════════════════════════════════════════════════════════════════════════
 
 // V-AT-1 hardening: httpOnly cookie session for the admin token.
 // POST /admin/session — validate token, set httpOnly cookie. Rate-limited (5/min/IP)

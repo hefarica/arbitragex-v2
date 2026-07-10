@@ -209,9 +209,45 @@ app.use('/socket.io', wsProxy);
 // Health probe alias — REST convention for load balancers / external monitors.
 // Proxied to api-server's /api/health which returns service/version/uptime JSON.
 app.get("/api/health", (req, res) => proxy("/api/health", req, res));
-// FASE 1 P0: OMEGA Health & Telemetry routes
-app.get("/api/v1/health", (req, res) => proxy("/api/v1/health", req, res));
-app.get("/api/v1/metrics/entropy", (req, res) => proxy("/api/v1/metrics/entropy", req, res));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LATENCY-OPTIMIZED PASS-THROUGH PROXY (<30ms target)
+// Routes: /api/v1/health, /api/v1/metrics/entropy
+// Strategy: Direct stream piping via http-proxy-middleware (no body buffering)
+// This eliminates JSON serialization overhead and reduces memory pressure.
+// ═══════════════════════════════════════════════════════════════════════════════
+const healthProxy = createProxyMiddleware({
+  target: API_SERVER_URL,
+  changeOrigin: true,
+  logLevel: 'silent', // Disable I/O overhead for hot path
+  pathRewrite: { '^/api/v1/health': '/api/v1/health' }, // Identity rewrite
+  onProxyReq: (proxyReq) => {
+    // Inject edge token and trace ID for observability
+    proxyReq.setHeader('x-arbx-edge-token', ARBX_EDGE_TOKEN);
+    proxyReq.setHeader('accept', 'application/json');
+  },
+  proxyTimeout: 5000,
+  timeout: 5000,
+});
+
+const entropyProxy = createProxyMiddleware({
+  target: API_SERVER_URL,
+  changeOrigin: true,
+  logLevel: 'silent',
+  pathRewrite: { '^/api/v1/metrics/entropy': '/api/v1/metrics/entropy' },
+  onProxyReq: (proxyReq) => {
+    proxyReq.setHeader('x-arbx-edge-token', ARBX_EDGE_TOKEN);
+    proxyReq.setHeader('accept', 'application/json');
+  },
+  proxyTimeout: 5000,
+  timeout: 5000,
+});
+
+// Mount latency-optimized routes BEFORE generic handlers
+app.use('/api/v1/health', healthProxy);
+app.use('/api/v1/metrics/entropy', entropyProxy);
+// ═══════════════════════════════════════════════════════════════════════════════
+
 app.get("/api/opportunities/live", (req, res) => proxy("/api/v1/opportunities/live", req, res));
 app.get("/api/scanner/heartbeat", (req, res) => {
   const chain = String(req.query["chain_id"] ?? 1);
