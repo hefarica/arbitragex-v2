@@ -18,25 +18,16 @@ export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
-  // Hydration safety: getApiBaseUrl() returns different strings on SSR (INTERNAL_EDGE_URL) 
+  // Hydration safety: getApiBaseUrl() returns different strings on SSR (INTERNAL_EDGE_URL)
   // vs CSR (NEXT_PUBLIC_EDGE_URL). We must delay rendering it until the client mounts.
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
-      <div className="flex h-16 items-center gap-3 px-4 lg:px-6">
+    <header className="sticky top-0 z-40 w-full border-b border-[color-mix(in_oklab,oklch(0.62_0.22_263)_20%,transparent)] bg-[color-mix(in_oklab,oklch(0.18_0.05_264)_85%,transparent)] backdrop-blur-xl">
+      <div className="flex h-14 items-center gap-4 px-4 lg:px-6">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-          {/*
-           * NOTE: SheetTrigger WITHOUT asChild — Radix Dialog.Trigger already
-           * renders a native <button>. Styling it via buttonVariants() gives
-           * identical visuals with zero Slot/SlotClone composition, which was
-           * the dev-time source of "Function components cannot be given refs"
-           * (stack: Button <- SlotClone <- SheetTrigger) even after Button
-           * was wrapped in React.forwardRef. Native button = no ref
-           * forwarding path = no warning, guaranteed.
-           */}
           <SheetTrigger
             className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "lg:hidden")}
             aria-label="Open navigation"
@@ -47,7 +38,7 @@ export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
             <SheetHeader>
               <SheetTitle className="flex items-center gap-2">
                 <QuantumLogo className="size-5" />
-                Quantum<span className="text-primary">X</span>
+                ARBITRAG<span className="text-primary">E</span>X
               </SheetTitle>
             </SheetHeader>
             <div className="flex flex-col gap-6 px-3 pb-6">
@@ -56,30 +47,50 @@ export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
           </SheetContent>
         </Sheet>
 
-        <Link href="/" className="flex items-center gap-2.5">
+        {/* Logo */}
+        <Link href="/" className="flex items-center gap-2">
           <span
             aria-hidden
-            className="grid size-9 place-items-center rounded-lg bg-primary/10 shadow-sm ring-1 ring-primary/25"
+            className="grid size-7 place-items-center rounded-full bg-[oklch(0.62_0.22_263)] shadow-[0_0_12px_oklch(0.62_0.22_263/0.5)]"
           >
-            <QuantumLogo className="size-7" />
+            <QuantumLogo className="size-4 text-white" />
           </span>
-          <div className="flex flex-col -space-y-0.5 leading-none">
-            <span className="text-sm font-semibold tracking-tight">
-              Quantum<span className="text-primary">X</span>
-            </span>
-            <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-              control plane
-            </span>
-          </div>
+          <span className="text-[13px] font-bold tracking-[0.12em] text-white">
+            ARBITRAG<span className="text-[oklch(0.62_0.22_263)]">E</span>X
+          </span>
         </Link>
 
-        <Badge variant="glass" className="hidden sm:inline-flex">
-          <span className="size-1.5 rounded-full bg-current opacity-80" aria-hidden /> ghost-protocol
-        </Badge>
+        {/* Center tagline */}
+        <div className="hidden lg:flex items-center gap-2 text-[11px] font-medium tracking-[0.15em] text-[color-mix(in_oklab,white_60%,transparent)] uppercase">
+          <span>Quantum Research Terminal</span>
+          <span className="text-[color-mix(in_oklab,white_30%,transparent)]">·</span>
+          <span>Topological Yield Engine</span>
+        </div>
 
+        {/* Right side badges */}
         <div className="ml-auto flex items-center gap-2">
+          {/* Paper · TLS Shadow Badge */}
+          <Badge
+            variant="outline"
+            className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 h-7 text-[11px] font-medium tracking-wide border-[oklch(0.55_0.18_145)] bg-[color-mix(in_oklab,oklch(0.55_0.18_145)_15%,transparent)] text-[oklch(0.75_0.15_145)] hover:bg-[color-mix(in_oklab,oklch(0.55_0.18_145)_20%,transparent)]"
+          >
+            <span className="size-1.5 rounded-full bg-[oklch(0.65_0.16_145)] animate-pulse" aria-hidden />
+            PAPER · TLS SHADOW
+          </Badge>
+
+          {/* Kill-Switch Badge */}
+          <Badge
+            variant="outline"
+            className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 h-7 text-[11px] font-medium tracking-wide border-[oklch(0.55_0.15_250)] bg-[color-mix(in_oklab,oklch(0.55_0.15_250)_15%,transparent)] text-[oklch(0.75_0.12_250)] hover:bg-[color-mix(in_oklab,oklch(0.55_0.15_250)_20%,transparent)]"
+          >
+            <span className="size-1.5 rounded-full bg-[oklch(0.65_0.13_250)]" aria-hidden />
+            KILL-SWITCH &lt;10MS
+          </Badge>
+
+          <div className="w-px h-5 bg-[color-mix(in_oklab,white_15%,transparent)] mx-1" />
+
           <WebSocketIndicator />
-          <code className="hidden md:inline-flex rounded-md border bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground">
+          <code className="hidden md:inline-flex rounded-md border border-[color-mix(in_oklab,white_15%,transparent)] bg-[color-mix(in_oklab,black_30%,transparent)] px-2 py-1 text-[10px] text-[color-mix(in_oklab,white_50%,transparent)]">
             {isMounted ? getApiBaseUrl() : "—"}
           </code>
           <ThemeToggle />

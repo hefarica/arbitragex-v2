@@ -1,109 +1,141 @@
-import { getApiBaseUrl } from "@/lib/api-client";
-import Link from "next/link";
-import {
-  ActivityIcon,
-  AlertTriangleIcon,
-  ArrowUpRightIcon,
-  FlaskConicalIcon,
-  GaugeIcon,
-  KeyRoundIcon,
-  ListChecksIcon,
-  PowerIcon,
-  SatelliteDishIcon,
-  SettingsIcon,
-  ZapIcon,
-  type LucideIcon,
-} from "lucide-react";
+import { XRayCard } from "@/components/XRayCard";
+import { StatCard } from "@/components/StatCard";
+import { GateSection } from "@/components/GateSection";
 
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { HomeKpiStrip } from "@/features/home/HomeKpiStrip";
-import { ProgressRealCard } from "@/features/home/ProgressRealCard";
-import { getReconSummary, getStatus } from "@/lib/api-client";
-
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-
-type Tile = {
-  href: string;
-  title: string;
-  blurb: string;
-  icon: LucideIcon;
-  tag: "observe" | "control";
-};
-
-const TILES: Tile[] = [
-  { href: "/status",             title: "System status",      blurb: "Per-service health, kill-switch state, version metadata.",                          icon: ActivityIcon,      tag: "observe" },
-  { href: "/opportunities",      title: "Live opportunities", blurb: "Recent detections from the mempool; filter by chain + strategy.",                  icon: SatelliteDishIcon, tag: "observe" },
-  { href: "/executions",         title: "Recent executions",  blurb: "Bundle submissions and outcomes — included, reverted, replaced, dropped.",          icon: ZapIcon,           tag: "observe" },
-  { href: "/live-readiness",     title: "Live readiness",     blurb: "GO/NO-GO gate — readiness criteria that must be green before flipping paper-mode off.", icon: ListChecksIcon,  tag: "control" },
-  { href: "/risk",               title: "Risk & alerts",      blurb: "Circuit-breaker trips, anomaly events, blacklist hits, kill-switch log.",           icon: AlertTriangleIcon, tag: "observe" },
-  { href: "/recon",              title: "Recon & PnL",        blurb: "Window totals, realised PnL, top strategies by adaptive score.",                    icon: GaugeIcon,         tag: "observe" },
-  { href: "/paper/history",      title: "Paper history",      blurb: "Paper-trade ledger and drift analysis during the paper-shadow accumulation window.", icon: FlaskConicalIcon,  tag: "observe" },
-  { href: "/settings/credentials", title: "Credentials",      blurb: "Inject RPC keys, relay auth, token-safety APIs. Step 1 — the platform is blind without it.", icon: KeyRoundIcon, tag: "control" },
-  { href: "/config",             title: "Current config",     blurb: "Loaded application settings. Secrets are redacted.",                                icon: SettingsIcon,      tag: "control" },
-  { href: "/killswitch",         title: "Kill-switch",        blurb: "Arm or disable execution at the platform level. Admin token required.",              icon: PowerIcon,         tag: "control" },
+const opportunities = [
+  {
+    pair: "WETH/USDC",
+    yield: "+0.42%",
+    confidence: 87,
+    legs: 2,
+    ago: "4s ago",
+    route: "UNI-V3 → SUSHI-V2",
+    fees: "pool 0.30% + gas 0.018%",
+    tlsAmount: "12.4 WETH",
+    simVerdict: "revm-pass · 3ms",
+    safetyA: 92,
+    safetyB: 88,
+  },
+  {
+    pair: "ARB/WETH",
+    yield: "+0.18%",
+    confidence: 74,
+    legs: 3,
+    ago: "7s ago",
+    route: "CAMELOT → UNI-V3",
+    fees: "pool 0.25% + gas 0.021%",
+    tlsAmount: "— (no TLS)",
+    simVerdict: "revm-pass · 4ms",
+    safetyA: 88,
+    safetyB: 90,
+  },
+  {
+    pair: "WBTC/USDC",
+    yield: "+0.31%",
+    confidence: 91,
+    legs: 2,
+    ago: "9s ago",
+    route: "UNI-V3 → BAL-V2",
+    fees: "pool 0.30% + gas 0.019%",
+    tlsAmount: "3.1 WBTC",
+    simVerdict: "revm-pass · 3ms",
+    safetyA: 95,
+    safetyB: 84,
+  },
 ];
 
-export default async function Home() {
-  const [status, recon] = await Promise.all([getStatus(), getReconSummary(1)]);
+export default function HomePage() {
   return (
-    <>
-      <div className="mb-8 space-y-2">
-        <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-muted-foreground">
-          <span className="size-1.5 rounded-full bg-primary" />
-          operator console
+    <div className="space-y-12">
+      {/* Hero Section */}
+      <section className="max-w-[980px]">
+        <div className="font-mono text-[10.5px] tracking-widest uppercase text-[var(--primary)] mb-4">
+          IA OMEGA · OBSERVE → SIMULATE → EXECUTE
         </div>
-        <h1>Platform control plane.</h1>
-        <p className="max-w-2xl text-base text-muted-foreground">
-          Every view below consumes live edge endpoints. When an upstream is unhealthy
-          the page surfaces the error verbatim — it never synthesizes values.
+
+        <h1 className="text-[clamp(2.4rem,4.6vw,4rem)] font-semibold leading-[1.03] tracking-[-0.04em] mb-6">
+          Convergencia estocástica.
+          <br />
+          <span className="text-[var(--primary-2)]">Topological Yield</span> en milisegundos.
+        </h1>
+
+        <p className="text-base leading-relaxed text-[var(--muted)] max-w-[64ch]">
+          El motor observa <b className="text-[var(--foreground)] font-medium">50 rutas de Liquidity Manifolds</b> en paralelo,
+          resuelve <b className="text-[var(--foreground)] font-medium">Asimetría Topológica</b> bajo
+          <b className="text-[var(--foreground)] font-medium">Temporal Liquidity Superposition</b>,
+          y mantiene el capital expuesto en <b className="text-[var(--foreground)] font-medium">$0.00</b> hasta que cada gate
+          institucional esté en verde. Doctrina OMEGA: honestidad antes que teatro.
         </p>
-        <div className="flex flex-wrap gap-2 pt-2">
-          <Badge variant="info">paper-mode ON</Badge>
-          <Badge variant="outline">S1 – S6 merged</Badge>
-          <Badge variant="outline" className="font-mono">{getApiBaseUrl()}</Badge>
+      </section>
+
+      {/* Stats Grid */}
+      <section className="stats-grid">
+        <StatCard
+          label="Topological Yield · 24h"
+          value={0.42}
+          subtext="proyectado · REVM verified"
+          variant="success"
+          decimals={2}
+          suffix="%"
+        />
+
+        <StatCard
+          label="Asimetrías detectadas"
+          value={1284}
+          subtext="stream arbx:opps:detected"
+          variant="accent"
+          decimals={0}
+        />
+
+        <StatCard
+          label="Capital expuesto"
+          value={0}
+          subtext="paper-shadow · estructural"
+          decimals={0}
+          prefix="$"
+          suffix=".00"
+        />
+
+        <StatCard
+          label="Decoherencia media"
+          value={0.21}
+          subtext="slippage proyectado"
+          decimals={2}
+          suffix="%"
+        />
+      </section>
+
+      {/* Opportunities Section */}
+      <section>
+        <div className="flex items-baseline gap-4 mb-5">
+          <span className="font-mono text-[10.5px] tracking-widest uppercase text-[var(--muted)]">
+            / opportunities · live
+          </span>
+          <h2 className="text-[22px] font-semibold tracking-[-0.02em]">
+            Asimetrías Topológicas activas
+          </h2>
         </div>
-      </div>
 
-      <HomeKpiStrip status={status} recon={recon} />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-[18px]">
+          {opportunities.map((opp) => (
+            <XRayCard key={opp.pair} {...opp} />
+          ))}
+        </div>
+      </section>
 
-      <ProgressRealCard />
+      {/* Gate Section */}
+      <section>
+        <div className="flex items-baseline gap-4 mb-5">
+          <span className="font-mono text-[10.5px] tracking-widest uppercase text-[var(--muted)]">
+            / live-readiness · doctrinal gate
+          </span>
+          <h2 className="text-[22px] font-semibold tracking-[-0.02em]">
+            The Gate Refusal
+          </h2>
+        </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {TILES.map((t) => {
-          const Icon = t.icon;
-          return (
-            <Link key={t.href} href={t.href} className="group">
-              <Card className="relative h-full overflow-hidden transition-all hover:border-primary/40 hover:shadow-md">
-                <div
-                  aria-hidden
-                  className="pointer-events-none absolute inset-0 opacity-0 transition-opacity group-hover:opacity-100"
-                  style={{
-                    background:
-                      "radial-gradient(600px circle at 0% 0%, color-mix(in oklab, var(--primary) 8%, transparent), transparent 40%)",
-                  }}
-                />
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div className="flex size-9 items-center justify-center rounded-md bg-muted text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary">
-                      <Icon className="size-4" />
-                    </div>
-                    <Badge variant={t.tag === "control" ? "default" : "secondary"}>
-                      {t.tag}
-                    </Badge>
-                  </div>
-                  <CardTitle className="mt-3 flex items-center gap-1.5">
-                    {t.title}
-                    <ArrowUpRightIcon className="size-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
-                  </CardTitle>
-                  <CardDescription>{t.blurb}</CardDescription>
-                </CardHeader>
-              </Card>
-            </Link>
-          );
-        })}
-      </div>
-    </>
+        <GateSection />
+      </section>
+    </div>
   );
 }

@@ -3,6 +3,11 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ============================================
+   ARBITRAGEX PREMIUM ENTERPRISE DESIGN SYSTEM
+   Liquid Glass + X-Ray + Premium Effects V5
+   ============================================ */
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -54,127 +59,160 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* PURE WHITE THEME (#FFFFFF) - PHASE 8 CONSOLIDATION */
+/* ============ THEME TOKENS - PREMIUM ENTERPRISE ============ */
+
+/* LIGHT — Wonderful Whites (default) */
 :root {
-  --radius: 1rem; /* iOS-style rounded corners */
+  --radius: 0.875rem;
 
-  /* Particle-sphere accent — ROYAL BLUE in the light theme (HeroSphere). */
+  /* Aurora/Glow colors */
+  --glow-1: oklch(0.78 0.15 258 / 0.45);
+  --glow-2: oklch(0.82 0.12 235 / 0.35);
+  --glow-3: oklch(0.88 0.09 220 / 0.28);
   --sphere-rgb: 36 74 235;
+  --sphere-blend: multiply;
+  --grain-opacity: 0.26;
 
-  --background: oklch(1 0 0); /* #FFFFFF */
+  /* Core colors */
+  --background: oklch(0.985 0.004 240);
   --foreground: oklch(0.18 0.04 260);
-
-  --card: oklch(1 0 0);
+  --card: oklch(1.000 0.003 240 / 0.55);
   --card-foreground: oklch(0.18 0.04 260);
 
-  --popover: oklch(1 0 0 / 95%);
+  --popover: oklch(0.99 0.004 240 / 0.95%);
   --popover-foreground: oklch(0.18 0.04 260);
 
-  --primary: oklch(0.25 0.05 260);
+  --primary: oklch(0.50 0.22 263);
   --primary-foreground: oklch(1 0 0);
+  --primary-2: oklch(0.55 0.20 240);
 
   --secondary: oklch(0.96 0.015 220);
   --secondary-foreground: oklch(0.18 0.04 260);
 
-  --muted: oklch(0.96 0.015 220);
-  --muted-foreground: oklch(0.45 0.025 220);
+  --muted: oklch(0.45 0.025 250);
+  --muted-foreground: oklch(0.55 0.03 250);
 
   --accent: oklch(0.92 0.04 215);
   --accent-foreground: oklch(0.18 0.04 260);
 
-  --destructive: oklch(0.55 0.13 180);
+  --destructive: oklch(0.50 0.22 18);
   --destructive-foreground: oklch(1 0 0);
 
-  --success: oklch(0.62 0.17 145); /* Fluorescent Green */
+  --success: oklch(0.45 0.17 152);
   --success-foreground: oklch(1 0 0);
 
-  --warning: oklch(0.75 0.18 85);
+  --warning: oklch(0.55 0.16 75);
   --warning-foreground: oklch(0.18 0.04 260);
 
   --info: oklch(0.60 0.15 220);
   --info-foreground: oklch(1 0 0);
 
-  --border: oklch(0.92 0.01 220);
+  --border: oklch(0.30 0.04 260 / 0.14);
   --input: oklch(0.94 0.01 220);
-  --ring: oklch(0.25 0.05 260);
+  --ring: oklch(0.50 0.22 263);
 
+  /* Ticker & Header */
+  --ticker-bg: oklch(0.99 0.004 240 / 0.70);
+  --header-bg: oklch(0.985 0.004 240 / 0.62);
+  --hairline: inset 0 1px 0 0 oklch(0.55 0.10 255 / 0.22);
+  --shadow: 0 10px 32px -16px oklch(0.40 0.10 255 / 0.22);
+  --xray-bg: oklch(0.97 0.012 250 / 0.94);
+  --wordmark-glow: 0 0 22px oklch(0.50 0.22 263 / 0.35), 0 0 38px oklch(0.50 0.22 263 / 0.20);
+
+  /* Easings */
+  --ease-expo: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-sharp: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Chart colors */
   --chart-1: oklch(0.60 0.15 220);
   --chart-2: oklch(0.62 0.17 145);
   --chart-3: oklch(0.45 0.18 260);
   --chart-4: oklch(0.75 0.18 85);
   --chart-5: oklch(0.65 0.20 330);
 
-  --sidebar: oklch(1 0 0);
+  /* Sidebar */
+  --sidebar: oklch(0.98 0.004 240);
   --sidebar-foreground: oklch(0.18 0.04 260);
-  --sidebar-primary: oklch(0.25 0.05 260);
+  --sidebar-primary: oklch(0.50 0.22 263);
   --sidebar-primary-foreground: oklch(1 0 0);
   --sidebar-accent: oklch(0.96 0.02 220);
   --sidebar-accent-foreground: oklch(0.18 0.04 260);
-  --sidebar-border: oklch(0.92 0.01 220);
-  --sidebar-ring: oklch(0.25 0.05 260);
+  --sidebar-border: oklch(0.30 0.04 260 / 0.14);
+  --sidebar-ring: oklch(0.50 0.22 263);
 }
 
-/* Dark mode — "TradePro" premium fintech theme:
-   deep navy/indigo background + electric royal-blue primary + blue accents.
-   Green = success/buy, red = destructive/sell, amber = warning. */
+/* DARK — Royal Blue → Light Blue (vivid, alive) - EXACT MOCKUP COLORS */
 .dark {
-  /* Particle-sphere accent — LIGHT (pale blue-white) in the dark theme (HeroSphere). */
+  /* Aurora/Glow colors - from mockup */
+  --glow-1: oklch(0.55 0.26 263 / 0.50);
+  --glow-2: oklch(0.70 0.18 240 / 0.38);
+  --glow-3: oklch(0.84 0.11 220 / 0.32);
   --sphere-rgb: 206 224 255;
+  --sphere-blend: normal;
+  --grain-opacity: 0.5;
 
-  --background: oklch(0.14 0.035 265);
+  /* Core colors - EXACT from mockup */
+  --background: oklch(0.18 0.05 264);
   --foreground: oklch(0.98 0.012 250);
-
-  --card: oklch(0.18 0.04 265);
+  --card: oklch(0.24 0.06 258 / 0.55);  /* Increased transparency for Liquid Glass */
   --card-foreground: oklch(0.98 0.012 250);
 
   --popover: oklch(0.17 0.04 265 / 96%);
   --popover-foreground: oklch(0.98 0.012 250);
 
-  /* Electric royal blue — the TradePro accent. */
-  --primary: oklch(0.62 0.20 263);
-  --primary-foreground: oklch(0.99 0.008 250);
+  --primary: oklch(0.62 0.22 263);
+  --primary-foreground: oklch(0.18 0.05 264);
+  --primary-2: oklch(0.78 0.14 235);
 
   --secondary: oklch(0.23 0.04 265);
   --secondary-foreground: oklch(0.96 0.012 250);
 
-  --muted: oklch(0.22 0.04 265);
+  --muted: oklch(0.69 0.04 250);
   --muted-foreground: oklch(0.69 0.035 258);
 
   --accent: oklch(0.32 0.075 263);
   --accent-foreground: oklch(0.98 0.012 250);
 
-  /* Red for destructive / sell-side. */
-  --destructive: oklch(0.62 0.20 18);
+  --destructive: oklch(0.66 0.22 18);
   --destructive-foreground: oklch(0.99 0.008 250);
 
-  /* Green for success / buy-side. */
-  --success: oklch(0.70 0.17 152);
-  --success-foreground: oklch(0.14 0.035 265);
+  --success: oklch(0.77 0.18 152);
+  --success-foreground: oklch(0.18 0.05 264);
 
-  --warning: oklch(0.80 0.16 80);
-  --warning-foreground: oklch(0.14 0.035 265);
+  --warning: oklch(0.82 0.16 80);
+  --warning-foreground: oklch(0.18 0.05 264);
 
   --info: oklch(0.66 0.16 256);
-  --info-foreground: oklch(0.14 0.035 265);
+  --info-foreground: oklch(0.18 0.05 264);
 
-  --border: oklch(0.29 0.035 264);
+  --border: oklch(0.70 0.10 250 / 0.16);
   --input: oklch(0.27 0.035 264);
-  --ring: oklch(0.62 0.20 263);
+  --ring: oklch(0.62 0.22 263);
 
+  /* Ticker & Header */
+  --ticker-bg: oklch(0.16 0.05 266 / 0.55);
+  --header-bg: oklch(0.18 0.05 264 / 0.40);
+  --hairline: inset 0 1px 0 0 oklch(0.98 0.012 250 / 0.16);
+  --shadow: 0 8px 30px -14px oklch(0.02 0.02 266 / 0.5);
+  --xray-bg: oklch(0.16 0.06 263 / 0.92);
+  --wordmark-glow: 0 0 26px oklch(0.62 0.22 263 / 0.60), 0 0 48px oklch(0.62 0.22 263 / 0.35);
+
+  /* Chart colors */
   --chart-1: oklch(0.62 0.20 263);
   --chart-2: oklch(0.70 0.17 152);
   --chart-3: oklch(0.70 0.15 258);
   --chart-4: oklch(0.80 0.16 80);
   --chart-5: oklch(0.66 0.20 330);
 
+  /* Sidebar */
   --sidebar: oklch(0.16 0.04 266);
   --sidebar-foreground: oklch(0.98 0.012 250);
-  --sidebar-primary: oklch(0.62 0.20 263);
+  --sidebar-primary: oklch(0.62 0.22 263);
   --sidebar-primary-foreground: oklch(0.99 0.008 250);
   --sidebar-accent: oklch(0.26 0.05 265);
   --sidebar-accent-foreground: oklch(0.98 0.012 250);
-  --sidebar-border: oklch(0.29 0.035 264);
-  --sidebar-ring: oklch(0.62 0.20 263);
+  --sidebar-border: oklch(0.70 0.10 250 / 0.16);
+  --sidebar-ring: oklch(0.62 0.22 263);
 }
 
 @layer base {
@@ -188,58 +226,438 @@
   body {
     @apply bg-background text-foreground font-sans;
     font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+    overflow-x: hidden;
+    letter-spacing: -0.011em;
+    transition: background 320ms var(--ease-expo), color 320ms var(--ease-expo);
   }
 }
 
-/* ── TradePro premium glassmorphism (dark theme) ───────────────────────────
-   Layered navy gradient backdrop + frosted-glass surfaces that let the
-   gradient bleed through. Dark-scoped; the light theme stays flat/solid.
-   This deliberately replicates the TradePro reference design at the operator's
-   explicit request — a controlled gradient+glass system, not noise. */
-
-/* Gradient backdrop — electric-blue glow over deep navy, pinned to viewport so
-   panels float over it (the glass blur samples this fixed layer). */
-.dark body {
-  background-color: oklch(0.13 0.035 266);
-  background-image:
-    radial-gradient(58% 48% at 50% -8%, oklch(0.55 0.20 263 / 0.22), transparent 62%),
-    radial-gradient(40% 34% at 93% 3%, oklch(0.50 0.18 296 / 0.14), transparent 58%),
-    radial-gradient(42% 38% at 5% 8%, oklch(0.52 0.15 232 / 0.12), transparent 58%),
-    linear-gradient(180deg, oklch(0.155 0.045 266) 0%, oklch(0.125 0.032 267) 52%, oklch(0.11 0.028 268) 100%);
-  background-attachment: fixed;
+/* ============ AURORA BACKDROP - EXACT MOCKUP ============ */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -30%;
+  z-index: -20;
+  background:
+    radial-gradient(62% 52% at 50% -6%, var(--glow-1), transparent 62%),
+    radial-gradient(46% 38% at 88% 6%, var(--glow-2), transparent 60%),
+    radial-gradient(48% 40% at 10% 14%, var(--glow-3), transparent 60%);
   background-repeat: no-repeat;
+  animation: drift 34s ease-in-out infinite;
+  will-change: transform;
+  transition: background 480ms var(--ease-expo);
 }
 
-/* Frosted-glass cards — translucent navy + blur so the gradient shows through,
-   with a hairline top highlight + soft drop shadow for the glass edge. */
-.dark [data-slot="card"] {
-  background-color: oklch(0.205 0.042 265 / 0.55);
-  backdrop-filter: blur(14px) saturate(1.35);
-  -webkit-backdrop-filter: blur(14px) saturate(1.35);
-  /* NOTE: intentionally do NOT set border-color here. Several pages put
-     data-slot="card" on raw divs that carry state borders (e.g. worker-health
-     uses `border-success/40` to signal "Kernel Bypass ACTIVE"). An attribute
-     selector (0,1,1) would clobber those single-class utilities (0,1,0) and
-     silently flatten the state signal. The glass edge comes from the inset
-     top-highlight in the box-shadow below — border tint is not needed. */
+@keyframes drift {
+  0% { transform: translate3d(0%, 0%, 0) scale(1); }
+  25% { transform: translate3d(6%, -4%, 0) scale(1.09); }
+  50% { transform: translate3d(-5%, 5%, 0) scale(1.13); }
+  75% { transform: translate3d(5%, 3%, 0) scale(1.07); }
+  100% { transform: translate3d(0%, 0%, 0) scale(1); }
+}
+
+/* Body gradient sweep - EXACT from mockup */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -30;
+  background: linear-gradient(90deg,
+    oklch(0.99 0.004 240) 0%,
+    oklch(0.965 0.008 250) 55%,
+    oklch(0.935 0.013 252) 100%);
+  background-attachment: fixed;
+  transition: background 480ms var(--ease-expo);
+}
+
+.dark body::after {
+  background: linear-gradient(90deg,
+    oklch(0.46 0.19 250) 0%,
+    oklch(0.24 0.11 258) 55%,
+    oklch(0.16 0.05 266) 100%);
+}
+
+/* ============ FILM GRAIN OVERLAY ============ */
+.grain-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/></svg>");
+  transition: opacity 320ms var(--ease-expo);
+}
+
+/* ============ LIQUID GLASS - PREMIUM CARDS - EXACT MOCKUP ============ */
+.liquid-glass {
+  background: linear-gradient(145deg,
+    color-mix(in oklab, var(--card) 60%, transparent) 0%,
+    color-mix(in oklab, var(--card) 40%, transparent) 100%);
+  backdrop-filter: blur(20px) saturate(2.2) brightness(1.05);
+  -webkit-backdrop-filter: blur(20px) saturate(2.2) brightness(1.05);
+  border: 1px solid color-mix(in oklab, var(--primary) 20%, transparent);
+  border-radius: 14px;
   box-shadow:
-    inset 0 1px 0 0 oklch(0.92 0.04 260 / 0.07),
-    0 10px 34px -16px oklch(0.02 0.02 266 / 0.85);
+    inset 0 1px 0 0 color-mix(in oklab, white 8%, transparent),
+    0 8px 32px color-mix(in oklab, var(--primary) 8%, transparent);
+  position: relative;
+  overflow: hidden;
+  transition: all 320ms var(--ease-expo);
 }
 
-/* Opt-in glass surface for non-Card panels (metric tiles, etc.).
-   Solid in light theme, frosted in dark. */
-.glass-surface {
-  @apply bg-card;
-}
-.dark .glass-surface {
-  background-color: oklch(0.21 0.042 265 / 0.50);
-  backdrop-filter: blur(11px) saturate(1.3);
-  -webkit-backdrop-filter: blur(11px) saturate(1.3);
-  border-color: oklch(0.55 0.06 264 / 0.18);
+.liquid-glass:hover {
+  border-color: color-mix(in oklab, var(--primary) 40%, transparent);
+  transform: translateY(-3px) scale(1.01);
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, white 12%, transparent),
+    0 16px 48px color-mix(in oklab, var(--primary) 15%, transparent);
 }
 
-/* Glassmorphism Phase 8 - GPU Optimized (legacy utilities, retained) */
+.dark .liquid-glass {
+  background: linear-gradient(135deg,
+    color-mix(in oklab, oklch(0.24 0.06 258) 50%, transparent) 0%,
+    color-mix(in oklab, oklch(0.20 0.05 260) 40%, transparent) 50%,
+    color-mix(in oklab, oklch(0.22 0.05 259) 45%, transparent) 100%);
+}
+
+/* ============ X-RAY CARD EFFECT - EXACT MOCKUP ============ */
+.xray-card {
+  position: relative;
+  background: linear-gradient(135deg,
+    color-mix(in oklab, oklch(0.24 0.06 258) 45%, transparent) 0%,
+    color-mix(in oklab, oklch(0.20 0.05 260) 35%, transparent) 50%,
+    color-mix(in oklab, oklch(0.22 0.05 259) 40%, transparent) 100%);
+  backdrop-filter: blur(20px) saturate(2.2) brightness(1.05);
+  -webkit-backdrop-filter: blur(20px) saturate(2.2) brightness(1.05);
+  border: 1px solid color-mix(in oklab, var(--primary) 25%, transparent);
+  border-radius: 14px;
+  padding: 20px 22px;
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, white 8%, transparent),
+    0 8px 32px color-mix(in oklab, var(--primary) 8%, transparent);
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 320ms var(--ease-expo);
+}
+
+.xray-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg,
+    transparent 30%,
+    color-mix(in oklab, var(--primary) 8%, transparent) 45%,
+    color-mix(in oklab, white 12%, transparent) 50%,
+    color-mix(in oklab, var(--primary) 8%, transparent) 55%,
+    transparent 70%);
+  transform: translateX(-100%);
+  transition: transform 600ms var(--ease-expo);
+  pointer-events: none;
+}
+
+.xray-card:hover {
+  border-color: color-mix(in oklab, var(--primary) 40%, transparent);
+  transform: translateY(-3px) scale(1.01);
+  box-shadow:
+    var(--hairline),
+    0 16px 48px color-mix(in oklab, var(--primary) 15%, transparent),
+    0 8px 24px color-mix(in oklab, var(--primary) 10%, transparent),
+    inset 0 1px 0 color-mix(in oklab, white 12%, transparent);
+}
+
+.xray-card:hover::before {
+  transform: translateX(100%);
+}
+
+.xray-card:hover .xray-content {
+  clip-path: inset(0 0 0 0);
+}
+
+.xray-card:hover .xray-main {
+  opacity: 0.35;
+  transition: opacity 320ms;
+}
+
+.xray-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 18px 22px 20px;
+  background: linear-gradient(180deg, transparent, var(--xray-bg));
+  backdrop-filter: blur(6px);
+  clip-path: inset(100% 0 0 0);
+  transition: clip-path 320ms var(--ease-sharp);
+}
+
+/* ============ SHIMMER EFFECT ============ */
+.shimmer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(115deg,
+    transparent 30%,
+    color-mix(in oklab, var(--foreground) 14%, transparent) 50%,
+    transparent 70%);
+  transform: translateX(-120%);
+  animation: shine 3.4s var(--ease-sharp) 1.2s infinite;
+}
+
+@keyframes shine {
+  0%, 80% { transform: translateX(-120%); }
+  100% { transform: translateX(120%); }
+}
+
+/* ============ TICKER STYLES ============ */
+.ticker {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  border-top: 1px solid var(--border);
+  background: var(--ticker-bg);
+  backdrop-filter: blur(12px) saturate(1.4);
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
+  overflow: hidden;
+  font-family: var(--font-geist-mono), 'Space Mono', monospace;
+  font-size: 12.5px;
+  letter-spacing: 0.08em;
+}
+
+.ticker-track {
+  display: inline-flex;
+  align-items: center;
+  gap: 2.5rem;
+  padding: 16px 0;
+  white-space: nowrap;
+  animation: tick 60s linear infinite;
+}
+
+.ticker:hover .ticker-track {
+  animation-play-state: paused;
+}
+
+@keyframes tick {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.ticker-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--muted);
+}
+
+.ticker-item b {
+  color: var(--foreground);
+  font-weight: 700;
+}
+
+.ticker-item .pos { color: var(--success); }
+.ticker-item .neg { color: var(--destructive); }
+.ticker-item .arr { font-size: 9px; }
+.ticker-item .ago { opacity: 0.65; }
+
+/* ============ GATE SECTION ============ */
+.gate-section {
+  margin-top: 56px;
+  padding: 28px 30px;
+  background: linear-gradient(145deg,
+    color-mix(in oklab, var(--card) 92%, white 4%) 0%,
+    color-mix(in oklab, var(--card) 80%, transparent) 100%);
+  backdrop-filter: blur(22px) saturate(2.0) brightness(1.05);
+  -webkit-backdrop-filter: blur(22px) saturate(2.0) brightness(1.05);
+  border: 1px solid color-mix(in oklab, var(--border) 50%, var(--primary) 18%);
+  border-radius: 14px;
+  box-shadow:
+    var(--hairline),
+    var(--shadow),
+    0 12px 40px color-mix(in oklab, var(--primary) 10%, transparent),
+    inset 0 1px 0 color-mix(in oklab, white 6%, transparent);
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 32px;
+  align-items: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.gate-section::before {
+  content: "";
+  position: absolute;
+  top: -50%;
+  right: -20%;
+  width: 60%;
+  height: 200%;
+  background: radial-gradient(ellipse at center,
+    color-mix(in oklab, var(--destructive) 8%, transparent) 0%,
+    transparent 70%);
+  pointer-events: none;
+}
+
+.gate-verdict {
+  font-family: var(--font-geist-mono), 'Space Mono', monospace;
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  color: var(--destructive);
+  margin-bottom: 14px;
+}
+
+.gate-checks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 14px;
+  font-family: var(--font-geist-mono), 'Space Mono', monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+}
+
+.gate-check {
+  color: var(--muted);
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.gate-check .led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.gate-check.green {
+  color: var(--foreground);
+}
+
+.gate-check.green .led {
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
+}
+
+.gate-check.red .led {
+  background: var(--destructive);
+  box-shadow: 0 0 8px var(--destructive);
+}
+
+/* ============ BADGES - LIQUID GLASS ============ */
+.badge-liquid {
+  font-family: var(--font-geist-mono), 'Space Mono', monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 7px 13px;
+  border-radius: 8px;
+  background: linear-gradient(135deg,
+    color-mix(in oklab, var(--success) 20%, transparent) 0%,
+    color-mix(in oklab, var(--success) 10%, transparent) 100%);
+  color: var(--success);
+  border: 1px solid color-mix(in oklab, var(--success) 40%, transparent);
+  box-shadow:
+    0 2px 8px color-mix(in oklab, var(--success) 15%, transparent),
+    inset 0 1px 0 color-mix(in oklab, white 10%, transparent);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  white-space: nowrap;
+  transition: transform 180ms var(--ease-sharp), box-shadow 180ms;
+}
+
+.badge-liquid:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 4px 12px color-mix(in oklab, var(--success) 20%, transparent),
+    inset 0 1px 0 color-mix(in oklab, white 12%, transparent);
+}
+
+.badge-liquid .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 12px var(--success), 0 0 20px color-mix(in oklab, var(--success) 70%, transparent);
+  animation: pulse-led 2s ease-in-out infinite;
+}
+
+.badge-liquid.primary {
+  background: linear-gradient(135deg,
+    color-mix(in oklab, var(--primary) 20%, transparent) 0%,
+    color-mix(in oklab, var(--primary) 10%, transparent) 100%);
+  color: var(--primary);
+  border-color: color-mix(in oklab, var(--primary) 40%, transparent);
+  box-shadow:
+    0 2px 8px color-mix(in oklab, var(--primary) 15%, transparent),
+    inset 0 1px 0 color-mix(in oklab, white 10%, transparent);
+}
+
+.badge-liquid.primary:hover {
+  box-shadow:
+    0 4px 12px color-mix(in oklab, var(--primary) 20%, transparent),
+    inset 0 1px 0 color-mix(in oklab, white 12%, transparent);
+}
+
+.badge-liquid.primary .dot {
+  background: var(--primary);
+  box-shadow: 0 0 12px var(--primary), 0 0 20px color-mix(in oklab, var(--primary) 70%, transparent);
+}
+
+@keyframes pulse-led {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 10px var(--success), 0 0 20px color-mix(in oklab, var(--success) 60%, transparent);
+  }
+  50% {
+    opacity: 0.75;
+    transform: scale(0.92);
+    box-shadow: 0 0 20px var(--success), 0 0 36px color-mix(in oklab, var(--success) 80%, transparent), 0 0 48px color-mix(in oklab, var(--success) 40%, transparent);
+  }
+}
+
+/* ============ WORDMARK GLOW ============ */
+.wordmark-glow {
+  text-shadow: var(--wordmark-glow);
+}
+
+/* ============ STATS GRID ============ */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 18px;
+  margin: 40px 0 56px;
+}
+
+@media (max-width: 1100px) {
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .gate-section { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 640px) {
+  .stats-grid { grid-template-columns: 1fr; }
+}
+
+/* ============ CUSTOM SCROLLBAR ============ */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--muted) 20%, transparent);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--muted) 40%, transparent);
+}
+
+/* ============ LEGACY GLASS UTILITIES (retained for compatibility) ============ */
 .glass-panel {
   @apply bg-background/60 backdrop-blur-md border border-white/20 shadow-sm;
   transform: translateZ(0);
@@ -250,8 +668,6 @@
   transform: translateZ(0);
 }
 
-/* Premium gradient heading — theme-aware. Light theme: royal-blue ramp (reads on
-   white). Dark theme: white → electric royal-blue (reads on the navy backdrop). */
 .text-gradient-primary {
   background-image: linear-gradient(
     96deg,
@@ -263,6 +679,7 @@
   background-clip: text;
   color: transparent;
 }
+
 .dark .text-gradient-primary {
   background-image: linear-gradient(
     96deg,
@@ -272,52 +689,39 @@
   );
 }
 
-/* Glassmorphism gradient label/tag — theme-correspondent. Light theme: royal-blue
-   frosted gradient; dark theme: pale-blue frosted gradient. Used by Badge
-   variant="glass" and any decorative .badge-glass tag. */
-.badge-glass {
-  border: 1px solid rgb(36 74 235 / 0.28);
-  background-image: linear-gradient(135deg, rgb(36 74 235 / 0.16), rgb(36 74 235 / 0.04));
-  backdrop-filter: blur(8px) saturate(1.4);
-  -webkit-backdrop-filter: blur(8px) saturate(1.4);
-  color: oklch(0.34 0.12 263);
-}
-.dark .badge-glass {
-  border-color: rgb(206 224 255 / 0.22);
-  background-image: linear-gradient(135deg, oklch(0.72 0.16 258 / 0.22), oklch(0.62 0.20 263 / 0.07));
-  color: oklch(0.93 0.03 250);
-}
-
-/* Remove all auroras, gradients and visual noise */
-.aurora-blob, .aurora-bg, .gradient-mesh, .noise-overlay {
-  display: none !important;
-  animation: none !important;
-}
-
-/* EdgeState — degraded-state scanline sweep over the ghost skeleton.
-   Defined globally (not injected per component instance). Motion-guarded. */
+/* EdgeState — degraded-state scanline sweep */
 @keyframes edgeScan {
   0% { transform: translateY(0); opacity: 0; }
   8% { opacity: 1; }
   92% { opacity: 1; }
   100% { transform: translateY(58vh); opacity: 0; }
 }
+
 .edge-scan {
   background: linear-gradient(90deg, transparent, var(--primary), transparent);
   box-shadow: 0 0 12px 1px var(--primary);
 }
+
 @media (prefers-reduced-motion: no-preference) {
   .edge-scan { animation: edgeScan 3.6s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
 }
 
-/* Custom Scrollbar - Pure White Style */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* ============ FORCE EXACT MOCKUP COLORS ============ */
+/* Override shadcn/ui default colors with exact mockup values */
+.dark [data-slot="card"] {
+  background: linear-gradient(145deg,
+    color-mix(in oklab, oklch(0.24 0.06 258) 50%, transparent) 0%,
+    color-mix(in oklab, oklch(0.18 0.05 264) 35%, transparent) 100%) !important;
+  backdrop-filter: blur(18px) saturate(2.0) brightness(1.08) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(2.0) brightness(1.08) !important;
+  border: 1px solid color-mix(in oklab, oklch(0.62 0.22 263) 25%, transparent) !important;
 }
-::-webkit-scrollbar-track {
-  @apply bg-transparent;
-}
-::-webkit-scrollbar-thumb {
-  @apply bg-muted-foreground/20 rounded-full hover:bg-muted-foreground/40 transition-colors;
+
+.dark [data-slot="sidebar"] {
+  background: linear-gradient(180deg,
+    color-mix(in oklab, oklch(0.16 0.05 266 / 0.85) 80%, transparent) 0%,
+    color-mix(in oklab, oklch(0.20 0.05 265 / 0.7) 60%, transparent) 100%) !important;
+  backdrop-filter: blur(24px) saturate(2.0) brightness(1.1) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(2.0) brightness(1.1) !important;
+  border-right: 1px solid color-mix(in oklab, oklch(0.62 0.22 263) 20%, transparent) !important;
 }

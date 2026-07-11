@@ -13,6 +13,8 @@ import { SystemGuardBanner } from "@/components/SystemGuardBanner";
 import { Web3Provider } from "@/app/providers/Web3Provider";
 import { Toaster } from "sonner";
 
+import { OpportunityTicker } from "@/components/OpportunityTicker";
+
 export const metadata = {
   title: "QuantumX — Control Plane",
   description: "Institutional-grade stochastic convergence operator console",
@@ -91,6 +93,10 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         <meta name="google" content="notranslate" />
       </head>
       <body className="min-h-dvh bg-background font-sans antialiased notranslate" translate="no">
+        {/* Grain Overlay */}
+        <div className="grain-overlay" aria-hidden="true" />
+
+        {/* Hero Sphere Background */}
         <HeroSphere />
         <a
           href="#main"
@@ -106,10 +112,12 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         <Web3Provider cookie={requestCookie}>
           <div className="flex min-h-dvh flex-col">
             <SiteHeader paperMode={paperMode} />
-            <SystemGuardBanner />
-            <div className="flex flex-1">
+            {/* Layout: Sidebar starts at top-0, banner is inside main content area */}
+            <div className="flex flex-1 relative">
               <AppSidebar paperMode={paperMode} credsNeedsAttention={credsNeedsAttention} />
-              <main id="main" tabIndex={-1} className="min-w-0 flex-1 outline-none">
+              <main id="main" tabIndex={-1} className="min-w-0 flex-1 outline-none flex flex-col">
+                {/* SystemGuardBanner now inside main, limited by sidebar width */}
+                <SystemGuardBanner />
                 {/*
                   2026-05-10: max-w-7xl (1280px) wasted ~340px on each side of a
                   1920px monitor when rendering data-dense tables (/opportunities,
@@ -118,7 +126,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
                   centred reading line. Horizontal padding kept at lg:px-10 for
                   breathing room around the sidebar.
                 */}
-                <div className="mx-auto w-full max-w-[1800px] px-4 py-8 lg:px-10 lg:py-10">
+                <div className="mx-auto w-full max-w-[1800px] px-4 py-8 lg:px-10 lg:py-10 flex-1">
                   <PageBreadcrumb />
                   {children}
                 </div>
@@ -126,6 +134,8 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
             </div>
           </div>
         </Web3Provider>
+        <OpportunityTicker />
+
         <Toaster richColors position="top-right" />
       </body>
     </html>
