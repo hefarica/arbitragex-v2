@@ -455,8 +455,6 @@ fn u256_to_f64(v: &U256) -> f64 {
 use std::str::FromStr;
 
 // Re-export for convenience
-pub use BridgeConfig;
-pub use CrossChainOpportunity;
 pub use PriceOracle;
 
 #[cfg(test)]

@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getOpportunitiesLive } from "@/lib/api-client";
+import type { OpportunityRow } from "@/lib/schemas";
 
 interface TickerItem {
   pair: string;
@@ -10,22 +12,67 @@ interface TickerItem {
   ago: string;
 }
 
-const defaultItems: TickerItem[] = [
-  { pair: "WETH/USDC", from: "UNI-V3", to: "SUSHI-V2", yield: 0.42, ago: "4s" },
-  { pair: "ARB/WETH", from: "CAMELOT", to: "UNI-V3", yield: 0.18, ago: "7s" },
-  { pair: "WBTC/USDC", from: "UNI-V3", to: "BAL-V2", yield: 0.31, ago: "9s" },
-  { pair: "GMX/WETH", from: "GMX-V2", to: "SUSHI", yield: -0.08, ago: "12s" },
-  { pair: "RDNT/WETH", from: "CAMELOT", to: "UNI-V3", yield: 0.55, ago: "15s" },
-  { pair: "STG/USDC", from: "UNI-V3", to: "SUSHI", yield: 0.22, ago: "18s" },
-  { pair: "WETH/USDT", from: "UNI-V3", to: "CAMELOT", yield: 0.14, ago: "21s" },
-  { pair: "LDO/WETH", from: "BAL-V2", to: "UNI-V3", yield: -0.03, ago: "24s" },
-];
+function formatAgo(detectedAt: string): string {
+  const detected = new Date(detectedAt).getTime();
+  const now = Date.now();
+  const diffSeconds = Math.floor((now - detected) / 1000);
+
+  if (diffSeconds < 60) return `${diffSeconds}s`;
+  if (diffSeconds < 3600) return `${Math.floor(diffSeconds / 60)}m`;
+  return `${Math.floor(diffSeconds / 3600)}h`;
+}
+
+function opportunityToTickerItem(opp: OpportunityRow): TickerItem | null {
+  // Use net_expected_profit_usd (NET yield) when available, fallback to expected_profit_usd (GROSS)
+  const profit = opp.net_expected_profit_usd ?? opp.expected_profit_usd ?? null;
+  if (profit === null) return null;
+
+  const pair = opp.pair_symbol ?? `${opp.token_in.slice(0, 6)}…/${opp.token_out.slice(0, 6)}…`;
+  const from = opp.dex_a ?? "Unknown";
+  const to = opp.dex_b ?? opp.dex_a ?? "Unknown";
+
+  // Convert profit to percentage yield (approximation based on typical capital)
+  // If roi_pct is available, use it; otherwise estimate from profit
+  const yieldPct = opp.roi_pct ?? (profit > 0 ? profit * 0.1 : profit * 0.1); // Rough scaling
+
+  return {
+    pair,
+    from,
+    to,
+    yield: yieldPct,
+    ago: formatAgo(opp.detected_at),
+  };
+}
 
 export function OpportunityTicker() {
   const [mounted, setMounted] = useState(false);
+  const [items, setItems] = useState<TickerItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setMounted(true);
+
+    async function fetchOpportunities() {
+      const result = await getOpportunitiesLive(20);
+      if (result.ok) {
+        const tickerItems = result.data.items
+          .map(opportunityToTickerItem)
+          .filter((item): item is TickerItem => item !== null);
+        setItems(tickerItems);
+        setError(null);
+      } else {
+        setError(result.error);
+        setItems([]);
+      }
+      setLoading(false);
+    }
+
+    fetchOpportunities();
+
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchOpportunities, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   if (!mounted) {
@@ -38,13 +85,35 @@ export function OpportunityTicker() {
     );
   }
 
+  if (loading) {
+    return (
+      <div className="ticker" aria-label="Live opportunity feed">
+        <div className="ticker-track">
+          <span className="ticker-item">Loading opportunities...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || items.length === 0) {
+    return (
+      <div className="ticker" aria-label="Live opportunity feed">
+        <div className="ticker-track">
+          <span className="ticker-item">
+            {error ? `Observation: ${error}` : "No topological convergence detected — waiting for market topology..."}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   // Duplicate items for seamless loop
-  const items = [...defaultItems, ...defaultItems];
+  const displayItems = [...items, ...items];
 
   return (
     <div className="ticker" aria-label="Live opportunity feed">
       <div className="ticker-track">
-        {items.map((item, idx) => {
+        {displayItems.map((item, idx) => {
           const isPositive = item.yield >= 0;
           return (
             <span key={idx} className="ticker-item">
