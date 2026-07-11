@@ -809,7 +809,8 @@ const redisClient = new Redis(REDIS_URL, {
 const sendFast = (res: express.Response, data: unknown, status = 200) => {
   res.status(status).setHeader("content-type", "application/json");
   res.setHeader("x-arbx-cache", "HOT_REDIS");
-  res.setHeader("x-arbx-latency-tier", "sub-30ms");
+  res.setHeader("x-arbx-latency-tier", "sub-10ms");
+  res.setHeader("cache-control", "no-store");
   res.send(JSON.stringify(data));
 };
 
@@ -828,6 +829,76 @@ app.get("/hot/v1/metrics/entropy", async (_req, res) => {
   try {
     const entropy = await redisClient.get("arbx:metrics:entropy:current");
     sendFast(res, { entropy: entropy ? Number(entropy) : null, latency_ms: Date.now() - start });
+  } catch (e) {
+    res.status(503).json({ error: "redis_unavailable" });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TASK 4: HOT PATH ENDPOINTS <10ms — REDIS STREAM READS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// GET /hot/v1/health/fast — Redis health check <10ms
+app.get("/hot/v1/health/fast", async (_req, res) => {
+  const start = Date.now();
+  try {
+    const pong = await redisClient.ping();
+    sendFast(res, { status: pong === "PONG" ? "healthy" : "degraded", latency_ms: Date.now() - start });
+  } catch (e) {
+    res.status(503).json({ error: "redis_unavailable" });
+  }
+});
+
+// GET /hot/v1/opportunities/detected — XREVRANGE arbx:hot:detected
+app.get("/hot/v1/opportunities/detected", async (req, res) => {
+  const start = Date.now();
+  const count = Math.min(parseInt(req.query["count"] as string) || 10, 100);
+  try {
+    const items = await redisClient.xrevrange("arbx:hot:detected", "+", "-", "COUNT", count);
+    sendFast(res, { stream: "arbx:hot:detected", opportunities: items, count: items.length, latency_ms: Date.now() - start });
+  } catch (e) {
+    res.status(503).json({ error: "redis_unavailable" });
+  }
+});
+
+// GET /hot/v1/opportunities/simulated — XREVRANGE arbx:hot:simulated (status=passed)
+app.get("/hot/v1/opportunities/simulated", async (req, res) => {
+  const start = Date.now();
+  const count = Math.min(parseInt(req.query["count"] as string) || 10, 100);
+  try {
+    const items = await redisClient.xrevrange("arbx:hot:simulated", "+", "-", "COUNT", count);
+    // Filter for status=passed if present in item fields
+    const passed = items.filter((item: unknown[]) => {
+      // Redis XREVRANGE returns [id, [field1, value1, field2, value2, ...]]
+      const fields = item[1] as string[];
+      for (let i = 0; i < fields.length; i += 2) {
+        if (fields[i] === "status" && fields[i + 1] === "passed") return true;
+      }
+      return false;
+    });
+    sendFast(res, { stream: "arbx:hot:simulated", opportunities: passed, count: passed.length, total_scanned: items.length, latency_ms: Date.now() - start });
+  } catch (e) {
+    res.status(503).json({ error: "redis_unavailable" });
+  }
+});
+
+// GET /hot/v1/metrics/throughput — Throughput counters
+app.get("/hot/v1/metrics/throughput", async (_req, res) => {
+  const start = Date.now();
+  try {
+    const [detected, simulated, executed] = await Promise.all([
+      redisClient.get("arbx:metrics:throughput:detected"),
+      redisClient.get("arbx:metrics:throughput:simulated"),
+      redisClient.get("arbx:metrics:throughput:executed"),
+    ]);
+    sendFast(res, {
+      throughput: {
+        detected: detected ? Number(detected) : 0,
+        simulated: simulated ? Number(simulated) : 0,
+        executed: executed ? Number(executed) : 0,
+      },
+      latency_ms: Date.now() - start,
+    });
   } catch (e) {
     res.status(503).json({ error: "redis_unavailable" });
   }

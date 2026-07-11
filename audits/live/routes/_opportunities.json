@@ -1,0 +1,20 @@
+{
+  "path": "/opportunities",
+  "label": "Convergence signals",
+  "group": "observe",
+  "httpStatus": 429,
+  "contentType": "application/json; charset=utf-8",
+  "hasH1": false,
+  "hasPrimaryContent": false,
+  "pageLevelError": false,
+  "is404": false,
+  "shadowed": true,
+  "forbiddenHits": [],
+  "buttons": 0,
+  "forms": 0,
+  "tables": 0,
+  "toggles": 0,
+  "dataProvenance": 0,
+  "consoleErrors": [],
+  "verdict": "RATE_LIMITED"
+}

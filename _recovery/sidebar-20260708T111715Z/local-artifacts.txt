@@ -1,0 +1,198 @@
+../APE_Resilience_Toolkit_v6.3/skills/backup_master_v86_god_tier
+../IPTV_Backups_Master
+../IPTV_Backups_Master/V86.0-GOD-TIER_Master_Backup_2026-03-03_08-51-13.zip
+../IPTV_Navigator_PRO (12)/vps_backup_20260222
+../IPTV_Navigator_PRO (15) v. Premium 2.2/IPTV_Navigator_PRO (12)/vps_backup_20260222
+../IPTV_Navigator_PRO (15) v. Premium 3.0/IPTV_Navigator_PRO (12)/vps_backup_20260222
+../IPTV_Navigator_PRO/iptv_nav/files/export-module.BACKUP_LEGACY.js
+../IPTV_Navigator_PRO/iptv_nav/files/index-v4.html.backup-gateway
+../IPTV_Navigator_PRO/iptv_nav/files/index-v4.html.backup-phase2
+../IPTV_Navigator_PRO_BACKUP
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master (8)/IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master/C:tmpbackup_out.txt
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master (8)/IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master/IPTV_v5.4_MAX_AGGRESSION/backup_master_v5.4_phantom_engine
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master (8)/IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master/IPTV_v5.4_MAX_AGGRESSION/backups
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master (8)/IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master/ui_add_menu.xml
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master/.agent/skills/backup_master_v86_god_tier
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master/.agent/skills/iptv_navigator_v54_backup_rollback_index
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master/.agents/skills/hetzner-backup-scheduler
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master/.backups
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master/C:tmpbackup_out.txt
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master/IPTV_v5.4_MAX_AGGRESSION/backend/backup-hls-max
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master/IPTV_v5.4_MAX_AGGRESSION/backup_master_v5.4_phantom_engine
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master/IPTV_v5.4_MAX_AGGRESSION/backups
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master/IPTV_v5.4_MAX_AGGRESSION/frontend/export-module.BACKUP_LEGACY.js
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master/IPTV_v5.4_MAX_AGGRESSION/net-shield/backups
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION-master/ui_add_menu.xml
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION/.agent/skills/backup_master_v86_god_tier
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION/.agent/skills/iptv_navigator_v54_backup_rollback_index
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION/.agents/skills/hetzner-backup-scheduler
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION/C:tmpbackup_out.txt
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION/IPTV_v5.4_MAX_AGGRESSION/backend/backup-hls-max
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION/IPTV_v5.4_MAX_AGGRESSION/backup_master_v5.4_phantom_engine
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION/IPTV_v5.4_MAX_AGGRESSION/backups
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION/IPTV_v5.4_MAX_AGGRESSION/frontend/export-module.BACKUP_LEGACY.js
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION/IPTV_v5.4_MAX_AGGRESSION/frontend/index-v4.html.backup-gateway
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION/IPTV_v5.4_MAX_AGGRESSION/frontend/index-v4.html.backup-phase2
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION/IPTV_v5.4_MAX_AGGRESSION/net-shield/backups
+../IPTV_Navigator_PRO_v5.4_MAX_AGGRESSION/ui_add_menu.xml
+../Manuales/Cómo configurar un server side para mi aplicación/backup.sh
+../Manuales/backup.sh
+../_backup5_compare
+../_backup_compare
+../_backup_scripts.txt
+../arbitragex-v2-main (17)/.claude/skills/sidebar-crisis-prevention
+../arbitragex-v2-main (17)/.claude/skills/sidebar-recovery-protocol
+../arbitragex-v2-main (17)/.skills/sidebar-crisis-prevention
+../arbitragex-v2-main (17)/.skills/sidebar-recovery-protocol
+../arbitragex-v2-main (17)/_recovery/sidebar-20260708T111715Z
+../arbitragex-v2-main (17)/_recovery/sidebar-20260708T111715Z/app-sidebar.current.tsx
+../arbitragex-v2-main (17)/_recovery/sidebar-20260708T111715Z/app-sidebar.git-log-all.txt
+../arbitragex-v2-main (17)/_recovery/sidebar-20260708T111715Z/app-sidebar.git-log.txt
+../arbitragex-v2-main (17)/_recovery/sidebar-20260708T111715Z/app-sidebar.stash-0.patch
+../arbitragex-v2-main (17)/_recovery/sidebar-20260708T111715Z/app-sidebar.stash-1.patch
+../arbitragex-v2-main (17)/_recovery/sidebar-20260708T111715Z/app-sidebar.stash-2.patch
+../arbitragex-v2-main (17)/_recovery/sidebar-20260708T111715Z/app-sidebar.stash-3.patch
+../arbitragex-v2-main (17)/_recovery/sidebar-20260708T111715Z/app-sidebar.stash-4.patch
+../arbitragex-v2-main (17)/_recovery/sidebar-20260708T111715Z/app-sidebar.stash-5.patch
+../arbitragex-v2-main (17)/automation/scripts/backup-offsite.sh
+../arbitragex-v2-main (17)/automation/scripts/backup-pg.sh
+../arbitragex-v2-main (17)/automation/systemd/arbx-backup.service
+../arbitragex-v2-main (17)/automation/systemd/arbx-backup.timer
+../arbitragex-v2-main (17)/configs/backup-recipient.age.pub.example
+../arbitragex-v2-main (17)/current-sidebar-state.png
+../arbitragex-v2-main (17)/docs/crisis/sidebar-breakdown-2026-07-08.md
+../arbitragex-v2-main (17)/frontend/.skills/sidebar-recovery-protocol
+../arbitragex-v2-main (17)/frontend/app_backup
+../arbitragex-v2-main (17)/frontend/components/app-sidebar.tsx
+../arbitragex-v2-main (17)/frontend/components_backup
+../arbitragex-v2-main (17)/frontend/components_backup/app-sidebar.tsx
+../arbitragex-v2-main (17)/frontend/features_backup
+../arbitragex-v2-main (17)/full-page-verification.png
+../arbitragex-v2-main (17)/localhost-3000-status-stack.png
+../arbitragex-v2-main (17)/monitoring/alertmanager/alertmanager.yml.backup.20260517T144000Z
+../arbitragex-v2-main (17)/node_modules/@radix-ui/react-context-menu
+../arbitragex-v2-main (17)/node_modules/@radix-ui/react-dropdown-menu
+../arbitragex-v2-main (17)/node_modules/@radix-ui/react-menu
+../arbitragex-v2-main (17)/node_modules/@radix-ui/react-menubar
+../arbitragex-v2-main (17)/node_modules/@radix-ui/react-navigation-menu
+../arbitragex-v2-main (17)/scripts/verify_sidebar.py
+../arbitragex-v2-main (17)/sidebar-blur-minimo.png
+../arbitragex-v2-main (17)/sidebar-crystal-effect.png
+../arbitragex-v2-main (17)/sidebar-gradual-transparente.png
+../arbitragex-v2-main (17)/sidebar-translucido-65.png
+../arbitragex-v2-main (17)/sidebar-updated.png
+../arbitragex-v2-main (17)/sidebar_crisis_before_restore.patch
+../arbitragex-v2-main (17)/status-stack-bottom.png
+../arbitragex-v2-main (17)/status-stack-centered.png
+../arbitragex-v2-main (17)/status-stack-complete.png
+../arbitragex-v2-main (17)/status-stack-final.png
+../arbitragex-v2-main (17)/status-stack-focused.png
+../arbitragex-v2-main (17)/status-stack-sidebar-focus.png
+../arbitragex-v2-main-18/arbitragex-v2-main/configs/backup-recipient.age.pub.example
+../arbitragex-v2-omega102/automation/scripts/backup-offsite.sh
+../arbitragex-v2-omega102/automation/scripts/backup-pg.sh
+../arbitragex-v2-omega102/automation/systemd/arbx-backup.service
+../arbitragex-v2-omega102/automation/systemd/arbx-backup.timer
+../arbitragex-v2-omega102/configs/backup-recipient.age.pub.example
+../arbitragex-v2-omega102/frontend/components/app-sidebar.tsx
+../arbitragex_v2_productivo_full/automation/scripts/backup-offsite.sh
+../arbitragex_v2_productivo_full/automation/scripts/backup-pg.sh
+../arbitragex_v2_productivo_full/automation/systemd/arbx-backup.service
+../arbitragex_v2_productivo_full/automation/systemd/arbx-backup.timer
+../arbitragex_v2_productivo_full/configs/backup-recipient.age.pub.example
+../arbitragex_v2_productivo_full/frontend/components/app-sidebar.tsx
+../arbitragex_v2_productivo_full/monitoring/alertmanager/alertmanager.yml.backup.20260517T144000Z
+../arbitragex_v2_productivo_full/node_modules/@radix-ui/react-context-menu
+../arbitragex_v2_productivo_full/node_modules/@radix-ui/react-dropdown-menu
+../arbitragex_v2_productivo_full/node_modules/@radix-ui/react-menu
+../arbitragex_v2_productivo_full/node_modules/@radix-ui/react-menubar
+../arbitragex_v2_productivo_full/node_modules/@radix-ui/react-navigation-menu
+../cf_worker_node_modules_backup
+../premium30_ref/IPTV_Navigator_PRO (12)/vps_backup_20260222
+../sidebar-accordion-pipeline-closed.png
+../sidebar-after-collapsed.png
+../sidebar-after-expanded.png
+../sidebar-liquid-glass-hover.png
+../sidebar-liquid-glass.png
+../temp_premium_2_2/IPTV_Navigator_PRO (12)/vps_backup_20260222
+../temp_premium_3_0/IPTV_Navigator_PRO (12)/vps_backup_20260222
+./.claude/skills/sidebar-crisis-prevention
+./.claude/skills/sidebar-recovery-protocol
+./.claude/worktrees/agent-a7a72813e0989b73b/mockup-final-sidebar-toggle.png
+./.claude/worktrees/agent-a7a72813e0989b73b/mockup-sidebar-gradient-toggle.png
+./.claude/worktrees/agent-a7a72813e0989b73b/mockup-status-stack-offline.png
+./.claude/worktrees/agent-a7a72813e0989b73b/mockup-status-stack-online.png
+./.claude/worktrees/agent-a7a72813e0989b73b/mockup-white-menu-fluorescent.png
+./.claude/worktrees/agent-a7a72813e0989b73b/sidebar-feedback-applied.png
+./.claude/worktrees/agent-a7a72813e0989b73b/status-stack-verification.png
+./.claude/worktrees/agent-ab798a43a6ebcddca/mockup-final-sidebar-toggle.png
+./.claude/worktrees/agent-ab798a43a6ebcddca/mockup-sidebar-gradient-toggle.png
+./.claude/worktrees/agent-ab798a43a6ebcddca/mockup-status-stack-offline.png
+./.claude/worktrees/agent-ab798a43a6ebcddca/mockup-status-stack-online.png
+./.claude/worktrees/agent-ab798a43a6ebcddca/mockup-white-menu-fluorescent.png
+./.claude/worktrees/agent-ab798a43a6ebcddca/sidebar-feedback-applied.png
+./.claude/worktrees/agent-ab798a43a6ebcddca/status-stack-verification.png
+./.claude/worktrees/agent-ac4deafb48d86bfc4/mockup-final-sidebar-toggle.png
+./.claude/worktrees/agent-ac4deafb48d86bfc4/mockup-sidebar-gradient-toggle.png
+./.claude/worktrees/agent-ac4deafb48d86bfc4/mockup-status-stack-offline.png
+./.claude/worktrees/agent-ac4deafb48d86bfc4/mockup-status-stack-online.png
+./.claude/worktrees/agent-ac4deafb48d86bfc4/mockup-white-menu-fluorescent.png
+./.claude/worktrees/agent-ac4deafb48d86bfc4/sidebar-feedback-applied.png
+./.claude/worktrees/agent-ac4deafb48d86bfc4/status-stack-verification.png
+./.skills/sidebar-crisis-prevention
+./.skills/sidebar-recovery-protocol
+./_recovery/sidebar-20260708T111715Z
+./_recovery/sidebar-20260708T111715Z/app-sidebar.current.tsx
+./_recovery/sidebar-20260708T111715Z/app-sidebar.git-log-all.txt
+./_recovery/sidebar-20260708T111715Z/app-sidebar.git-log.txt
+./_recovery/sidebar-20260708T111715Z/app-sidebar.stash-0.patch
+./_recovery/sidebar-20260708T111715Z/app-sidebar.stash-1.patch
+./_recovery/sidebar-20260708T111715Z/app-sidebar.stash-2.patch
+./_recovery/sidebar-20260708T111715Z/app-sidebar.stash-3.patch
+./_recovery/sidebar-20260708T111715Z/app-sidebar.stash-4.patch
+./_recovery/sidebar-20260708T111715Z/app-sidebar.stash-5.patch
+./_recovery/sidebar-20260708T111715Z/candidates/app-sidebar.37fca6f.healthy.tsx
+./_recovery/sidebar-20260708T111715Z/candidates/app-sidebar.45647b0.fase-omega.tsx
+./_recovery/sidebar-20260708T111715Z/candidates/app-sidebar.HEAD.tsx
+./arbitragex-v2-main/node_modules/@radix-ui/react-context-menu
+./arbitragex-v2-main/node_modules/@radix-ui/react-dropdown-menu
+./arbitragex-v2-main/node_modules/@radix-ui/react-menu
+./arbitragex-v2-main/node_modules/@radix-ui/react-menubar
+./arbitragex-v2-main/node_modules/@radix-ui/react-navigation-menu
+./automation/scripts/backup-offsite.sh
+./automation/scripts/backup-pg.sh
+./automation/systemd/arbx-backup.service
+./automation/systemd/arbx-backup.timer
+./configs/backup-recipient.age.pub.example
+./current-sidebar-state.png
+./docs/crisis/sidebar-breakdown-2026-07-08.md
+./docs/crisis/verification-screenshots/full-page.png
+./docs/crisis/verification-screenshots/sidebar-focused.png
+./frontend/.skills/sidebar-recovery-protocol
+./frontend/app_backup
+./frontend/components/app-sidebar.tsx
+./frontend/components_backup
+./frontend/components_backup/app-sidebar.tsx
+./frontend/features_backup
+./full-page-verification.png
+./localhost-3000-status-stack.png
+./monitoring/alertmanager/alertmanager.yml.backup.20260517T144000Z
+./node_modules/@radix-ui/react-context-menu
+./node_modules/@radix-ui/react-dropdown-menu
+./node_modules/@radix-ui/react-menu
+./node_modules/@radix-ui/react-menubar
+./node_modules/@radix-ui/react-navigation-menu
+./node_modules/pino/docsify/sidebar.md
+./scripts/verify_sidebar.py
+./sidebar-blur-minimo.png
+./sidebar-crystal-effect.png
+./sidebar-gradual-transparente.png
+./sidebar-translucido-65.png
+./sidebar-updated.png
+./sidebar_crisis_before_restore.patch
+./status-stack-bottom.png
+./status-stack-centered.png
+./status-stack-complete.png
+./status-stack-final.png
+./status-stack-focused.png
+./status-stack-sidebar-focus.png

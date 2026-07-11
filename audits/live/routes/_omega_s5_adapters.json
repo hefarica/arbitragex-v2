@@ -1,0 +1,20 @@
+{
+  "path": "/omega-s5/adapters",
+  "label": "OMEGA-S5 adapters",
+  "group": "misc",
+  "httpStatus": 200,
+  "contentType": "text/html; charset=utf-8",
+  "hasH1": true,
+  "hasPrimaryContent": true,
+  "pageLevelError": false,
+  "is404": false,
+  "shadowed": false,
+  "forbiddenHits": [],
+  "buttons": 2,
+  "forms": 0,
+  "tables": 1,
+  "toggles": 0,
+  "dataProvenance": 0,
+  "consoleErrors": [],
+  "verdict": "PASS"
+}

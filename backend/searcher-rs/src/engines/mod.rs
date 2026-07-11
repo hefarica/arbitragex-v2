@@ -26,6 +26,12 @@ pub mod dex_engine;
 pub mod flashloan_engine;
 pub mod liquidation_engine;
 pub mod triangular_engine;
+
+// New engines for Task 3
+pub mod spanning_tree_engine;
+pub mod cross_chain_bridge_engine;
+pub mod liquidation_snipe_engine;
+
 // Experimental/legacy engines are kept behind an explicit feature because
 // their candidate/route DTOs currently target an older prioritization-spine
 // shape. The production orchestrator uses the four stable engines above.

@@ -1,0 +1,229 @@
+24d1407 HEAD@{2026-07-08 05:56:06 -0500}: commit: feat(skills): add sidebar crisis prevention and recovery protocols
+c59bb38 HEAD@{2026-07-07 17:50:53 -0500}: checkout: moving from feat/auto-deploy-vps-post-ci to feature/premium-mockup-replication
+c59bb38 HEAD@{2026-07-07 16:15:36 -0500}: commit: ci(allowlist): add next vulnerability exception
+065aa70 HEAD@{2026-07-07 15:31:18 -0500}: commit: fix(frontend): dependency compatibility
+2f8caf5 HEAD@{2026-07-07 15:31:09 -0500}: commit: fix(edge): install @cloudflare/workers-types
+822067a HEAD@{2026-07-07 15:30:39 -0500}: commit: fix(cargo): update dependencies for RUSTSEC-2026-0204
+c242d3d HEAD@{2026-07-07 15:30:30 -0500}: commit: fix(sed-core): suppress dead_code warnings in connectors
+92d7df9 HEAD@{2026-07-07 15:30:20 -0500}: commit: fix(sed-core): clippy errors - unwrap policy + neg_cmp_op + too_many_arguments
+720288c HEAD@{2026-07-07 15:18:14 -0500}: commit: security(deps): update crossbeam-epoch v0.9.18 -> v0.9.20
+7ac537e HEAD@{2026-07-07 14:56:52 -0500}: commit: feat(ci): auto-deploy to VPS after CI EVER GREEN
+e12f38c HEAD@{2026-07-07 14:56:51 -0500}: checkout: moving from main to feat/auto-deploy-vps-post-ci
+e12f38c HEAD@{2026-07-07 14:30:21 -0500}: checkout: moving from fix/token-enricher-null-handling to main
+e12f38c HEAD@{2026-07-07 14:30:04 -0500}: checkout: moving from main to main
+0e9411e HEAD@{2026-07-07 14:30:01 -0500}: checkout: moving from main to fix/token-enricher-null-handling
+e12f38c HEAD@{2026-07-07 14:29:45 -0500}: pull github main: Fast-forward
+7983215 HEAD@{2026-07-07 14:29:44 -0500}: checkout: moving from fix/token-enricher-null-handling to main
+0e9411e HEAD@{2026-07-07 14:29:39 -0500}: commit: fix(selector-api): Decision type compatibility with exactOptionalPropertyTypes
+e6fdf8e HEAD@{2026-07-07 14:28:48 -0500}: reset: moving to HEAD~1
+444553a HEAD@{2026-07-07 14:28:20 -0500}: commit: fix(selector-api): Decision type null -> undefined
+e6fdf8e HEAD@{2026-07-07 14:26:10 -0500}: commit: style: cargo fmt --all fix token-enricher CI
+f4d8398 HEAD@{2026-07-07 14:25:24 -0500}: checkout: moving from fix/token-enricher-null-handling to fix/token-enricher-null-handling
+f4d8398 HEAD@{2026-07-07 14:12:04 -0500}: commit: fix(token-enricher): handle NULL resolved_via in needs_resolution
+d46bc42 HEAD@{2026-07-07 14:11:56 -0500}: reset: moving to HEAD~1
+9246b53 HEAD@{2026-07-07 14:11:34 -0500}: commit: fix(token-enricher): handle NULL resolved_via in needs_resolution
+d46bc42 HEAD@{2026-07-07 14:11:30 -0500}: checkout: moving from visual/micro-polish-blue-sidebar to fix/token-enricher-null-handling
+d46bc42 HEAD@{2026-07-07 09:15:13 -0500}: commit: feat: forced convergence 100% — FASE OMEGA COMPLETE
+45647b0 HEAD@{2026-07-07 09:11:54 -0500}: reset: moving to HEAD
+45647b0 HEAD@{2026-07-07 09:03:32 -0500}: commit: FASE OMEGA: 5 Vectores de Ejecución + Protocolo de Preservación CI/CD
+e89d866 HEAD@{2026-07-06 08:15:14 -0500}: reset: moving to HEAD
+e89d866 HEAD@{2026-07-06 07:50:28 -0500}: commit: style(frontend): fix LiveTicker to match mockup exactly
+48ea1a5 HEAD@{2026-07-06 07:37:15 -0500}: commit: style(frontend): pixel-perfect visual parity with mockup-premium.html
+d0b0edf HEAD@{2026-07-06 03:00:11 -0500}: checkout: moving from temp/push-authorized to visual/micro-polish-blue-sidebar
+0e52504 HEAD@{2026-07-06 03:00:06 -0500}: reset: moving to 0e52504feb482881b7ad4576a8bfc4a60668bb1a
+0e52504 HEAD@{2026-07-06 02:59:07 -0500}: cherry-pick: feat(sim-core): Monte Carlo validator para topologías de reintentos con DLQ
+e12f38c HEAD@{2026-07-06 02:59:07 -0500}: checkout: moving from visual/micro-polish-blue-sidebar to temp/push-authorized
+d0b0edf HEAD@{2026-07-06 02:59:07 -0500}: reset: moving to HEAD
+d0b0edf HEAD@{2026-07-06 02:50:52 -0500}: commit: style(frontend): micro-polish blue sidebar + liquid-glass accordions
+ecb0416 HEAD@{2026-07-06 02:40:18 -0500}: commit: feat(sim-core): Monte Carlo validator para topologías de reintentos con DLQ
+da1b9cb HEAD@{2026-07-06 00:59:11 -0500}: commit (merge): Merge github/main: trae 7 PRs de hardening (#273-#281) a visual/micro-polish-blue-sidebar
+ad99a55 HEAD@{2026-07-06 00:56:26 -0500}: commit: style(sidebar): refinar blue accent + liquid-glass (continuación 67d69b6)
+0b27799 HEAD@{2026-07-06 00:56:26 -0500}: commit: feat(fase-3): token-safety graph gate + flash-loan slot-2 override (sim↔exec parity)
+67d69b6 HEAD@{2026-07-06 00:28:24 -0500}: checkout: moving from fix/fase-0-stability-singularities to visual/micro-polish-blue-sidebar
+e12f38c HEAD@{2026-07-06 00:26:01 -0500}: checkout: moving from visual/micro-polish-blue-sidebar to fix/fase-0-stability-singularities
+67d69b6 HEAD@{2026-07-06 00:26:00 -0500}: reset: moving to HEAD
+67d69b6 HEAD@{2026-07-05 19:07:44 -0500}: commit: style(sidebar): visual micro-polish — blue accent + liquid-glass accordions
+19b3043 HEAD@{2026-07-05 18:53:16 -0500}: checkout: moving from feat/fase-2-token-safety-scorer to visual/micro-polish-blue-sidebar
+19b3043 HEAD@{2026-07-05 17:35:06 -0500}: commit: feat(research): wire EntropyEngine into policy decide() — paper-trade observable
+e87d90f HEAD@{2026-07-05 17:29:37 -0500}: commit: feat(research): EntropyEngine v2.0 — price-microstructure signal (SHADOW)
+f0fc6f2 HEAD@{2026-07-05 17:09:36 -0500}: commit: feat(fase-4): MakerDaoDssFlashAdapter + 7 mock tests (forge PASS)
+874cb6a HEAD@{2026-07-05 16:46:25 -0500}: commit: fix(fase-2): token-safety floor from AppConfig, not TOKEN_SAFETY_FLOOR env
+4e551f2 HEAD@{2026-07-05 16:23:59 -0500}: commit: feat(fase-2): 11-signal anti-rug composite scorer (TS) + goplus.ts integration
+7983215 HEAD@{2026-07-05 15:47:39 -0500}: checkout: moving from main to feat/fase-2-token-safety-scorer
+7983215 HEAD@{2026-07-05 15:47:39 -0500}: checkout: moving from excel-chain-builder to main
+2b242ee HEAD@{2026-07-05 15:47:38 -0500}: commit: fix(rpc-sync): installer calls RebuildChainBuilder + covStart+6 maxCol (FASE 1)
+e9bcadd HEAD@{2026-07-05 15:46:58 -0500}: checkout: moving from feat/fase-2-token-safety-scorer to excel-chain-builder
+e9bcadd HEAD@{2026-07-05 15:44:00 -0500}: checkout: moving from excel-chain-builder to feat/fase-2-token-safety-scorer
+e9bcadd HEAD@{2026-07-05 15:40:02 -0500}: commit: feat(opportunities): card v2 consolidation — hard filter + duplicity fix + layered card
+3a54a9d HEAD@{2026-07-05 13:47:31 -0500}: commit: feat(fase-1): liquidity primitive registry seed + Chain Builder cols O-P-Q
+1297b20 HEAD@{2026-07-05 12:22:30 -0500}: commit: fix(rpc-sync): non-destructive rebuild + dynamic coverage cols + footer restore
+b3dc81b HEAD@{2026-07-05 09:06:06 -0500}: commit: fix(rpc-sync): VBA 25-line-continuation limit + empty-module Lines guard
+716e2a7 HEAD@{2026-07-05 08:29:30 -0500}: commit: feat(rpc-catalog): auto-sync RPC Providers -> Chain Builder + curated seed
+9ff2df2 HEAD@{2026-07-05 07:24:06 -0500}: commit: fix(bundle-importer): align DB apply with real schemas (chains FK + rpc_endpoints cols)
+771c3ca HEAD@{2026-07-05 06:49:35 -0500}: commit: fix(bundle-shipper): VBA FactoriesJson Case Else -> '[]' (was empty -> invalid JSON)
+2c84a97 HEAD@{2026-07-05 02:16:49 -0500}: commit: feat(bundle-shipper): install_bundle_shipper.ps1 - COM installer for the .xlsm
+1e0dd65 HEAD@{2026-07-05 01:58:00 -0500}: commit: feat(config-bundle): T3 binary bundle_importer - decrypt + idempotent apply
+95a748b HEAD@{2026-07-05 01:55:26 -0500}: commit: feat(config-bundle): T4 Ruta 2 - admin endpoint + frontend panel
+35ef490 HEAD@{2026-07-05 01:35:29 -0500}: commit: feat(bundle-shipper): VBA macro ShipBundle - the Excel generator
+a4436cd HEAD@{2026-07-05 01:32:54 -0500}: commit: feat(bundle-shipper): --json-in + --out modes for the VBA macro generator
+0ea99a0 HEAD@{2026-07-05 01:19:42 -0500}: commit: feat(config-bundle): T3 importer core - hybrid-decrypt + schema-validate
+527571c HEAD@{2026-07-04 19:14:34 -0500}: commit: fix(chain-builder): Aerodrome removed (was 39-char invalid address)
+6696837 HEAD@{2026-07-04 19:12:55 -0500}: commit: fix(chain-builder): remove invalid Aerodrome address (39-char) from gen_chain_env
+c5c7e49 HEAD@{2026-07-04 18:59:02 -0500}: commit: fix(bundle-shipper): skip header row (min_row=3) — 'Variable' no longer ships
+af63e8d HEAD@{2026-07-04 18:48:59 -0500}: commit: feat(config-bundle): shipper + schema — RSA-4096+AES-256-GCM Excel→VPS (E2E tested)
+284a325 HEAD@{2026-07-04 18:11:01 -0500}: commit: feat(excel-bridge): Chain Builder — Excel as SSOT for chain activation
+7983215 HEAD@{2026-07-04 18:10:02 -0500}: checkout: moving from main to excel-chain-builder
+7983215 HEAD@{2026-07-04 18:10:02 -0500}: checkout: moving from ops-b2c-activate-workflow to main
+cb99901 HEAD@{2026-07-04 15:46:31 -0500}: commit: docs(G-SIM-1): mainnet proxy deploy SOP + historical context
+cd1ccbe HEAD@{2026-07-04 15:22:58 -0500}: commit: ops(G-SIM-1 B2c): workflow to activate REAL multi-step REVM sim path
+7983215 HEAD@{2026-07-04 15:21:49 -0500}: checkout: moving from main to ops-b2c-activate-workflow
+7983215 HEAD@{2026-07-04 15:21:48 -0500}: checkout: moving from paso7-sim-ready-checklist to main
+4d75fcb HEAD@{2026-07-04 13:46:04 -0500}: rebase (finish): returning to refs/heads/paso7-sim-ready-checklist
+4d75fcb HEAD@{2026-07-04 13:46:04 -0500}: rebase (pick): docs(G-SIM-1): mark #271 + #272 as merged in flip checklist
+8f12cd5 HEAD@{2026-07-04 13:46:04 -0500}: rebase (pick): docs(G-SIM-1): paso 7 prep — ARBX_SIMULATOR_V2_READY flip checklist
+7983215 HEAD@{2026-07-04 13:46:03 -0500}: rebase (start): checkout github/main
+7c91b11 HEAD@{2026-07-04 13:46:03 -0500}: checkout: moving from main to paso7-sim-ready-checklist
+7983215 HEAD@{2026-07-04 13:30:36 -0500}: checkout: moving from paso7-sim-ready-checklist to main
+7c91b11 HEAD@{2026-07-04 12:59:05 -0500}: commit: docs(G-SIM-1): mark #271 + #272 as merged in flip checklist
+ebc7d80 HEAD@{2026-07-04 12:58:36 -0500}: checkout: moving from main to paso7-sim-ready-checklist
+7983215 HEAD@{2026-07-04 12:57:28 -0500}: reset: moving to github/main
+37fca6f HEAD@{2026-07-04 12:57:24 -0500}: checkout: moving from paso7-sim-ready-checklist to main
+ebc7d80 HEAD@{2026-07-04 12:00:50 -0500}: commit: docs(G-SIM-1): paso 7 prep — ARBX_SIMULATOR_V2_READY flip checklist
+37fca6f HEAD@{2026-07-04 12:00:49 -0500}: checkout: moving from main to paso7-sim-ready-checklist
+37fca6f HEAD@{2026-07-04 12:00:49 -0500}: checkout: moving from b2c-wire-multistep-revm to main
+a955bcf HEAD@{2026-07-04 11:58:33 -0500}: commit: fix(G-SIM-1 B2c): 3 compile errors — keccak256, config fields, type conversion
+bbeace9 HEAD@{2026-07-04 11:11:15 -0500}: rebase (finish): returning to refs/heads/b2c-wire-multistep-revm
+bbeace9 HEAD@{2026-07-04 11:11:15 -0500}: rebase (pick): fix(sim-ctl): update Cargo.lock for sim-core + prioritization-spine deps
+2c6c8d9 HEAD@{2026-07-04 11:11:14 -0500}: rebase (continue): feat(G-SIM-1 B2c): wire execute_multistep_revm — REAL multi-step REVM sim
+37fca6f HEAD@{2026-07-04 11:05:56 -0500}: rebase (start): checkout main
+ff3f2c1 HEAD@{2026-07-04 11:05:55 -0500}: checkout: moving from paso6-scanner-route-capture to b2c-wire-multistep-revm
+11f4cb9 HEAD@{2026-07-04 11:05:03 -0500}: rebase (finish): returning to refs/heads/paso6-scanner-route-capture
+11f4cb9 HEAD@{2026-07-04 11:05:03 -0500}: rebase (pick): feat(G-SIM-1 B2b): step 6 — scanner→emitter route capture wire
+37fca6f HEAD@{2026-07-04 11:05:03 -0500}: rebase (start): checkout main
+24d25ae HEAD@{2026-07-04 11:05:03 -0500}: checkout: moving from main to paso6-scanner-route-capture
+37fca6f HEAD@{2026-07-04 11:04:13 -0500}: reset: moving to github/main
+bcd406e HEAD@{2026-07-04 11:04:08 -0500}: checkout: moving from b2c-wire-multistep-revm to main
+ff3f2c1 HEAD@{2026-07-04 10:55:48 -0500}: commit: fix(sim-ctl): update Cargo.lock for sim-core + prioritization-spine deps
+8a4d2ff HEAD@{2026-07-04 10:54:59 -0500}: checkout: moving from paso6-scanner-route-capture to b2c-wire-multistep-revm
+24d25ae HEAD@{2026-07-04 10:48:36 -0500}: commit: feat(G-SIM-1 B2b): step 6 — scanner→emitter route capture wire
+bcd406e HEAD@{2026-07-04 10:41:16 -0500}: checkout: moving from main to paso6-scanner-route-capture
+bcd406e HEAD@{2026-07-04 10:41:16 -0500}: checkout: moving from b2c-wire-multistep-revm to main
+8a4d2ff HEAD@{2026-07-04 10:15:01 -0500}: commit: feat(G-SIM-1 B2c): wire execute_multistep_revm — REAL multi-step REVM sim
+bcd406e HEAD@{2026-07-04 10:03:42 -0500}: rebase (finish): returning to refs/heads/b2c-wire-multistep-revm
+bcd406e HEAD@{2026-07-04 10:03:42 -0500}: rebase (start): checkout main
+f842f12 HEAD@{2026-07-04 10:03:42 -0500}: checkout: moving from fase5-frontend-selector to b2c-wire-multistep-revm
+428686b HEAD@{2026-07-04 10:03:05 -0500}: rebase (finish): returning to refs/heads/fase5-frontend-selector
+428686b HEAD@{2026-07-04 10:03:05 -0500}: rebase (pick): feat(G-SIM-1 B2b): Fase 5 frontend — route_source selector + collapsible glassmorphism sidebar
+bcd406e HEAD@{2026-07-04 10:03:05 -0500}: rebase (start): checkout main
+d2990fa HEAD@{2026-07-04 10:03:05 -0500}: checkout: moving from fase4-a3-simctl-lookup to fase5-frontend-selector
+cdacef4 HEAD@{2026-07-04 10:02:49 -0500}: rebase (finish): returning to refs/heads/fase4-a3-simctl-lookup
+cdacef4 HEAD@{2026-07-04 10:02:49 -0500}: rebase (pick): feat(G-SIM-1 B2b): Fase 4 A3 — sim-ctl autonomous PG route lookup
+bcd406e HEAD@{2026-07-04 10:02:49 -0500}: rebase (start): checkout main
+8c45aea HEAD@{2026-07-04 10:02:49 -0500}: checkout: moving from fase3-a2-searcher-api to fase4-a3-simctl-lookup
+1247030 HEAD@{2026-07-04 10:02:09 -0500}: rebase (finish): returning to refs/heads/fase3-a2-searcher-api
+1247030 HEAD@{2026-07-04 10:02:09 -0500}: rebase (pick): fix(G-SIM-1 B2b): Fase 3 CI — cargo fmt + NodeNext import + enrichedBody type
+b8db4ff HEAD@{2026-07-04 10:02:09 -0500}: rebase (pick): feat(G-SIM-1 B2b): Fase 3 A2 — searcher-rs route API + api-server client
+bcd406e HEAD@{2026-07-04 10:02:09 -0500}: rebase (start): checkout main
+c5dccbd HEAD@{2026-07-04 10:02:08 -0500}: checkout: moving from main to fase3-a2-searcher-api
+bcd406e HEAD@{2026-07-04 10:01:24 -0500}: checkout: moving from fase3-a2-searcher-api to main
+c5dccbd HEAD@{2026-07-04 10:01:24 -0500}: rebase (abort): returning to refs/heads/fase3-a2-searcher-api
+bcd406e HEAD@{2026-07-04 10:00:48 -0500}: rebase (start): checkout main
+c5dccbd HEAD@{2026-07-04 10:00:48 -0500}: checkout: moving from main to fase3-a2-searcher-api
+bcd406e HEAD@{2026-07-04 10:00:09 -0500}: reset: moving to github/main
+9338b5b HEAD@{2026-07-04 10:00:08 -0500}: checkout: moving from b2c-wire-multistep-revm to main
+f842f12 HEAD@{2026-07-04 09:53:31 -0500}: checkout: moving from fase1-opportunity-candidate to b2c-wire-multistep-revm
+f842f12 HEAD@{2026-07-04 09:53:31 -0500}: checkout: moving from fase3-a2-searcher-api to fase1-opportunity-candidate
+c5dccbd HEAD@{2026-07-04 09:52:48 -0500}: commit: fix(G-SIM-1 B2b): Fase 3 CI — cargo fmt + NodeNext import + enrichedBody type
+53f152a HEAD@{2026-07-04 09:48:15 -0500}: checkout: moving from fase5-frontend-selector to fase3-a2-searcher-api
+d2990fa HEAD@{2026-07-04 09:39:13 -0500}: commit: feat(G-SIM-1 B2b): Fase 5 frontend — route_source selector + collapsible glassmorphism sidebar
+f842f12 HEAD@{2026-07-04 09:32:17 -0500}: checkout: moving from fase1-opportunity-candidate to fase5-frontend-selector
+f842f12 HEAD@{2026-07-04 09:32:17 -0500}: checkout: moving from fase4-a3-simctl-lookup to fase1-opportunity-candidate
+8c45aea HEAD@{2026-07-04 08:38:14 -0500}: rebase (finish): returning to refs/heads/fase4-a3-simctl-lookup
+8c45aea HEAD@{2026-07-04 08:38:14 -0500}: rebase (pick): feat(G-SIM-1 B2b): Fase 4 A3 — sim-ctl autonomous PG route lookup
+f842f12 HEAD@{2026-07-04 08:38:14 -0500}: rebase (start): checkout fase1-opportunity-candidate
+9b9e54c HEAD@{2026-07-04 08:38:14 -0500}: checkout: moving from fase3-a2-searcher-api to fase4-a3-simctl-lookup
+53f152a HEAD@{2026-07-04 08:38:11 -0500}: rebase (finish): returning to refs/heads/fase3-a2-searcher-api
+53f152a HEAD@{2026-07-04 08:38:11 -0500}: rebase (pick): feat(G-SIM-1 B2b): Fase 3 A2 — searcher-rs route API + api-server client
+f842f12 HEAD@{2026-07-04 08:38:11 -0500}: rebase (start): checkout fase1-opportunity-candidate
+a3064cb HEAD@{2026-07-04 08:38:11 -0500}: checkout: moving from fase1-opportunity-candidate to fase3-a2-searcher-api
+f842f12 HEAD@{2026-07-04 08:37:50 -0500}: commit: fix(frontend): remove .strict() from DecimalsMapSchema (ZodRecord)
+e0b1b72 HEAD@{2026-07-04 08:36:32 -0500}: checkout: moving from fase4-a3-simctl-lookup to fase1-opportunity-candidate
+9b9e54c HEAD@{2026-07-04 08:32:11 -0500}: rebase (finish): returning to refs/heads/fase4-a3-simctl-lookup
+9b9e54c HEAD@{2026-07-04 08:32:11 -0500}: rebase (pick): feat(G-SIM-1 B2b): Fase 4 A3 — sim-ctl autonomous PG route lookup
+e0b1b72 HEAD@{2026-07-04 08:32:11 -0500}: rebase (start): checkout fase1-opportunity-candidate
+e7cd8cc HEAD@{2026-07-04 08:32:11 -0500}: checkout: moving from fase3-a2-searcher-api to fase4-a3-simctl-lookup
+a3064cb HEAD@{2026-07-04 08:32:11 -0500}: rebase (finish): returning to refs/heads/fase3-a2-searcher-api
+a3064cb HEAD@{2026-07-04 08:32:11 -0500}: rebase (pick): feat(G-SIM-1 B2b): Fase 3 A2 — searcher-rs route API + api-server client
+e0b1b72 HEAD@{2026-07-04 08:32:11 -0500}: rebase (start): checkout fase1-opportunity-candidate
+7bda591 HEAD@{2026-07-04 08:32:10 -0500}: checkout: moving from fase1-opportunity-candidate to fase3-a2-searcher-api
+e0b1b72 HEAD@{2026-07-04 08:31:50 -0500}: commit: fix(shared-rs): clippy map_clone — use .cloned() instead of .map(|x| x.clone())
+4a932ea HEAD@{2026-07-04 08:25:14 -0500}: checkout: moving from fase4-a3-simctl-lookup to fase1-opportunity-candidate
+e7cd8cc HEAD@{2026-07-04 08:22:22 -0500}: commit: feat(G-SIM-1 B2b): Fase 4 A3 — sim-ctl autonomous PG route lookup
+4a932ea HEAD@{2026-07-04 08:16:32 -0500}: checkout: moving from fase1-opportunity-candidate to fase4-a3-simctl-lookup
+4a932ea HEAD@{2026-07-04 08:16:32 -0500}: checkout: moving from fase3-a2-searcher-api to fase1-opportunity-candidate
+7bda591 HEAD@{2026-07-04 08:15:51 -0500}: rebase (finish): returning to refs/heads/fase3-a2-searcher-api
+7bda591 HEAD@{2026-07-04 08:15:51 -0500}: rebase (pick): feat(G-SIM-1 B2b): Fase 3 A2 — searcher-rs route API + api-server client
+4a932ea HEAD@{2026-07-04 08:15:51 -0500}: rebase (start): checkout fase1-opportunity-candidate
+24b5e2e HEAD@{2026-07-04 08:15:51 -0500}: checkout: moving from fase1-opportunity-candidate to fase3-a2-searcher-api
+4a932ea HEAD@{2026-07-04 08:15:04 -0500}: commit: fix(sim-ctl): resolve E0283 type ambiguity in NotImplementedPayload args
+7b88940 HEAD@{2026-07-04 08:13:41 -0500}: checkout: moving from fase3-a2-searcher-api to fase1-opportunity-candidate
+24b5e2e HEAD@{2026-07-04 08:10:47 -0500}: rebase (finish): returning to refs/heads/fase3-a2-searcher-api
+24b5e2e HEAD@{2026-07-04 08:10:47 -0500}: rebase (pick): feat(G-SIM-1 B2b): Fase 3 A2 — searcher-rs route API + api-server client
+7b88940 HEAD@{2026-07-04 08:10:47 -0500}: rebase (start): checkout fase1-opportunity-candidate
+65a9d88 HEAD@{2026-07-04 08:10:25 -0500}: commit: feat(G-SIM-1 B2b): Fase 3 A2 — searcher-rs route API + api-server client
+93ce113 HEAD@{2026-07-04 08:09:24 -0500}: checkout: moving from fase1-opportunity-candidate to fase3-a2-searcher-api
+7b88940 HEAD@{2026-07-04 08:07:45 -0500}: commit: fix(sim-ctl): unify simulate_legacy return type to concrete tuple
+93ce113 HEAD@{2026-07-04 08:06:29 -0500}: checkout: moving from fase3-a2-searcher-api to fase1-opportunity-candidate
+93ce113 HEAD@{2026-07-04 08:06:29 -0500}: reset: moving to HEAD
+93ce113 HEAD@{2026-07-04 07:59:12 -0500}: checkout: moving from fase1-opportunity-candidate to fase3-a2-searcher-api
+93ce113 HEAD@{2026-07-04 07:53:11 -0500}: commit: feat(G-SIM-1 B2b): Fase 1+2 — OpportunityCandidate + route_metadata (A1 path)
+9338b5b HEAD@{2026-07-04 07:38:45 -0500}: checkout: moving from main to fase1-opportunity-candidate
+9338b5b HEAD@{2026-07-04 07:38:05 -0500}: reset: moving to github/main
+9338b5b HEAD@{2026-07-04 07:38:05 -0500}: checkout: moving from fase2-a1-pg-persist to main
+7af9b70 HEAD@{2026-07-04 07:34:39 -0500}: commit: feat(G-SIM-1 B2b): Fase 2 A1 — persist route_metadata JSONB in opportunities
+7a215c1 HEAD@{2026-07-04 07:21:12 -0500}: checkout: moving from fase4-a3-simctl-lookup to fase2-a1-pg-persist
+7a215c1 HEAD@{2026-07-04 07:20:53 -0500}: checkout: moving from fase1-opportunity-candidate to fase4-a3-simctl-lookup
+7a215c1 HEAD@{2026-07-04 07:20:53 -0500}: checkout: moving from fase3-a2-searcher-api to fase1-opportunity-candidate
+7a215c1 HEAD@{2026-07-04 07:20:52 -0500}: checkout: moving from fase1-opportunity-candidate to fase3-a2-searcher-api
+7a215c1 HEAD@{2026-07-04 07:20:52 -0500}: checkout: moving from fase2-a1-pg-persist to fase1-opportunity-candidate
+7a215c1 HEAD@{2026-07-04 07:20:52 -0500}: checkout: moving from fase1-opportunity-candidate to fase2-a1-pg-persist
+7a215c1 HEAD@{2026-07-04 07:20:52 -0500}: checkout: moving from main to fase1-opportunity-candidate
+9338b5b HEAD@{2026-07-04 07:19:57 -0500}: reset: moving to github/main
+721ec1f HEAD@{2026-07-04 07:19:51 -0500}: checkout: moving from fase1-opportunity-candidate to main
+7a215c1 HEAD@{2026-07-04 06:35:15 -0500}: rebase (finish): returning to refs/heads/fase1-opportunity-candidate
+7a215c1 HEAD@{2026-07-04 06:35:15 -0500}: rebase (pick): feat(G-SIM-1 B2b): Fase 1 — OpportunityCandidate + route_source selector
+fec5d88 HEAD@{2026-07-04 06:35:15 -0500}: rebase (pick): docs(omega): FASE A path-to-live gate map — 8 gates audited (PAPER ~68% / LIVE ~22%); critical path single-rooted on #224 merge; stale-state corrections
+c3dae07 HEAD@{2026-07-04 06:35:15 -0500}: rebase (pick): docs(m5): completion plan — keyless-CI refactor of #229 + seeded-pools cross-DEX canary (delta over #224/#229/#231; no duplication)
+5d12c33 HEAD@{2026-07-04 06:35:15 -0500}: rebase (pick): docs(m5): CORRECT §2 — cross-DEX fix IS in #224 (audited GO), not on main; prerequisite = #224 merged (no separate fix PR); duplicate #234 closed
+36f2257 HEAD@{2026-07-04 06:35:15 -0500}: rebase (pick): docs(m5): ground-truth corrections — cross-DEX fix is UNMET on main (_boundedRouterCall approves only tokenIn); AllowanceManager deprecated as spend-gate (SC-12); deploy must setTokenApproval both legs
+bdefc7a HEAD@{2026-07-04 06:35:15 -0500}: rebase (pick): docs(m5): reconcile prerequisites with #224 (cross-DEX fix + Layer-C harness + parity already built/CI-green/GO) — single hard prereq is '#224 merged'; per-trade spend-cap = AllowanceManager wired at deploy
+07735e2 HEAD@{2026-07-04 06:35:15 -0500}: rebase (pick): docs(m5): A5 selector-whitelist (setRouterSelectorApproval) promoted to HARD prerequisite + DeployTestnet wiring step (fail-closed; canary reverts without it)
+0b5afdd HEAD@{2026-07-04 06:35:15 -0500}: rebase (pick): docs(m5): Sepolia validation pipeline spec — 3-zone keyless-CI/operator-KMS, seeded canary A, fail-honest (real metrics not fabricated), prereq = contract cross-DEX fix + #224 reconcile
+1e39f1a HEAD@{2026-07-04 06:35:15 -0500}: rebase (pick): refactor(price-validator): per-item dead_code allows + panic-free median + deterministic config test
+f0b58d7 HEAD@{2026-07-04 06:35:15 -0500}: rebase (pick): feat(price-validator): pure validation logic — consensus/divergence/halt + 10 normative vectors
+fee7795 HEAD@{2026-07-04 06:35:15 -0500}: rebase (pick): docs(validator): tightness = relative range (not MAD) — fixes the [1.0,1.0,1.4] duplicate trap; vector #3 made testable
+617d13c HEAD@{2026-07-04 06:35:15 -0500}: rebase (pick): feat(db): migration 098 — validator_divergences + tokens metadata columns
+d401b2a HEAD@{2026-07-04 06:35:15 -0500}: rebase (pick): feat(price-validator): scaffold crate + workspace registration
+756bf86 HEAD@{2026-07-04 06:35:15 -0500}: rebase (pick): docs(validator): apply operator adjustments — conservative halt-grade thresholds + 10 normative vectors (spec §6), plan addendum (phase order, no-influence gates, truth/annotative split, Apify-secondary)
+5fd22b6 HEAD@{2026-07-04 06:35:15 -0500}: rebase (pick): docs(validator): implementation plan — phased TDD (migrations, Rust bridge, Apify actor, api endpoint, deploy)
+9f5c5cf HEAD@{2026-07-04 06:35:15 -0500}: rebase (pick): docs(validator): spec v2 — liquidity/executability axis (fase 2), expanded CEX venues, tokens.logo_url gap-fill correction, Apify Store eval
+1db77b1 HEAD@{2026-07-04 06:35:15 -0500}: rebase (pick): docs(validator): off-chain price validator spec v1 — Opción A (Apify+bridge)
+9338b5b HEAD@{2026-07-04 06:35:15 -0500}: rebase (start): checkout github/main
+721ec1f HEAD@{2026-07-04 06:32:57 -0500}: checkout: moving from main to fase1-opportunity-candidate
+721ec1f HEAD@{2026-07-04 06:32:30 -0500}: commit: feat(G-SIM-1 B2b): Fase 1 — OpportunityCandidate + route_source selector
+0080ebf HEAD@{2026-06-29 20:40:00 -0500}: commit: docs(omega): FASE A path-to-live gate map — 8 gates audited (PAPER ~68% / LIVE ~22%); critical path single-rooted on #224 merge; stale-state corrections
+6ede1a8 HEAD@{2026-06-29 19:15:44 -0500}: commit: docs(m5): completion plan — keyless-CI refactor of #229 + seeded-pools cross-DEX canary (delta over #224/#229/#231; no duplication)
+506706d HEAD@{2026-06-29 18:58:12 -0500}: commit: docs(m5): CORRECT §2 — cross-DEX fix IS in #224 (audited GO), not on main; prerequisite = #224 merged (no separate fix PR); duplicate #234 closed
+bc566a5 HEAD@{2026-06-29 17:48:25 -0500}: commit: docs(m5): ground-truth corrections — cross-DEX fix is UNMET on main (_boundedRouterCall approves only tokenIn); AllowanceManager deprecated as spend-gate (SC-12); deploy must setTokenApproval both legs
+1845cbb HEAD@{2026-06-29 17:42:03 -0500}: commit: docs(m5): reconcile prerequisites with #224 (cross-DEX fix + Layer-C harness + parity already built/CI-green/GO) — single hard prereq is '#224 merged'; per-trade spend-cap = AllowanceManager wired at deploy
+61023d2 HEAD@{2026-06-29 17:31:06 -0500}: commit: docs(m5): A5 selector-whitelist (setRouterSelectorApproval) promoted to HARD prerequisite + DeployTestnet wiring step (fail-closed; canary reverts without it)
+d4d0e38 HEAD@{2026-06-29 17:22:21 -0500}: commit: docs(m5): Sepolia validation pipeline spec — 3-zone keyless-CI/operator-KMS, seeded canary A, fail-honest (real metrics not fabricated), prereq = contract cross-DEX fix + #224 reconcile
+99ed397 HEAD@{2026-06-29 01:15:38 -0500}: commit: refactor(price-validator): per-item dead_code allows + panic-free median + deterministic config test
+6290d8d HEAD@{2026-06-29 00:45:34 -0500}: commit: feat(price-validator): pure validation logic — consensus/divergence/halt + 10 normative vectors
+09ac2df HEAD@{2026-06-29 00:40:01 -0500}: commit: docs(validator): tightness = relative range (not MAD) — fixes the [1.0,1.0,1.4] duplicate trap; vector #3 made testable
+6e84ac4 HEAD@{2026-06-29 00:08:35 -0500}: commit: feat(db): migration 098 — validator_divergences + tokens metadata columns
+c17e96b HEAD@{2026-06-29 00:07:55 -0500}: commit: feat(price-validator): scaffold crate + workspace registration
+53d7594 HEAD@{2026-06-28 23:59:41 -0500}: commit: docs(validator): apply operator adjustments — conservative halt-grade thresholds + 10 normative vectors (spec §6), plan addendum (phase order, no-influence gates, truth/annotative split, Apify-secondary)
+b8ee022 HEAD@{2026-06-28 23:49:12 -0500}: commit: docs(validator): implementation plan — phased TDD (migrations, Rust bridge, Apify actor, api endpoint, deploy)
+d8f8f8b HEAD@{2026-06-28 23:43:38 -0500}: commit: docs(validator): spec v2 — liquidity/executability axis (fase 2), expanded CEX venues, tokens.logo_url gap-fill correction, Apify Store eval
+aa2505a HEAD@{2026-06-28 23:26:19 -0500}: commit (initial): docs(validator): off-chain price validator spec v1 — Opción A (Apify+bridge)

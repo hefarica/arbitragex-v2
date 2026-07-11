@@ -24,6 +24,94 @@ import type { Application, Request, Response } from "express";
 import type { Pool, QueryResultRow } from "pg";
 import type { Redis } from "ioredis";
 import { resolveTokensOnDemand, tokenCacheKey } from "./tokenResolver.js";
+
+// ── Token Symbol Cache ───────────────────────────────────────────────────────
+// Cache en memoria para símbolos de tokens (reduce queries repetidas a DB)
+// TTL: 60 segundos - balance entre frescura de datos y rendimiento
+
+interface TokenSymbolCacheEntry {
+  symbol: string;
+  decimals: number;
+  logo_url: string | null;
+  timestamp: number;
+}
+
+const TOKEN_CACHE_TTL_MS = 60 * 1000; // 60 segundos
+const tokenSymbolCache = new Map<string, TokenSymbolCacheEntry>();
+
+/**
+ * Resuelve símbolos de tokens con caching agresivo.
+ * Evita queries repetidas a PostgreSQL para tokens ya resueltos recientemente.
+ */
+async function resolveTokenSymbolsWithCache(
+  pool: Pool,
+  tokenAddresses: Array<{ chain_id: number; address: string }>,
+): Promise<Map<string, TokenSymbolCacheEntry>> {
+  const results = new Map<string, TokenSymbolCacheEntry>();
+  const toFetch: Array<{ chain_id: number; address: string }> = [];
+  const now = Date.now();
+
+  // Check cache primero
+  for (const { chain_id, address } of tokenAddresses) {
+    const cacheKey = tokenCacheKey(chain_id, address);
+    const cached = tokenSymbolCache.get(cacheKey);
+
+    if (cached && now - cached.timestamp < TOKEN_CACHE_TTL_MS) {
+      results.set(cacheKey, cached);
+    } else {
+      toFetch.push({ chain_id, address });
+    }
+  }
+
+  // Fetch solo los que no están en cache o expiraron
+  if (toFetch.length > 0) {
+    const query = `
+      SELECT chain_id, address, symbol, decimals, logo_url
+      FROM tokens
+      WHERE (chain_id, address) IN (${toFetch
+        .map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`)
+        .join(", ")})
+    `;
+    const params = toFetch.flatMap((t) => [t.chain_id, t.address.toLowerCase()]);
+
+    try {
+      const { rows } = await pool.query(query, params);
+
+      for (const row of rows) {
+        const entry: TokenSymbolCacheEntry = {
+          symbol: row.symbol,
+          decimals: row.decimals,
+          logo_url: row.logo_url,
+          timestamp: now,
+        };
+        const cacheKey = tokenCacheKey(row.chain_id, row.address);
+        tokenSymbolCache.set(cacheKey, entry);
+        results.set(cacheKey, entry);
+      }
+    } catch (e) {
+      // Fail-honest: si falla, continuamos con lo que tengamos en cache
+      console.warn("[TokenCache] DB query failed, using cached data only:", e);
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Obtiene entrada de cache para un token específico
+ */
+function getCachedToken(
+  chain_id: number,
+  address: string,
+): TokenSymbolCacheEntry | undefined {
+  const cacheKey = tokenCacheKey(chain_id, address);
+  const cached = tokenSymbolCache.get(cacheKey);
+
+  if (cached && Date.now() - cached.timestamp < TOKEN_CACHE_TTL_MS) {
+    return cached;
+  }
+  return undefined;
+}
 import { verifyToken } from "../services/tokenRegistry.js";
 import {
   readTokenValidationsBatch,

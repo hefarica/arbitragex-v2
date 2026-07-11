@@ -63,6 +63,18 @@ pub enum StrategyLabel {
     /// protocol-defined bonus.
     #[serde(rename = "liquidation")]
     Liquidation,
+    /// Graph-theoretic cycle detection via Bellman-Ford on token liquidity graphs.
+    /// Detects negative cycles (Holonomic Loop Resolutions) using -ln(rate) edge weights.
+    #[serde(rename = "spanning_tree_arb")]
+    SpanningTreeArb,
+    /// Cross-chain Holonomic Loop Resolution via bridge protocols (LayerZero, Wormhole).
+    /// Detects price divergences across chains accounting for bridge fees and latency.
+    #[serde(rename = "cross_chain_arb")]
+    CrossChainArb,
+    /// High-frequency liquidation sniping on Aave V3 and Compound V2.
+    /// Monitors health_factor < 1.0 positions for profitable liquidation opportunities.
+    #[serde(rename = "liquidation_snipe")]
+    LiquidationSnipe,
 }
 
 impl StrategyLabel {
@@ -114,6 +126,9 @@ impl StrategyLabel {
             StrategyLabel::TriangularArb => "triangular_arb",
             StrategyLabel::FlashloanArb => "flashloan_arb",
             StrategyLabel::Liquidation => "liquidation",
+            StrategyLabel::SpanningTreeArb => "spanning_tree_arb",
+            StrategyLabel::CrossChainArb => "cross_chain_arb",
+            StrategyLabel::LiquidationSnipe => "liquidation_snipe",
         }
     }
 
@@ -128,6 +143,9 @@ impl StrategyLabel {
             "triangular_arb" => Some(StrategyLabel::TriangularArb),
             "flashloan_arb" => Some(StrategyLabel::FlashloanArb),
             "liquidation" => Some(StrategyLabel::Liquidation),
+            "spanning_tree_arb" => Some(StrategyLabel::SpanningTreeArb),
+            "cross_chain_arb" => Some(StrategyLabel::CrossChainArb),
+            "liquidation_snipe" => Some(StrategyLabel::LiquidationSnipe),
             _ => None,
         }
     }
@@ -137,6 +155,10 @@ impl StrategyLabel {
     ///
     /// All four `DexArb*` variants map to `DexArb` to keep the DB schema stable
     /// (spec §3.1, §6.1 — no migration required).
+    /// New experimental engines map to appropriate existing kinds:
+    /// - SpanningTreeArb → Triangular (similar graph-cycle nature)
+    /// - CrossChainArb → DexArb (cross-DEX arbitrage pattern)
+    /// - LiquidationSnipe → Liquidation (same protocol family)
     ///
     /// Takes `self` by value (`Copy` type — no overhead).
     ///
@@ -148,10 +170,13 @@ impl StrategyLabel {
             StrategyLabel::DexArbV2V2
             | StrategyLabel::DexArbV2V3
             | StrategyLabel::DexArbV3V2
-            | StrategyLabel::DexArbV3V3 => shared_rs::contracts::StrategyKind::DexArb,
-            StrategyLabel::TriangularArb => shared_rs::contracts::StrategyKind::Triangular,
+            | StrategyLabel::DexArbV3V3
+            | StrategyLabel::CrossChainArb => shared_rs::contracts::StrategyKind::DexArb,
+            StrategyLabel::TriangularArb
+            | StrategyLabel::SpanningTreeArb => shared_rs::contracts::StrategyKind::Triangular,
             StrategyLabel::FlashloanArb => shared_rs::contracts::StrategyKind::FlashloanArb,
-            StrategyLabel::Liquidation => shared_rs::contracts::StrategyKind::Liquidation,
+            StrategyLabel::Liquidation
+            | StrategyLabel::LiquidationSnipe => shared_rs::contracts::StrategyKind::Liquidation,
         }
     }
 }

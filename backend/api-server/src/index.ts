@@ -122,6 +122,7 @@ import {
   subscribeToConvergenceSignals,
   subscribeToCartridgeTelemetry,
   subscribeToRouteDiscoveryTelemetry,
+  OpportunityHotStreamer,
 } from "./websocket.js";
 import {
   TelemetryCache,
@@ -1537,6 +1538,18 @@ if (pool && outcomeSinkEnabled()) {
   );
 }
 
+// OMEGA Pipeline Task 5 — Hot Opportunity Streamer (Redis Streams → WebSocket)
+// Emite oportunidades detectadas y simuladas a clientes en tiempo real.
+const hotOpportunityStreamer = new OpportunityHotStreamer({
+  io,
+  redisUrl: REDIS_URL,
+  logger,
+});
+hotOpportunityStreamer.start().catch((e) =>
+  logger.error({ event: "hot_streamer.start_err", err: (e as Error).message },
+    "hot opportunity streamer failed to start"),
+);
+
 // Gate C — scored_opportunities archiver (passive scoring telemetry sink).
 // Reads arbx:scoring:scored (the Rust OpportunityEmitter's ConfidenceScore XADD)
 // and persists each scored opportunity into scored_opportunities. 100% passive:
@@ -1589,6 +1602,7 @@ const shutdown = async (sig: string) => {
   await rdOutcomeSink?.stop().catch(() => {});
   await scoredArchiver?.stop().catch(() => {});
   await oppsBridge?.stop().catch(() => {});
+  await hotOpportunityStreamer.stop().catch(() => {});
   // Arteria WSS: cerrar el subscriber de convergencia antes que el redis
   // principal para evitar errores de "Connection is closed" en handlers.
   await convergenceSubscriber.quit().catch(() => {});

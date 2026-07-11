@@ -662,6 +662,129 @@ export function subscribeToCartridgeTelemetry(
 
 const ROUTE_DISCOVERY_TELEMETRY_CHANNEL = 'arbx:route_discovery:telemetry';
 
+// ---------------------------------------------------------------------------
+// Hot Opportunity Streamer — OMEGA Pipeline Task 5
+// ---------------------------------------------------------------------------
+
+const HOT_OPPORTUNITIES_GROUP = 'ws-emitter-g0';
+const HOT_DETECTED_STREAM = 'arbx:hot:detected';
+const HOT_SIMULATED_STREAM = 'arbx:hot:simulated';
+
+export interface HotOpportunityStreamerOptions {
+    io: Server;
+    redisUrl: string;
+    logger?: { log: (...args: unknown[]) => void; error: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
+}
+
+export interface HotOpportunity {
+    id: string;
+    chain_id?: string;
+    strategy_kind?: string;
+    detected_at_ms?: string;
+    status?: string;
+    net_profit_wei?: string;
+    gas_used?: string;
+    timestamp_ms?: string;
+    [key: string]: string | undefined;
+}
+
+export class OpportunityHotStreamer {
+    private io: Server;
+    private redis: Redis;
+    private logger: NonNullable<HotOpportunityStreamerOptions['logger']>;
+    private running = false;
+    private consumerName: string;
+    private pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+    constructor(opts: HotOpportunityStreamerOptions) {
+        this.io = opts.io;
+        this.redis = new Redis(opts.redisUrl, {
+            lazyConnect: false,
+            maxRetriesPerRequest: 3,
+            retryStrategy: (times: number) => Math.min(times * 50, 2000),
+        });
+        this.logger = opts.logger ?? console;
+        this.consumerName = `ws-emitter-${process.pid}-${Date.now()}`;
+    }
+
+    async start(): Promise<void> {
+        // Create consumer groups if not exist (ignore BUSYGROUP error)
+        try {
+            await this.redis.xgroup('CREATE', HOT_DETECTED_STREAM, HOT_OPPORTUNITIES_GROUP, '$', 'MKSTREAM');
+            this.logger.log(`[HotStreamer] Created consumer group for ${HOT_DETECTED_STREAM}`);
+        } catch (e: unknown) {
+            const err = e as Error;
+            if (!err.message?.includes('BUSYGROUP')) throw e;
+            this.logger.log(`[HotStreamer] Consumer group already exists for ${HOT_DETECTED_STREAM}`);
+        }
+        try {
+            await this.redis.xgroup('CREATE', HOT_SIMULATED_STREAM, HOT_OPPORTUNITIES_GROUP, '$', 'MKSTREAM');
+            this.logger.log(`[HotStreamer] Created consumer group for ${HOT_SIMULATED_STREAM}`);
+        } catch (e: unknown) {
+            const err = e as Error;
+            if (!err.message?.includes('BUSYGROUP')) throw e;
+            this.logger.log(`[HotStreamer] Consumer group already exists for ${HOT_SIMULATED_STREAM}`);
+        }
+
+        this.running = true;
+        this.logger.log('[HotStreamer] Starting poll loops');
+
+        // Start polling loops (non-blocking)
+        this.pollLoop(HOT_DETECTED_STREAM, 'opportunity:detected');
+        this.pollLoop(HOT_SIMULATED_STREAM, 'opportunity:validated');
+    }
+
+    private async pollLoop(stream: string, eventName: string): Promise<void> {
+        while (this.running) {
+            try {
+                // XREADGROUP with 1s block
+                const results = await this.redis.xreadgroup(
+                    'GROUP', HOT_OPPORTUNITIES_GROUP, this.consumerName,
+                    'BLOCK', 1000,
+                    'COUNT', 100,
+                    'STREAMS', stream, '>'
+                ) as [string, [string, string[]][]][] | null;
+
+                if (results) {
+                    for (const [, messages] of results) {
+                        for (const [id, fields] of messages) {
+                            const data = this.parseFields(fields);
+                            // Emit to all clients in 'opportunities' room
+                            const start = process.hrtime.bigint();
+                            this.io.to('opportunities').emit(eventName, { ...data, _stream_id: id });
+                            const elapsedNs = process.hrtime.bigint() - start;
+                            const elapsedMs = Number(elapsedNs) / 1_000_000;
+                            if (elapsedMs > 5) {
+                                this.logger.warn(`[HotStreamer] Slow emit: ${elapsedMs.toFixed(2)}ms > 5ms target`);
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                this.logger.error('[HotStreamer] Poll error:', e);
+                await new Promise(r => setTimeout(r, 1000));
+            }
+        }
+    }
+
+    private parseFields(fields: string[]): Record<string, string> {
+        const result: Record<string, string> = {};
+        for (let i = 0; i < fields.length; i += 2) {
+            result[fields[i]!] = fields[i + 1] ?? '';
+        }
+        return result;
+    }
+
+    async stop(): Promise<void> {
+        this.running = false;
+        if (this.pollTimer) {
+            clearTimeout(this.pollTimer);
+            this.pollTimer = null;
+        }
+        await this.redis.quit();
+    }
+}
+
 /**
  * Emite un mensaje de telemetría del radar a los clientes suscritos al room
  * `route_discovery`. Path principal: el puente Redis Pub/Sub en

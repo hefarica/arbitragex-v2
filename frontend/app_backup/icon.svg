@@ -1,0 +1,20 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="QuantumX">
+  <rect width="48" height="48" rx="11" fill="#0C1230"/>
+  <defs>
+    <linearGradient id="qx-o" x1="10" y1="10" x2="38" y2="38" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9BC0FF"/>
+      <stop offset="0.52" stop-color="#4F7BF7"/>
+      <stop offset="1" stop-color="#2742E0"/>
+    </linearGradient>
+    <radialGradient id="qx-n" cx="0.5" cy="0.45" r="0.6">
+      <stop stop-color="#EAF2FF"/>
+      <stop offset="0.55" stop-color="#6E9CFF"/>
+      <stop offset="1" stop-color="#2C54EE"/>
+    </radialGradient>
+  </defs>
+  <ellipse cx="24" cy="24" rx="15.5" ry="5.6" transform="rotate(45 24 24)" stroke="url(#qx-o)" stroke-width="2.4"/>
+  <ellipse cx="24" cy="24" rx="15.5" ry="5.6" transform="rotate(-45 24 24)" stroke="url(#qx-o)" stroke-width="2.4"/>
+  <circle cx="24" cy="24" r="3.8" fill="url(#qx-n)"/>
+  <circle cx="34.9" cy="13.1" r="1.8" fill="#9BC0FF"/>
+  <circle cx="13.1" cy="34.9" r="1.8" fill="#5B86F7"/>
+</svg>

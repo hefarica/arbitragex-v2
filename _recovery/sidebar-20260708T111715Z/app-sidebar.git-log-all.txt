@@ -1,0 +1,11 @@
+45647b0 FASE OMEGA: 5 Vectores de Ejecución + Protocolo de Preservación CI/CD
+48ea1a5 style(frontend): pixel-perfect visual parity with mockup-premium.html
+ad99a55 style(sidebar): refinar blue accent + liquid-glass (continuación 67d69b6)
+67d69b6 style(sidebar): visual micro-polish — blue accent + liquid-glass accordions
+37fca6f feat(G-SIM-1 B2b): Fase 5 frontend — route_source selector + collapsible glassmorphism sidebar (#270)
+428686b (github/fase5-frontend-selector, fase5-frontend-selector) feat(G-SIM-1 B2b): Fase 5 frontend — route_source selector + collapsible glassmorphism sidebar
+de98724 feat(frontend): aethir-style particle-sphere bg + glass labels/iOS radius + UX polish + lockfile fix
+66b7667 (github/feat/credentials-summary-badge) feat(fe): sidebar credentials "needs attention" badge + fix paper-mode fetch path
+413ad79 feat(fe): nav 4-group, dynamic paper-mode badge, panels, readiness gate
+2ebe5c0 feat(gov,phase0.5): R3 admin relay CRUD + R9 onboarding phase 1 skeleton
+58f34d4 feat(frontend): shadcn/ui design system + Tailwind v4 + dark-mode default

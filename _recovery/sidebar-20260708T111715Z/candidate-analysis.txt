@@ -1,0 +1,88 @@
+===== _recovery/sidebar-20260708T111715Z/candidates/app-sidebar.37fca6f.healthy.tsx =====
+222 _recovery/sidebar-20260708T111715Z/candidates/app-sidebar.37fca6f.healthy.tsx
+16:const COLLAPSE_KEY = "arbx:sidebar:collapsed";
+19:  const [collapsed, setCollapsed] = useState(false);
+25:      const stored = window.localStorage.getItem(COLLAPSE_KEY);
+28:      /* localStorage blocked (private mode / SSR guard) — default expanded */
+36:        window.localStorage.setItem(COLLAPSE_KEY, String(next));
+45:  const effective = mounted ? collapsed : false;
+53:  collapsed = false,
+58:  collapsed?: boolean;
+63:    <ul className="space-y-0.5">
+73:              title={collapsed ? item.label : undefined}
+77:                collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2 hover:bg-sidebar-accent/60",
+79:                active && collapsed && "bg-primary/15",
+82:              aria-label={collapsed ? item.label : undefined}
+85:              {!collapsed && <span className="truncate">{item.label}</span>}
+92:                    collapsed ? "absolute right-1 top-1 px-0.5" : "ml-auto",
+97:                  {collapsed ? "" : credsNeedsAttention}
+100:                !collapsed && <span className="ml-auto size-1.5 rounded-full bg-primary" aria-hidden />
+103:              {active && collapsed && (
+105:                  className="absolute left-0 top-1/2 h-6 w-0.5 -translate-y-1/2 rounded-r-full bg-primary"
+121:  const [collapsed, toggleCollapsed] = useSidebarCollapsed();
+===== _recovery/sidebar-20260708T111715Z/candidates/app-sidebar.45647b0.fase-omega.tsx =====
+481 _recovery/sidebar-20260708T111715Z/candidates/app-sidebar.45647b0.fase-omega.tsx
+21:function StatusStack({ paperMode, collapsed }: { paperMode: boolean; collapsed: boolean }) {
+53:  if (collapsed) {
+182:const COLLAPSE_KEY = "arbx:sidebar:collapsed";
+184:const CLOSED_SECTIONS_KEY = "arbx:sidebar:closedSections";
+187:  const [collapsed, setCollapsed] = useState(false);
+193:      const stored = window.localStorage.getItem(COLLAPSE_KEY);
+196:      /* localStorage blocked (private mode / SSR guard) — default expanded */
+204:        window.localStorage.setItem(COLLAPSE_KEY, String(next));
+213:  const effective = mounted ? collapsed : false;
+219: * localStorage as the set of CLOSED groups (default = all open, so a fresh
+229:      const raw = window.localStorage.getItem(CLOSED_SECTIONS_KEY);
+242:        window.localStorage.setItem(CLOSED_SECTIONS_KEY, JSON.stringify([...next]));
+250:  // SSR: render all open (no flash of collapsed sections).
+260:  collapsed = false,
+265:  collapsed?: boolean;
+270:    <ul className="space-y-0.5">
+280:              title={collapsed ? item.label : undefined}
+285:                collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2 hover:bg-sidebar-accent/60",
+288:                  !collapsed &&
+290:                active && collapsed && "bg-primary/20 text-foreground",
+===== _recovery/sidebar-20260708T111715Z/candidates/app-sidebar.HEAD.tsx =====
+222 _recovery/sidebar-20260708T111715Z/candidates/app-sidebar.HEAD.tsx
+16:const COLLAPSE_KEY = "arbx:sidebar:collapsed";
+19:  const [collapsed, setCollapsed] = useState(false);
+25:      const stored = window.localStorage.getItem(COLLAPSE_KEY);
+28:      /* localStorage blocked (private mode / SSR guard) — default expanded */
+36:        window.localStorage.setItem(COLLAPSE_KEY, String(next));
+45:  const effective = mounted ? collapsed : false;
+53:  collapsed = false,
+58:  collapsed?: boolean;
+63:    <ul className="space-y-0.5">
+73:              title={collapsed ? item.label : undefined}
+77:                collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2 hover:bg-sidebar-accent/60",
+79:                active && collapsed && "bg-primary/15",
+82:              aria-label={collapsed ? item.label : undefined}
+85:              {!collapsed && <span className="truncate">{item.label}</span>}
+92:                    collapsed ? "absolute right-1 top-1 px-0.5" : "ml-auto",
+97:                  {collapsed ? "" : credsNeedsAttention}
+100:                !collapsed && <span className="ml-auto size-1.5 rounded-full bg-primary" aria-hidden />
+103:              {active && collapsed && (
+105:                  className="absolute left-0 top-1/2 h-6 w-0.5 -translate-y-1/2 rounded-r-full bg-primary"
+121:  const [collapsed, toggleCollapsed] = useSidebarCollapsed();
+===== _recovery/sidebar-20260708T111715Z/candidates/app-sidebar.backup-components.tsx =====
+358 _recovery/sidebar-20260708T111715Z/candidates/app-sidebar.backup-components.tsx
+12:function StatusStack({ paperMode, collapsed }: { paperMode: boolean; collapsed: boolean }) {
+44:  if (collapsed) {
+173:const COLLAPSE_KEY = "arbx:sidebar:collapsed";
+176:  const [collapsed, setCollapsed] = useState(false);
+182:      const stored = window.localStorage.getItem(COLLAPSE_KEY);
+185:      /* localStorage blocked (private mode / SSR guard) — default expanded */
+193:        window.localStorage.setItem(COLLAPSE_KEY, String(next));
+202:  const effective = mounted ? collapsed : false;
+210:  collapsed = false,
+215:  collapsed?: boolean;
+220:    <ul className="space-y-0.5">
+230:              title={collapsed ? item.label : undefined}
+234:                collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2 hover:bg-sidebar-accent/60",
+236:                active && collapsed && "bg-primary/15",
+239:              aria-label={collapsed ? item.label : undefined}
+242:              {!collapsed && <span className="truncate">{item.label}</span>}
+249:                    collapsed ? "absolute right-1 top-1 px-0.5" : "ml-auto",
+254:                  {collapsed ? "" : credsNeedsAttention}
+257:                !collapsed && <span className="ml-auto size-1.5 rounded-full bg-primary" aria-hidden />
+260:              {active && collapsed && (

@@ -1,0 +1,20 @@
+{
+  "path": "/admin/signin",
+  "label": "Admin sign-in",
+  "group": "admin",
+  "httpStatus": 200,
+  "contentType": "text/html; charset=utf-8",
+  "hasH1": false,
+  "hasPrimaryContent": true,
+  "pageLevelError": false,
+  "is404": false,
+  "shadowed": false,
+  "forbiddenHits": [],
+  "buttons": 3,
+  "forms": 1,
+  "tables": 0,
+  "toggles": 0,
+  "dataProvenance": 0,
+  "consoleErrors": [],
+  "verdict": "PASS"
+}

@@ -1,0 +1,20 @@
+{
+  "path": "/recon",
+  "label": "Recon & yield",
+  "group": "observe",
+  "httpStatus": 200,
+  "contentType": "text/html; charset=utf-8",
+  "hasH1": true,
+  "hasPrimaryContent": true,
+  "pageLevelError": false,
+  "is404": false,
+  "shadowed": false,
+  "forbiddenHits": [],
+  "buttons": 8,
+  "forms": 0,
+  "tables": 0,
+  "toggles": 0,
+  "dataProvenance": 0,
+  "consoleErrors": [],
+  "verdict": "PASS"
+}

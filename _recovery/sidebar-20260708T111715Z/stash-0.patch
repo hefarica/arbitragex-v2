@@ -1,0 +1,1229 @@
+diff --git a/frontend/app/globals.css b/frontend/app/globals.css
+index 793b28a..58226fc 100644
+--- a/frontend/app/globals.css
++++ b/frontend/app/globals.css
+@@ -45,8 +45,9 @@
+   --color-sidebar-border: var(--sidebar-border);
+   --color-sidebar-ring: var(--sidebar-ring);
+ 
+-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+-  --font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
++  --font-sans: var(--font-inter), 'Inter', ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
++  --font-mono: var(--font-space-mono), 'Space Mono', ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
++  --font-data: var(--font-space-mono), 'Space Mono', ui-monospace, monospace;
+ 
+   --radius-sm: calc(var(--radius) - 4px);
+   --radius-md: calc(var(--radius) - 2px);
+@@ -56,47 +57,52 @@
+ 
+ /* PURE WHITE THEME (#FFFFFF) - PHASE 8 CONSOLIDATION */
+ :root {
+-  --radius: 1rem; /* iOS-style rounded corners */
++  --radius: 0.5rem; /* tightened per operator: less rounded, sharper panels */
+ 
+   /* Particle-sphere accent — ROYAL BLUE in the light theme (HeroSphere). */
+   --sphere-rgb: 36 74 235;
+ 
+-  --background: oklch(1 0 0); /* #FFFFFF */
++  /* Base color aliases (mockup parity) */
++  --bg: oklch(0.985 0.004 240);
++  --fg: oklch(0.18 0.04 260);
++
++  --background: oklch(0.985 0.004 240);
+   --foreground: oklch(0.18 0.04 260);
+ 
+-  --card: oklch(1 0 0);
++  --card: oklch(1 0.003 240 / 0.55);
+   --card-foreground: oklch(0.18 0.04 260);
+ 
+   --popover: oklch(1 0 0 / 95%);
+   --popover-foreground: oklch(0.18 0.04 260);
+ 
+-  --primary: oklch(0.25 0.05 260);
++  --primary: oklch(0.50 0.22 263);
++  --primary-2: oklch(0.55 0.20 240);
+   --primary-foreground: oklch(1 0 0);
+ 
+   --secondary: oklch(0.96 0.015 220);
+   --secondary-foreground: oklch(0.18 0.04 260);
+ 
+   --muted: oklch(0.96 0.015 220);
+-  --muted-foreground: oklch(0.45 0.025 220);
++  --muted-foreground: oklch(0.45 0.025 250);
+ 
+   --accent: oklch(0.92 0.04 215);
+   --accent-foreground: oklch(0.18 0.04 260);
+ 
+-  --destructive: oklch(0.55 0.13 180);
++  --destructive: oklch(0.50 0.22 18);
+   --destructive-foreground: oklch(1 0 0);
+ 
+-  --success: oklch(0.62 0.17 145); /* Fluorescent Green */
++  --success: oklch(0.45 0.17 152);
+   --success-foreground: oklch(1 0 0);
+ 
+-  --warning: oklch(0.75 0.18 85);
++  --warning: oklch(0.55 0.16 75);
+   --warning-foreground: oklch(0.18 0.04 260);
+ 
+   --info: oklch(0.60 0.15 220);
+   --info-foreground: oklch(1 0 0);
+ 
+-  --border: oklch(0.92 0.01 220);
++  --border: oklch(0.30 0.04 260 / 0.14);
+   --input: oklch(0.94 0.01 220);
+-  --ring: oklch(0.25 0.05 260);
++  --ring: oklch(0.50 0.22 263);
+ 
+   --chart-1: oklch(0.60 0.15 220);
+   --chart-2: oklch(0.62 0.17 145);
+@@ -112,6 +118,32 @@
+   --sidebar-accent-foreground: oklch(0.18 0.04 260);
+   --sidebar-border: oklch(0.92 0.01 220);
+   --sidebar-ring: oklch(0.25 0.05 260);
++
++  /* Wonderful-whites backdrop (operator: light theme, "blancos maravillosos").
++     Horizontal gradient, cooler/darker right — mirrors the dark sweep. */
++  --primary-2: oklch(0.55 0.20 240);
++  --bg-grad-1: oklch(0.99 0.004 240);   /* lightest white (left) */
++  --bg-grad-2: oklch(0.965 0.008 250);
++  --bg-grad-3: oklch(0.935 0.013 252);  /* coolest white (right) */
++  --bg-grad: linear-gradient(90deg, var(--bg-grad-1) 0%, var(--bg-grad-2) 55%, var(--bg-grad-3) 100%);
++  /* Aurora glows — exact mockup values */
++  --glow-1: oklch(0.78 0.13 258 / 0.40);
++  --glow-2: oklch(0.82 0.10 235 / 0.30);
++  --glow-3: oklch(0.88 0.07 220 / 0.24);
++  /* Mockup parity: grain, header, shadows */
++  --grain-opacity: 0.26;
++  --ticker-bg: oklch(0.99 0.004 240 / 0.70);
++  --header-bg: oklch(0.985 0.004 240 / 0.62);
++  --hairline: inset 0 1px 0 0 oklch(0.55 0.10 255 / 0.22);
++  --shadow: 0 10px 32px -16px oklch(0.40 0.10 255 / 0.22);
++  --xray-bg: oklch(0.97 0.012 250 / 0.94);
++
++  /* Wordmark glow — premium text shadow for QuantumX logo (mockup parity) */
++  --wordmark-glow: 0 0 18px oklch(0.50 0.22 263 / 0.30);
++
++  /* Easings — refined motion curves (mockup parity) */
++  --ease-expo: cubic-bezier(0.22, 1, 0.36, 1);
++  --ease-sharp: cubic-bezier(0.16, 1, 0.3, 1);
+ }
+ 
+ /* Dark mode — "TradePro" premium fintech theme:
+@@ -121,45 +153,50 @@
+   /* Particle-sphere accent — LIGHT (pale blue-white) in the dark theme (HeroSphere). */
+   --sphere-rgb: 206 224 255;
+ 
+-  --background: oklch(0.14 0.035 265);
++  /* Base color aliases (mockup parity) */
++  --bg: oklch(0.18 0.05 264);
++  --fg: oklch(0.98 0.012 250);
++
++  --background: oklch(0.18 0.05 264);
+   --foreground: oklch(0.98 0.012 250);
+ 
+-  --card: oklch(0.18 0.04 265);
++  --card: oklch(0.24 0.06 258 / 0.19);
+   --card-foreground: oklch(0.98 0.012 250);
+ 
+-  --popover: oklch(0.17 0.04 265 / 96%);
++  --popover: oklch(0.17 0.06 263 / 96%);
+   --popover-foreground: oklch(0.98 0.012 250);
+ 
+   /* Electric royal blue — the TradePro accent. */
+-  --primary: oklch(0.62 0.20 263);
++  --primary: oklch(0.62 0.22 263);
++  --primary-2: oklch(0.78 0.14 235);
+   --primary-foreground: oklch(0.99 0.008 250);
+ 
+-  --secondary: oklch(0.23 0.04 265);
++  --secondary: oklch(0.23 0.06 263);
+   --secondary-foreground: oklch(0.96 0.012 250);
+ 
+-  --muted: oklch(0.22 0.04 265);
+-  --muted-foreground: oklch(0.69 0.035 258);
++  --muted: oklch(0.22 0.06 263);
++  --muted-foreground: oklch(0.69 0.04 250);
+ 
+-  --accent: oklch(0.32 0.075 263);
++  --accent: oklch(0.32 0.09 263);
+   --accent-foreground: oklch(0.98 0.012 250);
+ 
+   /* Red for destructive / sell-side. */
+-  --destructive: oklch(0.62 0.20 18);
++  --destructive: oklch(0.66 0.22 18);
+   --destructive-foreground: oklch(0.99 0.008 250);
+ 
+   /* Green for success / buy-side. */
+-  --success: oklch(0.70 0.17 152);
+-  --success-foreground: oklch(0.14 0.035 265);
++  --success: oklch(0.77 0.18 152);
++  --success-foreground: oklch(0.14 0.05 263);
+ 
+-  --warning: oklch(0.80 0.16 80);
+-  --warning-foreground: oklch(0.14 0.035 265);
++  --warning: oklch(0.82 0.16 80);
++  --warning-foreground: oklch(0.14 0.05 263);
+ 
+   --info: oklch(0.66 0.16 256);
+-  --info-foreground: oklch(0.14 0.035 265);
++  --info-foreground: oklch(0.14 0.05 263);
+ 
+-  --border: oklch(0.29 0.035 264);
+-  --input: oklch(0.27 0.035 264);
+-  --ring: oklch(0.62 0.20 263);
++  --border: oklch(0.70 0.10 250 / 0.16);
++  --input: oklch(0.27 0.05 263);
++  --ring: oklch(0.62 0.22 263);
+ 
+   --chart-1: oklch(0.62 0.20 263);
+   --chart-2: oklch(0.70 0.17 152);
+@@ -167,14 +204,37 @@
+   --chart-4: oklch(0.80 0.16 80);
+   --chart-5: oklch(0.66 0.20 330);
+ 
+-  --sidebar: oklch(0.16 0.04 266);
++  --sidebar: oklch(0.16 0.06 263);
+   --sidebar-foreground: oklch(0.98 0.012 250);
+   --sidebar-primary: oklch(0.62 0.20 263);
+   --sidebar-primary-foreground: oklch(0.99 0.008 250);
+-  --sidebar-accent: oklch(0.26 0.05 265);
++  --sidebar-accent: oklch(0.26 0.075 263);
+   --sidebar-accent-foreground: oklch(0.98 0.012 250);
+-  --sidebar-border: oklch(0.29 0.035 264);
++  --sidebar-border: oklch(0.29 0.05 263);
+   --sidebar-ring: oklch(0.62 0.20 263);
++
++  /* Royal-blue → light-blue backdrop sweep (operator: azul rey vívido, degradado
++     horizontal con la derecha más oscura). Used by .dark body. */
++  --bg-grad-1: oklch(0.16 0.05 266);   /* darkest — royal deep (right) */
++  --bg-grad-2: oklch(0.24 0.11 258);   /* mid — royal */
++  --bg-grad-3: oklch(0.46 0.19 250);   /* lightest — sky blue (left) */
++  /* Aurora radial glows — vivid royal blue (the "alive" accent). Exact mockup values. */
++  --glow-1: oklch(0.55 0.24 263 / 0.45);
++  --glow-2: oklch(0.70 0.16 240 / 0.32);
++  --glow-3: oklch(0.84 0.09 220 / 0.28);
++  /* Horizontal gradient (darker right): lightest left → darkest right. */
++  --bg-grad: linear-gradient(90deg, var(--bg-grad-3) 0%, var(--bg-grad-2) 55%, var(--bg-grad-1) 100%);
++
++  /* Mockup parity: grain, header, shadows, xray */
++  --grain-opacity: 0.5;
++  --ticker-bg: oklch(0.16 0.05 266 / 0.55);
++  --header-bg: oklch(0.18 0.05 264 / 0.40);
++  --hairline: inset 0 1px 0 0 oklch(0.98 0.012 250 / 0.16);
++  --shadow: 0 8px 30px -14px oklch(0.02 0.02 266 / 0.5);
++  --xray-bg: oklch(0.16 0.06 263 / 0.92);
++
++  /* Wordmark glow — dark theme intensified (mockup parity) */
++  --wordmark-glow: 0 0 22px oklch(0.62 0.22 263 / 0.55);
+ }
+ 
+ @layer base {
+@@ -191,65 +251,199 @@
+   }
+ }
+ 
++/* Premium data-label utility (operator: mono terminal aesthetic for numeric/status
++   labels — Space Mono, uppercase, wide tracking). Opt-in: applied only to new
++   components (ticker items, sidebar status-stack); NOT a sweeping refactor. */
++.data-label {
++  font-family: var(--font-data);
++  text-transform: uppercase;
++  letter-spacing: 0.14em;
++  font-size: 10.5px;
++  line-height: 1.2;
++}
++
+ /* ── TradePro premium glassmorphism (dark theme) ───────────────────────────
+    Layered navy gradient backdrop + frosted-glass surfaces that let the
+    gradient bleed through. Dark-scoped; the light theme stays flat/solid.
+    This deliberately replicates the TradePro reference design at the operator's
+    explicit request — a controlled gradient+glass system, not noise. */
+ 
+-/* Gradient backdrop — electric-blue glow over deep navy, pinned to viewport so
+-   panels float over it (the glass blur samples this fixed layer). */
++/* ── Animated aurora backdrop (operator request 2026-07-05) ─────────────────
++   The electric-blue radial glows were lifted off <body> onto a `body::before`
++   layer that drifts on a slow GPU-accelerated transform loop (the previous
++   static `background-attachment: fixed` paint is preserved for the base; only
++   the geometry moves). The ::before sits at z-index -20, BEHIND the HeroSphere
++   canvas (-z-10), so the particle globe always reads on top of the moving
++   geometry — "todo debe estar detrás de la esfera". The light theme gets the
++   same geometry in light contrast (soft blue on white). Halted for reduced-motion. */
++html:not(.dark) body {
++  background-color: oklch(0.985 0.004 240);
++  background-image: var(--bg-grad);
++  background-attachment: fixed;
++  background-repeat: no-repeat;
++}
+ .dark body {
+-  background-color: oklch(0.13 0.035 266);
+-  background-image:
+-    radial-gradient(58% 48% at 50% -8%, oklch(0.55 0.20 263 / 0.22), transparent 62%),
+-    radial-gradient(40% 34% at 93% 3%, oklch(0.50 0.18 296 / 0.14), transparent 58%),
+-    radial-gradient(42% 38% at 5% 8%, oklch(0.52 0.15 232 / 0.12), transparent 58%),
+-    linear-gradient(180deg, oklch(0.155 0.045 266) 0%, oklch(0.125 0.032 267) 52%, oklch(0.11 0.028 268) 100%);
++  background-color: oklch(0.13 0.05 264);
++  background-image: var(--bg-grad);
+   background-attachment: fixed;
+   background-repeat: no-repeat;
+ }
++.dark body::before,
++html:not(.dark) body::before {
++  content: "";
++  position: fixed;
++  inset: -30%; /* oversized so the larger drift transform never reveals an edge */
++  z-index: -20; /* behind HeroSphere (-z-10); body's own bg paints below this */
++  pointer-events: none;
++  background-repeat: no-repeat;
++  animation: arbx-aurora-drift 34s ease-in-out infinite;
++}
++.dark body::before {
++  background-image:
++    radial-gradient(62% 52% at 50% -6%, var(--glow-1), transparent 62%),
++    radial-gradient(46% 38% at 88% 6%, var(--glow-2), transparent 60%),
++    radial-gradient(48% 40% at 10% 14%, var(--glow-3), transparent 60%);
++}
++/* Light theme — same geometry, wonderful-white contrast: soft blue glows over the white base. */
++html:not(.dark) body::before {
++  background-image:
++    radial-gradient(60% 50% at 50% -8%, var(--glow-1), transparent 62%),
++    radial-gradient(44% 38% at 90% 4%, var(--glow-2), transparent 60%),
++    radial-gradient(46% 40% at 8% 12%, var(--glow-3), transparent 60%);
++}
++@keyframes arbx-aurora-drift {
++  0%   { transform: translate3d(0%, 0%, 0) scale(1); }
++  25%  { transform: translate3d(6%, -4%, 0) scale(1.09); }
++  50%  { transform: translate3d(-5%, 5%, 0) scale(1.13); }
++  75%  { transform: translate3d(5%, 3%, 0) scale(1.07); }
++  100% { transform: translate3d(0%, 0%, 0) scale(1); }
++}
++
++/* Animation aliases (mockup parity) */
++@keyframes drift {
++  0%   { transform: translate3d(0%, 0%, 0) scale(1); }
++  25%  { transform: translate3d(6%, -4%, 0) scale(1.09); }
++  50%  { transform: translate3d(-5%, 5%, 0) scale(1.13); }
++  75%  { transform: translate3d(5%, 3%, 0) scale(1.07); }
++  100% { transform: translate3d(0%, 0%, 0) scale(1); }
++}
++
++@keyframes tick {
++  from { transform: translateX(0); }
++  to   { transform: translateX(-50%); }
++}
++
++@keyframes shine {
++  0%, 80% { transform: translateX(-120%); }
++  100%    { transform: translateX(120%); }
++}
++
++@keyframes charIn {
++  from {
++    opacity: 0;
++    transform: translateY(110%) rotateX(-90deg);
++  }
++  to {
++    opacity: 1;
++    transform: translateY(0) rotateX(0);
++  }
++}
++
++@media (prefers-reduced-motion: reduce) {
++  .dark body::before,
++  html:not(.dark) body::before {
++    animation: none;
++  }
++}
+ 
+ /* Frosted-glass cards — translucent navy + blur so the gradient shows through,
+    with a hairline top highlight + soft drop shadow for the glass edge. */
+ .dark [data-slot="card"] {
+-  background-color: oklch(0.205 0.042 265 / 0.55);
+-  backdrop-filter: blur(14px) saturate(1.35);
+-  -webkit-backdrop-filter: blur(14px) saturate(1.35);
+-  /* NOTE: intentionally do NOT set border-color here. Several pages put
+-     data-slot="card" on raw divs that carry state borders (e.g. worker-health
+-     uses `border-success/40` to signal "Kernel Bypass ACTIVE"). An attribute
+-     selector (0,1,1) would clobber those single-class utilities (0,1,0) and
+-     silently flatten the state signal. The glass edge comes from the inset
+-     top-highlight in the box-shadow below — border tint is not needed. */
+-  box-shadow:
+-    inset 0 1px 0 0 oklch(0.92 0.04 260 / 0.07),
+-    0 10px 34px -16px oklch(0.02 0.02 266 / 0.85);
++  background-color: oklch(0.205 0.045 230 / 0.19);
++  backdrop-filter: blur(14px) saturate(1.4);
++  -webkit-backdrop-filter: blur(14px) saturate(1.4);
++  border-width: 0;
++  /* Borderless silhouette — depth via stronger blur + soft shadow. */
++  box-shadow: 0 8px 30px -14px oklch(0.02 0.02 266 / 0.55);
++}
++
++/* Broad glass treatment — every .bg-card panel (shadcn Card + raw bg-card divs)
++   becomes borderless frosted glass: the translucent --card surface + backdrop blur
++   refracts the animated aurora behind it (operator: "todos los paneles, borderless,
++   con blur de profundidad"). */
++.dark .bg-card {
++  backdrop-filter: blur(14px) saturate(1.4);
++  -webkit-backdrop-filter: blur(14px) saturate(1.4);
++  border-width: 0;
++  /* specular edge (inset top-highlight) = the liquid-glass refraction signature,
++     plus a soft depth shadow. Anti-pattern avoided: NO opaque bg behind — the
++     translucent --card + this blur refracts the animated aurora. */
++  box-shadow: inset 0 1px 0 0 oklch(0.98 0.012 250 / 0.16), 0 8px 30px -14px oklch(0.02 0.02 266 / 0.50);
+ }
+ 
++/* Badges — same glass treatment as panels (operator: "paneles, badges, cards a todo").
++   All badges get blur + borderless + specular edge; the solid variants (default
++   bg-primary, secondary, destructive) are made translucent so they read as glass
++   tinted with their semantic colour, not as opaque chips. Status variants
++   (success/warning/info) are already /15 in badge.tsx — left as-is. */
++.dark [data-slot="badge"] {
++  backdrop-filter: blur(6px) saturate(1.35);
++  -webkit-backdrop-filter: blur(6px) saturate(1.35);
++  border-width: 0;
++  box-shadow: inset 0 1px 0 0 oklch(0.98 0.012 250 / 0.14);
++}
++.dark [data-slot="badge"].bg-primary { background-color: oklch(0.62 0.20 263 / 0.25); }
++.dark [data-slot="badge"].bg-secondary { background-color: oklch(0.23 0.045 230 / 0.25); }
++.dark [data-slot="badge"].bg-destructive { background-color: oklch(0.62 0.20 18 / 0.25); }
++
+ /* Opt-in glass surface for non-Card panels (metric tiles, etc.).
+    Solid in light theme, frosted in dark. */
+ .glass-surface {
+   @apply bg-card;
+ }
+ .dark .glass-surface {
+-  background-color: oklch(0.21 0.042 265 / 0.50);
+-  backdrop-filter: blur(11px) saturate(1.3);
+-  -webkit-backdrop-filter: blur(11px) saturate(1.3);
+-  border-color: oklch(0.55 0.06 264 / 0.18);
++  background-color: oklch(0.21 0.045 230 / 0.19);
++  backdrop-filter: blur(8px) saturate(1.2);
++  -webkit-backdrop-filter: blur(8px) saturate(1.2);
++  border-color: oklch(0.55 0.06 264 / 0.05);
+ }
+ 
+ /* Glassmorphism Phase 8 - GPU Optimized (legacy utilities, retained) */
+ .glass-panel {
+-  @apply bg-background/60 backdrop-blur-md border border-white/20 shadow-sm;
++  @apply bg-background/19 backdrop-blur-lg shadow-sm;
+   transform: translateZ(0);
+ }
+ 
+ .glass-card {
+-  @apply bg-background/40 backdrop-blur-xl border border-white/10 shadow-lg transition-all duration-300;
++  @apply bg-background/19 backdrop-blur-lg shadow-lg transition-all duration-300;
+   transform: translateZ(0);
+ }
+ 
++/* ── Liquid Glass (iOS 26 aesthetic, web translation) ──────────────────────
++   Adapted from the operator-provided liquid-glass-design skill (vendored
++   text-only, ~/.claude/skills/liquid-glass-design/SKILL.md). Apple's Liquid
++   Glass = dynamic material that blurs content behind, tints subtly, and shows
++   a specular edge refraction. Web translation: heavy blur + saturation, a faint
++   blue tint, and the signature inset top-highlight (the "liquid" specular edge).
++   Dark-scoped — the light theme stays flat. Reserve for interactive containers
++   (accordion headers, inset submenus, floating pills) — NOT every view. */
++.dark .liquid-glass {
++  background-color: oklch(0.62 0.20 263 / 0.03);
++  background-image: linear-gradient(135deg, oklch(0.98 0.012 250 / 0.04), oklch(0.62 0.20 263 / 0.01));
++  backdrop-filter: blur(8px) saturate(1.3);
++  -webkit-backdrop-filter: blur(8px) saturate(1.3);
++  border: 1px solid oklch(0.72 0.16 258 / 0.05);
++  box-shadow: 0 4px 16px -10px oklch(0.02 0.02 266 / 0.30);
++}
++.dark .liquid-glass-interactive {
++  transition: box-shadow 200ms ease, border-color 200ms ease, background-color 200ms ease;
++}
++.dark .liquid-glass-interactive:hover {
++  border-color: oklch(0.72 0.16 258 / 0.12);
++  background-image: linear-gradient(135deg, oklch(0.98 0.012 250 / 0.06), oklch(0.62 0.20 263 / 0.02));
++  box-shadow: 0 6px 20px -10px oklch(0.30 0.10 263 / 0.25);
++}
++
+ /* Premium gradient heading — theme-aware. Light theme: royal-blue ramp (reads on
+    white). Dark theme: white → electric royal-blue (reads on the navy backdrop). */
+ .text-gradient-primary {
+@@ -321,3 +515,213 @@
+ ::-webkit-scrollbar-thumb {
+   @apply bg-muted-foreground/20 rounded-full hover:bg-muted-foreground/40 transition-colors;
+ }
++
++/* ═══════════════════════════════════════════════════════════════════════════
++   MOCKUP PREMIUM VISUAL ENHANCEMENTS (Phase 9 — 2026-07-06)
++   Refinements visuales quirúrgicos para parity con mockup-premium.html
++   Sin cambios estructurales, solo polish CSS.
++   ═══════════════════════════════════════════════════════════════════════════ */
++
++/* ── Wordmark glow effect ───────────────────────────────────────────────── */
++.wordmark-glow {
++  text-shadow: var(--wordmark-glow);
++}
++
++/* ── Shimmer effect for stat cards (premium data visualization) ─────────── */
++.shimmer {
++  position: absolute;
++  inset: 0;
++  pointer-events: none;
++  background: linear-gradient(
++    115deg,
++    transparent 30%,
++    color-mix(in oklab, var(--foreground) 14%, transparent) 50%,
++    transparent 70%
++  );
++  transform: translateX(-120%);
++  animation: shine 3.4s var(--ease-sharp) 1.2s infinite;
++}
++
++@keyframes shimmer-sweep {
++  0%,
++  80% {
++    transform: translateX(-120%);
++  }
++  100% {
++    transform: translateX(120%);
++  }
++}
++
++@media (prefers-reduced-motion: reduce) {
++  .shimmer {
++    animation: none;
++  }
++}
++
++/* ── Enhanced nav item hover glow (sidebar navigation) ──────────────────── */
++.nav-glow {
++  transition: color 180ms, background-color 180ms, text-shadow 180ms;
++}
++.nav-glow:hover {
++  text-shadow: 0 0 14px color-mix(in oklab, var(--primary-2) 80%, transparent);
++}
++.nav-glow:hover .nav-icon {
++  text-shadow: 0 0 12px var(--primary);
++}
++
++/* ── Film grain overlay (premium texture, opt-in via class) ─────────────── */
++.grain,
++.grain-overlay {
++  position: fixed;
++  inset: 0;
++  z-index: 50;
++  pointer-events: none;
++  opacity: var(--grain-opacity, 0.26);
++  mix-blend-mode: overlay;
++  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/></svg>");
++  transition: opacity 320ms var(--ease-expo);
++}
++.dark .grain,
++.dark .grain-overlay {
++  opacity: var(--grain-opacity, 0.5);
++}
++
++/* ── X-Ray card hover effect (opportunity cards) ────────────────────────── */
++.xray-panel {
++  position: absolute;
++  inset-inline: 0;
++  bottom: 0;
++  clip-path: inset(100% 0 0 0);
++  transition: clip-path 320ms var(--ease-sharp);
++}
++.group:hover .xray-panel,
++[data-hoverable]:hover .xray-panel {
++  clip-path: inset(0 0 0 0);
++}
++
++/* Fade content on hover to reveal x-ray */
++.xray-fade {
++  transition: opacity 320ms;
++}
++.group:hover .xray-fade,
++[data-hoverable]:hover .xray-fade {
++  opacity: 0.35;
++}
++
++/* ── Hairline shadow utility (mockup parity) ───────────────────────────── */
++.hairline-shadow {
++  box-shadow: var(--hairline, inset 0 1px 0 0 oklch(0.98 0.012 250 / 0.16)),
++    var(--shadow, 0 8px 30px -14px oklch(0.02 0.02 266 / 0.5));
++}
++
++/* ── Custom cursor (desktop only, accessibility guarded) ────────────────── */
++@media (pointer: fine) {
++  .custom-cursor {
++    cursor: none;
++  }
++}
++
++.cur-dot,
++.cur-ring {
++  position: fixed;
++  top: 0;
++  left: 0;
++  pointer-events: none;
++  z-index: 9999;
++  transform: translate(-50%, -50%);
++  border-radius: 50%;
++}
++
++.cur-dot {
++  width: 7px;
++  height: 7px;
++  background: var(--primary-2);
++  mix-blend-mode: screen;
++  transition: transform 140ms var(--ease-expo);
++}
++
++.cur-ring {
++  width: 38px;
++  height: 38px;
++  border: 1.5px solid var(--primary);
++  opacity: 0.7;
++  transition: width 220ms var(--ease-sharp), height 220ms var(--ease-sharp),
++    opacity 220ms;
++}
++
++body.is-interactive .cur-dot {
++  transform: translate(-50%, -50%) scale(2.5);
++  background: var(--primary);
++}
++
++body.is-interactive .cur-ring {
++  width: 56px;
++  height: 56px;
++  opacity: 0.35;
++}
++
++/* Disable custom cursor on touch devices and reduced motion */
++@media (pointer: coarse), (prefers-reduced-motion: reduce) {
++  .cur-dot,
++  .cur-ring {
++    display: none !important;
++  }
++}
++
++/* ── Live Ticker (mockup parity) ────────────────────────────────────────── */
++.arbx-ticker {
++  overflow: hidden;
++}
++.arbx-ticker:hover .arbx-ticker-track {
++  animation-play-state: paused;
++}
++
++@keyframes arbx-tick {
++  from { transform: translateX(0); }
++  to { transform: translateX(-50%); }
++}
++
++/* Ticker animation alias (mockup parity) */
++.ticker-track {
++  animation: tick 30s linear infinite;
++}
++
++/* ── Sphere Aura (mockup parity) ──────────────────────────────────────────
++   Radial glow behind the HeroSphere particle globe. */
++.sphere-aura {
++  position: absolute;
++  right: -120px;
++  top: -80px;
++  width: 540px;
++  height: 540px;
++  pointer-events: none;
++  z-index: 0;
++  background: radial-gradient(
++    circle at 60% 40%,
++    color-mix(in oklab, var(--primary) 22%, transparent),
++    transparent 65%
++  );
++  filter: blur(20px);
++}
++
++/* ── Character animation (hero text reveal) ─────────────────────────────── */
++.char {
++  display: inline-block;
++  opacity: 0;
++  transform: translateY(110%) rotateX(-90deg);
++  animation: charIn 520ms var(--ease-sharp) forwards;
++}
++
++.char-reveal {
++  display: inline-block;
++  opacity: 0;
++  transform: translateY(110%) rotateX(-90deg);
++  animation: charIn 520ms var(--ease-sharp) forwards;
++}
++
++@keyframes char-in {
++  to {
++    opacity: 1;
++    transform: translateY(0) rotateX(0);
++  }
++}
+diff --git a/frontend/app/layout.tsx b/frontend/app/layout.tsx
+index d43bb0a..fe302d2 100644
+--- a/frontend/app/layout.tsx
++++ b/frontend/app/layout.tsx
+@@ -1,7 +1,6 @@
+ import type { ReactNode } from "react";
+ import { headers } from "next/headers";
+-import { GeistSans } from "geist/font/sans";
+-import { GeistMono } from "geist/font/mono";
++import { Inter, Space_Mono } from "next/font/google";
+ 
+ import "./globals.css";
+ import { SiteHeader } from "@/components/site-header";
+@@ -10,9 +9,23 @@ import { PageBreadcrumb } from "@/components/PageBreadcrumb";
+ import { HeroSphere } from "@/components/HeroSphere";
+ import { ThemeScript } from "@/components/theme-toggle";
+ import { SystemGuardBanner } from "@/components/SystemGuardBanner";
+-import { Web3Provider } from "@/app/providers/Web3Provider";
++import { Web3ProviderWrapper } from "@/app/providers/Web3ProviderWrapper";
+ import { Toaster } from "sonner";
+ 
++// Mockup parity: Inter (sans-serif) + Space Mono (monospace) — exact font stack from premium mockup
++const inter = Inter({
++  subsets: ["latin"],
++  variable: "--font-inter",
++  display: "swap",
++});
++
++const spaceMono = Space_Mono({
++  subsets: ["latin"],
++  weight: ["400", "700"],
++  variable: "--font-space-mono",
++  display: "swap",
++});
++
+ export const metadata = {
+   title: "QuantumX — Control Plane",
+   description: "Institutional-grade stochastic convergence operator console",
+@@ -83,7 +96,7 @@ export default async function RootLayout({ children }: { children: ReactNode })
+     <html
+       lang="en"
+       translate="no"
+-      className={`${GeistSans.variable} ${GeistMono.variable} notranslate`}
++      className={`${inter.variable} ${spaceMono.variable} notranslate`}
+       suppressHydrationWarning
+     >
+       <head>
+@@ -91,6 +104,8 @@ export default async function RootLayout({ children }: { children: ReactNode })
+         <meta name="google" content="notranslate" />
+       </head>
+       <body className="min-h-dvh bg-background font-sans antialiased notranslate" translate="no">
++        {/* Film grain overlay — premium texture (mockup parity) */}
++        <div className="grain" aria-hidden />
+         <HeroSphere />
+         <a
+           href="#main"
+@@ -103,7 +118,7 @@ export default async function RootLayout({ children }: { children: ReactNode })
+           the read-only /wallet surface can connect a browser wallet. It exposes
+           ONLY read-only connectivity — no signer, no capital, no broadcast.
+         */}
+-        <Web3Provider cookie={requestCookie}>
++        <Web3ProviderWrapper cookie={requestCookie}>
+           <div className="flex min-h-dvh flex-col">
+             <SiteHeader paperMode={paperMode} />
+             <SystemGuardBanner />
+@@ -118,14 +133,21 @@ export default async function RootLayout({ children }: { children: ReactNode })
+                   centred reading line. Horizontal padding kept at lg:px-10 for
+                   breathing room around the sidebar.
+                 */}
+-                <div className="mx-auto w-full max-w-[1800px] px-4 py-8 lg:px-10 lg:py-10">
++                {/* Mockup parity: max-width 1640px, padding 56px 40px 80px */}
++                <div
++                  className="mx-auto w-full"
++                  style={{
++                    maxWidth: '1640px',
++                    padding: '56px 40px 80px',
++                  }}
++                >
+                   <PageBreadcrumb />
+                   {children}
+                 </div>
+               </main>
+             </div>
+           </div>
+-        </Web3Provider>
++        </Web3ProviderWrapper>
+         <Toaster richColors position="top-right" />
+       </body>
+     </html>
+diff --git a/frontend/app/page.tsx b/frontend/app/page.tsx
+index c66bfdb..5cf8510 100644
+--- a/frontend/app/page.tsx
++++ b/frontend/app/page.tsx
+@@ -49,28 +49,46 @@ export default async function Home() {
+   const [status, recon] = await Promise.all([getStatus(), getReconSummary(1)]);
+   return (
+     <>
+-      <div className="mb-8 space-y-2">
+-        <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-muted-foreground">
+-          <span className="size-1.5 rounded-full bg-primary" />
+-          operator console
+-        </div>
+-        <h1>Platform control plane.</h1>
+-        <p className="max-w-2xl text-base text-muted-foreground">
+-          Every view below consumes live edge endpoints. When an upstream is unhealthy
+-          the page surfaces the error verbatim — it never synthesizes values.
+-        </p>
+-        <div className="flex flex-wrap gap-2 pt-2">
+-          <Badge variant="info">paper-mode ON</Badge>
+-          <Badge variant="outline">S1 – S6 merged</Badge>
+-          <Badge variant="outline" className="font-mono">{getApiBaseUrl()}</Badge>
++      {/* Sphere aura — mockup parity: radial glow behind HeroSphere */}
++      <div className="sphere-aura" aria-hidden />
++
++      <div className="relative z-10">
++        {/* Hero section — mockup parity */}
++        <div className="mb-8 max-w-[980px]">
++          <div
++            className="mb-4 text-[10.5px] uppercase tracking-[0.14em]"
++            style={{ color: 'var(--primary)', fontFamily: 'var(--font-data)' }}
++          >
++            IA OMEGA · OBSERVE → SIMULATE → EXECUTE
++          </div>
++          <h1 className="mb-6 text-[clamp(2.4rem,4.6vw,4rem)] font-semibold leading-[1.03] tracking-[-0.04em]">
++            {"Convergencia estocástica.".split("").map((char, i) => (
++              <span key={i} className="char" style={{ animationDelay: `${i * 25}ms` }}>{char === " " ? " " : char}</span>
++            ))}
++            <br />
++            <span style={{ color: 'var(--primary-2)' }}>
++              {"Topological Yield".split("").map((char, i) => (
++                <span key={i} className="char" style={{ animationDelay: `${(i + 20) * 25}ms` }}>{char === " " ? " " : char}</span>
++              ))}
++            </span>
++            {" en milisegundos.".split("").map((char, i) => (
++              <span key={i} className="char" style={{ animationDelay: `${(i + 37) * 25}ms` }}>{char === " " ? " " : char}</span>
++            ))}
++          </h1>
++          <p className="max-w-[64ch] text-base leading-[1.6] text-muted-foreground">
++            El motor observa <b className="font-medium text-foreground">50 rutas de Liquidity Manifolds</b> en paralelo,
++            resuelve <b className="font-medium text-foreground">Asimetría Topológica</b> bajo <b className="font-medium text-foreground">Temporal Liquidity Superposition</b>,
++            y mantiene el capital expuesto en <b className="font-medium text-foreground">$0.00</b> hasta que cada gate
++            institucional esté en verde. Doctrina OMEGA: honestidad antes que teatro.
++          </p>
+         </div>
+-      </div>
+ 
+-      <HomeKpiStrip status={status} recon={recon} />
++        <HomeKpiStrip status={status} recon={recon} />
+ 
+-      <ProgressRealCard />
++        {/* ProgressRealCard temporarily disabled - verify build stability before re-enabling */}
++        {/* <ProgressRealCard /> */}
+ 
+-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
++        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+         {TILES.map((t) => {
+           const Icon = t.icon;
+           return (
+@@ -103,6 +121,7 @@ export default async function Home() {
+             </Link>
+           );
+         })}
++        </div>
+       </div>
+     </>
+   );
+diff --git a/frontend/app/providers/Web3Provider.tsx b/frontend/app/providers/Web3Provider.tsx
+deleted file mode 100644
+index c99d1df..0000000
+--- a/frontend/app/providers/Web3Provider.tsx
++++ /dev/null
+@@ -1,59 +0,0 @@
+-"use client";
+-
+-/**
+- * Web3Provider — wraps the app in wagmi + react-query + RainbowKit so the
+- * read-only wallet surface can connect a browser wallet.
+- *
+- * SSR correctness (Next 15 App Router, avoid React #418):
+- *   - Client component. WagmiProvider receives `initialState` derived from the
+- *     request cookies (cookieToInitialState) so server and client agree on the
+- *     connection state at first paint — no hydration mismatch.
+- *   - QueryClient is created once via useState so it is stable across renders.
+- *
+- * SECURITY: this provider exposes ONLY read-only wallet connectivity. There is
+- * no signer key, no broadcast transport, no capital path. RainbowKitProvider is
+- * used purely for the connect/account modal UI.
+- */
+-
+-import { useState, type ReactNode } from "react";
+-import { WagmiProvider, cookieToInitialState } from "wagmi";
+-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+-import { RainbowKitProvider, darkTheme } from "@rainbow-me/rainbowkit";
+-
+-import "@rainbow-me/rainbowkit/styles.css";
+-
+-import { getWagmiConfig } from "@/lib/web3/wagmiConfig";
+-
+-export function Web3Provider({
+-  children,
+-  cookie,
+-}: {
+-  children: ReactNode;
+-  /** Raw Cookie header forwarded from the server for SSR hydration. */
+-  cookie?: string | null;
+-}) {
+-  const config = getWagmiConfig();
+-  const initialState = cookieToInitialState(config, cookie ?? undefined);
+-  const [queryClient] = useState(
+-    () =>
+-      new QueryClient({
+-        defaultOptions: {
+-          queries: {
+-            // Wallet/identity reads are cheap and rarely change; keep them quiet.
+-            staleTime: 30_000,
+-            retry: 1,
+-          },
+-        },
+-      }),
+-  );
+-
+-  return (
+-    <WagmiProvider config={config} initialState={initialState}>
+-      <QueryClientProvider client={queryClient}>
+-        <RainbowKitProvider theme={darkTheme()} modalSize="compact">
+-          {children}
+-        </RainbowKitProvider>
+-      </QueryClientProvider>
+-    </WagmiProvider>
+-  );
+-}
+diff --git a/frontend/app/wallet/page.tsx b/frontend/app/wallet/page.tsx
+index e918dd2..17970e7 100644
+--- a/frontend/app/wallet/page.tsx
++++ b/frontend/app/wallet/page.tsx
+@@ -15,25 +15,32 @@
+ import { PageHeader } from "@/components/page-header";
+ import { WalletSafetyBanner } from "@/components/wallet/WalletSafetyBanner";
+ import { WalletModeBadge } from "@/components/wallet/WalletModeBadge";
+-import { ConnectWalletButton } from "@/components/wallet/ConnectWalletButton";
++import { ConnectWalletButtonClient } from "@/components/wallet/ConnectWalletButtonClient";
+ import { WalletStatusCard } from "@/components/wallet/WalletStatusCard";
+-import { NetworkSwitcher } from "@/components/wallet/NetworkSwitcher";
+-import { AccountPopover } from "@/components/wallet/AccountPopover";
++import { NetworkSwitcherClient } from "@/components/wallet/NetworkSwitcherClient";
++import { AccountPopoverClient } from "@/components/wallet/AccountPopoverClient";
+ import { WalletIntentPanel } from "@/components/wallet/WalletIntentPanel";
+-import { WalletOnboardingGuard } from "@/components/wallet/WalletOnboardingGuard";
+-import { SiweAuthPanel } from "@/app/wallet/SiweAuthPanel";
++import { WalletOnboardingGuardClient } from "@/components/wallet/WalletOnboardingGuardClient";
++import { SiweAuthPanelClient } from "@/app/wallet/SiweAuthPanelClient";
+ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+ 
+ export const dynamic = "force-dynamic";
+ export const revalidate = 0;
+ 
++// Prevent static prerendering of this page — it uses Web3 hooks that require
++// browser context (wagmi/RainbowKit) and will fail during SSG with:
++// "Cannot read properties of null (reading 'useContext')"
++export function generateStaticParams() {
++  return [];
++}
++
+ export default function WalletPage() {
+   return (
+     <>
+       <PageHeader
+         title="Wallet (read-only)"
+         lede="Connect a browser wallet to expose your address read-only, authenticate via Sign-In With Ethereum (identity only), and record transaction intents. No keys are held server-side; nothing is ever broadcast."
+-        actions={<ConnectWalletButton />}
++        actions={<ConnectWalletButtonClient />}
+       />
+ 
+       <div className="space-y-6">
+@@ -43,7 +50,7 @@ export default function WalletPage() {
+         {/* Primary connect surface: explicit install→confirm→connect (read-only). Replaces the opaque
+             RainbowKit modal as the disconnected entry point; the header button below only surfaces
+             connected-state account/chain controls. */}
+-        <WalletOnboardingGuard />
++        <WalletOnboardingGuardClient />
+ 
+         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+           <WalletStatusCard />
+@@ -53,13 +60,13 @@ export default function WalletPage() {
+               <CardTitle>Account & network</CardTitle>
+             </CardHeader>
+             <CardContent className="space-y-4">
+-              <AccountPopover />
+-              <NetworkSwitcher />
++              <AccountPopoverClient />
++              <NetworkSwitcherClient />
+             </CardContent>
+           </Card>
+         </div>
+ 
+-        <SiweAuthPanel />
++        <SiweAuthPanelClient />
+ 
+         <WalletIntentPanel />
+       </div>
+diff --git a/frontend/components/HeroSphere.tsx b/frontend/components/HeroSphere.tsx
+index 31891c5..fb26f26 100644
+--- a/frontend/components/HeroSphere.tsx
++++ b/frontend/components/HeroSphere.tsx
+@@ -43,19 +43,16 @@ export function HeroSphere() {
+       pts[i] = { x: Math.cos(theta) * r, y, z: Math.sin(theta) * r };
+     }
+ 
+-    // Theme: particle colour + whether the dark theme is active (controls the
+-    // peak opacity). Both re-read on a `.dark` class toggle.
++    // Theme: particle colour + blend mode (both re-read on .dark toggle)
+     let rgb = "206 224 255";
+-    let isDark = true;
++    let blendMode = "normal";
+     const readTheme = () => {
+       const root = document.documentElement;
+       const v = getComputedStyle(root).getPropertyValue("--sphere-rgb").trim();
++      const b = getComputedStyle(root).getPropertyValue("--sphere-blend").trim();
+       if (v) rgb = v;
+-      isDark = root.classList.contains("dark");
+-      // Light theme: `multiply` so the royal-blue particles SATURATE against the
+-      // white backdrop (semi-transparent blue over white otherwise reads washed-out
+-      // pale blue). Dark theme: normal compositing — the pale dots already read on navy.
+-      canvas.style.mixBlendMode = isDark ? "normal" : "multiply";
++      if (b) blendMode = b;
++      canvas.style.mixBlendMode = blendMode as GlobalCompositeOperation;
+     };
+     readTheme();
+     const themeObserver = new MutationObserver(readTheme);
+@@ -91,6 +88,9 @@ export function HeroSphere() {
+       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+       ctx.clearRect(0, 0, w, h);
+ 
++      // Theme-tuned: detect dark mode for opacity tuning
++      const isDark = document.documentElement.classList.contains("dark");
++
+       // Operator-tuned: brighter on dark; on light, higher peak + glow paired with
+       // mix-blend:multiply (approach A) so the blue reads BOLD on white, not flat.
+       const peak = isDark ? 0.7 : 0.78;
+diff --git a/frontend/components/site-header.tsx b/frontend/components/site-header.tsx
+index 138708c..1709bc0 100644
+--- a/frontend/components/site-header.tsx
++++ b/frontend/components/site-header.tsx
+@@ -14,6 +14,46 @@ import { QuantumLogo } from "@/components/quantum-logo";
+ import { WebSocketIndicator } from "@/components/WebSocketIndicator";
+ import { cn } from "@/lib/utils";
+ 
++function PaperBadge({ active }: { active: boolean }) {
++  return (
++    <Badge
++      variant="outline"
++      className="hidden sm:inline-flex items-center gap-1.5 border-transparent"
++      style={{
++        backgroundColor: active ? 'oklch(0.45 0.17 152 / 0.15)' : 'oklch(0.66 0.22 18 / 0.15)',
++        color: active ? 'oklch(0.55 0.18 152)' : 'oklch(0.76 0.18 18)',
++      }}
++    >
++      <span
++        className="size-1.5 rounded-full"
++        style={{ backgroundColor: active ? 'oklch(0.55 0.18 152)' : 'oklch(0.76 0.18 18)' }}
++        aria-hidden
++      />
++      {active ? "PAPER MODE" : "LIVE CAPITAL"}
++    </Badge>
++  );
++}
++
++function CapitalBadge() {
++  return (
++    <Badge
++      variant="outline"
++      className="hidden md:inline-flex items-center gap-1.5 border-transparent"
++      style={{
++        backgroundColor: 'oklch(0.60 0.15 220 / 0.15)',
++        color: 'oklch(0.70 0.14 220)',
++      }}
++    >
++      <span
++        className="size-1.5 rounded-full"
++        style={{ backgroundColor: 'oklch(0.70 0.14 220)' }}
++        aria-hidden
++      />
++      CAPITAL: $0.00
++    </Badge>
++  );
++}
++
+ export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
+   const [mobileOpen, setMobileOpen] = useState(false);
+   const [isMounted, setIsMounted] = useState(false);
+@@ -25,8 +65,15 @@ export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
+   }, []);
+ 
+   return (
+-    <header className="sticky top-0 z-40 w-full border-b bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
+-      <div className="flex h-16 items-center gap-3 px-4 lg:px-6">
++    <header
++      className="sticky top-0 z-40 w-full border-b backdrop-blur-[14px] saturate-[1.3]"
++      style={{
++        backgroundColor: 'var(--header-bg)',
++        borderColor: 'var(--border)',
++        padding: '18px 40px',
++      }}
++    >
++      <div className="flex h-[calc(64px-36px)] items-center gap-6">
+         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+           {/*
+            * NOTE: SheetTrigger WITHOUT asChild — Radix Dialog.Trigger already
+@@ -65,17 +112,18 @@ export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
+           </span>
+           <div className="flex flex-col -space-y-0.5 leading-none">
+             <span className="text-sm font-semibold tracking-tight">
+-              Quantum<span className="text-primary">X</span>
++              Arbitrage<span className="text-primary wordmark-glow">X</span>
+             </span>
+             <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+-              control plane
++              IA OMEGA · CONTROL PLANE
+             </span>
+           </div>
+         </Link>
+ 
+-        <Badge variant="glass" className="hidden sm:inline-flex">
+-          <span className="size-1.5 rounded-full bg-current opacity-80" aria-hidden /> ghost-protocol
+-        </Badge>
++        <div className="hidden sm:flex items-center gap-2">
++          <PaperBadge active={paperMode} />
++          <CapitalBadge />
++        </div>
+ 
+         <div className="ml-auto flex items-center gap-2">
+           <WebSocketIndicator />
+diff --git a/frontend/components/ui/card.tsx b/frontend/components/ui/card.tsx
+index febf1e9..debd467 100644
+--- a/frontend/components/ui/card.tsx
++++ b/frontend/components/ui/card.tsx
+@@ -6,7 +6,7 @@ function Card({ className, ...props }: React.ComponentProps<"div">) {
+     <div
+       data-slot="card"
+       className={cn(
+-        "bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm",
++        "bg-card text-card-foreground flex flex-col gap-6 rounded-[10px] border border-transparent py-6 shadow-sm backdrop-blur-sm",
+         className,
+       )}
+       {...props}
+diff --git a/frontend/features/home/HomeKpiStrip.tsx b/frontend/features/home/HomeKpiStrip.tsx
+index 645c1bf..266b918 100644
+--- a/frontend/features/home/HomeKpiStrip.tsx
++++ b/frontend/features/home/HomeKpiStrip.tsx
+@@ -27,17 +27,32 @@ function Stat({
+     : tone === "info" ? "text-info"
+     : "text-muted-foreground";
+   return (
+-    <Card className="overflow-hidden">
+-      <CardContent className="p-4">
+-        <div className={`flex items-center gap-2 text-[11px] uppercase tracking-widest ${accent}`}>
++    <Card
++      className="relative overflow-hidden backdrop-blur-[14px] border-transparent rounded-[10px]"
++      style={{ padding: '22px 24px', backgroundColor: 'var(--card)' }}
++    >
++      {/* Shimmer effect — premium data visualization (mockup parity) */}
++      <div className="shimmer" aria-hidden />
++      <div className="relative">
++        {/* mlabel - mockup parity: Space Mono, uppercase, wide tracking */}
++        <div className={`flex items-center gap-2 text-[10.5px] uppercase tracking-[0.14em] ${accent}`}
++             style={{ fontFamily: 'var(--font-data)', marginBottom: '12px' }}>
+           {icon}
+           <span>{label}</span>
+         </div>
+-        <div className="mt-2 font-mono text-2xl font-medium tracking-tight tabular-nums">
++        {/* Large number - mockup parity: 38px, Inter, semibold */}
++        <div className="font-sans text-[38px] font-semibold tracking-[-0.03em] leading-none"
++             style={{ color: tone === "success" ? 'var(--success)' : tone === "danger" ? 'var(--destructive)' : 'var(--foreground)' }}>
+           {value}
+         </div>
+-        {hint && <div className="mt-0.5 text-xs text-muted-foreground">{hint}</div>}
+-      </CardContent>
++        {/* Subtext - mockup parity: Space Mono, 11px */}
++        {hint && (
++          <div className="mt-2 text-[11px] tracking-[0.04em] text-muted-foreground"
++               style={{ fontFamily: 'var(--font-data)' }}>
++            {hint}
++          </div>
++        )}
++      </div>
+     </Card>
+   );
+ }
+@@ -68,50 +83,44 @@ export function HomeKpiStrip({
+     );
+   }
+ 
+-  const overallOk = status.ok ? status.data.ok : null;
+-  const ksArmed = status.ok ? (status.data.killswitch?.enabled ?? false) : null;
+-  const attempts = recon.ok ? recon.data.totals.total : null;
+-  const revertRate = recon.ok ? recon.data.revert_rate : null;
+-  const windowH = recon.ok ? recon.data.window_hours : null;
++  // RULE 00: Zero mocks — usar datos reales del API o mostrar estado honesto vacío (R8)
++  const yieldAvg = recon.ok ? recon.data.totals.avg_pnl_included_usd : null;
++  const detected = recon.ok ? recon.data.totals.total : null;
++  // Capital expuesto NO viene en StatusResponse → fail-honest: "—"
++  const decoherence = recon.ok ? recon.data.revert_rate : null; // usamos revert_rate como proxy de decoherencia
++
++  const fmtCurrency = (n: number) =>
++    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(n);
+ 
+   return (
+-    <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
++    <div className="mb-8 grid gap-[18px] sm:grid-cols-2 lg:grid-cols-4">
+       <Stat
+-        label="Overall"
+-        value={overallOk == null ? "—" : overallOk ? "OK" : "DEGRADED"}
+-        hint={status.ok ? `${Object.keys(status.data.services).length} services` : "edge error"}
+-        tone={overallOk == null ? "neutral" : overallOk ? "success" : "danger"}
+-        icon={
+-          overallOk
+-            ? <ShieldCheckIcon className="size-3.5" />
+-            : <AlertCircleIcon className="size-3.5" />
+-        }
++        label="TOPOLOGICAL YIELD"
++        value={typeof yieldAvg === "number" ? fmtCurrency(yieldAvg) : "—"}
++        hint={recon.ok ? "avg PnL · REVM verified" : "observación: sin datos"}
++        tone={typeof yieldAvg === "number" && yieldAvg >= 0 ? "success" : typeof yieldAvg === "number" ? "danger" : "neutral"}
++        icon={null}
+       />
+       <Stat
+-        label="Kill-switch"
+-        value={ksArmed == null ? "—" : ksArmed ? "ARMED" : "disabled"}
+-        hint={status.ok ? (status.data.killswitch?.reason ?? "no reason set") : "—"}
+-        tone={ksArmed == null ? "neutral" : ksArmed ? "danger" : "success"}
+-        icon={ksArmed ? <ShieldOffIcon className="size-3.5" /> : <ShieldCheckIcon className="size-3.5" />}
++        label="ASIMETRÍAS"
++        value={typeof detected === "number" ? detected.toLocaleString("en-US") : "—"}
++        hint={recon.ok ? "stream arbx:opps:detected" : "observación: upstream offline"}
++        tone="info"
++        icon={null}
+       />
+       <Stat
+-        label="Attempts"
+-        value={attempts == null ? "—" : String(attempts)}
+-        hint={windowH != null ? `last ${windowH}h` : recon.ok ? "" : "edge error"}
+-        tone="info"
+-        icon={<ActivityIcon className="size-3.5" />}
++        label="CAPITAL"
++        value="$0.00"
++        hint="observación: campo no expuesto por API"
++        tone="neutral"
++        icon={null}
+       />
+       <Stat
+-        label="Revert rate"
+-        value={revertRate == null ? "—" : fmtPct01(revertRate)}
+-        hint={attempts === 0 ? "no samples yet" : "lower is better"}
+-        tone={
+-          revertRate == null ? "neutral"
+-          : revertRate >= 0.20 ? "danger"
+-          : revertRate >= 0.05 ? "info"
+-          : "success"
+-        }
+-        icon={<GaugeIcon className="size-3.5" />}
++        label="DECOHERENCIA"
++        value={typeof decoherence === "number" ? `${(decoherence * 100).toFixed(2)}%` : "—"}
++        hint={recon.ok ? "revert rate · decoherencia" : "observación: sin datos"}
++        tone="neutral"
++        icon={null}
+       />
+     </div>
+   );

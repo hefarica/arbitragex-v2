@@ -1,0 +1,7 @@
+ .../prioritization-spine/src/bayesian_allocator.rs |   2 +-
+ .../src/hedger/orthogonal_variance_hedger.rs       |   8 +-
+ backend/sed-core/src/metrics/sed_metrics.rs        |   2 +-
+ backend/sed-core/src/types/errors.rs               |   6 +-
+ backend/token-enricher/src/consumer.rs             |   2 +-
+ frontend/components/app-sidebar.tsx                | 390 +++++++++++++++++----
+ 6 files changed, 338 insertions(+), 72 deletions(-)

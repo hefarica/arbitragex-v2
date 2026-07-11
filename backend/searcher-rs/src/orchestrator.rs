@@ -45,6 +45,10 @@ use crate::engines::dex_engine::DexEngine;
 use crate::engines::flashloan_engine::FlashloanEngine;
 use crate::engines::liquidation_engine::LiquidationEngine;
 use crate::engines::triangular_engine::TriangularEngine;
+// Task 3: New engines
+use crate::engines::spanning_tree_engine::SpanningTreeEngine;
+use crate::engines::cross_chain_bridge_engine::CrossChainBridgeEngine;
+use crate::engines::liquidation_snipe_engine::LiquidationSnipeEngine;
 use crate::engines::StrategyCandidate;
 use crate::impact_index::ImpactIndex;
 use crate::metrics::{
@@ -92,6 +96,12 @@ pub struct OrchestratorContext {
     pub state_projector: Arc<StateProjector>,
     /// SizeOptimizer — optimal amount_in per candidate (Phase 13).
     pub size_optimizer: Arc<SizeOptimizer>,
+    /// SpanningTreeEngine — Bellman-Ford graph cycle detection (Task 3).
+    pub spanning_tree_engine: Option<Arc<SpanningTreeEngine>>,
+    /// CrossChainBridgeEngine — cross-chain opportunity detection (Task 3).
+    pub cross_chain_engine: Option<Arc<CrossChainBridgeEngine>>,
+    /// LiquidationSnipeEngine — Aave/Compound liquidation sniping (Task 3).
+    pub liquidation_snipe_engine: Option<Arc<LiquidationSnipeEngine>>,
     /// Single-point emit path (PG + Redis).
     pub emitter: Arc<OpportunityEmitter>,
     /// Asynchronously fetches the live `TradingConfigState` for `chain_id`.

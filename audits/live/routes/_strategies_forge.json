@@ -1,0 +1,20 @@
+{
+  "path": "/strategies/forge",
+  "label": "Strategy Forge",
+  "group": "control",
+  "httpStatus": 200,
+  "contentType": "text/html; charset=utf-8",
+  "hasH1": true,
+  "hasPrimaryContent": true,
+  "pageLevelError": false,
+  "is404": false,
+  "shadowed": false,
+  "forbiddenHits": [],
+  "buttons": 5,
+  "forms": 0,
+  "tables": 0,
+  "toggles": 0,
+  "dataProvenance": 0,
+  "consoleErrors": [],
+  "verdict": "PASS"
+}

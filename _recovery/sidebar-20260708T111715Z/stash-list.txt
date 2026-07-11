@@ -1,0 +1,2 @@
+stash@{0}: On feature/premium-mockup-replication: cambios-previos-mockup
+stash@{1}: On excel-chain-builder: pre-existing WIP: app-sidebar + tsconfig + Cargo.lock (opportunities stream)

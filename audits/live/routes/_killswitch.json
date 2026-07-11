@@ -1,0 +1,22 @@
+{
+  "path": "/killswitch",
+  "label": "Kill-switch",
+  "group": "control",
+  "httpStatus": 200,
+  "contentType": "text/html; charset=utf-8",
+  "hasH1": true,
+  "hasPrimaryContent": true,
+  "pageLevelError": false,
+  "is404": false,
+  "shadowed": false,
+  "forbiddenHits": [],
+  "buttons": 6,
+  "forms": 0,
+  "tables": 0,
+  "toggles": 0,
+  "dataProvenance": 0,
+  "consoleErrors": [
+    "Error checking Cross-Origin-Opener-Policy: HTTP error! status: 429"
+  ],
+  "verdict": "PASS"
+}

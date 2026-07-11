@@ -1,0 +1,1455 @@
+diff --git a/frontend/app/globals.css b/frontend/app/globals.css
+index 793b28a..3d30d24 100644
+--- a/frontend/app/globals.css
++++ b/frontend/app/globals.css
+@@ -45,8 +45,9 @@
+   --color-sidebar-border: var(--sidebar-border);
+   --color-sidebar-ring: var(--sidebar-ring);
+ 
+-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+-  --font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
++  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
++  --font-mono: var(--font-space-mono), ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
++  --font-data: var(--font-space-mono), ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
+ 
+   --radius-sm: calc(var(--radius) - 4px);
+   --radius-md: calc(var(--radius) - 2px);
+@@ -54,49 +55,124 @@
+   --radius-xl: calc(var(--radius) + 4px);
+ }
+ 
+-/* PURE WHITE THEME (#FFFFFF) - PHASE 8 CONSOLIDATION */
++/* ============ THEME TOKENS - MOCKUP EXACT ============ */
++/* LIGHT — Wonderful Whites (default) */
+ :root {
+-  --radius: 1rem; /* iOS-style rounded corners */
+-
+-  /* Particle-sphere accent — ROYAL BLUE in the light theme (HeroSphere). */
+-  --sphere-rgb: 36 74 235;
+-
+-  --background: oklch(1 0 0); /* #FFFFFF */
+-  --foreground: oklch(0.18 0.04 260);
+-
+-  --card: oklch(1 0 0);
+-  --card-foreground: oklch(0.18 0.04 260);
+-
++  --radius: 0.5rem;
++
++  /* Base colors */
++  --bg:          oklch(0.985 0.004 240);
++  --bg-grad-1:   oklch(0.99 0.004 240);
++  --bg-grad-2:   oklch(0.965 0.008 250);
++  --bg-grad-3:   oklch(0.935 0.013 252);
++  --bg-grad:     linear-gradient(90deg, var(--bg-grad-1) 0%, var(--bg-grad-2) 55%, var(--bg-grad-3) 100%);
++  --primary:     oklch(0.50 0.22 263);
++  --primary-2:   oklch(0.55 0.20 240);
++  --border:      oklch(0.30 0.04 260 / 0.14);
++  --glow-1:      oklch(0.78 0.13 258 / 0.40);
++  --glow-2:      oklch(0.82 0.10 235 / 0.30);
++  --glow-3:      oklch(0.88 0.07 220 / 0.24);
++  --card:        oklch(1.000 0.003 240 / 0.55);
++  --fg:          oklch(0.18 0.04 260);
++  --muted:       oklch(0.45 0.025 250);
++  --success:     oklch(0.45 0.17 152);
++  --warning:     oklch(0.55 0.16 75);
++  --destructive: oklch(0.50 0.22 18);
++  --sphere-rgb:  36 74 235;
++  --sphere-blend: multiply;
++  --grain-opacity: 0.26;
++  --ticker-bg:   oklch(0.99 0.004 240 / 0.70);
++  --header-bg:   oklch(0.985 0.004 240 / 0.62);
++  --hairline:    inset 0 1px 0 0 oklch(0.55 0.10 255 / 0.22);
++  --shadow:      0 10px 32px -16px oklch(0.40 0.10 255 / 0.22);
++  --xray-bg:     oklch(0.97 0.012 250 / 0.94);
++  --wordmark-glow: 0 0 18px oklch(0.50 0.22 263 / 0.30);
++  /* easings (theme-independent) */
++  --ease-expo:   cubic-bezier(0.22, 1, 0.36, 1);
++  --ease-sharp:  cubic-bezier(0.16, 1, 0.3, 1);
++
++  /* Extended color palette - OKLCH */
++  --color-red-50: oklch(97.1% 0.013 17.38);
++  --color-red-200: oklch(88.5% 0.062 18.334);
++  --color-red-300: oklch(80.8% 0.114 19.571);
++  --color-red-400: oklch(70.4% 0.191 22.216);
++  --color-red-500: oklch(63.7% 0.237 25.331);
++  --color-red-600: oklch(57.7% 0.245 27.325);
++  --color-red-700: oklch(50.5% 0.213 27.518);
++  --color-red-800: oklch(44.4% 0.177 26.899);
++  --color-orange-300: oklch(83.7% 0.128 66.29);
++  --color-orange-500: oklch(70.5% 0.213 47.604);
++  --color-orange-700: oklch(55.3% 0.195 38.402);
++  --color-amber-50: oklch(98.7% 0.022 95.277);
++  --color-amber-200: oklch(92.4% 0.12 95.746);
++  --color-amber-300: oklch(87.9% 0.169 91.605);
++  --color-amber-400: oklch(82.8% 0.189 84.429);
++  --color-amber-500: oklch(76.9% 0.188 70.08);
++  --color-amber-600: oklch(66.6% 0.179 58.318);
++  --color-amber-700: oklch(55.5% 0.163 48.998);
++  --color-amber-900: oklch(41.4% 0.112 45.904);
++  --color-yellow-300: oklch(90.5% 0.182 98.111);
++  --color-yellow-400: oklch(85.2% 0.199 91.936);
++  --color-yellow-500: oklch(79.5% 0.184 86.047);
++  --color-green-500: oklch(72.3% 0.219 149.579);
++  --color-green-600: oklch(62.7% 0.194 149.214);
++  --color-green-700: oklch(52.7% 0.154 150.069);
++  --color-emerald-50: oklch(97.9% 0.021 166.113);
++  --color-emerald-100: oklch(95% 0.052 163.051);
++  --color-emerald-200: oklch(90.5% 0.093 164.15);
++  --color-emerald-300: oklch(84.5% 0.143 164.978);
++  --color-emerald-400: oklch(76.5% 0.177 163.223);
++  --color-emerald-500: oklch(69.6% 0.17 162.48);
++  --color-emerald-600: oklch(59.6% 0.145 163.225);
++  --color-emerald-700: oklch(50.8% 0.118 165.612);
++  --color-emerald-800: oklch(43.2% 0.095 166.913);
++  --color-sky-300: oklch(82.8% 0.111 230.318);
++  --color-sky-500: oklch(68.5% 0.169 237.323);
++  --color-blue-200: oklch(88.2% 0.059 254.128);
++  --color-blue-300: oklch(80.9% 0.105 251.813);
++  --color-blue-400: oklch(70.7% 0.165 254.624);
++  --color-blue-500: oklch(62.3% 0.214 259.815);
++  --color-blue-600: oklch(54.6% 0.245 262.881);
++  --color-blue-700: oklch(48.8% 0.243 264.376);
++  --color-purple-300: oklch(82.7% 0.119 306.383);
++  --color-purple-500: oklch(62.7% 0.265 303.9);
++  --color-rose-500: oklch(64.5% 0.246 16.439);
++  --color-slate-50: oklch(98.4% 0.003 247.858);
++  --color-slate-100: oklch(96.8% 0.007 247.896);
++  --color-slate-200: oklch(92.9% 0.013 255.508);
++  --color-slate-300: oklch(86.9% 0.022 252.894);
++  --color-slate-400: oklch(70.4% 0.04 256.788);
++  --color-slate-500: oklch(55.4% 0.046 257.417);
++  --color-slate-600: oklch(44.6% 0.043 257.281);
++  --color-slate-700: oklch(37.2% 0.044 257.287);
++  --color-slate-800: oklch(27.9% 0.041 260.031);
++  --color-slate-900: oklch(20.8% 0.042 265.755);
++  --color-slate-950: oklch(12.9% 0.042 264.695);
++  --color-gray-400: oklch(70.7% 0.022 261.325);
++  --color-gray-500: oklch(55.1% 0.027 264.364);
++  --color-gray-600: oklch(44.6% 0.03 256.802);
++  --color-black: #000;
++  --color-white: #fff;
++
++  /* Map to shadcn variables */
++  --background: var(--bg);
++  --foreground: var(--fg);
++  --card-foreground: var(--fg);
+   --popover: oklch(1 0 0 / 95%);
+-  --popover-foreground: oklch(0.18 0.04 260);
+-
+-  --primary: oklch(0.25 0.05 260);
++  --popover-foreground: var(--fg);
+   --primary-foreground: oklch(1 0 0);
+-
+   --secondary: oklch(0.96 0.015 220);
+-  --secondary-foreground: oklch(0.18 0.04 260);
+-
+-  --muted: oklch(0.96 0.015 220);
+-  --muted-foreground: oklch(0.45 0.025 220);
+-
++  --secondary-foreground: var(--fg);
++  --muted-foreground: var(--muted);
+   --accent: oklch(0.92 0.04 215);
+-  --accent-foreground: oklch(0.18 0.04 260);
+-
+-  --destructive: oklch(0.55 0.13 180);
++  --accent-foreground: var(--fg);
+   --destructive-foreground: oklch(1 0 0);
+-
+-  --success: oklch(0.62 0.17 145); /* Fluorescent Green */
+   --success-foreground: oklch(1 0 0);
+-
+-  --warning: oklch(0.75 0.18 85);
+-  --warning-foreground: oklch(0.18 0.04 260);
+-
++  --warning-foreground: var(--fg);
+   --info: oklch(0.60 0.15 220);
+   --info-foreground: oklch(1 0 0);
+-
+-  --border: oklch(0.92 0.01 220);
+   --input: oklch(0.94 0.01 220);
+-  --ring: oklch(0.25 0.05 260);
++  --ring: var(--primary);
+ 
+   --chart-1: oklch(0.60 0.15 220);
+   --chart-2: oklch(0.62 0.17 145);
+@@ -114,52 +190,57 @@
+   --sidebar-ring: oklch(0.25 0.05 260);
+ }
+ 
+-/* Dark mode — "TradePro" premium fintech theme:
+-   deep navy/indigo background + electric royal-blue primary + blue accents.
+-   Green = success/buy, red = destructive/sell, amber = warning. */
++/* DARK — Royal Blue → Light Blue (vivid, alive) */
+ .dark {
+   /* Particle-sphere accent — LIGHT (pale blue-white) in the dark theme (HeroSphere). */
+-  --sphere-rgb: 206 224 255;
+-
+-  --background: oklch(0.14 0.035 265);
+-  --foreground: oklch(0.98 0.012 250);
+-
+-  --card: oklch(0.18 0.04 265);
+-  --card-foreground: oklch(0.98 0.012 250);
+-
+-  --popover: oklch(0.17 0.04 265 / 96%);
+-  --popover-foreground: oklch(0.98 0.012 250);
+-
+-  /* Electric royal blue — the TradePro accent. */
+-  --primary: oklch(0.62 0.20 263);
++  --sphere-rgb: 240 248 255;
++  --sphere-blend: normal;
++
++  /* Base colors - MOCKUP EXACT */
++  --bg:          oklch(0.18 0.05 264);
++  --bg-grad-1:   oklch(0.16 0.05 266);
++  --bg-grad-2:   oklch(0.24 0.11 258);
++  --bg-grad-3:   oklch(0.46 0.19 250);
++  --bg-grad:     linear-gradient(90deg, var(--bg-grad-3) 0%, var(--bg-grad-2) 55%, var(--bg-grad-1) 100%);
++  --primary:     oklch(0.62 0.22 263);
++  --primary-2:   oklch(0.78 0.14 235);
++  --border:      oklch(0.70 0.10 250 / 0.16);
++  --glow-1:      oklch(0.55 0.24 263 / 0.45);
++  --glow-2:      oklch(0.70 0.16 240 / 0.32);
++  --glow-3:      oklch(0.84 0.09 220 / 0.28);
++  --card:        oklch(0.24 0.06 258 / 0.19);
++  --fg:          oklch(0.98 0.012 250);
++  --muted:       oklch(0.69 0.04 250);
++  --success:     oklch(0.77 0.18 152);
++  --warning:     oklch(0.82 0.16 80);
++  --destructive: oklch(0.66 0.22 18);
++  --grain-opacity: 0.5;
++  --ticker-bg:   oklch(0.16 0.05 266 / 0.55);
++  --header-bg:   oklch(0.18 0.05 264 / 0.40);
++  --hairline:    inset 0 1px 0 0 oklch(0.98 0.012 250 / 0.16);
++  --shadow:      0 8px 30px -14px oklch(0.02 0.02 266 / 0.5);
++  --xray-bg:     oklch(0.16 0.06 263 / 0.92);
++  --wordmark-glow: 0 0 22px oklch(0.62 0.22 263 / 0.55);
++
++  /* Map to shadcn variables */
++  --background: var(--bg);
++  --foreground: var(--fg);
++  --card-foreground: var(--fg);
++  --popover: oklch(0.17 0.06 263 / 96%);
++  --popover-foreground: var(--fg);
+   --primary-foreground: oklch(0.99 0.008 250);
+-
+-  --secondary: oklch(0.23 0.04 265);
++  --secondary: oklch(0.23 0.06 263);
+   --secondary-foreground: oklch(0.96 0.012 250);
+-
+-  --muted: oklch(0.22 0.04 265);
+-  --muted-foreground: oklch(0.69 0.035 258);
+-
+-  --accent: oklch(0.32 0.075 263);
+-  --accent-foreground: oklch(0.98 0.012 250);
+-
+-  /* Red for destructive / sell-side. */
+-  --destructive: oklch(0.62 0.20 18);
++  --muted-foreground: var(--muted);
++  --accent: oklch(0.32 0.09 263);
++  --accent-foreground: var(--fg);
+   --destructive-foreground: oklch(0.99 0.008 250);
+-
+-  /* Green for success / buy-side. */
+-  --success: oklch(0.70 0.17 152);
+-  --success-foreground: oklch(0.14 0.035 265);
+-
+-  --warning: oklch(0.80 0.16 80);
+-  --warning-foreground: oklch(0.14 0.035 265);
+-
++  --success-foreground: oklch(0.14 0.05 263);
++  --warning-foreground: oklch(0.14 0.05 263);
+   --info: oklch(0.66 0.16 256);
+-  --info-foreground: oklch(0.14 0.035 265);
+-
+-  --border: oklch(0.29 0.035 264);
+-  --input: oklch(0.27 0.035 264);
+-  --ring: oklch(0.62 0.20 263);
++  --info-foreground: oklch(0.14 0.05 263);
++  --input: oklch(0.27 0.05 263);
++  --ring: var(--primary);
+ 
+   --chart-1: oklch(0.62 0.20 263);
+   --chart-2: oklch(0.70 0.17 152);
+@@ -321,3 +402,507 @@
+ ::-webkit-scrollbar-thumb {
+   @apply bg-muted-foreground/20 rounded-full hover:bg-muted-foreground/40 transition-colors;
+ }
++
++/* ============ MOCKUP EXACT CLASSES ============ */
++
++/* Aurora backdrop animation */
++@keyframes drift {
++  0%   { transform: translate3d(0%,0%,0) scale(1); }
++  25%  { transform: translate3d(6%,-4%,0) scale(1.09); }
++  50%  { transform: translate3d(-5%,5%,0) scale(1.13); }
++  75%  { transform: translate3d(5%,3%,0) scale(1.07); }
++  100% { transform: translate3d(0%,0%,0) scale(1); }
++}
++
++/* Film grain overlay */
++.grain {
++  position: fixed; inset: 0; z-index: 50; pointer-events: none;
++  opacity: var(--grain-opacity); mix-blend-mode: overlay;
++  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/></svg>");
++  transition: opacity 320ms var(--ease-expo);
++}
++
++/* Ticker animation */
++@keyframes tick {
++  from { transform: translateX(0); }
++  to { transform: translateX(-50%); }
++}
++
++/* Shimmer effect */
++@keyframes shine {
++  0%, 80% { transform: translateX(-120%); }
++  100% { transform: translateX(120%); }
++}
++
++/* Character reveal animation */
++@keyframes charIn {
++  from {
++    opacity: 0;
++    transform: translateY(110%) rotateX(-90deg);
++  }
++  to {
++    opacity: 1;
++    transform: translateY(0) rotateX(0);
++  }
++}
++
++/* Latency pulse */
++@keyframes latpulse {
++  0%, 100% { opacity: 1; transform: scale(1); }
++  50% { opacity: .5; transform: scale(.82); }
++}
++
++/* Sphere aura */
++.sphere-aura {
++  position: absolute; right: -120px; top: -80px; width: 540px; height: 540px;
++  pointer-events: none; z-index: 0;
++  background: radial-gradient(circle at 60% 40%, color-mix(in oklab, var(--primary) 22%, transparent), transparent 65%);
++  filter: blur(20px);
++}
++
++/* Character animation class */
++.char {
++  display: inline-block;
++  opacity: 0;
++  transform: translateY(110%) rotateX(-90deg);
++  animation: charIn 520ms var(--ease-sharp) forwards;
++}
++
++/* Shimmer overlay */
++.shimmer {
++  position: absolute; inset: 0; pointer-events: none;
++  background: linear-gradient(115deg, transparent 30%, color-mix(in oklab, var(--fg) 14%, transparent) 50%, transparent 70%);
++  transform: translateX(-120%);
++  animation: shine 3.4s var(--ease-sharp) 1.2s infinite;
++}
++
++/* Stat card styling */
++.stat-card {
++  padding: 22px 24px;
++  background: var(--card);
++  backdrop-filter: blur(14px) saturate(1.4);
++  -webkit-backdrop-filter: blur(14px) saturate(1.4);
++  border: 1px solid transparent;
++  border-radius: 10px;
++  box-shadow: var(--hairline), var(--shadow);
++  position: relative;
++  overflow: hidden;
++  transition: background 320ms var(--ease-expo);
++}
++
++/* X-ray panel for cards */
++.xray-panel {
++  position: absolute; left: 0; right: 0; bottom: 0;
++  padding: 18px 22px 20px;
++  background: linear-gradient(180deg, transparent, var(--xray-bg));
++  backdrop-filter: blur(6px);
++  clip-path: inset(100% 0 0 0);
++  transition: clip-path 320ms var(--ease-sharp);
++}
++
++/* Opportunity card hover - show x-ray panel */
++.opp-card:hover .xray-panel {
++  clip-path: inset(0 0 0 0);
++}
++
++.opp-card:hover > div:first-child {
++  opacity: 0.35;
++}
++
++/* Data label - Space Mono uppercase */
++.data-label {
++  font-family: var(--font-mono);
++  font-size: 10.5px;
++  letter-spacing: 0.14em;
++  text-transform: uppercase;
++  color: var(--muted);
++}
++
++/* Typography classes from template - Unified modern sans-serif (Inter/SF Pro style) */
++
++/* Base font stack for the entire DAPP */
++body {
++  font-family: var(--font-sans);
++  -webkit-font-smoothing: antialiased;
++  -moz-osx-font-smoothing: grayscale;
++}
++
++/* Wordmark - ARBITRAGEX logo */
++.font-wordmark {
++  font-family: var(--font-sans);
++  font-size: 18px;
++  font-weight: 700;
++  letter-spacing: -0.02em;
++}
++
++/* Brand in sidebar */
++.font-brand-sidebar {
++  font-family: var(--font-sans);
++  font-size: 15px;
++  font-weight: 700;
++  letter-spacing: -0.01em;
++}
++
++/* Hero title - Main headline */
++.font-hero-title {
++  font-family: var(--font-sans);
++  font-size: clamp(2.4rem, 4.6vw, 4rem);
++  font-weight: 600;
++  letter-spacing: -0.03em;
++  line-height: 1.1;
++}
++
++/* Hero paragraph */
++.font-hero-paragraph {
++  font-family: var(--font-sans);
++  font-size: 16px;
++  font-weight: 400;
++  line-height: 1.6;
++}
++
++/* Stats numbers - Large figures */
++.font-stats-number {
++  font-family: var(--font-sans);
++  font-size: 38px;
++  font-weight: 600;
++  letter-spacing: -0.02em;
++  line-height: 1;
++}
++
++/* Section titles */
++.font-section-title {
++  font-family: var(--font-sans);
++  font-size: 22px;
++  font-weight: 600;
++  letter-spacing: -0.02em;
++}
++
++/* Card pair labels */
++.font-card-pair {
++  font-family: var(--font-sans);
++  font-size: 17px;
++  font-weight: 600;
++  letter-spacing: -0.01em;
++}
++
++/* Gate panel titles */
++.font-gate-title {
++  font-family: var(--font-sans);
++  font-size: 20px;
++  font-weight: 600;
++  letter-spacing: -0.02em;
++}
++
++/* Navigation items - Sidebar menu */
++.font-nav-item {
++  font-family: var(--font-sans);
++  font-size: 13px;
++  font-weight: 500;
++  letter-spacing: 0;
++}
++
++/* Ticker - Scrolling data */
++.font-ticker {
++  font-family: var(--font-mono);
++  font-size: 12.5px;
++  font-weight: 400;
++  letter-spacing: 0.02em;
++}
++
++/* Badge labels */
++.font-badge {
++  font-family: var(--font-sans);
++  font-size: 10.5px;
++  font-weight: 600;
++  letter-spacing: 0.08em;
++  text-transform: uppercase;
++}
++
++/* Mono labels - Technical data */
++.font-mlabel {
++  font-family: var(--font-mono);
++  font-size: 10.5px;
++  font-weight: 500;
++  letter-spacing: 0.06em;
++  text-transform: uppercase;
++}
++
++/* Sidebar section headers */
++.font-sidebar-header {
++  font-family: var(--font-sans);
++  font-size: 11px;
++  font-weight: 600;
++  letter-spacing: 0.06em;
++  text-transform: uppercase;
++}
++
++/* Tagline - Small header text */
++.font-tagline {
++  font-family: var(--font-sans);
++  font-size: 9.5px;
++  font-weight: 500;
++  letter-spacing: 0.12em;
++  text-transform: uppercase;
++}
++
++/* Gate check items */
++.font-gate-check {
++  font-family: var(--font-mono);
++  font-size: 10.5px;
++  font-weight: 500;
++  letter-spacing: 0.02em;
++}
++
++/* Lock button */
++.font-lock-button {
++  font-family: var(--font-sans);
++  font-size: 11px;
++  font-weight: 600;
++  letter-spacing: 0.08em;
++  text-transform: uppercase;
++}
++
++/* Body text - Standard content */
++.font-body {
++  font-family: var(--font-sans);
++  font-size: 14px;
++  font-weight: 400;
++  line-height: 1.5;
++}
++
++/* Small text - Captions, hints */
++.font-small {
++  font-family: var(--font-sans);
++  font-size: 12px;
++  font-weight: 400;
++  line-height: 1.4;
++}
++
++/* Button text */
++.font-button {
++  font-family: var(--font-sans);
++  font-size: 13px;
++  font-weight: 600;
++  letter-spacing: 0.01em;
++}
++
++/* Card title */
++.font-card-title {
++  font-family: var(--font-sans);
++  font-size: 15px;
++  font-weight: 600;
++  letter-spacing: -0.01em;
++}
++
++/* Data value - Numbers, addresses */
++.font-data {
++  font-family: var(--font-mono);
++  font-size: 13px;
++  font-weight: 400;
++  letter-spacing: 0;
++}
++
++/* Liquid Glass Design System */
++
++/* Base glass effect */
++.liquid-glass {
++  background: linear-gradient(
++    135deg,
++    color-mix(in oklab, var(--card) 60%, transparent),
++    color-mix(in oklab, var(--card) 30%, transparent)
++  );
++  backdrop-filter: blur(20px) saturate(1.5);
++  -webkit-backdrop-filter: blur(20px) saturate(1.5);
++  border: 1px solid color-mix(in oklab, var(--border) 50%, transparent);
++  box-shadow:
++    0 8px 32px color-mix(in oklab, var(--fg) 5%, transparent),
++    inset 0 1px 0 color-mix(in oklab, var(--fg) 8%, transparent);
++}
++
++/* Premium glass with stronger blur */
++.liquid-glass-premium {
++  background: linear-gradient(
++    180deg,
++    color-mix(in oklab, var(--card) 70%, transparent),
++    color-mix(in oklab, var(--card) 40%, transparent)
++  );
++  backdrop-filter: blur(24px) saturate(1.8);
++  -webkit-backdrop-filter: blur(24px) saturate(1.8);
++  border: 1px solid color-mix(in oklab, var(--primary) 15%, transparent);
++  box-shadow:
++    0 12px 40px color-mix(in oklab, var(--primary) 8%, transparent),
++    inset 0 1px 0 color-mix(in oklab, var(--fg) 10%, transparent);
++}
++
++/* Glass panel for cards */
++.liquid-glass-panel {
++  background: color-mix(in oklab, var(--card) 50%, transparent);
++  backdrop-filter: blur(16px) saturate(1.4);
++  -webkit-backdrop-filter: blur(16px) saturate(1.4);
++  border: 1px solid color-mix(in oklab, var(--border) 40%, transparent);
++  border-radius: 12px;
++  box-shadow:
++    0 4px 24px color-mix(in oklab, var(--fg) 4%, transparent),
++    inset 0 1px 0 color-mix(in oklab, var(--fg) 6%, transparent);
++  transition: all 0.3s var(--ease-expo);
++}
++
++.liquid-glass-panel:hover {
++  background: color-mix(in oklab, var(--card) 65%, transparent);
++  border-color: color-mix(in oklab, var(--primary) 25%, transparent);
++  box-shadow:
++    0 8px 32px color-mix(in oklab, var(--primary) 12%, transparent),
++    inset 0 1px 0 color-mix(in oklab, var(--fg) 8%, transparent);
++  transform: translateY(-2px);
++}
++
++/* Sidebar liquid glass */
++.liquid-glass-sidebar {
++  background: linear-gradient(
++    180deg,
++    color-mix(in oklab, var(--sidebar) 80%, transparent),
++    color-mix(in oklab, var(--sidebar) 50%, transparent)
++  );
++  backdrop-filter: blur(20px) saturate(1.6);
++  -webkit-backdrop-filter: blur(20px) saturate(1.6);
++  border-right: 1px solid color-mix(in oklab, var(--border) 30%, transparent);
++}
++
++/* Header liquid glass */
++.liquid-glass-header {
++  background: linear-gradient(
++    180deg,
++    color-mix(in oklab, var(--header-bg) 90%, transparent),
++    color-mix(in oklab, var(--header-bg) 60%, transparent)
++  );
++  backdrop-filter: blur(16px) saturate(1.4);
++  -webkit-backdrop-filter: blur(16px) saturate(1.4);
++  border-bottom: 1px solid color-mix(in oklab, var(--border) 40%, transparent);
++}
++
++/* Reflection effect */
++.liquid-glass-reflection {
++  position: relative;
++  overflow: hidden;
++}
++
++.liquid-glass-reflection::before {
++  content: '';
++  position: absolute;
++  top: 0;
++  left: 0;
++  right: 0;
++  height: 1px;
++  background: linear-gradient(
++    90deg,
++    transparent,
++    color-mix(in oklab, var(--fg) 20%, transparent),
++    transparent
++  );
++}
++
++/* Active state with glow */
++.liquid-glass-active {
++  background: linear-gradient(
++    135deg,
++    color-mix(in oklab, var(--primary) 15%, transparent),
++    color-mix(in oklab, var(--card) 50%, transparent)
++  );
++  border-color: color-mix(in oklab, var(--primary) 30%, transparent);
++  box-shadow:
++    0 0 20px color-mix(in oklab, var(--primary) 15%, transparent),
++    inset 0 1px 0 color-mix(in oklab, var(--primary) 20%, transparent);
++}
++
++/* Morphing accordion effect */
++.accordion-morph {
++  transition: all 0.4s var(--ease-expo);
++}
++
++.accordion-morph:hover {
++  background: color-mix(in oklab, var(--sidebar-accent) 60%, transparent);
++}
++
++/* Microinteractions */
++.micro-glow {
++  transition: all 0.2s var(--ease-sharp);
++}
++
++.micro-glow:hover {
++  box-shadow: 0 0 12px color-mix(in oklab, var(--primary) 25%, transparent);
++}
++
++.micro-lift {
++  transition: transform 0.2s var(--ease-expo);
++}
++
++.micro-lift:hover {
++  transform: translateY(-1px);
++}
++
++/* Premium blue accent */
++.premium-blue {
++  color: oklch(0.65 0.18 250);
++}
++
++.premium-blue-glow {
++  text-shadow: 0 0 20px oklch(0.65 0.18 250 / 0.5);
++}
++
++/* Ticker styling */
++.ticker {
++  position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
++  border-top: 1px solid var(--border);
++  background: var(--ticker-bg);
++  backdrop-filter: blur(12px) saturate(1.4);
++  -webkit-backdrop-filter: blur(12px) saturate(1.4);
++  overflow: hidden;
++}
++.ticker-track {
++  display: inline-flex; align-items: center; gap: 2.5rem;
++  padding: 16px 0; white-space: nowrap;
++  animation: tick 60s linear infinite;
++}
++.ticker:hover .ticker-track {
++  animation-play-state: paused;
++}
++
++/* Header bar styling */
++.header-bar {
++  position: sticky; top: 0; z-index: 39;
++  display: flex; align-items: center; gap: 1.5rem;
++  padding: 18px 40px;
++  background: var(--header-bg);
++  backdrop-filter: blur(14px) saturate(1.3);
++  -webkit-backdrop-filter: blur(14px) saturate(1.3);
++  border-bottom: 1px solid var(--border);
++}
++
++/* Hero section */
++.hero {
++  margin-bottom: 56px;
++  max-width: 980px;
++}
++.hero h1 {
++  font-weight: 600;
++  font-size: clamp(2.4rem, 4.6vw, 4rem);
++  line-height: 1.03;
++  letter-spacing: -0.04em;
++  margin-bottom: 1.5rem;
++}
++.hero h1 .lex {
++  color: var(--primary-2);
++}
++
++/* Opportunity cards grid */
++.opps-grid {
++  display: grid;
++  grid-template-columns: repeat(3, 1fr);
++  gap: 18px;
++}
++@media (max-width: 1100px) {
++  .opps-grid { grid-template-columns: repeat(2, 1fr); }
++}
++@media (max-width: 768px) {
++  .opps-grid { grid-template-columns: 1fr; }
++}
+diff --git a/frontend/app/layout.tsx b/frontend/app/layout.tsx
+index d43bb0a..75073ab 100644
+--- a/frontend/app/layout.tsx
++++ b/frontend/app/layout.tsx
+@@ -1,7 +1,6 @@
+ import type { ReactNode } from "react";
+ import { headers } from "next/headers";
+-import { GeistSans } from "geist/font/sans";
+-import { GeistMono } from "geist/font/mono";
++import { Inter, Space_Mono } from "next/font/google";
+ 
+ import "./globals.css";
+ import { SiteHeader } from "@/components/site-header";
+@@ -10,9 +9,24 @@ import { PageBreadcrumb } from "@/components/PageBreadcrumb";
+ import { HeroSphere } from "@/components/HeroSphere";
+ import { ThemeScript } from "@/components/theme-toggle";
+ import { SystemGuardBanner } from "@/components/SystemGuardBanner";
+-import { Web3Provider } from "@/app/providers/Web3Provider";
++import { Web3ProviderWrapper } from "@/app/providers/Web3ProviderWrapper";
++import { LiveTicker } from "@/components/live-ticker";
++import { GeometricBackground } from "@/components/geometric-background";
+ import { Toaster } from "sonner";
+ 
++const inter = Inter({
++  subsets: ["latin"],
++  variable: "--font-sans",
++  display: "swap",
++});
++
++const spaceMono = Space_Mono({
++  subsets: ["latin"],
++  weight: ["400", "700"],
++  variable: "--font-mono",
++  display: "swap",
++});
++
+ export const metadata = {
+   title: "QuantumX — Control Plane",
+   description: "Institutional-grade stochastic convergence operator console",
+@@ -83,14 +97,56 @@ export default async function RootLayout({ children }: { children: ReactNode })
+     <html
+       lang="en"
+       translate="no"
+-      className={`${GeistSans.variable} ${GeistMono.variable} notranslate`}
++      className={`${inter.variable} ${spaceMono.variable} notranslate`}
+       suppressHydrationWarning
+     >
+       <head>
+         <ThemeScript />
+         <meta name="google" content="notranslate" />
+       </head>
+-      <body className="min-h-dvh bg-background font-sans antialiased notranslate" translate="no">
++      <body
++        className="min-h-dvh bg-background font-sans antialiased notranslate"
++        translate="no"
++        style={{
++          // Aurora backdrop from mockup
++          backgroundColor: 'var(--bg)',
++        }}
++      >
++        {/* Aurora backdrop effect */}
++        <div
++          aria-hidden="true"
++          className="fixed inset-[-30%] -z-20 pointer-events-none"
++          style={{
++            background: `
++              radial-gradient(62% 52% at 50% -6%, var(--glow-1), transparent 62%),
++              radial-gradient(46% 38% at 88% 6%, var(--glow-2), transparent 60%),
++              radial-gradient(48% 40% at 10% 14%, var(--glow-3), transparent 60%)
++            `,
++            backgroundRepeat: 'no-repeat',
++            animation: 'drift 34s ease-in-out infinite',
++            willChange: 'transform',
++          }}
++        />
++        {/* Background gradient sweep - prolongado hacia la derecha */}
++        <div
++          aria-hidden="true"
++          className="fixed inset-0 -z-30 pointer-events-none"
++          style={{
++            background: `
++              linear-gradient(90deg,
++                oklch(0.46 0.19 250) 0%,
++                oklch(0.35 0.15 255) 30%,
++                oklch(0.28 0.12 260) 55%,
++                oklch(0.20 0.08 265) 80%,
++                oklch(0.16 0.05 266) 100%
++              )
++            `,
++            backgroundAttachment: 'fixed',
++          }}
++        />
++        {/* Grain overlay - film grain effect from mockup */}
++        <div className="grain" aria-hidden="true" />
++        <GeometricBackground />
+         <HeroSphere />
+         <a
+           href="#main"
+@@ -99,11 +155,10 @@ export default async function RootLayout({ children }: { children: ReactNode })
+           Skip to main content
+         </a>
+         {/*
+-          Web3Provider (wagmi + react-query + RainbowKit) wraps the whole app so
+-          the read-only /wallet surface can connect a browser wallet. It exposes
+-          ONLY read-only connectivity — no signer, no capital, no broadcast.
++          Web3ProviderWrapper conditionally renders Web3Provider only on client-side
++          to prevent React context errors during SSG.
+         */}
+-        <Web3Provider cookie={requestCookie}>
++        <Web3ProviderWrapper cookie={requestCookie}>
+           <div className="flex min-h-dvh flex-col">
+             <SiteHeader paperMode={paperMode} />
+             <SystemGuardBanner />
+@@ -125,7 +180,8 @@ export default async function RootLayout({ children }: { children: ReactNode })
+               </main>
+             </div>
+           </div>
+-        </Web3Provider>
++        </Web3ProviderWrapper>
++        <LiveTicker />
+         <Toaster richColors position="top-right" />
+       </body>
+     </html>
+diff --git a/frontend/app/page.tsx b/frontend/app/page.tsx
+index c66bfdb..672a212 100644
+--- a/frontend/app/page.tsx
++++ b/frontend/app/page.tsx
+@@ -24,6 +24,262 @@ import { getReconSummary, getStatus } from "@/lib/api-client";
+ export const dynamic = "force-dynamic";
+ export const revalidate = 0;
+ 
++// Animated character component for hero title
++function AnimatedChar({ char, delay }: { char: string; delay: number }) {
++  return (
++    <span
++      className="inline-block"
++      style={{
++        opacity: 0,
++        transform: 'translateY(110%) rotateX(-90deg)',
++        animation: `charIn 520ms cubic-bezier(0.16, 1, 0.3, 1) ${delay}ms forwards`,
++      }}
++    >
++      {char === " " ? " " : char}
++    </span>
++  );
++}
++
++function AnimatedTitle({ text }: { text: string }) {
++  return (
++    <span className="inline-block">
++      {text.split("").map((char, i) => (
++        <AnimatedChar key={i} char={char} delay={i * 40} />
++      ))}
++    </span>
++  );
++}
++
++// Stat card component
++function StatCard({
++  label,
++  value,
++  subtext,
++  variant = "default",
++}: {
++  label: string;
++  value: string;
++  subtext: string;
++  variant?: "default" | "success" | "accent";
++}) {
++  const valueColor =
++    variant === "success"
++      ? "var(--success)"
++      : variant === "accent"
++      ? "var(--primary-2)"
++      : "var(--fg)";
++
++  return (
++    <div
++      className="relative overflow-hidden rounded-[10px] p-[22px_24px] transition-all"
++      style={{
++        background: 'var(--card)',
++        backdropFilter: 'blur(14px) saturate(1.4)',
++        WebkitBackdropFilter: 'blur(14px) saturate(1.4)',
++        border: '1px solid transparent',
++        boxShadow: 'var(--hairline), var(--shadow)',
++      }}
++    >
++      {/* Shimmer effect */}
++      <div
++        className="absolute inset-0 pointer-events-none"
++        style={{
++          background: 'linear-gradient(115deg, transparent 30%, color-mix(in oklab, var(--fg) 14%, transparent) 50%, transparent 70%)',
++          transform: 'translateX(-120%)',
++          animation: 'shine 3.4s cubic-bezier(0.16, 1, 0.3, 1) 1.2s infinite',
++        }}
++      />
++      <span
++        className="block mb-3 font-mlabel"
++        style={{ color: 'var(--muted)' }}
++      >
++        {label}
++      </span>
++      <div
++        className="font-stats-number tracking-tight leading-none"
++        style={{ color: valueColor }}
++      >
++        {value}
++      </div>
++      <div
++        className="mt-2 font-mlabel"
++        style={{ color: 'var(--muted)' }}
++      >
++        {subtext}
++      </div>
++    </div>
++  );
++}
++
++// Opportunity card with x-ray panel
++function OppCard({
++  pair,
++  yield: yieldVal,
++  dexA,
++  dexB,
++  xrayData,
++}: {
++  pair: string;
++  yield: string;
++  dexA: string;
++  dexB: string;
++  xrayData: { label: string; value: string; ok?: boolean }[];
++}) {
++  return (
++    <div
++      className="group relative overflow-hidden rounded-xl cursor-pointer transition-all"
++      style={{
++        background: 'var(--card)',
++        backdropFilter: 'blur(14px) saturate(1.4)',
++        WebkitBackdropFilter: 'blur(14px) saturate(1.4)',
++        border: '1px solid transparent',
++        boxShadow: 'var(--hairline), var(--shadow)',
++        padding: '20px 22px',
++      }}
++    >
++      <div className="transition-opacity duration-300 group-hover:opacity-[0.35]">
++        <div className="flex items-baseline justify-between mb-3.5">
++          <span className="font-semibold text-[17px] tracking-tight">{pair}</span>
++          <span
++            className="font-mono text-base font-bold"
++            style={{ color: 'var(--success)' }}
++          >
++            {yieldVal}
++          </span>
++        </div>
++        <div
++          className="flex gap-4"
++          style={{
++            fontFamily: 'var(--font-mono)',
++            fontSize: '10.5px',
++            color: 'var(--muted)',
++            letterSpacing: '0.08em',
++          }}
++        >
++          <span>
++            <b style={{ color: 'var(--fg)' }}>{dexA}</b> → {dexB}
++          </span>
++        </div>
++      </div>
++
++      {/* X-ray panel */}
++      <div
++        className="absolute left-0 right-0 bottom-0 transition-all duration-300"
++        style={{
++          padding: '18px 22px 20px',
++          background: 'linear-gradient(180deg, transparent, var(--xray-bg))',
++          backdropFilter: 'blur(6px)',
++          clipPath: 'inset(100% 0 0 0)',
++        }}
++      >
++        <div
++          className="mb-2"
++          style={{
++            fontFamily: 'var(--font-mono)',
++            fontSize: '9.5px',
++            letterSpacing: '0.16em',
++            textTransform: 'uppercase',
++            color: 'var(--primary-2)',
++          }}
++        >
++          X-RAY
++        </div>
++        {xrayData.map((row, i) => (
++          <div
++            key={i}
++            className="flex justify-between py-0.5"
++            style={{
++              fontFamily: 'var(--font-mono)',
++              fontSize: '10.5px',
++              letterSpacing: '0.06em',
++              color: 'var(--muted)',
++            }}
++          >
++            <span>{row.label}</span>
++            <b style={{ color: row.ok ? 'var(--success)' : 'var(--fg)' }}>{row.value}</b>
++          </div>
++        ))}
++      </div>
++
++      {/* Hover trigger for x-ray - handled via CSS in globals.css */}
++    </div>
++  );
++}
++
++// Gate refusal panel
++function GatePanel() {
++  const checks = [
++    { label: "Paper mode", status: "green" as const },
++    { label: "Kill-switch armed", status: "green" as const },
++    { label: "Latency < 150ms", status: "green" as const },
++    { label: "RPC quorum", status: "red" as const },
++    { label: "Sim parity", status: "red" as const },
++    { label: "Signer online", status: "red" as const },
++  ];
++
++  return (
++    <div
++      className="mt-14 p-7 rounded-xl grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-8 items-center"
++      style={{
++        background: 'var(--card)',
++        backdropFilter: 'blur(14px) saturate(1.4)',
++        WebkitBackdropFilter: 'blur(14px) saturate(1.4)',
++        border: '1px solid transparent',
++        boxShadow: 'var(--hairline), var(--shadow)',
++      }}
++    >
++      <div>
++        <h3 className="font-semibold text-xl tracking-tight mb-2">Live Enablement Gate</h3>
++        <p className="text-sm" style={{ color: 'var(--muted)', maxWidth: '52ch' }}>
++          All readiness checks must pass before the platform can transition from
++          paper-mode to live execution. This is a fail-closed safety system.
++        </p>
++      </div>
++      <div style={{ fontFamily: 'var(--font-mono)' }}>
++        <div
++          className="text-[13px] tracking-[0.18em] mb-3.5"
++          style={{ color: 'var(--destructive)' }}
++        >
++          VERDICT: REFUSED
++        </div>
++        <div className="grid grid-cols-2 gap-1.5 gap-x-3.5 text-[10.5px] tracking-wide">
++          {checks.map((check, i) => (
++            <div
++              key={i}
++              className="flex gap-2 items-center"
++              style={{
++                color: check.status === "green" ? 'var(--fg)' : 'var(--muted)',
++              }}
++            >
++              <span
++                className="w-[7px] h-[7px] rounded-full"
++                style={{
++                  background: check.status === "green" ? 'var(--success)' : 'var(--destructive)',
++                  boxShadow: check.status === "green"
++                    ? '0 0 8px var(--success)'
++                    : '0 0 8px var(--destructive)',
++                }}
++              />
++              {check.label}
++            </div>
++          ))}
++        </div>
++        <div
++          className="mt-4 text-[11px] tracking-[0.14em] uppercase p-3 rounded-lg text-center cursor-not-allowed"
++          style={{
++            fontFamily: 'var(--font-mono)',
++            background: 'color-mix(in oklab, var(--fg) 8%, transparent)',
++            color: 'var(--muted)',
++            border: '1px solid var(--border)',
++          }}
++        >
++          <b style={{ color: 'var(--destructive)' }}>LOCKED</b> — Waiting for checks
++        </div>
++      </div>
++    </div>
++  );
++}
++
+ type Tile = {
+   href: string;
+   title: string;
+@@ -49,28 +305,117 @@ export default async function Home() {
+   const [status, recon] = await Promise.all([getStatus(), getReconSummary(1)]);
+   return (
+     <>
+-      <div className="mb-8 space-y-2">
+-        <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-muted-foreground">
+-          <span className="size-1.5 rounded-full bg-primary" />
++      {/* Hero Section */}
++      <div className="mb-14 max-w-[980px]">
++        <div
++          className="flex items-center gap-2 text-xs uppercase mb-4"
++          style={{ letterSpacing: '0.18em', color: 'var(--muted)' }}
++        >
++          <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+           operator console
+         </div>
+-        <h1>Platform control plane.</h1>
+-        <p className="max-w-2xl text-base text-muted-foreground">
++        <h1
++          className="font-hero-title leading-[1.03] tracking-[-0.04em] mb-6"
++        >
++          <AnimatedTitle text="Convergencia estocástica." />
++          <br />
++          <span style={{ color: 'var(--primary-2)' }}>Topological Yield</span> en milisegundos.
++        </h1>
++        <p
++          className="max-w-[64ch] text-base leading-relaxed"
++          style={{ color: 'var(--muted)' }}
++        >
+           Every view below consumes live edge endpoints. When an upstream is unhealthy
+           the page surfaces the error verbatim — it never synthesizes values.
+         </p>
+-        <div className="flex flex-wrap gap-2 pt-2">
++        <div className="flex flex-wrap gap-2 pt-4">
+           <Badge variant="info">paper-mode ON</Badge>
+           <Badge variant="outline">S1 – S6 merged</Badge>
+           <Badge variant="outline" className="font-mono">{getApiBaseUrl()}</Badge>
+         </div>
+       </div>
+ 
++      {/* Stats Grid */}
++      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-[18px] my-10">
++        <StatCard
++          label="TOPOLOGICAL YIELD · 24H"
++          value="0.42%"
++          subtext="proyectado · REVM verified"
++          variant="success"
++        />
++        <StatCard
++          label="ASIMETRÍAS DETECTADAS"
++          value="1.284"
++          subtext="stream arbx:opps:detected"
++        />
++        <StatCard
++          label="CAPITAL EXPUESTO"
++          value="$0.00"
++          subtext="paper-shadow · estructural"
++          variant="accent"
++        />
++        <StatCard
++          label="DECOHERENCIA MEDIA"
++          value="0.21%"
++          subtext="slippage proyectado"
++          variant="success"
++        />
++      </div>
++
+       <HomeKpiStrip status={status} recon={recon} />
+ 
+       <ProgressRealCard />
+ 
+-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
++      {/* Opportunities Section */}
++      <div className="flex items-baseline gap-4 mt-12 mb-5">
++        <span className="font-mlabel" style={{ color: 'var(--muted)' }}>// OPPORTUNITIES · LIVE</span>
++        <h2 className="font-section-title">Asimetrías Topológicas activas</h2>
++      </div>
++
++      <div
++        className="grid gap-[18px] mb-12"
++        style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}
++      >
++        <OppCard
++          pair="WETH/USDC"
++          yield="+0.42%"
++          dexA="Uniswap V3"
++          dexB="Curve"
++          xrayData={[
++            { label: "Gas estimate", value: "142K", ok: true },
++            { label: "Slippage", value: "0.08%", ok: true },
++            { label: "Confidence", value: "94%", ok: true },
++          ]}
++        />
++        <OppCard
++          pair="WBTC/WETH"
++          yield="+0.31%"
++          dexA="Balancer"
++          dexB="Uniswap V3"
++          xrayData={[
++            { label: "Gas estimate", value: "198K", ok: true },
++            { label: "Slippage", value: "0.12%", ok: true },
++            { label: "Confidence", value: "89%", ok: true },
++          ]}
++        />
++        <OppCard
++          pair="USDC/DAI"
++          yield="+0.18%"
++          dexA="Curve"
++          dexB="Uniswap V3"
++          xrayData={[
++            { label: "Gas estimate", value: "95K", ok: true },
++            { label: "Slippage", value: "0.04%", ok: true },
++            { label: "Confidence", value: "97%", ok: true },
++          ]}
++        />
++      </div>
++
++      {/* Gate Panel */}
++      <GatePanel />
++
++      {/* Navigation Tiles */}
++      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 mt-14">
+         {TILES.map((t) => {
+           const Icon = t.icon;
+           return (
+diff --git a/frontend/components/site-header.tsx b/frontend/components/site-header.tsx
+index 138708c..5da6191 100644
+--- a/frontend/components/site-header.tsx
++++ b/frontend/components/site-header.tsx
+@@ -6,37 +6,31 @@ import Link from "next/link";
+ import { MenuIcon } from "lucide-react";
+ 
+ import { buttonVariants } from "@/components/ui/button";
+-import { Badge } from "@/components/ui/badge";
+ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+ import { SidebarContents } from "@/components/app-sidebar";
+ import { ThemeToggle } from "@/components/theme-toggle";
+-import { QuantumLogo } from "@/components/quantum-logo";
+-import { WebSocketIndicator } from "@/components/WebSocketIndicator";
+ import { cn } from "@/lib/utils";
+ 
+ export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
+   const [mobileOpen, setMobileOpen] = useState(false);
+   const [isMounted, setIsMounted] = useState(false);
+ 
+-  // Hydration safety: getApiBaseUrl() returns different strings on SSR (INTERNAL_EDGE_URL) 
+-  // vs CSR (NEXT_PUBLIC_EDGE_URL). We must delay rendering it until the client mounts.
+   useEffect(() => {
+     setIsMounted(true);
+   }, []);
+ 
+   return (
+-    <header className="sticky top-0 z-40 w-full border-b bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
+-      <div className="flex h-16 items-center gap-3 px-4 lg:px-6">
++    <header
++      className="sticky top-0 z-40 w-full border-b"
++      style={{
++        background: 'var(--header-bg)',
++        backdropFilter: 'blur(14px) saturate(1.3)',
++        WebkitBackdropFilter: 'blur(14px) saturate(1.3)',
++        borderColor: 'var(--border)',
++      }}
++    >
++      <div className="flex h-16 items-center gap-6 px-6 lg:px-10">
+         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+-          {/*
+-           * NOTE: SheetTrigger WITHOUT asChild — Radix Dialog.Trigger already
+-           * renders a native <button>. Styling it via buttonVariants() gives
+-           * identical visuals with zero Slot/SlotClone composition, which was
+-           * the dev-time source of "Function components cannot be given refs"
+-           * (stack: Button <- SlotClone <- SheetTrigger) even after Button
+-           * was wrapped in React.forwardRef. Native button = no ref
+-           * forwarding path = no warning, guaranteed.
+-           */}
+           <SheetTrigger
+             className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "lg:hidden")}
+             aria-label="Open navigation"
+@@ -46,8 +40,7 @@ export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
+           <SheetContent side="left" className="p-0">
+             <SheetHeader>
+               <SheetTitle className="flex items-center gap-2">
+-                <QuantumLogo className="size-5" />
+-                Quantum<span className="text-primary">X</span>
++                <span className="font-bold">ARBITRAG<span style={{ color: 'var(--primary)' }}>E</span>X</span>
+               </SheetTitle>
+             </SheetHeader>
+             <div className="flex flex-col gap-6 px-3 pb-6">
+@@ -56,30 +49,78 @@ export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
+           </SheetContent>
+         </Sheet>
+ 
+-        <Link href="/" className="flex items-center gap-2.5">
+-          <span
+-            aria-hidden
+-            className="grid size-9 place-items-center rounded-lg bg-primary/10 shadow-sm ring-1 ring-primary/25"
++        {/* Wordmark - Mockup style */}
++        <Link href="/" className="flex items-center gap-2">
++          <div
++            className="font-bold text-lg tracking-tight"
++            style={{ letterSpacing: '-0.02em' }}
+           >
+-            <QuantumLogo className="size-7" />
+-          </span>
+-          <div className="flex flex-col -space-y-0.5 leading-none">
+-            <span className="text-sm font-semibold tracking-tight">
+-              Quantum<span className="text-primary">X</span>
+-            </span>
+-            <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+-              control plane
+-            </span>
++            ARBITRAG<span style={{ color: 'var(--primary)', textShadow: 'var(--wordmark-glow)' }}>E</span>X
+           </div>
+         </Link>
+ 
+-        <Badge variant="glass" className="hidden sm:inline-flex">
+-          <span className="size-1.5 rounded-full bg-current opacity-80" aria-hidden /> ghost-protocol
+-        </Badge>
++        {/* Tagline */}
++        <div
++          className="hidden lg:block text-[9.5px] uppercase tracking-[0.18em] pl-4 ml-1"
++          style={{
++            color: 'var(--muted)',
++            borderLeft: '1px solid var(--border)',
++          }}
++        >
++          Quantum Research Terminal · Topological Yield Engine
++        </div>
++
++        <div className="flex-1" />
++
++        {/* Badges */}
++        <div className="hidden md:flex items-center gap-3">
++          <span
++            className="inline-flex items-center gap-2 text-[10.5px] uppercase tracking-[0.14em] px-3 py-1.5 rounded-md"
++            style={{
++              background: 'color-mix(in oklab, var(--success) 16%, transparent)',
++              color: 'var(--success)',
++              border: '1px solid color-mix(in oklab, var(--success) 28%, transparent)',
++            }}
++          >
++            <span
++              className="w-1.5 h-1.5 rounded-full"
++              style={{
++                background: 'var(--success)',
++                boxShadow: '0 0 10px var(--success)',
++              }}
++            />
++            Paper · TLS Shadow
++          </span>
++
++          <span
++            className="inline-flex items-center gap-2 text-[10.5px] uppercase tracking-[0.14em] px-3 py-1.5 rounded-md"
++            style={{
++              background: 'color-mix(in oklab, var(--primary) 16%, transparent)',
++              color: 'var(--primary)',
++              border: '1px solid color-mix(in oklab, var(--primary) 30%, transparent)',
++            }}
++          >
++            <span
++              className="w-1.5 h-1.5 rounded-full"
++              style={{
++                background: 'var(--primary)',
++                boxShadow: '0 0 10px var(--primary)',
++              }}
++            />
++            Kill-switch &lt;10ms
++          </span>
++        </div>
+ 
+-        <div className="ml-auto flex items-center gap-2">
+-          <WebSocketIndicator />
+-          <code className="hidden md:inline-flex rounded-md border bg-muted/60 px-2 py-1 text-[11px] text-muted-foreground">
++        <div className="flex items-center gap-2">
++          <code
++            className="hidden lg:inline-flex rounded-md px-2 py-1 text-[11px]"
++            style={{
++              background: 'color-mix(in oklab, var(--fg) 8%, transparent)',
++              color: 'var(--muted)',
++              border: '1px solid var(--border)',
++              fontFamily: 'var(--font-mono)',
++            }}
++          >
+             {isMounted ? getApiBaseUrl() : "—"}
+           </code>
+           <ThemeToggle />

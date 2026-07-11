@@ -1,0 +1,51 @@
+ M backend/prioritization-spine/src/bayesian_allocator.rs
+ M backend/sed-core/src/hedger/orthogonal_variance_hedger.rs
+ M backend/sed-core/src/metrics/sed_metrics.rs
+ M backend/sed-core/src/types/errors.rs
+ M backend/token-enricher/src/consumer.rs
+ M frontend/components/app-sidebar.tsx
+?? .skills/
+?? 01-baseline-expanded.png
+?? 02-baseline-collapsed.png
+?? 03-recovered-expanded.png
+?? 04-recovered-collapsed.png
+?? 05-final-expanded.png
+?? 06-final-collapsed.png
+?? 07-final-expanded.png
+?? _recovery/
+?? arbitragex-v2-main/
+?? audit_report_51_pages.md
+?? audits/live/
+?? carpeta-18-frontend.png
+?? current-sidebar-state.png
+?? docs/crisis/
+?? frontend/app/client-only/
+?? frontend/app/providers/Web3ProviderWrapper.tsx
+?? frontend/app/wallet/SiweAuthPanelClient.tsx
+?? frontend/app_backup/
+?? frontend/components/geometric-background.tsx
+?? frontend/components/live-ticker.tsx
+?? frontend/components/wallet/AccountPopoverClient.tsx
+?? frontend/components/wallet/ConnectWalletButtonClient.tsx
+?? frontend/components/wallet/NetworkSwitcherClient.tsx
+?? frontend/components/wallet/WalletOnboardingGuardClient.tsx
+?? frontend/components_backup/
+?? frontend/features_backup/
+?? full-page-verification.png
+?? localhost-3000-status-stack.png
+?? scripts/deploy-blue-green.sh
+?? scripts/verify_sidebar.py
+?? sidebar-blur-minimo.png
+?? sidebar-crystal-effect.png
+?? sidebar-gradual-transparente.png
+?? sidebar-translucido-65.png
+?? sidebar-updated.png
+?? sidebar_crisis_before_restore.patch
+?? status-stack-bottom.png
+?? status-stack-centered.png
+?? status-stack-complete.png
+?? status-stack-final.png
+?? status-stack-focused.png
+?? status-stack-sidebar-focus.png
+?? tests/e2e/audit-44-pages.spec.ts
+?? tests/e2e/package-lock.json

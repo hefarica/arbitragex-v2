@@ -1,0 +1,20 @@
+{
+  "path": "/onboarding/5-production",
+  "label": "Onboarding 5 — production",
+  "group": "flow",
+  "httpStatus": 200,
+  "contentType": "text/html; charset=utf-8",
+  "hasH1": true,
+  "hasPrimaryContent": true,
+  "pageLevelError": false,
+  "is404": false,
+  "shadowed": false,
+  "forbiddenHits": [],
+  "buttons": 3,
+  "forms": 0,
+  "tables": 0,
+  "toggles": 0,
+  "dataProvenance": 0,
+  "consoleErrors": [],
+  "verdict": "PASS"
+}

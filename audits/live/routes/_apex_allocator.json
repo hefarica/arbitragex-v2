@@ -1,0 +1,23 @@
+{
+  "path": "/apex/allocator",
+  "label": "APEX allocator",
+  "group": "misc",
+  "httpStatus": 200,
+  "contentType": "text/html; charset=utf-8",
+  "hasH1": true,
+  "hasPrimaryContent": true,
+  "pageLevelError": false,
+  "is404": false,
+  "shadowed": false,
+  "forbiddenHits": [],
+  "buttons": 2,
+  "forms": 0,
+  "tables": 0,
+  "toggles": 0,
+  "dataProvenance": 0,
+  "consoleErrors": [
+    "WebSocket connection to 'wss://edge-arbx.ape-tv.net/edge/ws/allocator' failed: HTTP Authentication failed; no valid credentials available",
+    "WebSocket connection to 'wss://edge-arbx.ape-tv.net/edge/ws/allocator' failed: HTTP Authentication failed; no valid credentials available"
+  ],
+  "verdict": "PASS"
+}

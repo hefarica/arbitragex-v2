@@ -1,0 +1,277 @@
+diff --git a/backend/Cargo.lock b/backend/Cargo.lock
+index 20a6d5e..0e20fee 100644
+--- a/backend/Cargo.lock
++++ b/backend/Cargo.lock
+@@ -6665,6 +6665,7 @@ dependencies = [
+  "jsonschema",
+  "once_cell",
+  "prometheus",
++ "rand 0.8.6",
+  "redis",
+  "reqwest 0.12.28",
+  "rsa",
+diff --git a/frontend/components/app-sidebar.tsx b/frontend/components/app-sidebar.tsx
+index 15b4a87..25ead04 100644
+--- a/frontend/components/app-sidebar.tsx
++++ b/frontend/components/app-sidebar.tsx
+@@ -3,7 +3,7 @@
+ import { useState, useEffect, useCallback } from "react";
+ import Link from "next/link";
+ import { usePathname } from "next/navigation";
+-import { PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react";
++import { ChevronRightIcon, PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react";
+ 
+ import { cn } from "@/lib/utils";
+ import { NAV_ITEMS, type NavItem } from "@/components/nav-items";
+@@ -14,6 +14,11 @@ function isActive(pathname: string, item: NavItem): boolean {
+ }
+ 
+ const COLLAPSE_KEY = "arbx:sidebar:collapsed";
++// Per-section accordion state. The four canonical groups seed the default
++// (all-collapsed) state and filter localStorage so a stale/corrupt key can't
++// introduce unknown groups.
++const SECTIONS_KEY = "arbx:sidebar:collapsed-sections";
++const SECTION_GROUPS: NavItem["group"][] = ["pipeline", "control", "setup", "omega"];
+ 
+ function useSidebarCollapsed(): [boolean, () => void] {
+   const [collapsed, setCollapsed] = useState(false);
+@@ -46,6 +51,45 @@ function useSidebarCollapsed(): [boolean, () => void] {
+   return [effective, toggle];
+ }
+ 
++function useCollapsedSections(): readonly [Set<NavItem["group"]>, (group: NavItem["group"]) => void] {
++  // SSR + first client paint default to ALL collapsed (operator requested the
++  // four titles render "contracted"). localStorage re-applies the saved set
++  // after mount — the initial server/first-paint state is identical on both
++  // sides, so there is no hydration mismatch (sidebar rule R1).
++  const [collapsed, setCollapsed] = useState<Set<NavItem["group"]>>(() => new Set(SECTION_GROUPS));
++
++  useEffect(() => {
++    try {
++      const stored = window.localStorage.getItem(SECTIONS_KEY);
++      if (!stored) return;
++      const parsed = JSON.parse(stored);
++      if (!Array.isArray(parsed)) return;
++      const valid = parsed.filter((g): g is NavItem["group"] =>
++        SECTION_GROUPS.includes(g as NavItem["group"]),
++      );
++      setCollapsed(new Set(valid));
++    } catch {
++      /* localStorage blocked / corrupt — keep default all-collapsed */
++    }
++  }, []);
++
++  const toggle = useCallback((group: NavItem["group"]) => {
++    setCollapsed((prev) => {
++      const next = new Set(prev);
++      if (next.has(group)) next.delete(group);
++      else next.add(group);
++      try {
++        window.localStorage.setItem(SECTIONS_KEY, JSON.stringify([...next]));
++      } catch {
++        /* non-fatal: preference lives in memory for the session */
++      }
++      return next;
++    });
++  }, []);
++
++  return [collapsed, toggle] as const;
++}
++
+ function NavList({
+   group,
+   credsNeedsAttention = 0,
+@@ -72,16 +116,18 @@ function NavList({
+               onClick={onNavigate}
+               title={collapsed ? item.label : undefined}
+               className={cn(
+-                "group relative flex items-center gap-3 rounded-md text-sm font-medium transition-all",
+-                "text-sidebar-foreground/70 hover:text-sidebar-foreground",
+-                collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2 hover:bg-sidebar-accent/60",
+-                active && "bg-sidebar-accent text-sidebar-foreground shadow-xs",
+-                active && collapsed && "bg-primary/15",
++                "group relative flex items-center gap-3 text-sm font-medium transition-colors",
++                "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50",
++                collapsed ? "justify-center px-2 py-2.5" : "px-3 py-2",
++                // Active — SOLID primary in BOTH states: expanded = full-width solid row with
++                // white text/icon; collapsed (icon-only) = solid primary rounded square around
++                // the icon. The theme-blue highlight (reference used green; operator asked blue).
++                active && "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
+               )}
+               aria-current={active ? "page" : undefined}
+               aria-label={collapsed ? item.label : undefined}
+             >
+-              <Icon className={cn("size-4 shrink-0 transition-colors", active && "text-primary")} />
++              <Icon className={cn("size-4 shrink-0 transition-colors", active && "text-primary-foreground")} />
+               {!collapsed && <span className="truncate">{item.label}</span>}
+               {/* Credentials "needs attention" badge (invalid + untested), server-resolved.
+                   Falls back to the active-page dot when there's nothing to flag. */}
+@@ -96,16 +142,7 @@ function NavList({
+                 >
+                   {collapsed ? "" : credsNeedsAttention}
+                 </span>
+-              ) : active ? (
+-                !collapsed && <span className="ml-auto size-1.5 rounded-full bg-primary" aria-hidden />
+               ) : null}
+-              {/* Collapsed active indicator: left edge accent bar */}
+-              {active && collapsed && (
+-                <span
+-                  className="absolute left-0 top-1/2 h-6 w-0.5 -translate-y-1/2 rounded-r-full bg-primary"
+-                  aria-hidden
+-                />
+-              )}
+             </Link>
+           </li>
+         );
+@@ -124,10 +161,9 @@ export function AppSidebar({
+     <aside
+       className={cn(
+         "hidden lg:flex lg:flex-col lg:sticky lg:top-16 lg:self-start lg:h-[calc(100dvh-4rem)] lg:shrink-0 lg:z-30",
+-        "lg:border-r lg:border-sidebar-border/60",
+-        // Glassmorphism: semi-transparent sidebar so the aurora background bleeds through.
+-        // supports-[backdrop-filter] degrades gracefully to solid bg-sidebar on old browsers.
+-        "lg:bg-sidebar/70 lg:backdrop-blur-xl lg:supports-[backdrop-filter]:lg:bg-sidebar/55",
++        // Flat/matte sidebar (operator reference): solid bg-sidebar, no frosted glass,
++        // no translucency, no bleed-through, no edge border (reference has none).
++        "lg:bg-sidebar",
+         collapsed ? "lg:w-[4.5rem]" : "lg:w-64",
+         "transition-[width] duration-200 ease-out",
+       )}
+@@ -140,7 +176,7 @@ export function AppSidebar({
+         title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+         className={cn(
+           "absolute -right-3 top-6 z-40 grid size-6 place-items-center rounded-full",
+-          "border border-sidebar-border/80 bg-card/90 backdrop-blur-md shadow-md",
++          "border border-sidebar-border bg-card shadow-md",
+           "text-muted-foreground hover:text-foreground hover:bg-accent/80",
+           "transition-all hover:scale-105 active:scale-95",
+         )}
+@@ -171,31 +207,82 @@ export function SidebarContents({
+   onNavigate,
+   collapsed = false,
+ }: { paperMode?: boolean; credsNeedsAttention?: number; onNavigate?: () => void; collapsed?: boolean } = {}) {
++  const [collapsedSections, toggleSection] = useCollapsedSections();
+   return (
+     <>
+-      {NAV_SECTIONS.map(({ group, title }, idx) => (
+-        <div key={group} className={idx > 0 && !collapsed ? "pt-5" : idx > 0 ? "pt-4" : ""}>
+-          {!collapsed && (
+-            <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-gradient-primary">
+-              {title}
+-            </div>
+-          )}
+-          {/* Collapsed: thin separator line between sections */}
+-          {collapsed && idx > 0 && (
+-            <div className="mx-2 mb-2 border-t border-sidebar-border/40" aria-hidden />
+-          )}
+-          <NavList
+-            group={group}
+-            credsNeedsAttention={credsNeedsAttention}
+-            {...(onNavigate ? { onNavigate } : {})}
+-            collapsed={collapsed}
+-          />
+-        </div>
+-      ))}
++      {NAV_SECTIONS.map(({ group, title }, idx) => {
++        const sectionCollapsed = collapsedSections.has(group);
++        return (
++          <div key={group} className={idx > 0 && !collapsed ? "pt-5" : idx > 0 ? "pt-4" : ""}>
++            {!collapsed ? (
++              <>
++                <button
++                  type="button"
++                  onClick={() => toggleSection(group)}
++                  aria-expanded={!sectionCollapsed}
++                  aria-controls={`nav-section-${group}`}
++                  title={sectionCollapsed ? `Expand ${title}` : `Collapse ${title}`}
++                  className={cn(
++                    // Plain-text section header (operator reference): no pill, no glass,
++                    // no border — bare uppercase muted label directly on the matte sidebar,
++                    // still a <button> for the accordion toggle.
++                    "flex w-full items-center justify-between gap-2 px-3 pb-2 pt-1",
++                    "text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/55",
++                    "transition-colors hover:text-sidebar-foreground",
++                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
++                  )}
++                >
++                  <span>{title}</span>
++                  <ChevronRightIcon
++                    className={cn(
++                      "size-3.5 shrink-0 text-sidebar-foreground/45 transition-transform duration-200",
++                      sectionCollapsed ? "" : "rotate-90",
++                    )}
++                    aria-hidden
++                  />
++                </button>
++                {/*
++                  Collapsible body: CSS-grid 0fr→1fr trick animates height without JS
++                  measurement. overflow-hidden + min-h-0 let the row shrink to 0.
++                */}
++                <div
++                  id={`nav-section-${group}`}
++                  className={cn(
++                    "grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out",
++                    sectionCollapsed
++                      ? "mt-0 grid-rows-[0fr] opacity-0"
++                      : "mt-2 grid-rows-[1fr] opacity-100",
++                  )}
++                >
++                  <div className="overflow-hidden min-h-0">
++                    <NavList
++                      group={group}
++                      credsNeedsAttention={credsNeedsAttention}
++                      {...(onNavigate ? { onNavigate } : {})}
++                      collapsed={collapsed}
++                    />
++                  </div>
++                </div>
++              </>
++            ) : (
++              <>
++                {/* Icon-only sidebar mode: no header, no dividers (reference is clean);
++                    section spacing comes from the wrapper's pt-4 above. */}
++                <NavList
++                  group={group}
++                  credsNeedsAttention={credsNeedsAttention}
++                  {...(onNavigate ? { onNavigate } : {})}
++                  collapsed={collapsed}
++                />
++              </>
++            )}
++          </div>
++        );
++      })}
+       <div
+         className={cn(
+-          "mt-auto rounded-md border border-border/50 bg-card/40 backdrop-blur-sm p-3 text-xs text-muted-foreground",
+-          collapsed && "p-2",
++          "mt-6 border border-sidebar-border bg-sidebar-accent/30 p-3 text-xs text-muted-foreground",
++          collapsed && "mt-4 p-2",
+         )}
+       >
+         <div className={cn("flex items-center gap-2 font-medium text-foreground", collapsed && "justify-center")}>
+diff --git a/frontend/next-env.d.ts b/frontend/next-env.d.ts
+index 9edff1c..830fb59 100644
+--- a/frontend/next-env.d.ts
++++ b/frontend/next-env.d.ts
+@@ -1,6 +1,6 @@
+ /// <reference types="next" />
+ /// <reference types="next/image-types/global" />
+-import "./.next/types/routes.d.ts";
++/// <reference path="./.next/types/routes.d.ts" />
+ 
+ // NOTE: This file should not be edited
+ // see https://nextjs.org/docs/app/api-reference/config/typescript for more information.
+diff --git a/frontend/tsconfig.json b/frontend/tsconfig.json
+index ec45032..a387716 100644
+--- a/frontend/tsconfig.json
++++ b/frontend/tsconfig.json
+@@ -16,7 +16,7 @@
+     "moduleResolution": "Bundler",
+     "resolveJsonModule": true,
+     "isolatedModules": true,
+-    "jsx": "react-jsx",
++    "jsx": "preserve",
+     "incremental": true,
+     "plugins": [
+       {
