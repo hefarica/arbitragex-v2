@@ -738,10 +738,10 @@ export class OpportunityHotStreamer {
         while (this.running) {
             try {
                 // XREADGROUP with 1s block
-                const results = await this.redis.xreadgroup(
+                const results = await (this.redis as any).xreadgroup(
                     'GROUP', HOT_OPPORTUNITIES_GROUP, this.consumerName,
-                    'BLOCK', 1000,
                     'COUNT', 100,
+                    'BLOCK', 1000,
                     'STREAMS', stream, '>'
                 ) as [string, [string, string[]][]][] | null;
 

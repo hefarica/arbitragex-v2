@@ -1564,7 +1564,7 @@ if (pool && outcomeSinkEnabled()) {
 const hotOpportunityStreamer = new OpportunityHotStreamer({
   io,
   redisUrl: REDIS_URL,
-  logger,
+  logger: logger as unknown as { log: (...args: unknown[]) => void; error: (...args: unknown[]) => void; warn: (...args: unknown[]) => void },
 });
 hotOpportunityStreamer.start().catch((e) =>
   logger.error({ event: "hot_streamer.start_err", err: (e as Error).message },

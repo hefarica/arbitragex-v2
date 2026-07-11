@@ -86,7 +86,7 @@ export class LatencyMonitor {
       .map((m) => m.latency_ms)
       .sort((a, b) => a - b);
     const idx = Math.floor(sorted.length * (percentile / 100));
-    return sorted[Math.min(idx, sorted.length - 1)];
+    return sorted[Math.min(idx, sorted.length - 1)] ?? 0;
   }
 
   /**
