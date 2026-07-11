@@ -33,6 +33,8 @@ pub mod scoring;
 pub mod scoring_pipeline;
 pub mod source_supervisor;
 pub mod strategy_label;
+// Task 2: HotPathEmitter for sub-100ms detection pipeline (Redis streams)
+pub mod hot_path_emitter;
 // Phase 7-8: orchestrator + engines exposed for integration tests.
 pub mod engines;
 pub mod orchestrator;
