@@ -20,7 +20,7 @@ prioritization-spine = { workspace = true }
 simulator-v2 = { path = "../simulator-v2" }
 
 # Official Rust MCP SDK (Model Context Protocol). stdio transport + tool macros.
-rmcp = { version = "0.3", features = ["server", "transport-io", "macros"] }
+rmcp = { version = "2.2", features = ["server", "transport-io", "macros"] }
 
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 serde = { workspace = true }
