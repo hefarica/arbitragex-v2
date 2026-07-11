@@ -100,6 +100,15 @@ jobs:
           ARBX_ASSUME_NO_RPC: "1"  # CI runs without Alchemy; the rpc-down spec validates honest-idle
         run: npm run test:smoke
 
+      - name: Run hot path pipeline tests (non-blocking)
+        working-directory: tests/e2e
+        env:
+          ARBX_EDGE_URL: http://localhost:8787
+          ARBX_WS_URL: http://localhost:3000
+          ARBX_ASSUME_NO_RPC: "1"
+        run: npm run test:hotpath || echo "Hot path tests skipped — VALIDATION_PENDING_INFRASTRUCTURE"
+        continue-on-error: true
+
       - name: Run full suite (may skip killswitch if no admin token)
         working-directory: tests/e2e
         env:

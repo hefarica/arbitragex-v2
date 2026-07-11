@@ -8,6 +8,8 @@
     "test": "playwright test",
     "test:ui": "playwright test --ui",
     "test:smoke": "playwright test smoke.spec.ts",
+    "test:hotpath": "playwright test hot-path-pipeline.spec.ts",
+    "test:hotpath:headed": "playwright test hot-path-pipeline.spec.ts --headed",
     "test:live": "playwright test --config=playwright.live.config.ts functional-live admin-gate-live honest-state-live",
     "test:live:all": "playwright test --config=playwright.live.config.ts",
     "test:live:functional": "playwright test --config=playwright.live.config.ts functional-live",

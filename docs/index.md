@@ -13,11 +13,12 @@
 
 New operator? Start here:
 
-1. **Understand the architecture** → [Architecture Overview](explanation/architecture-overview.md)
-2. **Deploy the platform** → [How to Deploy to VPS](how-to/deploy-to-vps.md)
-3. **Learn the kill-switch** → [Kill-Switch Runbook](runbooks/kill-switch-activation.md)
-4. **Unseal Vault** → [Vault Unseal Runbook](runbooks/vault-unseal.md)
-5. **Look up an API endpoint** → [API Reference](reference/api-endpoints.md)
+1. **Understand the architecture** → [OMEGA Pipeline Architecture](omega/pipeline-architecture.md)
+2. **Deploy the platform** → [OMEGA Deployment Guide](omega/deployment-guide.md)
+3. **Learn the runbook** → [OMEGA Runbook](omega/runbook.md)
+4. **Learn the kill-switch** → [Kill-Switch Runbook](runbooks/kill-switch-activation.md)
+5. **Unseal Vault** → [Vault Unseal Runbook](runbooks/vault-unseal.md)
+6. **Look up an API endpoint** → [OMEGA API Reference](omega/api-reference.md)
 
 ## Project Overview
 
@@ -63,8 +64,8 @@ This documentation follows the [Diátaxis framework](https://diataxis.fr/), whic
 |------|---------|-----------|
 | **Tutorials** | Learning-oriented. Step-by-step lessons for beginners. | *Planned: operator-onboarding, first-deployment* |
 | **How-To Guides** | Task-oriented. Step-by-step instructions to achieve a goal. | [Deploy to VPS](how-to/deploy-to-vps.md) |
-| **Explanation** | Understanding-oriented. Background and context. | [Architecture Overview](explanation/architecture-overview.md) |
-| **Reference** | Information-oriented. Precise technical details. | [API Endpoints](reference/api-endpoints.md) |
+| **Explanation** | Understanding-oriented. Background and context. | [Architecture Overview](explanation/architecture-overview.md), [OMEGA Pipeline Architecture](omega/pipeline-architecture.md) |
+| **Reference** | Information-oriented. Precise technical details. | [API Endpoints](reference/api-endpoints.md), [OMEGA API Reference](omega/api-reference.md) |
 
 ```
 docs/
@@ -74,12 +75,19 @@ docs/
 │   ├── 002-kill-switch-fail-closed.md
 │   ├── 003-vault-secrets-management.md
 │   └── 004-grafana-red-observability.md
+├── omega/                            # OMEGA Pipeline Documentation (Task 9)
+│   ├── pipeline-architecture.md      # System architecture and data flow
+│   ├── runbook.md                    # Operational procedures
+│   ├── deployment-guide.md           # VPS deployment steps
+│   └── api-reference.md              # Edge endpoints and WebSocket events
 ├── explanation/                      # Why? — Background and context
 │   └── architecture-overview.md
 ├── how-to/                           # How do I...? — Task-oriented guides
 │   └── deploy-to-vps.md
 ├── reference/                        # What is...? — Precise technical details
 │   └── api-endpoints.md
+├── redis-schema/                     # Data schemas
+│   └── hot-path-v2.md                # Redis stream schemas
 ├── runbooks/                         # Operational procedures
 │   ├── kill-switch-activation.md
 │   ├── vault-unseal.md

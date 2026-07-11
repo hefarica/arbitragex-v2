@@ -2,6 +2,7 @@ import express from "express";
 import pg from "pg";
 import { Redis } from "ioredis";
 import { PaperTradeArchiver } from "./routes/paper-trade-archiver.js";
+import { PaperExecutor } from "./paper/executor.js";
 import { ScoredOpportunitiesArchiver } from "./routes/scored-opportunities-archiver.js";
 import { RouteDiscoveryOutcomeSink, outcomeSinkEnabled } from "./routes/route-discovery-outcome-sink.js";
 import { OpportunitiesBridgeArchiver, opportunitiesBridgeEnabled } from "./routes/opportunities-bridge-archiver.js";
@@ -1518,6 +1519,26 @@ if (pool && (process.env["ARBX_PAPER_ARCHIVER_MODE"] ?? "off").toLowerCase() ===
   );
 }
 
+// OMEGA Pipeline Task 6 — Paper Trade Executor (Redis Streams consumer).
+// Consumes from arbx:hot:simulated, calculates net topological yield,
+// persists to paper_trade_runs, and emits to arbx:hot:paper_executed.
+// 100% passive: shadow/paper mode only, never touches real capital.
+// Dormant by default — set ARBX_PAPER_EXECUTOR_MODE=on to activate.
+let paperExecutor: PaperExecutor | null = null;
+if (pool && (process.env["ARBX_PAPER_EXECUTOR_MODE"] ?? "off").toLowerCase() === "on") {
+  paperExecutor = new PaperExecutor({ redisUrl: REDIS_URL, pool, logger });
+  paperExecutor.start().catch((e) =>
+    logger.error({ event: "paper_executor.start_err", err: (e as Error).message },
+      "paper executor failed to start"),
+  );
+} else {
+  logger.info(
+    { event: "paper_executor.dormant", reason: pool ? "mode_off" : "no_database_url" },
+    "paper executor dormant (set ARBX_PAPER_EXECUTOR_MODE=on to enable)",
+  );
+}
+
+
 // FASE B Paso 2 — route_discovery outcome sink (passive durable sink).
 // Reads arbx:route_discovery:outcomes (the Rust shadow emitter, Fase B Paso 1) and
 // persists each resolved outcome to route_discovery_outcomes — preserving the
@@ -1599,6 +1620,8 @@ const shutdown = async (sig: string) => {
   await killSwitch.close().catch(() => {});
   // Stop the passive paper-trade archiver (closes its dedicated Redis conn).
   await paperArchiver?.stop().catch(() => {});
+  // Stop the paper executor (closes its dedicated Redis conn).
+  await paperExecutor?.stop().catch(() => {});
   await rdOutcomeSink?.stop().catch(() => {});
   await scoredArchiver?.stop().catch(() => {});
   await oppsBridge?.stop().catch(() => {});

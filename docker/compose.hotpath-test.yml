@@ -1,0 +1,178 @@
+# ArbitrageX v2 — Hot Path Pipeline Test Environment
+#
+# Specialized compose stack for E2E testing of the sub-100ms pipeline.
+# This stack is lighter than the full dev stack and focuses on:
+#   - Redis (for hot path streams)
+#   - PostgreSQL (for persistence)
+#   - api-server (for WebSocket gateway)
+#   - edge (for proxying)
+#   - sim-ctl (for simulation)
+#
+# NOTE: searcher-rs is NOT included here; tests inject synthetic data.
+
+name: arbitragex-hotpath-test
+
+networks:
+  arbx-test-net:
+    driver: bridge
+
+volumes:
+  postgres_test_data:
+  redis_test_data:
+
+services:
+  # ───────── Data plane ─────────
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: arbitragex_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_test}
+      ARBX_MIGRATOR_PASSWORD: ${ARBX_MIGRATOR_PASSWORD:-test_migrator}
+      ARBX_RW_PASSWORD: ${ARBX_RW_PASSWORD:-test_rw}
+      ARBX_RO_PASSWORD: ${ARBX_RO_PASSWORD:-test_ro}
+    ports:
+      - "127.0.0.1:5433:5432"  # Different port to avoid conflicts
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+      - ../../database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d arbitragex_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - arbx-test-net
+
+  redis:
+    image: redis:7.2
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6380:6379"  # Different port to avoid conflicts
+    volumes:
+      - redis_test_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "PING"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - arbx-test-net
+
+  # ───────── Anvil fork for simulations (optional) ─────────
+
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    profiles: ["sim"]
+    entrypoint: ["anvil"]
+    command: >
+      --host 0.0.0.0
+      --port 8545
+      --fork-url ${ANVIL_FORK_URL:-http://localhost:8545}
+      --block-time 1
+      --accounts 10
+      --balance 10000
+      --chain-id 1
+    ports:
+      - "127.0.0.1:8546:8545"  # Different port to avoid conflicts
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --post-data='{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_blockNumber\",\"params\":[]}' --header='Content-Type:application/json' http://localhost:8545 | grep -q result || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      - arbx-test-net
+
+  # ───────── Backend services ─────────
+
+  sim-ctl:
+    build:
+      context: ../../backend
+      dockerfile: sim-ctl/Dockerfile
+    environment:
+      ARBX_CONFIG_PATH: /app/configs/app.toml
+      SIM_PORT: "3003"
+      DATABASE_URL: postgres://arbx_rw:${ARBX_RW_PASSWORD:-test_rw}@postgres:5432/arbitragex_test
+      REDIS_URL: redis://redis:6379
+      ANVIL_URL: http://anvil:8545
+      RUST_LOG: ${RUST_LOG:-warn}
+    volumes:
+      - ../../configs:/app/configs:ro
+    ports:
+      - "127.0.0.1:3004:3003"  # Different port to avoid conflicts
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - arbx-test-net
+    profiles: ["sim"]
+
+  api-server:
+    build:
+      context: ../..
+      dockerfile: backend/api-server/Dockerfile
+    environment:
+      NODE_ENV: test
+      DATABASE_URL: postgres://arbx_rw:${ARBX_RW_PASSWORD:-test_rw}@postgres:5432/arbitragex_test
+      DATABASE_READONLY_URL: postgres://arbx_ro:${ARBX_RO_PASSWORD:-test_ro}@postgres:5432/arbitragex_test
+      REDIS_URL: redis://redis:6379
+      ARBX_ADMIN_TOKEN: ${ARBX_ADMIN_TOKEN:-test_admin_token_for_e2e_only}
+      API_PORT: "8080"
+      SELECTOR_URL: http://localhost:3002
+      SIM_URL: http://sim-ctl:3003
+      RECON_URL: http://localhost:3004
+      RELAYS_URL: http://localhost:3005
+      SEARCHER_URL: http://localhost:9001
+    ports:
+      - "127.0.0.1:8081:8080"  # Different port to avoid conflicts
+    volumes:
+      - ../..:/repo:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - arbx-test-net
+
+  edge:
+    build:
+      context: ../..
+      dockerfile: edge/dev-local/Dockerfile
+    environment:
+      API_SERVER_URL: http://api-server:8080
+      ARBX_EDGE_TOKEN: ${ARBX_EDGE_TOKEN:-test_edge_token_for_e2e_only}
+      EDGE_PORT: "8787"
+      FRONTEND_URL: http://frontend:5173
+      PUBLIC_EDGE_HOST: localhost
+    ports:
+      - "127.0.0.1:8788:8787"  # Different port to avoid conflicts
+    depends_on:
+      - api-server
+    networks:
+      - arbx-test-net
+
+  # ───────── Test fixtures service ─────────
+  # Optional service that provides HTTP endpoints for test data injection
+
+  test-fixtures:
+    build:
+      context: ../..
+      dockerfile: tests/e2e/fixtures/Dockerfile
+    environment:
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgres://arbx_rw:${ARBX_RW_PASSWORD:-test_rw}@postgres:5432/arbitragex_test
+      FIXTURES_PORT: "9090"
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - arbx-test-net
+    profiles: ["fixtures"]

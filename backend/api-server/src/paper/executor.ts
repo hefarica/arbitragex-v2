@@ -1,22 +1,17 @@
 /**
  * PaperExecutor — Holonomic Loop Resolution Shadow Executor (Task 6).
  *
- * 100% PASSIVE / PAPER-ONLY. Consumes from `arbx:hot:simulated` stream and
- * simulates the execution phase with artificial latency and variance.
+ * 100% PASSIVE / PAPER-ONLY. Consumes from arbx:hot:simulated stream and
+ * simulates the execution phase with fail-honest pattern (R8).
  *
- * It only:
- *   1. Reads simulated opportunities from Redis stream `arbx:hot:simulated`
- *      (consumer group: paper-executor-g0, at-least-once, XACK after persist)
- *   2. Processes only status=passed opportunities
- *   3. Simulates execution delay (10-50ms artificial)
- *   4. Calculates actual_pnl with variance (±5%)
- *   5. Persists to paper_trade_runs table
- *   6. XADD to arbx:hot:paper_executed stream
- *
- * It NEVER:
- *   - touches real capital or broadcasts transactions
- *   - fabricates data when fields are missing
- *   - executes on live networks
+ * OMEGA Pipeline Task 6 Requirements:
+ *   - Consumer Group: paper-executor-g0
+ *   - Consumer Name: api-server-{instance_id}
+ *   - XREADGROUP with BLOCK 100
+ *   - Calculates net_topological_yield_wei = gross_yield - gas_cost - decoherence_penalty
+ *   - Persists to paper_trade_runs table
+ *   - Emits to arbx:hot:paper_executed stream (MAXLEN ~5000)
+ *   - Metrics: arbx:metrics:throughput:paper_executed + latency histogram
  */
 
 import { Redis } from "ioredis";
@@ -25,9 +20,9 @@ import pg from "pg";
 const STREAM_IN = "arbx:hot:simulated";
 const STREAM_OUT = "arbx:hot:paper_executed";
 const GROUP = "paper-executor-g0";
-const CONSUMER = process.env["HOSTNAME"] ?? "paper-executor-1";
+const INSTANCE_ID = process.env["HOSTNAME"] || `api-server-${process.pid}`;
+const CONSUMER = `api-server-${INSTANCE_ID}`;
 
-/** Minimal structural logger */
 export interface ExecutorLogger {
   info(obj: object, msg?: string): void;
   warn(obj: object, msg?: string): void;
@@ -35,26 +30,34 @@ export interface ExecutorLogger {
 }
 
 export interface PaperExecutorDeps {
-  /** Connection string for a DEDICATED Redis connection (XREADGROUP blocks) */
   redisUrl: string;
-  /** Shared pg pool from the api-server (DATABASE_URL must be configured) */
   pool: pg.Pool;
   logger: ExecutorLogger;
 }
 
-/** Simulated opportunity from the hot path */
 interface SimulatedOpportunity {
   id: string;
   status: "passed" | "failed";
-  net_profit_wei?: string;
-  gas_used?: number;
+  gross_topological_yield_wei: string | undefined;
+  net_topological_yield_wei: string | undefined;
+  gas_cost_wei: string | undefined;
+  decoherence_penalty_wei: string | undefined;
   timestamp_ms: number;
-  opportunity_id?: string;
-  chain_id?: number;
-  strategy_kind?: string;
+  opportunity_id: string | undefined;
+  chain_id: number | undefined;
+  strategy_kind: string | undefined;
+  token_pair: string | undefined;
 }
 
-/** Extract the value for `key` from a flat XREAD kv array [k1,v1,k2,v2,...] */
+interface PaperExecutionResult {
+  id: string;
+  status: "ACCEPTED" | "REJECTED";
+  net_yield_wei: string;
+  executed_at_ms: number;
+  rejection_reason: string | undefined;
+  execution_time_ms: number;
+}
+
 function fieldValue(kv: string[], key: string): string | undefined {
   for (let i = 0; i + 1 < kv.length; i += 2) {
     if (kv[i] === key) return kv[i + 1];
@@ -62,55 +65,74 @@ function fieldValue(kv: string[], key: string): string | undefined {
   return undefined;
 }
 
-/** Parse simulated opportunity from stream fields */
+
 function parseSimulatedOpportunity(kv: string[]): SimulatedOpportunity | null {
   const id = fieldValue(kv, "id");
   const status = fieldValue(kv, "status");
-  const net_profit_wei = fieldValue(kv, "net_profit_wei");
-  const gas_used = fieldValue(kv, "gas_used");
+  const gross_yield = fieldValue(kv, "gross_topological_yield_wei") || fieldValue(kv, "gross_yield_wei") || fieldValue(kv, "net_profit_wei");
+  const net_yield = fieldValue(kv, "net_topological_yield_wei") || fieldValue(kv, "net_yield_wei");
+  const gas_cost = fieldValue(kv, "gas_cost_wei") || fieldValue(kv, "gas_used");
+  const decoherence = fieldValue(kv, "decoherence_penalty_wei") || fieldValue(kv, "slippage_wei");
   const timestamp_ms = fieldValue(kv, "timestamp_ms");
   const opportunity_id = fieldValue(kv, "opportunity_id");
   const chain_id = fieldValue(kv, "chain_id");
   const strategy_kind = fieldValue(kv, "strategy_kind");
+  const token_pair = fieldValue(kv, "token_pair");
 
   if (!id || !status) return null;
 
   return {
     id,
     status: status as "passed" | "failed",
-    net_profit_wei,
-    gas_used: gas_used ? parseInt(gas_used, 10) : undefined,
+    gross_topological_yield_wei: gross_yield,
+    net_topological_yield_wei: net_yield,
+    gas_cost_wei: gas_cost,
+    decoherence_penalty_wei: decoherence,
     timestamp_ms: timestamp_ms ? parseInt(timestamp_ms, 10) : Date.now(),
     opportunity_id,
     chain_id: chain_id ? parseInt(chain_id, 10) : undefined,
     strategy_kind,
+    token_pair,
   };
 }
 
-/** Convert wei to USD (simplified — uses fixed rate for paper mode) */
-function weiToUsd(wei: string): number {
-  const eth = Number(BigInt(wei)) / 1e18;
-  // Paper mode fixed rate: 1 ETH = $3500 USD
+function calculateNetTopologicalYield(
+  sim: SimulatedOpportunity
+): { net_yield_wei: bigint; calculation_basis: string } | null {
+  if (sim.net_topological_yield_wei) {
+    try {
+      return {
+        net_yield_wei: BigInt(sim.net_topological_yield_wei),
+        calculation_basis: "pre_calculated_net",
+      };
+    } catch {
+      // Fall through
+    }
+  }
+
+  if (sim.gross_topological_yield_wei) {
+    try {
+      const gross = BigInt(sim.gross_topological_yield_wei);
+      const gas = sim.gas_cost_wei ? BigInt(sim.gas_cost_wei) : BigInt(0);
+      const decoherence = sim.decoherence_penalty_wei ? BigInt(sim.decoherence_penalty_wei) : BigInt(0);
+      const net = gross - gas - decoherence;
+      return {
+        net_yield_wei: net,
+        calculation_basis: "calculated_gross_minus_costs",
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function weiToUsd(wei: bigint): number {
+  const eth = Number(wei) / 1e18;
   return eth * 3500;
 }
 
-/** Simulate execution with artificial delay and variance */
-async function simulateExecution(simProfitUsd: number): Promise<{
-  executionTimeMs: number;
-  actualPnlUsd: number;
-}> {
-  // Artificial execution delay: 10-50ms
-  const executionTimeMs = 10 + Math.random() * 40;
-
-  // Simulate variance: ±5% on the topological yield
-  const variance = (Math.random() - 0.5) * 0.1; // -5% to +5%
-  const actualPnlUsd = simProfitUsd * (1 + variance);
-
-  // Apply the delay
-  await new Promise((resolve) => setTimeout(resolve, executionTimeMs));
-
-  return { executionTimeMs: Math.round(executionTimeMs), actualPnlUsd };
-}
 
 export class PaperExecutor {
   private redis: Redis | null = null;
@@ -122,13 +144,12 @@ export class PaperExecutor {
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
-    // Dedicated connection: a blocking XREADGROUP must not stall the shared client
     this.redis = new Redis(this.deps.redisUrl, { maxRetriesPerRequest: 3 });
     await this.ensureGroup();
     this.stopPromise = this.runLoop();
     this.deps.logger.info(
       { event: "paper_executor.started", stream: STREAM_IN, group: GROUP, consumer: CONSUMER },
-      "Paper Executor consuming simulated opportunities"
+      "Paper Executor consuming simulated opportunities (Task 6)"
     );
   }
 
@@ -142,7 +163,7 @@ export class PaperExecutor {
   private async ensureGroup(): Promise<void> {
     if (!this.redis) return;
     try {
-      await this.redis.xgroup("CREATE", STREAM_IN, GROUP, "$", "MKSTREAM");
+      await this.redis.xgroup("CREATE", STREAM_IN, GROUP, "0", "MKSTREAM");
     } catch (e) {
       const msg = (e as Error).message;
       if (!msg.includes("BUSYGROUP")) {
@@ -151,13 +172,14 @@ export class PaperExecutor {
     }
   }
 
+
   private async runLoop(): Promise<void> {
     while (this.running && this.redis) {
       try {
         const r = await this.redis.xreadgroup(
           "GROUP", GROUP, CONSUMER,
           "COUNT", 32,
-          "BLOCK", 2000,
+          "BLOCK", 100,
           "STREAMS", STREAM_IN, ">"
         );
         if (!r || (r as unknown[]).length === 0) continue;
@@ -175,8 +197,8 @@ export class PaperExecutor {
 
   private async processOne(id: string, kv: string[]): Promise<void> {
     if (!this.redis) return;
+    const processStartMs = Date.now();
 
-    // Parse — invalid/unparseable messages are SKIPPED + XACKed
     const sim = parseSimulatedOpportunity(kv);
     if (!sim) {
       this.deps.logger.warn({ event: "paper_executor.invalid_message", id }, "failed to parse message");
@@ -184,7 +206,6 @@ export class PaperExecutor {
       return;
     }
 
-    // Only process passed opportunities (R8: fail-honest)
     if (sim.status !== "passed") {
       this.deps.logger.info(
         { event: "paper_executor.skip_failed", opportunity_id: sim.id, status: sim.status },
@@ -194,41 +215,57 @@ export class PaperExecutor {
       return;
     }
 
-    // Fail-honest: skip if missing required fields
-    if (!sim.net_profit_wei || !sim.opportunity_id || !sim.chain_id || !sim.strategy_kind) {
+    if (!sim.opportunity_id || !sim.chain_id || !sim.strategy_kind) {
       this.deps.logger.info(
         { event: "paper_executor.skip_incomplete", opportunity_id: sim.id },
-        "missing required fields — skipped"
+        "missing required fields - skipped"
       );
       await this.redis.xack(STREAM_IN, GROUP, id).catch(() => {});
       return;
     }
 
-    // Calculate simulated profit in USD
-    const simProfitUsd = weiToUsd(sim.net_profit_wei);
+
+    const yieldCalc = calculateNetTopologicalYield(sim);
+    if (!yieldCalc) {
+      this.deps.logger.info(
+        { event: "paper_executor.calculation_failed", opportunity_id: sim.id },
+        "could not calculate net topological yield - skipped"
+      );
+      await this.emitResult({
+        id: sim.id,
+        status: "REJECTED",
+        net_yield_wei: "0",
+        executed_at_ms: Date.now(),
+        rejection_reason: "calculation_failed",
+        execution_time_ms: Date.now() - processStartMs,
+      });
+      await this.redis.xack(STREAM_IN, GROUP, id).catch(() => {});
+      return;
+    }
+
+    const { net_yield_wei, calculation_basis } = yieldCalc;
+    const executionTimeMs = Date.now() - processStartMs;
+
+    const isAccepted = net_yield_wei > BigInt(0);
+    const status: "ACCEPTED" | "REJECTED" = isAccepted ? "ACCEPTED" : "REJECTED";
+    const rejectionReason = isAccepted ? undefined : "net_yield_non_positive";
 
     try {
-      // Simulate execution with delay and variance
-      const { executionTimeMs, actualPnlUsd } = await simulateExecution(simProfitUsd);
+      let paperRunId: string | undefined;
+      if (isAccepted) {
+        paperRunId = await this.persistRun(sim, net_yield_wei, executionTimeMs, calculation_basis);
+      }
 
-      // Persist to paper_trade_runs
-      const paperRunId = await this.persistRun(sim, simProfitUsd, actualPnlUsd, executionTimeMs);
+      await this.emitResult({
+        id: sim.id,
+        status,
+        net_yield_wei: net_yield_wei.toString(),
+        executed_at_ms: Date.now(),
+        rejection_reason: rejectionReason,
+        execution_time_ms: executionTimeMs,
+      });
 
-      // XADD to arbx:hot:paper_executed stream
-      await this.redis.xadd(
-        STREAM_OUT,
-        "MAXLEN", "~", 1000,
-        "*",
-        "id", sim.id,
-        "opportunity_id", sim.opportunity_id,
-        "paper_run_id", paperRunId,
-        "execution_time_ms", executionTimeMs.toString(),
-        "paper_pnl_usd", actualPnlUsd.toFixed(6),
-        "status", "completed",
-        "timestamp_ms", Date.now().toString()
-      );
-
-      // Acknowledge the message
+      await this.updateMetrics(status, executionTimeMs);
       await this.redis.xack(STREAM_IN, GROUP, id);
 
       this.deps.logger.info(
@@ -236,23 +273,23 @@ export class PaperExecutor {
           event: "paper_executor.completed",
           opportunity_id: sim.opportunity_id,
           paper_run_id: paperRunId,
+          status,
+          net_yield_wei: net_yield_wei.toString(),
           execution_time_ms: executionTimeMs,
-          paper_pnl_usd: actualPnlUsd,
+          calculation_basis,
         },
-        "paper execution completed"
+        `paper execution ${status.toLowerCase()}`
       );
     } catch (err) {
       const code = (err as { code?: string }).code;
       if (code === "23503") {
-        // FK: the opportunity row is not (yet) persisted
         this.deps.logger.warn(
           { event: "paper_executor.skip_opportunity_absent", opportunity_id: sim.opportunity_id },
-          "opportunity not present in opportunities table — skipped"
+          "opportunity not present in opportunities table - skipped"
         );
         await this.redis.xack(STREAM_IN, GROUP, id).catch(() => {});
         return;
       }
-      // Transient DB error — do NOT ack; a later read can retry
       this.deps.logger.error({
         event: "paper_executor.persist_err",
         opportunity_id: sim.opportunity_id,
@@ -262,12 +299,52 @@ export class PaperExecutor {
     }
   }
 
+
+  private async emitResult(result: PaperExecutionResult): Promise<void> {
+    if (!this.redis) return;
+
+    const fields: (string | number)[] = [
+      "id", result.id,
+      "status", result.status,
+      "net_yield_wei", result.net_yield_wei,
+      "executed_at_ms", result.executed_at_ms,
+      "execution_time_ms", result.execution_time_ms,
+    ];
+
+    if (result.rejection_reason) {
+      fields.push("rejection_reason", result.rejection_reason);
+    }
+
+    await this.redis.xadd(STREAM_OUT, "MAXLEN", "~", 5000, "*", ...fields);
+  }
+
+  private async updateMetrics(status: "ACCEPTED" | "REJECTED", executionTimeMs: number): Promise<void> {
+    if (!this.redis) return;
+
+    await this.redis.hincrby("arbx:metrics:throughput:paper_executed", status.toLowerCase(), 1);
+
+    const bucket = this.getLatencyBucket(executionTimeMs);
+    await this.redis.hincrby("arbx:metrics:latency:paper_execution", bucket, 1);
+  }
+
+  private getLatencyBucket(ms: number): string {
+    if (ms < 5) return "lt_5ms";
+    if (ms < 10) return "lt_10ms";
+    if (ms < 25) return "lt_25ms";
+    if (ms < 50) return "lt_50ms";
+    if (ms < 100) return "lt_100ms";
+    return "gte_100ms";
+  }
+
+
   private async persistRun(
     sim: SimulatedOpportunity,
-    simProfitUsd: number,
-    actualPnlUsd: number,
-    executionTimeMs: number
+    netYieldWei: bigint,
+    executionTimeMs: number,
+    calculationBasis: string
   ): Promise<string> {
+    const netYieldUsd = weiToUsd(netYieldWei);
+
     const result = await this.deps.pool.query<{ id: string }>(
       `INSERT INTO paper_trade_runs
          (opportunity_id, chain_id, strategy_kind, sim_expected_profit_usd,
@@ -279,16 +356,18 @@ export class PaperExecutor {
         sim.opportunity_id,
         sim.chain_id,
         sim.strategy_kind,
-        simProfitUsd,
-        null, // sim_gas_cost_usd — not available from hot stream
-        null, // sim_block_number — not available from hot stream
+        netYieldUsd,
+        null,
+        null,
         new Date(sim.timestamp_ms),
-        actualPnlUsd,
+        netYieldUsd,
         new Date(),
         executionTimeMs,
-        "paper_executor_shadow",
+        `paper_executor:${calculationBasis}`,
       ]
     );
+    if (!result.rows[0]) throw new Error("persist_failed");
     return result.rows[0].id;
   }
 }
+
