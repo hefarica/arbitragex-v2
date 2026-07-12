@@ -325,7 +325,7 @@ impl CrossChainBridgeEngine {
         };
 
         let pool_addresses = vec![format!("0x{:040x}", opp.bridge.bridge_address)];
-        let token_addresses = vec![token_in];
+        let token_addresses = vec![token_in.clone()];
 
         let candidate = OpportunityCandidate {
             route_fingerprint: format!("cc_{}_{}_{}_{}", opp.source_chain, opp.dest_chain, opp.token_symbol, opp.id),
@@ -453,9 +453,6 @@ fn u256_to_f64(v: &U256) -> f64 {
 }
 
 use std::str::FromStr;
-
-// Re-export for convenience
-pub use PriceOracle;
 
 #[cfg(test)]
 mod tests {

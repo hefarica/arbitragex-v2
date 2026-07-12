@@ -447,11 +447,6 @@ impl LiquidationSnipeEngine {
     }
 }
 
-// Re-export for convenience
-pub use LendingPoolConfig;
-pub use LendingPosition;
-pub use LiquidationCandidate;
-
 #[cfg(test)]
 mod tests {
     use super::*;

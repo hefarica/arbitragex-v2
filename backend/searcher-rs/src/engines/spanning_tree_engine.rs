@@ -22,7 +22,7 @@ use crate::engines::StrategyCandidate;
 use crate::impact_index::{CycleId, ImpactSet};
 use crate::route_intent::RouteIntent;
 use crate::strategy_label::StrategyLabel;
-use crate::workers::triangular_engine::ReservesCache;
+use crate::engines::triangular_engine::ReservesCache;
 use chrono::Utc;
 use ethers::types::{Address, H256, U256};
 use prioritization_spine::route_plan::{RouteLeg, RoutePlan};

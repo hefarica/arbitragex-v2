@@ -22,7 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Simulation outcome passed from the REVM orchestrator.
 /// Mirrored from `prioritization_spine::round_trip_executor::SimulationOutcome`
 /// to avoid deep trait coupling in the emitter boundary.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SimulationResult {
     pub passed: bool,
     pub net_profit_wei: u128,

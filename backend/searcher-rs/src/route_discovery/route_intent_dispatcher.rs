@@ -34,9 +34,10 @@ pub fn coarse_name(label: StrategyLabel) -> &'static str {
         | StrategyLabel::DexArbV2V3
         | StrategyLabel::DexArbV3V2
         | StrategyLabel::DexArbV3V3 => "dex_arb",
-        StrategyLabel::TriangularArb => "triangular_arb",
+        StrategyLabel::TriangularArb | StrategyLabel::SpanningTreeArb => "triangular_arb",
         StrategyLabel::FlashloanArb => "flashloan_arb",
-        StrategyLabel::Liquidation => "liquidation",
+        StrategyLabel::Liquidation | StrategyLabel::LiquidationSnipe => "liquidation",
+        StrategyLabel::CrossChainArb => "cross_chain_arb",
     }
 }
 
