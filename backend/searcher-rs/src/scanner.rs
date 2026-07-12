@@ -100,6 +100,9 @@ use crate::engines::dex_engine::DexEngine;
 use crate::engines::flashloan_engine::FlashloanEngine;
 use crate::engines::liquidation_engine::LiquidationEngine;
 use crate::engines::triangular_engine::{ReservesCache, TriangularEngine};
+use crate::engines::spanning_tree_engine::SpanningTreeEngine;
+use crate::engines::cross_chain_bridge_engine::CrossChainBridgeEngine;
+use crate::engines::liquidation_snipe_engine::LiquidationSnipeEngine;
 use crate::impact_index::ImpactIndex;
 use crate::lending_position_indexer::LendingPositionIndexer;
 use crate::opportunity_emitter::OpportunityEmitter;
@@ -451,6 +454,9 @@ async fn build_orchestrator(
         config_provider,
         chain_id,
         cartridge_runner,
+        spanning_tree_engine: None,
+        cross_chain_engine: None,
+        liquidation_snipe_engine: None,
     };
 
     Some((Arc::new(Orchestrator::new(ctx)), impact_index))
