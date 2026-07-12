@@ -29,6 +29,8 @@ jobs:
           fetch-depth: 0
 
       - name: Verify CI EVER GREEN
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Verificando estado del pipeline..."
           gh run view ${{ github.event.workflow_run.id }} --repo ${{ github.repository }} --json conclusion
