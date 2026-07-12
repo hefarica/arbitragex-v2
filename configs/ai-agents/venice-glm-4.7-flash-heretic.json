@@ -1,0 +1,45 @@
+{
+  "$schema": "./agent-profile.schema.json",
+  "schema_version": 1,
+  "provider": "venice",
+  "model": "olafangensan-glm-4.7-flash-heretic",
+  "display_name": "GLM 4.7 Flash Heretic",
+  "properties": {
+    "private_inference": true,
+    "experimental_variant": true,
+    "context_window_tokens": 200000
+  },
+  "transport": {
+    "api_family": "openai_responses",
+    "max_output_tokens": 16384,
+    "credential_source": "runtime_environment_only"
+  },
+  "authority": {
+    "effective_level": "L1_READ_ONLY",
+    "target_level": "L4_CI_OPERATOR",
+    "live_capital_allowed": false,
+    "production_deploy_allowed": false,
+    "mainnet_broadcast_allowed": false,
+    "requires_human_authorization_per_prod_action": true
+  },
+  "required_gates": [
+    "arbx-mev-ethics-gate",
+    "arbx-net-profit-gate",
+    "arbx-simulation-mandatory",
+    "arbx-pre-execute-checklist",
+    "arbx-pre-edit-audit",
+    "arbx-no-hardcode-doctrine",
+    "arbx-contract-atomicity-rules",
+    "arbx-flash-loan-discipline",
+    "arbx-rpc-failover-discipline",
+    "arbx-risk-limits-enforcement",
+    "arbx-token-safety-screen",
+    "arbx-paper-trade-first"
+  ],
+  "promotion_policy": {
+    "consecutive_green_runs_required": 3,
+    "false_pass_tolerance": 0,
+    "secret_leak_tolerance": 0,
+    "gate_violation_tolerance": 0
+  }
+}
