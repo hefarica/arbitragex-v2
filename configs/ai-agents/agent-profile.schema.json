@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arbitragex.local/schemas/agent-profile.schema.json",
+  "title": "ArbitrageX Agent Operator Profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "provider",
+    "model",
+    "display_name",
+    "properties",
+    "transport",
+    "authority",
+    "required_gates",
+    "promotion_policy"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": 1 },
+    "provider": { "type": "string", "minLength": 1 },
+    "model": { "type": "string", "minLength": 1 },
+    "display_name": { "type": "string", "minLength": 1 },
+    "properties": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["private_inference", "experimental_variant", "context_window_tokens"],
+      "properties": {
+        "private_inference": { "type": "boolean" },
+        "experimental_variant": { "type": "boolean" },
+        "context_window_tokens": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "transport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api_family", "max_output_tokens", "credential_source"],
+      "properties": {
+        "api_family": { "enum": ["openai_responses", "openai_chat_completions"] },
+        "max_output_tokens": { "type": "integer", "minimum": 1, "maximum": 16384 },
+        "credential_source": { "const": "runtime_environment_only" }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effective_level",
+        "target_level",
+        "live_capital_allowed",
+        "production_deploy_allowed",
+        "mainnet_broadcast_allowed",
+        "requires_human_authorization_per_prod_action"
+      ],
+      "properties": {
+        "effective_level": {
+          "enum": ["L0_CHAT", "L1_READ_ONLY", "L2_LOCAL_EDIT", "L3_PR_OPERATOR", "L4_CI_OPERATOR", "L5_PAPER_SHADOW_OPERATOR", "L6_PROD_DEPLOY_ASSISTED", "L7_LIVE_CAPITAL"]
+        },
+        "target_level": {
+          "enum": ["L0_CHAT", "L1_READ_ONLY", "L2_LOCAL_EDIT", "L3_PR_OPERATOR", "L4_CI_OPERATOR", "L5_PAPER_SHADOW_OPERATOR", "L6_PROD_DEPLOY_ASSISTED", "L7_LIVE_CAPITAL"]
+        },
+        "live_capital_allowed": { "const": false },
+        "production_deploy_allowed": { "const": false },
+        "mainnet_broadcast_allowed": { "const": false },
+        "requires_human_authorization_per_prod_action": { "const": true }
+      }
+    },
+    "required_gates": {
+      "type": "array",
+      "minItems": 12,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^arbx-" }
+    },
+    "promotion_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "consecutive_green_runs_required",
+        "false_pass_tolerance",
+        "secret_leak_tolerance",
+        "gate_violation_tolerance"
+      ],
+      "properties": {
+        "consecutive_green_runs_required": { "type": "integer", "minimum": 3 },
+        "false_pass_tolerance": { "const": 0 },
+        "secret_leak_tolerance": { "const": 0 },
+        "gate_violation_tolerance": { "const": 0 }
+      }
+    }
+  }
+}
