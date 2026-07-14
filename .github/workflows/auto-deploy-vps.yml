@@ -20,7 +20,10 @@ concurrency:
 jobs:
   Deploy-to-VPS:
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    # OMEGA-7 FIX: E2E FIRST PRINCIPLE
+    # Deploy only when e2e workflow completes successfully, regardless of CI/TypeScript/Rust status
+    # This ensures gates system live tests run BEFORE any VPS deployment
+    if: "${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.name == 'e2e' }}"
 
     steps:
       - name: Checkout Repository
