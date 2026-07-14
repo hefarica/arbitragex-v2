@@ -117,6 +117,7 @@ import { mountAuthSiwe } from "./routes/auth-siwe.js";
 import { mountOperatorSelfTest } from "./routes/operator-selftest.js";
 import { buildTopologyVaultRouter } from "./routes/topology-vault.js";
 import { mountHealthRouter, setupMetricsWebSocket } from "./routes/health.js";
+import { registerGatesStatusRoutes } from "./routes/gates-status.js";
 import {
   setupWebSocketGateway,
   broadcastOpportunity,
@@ -509,6 +510,7 @@ mountDefi(app, { pool, logger });
 mountStrategyRuntimeStatus(app, { pool, redis, logger });
 mountReadinessExtras(app, { pool, logger });
 mountReadinessSteps(app, { pool, logger });
+registerGatesStatusRoutes(app);
 mountAgentsStatus(app, { pool, logger });
 mountScoringStatus(app, { pool, logger });
 // Web3 safe-gated wallet surface (read-only / paper) + SIWE identity-only auth.

@@ -40,5 +40,9 @@ async function getInitialOpportunities(): Promise<OpportunitiesSnapshot> {
 export default async function OpportunitiesPage() {
   const initialSnapshot = await getInitialOpportunities();
 
-  return <OpportunitiesClient initialSnapshot={initialSnapshot} />;
+  return (
+    <div className="min-h-screen">
+      <OpportunitiesClient initialSnapshot={initialSnapshot} />
+    </div>
+  );
 }
