@@ -63,7 +63,7 @@ interface UseSocketIOReturn {
 }
 
 // Constantes de configuración
-const DEFAULT_WS_URL = "ws://localhost:8080";
+const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_WS_URL ? process.env.NEXT_PUBLIC_WS_URL.replace('http', 'ws') : 'ws://[WS_URL]';
 const DEFAULT_RECONNECT_INTERVAL = 5000;
 const DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
 

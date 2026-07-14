@@ -34,8 +34,8 @@ interface UseMetricsReturn {
 }
 
 // Constantes de configuración
-const DEFAULT_WS_URL = "ws://localhost:8080/ws/metrics";
-const DEFAULT_REST_URL = "http://localhost:8080/metrics/entropy";
+const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_WS_URL ? process.env.NEXT_PUBLIC_WS_URL.replace('http', 'ws') + '/ws/metrics' : 'ws://[WS_URL]/ws/metrics';
+const DEFAULT_REST_URL = process.env.NEXT_PUBLIC_WS_URL ? process.env.NEXT_PUBLIC_WS_URL + '/metrics/entropy' : 'http://[WS_URL]/metrics/entropy';
 const DEFAULT_RECONNECT_INTERVAL = 5000;
 const DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
 

@@ -213,11 +213,16 @@ async fn build_ctx(
         liquidation_engine: liq_engine,
         state_projector,
         size_optimizer,
+        spanning_tree_engine: None,
+        cross_chain_engine: None,
+        liquidation_snipe_engine: None,
         emitter: emitter.clone(),
         config_provider,
         pool_discovery,
         chain_id: CHAIN_ID,
         cartridge_runner,
+        #[cfg(feature = "paper-shadow")]
+        sed_bridge: None,
     };
 
     (Arc::new(Orchestrator::new(ctx)), emitter)

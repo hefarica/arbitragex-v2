@@ -41,7 +41,7 @@ async function getInitialMetrics(): Promise<{
   entropy: number;
 }> {
   try {
-    const base = process.env.NEXT_PUBLIC_EDGE_URL ?? "http://localhost:8787";
+    const base = process.env.NEXT_PUBLIC_EDGE_URL;
 
     // Intentar obtener datos del edge usando endpoint /status
     const res = await fetch(`${base.replace(/\/$/, "")}/status`, {
@@ -244,11 +244,11 @@ export default async function MonitorPage() {
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
             <ActivityIcon className="size-3.5" />
-            <span>Socket.IO: ws://localhost:8080</span>
+            <span>Socket.IO: {process.env.NEXT_PUBLIC_WS_URL ? process.env.NEXT_PUBLIC_WS_URL.replace("http", "ws") : "ws://[WS_URL]"}</span>
           </div>
           <div className="flex items-center gap-1.5">
             <ServerIcon className="size-3.5" />
-            <span>Edge: {process.env.NEXT_PUBLIC_EDGE_URL ?? "localhost:8787"}</span>
+            <span>Edge: {process.env.NEXT_PUBLIC_EDGE_URL ?? "[EDGE_URL]"}</span>
           </div>
         </div>
         <div className="flex items-center gap-1.5">
