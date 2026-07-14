@@ -510,7 +510,7 @@ mountDefi(app, { pool, logger });
 mountStrategyRuntimeStatus(app, { pool, redis, logger });
 mountReadinessExtras(app, { pool, logger });
 mountReadinessSteps(app, { pool, logger });
-registerGatesStatusRoutes(app);
+registerGatesStatusRoutes(app, { pool, redis, logger });
 mountAgentsStatus(app, { pool, logger });
 mountScoringStatus(app, { pool, logger });
 // Web3 safe-gated wallet surface (read-only / paper) + SIWE identity-only auth.
