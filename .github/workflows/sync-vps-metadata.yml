@@ -149,7 +149,7 @@ jobs:
       # STEP 3 — Checkout TARGET_SHA + verificar ancestro main
       # ──────────────────────────────────────────────────────────────
       - name: Step 3 — Checkout TARGET_SHA
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.target_sha }}
           fetch-depth: 0

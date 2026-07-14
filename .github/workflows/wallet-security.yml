@@ -24,6 +24,6 @@ jobs:
     name: Wallet HARD invariants (no key / no seed / no FE broadcast / no blind sign)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Run wallet-security-gate
         run: bash automation/tools/wallet-security-gate.sh

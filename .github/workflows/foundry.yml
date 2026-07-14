@@ -28,7 +28,7 @@ jobs:
         working-directory: contracts
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         # No submodules: contracts/lib/ is gitignored and managed via forge install.
 
       - uses: foundry-rs/foundry-toolchain@v1
@@ -94,7 +94,7 @@ jobs:
         working-directory: contracts
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: foundry-rs/foundry-toolchain@v1
         with:
