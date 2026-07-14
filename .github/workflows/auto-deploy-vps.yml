@@ -2,7 +2,7 @@ name: Auto-Deploy VPS (Post-CI) - Math Guarded
 
 on:
   workflow_run:
-    workflows: ["CI", "TypeScript CI", "Rust CI"]
+    workflows: ["CI", "TypeScript CI", "Rust CI", "e2e"]
     types: [completed]
     branches: [main]
     tags: [deploy-*]
