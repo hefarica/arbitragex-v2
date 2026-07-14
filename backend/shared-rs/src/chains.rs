@@ -97,10 +97,49 @@ pub const ROUTERS_MAINNET: &[RouterEntry] = &[
     SUSHI_ROUTER_MAINNET,
 ];
 
+// Sepolia testnet routers (chain_id: 11155111)
+const UNIV3_SWAPROUTER_SEPOLIA: RouterEntry = RouterEntry {
+    chain_id: 11155111,
+    name: "uniswap-v3-swap-router-sepolia",
+    kind: RouterKind::UniswapV3,
+    address: hex20("0x3bFA4769FB12BF0E297FFB62d94D4E91C4f47A28"),
+};
+
+pub const ROUTERS_SEPOLIA: &[RouterEntry] = &[
+    UNIV3_SWAPROUTER_SEPOLIA,
+];
+
+// Arbitrum Sepolia testnet routers (chain_id: 421614)
+const UNIV3_SWAPROUTER_ARB_SEPOLIA: RouterEntry = RouterEntry {
+    chain_id: 421614,
+    name: "uniswap-v3-swap-router-arb-sepolia",
+    kind: RouterKind::UniswapV3,
+    address: hex20("0x101F443B4d1b059569D643917553c771E1b9663E"),
+};
+
+pub const ROUTERS_ARB_SEPOLIA: &[RouterEntry] = &[
+    UNIV3_SWAPROUTER_ARB_SEPOLIA,
+];
+
+// Optimism Sepolia testnet routers (chain_id: 11155420)
+const UNIV3_SWAPROUTER_OP_SEPOLIA: RouterEntry = RouterEntry {
+    chain_id: 11155420,
+    name: "uniswap-v3-swap-router-op-sepolia",
+    kind: RouterKind::UniswapV3,
+    address: hex20("0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4"),
+};
+
+pub const ROUTERS_OP_SEPOLIA: &[RouterEntry] = &[
+    UNIV3_SWAPROUTER_OP_SEPOLIA,
+];
+
 /// Returns the static router catalog for a given chain.
 pub fn routers_for_chain(chain_id: u64) -> &'static [RouterEntry] {
     match chain_id {
         1 => ROUTERS_MAINNET,
+        11155111 => ROUTERS_SEPOLIA,
+        421614 => ROUTERS_ARB_SEPOLIA,
+        11155420 => ROUTERS_OP_SEPOLIA,
         _ => &[],
     }
 }
@@ -108,6 +147,10 @@ pub fn routers_for_chain(chain_id: u64) -> &'static [RouterEntry] {
 // Uniswap V3 QuoterV2 + canonical Multicall3, centralized here (were hardcoded
 // in triangular_worker.rs). Read-only quote infrastructure — no signer/capital.
 const QUOTER_V2_MAINNET: [u8; 20] = hex20("0x61fFE014bA17989E743c5F6cB21bF9697530B21e");
+const QUOTER_V2_SEPOLIA: [u8; 20] = hex20("0xEd1f6473345F45b75B8178D559b7bf91486307e2");
+const QUOTER_V2_ARB_SEPOLIA: [u8; 20] = hex20("0x2779a0CC1c3e0E44D254bC76C39A63ed67Bc2a61");
+const QUOTER_V2_OP_SEPOLIA: [u8; 20] = hex20("0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6");
+
 const MULTICALL3_CANONICAL: [u8; 20] = hex20("0xcA11bde05977b3631167028862bE2a173976CA11");
 
 /// Uniswap V3 QuoterV2 address for a chain (read-only `quoteExactInputSingle`).
@@ -115,6 +158,9 @@ const MULTICALL3_CANONICAL: [u8; 20] = hex20("0xcA11bde05977b3631167028862bE2a17
 pub fn quoter_v2_for_chain(chain_id: u64) -> Option<[u8; 20]> {
     match chain_id {
         1 => Some(QUOTER_V2_MAINNET),
+        11155111 => Some(QUOTER_V2_SEPOLIA),
+        421614 => Some(QUOTER_V2_ARB_SEPOLIA),
+        11155420 => Some(QUOTER_V2_OP_SEPOLIA),
         _ => None,
     }
 }
@@ -124,6 +170,9 @@ pub fn quoter_v2_for_chain(chain_id: u64) -> Option<[u8; 20]> {
 pub fn multicall3_for_chain(chain_id: u64) -> Option<[u8; 20]> {
     match chain_id {
         1 => Some(MULTICALL3_CANONICAL),
+        11155111 => Some(MULTICALL3_CANONICAL),
+        421614 => Some(MULTICALL3_CANONICAL),
+        11155420 => Some(MULTICALL3_CANONICAL),
         _ => None,
     }
 }
@@ -143,15 +192,18 @@ pub fn find_router(chain_id: u64, addr: &[u8; 20]) -> Option<&'static RouterEntr
 /// Values are conservative best-estimates (round up, not down) so
 /// capital cost is never under-counted:
 ///
-/// | Chain     | chain_id | Typical block time | Source                             |
-/// |-----------|----------|--------------------|------------------------------------|
-/// | Ethereum  | 1        | 12.0 s             | PoS slot time (12s)                |
-/// | BSC       | 56       | 3.0 s              | BNB Chain PoSA ~3s                 |
-/// | Polygon   | 137      | 2.0 s              | Bor PoS ~2s                        |
-/// | Base      | 8453     | 2.0 s              | OP-Stack (2s slots)                |
-/// | Arbitrum  | 42161    | 0.5 s              | Nitro sub-second; 0.5s safety buf  |
-/// | Optimism  | 10       | 2.0 s              | OP-Stack (2s slots)                |
-/// | unknown   | _        | 12.0 s             | ETH-equivalent fallback            |
+/// | Chain           | chain_id | Typical block time | Source                             |
+/// |-----------------|----------|--------------------|------------------------------------|
+/// | Ethereum        | 1        | 12.0 s             | PoS slot time (12s)                |
+/// | Sepolia         | 11155111 | 12.0 s             | PoS slot time (12s)                |
+/// | BSC             | 56       | 3.0 s              | BNB Chain PoSA ~3s                 |
+/// | Polygon         | 137      | 2.0 s              | Bor PoS ~2s                        |
+/// | Base            | 8453     | 2.0 s              | OP-Stack (2s slots)                |
+/// | Arbitrum        | 42161    | 0.5 s              | Nitro sub-second; 0.5s safety buf  |
+/// | Arbitrum Sepolia| 421614   | 0.5 s              | Nitro sub-second; 0.5s safety buf  |
+/// | Optimism        | 10       | 2.0 s              | OP-Stack (2s slots)                |
+/// | Optimism Sepolia| 11155420 | 2.0 s              | OP-Stack (2s slots)                |
+/// | unknown         | _        | 12.0 s             | ETH-equivalent fallback            |
 ///
 /// BE-3.7 refinement (2026-05-08):
 ///   Arbitrum adjusted from 0.25s to 0.5s. Real Nitro block times are
@@ -165,13 +217,16 @@ pub fn find_router(chain_id: u64, addr: &[u8; 20]) -> Option<&'static RouterEntr
 /// constant in `prioritization-spine/config_aware.rs`.
 pub fn block_time_s_for_chain(chain_id: u64) -> f64 {
     match chain_id {
-        1 => 12.0,    // Ethereum mainnet (PoS 12s slots)
-        56 => 3.0,    // BNB Smart Chain (PoSA ~3s)
-        137 => 2.0,   // Polygon PoS (~2s)
-        8453 => 2.0,  // Base (OP-Stack 2s slots)
-        42161 => 0.5, // Arbitrum Nitro: ~0.25s real; 0.5s safety buffer (BE-3.7)
-        10 => 2.0,    // Optimism (OP-Stack 2s slots)
-        _ => 12.0,    // unknown → ETH-equivalent (conservative)
+        1 => 12.0,       // Ethereum mainnet (PoS 12s slots)
+        11155111 => 12.0, // Sepolia (PoS 12s slots)
+        56 => 3.0,       // BNB Smart Chain (PoSA ~3s)
+        137 => 2.0,      // Polygon PoS (~2s)
+        8453 => 2.0,     // Base (OP-Stack 2s slots)
+        42161 => 0.5,    // Arbitrum Nitro: ~0.25s real; 0.5s safety buffer (BE-3.7)
+        421614 => 0.5,   // Arbitrum Sepolia (BE-3.7)
+        10 => 2.0,       // Optimism (OP-Stack 2s slots)
+        11155420 => 2.0, // Optimism Sepolia (OP-Stack 2s slots)
+        _ => 12.0,       // unknown → ETH-equivalent (conservative)
     }
 }
 
@@ -206,13 +261,16 @@ pub fn block_time_s_for_chain(chain_id: u64) -> f64 {
 /// sizing) and is covered by unit tests to prevent silent regression.
 pub fn reorg_buffer_blocks_for_chain(chain_id: u64) -> u32 {
     match chain_id {
-        1 => 12,    // Ethereum: ~2.4 min finality window
-        56 => 15,   // BSC: PoSA; documented reorg incidents
-        137 => 256, // Polygon: repeated deep-reorg history
-        8453 => 0,  // Base: OP-Stack sequencer, no L2 reorgs
-        42161 => 0, // Arbitrum Nitro: sequencer, no L2 reorgs
-        10 => 0,    // Optimism: OP-Stack sequencer, no L2 reorgs
-        _ => 12,    // unknown → ETH-equivalent (conservative)
+        1 => 12,       // Ethereum: ~2.4 min finality window
+        11155111 => 12, // Sepolia: ETH-equivalent
+        56 => 15,      // BSC: PoSA; documented reorg incidents
+        137 => 256,    // Polygon: repeated deep-reorg history
+        8453 => 0,     // Base: OP-Stack sequencer, no L2 reorgs
+        42161 => 0,    // Arbitrum Nitro: sequencer, no L2 reorgs
+        421614 => 0,   // Arbitrum Sepolia: sequencer, no L2 reorgs
+        10 => 0,       // Optimism: OP-Stack sequencer, no L2 reorgs
+        11155420 => 0, // Optimism Sepolia: OP-Stack sequencer, no L2 reorgs
+        _ => 12,       // unknown → ETH-equivalent (conservative)
     }
 }
 
@@ -343,12 +401,15 @@ mod tests {
     #[test]
     fn block_time_known_chains() {
         let cases: &[(u64, f64)] = &[
-            (1, 12.0),    // Ethereum
-            (56, 3.0),    // BSC
-            (137, 2.0),   // Polygon
-            (8453, 2.0),  // Base
-            (42161, 0.5), // Arbitrum (BE-3.7: 0.5s safety buffer; was 0.25s)
-            (10, 2.0),    // Optimism
+            (1, 12.0),       // Ethereum
+            (11155111, 12.0), // Sepolia
+            (56, 3.0),       // BSC
+            (137, 2.0),      // Polygon
+            (8453, 2.0),     // Base
+            (42161, 0.5),    // Arbitrum (BE-3.7: 0.5s safety buffer; was 0.25s)
+            (421614, 0.5),   // Arbitrum Sepolia
+            (10, 2.0),       // Optimism
+            (11155420, 2.0), // Optimism Sepolia
         ];
         for &(chain_id, expected) in cases {
             let got = block_time_s_for_chain(chain_id);
@@ -391,7 +452,7 @@ mod tests {
     /// their sequencers do not reorganise at the L2 layer.
     #[test]
     fn l2_chains_have_zero_reorg_buffer() {
-        let l2_chains: &[u64] = &[42161, 10, 8453]; // Arbitrum, Optimism, Base
+        let l2_chains: &[u64] = &[42161, 10, 8453, 421614, 11155420]; // Arbitrum, Optimism, Base + testnets
         for &chain_id in l2_chains {
             let buf = reorg_buffer_blocks_for_chain(chain_id);
             assert_eq!(
@@ -399,6 +460,30 @@ mod tests {
                 "L2 chain_id={chain_id} must have reorg_buffer=0 (sequencer guarantees), got {buf}",
             );
         }
+    }
+
+    /// Testnets must have router catalogs.
+    #[test]
+    fn testnet_routers_exist() {
+        assert!(!routers_for_chain(11155111).is_empty(), "Sepolia must have routers");
+        assert!(!routers_for_chain(421614).is_empty(), "Arbitrum Sepolia must have routers");
+        assert!(!routers_for_chain(11155420).is_empty(), "Optimism Sepolia must have routers");
+    }
+
+    /// Testnets must have QuoterV2 for price quotes.
+    #[test]
+    fn testnet_quoter_v2_exists() {
+        assert!(quoter_v2_for_chain(11155111).is_some(), "Sepolia must have QuoterV2");
+        assert!(quoter_v2_for_chain(421614).is_some(), "Arbitrum Sepolia must have QuoterV2");
+        assert!(quoter_v2_for_chain(11155420).is_some(), "Optimism Sepolia must have QuoterV2");
+    }
+
+    /// Testnets must have Multicall3 for batching.
+    #[test]
+    fn testnet_multicall3_exists() {
+        assert!(multicall3_for_chain(11155111).is_some(), "Sepolia must have Multicall3");
+        assert!(multicall3_for_chain(421614).is_some(), "Arbitrum Sepolia must have Multicall3");
+        assert!(multicall3_for_chain(11155420).is_some(), "Optimism Sepolia must have Multicall3");
     }
 
     /// Ethereum must have a non-zero reorg buffer (12 blocks = ~2.4 min).
