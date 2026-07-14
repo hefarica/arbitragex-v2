@@ -1,0 +1,18 @@
+name: ops(live-testnet)
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+      chain_id:
+        default: "11155111"
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          if [ "${{ inputs.chain_id }}" = "1" ]; then exit 1; fi
+          echo "Testnet OK"
