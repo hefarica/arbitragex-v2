@@ -165,21 +165,26 @@ export const useOmniStore = create<OmniStoreState>()(
           // Normalise to an array, never throwing on a non-array (the old
           // `x.items || x` fell through to the {success,data} OBJECT and crashed
           // .forEach → registryError → the registry showed a false error).
-          const toArray = (d: unknown): unknown[] => {
+          // FAIL-HONEST: Log unexpected formats for debugging instead of silent empty.
+          const toArray = (d: unknown, endpoint: string): unknown[] => {
             const o = d as { data?: unknown; items?: unknown } | null;
             if (Array.isArray(o?.data)) return o.data as unknown[];
             if (Array.isArray(o?.items)) return o.items as unknown[];
-            return Array.isArray(d) ? (d as unknown[]) : [];
+            if (Array.isArray(d)) return d as unknown[];
+            // Log unexpected format for debugging - don't silently return empty
+            console.error(`[OmniStore] Unexpected response format from ${endpoint}:`, d);
+            // Return empty but registry stays in "ready" state - upstream should validate
+            return [];
           };
 
           const chainsMap = new Map<number, Chain>();
-          toArray(chainsData).forEach((c: any) => {
+          toArray(chainsData, '/api/chains').forEach((c: any) => {
             const id = c.id || c.chain_id;
             chainsMap.set(id, c);
           });
 
           const dexesMap = new Map<string, DEX>();
-          toArray(dexesData).forEach((d: any) => {
+          toArray(dexesData, '/api/dexes').forEach((d: any) => {
             // /api/dexes returns chain_id (singular); the dex-registry view expects
             // chain_ids (an array) for its chain badges + chain filter. Normalise
             // so the render never crashes on undefined.chain_ids (was throwing a

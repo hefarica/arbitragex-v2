@@ -32,7 +32,15 @@ import {
 const isBrowser = typeof window !== "undefined";
 
 export function getApiBaseUrl(): string {
-  const envUrl = isBrowser ? process.env.NEXT_PUBLIC_EDGE_URL : process.env.INTERNAL_EDGE_URL;
+  // BROWSER FIX: Use relative paths to avoid CORS when developing locally.
+  // Next.js rewrites (configured in next.config.js) proxy /api/* to the edge.
+  // This eliminates CORS issues when frontend (localhost:3000) calls VPS edge.
+  if (isBrowser) {
+    return "";
+  }
+
+  // Server-side: use INTERNAL_EDGE_URL for direct edge communication
+  const envUrl = process.env.INTERNAL_EDGE_URL;
   
   const isProd = process.env.NODE_ENV === "production";
 
@@ -42,10 +50,6 @@ export function getApiBaseUrl(): string {
 
   if (envUrl && envUrl.trim().length > 0) {
     return envUrl.replace(/\/$/, "");
-  }
-
-  if (isBrowser) {
-    return window.location.origin;
   }
 
   return "";

@@ -4,7 +4,7 @@
  * LiveTicker — sticky-bottom marquee of live Asimetría Topológica detections.
  *
  * REAL data only (RULE 00): polls /api/opportunities/live on its own lightweight
- * 10s loop. Deliberately independent of the omni-store connection hook
+ * 30s loop. Deliberately independent of the omni-store connection hook
  * (useOmniOpportunities) so it does NOT double-mount / interfere with the
  * /opportunities page subscription. Empty feed → honest empty state (no fabricated
  * items, no fake placeholders). Failures leave the last known items (stale-but-real),
@@ -43,12 +43,13 @@ export function LiveTicker() {
     setMounted(true);
     let cancelled = false;
     const base = getApiBaseUrl();
-    if (!base) return; // no edge configured → ticker stays empty (R8 fail-honest)
+    // base can be "" (relative path) which is valid - use window.location.origin as fallback
+    const apiBase = base || window.location.origin;
 
     const poll = async () => {
       try {
         const res = await fetch(
-          `${base}/api/opportunities/live?limit=20`,
+          `${apiBase}/api/opportunities/live?limit=20`,
           { headers: { accept: "application/json" }, cache: "no-store" },
         );
         if (!res.ok || cancelled) return;
@@ -63,7 +64,7 @@ export function LiveTicker() {
     };
 
     poll();
-    const id = setInterval(poll, 10000);
+    const id = setInterval(poll, 30000);
     return () => {
       cancelled = true;
       clearInterval(id);

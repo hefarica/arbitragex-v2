@@ -123,8 +123,14 @@ export function PoolsTab({ chainId }: Props) {
     }))
   );
 
-  const SUPPORTED_CHAINS = useMemo(() => Array.from(chainsMap.values()), [chainsMap]);
-  const dexes = useMemo(() => Array.from(dexesMap.values()), [dexesMap]);
+  const SUPPORTED_CHAINS = useMemo(() =>
+    chainsMap instanceof Map ? Array.from(chainsMap.values()) : [],
+    [chainsMap]
+  );
+  const dexes = useMemo(() =>
+    dexesMap instanceof Map ? Array.from(dexesMap.values()) : [],
+    [dexesMap]
+  );
 
   // ── Chain selector state ──
   const [selectedChainId, setSelectedChainId] = useState<number>(chainId);
@@ -227,7 +233,9 @@ export function PoolsTab({ chainId }: Props) {
   const hasMore = pools.length < totalCount && !poolsLoading;
 
   const selectedChainName =
-    chainsMap.get(selectedChainId)?.name ?? String(selectedChainId);
+    chainsMap instanceof Map
+      ? (chainsMap.get(selectedChainId)?.name ?? String(selectedChainId))
+      : String(selectedChainId);
 
   return (
     <Card>
@@ -243,18 +251,25 @@ export function PoolsTab({ chainId }: Props) {
           </div>
           <div className="flex items-center gap-3">
             <Select
-              value={String(selectedChainId)}
+              value={SUPPORTED_CHAINS.length > 0 ? String(selectedChainId) : ""}
               onValueChange={onChainChange}
+              disabled={registryStatus === "loading" || SUPPORTED_CHAINS.length === 0}
             >
               <SelectTrigger size="sm" className="w-48">
-                <SelectValue />
+                <SelectValue placeholder={registryStatus === "loading" ? "Loading chains..." : "Select chain"} />
               </SelectTrigger>
               <SelectContent>
-                {SUPPORTED_CHAINS.map((c) => (
-                  <SelectItem key={c.id} value={String(c.id)}>
-                    {c.name}
+                {SUPPORTED_CHAINS.length === 0 ? (
+                  <SelectItem value="" disabled>
+                    {registryStatus === "loading" ? "Loading chains..." : "No chains available"}
                   </SelectItem>
-                ))}
+                ) : (
+                  SUPPORTED_CHAINS.map((c) => (
+                    <SelectItem key={c.id} value={String(c.id)}>
+                      {c.name}
+                    </SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
 
@@ -273,18 +288,24 @@ export function PoolsTab({ chainId }: Props) {
           <Select
             value={selectedDexId}
             onValueChange={onDexChange}
-            disabled={registryStatus === "loading"}
+            disabled={registryStatus === "loading" || dexes.length === 0}
           >
             <SelectTrigger size="sm" className="w-48">
-              <SelectValue placeholder="All DEXes" />
+              <SelectValue placeholder={registryStatus === "loading" ? "Loading DEXes..." : "All DEXes"} />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__">All DEXes</SelectItem>
-              {dexes.map((d) => (
-                <SelectItem key={d.id} value={d.id}>
-                  {d.name}
+              {dexes.length === 0 ? (
+                <SelectItem value="__empty__" disabled>
+                  {registryStatus === "loading" ? "Loading DEXes..." : "No DEXes available"}
                 </SelectItem>
-              ))}
+              ) : (
+                dexes.map((d) => (
+                  <SelectItem key={d.id} value={d.id}>
+                    {d.name}
+                  </SelectItem>
+                ))
+              )}
             </SelectContent>
           </Select>
 
