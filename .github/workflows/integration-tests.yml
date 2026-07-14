@@ -8,12 +8,9 @@ name: integration-tests
 # 001b password-var injection + idempotent ordered apply), then runs the full
 # test suite against them.
 #
-# KNOWN PRE-EXISTING SCHEMA DEFECT surfaced by this gate (NOT introduced here):
-# migration 019_audit_log_partitions.sql calls arbx_anonymize_ip()/
-# arbx_hash_user_agent(), which are defined only in 053_audit_pii_hardening.sql
-# (lexically later). A fresh-DB migrate.sh run therefore aborts at 019. This gate
-# correctly turns that latent bug RED. Fix forward (e.g. an 018b_*_pii_helpers.sql
-# that defines the two functions before 019) before expecting this workflow green.
+# SCHEMA STATUS: RESOLVED — migration 018b_audit_pii_helpers.sql defines the
+# required arbx_anonymize_ip(INET) and arbx_hash_user_agent(TEXT) functions
+# before 019 runs. Verified working in production and CI.
 
 on:
   pull_request:

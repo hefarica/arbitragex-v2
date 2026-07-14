@@ -1,0 +1,18 @@
+claim:
+  id: "TRAILBLAZING-5182"
+  hypothesis: "Migration 018b exists but may have syntax issues or signature mismatches"
+  reason: "CI still failing despite 018b existing with correct lexical order"
+
+  evidence:
+    - file: "database/migrations/018b_audit_pii_helpers.sql"
+      status: "EXISTS"
+    - file: ".github/workflows/integration-tests.yml"
+      lines: "11-16"
+      note: "Still reports SCHEMA DEFECT"
+
+  action_steps:
+    - step_1: "Create verification test"
+    - step_2: "Run migrate.sh locally"
+    - step_3: "Validate function signatures match"
+
+  expected_outcome: "Integration tests pass"

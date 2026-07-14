@@ -1,0 +1,66 @@
+name: TRAILBLAZING-5182 Validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'database/migrations/018b_*.sql'
+      - 'database/migrations/019_*.sql'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-018b:
+    name: Validate 018b Migration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: arbitragex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/arbitragex
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install psql
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Create pgcrypto extension
+        run: psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+
+      - name: Verify 018b exists
+        run: |
+          test -f "database/migrations/018b_audit_pii_helpers.sql" || exit 1
+          echo "018b exists"
+
+      - name: Apply migrations
+        run: bash automation/scripts/migrate.sh
+
+      - name: Verify functions exist
+        run: |
+          psql "$DATABASE_URL" -c "SELECT proname FROM pg_proc WHERE proname LIKE 'arbx_%';"
+
+      - name: Test functions
+        run: |
+          psql "$DATABASE_URL" -c "SELECT arbx_anonymize_ip('192.168.1.100'::inet);"
+          psql "$DATABASE_URL" -c "SELECT arbx_hash_user_agent('test');"
+
+      - name: Report success
+        if: success()
+        run: echo "TRAILBLAZING-5182 VALIDATION PASSED"
