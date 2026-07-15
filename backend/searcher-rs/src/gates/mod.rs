@@ -59,12 +59,12 @@ pub fn orbital_condition(energy: f64, threshold: f64) -> bool {
 ///
 /// ## Energy Model
 /// The gate computes energy state according to:
-/// ```
+/// ```text
 /// E_state = H(q, p, t) + lambda * R(gamma)
 /// ```
 ///
 /// ### Hamiltonian (H)
-/// ```
+/// ```text
 /// H(q, p, t) = net_yield * confiscation_threshold + gas_cost
 /// ```
 /// Where:
@@ -73,7 +73,7 @@ pub fn orbital_condition(energy: f64, threshold: f64) -> bool {
 /// - `gas_cost`: Estimated gas price impact
 ///
 /// ### Perturbation (lambda * R(gamma))
-/// ```
+/// ```text
 /// lambda * R(gamma) = confiscation_epsilon * 100 (scaled penalty)
 /// ```
 /// Where:
@@ -96,7 +96,7 @@ pub fn orbital_condition(energy: f64, threshold: f64) -> bool {
 /// - Gate blocks only when energy remains too high after variance tolerance
 ///
 /// ## Configuration (configs/app.toml)
-/// ```toml
+/// ```text
 /// [stochastic_gates]
 /// confiscation_detection = "auto"         # Enable in paper mode only
 /// confiscation_threshold = 1.1            # 10% gas price buffer
@@ -129,13 +129,7 @@ impl MacroMevGateConfig {
         Self {
             enabled: std::env::var("ARBX_GATE_MACRO_MEV_ENABLED")
                 .ok()
-                .and_then(|v| {
-                    if matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on") {
-                        Some(true)
-                    } else {
-                        Some(false)
-                    }
-                })
+                .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
                 .unwrap_or(true),
             confiscation_threshold: std::env::var("ARBX_MACRO_MEV_THRESHOLD")
                 .ok()
@@ -149,13 +143,7 @@ impl MacroMevGateConfig {
                 .unwrap_or(DEFAULT_CONFISCATION_EPSILON),
             log_hits: std::env::var("ARBX_MACRO_MEV_LOG_HITS")
                 .ok()
-                .and_then(|v| {
-                    if matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on") {
-                        Some(true)
-                    } else {
-                        Some(false)
-                    }
-                })
+                .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
                 .unwrap_or(true),
         }
     }
@@ -251,7 +239,7 @@ impl MacroMevGate {
     /// Evaluate gate and return energy state (NEW: energy-based evaluation).
     ///
     /// Implements the energy model:
-    /// ```
+    /// ```text
     /// E_state = H(q, p, t) + lambda * R(gamma)
     /// H(q, p, t) = net_yield * threshold + gas_cost
     /// lambda * R(gamma) = confiscation_epsilon * 100
@@ -262,7 +250,7 @@ impl MacroMevGate {
     /// - `None`: Gate disabled or validation failed
     ///
     /// ## Usage
-    /// ```rust
+    /// ```ignore
     /// let energy = gate.evaluate_energy(&opportunity, &config)?;
     /// if orbital_condition(energy.energy, threshold) {
     ///     // Gate passes — opportunity proceeds
@@ -321,7 +309,7 @@ impl MacroMevGate {
                 hamiltonian,
                 perturbation,
                 gate_identifier: "macro_mev_confiscation".to_string(),
-                energy_reason: "confiscated_by_threshold".to_string(),
+                energy_reason: "confisted_by_threshold".to_string(),
             });
         }
 
