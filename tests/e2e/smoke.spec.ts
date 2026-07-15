@@ -13,7 +13,7 @@ import { test, expect } from "@playwright/test";
  */
 
 const PAGES: Array<{ path: string; heading: RegExp }> = [
-  { path: "/",              heading: /operator console|arbitragex|platform control plane/i },
+  { path: "/",              heading: /operator console|arbitragex|platform control plane|convergencia|topological yield/i },
   { path: "/status",        heading: /system status/i },
   { path: "/opportunities", heading: /live opportunities|opportunities|live network/i },
   { path: "/executions",    heading: /executions/i },
