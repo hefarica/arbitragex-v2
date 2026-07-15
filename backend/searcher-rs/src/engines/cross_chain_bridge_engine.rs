@@ -328,7 +328,10 @@ impl CrossChainBridgeEngine {
         let token_addresses = vec![token_in.clone()];
 
         let candidate = OpportunityCandidate {
-            route_fingerprint: format!("cc_{}_{}_{}_{}", opp.source_chain, opp.dest_chain, opp.token_symbol, opp.id),
+            route_fingerprint: format!(
+                "cc_{}_{}_{}_{}",
+                opp.source_chain, opp.dest_chain, opp.token_symbol, opp.id
+            ),
             pool_addresses,
             token_addresses,
             dex_adapters: vec![opp.bridge.protocol.clone()],
@@ -403,20 +406,22 @@ impl CrossChainBridgeEngine {
                 dest_gas_cost_usd: 5.0,
                 avg_latency_secs: 300, // 5 minutes
                 supported_tokens: vec![
-                    Address::from_str("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap_or_default(), // USDC
+                    Address::from_str("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+                        .unwrap_or_default(), // USDC
                 ],
             },
             // Wormhole: Ethereum -> Solana (would need adapter)
             BridgeConfig {
                 protocol: "wormhole".to_string(),
-                source_chain: 1, // Ethereum
+                source_chain: 1,        // Ethereum
                 dest_chain: 1399811149, // Solana (Wormhole chain ID)
                 bridge_address: Address::from_low_u64_be(0x5678),
                 protocol_fee_bps: 15,
                 dest_gas_cost_usd: 0.5,
                 avg_latency_secs: 900, // 15 minutes
                 supported_tokens: vec![
-                    Address::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").unwrap_or_default(), // WETH
+                    Address::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
+                        .unwrap_or_default(), // WETH
                 ],
             },
         ]
@@ -496,7 +501,10 @@ mod tests {
         let opportunities = engine.detect_cross_chain_arbs().await;
 
         // Should find opportunities due to 1% spread > 50 bps threshold
-        assert!(!opportunities.is_empty(), "should detect opportunity with 1% spread");
+        assert!(
+            !opportunities.is_empty(),
+            "should detect opportunity with 1% spread"
+        );
 
         let opp = &opportunities[0];
         assert_eq!(opp.source_chain, 1);
@@ -524,7 +532,10 @@ mod tests {
         let opportunities = engine.detect_cross_chain_arbs().await;
 
         // Should NOT find opportunities due to spread < 50 bps
-        assert!(opportunities.is_empty(), "should skip opportunities with < 50 bps spread");
+        assert!(
+            opportunities.is_empty(),
+            "should skip opportunities with < 50 bps spread"
+        );
     }
 
     #[test]

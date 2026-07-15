@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use crate::thermodynamics::{PermittedCycle, PotentialGradient};
+use async_trait::async_trait;
 
 #[async_trait]
 pub trait PotentialField: Send + Sync {

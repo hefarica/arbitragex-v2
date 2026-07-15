@@ -5,7 +5,16 @@
 
 // Suppress the same lints as main.rs for consistency. Individual modules
 // carry their own allows where the pattern is demonstrably safe.
-#![allow(unused_imports, unused_variables, unreachable_patterns, unexpected_cfgs, clippy::unwrap_used, clippy::manual_unwrap_or_default, clippy::manual_unwrap_or, unused_mut)]
+#![allow(
+    unused_imports,
+    unused_variables,
+    unreachable_patterns,
+    unexpected_cfgs,
+    clippy::unwrap_used,
+    clippy::manual_unwrap_or_default,
+    clippy::manual_unwrap_or,
+    unused_mut
+)]
 
 // Phase 1-3 modules re-exported so the library target compiles standalone.
 pub mod amm_math;
@@ -23,7 +32,6 @@ pub mod persistence;
 pub mod pool_candidate;
 pub mod pool_discovery;
 pub mod pool_sources;
-pub mod shared;
 pub mod publisher;
 pub mod reserves;
 pub mod route_api;
@@ -32,6 +40,7 @@ pub mod route_discovery;
 pub mod route_intent;
 pub mod scoring;
 pub mod scoring_pipeline;
+pub mod shared;
 pub mod source_supervisor;
 pub mod strategy_label;
 // Task 2: HotPathEmitter for sub-100ms detection pipeline (Redis streams)

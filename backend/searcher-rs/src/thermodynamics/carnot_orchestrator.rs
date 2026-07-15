@@ -1,9 +1,6 @@
 use crate::thermodynamics::{
-    bayesian_stator::BayesianStator,
-    entropy_sink::EntropySink,
-    impedance_tensor::ImpedanceTensor,
-    liquidity_curvature::LiquidityCurvature,
-    PermittedCycle,
+    bayesian_stator::BayesianStator, entropy_sink::EntropySink, impedance_tensor::ImpedanceTensor,
+    liquidity_curvature::LiquidityCurvature, PermittedCycle,
 };
 use std::sync::Arc;
 
@@ -68,7 +65,11 @@ mod tests {
 
     struct FixedStator;
     impl BayesianStator for FixedStator {
-        fn predict(&self, gradient: &PotentialGradient, impedance: &ImpedanceSnapshot) -> ThermodynamicCycle {
+        fn predict(
+            &self,
+            gradient: &PotentialGradient,
+            impedance: &ImpedanceSnapshot,
+        ) -> ThermodynamicCycle {
             ThermodynamicCycle {
                 gradient: gradient.clone(),
                 heat_in_usd: gradient.potential_delta_usd,
@@ -101,7 +102,9 @@ mod tests {
 
     #[test]
     fn positive_work_cycle_is_permitted() {
-        let curvature = Arc::new(FixedCurvature { gradients: vec![sample_gradient(10.0)] });
+        let curvature = Arc::new(FixedCurvature {
+            gradients: vec![sample_gradient(10.0)],
+        });
         let orchestrator = CarnotOrchestrator::new(
             curvature,
             Arc::new(FixedStator),
@@ -117,7 +120,9 @@ mod tests {
 
     #[test]
     fn negative_work_cycle_is_rejected() {
-        let curvature = Arc::new(FixedCurvature { gradients: vec![sample_gradient(0.1)] });
+        let curvature = Arc::new(FixedCurvature {
+            gradients: vec![sample_gradient(0.1)],
+        });
         let orchestrator = CarnotOrchestrator::new(
             curvature,
             Arc::new(FixedStator),
@@ -131,7 +136,9 @@ mod tests {
     #[test]
     fn below_min_eta_is_rejected() {
         // heat_in=0.7, heat_out=0.6, eta=0.142, so min_eta=0.2 rejects
-        let curvature = Arc::new(FixedCurvature { gradients: vec![sample_gradient(0.7)] });
+        let curvature = Arc::new(FixedCurvature {
+            gradients: vec![sample_gradient(0.7)],
+        });
         let orchestrator = CarnotOrchestrator::new(
             curvature,
             Arc::new(FixedStator),

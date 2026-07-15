@@ -18,7 +18,7 @@
 //! Layer 2 (MID COST - P1): probabilistic confiscation + time decay + carrier detection — TO IMPLEMENT
 //! Layer 3 (HIGH COST - P2): private beacon (Flashbots) routing — TO IMPLEMENT
 
-use crate::shared::gates::{GateOutcome, GateLogic, RejectReason};
+use crate::shared::gates::{GateLogic, GateOutcome, RejectReason};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -129,7 +129,12 @@ impl MacroMevGateConfig {
         Self {
             enabled: std::env::var("ARBX_GATE_MACRO_MEV_ENABLED")
                 .ok()
-                .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+                .map(|v| {
+                    matches!(
+                        v.trim().to_ascii_lowercase().as_str(),
+                        "1" | "true" | "yes" | "on"
+                    )
+                })
                 .unwrap_or(true),
             confiscation_threshold: std::env::var("ARBX_MACRO_MEV_THRESHOLD")
                 .ok()
@@ -143,7 +148,12 @@ impl MacroMevGateConfig {
                 .unwrap_or(DEFAULT_CONFISCATION_EPSILON),
             log_hits: std::env::var("ARBX_MACRO_MEV_LOG_HITS")
                 .ok()
-                .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+                .map(|v| {
+                    matches!(
+                        v.trim().to_ascii_lowercase().as_str(),
+                        "1" | "true" | "yes" | "on"
+                    )
+                })
                 .unwrap_or(true),
         }
     }
@@ -188,7 +198,11 @@ impl GateLogic for MacroMevGate {
         Self
     }
 
-    fn evaluate(&self, opportunity: &Self::Candidate, config: &Self::Config) -> Option<GateOutcome> {
+    fn evaluate(
+        &self,
+        opportunity: &Self::Candidate,
+        config: &Self::Config,
+    ) -> Option<GateOutcome> {
         if !config.enabled {
             return None;
         }
@@ -209,7 +223,10 @@ impl GateLogic for MacroMevGate {
         let gas_cost_usd_apprx = calculate_gas_cost_approx(opportunity, config);
 
         // Extract net_yield if available from the scanner stream.
-        let net_yield = match (opportunity.net_expected_profit_usd, opportunity.expected_profit_usd) {
+        let net_yield = match (
+            opportunity.net_expected_profit_usd,
+            opportunity.expected_profit_usd,
+        ) {
             (Some(net), _) => net,
             (None, Some(gross)) => gross,
             (None, None) => return None,
@@ -283,7 +300,10 @@ impl MacroMevGate {
         let gas_cost_usd_apprx = calculate_gas_cost_approx(opportunity, config);
 
         // Extract net_yield if available from the scanner stream.
-        let net_yield = match (opportunity.net_expected_profit_usd, opportunity.expected_profit_usd) {
+        let net_yield = match (
+            opportunity.net_expected_profit_usd,
+            opportunity.expected_profit_usd,
+        ) {
             (Some(net), _) => net,
             (None, Some(gross)) => gross,
             (None, None) => return None,
@@ -296,7 +316,8 @@ impl MacroMevGate {
         if net_yield_with_epsilon < gas_cost_usd_apprx * config.confiscation_threshold {
             // Blocked by confiscation condition — compute energy state for telemetry
             // Hamiltonian: base energy from opportunity
-            let hamiltonian = net_yield_with_epsilon * config.confiscation_threshold + gas_cost_usd_apprx;
+            let hamiltonian =
+                net_yield_with_epsilon * config.confiscation_threshold + gas_cost_usd_apprx;
 
             // Perturbation: variant tolerance penalty
             let perturbation = config.confiscation_epsilon * 100.0;
@@ -314,7 +335,8 @@ impl MacroMevGate {
         }
 
         // Passed confiscation condition — energy at baseline
-        let hamiltonian = net_yield_with_epsilon * config.confiscation_threshold + gas_cost_usd_apprx;
+        let hamiltonian =
+            net_yield_with_epsilon * config.confiscation_threshold + gas_cost_usd_apprx;
         let perturbation = config.confiscation_epsilon * 100.0; // Small penalty for variance tolerance
 
         Some(GateEnergyState {
@@ -338,7 +360,10 @@ impl MacroMevGate {
 ///
 /// ## Returns
 /// - `f64`: Gas cost approximation in USD (clamped >= 0)
-fn calculate_gas_cost_approx(_opportunity: &shared_rs::contracts::Opportunity, _config: &MacroMevGateConfig) -> f64 {
+fn calculate_gas_cost_approx(
+    _opportunity: &shared_rs::contracts::Opportunity,
+    _config: &MacroMevGateConfig,
+) -> f64 {
     0.0
 }
 
@@ -394,7 +419,10 @@ mod tests {
         }
     }
 
-    fn create_test_opportunity(net: Option<f64>, gross: Option<f64>) -> shared_rs::contracts::Opportunity {
+    fn create_test_opportunity(
+        net: Option<f64>,
+        gross: Option<f64>,
+    ) -> shared_rs::contracts::Opportunity {
         shared_rs::contracts::Opportunity {
             id: Uuid::new_v4(),
             chain_id: 1,
@@ -430,7 +458,10 @@ mod tests {
 
         let gate = MacroMevGate;
         let result = gate.evaluate(&opportunity, &config);
-        assert!(result.is_none(), "Expected no confiscation since approximate gas cost is 0.0");
+        assert!(
+            result.is_none(),
+            "Expected no confiscation since approximate gas cost is 0.0"
+        );
     }
 
     #[test]
@@ -440,7 +471,10 @@ mod tests {
 
         let gate = MacroMevGate;
         let result = gate.evaluate(&opportunity, &config);
-        assert!(result.is_none(), "Should not confiscate when margin is sufficient");
+        assert!(
+            result.is_none(),
+            "Should not confiscate when margin is sufficient"
+        );
     }
 
     #[test]
@@ -452,7 +486,10 @@ mod tests {
             log_hits: true,
         };
 
-        assert!(config.validate().is_err(), "Should reject invalid threshold");
+        assert!(
+            config.validate().is_err(),
+            "Should reject invalid threshold"
+        );
     }
 
     #[test]

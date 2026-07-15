@@ -1,7 +1,7 @@
-use async_trait::async_trait;
 use crate::engines::liquidation_engine::LiquidationEngine;
 use crate::thermodynamics::potential_field::PotentialField;
 use crate::thermodynamics::{PermittedCycle, PotentialGradient};
+use async_trait::async_trait;
 use std::sync::Arc;
 
 pub struct LiquidationPotentialAdapter {

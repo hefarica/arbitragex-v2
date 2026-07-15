@@ -29,7 +29,6 @@ pub struct SimulationResult {
     pub gas_used: u64,
 }
 
-
 /// Hot-path emitter for sub-100ms detection pipeline.
 ///
 /// Clone the inner connection for each call — this is the tokio-redis

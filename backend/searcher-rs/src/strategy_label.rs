@@ -172,11 +172,13 @@ impl StrategyLabel {
             | StrategyLabel::DexArbV3V2
             | StrategyLabel::DexArbV3V3
             | StrategyLabel::CrossChainArb => shared_rs::contracts::StrategyKind::DexArb,
-            StrategyLabel::TriangularArb
-            | StrategyLabel::SpanningTreeArb => shared_rs::contracts::StrategyKind::Triangular,
+            StrategyLabel::TriangularArb | StrategyLabel::SpanningTreeArb => {
+                shared_rs::contracts::StrategyKind::Triangular
+            }
             StrategyLabel::FlashloanArb => shared_rs::contracts::StrategyKind::FlashloanArb,
-            StrategyLabel::Liquidation
-            | StrategyLabel::LiquidationSnipe => shared_rs::contracts::StrategyKind::Liquidation,
+            StrategyLabel::Liquidation | StrategyLabel::LiquidationSnipe => {
+                shared_rs::contracts::StrategyKind::Liquidation
+            }
         }
     }
 }
