@@ -29,6 +29,7 @@ pub struct SimulationResult {
     pub gas_used: u64,
 }
 
+
 /// Hot-path emitter for sub-100ms detection pipeline.
 ///
 /// Clone the inner connection for each call — this is the tokio-redis
@@ -106,7 +107,7 @@ impl HotPathEmitter {
     /// Stream fields:
     ///   - `id`: Opportunity UUID
     ///   - `status`: "passed" or "failed"
-    ///   - `net_profit_wei`: Stringified u128 (canonical for precision)
+    ///   - ``net_profit_wei`: Stringified u128 (canonical for precision)
     ///   - `gas_used`: Gas consumed in simulation
     ///   - `timestamp_ms`: Unix timestamp millis
     ///
@@ -164,6 +165,45 @@ impl HotPathEmitter {
 
         Ok(())
     }
+
+    /// Emits a gate commit with energy state to `arbx:gate:commit`.
+    ///
+    /// New gate commitment stream for energy-based gate evaluation.
+    /// Used by orchestrator to track gate decisions during the sub-100ms pipeline.
+    pub async fn emit_gate_commit_from_state(
+        &self,
+        energy_state: &crate::gates::GateEnergyState,
+    ) -> Result<(), redis::RedisError> {
+        use crate::gates::GateEnergyState;
+        let timestamp_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        // XADD arbx:gate:commit with approximate maxlen ~5k
+        let _: () = redis::cmd("XADD")
+            .arg("arbx:gate:commit")
+            .arg("MAXLEN")
+            .arg("~")
+            .arg(5000)
+            .arg("*")
+            .arg("gate_identifier")
+            .arg(&energy_state.gate_identifier)
+            .arg("energy")
+            .arg(energy_state.energy)
+            .arg("hamiltonian")
+            .arg(energy_state.hamiltonian)
+            .arg("perturbation")
+            .arg(energy_state.perturbation)
+            .arg("energy_reason")
+            .arg(&energy_state.energy_reason)
+            .arg("ts_ms")
+            .arg(timestamp_ms)
+            .query_async(&mut self.redis.clone())
+            .await?;
+
+        Ok(())
+    }
 }
 
 /// Converts StrategyKind to canonical snake_case string.
@@ -174,6 +214,7 @@ fn strategy_kind_to_str(kind: &shared_rs::contracts::StrategyKind) -> &'static s
         shared_rs::contracts::StrategyKind::Backrun => "backrun",
         shared_rs::contracts::StrategyKind::Liquidation => "liquidation",
         shared_rs::contracts::StrategyKind::FlashloanArb => "flashloan_arb",
+        _ => "unknown",
     }
 }
 

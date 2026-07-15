@@ -33,6 +33,7 @@ futures-util.workspace = true
 lru.workspace = true
 hex.workspace = true
 bigdecimal.workspace = true
+rust_decimal.workspace = true
 rand.workspace = true
 prioritization-spine = { workspace = true }
 # G-SIM-1 PR-B1 (Option B) — the REAL wrapped-flash multi-step REVM sim +

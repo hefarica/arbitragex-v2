@@ -35,6 +35,8 @@ pub mod source_supervisor;
 pub mod strategy_label;
 // Task 2: HotPathEmitter for sub-100ms detection pipeline (Redis streams)
 pub mod hot_path_emitter;
+// FASE OMEGA: Gate subsystem with energy-state control plane
+pub mod gates;
 // Phase 7-8: orchestrator + engines exposed for integration tests.
 pub mod engines;
 pub mod orchestrator;

@@ -733,7 +733,7 @@ impl Orchestrator {
         let ev = ConfigAwareEvaluator::with_cache(state, signals, HashMap::new());
 
         // Run the spine gate.
-        let gate_outcome = ev.evaluate_with_route_plan(
+        let spine_gate_outcome = ev.evaluate_with_route_plan(
             &sc.candidate,
             Some(&sc.route_plan),
             label_str,
@@ -742,7 +742,101 @@ impl Orchestrator {
             60_000,
         );
 
-        match gate_outcome {
+        // NEW: Energy-based gate evaluation (MacroMevGate)
+        // This provides the "closed-loop" control: E_state determines pass/fail
+        #[cfg(feature = "searcher-rs")]
+        {
+            let gate_config = MacroMevGateConfig {
+                enabled: std::env::var("ARBX_GATE_MACRO_MEV_ENABLED")
+                    .ok()
+                    .and_then(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+                    .unwrap_or(false),
+                confiscation_threshold: std::env::var("ARBX_MACRO_MEV_THRESHOLD")
+                    .ok()
+                    .and_then(|v| v.trim().parse::<f64>().ok())
+                    .filter(|v| v.is_finite() && v >= 1.0)
+                    .unwrap_or(1.1),
+                confiscation_epsilon: std::env::var("ARBX_MACRO_MEV_EPSILON")
+                    .ok()
+                    .and_then(|v| v.trim().parse::<f64>().ok())
+                    .filter(|v| v.is_finite() && v >= 0.0)
+                    .unwrap_or(0.01),
+                log_hits: std::env::var("ARBX_MACRO_MEV_LOG_HITS")
+                    .ok()
+                    .and_then(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+                    .unwrap_or(true),
+            };
+
+            let gate = MacroMevGate;
+            let energy_state = gate.evaluate_energy(&sc.opportunity, &gate_config);
+
+            // Emit energy state to Redis for telemetry
+            if let Some(energy) = energy_state {
+                if let Err(e) = self.ctx.emitter.emit_gate_commit_from_state(&energy).await {
+                    warn!(
+                        event = "orchestrator.gate_commit_fail",
+                        chain_id,
+                        tx_hash = %sc.source_intent_hash,
+                        strategy = label_str,
+                        error = %e,
+                        "Failed to emit gate commit to Redis"
+                    );
+                }
+
+                // Load threshold from environment
+                let gate_threshold = std::env::var("ARBX_GATE_THRESHOLD_ENERGY")
+                    .ok()
+                    .and_then(|v| v.trim().parse::<f64>().ok())
+                    .unwrap_or(10.0); // Default threshold: 10 hedonic units
+
+                // Apply orbital condition: E_state < threshold → pass
+                // E_state >= threshold → block
+                let passes_orbital = orbital_condition(energy.energy, gate_threshold);
+
+                if !passes_orbital {
+                    // Energy exceeds threshold — block opportunity
+                    let energy_formatted = format!("{:.4}", energy.energy);
+                    let mut opp = sc.opportunity.clone();
+                    opp.rejection_reason = Some(format!("E_{}_pass:{}", energy.gauntlet_id, energy_formatted));
+                    opp.roi_pct = Some(0.0);
+                    opp.risk_score = Some(0.0);
+                    REJECTED_NO_PROFIT_TOTAL
+                        .with_label_values(&[&chain_str, label_str, &energy_formatted])
+                        .inc();
+                    info!(
+                        event = "orchestrator.gate_blocked_orbital",
+                        chain_id,
+                        tx_hash = %sc.source_intent_hash,
+                        strategy = label_str,
+                        energy = energy.energy,
+                        hamiltonian = energy.hamiltonian,
+                        perturbation = energy.perturbation,
+                        threshold = gate_threshold,
+                        reason = ?energy.energy_reason,
+                        "Energy-based gate orbital condition: E_state >= threshold"
+                    );
+                    self.ctx
+                        .emitter
+                        .emit_rejected(&opp, label, &energy_formatted)
+                        .await?;
+                    return Ok(());
+                }
+
+                info!(
+                    event = "orchestrator.gate_passed_orbital",
+                    chain_id,
+                    tx_hash = %sc.source_intent_hash,
+                    strategy = label_str,
+                    energy = energy.energy,
+                    threshold = gate_threshold,
+                    "Energy-based gate orbital condition satisfied"
+                );
+            }
+        }
+
+        // Continue with spine gate outcome (if evaluator available)
+
+        match spine_gate_outcome {
             ConfigGateOutcome::TokenNotAllowed {
                 token_symbol_or_addr,
             } => {
