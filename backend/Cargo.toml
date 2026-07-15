@@ -51,7 +51,6 @@ reqwest       = { version = "0.12", default-features = false, features = ["json"
 redis         = { version = "0.25", features = ["tokio-comp","connection-manager"] }
 sqlx          = { version = "0.7",  default-features = false, features = ["runtime-tokio","tls-rustls","postgres","uuid","chrono","json","macros","bigdecimal"] }
 bigdecimal    = "0.4"
-rust_decimal  = "1"
 rand          = "0.8"
 prometheus    = "0.13"  # Pinned at 0.13 audit re-run #2 2026-05-10: 0.14 changed
                         # with_label_values signature breaking 12 call sites in

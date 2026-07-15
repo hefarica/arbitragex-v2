@@ -75,23 +75,11 @@ pub trait GateLogic {
     /// Candidate/opportunity type being evaluated
     type Candidate;
 
-    /// Energy state type for telemetry / deterministic control
-    type EnergyState;
-
     /// Create a new gate instance with the given configuration
     fn new_config(config: Self::Config) -> Self;
 
     /// Evaluate a candidate opportunity against this gate.
     fn evaluate(&self, candidate: &Self::Candidate, config: &Self::Config) -> Option<GateOutcome>;
-
-    /// Evaluate the energy state of this candidate (closed-loop control).
-    /// Returns Some(E_state) when the gate computes a deterministic energy,
-    /// or None when the gate is disabled / data is missing.
-    fn evaluate_energy(
-        &self,
-        candidate: &Self::Candidate,
-        config: &Self::Config,
-    ) -> Option<Self::EnergyState>;
 }
 
 /// Rejection reasons for gate evaluations.

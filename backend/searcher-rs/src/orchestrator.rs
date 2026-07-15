@@ -57,9 +57,6 @@ use crate::metrics::{
     SIMULATION_FAILED_TOTAL,
 };
 use crate::opportunity_emitter::OpportunityEmitter;
-// FASE OMEGA: energy-based gate subsystem imports
-use crate::gates::{MacroMevGate, MacroMevGateConfig, orbital_condition};
-use crate::shared::gates::GateLogic;
 use crate::route_intent::RouteIntent;
 use crate::size_optimizer::{OptimizeOutcome, OptimizeRejectReason, SizeOptimizer};
 use crate::state_projector::StateProjector;
@@ -747,38 +744,31 @@ impl Orchestrator {
 
         // NEW: Energy-based gate evaluation (MacroMevGate)
         // This provides the "closed-loop" control: E_state determines pass/fail
-        // FASE OMEGA: Energy-based gate evaluation (MacroMevGate)
-        // This provides the "closed-loop" control: E_state determines pass/fail.
+        #[cfg(feature = "searcher-rs")]
         {
             let gate_config = MacroMevGateConfig {
                 enabled: std::env::var("ARBX_GATE_MACRO_MEV_ENABLED")
                     .ok()
-                    .and_then(|v| if matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on") { Some(true) } else { None })
+                    .and_then(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
                     .unwrap_or(false),
                 confiscation_threshold: std::env::var("ARBX_MACRO_MEV_THRESHOLD")
                     .ok()
                     .and_then(|v| v.trim().parse::<f64>().ok())
-                    .filter(|v| v.is_finite() && *v >= 1.0)
+                    .filter(|v| v.is_finite() && v >= 1.0)
                     .unwrap_or(1.1),
                 confiscation_epsilon: std::env::var("ARBX_MACRO_MEV_EPSILON")
                     .ok()
                     .and_then(|v| v.trim().parse::<f64>().ok())
-                    .filter(|v| v.is_finite() && *v >= 0.0)
+                    .filter(|v| v.is_finite() && v >= 0.0)
                     .unwrap_or(0.01),
                 log_hits: std::env::var("ARBX_MACRO_MEV_LOG_HITS")
                     .ok()
-                    .and_then(|v| if matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on") { Some(true) } else { None })
+                    .and_then(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
                     .unwrap_or(true),
             };
 
             let gate = MacroMevGate;
-            let gate_input = crate::types::OpportunityCandidate {
-                net_yield: sc.opportunity.net_expected_profit_usd.or(sc.opportunity.expected_profit_usd),
-                gross_yield: sc.opportunity.expected_profit_usd,
-                gas_price: None,
-                gas_used_estimate: None,
-            };
-            let energy_state = gate.evaluate_energy(&gate_input, &gate_config);
+            let energy_state = gate.evaluate_energy(&sc.opportunity, &gate_config);
 
             // Emit energy state to Redis for telemetry
             if let Some(energy) = energy_state {
@@ -807,7 +797,7 @@ impl Orchestrator {
                     // Energy exceeds threshold — block opportunity
                     let energy_formatted = format!("{:.4}", energy.energy);
                     let mut opp = sc.opportunity.clone();
-                    opp.rejection_reason = Some(format!("E_{}_pass:{}", energy.gate_identifier, energy_formatted));
+                    opp.rejection_reason = Some(format!("E_{}_pass:{}", energy.gauntlet_id, energy_formatted));
                     opp.roi_pct = Some(0.0);
                     opp.risk_score = Some(0.0);
                     REJECTED_NO_PROFIT_TOTAL

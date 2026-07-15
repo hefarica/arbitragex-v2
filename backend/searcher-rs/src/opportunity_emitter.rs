@@ -181,45 +181,6 @@ impl OpportunityEmitter {
         self.dry_run
     }
 
-    /// Emit a gate energy commit to `arbx:gate:commit`.
-    ///
-    /// FASE OMEGA: closed-loop telemetry for energy-based gate control.
-    /// Dry-run mode still emits the stream entry (observability is always on).
-    pub async fn emit_gate_commit_from_state(
-        &self,
-        energy_state: &crate::gates::GateEnergyState,
-    ) -> Result<(), redis::RedisError> {
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        let timestamp_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-
-        let _: () = redis::cmd("XADD")
-            .arg("arbx:gate:commit")
-            .arg("MAXLEN")
-            .arg("~")
-            .arg(5000)
-            .arg("*")
-            .arg("gate_identifier")
-            .arg(&energy_state.gate_identifier)
-            .arg("energy")
-            .arg(energy_state.energy)
-            .arg("hamiltonian")
-            .arg(energy_state.hamiltonian)
-            .arg("perturbation")
-            .arg(energy_state.perturbation)
-            .arg("energy_reason")
-            .arg(&energy_state.energy_reason)
-            .arg("ts_ms")
-            .arg(timestamp_ms)
-            .query_async(&mut self.redis.clone())
-            .await?;
-
-        Ok(())
-    }
-
     /// Returns a snapshot of all emissions recorded in dry-run mode.
     ///
     /// Only populated when `dry_run = true` (i.e., `new_dry_run` constructor).
