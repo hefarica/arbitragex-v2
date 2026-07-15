@@ -517,6 +517,75 @@ app.get("/api/v1/health",          (c) => proxyPassThrough(c, "/api/v1/health"))
 app.get("/api/v1/metrics/entropy", (c) => proxyPassThrough(c, "/api/v1/metrics/entropy"));
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// =============================================================================
+// CARNOT ORCHESTRATOR — thermodynamic cycle passthrough (Task 8).
+// Exposes the api-server Carnot REST + WebSocket surface through the edge.
+// All reads are cached with short TTL; mutations are not exposed here.
+// =============================================================================
+app.get("/api/v1/carnot/cycles",   (c) => proxy(c, "/api/v1/carnot/cycles",   "arbx:cache:carnot-cycles",   5));
+app.get("/api/v1/carnot/snapshot", (c) => proxy(c, "/api/v1/carnot/snapshot", "arbx:cache:carnot-snapshot", 5));
+
+/**
+ * WebSocket passthrough for the live Carnot room.
+ *
+ * Cloudflare Workers can upgrade an incoming request to a WebSocket pair.
+ * We accept the client socket, open a second socket to the api-server's
+ * Socket.IO endpoint, and forward frames in both directions. No data is
+ * buffered or inspected beyond the upgrade handshake.
+ */
+app.get("/carnot-cycles", async (c) => {
+  const upgrade = c.req.header("upgrade");
+  if (!upgrade || upgrade.toLowerCase() !== "websocket") {
+    return c.json(
+      {
+        error: "websocket_required",
+        message: "Connect with a WebSocket client to /carnot-cycles",
+        events: [
+          "subscribe:carnot",
+          "unsubscribe:carnot",
+          "carnot:snapshot",
+          "carnot:cycle",
+        ],
+      },
+      400,
+    );
+  }
+
+  const webSocketPair = new WebSocketPair();
+  const [clientWs, serverWs] = [webSocketPair[0], webSocketPair[1]];
+
+  const upstreamUrl = `${c.env.API_SERVER_URL}/socket.io/?EIO=4&transport=websocket`;
+  const upstream = new WebSocket(upstreamUrl);
+
+  serverWs.accept();
+
+  upstream.addEventListener("open", () => {
+    console.log(JSON.stringify({ event: "carnot.ws.upstream.open", trace_id: (c as unknown as { traceId: string }).traceId }));
+  });
+  upstream.addEventListener("error", (err) => {
+    const message = err && typeof (err as ErrorEvent).message === "string" ? (err as ErrorEvent).message : "unknown";
+    console.log(JSON.stringify({ event: "carnot.ws.upstream.error", error: message }));
+    serverWs.close(1011, "upstream_error");
+  });
+  upstream.addEventListener("close", () => {
+    console.log(JSON.stringify({ event: "carnot.ws.upstream.close", trace_id: (c as unknown as { traceId: string }).traceId }));
+    serverWs.close();
+  });
+  upstream.addEventListener("message", (msg) => {
+    serverWs.send(msg.data);
+  });
+
+  serverWs.addEventListener("message", (msg) => {
+    upstream.send(msg.data);
+  });
+  serverWs.addEventListener("close", () => {
+    console.log(JSON.stringify({ event: "carnot.ws.client.close", trace_id: (c as unknown as { traceId: string }).traceId }));
+    upstream.close();
+  });
+
+  return new Response(null, { status: 101, webSocket: clientWs });
+});
+
 // V-AT-1 hardening: httpOnly cookie session for the admin token.
 // POST /admin/session — validate token, set httpOnly cookie. Rate-limited (5/min/IP)
 // and protected by 401 lockout (10 consecutive failures → 15 min block).
