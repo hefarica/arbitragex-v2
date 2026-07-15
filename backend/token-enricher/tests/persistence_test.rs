@@ -83,7 +83,9 @@ async fn apply_token_migrations(pool: &sqlx::PgPool) -> sqlx::Result<()> {
     sqlx::raw_sql(TEST_MIGRATION_001_ROLES)
         .execute(pool)
         .await?;
-    sqlx::raw_sql(MIGRATION_034_TOKENS_DDL).execute(pool).await?;
+    sqlx::raw_sql(MIGRATION_034_TOKENS_DDL)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

@@ -277,14 +277,17 @@ impl EnricherConsumer {
                 .count(batch_count);
             // No .block() here — PEL (non-">") reads return immediately.
 
-            let reply: StreamReadReply =
-                match self.conn.xread_options(&[STREAM], &[cursor.as_str()], &opts).await {
-                    Ok(r) => r,
-                    Err(e) => {
-                        warn!(event = "enricher.drain_pel_error", err = %e);
-                        break;
-                    }
-                };
+            let reply: StreamReadReply = match self
+                .conn
+                .xread_options(&[STREAM], &[cursor.as_str()], &opts)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(event = "enricher.drain_pel_error", err = %e);
+                    break;
+                }
+            };
 
             // Empty reply = PEL fully paged.
             let total_entries: usize = reply.keys.iter().map(|k| k.ids.len()).sum();

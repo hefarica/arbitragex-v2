@@ -133,21 +133,28 @@ impl LiquidationSnipeEngine {
             LendingPoolConfig {
                 protocol: "aave-v3".to_string(),
                 chain_id: 1,
-                pool_address: Address::from_str("0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2").unwrap_or_default(),
-                data_provider: Some(Address::from_str("0x7b4eb56e7cd4b454b8f71d048c14752252e36fb4").unwrap_or_default()),
-                liquidation_proxy: Address::from_str("0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2").unwrap_or_default(),
-                min_liquidation_bonus_bps: 500,  // 5%
-                close_factor_bps: 5000,          // 50%
+                pool_address: Address::from_str("0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2")
+                    .unwrap_or_default(),
+                data_provider: Some(
+                    Address::from_str("0x7b4eb56e7cd4b454b8f71d048c14752252e36fb4")
+                        .unwrap_or_default(),
+                ),
+                liquidation_proxy: Address::from_str("0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2")
+                    .unwrap_or_default(),
+                min_liquidation_bonus_bps: 500, // 5%
+                close_factor_bps: 5000,         // 50%
             },
             // Compound V2 on Ethereum mainnet
             LendingPoolConfig {
                 protocol: "compound-v2".to_string(),
                 chain_id: 1,
-                pool_address: Address::from_str("0x3d9819210a31b4961b30ef54be2aed79b9c9cd3b").unwrap_or_default(),
+                pool_address: Address::from_str("0x3d9819210a31b4961b30ef54be2aed79b9c9cd3b")
+                    .unwrap_or_default(),
                 data_provider: None,
-                liquidation_proxy: Address::from_str("0x3d9819210a31b4961b30ef54be2aed79b9c9cd3b").unwrap_or_default(),
-                min_liquidation_bonus_bps: 800,  // 8%
-                close_factor_bps: 5000,          // 50%
+                liquidation_proxy: Address::from_str("0x3d9819210a31b4961b30ef54be2aed79b9c9cd3b")
+                    .unwrap_or_default(),
+                min_liquidation_bonus_bps: 800, // 8%
+                close_factor_bps: 5000,         // 50%
             },
         ];
 
@@ -196,7 +203,9 @@ impl LiquidationSnipeEngine {
                 }
 
                 // Calculate liquidation opportunity
-                if let Some(candidate) = self.calculate_liquidation_opportunity(&position, &mut id_counter) {
+                if let Some(candidate) =
+                    self.calculate_liquidation_opportunity(&position, &mut id_counter)
+                {
                     if candidate.net_yield_usd > 0.0 {
                         info!(
                             event = "liquidation_snipe_engine.candidate_found",
@@ -251,7 +260,10 @@ impl LiquidationSnipeEngine {
     /// 1. Query The Graph subgraph for Aave/Compound
     /// 2. Filter for positions with health_factor < 1.0
     /// 3. Paginate through all borrowers
-    async fn fetch_positions_from_subgraph(&self, pool_config: &LendingPoolConfig) -> Vec<LendingPosition> {
+    async fn fetch_positions_from_subgraph(
+        &self,
+        pool_config: &LendingPoolConfig,
+    ) -> Vec<LendingPosition> {
         // Placeholder: In production, query actual subgraphs
         // Aave V3 subgraph: https://api.thegraph.com/subgraphs/name/aave/protocol-v3
         // Compound V2 subgraph: https://api.thegraph.com/subgraphs/name/graphprotocol/compound-v2
@@ -267,7 +279,8 @@ impl LiquidationSnipeEngine {
         id_counter: &mut u64,
     ) -> Option<LiquidationCandidate> {
         // Max liquidatable debt (limited by close factor)
-        let max_repay_usd = position.total_debt_usd * (position.liquidation_bonus_bps as f64 / 10_000.0);
+        let max_repay_usd =
+            position.total_debt_usd * (position.liquidation_bonus_bps as f64 / 10_000.0);
         let optimal_repay_usd = max_repay_usd.min(position.max_liquidatable_debt_usd);
 
         if optimal_repay_usd <= 0.0 {
@@ -355,7 +368,8 @@ impl LiquidationSnipeEngine {
             token_addresses,
             dex_adapters: vec![position.protocol.clone()],
             amount_in: liq.optimal_repay_usd,
-            expected_amount_out: liq.optimal_repay_usd * (1.0 + position.liquidation_bonus_bps as f64 / 10_000.0),
+            expected_amount_out: liq.optimal_repay_usd
+                * (1.0 + position.liquidation_bonus_bps as f64 / 10_000.0),
             gross_profit: liq.gross_profit_usd,
         };
 
@@ -486,7 +500,9 @@ mod tests {
         let position = test_position(0.85, 1000); // HF = 0.85 (liquidatable), 10% bonus
 
         let mut id = 0u64;
-        let candidate = engine.calculate_liquidation_opportunity(&position, &mut id).unwrap();
+        let candidate = engine
+            .calculate_liquidation_opportunity(&position, &mut id)
+            .unwrap();
 
         // Max repay = $4000 (50% close factor)
         // Gross profit = $4000 * 10% = $400

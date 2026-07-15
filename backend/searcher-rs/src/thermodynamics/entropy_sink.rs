@@ -1,4 +1,7 @@
-use crate::thermodynamics::{CycleStatus, DissipationMetrics, EntropyError, PermittedCycle, PotentialGradient, ThermodynamicCycle};
+use crate::thermodynamics::{
+    CycleStatus, DissipationMetrics, EntropyError, PermittedCycle, PotentialGradient,
+    ThermodynamicCycle,
+};
 use uuid::Uuid;
 
 pub struct EntropySink {

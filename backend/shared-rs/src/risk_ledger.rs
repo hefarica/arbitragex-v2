@@ -311,10 +311,7 @@ mod tests {
     fn peak_then_drop_computes_drawdown_tier() {
         // NAV 1000. Equity walk: 1000 → +200=1200 (peak) → -300=900.
         // Drawdown from peak 1200 to 900 = 300/1200 = 25% → Pause tier.
-        let outcomes = [
-            out(100, 200.0, false, 1.0),
-            out(200, -300.0, false, 1.0),
-        ];
+        let outcomes = [out(100, 200.0, false, 1.0), out(200, -300.0, false, 1.0)];
         let s = compute_breakers(1_000, &outcomes, &th(2));
         assert!((s.drawdown_pct.value - 25.0).abs() < 1e-9);
         assert_eq!(s.drawdown_pct.level, BreakerLevel::Pause);

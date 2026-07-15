@@ -142,7 +142,12 @@ impl DexScreenerConfig {
                 }
             }
         }
-        Self::from_values(&gate, min_liq.as_deref(), interval.as_deref(), enabled_chains)
+        Self::from_values(
+            &gate,
+            min_liq.as_deref(),
+            interval.as_deref(),
+            enabled_chains,
+        )
     }
 
     /// Pure config parse (no env access) — unit-testable without touching the
@@ -313,8 +318,7 @@ impl DexScreenerPriceOracle {
     }
 
     async fn connect_redis(&self) -> Result<redis::aio::MultiplexedConnection> {
-        let client =
-            redis::Client::open(self.redis_url.as_str()).context("redis::Client::open")?;
+        let client = redis::Client::open(self.redis_url.as_str()).context("redis::Client::open")?;
         client
             .get_multiplexed_async_connection()
             .await
@@ -398,7 +402,11 @@ impl DexScreenerPriceOracle {
             }
 
             if priced.is_empty() {
-                debug!(event = "dexscreener.no_prices_resolved", chain_id, considered = tokens.len());
+                debug!(
+                    event = "dexscreener.no_prices_resolved",
+                    chain_id,
+                    considered = tokens.len()
+                );
                 continue;
             }
             let flat: Vec<(String, f64)> = priced.into_iter().map(|(s, (p, _))| (s, p)).collect();
@@ -566,7 +574,11 @@ fn select_best_pair(
         if !(liq.is_finite() && liq >= min_liq) {
             continue;
         }
-        let price = match p.price_usd.as_deref().and_then(|s| s.trim().parse::<f64>().ok()) {
+        let price = match p
+            .price_usd
+            .as_deref()
+            .and_then(|s| s.trim().parse::<f64>().ok())
+        {
             Some(v) if v.is_finite() && v > 0.0 => v,
             _ => continue,
         };
@@ -617,9 +629,15 @@ mod tests {
 
     #[test]
     fn config_off_when_gate_absent_or_other() {
-        assert!(DexScreenerConfig::from_values("", None, None, &[1]).unwrap().is_none());
-        assert!(DexScreenerConfig::from_values("off", None, None, &[1]).unwrap().is_none());
-        assert!(DexScreenerConfig::from_values("shadow", None, None, &[1]).unwrap().is_none());
+        assert!(DexScreenerConfig::from_values("", None, None, &[1])
+            .unwrap()
+            .is_none());
+        assert!(DexScreenerConfig::from_values("off", None, None, &[1])
+            .unwrap()
+            .is_none());
+        assert!(DexScreenerConfig::from_values("shadow", None, None, &[1])
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -798,15 +816,17 @@ mod tests {
         assert_eq!(parsed.pairs[0].chain_id, "ethereum");
         assert_eq!(parsed.pairs[0].base_token.address, "0xABC");
         assert_eq!(parsed.pairs[0].price_usd.as_deref(), Some("1.2345"));
-        assert_eq!(parsed.pairs[0].liquidity.as_ref().unwrap().usd, Some(123456.7));
+        assert_eq!(
+            parsed.pairs[0].liquidity.as_ref().unwrap().usd,
+            Some(123456.7)
+        );
         assert!(parsed.pairs[1].price_usd.is_none());
         assert!(parsed.pairs[1].liquidity.is_none());
     }
 
     #[test]
     fn deserialize_empty_pairs() {
-        let parsed: DexScreenerResponse =
-            serde_json::from_str(r#"{"pairs":[]}"#).unwrap();
+        let parsed: DexScreenerResponse = serde_json::from_str(r#"{"pairs":[]}"#).unwrap();
         assert!(parsed.pairs.is_empty());
         // Missing "pairs" entirely also yields empty (serde default).
         let parsed2: DexScreenerResponse = serde_json::from_str(r#"{}"#).unwrap();

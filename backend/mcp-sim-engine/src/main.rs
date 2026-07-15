@@ -318,7 +318,10 @@ impl SimEngine {
         if p.pools.len() > MAX_INPUT_POOLS {
             return Json(DiscoveryOutput::err(
                 p.chain_id,
-                format!("too_many_pools: {} > limit {MAX_INPUT_POOLS}", p.pools.len()),
+                format!(
+                    "too_many_pools: {} > limit {MAX_INPUT_POOLS}",
+                    p.pools.len()
+                ),
             ));
         }
         let mut edges: Vec<RouteEdge> = Vec::new();
@@ -404,7 +407,11 @@ impl SimEngine {
                 tokens: r.tokens.iter().map(|a| format!("{a:#x}")).collect(),
                 pools: r.pools.iter().map(|a| format!("{a:#x}")).collect(),
                 protocols: r.protocols.iter().map(|x| proto_str(*x)).collect(),
-                directions: r.directions.iter().map(|d| d.as_str().to_string()).collect(),
+                directions: r
+                    .directions
+                    .iter()
+                    .map(|d| d.as_str().to_string())
+                    .collect(),
             })
             .collect();
 
@@ -489,7 +496,9 @@ impl SimEngine {
                     net_profit_wei: "0".to_string(),
                     profitable: false,
                     legs: p.legs.len(),
-                    note: format!("leg[{i}]: fee_bps {fee} >= 10000 is invalid (would underflow V2 math)"),
+                    note: format!(
+                        "leg[{i}]: fee_bps {fee} >= 10000 is invalid (would underflow V2 math)"
+                    ),
                     error: Some("invalid_fee_bps".to_string()),
                 });
             }
@@ -553,35 +562,93 @@ impl SimEngine {
         // ── parse route inputs ──
         let (token_in, token_out) = match (parse_addr(&p.token_in), parse_addr(&p.token_out)) {
             (Ok(a), Ok(b)) => (a, b),
-            _ => return sim_err(p.chain_id, "invalid_token_address", None, "token_in/token_out must be 0x addresses"),
+            _ => {
+                return sim_err(
+                    p.chain_id,
+                    "invalid_token_address",
+                    None,
+                    "token_in/token_out must be 0x addresses",
+                )
+            }
         };
-        let (fwd_router, bwd_router) = match (parse_addr(&p.forward_router), parse_addr(&p.backward_router)) {
+        let (fwd_router, bwd_router) = match (
+            parse_addr(&p.forward_router),
+            parse_addr(&p.backward_router),
+        ) {
             (Ok(a), Ok(b)) => (a, b),
-            _ => return sim_err(p.chain_id, "invalid_router_address", None, "forward_router/backward_router must be 0x addresses"),
+            _ => {
+                return sim_err(
+                    p.chain_id,
+                    "invalid_router_address",
+                    None,
+                    "forward_router/backward_router must be 0x addresses",
+                )
+            }
         };
-        let parse_path = |v: &[String]| -> Option<Vec<Address>> { v.iter().map(|s| parse_addr(s).ok()).collect() };
+        let parse_path = |v: &[String]| -> Option<Vec<Address>> {
+            v.iter().map(|s| parse_addr(s).ok()).collect()
+        };
         let fwd_path = match parse_path(&p.forward_path) {
             Some(x) if x.len() >= 2 => x,
-            _ => return sim_err(p.chain_id, "invalid_forward_path", None, "forward_path needs >=2 valid 0x addresses"),
+            _ => {
+                return sim_err(
+                    p.chain_id,
+                    "invalid_forward_path",
+                    None,
+                    "forward_path needs >=2 valid 0x addresses",
+                )
+            }
         };
         let bwd_path = match parse_path(&p.backward_path) {
             Some(x) if x.len() >= 2 => x,
-            _ => return sim_err(p.chain_id, "invalid_backward_path", None, "backward_path needs >=2 valid 0x addresses"),
+            _ => {
+                return sim_err(
+                    p.chain_id,
+                    "invalid_backward_path",
+                    None,
+                    "backward_path needs >=2 valid 0x addresses",
+                )
+            }
         };
         let amount_in = match U256::from_dec_str(p.amount_in_wei.trim()) {
             Ok(a) if !a.is_zero() => a,
-            _ => return sim_err(p.chain_id, "invalid_amount_in", None, "amount_in_wei must be a positive decimal wei string"),
+            _ => {
+                return sim_err(
+                    p.chain_id,
+                    "invalid_amount_in",
+                    None,
+                    "amount_in_wei must be a positive decimal wei string",
+                )
+            }
         };
-        let gas_price_wei = match p.gas_price_wei.as_deref().map(|s| U256::from_dec_str(s.trim())) {
+        let gas_price_wei = match p
+            .gas_price_wei
+            .as_deref()
+            .map(|s| U256::from_dec_str(s.trim()))
+        {
             None => U256::zero(),
             Some(Ok(g)) => g,
-            Some(Err(_)) => return sim_err(p.chain_id, "invalid_gas_price_wei", None, "gas_price_wei must be a decimal wei string"),
+            Some(Err(_)) => {
+                return sim_err(
+                    p.chain_id,
+                    "invalid_gas_price_wei",
+                    None,
+                    "gas_price_wei must be a decimal wei string",
+                )
+            }
         };
         let route_hash: [u8; 32] = match p.route_hash.as_deref() {
             None => [0u8; 32],
             Some(h) => match H256::from_str(h) {
                 Ok(x) => x.0,
-                Err(_) => return sim_err(p.chain_id, "invalid_route_hash", None, "route_hash must be 0x + 64 hex"),
+                Err(_) => {
+                    return sim_err(
+                        p.chain_id,
+                        "invalid_route_hash",
+                        None,
+                        "route_hash must be 0x + 64 hex",
+                    )
+                }
             },
         };
         let deadline = U256::from(
@@ -610,7 +677,7 @@ impl SimEngine {
             gas_price_wei,
             route_hash,
             min_profit_wei: U256::from(1u8), // bare contract minimum (>0); economic floor is the caller's gate
-            paper_mode: true,                // structural NO-ACTIVE gate; orchestrator rejects false
+            paper_mode: true, // structural NO-ACTIVE gate; orchestrator rejects false
         };
 
         // SimulatorV2::new is a cheap sync ctor; the RPC state fetch is lazy (LazyDb) inside simulate().

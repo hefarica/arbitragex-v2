@@ -46,9 +46,9 @@ use crate::engines::flashloan_engine::FlashloanEngine;
 use crate::engines::liquidation_engine::LiquidationEngine;
 use crate::engines::triangular_engine::TriangularEngine;
 // Task 3: New engines
-use crate::engines::spanning_tree_engine::SpanningTreeEngine;
 use crate::engines::cross_chain_bridge_engine::CrossChainBridgeEngine;
 use crate::engines::liquidation_snipe_engine::LiquidationSnipeEngine;
+use crate::engines::spanning_tree_engine::SpanningTreeEngine;
 use crate::engines::StrategyCandidate;
 use crate::impact_index::ImpactIndex;
 use crate::metrics::{
@@ -749,7 +749,12 @@ impl Orchestrator {
             let gate_config = MacroMevGateConfig {
                 enabled: std::env::var("ARBX_GATE_MACRO_MEV_ENABLED")
                     .ok()
-                    .and_then(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+                    .and_then(|v| {
+                        matches!(
+                            v.trim().to_ascii_lowercase().as_str(),
+                            "1" | "true" | "yes" | "on"
+                        )
+                    })
                     .unwrap_or(false),
                 confiscation_threshold: std::env::var("ARBX_MACRO_MEV_THRESHOLD")
                     .ok()
@@ -763,7 +768,12 @@ impl Orchestrator {
                     .unwrap_or(0.01),
                 log_hits: std::env::var("ARBX_MACRO_MEV_LOG_HITS")
                     .ok()
-                    .and_then(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+                    .and_then(|v| {
+                        matches!(
+                            v.trim().to_ascii_lowercase().as_str(),
+                            "1" | "true" | "yes" | "on"
+                        )
+                    })
                     .unwrap_or(true),
             };
 
@@ -797,7 +807,10 @@ impl Orchestrator {
                     // Energy exceeds threshold — block opportunity
                     let energy_formatted = format!("{:.4}", energy.energy);
                     let mut opp = sc.opportunity.clone();
-                    opp.rejection_reason = Some(format!("E_{}_pass:{}", energy.gauntlet_id, energy_formatted));
+                    opp.rejection_reason = Some(format!(
+                        "E_{}_pass:{}",
+                        energy.gauntlet_id, energy_formatted
+                    ));
                     opp.roi_pct = Some(0.0);
                     opp.risk_score = Some(0.0);
                     REJECTED_NO_PROFIT_TOTAL

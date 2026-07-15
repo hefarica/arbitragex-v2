@@ -18,11 +18,11 @@
 //! - All cycles with product ≤ 1.0 emit REJECTED candidates
 //! - Profitable cycles emit ACCEPTED with gross_topological_yield_usd
 
+use crate::engines::triangular_engine::ReservesCache;
 use crate::engines::StrategyCandidate;
 use crate::impact_index::{CycleId, ImpactSet};
 use crate::route_intent::RouteIntent;
 use crate::strategy_label::StrategyLabel;
-use crate::engines::triangular_engine::ReservesCache;
 use chrono::Utc;
 use ethers::types::{Address, H256, U256};
 use prioritization_spine::route_plan::{RouteLeg, RoutePlan};
@@ -226,48 +226,60 @@ impl SpanningTreeEngine {
         for (token_a, token_b, pool_addr) in well_known_pairs {
             if let Some(reserves) = self.reserves_cache.get(&pool_addr).await {
                 // Add nodes if not present
-                let idx_a = *node_indices
-                    .entry(token_a)
-                    .or_insert_with(|| {
-                        let idx = nodes.len();
-                        nodes.push(TokenNode {
-                            address: token_a,
-                            symbol: self.token_symbols.get(&token_a).cloned().unwrap_or_else(|| format!("0x{:08x}", token_a)),
-                            decimals: *self.token_decimals.get(&token_a).unwrap_or(&18),
-                        });
-                        idx
+                let idx_a = *node_indices.entry(token_a).or_insert_with(|| {
+                    let idx = nodes.len();
+                    nodes.push(TokenNode {
+                        address: token_a,
+                        symbol: self
+                            .token_symbols
+                            .get(&token_a)
+                            .cloned()
+                            .unwrap_or_else(|| format!("0x{:08x}", token_a)),
+                        decimals: *self.token_decimals.get(&token_a).unwrap_or(&18),
                     });
+                    idx
+                });
 
-                let idx_b = *node_indices
-                    .entry(token_b)
-                    .or_insert_with(|| {
-                        let idx = nodes.len();
-                        nodes.push(TokenNode {
-                            address: token_b,
-                            symbol: self.token_symbols.get(&token_b).cloned().unwrap_or_else(|| format!("0x{:08x}", token_b)),
-                            decimals: *self.token_decimals.get(&token_b).unwrap_or(&18),
-                        });
-                        idx
+                let idx_b = *node_indices.entry(token_b).or_insert_with(|| {
+                    let idx = nodes.len();
+                    nodes.push(TokenNode {
+                        address: token_b,
+                        symbol: self
+                            .token_symbols
+                            .get(&token_b)
+                            .cloned()
+                            .unwrap_or_else(|| format!("0x{:08x}", token_b)),
+                        decimals: *self.token_decimals.get(&token_b).unwrap_or(&18),
                     });
+                    idx
+                });
 
                 // Create bidirectional edges (A->B and B->A)
                 let swap_in_is_token0 = token_a < token_b;
 
-                edges.push((idx_a, idx_b, PoolEdge {
-                    pool_address: pool_addr,
-                    dex_id: "uniswap-v2".to_string(),
-                    fee_bps: 30,
-                    reserves,
-                    swap_in_is_token0,
-                }));
+                edges.push((
+                    idx_a,
+                    idx_b,
+                    PoolEdge {
+                        pool_address: pool_addr,
+                        dex_id: "uniswap-v2".to_string(),
+                        fee_bps: 30,
+                        reserves,
+                        swap_in_is_token0,
+                    },
+                ));
 
-                edges.push((idx_b, idx_a, PoolEdge {
-                    pool_address: pool_addr,
-                    dex_id: "uniswap-v2".to_string(),
-                    fee_bps: 30,
-                    reserves,
-                    swap_in_is_token0: !swap_in_is_token0,
-                }));
+                edges.push((
+                    idx_b,
+                    idx_a,
+                    PoolEdge {
+                        pool_address: pool_addr,
+                        dex_id: "uniswap-v2".to_string(),
+                        fee_bps: 30,
+                        reserves,
+                        swap_in_is_token0: !swap_in_is_token0,
+                    },
+                ));
             }
         }
 
@@ -298,7 +310,7 @@ impl SpanningTreeEngine {
         dist[start_idx] = 0.0;
 
         // Relax edges n-1 times
-        for _ in 0..n-1 {
+        for _ in 0..n - 1 {
             for (u, v, edge) in edges {
                 let weight = edge.log_weight();
                 if dist[*u] != f64::INFINITY && dist[*u] + weight < dist[*v] {
@@ -321,7 +333,9 @@ impl SpanningTreeEngine {
                 }
 
                 // Reconstruct cycle
-                if let Some(cycle) = self.reconstruct_cycle(nodes, edges, &predecessor, *v, start_addr) {
+                if let Some(cycle) =
+                    self.reconstruct_cycle(nodes, edges, &predecessor, *v, start_addr)
+                {
                     visited_negative[*v] = true;
                     cycles.push(cycle);
                 }
@@ -356,7 +370,9 @@ impl SpanningTreeEngine {
             match predecessor[current] {
                 Some(prev) => {
                     // Find the edge
-                    if let Some((_, _, edge)) = edges.iter().find(|(u, v, _)| *u == prev && *v == current) {
+                    if let Some((_, _, edge)) =
+                        edges.iter().find(|(u, v, _)| *u == prev && *v == current)
+                    {
                         cycle_edges.push(edge.clone());
                         cycle_nodes.push(nodes[current].clone());
                     }
@@ -415,8 +431,14 @@ impl SpanningTreeEngine {
             "unknown".to_string()
         };
 
-        let token_in = format!("0x{:040x}", cycle.tokens.first().map(|t| t.address).unwrap_or_default());
-        let token_out = format!("0x{:040x}", cycle.tokens.get(1).map(|t| t.address).unwrap_or_default());
+        let token_in = format!(
+            "0x{:040x}",
+            cycle.tokens.first().map(|t| t.address).unwrap_or_default()
+        );
+        let token_out = format!(
+            "0x{:040x}",
+            cycle.tokens.get(1).map(|t| t.address).unwrap_or_default()
+        );
 
         // Calculate gross yield in USD
         let gross_yield_usd = if cycle.rate_product > 1.0 {
@@ -452,11 +474,15 @@ impl SpanningTreeEngine {
             trace_id,
         };
 
-        let pool_addresses: Vec<String> = cycle.edges.iter()
+        let pool_addresses: Vec<String> = cycle
+            .edges
+            .iter()
             .map(|e| format!("0x{:040x}", e.pool_address))
             .collect();
 
-        let token_addresses: Vec<String> = cycle.tokens.iter()
+        let token_addresses: Vec<String> = cycle
+            .tokens
+            .iter()
             .map(|t| format!("0x{:040x}", t.address))
             .collect();
 
@@ -466,17 +492,25 @@ impl SpanningTreeEngine {
             token_addresses,
             dex_adapters: vec!["uniswap-v2".to_string(); cycle.edges.len()],
             amount_in: u256_to_f64(&cycle.optimal_amount_in_wei) / 1e18,
-            expected_amount_out: u256_to_f64(&cycle.optimal_amount_in_wei) / 1e18 * cycle.rate_product,
+            expected_amount_out: u256_to_f64(&cycle.optimal_amount_in_wei) / 1e18
+                * cycle.rate_product,
             gross_profit: gross_yield_usd.unwrap_or(0.0),
         };
 
         // Build RouteLeg entries
-        let legs: Vec<RouteLeg> = cycle.edges.iter().enumerate()
+        let legs: Vec<RouteLeg> = cycle
+            .edges
+            .iter()
+            .enumerate()
             .map(|(i, edge)| {
-                let token_in_addr = cycle.tokens.get(i)
+                let token_in_addr = cycle
+                    .tokens
+                    .get(i)
                     .map(|t| format!("0x{:040x}", t.address))
                     .unwrap_or_default();
-                let token_out_addr = cycle.tokens.get((i + 1) % cycle.tokens.len())
+                let token_out_addr = cycle
+                    .tokens
+                    .get((i + 1) % cycle.tokens.len())
                     .map(|t| format!("0x{:040x}", t.address))
                     .unwrap_or_default();
 
@@ -515,7 +549,11 @@ impl SpanningTreeEngine {
             cycle_id,
             rate_product = cycle.rate_product,
             "spanning tree candidate {}",
-            if rejection_reason.is_some() { "rejected" } else { "accepted" }
+            if rejection_reason.is_some() {
+                "rejected"
+            } else {
+                "accepted"
+            }
         );
 
         StrategyCandidate {
@@ -599,7 +637,10 @@ mod tests {
         // Equal reserves with 30bps fee should give rate = 0.997
         // -ln(0.997) ≈ 0.003
         let weight = edge.log_weight();
-        assert!(weight > 0.0, "weight should be positive for equal reserves with fee");
+        assert!(
+            weight > 0.0,
+            "weight should be positive for equal reserves with fee"
+        );
         assert!(weight < 0.01, "weight should be small");
     }
 
@@ -625,7 +666,9 @@ mod tests {
         let cache = Arc::new(ReservesCache::new());
         let engine = SpanningTreeEngine::new(cache);
 
-        let cycles = engine.detect_cycles("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").await;
+        let cycles = engine
+            .detect_cycles("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
+            .await;
         assert!(cycles.is_empty(), "empty cache should produce no cycles");
     }
 }

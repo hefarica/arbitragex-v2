@@ -213,8 +213,14 @@ mod tests {
         map.insert("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".into(), 6);
 
         // Case-insensitive lookup
-        assert_eq!(map.get("0xc02aaA39b223fE8D0A0e5C4F27eAD9083C756Cc2"), Some(18));
-        assert_eq!(map.get("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"), Some(6));
+        assert_eq!(
+            map.get("0xc02aaA39b223fE8D0A0e5C4F27eAD9083C756Cc2"),
+            Some(18)
+        );
+        assert_eq!(
+            map.get("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+            Some(6)
+        );
         assert_eq!(map.get("0xunknown"), None);
     }
 
@@ -272,7 +278,10 @@ mod tests {
             dex_adapters: vec!["uniswap_v2_router".into(), "sushiswap".into()],
             decimals,
         };
-        assert!(rm.validate().is_ok(), "2-hop route with complete decimals should validate");
+        assert!(
+            rm.validate().is_ok(),
+            "2-hop route with complete decimals should validate"
+        );
     }
 
     #[test]
@@ -284,7 +293,11 @@ mod tests {
             decimals: DecimalsMap::new(),
         };
         let err = rm.validate().unwrap_err();
-        assert!(err.contains("length"), "expected length mismatch in: {}", err);
+        assert!(
+            err.contains("length"),
+            "expected length mismatch in: {}",
+            err
+        );
     }
 
     #[test]
@@ -296,7 +309,11 @@ mod tests {
             decimals: DecimalsMap::new(),
         };
         let err = rm.validate().unwrap_err();
-        assert!(err.contains("missing decimals"), "expected missing decimals in: {}", err);
+        assert!(
+            err.contains("missing decimals"),
+            "expected missing decimals in: {}",
+            err
+        );
     }
 
     #[test]

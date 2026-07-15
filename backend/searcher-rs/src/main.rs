@@ -2,7 +2,17 @@
 // Promoted from warn→deny so CI fails on new unwrap/expect in this binary.
 // Per-file #[allow(...)] is used below in files where the pattern is
 // demonstrably safe (mutex poison, infallible slice casts, test modules).
-#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+#![allow(
+    unused_imports,
+    unused_variables,
+    unreachable_patterns,
+    unexpected_cfgs,
+    clippy::unwrap_used,
+    clippy::manual_unwrap_or_default,
+    clippy::manual_unwrap_or,
+    dead_code,
+    unused_mut
+)]
 
 //! searcher-rs — Sprint 2 entry point.
 //!

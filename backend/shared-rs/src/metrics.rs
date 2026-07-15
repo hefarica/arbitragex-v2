@@ -281,7 +281,7 @@ pub static BUNDLE_INCLUDED_NO_PROFIT_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
 pub static GAS_PRICE_TS_SECONDS: Lazy<prometheus::IntGauge> = Lazy::new(|| {
     let g = prometheus::IntGauge::new(
         "arbx_gas_price_ts_seconds",
-        "Timestamp in seconds of the last updated gas price"
+        "Timestamp in seconds of the last updated gas price",
     )
     .expect("metric");
     REGISTRY.register(Box::new(g.clone())).expect("register");

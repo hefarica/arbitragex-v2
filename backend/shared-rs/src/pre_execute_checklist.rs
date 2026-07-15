@@ -293,10 +293,7 @@ async fn check_kill_switch(redis: &mut ConnectionManager) -> Result<(), Checklis
 ///
 /// Env overrides (`ARBX_PAPER_MODE`, `ARBX_PAPER_TRADE`) take precedence for
 /// fast operator opt-in and are kept identical to the legacy implementation.
-async fn check_paper_mode(
-    client: &PaperModeClient,
-    chain_id: u64,
-) -> Result<(), ChecklistError> {
+async fn check_paper_mode(client: &PaperModeClient, chain_id: u64) -> Result<(), ChecklistError> {
     // Canonical per-chain read — identical resolution to submit_engine line 106.
     let paper_enabled = client.is_enabled_for_chain(chain_id).await;
 
@@ -970,8 +967,7 @@ mod tests {
 
         for (label, legacy_raw) in cases {
             let legacy = resolve_paper_enabled_legacy_only(*legacy_raw, default_when_absent);
-            let per_chain =
-                resolve_paper_enabled(None, *legacy_raw, default_when_absent);
+            let per_chain = resolve_paper_enabled(None, *legacy_raw, default_when_absent);
             assert_eq!(
                 legacy, per_chain,
                 "parity broken for case `{label}`: legacy={legacy}, per_chain={per_chain}",
@@ -988,8 +984,7 @@ mod tests {
         // produced (it never saw the per-chain arming).
         let legacy_disabled =
             r#"{"enabled":false,"updated_at":"2026-05-13T00:00:00Z","updated_by":"ops"}"#;
-        let per_chain_armed =
-            r#"{"enabled":true,"updated_at":"2026-05-13T00:00:01Z","updated_by":"admin-armed-chain-1"}"#;
+        let per_chain_armed = r#"{"enabled":true,"updated_at":"2026-05-13T00:00:01Z","updated_by":"admin-armed-chain-1"}"#;
 
         // Old behaviour (legacy-only): broadcast NOT suppressed — bug.
         let legacy = resolve_paper_enabled_legacy_only(Some(legacy_disabled), true);
