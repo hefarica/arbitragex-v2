@@ -117,6 +117,8 @@ pub mod cartridge_loader;
 pub mod cartridge_boot;
 // FASE OMEGA — Block/log backrunning scanner (ARBX_MEMPOOL_MODE=block).
 pub mod block_scanner;
+// Carnot Orchestrator v2 — thermodynamic control plane.
+pub mod thermodynamics;
 
 // -- SOP-EDGE-001: Edge Node modules (paper-shadow feature gate) -------
 // These modules implement the Alloy anti-mock layer, U256<->f64 normalization,
