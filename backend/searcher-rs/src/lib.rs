@@ -33,6 +33,10 @@ pub mod scoring;
 pub mod scoring_pipeline;
 pub mod source_supervisor;
 pub mod strategy_label;
+// FASE OMEGA: shared gate types + trait layer (must come before gates/hot_path_emitter)
+pub mod shared;
+// Base type definitions used by gates and engines.
+pub mod types;
 // Task 2: HotPathEmitter for sub-100ms detection pipeline (Redis streams)
 pub mod hot_path_emitter;
 // FASE OMEGA: Gate subsystem with energy-state control plane

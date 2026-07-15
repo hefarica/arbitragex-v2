@@ -174,7 +174,6 @@ impl HotPathEmitter {
         &self,
         energy_state: &crate::gates::GateEnergyState,
     ) -> Result<(), redis::RedisError> {
-        use crate::gates::GateEnergyState;
         let timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

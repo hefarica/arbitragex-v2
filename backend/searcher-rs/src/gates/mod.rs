@@ -131,21 +131,21 @@ impl MacroMevGateConfig {
         Self {
             enabled: std::env::var("ARBX_GATE_MACRO_MEV_ENABLED")
                 .ok()
-                .and_then(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+                .and_then(|v| if matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on") { Some(true) } else { None })
                 .unwrap_or(true),
             confiscation_threshold: std::env::var("ARBX_MACRO_MEV_THRESHOLD")
                 .ok()
                 .and_then(|v| v.trim().parse::<f64>().ok())
-                .filter(|v| v.is_finite() && v >= 1.0)
+                .filter(|v| v.is_finite() && *v >= 1.0)
                 .unwrap_or(DEFAULT_CONFISCATION_THRESHOLD),
             confiscation_epsilon: std::env::var("ARBX_MACRO_MEV_EPSILON")
                 .ok()
                 .and_then(|v| v.trim().parse::<f64>().ok())
-                .filter(|v| v.is_finite() && v >= 0.0)
+                .filter(|v| v.is_finite() && *v >= 0.0)
                 .unwrap_or(DEFAULT_CONFISCATION_EPSILON),
             log_hits: std::env::var("ARBX_MACRO_MEV_LOG_HITS")
                 .ok()
-                .and_then(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+                .and_then(|v| if matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on") { Some(true) } else { None })
                 .unwrap_or(true),
         }
     }
@@ -184,6 +184,8 @@ pub struct MacroMevGate;
 
 impl GateLogic for MacroMevGate {
     type Config = MacroMevGateConfig;
+    type Candidate = OpportunityCandidate;
+    type EnergyState = GateEnergyState;
 
     fn new_config(_cfg: Self::Config) -> Self {
         Self
@@ -391,31 +393,15 @@ impl MacroMevContext {
     pub fn collect_payload(&self, outcome: GateOutcome) {
         if self.config.log_hits {
             // Logged to gate-commit stream (pure, stateless).
-            // NEW: Include energy state in telemetry
-            if let Some(energy) = &outcome.energy_state {
-                tracing::info!(
-                    event = "gate.gate_commit_energy",
-                    gate_identifier = "macro_mev_confiscation",
-                    rejected = outcome.reject,
-                    energy = energy.energy,
-                    hamiltonian = energy.hamiltonian,
-                    perturbation = energy.perturbation,
-                    reason = ?outcome.reason,
-                    mitigation = outcome.mitigation,
-                    can_override = outcome.can_override,
-                    gate_score_hash = outcome.gate_score_hash
-                );
-            } else {
-                tracing::info!(
-                    event = "gate.gate_commit",
-                    gate_identifier = "macro_mev_confiscation",
-                    rejected = outcome.reject,
-                    reason = ?outcome.reason,
-                    mitigation = outcome.mitigation,
-                    can_override = outcome.can_override,
-                    gate_score_hash = outcome.gate_score_hash
-                );
-            }
+            tracing::info!(
+                event = "gate.gate_commit",
+                gate_identifier = "macro_mev_confiscation",
+                rejected = outcome.reject,
+                reason = ?outcome.reason,
+                mitigation = outcome.mitigation,
+                can_override = outcome.can_override,
+                gate_score_hash = outcome.gate_score_hash
+            );
         }
     }
 }
