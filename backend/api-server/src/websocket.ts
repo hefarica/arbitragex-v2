@@ -6,6 +6,8 @@ import {
     runtimeAckBroadcastTotal,
     runtimeAckBroadcastLatencyMs,
 } from '@arbx/shared';
+import type { CarnotStore } from './services/carnotStore.js';
+import { registerCarnotWebSocket } from './websocket-carnot.js';
 
 // ---------------------------------------------------------------------------
 // Tipos públicos
@@ -208,7 +210,7 @@ function isValidConvergenceSignal(payload: unknown): payload is ConvergenceSigna
 // Gateway WebSocket
 // ---------------------------------------------------------------------------
 
-export function setupWebSocketGateway(server: HttpServer) {
+export function setupWebSocketGateway(server: HttpServer, carnotStore?: CarnotStore) {
     const allowed = parseAllowedOrigins();
     const io = new Server(server, {
         cors: {
@@ -250,6 +252,10 @@ export function setupWebSocketGateway(server: HttpServer) {
         };
         next();
     });
+
+    if (carnotStore) {
+        registerCarnotWebSocket(io, carnotStore, { info: (...args: any[]) => console.log(...args) });
+    }
 
     io.on('connection', (socket: any) => {
         console.log(`[WebSocket] Nuevo cliente conectado: ${socket.id}`);

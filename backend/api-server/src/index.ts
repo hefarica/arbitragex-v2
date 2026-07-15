@@ -1406,7 +1406,7 @@ app.get("/api/v1/readiness", async (req, res) => {
 // env var was absent.
 const PORT = Number(process.env["API_PORT"] ?? 8080);
 const httpServer = createServer(app);
-const io = setupWebSocketGateway(httpServer);
+const io = setupWebSocketGateway(httpServer, carnotStore);
 
 // OMEGA Health & Telemetry endpoints — léxico físico-matemático
 // Montar DESPUÉS de que pool/redis/io estén inicializados
