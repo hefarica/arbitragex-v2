@@ -56,6 +56,17 @@ jobs:
             COMPOSE_FILE="docker/compose.prod.yml"
             ENV_FILE=".env"
 
+            echo "[0/6] Ensuring env file exists..."
+            if [ ! -f "$ENV_FILE" ]; then
+              if [ -f ".env.example" ]; then
+                echo "Creating .env from .env.example"
+                cp .env.example "$ENV_FILE"
+              else
+                echo "WARNING: no .env or .env.example found, creating empty .env"
+                touch "$ENV_FILE"
+              fi
+            fi
+
             echo "[1/6] Stopping current stack..."
             docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down
 
