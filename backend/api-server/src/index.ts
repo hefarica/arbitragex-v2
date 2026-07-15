@@ -113,6 +113,7 @@ import { mountRiskCircuitBreakers } from "./routes/risk-circuit-breakers.js";
 import { mountAdminChains } from "./routes/admin-chains.js";
 import { mountSedStatus } from "./routes/sed-status.js";
 import { mountSystemManifest } from "./routes/system-manifest.js";
+import { mountLiveTestnet } from "./routes/live-testnet.js";
 import { mountWalletRoutes } from "./routes/wallet.js";
 import { createForkSimulator } from "./routes/wallet-sim-runtime.js";
 import { mountAuthSiwe } from "./routes/auth-siwe.js";
@@ -559,6 +560,12 @@ mountAdminChains(app, {
 mountPaperShadowMetrics(app, { pool, logger });
 mountForkStatus(app, { logger });
 mountOpportunitySimulate(app, { logger });
+mountLiveTestnet(app, {
+  logger,
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
+  readiness: async () => verifyAll({ pool }),
+});
 // RPC registry sync (Excel catalog → rpc_endpoints): public status + admin import/reload.
 // status is counts-only (ungated); import/reload are requireAdminToken-gated.
 mountRpcRegistry(app, { pool, redis, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN, logger });

@@ -1,0 +1,58 @@
+import { test, expect } from "@playwright/test";
+
+/**
+ * LT-HONEST: Live-testnet config surface must be honest.
+ *
+ * These tests assert that the new TS route returns:
+ *   - mode = LIVE_TESTNET
+ *   - paper_mode = true
+ *   - can_execute = false
+ *   - mainnet_blocked = true
+ *   - blockers are present (readiness decision still says NO_GO)
+ */
+
+test("LT-HONEST-001: GET /api/v1/live-testnet/config is honest", async ({ request }) => {
+  const res = await request.get("/api/v1/live-testnet/config");
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  expect(body.mode).toBe("LIVE_TESTNET");
+  expect(body.paper_mode).toBe(true);
+  expect(body.can_execute).toBe(false);
+  expect(body.mainnet_blocked).toBe(true);
+  expect(Array.isArray(body.allowed_chain_ids)).toBe(true);
+  expect(body.allowed_chain_ids).not.toContain(1);
+  expect(Array.isArray(body.blockers)).toBe(true);
+});
+
+test("LT-HONEST-002: POST /admin/config/live-testnet blocks mainnet", async ({ request }) => {
+  const res = await request.post("/admin/config/live-testnet", {
+    data: { enabled: true, chain_id: 1 },
+    headers: { "x-arbx-admin-token": "dev_admin_token_change_me_0123456789" },
+  });
+  expect(res.status()).toBe(403);
+  const body = await res.json();
+  expect(body.error).toBe("MAINNET_BLOCKED");
+});
+
+test("LT-HONEST-003: POST /admin/config/live-testnet rejects unsupported chain", async ({ request }) => {
+  const res = await request.post("/admin/config/live-testnet", {
+    data: { enabled: true, chain_id: 999999999 },
+    headers: { "x-arbx-admin-token": "dev_admin_token_change_me_0123456789" },
+  });
+  expect(res.status()).toBe(400);
+  const body = await res.json();
+  expect(body.error).toBe("UNSUPPORTED_CHAIN");
+});
+
+test("LT-HONEST-004: POST /admin/config/live-testnet accepts Sepolia and stays honest", async ({ request }) => {
+  const res = await request.post("/admin/config/live-testnet", {
+    data: { enabled: true, chain_id: 11155111 },
+    headers: { "x-arbx-admin-token": "dev_admin_token_change_me_0123456789" },
+  });
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  expect(body.mode).toBe("LIVE_TESTNET");
+  expect(body.paper_mode).toBe(true);
+  expect(body.can_execute).toBe(false);
+  expect(body.chain_id).toBe(11155111);
+});
