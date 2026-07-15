@@ -53,24 +53,27 @@ jobs:
             set -e
             cd "$DEPLOY_PATH"
 
+            COMPOSE_FILE="docker/compose.prod.yml"
+            ENV_FILE=".env"
+
             echo "[1/6] Stopping current stack..."
-            docker compose down
+            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down
 
             echo "[2/6] Pulling latest main..."
             git fetch origin main
             git reset --hard origin/main
 
             echo "[3/6] Building containers..."
-            docker compose build --no-cache
+            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --no-cache
 
             echo "[4/6] Starting new stack..."
-            docker compose up -d --force-recreate --remove-orphans
+            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --force-recreate --remove-orphans
 
             echo "[5/6] Waiting for services..."
             sleep 20
 
             echo "[6/6] Health check..."
-            docker compose ps
+            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
             curl -sf http://127.0.0.1:3000/health || echo "api-server health not ready yet"
             curl -sf http://127.0.0.1:8787/health || echo "edge health not ready yet"
 
