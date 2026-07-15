@@ -23,6 +23,7 @@ pub mod persistence;
 pub mod pool_candidate;
 pub mod pool_discovery;
 pub mod pool_sources;
+pub mod shared;
 pub mod publisher;
 pub mod reserves;
 pub mod route_api;
