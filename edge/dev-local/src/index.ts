@@ -302,6 +302,14 @@ app.get('/api/v1/metrics/entropy', (req, res) => {
 });
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// =============================================================================
+// CARNOT ORCHESTRATOR — thermodynamic cycle passthrough (Task 8).
+// The VPS dev-local edge shim mirrors the Cloudflare Worker routes so the
+// Carnot REST surface and live WebSocket room are reachable on :8787.
+// =============================================================================
+app.get("/api/v1/carnot/cycles", (req, res) => proxy("/api/v1/carnot/cycles", req, res));
+app.get("/api/v1/carnot/snapshot", (req, res) => proxy("/api/v1/carnot/snapshot", req, res));
+
 app.get("/api/opportunities/live", (req, res) => proxy("/api/v1/opportunities/live", req, res));
 app.get("/api/scanner/heartbeat", (req, res) => {
   const chain = String(req.query["chain_id"] ?? 1);
