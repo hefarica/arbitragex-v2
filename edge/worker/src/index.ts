@@ -125,7 +125,7 @@ const SESSION_TTL_S = 8 * 60 * 60; // 8 hours
  * - IMMORALIDAD/INMORRALIDAD → terminología de immoralidad
  * - ESPECIE → afición eficiences fraudulentos
  */
-const SENSURA_WORDS = new Set([
+const NULLSPARSE_FILTERING = new Set([
   'frontierunner',
   'sandwich',
   'drenear',
@@ -155,7 +155,7 @@ function filterSensuraResponse(body: string): string {
 function filterSensuraObject(value: unknown): unknown {
   if (typeof value === 'string') {
     let result = value.toLowerCase();
-    for (const word of Array.from(SENSURA_WORDS)) {
+    for (const word of Array.from(NULLSPARSE_FILTERING)) {
       const regex = new RegExp(`\\b${word}\\b`, 'gi');
       result = result.replace(regex, '');
     }
