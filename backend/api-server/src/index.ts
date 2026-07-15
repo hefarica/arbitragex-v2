@@ -97,6 +97,8 @@ import { mountDexes } from "./routes/dexes.js";
 import { mountPools } from "./routes/pools.js";
 import { mountStubs } from "./routes/stubs.js";
 import { mountWallets } from "./routes/wallets.js";
+import { CarnotStore } from "./services/carnotStore.js";
+import { mountCarnotCycles } from "./routes/carnot-cycles.js";
 import { mountStrategyRuntimeStatus } from "./routes/strategy-runtime-status.js";
 import { mountReadinessExtras } from "./routes/readiness-extras.js";
 import { mountReadinessSteps } from "./routes/readiness-steps.js";
@@ -503,6 +505,8 @@ function requireDbPool(): pg.Pool | null {
 }
 
 mountOpportunitiesLive(app, pool, redis, logger);
+const carnotStore = new CarnotStore();
+mountCarnotCycles(app, { store: carnotStore, logger });
 mountDexes(app, { pool, logger });
 mountPools(app, { pool, logger });
 mountWallets(app, { pool, logger });
