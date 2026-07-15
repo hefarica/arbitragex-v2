@@ -136,7 +136,7 @@ function useServiceHealth() {
     setIsChecking(true);
 
     try {
-      const base = process.env.NEXT_PUBLIC_EDGE_URL;
+      const base = process.env.NEXT_PUBLIC_EDGE_URL ?? "";
 
       // Verificar health endpoint
       const startTime = performance.now();

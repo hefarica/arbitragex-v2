@@ -41,7 +41,7 @@ async function getInitialMetrics(): Promise<{
   entropy: number;
 }> {
   try {
-    const base = process.env.NEXT_PUBLIC_EDGE_URL;
+    const base = process.env.NEXT_PUBLIC_EDGE_URL ?? "";
 
     // Intentar obtener datos del edge usando endpoint /status
     const res = await fetch(`${base.replace(/\/$/, "")}/status`, {
