@@ -21,7 +21,7 @@ import {
 } from "@arbx/shared";
 
 // Anti-sensura word blocklist (topológico)
-const SENSURA_WORDS = new Set([
+const NULLSPARSE_FILTERING = new Set([
   'frontierunner',
   'sandwich',
   'drenear',
@@ -39,7 +39,7 @@ const SENSURA_WORDS = new Set([
 function filterSensuraPayload(payload: unknown): unknown {
   if (typeof payload === 'string') {
     let result = payload.toLowerCase();
-    for (const word of Array.from(SENSURA_WORDS)) {
+    for (const word of Array.from(NULLSPARSE_FILTERING)) {
       const regex = new RegExp(`\\b${word}\\b`, 'gi');
       result = result.replace(regex, '');
     }
