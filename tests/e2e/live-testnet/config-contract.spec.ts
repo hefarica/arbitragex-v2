@@ -5,7 +5,12 @@ import { test, expect } from "@playwright/test";
  *
  * These tests protect against accidental regressions in the response shape
  * consumed by `frontend/hooks/useLiveTestnetStatus.ts`.
+ *
+ * The admin token is read from ARBX_ADMIN_TOKEN env var so CI can run against
+ * a real deployment without hardcoding secrets.
  */
+
+const ADMIN_TOKEN = process.env["ARBX_ADMIN_TOKEN"] ?? "dev_admin_token_change_me_0123456789";
 
 test("LT-CONTRACT-001: GET response contains required fields", async ({ request }) => {
   const res = await request.get("/api/v1/live-testnet/config");
@@ -33,4 +38,16 @@ test("LT-CONTRACT-002: POST without admin token is rejected", async ({ request }
     data: { enabled: true, chain_id: 11155111 },
   });
   expect(res.status()).toBe(401);
+});
+
+test("LT-CONTRACT-003: POST with admin token returns contract shape", async ({ request }) => {
+  const res = await request.post("/admin/config/live-testnet", {
+    data: { enabled: true, chain_id: 11155111 },
+    headers: { "x-arbx-admin-token": ADMIN_TOKEN },
+  });
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  expect(body.mode).toBe("LIVE_TESTNET");
+  expect(typeof body.chain_id).toBe("number");
+  expect(Array.isArray(body.allowed_chain_ids)).toBe(true);
 });

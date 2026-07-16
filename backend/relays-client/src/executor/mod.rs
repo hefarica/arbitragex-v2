@@ -126,3 +126,75 @@ impl Default for ExecutorConfig {
         }
     }
 }
+
+/// Execution receipt for a paper-shadow / testnet opportunity.
+/// `tx_hash` is None because the executor never broadcasts in testnet mode.
+#[derive(Debug, Clone)]
+pub struct ExecutionReceipt {
+    pub plan_hash: H256,
+    pub status: &'static str,
+    pub tx_hash: Option<H256>,
+    pub gas_used: Option<U256>,
+    pub error: Option<ExecutionError>,
+}
+
+impl LiveTestnetExecutor {
+    /// Construct a paper-shadow executor. No broadcast keys are required.
+    pub fn new(
+        _provider: Arc<Provider<Http>>,
+        _wallet: LocalWallet,
+        chain_id: u64,
+        opportunity_rx: mpsc::Receiver<ExecutionOpportunity>,
+        event_tx: mpsc::Sender<ExecutionEvent>,
+        config: ExecutorConfig,
+    ) -> Self {
+        Self {
+            provider: _provider,
+            wallet: _wallet,
+            chain_id,
+            nonce_manager: Arc::new(RwLock::new(NonceManager::new())),
+            pending_txs: Arc::new(RwLock::new(HashMap::new())),
+            opportunity_rx,
+            event_tx,
+            config,
+            idempotency: IdempotencyChecker::new(),
+        }
+    }
+
+    /// Safe testnet entry point. Always returns a paper-shadow receipt and
+    /// never submits a transaction to the network.
+    pub async fn execute_testnet_opportunity(
+        &self,
+        opportunity: &ExecutionOpportunity,
+    ) -> Result<ExecutionReceipt, ExecutionError> {
+        let _ = self
+            .idempotency
+            .check_or_insert(opportunity.plan_hash)
+            .await
+            .map_err(|e| ExecutionError::IdempotencyError(e.to_string()))?;
+
+        let receipt = ExecutionReceipt {
+            plan_hash: opportunity.plan_hash,
+            status: "paper_shadow_noop",
+            tx_hash: None,
+            gas_used: None,
+            error: None,
+        };
+
+        let _ = self
+            .event_tx
+            .send(ExecutionEvent::StateTransition {
+                plan_hash: opportunity.plan_hash,
+                from: ExecutionState::Approved,
+                to: ExecutionState::Finalized,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            })
+            .await
+            .map_err(|_| ExecutionError::EventChannelClosed)?;
+
+        Ok(receipt)
+    }
+}

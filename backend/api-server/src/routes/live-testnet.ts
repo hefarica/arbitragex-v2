@@ -15,6 +15,7 @@
  * Endpoints:
  *   GET  /api/v1/live-testnet/config
  *   POST /admin/config/live-testnet   (admin token required)
+ *   GET  /api/live-testnet/events     (public SSE telemetry stream)
  */
 
 import type { Application, Request, Response } from "express";
@@ -85,10 +86,46 @@ async function buildConfig(enabled: boolean, chainId: number, readiness: Deps["r
   };
 }
 
+function sendSse(res: Response, event: string, data: unknown): void {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
 export function mountLiveTestnet(app: Application, deps: Deps): void {
   app.get("/api/v1/live-testnet/config", async (_req: Request, res: Response) => {
     const cfg = await buildConfig(true, TESTNET_CHAIN_IDS[0] ?? 11155111, deps.readiness);
     res.status(200).json(cfg);
+  });
+
+  // Public SSE telemetry stream. Emits config snapshot + periodic pings.
+  // No admin token required — all data is read-only and non-secret.
+  app.get("/api/live-testnet/events", async (req: Request, res: Response) => {
+    const requestedChainId = Number(req.query["chain_id"]);
+    const chainId = Number.isFinite(requestedChainId) && requestedChainId > 1 ? requestedChainId : (TESTNET_CHAIN_IDS[0] ?? 11155111);
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
+    const cfg = await buildConfig(true, chainId, deps.readiness);
+    sendSse(res, "connected", { mode: cfg.mode, chain_id: cfg.chain_id, ts: Date.now() });
+
+    const intervalMs = Number(process.env["LIVE_TESTNET_SSE_INTERVAL_MS"] ?? 5000);
+    const intervalHandle = setInterval(() => {
+      sendSse(res, "ping", { type: "ping", chain_id: chainId, ts: Date.now() });
+    }, intervalMs);
+
+    req.on("close", () => {
+      clearInterval(intervalHandle);
+      res.end();
+    });
+
+    req.on("error", () => {
+      clearInterval(intervalHandle);
+      res.end();
+    });
   });
 
   app.post(
