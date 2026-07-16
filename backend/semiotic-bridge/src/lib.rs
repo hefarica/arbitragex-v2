@@ -4,8 +4,7 @@ pub mod api;
 pub mod errors;
 
 pub use api::create_router;
-pub use types::{TranslationRequest, TranslationResponse, InputSanitizer};
-pub use formulas::{SVD, RFD, HBA, IES, DCL};
+pub use types::{TranslationRequest, TranslationResponse, FormulaType, InputSanitizer};
 pub use errors::SemioticError;
 
 static WORD_TO_FORMULA_MAP: &[(&str, FormulaType)] = &[

@@ -1,4 +1,5 @@
-use crate::types::{FormulaType, CalcInputs, SemioticError};
+use crate::types::{FormulaType, CalcInputs};
+use crate::errors::SemioticError;
 
 pub fn singular_value_extraction(_inputs: &CalcInputs) -> Result<f64, SemioticError> {
     let duration = _inputs.volume * _inputs.threshold;
@@ -26,8 +27,9 @@ pub fn hysteresis_loop(_inputs: &CalcInputs) -> Result<f64, SemioticError> {
 
 pub fn entropy_inflation(_inputs: &CalcInputs) -> Result<f64, SemioticError> {
     let volume = _inputs.volume.max(1e-9);
-    let numerator = (_inputs.threshold * volume).exp();
-    let denominator = (_inputs.threshold * volume).exp().sum();
+    let theta_v = _inputs.threshold * volume;
+    let numerator = theta_v.exp();
+    let denominator = numerator + 1.0; // Two-state partition function
     Ok(numerator / denominator)
 }
 

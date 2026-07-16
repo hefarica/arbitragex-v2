@@ -2,8 +2,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum SemioticError {
-    #[error("Invalid input: {source}")]
-    InvalidInput { source: String },
+    #[error("Invalid input: {input}")]
+    InvalidInput { input: String },
 
     #[error("Formula computation failed: {details}")]
     ComputationFailed { details: String },

@@ -1,6 +1,6 @@
 use axum::{routing::get, Router, Json, extract::Query};
 use std::collections::HashMap;
-use crate::types::{TranslationRequest, TranslationResponse, FormulaType, InputSanitizer};
+use crate::types::{TranslationResponse, FormulaType, InputSanitizer};
 
 pub fn create_router() -> Router {
     Router::new()
