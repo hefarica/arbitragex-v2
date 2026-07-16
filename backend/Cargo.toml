@@ -21,6 +21,8 @@ members = [
     # + kill-switch + 501 prereq); math bodies (filtration, eigenstate,
     # allocator, hedger) defer to Phase 2.
     "sed-core",
+    # Fact-Forcing Gate Semiotic-Translation — english to math translations
+    "semiotic-bridge",
 ]
 
 [workspace.package]
