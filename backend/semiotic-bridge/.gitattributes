@@ -1,0 +1,4 @@
+# PROTECTION: Never mark as generated/hidden
+PROTECTION.md linguist-generated=false
+Cargo.toml linguist-generated=false
+src/**/*.rs linguist-generated=false
