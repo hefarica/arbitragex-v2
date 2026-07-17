@@ -1,6 +1,8 @@
 import type pg from "pg";
 import { Redis } from "ioredis";
 import type { ReadinessItem } from "../types.js";
+import { resolvePaperModeState, type PaperModeState } from "../paper-mode-state.js";
+import { gradePaperReadiness, type PaperAccumulationState } from "../paper-mode-readiness.js";
 
 const DEFAULT_REDIS = process.env["REDIS_URL"] ?? "redis://redis:6379";
 
@@ -44,49 +46,20 @@ export async function verifyGPAP1(opts?: {
     verified_at,
   };
 
-  // Layer 1: paper-mode enabled.
+  // Layer 1: resolve canonical paper-mode authority from Redis.
   const redis = new Redis(redisUrl, {
     lazyConnect: true,
     maxRetriesPerRequest: 1,
     connectTimeout: 2000,
   });
-  let paper_mode_enabled = false;
-  let paper_mode_source = "none";
-  const parseEnabled = (raw: string): boolean => {
-    try {
-      const j = JSON.parse(raw) as { enabled?: boolean };
-      return !!j.enabled;
-    } catch {
-      // bare key (legacy) — treat string "1"/"true" as enabled
-      return raw === "1" || raw === "true";
-    }
-  };
+  let authority: PaperModeState;
   try {
     await redis.connect();
-    // Legacy global key (pre-B0.2 writers).
-    const raw = await redis.get("arbx:papermode");
-    if (raw && parseEnabled(raw)) {
-      paper_mode_enabled = true;
-      paper_mode_source = "arbx:papermode (legacy global)";
-    }
-    // B0.2 (2026-05-13) made POST /admin/config/paper-mode write PER-CHAIN keys
-    // (arbx:papermode:{chain_id}) and stop writing the global key — this verifier
-    // kept reading only the global, so the gate could NEVER flip via the current
-    // writer. Honest fix: ALSO accept any per-chain enabled=true. The gate is not
-    // weakened — Layers 2-3 (pipeline alive + ≥7d accumulation) still apply.
-    if (!paper_mode_enabled) {
-      const chainKeys = (await redis.keys("arbx:papermode:*")).filter(
-        (k) => !k.endsWith(":changes"),
-      );
-      for (const k of chainKeys) {
-        const v = await redis.get(k);
-        if (v && parseEnabled(v)) {
-          paper_mode_enabled = true;
-          paper_mode_source = k;
-          break;
-        }
-      }
-    }
+    authority = await resolvePaperModeState({
+      redis: { mget: async (...keys: string[]) => redis.mget(...keys) },
+      env: process.env,
+      enabledChainIds: [1],
+    });
   } catch (e) {
     return {
       ...base,
@@ -95,13 +68,6 @@ export async function verifyGPAP1(opts?: {
     };
   } finally {
     redis.disconnect();
-  }
-  if (!paper_mode_enabled) {
-    return {
-      ...base,
-      status: "red",
-      reason: "paper-mode is OFF — paper-shadow accumulation is not happening",
-    };
   }
 
   // Layer 2 + 3: pipeline alive + age computation.
@@ -144,34 +110,30 @@ export async function verifyGPAP1(opts?: {
     };
   }
 
-  if (first_row_age_days == null) {
-    return {
-      ...base,
-      status: "red",
-      reason: "paper-mode ON but opportunities table is empty — pipeline never produced a detection",
-    };
-  }
-  if (recent_count === 0) {
-    return {
-      ...base,
-      status: "yellow",
-      reason: `paper-mode ON, oldest detection ${first_row_age_days.toFixed(1)}d ago, but 0 detections in the past 7 days — pipeline appears stalled`,
-    };
-  }
-  if (first_row_age_days < minDays) {
-    const remaining = minDays - first_row_age_days;
-    return {
-      ...base,
-      status: "yellow",
-      reason: `paper-mode running ${first_row_age_days.toFixed(1)}/${minDays}d (${remaining.toFixed(1)}d remaining); ${recent_count} detections in last 7d, last ${(last_row_age_hours ?? 0).toFixed(1)}h ago`,
-      evidence: { kind: "db_query", ref: "MIN(detected_at) FROM opportunities" },
-    };
-  }
+  const accumulation: PaperAccumulationState = {
+    days_accumulated: first_row_age_days ?? 0,
+    recent_opportunities: recent_count,
+    last_opportunity_at:
+      last_row_age_hours != null
+        ? new Date(Date.now() - last_row_age_hours * 3600_000).toISOString()
+        : null,
+    pipeline_active: recent_count > 0,
+    degraded: authority.degraded,
+    reasons: authority.reasons,
+  };
+
+  const grade = gradePaperReadiness(authority, accumulation);
+
+  const suffix =
+    first_row_age_days != null
+      ? `; ${recent_count} detections in last 7d, last ${(last_row_age_hours ?? 0).toFixed(1)}h ago · authority: ${authority.confidence}`
+      : "";
+  const reason = `${grade.reason}${suffix}`;
 
   return {
     ...base,
-    status: "green",
-    reason: `paper-mode running ${first_row_age_days.toFixed(1)}d (≥${minDays}d threshold); ${recent_count} detections in last 7d, last ${(last_row_age_hours ?? 0).toFixed(1)}h ago · papermode source: ${paper_mode_source}`,
+    status: grade.status,
+    reason,
     evidence: { kind: "db_query", ref: "MIN(detected_at) FROM opportunities" },
   };
 }

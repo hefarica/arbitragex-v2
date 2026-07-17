@@ -32,8 +32,10 @@
 
 import type { Application, Request, Response } from "express";
 import type pg from "pg";
+import type { Redis } from "ioredis";
 
 import { loadTopologySnapshot, type TopologySnapshot } from "./topology-vault.js";
+import { resolvePaperModeState } from "../readiness/paper-mode-state.js";
 
 // ---------------------------------------------------------------------------
 // Wire contract — frontend Zod schema mirrors these exactly.
@@ -444,9 +446,13 @@ async function gatherMarkets(
   }
 }
 
-function isPaperMode(): boolean {
-  const v = process.env["ARBX_TRADE_MODE"];
-  return v === undefined ? true : v === "paper";
+async function isPaperMode(redis: Redis | null): Promise<boolean> {
+  const authority = await resolvePaperModeState({
+    redis,
+    env: process.env,
+    enabledChainIds: [1],
+  });
+  return authority.enabled;
 }
 
 function isShadowMode(): boolean {
@@ -456,10 +462,13 @@ function isShadowMode(): boolean {
 
 async function gatherEngines(
   pool: pg.Pool | null,
+  redis: Redis | null,
   logger: { warn: (obj: object, msg?: string) => void },
 ): Promise<EnginesInput> {
-  const paperMode = isPaperMode();
-  const shadowMode = isShadowMode();
+  const [paperMode, shadowMode] = await Promise.all([
+    isPaperMode(redis),
+    Promise.resolve(isShadowMode()),
+  ]);
   if (!pool) return { enginesActive: [], paperMode, shadowMode, dbError: true };
   try {
     const exists = await pool.query("SELECT to_regclass('public.trading_config') IS NOT NULL AS ok");
@@ -500,14 +509,18 @@ export const __forTesting = {
 
 export function mountReadinessSteps(
   app: Application,
-  deps: { pool: pg.Pool | null; logger: { warn: (obj: object, msg?: string) => void } },
+  deps: {
+    pool: pg.Pool | null;
+    redis: Redis | null;
+    logger: { warn: (obj: object, msg?: string) => void };
+  },
 ): void {
   app.get("/api/v1/readiness/steps", async (_req: Request, res: Response) => {
     try {
       const [topology, markets, engines] = await Promise.all([
         gatherTopology(),
         gatherMarkets(deps.pool, deps.logger),
-        gatherEngines(deps.pool, deps.logger),
+        gatherEngines(deps.pool, deps.redis, deps.logger),
       ]);
       const credentials = gatherCredentials();
       const steps = assembleSteps({ topology, credentials, markets, engines });

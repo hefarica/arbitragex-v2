@@ -121,7 +121,7 @@ export async function resolvePaperModeState(
   const anyPerChain = perChainRaws.some((r) => r !== null);
 
   for (let i = 0; i < enabledChainIds.length; i++) {
-    const chainId = enabledChainIds[i];
+    const chainId = enabledChainIds[i]!;
     const raw = perChainRaws[i] ?? null;
     const enabled = parseEnabled(raw);
     const updatedAt = parseUpdatedAt(raw);
@@ -239,7 +239,7 @@ export async function resolvePaperModeState(
     c.conflict = (anyOn && anyOff) || (!c.enabled && archiverOn);
   }
 
-  const aggregateChainId = targetChainId ?? (chains.length === 1 ? chains[0].chain_id : null);
+  const aggregateChainId = targetChainId ?? (chains.length === 1 ? chains[0]!.chain_id : null);
 
   if (allEnabled && !anyOff && reasons.length === 0 && !degraded) {
     reasons.push("all chains report paper mode enabled");

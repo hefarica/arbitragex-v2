@@ -36,9 +36,11 @@
 
 import type { Application, Request, Response } from "express";
 import type pg from "pg";
+import type { Redis } from "ioredis";
 
 import { verifyAll } from "../readiness/verifiers/index.js";
 import type { ReadinessItem } from "../readiness/types.js";
+import { resolvePaperModeState } from "../readiness/paper-mode-state.js";
 
 // ---------------------------------------------------------------------------
 // Types — wire contract for the two endpoints. Frontend Zod schemas mirror
@@ -414,6 +416,7 @@ function doctrinalBlockers(): Blocker[] {
 
 async function collectBlockers(deps: {
   pool: pg.Pool | null;
+  redis: Redis | null;
 }): Promise<{ blockers: Blocker[]; paperMode: boolean }> {
   const env = envBlockers();
   const doc = doctrinalBlockers();
@@ -423,9 +426,12 @@ async function collectBlockers(deps: {
   try {
     const report = await verifyAll({ pool: deps.pool });
     readinessBlockers = readinessItemsToBlockers(report.items);
-    paperMode = process.env["ARBX_TRADE_MODE"] !== undefined
-      ? process.env["ARBX_TRADE_MODE"] === "paper"
-      : true;
+    const authority = await resolvePaperModeState({
+      redis: deps.redis,
+      env: process.env,
+      enabledChainIds: [1],
+    });
+    paperMode = authority.enabled;
   } catch {
     // verifyAll failed — DO NOT swallow; surface as a single blocker. This
     // preserves R8: we never pretend readiness was green when it failed.
@@ -488,11 +494,15 @@ export const __forTesting = {
 
 export function mountReadinessExtras(
   app: Application,
-  deps: { pool: pg.Pool | null; logger: { warn: (obj: object, msg?: string) => void } },
+  deps: {
+    pool: pg.Pool | null;
+    redis: Redis | null;
+    logger: { warn: (obj: object, msg?: string) => void };
+  },
 ): void {
   app.get("/api/v1/readiness/blockers", async (_req: Request, res: Response) => {
     try {
-      const { blockers } = await collectBlockers({ pool: deps.pool });
+      const { blockers } = await collectBlockers({ pool: deps.pool, redis: deps.redis });
       const summary = summarize(blockers);
       const response: BlockersResponse = {
         generated_at: new Date().toISOString(),
@@ -510,7 +520,7 @@ export function mountReadinessExtras(
 
   app.get("/api/v1/readiness/decision", async (_req: Request, res: Response) => {
     try {
-      const { blockers, paperMode } = await collectBlockers({ pool: deps.pool });
+      const { blockers, paperMode } = await collectBlockers({ pool: deps.pool, redis: deps.redis });
       const summary = summarize(blockers);
 
       const a4Blocker = blockers.find((b) => b.id === "a4_fork_real_not_executed");
