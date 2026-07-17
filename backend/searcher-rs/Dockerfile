@@ -31,6 +31,7 @@ COPY sim-core ./sim-core
 # with "failed to load manifest for workspace member /build/token-enricher".
 COPY token-enricher ./token-enricher
 COPY sed-core ./sed-core
+COPY semiotic-bridge ./semiotic-bridge
 # mcp-sim-engine: workspace member (9a45a96). Never a build target here, but the
 # workspace resolver requires its manifest to be present, else `cargo build -p
 # searcher-rs` fails "failed to load manifest for workspace member

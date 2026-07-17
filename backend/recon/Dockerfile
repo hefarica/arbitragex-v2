@@ -16,6 +16,7 @@ COPY simulator-v2 ./simulator-v2
 COPY sim-core ./sim-core
 COPY token-enricher ./token-enricher
 COPY sed-core ./sed-core
+COPY semiotic-bridge ./semiotic-bridge
 # mcp-sim-engine: workspace member (9a45a96); manifest required by the resolver
 # even though it is never built here, else "failed to load manifest" aborts.
 COPY mcp-sim-engine ./mcp-sim-engine
