@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! arbx-sim-engine — local MCP (stdio) server for ArbitrageX v2.
 //!
 //! Exposes the REAL `searcher-rs` kernels to Claude as MCP tools so route
