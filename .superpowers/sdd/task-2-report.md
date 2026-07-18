@@ -1,96 +1,36 @@
-# Task 2 Report: Optimizar searcher-rs Pipeline de Detección
+# Task 2 Report: Readiness Evaluator (Authority + Accumulation)
 
-## Summary
+## Status
+COMPLETE — 5/5 tests passing, committed.
 
-Implemented `HotPathEmitter` for sub-100ms detection pipeline as specified in Task 2 brief.
+## Commits
+- `b579056` feat(readiness): add PaperMode readiness evaluator (Task 2)
 
 ## Files Created
+- `backend/api-server/src/readiness/paper-mode-readiness.ts`
+- `backend/api-server/src/readiness/paper-mode-readiness.test.ts`
 
-- `backend/searcher-rs/src/hot_path_emitter.rs` — New module implementing the hot path emitter
-
-## Files Modified
-
-- `backend/searcher-rs/src/lib.rs` — Added `pub mod hot_path_emitter;`
-
-## Implementation Details
-
-### HotPathEmitter (`hot_path_emitter.rs`)
-
-The emitter provides two main methods:
-
-1. **`emit_detected`** — Emits opportunities to `arbx:hot:detected` stream
-   - Fields: `id`, `chain_id`, `strategy_kind`, `detected_at_ms`
-   - Stores full opportunity data at `arbx:hot:opp:{id}` with 300s TTL
-   - Uses approximate maxlen ~10,000 for stream trimming
-
-2. **`emit_simulated`** — Emits simulation results to `arbx:hot:simulated` stream
-   - Fields: `id`, `status` ("passed"/"failed"), `net_profit_wei`, `gas_used`, `timestamp_ms`
-   - Stores full result at `arbx:hot:sim:{id}` with 300s TTL (only on passed)
-   - Uses approximate maxlen ~5,000 for stream trimming
-
-### Supporting Types
-
-- `SimulationResult` — Local mirror of `SimulationOutcome` to avoid deep trait coupling
-- `strategy_kind_to_str` — Converts `StrategyKind` to canonical snake_case strings
-
-### Design Compliance
-
-- **R8 Fail-Honest**: Redis errors propagate as `Err`, never silently dropped
-- **Latency Budget**: Clone-on-call pattern for tokio-redis (recommended for <5ms emit)
-- **Observer-Only**: No capital keys access, pure emitter logic
-- **OMEGA Lexicon**: No DeFi jargon used (physical topology terminology ready)
-
-## Compilation Status
-
-- Syntax check: **PASSED** (`rustfmt --edition 2021`)
-- Full build: **BLOCKED** by pre-existing workspace dependency issues (ethers_core crate resolution)
-  - Error is in `ethers-contract-abigen` and `ethers-signers` crates, not in new code
-  - This is a known workspace issue unrelated to Task 2 changes
-
-## Commands Executed
-
-```bash
-# Syntax verification
-rustfmt --edition 2021 --check src/hot_path_emitter.rs
-
-# Compilation attempt (blocked by workspace deps)
-cargo check --lib --no-default-features 2>&1 | head -50
+## Test Summary
+```
+✓ src/readiness/paper-mode-readiness.test.ts (5 tests)
+  ✓ GREEN when explicit + >=7d + pipeline active
+  ✓ YELLOW when explicit + <7d
+  ✓ RED when conflict
+  ✓ YELLOW when inferred + pipeline active
+  ✓ YELLOW when explicit_legacy (never green)
 ```
 
-## Acceptance Criteria Status
-
-| Criteria | Status |
-|----------|--------|
-| HotPathEmitter creado con métodos emit_detected y emit_simulated | ✅ |
-| Emite a arbx:hot:detected post-detección | ✅ (API ready) |
-| Emite a arbx:hot:simulated post-simulación | ✅ (API ready) |
-| Compila sin errores | ⚠️ Blocked by workspace deps (not code issues) |
-| Commiteado | ⏳ Pending |
-
-## Integration Notes for Future Tasks
-
-The `HotPathEmitter` is designed to be integrated in `scanner.rs` where:
-1. `emit_detected` should be called after opportunity creation (around line 2196+)
-2. `emit_simulated` should be called after `dispatch_orchestrator_and_classify` returns
-
-Example integration pattern:
-```rust
-if let Some(ref emitter) = hot_path_emitter {
-    let _ = emitter.emit_detected(&opportunity).await;
-    
-    if sim_status_str == "SIM_SUCCESS" {
-        let sim_result = SimulationResult {
-            passed: true,
-            net_profit_wei: outcome.simulated_profit_token_in.as_u128(),
-            gas_used: outcome.gas_used_total,
-        };
-        let _ = emitter.emit_simulated(&opportunity.id.to_string(), &sim_result).await;
-    }
-}
-```
+## Implementation Notes
+- `gradePaperReadiness` consumes `PaperModeState` and `PaperAccumulationState`.
+- Evaluation follows the exact precedence in the brief:
+  1. `authority.conflict === true` -> RED
+  2. `authority.enabled === false` -> RED
+  3. `explicit` + `>= 7 days` + `pipeline_active` -> GREEN
+  4. `explicit` + stalled pipeline -> YELLOW
+  5. `explicit` + `< 7 days` -> YELLOW
+  6. `explicit_legacy`, `inferred`, `default_safe`, `observed` -> YELLOW max
+- Reason strings match the brief labels for the tested branches.
+- No existing files were modified.
 
 ## Concerns
-
-1. **Workspace Build Issues**: The backend/searcher-rs crate has pre-existing dependency resolution issues with ethers_core. This needs to be resolved for full compilation.
-
-2. **Integration Pending**: The actual integration into scanner.rs dispatch flow is documented but not implemented, as the task brief focused on creating the emitter module.
+- None. This is read-only/paper-shadow grading logic with no live trading path.

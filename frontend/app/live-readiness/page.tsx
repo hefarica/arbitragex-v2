@@ -21,6 +21,7 @@ import { ForkValidationPanel } from "@/components/ForkValidationPanel";
 import { PaperShadowPanel } from "@/components/PaperShadowPanel";
 import { DegradedBanner } from "@/components/DegradedBanner";
 import { SourceMeta } from "@/components/SourceMeta";
+import { GSimSmokeTestCard } from "@/components/readiness/GSimSmokeTestCard";
 
 // ─── Aesthetic helpers ───────────────────────────────────────────────────
 
@@ -355,6 +356,7 @@ export default function LiveReadinessPage() {
           <ForkValidationPanel />
           <PaperShadowPanel />
         </div>
+        <GSimSmokeTestCard />
         <AgentTeamsPanel />
         <ConfidenceScoringPanel />
         <RiskCircuitPanel />

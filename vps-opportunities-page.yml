@@ -1,0 +1,257 @@
+- generic [active] [ref=f1e1]:
+  - link "Skip to main content" [ref=f1e2] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=f1e4]:
+    - banner [ref=f1e5]:
+      - generic [ref=f1e6]:
+        - link "ARBITRAGEX" [ref=f1e7] [cursor=pointer]:
+          - /url: /
+        - generic [ref=f1e16]:
+          - generic [ref=f1e17]: Quantum Research Terminal
+          - generic [ref=f1e18]: ·
+          - generic [ref=f1e19]: Topological Yield Engine
+        - generic [ref=f1e20]:
+          - generic [ref=f1e21]: PAPER · TLS SHADOW
+          - generic [ref=f1e23]: KILL-SWITCH <10MS
+          - 'generic "Live opportunity stream status: POLLING" [ref=f1e26]': POLLING
+          - code [ref=f1e28]
+          - button "Switch to light mode" [ref=f1e29]
+    - generic [ref=f1e30]:
+      - complementary [ref=f1e31]:
+        - button "Collapse sidebar" [ref=f1e32]
+        - generic [ref=f1e36]:
+          - generic [ref=f1e37]:
+            - generic [ref=f1e38]: Pipeline
+            - list [ref=f1e39]:
+              - listitem [ref=f1e40]:
+                - link "Home" [ref=f1e41] [cursor=pointer]:
+                  - /url: /
+              - listitem [ref=f1e46]:
+                - link "System status" [ref=f1e47] [cursor=pointer]:
+                  - /url: /status
+              - listitem [ref=f1e51]:
+                - link "Opportunities" [ref=f1e52] [cursor=pointer]:
+                  - /url: /opportunities
+              - listitem [ref=f1e60]:
+                - link "By strategy" [ref=f1e61] [cursor=pointer]:
+                  - /url: /opportunities/by-strategy
+              - listitem [ref=f1e67]:
+                - link "Executions" [ref=f1e68] [cursor=pointer]:
+                  - /url: /executions
+              - listitem [ref=f1e72]:
+                - link "Paper history" [ref=f1e73] [cursor=pointer]:
+                  - /url: /paper/history
+              - listitem [ref=f1e77]:
+                - link "Recon & yield" [ref=f1e78] [cursor=pointer]:
+                  - /url: /recon
+              - listitem [ref=f1e83]:
+                - link "Operations metrics" [ref=f1e84] [cursor=pointer]:
+                  - /url: /operations
+              - listitem [ref=f1e89]:
+                - link "Route outcomes" [ref=f1e90] [cursor=pointer]:
+                  - /url: /route-outcomes
+              - listitem [ref=f1e96]:
+                - link "Route discovery" [ref=f1e97] [cursor=pointer]:
+                  - /url: /routes/discovery
+              - listitem [ref=f1e106]:
+                - link "SED Pipeline" [ref=f1e107] [cursor=pointer]:
+                  - /url: /sed
+              - listitem [ref=f1e111]:
+                - link "Agent insights" [ref=f1e112] [cursor=pointer]:
+                  - /url: /agent-insights
+              - listitem [ref=f1e117]:
+                - link "Worker health" [ref=f1e118] [cursor=pointer]:
+                  - /url: /worker-health
+          - generic [ref=f1e123]:
+            - generic [ref=f1e124]: Risk & Control
+            - list [ref=f1e125]:
+              - listitem [ref=f1e126]:
+                - link "Entropy & alerts" [ref=f1e127] [cursor=pointer]:
+                  - /url: /risk
+              - listitem [ref=f1e131]:
+                - link "Kill-switch" [ref=f1e132] [cursor=pointer]:
+                  - /url: /killswitch
+              - listitem [ref=f1e136]:
+                - link "Live readiness" [ref=f1e137] [cursor=pointer]:
+                  - /url: /live-readiness
+              - listitem [ref=f1e142]:
+                - link "Operator panel" [ref=f1e143] [cursor=pointer]:
+                  - /url: /operator
+              - listitem [ref=f1e147]:
+                - link "Self-test center" [ref=f1e148] [cursor=pointer]:
+                  - /url: /operator/self-test
+              - listitem [ref=f1e154]:
+                - link "Audit logs" [ref=f1e155] [cursor=pointer]:
+                  - /url: /audit-logs
+              - listitem [ref=f1e160]:
+                - link "Apex allocator" [ref=f1e161] [cursor=pointer]:
+                  - /url: /apex/allocator
+          - generic [ref=f1e166]:
+            - generic [ref=f1e167]: Configuration
+            - list [ref=f1e168]:
+              - listitem [ref=f1e169]:
+                - link "Credentials" [ref=f1e170] [cursor=pointer]:
+                  - /url: /settings/credentials
+              - listitem [ref=f1e175]:
+                - link "Config" [ref=f1e176] [cursor=pointer]:
+                  - /url: /config
+              - listitem [ref=f1e181]:
+                - link "Trading config" [ref=f1e182] [cursor=pointer]:
+                  - /url: /config/trading
+              - listitem [ref=f1e185]:
+                - link "Strategies" [ref=f1e186] [cursor=pointer]:
+                  - /url: /strategies
+              - listitem [ref=f1e189]:
+                - link "Cartridge Forge" [ref=f1e190] [cursor=pointer]:
+                  - /url: /strategies/forge
+              - listitem [ref=f1e196]:
+                - link "Onboarding" [ref=f1e197] [cursor=pointer]:
+                  - /url: /onboarding
+              - listitem [ref=f1e202]:
+                - link "Chain registry" [ref=f1e203] [cursor=pointer]:
+                  - /url: /chains
+              - listitem [ref=f1e208]:
+                - link "RPC health" [ref=f1e209] [cursor=pointer]:
+                  - /url: /rpcs
+              - listitem [ref=f1e214]:
+                - link "Pool registry" [ref=f1e215] [cursor=pointer]:
+                  - /url: /pools
+              - listitem [ref=f1e222]:
+                - link "Exchange registry" [ref=f1e223] [cursor=pointer]:
+                  - /url: /dex-registry
+              - listitem [ref=f1e229]:
+                - link "Wallets" [ref=f1e230] [cursor=pointer]:
+                  - /url: /wallets
+              - listitem [ref=f1e235]:
+                - link "Wallet overview" [ref=f1e236] [cursor=pointer]:
+                  - /url: /wallet
+              - listitem [ref=f1e241]:
+                - link "Deploy pipeline" [ref=f1e242] [cursor=pointer]:
+                  - /url: /deploy-pipeline
+              - listitem [ref=f1e249]:
+                - link "Topology Vault" [ref=f1e250] [cursor=pointer]:
+                  - /url: /admin/topology
+              - listitem [ref=f1e257]:
+                - link "Admin chains" [ref=f1e258] [cursor=pointer]:
+                  - /url: /admin/chains
+              - listitem [ref=f1e263]:
+                - link "Admin sign-in" [ref=f1e264] [cursor=pointer]:
+                  - /url: /admin/signin
+              - listitem [ref=f1e269]:
+                - link "Settings" [ref=f1e270] [cursor=pointer]:
+                  - /url: /settings
+          - generic [ref=f1e275]:
+            - generic [ref=f1e276]: Omega S5
+            - list [ref=f1e277]:
+              - listitem [ref=f1e278]:
+                - link "Ω Core decoder" [ref=f1e279] [cursor=pointer]:
+                  - /url: /omega-s5/core
+              - listitem [ref=f1e284]:
+                - link "Ω Crucible tracker" [ref=f1e285] [cursor=pointer]:
+                  - /url: /omega-s5/crucible
+              - listitem [ref=f1e290]:
+                - link "Ω Factory deployments" [ref=f1e291] [cursor=pointer]:
+                  - /url: /omega-s5/factory
+              - listitem [ref=f1e295]:
+                - link "Ω DEX adapters" [ref=f1e296] [cursor=pointer]:
+                  - /url: /omega-s5/adapters
+              - listitem [ref=f1e303]:
+                - link "Ω Drift detection" [ref=f1e304] [cursor=pointer]:
+                  - /url: /omega-s5/drift
+              - listitem [ref=f1e310]:
+                - link "Ω Operator params" [ref=f1e311] [cursor=pointer]:
+                  - /url: /omega-s5/operator
+              - listitem [ref=f1e315]:
+                - link "Ω Entity registries" [ref=f1e316] [cursor=pointer]:
+                  - /url: /omega-s5/registry
+              - listitem [ref=f1e320]:
+                - link "Ω Wallet topology" [ref=f1e321] [cursor=pointer]:
+                  - /url: /omega-s5/wallets
+          - generic "Paper Mode - No capital at risk" [ref=f1e326]:
+            - generic [ref=f1e327]: PAPER
+            - paragraph [ref=f1e330]: Simulated execution
+      - main [ref=f1e331]:
+        - status [ref=f1e332]:
+          - generic [ref=f1e333]:
+            - generic [ref=f1e334]: System guard
+            - generic [ref=f1e339]:
+              - generic [ref=f1e340]: "Live:"
+              - generic [ref=f1e341]: "OFF"
+            - generic [ref=f1e342]:
+              - generic [ref=f1e343]: "Private relay:"
+              - generic [ref=f1e344]: "OFF"
+            - generic [ref=f1e345]:
+              - generic [ref=f1e346]: "Submit:"
+              - generic [ref=f1e347]: "OFF"
+            - generic [ref=f1e348]:
+              - generic [ref=f1e349]: "Broadcast:"
+              - generic [ref=f1e350]: "OFF"
+            - generic [ref=f1e351]:
+              - generic [ref=f1e352]: "Paper:"
+              - generic [ref=f1e353]: "ON"
+            - generic [ref=f1e354]:
+              - generic [ref=f1e355]: "Capital:"
+              - generic [ref=f1e356]: $0
+            - generic [ref=f1e357]:
+              - generic [ref=f1e358]: "Readiness:"
+              - generic [ref=f1e359]: 0/4
+            - generic [ref=f1e360]:
+              - generic [ref=f1e361]: "LIVE lock:"
+              - generic [ref=f1e362]: LOCKED
+            - generic [ref=f1e363]:
+              - generic [ref=f1e364]: "GO live:"
+              - generic [ref=f1e365]: NO-GO
+            - generic [ref=f1e366]:
+              - generic [ref=f1e367]: "A.4 fork:"
+              - generic [ref=f1e368]: BLOCKED
+            - generic [ref=f1e369]:
+              - generic [ref=f1e370]: "A.5 paper-shadow:"
+              - generic [ref=f1e371]: BLOCKED
+            - generic [ref=f1e372]:
+              - 'generic "PG: ok" [ref=f1e373]': PG ok
+              - generic [ref=f1e374]: ·
+              - 'generic "Redis: ok" [ref=f1e375]': Redis ok
+              - generic [ref=f1e376]: ·
+              - generic [ref=f1e377]: HB fresh
+              - generic [ref=f1e378]: ·
+              - generic [ref=f1e379]: Engine loaded
+              - generic [ref=f1e380]: ·
+              - generic [ref=f1e381]: Flip blocked
+        - generic [ref=f1e382]:
+          - navigation "Breadcrumb" [ref=f1e383]:
+            - link "Home" [ref=f1e384] [cursor=pointer]:
+              - /url: /
+            - generic [ref=f1e388]: Opportunities
+          - generic [ref=f1e393]:
+            - generic [ref=f1e394]:
+              - generic [ref=f1e395]:
+                - heading "Live Network value Feed" [level=1] [ref=f1e396]
+                - paragraph [ref=f1e397]: "Fallback: polling edge every 4s · Last refresh: 11:37:36 p. m."
+                - paragraph [ref=f1e398]:
+                  - generic [ref=f1e399]: 0 viable / 0 total
+              - generic [ref=f1e400]:
+                - button "Show all" [ref=f1e401]
+                - button "Force refresh" [ref=f1e408]
+                - generic [ref=f1e414]: POLLING
+            - generic [ref=f1e426]:
+              - heading "SCANNING MEMPOOL IN REAL-TIME" [level=3] [ref=f1e427]
+              - paragraph [ref=f1e428]: Searcher-rs is actively hunting for resolution routes. Opportunities will appear here instantly.
+            - table [ref=f1e430]:
+              - rowgroup [ref=f1e431]:
+                - row [ref=f1e432]:
+                  - columnheader "Age / Time" [ref=f1e433]
+                  - columnheader "Route" [ref=f1e434]
+                  - columnheader "Status" [ref=f1e435]
+                  - columnheader "Gross (USD)" [ref=f1e436]
+                  - columnheader "Net Yield (USD)" [ref=f1e437]
+                  - columnheader "Net Convergence Ratio" [ref=f1e438]
+                  - columnheader "Score" [ref=f1e439]
+                  - columnheader "Confidence" [ref=f1e440]
+                  - columnheader "Gas Used" [ref=f1e441]
+                  - columnheader "Action" [ref=f1e442]
+              - rowgroup [ref=f1e443]:
+                - row [ref=f1e444]:
+                  - cell "No opportunities detected. Searcher scanning mempool..." [ref=f1e445]
+  - generic "Live opportunity feed" [ref=f1e446]: No topological convergence detected — waiting for market topology...
+  - region "Notifications alt+T"
+  - alert [ref=f1e449]

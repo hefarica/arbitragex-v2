@@ -1,0 +1,357 @@
+- generic [active] [ref=e1]:
+  - link "Skip to main content" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=e4]:
+    - banner [ref=e5]:
+      - generic [ref=e6]:
+        - link "ARBITRAGEX" [ref=e7] [cursor=pointer]:
+          - /url: /
+        - generic [ref=e16]:
+          - generic [ref=e17]: Quantum Research Terminal
+          - generic [ref=e18]: ·
+          - generic [ref=e19]: Topological Yield Engine
+        - generic [ref=e20]:
+          - generic [ref=e21]: PAPER · TLS SHADOW
+          - generic [ref=e23]: KILL-SWITCH <10MS
+          - 'generic "Live opportunity stream status: IDLE" [ref=e26]': IDLE
+          - code [ref=e28]
+          - button "Switch to light mode" [ref=e542]
+    - generic [ref=e30]:
+      - complementary [ref=e31]:
+        - button "Collapse sidebar" [ref=e32]
+        - generic [ref=e36]:
+          - generic [ref=e37]:
+            - generic [ref=e38]: Pipeline
+            - list [ref=e39]:
+              - listitem [ref=e40]:
+                - link "Home" [ref=e41] [cursor=pointer]:
+                  - /url: /
+              - listitem [ref=e47]:
+                - link "System status" [ref=e48] [cursor=pointer]:
+                  - /url: /status
+              - listitem [ref=e52]:
+                - link "Opportunities" [ref=e53] [cursor=pointer]:
+                  - /url: /opportunities
+              - listitem [ref=e60]:
+                - link "By strategy" [ref=e61] [cursor=pointer]:
+                  - /url: /opportunities/by-strategy
+              - listitem [ref=e67]:
+                - link "Executions" [ref=e68] [cursor=pointer]:
+                  - /url: /executions
+              - listitem [ref=e72]:
+                - link "Paper history" [ref=e73] [cursor=pointer]:
+                  - /url: /paper/history
+              - listitem [ref=e77]:
+                - link "Recon & yield" [ref=e78] [cursor=pointer]:
+                  - /url: /recon
+              - listitem [ref=e83]:
+                - link "Operations metrics" [ref=e84] [cursor=pointer]:
+                  - /url: /operations
+              - listitem [ref=e89]:
+                - link "Route outcomes" [ref=e90] [cursor=pointer]:
+                  - /url: /route-outcomes
+              - listitem [ref=e96]:
+                - link "Route discovery" [ref=e97] [cursor=pointer]:
+                  - /url: /routes/discovery
+              - listitem [ref=e106]:
+                - link "SED Pipeline" [ref=e107] [cursor=pointer]:
+                  - /url: /sed
+              - listitem [ref=e111]:
+                - link "Agent insights" [ref=e112] [cursor=pointer]:
+                  - /url: /agent-insights
+              - listitem [ref=e117]:
+                - link "Worker health" [ref=e118] [cursor=pointer]:
+                  - /url: /worker-health
+          - generic [ref=e123]:
+            - generic [ref=e124]: Risk & Control
+            - list [ref=e125]:
+              - listitem [ref=e126]:
+                - link "Entropy & alerts" [ref=e127] [cursor=pointer]:
+                  - /url: /risk
+              - listitem [ref=e131]:
+                - link "Kill-switch" [ref=e132] [cursor=pointer]:
+                  - /url: /killswitch
+              - listitem [ref=e136]:
+                - link "Live readiness" [ref=e137] [cursor=pointer]:
+                  - /url: /live-readiness
+              - listitem [ref=e142]:
+                - link "Operator panel" [ref=e143] [cursor=pointer]:
+                  - /url: /operator
+              - listitem [ref=e147]:
+                - link "Self-test center" [ref=e148] [cursor=pointer]:
+                  - /url: /operator/self-test
+              - listitem [ref=e154]:
+                - link "Audit logs" [ref=e155] [cursor=pointer]:
+                  - /url: /audit-logs
+              - listitem [ref=e160]:
+                - link "Apex allocator" [ref=e161] [cursor=pointer]:
+                  - /url: /apex/allocator
+          - generic [ref=e166]:
+            - generic [ref=e167]: Configuration
+            - list [ref=e168]:
+              - listitem [ref=e169]:
+                - link "Credentials" [ref=e170] [cursor=pointer]:
+                  - /url: /settings/credentials
+              - listitem [ref=e175]:
+                - link "Config" [ref=e176] [cursor=pointer]:
+                  - /url: /config
+              - listitem [ref=e181]:
+                - link "Trading config" [ref=e182] [cursor=pointer]:
+                  - /url: /config/trading
+              - listitem [ref=e185]:
+                - link "Strategies" [ref=e186] [cursor=pointer]:
+                  - /url: /strategies
+              - listitem [ref=e189]:
+                - link "Cartridge Forge" [ref=e190] [cursor=pointer]:
+                  - /url: /strategies/forge
+              - listitem [ref=e196]:
+                - link "Onboarding" [ref=e197] [cursor=pointer]:
+                  - /url: /onboarding
+              - listitem [ref=e202]:
+                - link "Chain registry" [ref=e203] [cursor=pointer]:
+                  - /url: /chains
+              - listitem [ref=e208]:
+                - link "RPC health" [ref=e209] [cursor=pointer]:
+                  - /url: /rpcs
+              - listitem [ref=e214]:
+                - link "Pool registry" [ref=e215] [cursor=pointer]:
+                  - /url: /pools
+              - listitem [ref=e222]:
+                - link "Exchange registry" [ref=e223] [cursor=pointer]:
+                  - /url: /dex-registry
+              - listitem [ref=e229]:
+                - link "Wallets" [ref=e230] [cursor=pointer]:
+                  - /url: /wallets
+              - listitem [ref=e235]:
+                - link "Wallet overview" [ref=e236] [cursor=pointer]:
+                  - /url: /wallet
+              - listitem [ref=e241]:
+                - link "Deploy pipeline" [ref=e242] [cursor=pointer]:
+                  - /url: /deploy-pipeline
+              - listitem [ref=e249]:
+                - link "Topology Vault" [ref=e250] [cursor=pointer]:
+                  - /url: /admin/topology
+              - listitem [ref=e257]:
+                - link "Admin chains" [ref=e258] [cursor=pointer]:
+                  - /url: /admin/chains
+              - listitem [ref=e263]:
+                - link "Admin sign-in" [ref=e264] [cursor=pointer]:
+                  - /url: /admin/signin
+              - listitem [ref=e269]:
+                - link "Settings" [ref=e270] [cursor=pointer]:
+                  - /url: /settings
+          - generic [ref=e275]:
+            - generic [ref=e276]: Omega S5
+            - list [ref=e277]:
+              - listitem [ref=e278]:
+                - link "Ω Core decoder" [ref=e279] [cursor=pointer]:
+                  - /url: /omega-s5/core
+              - listitem [ref=e284]:
+                - link "Ω Crucible tracker" [ref=e285] [cursor=pointer]:
+                  - /url: /omega-s5/crucible
+              - listitem [ref=e290]:
+                - link "Ω Factory deployments" [ref=e291] [cursor=pointer]:
+                  - /url: /omega-s5/factory
+              - listitem [ref=e295]:
+                - link "Ω DEX adapters" [ref=e296] [cursor=pointer]:
+                  - /url: /omega-s5/adapters
+              - listitem [ref=e303]:
+                - link "Ω Drift detection" [ref=e304] [cursor=pointer]:
+                  - /url: /omega-s5/drift
+              - listitem [ref=e310]:
+                - link "Ω Operator params" [ref=e311] [cursor=pointer]:
+                  - /url: /omega-s5/operator
+              - listitem [ref=e315]:
+                - link "Ω Entity registries" [ref=e316] [cursor=pointer]:
+                  - /url: /omega-s5/registry
+              - listitem [ref=e320]:
+                - link "Ω Wallet topology" [ref=e321] [cursor=pointer]:
+                  - /url: /omega-s5/wallets
+          - generic "Paper Mode - No capital at risk" [ref=e326]:
+            - generic [ref=e327]: PAPER
+            - paragraph [ref=e330]: Simulated execution
+      - main [ref=e331]:
+        - status [ref=e332]:
+          - generic [ref=e333]:
+            - generic [ref=e334]: System guard
+            - generic [ref=e339]:
+              - generic [ref=e340]: "Live:"
+              - generic [ref=e341]: "OFF"
+            - generic [ref=e342]:
+              - generic [ref=e343]: "Private relay:"
+              - generic [ref=e344]: "OFF"
+            - generic [ref=e345]:
+              - generic [ref=e346]: "Submit:"
+              - generic [ref=e347]: "OFF"
+            - generic [ref=e348]:
+              - generic [ref=e349]: "Broadcast:"
+              - generic [ref=e350]: "OFF"
+            - generic [ref=e351]:
+              - generic [ref=e352]: "Paper:"
+              - generic [ref=e353]: "ON"
+            - generic [ref=e354]:
+              - generic [ref=e355]: "Capital:"
+              - generic [ref=e356]: $0
+            - generic [ref=e357]:
+              - generic [ref=e358]: "Readiness:"
+              - generic [ref=e359]: 0/4
+            - generic [ref=e360]:
+              - generic [ref=e361]: "LIVE lock:"
+              - generic [ref=e362]: LOCKED
+            - generic [ref=e363]:
+              - generic [ref=e364]: "GO live:"
+              - generic [ref=e365]: NO-GO
+            - generic [ref=e366]:
+              - generic [ref=e367]: "A.4 fork:"
+              - generic [ref=e368]: BLOCKED
+            - generic [ref=e369]:
+              - generic [ref=e370]: "A.5 paper-shadow:"
+              - generic [ref=e371]: BLOCKED
+            - generic [ref=e372]:
+              - 'generic "PG: ok" [ref=e543]': PG ok
+              - generic [ref=e378]: ·
+              - 'generic "Redis: ok" [ref=e544]': Redis ok
+              - generic [ref=e545]: ·
+              - generic [ref=e546]: HB fresh
+              - generic [ref=e547]: ·
+              - generic [ref=e548]: Engine loaded
+              - generic [ref=e549]: ·
+              - generic [ref=e550]: Flip blocked
+        - generic [ref=e380]:
+          - generic [ref=e381]:
+            - generic [ref=e382]: IA OMEGA · OBSERVE → SIMULATE → EXECUTE
+            - heading "Convergencia estocástica. Topological Yield en milisegundos." [level=1] [ref=e383]: Convergencia estocástica.Topological Yield en milisegundos.
+            - paragraph [ref=e384]: "El motor observa 50 rutas de Liquidity Manifolds en paralelo, resuelve Asimetría Topológica bajoTemporal Liquidity Superposition, y mantiene el capital expuesto en $0.00 hasta que cada gate institucional esté en verde. Doctrina OMEGA: honestidad antes que teatro."
+          - generic [ref=e385]:
+            - generic [ref=e386]:
+              - generic [ref=e387]: Topological Yield · 24h
+              - generic [ref=e388]: 0.42%
+              - generic [ref=e389]: proyectado · REVM verified
+            - generic [ref=e390]:
+              - generic [ref=e391]: Asimetrías detectadas
+              - generic [ref=e392]: "1284"
+              - generic [ref=e393]: stream arbx:opps:detected
+            - generic [ref=e394]:
+              - generic [ref=e395]: Capital expuesto
+              - generic [ref=e396]: $0.00
+              - generic [ref=e397]: paper-shadow · estructural
+            - generic [ref=e398]:
+              - generic [ref=e399]: Decoherencia media
+              - generic [ref=e400]: 0.21%
+              - generic [ref=e401]: slippage proyectado
+          - generic [ref=e402]:
+            - generic [ref=e403]:
+              - generic [ref=e404]: / opportunities · live
+              - heading "Asimetrías Topológicas activas" [level=2] [ref=e405]
+            - generic [ref=e406]:
+              - article [ref=e407] [cursor=pointer]:
+                - generic [ref=e408]:
+                  - generic [ref=e409]:
+                    - generic [ref=e410]: WETH/USDC
+                    - generic [ref=e411]: +0.42%
+                  - generic [ref=e412]:
+                    - generic [ref=e413]: 87% conf
+                    - generic [ref=e414]: 2 legs
+                    - generic [ref=e415]: 4s ago
+                    - generic [ref=e416]: "[PAPER]"
+                - generic [ref=e417]:
+                  - generic [ref=e418]: X-Ray · route breakdown
+                  - generic [ref=e419]:
+                    - generic [ref=e420]:
+                      - generic [ref=e421]: ROUTE
+                      - generic [ref=e422]: UNI-V3 → SUSHI-V2
+                    - generic [ref=e423]:
+                      - generic [ref=e424]: DECOHERENCIA
+                      - generic [ref=e425]: pool 0.30% + gas 0.018%
+                    - generic [ref=e426]:
+                      - generic [ref=e427]: TLS AMOUNT
+                      - generic [ref=e428]: 12.4 WETH
+                    - generic [ref=e429]:
+                      - generic [ref=e430]: SIM VERDICT
+                      - generic [ref=e431]: ✓ revm-pass · 3ms
+                    - generic [ref=e432]:
+                      - generic [ref=e433]: TOKEN SAFETY
+                      - generic [ref=e434]: A 92 · B 88
+              - article [ref=e435] [cursor=pointer]:
+                - generic [ref=e436]:
+                  - generic [ref=e437]:
+                    - generic [ref=e438]: ARB/WETH
+                    - generic [ref=e439]: +0.18%
+                  - generic [ref=e440]:
+                    - generic [ref=e441]: 74% conf
+                    - generic [ref=e442]: 3 legs
+                    - generic [ref=e443]: 7s ago
+                    - generic [ref=e444]: "[PAPER]"
+                - generic [ref=e445]:
+                  - generic [ref=e446]: X-Ray · route breakdown
+                  - generic [ref=e447]:
+                    - generic [ref=e448]:
+                      - generic [ref=e449]: ROUTE
+                      - generic [ref=e450]: CAMELOT → UNI-V3
+                    - generic [ref=e451]:
+                      - generic [ref=e452]: DECOHERENCIA
+                      - generic [ref=e453]: pool 0.25% + gas 0.021%
+                    - generic [ref=e454]:
+                      - generic [ref=e455]: TLS AMOUNT
+                      - generic [ref=e456]: — (no TLS)
+                    - generic [ref=e457]:
+                      - generic [ref=e458]: SIM VERDICT
+                      - generic [ref=e459]: ✓ revm-pass · 4ms
+                    - generic [ref=e460]:
+                      - generic [ref=e461]: TOKEN SAFETY
+                      - generic [ref=e462]: A 88 · B 90
+              - article [ref=e463] [cursor=pointer]:
+                - generic [ref=e464]:
+                  - generic [ref=e465]:
+                    - generic [ref=e466]: WBTC/USDC
+                    - generic [ref=e467]: +0.31%
+                  - generic [ref=e468]:
+                    - generic [ref=e469]: 91% conf
+                    - generic [ref=e470]: 2 legs
+                    - generic [ref=e471]: 9s ago
+                    - generic [ref=e472]: "[PAPER]"
+                - generic [ref=e473]:
+                  - generic [ref=e474]: X-Ray · route breakdown
+                  - generic [ref=e475]:
+                    - generic [ref=e476]:
+                      - generic [ref=e477]: ROUTE
+                      - generic [ref=e478]: UNI-V3 → BAL-V2
+                    - generic [ref=e479]:
+                      - generic [ref=e480]: DECOHERENCIA
+                      - generic [ref=e481]: pool 0.30% + gas 0.019%
+                    - generic [ref=e482]:
+                      - generic [ref=e483]: TLS AMOUNT
+                      - generic [ref=e484]: 3.1 WBTC
+                    - generic [ref=e485]:
+                      - generic [ref=e486]: SIM VERDICT
+                      - generic [ref=e487]: ✓ revm-pass · 3ms
+                    - generic [ref=e488]:
+                      - generic [ref=e489]: TOKEN SAFETY
+                      - generic [ref=e490]: A 95 · B 84
+          - generic [ref=e491]:
+            - generic [ref=e492]:
+              - generic [ref=e493]: / live-readiness · doctrinal gate
+              - heading "The Gate Refusal" [level=2] [ref=e494]
+            - generic [ref=e495]:
+              - generic [ref=e496]:
+                - heading "Habilitación live · bloqueada por doctrina" [level=3] [ref=e497]
+                - paragraph [ref=e498]: El flip a live requiere 12 gates doctrinales en verde + confirmación manual del operador. Mientras tanto, capital expuesto permanece estructuralmente en $0.00. La restricción al launch es lo que convierte escépticos en creyentes.
+              - generic [ref=e499]:
+                - generic [ref=e500]: VEREDICTO · NO-GO
+                - generic [ref=e501]:
+                  - generic [ref=e502]: Flash-loan discipline
+                  - generic [ref=e505]: Simulation mandatory
+                  - generic [ref=e508]: Net-profit gate
+                  - generic [ref=e511]: RPC failover
+                  - generic [ref=e514]: Token-safety screen
+                  - generic [ref=e517]: KMS/HSM signer
+                  - generic [ref=e520]: Risk limits
+                  - generic [ref=e523]: MEV ethics
+                  - generic [ref=e526]: Pre-execute checklist
+                  - generic [ref=e529]: Crucible 72h/95%
+                  - generic [ref=e532]: Pre-edit audit
+                  - generic [ref=e535]: Contract atomicity
+                - generic [ref=e538]: Activate live mode · LOCKED (3 gates red)
+  - generic "Live opportunity feed" [ref=e539]: No topological convergence detected — waiting for market topology...
+  - region "Notifications alt+T"
+  - alert [ref=e551]

@@ -1,0 +1,3004 @@
+{
+  "configured": true,
+  "sha": "",
+  "branch": "detached",
+  "dirty_count": 0,
+  "os": "Ubuntu 24.04",
+  "uname": "Linux 6.8.0-90-generic x86_64 GNU/Linux",
+  "uptime": "up 10 weeks, 5 days, 13 hours, 0 minutes",
+  "disk": "/dev/sda1        157197504 121753028  28999856      81% /",
+  "memory": "16372305920 3512643584 12859662336",
+  "docker_version": "29.4.2",
+  "compose_version": "5.1.3",
+  "containers": {
+    "arbitragex-v2-frontend-1": {
+      "Command": "\"/usr/bin/tini -- node /app/node_modules/next/dist/bin/next start -p 5173\"",
+      "CreatedAt": "2026-07-17 02:08:15 +0000 UTC",
+      "ID": "311a3a780c6359e54bcac67ad45fe6315d54e9e34d2e6ac9c49190bded630b9e",
+      "Image": "arbitragex-v2-frontend",
+      "Labels": "com.docker.compose.config-hash=f94f08457503cd5c7eb9cd124d5425dadf692c32d235769aa73a6602cd49a4ac,com.docker.compose.container-number=1,com.docker.compose.depends_on=edge:service_started:false,com.docker.compose.image=sha256:1611c7568ca1c756b874f9104e2baf32f7d2b9cffa700bda8cdc9ce73ef09174,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=frontend-1,com.docker.compose.service=frontend,com.docker.compose.version=5.1.3",
+      "LocalVolumes": "0",
+      "Mounts": "",
+      "Names": "arbitragex-v2-frontend-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "0.0.0.0:5173->5173/tcp",
+      "RunningFor": "51 minutes ago",
+      "Size": "4.1kB (virtual 2.31GB)",
+      "State": "running",
+      "Status": "Up 51 minutes (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 1255242,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-07-17T02:08:20.000291376Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:09.643212504Z",
+              "End": "2026-07-17T02:57:09.764777081Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:57:39.766089357Z",
+              "End": "2026-07-17T02:57:39.897302164Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:09.898207631Z",
+              "End": "2026-07-17T02:58:10.04353447Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:40.044475899Z",
+              "End": "2026-07-17T02:58:40.183076219Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:10.184347087Z",
+              "End": "2026-07-17T02:59:10.333617667Z",
+              "ExitCode": 0,
+              "Output": ""
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-frontend-1",
+            "frontend"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "4ef795e87beb2811a9d553e63f6c654d3bb79a80f6c36901e27d21aaa024343e",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.23",
+          "MacAddress": "06:70:c7:79:58:02",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-frontend-1",
+            "frontend",
+            "311a3a780c63"
+          ]
+        }
+      },
+      "MountsSafe": [],
+      "ImageIDSafe": "sha256:1611c7568ca1c756b874f9104e2baf32f7d2b9cffa700bda8cdc9ce73ef09174",
+      "ComposeServiceSafe": "frontend",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-edge-1": {
+      "Command": "\"/usr/bin/tini -- node /app/edge/dev-local/dist/index.js\"",
+      "CreatedAt": "2026-07-17 02:08:14 +0000 UTC",
+      "ID": "819a2361083a081bfde2517c019d7b42d3867517a2ec1edb8e5e8d781c00166f",
+      "Image": "arbitragex-v2-edge",
+      "Labels": "com.docker.compose.config-hash=8076d68873f1da45b73eeea67209bb6e57cc02f6ab9b93d5f002eca6127c2da3,com.docker.compose.container-number=1,com.docker.compose.depends_on=api-server:service_started:false,com.docker.compose.image=sha256:8fedc7e4842ebb679a33153e72ea9d347039cb826622d38704ad1480d0f42fc7,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=edge-1,com.docker.compose.service=edge,com.docker.compose.version=5.1.3",
+      "LocalVolumes": "0",
+      "Mounts": "",
+      "Names": "arbitragex-v2-edge-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "0.0.0.0:8787->8787/tcp",
+      "RunningFor": "51 minutes ago",
+      "Size": "4.1kB (virtual 313MB)",
+      "State": "running",
+      "Status": "Up 51 minutes (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 1255097,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-07-17T02:08:19.826254754Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:34.796131919Z",
+              "End": "2026-07-17T02:57:34.891432322Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:04.892346319Z",
+              "End": "2026-07-17T02:58:05.001380879Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:35.002762243Z",
+              "End": "2026-07-17T02:58:35.112057934Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:05.112889883Z",
+              "End": "2026-07-17T02:59:05.210543146Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:35.21157429Z",
+              "End": "2026-07-17T02:59:35.308104113Z",
+              "ExitCode": 0,
+              "Output": ""
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-edge-1",
+            "edge"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "f746227a03384bd053da632fbff8d5f2408cdd6100ff1b3ac8eb29872b97cad3",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.22",
+          "MacAddress": "da:5f:69:e7:b9:73",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-edge-1",
+            "edge",
+            "819a2361083a"
+          ]
+        }
+      },
+      "MountsSafe": [],
+      "ImageIDSafe": "sha256:8fedc7e4842ebb679a33153e72ea9d347039cb826622d38704ad1480d0f42fc7",
+      "ComposeServiceSafe": "edge",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-api-server-1": {
+      "Command": "\"/usr/bin/tini -- node /app/backend/api-server/dist/index.js\"",
+      "CreatedAt": "2026-07-17 02:07:57 +0000 UTC",
+      "ID": "e1329dbbc4118b347a3b3e113b2f6d76d5a1189cbd9e5485923e1ff20131d616",
+      "Image": "arbitragex-v2-api-server",
+      "Labels": "com.docker.compose.config-hash=f8227c3d8dcf999f6752d30e1207dcc98e3830be50e69a389748f23ba7a631dd,com.docker.compose.container-number=1,com.docker.compose.depends_on=redis:service_healthy:false,com.docker.compose.image=sha256:1b42133df55cbe69241e32d040ee923dff97d7926733d95bf2a3fb7b233522db,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=api-server-1,com.docker.compose.service=api-server,com.docker.compose.version=5.1.3",
+      "LocalVolumes": "0",
+      "Mounts": "/opt/arbitragex-v2,/var/lib/arbx",
+      "Names": "arbitragex-v2-api-server-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "127.0.0.1:8080->8080/tcp",
+      "RunningFor": "51 minutes ago",
+      "Size": "24.6kB (virtual 390MB)",
+      "State": "running",
+      "Status": "Up 51 minutes (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 1254770,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-07-17T02:08:19.613095681Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:34.81526941Z",
+              "End": "2026-07-17T02:57:34.909729995Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:04.911287372Z",
+              "End": "2026-07-17T02:58:05.019345819Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:35.020510565Z",
+              "End": "2026-07-17T02:58:35.117430991Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:05.118008762Z",
+              "End": "2026-07-17T02:59:05.210554247Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:35.211631317Z",
+              "End": "2026-07-17T02:59:35.319531356Z",
+              "ExitCode": 0,
+              "Output": ""
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-api-server-1",
+            "api-server"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "e4001ced521c1bab5ee241c87c5d70346486851030cfc18c62a38adffe70b887",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.11",
+          "MacAddress": "aa:b5:a2:1d:2c:bc",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-api-server-1",
+            "api-server",
+            "e1329dbbc411"
+          ]
+        }
+      },
+      "MountsSafe": [
+        {
+          "Type": "bind",
+          "Source": "/var/lib/arbx",
+          "Destination": "/var/lib/arbx",
+          "Mode": "rw",
+          "RW": true,
+          "Propagation": "rprivate"
+        },
+        {
+          "Type": "bind",
+          "Source": "/opt/arbitragex-v2",
+          "Destination": "/repo",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        }
+      ],
+      "ImageIDSafe": "sha256:1b42133df55cbe69241e32d040ee923dff97d7926733d95bf2a3fb7b233522db",
+      "ComposeServiceSafe": "api-server",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-searcher-rs-1": {
+      "Command": "\"/usr/bin/tini -- /usr/local/bin/searcher-rs\"",
+      "CreatedAt": "2026-07-17 02:07:56 +0000 UTC",
+      "ID": "3d6bd9347fc5eefde06fdcfb68af36c6361782e4bc890cfc9223460e9d443a83",
+      "Image": "arbitragex-v2-searcher-rs",
+      "Labels": "com.docker.compose.config-hash=3817a9aba7dcb19be2738a307b29058b3329b84a6c1f201914838c12d1d2500b,com.docker.compose.container-number=1,com.docker.compose.depends_on=redis:service_healthy:false,postgres:service_healthy:false,com.docker.compose.image=sha256:3c2cf122dee0e195d1dc89c10dcef2f8e04d46a65791a437600678fcb0dc571a,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=searcher-rs-1,com.docker.compose.service=searcher-rs,com.docker.compose.version=5.1.3",
+      "LocalVolumes": "0",
+      "Mounts": "/opt/arbitragex-v2/configs",
+      "Names": "arbitragex-v2-searcher-rs-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "9001/tcp",
+      "RunningFor": "51 minutes ago",
+      "Size": "12.3kB (virtual 135MB)",
+      "State": "running",
+      "Status": "Up 51 minutes (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 1254798,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-07-17T02:08:19.629644224Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:30.403126753Z",
+              "End": "2026-07-17T02:57:30.450373426Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:00.450700486Z",
+              "End": "2026-07-17T02:58:00.503262808Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:30.504389827Z",
+              "End": "2026-07-17T02:58:30.556031829Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:00.556829059Z",
+              "End": "2026-07-17T02:59:00.62226957Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:30.631706062Z",
+              "End": "2026-07-17T02:59:30.688483675Z",
+              "ExitCode": 0,
+              "Output": ""
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-searcher-rs-1",
+            "searcher-rs"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "e34aea95a1d435ca7f01667eab60b06485bc4b285a53763eb98b7cfd10e669b5",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.12",
+          "MacAddress": "66:9f:c0:14:f1:6c",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-searcher-rs-1",
+            "searcher-rs",
+            "3d6bd9347fc5"
+          ]
+        }
+      },
+      "MountsSafe": [
+        {
+          "Type": "bind",
+          "Source": "/opt/arbitragex-v2/configs",
+          "Destination": "/app/configs",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        }
+      ],
+      "ImageIDSafe": "sha256:3c2cf122dee0e195d1dc89c10dcef2f8e04d46a65791a437600678fcb0dc571a",
+      "ComposeServiceSafe": "searcher-rs",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-sim-ctl-1": {
+      "Command": "\"/usr/bin/tini -- /usr/local/bin/sim-ctl\"",
+      "CreatedAt": "2026-07-17 02:07:56 +0000 UTC",
+      "ID": "d90be7db4f42a2c4612d4e4779301850fa8a4cce441cfa32bbf830d3c6007266",
+      "Image": "arbitragex-v2-sim-ctl",
+      "Labels": "com.docker.compose.config-hash=209ad193c9f52dbc30d92097f4831c3d89f84455c609bfd998af84bf92c175d4,com.docker.compose.container-number=1,com.docker.compose.depends_on=postgres:service_healthy:false,redis:service_healthy:false,com.docker.compose.image=sha256:a1044db18b09a4ff02c623eb20c4a5ba607fcc031595811680d808f4ca47b75b,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=sim-ctl-1,com.docker.compose.service=sim-ctl,com.docker.compose.version=5.1.3",
+      "LocalVolumes": "0",
+      "Mounts": "/opt/arbitragex-v2/configs",
+      "Names": "arbitragex-v2-sim-ctl-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "127.0.0.1:3003->3003/tcp",
+      "RunningFor": "51 minutes ago",
+      "Size": "12.3kB (virtual 118MB)",
+      "State": "running",
+      "Status": "Up 51 minutes (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 1254765,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-07-17T02:08:19.626829536Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:30.387337632Z",
+              "End": "2026-07-17T02:57:30.457839946Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:00.46040906Z",
+              "End": "2026-07-17T02:58:00.509627518Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:30.510253505Z",
+              "End": "2026-07-17T02:58:30.559202779Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:00.560005146Z",
+              "End": "2026-07-17T02:59:00.613375877Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:30.613894612Z",
+              "End": "2026-07-17T02:59:30.667179851Z",
+              "ExitCode": 0,
+              "Output": ""
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-sim-ctl-1",
+            "sim-ctl"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "c5d310e18adb7393414df9b3fac026997fad230c4935dcae8fd5c3a36c003d15",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.13",
+          "MacAddress": "ea:da:24:86:62:59",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-sim-ctl-1",
+            "sim-ctl",
+            "d90be7db4f42"
+          ]
+        }
+      },
+      "MountsSafe": [
+        {
+          "Type": "bind",
+          "Source": "/opt/arbitragex-v2/configs",
+          "Destination": "/app/configs",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        }
+      ],
+      "ImageIDSafe": "sha256:a1044db18b09a4ff02c623eb20c4a5ba607fcc031595811680d808f4ca47b75b",
+      "ComposeServiceSafe": "sim-ctl",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-relays-client-1": {
+      "Command": "\"/usr/bin/tini -- /usr/local/bin/relays-client\"",
+      "CreatedAt": "2026-07-17 02:07:56 +0000 UTC",
+      "ID": "a14101c883ce4c697bc4a6e5a50fd2379c9f864980c8812298e86a4b902cf43b",
+      "Image": "arbitragex-v2-relays-client",
+      "Labels": "com.docker.compose.config-hash=baf1f6cc9407439a0a3983ede7cc483c5078be490e856b7b45a46f37a601c44a,com.docker.compose.container-number=1,com.docker.compose.depends_on=redis:service_healthy:false,com.docker.compose.image=sha256:3e681d933730ed91a7265af80a60a18a03be82bce3a4f24a56c0e46717cd2495,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=relays-client-1,com.docker.compose.service=relays-client,com.docker.compose.version=5.1.3",
+      "LocalVolumes": "0",
+      "Mounts": "/opt/arbitragex-v2/configs",
+      "Names": "arbitragex-v2-relays-client-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "127.0.0.1:3005->3005/tcp",
+      "RunningFor": "51 minutes ago",
+      "Size": "12.3kB (virtual 121MB)",
+      "State": "running",
+      "Status": "Up 51 minutes (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 1254788,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-07-17T02:08:19.632456799Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:30.386764656Z",
+              "End": "2026-07-17T02:57:30.457806042Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:00.458792923Z",
+              "End": "2026-07-17T02:58:00.51142764Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:30.517591906Z",
+              "End": "2026-07-17T02:58:30.561163012Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:00.570903927Z",
+              "End": "2026-07-17T02:59:00.617681307Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:30.618761356Z",
+              "End": "2026-07-17T02:59:30.686331129Z",
+              "ExitCode": 0,
+              "Output": ""
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-relays-client-1",
+            "relays-client"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "06c018b39b5768f22ddb9c7c319d2e1dba0d14e01709c741a32e62d85356f5fb",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.16",
+          "MacAddress": "a6:e0:78:46:d3:45",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-relays-client-1",
+            "relays-client",
+            "a14101c883ce"
+          ]
+        }
+      },
+      "MountsSafe": [
+        {
+          "Type": "bind",
+          "Source": "/opt/arbitragex-v2/configs",
+          "Destination": "/app/configs",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        }
+      ],
+      "ImageIDSafe": "sha256:3e681d933730ed91a7265af80a60a18a03be82bce3a4f24a56c0e46717cd2495",
+      "ComposeServiceSafe": "relays-client",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-recon-1": {
+      "Command": "\"/usr/bin/tini -- /usr/local/bin/recon\"",
+      "CreatedAt": "2026-07-17 02:07:56 +0000 UTC",
+      "ID": "4b70eea94a94da531d59ab9a8ff139b077a4cf78ad180918e1f7224583844ef7",
+      "Image": "arbitragex-v2-recon",
+      "Labels": "com.docker.compose.config-hash=f122d79946b32bfbdeed9742d1d4b486fa71acf47229f4a9c95a527dbaed5fcc,com.docker.compose.container-number=1,com.docker.compose.depends_on=postgres:service_healthy:false,com.docker.compose.image=sha256:b11e553f6fe0e2b0d46baf8b253e3ae6488795b887ebd1d0af3e4ef1859cb0e5,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=recon-1,com.docker.compose.service=recon,com.docker.compose.version=5.1.3",
+      "LocalVolumes": "0",
+      "Mounts": "/opt/arbitragex-v2/configs",
+      "Names": "arbitragex-v2-recon-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "127.0.0.1:3004->3004/tcp",
+      "RunningFor": "51 minutes ago",
+      "Size": "12.3kB (virtual 118MB)",
+      "State": "running",
+      "Status": "Up 51 minutes (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 1254800,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-07-17T02:08:19.631443164Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:30.378698809Z",
+              "End": "2026-07-17T02:57:30.441534166Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:00.442761787Z",
+              "End": "2026-07-17T02:58:00.499096468Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:30.499514636Z",
+              "End": "2026-07-17T02:58:30.556095038Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:00.55726626Z",
+              "End": "2026-07-17T02:59:00.611843407Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:30.613056927Z",
+              "End": "2026-07-17T02:59:30.671015118Z",
+              "ExitCode": 0,
+              "Output": ""
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-recon-1",
+            "recon"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "dde16b54906f54865c64e9e59f5fe0bcb356a909e9b20f915f0ec7533717a70a",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.15",
+          "MacAddress": "72:fc:58:81:f1:3d",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-recon-1",
+            "recon",
+            "4b70eea94a94"
+          ]
+        }
+      },
+      "MountsSafe": [
+        {
+          "Type": "bind",
+          "Source": "/opt/arbitragex-v2/configs",
+          "Destination": "/app/configs",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        }
+      ],
+      "ImageIDSafe": "sha256:b11e553f6fe0e2b0d46baf8b253e3ae6488795b887ebd1d0af3e4ef1859cb0e5",
+      "ComposeServiceSafe": "recon",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-selector-api-1": {
+      "Command": "\"/usr/bin/tini -- node /app/backend/selector-api/dist/index.js\"",
+      "CreatedAt": "2026-07-17 02:07:56 +0000 UTC",
+      "ID": "0ebd46b3e8b8d0f4586bc06380a627ed326be7eb201f2e1d1e16b7467b178d39",
+      "Image": "arbitragex-v2-selector-api",
+      "Labels": "com.docker.compose.config-hash=7fc794ad0b42a67845189200e0a870f9d7c5df9144232b70615ce9de2215866a,com.docker.compose.container-number=1,com.docker.compose.depends_on=postgres:service_healthy:false,redis:service_healthy:false,com.docker.compose.image=sha256:14f435688d23c08d395d52c5a54d71f521504e2654afb57c665086c7d1a9e8dc,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=selector-api-1,com.docker.compose.service=selector-api,com.docker.compose.version=5.1.3",
+      "LocalVolumes": "0",
+      "Mounts": "",
+      "Names": "arbitragex-v2-selector-api-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "127.0.0.1:3002->3002/tcp",
+      "RunningFor": "51 minutes ago",
+      "Size": "4.1kB (virtual 316MB)",
+      "State": "running",
+      "Status": "Up 51 minutes (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 1254795,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-07-17T02:08:19.632074511Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:34.869075529Z",
+              "End": "2026-07-17T02:57:34.958729141Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:04.959594668Z",
+              "End": "2026-07-17T02:58:05.065304602Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:35.066415246Z",
+              "End": "2026-07-17T02:58:35.158042506Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:05.158705967Z",
+              "End": "2026-07-17T02:59:05.262357744Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:35.263080637Z",
+              "End": "2026-07-17T02:59:35.379729396Z",
+              "ExitCode": 0,
+              "Output": ""
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-selector-api-1",
+            "selector-api"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "8ecefa45f73d96ee71d021ad043b3b59dd63e0a86d8eea646eb360cc63caa178",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.14",
+          "MacAddress": "1a:28:29:d8:26:b9",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-selector-api-1",
+            "selector-api",
+            "0ebd46b3e8b8"
+          ]
+        }
+      },
+      "MountsSafe": [],
+      "ImageIDSafe": "sha256:14f435688d23c08d395d52c5a54d71f521504e2654afb57c665086c7d1a9e8dc",
+      "ComposeServiceSafe": "selector-api",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-token-enricher-1": {
+      "Command": "\"/usr/bin/tini -- /usr/local/bin/token-enricher\"",
+      "CreatedAt": "2026-07-17 02:07:56 +0000 UTC",
+      "ID": "9d893640a19f9c7436af6d3b62887870ef12dea249e752b170181d5a8371f2a2",
+      "Image": "arbitragex-v2-token-enricher",
+      "Labels": "com.docker.compose.config-hash=17909f286ab783adeeeb54267bd4dee0fd429b8920098f91e63f2f69805a3037,com.docker.compose.container-number=1,com.docker.compose.depends_on=redis:service_healthy:false,postgres:service_healthy:false,com.docker.compose.image=sha256:64dad42e7258b062f4673d585caf85b2d1c4846ad9646cba2d2983a128859b4a,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=token-enricher-1,com.docker.compose.service=token-enricher,com.docker.compose.version=5.1.3",
+      "LocalVolumes": "0",
+      "Mounts": "",
+      "Names": "arbitragex-v2-token-enricher-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "127.0.0.1:9004->9004/tcp",
+      "RunningFor": "51 minutes ago",
+      "Size": "4.1kB (virtual 118MB)",
+      "State": "running",
+      "Status": "Up 51 minutes (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 1254733,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-07-17T02:08:19.614919918Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:30.386712318Z",
+              "End": "2026-07-17T02:57:30.449510464Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:00.450591291Z",
+              "End": "2026-07-17T02:58:00.49706417Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:30.498335681Z",
+              "End": "2026-07-17T02:58:30.555638401Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:00.556894181Z",
+              "End": "2026-07-17T02:59:00.612311718Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:30.613012333Z",
+              "End": "2026-07-17T02:59:30.661737125Z",
+              "ExitCode": 0,
+              "Output": ""
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-token-enricher-1",
+            "token-enricher"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "4d7258d3097c4bf4a18e9ee13a6ae2e14dc36979610d45a1ee171d4a9669e299",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.9",
+          "MacAddress": "e2:e2:0f:f1:c9:36",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-token-enricher-1",
+            "token-enricher",
+            "9d893640a19f"
+          ]
+        }
+      },
+      "MountsSafe": [],
+      "ImageIDSafe": "sha256:64dad42e7258b062f4673d585caf85b2d1c4846ad9646cba2d2983a128859b4a",
+      "ComposeServiceSafe": "token-enricher",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-postgres-1": {
+      "Command": "\"docker-entrypoint.sh postgres\"",
+      "CreatedAt": "2026-07-17 01:46:02 +0000 UTC",
+      "ID": "9f473b92a0eaac9b50274be2ac4c2ec1845847e722d653e9741fcf644fe3b73b",
+      "Image": "postgres:15",
+      "Labels": "com.docker.compose.config-hash=61c80213fa1d8d16da67fd20cfd4040616dc6c10885725f14702b93111ebd1f3,com.docker.compose.container-number=1,com.docker.compose.depends_on=,com.docker.compose.image=sha256:74e110c41804365e3915fcc09d5e7a1eff50161aaa94d5da0e58e0cd75ae509c,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=postgres-1,com.docker.compose.service=postgres,com.docker.compose.version=5.1.3",
+      "LocalVolumes": "1",
+      "Mounts": "/opt/arbitragex-v2/database/init,arbitragex-v2_postgres_data",
+      "Names": "arbitragex-v2-postgres-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "127.0.0.1:5432->5432/tcp",
+      "RunningFor": "About an hour ago",
+      "Size": "20.5kB (virtual 469MB)",
+      "State": "running",
+      "Status": "Up About an hour (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 1215754,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-07-17T01:46:10.144334349Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:59:16.184102588Z",
+              "End": "2026-07-17T02:59:16.27227199Z",
+              "ExitCode": 0,
+              "Output": "/var/run/postgresql:5432 - accepting connections\n"
+            },
+            {
+              "Start": "2026-07-17T02:59:21.273104148Z",
+              "End": "2026-07-17T02:59:21.345639703Z",
+              "ExitCode": 0,
+              "Output": "/var/run/postgresql:5432 - accepting connections\n"
+            },
+            {
+              "Start": "2026-07-17T02:59:26.347215186Z",
+              "End": "2026-07-17T02:59:26.431268904Z",
+              "ExitCode": 0,
+              "Output": "/var/run/postgresql:5432 - accepting connections\n"
+            },
+            {
+              "Start": "2026-07-17T02:59:31.432292681Z",
+              "End": "2026-07-17T02:59:31.512760652Z",
+              "ExitCode": 0,
+              "Output": "/var/run/postgresql:5432 - accepting connections\n"
+            },
+            {
+              "Start": "2026-07-17T02:59:36.513896157Z",
+              "End": "2026-07-17T02:59:36.587515939Z",
+              "ExitCode": 0,
+              "Output": "/var/run/postgresql:5432 - accepting connections\n"
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-postgres-1",
+            "postgres"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "5516dfb1e6de45315ea4283f3de286fc755b03e4a1a81385401c7082aad0c159",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.7",
+          "MacAddress": "46:fe:48:69:52:70",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-postgres-1",
+            "postgres",
+            "9f473b92a0ea"
+          ]
+        }
+      },
+      "MountsSafe": [
+        {
+          "Type": "volume",
+          "Name": "arbitragex-v2_postgres_data",
+          "Source": "/var/lib/docker/volumes/arbitragex-v2_postgres_data/_data",
+          "Destination": "/var/lib/postgresql/data",
+          "Driver": "local",
+          "Mode": "rw",
+          "RW": true,
+          "Propagation": ""
+        },
+        {
+          "Type": "bind",
+          "Source": "/opt/arbitragex-v2/database/init",
+          "Destination": "/docker-entrypoint-initdb.d",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        }
+      ],
+      "ImageIDSafe": "sha256:74e110c41804365e3915fcc09d5e7a1eff50161aaa94d5da0e58e0cd75ae509c",
+      "ComposeServiceSafe": "postgres",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-anvil-1": {
+      "Command": "\"/bin/sh -c 'exec anvil --fork-url \\\"$ANVIL_FORK_URL\\\" --host 0.0.0.0 --port 8545'\"",
+      "CreatedAt": "2026-07-17 01:46:02 +0000 UTC",
+      "ID": "4f1f756dad96c5017c5b6b8ab5033764dcda9d0662b9b985abbe795eec8845dd",
+      "Image": "ghcr.io/foundry-rs/foundry:latest",
+      "Labels": "com.docker.compose.config-hash=86ec2ac681a89ca5f6c3e7948e28446b361e18dee9df1853318c3a558d9bef76,com.docker.compose.container-number=1,com.docker.compose.depends_on=,com.docker.compose.image=sha256:8347b728d5d393dac1c018691b36f506d23b9dcd78341d40ea0fcb11c3a19cdd,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=anvil-1,com.docker.compose.service=anvil,com.docker.compose.version=5.1.3,org.label-schema.build-date=,org.label-schema.description=Foundry,org.label-schema.name=Foundry,org.label-schema.schema-version=1.0,org.label-schema.url=https://getfoundry.sh,org.label-schema.vcs-ref=,org.label-schema.vcs-url=https://github.com/foundry-rs/foundry.git,org.label-schema.vendor=Foundry-rs,org.label-schema.version=,org.opencontainers.image.created=2026-05-08T08:38:48.979Z,org.opencontainers.image.description=Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.,org.opencontainers.image.licenses=Apache-2.0,org.opencontainers.image.revision=4072e48705af9d93e3c0f6e29e93b5e9a40caed8,org.opencontainers.image.source=https://github.com/foundry-rs/foundry,org.opencontainers.image.title=foundry,org.opencontainers.image.url=https://github.com/foundry-rs/foundry,org.opencontainers.image.version=v1.7.1",
+      "LocalVolumes": "0",
+      "Mounts": "",
+      "Names": "arbitragex-v2-anvil-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "8545/tcp",
+      "RunningFor": "About an hour ago",
+      "Size": "4.1kB (virtual 479MB)",
+      "State": "running",
+      "Status": "Up About an hour (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 1215752,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-07-17T01:46:10.143313451Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:58:23.061566967Z",
+              "End": "2026-07-17T02:58:23.126561209Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:38.128151085Z",
+              "End": "2026-07-17T02:58:38.208067238Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:53.209380366Z",
+              "End": "2026-07-17T02:58:53.286630468Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:08.287620582Z",
+              "End": "2026-07-17T02:59:08.365028862Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:23.36661082Z",
+              "End": "2026-07-17T02:59:23.44330041Z",
+              "ExitCode": 0,
+              "Output": ""
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-anvil-1",
+            "anvil"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "e7c12f32452adeb4eae933ea3915f4069fc34435cf8d83419a59b7cc29051336",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.3",
+          "MacAddress": "06:2e:cd:ef:95:09",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-anvil-1",
+            "anvil",
+            "4f1f756dad96"
+          ]
+        }
+      },
+      "MountsSafe": [],
+      "ImageIDSafe": "sha256:8347b728d5d393dac1c018691b36f506d23b9dcd78341d40ea0fcb11c3a19cdd",
+      "ComposeServiceSafe": "anvil",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-redis-1": {
+      "Command": "\"docker-entrypoint.sh redis-server --save  --appendonly no\"",
+      "CreatedAt": "2026-07-15 01:54:53 +0000 UTC",
+      "ID": "7b70eb841558a17febf0d8962276123f5cbf86a1dabbe0e8497daf366507c07b",
+      "Image": "redis:7.2",
+      "Labels": "com.docker.compose.config-hash=040d39dd0a8f17a4039db0890bbd1a715720d2897714ba22f3edf83157dcf4b7,com.docker.compose.container-number=1,com.docker.compose.depends_on=,com.docker.compose.image=sha256:f0707c78ea880b293ccdeb410c9c0a8ccae93fe7128799b751333a698b0a39a7,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.dev.yml,com.docker.compose.project.environment_file=/opt/arbitragex-v2/.env,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=redis-1,com.docker.compose.service=redis,com.docker.compose.version=5.1.3",
+      "LocalVolumes": "1",
+      "Mounts": "arbitragex-v2_redis_data",
+      "Names": "arbitragex-v2-redis-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "127.0.0.1:6379->6379/tcp",
+      "RunningFor": "2 days ago",
+      "Size": "4.1kB (virtual 123MB)",
+      "State": "running",
+      "Status": "Up 2 days (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 1229853,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-07-15T01:55:05.62215223Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:59:15.939378268Z",
+              "End": "2026-07-17T02:59:15.988390429Z",
+              "ExitCode": 0,
+              "Output": "PONG\n"
+            },
+            {
+              "Start": "2026-07-17T02:59:20.989454031Z",
+              "End": "2026-07-17T02:59:21.037329988Z",
+              "ExitCode": 0,
+              "Output": "PONG\n"
+            },
+            {
+              "Start": "2026-07-17T02:59:26.037841402Z",
+              "End": "2026-07-17T02:59:26.085184215Z",
+              "ExitCode": 0,
+              "Output": "PONG\n"
+            },
+            {
+              "Start": "2026-07-17T02:59:31.08632951Z",
+              "End": "2026-07-17T02:59:31.136500267Z",
+              "ExitCode": 0,
+              "Output": "PONG\n"
+            },
+            {
+              "Start": "2026-07-17T02:59:36.137927903Z",
+              "End": "2026-07-17T02:59:36.186832621Z",
+              "ExitCode": 0,
+              "Output": "PONG\n"
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-redis-1",
+            "redis"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "b35bda5ba957fb852a2a3617209e98bf270e331f91c4526f537323a1a95c5304",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.2",
+          "MacAddress": "8e:79:9e:99:87:ac",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-redis-1",
+            "redis",
+            "7b70eb841558"
+          ]
+        }
+      },
+      "MountsSafe": [
+        {
+          "Type": "volume",
+          "Name": "arbitragex-v2_redis_data",
+          "Source": "/var/lib/docker/volumes/arbitragex-v2_redis_data/_data",
+          "Destination": "/data",
+          "Driver": "local",
+          "Mode": "rw",
+          "RW": true,
+          "Propagation": ""
+        }
+      ],
+      "ImageIDSafe": "sha256:f0707c78ea880b293ccdeb410c9c0a8ccae93fe7128799b751333a698b0a39a7",
+      "ComposeServiceSafe": "redis",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.dev.yml"
+    },
+    "arbitragex-v2-promtail-1": {
+      "Command": "\"/usr/bin/promtail -config.file=/etc/promtail/config.yml\"",
+      "CreatedAt": "2026-06-06 20:01:42 +0000 UTC",
+      "ID": "2b0ee2c6c43561fd5d30d1e9cefbfdda8dbdc5ad782476f87e0f83ac8e038d40",
+      "Image": "grafana/promtail:2.9.7",
+      "Labels": "com.docker.compose.config-hash=22331ca082ff2e2d99b2d04619108ab6319161d7264ec575c20b0b54abea4575,com.docker.compose.container-number=1,com.docker.compose.depends_on=loki:service_started:false,com.docker.compose.image=sha256:ba5f128849f51db31459a8ecd63d3f50e443af8585cf088ec11cb22248c6ae23,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=promtail-1,com.docker.compose.service=promtail,com.docker.compose.version=5.1.3,org.opencontainers.image.created=2024-04-10T09:06:31Z,org.opencontainers.image.revision=efc4d2f009e04ecb1db58a637b89b33aa234de34,org.opencontainers.image.source=https://github.com/grafana/loki.git,org.opencontainers.image.url=https://github.com/grafana/loki",
+      "LocalVolumes": "0",
+      "Mounts": "/opt/arbitragex-v2/monitoring/promtail/promtail-config.yml,/var/run/docker.sock",
+      "Names": "arbitragex-v2-promtail-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "",
+      "RunningFor": "5 weeks ago",
+      "Size": "41kB (virtual 212MB)",
+      "State": "running",
+      "Status": "Up 5 weeks (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 4013049,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-06-06T20:01:43.2743066Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:20.699400843Z",
+              "End": "2026-07-17T02:57:20.750402703Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:57:50.751292072Z",
+              "End": "2026-07-17T02:57:50.812794212Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:20.813608665Z",
+              "End": "2026-07-17T02:58:20.864915297Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:50.866003372Z",
+              "End": "2026-07-17T02:58:50.920407795Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:20.921759034Z",
+              "End": "2026-07-17T02:59:20.972191192Z",
+              "ExitCode": 0,
+              "Output": ""
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-promtail-1",
+            "promtail"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "3fca44d930f574869a7d74eb316d4a8127b330bac95084b3eaccd356fbd3534d",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.10",
+          "MacAddress": "22:41:3b:63:8c:e7",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-promtail-1",
+            "promtail",
+            "2b0ee2c6c435"
+          ]
+        }
+      },
+      "MountsSafe": [
+        {
+          "Type": "bind",
+          "Source": "/opt/arbitragex-v2/monitoring/promtail/promtail-config.yml",
+          "Destination": "/etc/promtail/config.yml",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        },
+        {
+          "Type": "bind",
+          "Source": "/var/run/docker.sock",
+          "Destination": "/var/run/docker.sock",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        }
+      ],
+      "ImageIDSafe": "sha256:ba5f128849f51db31459a8ecd63d3f50e443af8585cf088ec11cb22248c6ae23",
+      "ComposeServiceSafe": "promtail",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "friendly_jones": {
+      "Command": "\"/bin/sh -c 'npm install --workspaces --include-workspace-root --silent'\"",
+      "CreatedAt": "2026-05-31 17:24:31 +0000 UTC",
+      "ID": "aa2a9fbe5cf7878ed4774f8ee2af61f15e8a83bb13ac2c2102fe9076eb0749df",
+      "Image": "sha256:af08006fa1bedf06a2674ac3e06555ea1891628d8135451f923de93f9e0c9784",
+      "Labels": "",
+      "LocalVolumes": "0",
+      "Mounts": "",
+      "Names": "friendly_jones",
+      "Networks": "bridge",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "",
+      "RunningFor": "6 weeks ago",
+      "Size": "20.5kB (virtual 219MB)",
+      "State": "exited",
+      "Status": "Exited (1) 6 weeks ago",
+      "StateSafe": {
+        "Status": "exited",
+        "Running": false,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 0,
+        "ExitCode": 1,
+        "Error": "",
+        "StartedAt": "2026-05-31T17:24:31.564209957Z",
+        "FinishedAt": "2026-05-31T17:24:32.11686033Z"
+      },
+      "NetworksSafe": {
+        "bridge": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": null,
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "44aa2498fe70d863509d0fef43b283e25e9646fe70ade5c6d1055ad650400d49",
+          "EndpointID": "",
+          "Gateway": "",
+          "IPAddress": "",
+          "MacAddress": "",
+          "IPPrefixLen": 0,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": null
+        }
+      },
+      "MountsSafe": [],
+      "ImageIDSafe": "sha256:af08006fa1bedf06a2674ac3e06555ea1891628d8135451f923de93f9e0c9784",
+      "ComposeServiceSafe": "",
+      "ComposeConfigFilesSafe": ""
+    },
+    "arbitragex-v2-vault-1": {
+      "Command": "\"docker-entrypoint.sh server\"",
+      "CreatedAt": "2026-05-21 18:00:41 +0000 UTC",
+      "ID": "9eff9f5b618518d8b658695ff224663e2bb1f7cdae8b0d058d9e4b4a7a43a87d",
+      "Image": "hashicorp/vault:1.18.1",
+      "Labels": "com.docker.compose.config-hash=b7fa784cee69cad4d10215a890987da941da5dadfb64960f990c05105d6030cb,com.docker.compose.container-number=1,com.docker.compose.depends_on=,com.docker.compose.image=sha256:3580fa352195aa7e76449cb8fadeef6d2f90a454c38982d30cf094e9013be786,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=arbitragex-v2-vault-1,com.docker.compose.service=vault,com.docker.compose.version=5.1.3,description=Vault is a tool for securely accessing secrets. A secret is anything that you want to tightly control access to, such as API keys, passwords, certificates, and more. Vault provides a unified interface to any secret, while providing tight access control and recording a detailed audit log.,maintainer=Vault Team <vault@hashicorp.com>,name=Vault,release=f479e5c85462477c9334564bc8f69531cdb03b65,revision=f479e5c85462477c9334564bc8f69531cdb03b65,summary=Vault is a tool for securely accessing secrets.,vendor=HashiCorp,version=1.18.1",
+      "LocalVolumes": "3",
+      "Mounts": "arbitragex-v2_vault_data,58f66947a818422fa546b09e4c1aa494c1b0f6de618d0060eb038e5d7e64d918,arbitragex-v2_vault_logs,/opt/arbitragex-v2/monitoring/vault/tls",
+      "Names": "arbitragex-v2-vault-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "127.0.0.1:8200->8200/tcp",
+      "RunningFor": "8 weeks ago",
+      "Size": "458MB (virtual 926MB)",
+      "State": "running",
+      "Status": "Up 8 weeks (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 1206142,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-05-21T18:00:45.700202188Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:35.366715845Z",
+              "End": "2026-07-17T02:57:35.551121468Z",
+              "ExitCode": 0,
+              "Output": "Key                Value\n---                -----\nSeal Type          shamir\nInitialized        true\nSealed             true\nTotal Shares       3\nThreshold          2\nUnseal Progress    0/2\nUnseal Nonce       n/a\nVersion            1.18.1\nBuild Date         2024-10-29T14:21:31Z\nStorage Type       file\nHA Enabled         false\n"
+            },
+            {
+              "Start": "2026-07-17T02:58:05.551857752Z",
+              "End": "2026-07-17T02:58:05.859881161Z",
+              "ExitCode": 0,
+              "Output": "Key                Value\n---                -----\nSeal Type          shamir\nInitialized        true\nSealed             true\nTotal Shares       3\nThreshold          2\nUnseal Progress    0/2\nUnseal Nonce       n/a\nVersion            1.18.1\nBuild Date         2024-10-29T14:21:31Z\nStorage Type       file\nHA Enabled         false\n"
+            },
+            {
+              "Start": "2026-07-17T02:58:35.860844968Z",
+              "End": "2026-07-17T02:58:36.059083364Z",
+              "ExitCode": 0,
+              "Output": "Key                Value\n---                -----\nSeal Type          shamir\nInitialized        true\nSealed             true\nTotal Shares       3\nThreshold          2\nUnseal Progress    0/2\nUnseal Nonce       n/a\nVersion            1.18.1\nBuild Date         2024-10-29T14:21:31Z\nStorage Type       file\nHA Enabled         false\n"
+            },
+            {
+              "Start": "2026-07-17T02:59:06.060332046Z",
+              "End": "2026-07-17T02:59:06.250185736Z",
+              "ExitCode": 0,
+              "Output": "Key                Value\n---                -----\nSeal Type          shamir\nInitialized        true\nSealed             true\nTotal Shares       3\nThreshold          2\nUnseal Progress    0/2\nUnseal Nonce       n/a\nVersion            1.18.1\nBuild Date         2024-10-29T14:21:31Z\nStorage Type       file\nHA Enabled         false\n"
+            },
+            {
+              "Start": "2026-07-17T02:59:36.251250952Z",
+              "End": "2026-07-17T02:59:36.476766045Z",
+              "ExitCode": 0,
+              "Output": "Key                Value\n---                -----\nSeal Type          shamir\nInitialized        true\nSealed             true\nTotal Shares       3\nThreshold          2\nUnseal Progress    0/2\nUnseal Nonce       n/a\nVersion            1.18.1\nBuild Date         2024-10-29T14:21:31Z\nStorage Type       file\nHA Enabled         false\n"
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-vault-1",
+            "vault"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "1dc2efac57f7667696da9fea050143ff4fc656237cd56d684f06d17122649cf1",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.8",
+          "MacAddress": "ee:b4:75:ad:3a:4c",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-vault-1",
+            "vault",
+            "9eff9f5b6185"
+          ]
+        }
+      },
+      "MountsSafe": [
+        {
+          "Type": "volume",
+          "Name": "arbitragex-v2_vault_logs",
+          "Source": "/var/lib/docker/volumes/arbitragex-v2_vault_logs/_data",
+          "Destination": "/vault/logs",
+          "Driver": "local",
+          "Mode": "rw",
+          "RW": true,
+          "Propagation": ""
+        },
+        {
+          "Type": "volume",
+          "Name": "arbitragex-v2_vault_data",
+          "Source": "/var/lib/docker/volumes/arbitragex-v2_vault_data/_data",
+          "Destination": "/vault/data",
+          "Driver": "local",
+          "Mode": "rw",
+          "RW": true,
+          "Propagation": ""
+        },
+        {
+          "Type": "bind",
+          "Source": "/opt/arbitragex-v2/monitoring/vault/tls",
+          "Destination": "/vault/tls",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        },
+        {
+          "Type": "volume",
+          "Name": "58f66947a818422fa546b09e4c1aa494c1b0f6de618d0060eb038e5d7e64d918",
+          "Source": "/var/lib/docker/volumes/58f66947a818422fa546b09e4c1aa494c1b0f6de618d0060eb038e5d7e64d918/_data",
+          "Destination": "/vault/file",
+          "Driver": "local",
+          "Mode": "z",
+          "RW": true,
+          "Propagation": ""
+        }
+      ],
+      "ImageIDSafe": "sha256:3580fa352195aa7e76449cb8fadeef6d2f90a454c38982d30cf094e9013be786",
+      "ComposeServiceSafe": "vault",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-grafana-1": {
+      "Command": "\"/run.sh\"",
+      "CreatedAt": "2026-05-17 02:14:14 +0000 UTC",
+      "ID": "62c259240a6d059b78e3ec215d0c2da4802317e493d7b8adcb95252191c8d251",
+      "Image": "grafana/grafana:11.4.0",
+      "Labels": "com.docker.compose.config-hash=aab295acafd3d4c1328739f7cf0a54b40b632389b05a21e56d4bb4694fbd42f1,com.docker.compose.container-number=1,com.docker.compose.depends_on=prometheus:service_started:false,com.docker.compose.image=sha256:d8ea37798ccc41061a62ab080f2676dda6bf7815558499f901bdb0f533a456fb,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=grafana-1,com.docker.compose.service=grafana,com.docker.compose.version=5.1.3,maintainer=Grafana Labs <hello@grafana.com>",
+      "LocalVolumes": "1",
+      "Mounts": "/opt/arbitragex-v2/monitoring/grafana/dashboards,/opt/arbitragex-v2/monitoring/grafana/datasources,/run/secrets/arbx/grafana_admin_password,arbitragex-v2_grafana_data",
+      "Names": "arbitragex-v2-grafana-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "127.0.0.1:3000->3000/tcp",
+      "RunningFor": "2 months ago",
+      "Size": "16.4kB (virtual 514MB)",
+      "State": "running",
+      "Status": "Up 8 weeks (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 1975771,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-05-18T13:50:36.286177401Z",
+        "FinishedAt": "2026-05-18T13:50:36.136688236Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:36.750620383Z",
+              "End": "2026-07-17T02:57:36.803170662Z",
+              "ExitCode": 0,
+              "Output": "{\n  \"database\": \"ok\",\n  \"version\": \"11.4.0\",\n  \"commit\": \"b58701869e1a11b696010a6f28bd96b68a2cf0d0\"\n}"
+            },
+            {
+              "Start": "2026-07-17T02:58:06.804542508Z",
+              "End": "2026-07-17T02:58:06.860049544Z",
+              "ExitCode": 0,
+              "Output": "{\n  \"database\": \"ok\",\n  \"version\": \"11.4.0\",\n  \"commit\": \"b58701869e1a11b696010a6f28bd96b68a2cf0d0\"\n}"
+            },
+            {
+              "Start": "2026-07-17T02:58:36.860999935Z",
+              "End": "2026-07-17T02:58:36.908130088Z",
+              "ExitCode": 0,
+              "Output": "{\n  \"database\": \"ok\",\n  \"version\": \"11.4.0\",\n  \"commit\": \"b58701869e1a11b696010a6f28bd96b68a2cf0d0\"\n}"
+            },
+            {
+              "Start": "2026-07-17T02:59:06.909511859Z",
+              "End": "2026-07-17T02:59:06.959372824Z",
+              "ExitCode": 0,
+              "Output": "{\n  \"database\": \"ok\",\n  \"version\": \"11.4.0\",\n  \"commit\": \"b58701869e1a11b696010a6f28bd96b68a2cf0d0\"\n}"
+            },
+            {
+              "Start": "2026-07-17T02:59:36.960100906Z",
+              "End": "2026-07-17T02:59:37.004684395Z",
+              "ExitCode": 0,
+              "Output": "{\n  \"database\": \"ok\",\n  \"version\": \"11.4.0\",\n  \"commit\": \"b58701869e1a11b696010a6f28bd96b68a2cf0d0\"\n}"
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-grafana-1",
+            "grafana"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "dae9ba7c25871429dfa60cb31242f10aea01729a4c3409c4a8e33dc3f3f2c455",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.19",
+          "MacAddress": "0a:ff:aa:af:a8:df",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-grafana-1",
+            "grafana",
+            "62c259240a6d"
+          ]
+        }
+      },
+      "MountsSafe": [
+        {
+          "Type": "bind",
+          "Source": "/run/secrets/arbx/grafana_admin_password",
+          "Destination": "/run/secrets/grafana_admin_password",
+          "Mode": "",
+          "RW": false,
+          "Propagation": "rprivate"
+        },
+        {
+          "Type": "bind",
+          "Source": "/opt/arbitragex-v2/monitoring/grafana/datasources",
+          "Destination": "/etc/grafana/provisioning/datasources",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        },
+        {
+          "Type": "bind",
+          "Source": "/opt/arbitragex-v2/monitoring/grafana/dashboards",
+          "Destination": "/etc/grafana/provisioning/dashboards",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        },
+        {
+          "Type": "volume",
+          "Name": "arbitragex-v2_grafana_data",
+          "Source": "/var/lib/docker/volumes/arbitragex-v2_grafana_data/_data",
+          "Destination": "/var/lib/grafana",
+          "Driver": "local",
+          "Mode": "rw",
+          "RW": true,
+          "Propagation": ""
+        }
+      ],
+      "ImageIDSafe": "sha256:d8ea37798ccc41061a62ab080f2676dda6bf7815558499f901bdb0f533a456fb",
+      "ComposeServiceSafe": "grafana",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-thanos-query-1": {
+      "Command": "\"/bin/thanos query --http-address=0.0.0.0:10904 --grpc-address=0.0.0.0:10905 --store=thanos-sidecar:10901 --store=thanos-store:10901\"",
+      "CreatedAt": "2026-05-17 01:33:44 +0000 UTC",
+      "ID": "2da5d30575197adf5ea6ce508631b582e7a0c28194fc27f1c6d4d0f2ab5e80f0",
+      "Image": "quay.io/thanos/thanos:v0.36.1",
+      "Labels": "com.docker.compose.config-hash=f27808f876f1648724888ba10d6d99db2cec7a90b77960826f3651b2bf3eeba2,com.docker.compose.container-number=1,com.docker.compose.depends_on=thanos-store:service_started:false,thanos-sidecar:service_started:false,com.docker.compose.image=sha256:e542959e1b36d5046083d1b64a7049c356b68a44a173c58b3ae7c0c9ada932d5,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.service=thanos-query,com.docker.compose.version=5.1.3,maintainer=The Thanos Authors",
+      "LocalVolumes": "0",
+      "Mounts": "",
+      "Names": "arbitragex-v2-thanos-query-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "127.0.0.1:10904->10904/tcp",
+      "RunningFor": "2 months ago",
+      "Size": "4.1kB (virtual 216MB)",
+      "State": "running",
+      "Status": "Up 2 months (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 2581505,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-05-17T02:14:55.777220323Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:35.960180597Z",
+              "End": "2026-07-17T02:57:36.016824469Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:06.018203379Z",
+              "End": "2026-07-17T02:58:06.067460881Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:36.068314981Z",
+              "End": "2026-07-17T02:58:36.124129815Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:06.125559717Z",
+              "End": "2026-07-17T02:59:06.168540664Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:36.169790877Z",
+              "End": "2026-07-17T02:59:36.21696247Z",
+              "ExitCode": 0,
+              "Output": ""
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-thanos-query-1",
+            "thanos-query"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "6c0a34d4fb94785d6e576fb5e20b32e8660a1e5a842194be6ef4ca4ca8cc91bd",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.18",
+          "MacAddress": "ca:35:b8:d1:22:1c",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-thanos-query-1",
+            "thanos-query",
+            "2da5d3057519"
+          ]
+        }
+      },
+      "MountsSafe": [],
+      "ImageIDSafe": "sha256:e542959e1b36d5046083d1b64a7049c356b68a44a173c58b3ae7c0c9ada932d5",
+      "ComposeServiceSafe": "thanos-query",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-thanos-sidecar-1": {
+      "Command": "\"/bin/thanos sidecar --tsdb.path=/prometheus --prometheus.url=http://prometheus:9090 --objstore.config-file=/etc/thanos/objstore.yml --grpc-address=0.0.0.0:10901 --http-address=0.0.0.0:10902\"",
+      "CreatedAt": "2026-05-17 01:33:44 +0000 UTC",
+      "ID": "ef129f984dd7a41ea0a6abad8e379d33d2705f041c9d81e7899d4560568b0956",
+      "Image": "quay.io/thanos/thanos:v0.36.1",
+      "Labels": "com.docker.compose.config-hash=75ab92d411df67c62f32f6509f143fbaab1a23202e677741a2ed73e552c2e71d,com.docker.compose.container-number=1,com.docker.compose.depends_on=minio:service_healthy:false,prometheus:service_healthy:false,com.docker.compose.image=sha256:e542959e1b36d5046083d1b64a7049c356b68a44a173c58b3ae7c0c9ada932d5,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.service=thanos-sidecar,com.docker.compose.version=5.1.3,maintainer=The Thanos Authors",
+      "LocalVolumes": "1",
+      "Mounts": "arbitragex-v2_prometheus_data,/opt/arbitragex-v2/monitoring/thanos/objstore.yml",
+      "Names": "arbitragex-v2-thanos-sidecar-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "",
+      "RunningFor": "2 months ago",
+      "Size": "16.4kB (virtual 216MB)",
+      "State": "running",
+      "Status": "Up 2 months (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 2581432,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-05-17T02:14:55.631091662Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:36.960606556Z",
+              "End": "2026-07-17T02:57:37.011453224Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:07.012253596Z",
+              "End": "2026-07-17T02:58:07.07538544Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:37.075905903Z",
+              "End": "2026-07-17T02:58:37.131034928Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:07.132108658Z",
+              "End": "2026-07-17T02:59:07.182462881Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:37.184010302Z",
+              "End": "2026-07-17T02:59:37.237535223Z",
+              "ExitCode": 0,
+              "Output": ""
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-thanos-sidecar-1",
+            "thanos-sidecar"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "5d4f4abccaf0cc132ea9a2ba6cc10f28524b4ce846a9a1443545554a12719a64",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.17",
+          "MacAddress": "d2:e4:88:9d:b8:53",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-thanos-sidecar-1",
+            "thanos-sidecar",
+            "ef129f984dd7"
+          ]
+        }
+      },
+      "MountsSafe": [
+        {
+          "Type": "bind",
+          "Source": "/opt/arbitragex-v2/monitoring/thanos/objstore.yml",
+          "Destination": "/etc/thanos/objstore.yml",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        },
+        {
+          "Type": "volume",
+          "Name": "arbitragex-v2_prometheus_data",
+          "Source": "/var/lib/docker/volumes/arbitragex-v2_prometheus_data/_data",
+          "Destination": "/prometheus",
+          "Driver": "local",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": ""
+        }
+      ],
+      "ImageIDSafe": "sha256:e542959e1b36d5046083d1b64a7049c356b68a44a173c58b3ae7c0c9ada932d5",
+      "ComposeServiceSafe": "thanos-sidecar",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-prometheus-1": {
+      "Command": "\"/bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus --storage.tsdb.min-block-duration=2h --storage.tsdb.max-block-duration=2h --web.enable-lifecycle\"",
+      "CreatedAt": "2026-05-17 01:33:44 +0000 UTC",
+      "ID": "5fd56632eeb02f156200f183ac435d184cd5b5f8bb4b25de2e90306a983d9a23",
+      "Image": "prom/prometheus:v2.55.1",
+      "Labels": "com.docker.compose.config-hash=a450bb86786205506eeaae1af05a3df313b447ce52866256fd007d5481a9f6a4,com.docker.compose.container-number=1,com.docker.compose.depends_on=,com.docker.compose.image=sha256:2659f4c2ebb718e7695cb9b25ffa7d6be64db013daba13e05c875451cf51b0d3,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=prometheus-1,com.docker.compose.service=prometheus,com.docker.compose.version=5.1.3,maintainer=The Prometheus Authors <prometheus-developers@googlegroups.com>",
+      "LocalVolumes": "1",
+      "Mounts": "/opt/arbitragex-v2/monitoring/alerts.rules.yml,/opt/arbitragex-v2/monitoring/prometheus/prometheus.prod.yml,arbitragex-v2_prometheus_data",
+      "Names": "arbitragex-v2-prometheus-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "127.0.0.1:9090->9090/tcp",
+      "RunningFor": "2 months ago",
+      "Size": "16.4kB (virtual 293MB)",
+      "State": "running",
+      "Status": "Up 2 months (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 2575462,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-05-17T02:14:24.863142185Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:36.389018072Z",
+              "End": "2026-07-17T02:57:36.450210611Z",
+              "ExitCode": 0,
+              "Output": "Prometheus Server is Healthy.\n"
+            },
+            {
+              "Start": "2026-07-17T02:58:06.451466651Z",
+              "End": "2026-07-17T02:58:06.507180545Z",
+              "ExitCode": 0,
+              "Output": "Prometheus Server is Healthy.\n"
+            },
+            {
+              "Start": "2026-07-17T02:58:36.507983028Z",
+              "End": "2026-07-17T02:58:36.566609295Z",
+              "ExitCode": 0,
+              "Output": "Prometheus Server is Healthy.\n"
+            },
+            {
+              "Start": "2026-07-17T02:59:06.567664301Z",
+              "End": "2026-07-17T02:59:06.615584349Z",
+              "ExitCode": 0,
+              "Output": "Prometheus Server is Healthy.\n"
+            },
+            {
+              "Start": "2026-07-17T02:59:36.616560508Z",
+              "End": "2026-07-17T02:59:36.66582935Z",
+              "ExitCode": 0,
+              "Output": "Prometheus Server is Healthy.\n"
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-prometheus-1",
+            "prometheus"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "9da4109d3090ea8d210cf9d2e8e0795407331ed19576292796c7c5687ef39b81",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.5",
+          "MacAddress": "8e:72:2c:2b:c7:99",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-prometheus-1",
+            "prometheus",
+            "5fd56632eeb0"
+          ]
+        }
+      },
+      "MountsSafe": [
+        {
+          "Type": "volume",
+          "Name": "arbitragex-v2_prometheus_data",
+          "Source": "/var/lib/docker/volumes/arbitragex-v2_prometheus_data/_data",
+          "Destination": "/prometheus",
+          "Driver": "local",
+          "Mode": "rw",
+          "RW": true,
+          "Propagation": ""
+        },
+        {
+          "Type": "bind",
+          "Source": "/opt/arbitragex-v2/monitoring/prometheus/prometheus.prod.yml",
+          "Destination": "/etc/prometheus/prometheus.yml",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        },
+        {
+          "Type": "bind",
+          "Source": "/opt/arbitragex-v2/monitoring/alerts.rules.yml",
+          "Destination": "/etc/prometheus/alerts.rules.yml",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        }
+      ],
+      "ImageIDSafe": "sha256:2659f4c2ebb718e7695cb9b25ffa7d6be64db013daba13e05c875451cf51b0d3",
+      "ComposeServiceSafe": "prometheus",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-alertmanager-1": {
+      "Command": "\"/bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager\"",
+      "CreatedAt": "2026-05-17 01:33:44 +0000 UTC",
+      "ID": "229281f7a52df44ae143650b04e3230f7210b0dc479ee9690efbe7a48aa87237",
+      "Image": "prom/alertmanager:v0.27.0",
+      "Labels": "com.docker.compose.config-hash=c050a9a73f69aea393aae87a66a16bc862797cf8788ad5e19557545d53b278ae,com.docker.compose.container-number=1,com.docker.compose.depends_on=,com.docker.compose.image=sha256:e13b6ed5cb929eeaee733479dce55e10eb3bc2e9c4586c705a4e8da41e5eacf5,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=alertmanager-1,com.docker.compose.service=alertmanager,com.docker.compose.version=5.1.3,maintainer=The Prometheus Authors <prometheus-developers@googlegroups.com>",
+      "LocalVolumes": "1",
+      "Mounts": "4b2fe1cfd16ecdabe8e13a1f8346e9213a07cf4571b09a2e61a00e8e65b9ba3b,/opt/arbitragex-v2/monitoring/alertmanager/alertmanager.yml",
+      "Names": "arbitragex-v2-alertmanager-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "127.0.0.1:9093->9093/tcp",
+      "RunningFor": "2 months ago",
+      "Size": "4.1kB (virtual 73.2MB)",
+      "State": "running",
+      "Status": "Up 2 months (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 3856684,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-05-17T14:40:00.923628865Z",
+        "FinishedAt": "2026-05-17T14:39:12.729098885Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:22.423800009Z",
+              "End": "2026-07-17T02:57:22.474136959Z",
+              "ExitCode": 0,
+              "Output": "OK"
+            },
+            {
+              "Start": "2026-07-17T02:57:52.475160428Z",
+              "End": "2026-07-17T02:57:52.559587567Z",
+              "ExitCode": 0,
+              "Output": "OK"
+            },
+            {
+              "Start": "2026-07-17T02:58:22.561081826Z",
+              "End": "2026-07-17T02:58:22.617898132Z",
+              "ExitCode": 0,
+              "Output": "OK"
+            },
+            {
+              "Start": "2026-07-17T02:58:52.619410482Z",
+              "End": "2026-07-17T02:58:52.699374565Z",
+              "ExitCode": 0,
+              "Output": "OK"
+            },
+            {
+              "Start": "2026-07-17T02:59:22.701081029Z",
+              "End": "2026-07-17T02:59:22.749993883Z",
+              "ExitCode": 0,
+              "Output": "OK"
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-alertmanager-1",
+            "alertmanager"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "071e52e30d91203041b9babff4ade72f600b8dd3f2a9b0a47b2454a55754ff5a",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.20",
+          "MacAddress": "ea:e4:e6:6b:33:59",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-alertmanager-1",
+            "alertmanager",
+            "229281f7a52d"
+          ]
+        }
+      },
+      "MountsSafe": [
+        {
+          "Type": "bind",
+          "Source": "/opt/arbitragex-v2/monitoring/alertmanager/alertmanager.yml",
+          "Destination": "/etc/alertmanager/alertmanager.yml",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        },
+        {
+          "Type": "volume",
+          "Name": "4b2fe1cfd16ecdabe8e13a1f8346e9213a07cf4571b09a2e61a00e8e65b9ba3b",
+          "Source": "/var/lib/docker/volumes/4b2fe1cfd16ecdabe8e13a1f8346e9213a07cf4571b09a2e61a00e8e65b9ba3b/_data",
+          "Destination": "/alertmanager",
+          "Driver": "local",
+          "Mode": "z",
+          "RW": true,
+          "Propagation": ""
+        }
+      ],
+      "ImageIDSafe": "sha256:e13b6ed5cb929eeaee733479dce55e10eb3bc2e9c4586c705a4e8da41e5eacf5",
+      "ComposeServiceSafe": "alertmanager",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-thanos-store-1": {
+      "Command": "\"/bin/thanos store --data-dir=/data --objstore.config-file=/etc/thanos/objstore.yml --grpc-address=0.0.0.0:10901 --http-address=0.0.0.0:10902\"",
+      "CreatedAt": "2026-05-17 01:33:44 +0000 UTC",
+      "ID": "3bc0b3b306b2b424e96e3fa1d45f58b6f59da93555f8d903366d0b787f031a5b",
+      "Image": "quay.io/thanos/thanos:v0.36.1",
+      "Labels": "com.docker.compose.config-hash=24a90593fce0944214d5aedf7a50e392a0ba9d6c00f600f1993c6099f392d348,com.docker.compose.container-number=1,com.docker.compose.depends_on=minio:service_healthy:false,com.docker.compose.image=sha256:e542959e1b36d5046083d1b64a7049c356b68a44a173c58b3ae7c0c9ada932d5,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.service=thanos-store,com.docker.compose.version=5.1.3,maintainer=The Thanos Authors",
+      "LocalVolumes": "1",
+      "Mounts": "arbitragex-v2_thanos_store_data,/opt/arbitragex-v2/monitoring/thanos/objstore.yml",
+      "Names": "arbitragex-v2-thanos-store-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "",
+      "RunningFor": "2 months ago",
+      "Size": "16.4kB (virtual 216MB)",
+      "State": "running",
+      "Status": "Up 7 hours (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 539869,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-07-16T20:05:06.885480583Z",
+        "FinishedAt": "2026-07-09T11:39:41.381598304Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:30.982794098Z",
+              "End": "2026-07-17T02:57:31.058479862Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:01.059533737Z",
+              "End": "2026-07-17T02:58:01.124441778Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:58:31.125342763Z",
+              "End": "2026-07-17T02:58:31.17440091Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:01.175911507Z",
+              "End": "2026-07-17T02:59:01.231825488Z",
+              "ExitCode": 0,
+              "Output": ""
+            },
+            {
+              "Start": "2026-07-17T02:59:31.232759242Z",
+              "End": "2026-07-17T02:59:31.28533574Z",
+              "ExitCode": 0,
+              "Output": ""
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-thanos-store-1",
+            "thanos-store"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "7719ccae56d62010943c85b747f31d535560b80e28913aeb4551fbdfa13f3c12",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.21",
+          "MacAddress": "0e:6a:ad:e9:97:a2",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-thanos-store-1",
+            "thanos-store",
+            "3bc0b3b306b2"
+          ]
+        }
+      },
+      "MountsSafe": [
+        {
+          "Type": "volume",
+          "Name": "arbitragex-v2_thanos_store_data",
+          "Source": "/var/lib/docker/volumes/arbitragex-v2_thanos_store_data/_data",
+          "Destination": "/data",
+          "Driver": "local",
+          "Mode": "rw",
+          "RW": true,
+          "Propagation": ""
+        },
+        {
+          "Type": "bind",
+          "Source": "/opt/arbitragex-v2/monitoring/thanos/objstore.yml",
+          "Destination": "/etc/thanos/objstore.yml",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        }
+      ],
+      "ImageIDSafe": "sha256:e542959e1b36d5046083d1b64a7049c356b68a44a173c58b3ae7c0c9ada932d5",
+      "ComposeServiceSafe": "thanos-store",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "957190bc6d60_arbitragex-v2-loki-1": {
+      "Command": "\"/usr/bin/loki -config.file=/etc/loki/config.yml\"",
+      "CreatedAt": "2026-05-17 01:33:44 +0000 UTC",
+      "ID": "8fe89f77a50753039e8d74c8a6ab363f8c7c4c98dfda0b00363729c935f9cbc0",
+      "Image": "grafana/loki:2.9.7",
+      "Labels": "com.docker.compose.config-hash=d0b8c49018239808fc4a685e0b2e7942420dde6049524dad9cb0c9f4156eaa23,com.docker.compose.container-number=1,com.docker.compose.depends_on=,com.docker.compose.image=sha256:792a791d9e52fdff6a4e21be57b5fd9e5868218156e175bb8dde0fa258c76e20,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.replace=loki-1,com.docker.compose.service=loki,com.docker.compose.version=5.1.3,org.opencontainers.image.created=2024-04-10T09:06:31Z,org.opencontainers.image.revision=efc4d2f009e04ecb1db58a637b89b33aa234de34,org.opencontainers.image.source=https://github.com/grafana/loki.git,org.opencontainers.image.url=https://github.com/grafana/loki",
+      "LocalVolumes": "1",
+      "Mounts": "/opt/arbitragex-v2/monitoring/loki/loki-config.yml,arbitragex-v2_loki_data",
+      "Names": "957190bc6d60_arbitragex-v2-loki-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "127.0.0.1:3100->3100/tcp",
+      "RunningFor": "2 months ago",
+      "Size": "16.4kB (virtual 76.5MB)",
+      "State": "running",
+      "Status": "Up 4 weeks (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 3510932,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-06-14T08:08:57.893687518Z",
+        "FinishedAt": "2026-06-14T08:08:57.629690632Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:36.752376142Z",
+              "End": "2026-07-17T02:57:36.799701283Z",
+              "ExitCode": 0,
+              "Output": "ready\n"
+            },
+            {
+              "Start": "2026-07-17T02:58:06.80071206Z",
+              "End": "2026-07-17T02:58:06.872036389Z",
+              "ExitCode": 0,
+              "Output": "ready\n"
+            },
+            {
+              "Start": "2026-07-17T02:58:36.872835246Z",
+              "End": "2026-07-17T02:58:36.908268729Z",
+              "ExitCode": 0,
+              "Output": "ready\n"
+            },
+            {
+              "Start": "2026-07-17T02:59:06.909604813Z",
+              "End": "2026-07-17T02:59:06.955548147Z",
+              "ExitCode": 0,
+              "Output": "ready\n"
+            },
+            {
+              "Start": "2026-07-17T02:59:36.956573698Z",
+              "End": "2026-07-17T02:59:37.007304899Z",
+              "ExitCode": 0,
+              "Output": "ready\n"
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-loki-1",
+            "loki"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "60d8692dcb7e9c04956d419db32a739a4f0fd1c23f6039cbadb18f8dd7ef96aa",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.6",
+          "MacAddress": "52:d2:3c:c2:ed:de",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "957190bc6d60_arbitragex-v2-loki-1",
+            "arbitragex-v2-loki-1",
+            "loki",
+            "8fe89f77a507"
+          ]
+        }
+      },
+      "MountsSafe": [
+        {
+          "Type": "volume",
+          "Name": "arbitragex-v2_loki_data",
+          "Source": "/var/lib/docker/volumes/arbitragex-v2_loki_data/_data",
+          "Destination": "/loki",
+          "Driver": "local",
+          "Mode": "rw",
+          "RW": true,
+          "Propagation": ""
+        },
+        {
+          "Type": "bind",
+          "Source": "/opt/arbitragex-v2/monitoring/loki/loki-config.yml",
+          "Destination": "/etc/loki/config.yml",
+          "Mode": "ro",
+          "RW": false,
+          "Propagation": "rprivate"
+        }
+      ],
+      "ImageIDSafe": "sha256:792a791d9e52fdff6a4e21be57b5fd9e5868218156e175bb8dde0fa258c76e20",
+      "ComposeServiceSafe": "loki",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    },
+    "arbitragex-v2-minio-1": {
+      "Command": "\"/usr/bin/docker-entrypoint.sh server /data --console-address :9001\"",
+      "CreatedAt": "2026-05-17 01:33:44 +0000 UTC",
+      "ID": "1ed18b4815b3a453b8f718cd2077cdad13cc5dee7afba44fd153e89cef2b7615",
+      "Image": "minio/minio:RELEASE.2024-11-07T00-52-20Z",
+      "Labels": "architecture=x86_64,build-date=2024-08-27T19:24:54,com.docker.compose.config-hash=a19e1d40bf491e2b8376a4974d212ae2ad1697d301da881e8f28747f3c032805,com.docker.compose.container-number=1,com.docker.compose.depends_on=,com.docker.compose.image=sha256:ac591851803a79aee64bc37f66d77c56b0a4b6e12d9e5356380f4105510f2332,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=/opt/arbitragex-v2/docker/compose.prod.yml,com.docker.compose.project.working_dir=/opt/arbitragex-v2/docker,com.docker.compose.project=arbitragex-v2,com.docker.compose.service=minio,com.docker.compose.version=5.1.3,com.redhat.component=ubi9-micro-container,com.redhat.license_terms=https://www.redhat.com/en/about/red-hat-end-user-license-agreements#UBI,description=MinIO object storage is fundamentally different. Designed for performance and the S3 API, it is 100% open-source. MinIO is ideal for large, private cloud environments with stringent security requirements and delivers mission-critical availability across a diverse range of workloads.,distribution-scope=public,io.buildah.version=1.29.0,io.k8s.description=Very small image which doesn't install the package manager.,io.k8s.display-name=Ubi9-micro,io.openshift.expose-services=,maintainer=MinIO Inc <dev@min.io>,name=MinIO,release=RELEASE.2024-11-07T00-52-20Z,summary=MinIO is a High Performance Object Storage, API compatible with Amazon S3 cloud storage service.,url=https://access.redhat.com/containers/#/registry.access.redhat.com/ubi9/ubi-micro/images/9.4-15,vcs-ref=cd5996c9b8b99b546584696465f8f39ec682078c,vcs-type=git,vendor=MinIO Inc <dev@min.io>,version=RELEASE.2024-11-07T00-52-20Z",
+      "LocalVolumes": "1",
+      "Mounts": "arbitragex-v2_minio_data",
+      "Names": "arbitragex-v2-minio-1",
+      "Networks": "arbitragex-v2_arbx-net",
+      "Platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "Ports": "127.0.0.1:9000-9001->9000-9001/tcp",
+      "RunningFor": "2 months ago",
+      "Size": "61.4kB (virtual 168MB)",
+      "State": "running",
+      "Status": "Up 2 months (healthy)",
+      "StateSafe": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 2575460,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-05-17T02:14:24.865488683Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-07-17T02:57:27.895913261Z",
+              "End": "2026-07-17T02:57:27.946216086Z",
+              "ExitCode": 0,
+              "Output": "  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current\n                                 Dload  Upload   Total   Spent    Left  Speed\n\r  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0\r  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0\n"
+            },
+            {
+              "Start": "2026-07-17T02:57:57.947431568Z",
+              "End": "2026-07-17T02:57:58.001688635Z",
+              "ExitCode": 0,
+              "Output": "  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current\n                                 Dload  Upload   Total   Spent    Left  Speed\n\r  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0\r  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0\n"
+            },
+            {
+              "Start": "2026-07-17T02:58:28.003533697Z",
+              "End": "2026-07-17T02:58:28.061899214Z",
+              "ExitCode": 0,
+              "Output": "  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current\n                                 Dload  Upload   Total   Spent    Left  Speed\n\r  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0\r  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0\n"
+            },
+            {
+              "Start": "2026-07-17T02:58:58.063292785Z",
+              "End": "2026-07-17T02:58:58.11659105Z",
+              "ExitCode": 0,
+              "Output": "  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current\n                                 Dload  Upload   Total   Spent    Left  Speed\n\r  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0\r  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0\n"
+            },
+            {
+              "Start": "2026-07-17T02:59:28.117828057Z",
+              "End": "2026-07-17T02:59:28.177489839Z",
+              "ExitCode": 0,
+              "Output": "  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current\n                                 Dload  Upload   Total   Spent    Left  Speed\n\r  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0\r  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0\n"
+            }
+          ]
+        }
+      },
+      "NetworksSafe": {
+        "arbitragex-v2_arbx-net": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "arbitragex-v2-minio-1",
+            "minio"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "95606e6a95f5252995b124d516a0b91f510f2a3e4e2beaad59ecb9dd464600f4",
+          "EndpointID": "7bec42b453d6efb370a3e022b9cd20eeaedd2f1007b05cbcdfb710d18cba405d",
+          "Gateway": "172.18.0.1",
+          "IPAddress": "172.18.0.4",
+          "MacAddress": "62:86:33:2c:65:45",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "arbitragex-v2-minio-1",
+            "minio",
+            "1ed18b4815b3"
+          ]
+        }
+      },
+      "MountsSafe": [
+        {
+          "Type": "volume",
+          "Name": "arbitragex-v2_minio_data",
+          "Source": "/var/lib/docker/volumes/arbitragex-v2_minio_data/_data",
+          "Destination": "/data",
+          "Driver": "local",
+          "Mode": "rw",
+          "RW": true,
+          "Propagation": ""
+        }
+      ],
+      "ImageIDSafe": "sha256:ac591851803a79aee64bc37f66d77c56b0a4b6e12d9e5356380f4105510f2332",
+      "ComposeServiceSafe": "minio",
+      "ComposeConfigFilesSafe": "/opt/arbitragex-v2/docker/compose.prod.yml"
+    }
+  },
+  "networks": [
+    {
+      "CreatedAt": "2026-05-02 16:05:54.630710119 +0000 UTC",
+      "Driver": "bridge",
+      "ID": "95606e6a95f5",
+      "IPv4": "true",
+      "IPv6": "false",
+      "Internal": "false",
+      "Labels": "com.docker.compose.config-hash=201d2540c9b989951b58978ccba209e620fe8a13e1c2f1e4b1a810dd0b6bafcb,com.docker.compose.network=arbx-net,com.docker.compose.project=arbitragex-v2,com.docker.compose.version=5.1.3",
+      "Name": "arbitragex-v2_arbx-net",
+      "Scope": "local"
+    },
+    {
+      "CreatedAt": "2026-05-02 14:04:32.547781691 +0000 UTC",
+      "Driver": "bridge",
+      "ID": "44aa2498fe70",
+      "IPv4": "true",
+      "IPv6": "false",
+      "Internal": "false",
+      "Labels": "",
+      "Name": "bridge",
+      "Scope": "local"
+    },
+    {
+      "CreatedAt": "2026-05-02 14:04:32.542709805 +0000 UTC",
+      "Driver": "host",
+      "ID": "589ddb4aa6de",
+      "IPv4": "true",
+      "IPv6": "false",
+      "Internal": "false",
+      "Labels": "",
+      "Name": "host",
+      "Scope": "local"
+    },
+    {
+      "CreatedAt": "2026-05-02 14:04:32.536102674 +0000 UTC",
+      "Driver": "null",
+      "ID": "9fd10542f8a9",
+      "IPv4": "true",
+      "IPv6": "false",
+      "Internal": "false",
+      "Labels": "",
+      "Name": "none",
+      "Scope": "local"
+    }
+  ],
+  "volumes": [
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.volume.anonymous=",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/4b2fe1cfd16ecdabe8e13a1f8346e9213a07cf4571b09a2e61a00e8e65b9ba3b/_data",
+      "Name": "4b2fe1cfd16ecdabe8e13a1f8346e9213a07cf4571b09a2e61a00e8e65b9ba3b",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.volume.anonymous=",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/8ec4a318855ecf2677afb1e9f11da4e396d04e5b4a3f09caca84586e04d5ea60/_data",
+      "Name": "8ec4a318855ecf2677afb1e9f11da4e396d04e5b4a3f09caca84586e04d5ea60",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.volume.anonymous=",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/35cf4ad49f8db098b6f15f387a21a80fb7a8d66d0f4ad08621120f0b1101856e/_data",
+      "Name": "35cf4ad49f8db098b6f15f387a21a80fb7a8d66d0f4ad08621120f0b1101856e",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.volume.anonymous=",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/050b54d8441c79e143c87b68ac73bfe0b4dfa9961e88dd585c0cf631b1700486/_data",
+      "Name": "050b54d8441c79e143c87b68ac73bfe0b4dfa9961e88dd585c0cf631b1700486",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.volume.anonymous=",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/58f66947a818422fa546b09e4c1aa494c1b0f6de618d0060eb038e5d7e64d918/_data",
+      "Name": "58f66947a818422fa546b09e4c1aa494c1b0f6de618d0060eb038e5d7e64d918",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.volume.anonymous=",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/84dcafefae344caecc6d0c6954514db2a66ab903355f130b2021a4eaf8f6884f/_data",
+      "Name": "84dcafefae344caecc6d0c6954514db2a66ab903355f130b2021a4eaf8f6884f",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.volume.anonymous=",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/172b4974c986c921862397f926ec26c78f24934bbceb0282cb02e6cc2c769706/_data",
+      "Name": "172b4974c986c921862397f926ec26c78f24934bbceb0282cb02e6cc2c769706",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.volume.anonymous=",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/745e16c2f8f335b3d0f97058b59e7f08b43b01163b08c88f65b70124438e2365/_data",
+      "Name": "745e16c2f8f335b3d0f97058b59e7f08b43b01163b08c88f65b70124438e2365",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.volume.anonymous=",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/65295d4c4b0f89d68da650d0f611498654e72166701e663b53e04858593efcae/_data",
+      "Name": "65295d4c4b0f89d68da650d0f611498654e72166701e663b53e04858593efcae",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.volume.anonymous=",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/8184429b8875eae8954a7b0c142734d1a54567f124ff60621ac36b0d433b7ad8/_data",
+      "Name": "8184429b8875eae8954a7b0c142734d1a54567f124ff60621ac36b0d433b7ad8",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.compose.config-hash=e6c533dd10e0381d9888d271b2910d8adc73c8cbaaa479a2b8b8df6e8e57e362,com.docker.compose.project=arbitragex-v2,com.docker.compose.version=5.1.3,com.docker.compose.volume=arbx_vault_data",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/arbitragex-v2_arbx_vault_data/_data",
+      "Name": "arbitragex-v2_arbx_vault_data",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.compose.volume=grafana_data,com.docker.compose.config-hash=e63d198f657bd8b83a72a57769a8730262f92117b04ae5e60b4cef6a79d03ee6,com.docker.compose.project=arbitragex-v2,com.docker.compose.version=5.1.3",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/arbitragex-v2_grafana_data/_data",
+      "Name": "arbitragex-v2_grafana_data",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.compose.config-hash=657ef9d23be9d2937841860536e015d8ca09c542bdcf3b23c5cc4800234904ba,com.docker.compose.project=arbitragex-v2,com.docker.compose.version=5.1.3,com.docker.compose.volume=loki_data",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/arbitragex-v2_loki_data/_data",
+      "Name": "arbitragex-v2_loki_data",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.compose.version=5.1.3,com.docker.compose.volume=minio_data,com.docker.compose.config-hash=7053203d8e609c160c8ebd1c2b6ebf5c0b5e17e03437b747d2e8e667ca28c3fd,com.docker.compose.project=arbitragex-v2",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/arbitragex-v2_minio_data/_data",
+      "Name": "arbitragex-v2_minio_data",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.compose.config-hash=376f68c14bb808d93866159daf0f306315fb3183953c4c2abea743143e9fd8d4,com.docker.compose.project=arbitragex-v2,com.docker.compose.version=5.1.3,com.docker.compose.volume=postgres_data",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/arbitragex-v2_postgres_data/_data",
+      "Name": "arbitragex-v2_postgres_data",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.compose.version=5.1.3,com.docker.compose.volume=prometheus_data,com.docker.compose.config-hash=5391796e0718b23adecf91626ca873c8715faf4c08986f9200e487c885fe5285,com.docker.compose.project=arbitragex-v2",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/arbitragex-v2_prometheus_data/_data",
+      "Name": "arbitragex-v2_prometheus_data",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.compose.config-hash=567e855ba39f408580c22c332fc99c3f56fa08442662bf8f66ba1168dc3e5dba,com.docker.compose.project=arbitragex-v2,com.docker.compose.version=5.1.3,com.docker.compose.volume=redis_data",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/arbitragex-v2_redis_data/_data",
+      "Name": "arbitragex-v2_redis_data",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.compose.config-hash=b7ca51d065ce9c2083e39602c0818daec42ff28960244fc6d75533ca5cd6cc6b,com.docker.compose.project=arbitragex-v2,com.docker.compose.version=5.1.3,com.docker.compose.volume=thanos_store_data",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/arbitragex-v2_thanos_store_data/_data",
+      "Name": "arbitragex-v2_thanos_store_data",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.compose.version=5.1.3,com.docker.compose.volume=vault_data,com.docker.compose.config-hash=bd36349952aa09a7a74fa008ce09a6fbe7064a5c4778b87e47b3f2c8d2347b20,com.docker.compose.project=arbitragex-v2",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/arbitragex-v2_vault_data/_data",
+      "Name": "arbitragex-v2_vault_data",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.compose.config-hash=51abf57d9ab1f3558b6aea6493b1cea77d5685e595ac0891fdaee98564ff8413,com.docker.compose.project=arbitragex-v2,com.docker.compose.version=5.1.3,com.docker.compose.volume=vault_logs",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/arbitragex-v2_vault_logs/_data",
+      "Name": "arbitragex-v2_vault_logs",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.compose.config-hash=85763fe8cadd8590d3367d2a213a959b8edfb8fb28dadf3ceb959aa362203ce9,com.docker.compose.project=arbx-frontend-devcontainer,com.docker.compose.version=5.1.3,com.docker.compose.volume=arbx_frontend_next",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/arbx-frontend-devcontainer_arbx_frontend_next/_data",
+      "Name": "arbx-frontend-devcontainer_arbx_frontend_next",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.compose.config-hash=be14bd22990538664c492f043aac64c3fb1245b3b259e0c958a00a4a690f46f6,com.docker.compose.project=arbx-frontend-devcontainer,com.docker.compose.version=5.1.3,com.docker.compose.volume=arbx_frontend_node_modules",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/arbx-frontend-devcontainer_arbx_frontend_node_modules/_data",
+      "Name": "arbx-frontend-devcontainer_arbx_frontend_node_modules",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.compose.config-hash=5e2115d8e7d7852f3b103529a6310df50a856a559059180db172a6d17b673852,com.docker.compose.project=arbx-frontend-devcontainer,com.docker.compose.version=5.1.3,com.docker.compose.volume=arbx_node_modules",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/arbx-frontend-devcontainer_arbx_node_modules/_data",
+      "Name": "arbx-frontend-devcontainer_arbx_node_modules",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.volume.anonymous=",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/bf8060edef13940abcb5b33fb8f0603ee0bd31399b42926534df7893037ee9a2/_data",
+      "Name": "bf8060edef13940abcb5b33fb8f0603ee0bd31399b42926534df7893037ee9a2",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    },
+    {
+      "Availability": "N/A",
+      "Driver": "local",
+      "Group": "N/A",
+      "Labels": "com.docker.volume.anonymous=",
+      "Links": "N/A",
+      "Mountpoint": "/var/lib/docker/volumes/dd9ee63fd7de51045d4ecfb8f3db262ea5a8b7175e22ee17040fdb72648d9a8b/_data",
+      "Name": "dd9ee63fd7de51045d4ecfb8f3db262ea5a8b7175e22ee17040fdb72648d9a8b",
+      "Scope": "local",
+      "Size": "N/A",
+      "Status": "N/A"
+    }
+  ],
+  "file_hashes": {
+    ".devcontainer/Dockerfile": "MISSING",
+    ".devcontainer/docker-compose.yml": "MISSING",
+    ".github/workflows/action-a-plus-v2.yml": "MISSING",
+    ".github/workflows/action-a-plus.yml": "MISSING",
+    ".github/workflows/audit-vps-wiring.yml": "MISSING",
+    ".github/workflows/audit-wiring.yml": "MISSING",
+    ".github/workflows/audit.yml": "MISSING",
+    ".github/workflows/auto-deploy-vps.yml": "MISSING",
+    ".github/workflows/c10-f1-recovery-step14-only.yml": "MISSING",
+    ".github/workflows/cartridge-integration-deploy.yml": "MISSING",
+    ".github/workflows/ci.yml": "MISSING",
+    ".github/workflows/codeql.yml": "MISSING",
+    ".github/workflows/deploy-edge-only-v2.yml": "MISSING",
+    ".github/workflows/deploy-edge-only.yml": "MISSING",
+    ".github/workflows/deploy-frontend.yml": "MISSING",
+    ".github/workflows/deploy-vps.yml": "MISSING",
+    ".github/workflows/deploy.yml": "MISSING",
+    ".github/workflows/diag-cookie-emission.yml": "MISSING",
+    ".github/workflows/docker-build.yml": "MISSING",
+    ".github/workflows/dockerfile-audit.yml": "MISSING",
+    ".github/workflows/e2e.yml": "MISSING",
+    ".github/workflows/ethics-guard.yml": "MISSING",
+    ".github/workflows/foundry.yml": "MISSING",
+    ".github/workflows/frontend-build.yml": "MISSING",
+    ".github/workflows/hardened-vps-audit.yml": "MISSING",
+    ".github/workflows/hardened-vps-baseline.yml": "MISSING",
+    ".github/workflows/hardened-vps-deploy.yml": "MISSING",
+    ".github/workflows/integration-tests.yml": "MISSING",
+    ".github/workflows/m5-sepolia-validation.yml": "MISSING",
+    ".github/workflows/monitoring-config.yml": "MISSING",
+    ".github/workflows/no-hardcode.yml": "MISSING",
+    ".github/workflows/omega8-m3-grep-gates.yml": "MISSING",
+    ".github/workflows/omega8-pii-gates.yml": "MISSING",
+    ".github/workflows/ops-live-testnet.yml": "MISSING",
+    ".github/workflows/ops-paper-mode.yml": "MISSING",
+    ".github/workflows/probe-admin-session.yml": "MISSING",
+    ".github/workflows/probe-cookies-deep.yml": "MISSING",
+    ".github/workflows/rust.yml": "MISSING",
+    ".github/workflows/security.yml": "MISSING",
+    ".github/workflows/semiotic.yml": "MISSING",
+    ".github/workflows/spec-drift-gate.yml": "MISSING",
+    ".github/workflows/sync-vps-metadata.yml": "MISSING",
+    ".github/workflows/trailblazing-5182-validation.yml": "MISSING",
+    ".github/workflows/typescript.yml": "MISSING",
+    ".github/workflows/unit-tests.yml": "MISSING",
+    ".github/workflows/verify-admin-session-wiring.yml": "MISSING",
+    "backend/Cargo.lock": "MISSING",
+    "backend/Cargo.toml": "MISSING",
+    "backend/api-server/Dockerfile": "MISSING",
+    "backend/api-server/package.json": "MISSING",
+    "backend/api-server/src/index.ts": "MISSING",
+    "backend/math-engine/Cargo.toml": "MISSING",
+    "backend/mcp-sim-engine/Cargo.toml": "MISSING",
+    "backend/prioritization-spine/Cargo.toml": "MISSING",
+    "backend/recon/Cargo.toml": "MISSING",
+    "backend/recon/Dockerfile": "MISSING",
+    "backend/relays-client/Cargo.toml": "MISSING",
+    "backend/relays-client/Dockerfile": "MISSING",
+    "backend/searcher-rs/Cargo.toml": "MISSING",
+    "backend/searcher-rs/Dockerfile": "MISSING",
+    "backend/sed-core/Cargo.toml": "MISSING",
+    "backend/selector-api/Dockerfile": "MISSING",
+    "backend/selector-api/package.json": "MISSING",
+    "backend/semiotic-bridge/Cargo.toml": "MISSING",
+    "backend/shared-rs/Cargo.toml": "MISSING",
+    "backend/sim-core/Cargo.toml": "MISSING",
+    "backend/sim-ctl/Cargo.toml": "MISSING",
+    "backend/sim-ctl/Dockerfile": "MISSING",
+    "backend/simulator-v2/Cargo.toml": "MISSING",
+    "backend/token-enricher/Cargo.toml": "MISSING",
+    "backend/token-enricher/Dockerfile": "MISSING",
+    "configs/app.toml": "MISSING",
+    "contracts/foundry.toml": "MISSING",
+    "contracts/lib/forge-std/foundry.toml": "MISSING",
+    "contracts/lib/forge-std/package.json": "MISSING",
+    "contracts/lib/openzeppelin-contracts-upgradeable/contracts/package.json": "MISSING",
+    "contracts/lib/openzeppelin-contracts-upgradeable/foundry.toml": "MISSING",
+    "contracts/lib/openzeppelin-contracts-upgradeable/lib/forge-std/foundry.toml": "MISSING",
+    "contracts/lib/openzeppelin-contracts-upgradeable/lib/forge-std/lib/ds-test/package.json": "MISSING",
+    "contracts/lib/openzeppelin-contracts-upgradeable/lib/forge-std/package.json": "MISSING",
+    "contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/package.json": "MISSING",
+    "contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/foundry.toml": "MISSING",
+    "contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/lib/forge-std/foundry.toml": "MISSING",
+    "contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/lib/forge-std/lib/ds-test/package.json": "MISSING",
+    "contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/lib/forge-std/package.json": "MISSING",
+    "contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/package.json": "MISSING",
+    "contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/scripts/solhint-custom/package.json": "MISSING",
+    "contracts/lib/openzeppelin-contracts-upgradeable/package.json": "MISSING",
+    "contracts/lib/openzeppelin-contracts-upgradeable/scripts/solhint-custom/package.json": "MISSING",
+    "contracts/lib/openzeppelin-contracts/contracts/package.json": "MISSING",
+    "contracts/lib/openzeppelin-contracts/foundry.toml": "MISSING",
+    "contracts/lib/openzeppelin-contracts/lib/forge-std/foundry.toml": "MISSING",
+    "contracts/lib/openzeppelin-contracts/lib/forge-std/package.json": "MISSING",
+    "contracts/lib/openzeppelin-contracts/package.json": "MISSING",
+    "contracts/lib/openzeppelin-contracts/scripts/solhint-custom/package.json": "MISSING",
+    "database/run_migrations.sh": "MISSING",
+    "docker-compose.edge.yml": "MISSING",
+    "docker-compose.yml": "MISSING",
+    "docker/compose.dev.yml": "MISSING",
+    "docker/compose.hotpath-test.yml": "MISSING",
+    "docker/compose.loopback.override.yml": "MISSING",
+    "docker/compose.noports.override.yml": "MISSING",
+    "docker/compose.prod.yml": "MISSING",
+    "docker/compose.staging.override.yml": "MISSING",
+    "docs/blueprints/enterprise_package/docker-compose.yml": "MISSING",
+    "docs/contracts/foundry.toml": "MISSING",
+    "edge/dev-local/Dockerfile": "MISSING",
+    "edge/dev-local/package.json": "MISSING",
+    "edge/worker/package.json": "MISSING",
+    "frontend/Dockerfile": "MISSING",
+    "frontend/app/page.tsx": "MISSING",
+    "frontend/package.json": "MISSING",
+    "package.json": "MISSING",
+    "shared-ts/package.json": "MISSING",
+    "tests/e2e/package.json": "MISSING"
+  },
+  "errors": []
+}

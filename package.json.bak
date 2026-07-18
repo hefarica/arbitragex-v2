@@ -1,0 +1,47 @@
+{
+  "name": "arbitragex-v2-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ArbitrageX v2 — npm workspace root (shared-ts, services, frontend, edge).",
+  "packageManager": "npm@10.8.2",
+  "workspaces": [
+    "shared-ts",
+    "backend/selector-api",
+    "backend/api-server",
+    "edge/worker",
+    "edge/dev-local",
+    "frontend"
+  ],
+  "scripts": {
+    "build": "npm run build:all",
+    "test": "npm run test:all",
+    "lint": "npm run lint:all",
+    "typecheck": "npm run typecheck:all",
+    "build:all": "npm run build --workspaces --if-present",
+    "test:all": "npm run test --workspaces --if-present",
+    "lint:all": "npm run lint --workspaces --if-present",
+    "typecheck:all": "npm run typecheck --workspaces --if-present",
+    "e2e": "cd tests/e2e && npm install && npm run install-browsers && npm test",
+    "e2e:smoke": "cd tests/e2e && npm install && npm run install-browsers && npm run test:smoke"
+  },
+  "engines": {
+    "node": ">=20.11"
+  },
+  "overrides": {
+    "micromatch": "^4.0.8",
+    "postcss": "^8.5.14",
+    "undici": "^6.21.1",
+    "braces": "^3.0.3",
+    "@typescript-eslint/typescript-estree": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "defu": "^6.1.7",
+    "esbuild": "^0.25.0",
+    "glob": "^11.0.0",
+    "minimatch": "^10.0.0"
+  },
+  "dependencies": {
+    "@rollup/rollup-linux-x64-gnu": "^4.62.2",
+    "@tailwindcss/oxide-linux-x64-gnu": "^4.3.2",
+    "lightningcss-linux-x64-gnu": "^1.32.0"
+  }
+}

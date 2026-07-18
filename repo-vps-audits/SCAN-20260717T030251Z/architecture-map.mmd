@@ -1,0 +1,313 @@
+flowchart LR
+  classDef verified fill:#dcfce7,stroke:#166534,color:#166534;
+  classDef drift fill:#fef3c7,stroke:#92400e,color:#92400e;
+  classDef broken fill:#fee2e2,stroke:#991b1b,color:#991b1b;
+  classDef blocked fill:#ede9fe,stroke:#5b21b6,color:#5b21b6;
+  classDef unknown fill:#e5e7eb,stroke:#374151,color:#374151;
+  classDef extra fill:#dbeafe,stroke:#1e40af,color:#1e40af;
+  N0["FILE:.github/workflows/action-a-plus-v2.yml<br/>DRIFT"]
+  class N0 drift;
+  N1["FILE:.github/workflows/action-a-plus.yml<br/>DRIFT"]
+  class N1 drift;
+  N2["FILE:.github/workflows/audit-vps-wiring.yml<br/>DRIFT"]
+  class N2 drift;
+  N3["FILE:.github/workflows/audit-wiring.yml<br/>DRIFT"]
+  class N3 drift;
+  N4["FILE:.github/workflows/audit.yml<br/>DRIFT"]
+  class N4 drift;
+  N5["FILE:.github/workflows/c10-f1-recovery-step14-only.yml<br/>DRIFT"]
+  class N5 drift;
+  N6["FILE:.github/workflows/cartridge-integration-deploy.yml<br/>DRIFT"]
+  class N6 drift;
+  N7["FILE:.github/workflows/ci.yml<br/>DRIFT"]
+  class N7 drift;
+  N8["FILE:.github/workflows/codeql.yml<br/>DRIFT"]
+  class N8 drift;
+  N9["FILE:.github/workflows/deploy-edge-only-v2.yml<br/>DRIFT"]
+  class N9 drift;
+  N10["FILE:.github/workflows/deploy-edge-only.yml<br/>DRIFT"]
+  class N10 drift;
+  N11["FILE:.github/workflows/deploy-frontend.yml<br/>DRIFT"]
+  class N11 drift;
+  N12["FILE:.github/workflows/deploy-vps.yml<br/>DRIFT"]
+  class N12 drift;
+  N13["FILE:.github/workflows/deploy.yml<br/>DRIFT"]
+  class N13 drift;
+  N14["FILE:.github/workflows/diag-cookie-emission.yml<br/>DRIFT"]
+  class N14 drift;
+  N15["FILE:.github/workflows/docker-build.yml<br/>DRIFT"]
+  class N15 drift;
+  N16["FILE:.github/workflows/dockerfile-audit.yml<br/>DRIFT"]
+  class N16 drift;
+  N17["FILE:.github/workflows/e2e.yml<br/>DRIFT"]
+  class N17 drift;
+  N18["FILE:.github/workflows/ethics-guard.yml<br/>DRIFT"]
+  class N18 drift;
+  N19["FILE:.github/workflows/foundry.yml<br/>DRIFT"]
+  class N19 drift;
+  N20["FILE:.github/workflows/frontend-build.yml<br/>DRIFT"]
+  class N20 drift;
+  N21["FILE:.github/workflows/hardened-vps-audit.yml<br/>DRIFT"]
+  class N21 drift;
+  N22["FILE:.github/workflows/hardened-vps-baseline.yml<br/>DRIFT"]
+  class N22 drift;
+  N23["FILE:.github/workflows/hardened-vps-deploy.yml<br/>DRIFT"]
+  class N23 drift;
+  N24["FILE:.github/workflows/integration-tests.yml<br/>DRIFT"]
+  class N24 drift;
+  N25["FILE:.github/workflows/m5-sepolia-validation.yml<br/>DRIFT"]
+  class N25 drift;
+  N26["FILE:.github/workflows/monitoring-config.yml<br/>DRIFT"]
+  class N26 drift;
+  N27["FILE:.github/workflows/no-hardcode.yml<br/>DRIFT"]
+  class N27 drift;
+  N28["FILE:.github/workflows/omega8-m3-grep-gates.yml<br/>DRIFT"]
+  class N28 drift;
+  N29["FILE:.github/workflows/omega8-pii-gates.yml<br/>DRIFT"]
+  class N29 drift;
+  N30["FILE:.github/workflows/ops-paper-mode.yml<br/>DRIFT"]
+  class N30 drift;
+  N31["FILE:.github/workflows/probe-admin-session.yml<br/>DRIFT"]
+  class N31 drift;
+  N32["FILE:.github/workflows/probe-cookies-deep.yml<br/>DRIFT"]
+  class N32 drift;
+  N33["FILE:.github/workflows/rust.yml<br/>DRIFT"]
+  class N33 drift;
+  N34["FILE:.github/workflows/security.yml<br/>DRIFT"]
+  class N34 drift;
+  N35["FILE:.github/workflows/spec-drift-gate.yml<br/>DRIFT"]
+  class N35 drift;
+  N36["FILE:.github/workflows/sync-vps-metadata.yml<br/>DRIFT"]
+  class N36 drift;
+  N37["FILE:.github/workflows/trailblazing-5182-validation.yml<br/>DRIFT"]
+  class N37 drift;
+  N38["FILE:.github/workflows/typescript.yml<br/>DRIFT"]
+  class N38 drift;
+  N39["FILE:.github/workflows/unit-tests.yml<br/>DRIFT"]
+  class N39 drift;
+  N40["FILE:.github/workflows/verify-admin-session-wiring.yml<br/>DRIFT"]
+  class N40 drift;
+  N41["FILE:contracts/lib/forge-std/foundry.toml<br/>DRIFT"]
+  class N41 drift;
+  N42["FILE:contracts/lib/forge-std/package.json<br/>DRIFT"]
+  class N42 drift;
+  N43["FILE:contracts/lib/openzeppelin-contracts-upgradeable/contracts/package.json<br/>DRIFT"]
+  class N43 drift;
+  N44["FILE:contracts/lib/openzeppelin-contracts-upgradeable/foundry.toml<br/>DRIFT"]
+  class N44 drift;
+  N45["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/forge-std/foundry.toml<br/>DRIFT"]
+  class N45 drift;
+  N46["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/forge-std/lib/ds-test/package.json<br/>DRIFT"]
+  class N46 drift;
+  N47["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/forge-std/package.json<br/>DRIFT"]
+  class N47 drift;
+  N48["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/package.json<br/>DRIFT"]
+  class N48 drift;
+  N49["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/foundry.toml<br/>DRIFT"]
+  class N49 drift;
+  N50["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/lib/forge-std/foundry.toml<br/>DRIFT"]
+  class N50 drift;
+  N51["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/lib/forge-std/lib/ds-test/package.json<br/>DRIFT"]
+  class N51 drift;
+  N52["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/lib/forge-std/package.json<br/>DRIFT"]
+  class N52 drift;
+  N53["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/package.json<br/>DRIFT"]
+  class N53 drift;
+  N54["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/scripts/solhint-custom/package.json<br/>DRIFT"]
+  class N54 drift;
+  N55["FILE:contracts/lib/openzeppelin-contracts-upgradeable/package.json<br/>DRIFT"]
+  class N55 drift;
+  N56["FILE:contracts/lib/openzeppelin-contracts-upgradeable/scripts/solhint-custom/package.json<br/>DRIFT"]
+  class N56 drift;
+  N57["FILE:contracts/lib/openzeppelin-contracts/contracts/package.json<br/>DRIFT"]
+  class N57 drift;
+  N58["FILE:contracts/lib/openzeppelin-contracts/foundry.toml<br/>DRIFT"]
+  class N58 drift;
+  N59["FILE:contracts/lib/openzeppelin-contracts/lib/forge-std/foundry.toml<br/>DRIFT"]
+  class N59 drift;
+  N60["FILE:contracts/lib/openzeppelin-contracts/lib/forge-std/package.json<br/>DRIFT"]
+  class N60 drift;
+  N61["FILE:contracts/lib/openzeppelin-contracts/package.json<br/>DRIFT"]
+  class N61 drift;
+  N62["FILE:contracts/lib/openzeppelin-contracts/scripts/solhint-custom/package.json<br/>DRIFT"]
+  class N62 drift;
+  N63["EXTRA:container:friendly_jones<br/>EXTRA"]
+  class N63 extra;
+  N64["redis<br/>VERIFIED"]
+  class N64 verified;
+  N65["postgres<br/>VERIFIED"]
+  class N65 verified;
+  N66["api-server<br/>VERIFIED"]
+  class N66 verified;
+  N67["minio<br/>VERIFIED"]
+  class N67 verified;
+  N68["edge<br/>VERIFIED"]
+  class N68 verified;
+  N69["HOST:repo-parity<br/>VERIFIED"]
+  class N69 verified;
+  N70["HOST:compose-contract<br/>VERIFIED"]
+  class N70 verified;
+  N71["prometheus<br/>VERIFIED"]
+  class N71 verified;
+  N72["EXT:source-control<br/>VERIFIED"]
+  class N72 verified;
+  N73["FILE:docker/compose.prod.yml<br/>VERIFIED"]
+  class N73 verified;
+  N74["HOST:docker-engine<br/>VERIFIED"]
+  class N74 verified;
+  N75["VPS:host<br/>VERIFIED"]
+  class N75 verified;
+  N76["relays-client<br/>VERIFIED"]
+  class N76 verified;
+  N77["searcher-rs<br/>VERIFIED"]
+  class N77 verified;
+  N78["selector-api<br/>VERIFIED"]
+  class N78 verified;
+  N79["sim-ctl<br/>VERIFIED"]
+  class N79 verified;
+  N80["vault<br/>VERIFIED"]
+  class N80 verified;
+  N81["frontend<br/>VERIFIED"]
+  class N81 verified;
+  N82["loki<br/>VERIFIED"]
+  class N82 verified;
+  N83["thanos-sidecar<br/>VERIFIED"]
+  class N83 verified;
+  N84["thanos-store<br/>VERIFIED"]
+  class N84 verified;
+  N85["anvil<br/>VERIFIED"]
+  class N85 verified;
+  N86["recon<br/>VERIFIED"]
+  class N86 verified;
+  N87["token-enricher<br/>VERIFIED"]
+  class N87 verified;
+  N88["FILE:.devcontainer/Dockerfile<br/>VERIFIED"]
+  class N88 verified;
+  N89["FILE:.devcontainer/docker-compose.yml<br/>VERIFIED"]
+  class N89 verified;
+  N90["FILE:.github/workflows/auto-deploy-vps.yml<br/>VERIFIED"]
+  class N90 verified;
+  N91["FILE:.github/workflows/ops-live-testnet.yml<br/>VERIFIED"]
+  class N91 verified;
+  N92["FILE:.github/workflows/semiotic.yml<br/>VERIFIED"]
+  class N92 verified;
+  N93["FILE:backend/Cargo.lock<br/>VERIFIED"]
+  class N93 verified;
+  N94["FILE:backend/Cargo.toml<br/>VERIFIED"]
+  class N94 verified;
+  N95["FILE:backend/api-server/Dockerfile<br/>VERIFIED"]
+  class N95 verified;
+  N96["FILE:backend/api-server/package.json<br/>VERIFIED"]
+  class N96 verified;
+  N97["FILE:backend/api-server/src/index.ts<br/>VERIFIED"]
+  class N97 verified;
+  N98["FILE:backend/math-engine/Cargo.toml<br/>VERIFIED"]
+  class N98 verified;
+  N99["FILE:backend/mcp-sim-engine/Cargo.toml<br/>VERIFIED"]
+  class N99 verified;
+  N100["FILE:backend/prioritization-spine/Cargo.toml<br/>VERIFIED"]
+  class N100 verified;
+  N101["FILE:backend/recon/Cargo.toml<br/>VERIFIED"]
+  class N101 verified;
+  N102["FILE:backend/recon/Dockerfile<br/>VERIFIED"]
+  class N102 verified;
+  N103["FILE:backend/relays-client/Cargo.toml<br/>VERIFIED"]
+  class N103 verified;
+  N104["FILE:backend/relays-client/Dockerfile<br/>VERIFIED"]
+  class N104 verified;
+  N105["FILE:backend/searcher-rs/Cargo.toml<br/>VERIFIED"]
+  class N105 verified;
+  N106["FILE:backend/searcher-rs/Dockerfile<br/>VERIFIED"]
+  class N106 verified;
+  N107["FILE:backend/sed-core/Cargo.toml<br/>VERIFIED"]
+  class N107 verified;
+  N108["FILE:backend/selector-api/Dockerfile<br/>VERIFIED"]
+  class N108 verified;
+  N109["FILE:backend/selector-api/package.json<br/>VERIFIED"]
+  class N109 verified;
+  N110["FILE:backend/semiotic-bridge/Cargo.toml<br/>VERIFIED"]
+  class N110 verified;
+  N111["FILE:backend/shared-rs/Cargo.toml<br/>VERIFIED"]
+  class N111 verified;
+  N112["FILE:backend/sim-core/Cargo.toml<br/>VERIFIED"]
+  class N112 verified;
+  N113["FILE:backend/sim-ctl/Cargo.toml<br/>VERIFIED"]
+  class N113 verified;
+  N114["FILE:backend/sim-ctl/Dockerfile<br/>VERIFIED"]
+  class N114 verified;
+  N115["FILE:backend/simulator-v2/Cargo.toml<br/>VERIFIED"]
+  class N115 verified;
+  N116["FILE:backend/token-enricher/Cargo.toml<br/>VERIFIED"]
+  class N116 verified;
+  N117["FILE:backend/token-enricher/Dockerfile<br/>VERIFIED"]
+  class N117 verified;
+  N118["FILE:configs/app.toml<br/>VERIFIED"]
+  class N118 verified;
+  N119["FILE:contracts/foundry.toml<br/>VERIFIED"]
+  class N119 verified;
+  N120["FILE:database/run_migrations.sh<br/>VERIFIED"]
+  class N120 verified;
+  N121["FILE:docker-compose.edge.yml<br/>VERIFIED"]
+  class N121 verified;
+  N122["FILE:docker-compose.yml<br/>VERIFIED"]
+  class N122 verified;
+  N123["FILE:docker/compose.dev.yml<br/>VERIFIED"]
+  class N123 verified;
+  N124["FILE:docker/compose.hotpath-test.yml<br/>VERIFIED"]
+  class N124 verified;
+  N125["FILE:docker/compose.loopback.override.yml<br/>VERIFIED"]
+  class N125 verified;
+  N126["FILE:docker/compose.noports.override.yml<br/>VERIFIED"]
+  class N126 verified;
+  N127["FILE:docker/compose.staging.override.yml<br/>VERIFIED"]
+  class N127 verified;
+  N128["FILE:docs/blueprints/enterprise_package/docker-compose.yml<br/>VERIFIED"]
+  class N128 verified;
+  N129["FILE:docs/contracts/foundry.toml<br/>VERIFIED"]
+  class N129 verified;
+  N130["FILE:edge/dev-local/Dockerfile<br/>VERIFIED"]
+  class N130 verified;
+  N131["FILE:edge/dev-local/package.json<br/>VERIFIED"]
+  class N131 verified;
+  N132["FILE:edge/worker/package.json<br/>VERIFIED"]
+  class N132 verified;
+  N133["FILE:frontend/Dockerfile<br/>VERIFIED"]
+  class N133 verified;
+  N134["FILE:frontend/app/page.tsx<br/>VERIFIED"]
+  class N134 verified;
+  N135["FILE:frontend/package.json<br/>VERIFIED"]
+  class N135 verified;
+  N136["FILE:package.json<br/>VERIFIED"]
+  class N136 verified;
+  N137["FILE:shared-ts/package.json<br/>VERIFIED"]
+  class N137 verified;
+  N138["FILE:tests/e2e/package.json<br/>VERIFIED"]
+  class N138 verified;
+  N139["alertmanager<br/>VERIFIED"]
+  class N139 verified;
+  N140["grafana<br/>VERIFIED"]
+  class N140 verified;
+  N141["promtail<br/>VERIFIED"]
+  class N141 verified;
+  N142["thanos-query<br/>VERIFIED"]
+  class N142 verified;
+  N64 --> N66
+  N66 --> N68
+  N64 --> N76
+  N64 --> N77
+  N65 --> N77
+  N65 --> N78
+  N64 --> N78
+  N65 --> N79
+  N64 --> N79
+  N68 --> N81
+  N71 --> N83
+  N67 --> N83
+  N67 --> N84
+  N65 --> N86
+  N65 --> N87
+  N64 --> N87
+  N71 --> N140
+  N82 --> N141
+  N83 --> N142
+  N84 --> N142

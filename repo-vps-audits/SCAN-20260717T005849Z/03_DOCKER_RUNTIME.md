@@ -1,0 +1,27 @@
+# Docker and Runtime Conformity
+
+| Service/Container | Status | Health | Path | Requires | Runtime evidence | Priority |
+|---|---|---|---|---|---|---|
+| EXTRA:container:friendly_jones | EXTRA | EXITED |  |  | image=sha256:af08006fa1bedf06a2674ac3e06555ea1891628d8135451f923de93f9e0c9784 \| status=Exited (1) 6 weeks ago | P3 |
+| redis | VERIFIED | HEALTHY |  |  | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-redis-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.dev.yml | OK |
+| postgres | VERIFIED | HEALTHY |  |  | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-postgres-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |
+| api-server | VERIFIED | RUNNING |  | redis | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-api-server-1 \| health=RUNNING \| active_compose=/opt/arbitragex-v2/docker/compose.dev.yml | OK |
+| minio | VERIFIED | HEALTHY |  |  | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-minio-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |
+| edge | VERIFIED | RUNNING |  | api-server | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-edge-1 \| health=RUNNING \| active_compose=/opt/arbitragex-v2/docker/compose.dev.yml | OK |
+| prometheus | VERIFIED | HEALTHY |  |  | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-prometheus-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |
+| relays-client | VERIFIED | HEALTHY | backend | redis | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-relays-client-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |
+| searcher-rs | VERIFIED | HEALTHY | backend | redis, postgres | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-searcher-rs-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |
+| selector-api | VERIFIED | HEALTHY |  | postgres, redis | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-selector-api-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |
+| sim-ctl | VERIFIED | HEALTHY | backend | postgres, redis | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-sim-ctl-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |
+| vault | VERIFIED | HEALTHY |  |  | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-vault-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |
+| frontend | VERIFIED | RUNNING |  | edge | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-frontend-1 \| health=RUNNING \| active_compose=/opt/arbitragex-v2/docker/compose.dev.yml | OK |
+| loki | VERIFIED | HEALTHY |  |  | repo_path=True \| dockerfile=True \| compose=True \| container=957190bc6d60_arbitragex-v2-loki-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |
+| thanos-sidecar | VERIFIED | HEALTHY |  | prometheus, minio | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-thanos-sidecar-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |
+| thanos-store | VERIFIED | HEALTHY |  | minio | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-thanos-store-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |
+| anvil | VERIFIED | HEALTHY |  |  | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-anvil-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |
+| recon | VERIFIED | HEALTHY | backend | postgres | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-recon-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |
+| token-enricher | VERIFIED | HEALTHY | backend | postgres, redis | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-token-enricher-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |
+| alertmanager | VERIFIED | HEALTHY |  |  | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-alertmanager-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |
+| grafana | VERIFIED | HEALTHY |  | prometheus | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-grafana-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |
+| promtail | VERIFIED | HEALTHY |  | loki | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-promtail-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |
+| thanos-query | VERIFIED | HEALTHY |  | thanos-sidecar, thanos-store | repo_path=True \| dockerfile=True \| compose=True \| container=arbitragex-v2-thanos-query-1 \| health=HEALTHY \| active_compose=/opt/arbitragex-v2/docker/compose.prod.yml | OK |

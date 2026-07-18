@@ -1,0 +1,3054 @@
+{
+  "contract_version": 1,
+  "name": "arbitragex-v2-main (17)",
+  "generated": true,
+  "primary_compose": "docker/compose.prod.yml",
+  "services": [
+    {
+      "id": "postgres",
+      "path": "",
+      "dockerfile": "docker/compose.prod.yml",
+      "image": "postgres:15",
+      "ports": [
+        "127.0.0.1:5432:5432"
+      ],
+      "weight": 9,
+      "criticality": "CORE",
+      "requires": [],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "redis",
+      "path": "",
+      "dockerfile": "docker/compose.prod.yml",
+      "image": "redis:7.2",
+      "ports": [
+        "127.0.0.1:6379:6379"
+      ],
+      "weight": 9,
+      "criticality": "CORE",
+      "requires": [],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "searcher-rs",
+      "path": "dockerbackend",
+      "dockerfile": "dockerbackend/searcher-rs/Dockerfile",
+      "image": "",
+      "ports": [],
+      "weight": 8,
+      "criticality": "CORE",
+      "requires": [
+        "redis",
+        "postgres"
+      ],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "anvil",
+      "path": "",
+      "dockerfile": "docker/compose.prod.yml",
+      "image": "ghcr.io/foundry-rs/foundry:latest",
+      "ports": [],
+      "weight": 5,
+      "criticality": "CORE",
+      "requires": [],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "sim-ctl",
+      "path": "dockerbackend",
+      "dockerfile": "dockerbackend/sim-ctl/Dockerfile",
+      "image": "",
+      "ports": [
+        "127.0.0.1:3003:3003"
+      ],
+      "weight": 8,
+      "criticality": "CORE",
+      "requires": [
+        "postgres",
+        "redis"
+      ],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "relays-client",
+      "path": "dockerbackend",
+      "dockerfile": "dockerbackend/relays-client/Dockerfile",
+      "image": "",
+      "ports": [
+        "127.0.0.1:3005:3005"
+      ],
+      "weight": 8,
+      "criticality": "CORE",
+      "requires": [
+        "redis"
+      ],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "recon",
+      "path": "dockerbackend",
+      "dockerfile": "dockerbackend/recon/Dockerfile",
+      "image": "",
+      "ports": [
+        "127.0.0.1:3004:3004"
+      ],
+      "weight": 5,
+      "criticality": "CORE",
+      "requires": [
+        "postgres"
+      ],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "selector-api",
+      "path": "docker",
+      "dockerfile": "dockerbackend/selector-api/Dockerfile",
+      "image": "",
+      "ports": [
+        "127.0.0.1:3002:3002"
+      ],
+      "weight": 8,
+      "criticality": "CORE",
+      "requires": [
+        "postgres",
+        "redis"
+      ],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "api-server",
+      "path": "docker",
+      "dockerfile": "dockerbackend/api-server/Dockerfile",
+      "image": "",
+      "ports": [
+        "127.0.0.1:8080:8080"
+      ],
+      "weight": 8,
+      "criticality": "CORE",
+      "requires": [
+        "redis"
+      ],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "edge",
+      "path": "docker",
+      "dockerfile": "dockeredge/dev-local/Dockerfile",
+      "image": "",
+      "ports": [
+        "0.0.0.0:8787:8787"
+      ],
+      "weight": 6,
+      "criticality": "CORE",
+      "requires": [
+        "api-server"
+      ],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "frontend",
+      "path": "docker",
+      "dockerfile": "dockerfrontend/Dockerfile",
+      "image": "",
+      "ports": [
+        "0.0.0.0:5173:5173"
+      ],
+      "weight": 6,
+      "criticality": "CORE",
+      "requires": [
+        "edge"
+      ],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "prometheus",
+      "path": "",
+      "dockerfile": "docker/compose.prod.yml",
+      "image": "prom/prometheus:v2.55.1",
+      "ports": [
+        "127.0.0.1:9090:9090"
+      ],
+      "weight": 3,
+      "criticality": "SUPPORT",
+      "requires": [],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "grafana",
+      "path": "",
+      "dockerfile": "docker/compose.prod.yml",
+      "image": "grafana/grafana:11.4.0",
+      "ports": [
+        "127.0.0.1:3000:3000"
+      ],
+      "weight": 3,
+      "criticality": "SUPPORT",
+      "requires": [
+        "prometheus"
+      ],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "alertmanager",
+      "path": "",
+      "dockerfile": "docker/compose.prod.yml",
+      "image": "prom/alertmanager:v0.27.0",
+      "ports": [
+        "127.0.0.1:9093:9093"
+      ],
+      "weight": 3,
+      "criticality": "SUPPORT",
+      "requires": [],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "loki",
+      "path": "",
+      "dockerfile": "docker/compose.prod.yml",
+      "image": "grafana/loki:2.9.7",
+      "ports": [
+        "127.0.0.1:3100:3100"
+      ],
+      "weight": 3,
+      "criticality": "SUPPORT",
+      "requires": [],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "token-enricher",
+      "path": "dockerbackend",
+      "dockerfile": "dockerbackend/token-enricher/Dockerfile",
+      "image": "",
+      "ports": [
+        "127.0.0.1:9004:9004"
+      ],
+      "weight": 5,
+      "criticality": "CORE",
+      "requires": [
+        "postgres",
+        "redis"
+      ],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "promtail",
+      "path": "",
+      "dockerfile": "docker/compose.prod.yml",
+      "image": "grafana/promtail:2.9.7",
+      "ports": [],
+      "weight": 3,
+      "criticality": "SUPPORT",
+      "requires": [
+        "loki"
+      ],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "vault",
+      "path": "",
+      "dockerfile": "docker/compose.prod.yml",
+      "image": "hashicorp/vault:1.18.1",
+      "ports": [
+        "127.0.0.1:8200:8200"
+      ],
+      "weight": 7,
+      "criticality": "CORE",
+      "requires": [],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "minio",
+      "path": "",
+      "dockerfile": "docker/compose.prod.yml",
+      "image": "minio/minio:RELEASE.2024-11-07T00-52-20Z",
+      "ports": [
+        "127.0.0.1:9000:9000",
+        "127.0.0.1:9001:9001"
+      ],
+      "weight": 5,
+      "criticality": "SUPPORT",
+      "requires": [],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "thanos-sidecar",
+      "path": "",
+      "dockerfile": "docker/compose.prod.yml",
+      "image": "quay.io/thanos/thanos:v0.36.1",
+      "ports": [],
+      "weight": 3,
+      "criticality": "SUPPORT",
+      "requires": [
+        "prometheus",
+        "minio"
+      ],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "thanos-store",
+      "path": "",
+      "dockerfile": "docker/compose.prod.yml",
+      "image": "quay.io/thanos/thanos:v0.36.1",
+      "ports": [],
+      "weight": 3,
+      "criticality": "SUPPORT",
+      "requires": [
+        "minio"
+      ],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    },
+    {
+      "id": "thanos-query",
+      "path": "",
+      "dockerfile": "docker/compose.prod.yml",
+      "image": "quay.io/thanos/thanos:v0.36.1",
+      "ports": [
+        "127.0.0.1:10904:10904"
+      ],
+      "weight": 3,
+      "criticality": "SUPPORT",
+      "requires": [
+        "thanos-sidecar",
+        "thanos-store"
+      ],
+      "consumes": "",
+      "process": "",
+      "produces": ""
+    }
+  ],
+  "critical_files": [
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/.devcontainer/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/.devcontainer/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/.devcontainer/docker-compose.yml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/.devcontainer/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/.devcontainer/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/.devcontainer/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/.devcontainer/docker-compose.yml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/.devcontainer/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/Cargo.lock",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/Cargo.lock",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/api-server/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/api-server/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/api-server/package.json",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/api-server/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/math-engine/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/math-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/mcp-sim-engine/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/mcp-sim-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/prioritization-spine/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/prioritization-spine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/recon/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/recon/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/recon/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/recon/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/relays-client/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/relays-client/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/relays-client/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/relays-client/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/searcher-rs/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/searcher-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/searcher-rs/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/searcher-rs/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/sed-core/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/sed-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/selector-api/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/selector-api/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/selector-api/package.json",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/selector-api/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/shared-rs/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/shared-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/sim-ctl/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/sim-ctl/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/sim-ctl/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/sim-ctl/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/simulator-v2/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/simulator-v2/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/token-enricher/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/token-enricher/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/token-enricher/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/token-enricher/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/contracts/foundry.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker-compose.edge.yml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker-compose.edge.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker/compose.dev.yml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker/compose.dev.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker/compose.loopback.override.yml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker/compose.loopback.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker/compose.noports.override.yml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker/compose.noports.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker/compose.prod.yml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker/compose.prod.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker/compose.staging.override.yml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker/compose.staging.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docs/blueprints/enterprise_package/docker-compose.yml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docs/blueprints/enterprise_package/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docs/contracts/foundry.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docs/contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/edge/dev-local/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/edge/dev-local/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/edge/dev-local/package.json",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/edge/dev-local/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/edge/worker/package.json",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/edge/worker/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/frontend/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/frontend/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/frontend/package.json",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/frontend/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/package.json",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/shared-ts/package.json",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/shared-ts/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/tests/e2e/package.json",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/tests/e2e/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/Cargo.lock",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/Cargo.lock",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/api-server/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/api-server/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/api-server/package.json",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/api-server/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/flash-loan-core/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/flash-loan-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/math-engine/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/math-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/mcp-sim-engine/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/mcp-sim-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/prioritization-spine/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/prioritization-spine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/recon/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/recon/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/recon/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/recon/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/relays-client/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/relays-client/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/relays-client/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/relays-client/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/searcher-rs/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/searcher-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/searcher-rs/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/searcher-rs/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/sed-core/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/sed-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/selector-api/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/selector-api/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/selector-api/package.json",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/selector-api/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/shared-rs/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/shared-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/sim-core/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/sim-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/sim-ctl/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/sim-ctl/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/sim-ctl/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/sim-ctl/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/simulator-v2/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/simulator-v2/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/token-enricher/Cargo.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/token-enricher/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/token-enricher/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/backend/token-enricher/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/contracts/foundry.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/docker-compose.edge.yml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/docker-compose.edge.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/docker/compose.dev.yml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/docker/compose.dev.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/docker/compose.loopback.override.yml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/docker/compose.loopback.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/docker/compose.noports.override.yml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/docker/compose.noports.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/docker/compose.prod.yml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/docker/compose.prod.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/docker/compose.staging.override.yml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/docker/compose.staging.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/docs/blueprints/enterprise_package/docker-compose.yml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/docs/blueprints/enterprise_package/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/docs/contracts/foundry.toml",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/docs/contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/edge/dev-local/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/edge/dev-local/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/edge/dev-local/package.json",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/edge/dev-local/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/edge/worker/package.json",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/edge/worker/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/frontend/Dockerfile",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/frontend/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/frontend/package.json",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/frontend/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/package.json",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/shared-ts/package.json",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/shared-ts/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-a7a72813e0989b73b/tests/e2e/package.json",
+      "path": ".claude/worktrees/agent-a7a72813e0989b73b/tests/e2e/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/.devcontainer/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/.devcontainer/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/.devcontainer/docker-compose.yml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/.devcontainer/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/.devcontainer/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/.devcontainer/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/.devcontainer/docker-compose.yml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/.devcontainer/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/Cargo.lock",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/Cargo.lock",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/api-server/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/api-server/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/api-server/package.json",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/api-server/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/math-engine/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/math-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/mcp-sim-engine/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/mcp-sim-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/prioritization-spine/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/prioritization-spine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/recon/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/recon/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/recon/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/recon/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/relays-client/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/relays-client/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/relays-client/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/relays-client/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/searcher-rs/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/searcher-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/searcher-rs/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/searcher-rs/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/sed-core/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/sed-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/selector-api/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/selector-api/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/selector-api/package.json",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/selector-api/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/shared-rs/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/shared-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/sim-ctl/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/sim-ctl/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/sim-ctl/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/sim-ctl/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/simulator-v2/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/simulator-v2/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/token-enricher/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/token-enricher/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/token-enricher/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/token-enricher/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/contracts/foundry.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker-compose.edge.yml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker-compose.edge.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker/compose.dev.yml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker/compose.dev.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker/compose.loopback.override.yml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker/compose.loopback.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker/compose.noports.override.yml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker/compose.noports.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker/compose.prod.yml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker/compose.prod.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker/compose.staging.override.yml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker/compose.staging.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docs/blueprints/enterprise_package/docker-compose.yml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docs/blueprints/enterprise_package/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docs/contracts/foundry.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docs/contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/edge/dev-local/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/edge/dev-local/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/edge/dev-local/package.json",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/edge/dev-local/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/edge/worker/package.json",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/edge/worker/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/frontend/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/frontend/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/frontend/package.json",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/frontend/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/package.json",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/shared-ts/package.json",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/shared-ts/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/tests/e2e/package.json",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/tests/e2e/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/Cargo.lock",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/Cargo.lock",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/api-server/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/api-server/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/api-server/package.json",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/api-server/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/flash-loan-core/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/flash-loan-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/math-engine/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/math-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/mcp-sim-engine/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/mcp-sim-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/prioritization-spine/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/prioritization-spine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/recon/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/recon/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/recon/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/recon/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/relays-client/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/relays-client/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/relays-client/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/relays-client/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/searcher-rs/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/searcher-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/searcher-rs/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/searcher-rs/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/sed-core/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/sed-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/selector-api/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/selector-api/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/selector-api/package.json",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/selector-api/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/shared-rs/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/shared-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/sim-core/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/sim-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/sim-ctl/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/sim-ctl/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/sim-ctl/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/sim-ctl/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/simulator-v2/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/simulator-v2/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/token-enricher/Cargo.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/token-enricher/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/token-enricher/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/backend/token-enricher/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/contracts/foundry.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/docker-compose.edge.yml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/docker-compose.edge.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/docker/compose.dev.yml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/docker/compose.dev.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/docker/compose.loopback.override.yml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/docker/compose.loopback.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/docker/compose.noports.override.yml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/docker/compose.noports.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/docker/compose.prod.yml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/docker/compose.prod.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/docker/compose.staging.override.yml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/docker/compose.staging.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/docs/blueprints/enterprise_package/docker-compose.yml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/docs/blueprints/enterprise_package/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/docs/contracts/foundry.toml",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/docs/contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/edge/dev-local/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/edge/dev-local/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/edge/dev-local/package.json",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/edge/dev-local/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/edge/worker/package.json",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/edge/worker/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/frontend/Dockerfile",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/frontend/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/frontend/package.json",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/frontend/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/package.json",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/shared-ts/package.json",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/shared-ts/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ab798a43a6ebcddca/tests/e2e/package.json",
+      "path": ".claude/worktrees/agent-ab798a43a6ebcddca/tests/e2e/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/.devcontainer/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/.devcontainer/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/.devcontainer/docker-compose.yml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/.devcontainer/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/.devcontainer/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/.devcontainer/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/.devcontainer/docker-compose.yml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/.devcontainer/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/Cargo.lock",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/Cargo.lock",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/api-server/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/api-server/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/api-server/package.json",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/api-server/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/math-engine/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/math-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/mcp-sim-engine/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/mcp-sim-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/prioritization-spine/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/prioritization-spine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/recon/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/recon/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/recon/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/recon/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/relays-client/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/relays-client/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/relays-client/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/relays-client/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/searcher-rs/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/searcher-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/searcher-rs/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/searcher-rs/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/sed-core/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/sed-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/selector-api/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/selector-api/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/selector-api/package.json",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/selector-api/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/shared-rs/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/shared-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/sim-ctl/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/sim-ctl/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/sim-ctl/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/sim-ctl/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/simulator-v2/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/simulator-v2/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/token-enricher/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/token-enricher/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/token-enricher/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/token-enricher/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/contracts/foundry.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker-compose.edge.yml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker-compose.edge.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker/compose.dev.yml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker/compose.dev.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker/compose.loopback.override.yml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker/compose.loopback.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker/compose.noports.override.yml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker/compose.noports.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker/compose.prod.yml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker/compose.prod.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker/compose.staging.override.yml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker/compose.staging.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docs/blueprints/enterprise_package/docker-compose.yml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docs/blueprints/enterprise_package/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docs/contracts/foundry.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docs/contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/edge/dev-local/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/edge/dev-local/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/edge/dev-local/package.json",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/edge/dev-local/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/edge/worker/package.json",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/edge/worker/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/frontend/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/frontend/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/frontend/package.json",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/frontend/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/package.json",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/shared-ts/package.json",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/shared-ts/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/tests/e2e/package.json",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/tests/e2e/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/Cargo.lock",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/Cargo.lock",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/api-server/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/api-server/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/api-server/package.json",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/api-server/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/flash-loan-core/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/flash-loan-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/math-engine/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/math-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/mcp-sim-engine/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/mcp-sim-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/prioritization-spine/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/prioritization-spine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/recon/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/recon/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/recon/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/recon/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/relays-client/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/relays-client/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/relays-client/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/relays-client/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/searcher-rs/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/searcher-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/searcher-rs/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/searcher-rs/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/sed-core/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/sed-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/selector-api/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/selector-api/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/selector-api/package.json",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/selector-api/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/shared-rs/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/shared-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/sim-core/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/sim-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/sim-ctl/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/sim-ctl/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/sim-ctl/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/sim-ctl/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/simulator-v2/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/simulator-v2/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/token-enricher/Cargo.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/token-enricher/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/token-enricher/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/backend/token-enricher/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/contracts/foundry.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/docker-compose.edge.yml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/docker-compose.edge.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/docker/compose.dev.yml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/docker/compose.dev.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/docker/compose.loopback.override.yml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/docker/compose.loopback.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/docker/compose.noports.override.yml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/docker/compose.noports.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/docker/compose.prod.yml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/docker/compose.prod.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/docker/compose.staging.override.yml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/docker/compose.staging.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/docs/blueprints/enterprise_package/docker-compose.yml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/docs/blueprints/enterprise_package/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/docs/contracts/foundry.toml",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/docs/contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/edge/dev-local/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/edge/dev-local/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/edge/dev-local/package.json",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/edge/dev-local/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/edge/worker/package.json",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/edge/worker/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/frontend/Dockerfile",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/frontend/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/frontend/package.json",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/frontend/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/package.json",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/shared-ts/package.json",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/shared-ts/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/tests/e2e/package.json",
+      "path": ".claude/worktrees/agent-ac4deafb48d86bfc4/tests/e2e/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/.devcontainer/Dockerfile",
+      "path": ".claude/worktrees/pr4-opportunities/.devcontainer/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/.devcontainer/docker-compose.yml",
+      "path": ".claude/worktrees/pr4-opportunities/.devcontainer/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/Cargo.lock",
+      "path": ".claude/worktrees/pr4-opportunities/backend/Cargo.lock",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/Cargo.toml",
+      "path": ".claude/worktrees/pr4-opportunities/backend/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/api-server/Dockerfile",
+      "path": ".claude/worktrees/pr4-opportunities/backend/api-server/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/api-server/package.json",
+      "path": ".claude/worktrees/pr4-opportunities/backend/api-server/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/math-engine/Cargo.toml",
+      "path": ".claude/worktrees/pr4-opportunities/backend/math-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/mcp-sim-engine/Cargo.toml",
+      "path": ".claude/worktrees/pr4-opportunities/backend/mcp-sim-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/prioritization-spine/Cargo.toml",
+      "path": ".claude/worktrees/pr4-opportunities/backend/prioritization-spine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/recon/Cargo.toml",
+      "path": ".claude/worktrees/pr4-opportunities/backend/recon/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/recon/Dockerfile",
+      "path": ".claude/worktrees/pr4-opportunities/backend/recon/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/relays-client/Cargo.toml",
+      "path": ".claude/worktrees/pr4-opportunities/backend/relays-client/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/relays-client/Dockerfile",
+      "path": ".claude/worktrees/pr4-opportunities/backend/relays-client/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/searcher-rs/Cargo.toml",
+      "path": ".claude/worktrees/pr4-opportunities/backend/searcher-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/searcher-rs/Dockerfile",
+      "path": ".claude/worktrees/pr4-opportunities/backend/searcher-rs/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/sed-core/Cargo.toml",
+      "path": ".claude/worktrees/pr4-opportunities/backend/sed-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/selector-api/Dockerfile",
+      "path": ".claude/worktrees/pr4-opportunities/backend/selector-api/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/selector-api/package.json",
+      "path": ".claude/worktrees/pr4-opportunities/backend/selector-api/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/shared-rs/Cargo.toml",
+      "path": ".claude/worktrees/pr4-opportunities/backend/shared-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/sim-core/Cargo.toml",
+      "path": ".claude/worktrees/pr4-opportunities/backend/sim-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/sim-ctl/Cargo.toml",
+      "path": ".claude/worktrees/pr4-opportunities/backend/sim-ctl/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/sim-ctl/Dockerfile",
+      "path": ".claude/worktrees/pr4-opportunities/backend/sim-ctl/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/simulator-v2/Cargo.toml",
+      "path": ".claude/worktrees/pr4-opportunities/backend/simulator-v2/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/token-enricher/Cargo.toml",
+      "path": ".claude/worktrees/pr4-opportunities/backend/token-enricher/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/backend/token-enricher/Dockerfile",
+      "path": ".claude/worktrees/pr4-opportunities/backend/token-enricher/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/contracts/foundry.toml",
+      "path": ".claude/worktrees/pr4-opportunities/contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/docker-compose.edge.yml",
+      "path": ".claude/worktrees/pr4-opportunities/docker-compose.edge.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/docker/compose.dev.yml",
+      "path": ".claude/worktrees/pr4-opportunities/docker/compose.dev.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/docker/compose.loopback.override.yml",
+      "path": ".claude/worktrees/pr4-opportunities/docker/compose.loopback.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/docker/compose.noports.override.yml",
+      "path": ".claude/worktrees/pr4-opportunities/docker/compose.noports.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/docker/compose.prod.yml",
+      "path": ".claude/worktrees/pr4-opportunities/docker/compose.prod.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/docker/compose.staging.override.yml",
+      "path": ".claude/worktrees/pr4-opportunities/docker/compose.staging.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/docs/blueprints/enterprise_package/docker-compose.yml",
+      "path": ".claude/worktrees/pr4-opportunities/docs/blueprints/enterprise_package/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/docs/contracts/foundry.toml",
+      "path": ".claude/worktrees/pr4-opportunities/docs/contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/edge/dev-local/Dockerfile",
+      "path": ".claude/worktrees/pr4-opportunities/edge/dev-local/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/edge/dev-local/package.json",
+      "path": ".claude/worktrees/pr4-opportunities/edge/dev-local/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/edge/worker/package.json",
+      "path": ".claude/worktrees/pr4-opportunities/edge/worker/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/frontend/Dockerfile",
+      "path": ".claude/worktrees/pr4-opportunities/frontend/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/frontend/package.json",
+      "path": ".claude/worktrees/pr4-opportunities/frontend/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/package.json",
+      "path": ".claude/worktrees/pr4-opportunities/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/shared-ts/package.json",
+      "path": ".claude/worktrees/pr4-opportunities/shared-ts/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/pr4-opportunities/tests/e2e/package.json",
+      "path": ".claude/worktrees/pr4-opportunities/tests/e2e/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/.devcontainer/Dockerfile",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/.devcontainer/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/.devcontainer/docker-compose.yml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/.devcontainer/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/Cargo.lock",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/Cargo.lock",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/Cargo.toml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/api-server/Dockerfile",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/api-server/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/api-server/package.json",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/api-server/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/math-engine/Cargo.toml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/math-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/mcp-sim-engine/Cargo.toml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/mcp-sim-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/prioritization-spine/Cargo.toml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/prioritization-spine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/recon/Cargo.toml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/recon/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/recon/Dockerfile",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/recon/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/relays-client/Cargo.toml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/relays-client/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/relays-client/Dockerfile",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/relays-client/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/searcher-rs/Cargo.toml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/searcher-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/searcher-rs/Dockerfile",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/searcher-rs/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/sed-core/Cargo.toml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/sed-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/selector-api/Dockerfile",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/selector-api/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/selector-api/package.json",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/selector-api/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/shared-rs/Cargo.toml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/shared-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/sim-core/Cargo.toml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/sim-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/sim-ctl/Cargo.toml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/sim-ctl/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/sim-ctl/Dockerfile",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/sim-ctl/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/simulator-v2/Cargo.toml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/simulator-v2/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/token-enricher/Cargo.toml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/token-enricher/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/token-enricher/Dockerfile",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/backend/token-enricher/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/contracts/foundry.toml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/docker-compose.edge.yml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/docker-compose.edge.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/docker/compose.dev.yml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/docker/compose.dev.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/docker/compose.loopback.override.yml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/docker/compose.loopback.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/docker/compose.noports.override.yml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/docker/compose.noports.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/docker/compose.prod.yml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/docker/compose.prod.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/docker/compose.staging.override.yml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/docker/compose.staging.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/docs/blueprints/enterprise_package/docker-compose.yml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/docs/blueprints/enterprise_package/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/docs/contracts/foundry.toml",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/docs/contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/edge/dev-local/Dockerfile",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/edge/dev-local/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/edge/dev-local/package.json",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/edge/dev-local/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/edge/worker/package.json",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/edge/worker/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/frontend/Dockerfile",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/frontend/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/frontend/package.json",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/frontend/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/package.json",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/shared-ts/package.json",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/shared-ts/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.claude/worktrees/wf_4d31ee79-009-1/tests/e2e/package.json",
+      "path": ".claude/worktrees/wf_4d31ee79-009-1/tests/e2e/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.devcontainer/Dockerfile",
+      "path": ".devcontainer/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.devcontainer/docker-compose.yml",
+      "path": ".devcontainer/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/action-a-plus-v2.yml",
+      "path": ".github/workflows/action-a-plus-v2.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/action-a-plus.yml",
+      "path": ".github/workflows/action-a-plus.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/audit-vps-wiring.yml",
+      "path": ".github/workflows/audit-vps-wiring.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/audit-wiring.yml",
+      "path": ".github/workflows/audit-wiring.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/audit.yml",
+      "path": ".github/workflows/audit.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/auto-deploy-vps.yml",
+      "path": ".github/workflows/auto-deploy-vps.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/c10-f1-recovery-step14-only.yml",
+      "path": ".github/workflows/c10-f1-recovery-step14-only.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/cartridge-integration-deploy.yml",
+      "path": ".github/workflows/cartridge-integration-deploy.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/ci.yml",
+      "path": ".github/workflows/ci.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/codeql.yml",
+      "path": ".github/workflows/codeql.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/deploy-edge-only-v2.yml",
+      "path": ".github/workflows/deploy-edge-only-v2.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/deploy-edge-only.yml",
+      "path": ".github/workflows/deploy-edge-only.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/deploy-frontend.yml",
+      "path": ".github/workflows/deploy-frontend.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/deploy-vps.yml",
+      "path": ".github/workflows/deploy-vps.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/deploy.yml",
+      "path": ".github/workflows/deploy.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/diag-cookie-emission.yml",
+      "path": ".github/workflows/diag-cookie-emission.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/docker-build.yml",
+      "path": ".github/workflows/docker-build.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/dockerfile-audit.yml",
+      "path": ".github/workflows/dockerfile-audit.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/e2e.yml",
+      "path": ".github/workflows/e2e.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/ethics-guard.yml",
+      "path": ".github/workflows/ethics-guard.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/foundry.yml",
+      "path": ".github/workflows/foundry.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/frontend-build.yml",
+      "path": ".github/workflows/frontend-build.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/hardened-vps-audit.yml",
+      "path": ".github/workflows/hardened-vps-audit.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/hardened-vps-baseline.yml",
+      "path": ".github/workflows/hardened-vps-baseline.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/hardened-vps-deploy.yml",
+      "path": ".github/workflows/hardened-vps-deploy.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/integration-tests.yml",
+      "path": ".github/workflows/integration-tests.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/m5-sepolia-validation.yml",
+      "path": ".github/workflows/m5-sepolia-validation.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/monitoring-config.yml",
+      "path": ".github/workflows/monitoring-config.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/no-hardcode.yml",
+      "path": ".github/workflows/no-hardcode.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/omega8-m3-grep-gates.yml",
+      "path": ".github/workflows/omega8-m3-grep-gates.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/omega8-pii-gates.yml",
+      "path": ".github/workflows/omega8-pii-gates.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/ops-live-testnet.yml",
+      "path": ".github/workflows/ops-live-testnet.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/ops-paper-mode.yml",
+      "path": ".github/workflows/ops-paper-mode.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/probe-admin-session.yml",
+      "path": ".github/workflows/probe-admin-session.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/probe-cookies-deep.yml",
+      "path": ".github/workflows/probe-cookies-deep.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/rust.yml",
+      "path": ".github/workflows/rust.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/security.yml",
+      "path": ".github/workflows/security.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/semiotic.yml",
+      "path": ".github/workflows/semiotic.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/spec-drift-gate.yml",
+      "path": ".github/workflows/spec-drift-gate.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/sync-vps-metadata.yml",
+      "path": ".github/workflows/sync-vps-metadata.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/trailblazing-5182-validation.yml",
+      "path": ".github/workflows/trailblazing-5182-validation.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/typescript.yml",
+      "path": ".github/workflows/typescript.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/unit-tests.yml",
+      "path": ".github/workflows/unit-tests.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:.github/workflows/verify-admin-session-wiring.yml",
+      "path": ".github/workflows/verify-admin-session-wiring.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/Cargo.lock",
+      "path": "backend/Cargo.lock",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/Cargo.toml",
+      "path": "backend/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/api-server/Dockerfile",
+      "path": "backend/api-server/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/api-server/package.json",
+      "path": "backend/api-server/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/api-server/src/index.ts",
+      "path": "backend/api-server/src/index.ts",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/math-engine/Cargo.toml",
+      "path": "backend/math-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/mcp-sim-engine/Cargo.toml",
+      "path": "backend/mcp-sim-engine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/prioritization-spine/Cargo.toml",
+      "path": "backend/prioritization-spine/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/recon/Cargo.toml",
+      "path": "backend/recon/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/recon/Dockerfile",
+      "path": "backend/recon/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/relays-client/Cargo.toml",
+      "path": "backend/relays-client/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/relays-client/Dockerfile",
+      "path": "backend/relays-client/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/searcher-rs/Cargo.toml",
+      "path": "backend/searcher-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/searcher-rs/Dockerfile",
+      "path": "backend/searcher-rs/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/sed-core/Cargo.toml",
+      "path": "backend/sed-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/selector-api/Dockerfile",
+      "path": "backend/selector-api/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/selector-api/package.json",
+      "path": "backend/selector-api/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/semiotic-bridge/Cargo.toml",
+      "path": "backend/semiotic-bridge/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/shared-rs/Cargo.toml",
+      "path": "backend/shared-rs/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/sim-core/Cargo.toml",
+      "path": "backend/sim-core/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/sim-ctl/Cargo.toml",
+      "path": "backend/sim-ctl/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/sim-ctl/Dockerfile",
+      "path": "backend/sim-ctl/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/simulator-v2/Cargo.toml",
+      "path": "backend/simulator-v2/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/token-enricher/Cargo.toml",
+      "path": "backend/token-enricher/Cargo.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:backend/token-enricher/Dockerfile",
+      "path": "backend/token-enricher/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:configs/app.toml",
+      "path": "configs/app.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/foundry.toml",
+      "path": "contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/forge-std/foundry.toml",
+      "path": "contracts/lib/forge-std/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/forge-std/package.json",
+      "path": "contracts/lib/forge-std/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts-upgradeable/contracts/package.json",
+      "path": "contracts/lib/openzeppelin-contracts-upgradeable/contracts/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts-upgradeable/foundry.toml",
+      "path": "contracts/lib/openzeppelin-contracts-upgradeable/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/forge-std/foundry.toml",
+      "path": "contracts/lib/openzeppelin-contracts-upgradeable/lib/forge-std/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/forge-std/lib/ds-test/package.json",
+      "path": "contracts/lib/openzeppelin-contracts-upgradeable/lib/forge-std/lib/ds-test/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/forge-std/package.json",
+      "path": "contracts/lib/openzeppelin-contracts-upgradeable/lib/forge-std/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/package.json",
+      "path": "contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/foundry.toml",
+      "path": "contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/lib/forge-std/foundry.toml",
+      "path": "contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/lib/forge-std/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/lib/forge-std/lib/ds-test/package.json",
+      "path": "contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/lib/forge-std/lib/ds-test/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/lib/forge-std/package.json",
+      "path": "contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/lib/forge-std/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/package.json",
+      "path": "contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/scripts/solhint-custom/package.json",
+      "path": "contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/scripts/solhint-custom/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts-upgradeable/package.json",
+      "path": "contracts/lib/openzeppelin-contracts-upgradeable/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts-upgradeable/scripts/solhint-custom/package.json",
+      "path": "contracts/lib/openzeppelin-contracts-upgradeable/scripts/solhint-custom/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts/contracts/package.json",
+      "path": "contracts/lib/openzeppelin-contracts/contracts/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts/foundry.toml",
+      "path": "contracts/lib/openzeppelin-contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts/lib/forge-std/foundry.toml",
+      "path": "contracts/lib/openzeppelin-contracts/lib/forge-std/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts/lib/forge-std/package.json",
+      "path": "contracts/lib/openzeppelin-contracts/lib/forge-std/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts/package.json",
+      "path": "contracts/lib/openzeppelin-contracts/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:contracts/lib/openzeppelin-contracts/scripts/solhint-custom/package.json",
+      "path": "contracts/lib/openzeppelin-contracts/scripts/solhint-custom/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:database/run_migrations.sh",
+      "path": "database/run_migrations.sh",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:docker-compose.edge.yml",
+      "path": "docker-compose.edge.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:docker-compose.yml",
+      "path": "docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:docker/compose.dev.yml",
+      "path": "docker/compose.dev.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:docker/compose.hotpath-test.yml",
+      "path": "docker/compose.hotpath-test.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:docker/compose.loopback.override.yml",
+      "path": "docker/compose.loopback.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:docker/compose.noports.override.yml",
+      "path": "docker/compose.noports.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:docker/compose.prod.yml",
+      "path": "docker/compose.prod.yml",
+      "weight": 8,
+      "criticality": "CORE"
+    },
+    {
+      "id": "FILE:docker/compose.staging.override.yml",
+      "path": "docker/compose.staging.override.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:docs/blueprints/enterprise_package/docker-compose.yml",
+      "path": "docs/blueprints/enterprise_package/docker-compose.yml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:docs/contracts/foundry.toml",
+      "path": "docs/contracts/foundry.toml",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:edge/dev-local/Dockerfile",
+      "path": "edge/dev-local/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:edge/dev-local/package.json",
+      "path": "edge/dev-local/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:edge/worker/package.json",
+      "path": "edge/worker/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:frontend/Dockerfile",
+      "path": "frontend/Dockerfile",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:frontend/app/page.tsx",
+      "path": "frontend/app/page.tsx",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:frontend/package.json",
+      "path": "frontend/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:package.json",
+      "path": "package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:shared-ts/package.json",
+      "path": "shared-ts/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    },
+    {
+      "id": "FILE:tests/e2e/package.json",
+      "path": "tests/e2e/package.json",
+      "weight": 4,
+      "criticality": "SUPPORT"
+    }
+  ],
+  "flows": []
+}

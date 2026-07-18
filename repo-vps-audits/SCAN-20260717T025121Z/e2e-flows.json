@@ -1,0 +1,266 @@
+[
+  {
+    "id": "F1",
+    "name": "Experience/API",
+    "steps": [
+      "frontend",
+      "edge",
+      "api-server",
+      "postgres"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED",
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  },
+  {
+    "id": "F2",
+    "name": "Processing pipeline",
+    "steps": [
+      "searcher-rs",
+      "selector-api",
+      "sim-ctl",
+      "relays-client",
+      "recon"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED",
+      "VERIFIED",
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  },
+  {
+    "id": "F3",
+    "name": "Observability",
+    "steps": [
+      "promtail",
+      "loki",
+      "grafana"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  },
+  {
+    "id": "F4",
+    "name": "Metrics",
+    "steps": [
+      "prometheus",
+      "thanos-sidecar",
+      "minio",
+      "thanos-query",
+      "grafana"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED",
+      "VERIFIED",
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  },
+  {
+    "id": "DEP:searcher-rs",
+    "name": "Dependencies of searcher-rs",
+    "steps": [
+      "redis",
+      "postgres",
+      "searcher-rs"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  },
+  {
+    "id": "DEP:sim-ctl",
+    "name": "Dependencies of sim-ctl",
+    "steps": [
+      "postgres",
+      "redis",
+      "sim-ctl"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  },
+  {
+    "id": "DEP:relays-client",
+    "name": "Dependencies of relays-client",
+    "steps": [
+      "redis",
+      "relays-client"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  },
+  {
+    "id": "DEP:recon",
+    "name": "Dependencies of recon",
+    "steps": [
+      "postgres",
+      "recon"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  },
+  {
+    "id": "DEP:selector-api",
+    "name": "Dependencies of selector-api",
+    "steps": [
+      "postgres",
+      "redis",
+      "selector-api"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  },
+  {
+    "id": "DEP:api-server",
+    "name": "Dependencies of api-server",
+    "steps": [
+      "redis",
+      "api-server"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  },
+  {
+    "id": "DEP:edge",
+    "name": "Dependencies of edge",
+    "steps": [
+      "api-server",
+      "edge"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  },
+  {
+    "id": "DEP:frontend",
+    "name": "Dependencies of frontend",
+    "steps": [
+      "edge",
+      "frontend"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  },
+  {
+    "id": "DEP:grafana",
+    "name": "Dependencies of grafana",
+    "steps": [
+      "prometheus",
+      "grafana"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  },
+  {
+    "id": "DEP:token-enricher",
+    "name": "Dependencies of token-enricher",
+    "steps": [
+      "postgres",
+      "redis",
+      "token-enricher"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  },
+  {
+    "id": "DEP:promtail",
+    "name": "Dependencies of promtail",
+    "steps": [
+      "loki",
+      "promtail"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  },
+  {
+    "id": "DEP:thanos-sidecar",
+    "name": "Dependencies of thanos-sidecar",
+    "steps": [
+      "prometheus",
+      "minio",
+      "thanos-sidecar"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  },
+  {
+    "id": "DEP:thanos-store",
+    "name": "Dependencies of thanos-store",
+    "steps": [
+      "minio",
+      "thanos-store"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  },
+  {
+    "id": "DEP:thanos-query",
+    "name": "Dependencies of thanos-query",
+    "steps": [
+      "thanos-sidecar",
+      "thanos-store",
+      "thanos-query"
+    ],
+    "step_status": [
+      "VERIFIED",
+      "VERIFIED",
+      "VERIFIED"
+    ],
+    "status": "VERIFIED"
+  }
+]

@@ -1,13 +1,14 @@
 {
-  "permissions": {
-    "allow": [
-      "Bash(printf '%s\\\\n' '-- Migration 100: paper_trade_runs execution_time_ms column \\(Task 6\\) *)",
-      "Bash(printf '%s\\\\n' 'BEGIN *)",
-      "Bash(sed -i 's/gross_topological_yield_wei?: string;/gross_topological_yield_wei: string | undefined;/' backend/api-server/src/paper/executor.ts)",
-      "Bash(sed -i 's/net_topological_yield_wei?: string;/net_topological_yield_wei: string | undefined;/' backend/api-server/src/paper/executor.ts)",
-      "Bash(sed -i 's/gas_cost_wei?: string;/gas_cost_wei: string | undefined;/' backend/api-server/src/paper/executor.ts)",
-      "Bash(sed -i 's/decoherence_penalty_wei?: string;/decoherence_penalty_wei: string | undefined;/' backend/api-server/src/paper/executor.ts)",
-      "Bash(sed -i 's/opportunity_id?: string;/opportunity_id: string | undefined;/' backend/api-server/src/paper/executor.ts)"
-    ]
-  }
+    "permissions":  {
+                        "allow":  [
+                                      "Bash(printf \u0027%s\\\\n\u0027 \u0027-- Migration 100: paper_trade_runs execution_time_ms column \\(Task 6\\) *)",
+                                      "Bash(printf \u0027%s\\\\n\u0027 \u0027BEGIN *)",
+                                      "Bash(sed -i \u0027s/gross_topological_yield_wei?: string;/gross_topological_yield_wei: string | undefined;/\u0027 backend/api-server/src/paper/executor.ts)",
+                                      "Bash(sed -i \u0027s/net_topological_yield_wei?: string;/net_topological_yield_wei: string | undefined;/\u0027 backend/api-server/src/paper/executor.ts)",
+                                      "Bash(sed -i \u0027s/gas_cost_wei?: string;/gas_cost_wei: string | undefined;/\u0027 backend/api-server/src/paper/executor.ts)",
+                                      "Bash(sed -i \u0027s/decoherence_penalty_wei?: string;/decoherence_penalty_wei: string | undefined;/\u0027 backend/api-server/src/paper/executor.ts)",
+                                      "Bash(sed -i \u0027s/opportunity_id?: string;/opportunity_id: string | undefined;/\u0027 backend/api-server/src/paper/executor.ts)"
+                                  ],
+                        "defaultMode":  "bypassPermissions"
+                    }
 }

@@ -26,6 +26,7 @@ use prioritization_spine::round_trip_executor::SimulationOutcome;
 // They are structurally similar but distinct types. We convert between them
 // (see `to_spine_candidate`) because the encoder expects the spine version.
 use shared_rs::candidates::{DecimalsMap, OpportunityCandidate as SharedOpportunityCandidate};
+use shared_rs::metrics::SIMULATIONS_TOTAL;
 use sim_core::sim_encoder::{
     build_round_trip_context_from_candidate, RouteEncodingConfig, TokenDecimalsProvider,
 };
@@ -215,8 +216,19 @@ pub async fn run_real_simulation(
     .await;
 
     match result {
-        Ok(outcome) => outcome,
-        Err(e) => SimulationOutcome::failed(format!("b2c_spawn_blocking_join:{e}")),
+        Ok(outcome) => {
+            let passed_str = if outcome.passed { "true" } else { "false" };
+            SIMULATIONS_TOTAL
+                .with_label_values(&["revm", passed_str])
+                .inc();
+            outcome
+        }
+        Err(e) => {
+            SIMULATIONS_TOTAL
+                .with_label_values(&["revm", "false"])
+                .inc();
+            SimulationOutcome::failed(format!("b2c_spawn_blocking_join:{e}"))
+        }
     }
 }
 

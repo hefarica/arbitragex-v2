@@ -1,0 +1,18 @@
+{
+  "configured": false,
+  "sha": "",
+  "branch": "",
+  "dirty_count": null,
+  "os": "",
+  "uname": "",
+  "uptime": "",
+  "disk": "",
+  "memory": "",
+  "docker_version": "",
+  "compose_version": "",
+  "containers": {},
+  "networks": [],
+  "volumes": [],
+  "file_hashes": {},
+  "errors": []
+}

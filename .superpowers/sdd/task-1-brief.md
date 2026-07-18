@@ -1,74 +1,51 @@
-# Task Brief: Redis Hot Path Schema Design
-
-## Context
-
-Este es el Task 1 del Plan Maestro OMEGA para implementar un pipeline de detección/simulación/ejecución con latencia end-to-end <100ms.
+# Task 1: Types and Pure Resolver
 
 ## Goal
-
-Crear documentación técnica que defina el esquema de Redis Streams y Keys para el hot path de baja latencia.
+Create the canonical resolvePaperModeState() pure resolver with structured PaperModeState, ChainPaperMode, and PaperModeConfidence types. Replace KEYS with MGET for Redis reads.
 
 ## Files
+- Create: backend/api-server/src/readiness/paper-mode-state.ts
+- Create: backend/api-server/src/readiness/paper-mode-state.test.ts
 
-- Create: `docs/redis-schema/hot-path-v2.md`
+## Global Constraints
+- Use MGET only; KEYS is prohibited in production
+- Inferred confidence never produces GREEN; only EXPLICIT does
+- Global Redis key arbx:papermode is legacy-degraded (confidence explicit_legacy)
+- Aggregated confidence = MIN(confidence) across all chains
+- No live/capital paths modified
 
-## Interfaces
+## Implementation
 
-- Produces: Definición de streams y keys para pipeline <100ms
-- No consume interfaces previos (primer task)
+Create paper-mode-state.ts with:
+- PaperModeConfidence = "explicit" | "explicit_legacy" | "observed" | "inferred" | "default_safe"
+- ChainPaperMode { chain_id, enabled, source, confidence, conflict, updated_at }
+- PaperModeState { enabled, chain_id, source, confidence, degraded, conflict, updated_at, reasons, chains }
+- resolvePaperModeState({ redis, env, enabledChainIds, chainId?, logger? })
 
-## Steps (exactos)
+Resolver order:
+1. MGET per-chain keys + global key via redis.mget()
+2. If per-chain explicit → confidence=explicit
+3. If only global → confidence=explicit_legacy, degraded=true
+4. If no Redis but archiver env ON → confidence=inferred
+5. If no Redis, no archiver → fallback ARBX_TRADE_MODE → confidence=inferred
+6. If nothing at all → confidence=default_safe
+7. Aggregate: enabled=ALL chains ON, confidence=MIN across chains
+8. Conflict detection: any chain OFF while others ON, or explicit OFF + archiver ON
 
-### Step 1: Documentar streams requeridos
+Create paper-mode-state.test.ts with 6 tests:
+1. EXPLICIT when per-chain ON
+2. INFERRED when Redis empty + archiver ON
+3. CONFLICT when per-chain OFF + archiver ON
+4. explicit_legacy when only global exists
+5. aggregated confidence = minimum
+6. default_safe when no data
 
-Crear archivo con la siguiente estructura documentada:
+Use makeRedis() stub with mget() returning arrays.
 
-```markdown
-## Redis Streams (Hot Path v2)
+## Verification
+Run: cd backend/api-server && npx vitest run src/readiness/paper-mode-state.test.ts
+Expected: 6/6 PASS
 
-### arbx:hot:detected (Stream)
-- XADD por searcher-rs al detectar oportunidad
-- Fields: id, chain_id, strategy_kind, token_path[], amounts[], detected_at_ms
-- MAXLEN ~10000
-- Consumer Groups: paper-executor-g0, ws-emitter-g0
-
-### arbx:hot:simulated (Stream)
-- XADD por searcher-rs post-REVM (solo passed)
-- Fields: id, sim_result (JSON), net_profit_wei, gas_used, trace_hash
-- MAXLEN ~5000
-
-### arbx:hot:paper_executed (Stream)
-- XADD por api-server paper archiver
-- Fields: id, execution_time_ms, paper_pnl_usd, status
-- MAXLEN ~1000
-
-### Keys (TTL corto)
-- arbx:hot:opp:{id} (Hash, TTL 300s) - Datos completos
-- arbx:hot:sim:{id} (Hash, TTL 300s) - Resultado simulación
-- arbx:metrics:throughput:detected (String, TTL 60s) - Contador para métricas
-```
-
-### Step 2: Verificar sintaxis
-
-Run: `cat docs/redis-schema/hot-path-v2.md | head -30`
-Expected: Documento markdown válido con estructura clara
-
-### Step 3: Commit
-
-```bash
-git add docs/redis-schema/hot-path-v2.md
-git commit -m "docs(redis): define hot path schema v2 for <100ms pipeline"
-```
-
-## Acceptance Criteria
-
-- [ ] Archivo `docs/redis-schema/hot-path-v2.md` creado
-- [ ] Documenta los 3 streams: arbx:hot:detected, arbx:hot:simulated, arbx:hot:paper_executed
-- [ ] Documenta las 3 keys con TTL
-- [ ] Commiteado con mensaje convencional
-
-## Out of Scope
-
-- Implementación de código Rust/TypeScript
-- Tests funcionales
-- Modificaciones a archivos existentes
+## Report
+Write report to: .superpowers/sdd/task-1-report.md
+Include: status, commits, test summary, any concerns.

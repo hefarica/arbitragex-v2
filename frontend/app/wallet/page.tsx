@@ -20,6 +20,7 @@ import { WalletStatusCard } from "@/components/wallet/WalletStatusCard";
 import { NetworkSwitcher } from "@/components/wallet/NetworkSwitcher";
 import { AccountPopover } from "@/components/wallet/AccountPopover";
 import { WalletIntentPanel } from "@/components/wallet/WalletIntentPanel";
+import { ContractAdminPanel } from "@/components/wallet/ContractAdminPanel";
 import { WalletOnboardingGuard } from "@/components/wallet/WalletOnboardingGuard";
 import { SiweAuthPanel } from "@/app/wallet/SiweAuthPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -62,6 +63,7 @@ export default function WalletPage() {
         <SiweAuthPanel />
 
         <WalletIntentPanel />
+        <ContractAdminPanel />
       </div>
     </>
   );

@@ -1,3 +1,34 @@
 {
-  "enabledMcpjsonServers": ["playwright"]
+  "permissions": {
+    "allow": [
+      "Bash(cargo check *)",
+      "mcp__filesystem__create_directory",
+      "Bash(npm run *)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'feat\\(readiness\\): Tasks 5-6 Paper-Mode State Authority endpoints *)",
+      "Bash(git commit -m 'feat\\(paper-mode\\): add getPaperModeState\\(\\) client + usePaperModeState\\(\\) hook \\(Task 7\\) *)",
+      "mcp__filesystem__list_directory",
+      "Bash(npx tsc *)",
+      "mcp__filesystem__read_text_file",
+      "mcp__sequential-thinking__sequentialthinking",
+      "Bash(npx playwright *)",
+      "Bash(npm install *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/wallet)"
+    ],
+    "defaultMode": "bypassPermissions"
+  },
+  "enabledMcpjsonServers": [
+    "playwright",
+    "filesystem",
+    "postgres",
+    "redis",
+    "foundry",
+    "evm"
+  ],
+  "gateDoctrine": ".claude/gate/semiotic-bridge-gate-doctrine.md",
+  "gateBehavior": {
+    "semiticBridgeFastTrack": true,
+    "bashEditPreferred": true,
+    "mathematicalOutputRequired": true
+  }
 }

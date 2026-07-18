@@ -164,8 +164,6 @@ pub enum MultiStepError {
     PrefundFailed(#[from] PrefundError),
     #[error("flash-funded broadcast calldata encoding failed (empty forward calldata)")]
     FlashCalldataEncodeFailed,
-    #[error("REVM multi-step execution pending Phase A.3.c.3 simulator-v2 extension")]
-    RevmCacheDbPending,
 }
 
 impl MultiStepError {
@@ -189,7 +187,6 @@ impl MultiStepError {
             Self::SameTokenInOut => "same_token_in_out",
             Self::PrefundFailed(_) => "prefund_failed",
             Self::FlashCalldataEncodeFailed => "flash_calldata_encode_failed",
-            Self::RevmCacheDbPending => "multistep_revm_cachedb_pending",
         }
     }
 }
@@ -1306,10 +1303,6 @@ mod tests {
         assert_eq!(
             MultiStepError::FlashCalldataEncodeFailed.reason_tag(),
             "flash_calldata_encode_failed"
-        );
-        assert_eq!(
-            MultiStepError::RevmCacheDbPending.reason_tag(),
-            "multistep_revm_cachedb_pending"
         );
     }
 }

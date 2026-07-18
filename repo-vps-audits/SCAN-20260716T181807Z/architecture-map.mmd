@@ -1,0 +1,979 @@
+flowchart LR
+  classDef verified fill:#dcfce7,stroke:#166534,color:#166534;
+  classDef drift fill:#fef3c7,stroke:#92400e,color:#92400e;
+  classDef broken fill:#fee2e2,stroke:#991b1b,color:#991b1b;
+  classDef blocked fill:#ede9fe,stroke:#5b21b6,color:#5b21b6;
+  classDef unknown fill:#e5e7eb,stroke:#374151,color:#374151;
+  classDef extra fill:#dbeafe,stroke:#1e40af,color:#1e40af;
+  N0["thanos-store<br/>BROKEN"]
+  class N0 broken;
+  N1["api-server<br/>MISSING"]
+  class N1 broken;
+  N2["edge<br/>MISSING"]
+  class N2 broken;
+  N3["relays-client<br/>MISSING"]
+  class N3 broken;
+  N4["searcher-rs<br/>MISSING"]
+  class N4 broken;
+  N5["selector-api<br/>MISSING"]
+  class N5 broken;
+  N6["sim-ctl<br/>MISSING"]
+  class N6 broken;
+  N7["frontend<br/>MISSING"]
+  class N7 broken;
+  N8["recon<br/>MISSING"]
+  class N8 broken;
+  N9["token-enricher<br/>MISSING"]
+  class N9 broken;
+  N10["FILE:docker/compose.prod.yml<br/>DRIFT"]
+  class N10 drift;
+  N11["FILE:.claude/worktrees/agent-a7a72813e0989b73b/.devcontainer/Dockerfile<br/>DRIFT"]
+  class N11 drift;
+  N12["FILE:.claude/worktrees/agent-a7a72813e0989b73b/.devcontainer/docker-compose.yml<br/>DRIFT"]
+  class N12 drift;
+  N13["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/.devcontainer/Dockerfile<br/>DRIFT"]
+  class N13 drift;
+  N14["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/.devcontainer/docker-compose.yml<br/>DRIFT"]
+  class N14 drift;
+  N15["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/Cargo.lock<br/>DRIFT"]
+  class N15 drift;
+  N16["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/api-server/Dockerfile<br/>DRIFT"]
+  class N16 drift;
+  N17["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/api-server/package.json<br/>DRIFT"]
+  class N17 drift;
+  N18["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/math-engine/Cargo.toml<br/>DRIFT"]
+  class N18 drift;
+  N19["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/mcp-sim-engine/Cargo.toml<br/>DRIFT"]
+  class N19 drift;
+  N20["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/prioritization-spine/Cargo.toml<br/>DRIFT"]
+  class N20 drift;
+  N21["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/recon/Cargo.toml<br/>DRIFT"]
+  class N21 drift;
+  N22["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/recon/Dockerfile<br/>DRIFT"]
+  class N22 drift;
+  N23["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/relays-client/Cargo.toml<br/>DRIFT"]
+  class N23 drift;
+  N24["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/relays-client/Dockerfile<br/>DRIFT"]
+  class N24 drift;
+  N25["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/searcher-rs/Cargo.toml<br/>DRIFT"]
+  class N25 drift;
+  N26["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/searcher-rs/Dockerfile<br/>DRIFT"]
+  class N26 drift;
+  N27["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/sed-core/Cargo.toml<br/>DRIFT"]
+  class N27 drift;
+  N28["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/selector-api/Dockerfile<br/>DRIFT"]
+  class N28 drift;
+  N29["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/selector-api/package.json<br/>DRIFT"]
+  class N29 drift;
+  N30["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/shared-rs/Cargo.toml<br/>DRIFT"]
+  class N30 drift;
+  N31["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/sim-ctl/Cargo.toml<br/>DRIFT"]
+  class N31 drift;
+  N32["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/sim-ctl/Dockerfile<br/>DRIFT"]
+  class N32 drift;
+  N33["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/simulator-v2/Cargo.toml<br/>DRIFT"]
+  class N33 drift;
+  N34["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/token-enricher/Cargo.toml<br/>DRIFT"]
+  class N34 drift;
+  N35["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/backend/token-enricher/Dockerfile<br/>DRIFT"]
+  class N35 drift;
+  N36["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/contracts/foundry.toml<br/>DRIFT"]
+  class N36 drift;
+  N37["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker-compose.edge.yml<br/>DRIFT"]
+  class N37 drift;
+  N38["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker/compose.dev.yml<br/>DRIFT"]
+  class N38 drift;
+  N39["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker/compose.loopback.override.yml<br/>DRIFT"]
+  class N39 drift;
+  N40["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker/compose.noports.override.yml<br/>DRIFT"]
+  class N40 drift;
+  N41["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker/compose.prod.yml<br/>DRIFT"]
+  class N41 drift;
+  N42["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docker/compose.staging.override.yml<br/>DRIFT"]
+  class N42 drift;
+  N43["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docs/blueprints/enterprise_package/docker-compose.yml<br/>DRIFT"]
+  class N43 drift;
+  N44["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/docs/contracts/foundry.toml<br/>DRIFT"]
+  class N44 drift;
+  N45["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/edge/dev-local/Dockerfile<br/>DRIFT"]
+  class N45 drift;
+  N46["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/edge/dev-local/package.json<br/>DRIFT"]
+  class N46 drift;
+  N47["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/edge/worker/package.json<br/>DRIFT"]
+  class N47 drift;
+  N48["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/frontend/Dockerfile<br/>DRIFT"]
+  class N48 drift;
+  N49["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/frontend/package.json<br/>DRIFT"]
+  class N49 drift;
+  N50["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/package.json<br/>DRIFT"]
+  class N50 drift;
+  N51["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/shared-ts/package.json<br/>DRIFT"]
+  class N51 drift;
+  N52["FILE:.claude/worktrees/agent-a7a72813e0989b73b/arbitragex-v2-main/tests/e2e/package.json<br/>DRIFT"]
+  class N52 drift;
+  N53["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/Cargo.lock<br/>DRIFT"]
+  class N53 drift;
+  N54["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/Cargo.toml<br/>DRIFT"]
+  class N54 drift;
+  N55["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/api-server/Dockerfile<br/>DRIFT"]
+  class N55 drift;
+  N56["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/api-server/package.json<br/>DRIFT"]
+  class N56 drift;
+  N57["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/flash-loan-core/Cargo.toml<br/>DRIFT"]
+  class N57 drift;
+  N58["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/math-engine/Cargo.toml<br/>DRIFT"]
+  class N58 drift;
+  N59["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/mcp-sim-engine/Cargo.toml<br/>DRIFT"]
+  class N59 drift;
+  N60["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/prioritization-spine/Cargo.toml<br/>DRIFT"]
+  class N60 drift;
+  N61["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/recon/Cargo.toml<br/>DRIFT"]
+  class N61 drift;
+  N62["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/recon/Dockerfile<br/>DRIFT"]
+  class N62 drift;
+  N63["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/relays-client/Cargo.toml<br/>DRIFT"]
+  class N63 drift;
+  N64["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/relays-client/Dockerfile<br/>DRIFT"]
+  class N64 drift;
+  N65["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/searcher-rs/Cargo.toml<br/>DRIFT"]
+  class N65 drift;
+  N66["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/searcher-rs/Dockerfile<br/>DRIFT"]
+  class N66 drift;
+  N67["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/sed-core/Cargo.toml<br/>DRIFT"]
+  class N67 drift;
+  N68["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/selector-api/Dockerfile<br/>DRIFT"]
+  class N68 drift;
+  N69["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/selector-api/package.json<br/>DRIFT"]
+  class N69 drift;
+  N70["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/shared-rs/Cargo.toml<br/>DRIFT"]
+  class N70 drift;
+  N71["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/sim-core/Cargo.toml<br/>DRIFT"]
+  class N71 drift;
+  N72["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/sim-ctl/Cargo.toml<br/>DRIFT"]
+  class N72 drift;
+  N73["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/sim-ctl/Dockerfile<br/>DRIFT"]
+  class N73 drift;
+  N74["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/simulator-v2/Cargo.toml<br/>DRIFT"]
+  class N74 drift;
+  N75["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/token-enricher/Cargo.toml<br/>DRIFT"]
+  class N75 drift;
+  N76["FILE:.claude/worktrees/agent-a7a72813e0989b73b/backend/token-enricher/Dockerfile<br/>DRIFT"]
+  class N76 drift;
+  N77["FILE:.claude/worktrees/agent-a7a72813e0989b73b/contracts/foundry.toml<br/>DRIFT"]
+  class N77 drift;
+  N78["FILE:.claude/worktrees/agent-a7a72813e0989b73b/docker-compose.edge.yml<br/>DRIFT"]
+  class N78 drift;
+  N79["FILE:.claude/worktrees/agent-a7a72813e0989b73b/docker/compose.dev.yml<br/>DRIFT"]
+  class N79 drift;
+  N80["FILE:.claude/worktrees/agent-a7a72813e0989b73b/docker/compose.loopback.override.yml<br/>DRIFT"]
+  class N80 drift;
+  N81["FILE:.claude/worktrees/agent-a7a72813e0989b73b/docker/compose.noports.override.yml<br/>DRIFT"]
+  class N81 drift;
+  N82["FILE:.claude/worktrees/agent-a7a72813e0989b73b/docker/compose.prod.yml<br/>DRIFT"]
+  class N82 drift;
+  N83["FILE:.claude/worktrees/agent-a7a72813e0989b73b/docker/compose.staging.override.yml<br/>DRIFT"]
+  class N83 drift;
+  N84["FILE:.claude/worktrees/agent-a7a72813e0989b73b/docs/blueprints/enterprise_package/docker-compose.yml<br/>DRIFT"]
+  class N84 drift;
+  N85["FILE:.claude/worktrees/agent-a7a72813e0989b73b/docs/contracts/foundry.toml<br/>DRIFT"]
+  class N85 drift;
+  N86["FILE:.claude/worktrees/agent-a7a72813e0989b73b/edge/dev-local/Dockerfile<br/>DRIFT"]
+  class N86 drift;
+  N87["FILE:.claude/worktrees/agent-a7a72813e0989b73b/edge/dev-local/package.json<br/>DRIFT"]
+  class N87 drift;
+  N88["FILE:.claude/worktrees/agent-a7a72813e0989b73b/edge/worker/package.json<br/>DRIFT"]
+  class N88 drift;
+  N89["FILE:.claude/worktrees/agent-a7a72813e0989b73b/frontend/Dockerfile<br/>DRIFT"]
+  class N89 drift;
+  N90["FILE:.claude/worktrees/agent-a7a72813e0989b73b/frontend/package.json<br/>DRIFT"]
+  class N90 drift;
+  N91["FILE:.claude/worktrees/agent-a7a72813e0989b73b/package.json<br/>DRIFT"]
+  class N91 drift;
+  N92["FILE:.claude/worktrees/agent-a7a72813e0989b73b/shared-ts/package.json<br/>DRIFT"]
+  class N92 drift;
+  N93["FILE:.claude/worktrees/agent-a7a72813e0989b73b/tests/e2e/package.json<br/>DRIFT"]
+  class N93 drift;
+  N94["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/.devcontainer/Dockerfile<br/>DRIFT"]
+  class N94 drift;
+  N95["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/.devcontainer/docker-compose.yml<br/>DRIFT"]
+  class N95 drift;
+  N96["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/.devcontainer/Dockerfile<br/>DRIFT"]
+  class N96 drift;
+  N97["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/.devcontainer/docker-compose.yml<br/>DRIFT"]
+  class N97 drift;
+  N98["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/Cargo.lock<br/>DRIFT"]
+  class N98 drift;
+  N99["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/api-server/Dockerfile<br/>DRIFT"]
+  class N99 drift;
+  N100["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/api-server/package.json<br/>DRIFT"]
+  class N100 drift;
+  N101["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/math-engine/Cargo.toml<br/>DRIFT"]
+  class N101 drift;
+  N102["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/mcp-sim-engine/Cargo.toml<br/>DRIFT"]
+  class N102 drift;
+  N103["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/prioritization-spine/Cargo.toml<br/>DRIFT"]
+  class N103 drift;
+  N104["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/recon/Cargo.toml<br/>DRIFT"]
+  class N104 drift;
+  N105["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/recon/Dockerfile<br/>DRIFT"]
+  class N105 drift;
+  N106["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/relays-client/Cargo.toml<br/>DRIFT"]
+  class N106 drift;
+  N107["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/relays-client/Dockerfile<br/>DRIFT"]
+  class N107 drift;
+  N108["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/searcher-rs/Cargo.toml<br/>DRIFT"]
+  class N108 drift;
+  N109["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/searcher-rs/Dockerfile<br/>DRIFT"]
+  class N109 drift;
+  N110["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/sed-core/Cargo.toml<br/>DRIFT"]
+  class N110 drift;
+  N111["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/selector-api/Dockerfile<br/>DRIFT"]
+  class N111 drift;
+  N112["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/selector-api/package.json<br/>DRIFT"]
+  class N112 drift;
+  N113["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/shared-rs/Cargo.toml<br/>DRIFT"]
+  class N113 drift;
+  N114["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/sim-ctl/Cargo.toml<br/>DRIFT"]
+  class N114 drift;
+  N115["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/sim-ctl/Dockerfile<br/>DRIFT"]
+  class N115 drift;
+  N116["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/simulator-v2/Cargo.toml<br/>DRIFT"]
+  class N116 drift;
+  N117["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/token-enricher/Cargo.toml<br/>DRIFT"]
+  class N117 drift;
+  N118["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/backend/token-enricher/Dockerfile<br/>DRIFT"]
+  class N118 drift;
+  N119["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/contracts/foundry.toml<br/>DRIFT"]
+  class N119 drift;
+  N120["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker-compose.edge.yml<br/>DRIFT"]
+  class N120 drift;
+  N121["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker/compose.dev.yml<br/>DRIFT"]
+  class N121 drift;
+  N122["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker/compose.loopback.override.yml<br/>DRIFT"]
+  class N122 drift;
+  N123["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker/compose.noports.override.yml<br/>DRIFT"]
+  class N123 drift;
+  N124["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker/compose.prod.yml<br/>DRIFT"]
+  class N124 drift;
+  N125["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docker/compose.staging.override.yml<br/>DRIFT"]
+  class N125 drift;
+  N126["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docs/blueprints/enterprise_package/docker-compose.yml<br/>DRIFT"]
+  class N126 drift;
+  N127["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/docs/contracts/foundry.toml<br/>DRIFT"]
+  class N127 drift;
+  N128["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/edge/dev-local/Dockerfile<br/>DRIFT"]
+  class N128 drift;
+  N129["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/edge/dev-local/package.json<br/>DRIFT"]
+  class N129 drift;
+  N130["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/edge/worker/package.json<br/>DRIFT"]
+  class N130 drift;
+  N131["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/frontend/Dockerfile<br/>DRIFT"]
+  class N131 drift;
+  N132["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/frontend/package.json<br/>DRIFT"]
+  class N132 drift;
+  N133["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/package.json<br/>DRIFT"]
+  class N133 drift;
+  N134["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/shared-ts/package.json<br/>DRIFT"]
+  class N134 drift;
+  N135["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/arbitragex-v2-main/tests/e2e/package.json<br/>DRIFT"]
+  class N135 drift;
+  N136["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/Cargo.lock<br/>DRIFT"]
+  class N136 drift;
+  N137["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/Cargo.toml<br/>DRIFT"]
+  class N137 drift;
+  N138["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/api-server/Dockerfile<br/>DRIFT"]
+  class N138 drift;
+  N139["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/api-server/package.json<br/>DRIFT"]
+  class N139 drift;
+  N140["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/flash-loan-core/Cargo.toml<br/>DRIFT"]
+  class N140 drift;
+  N141["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/math-engine/Cargo.toml<br/>DRIFT"]
+  class N141 drift;
+  N142["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/mcp-sim-engine/Cargo.toml<br/>DRIFT"]
+  class N142 drift;
+  N143["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/prioritization-spine/Cargo.toml<br/>DRIFT"]
+  class N143 drift;
+  N144["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/recon/Cargo.toml<br/>DRIFT"]
+  class N144 drift;
+  N145["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/recon/Dockerfile<br/>DRIFT"]
+  class N145 drift;
+  N146["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/relays-client/Cargo.toml<br/>DRIFT"]
+  class N146 drift;
+  N147["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/relays-client/Dockerfile<br/>DRIFT"]
+  class N147 drift;
+  N148["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/searcher-rs/Cargo.toml<br/>DRIFT"]
+  class N148 drift;
+  N149["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/searcher-rs/Dockerfile<br/>DRIFT"]
+  class N149 drift;
+  N150["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/sed-core/Cargo.toml<br/>DRIFT"]
+  class N150 drift;
+  N151["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/selector-api/Dockerfile<br/>DRIFT"]
+  class N151 drift;
+  N152["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/selector-api/package.json<br/>DRIFT"]
+  class N152 drift;
+  N153["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/shared-rs/Cargo.toml<br/>DRIFT"]
+  class N153 drift;
+  N154["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/sim-core/Cargo.toml<br/>DRIFT"]
+  class N154 drift;
+  N155["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/sim-ctl/Cargo.toml<br/>DRIFT"]
+  class N155 drift;
+  N156["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/sim-ctl/Dockerfile<br/>DRIFT"]
+  class N156 drift;
+  N157["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/simulator-v2/Cargo.toml<br/>DRIFT"]
+  class N157 drift;
+  N158["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/token-enricher/Cargo.toml<br/>DRIFT"]
+  class N158 drift;
+  N159["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/backend/token-enricher/Dockerfile<br/>DRIFT"]
+  class N159 drift;
+  N160["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/contracts/foundry.toml<br/>DRIFT"]
+  class N160 drift;
+  N161["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/docker-compose.edge.yml<br/>DRIFT"]
+  class N161 drift;
+  N162["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/docker/compose.dev.yml<br/>DRIFT"]
+  class N162 drift;
+  N163["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/docker/compose.loopback.override.yml<br/>DRIFT"]
+  class N163 drift;
+  N164["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/docker/compose.noports.override.yml<br/>DRIFT"]
+  class N164 drift;
+  N165["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/docker/compose.prod.yml<br/>DRIFT"]
+  class N165 drift;
+  N166["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/docker/compose.staging.override.yml<br/>DRIFT"]
+  class N166 drift;
+  N167["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/docs/blueprints/enterprise_package/docker-compose.yml<br/>DRIFT"]
+  class N167 drift;
+  N168["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/docs/contracts/foundry.toml<br/>DRIFT"]
+  class N168 drift;
+  N169["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/edge/dev-local/Dockerfile<br/>DRIFT"]
+  class N169 drift;
+  N170["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/edge/dev-local/package.json<br/>DRIFT"]
+  class N170 drift;
+  N171["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/edge/worker/package.json<br/>DRIFT"]
+  class N171 drift;
+  N172["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/frontend/Dockerfile<br/>DRIFT"]
+  class N172 drift;
+  N173["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/frontend/package.json<br/>DRIFT"]
+  class N173 drift;
+  N174["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/package.json<br/>DRIFT"]
+  class N174 drift;
+  N175["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/shared-ts/package.json<br/>DRIFT"]
+  class N175 drift;
+  N176["FILE:.claude/worktrees/agent-ab798a43a6ebcddca/tests/e2e/package.json<br/>DRIFT"]
+  class N176 drift;
+  N177["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/.devcontainer/Dockerfile<br/>DRIFT"]
+  class N177 drift;
+  N178["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/.devcontainer/docker-compose.yml<br/>DRIFT"]
+  class N178 drift;
+  N179["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/.devcontainer/Dockerfile<br/>DRIFT"]
+  class N179 drift;
+  N180["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/.devcontainer/docker-compose.yml<br/>DRIFT"]
+  class N180 drift;
+  N181["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/Cargo.lock<br/>DRIFT"]
+  class N181 drift;
+  N182["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/api-server/Dockerfile<br/>DRIFT"]
+  class N182 drift;
+  N183["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/api-server/package.json<br/>DRIFT"]
+  class N183 drift;
+  N184["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/math-engine/Cargo.toml<br/>DRIFT"]
+  class N184 drift;
+  N185["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/mcp-sim-engine/Cargo.toml<br/>DRIFT"]
+  class N185 drift;
+  N186["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/prioritization-spine/Cargo.toml<br/>DRIFT"]
+  class N186 drift;
+  N187["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/recon/Cargo.toml<br/>DRIFT"]
+  class N187 drift;
+  N188["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/recon/Dockerfile<br/>DRIFT"]
+  class N188 drift;
+  N189["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/relays-client/Cargo.toml<br/>DRIFT"]
+  class N189 drift;
+  N190["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/relays-client/Dockerfile<br/>DRIFT"]
+  class N190 drift;
+  N191["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/searcher-rs/Cargo.toml<br/>DRIFT"]
+  class N191 drift;
+  N192["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/searcher-rs/Dockerfile<br/>DRIFT"]
+  class N192 drift;
+  N193["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/sed-core/Cargo.toml<br/>DRIFT"]
+  class N193 drift;
+  N194["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/selector-api/Dockerfile<br/>DRIFT"]
+  class N194 drift;
+  N195["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/selector-api/package.json<br/>DRIFT"]
+  class N195 drift;
+  N196["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/shared-rs/Cargo.toml<br/>DRIFT"]
+  class N196 drift;
+  N197["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/sim-ctl/Cargo.toml<br/>DRIFT"]
+  class N197 drift;
+  N198["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/sim-ctl/Dockerfile<br/>DRIFT"]
+  class N198 drift;
+  N199["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/simulator-v2/Cargo.toml<br/>DRIFT"]
+  class N199 drift;
+  N200["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/token-enricher/Cargo.toml<br/>DRIFT"]
+  class N200 drift;
+  N201["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/backend/token-enricher/Dockerfile<br/>DRIFT"]
+  class N201 drift;
+  N202["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/contracts/foundry.toml<br/>DRIFT"]
+  class N202 drift;
+  N203["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker-compose.edge.yml<br/>DRIFT"]
+  class N203 drift;
+  N204["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker/compose.dev.yml<br/>DRIFT"]
+  class N204 drift;
+  N205["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker/compose.loopback.override.yml<br/>DRIFT"]
+  class N205 drift;
+  N206["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker/compose.noports.override.yml<br/>DRIFT"]
+  class N206 drift;
+  N207["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker/compose.prod.yml<br/>DRIFT"]
+  class N207 drift;
+  N208["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docker/compose.staging.override.yml<br/>DRIFT"]
+  class N208 drift;
+  N209["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docs/blueprints/enterprise_package/docker-compose.yml<br/>DRIFT"]
+  class N209 drift;
+  N210["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/docs/contracts/foundry.toml<br/>DRIFT"]
+  class N210 drift;
+  N211["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/edge/dev-local/Dockerfile<br/>DRIFT"]
+  class N211 drift;
+  N212["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/edge/dev-local/package.json<br/>DRIFT"]
+  class N212 drift;
+  N213["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/edge/worker/package.json<br/>DRIFT"]
+  class N213 drift;
+  N214["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/frontend/Dockerfile<br/>DRIFT"]
+  class N214 drift;
+  N215["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/frontend/package.json<br/>DRIFT"]
+  class N215 drift;
+  N216["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/package.json<br/>DRIFT"]
+  class N216 drift;
+  N217["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/shared-ts/package.json<br/>DRIFT"]
+  class N217 drift;
+  N218["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/arbitragex-v2-main/tests/e2e/package.json<br/>DRIFT"]
+  class N218 drift;
+  N219["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/Cargo.lock<br/>DRIFT"]
+  class N219 drift;
+  N220["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/Cargo.toml<br/>DRIFT"]
+  class N220 drift;
+  N221["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/api-server/Dockerfile<br/>DRIFT"]
+  class N221 drift;
+  N222["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/api-server/package.json<br/>DRIFT"]
+  class N222 drift;
+  N223["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/flash-loan-core/Cargo.toml<br/>DRIFT"]
+  class N223 drift;
+  N224["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/math-engine/Cargo.toml<br/>DRIFT"]
+  class N224 drift;
+  N225["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/mcp-sim-engine/Cargo.toml<br/>DRIFT"]
+  class N225 drift;
+  N226["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/prioritization-spine/Cargo.toml<br/>DRIFT"]
+  class N226 drift;
+  N227["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/recon/Cargo.toml<br/>DRIFT"]
+  class N227 drift;
+  N228["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/recon/Dockerfile<br/>DRIFT"]
+  class N228 drift;
+  N229["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/relays-client/Cargo.toml<br/>DRIFT"]
+  class N229 drift;
+  N230["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/relays-client/Dockerfile<br/>DRIFT"]
+  class N230 drift;
+  N231["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/searcher-rs/Cargo.toml<br/>DRIFT"]
+  class N231 drift;
+  N232["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/searcher-rs/Dockerfile<br/>DRIFT"]
+  class N232 drift;
+  N233["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/sed-core/Cargo.toml<br/>DRIFT"]
+  class N233 drift;
+  N234["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/selector-api/Dockerfile<br/>DRIFT"]
+  class N234 drift;
+  N235["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/selector-api/package.json<br/>DRIFT"]
+  class N235 drift;
+  N236["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/shared-rs/Cargo.toml<br/>DRIFT"]
+  class N236 drift;
+  N237["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/sim-core/Cargo.toml<br/>DRIFT"]
+  class N237 drift;
+  N238["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/sim-ctl/Cargo.toml<br/>DRIFT"]
+  class N238 drift;
+  N239["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/sim-ctl/Dockerfile<br/>DRIFT"]
+  class N239 drift;
+  N240["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/simulator-v2/Cargo.toml<br/>DRIFT"]
+  class N240 drift;
+  N241["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/token-enricher/Cargo.toml<br/>DRIFT"]
+  class N241 drift;
+  N242["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/backend/token-enricher/Dockerfile<br/>DRIFT"]
+  class N242 drift;
+  N243["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/contracts/foundry.toml<br/>DRIFT"]
+  class N243 drift;
+  N244["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/docker-compose.edge.yml<br/>DRIFT"]
+  class N244 drift;
+  N245["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/docker/compose.dev.yml<br/>DRIFT"]
+  class N245 drift;
+  N246["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/docker/compose.loopback.override.yml<br/>DRIFT"]
+  class N246 drift;
+  N247["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/docker/compose.noports.override.yml<br/>DRIFT"]
+  class N247 drift;
+  N248["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/docker/compose.prod.yml<br/>DRIFT"]
+  class N248 drift;
+  N249["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/docker/compose.staging.override.yml<br/>DRIFT"]
+  class N249 drift;
+  N250["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/docs/blueprints/enterprise_package/docker-compose.yml<br/>DRIFT"]
+  class N250 drift;
+  N251["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/docs/contracts/foundry.toml<br/>DRIFT"]
+  class N251 drift;
+  N252["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/edge/dev-local/Dockerfile<br/>DRIFT"]
+  class N252 drift;
+  N253["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/edge/dev-local/package.json<br/>DRIFT"]
+  class N253 drift;
+  N254["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/edge/worker/package.json<br/>DRIFT"]
+  class N254 drift;
+  N255["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/frontend/Dockerfile<br/>DRIFT"]
+  class N255 drift;
+  N256["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/frontend/package.json<br/>DRIFT"]
+  class N256 drift;
+  N257["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/package.json<br/>DRIFT"]
+  class N257 drift;
+  N258["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/shared-ts/package.json<br/>DRIFT"]
+  class N258 drift;
+  N259["FILE:.claude/worktrees/agent-ac4deafb48d86bfc4/tests/e2e/package.json<br/>DRIFT"]
+  class N259 drift;
+  N260["FILE:.claude/worktrees/pr4-opportunities/.devcontainer/Dockerfile<br/>DRIFT"]
+  class N260 drift;
+  N261["FILE:.claude/worktrees/pr4-opportunities/.devcontainer/docker-compose.yml<br/>DRIFT"]
+  class N261 drift;
+  N262["FILE:.claude/worktrees/pr4-opportunities/backend/Cargo.lock<br/>DRIFT"]
+  class N262 drift;
+  N263["FILE:.claude/worktrees/pr4-opportunities/backend/Cargo.toml<br/>DRIFT"]
+  class N263 drift;
+  N264["FILE:.claude/worktrees/pr4-opportunities/backend/api-server/Dockerfile<br/>DRIFT"]
+  class N264 drift;
+  N265["FILE:.claude/worktrees/pr4-opportunities/backend/api-server/package.json<br/>DRIFT"]
+  class N265 drift;
+  N266["FILE:.claude/worktrees/pr4-opportunities/backend/math-engine/Cargo.toml<br/>DRIFT"]
+  class N266 drift;
+  N267["FILE:.claude/worktrees/pr4-opportunities/backend/mcp-sim-engine/Cargo.toml<br/>DRIFT"]
+  class N267 drift;
+  N268["FILE:.claude/worktrees/pr4-opportunities/backend/prioritization-spine/Cargo.toml<br/>DRIFT"]
+  class N268 drift;
+  N269["FILE:.claude/worktrees/pr4-opportunities/backend/recon/Cargo.toml<br/>DRIFT"]
+  class N269 drift;
+  N270["FILE:.claude/worktrees/pr4-opportunities/backend/recon/Dockerfile<br/>DRIFT"]
+  class N270 drift;
+  N271["FILE:.claude/worktrees/pr4-opportunities/backend/relays-client/Cargo.toml<br/>DRIFT"]
+  class N271 drift;
+  N272["FILE:.claude/worktrees/pr4-opportunities/backend/relays-client/Dockerfile<br/>DRIFT"]
+  class N272 drift;
+  N273["FILE:.claude/worktrees/pr4-opportunities/backend/searcher-rs/Cargo.toml<br/>DRIFT"]
+  class N273 drift;
+  N274["FILE:.claude/worktrees/pr4-opportunities/backend/searcher-rs/Dockerfile<br/>DRIFT"]
+  class N274 drift;
+  N275["FILE:.claude/worktrees/pr4-opportunities/backend/sed-core/Cargo.toml<br/>DRIFT"]
+  class N275 drift;
+  N276["FILE:.claude/worktrees/pr4-opportunities/backend/selector-api/Dockerfile<br/>DRIFT"]
+  class N276 drift;
+  N277["FILE:.claude/worktrees/pr4-opportunities/backend/selector-api/package.json<br/>DRIFT"]
+  class N277 drift;
+  N278["FILE:.claude/worktrees/pr4-opportunities/backend/shared-rs/Cargo.toml<br/>DRIFT"]
+  class N278 drift;
+  N279["FILE:.claude/worktrees/pr4-opportunities/backend/sim-core/Cargo.toml<br/>DRIFT"]
+  class N279 drift;
+  N280["FILE:.claude/worktrees/pr4-opportunities/backend/sim-ctl/Cargo.toml<br/>DRIFT"]
+  class N280 drift;
+  N281["FILE:.claude/worktrees/pr4-opportunities/backend/sim-ctl/Dockerfile<br/>DRIFT"]
+  class N281 drift;
+  N282["FILE:.claude/worktrees/pr4-opportunities/backend/simulator-v2/Cargo.toml<br/>DRIFT"]
+  class N282 drift;
+  N283["FILE:.claude/worktrees/pr4-opportunities/backend/token-enricher/Cargo.toml<br/>DRIFT"]
+  class N283 drift;
+  N284["FILE:.claude/worktrees/pr4-opportunities/backend/token-enricher/Dockerfile<br/>DRIFT"]
+  class N284 drift;
+  N285["FILE:.claude/worktrees/pr4-opportunities/contracts/foundry.toml<br/>DRIFT"]
+  class N285 drift;
+  N286["FILE:.claude/worktrees/pr4-opportunities/docker-compose.edge.yml<br/>DRIFT"]
+  class N286 drift;
+  N287["FILE:.claude/worktrees/pr4-opportunities/docker/compose.dev.yml<br/>DRIFT"]
+  class N287 drift;
+  N288["FILE:.claude/worktrees/pr4-opportunities/docker/compose.loopback.override.yml<br/>DRIFT"]
+  class N288 drift;
+  N289["FILE:.claude/worktrees/pr4-opportunities/docker/compose.noports.override.yml<br/>DRIFT"]
+  class N289 drift;
+  N290["FILE:.claude/worktrees/pr4-opportunities/docker/compose.prod.yml<br/>DRIFT"]
+  class N290 drift;
+  N291["FILE:.claude/worktrees/pr4-opportunities/docker/compose.staging.override.yml<br/>DRIFT"]
+  class N291 drift;
+  N292["FILE:.claude/worktrees/pr4-opportunities/docs/blueprints/enterprise_package/docker-compose.yml<br/>DRIFT"]
+  class N292 drift;
+  N293["FILE:.claude/worktrees/pr4-opportunities/docs/contracts/foundry.toml<br/>DRIFT"]
+  class N293 drift;
+  N294["FILE:.claude/worktrees/pr4-opportunities/edge/dev-local/Dockerfile<br/>DRIFT"]
+  class N294 drift;
+  N295["FILE:.claude/worktrees/pr4-opportunities/edge/dev-local/package.json<br/>DRIFT"]
+  class N295 drift;
+  N296["FILE:.claude/worktrees/pr4-opportunities/edge/worker/package.json<br/>DRIFT"]
+  class N296 drift;
+  N297["FILE:.claude/worktrees/pr4-opportunities/frontend/Dockerfile<br/>DRIFT"]
+  class N297 drift;
+  N298["FILE:.claude/worktrees/pr4-opportunities/frontend/package.json<br/>DRIFT"]
+  class N298 drift;
+  N299["FILE:.claude/worktrees/pr4-opportunities/package.json<br/>DRIFT"]
+  class N299 drift;
+  N300["FILE:.claude/worktrees/pr4-opportunities/shared-ts/package.json<br/>DRIFT"]
+  class N300 drift;
+  N301["FILE:.claude/worktrees/pr4-opportunities/tests/e2e/package.json<br/>DRIFT"]
+  class N301 drift;
+  N302["FILE:.claude/worktrees/wf_4d31ee79-009-1/.devcontainer/Dockerfile<br/>DRIFT"]
+  class N302 drift;
+  N303["FILE:.claude/worktrees/wf_4d31ee79-009-1/.devcontainer/docker-compose.yml<br/>DRIFT"]
+  class N303 drift;
+  N304["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/Cargo.lock<br/>DRIFT"]
+  class N304 drift;
+  N305["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/Cargo.toml<br/>DRIFT"]
+  class N305 drift;
+  N306["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/api-server/Dockerfile<br/>DRIFT"]
+  class N306 drift;
+  N307["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/api-server/package.json<br/>DRIFT"]
+  class N307 drift;
+  N308["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/math-engine/Cargo.toml<br/>DRIFT"]
+  class N308 drift;
+  N309["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/mcp-sim-engine/Cargo.toml<br/>DRIFT"]
+  class N309 drift;
+  N310["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/prioritization-spine/Cargo.toml<br/>DRIFT"]
+  class N310 drift;
+  N311["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/recon/Cargo.toml<br/>DRIFT"]
+  class N311 drift;
+  N312["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/recon/Dockerfile<br/>DRIFT"]
+  class N312 drift;
+  N313["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/relays-client/Cargo.toml<br/>DRIFT"]
+  class N313 drift;
+  N314["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/relays-client/Dockerfile<br/>DRIFT"]
+  class N314 drift;
+  N315["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/searcher-rs/Cargo.toml<br/>DRIFT"]
+  class N315 drift;
+  N316["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/searcher-rs/Dockerfile<br/>DRIFT"]
+  class N316 drift;
+  N317["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/sed-core/Cargo.toml<br/>DRIFT"]
+  class N317 drift;
+  N318["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/selector-api/Dockerfile<br/>DRIFT"]
+  class N318 drift;
+  N319["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/selector-api/package.json<br/>DRIFT"]
+  class N319 drift;
+  N320["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/shared-rs/Cargo.toml<br/>DRIFT"]
+  class N320 drift;
+  N321["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/sim-core/Cargo.toml<br/>DRIFT"]
+  class N321 drift;
+  N322["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/sim-ctl/Cargo.toml<br/>DRIFT"]
+  class N322 drift;
+  N323["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/sim-ctl/Dockerfile<br/>DRIFT"]
+  class N323 drift;
+  N324["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/simulator-v2/Cargo.toml<br/>DRIFT"]
+  class N324 drift;
+  N325["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/token-enricher/Cargo.toml<br/>DRIFT"]
+  class N325 drift;
+  N326["FILE:.claude/worktrees/wf_4d31ee79-009-1/backend/token-enricher/Dockerfile<br/>DRIFT"]
+  class N326 drift;
+  N327["FILE:.claude/worktrees/wf_4d31ee79-009-1/contracts/foundry.toml<br/>DRIFT"]
+  class N327 drift;
+  N328["FILE:.claude/worktrees/wf_4d31ee79-009-1/docker-compose.edge.yml<br/>DRIFT"]
+  class N328 drift;
+  N329["FILE:.claude/worktrees/wf_4d31ee79-009-1/docker/compose.dev.yml<br/>DRIFT"]
+  class N329 drift;
+  N330["FILE:.claude/worktrees/wf_4d31ee79-009-1/docker/compose.loopback.override.yml<br/>DRIFT"]
+  class N330 drift;
+  N331["FILE:.claude/worktrees/wf_4d31ee79-009-1/docker/compose.noports.override.yml<br/>DRIFT"]
+  class N331 drift;
+  N332["FILE:.claude/worktrees/wf_4d31ee79-009-1/docker/compose.prod.yml<br/>DRIFT"]
+  class N332 drift;
+  N333["FILE:.claude/worktrees/wf_4d31ee79-009-1/docker/compose.staging.override.yml<br/>DRIFT"]
+  class N333 drift;
+  N334["FILE:.claude/worktrees/wf_4d31ee79-009-1/docs/blueprints/enterprise_package/docker-compose.yml<br/>DRIFT"]
+  class N334 drift;
+  N335["FILE:.claude/worktrees/wf_4d31ee79-009-1/docs/contracts/foundry.toml<br/>DRIFT"]
+  class N335 drift;
+  N336["FILE:.claude/worktrees/wf_4d31ee79-009-1/edge/dev-local/Dockerfile<br/>DRIFT"]
+  class N336 drift;
+  N337["FILE:.claude/worktrees/wf_4d31ee79-009-1/edge/dev-local/package.json<br/>DRIFT"]
+  class N337 drift;
+  N338["FILE:.claude/worktrees/wf_4d31ee79-009-1/edge/worker/package.json<br/>DRIFT"]
+  class N338 drift;
+  N339["FILE:.claude/worktrees/wf_4d31ee79-009-1/frontend/Dockerfile<br/>DRIFT"]
+  class N339 drift;
+  N340["FILE:.claude/worktrees/wf_4d31ee79-009-1/frontend/package.json<br/>DRIFT"]
+  class N340 drift;
+  N341["FILE:.claude/worktrees/wf_4d31ee79-009-1/package.json<br/>DRIFT"]
+  class N341 drift;
+  N342["FILE:.claude/worktrees/wf_4d31ee79-009-1/shared-ts/package.json<br/>DRIFT"]
+  class N342 drift;
+  N343["FILE:.claude/worktrees/wf_4d31ee79-009-1/tests/e2e/package.json<br/>DRIFT"]
+  class N343 drift;
+  N344["FILE:.devcontainer/Dockerfile<br/>DRIFT"]
+  class N344 drift;
+  N345["FILE:.devcontainer/docker-compose.yml<br/>DRIFT"]
+  class N345 drift;
+  N346["FILE:.github/workflows/action-a-plus-v2.yml<br/>DRIFT"]
+  class N346 drift;
+  N347["FILE:.github/workflows/action-a-plus.yml<br/>DRIFT"]
+  class N347 drift;
+  N348["FILE:.github/workflows/audit-vps-wiring.yml<br/>DRIFT"]
+  class N348 drift;
+  N349["FILE:.github/workflows/audit-wiring.yml<br/>DRIFT"]
+  class N349 drift;
+  N350["FILE:.github/workflows/audit.yml<br/>DRIFT"]
+  class N350 drift;
+  N351["FILE:.github/workflows/auto-deploy-vps.yml<br/>DRIFT"]
+  class N351 drift;
+  N352["FILE:.github/workflows/c10-f1-recovery-step14-only.yml<br/>DRIFT"]
+  class N352 drift;
+  N353["FILE:.github/workflows/cartridge-integration-deploy.yml<br/>DRIFT"]
+  class N353 drift;
+  N354["FILE:.github/workflows/ci.yml<br/>DRIFT"]
+  class N354 drift;
+  N355["FILE:.github/workflows/codeql.yml<br/>DRIFT"]
+  class N355 drift;
+  N356["FILE:.github/workflows/deploy-edge-only-v2.yml<br/>DRIFT"]
+  class N356 drift;
+  N357["FILE:.github/workflows/deploy-edge-only.yml<br/>DRIFT"]
+  class N357 drift;
+  N358["FILE:.github/workflows/deploy-frontend.yml<br/>DRIFT"]
+  class N358 drift;
+  N359["FILE:.github/workflows/deploy-vps.yml<br/>DRIFT"]
+  class N359 drift;
+  N360["FILE:.github/workflows/deploy.yml<br/>DRIFT"]
+  class N360 drift;
+  N361["FILE:.github/workflows/diag-cookie-emission.yml<br/>DRIFT"]
+  class N361 drift;
+  N362["FILE:.github/workflows/docker-build.yml<br/>DRIFT"]
+  class N362 drift;
+  N363["FILE:.github/workflows/dockerfile-audit.yml<br/>DRIFT"]
+  class N363 drift;
+  N364["FILE:.github/workflows/e2e.yml<br/>DRIFT"]
+  class N364 drift;
+  N365["FILE:.github/workflows/ethics-guard.yml<br/>DRIFT"]
+  class N365 drift;
+  N366["FILE:.github/workflows/foundry.yml<br/>DRIFT"]
+  class N366 drift;
+  N367["FILE:.github/workflows/frontend-build.yml<br/>DRIFT"]
+  class N367 drift;
+  N368["FILE:.github/workflows/hardened-vps-audit.yml<br/>DRIFT"]
+  class N368 drift;
+  N369["FILE:.github/workflows/hardened-vps-baseline.yml<br/>DRIFT"]
+  class N369 drift;
+  N370["FILE:.github/workflows/hardened-vps-deploy.yml<br/>DRIFT"]
+  class N370 drift;
+  N371["FILE:.github/workflows/integration-tests.yml<br/>DRIFT"]
+  class N371 drift;
+  N372["FILE:.github/workflows/m5-sepolia-validation.yml<br/>DRIFT"]
+  class N372 drift;
+  N373["FILE:.github/workflows/monitoring-config.yml<br/>DRIFT"]
+  class N373 drift;
+  N374["FILE:.github/workflows/no-hardcode.yml<br/>DRIFT"]
+  class N374 drift;
+  N375["FILE:.github/workflows/omega8-m3-grep-gates.yml<br/>DRIFT"]
+  class N375 drift;
+  N376["FILE:.github/workflows/omega8-pii-gates.yml<br/>DRIFT"]
+  class N376 drift;
+  N377["FILE:.github/workflows/ops-live-testnet.yml<br/>DRIFT"]
+  class N377 drift;
+  N378["FILE:.github/workflows/ops-paper-mode.yml<br/>DRIFT"]
+  class N378 drift;
+  N379["FILE:.github/workflows/probe-admin-session.yml<br/>DRIFT"]
+  class N379 drift;
+  N380["FILE:.github/workflows/probe-cookies-deep.yml<br/>DRIFT"]
+  class N380 drift;
+  N381["FILE:.github/workflows/rust.yml<br/>DRIFT"]
+  class N381 drift;
+  N382["FILE:.github/workflows/security.yml<br/>DRIFT"]
+  class N382 drift;
+  N383["FILE:.github/workflows/semiotic.yml<br/>DRIFT"]
+  class N383 drift;
+  N384["FILE:.github/workflows/spec-drift-gate.yml<br/>DRIFT"]
+  class N384 drift;
+  N385["FILE:.github/workflows/sync-vps-metadata.yml<br/>DRIFT"]
+  class N385 drift;
+  N386["FILE:.github/workflows/trailblazing-5182-validation.yml<br/>DRIFT"]
+  class N386 drift;
+  N387["FILE:.github/workflows/typescript.yml<br/>DRIFT"]
+  class N387 drift;
+  N388["FILE:.github/workflows/unit-tests.yml<br/>DRIFT"]
+  class N388 drift;
+  N389["FILE:.github/workflows/verify-admin-session-wiring.yml<br/>DRIFT"]
+  class N389 drift;
+  N390["FILE:backend/Cargo.lock<br/>DRIFT"]
+  class N390 drift;
+  N391["FILE:backend/Cargo.toml<br/>DRIFT"]
+  class N391 drift;
+  N392["FILE:backend/api-server/Dockerfile<br/>DRIFT"]
+  class N392 drift;
+  N393["FILE:backend/api-server/package.json<br/>DRIFT"]
+  class N393 drift;
+  N394["FILE:backend/api-server/src/index.ts<br/>DRIFT"]
+  class N394 drift;
+  N395["FILE:backend/math-engine/Cargo.toml<br/>DRIFT"]
+  class N395 drift;
+  N396["FILE:backend/mcp-sim-engine/Cargo.toml<br/>DRIFT"]
+  class N396 drift;
+  N397["FILE:backend/prioritization-spine/Cargo.toml<br/>DRIFT"]
+  class N397 drift;
+  N398["FILE:backend/recon/Cargo.toml<br/>DRIFT"]
+  class N398 drift;
+  N399["FILE:backend/recon/Dockerfile<br/>DRIFT"]
+  class N399 drift;
+  N400["FILE:backend/relays-client/Cargo.toml<br/>DRIFT"]
+  class N400 drift;
+  N401["FILE:backend/relays-client/Dockerfile<br/>DRIFT"]
+  class N401 drift;
+  N402["FILE:backend/searcher-rs/Cargo.toml<br/>DRIFT"]
+  class N402 drift;
+  N403["FILE:backend/searcher-rs/Dockerfile<br/>DRIFT"]
+  class N403 drift;
+  N404["FILE:backend/sed-core/Cargo.toml<br/>DRIFT"]
+  class N404 drift;
+  N405["FILE:backend/selector-api/Dockerfile<br/>DRIFT"]
+  class N405 drift;
+  N406["FILE:backend/selector-api/package.json<br/>DRIFT"]
+  class N406 drift;
+  N407["FILE:backend/semiotic-bridge/Cargo.toml<br/>DRIFT"]
+  class N407 drift;
+  N408["FILE:backend/shared-rs/Cargo.toml<br/>DRIFT"]
+  class N408 drift;
+  N409["FILE:backend/sim-core/Cargo.toml<br/>DRIFT"]
+  class N409 drift;
+  N410["FILE:backend/sim-ctl/Cargo.toml<br/>DRIFT"]
+  class N410 drift;
+  N411["FILE:backend/sim-ctl/Dockerfile<br/>DRIFT"]
+  class N411 drift;
+  N412["FILE:backend/simulator-v2/Cargo.toml<br/>DRIFT"]
+  class N412 drift;
+  N413["FILE:backend/token-enricher/Cargo.toml<br/>DRIFT"]
+  class N413 drift;
+  N414["FILE:backend/token-enricher/Dockerfile<br/>DRIFT"]
+  class N414 drift;
+  N415["FILE:configs/app.toml<br/>DRIFT"]
+  class N415 drift;
+  N416["FILE:contracts/foundry.toml<br/>DRIFT"]
+  class N416 drift;
+  N417["FILE:contracts/lib/forge-std/foundry.toml<br/>DRIFT"]
+  class N417 drift;
+  N418["FILE:contracts/lib/forge-std/package.json<br/>DRIFT"]
+  class N418 drift;
+  N419["FILE:contracts/lib/openzeppelin-contracts-upgradeable/contracts/package.json<br/>DRIFT"]
+  class N419 drift;
+  N420["FILE:contracts/lib/openzeppelin-contracts-upgradeable/foundry.toml<br/>DRIFT"]
+  class N420 drift;
+  N421["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/forge-std/foundry.toml<br/>DRIFT"]
+  class N421 drift;
+  N422["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/forge-std/lib/ds-test/package.json<br/>DRIFT"]
+  class N422 drift;
+  N423["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/forge-std/package.json<br/>DRIFT"]
+  class N423 drift;
+  N424["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/contracts/package.json<br/>DRIFT"]
+  class N424 drift;
+  N425["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/foundry.toml<br/>DRIFT"]
+  class N425 drift;
+  N426["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/lib/forge-std/foundry.toml<br/>DRIFT"]
+  class N426 drift;
+  N427["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/lib/forge-std/lib/ds-test/package.json<br/>DRIFT"]
+  class N427 drift;
+  N428["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/lib/forge-std/package.json<br/>DRIFT"]
+  class N428 drift;
+  N429["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/package.json<br/>DRIFT"]
+  class N429 drift;
+  N430["FILE:contracts/lib/openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts/scripts/solhint-custom/package.json<br/>DRIFT"]
+  class N430 drift;
+  N431["FILE:contracts/lib/openzeppelin-contracts-upgradeable/package.json<br/>DRIFT"]
+  class N431 drift;
+  N432["FILE:contracts/lib/openzeppelin-contracts-upgradeable/scripts/solhint-custom/package.json<br/>DRIFT"]
+  class N432 drift;
+  N433["FILE:contracts/lib/openzeppelin-contracts/contracts/package.json<br/>DRIFT"]
+  class N433 drift;
+  N434["FILE:contracts/lib/openzeppelin-contracts/foundry.toml<br/>DRIFT"]
+  class N434 drift;
+  N435["FILE:contracts/lib/openzeppelin-contracts/lib/forge-std/foundry.toml<br/>DRIFT"]
+  class N435 drift;
+  N436["FILE:contracts/lib/openzeppelin-contracts/lib/forge-std/package.json<br/>DRIFT"]
+  class N436 drift;
+  N437["FILE:contracts/lib/openzeppelin-contracts/package.json<br/>DRIFT"]
+  class N437 drift;
+  N438["FILE:contracts/lib/openzeppelin-contracts/scripts/solhint-custom/package.json<br/>DRIFT"]
+  class N438 drift;
+  N439["FILE:database/run_migrations.sh<br/>DRIFT"]
+  class N439 drift;
+  N440["FILE:docker-compose.edge.yml<br/>DRIFT"]
+  class N440 drift;
+  N441["FILE:docker-compose.yml<br/>DRIFT"]
+  class N441 drift;
+  N442["FILE:docker/compose.dev.yml<br/>DRIFT"]
+  class N442 drift;
+  N443["FILE:docker/compose.hotpath-test.yml<br/>DRIFT"]
+  class N443 drift;
+  N444["FILE:docker/compose.loopback.override.yml<br/>DRIFT"]
+  class N444 drift;
+  N445["FILE:docker/compose.noports.override.yml<br/>DRIFT"]
+  class N445 drift;
+  N446["FILE:docker/compose.staging.override.yml<br/>DRIFT"]
+  class N446 drift;
+  N447["FILE:docs/blueprints/enterprise_package/docker-compose.yml<br/>DRIFT"]
+  class N447 drift;
+  N448["FILE:docs/contracts/foundry.toml<br/>DRIFT"]
+  class N448 drift;
+  N449["FILE:edge/dev-local/Dockerfile<br/>DRIFT"]
+  class N449 drift;
+  N450["FILE:edge/dev-local/package.json<br/>DRIFT"]
+  class N450 drift;
+  N451["FILE:edge/worker/package.json<br/>DRIFT"]
+  class N451 drift;
+  N452["FILE:frontend/Dockerfile<br/>DRIFT"]
+  class N452 drift;
+  N453["FILE:frontend/app/page.tsx<br/>DRIFT"]
+  class N453 drift;
+  N454["FILE:frontend/package.json<br/>DRIFT"]
+  class N454 drift;
+  N455["FILE:package.json<br/>DRIFT"]
+  class N455 drift;
+  N456["FILE:shared-ts/package.json<br/>DRIFT"]
+  class N456 drift;
+  N457["FILE:tests/e2e/package.json<br/>DRIFT"]
+  class N457 drift;
+  N458["HOST:repo-parity<br/>UNKNOWN"]
+  class N458 unknown;
+  N459["EXTRA:container:friendly_jones<br/>EXTRA"]
+  class N459 extra;
+  N460["redis<br/>VERIFIED"]
+  class N460 verified;
+  N461["postgres<br/>VERIFIED"]
+  class N461 verified;
+  N462["minio<br/>VERIFIED"]
+  class N462 verified;
+  N463["HOST:compose-contract<br/>VERIFIED"]
+  class N463 verified;
+  N464["prometheus<br/>VERIFIED"]
+  class N464 verified;
+  N465["EXT:source-control<br/>VERIFIED"]
+  class N465 verified;
+  N466["HOST:docker-engine<br/>VERIFIED"]
+  class N466 verified;
+  N467["VPS:host<br/>VERIFIED"]
+  class N467 verified;
+  N468["vault<br/>VERIFIED"]
+  class N468 verified;
+  N469["loki<br/>VERIFIED"]
+  class N469 verified;
+  N470["thanos-sidecar<br/>VERIFIED"]
+  class N470 verified;
+  N471["anvil<br/>VERIFIED"]
+  class N471 verified;
+  N472["alertmanager<br/>VERIFIED"]
+  class N472 verified;
+  N473["grafana<br/>VERIFIED"]
+  class N473 verified;
+  N474["promtail<br/>VERIFIED"]
+  class N474 verified;
+  N475["thanos-query<br/>VERIFIED"]
+  class N475 verified;
+  N462 --> N0
+  N460 --> N1
+  N1 --> N2
+  N460 --> N3
+  N460 --> N4
+  N461 --> N4
+  N461 --> N5
+  N460 --> N5
+  N461 --> N6
+  N460 --> N6
+  N2 --> N7
+  N461 --> N8
+  N461 --> N9
+  N460 --> N9
+  N464 --> N470
+  N462 --> N470
+  N464 --> N473
+  N469 --> N474
+  N470 --> N475
+  N0 --> N475

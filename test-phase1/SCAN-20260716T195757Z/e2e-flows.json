@@ -1,0 +1,266 @@
+[
+  {
+    "id": "F1",
+    "name": "Experience/API",
+    "steps": [
+      "frontend",
+      "edge",
+      "api-server",
+      "postgres"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN",
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  },
+  {
+    "id": "F2",
+    "name": "Processing pipeline",
+    "steps": [
+      "searcher-rs",
+      "selector-api",
+      "sim-ctl",
+      "relays-client",
+      "recon"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN",
+      "UNKNOWN",
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  },
+  {
+    "id": "F3",
+    "name": "Observability",
+    "steps": [
+      "promtail",
+      "loki",
+      "grafana"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  },
+  {
+    "id": "F4",
+    "name": "Metrics",
+    "steps": [
+      "prometheus",
+      "thanos-sidecar",
+      "minio",
+      "thanos-query",
+      "grafana"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN",
+      "UNKNOWN",
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  },
+  {
+    "id": "DEP:searcher-rs",
+    "name": "Dependencies of searcher-rs",
+    "steps": [
+      "redis",
+      "postgres",
+      "searcher-rs"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  },
+  {
+    "id": "DEP:sim-ctl",
+    "name": "Dependencies of sim-ctl",
+    "steps": [
+      "postgres",
+      "redis",
+      "sim-ctl"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  },
+  {
+    "id": "DEP:relays-client",
+    "name": "Dependencies of relays-client",
+    "steps": [
+      "redis",
+      "relays-client"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  },
+  {
+    "id": "DEP:recon",
+    "name": "Dependencies of recon",
+    "steps": [
+      "postgres",
+      "recon"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  },
+  {
+    "id": "DEP:selector-api",
+    "name": "Dependencies of selector-api",
+    "steps": [
+      "postgres",
+      "redis",
+      "selector-api"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  },
+  {
+    "id": "DEP:api-server",
+    "name": "Dependencies of api-server",
+    "steps": [
+      "redis",
+      "api-server"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  },
+  {
+    "id": "DEP:edge",
+    "name": "Dependencies of edge",
+    "steps": [
+      "api-server",
+      "edge"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  },
+  {
+    "id": "DEP:frontend",
+    "name": "Dependencies of frontend",
+    "steps": [
+      "edge",
+      "frontend"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  },
+  {
+    "id": "DEP:grafana",
+    "name": "Dependencies of grafana",
+    "steps": [
+      "prometheus",
+      "grafana"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  },
+  {
+    "id": "DEP:token-enricher",
+    "name": "Dependencies of token-enricher",
+    "steps": [
+      "postgres",
+      "redis",
+      "token-enricher"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  },
+  {
+    "id": "DEP:promtail",
+    "name": "Dependencies of promtail",
+    "steps": [
+      "loki",
+      "promtail"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  },
+  {
+    "id": "DEP:thanos-sidecar",
+    "name": "Dependencies of thanos-sidecar",
+    "steps": [
+      "prometheus",
+      "minio",
+      "thanos-sidecar"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  },
+  {
+    "id": "DEP:thanos-store",
+    "name": "Dependencies of thanos-store",
+    "steps": [
+      "minio",
+      "thanos-store"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  },
+  {
+    "id": "DEP:thanos-query",
+    "name": "Dependencies of thanos-query",
+    "steps": [
+      "thanos-sidecar",
+      "thanos-store",
+      "thanos-query"
+    ],
+    "step_status": [
+      "UNKNOWN",
+      "UNKNOWN",
+      "UNKNOWN"
+    ],
+    "status": "DRIFT"
+  }
+]
