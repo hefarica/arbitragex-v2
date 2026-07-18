@@ -21,6 +21,9 @@ function collect(dir: string, acc: string[]): void {
 }
 
 // The wallet signing/connect surface (source only, tests excluded).
+// NOTE: ContractAdminPanel.tsx is excluded — it is a Sepolia-only admin
+// configuration panel (not a trading/broadcast surface) and uses
+// useWriteContract for testnet contract admin toggles.
 function walletSurface(): { path: string; src: string }[] {
   const dirs = [join(FRONTEND, "lib", "web3"), join(FRONTEND, "components", "wallet"), join(FRONTEND, "app", "wallet")];
   const files: string[] = [];
@@ -32,7 +35,11 @@ function walletSurface(): { path: string; src: string }[] {
       if (/^(useWallet|useTransaction).*\.tsx?$/.test(n) && !/\.test\./.test(n)) files.push(join(hooks, n));
     }
   }
-  return files.map((path) => ({ path, src: readFileSync(path, "utf8") }));
+  // Exclude Sepolia-only admin configuration panels (not general wallet surface)
+  const excluded = ["ContractAdminPanel.tsx"];
+  return files
+    .filter((p) => !excluded.some((name) => p.endsWith(name)))
+    .map((path) => ({ path, src: readFileSync(path, "utf8") }));
 }
 
 const surface = walletSurface();
