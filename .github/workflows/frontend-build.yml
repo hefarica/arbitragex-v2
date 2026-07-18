@@ -47,9 +47,9 @@ jobs:
       NEXT_PUBLIC_WS_URL: wss://ws.ci.invalid
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "20"
           cache: npm
@@ -60,9 +60,7 @@ jobs:
         # next-cli compile deps), which then breaks the @arbx/shared tsc
         # build later in this workflow. NODE_ENV is set on the build step
         # itself so `next build` still produces a production bundle.
-        run: |
-          rm -f package-lock.json
-          npm install
+        run: npm ci --no-audit --no-fund
 
       - name: Build @arbx/shared
         # frontend imports @arbx/shared from shared-ts/dist/. Missing dist/

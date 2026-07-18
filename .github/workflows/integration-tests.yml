@@ -60,7 +60,7 @@ jobs:
       SIM_SIGNER_ADDRESS: "0x000000000000000000000000000000000000dead"
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install psql client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
@@ -79,10 +79,10 @@ jobs:
             -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
           bash automation/scripts/migrate.sh
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: backend
 
@@ -127,7 +127,7 @@ jobs:
       REDIS_URL: redis://localhost:6379
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install psql client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
@@ -141,29 +141,12 @@ jobs:
             -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
           bash automation/scripts/migrate.sh
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "20"
           cache: npm
       - name: Install dependencies
-        run: npm install
-      - name: Ensure rollup native binary (workaround npm/cli#4828)
-        # `npm install` intermittently SKIPS rollup's platform-specific optional
-        # dependency when the committed package-lock.json was generated without it
-        # (npm/cli#4828) — vitest then dies with
-        # "Cannot find module @rollup/rollup-linux-x64-gnu". This flaked the TS
-        # integration job while unit-tests/typescript (same install) passed.
-        # Force-install ONLY the matching native binary for this runner — version
-        # pinned to the resolved rollup, --no-save (no package.json/lock change),
-        # fail-safe (|| true) so it never breaks a healthy install.
-        run: |
-          ROLLUP_VER="$(node -p "require('rollup/package.json').version" 2>/dev/null || echo '')"
-          if [ -n "$ROLLUP_VER" ]; then
-            echo "rollup resolved to ${ROLLUP_VER}; ensuring @rollup/rollup-linux-x64-gnu@${ROLLUP_VER}"
-            npm install --no-save "@rollup/rollup-linux-x64-gnu@${ROLLUP_VER}" || true
-          else
-            echo "rollup not resolved in node_modules; nothing to ensure"
-          fi
+        run: npm ci --no-audit --no-fund
       - name: Build @arbx/shared
         run: npm run -w @arbx/shared build
       - name: Run DB-backed integration tests

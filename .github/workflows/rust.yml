@@ -27,9 +27,9 @@ jobs:
         working-directory: backend
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           # `stable` follows the current Rust release. Alloy ecosystem moves
           # fast: deps in lockfile require up to rustc 1.90 (ruint@1.18). Pinning
@@ -39,7 +39,7 @@ jobs:
           toolchain: stable
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: backend
 
@@ -55,20 +55,14 @@ jobs:
       - name: cargo clippy (gating — searcher-rs + relays-client)
         run: cargo clippy -p searcher-rs -p relays-client --locked --all-targets -- -D warnings
 
-      - name: cargo fmt (check only — workspace advisory)
+      - name: cargo fmt (blocking — workspace)
         run: cargo fmt --all -- --check
-        # Advisory until the pre-existing fmt drift is rebased clean. Hard-gate
-        # version is already enforced for searcher-rs + relays-client below.
-        continue-on-error: true
 
-      - name: cargo fmt (gating — searcher-rs + relays-client)
+      - name: cargo fmt (blocking — searcher-rs + relays-client)
         run: cargo fmt -p searcher-rs -p relays-client -- --check
 
-      - name: cargo clippy (workspace advisory)
+      - name: cargo clippy (blocking — workspace)
         run: cargo clippy --workspace --locked -- -D warnings
-        # Advisory baseline. Workspace-wide deny is the goal; remove
-        # continue-on-error once the rest of the workspace is clean.
-        continue-on-error: true
 
       - name: cargo test --lib (workspace)
         # --lib runs only unit tests in lib targets, skipping integration tests

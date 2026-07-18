@@ -24,16 +24,16 @@ jobs:
       matrix:
         language: [typescript, rust]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@66235dd0e4afa86b13b7702a92ec90713d4e8683 # v4
         with:
           languages: ${{ matrix.language }}
       - name: Autobuild (JS/TS)
         if: matrix.language != 'rust'
-        uses: github/codeql-action/autobuild@v4
+        uses: github/codeql-action/autobuild@66235dd0e4afa86b13b7702a92ec90713d4e8683 # v4
       - name: Build Rust
         if: matrix.language == 'rust'
         run: cd backend && cargo build --release
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@66235dd0e4afa86b13b7702a92ec90713d4e8683 # v4

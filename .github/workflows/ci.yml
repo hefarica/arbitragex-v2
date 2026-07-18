@@ -27,12 +27,12 @@ jobs:
       matrix:
         node-version: [20, 22]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
-      - run: rm -f package-lock.json && npm install
+      - run: npm ci --no-audit --no-fund
       - run: npm run lint:all
       - run: npm run build:all
       - run: npm run typecheck:all
@@ -43,34 +43,31 @@ jobs:
   lint-and-test-rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: cargo fmt (advisory — dedicated rust.yml gates searcher-rs + relays-client)
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: cargo fmt (blocking)
         run: cargo fmt -- --check
         working-directory: backend
-        continue-on-error: true
-      - name: cargo clippy (advisory — dedicated rust.yml gates critical crates)
+      - name: cargo clippy (blocking)
         run: cargo clippy --all-targets --all-features -- -D warnings
         working-directory: backend
-        continue-on-error: true
-      - name: cargo test (advisory — dedicated rust.yml is the gating check)
+      - name: cargo test (blocking)
         run: cargo test --all
         working-directory: backend
-        continue-on-error: true
 
   lint-and-test-frontend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: package-lock.json
-      - run: rm -f package-lock.json && npm install
+      - run: npm ci --no-audit --no-fund
       - run: cd frontend && npm run lint
       - run: cd frontend && npm run typecheck
       - run: cd frontend && npm run build
@@ -79,23 +76,19 @@ jobs:
   lint-and-test-contracts:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           submodules: recursive
-      - uses: foundry-rs/foundry-toolchain@v1
-      # NOTE: foundry.yml ("Foundry CI") is the GATING contracts check — its
-      # `forge build` + `forge test -vv` are BLOCKING (un-rigged in PR #191).
-      # The two steps below are advisory duplicates kept for at-a-glance signal
-      # in this aggregate workflow; they intentionally do not gate (foundry.yml
-      # does). This mirrors the lint-and-test-rust pattern above (rust.yml gates).
-      - name: forge test (advisory — foundry.yml is the gating check)
+      - uses: foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a # v1
+      # NOTE: foundry.yml ("Foundry CI") is the primary gating contracts check.
+      # The steps below are aggregate duplicates and are also BLOCKING — a failure
+      # here fails the CI gate. Keep them in sync with foundry.yml.
+      - name: forge test (blocking)
         run: forge test
         working-directory: contracts
-        continue-on-error: true
-      - name: forge fmt --check (advisory — style only, not gated anywhere)
+      - name: forge fmt --check (blocking)
         run: forge fmt --check
         working-directory: contracts
-        continue-on-error: true
 
   ci-gate:
     runs-on: ubuntu-latest

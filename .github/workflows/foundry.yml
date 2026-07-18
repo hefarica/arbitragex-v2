@@ -28,10 +28,10 @@ jobs:
         working-directory: contracts
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         # No submodules: contracts/lib/ is gitignored and managed via forge install.
 
-      - uses: foundry-rs/foundry-toolchain@v1
+      - uses: foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a # v1
         with:
           version: nightly
 
@@ -94,9 +94,9 @@ jobs:
         working-directory: contracts
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
-      - uses: foundry-rs/foundry-toolchain@v1
+      - uses: foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a # v1
         with:
           version: nightly
 
@@ -115,10 +115,11 @@ jobs:
         run: forge build --sizes
 
       - name: forge fork test (testFork_*)
-        # continue-on-error: RPC hiccups (rate-limit, latency spike) must not
-        # block merge.  The job is informational; a hard block is reserved for
-        # the unit-test job above.
-        continue-on-error: true
+        # BLOCKING: fork tests must pass for merge. If RPC flakiness becomes
+        # disruptive, the operator should either (a) provision a more stable
+        # RPC endpoint, or (b) move fork tests to a scheduled job — never
+        # re-introduce continue-on-error here, as that would re-create the
+        # false-green path that Gate 2 closes.
         run: forge test --fork-url $MAINNET_RPC_URL --match-test "testFork_" -vvv
         env:
           MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}

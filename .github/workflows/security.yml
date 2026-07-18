@@ -22,14 +22,14 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           # `stable` follows the current Rust release. See rust.yml for rationale.
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: backend
 
@@ -181,19 +181,36 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           # Full history required: gitleaks scans all commits, not just the tip.
           fetch-depth: 0
 
-      - uses: gitleaks/gitleaks-action@v3
-        # Non-blocking while leaked-PAT rotation + history scrub is pending
-        # (tracked separately). Scan still RUNS and reports findings.
-        continue-on-error: true
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
+        # BLOCKING (Gate 2): any high-entropy secret in the full history fails
+        # the merge. The operator must rotate leaked credentials (memory: 4 PATs
+        # leaked 2026-06-15) and scrub history BEFORE this gate can go green.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # gitleaks is blocking — secrets in history is a hard failure.
-        # GITHUB_TOKEN is sufficient for public/private repo scan.
+
+      - name: gitleaks diff scan (PR/push delta)
+        # Secondary scan: verify the incremental diff (PR or push) contains no
+        # high-entropy strings. Complements the full-history scan above.
+        run: |
+          set -euo pipefail
+          if command -v gitleaks >/dev/null 2>&1; then
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              BASE="${{ github.event.pull_request.base.sha }}"
+              HEAD="${{ github.event.pull_request.head.sha }}"
+            else
+              BASE="${{ github.event.before }}"
+              HEAD="${{ github.event.after }}"
+            fi
+            echo "Scanning diff ${BASE}..${HEAD} for high-entropy secrets"
+            gitleaks detect --source . --log-opts="${BASE}..${HEAD}" --redact --verbose
+          else
+            echo "gitleaks binary not available in runner; skipping diff scan"
+          fi
 
   npm-audit:
     # R2 (audit re-run #2, 2026-05-10): gate production-deps advisories.
@@ -206,16 +223,16 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: "20"
           cache: npm
 
       - name: Install all workspace dependencies
         # npm ci so package-lock.json is the source of truth.
-        run: npm install
+        run: npm ci --no-audit --no-fund
 
       - name: npm audit (prod deps, high+) — REAL gate
         # Was `npm audit --omit=dev --audit-level=high || true`, whose `|| true`
@@ -233,3 +250,75 @@ jobs:
         # decides when to schedule a major-bump sprint (wrangler, testcontainers,
         # vitest are listed semver-major-ignored in dependabot.yml).
         run: npm audit --include=dev || true
+
+  sbom:
+    # OPTIONAL (Gate 2 scaffolding): generates SBOM artifacts and signs them with
+    # Sigstore cosign. Marked continue-on-error because cargo-cyclonedx / cosign
+    # may not be pre-installed and we do NOT want SBOM tooling to block merge.
+    name: SBOM + provenance (optional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: npm SBOM (CycloneDX)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          if npm sbom --help >/dev/null 2>&1; then
+            npm sbom --package-lock-only --format=cyclonedx_json --output=sbom-npm.json
+          else
+            echo "npm sbom not available; skipping npm SBOM"
+          fi
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        continue-on-error: true
+
+      - name: Rust SBOM (cargo-cyclonedx)
+        continue-on-error: true
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          if ! command -v cargo-cyclonedx >/dev/null 2>&1; then
+            cargo install cargo-cyclonedx --locked || { echo "cargo-cyclonedx install failed; skipping Rust SBOM"; exit 0; }
+          fi
+          cargo cyclonedx --output-cdx --output-json --output-file=sbom-rust.json
+
+      - name: Install cosign
+        continue-on-error: true
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+      - name: Sign SBOMs with cosign
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          if command -v cosign >/dev/null 2>&1; then
+            for f in sbom-npm.json sbom-rust.json; do
+              [ -f "$f" ] && cosign sign-blob --yes "$f" --output-signature="${f}.sig"
+            done
+          else
+            echo "cosign not available; skipping attestation"
+          fi
+
+      - name: Upload SBOM artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom-artifacts
+          path: |
+            sbom-npm.json
+            sbom-npm.json.sig
+            backend/sbom-rust.json
+            backend/sbom-rust.json.sig
+          if-no-files-found: ignore
+          retention-days: 30
