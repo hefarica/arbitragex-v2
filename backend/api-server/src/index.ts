@@ -115,6 +115,8 @@ import { mountSedStatus } from "./routes/sed-status.js";
 import { mountSystemManifest } from "./routes/system-manifest.js";
 import { mountLiveTestnet } from "./routes/live-testnet.js";
 import { mountWalletRoutes } from "./routes/wallet.js";
+import { mountPaperModeState } from "./routes/paper-mode-state.js";
+import { mountPaperModeReconcile } from "./routes/paper-mode-reconcile.js";
 import { createForkSimulator } from "./routes/wallet-sim-runtime.js";
 import { mountAuthSiwe } from "./routes/auth-siwe.js";
 import { mountOperatorSelfTest } from "./routes/operator-selftest.js";
@@ -566,6 +568,22 @@ mountLiveTestnet(app, {
   adminToken: ARBX_ADMIN_TOKEN,
   readiness: async () => verifyAll({ pool }),
 });
+
+// Paper-Mode State Authority — Tasks 5-6
+// GET /api/paper-mode/state  (public, no-cache)
+// POST /admin/paper-mode/reconcile (admin, Lua-atomic, gated by ARBX_PAPER_AUTO_RECONCILE)
+const enabledChainIds = (cfg.chains ?? [])
+  .filter((c: { enabled?: boolean }) => c.enabled !== false)
+  .map((c: { chain_id: number }) => c.chain_id);
+mountPaperModeState(app, { redis, env: process.env, enabledChainIds, logger });
+mountPaperModeReconcile(app, {
+  redis,
+  env: process.env,
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
+  logger,
+});
+
 // RPC registry sync (Excel catalog → rpc_endpoints): public status + admin import/reload.
 // status is counts-only (ungated); import/reload are requireAdminToken-gated.
 mountRpcRegistry(app, { pool, redis, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN, logger });
