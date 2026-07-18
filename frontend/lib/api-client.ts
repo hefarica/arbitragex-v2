@@ -694,3 +694,15 @@ export function getScannerHeartbeat(chainId = 1): Promise<Result<ScannerHeartbea
 export function getStrategyCatalog(): Promise<Result<S.StrategyCatalogResponse>> {
   return getValidated("/api/strategy-catalog", S.StrategyCatalogResponseSchema);
 }
+
+// ─────── Paper Mode State (Task 7 — Paper-Mode State Authority) ───────
+//
+// Returns the canonical paper-mode resolution for the given chain (or global).
+// Fail-safe: on any error (network, timeout, parse) the Result resolves to
+// { ok: false, error } — callers never get a thrown promise.
+export function getPaperModeState(chainId?: number): Promise<Result<S.PaperModeState>> {
+  const path = chainId != null
+    ? `/api/paper-mode/state?chain_id=${chainId}`
+    : `/api/paper-mode/state`;
+  return getValidated(path, S.PaperModeStateSchema);
+}

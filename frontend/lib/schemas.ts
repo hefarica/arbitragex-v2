@@ -1054,3 +1054,45 @@ export type AdminChainsList = z.infer<typeof AdminChainsListSchema>;
 export type AdminChainProbeResult = z.infer<typeof AdminChainProbeResultSchema>;
 export type AdminChainCreateBody = z.infer<typeof AdminChainCreateBodySchema>;
 export type AdminChainUpdateBody = z.infer<typeof AdminChainUpdateBodySchema>;
+
+// ─────── Paper Mode State (Task 7 — Paper-Mode State Authority) ───────
+//
+// Canonical schema mirroring backend PaperModeState exactly.
+// Top-level confidence is a closed enum (canonical resolution source);
+// per-chain confidence is z.string() for forward-compat with future sources.
+
+export const PaperModeChainSchema = z.object({
+  chain_id: z.number().int(),
+  enabled: z.boolean(),
+  source: z.string(),
+  confidence: z.string(),
+  conflict: z.boolean(),
+  updated_at: z.string().nullable(),
+});
+
+export const PaperModeStateSchema = z.object({
+  enabled: z.boolean(),
+  chain_id: z.number().nullable(),
+  source: z.string(),
+  confidence: z.enum(["explicit", "explicit_legacy", "observed", "inferred", "default_safe"]),
+  degraded: z.boolean(),
+  conflict: z.boolean(),
+  updated_at: z.string().nullable(),
+  reasons: z.array(z.string()),
+  chains: z.array(PaperModeChainSchema),
+});
+
+export type PaperModeChain = z.infer<typeof PaperModeChainSchema>;
+export type PaperModeState = z.infer<typeof PaperModeStateSchema>;
+
+export const DEFAULT_SAFE_STATE: PaperModeState = {
+  enabled: false,
+  chain_id: null,
+  source: "default_safe",
+  confidence: "default_safe",
+  degraded: true,
+  conflict: false,
+  updated_at: null,
+  reasons: ["endpoint_unavailable"],
+  chains: [],
+};
