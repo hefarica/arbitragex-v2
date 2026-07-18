@@ -1,5 +1,6 @@
 "use client";
 import { getApiBaseUrl } from "@/lib/api-client";
+import { usePaperModeState } from "@/hooks/usePaperModeState";
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
@@ -17,12 +18,36 @@ import { cn } from "@/lib/utils";
 export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
+  const paper = usePaperModeState();
 
   // Hydration safety: getApiBaseUrl() returns different strings on SSR (INTERNAL_EDGE_URL)
   // vs CSR (NEXT_PUBLIC_EDGE_URL). We must delay rendering it until the client mounts.
   useEffect(() => {
     setIsMounted(true);
   }, []);
+
+  const isEnabled = paper.isLoading ? paperMode : paper.data.enabled;
+  const hasConflict = paper.data.conflict;
+  const isWarning = !isEnabled || hasConflict;
+
+  // Dynamic badge styling
+  const badgeBorder = isWarning
+    ? "border-[oklch(0.55_0.18_55)]"
+    : "border-[oklch(0.55_0.18_145)]";
+  const badgeBg = isWarning
+    ? "bg-[color-mix(in_oklab,oklch(0.55_0.18_55)_15%,transparent)]"
+    : "bg-[color-mix(in_oklab,oklch(0.55_0.18_145)_15%,transparent)]";
+  const badgeText = isWarning
+    ? "text-[oklch(0.75_0.15_55)]"
+    : "text-[oklch(0.75_0.15_145)]";
+  const badgeHover = isWarning
+    ? "hover:bg-[color-mix(in_oklab,oklch(0.55_0.18_55)_20%,transparent)]"
+    : "hover:bg-[color-mix(in_oklab,oklch(0.55_0.18_145)_20%,transparent)]";
+  const dotColor = isWarning
+    ? "bg-[oklch(0.65_0.16_55)]"
+    : "bg-[oklch(0.65_0.16_145)]";
+
+  const badgeLabel = isEnabled ? "PAPER · TLS SHADOW" : "LIVE · CHECK STATE";
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-[color-mix(in_oklab,oklch(0.62_0.22_263)_20%,transparent)] bg-[color-mix(in_oklab,oklch(0.18_0.05_264)_85%,transparent)] backdrop-blur-xl">
@@ -72,10 +97,16 @@ export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
           {/* Paper · TLS Shadow Badge */}
           <Badge
             variant="outline"
-            className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 h-7 text-[11px] font-medium tracking-wide border-[oklch(0.55_0.18_145)] bg-[color-mix(in_oklab,oklch(0.55_0.18_145)_15%,transparent)] text-[oklch(0.75_0.15_145)] hover:bg-[color-mix(in_oklab,oklch(0.55_0.18_145)_20%,transparent)]"
+            className={cn(
+              "hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 h-7 text-[11px] font-medium tracking-wide",
+              badgeBorder,
+              badgeBg,
+              badgeText,
+              badgeHover,
+            )}
           >
-            <span className="size-1.5 rounded-full bg-[oklch(0.65_0.16_145)] animate-pulse" aria-hidden />
-            PAPER · TLS SHADOW
+            <span className={cn("size-1.5 rounded-full animate-pulse", dotColor)} aria-hidden />
+            {badgeLabel}
           </Badge>
 
           {/* Kill-Switch Badge */}

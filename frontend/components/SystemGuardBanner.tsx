@@ -32,6 +32,7 @@ import { ShieldOff, ShieldAlert, RefreshCwIcon } from "lucide-react";
 
 import { getRuntimeStatus, getReadiness, getScannerHeartbeat } from "@/lib/api-client";
 import { useSystemReadiness } from "@/hooks/useSystemReadiness";
+import { usePaperModeState } from "@/hooks/usePaperModeState";
 import { cn } from "@/lib/utils";
 
 type LoadState =
@@ -87,6 +88,7 @@ export function SystemGuardBanner() {
   // "loading" tokens; the first useEffect tick reads real data.
   const [state, setState] = React.useState<LoadState>({ kind: "loading" });
   const readiness = useSystemReadiness();
+  const paper = usePaperModeState();
 
   React.useEffect(() => {
     let alive = true;
@@ -113,12 +115,18 @@ export function SystemGuardBanner() {
     };
   }, []);
 
+  // Paper tile: dynamic from canonical hook. SSR/loading fallback = ON (safe).
+  const paperEnabled = paper.isLoading ? true : paper.data.enabled;
+  const paperConflict = paper.data.conflict;
+  const paperDegraded = paper.data.degraded;
+  const paperConfidence = paper.data.confidence;
+  const paperTone: "safe" | "danger" = paperEnabled && !paperConflict ? "safe" : "danger";
+
   // Hardcoded structural facts (NOT fabricated metrics — these are
   // declarative statements of immutable code state):
   //   - liveOff = true: there is NO live submission path in this binary.
   //   - relayOff = true: relays-client is a no-op stub in paper mode.
   //   - submitOff / broadcastOff = true: no signer.send_transaction wired.
-  //   - paperModeOn = true: ARBX_TRADE_MODE=paper enforced in scanner.
   //   - capital = "$0": Phase 4 verified signer_zero_balance.
   //   - a4Blocked = true: fork validation requires RPC_HTTP_1 + EXECUTOR_1.
   //   - a5Blocked = true: paper-shadow runtime not yet executed.
@@ -140,7 +148,22 @@ export function SystemGuardBanner() {
         <GuardTile label="Private relay" value="OFF" tone="danger" />
         <GuardTile label="Submit" value="OFF" tone="danger" />
         <GuardTile label="Broadcast" value="OFF" tone="danger" />
-        <GuardTile label="Paper" value="ON" tone="safe" />
+        <GuardTile
+          label="Paper"
+          value={paperEnabled ? "ON" : "OFF"}
+          tone={paperTone}
+          subtitle={paperConfidence.toUpperCase()}
+        />
+        {paperConflict && (
+          <span className="inline-flex items-center rounded-md border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 font-mono text-[11px] uppercase text-destructive">
+            CONFLICT
+          </span>
+        )}
+        {paperDegraded && (
+          <span className="inline-flex items-center rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[11px] uppercase text-amber-600 dark:text-amber-300">
+            DEGRADED
+          </span>
+        )}
         <GuardTile label="Capital" value="$0" tone="safe" />
         <GuardTile label="Readiness" value={`${readiness.completedCount}/${readiness.totalCount}`} tone={readiness.allReady ? "safe" : "warning"} />
         <GuardTile label="LIVE lock" value={readiness.allReady ? "REVIEW" : "LOCKED"} tone={readiness.allReady ? "warning" : "danger"} />
@@ -160,10 +183,12 @@ function GuardTile({
   label,
   value,
   tone,
+  subtitle,
 }: {
   label: string;
   value: string;
   tone: "danger" | "warning" | "safe";
+  subtitle?: string;
 }) {
   return (
     <span
@@ -178,6 +203,9 @@ function GuardTile({
     >
       <span className="font-sans normal-case text-foreground/60">{label}:</span>
       <span className="font-semibold">{value}</span>
+      {subtitle && (
+        <span className="text-foreground/40">· {subtitle}</span>
+      )}
     </span>
   );
 }

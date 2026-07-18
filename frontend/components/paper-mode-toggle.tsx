@@ -1,5 +1,6 @@
 "use client";
 import { getApiBaseUrl, getReadiness, getReadinessBlockers } from "@/lib/api-client";
+import { usePaperModeState } from "@/hooks/usePaperModeState";
 
 import { useState, useEffect } from "react";
 import { Switch } from "@/components/ui/switch";
@@ -8,9 +9,10 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { getAdminToken, hasAdminSession } from "@/lib/admin-token";
 
-export function PaperModeToggle({ initialValue }: { initialValue: boolean }) {
+export function PaperModeToggle({ chainId }: { chainId: number }) {
+  const { data, isLoading } = usePaperModeState(chainId);
   const [loading, setLoading] = useState(false);
-  const [checked, setChecked] = useState(initialValue);
+  const [checked, setChecked] = useState(data.enabled);
   const [mounted, setMounted] = useState(false);
   // R1: session check deferred to useEffect — never read document.cookie during SSR.
   const [hasSession, setHasSession] = useState(false);
@@ -23,10 +25,32 @@ export function PaperModeToggle({ initialValue }: { initialValue: boolean }) {
     return () => clearInterval(id);
   }, []);
 
+  // Sync local checked state with canonical hook data
+  useEffect(() => {
+    setChecked(data.enabled);
+  }, [data.enabled]);
+
   const handleToggle = async (val: boolean) => {
+    // Validate chainId is positive integer before POST
+    if (!Number.isFinite(chainId) || chainId <= 0 || !Number.isInteger(chainId)) {
+      toast.error(`Invalid chain ID: ${chainId}`);
+      return;
+    }
+
     if (!hasAdminSession()) {
       setHasSession(false);  // sync React state with reality
       toast.error("Admin session required — open /killswitch and unlock a session first.");
+      return;
+    }
+
+    // Block toggle if confidence is default_safe or conflict or degraded
+    if (data.confidence === "default_safe" || data.conflict || data.degraded) {
+      const reasons = [
+        data.confidence === "default_safe" ? "DEFAULT_SAFE" : null,
+        data.conflict ? "CONFLICT" : null,
+        data.degraded ? "DEGRADED" : null,
+      ].filter(Boolean).join(" · ");
+      toast.error(`Paper mode toggle blocked: ${reasons}`);
       return;
     }
 
@@ -70,7 +94,7 @@ export function PaperModeToggle({ initialValue }: { initialValue: boolean }) {
           "x-arbx-admin-token": token,
         },
         credentials: "include", // For httpOnly session cookie
-        body: JSON.stringify({ enabled: val }),
+        body: JSON.stringify({ enabled: val, chain_id: chainId }),
       });
       if (!res.ok) {
         throw new Error(`Failed to update: HTTP ${res.status}`);
@@ -87,18 +111,32 @@ export function PaperModeToggle({ initialValue }: { initialValue: boolean }) {
 
   if (!mounted) return null;
 
+  const isBlocked = data.confidence === "default_safe" || data.conflict || data.degraded;
+  const confidenceLabel = data.confidence.toUpperCase();
+
   return (
     <div className="flex items-center space-x-2">
       <Switch
         id="paper-mode"
         checked={checked}
         onCheckedChange={handleToggle}
-        disabled={loading || !hasSession}
-        title={!hasSession ? "Admin session required — open /killswitch first" : undefined}
+        disabled={loading || !hasSession || isLoading || isBlocked}
+        title={
+          !hasSession
+            ? "Admin session required — open /killswitch first"
+            : isBlocked
+              ? `Blocked: ${confidenceLabel}`
+              : undefined
+        }
       />
       <Label htmlFor="paper-mode" className="font-mono text-sm cursor-pointer">
         {checked ? "Paper Mode: ON" : "Paper Mode: OFF"}
       </Label>
+      <span className="text-[11px] text-muted-foreground font-mono">
+        {confidenceLabel}
+        {data.conflict && " · CONFLICT"}
+        {data.degraded && " · DEGRADED"}
+      </span>
     </div>
   );
 }

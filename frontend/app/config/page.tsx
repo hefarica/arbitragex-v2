@@ -70,7 +70,7 @@ export default async function ConfigPage() {
           </Alert>
         )}
         <div className="flex-shrink-0 p-4 border rounded-xl bg-card">
-          <PaperModeToggle initialValue={paperOn} />
+          <PaperModeToggle chainId={1} />
         </div>
       </div>
 
