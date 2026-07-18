@@ -1086,7 +1086,7 @@ export type PaperModeChain = z.infer<typeof PaperModeChainSchema>;
 export type PaperModeState = z.infer<typeof PaperModeStateSchema>;
 
 export const DEFAULT_SAFE_STATE: PaperModeState = {
-  enabled: false,
+  enabled: true,
   chain_id: null,
   source: "default_safe",
   confidence: "default_safe",
