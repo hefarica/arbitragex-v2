@@ -995,6 +995,8 @@ app.get("/api/scoring/status", (c) => proxy(c, "/api/v1/scoring/status", "arbx:c
 // TTL); paper-shadow is daily metrics (slower cadence). Mirrors the dev-local edge.
 app.get("/api/sim-ctl/fork-status", (c) => proxy(c, "/api/v1/sim-ctl/fork-status", "arbx:cache:fork-status", 5));
 app.get("/api/metrics/paper-shadow", (c) => proxy(c, "/api/v1/metrics/paper-shadow", "arbx:cache:paper-shadow", 30));
+// Paper-mode state resolver (Task 5-8). No /v1/ prefix — api-server mounts at /api/paper-mode/state.
+app.get("/api/paper-mode/state", (c) => proxy(c, "/api/paper-mode/state", "arbx:cache:paper-mode", 5));
 // Credentials health summary (counts only) for the sidebar "needs attention" badge.
 app.get("/api/credentials/summary", (c) => proxy(c, "/api/v1/credentials/summary", "arbx:cache:creds-summary", 15));
 // RPC registry status (counts only) for the /rpcs panel.

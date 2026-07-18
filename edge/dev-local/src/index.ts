@@ -346,6 +346,8 @@ app.get("/api/scoring/status", (req, res) => proxy("/api/v1/scoring/status", req
 // DEGRADED/INACTIVE even though the api-server serves them (audit gap, 2026-06-22).
 app.get("/api/sim-ctl/fork-status", (req, res) => proxy("/api/v1/sim-ctl/fork-status", req, res));
 app.get("/api/metrics/paper-shadow", (req, res) => proxy("/api/v1/metrics/paper-shadow", req, res));
+// Paper-mode state resolver (Task 5-8). No /v1/ prefix — api-server mounts at /api/paper-mode/state.
+app.get("/api/paper-mode/state", (req, res) => proxy("/api/paper-mode/state", req, res));
 // A.6 comprehensive circuit breakers.
 app.get("/api/risk/circuit-breakers/status", (req, res) => proxy("/api/v1/risk/circuit-breakers/status", req, res));
 app.get("/api/risk/circuit-breakers/events", (req, res) => proxy("/api/v1/risk/circuit-breakers/events", req, res));
