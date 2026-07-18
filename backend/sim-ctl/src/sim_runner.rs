@@ -256,7 +256,7 @@ mod tests {
 
         let provider = CandidateDecimalsProvider::new(1, decimals);
         // Use a placeholder address; the provider formats it lowercased.
-        let addr = "0xtokenin".parse::<Address>();
+        let _addr = "0xtokenin".parse::<Address>();
         // "0xtokenin" is not a valid address (too short); this test just
         // verifies the provider returns None for unknown addresses without
         // panicking. Full integration tested via the encoder's own tests.
