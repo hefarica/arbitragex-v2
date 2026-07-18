@@ -7,6 +7,7 @@ pub use api::create_router;
 pub use types::{TranslationRequest, TranslationResponse, FormulaType, InputSanitizer};
 pub use errors::SemioticError;
 
+#[allow(dead_code)]
 static WORD_TO_FORMULA_MAP: &[(&str, FormulaType)] = &[
     ("sacar", FormulaType::SVD),
     ("drenar", FormulaType::RFD),
