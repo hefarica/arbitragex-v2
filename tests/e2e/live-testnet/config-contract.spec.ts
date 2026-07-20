@@ -11,9 +11,10 @@ import { test, expect } from "@playwright/test";
  */
 
 const ADMIN_TOKEN = process.env["ARBX_ADMIN_TOKEN"] ?? "dev_admin_token_change_me_0123456789";
+const EDGE_URL = process.env["ARBX_EDGE_URL"] ?? "http://localhost:8787";
 
 test("LT-CONTRACT-001: GET response contains required fields", async ({ request }) => {
-  const res = await request.get("/api/v1/live-testnet/config");
+  const res = await request.get(`${EDGE_URL}/api/v1/live-testnet/config`);
   expect(res.status()).toBe(200);
   const body = await res.json();
   const required = [
@@ -34,14 +35,14 @@ test("LT-CONTRACT-001: GET response contains required fields", async ({ request 
 });
 
 test("LT-CONTRACT-002: POST without admin token is rejected", async ({ request }) => {
-  const res = await request.post("/admin/config/live-testnet", {
+  const res = await request.post(`${EDGE_URL}/admin/config/live-testnet`, {
     data: { enabled: true, chain_id: 11155111 },
   });
   expect(res.status()).toBe(401);
 });
 
 test("LT-CONTRACT-003: POST with admin token returns contract shape", async ({ request }) => {
-  const res = await request.post("/admin/config/live-testnet", {
+  const res = await request.post(`${EDGE_URL}/admin/config/live-testnet`, {
     data: { enabled: true, chain_id: 11155111 },
     headers: { "x-arbx-admin-token": ADMIN_TOKEN },
   });

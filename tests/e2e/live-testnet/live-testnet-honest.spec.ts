@@ -15,9 +15,10 @@ import { test, expect } from "@playwright/test";
  */
 
 const ADMIN_TOKEN = process.env["ARBX_ADMIN_TOKEN"] ?? "dev_admin_token_change_me_0123456789";
+const EDGE_URL = process.env["ARBX_EDGE_URL"] ?? "http://localhost:8787";
 
 test("LT-HONEST-001: GET /api/v1/live-testnet/config is honest", async ({ request }) => {
-  const res = await request.get("/api/v1/live-testnet/config");
+  const res = await request.get(`${EDGE_URL}/api/v1/live-testnet/config`);
   expect(res.status()).toBe(200);
   const body = await res.json();
   expect(body.mode).toBe("LIVE_TESTNET");
@@ -30,7 +31,7 @@ test("LT-HONEST-001: GET /api/v1/live-testnet/config is honest", async ({ reques
 });
 
 test("LT-HONEST-002: POST /admin/config/live-testnet blocks mainnet", async ({ request }) => {
-  const res = await request.post("/admin/config/live-testnet", {
+  const res = await request.post(`${EDGE_URL}/admin/config/live-testnet`, {
     data: { enabled: true, chain_id: 1 },
     headers: { "x-arbx-admin-token": ADMIN_TOKEN },
   });
@@ -40,7 +41,7 @@ test("LT-HONEST-002: POST /admin/config/live-testnet blocks mainnet", async ({ r
 });
 
 test("LT-HONEST-003: POST /admin/config/live-testnet rejects unsupported chain", async ({ request }) => {
-  const res = await request.post("/admin/config/live-testnet", {
+  const res = await request.post(`${EDGE_URL}/admin/config/live-testnet`, {
     data: { enabled: true, chain_id: 999999999 },
     headers: { "x-arbx-admin-token": ADMIN_TOKEN },
   });
@@ -50,7 +51,7 @@ test("LT-HONEST-003: POST /admin/config/live-testnet rejects unsupported chain",
 });
 
 test("LT-HONEST-004: POST /admin/config/live-testnet accepts Sepolia and stays honest", async ({ request }) => {
-  const res = await request.post("/admin/config/live-testnet", {
+  const res = await request.post(`${EDGE_URL}/admin/config/live-testnet`, {
     data: { enabled: true, chain_id: 11155111 },
     headers: { "x-arbx-admin-token": ADMIN_TOKEN },
   });

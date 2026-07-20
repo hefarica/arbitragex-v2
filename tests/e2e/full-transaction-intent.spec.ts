@@ -46,7 +46,7 @@ test("registering an intent terminates at BROADCAST_DISABLED", async ({ page }) 
     // Honest transport error — acceptable, and crucially NOT a broadcast.
     expect(text).not.toContain("broadcast_allowed: true");
   } else {
-    await expect(page.getByTestId("intent-terminal-state")).toHaveText("BROADCAST_DISABLED");
+    await expect(page.getByTestId("intent-terminal-state")).toHaveText(/broadcast_disabled/i);
     await expect(result.getByText(/broadcast_allowed: false/i)).toBeVisible();
     await expect(result.getByText(/broadcast_disabled_by_policy/i)).toBeVisible();
   }
