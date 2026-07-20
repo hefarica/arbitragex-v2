@@ -219,12 +219,8 @@ async fn simulate_handler(
                 "fail_reason": outcome.fail_reason,
                 "wrapped_calldata": outcome.wrapped_calldata.as_ref().map(|bytes| format!("0x{}", hex::encode(bytes))),
             });
-            let status = if outcome.passed {
-                StatusCode::OK
-            } else {
-                StatusCode::OK // 200 with passed=false — honest result, not an HTTP error
-            };
-            (status, Json(response))
+            // Always 200: passed=false is an honest SimulationOutcome, not an HTTP error (R8).
+            (StatusCode::OK, Json(response))
         }
         None => {
             // No pre-enriched candidate: route_source determines the enrichment path.
