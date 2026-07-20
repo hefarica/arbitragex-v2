@@ -23,7 +23,9 @@ const FRONTEND_URL = process.env["ARBX_FRONTEND_URL"] ?? "http://localhost:5173"
 // ARBX_ASSUME_NO_RPC=1 (the CI partial-compose signal).
 const NO_RPC = process.env["ARBX_ASSUME_NO_RPC"] === "1";
 const ALWAYS_IGNORE = ["**/live/**"];
-const CI_IGNORE = NO_RPC ? [...ALWAYS_IGNORE, "rpc-down.spec.ts"] : ALWAYS_IGNORE;
+const CI_IGNORE = NO_RPC
+  ? [...ALWAYS_IGNORE, "rpc-down.spec.ts", "**/live-testnet/**"]
+  : [...ALWAYS_IGNORE, "**/live-testnet/**"];
 
 export default defineConfig({
   testDir: ".",
