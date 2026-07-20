@@ -442,6 +442,8 @@ app.get("/api/system/feature_manifest", (c) => proxy(c, "/api/system/feature_man
 app.get("/api/contracts", (c) => proxy(c, "/api/contracts", "arbx:cache:contracts", 5));
 app.get("/api/capital-gates", (c) => proxy(c, "/api/capital-gates", "arbx:cache:capital-gates", 5));
 app.get("/api/crucible/status", (c) => proxy(c, "/api/crucible/status", "arbx:cache:crucible", 5));
+app.get("/api/gates/status", (c) => proxy(c, "/api/gates/status", "arbx:cache:gates-status", 5));
+app.get("/api/gates/health", (c) => proxy(c, "/api/gates/health", "arbx:cache:gates-health", 5));
 
 // =============================================================================
 // Web3 safe-gated WALLET surface + SIWE identity-only auth. Mirrors the

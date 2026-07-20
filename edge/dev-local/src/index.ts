@@ -386,6 +386,8 @@ app.get("/api/paper/history/summary", (req, res) => proxy("/api/v1/paper/history
 app.get("/api/contracts", (req, res) => proxy("/api/contracts", req, res));
 app.get("/api/capital-gates", (req, res) => proxy("/api/capital-gates", req, res));
 app.get("/api/crucible/status", (req, res) => proxy("/api/crucible/status", req, res));
+app.get("/api/gates/status", (req, res) => proxy("/api/gates/status", req, res));
+app.get("/api/gates/health", (req, res) => proxy("/api/gates/health", req, res));
 
 // =============================================================================
 // Web3 safe-gated WALLET surface + SIWE identity-only auth. Mirrors the
