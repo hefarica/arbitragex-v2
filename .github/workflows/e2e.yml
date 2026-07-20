@@ -76,8 +76,16 @@ jobs:
           # under NODE_ENV=production during the frontend builder stage.
           docker compose --env-file .env -f docker/compose.dev.yml up -d postgres redis
           echo "waiting for postgres"
-          for i in $(seq 1 30); do
-            if docker exec arbitragex-v2-postgres-1 pg_isready -U postgres >/dev/null 2>&1; then break; fi
+          for i in $(seq 1 60); do
+            if docker compose --env-file .env -f docker/compose.dev.yml exec -T postgres pg_isready -U postgres -d arbitragex >/dev/null 2>&1; then
+              echo "postgres ready after ${i}s"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "postgres failed to become ready after 60s"
+              docker compose --env-file .env -f docker/compose.dev.yml logs --tail=50 postgres
+              exit 1
+            fi
             sleep 1
           done
           bash ./automation/scripts/migrate.sh

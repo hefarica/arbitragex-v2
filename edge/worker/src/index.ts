@@ -526,6 +526,7 @@ app.get("/api/v1/metrics/entropy", (c) => proxyPassThrough(c, "/api/v1/metrics/e
 // =============================================================================
 app.get("/api/v1/carnot/cycles",   (c) => proxy(c, "/api/v1/carnot/cycles",   "arbx:cache:carnot-cycles",   5));
 app.get("/api/v1/carnot/snapshot", (c) => proxy(c, "/api/v1/carnot/snapshot", "arbx:cache:carnot-snapshot", 5));
+app.get("/api/v1/live-testnet/config", (c) => proxy(c, "/api/v1/live-testnet/config", "arbx:cache:live-testnet-config", 5));
 
 /**
  * WebSocket passthrough for the live Carnot room.
@@ -884,6 +885,9 @@ app.delete("/admin/cartridges/:slug", (c) => {
   if (!CART_SLUG_W.test(slug)) return c.json({ error: "invalid_slug" }, 400);
   return cartForgeAdmin(c, `/api/v1/cartridges/${slug}`, "DELETE");
 });
+
+// Live-testnet config — admin-token gated POST; public GET proxied above.
+app.post("/admin/config/live-testnet", (c) => cartForgeAdmin(c, "/admin/config/live-testnet", "POST"));
 
 // Operations PnL — Sprint 3 PMI/EVM KPI surface (public read, numbers only).
 app.get("/api/operations/kpi", async (c) => {

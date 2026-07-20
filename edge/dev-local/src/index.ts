@@ -309,6 +309,7 @@ app.get('/api/v1/metrics/entropy', (req, res) => {
 // =============================================================================
 app.get("/api/v1/carnot/cycles", (req, res) => proxy("/api/v1/carnot/cycles", req, res));
 app.get("/api/v1/carnot/snapshot", (req, res) => proxy("/api/v1/carnot/snapshot", req, res));
+app.get("/api/v1/live-testnet/config", (req, res) => proxy("/api/v1/live-testnet/config", req, res));
 
 app.get("/api/opportunities/live", (req, res) => proxy("/api/v1/opportunities/live", req, res));
 app.get("/api/scanner/heartbeat", (req, res) => {
@@ -805,6 +806,7 @@ app.post("/api/killswitch/:action", async (req, res) => {
 });
 
 app.post("/admin/config/paper-mode",          (req, res) => adminProxy("/admin/config/paper-mode", req, res, "POST"));
+app.post("/admin/config/live-testnet",        (req, res) => adminProxy("/admin/config/live-testnet", req, res, "POST"));
 app.post("/admin/onboarding/1/complete",      (req, res) => adminProxy("/admin/onboarding/1/complete", req, res, "POST"));
 // 2026-05-10 audit follow-up: DEX active toggle from /dex-registry. Mounted
 // alongside the admin PUTs so the httpOnly cookie session is honoured.
