@@ -44,10 +44,7 @@ contract AllowanceManagerTest is Test {
 
         // SC-08: deploy via ERC1967Proxy with initialize() call
         AllowanceManager impl = new AllowanceManager();
-        bytes memory initData = abi.encodeWithSelector(
-            AllowanceManager.initialize.selector,
-            admin
-        );
+        bytes memory initData = abi.encodeWithSelector(AllowanceManager.initialize.selector, admin);
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         manager = AllowanceManager(address(proxy));
 
@@ -268,7 +265,7 @@ contract AllowanceManagerTest is Test {
     }
 
     // -----------------------------------------------------------------------
-    // SC-6: testNoExecutorRole — EXECUTOR_ROLE constant must not exist
+    // SC-6: testNoExecutorRole - EXECUTOR_ROLE constant must not exist
     // AllowanceManager.EXECUTOR_ROLE was removed (SC-6 dead code cleanup).
     // This test verifies the slot is gone by checking the constant is absent.
     // We can't test absence at the Solidity level, but the build will fail
@@ -307,7 +304,7 @@ contract AllowanceManagerTest is Test {
     function testUpgrade_OnlyUpgrader_CanUpgrade() public {
         AllowanceManagerV2 newImpl = new AllowanceManagerV2();
 
-        // stranger has no UPGRADER_ROLE — upgradeToAndCall must revert
+        // stranger has no UPGRADER_ROLE - upgradeToAndCall must revert
         vm.expectRevert();
         vm.prank(stranger);
         manager.upgradeToAndCall(address(newImpl), "");
@@ -322,22 +319,20 @@ contract AllowanceManagerTest is Test {
         uint256 maxAmount = 1_000e18;
         manager.grantAllowance(address(token), spender, maxAmount);
         assertEq(
-            token.allowance(address(manager), spender),
-            maxAmount,
-            "allowance must equal granted amount before upgrade"
+            token.allowance(address(manager), spender), maxAmount, "allowance must equal granted amount before upgrade"
         );
 
         // Deploy V2 implementation
         AllowanceManagerV2 newImpl = new AllowanceManagerV2();
 
-        // Admin (address(this)) has UPGRADER_ROLE — upgrade must succeed
+        // Admin (address(this)) has UPGRADER_ROLE - upgrade must succeed
         manager.upgradeToAndCall(address(newImpl), "");
 
         // Cast proxy to V2 to verify new function accessible
         AllowanceManagerV2 managerV2 = AllowanceManagerV2(address(manager));
         assertEq(managerV2.version(), "v2", "V2 marker function must be accessible after upgrade");
 
-        // Token allowance is external state (on the ERC20 token contract) — it persists
+        // Token allowance is external state (on the ERC20 token contract) - it persists
         // because it was set via approve() on the token, not in AllowanceManager storage.
         // Verify admin role (internal storage) is preserved.
         assertTrue(managerV2.hasRole(managerV2.ADMIN_ROLE(), admin), "ADMIN_ROLE must survive upgrade");
@@ -348,10 +343,10 @@ contract AllowanceManagerTest is Test {
     // Decision-free hardening (re-discovered post-burst): cap boundary, pause/
     // unpause access negatives, event emission, the SC-5 view layer, and batch
     // atomicity. None of these names/coverage existed (#200 added only init
-    // guards). Tests only — no src change.
+    // guards). Tests only - no src change.
     // =========================================================================
 
-    // grantAllowance at exactly MAX_SAFE_ALLOWANCE must SUCCEED — the cap is
+    // grantAllowance at exactly MAX_SAFE_ALLOWANCE must SUCCEED - the cap is
     // inclusive (src uses strict `>` for the reject). Complements the cap+1 reject.
     function testGrantAllowance_AtSafeCapExactSucceeds() public {
         uint256 cap = manager.MAX_SAFE_ALLOWANCE();
@@ -376,14 +371,14 @@ contract AllowanceManagerTest is Test {
         manager.unpause();
     }
 
-    // grantAllowance emits AllowanceGranted(token, spender, amount) — 2 indexed + data.
+    // grantAllowance emits AllowanceGranted(token, spender, amount) - 2 indexed + data.
     function testGrantAllowance_EmitsEvent() public {
         vm.expectEmit(true, true, false, true, address(manager));
         emit AllowanceManager.AllowanceGranted(address(token), spender, 1_000e18);
         manager.grantAllowance(address(token), spender, 1_000e18);
     }
 
-    // revokeAllowance emits AllowanceRevoked(token, spender) — 2 indexed, no data.
+    // revokeAllowance emits AllowanceRevoked(token, spender) - 2 indexed, no data.
     function testRevokeAllowance_EmitsEvent() public {
         manager.grantAllowance(address(token), spender, 1_000e18);
         vm.expectEmit(true, true, false, false, address(manager));
@@ -392,7 +387,7 @@ contract AllowanceManagerTest is Test {
     }
 
     // The SC-5 view layer (isApproved/getAllowance) feeds ArbitrageExecutor's AM
-    // integration and was entirely untested — it must reflect real token state
+    // integration and was entirely untested - it must reflect real token state
     // across grant -> revoke.
     function testViews_ReflectGrantAndRevoke() public {
         assertFalse(manager.isApproved(address(token), spender), "not approved before grant");

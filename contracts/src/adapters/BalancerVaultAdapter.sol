@@ -2,7 +2,7 @@
 pragma solidity ^0.8.19;
 
 // =============================================================================
-// SC-2: BalancerVaultAdapter — IDEXAdapter for Balancer V2 Vault
+// SC-2: BalancerVaultAdapter - IDEXAdapter for Balancer V2 Vault
 //
 // Supports Balancer V2 Vault swaps on any EVM chain:
 //   - Ethereum: 0xBA12222222228d8Ba445958a75a0704d566BF2C8
@@ -21,11 +21,11 @@ pragma solidity ^0.8.19;
 // For batch swaps (multi-hop), use batchSwap() directly via a helper or compose
 // multiple single swaps in the ArbitrageExecutor route.
 //
-// Vault address is injected via constructor — zero hardcoded addresses.
+// Vault address is injected via constructor - zero hardcoded addresses.
 //
 // Gas profile (optimizer_runs = 200):
 //   - swap()     : ~110,000 gas (Balancer Vault single swap)
-//   - quoteOut() : reverts — use Balancer SDK or Vault queryBatchSwap off-chain
+//   - quoteOut() : reverts - use Balancer SDK or Vault queryBatchSwap off-chain
 // =============================================================================
 
 import "../interfaces/IDEXAdapter.sol";
@@ -36,13 +36,13 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 // Minimal Balancer V2 Vault interfaces
 // -------------------------------------------------------------------------
 
-/// @dev Balancer V2 Vault — single swap and batch swap entry points.
+/// @dev Balancer V2 Vault - single swap and batch swap entry points.
 ///      Canonical address is the same on all chains (deployed via CREATE3).
 interface IVault {
     /// @notice Enum defining swap direction.
     enum SwapKind {
-        GIVEN_IN,  // Exact input: give amountIn, receive computed amountOut
-        GIVEN_OUT  // Exact output: give computed amountIn, receive amountOut
+        GIVEN_IN, // Exact input: give amountIn, receive computed amountOut
+        GIVEN_OUT // Exact output: give computed amountIn, receive amountOut
     }
 
     /// @notice Parameters for a single swap.
@@ -80,12 +80,10 @@ interface IVault {
     ///                     Reverts if the actual amount exceeds this limit.
     /// @param deadline    Unix timestamp after which the transaction reverts.
     /// @return amountOut  The amount of tokens received (for GIVEN_IN) or spent (for GIVEN_OUT).
-    function swap(
-        SingleSwap memory singleSwap,
-        FundManagement memory funds,
-        uint256 limit,
-        uint256 deadline
-    ) external payable returns (uint256 amountOut);
+    function swap(SingleSwap memory singleSwap, FundManagement memory funds, uint256 limit, uint256 deadline)
+        external
+        payable
+        returns (uint256 amountOut);
 
     /// @notice Query a batch swap without executing it. Returns asset deltas.
     /// @param kind         GIVEN_IN or GIVEN_OUT for the entire batch.
@@ -149,7 +147,7 @@ error BV_ZeroPoolId();
 error BV_SlippageExceeded(uint256 amountOut, uint256 minAmountOut);
 
 // =============================================================================
-/// @title BalancerVaultAdapter — IDEXAdapter for Balancer V2 Vault
+/// @title BalancerVaultAdapter - IDEXAdapter for Balancer V2 Vault
 /// @notice Executes swaps through the Balancer V2 Vault using the swap() function.
 ///         Supports both single swaps and batch swaps for multi-hop routes.
 /// @dev SC-2 (2026-05-15). Vault address injected via constructor. Zero hardcoded
@@ -172,7 +170,7 @@ contract BalancerVaultAdapter is IDEXAdapter {
 
     /// @param _vault  Balancer V2 Vault address. Must be a deployed contract
     ///                implementing IVault.
-    ///                Examples per chain (for reference only — NOT hardcoded):
+    ///                Examples per chain (for reference only - NOT hardcoded):
     ///                All chains: 0xBA12222222228d8Ba445958a75a0704d566BF2C8
     constructor(address _vault) {
         if (_vault == address(0)) revert BV_ZeroVault();
@@ -180,7 +178,7 @@ contract BalancerVaultAdapter is IDEXAdapter {
     }
 
     // -------------------------------------------------------------------------
-    // IDEXAdapter implementation — single swap
+    // IDEXAdapter implementation - single swap
     // -------------------------------------------------------------------------
 
     /// @inheritdoc IDEXAdapter
@@ -188,8 +186,8 @@ contract BalancerVaultAdapter is IDEXAdapter {
     ///      poolId: The Balancer pool identifier (32 bytes).
     ///      limit:  Maximum amountIn for GIVEN_IN swaps. Set to amountIn.
     ///
-    ///      Flow: transferFrom caller → forceApprove vault → vault.swap()
-    ///      → vault sends tokenOut directly to msg.sender.
+    ///      Flow: transferFrom caller -> forceApprove vault -> vault.swap()
+    ///      -> vault sends tokenOut directly to msg.sender.
     ///
     ///      Gas cost: ~110k gas at optimizer_runs=200.
     ///
@@ -199,13 +197,11 @@ contract BalancerVaultAdapter is IDEXAdapter {
     /// @param minAmountOut Minimum acceptable output (slippage guard). Reverts if not met.
     /// @param extraData    abi.encode(bytes32 poolId, uint256 limit)
     /// @return amountOut   Actual output amount received.
-    function swap(
-        address tokenIn,
-        address tokenOut,
-        uint256 amountIn,
-        uint256 minAmountOut,
-        bytes calldata extraData
-    ) external override returns (uint256 amountOut) {
+    function swap(address tokenIn, address tokenOut, uint256 amountIn, uint256 minAmountOut, bytes calldata extraData)
+        external
+        override
+        returns (uint256 amountOut)
+    {
         if (amountIn == 0) revert BV_ZeroAmountIn();
         if (tokenIn == tokenOut) revert BV_SameToken();
 
@@ -230,7 +226,7 @@ contract BalancerVaultAdapter is IDEXAdapter {
                 assetIn: tokenIn,
                 assetOut: tokenOut,
                 amount: amountIn,
-                userData: "" // opaque data — not needed for standard swaps
+                userData: "" // opaque data - not needed for standard swaps
             }),
             IVault.FundManagement({
                 sender: address(this),
@@ -239,7 +235,7 @@ contract BalancerVaultAdapter is IDEXAdapter {
                 toInternalBalance: false // send ERC20, not internal Balance
             }),
             limit, // max amount willing to pay (for GIVEN_IN = amountIn)
-            block.timestamp // atomic — no expiry needed
+            block.timestamp // atomic - no expiry needed
         );
 
         // 4. Defense-in-depth slippage check
@@ -251,7 +247,7 @@ contract BalancerVaultAdapter is IDEXAdapter {
     ///      Off-chain callers should use queryBatchSwap() for previews:
     ///        queryBatchSwap(SwapKind.GIVEN_IN, swaps, assets, funds)
     ///      Or use the Balancer SDK for JavaScript/TypeScript integrations.
-    ///      This function always reverts — use off-chain tools for quotes.
+    ///      This function always reverts - use off-chain tools for quotes.
     ///
     ///      Invariant: this function never modifies state. It reverts immediately.
     function quoteOut(
@@ -259,7 +255,12 @@ contract BalancerVaultAdapter is IDEXAdapter {
         address, /*tokenOut*/
         uint256, /*amountIn*/
         bytes calldata /*extraData*/
-    ) external pure override returns (uint256) {
+    )
+        external
+        pure
+        override
+        returns (uint256)
+    {
         revert("BalancerVaultAdapter: use queryBatchSwap off-chain for quotes");
     }
 
@@ -268,7 +269,7 @@ contract BalancerVaultAdapter is IDEXAdapter {
     // -------------------------------------------------------------------------
 
     /// @notice Execute a multi-hop batch swap through Balancer V2 Vault.
-    /// @dev This is NOT part of IDEXAdapter — it's an extended function for
+    /// @dev This is NOT part of IDEXAdapter - it's an extended function for
     ///      advanced users who need multi-hop routes (e.g. WETH -> DAI -> USDC).
     ///      Uses SwapKind.GIVEN_IN: exact total input, variable total output.
     ///

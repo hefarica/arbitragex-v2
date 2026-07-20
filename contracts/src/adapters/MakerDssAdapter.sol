@@ -5,20 +5,20 @@ pragma solidity 0.8.24;
  * @title  MakerDssAdapter
  * @notice Adaptador holonómico para Maker DSS (DAI Savings Rate / PSM).
  * @dev    Soporta dos modalidades:
- *           1) PSM swap (USDC ⇄ DAI sin slippage) — utilidad de estabilización.
- *           2) DSR deposit/withdraw — Topological Yield pasivo.
+ *           1) PSM swap (USDC ⇄ DAI sin slippage) - utilidad de estabilización.
+ *           2) DSR deposit/withdraw - Topological Yield pasivo.
  *
  *         Ghost Protocol: cero retención en este contrato.
  *         Lexicón Absoluto: ningún stub/placeholder.
  */
 
 interface IPsm {
-    function sellGem(address usr, uint256 gemAmt) external;     // USDC → DAI
-    function buyGem(address usr, uint256 gemAmt) external;      // DAI → USDC
+    function sellGem(address usr, uint256 gemAmt) external; // USDC -> DAI
+    function buyGem(address usr, uint256 gemAmt) external; // DAI -> USDC
     function dai() external view returns (address);
     function gemJoin() external view returns (address);
-    function tin() external view returns (uint256);              // fee in 1e18
-    function tout() external view returns (uint256);             // fee in 1e18
+    function tin() external view returns (uint256); // fee in 1e18
+    function tout() external view returns (uint256); // fee in 1e18
 }
 
 interface IDsr {
@@ -44,13 +44,10 @@ contract MakerDssAdapter {
     event DsrJoined(address indexed dsr, address indexed user, uint256 daiAmt);
     event DsrExited(address indexed dsr, address indexed user, uint256 daiAmt);
 
-    function psmSellGem(
-        address psm,
-        address usdc,
-        uint256 gemAmt,
-        uint256 minDaiOut,
-        address recipient
-    ) external returns (uint256 daiOut) {
+    function psmSellGem(address psm, address usdc, uint256 gemAmt, uint256 minDaiOut, address recipient)
+        external
+        returns (uint256 daiOut)
+    {
         if (gemAmt == 0) revert Maker__ZeroAmount();
         IPsm p = IPsm(psm);
         address dai = p.dai();
@@ -67,13 +64,10 @@ contract MakerDssAdapter {
         emit PsmSellGem(psm, msg.sender, gemAmt, daiOut);
     }
 
-    function psmBuyGem(
-        address psm,
-        address usdc,
-        uint256 gemAmt,
-        uint256 maxDaiIn,
-        address recipient
-    ) external returns (uint256 daiSpent) {
+    function psmBuyGem(address psm, address usdc, uint256 gemAmt, uint256 maxDaiIn, address recipient)
+        external
+        returns (uint256 daiSpent)
+    {
         if (gemAmt == 0) revert Maker__ZeroAmount();
         IPsm p = IPsm(psm);
         address dai = p.dai();

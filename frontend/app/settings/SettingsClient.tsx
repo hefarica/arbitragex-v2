@@ -225,7 +225,7 @@ export function SettingsClient() {
             <Select
               disabled={disabled}
               value={form.theme_override}
-              onValueChange={(v) =>
+              onValueChange={(v: string) =>
                 setForm((f) => ({
                   ...f,
                   theme_override: v as UserPrefs["theme_override"],

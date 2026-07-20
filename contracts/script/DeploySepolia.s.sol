@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// SC-12-Sepolia: Sepolia testnet deploy script — Ethereum L1 testnet
+// SC-12-Sepolia: Sepolia testnet deploy script - Ethereum L1 testnet
 //
 // Adapted from DeployMainnet.s.sol for Sepolia testnet (chainid 11155111).
 // Used for E2E smoke-testing the simulator-v2 REVM path before mainnet.
@@ -45,22 +45,19 @@ import "../src/AdminTimelock.sol";
 contract DeploySepolia is Script {
     // Aave V3 Pool on Sepolia testnet (verified 2026-07).
     // Source: https://docs.aave.com/developers/deployed-contracts/v3-testnet-addresses
-    address constant AAVE_V3_POOL_SEPOLIA_DEFAULT = 0x6Ae43d3271d1bB2bD0B19dF999473B5Bb40eF162;
+    address constant AAVE_V3_POOL_SEPOLIA_DEFAULT = 0x6aE43D3271D1BB2bd0B19df999473b5BB40eF162;
 
     function run() external {
         // Safety gate 1: explicit opt-in
-        require(
-            vm.envBool("CONFIRM_SEPOLIA_DEPLOY"),
-            "DeploySepolia: set CONFIRM_SEPOLIA_DEPLOY=true to proceed"
-        );
+        require(vm.envBool("CONFIRM_SEPOLIA_DEPLOY"), "DeploySepolia: set CONFIRM_SEPOLIA_DEPLOY=true to proceed");
 
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address deployer    = vm.addr(deployerKey);
+        address deployer = vm.addr(deployerKey);
 
         // Safety gate 2: chain ID must be Sepolia (11155111)
         require(block.chainid == 11155111, "DeploySepolia: not on Sepolia (chainid != 11155111)");
 
-        // M2: MULTISIG_ADDRESS — on testnet can be EOA (relaxed contract check)
+        // M2: MULTISIG_ADDRESS - on testnet can be EOA (relaxed contract check)
         address multisig = vm.envAddress("MULTISIG_ADDRESS");
         require(multisig != address(0), "DeploySepolia: MULTISIG_ADDRESS not set");
         require(
@@ -77,10 +74,7 @@ contract DeploySepolia is Script {
         );
 
         // Safety gate 3: deployer must have at least 0.05 SepoliaETH
-        require(
-            deployer.balance >= 0.05 ether,
-            "DeploySepolia: deployer balance < 0.05 SepoliaETH -- get from faucet"
-        );
+        require(deployer.balance >= 0.05 ether, "DeploySepolia: deployer balance < 0.05 SepoliaETH -- get from faucet");
 
         console2.log("=== ArbitrageX v2 Sepolia Deploy (Smoke Test) ===");
         console2.log("Deployer        :", deployer);
@@ -91,45 +85,38 @@ contract DeploySepolia is Script {
 
         vm.startBroadcast(deployerKey);
 
-        // 1. ArbitrageExecutor — UUPS proxy
+        // 1. ArbitrageExecutor - UUPS proxy
         ERC1967Proxy proxyAE;
         {
             ArbitrageExecutor implAE = new ArbitrageExecutor();
             console2.log("ArbitrageExecutor impl  :", address(implAE));
             proxyAE = new ERC1967Proxy(
-                address(implAE),
-                abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, deployer)
+                address(implAE), abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, deployer)
             );
         }
 
-        // 2. AllowanceManager — UUPS proxy
+        // 2. AllowanceManager - UUPS proxy
         ERC1967Proxy proxyAM;
         {
             AllowanceManager implAM = new AllowanceManager();
             console2.log("AllowanceManager impl   :", address(implAM));
             proxyAM = new ERC1967Proxy(
-                address(implAM),
-                abi.encodeWithSelector(AllowanceManager.initialize.selector, deployer)
+                address(implAM), abi.encodeWithSelector(AllowanceManager.initialize.selector, deployer)
             );
         }
 
-        // 3. FlashLoanExecutor — UUPS proxy
+        // 3. FlashLoanExecutor - UUPS proxy
         ERC1967Proxy proxyFL;
         {
             FlashLoanExecutor implFL = new FlashLoanExecutor();
             console2.log("FlashLoanExecutor impl  :", address(implFL));
             proxyFL = new ERC1967Proxy(
                 address(implFL),
-                abi.encodeWithSelector(
-                    FlashLoanExecutor.initialize.selector,
-                    deployer,
-                    aavePool,
-                    address(proxyAE)
-                )
+                abi.encodeWithSelector(FlashLoanExecutor.initialize.selector, deployer, aavePool, address(proxyAE))
             );
         }
 
-        // 4. AdminTimelock — 1h delay on Sepolia testnet
+        // 4. AdminTimelock - 1h delay on Sepolia testnet
         ERC1967Proxy proxyTL;
         {
             address[] memory proposers = new address[](1);
@@ -143,7 +130,7 @@ contract DeploySepolia is Script {
                 address(implTL),
                 abi.encodeWithSelector(
                     AdminTimelock.initialize.selector,
-                    uint256(3_600), // 1h — Sepolia testnet
+                    uint256(3_600), // 1h - Sepolia testnet
                     proposers,
                     executors,
                     deployer
@@ -202,7 +189,7 @@ contract DeploySepolia is Script {
         console2.log("2. Set FLASHLOAN_EXECUTOR_11155111=", address(proxyFL));
         console2.log("3. Approve tokens + routers + allowances (post-deploy steps 4-6 from mainnet runbook)");
         console2.log("4. Run: ./scripts/smoke-test-sepolia.sh");
-        console2.log("5. On SIM_SUCCESS → set ARBX_SIMULATOR_V2_READY=true");
+        console2.log("5. On SIM_SUCCESS -> set ARBX_SIMULATOR_V2_READY=true");
         console2.log("");
         console2.log("NOTE: Timelock delay = 1h (testnet). For production use DeployMainnet.s.sol (24h).");
     }

@@ -5,9 +5,17 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MathDomain {
-    GraphTheory, NumericalAnalysis, BayesianInference, LinearAlgebra,
-    QueueingTheory, Topology, OptimalControl, Optimization,
-    GameTheory, StatisticalInference, ProbabilityTheory,
+    GraphTheory,
+    NumericalAnalysis,
+    BayesianInference,
+    LinearAlgebra,
+    QueueingTheory,
+    Topology,
+    OptimalControl,
+    Optimization,
+    GameTheory,
+    StatisticalInference,
+    ProbabilityTheory,
 }
 
 impl MathDomain {
@@ -60,42 +68,109 @@ impl MathDomain {
 
 #[derive(Debug, Clone)]
 pub struct StrategyClassification {
-    pub mev_id: String, pub group: u8, pub name: String, pub family: String,
-    pub domain: MathDomain, pub atomic_possible: bool, pub nonatomic_possible: bool,
-    pub min_legs: u32, pub max_legs: u32, pub concept_weights: HashMap<u8, f64>,
+    pub mev_id: String,
+    pub group: u8,
+    pub name: String,
+    pub family: String,
+    pub domain: MathDomain,
+    pub atomic_possible: bool,
+    pub nonatomic_possible: bool,
+    pub min_legs: u32,
+    pub max_legs: u32,
+    pub concept_weights: HashMap<u8, f64>,
 }
 
 pub fn classify(mev_id: &str) -> Option<StrategyClassification> {
     let p: Vec<&str> = mev_id.split('-').collect();
-    if p.len() != 3 || p[0] != "MEV" { return None; }
+    if p.len() != 3 || p[0] != "MEV" {
+        return None;
+    }
     let g: u8 = p[1].parse().ok()?;
     let i: u32 = p[2].parse().ok()?;
     let domain = match g {
-        1 => MathDomain::GraphTheory, 2 => MathDomain::NumericalAnalysis,
-        3 => MathDomain::BayesianInference, 4 => MathDomain::LinearAlgebra,
-        5 => MathDomain::QueueingTheory, 6 => MathDomain::Topology,
-        7 => MathDomain::OptimalControl, 8 => MathDomain::Optimization,
-        9 => MathDomain::GameTheory, 10 => MathDomain::StatisticalInference,
-        11 => MathDomain::ProbabilityTheory, _ => return None,
+        1 => MathDomain::GraphTheory,
+        2 => MathDomain::NumericalAnalysis,
+        3 => MathDomain::BayesianInference,
+        4 => MathDomain::LinearAlgebra,
+        5 => MathDomain::QueueingTheory,
+        6 => MathDomain::Topology,
+        7 => MathDomain::OptimalControl,
+        8 => MathDomain::Optimization,
+        9 => MathDomain::GameTheory,
+        10 => MathDomain::StatisticalInference,
+        11 => MathDomain::ProbabilityTheory,
+        _ => return None,
     };
     let pri = domain.primary_concepts();
     let sec = domain.secondary_concepts();
     let mut w = HashMap::new();
-    for c in 1..=31 { w.insert(c, if pri.contains(&c) { 1.0 } else if sec.contains(&c) { 0.7 } else { 0.3 }); }
-    let fam = ["","Spot DEX","AMM","State","Paridad","CEX-DEX","Cross-chain","Derivados","Credito","Intents","NFT","Prediction"];
+    for c in 1..=31 {
+        w.insert(
+            c,
+            if pri.contains(&c) {
+                1.0
+            } else if sec.contains(&c) {
+                0.7
+            } else {
+                0.3
+            },
+        );
+    }
+    let fam = [
+        "",
+        "Spot DEX",
+        "AMM",
+        "State",
+        "Paridad",
+        "CEX-DEX",
+        "Cross-chain",
+        "Derivados",
+        "Credito",
+        "Intents",
+        "NFT",
+        "Prediction",
+    ];
     Some(StrategyClassification {
-        mev_id: mev_id.to_string(), group: g,
-        name: format!("MEV-{:02}-{:03}", g, i), family: fam[g as usize].to_string(),
-        domain, atomic_possible: g != 5 && g != 6 && g != 10, nonatomic_possible: true,
+        mev_id: mev_id.to_string(),
+        group: g,
+        name: format!("MEV-{:02}-{:03}", g, i),
+        family: fam[g as usize].to_string(),
+        domain,
+        atomic_possible: g != 5 && g != 6 && g != 10,
+        nonatomic_possible: true,
         min_legs: if g == 8 { 1 } else { 2 },
-        max_legs: match g { 5|6 => 16, 9 => if i==8 {16} else {12}, 11 => if i==5 {16} else {12}, _ => 8 },
+        max_legs: match g {
+            5 | 6 => 16,
+            9 => {
+                if i == 8 {
+                    16
+                } else {
+                    12
+                }
+            }
+            11 => {
+                if i == 5 {
+                    16
+                } else {
+                    12
+                }
+            }
+            _ => 8,
+        },
         concept_weights: w,
     })
 }
 
 pub fn classify_all() -> Vec<StrategyClassification> {
-    let c = [0,36,17,31,31,14,30,30,25,20,18,12];
+    // Index 0 unused; groups 1..=11 hold per-family cartridge counts (sum = 264).
+    let counts_by_group: [usize; 12] = [0, 36, 17, 31, 31, 14, 30, 30, 25, 20, 18, 12];
     let mut r = Vec::with_capacity(264);
-    for g in 1..=11 { for i in 1..=c[g] { if let Some(x) = classify(&format!("MEV-{:02}-{:03}",g,i)) { r.push(x); } } }
+    for (group, &count) in counts_by_group.iter().enumerate().skip(1) {
+        for i in 1..=count {
+            if let Some(x) = classify(&format!("MEV-{:02}-{:03}", group, i)) {
+                r.push(x);
+            }
+        }
+    }
     r
 }

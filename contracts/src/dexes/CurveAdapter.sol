@@ -2,14 +2,14 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// SC-2: CurveAdapter — IDEXAdapter for Curve Finance plain pools
+// SC-2: CurveAdapter - IDEXAdapter for Curve Finance plain pools
 //
 // Supports Curve pools that implement:
 //   - exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) external returns (uint256)
 //   - get_dy(int128 i, int128 j, uint256 dx) external view returns (uint256)
 //
 // This covers the majority of Curve plain pools (3pool, stETH, FRAX, etc.).
-// Meta-pools (factory pools) use a slightly different ABI — not covered here.
+// Meta-pools (factory pools) use a slightly different ABI - not covered here.
 //
 // extraData encoding: abi.encode(address pool, int128 i, int128 j)
 //   - pool: Curve pool contract address
@@ -42,7 +42,7 @@ interface ICurvePool {
     function get_dy(int128 i, int128 j, uint256 dx) external view returns (uint256);
 }
 
-/// @title CurveAdapter — IDEXAdapter for Curve plain pool exchange()
+/// @title CurveAdapter - IDEXAdapter for Curve plain pool exchange()
 /// @notice Full implementation. Pulls tokenIn from caller, swaps via Curve, returns tokenOut.
 /// @dev SC-2 (2026-05-08). Pool address and coin indices encoded in extraData.
 ///
@@ -68,14 +68,12 @@ contract CurveAdapter is IDEXAdapter {
 
     /// @inheritdoc IDEXAdapter
     /// @dev extraData = abi.encode(address pool, int128 i, int128 j)
-    ///      Flow: transferFrom caller → forceApprove pool → exchange() → transfer to caller
-    function swap(
-        address tokenIn,
-        address tokenOut,
-        uint256 amountIn,
-        uint256 minAmountOut,
-        bytes calldata extraData
-    ) external override returns (uint256 amountOut) {
+    ///      Flow: transferFrom caller -> forceApprove pool -> exchange() -> transfer to caller
+    function swap(address tokenIn, address tokenOut, uint256 amountIn, uint256 minAmountOut, bytes calldata extraData)
+        external
+        override
+        returns (uint256 amountOut)
+    {
         (address pool, int128 i, int128 j) = abi.decode(extraData, (address, int128, int128));
         if (pool == address(0)) revert CA_ZeroPoolAddress();
 
@@ -85,10 +83,10 @@ contract CurveAdapter is IDEXAdapter {
         // 2. Approve Curve pool to spend our tokenIn
         IERC20(tokenIn).forceApprove(pool, amountIn);
 
-        // 3. Execute the swap — pass minAmountOut to pool's own slippage guard
+        // 3. Execute the swap - pass minAmountOut to pool's own slippage guard
         amountOut = ICurvePool(pool).exchange(i, j, amountIn, minAmountOut);
 
-        // 4. Redundant slippage check (defense in depth — pool may not enforce)
+        // 4. Redundant slippage check (defense in depth - pool may not enforce)
         if (amountOut < minAmountOut) revert CA_SlippageExceeded(amountOut, minAmountOut);
 
         // 5. Push tokenOut back to caller
@@ -102,7 +100,12 @@ contract CurveAdapter is IDEXAdapter {
         address, /*tokenOut*/
         uint256 amountIn,
         bytes calldata extraData
-    ) external view override returns (uint256 amountOut) {
+    )
+        external
+        view
+        override
+        returns (uint256 amountOut)
+    {
         (address pool, int128 i, int128 j) = abi.decode(extraData, (address, int128, int128));
         if (pool == address(0)) revert CA_ZeroPoolAddress();
         return ICurvePool(pool).get_dy(i, j, amountIn);

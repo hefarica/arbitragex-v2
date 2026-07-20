@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// SC-13: Testnet deploy script — Sepolia / Holesky
+// SC-13: Testnet deploy script - Sepolia / Holesky
 //
 // Deploys all four contracts as UUPS proxies (ERC1967Proxy) with the deployer
 // as the initial admin. Reads configuration from environment variables.
@@ -19,7 +19,7 @@ pragma solidity ^0.8.20;
 //     --verify \
 //     -vvvv
 //
-// Usage (Holesky — no Aave V3 yet, pass address(0) or a mock):
+// Usage (Holesky - no Aave V3 yet, pass address(0) or a mock):
 //   export AAVE_POOL_ADDRESS=0x0000000000000000000000000000000000000001
 //   forge script script/DeployTestnet.s.sol \
 //     --rpc-url $HOLESKY_RPC_URL \
@@ -63,55 +63,56 @@ contract DeployTestnet is Script {
         vm.startBroadcast(deployerKey);
 
         // ----------------------------------------------------------------
-        // 1. ArbitrageExecutor — UUPS proxy
+        // 1. ArbitrageExecutor - UUPS proxy
         // ----------------------------------------------------------------
         // Each impl+proxy is block-scoped (keeping only the proxy address) so the
-        // impl/proxy locals free before the next deploy — keeps run() under the EVM
+        // impl/proxy locals free before the next deploy - keeps run() under the EVM
         // stack limit without project-wide via_ir. Behavior is identical.
         address arbitrageExecutorProxy;
         {
             ArbitrageExecutor implAE = new ArbitrageExecutor();
             console2.log("ArbitrageExecutor impl  :", address(implAE));
-            arbitrageExecutorProxy = address(new ERC1967Proxy(
-                address(implAE),
-                abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, deployer)
-            ));
+            arbitrageExecutorProxy = address(
+                new ERC1967Proxy(
+                    address(implAE), abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, deployer)
+                )
+            );
         }
 
         // ----------------------------------------------------------------
-        // 2. AllowanceManager — UUPS proxy
+        // 2. AllowanceManager - UUPS proxy
         // ----------------------------------------------------------------
         address allowanceManagerProxy;
         {
             AllowanceManager implAM = new AllowanceManager();
             console2.log("AllowanceManager impl   :", address(implAM));
-            allowanceManagerProxy = address(new ERC1967Proxy(
-                address(implAM),
-                abi.encodeWithSelector(AllowanceManager.initialize.selector, deployer)
-            ));
+            allowanceManagerProxy = address(
+                new ERC1967Proxy(
+                    address(implAM), abi.encodeWithSelector(AllowanceManager.initialize.selector, deployer)
+                )
+            );
         }
 
         // ----------------------------------------------------------------
-        // 3. FlashLoanExecutor — UUPS proxy
+        // 3. FlashLoanExecutor - UUPS proxy
         //    Points to: aavePool + arbitrageExecutorProxy
         // ----------------------------------------------------------------
         address flashLoanExecutorProxy;
         {
             FlashLoanExecutor implFL = new FlashLoanExecutor();
             console2.log("FlashLoanExecutor impl  :", address(implFL));
-            flashLoanExecutorProxy = address(new ERC1967Proxy(
-                address(implFL),
-                abi.encodeWithSelector(
-                    FlashLoanExecutor.initialize.selector,
-                    deployer,
-                    aavePool,
-                    arbitrageExecutorProxy
+            flashLoanExecutorProxy = address(
+                new ERC1967Proxy(
+                    address(implFL),
+                    abi.encodeWithSelector(
+                        FlashLoanExecutor.initialize.selector, deployer, aavePool, arbitrageExecutorProxy
+                    )
                 )
-            ));
+            );
         }
 
         // ----------------------------------------------------------------
-        // 4. AdminTimelock — SC-10
+        // 4. AdminTimelock - SC-10
         //    Testnet: 60s minDelay so the team can iterate quickly.
         //    Mainnet: use DeployMainnet.s.sol which sets 86400 (24h).
         //
@@ -128,22 +129,24 @@ contract DeployTestnet is Script {
 
             AdminTimelock implTL = new AdminTimelock();
             console2.log("AdminTimelock impl      :", address(implTL));
-            adminTimelockProxy = address(new ERC1967Proxy(
-                address(implTL),
-                abi.encodeWithSelector(
-                    AdminTimelock.initialize.selector,
-                    uint256(60),  // 60s — testnet iteration speed
-                    proposers,
-                    executors,
-                    deployer
+            adminTimelockProxy = address(
+                new ERC1967Proxy(
+                    address(implTL),
+                    abi.encodeWithSelector(
+                        AdminTimelock.initialize.selector,
+                        uint256(60), // 60s - testnet iteration speed
+                        proposers,
+                        executors,
+                        deployer
+                    )
                 )
-            ));
+            );
         }
 
         vm.stopBroadcast();
 
         // ----------------------------------------------------------------
-        // Output — copy these addresses to your .env / ops runbook
+        // Output - copy these addresses to your .env / ops runbook
         // ----------------------------------------------------------------
         console2.log("");
         console2.log("=== Deployed Proxies ===");

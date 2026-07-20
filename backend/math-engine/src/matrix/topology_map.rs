@@ -36,12 +36,8 @@ pub struct TopologyMap {
 impl TopologyMap {
     /// Crea una matriz vacia con etiquetas por defecto.
     pub fn new() -> Self {
-        let row_labels = (0..ROWS)
-            .map(|i| format!("vector_{:03}", i))
-            .collect();
-        let col_labels = (1..=COLS)
-            .map(|j| format!("op_{:02}", j))
-            .collect();
+        let row_labels = (0..ROWS).map(|i| format!("vector_{:03}", i)).collect();
+        let col_labels = (1..=COLS).map(|j| format!("op_{:02}", j)).collect();
 
         Self {
             projections: DMatrix::zeros(ROWS, COLS),
@@ -53,8 +49,18 @@ impl TopologyMap {
 
     /// Crea una matriz con etiquetas personalizadas.
     pub fn with_labels(row_labels: Vec<String>, col_labels: Vec<String>) -> Self {
-        assert_eq!(row_labels.len(), ROWS, "row_labels debe tener {} elementos", ROWS);
-        assert_eq!(col_labels.len(), COLS, "col_labels debe tener {} elementos", COLS);
+        assert_eq!(
+            row_labels.len(),
+            ROWS,
+            "row_labels debe tener {} elementos",
+            ROWS
+        );
+        assert_eq!(
+            col_labels.len(),
+            COLS,
+            "col_labels debe tener {} elementos",
+            COLS
+        );
 
         Self {
             projections: DMatrix::zeros(ROWS, COLS),
@@ -74,7 +80,12 @@ impl TopologyMap {
         state: &MarketState,
         row_index: usize,
     ) -> DVector<f64> {
-        assert!(row_index < ROWS, "row_index {} fuera de rango [0, {})", row_index, ROWS);
+        assert!(
+            row_index < ROWS,
+            "row_index {} fuera de rango [0, {})",
+            row_index,
+            ROWS
+        );
 
         let mut result = DVector::zeros(COLS);
         let available = registry.available();
@@ -88,8 +99,7 @@ impl TopologyMap {
             let scalar = output.scalar_value.unwrap_or(0.0);
             result[col] = scalar;
             self.projections[(row_index, col)] = scalar;
-            self.metadata
-                .insert((row_index, col), output.metadata);
+            self.metadata.insert((row_index, col), output.metadata);
         }
 
         result
@@ -180,10 +190,16 @@ impl TopologyMap {
     /// - S: valores singulares (vector de tamano min(264, 31) = 31)
     /// - Vt: matriz ortogonal 31x31
     pub fn svd(&self) -> Option<(DMatrix<f64>, DVector<f64>, DMatrix<f64>)> {
-        let svd = self.projections.clone().try_svd(true, true, f64::EPSILON, 0)?;
+        let svd = self
+            .projections
+            .clone()
+            .try_svd(true, true, f64::EPSILON, 0)?;
         let u = svd.u?;
         let v_t = svd.v_t?;
-        let s = DVector::from_iterator(svd.singular_values.len(), svd.singular_values.iter().copied());
+        let s = DVector::from_iterator(
+            svd.singular_values.len(),
+            svd.singular_values.iter().copied(),
+        );
         Some((u, s, v_t))
     }
 

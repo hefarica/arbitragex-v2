@@ -36,9 +36,12 @@
     "@typescript-eslint/parser": "^7.18.0",
     "defu": "^6.1.7",
     "esbuild": "^0.25.0",
-    "glob": "^11.0.0",
+    "glob": "^11.1.0",
     "minimatch": "^10.0.0"
   },
-  "dependencies": {
+  "dependencies": {},
+  "devDependencies": {
+    "glob": "^11.1.0",
+    "minimatch": "^10.0.0"
   }
 }

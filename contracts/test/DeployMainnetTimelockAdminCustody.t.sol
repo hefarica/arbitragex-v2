@@ -2,15 +2,15 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// DeployMainnet — AdminTimelock DEFAULT_ADMIN_ROLE custody regression
+// DeployMainnet - AdminTimelock DEFAULT_ADMIN_ROLE custody regression
 //
 // Closes the sibling gap to the UUPS UPGRADER_ROLE finding: the mainnet deploy
 // script grants the deployer EOA a *bootstrap* DEFAULT_ADMIN_ROLE over the
 // AdminTimelock proxy (OZ TimelockController init grants the `admin` arg the role
 // IN ADDITION to the timelock's own self-administration). If the deployer's copy
 // is not renounced, the deployer keeps DEFAULT_ADMIN_ROLE over the timelock and
-// can grantRole(PROPOSER/EXECUTOR, deployer) instantly — a direct AccessControl
-// call that does NOT pass through the 24h delay — defeating the multisig
+// can grantRole(PROPOSER/EXECUTOR, deployer) instantly - a direct AccessControl
+// call that does NOT pass through the 24h delay - defeating the multisig
 // separation of duties.
 //
 // This suite runs the REAL DeployMainnet().run() (satisfying the env / chainid /
@@ -36,8 +36,7 @@ contract DeployMainnetTimelockAdminCustodyTest is Test {
     bytes32 internal constant DEFAULT_ADMIN_ROLE = 0x00;
 
     // RoleGranted(bytes32 indexed role, address indexed account, address indexed sender)
-    bytes32 internal constant ROLE_GRANTED_SIG =
-        keccak256("RoleGranted(bytes32,address,address)");
+    bytes32 internal constant ROLE_GRANTED_SIG = keccak256("RoleGranted(bytes32,address,address)");
 
     DeployMainnet internal script;
 
@@ -49,13 +48,13 @@ contract DeployMainnetTimelockAdminCustodyTest is Test {
     function setUp() public {
         script = new DeployMainnet();
 
-        // Deployer EOA — deterministic key, funded above the 0.5 ETH gate.
+        // Deployer EOA - deterministic key, funded above the 0.5 ETH gate.
         // IDENTICAL derivation to DeployMainnetRoleCustody.t.sol on purpose: vm.setEnv
         // mutates the shared OS process env, which forge does NOT revert between suites.
         // If the two DeployMainnet suites set MULTISIG_ADDRESS / DEPLOYER_PRIVATE_KEY /
         // AAVE_V3_POOL to different values, the combined `forge test` run collides (one
         // suite reads the other's env and trips a code/balance gate in its own fork).
-        // Using the SAME values makes the shared env harmless — whichever setUp wins,
+        // Using the SAME values makes the shared env harmless - whichever setUp wins,
         // each suite has satisfied the gate (funded deployer / etched code) in its fork.
         deployerKey = uint256(keccak256("arbx.test.mainnet-deployer"));
         deployer = vm.addr(deployerKey);
@@ -84,8 +83,8 @@ contract DeployMainnetTimelockAdminCustodyTest is Test {
     // Anchor: only TimelockController self-administers, i.e. it emits
     // RoleGranted(DEFAULT_ADMIN_ROLE, address(this), address(this)) where the
     // *emitter* equals the *account* being granted. AE/AM/FL only ever grant
-    // DEFAULT_ADMIN_ROLE to the deployer or to the timelock proxy — never to
-    // themselves — so the self-grant is unique to the timelock. We also pin that
+    // DEFAULT_ADMIN_ROLE to the deployer or to the timelock proxy - never to
+    // themselves - so the self-grant is unique to the timelock. We also pin that
     // exactly one such event exists (sanity), then verify the recovered address
     // is a TimelockController by role/minDelay probes.
     // -----------------------------------------------------------------------
@@ -123,8 +122,7 @@ contract DeployMainnetTimelockAdminCustodyTest is Test {
         // Sanity pins: recovered address really is the configured timelock.
         assertEq(tl.getMinDelay(), 86_400, "recovered timelock minDelay must be 24h (sanity pin)");
         assertTrue(
-            tl.hasRole(tl.PROPOSER_ROLE(), multisig),
-            "recovered timelock must have multisig as proposer (sanity pin)"
+            tl.hasRole(tl.PROPOSER_ROLE(), multisig), "recovered timelock must have multisig as proposer (sanity pin)"
         );
 
         // --- Gap closed: deployer must NOT hold DEFAULT_ADMIN_ROLE on the timelock ---
@@ -150,7 +148,7 @@ contract DeployMainnetTimelockAdminCustodyTest is Test {
     //
     // Positive anti-brick control: prove renouncing the deployer's admin does
     // NOT strand the timelock. The multisig schedules + (after 24h) executes a
-    // grantRole targeting the timelock itself — the documented self-administration
+    // grantRole targeting the timelock itself - the documented self-administration
     // model. If self-admin had been damaged, this execute would revert.
     // -----------------------------------------------------------------------
     function testDeploy_TimelockStillAdministrableByMultisig() public {
@@ -164,17 +162,13 @@ contract DeployMainnetTimelockAdminCustodyTest is Test {
         // timelock's own governance path (schedule -> warp -> execute).
         address newProposer = makeAddr("newProposer");
         assertFalse(
-            tl.hasRole(tl.PROPOSER_ROLE(), newProposer),
-            "precondition: newProposer must not already hold PROPOSER_ROLE"
+            tl.hasRole(tl.PROPOSER_ROLE(), newProposer), "precondition: newProposer must not already hold PROPOSER_ROLE"
         );
 
         // The admin operation: timelock grants PROPOSER_ROLE to newProposer.
         // target == the timelock itself; only its self-admin can satisfy this.
-        bytes memory callData = abi.encodeWithSelector(
-            IAccessControl.grantRole.selector,
-            tl.PROPOSER_ROLE(),
-            newProposer
-        );
+        bytes memory callData =
+            abi.encodeWithSelector(IAccessControl.grantRole.selector, tl.PROPOSER_ROLE(), newProposer);
         bytes32 predecessor = bytes32(0);
         bytes32 salt = keccak256("anti-brick-selfadmin");
         uint256 minDelay = tl.getMinDelay();

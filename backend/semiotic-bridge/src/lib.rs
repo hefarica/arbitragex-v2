@@ -1,11 +1,11 @@
-pub mod types;
-pub mod formulas;
 pub mod api;
 pub mod errors;
+pub mod formulas;
+pub mod types;
 
 pub use api::create_router;
-pub use types::{TranslationRequest, TranslationResponse, FormulaType, InputSanitizer};
 pub use errors::SemioticError;
+pub use types::{FormulaType, InputSanitizer, TranslationRequest, TranslationResponse};
 
 #[allow(dead_code)]
 static WORD_TO_FORMULA_MAP: &[(&str, FormulaType)] = &[

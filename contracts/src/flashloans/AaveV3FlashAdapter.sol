@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// SC-1: AaveV3FlashAdapter — concrete IFlashLoanProvider for Aave V3
+// SC-1: AaveV3FlashAdapter - concrete IFlashLoanProvider for Aave V3
 //
 // Fee: 0.09% (FLASHLOAN_PREMIUM_TOTAL on Aave V3 mainnet).
 // Callback: Aave calls executeOperation(asset, amount, premium, initiator, params)
@@ -23,7 +23,7 @@ interface IAaveV3PoolAdapter {
     ) external;
 }
 
-/// @title AaveV3FlashAdapter — IFlashLoanProvider adapter for Aave V3 flashLoanSimple
+/// @title AaveV3FlashAdapter - IFlashLoanProvider adapter for Aave V3 flashLoanSimple
 /// @notice Full implementation. Fee = 0.09% (9 bps). Referral code fixed to 0.
 /// @dev SC-1 (2026-05-08). Part of multi-provider flash loan architecture.
 ///
@@ -46,17 +46,12 @@ contract AaveV3FlashAdapter is IFlashLoanProvider {
     /// @inheritdoc IFlashLoanProvider
     /// @dev Delegates to Aave V3 flashLoanSimple with referralCode=0.
     ///      Receiver must implement IFlashLoanReceiver (executeOperation callback).
-    function flashLoan(
-        address receiver,
-        address asset,
-        uint256 amount,
-        bytes calldata params
-    ) external override {
+    function flashLoan(address receiver, address asset, uint256 amount, bytes calldata params) external override {
         aavePool.flashLoanSimple(receiver, asset, amount, params, 0);
     }
 
     /// @inheritdoc IFlashLoanProvider
-    /// @dev Returns (amount * 9) / 10_000 — Aave V3 FLASHLOAN_PREMIUM_TOTAL = 0.09%.
+    /// @dev Returns (amount * 9) / 10_000 - Aave V3 FLASHLOAN_PREMIUM_TOTAL = 0.09%.
     ///      Uses unchecked: amount * 9 cannot overflow uint256 for any realistic loan.
     function flashLoanFee(uint256 amount) external pure override returns (uint256) {
         unchecked {
@@ -67,9 +62,16 @@ contract AaveV3FlashAdapter is IFlashLoanProvider {
     /// @inheritdoc IFlashLoanProvider
     /// @dev Aave V3 does not expose a direct maxFlashLoan view without the
     ///      DataProvider contract. Return type(uint256).max as a conservative
-    ///      "no hard limit on this side" signal — callers should verify
+    ///      "no hard limit on this side" signal - callers should verify
     ///      protocol reserves separately.
-    function maxFlashLoan(address /*asset*/) external pure override returns (uint256) {
+    function maxFlashLoan(
+        address /*asset*/
+    )
+        external
+        pure
+        override
+        returns (uint256)
+    {
         return type(uint256).max;
     }
 }

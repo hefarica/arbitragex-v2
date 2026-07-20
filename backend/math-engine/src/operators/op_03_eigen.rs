@@ -4,6 +4,7 @@
 use super::{MarketState, OperatorOutput, TopologicalOperator};
 use std::collections::HashMap;
 
+#[derive(Default)]
 pub struct EigenOperator;
 
 impl EigenOperator {

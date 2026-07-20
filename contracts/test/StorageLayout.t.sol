@@ -2,14 +2,14 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// StorageLayout.t.sol — append-only storage-layout gate for the UUPS proxies.
+// StorageLayout.t.sol - append-only storage-layout gate for the UUPS proxies.
 //
 // The UUPS contracts document a linear own-variable slot layout (their OZ parents
 // use ERC-7201 namespaced slots and do NOT occupy slots 0..N). Reordering or
 // inserting an own state variable would corrupt the layout and brick every live
 // proxy on upgrade. These tests pin each own variable to its documented slot via
 // vm.load, so ANY layout change fails the (now blocking) Foundry CI. New variables
-// must be APPENDED after the last slot — that is the only change that keeps the
+// must be APPENDED after the last slot - that is the only change that keeps the
 // pinned slots below intact.
 // =============================================================================
 
@@ -39,10 +39,13 @@ contract StorageLayoutTest is Test {
     //   slot 3: approvedSelectors mapping(address => mapping(bytes4 => bool))  [trailing/append target]
     function test_ArbitrageExecutor_StorageLayout() public {
         ArbitrageExecutor impl = new ArbitrageExecutor();
-        ArbitrageExecutor ae = ArbitrageExecutor(payable(address(new ERC1967Proxy(
-            address(impl),
-            abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, address(this))
-        ))));
+        ArbitrageExecutor ae = ArbitrageExecutor(
+            payable(address(
+                    new ERC1967Proxy(
+                        address(impl), abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, address(this))
+                    )
+                ))
+        );
 
         // slot 2: allowanceManager (directly readable). Insertion before it shifts this.
         address am = makeAddr("am");
@@ -70,7 +73,7 @@ contract StorageLayoutTest is Test {
     // FlashLoanExecutor TRUE (packed) own layout. NB: the in-contract slot comment
     // lists DECLARATION indices (referralCode "slot 2"), but Solidity PACKS the
     // 2-byte uint16 referralCode into the 12 free bytes of slot 1 alongside the
-    // arbitrageExecutor address — so the real layout is only 4 slots, not 5. The
+    // arbitrageExecutor address - so the real layout is only 4 slots, not 5. The
     // append-only invariant still holds (append after balancerVault). The contract
     // comment should be corrected to reflect packing (doc-only follow-up).
     //   slot 0: aavePool          address
@@ -81,10 +84,14 @@ contract StorageLayoutTest is Test {
         address aavePool = makeAddr("aavePool");
         address arbExec = makeAddr("arbExec");
         FlashLoanExecutor impl = new FlashLoanExecutor();
-        FlashLoanExecutor fl = FlashLoanExecutor(payable(address(new ERC1967Proxy(
-            address(impl),
-            abi.encodeWithSelector(FlashLoanExecutor.initialize.selector, address(this), aavePool, arbExec)
-        ))));
+        FlashLoanExecutor fl = FlashLoanExecutor(
+            payable(address(
+                    new ERC1967Proxy(
+                        address(impl),
+                        abi.encodeWithSelector(FlashLoanExecutor.initialize.selector, address(this), aavePool, arbExec)
+                    )
+                ))
+        );
 
         assertEq(_addr(_load(address(fl), 0)), aavePool, "aavePool must occupy slot 0");
         assertEq(_addr(_load(address(fl), 1)), arbExec, "arbitrageExecutor must occupy slot 1 (low 160 bits)");

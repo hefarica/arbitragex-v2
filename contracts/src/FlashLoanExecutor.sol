@@ -2,24 +2,24 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// STORAGE LAYOUT — APPEND-ONLY RULE (SC-08, 2026-05-08)
+// STORAGE LAYOUT - APPEND-ONLY RULE (SC-08, 2026-05-08)
 // =============================================================================
 // Parent contracts (Initializable, AccessControlUpgradeable, UUPSUpgradeable)
-// all use ERC-7201 namespaced slots — they do NOT occupy linear slot space.
+// all use ERC-7201 namespaced slots - they do NOT occupy linear slot space.
 //
 // This contract's OWN variables start at linear slot 0. NOTE THE PACKING: the
 // 2-byte uint16 referralCode shares slot 1 with the 20-byte arbitrageExecutor
 // address, so the real layout is FOUR slots (0..3), not five. This is the true
 // packed layout, verified by test/StorageLayout.t.sol (vm.load slot pins):
-//   slot 0: aavePool            (IAaveV3Pool — address, 20 bytes)  ← legacy compat
+//   slot 0: aavePool            (IAaveV3Pool - address, 20 bytes)  <- legacy compat
 //   slot 1: arbitrageExecutor   (address, 20 bytes, bits 0..159)
-//           + referralCode      (uint16, 2 bytes, bits 160..175 — PACKED into slot 1)
-//   slot 2: flashLoanProvider   (address, 20 bytes) ← SC-1: multi-provider support
-//   slot 3: balancerVault       (address, 20 bytes) ← A4 audit 2026-05-10
+//           + referralCode      (uint16, 2 bytes, bits 160..175 - PACKED into slot 1)
+//   slot 2: flashLoanProvider   (address, 20 bytes) <- SC-1: multi-provider support
+//   slot 3: balancerVault       (address, 20 bytes) <- A4 audit 2026-05-10
 //
 // CRITICAL: When adding new state variables in V2, V3, etc., you MUST append
 // them AFTER slot 3 (balancerVault).  NEVER insert variables between existing
-// ones — that
+// ones - that
 // would corrupt the storage layout and brick all proxies pointing at this impl.
 // =============================================================================
 
@@ -63,7 +63,7 @@ interface IAaveV3Pool {
     ) external;
 }
 
-/// @title FlashLoanExecutor — UUPS-upgradeable multi-provider flash loan wrapper
+/// @title FlashLoanExecutor - UUPS-upgradeable multi-provider flash loan wrapper
 /// @notice Requests flash loans from the configured IFlashLoanProvider and delegates
 ///         execution to ArbitrageExecutor. Defaults to Aave V3 for backward compat;
 ///         supports Balancer (0% fee), dYdX, and UniV3 via adapter pattern (SC-1).
@@ -72,11 +72,7 @@ interface IAaveV3Pool {
 ///      SC-3 (2026-05-08): string require() replaced with custom errors.
 ///      SC-8 (2026-05-08): referralCode is now operator-configurable via setReferralCode().
 ///      SC-1 (2026-05-08): IFlashLoanProvider adapter support via setFlashLoanProvider().
-contract FlashLoanExecutor is
-    Initializable,
-    AccessControlUpgradeable,
-    UUPSUpgradeable
-{
+contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgradeable {
     using SafeERC20 for IERC20;
 
     /// @notice Role required to call requestFlashLoan.
@@ -84,25 +80,25 @@ contract FlashLoanExecutor is
     /// @notice Separate UPGRADER_ROLE allows key rotation independent of admin.
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
 
-    // slot 0 — legacy Aave V3 pool reference (retained for backward compat and
+    // slot 0 - legacy Aave V3 pool reference (retained for backward compat and
     // as the Aave fallback when no IFlashLoanProvider adapter is configured).
     /// @notice Aave V3 lending pool address that will call executeOperation.
     IAaveV3Pool public aavePool;
     // slot 1 (low 160 bits; referralCode is PACKED into this same slot at bits 160..175)
     /// @notice ArbitrageExecutor proxy address that receives the delegated execution call.
     address public arbitrageExecutor;
-    // slot 1 (PACKED with arbitrageExecutor, bits 160..175) — SC-8: operator-configurable referral code.
+    // slot 1 (PACKED with arbitrageExecutor, bits 160..175) - SC-8: operator-configurable referral code.
     /// @notice Aave referral code passed to flashLoanSimple. Defaults to 0.
     ///         Set via setReferralCode() to enable referral rewards if applicable.
     uint16 public referralCode;
-    // slot 2 — SC-1: pluggable IFlashLoanProvider adapter.
+    // slot 2 - SC-1: pluggable IFlashLoanProvider adapter.
     /// @notice Active flash loan provider adapter. When set (non-zero),
     ///         requestFlashLoan delegates to this adapter instead of calling
     ///         aavePool.flashLoanSimple() directly. Use setFlashLoanProvider()
     ///         to configure Balancer (0% fee), dYdX (0% fee), or any custom adapter.
     ///         When zero, falls back to aavePool directly (legacy behavior).
     address public flashLoanProvider;
-    // slot 3 — A4 (audit 2026-05-10): Balancer V2 Vault address used to authenticate
+    // slot 3 - A4 (audit 2026-05-10): Balancer V2 Vault address used to authenticate
     // receiveFlashLoan callbacks. Must equal the actual Balancer Vault that sends the
     // callback. address(0) disables the Balancer flash path entirely.
     /// @notice Balancer V2 Vault address. Must be the actual Vault that calls
@@ -146,15 +142,11 @@ contract FlashLoanExecutor is
         _disableInitializers();
     }
 
-    /// @notice Initializer — replaces constructor. Must be called exactly once via ERC1967Proxy.
+    /// @notice Initializer - replaces constructor. Must be called exactly once via ERC1967Proxy.
     /// @param admin               Address granted DEFAULT_ADMIN_ROLE and UPGRADER_ROLE.
     /// @param _aavePool           Aave V3 lending pool address (legacy fallback).
     /// @param _arbitrageExecutor  ArbitrageExecutor proxy address.
-    function initialize(
-        address admin,
-        address _aavePool,
-        address _arbitrageExecutor
-    ) public initializer {
+    function initialize(address admin, address _aavePool, address _arbitrageExecutor) public initializer {
         __AccessControl_init();
         __UUPSUpgradeable_init();
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
@@ -162,7 +154,7 @@ contract FlashLoanExecutor is
         aavePool = IAaveV3Pool(_aavePool);
         arbitrageExecutor = _arbitrageExecutor;
         referralCode = 0;
-        // slot 2: flashLoanProvider defaults to address(0) — uses legacy aavePool path
+        // slot 2: flashLoanProvider defaults to address(0) - uses legacy aavePool path
     }
 
     // -------------------------------------------------------------------------
@@ -222,18 +214,17 @@ contract FlashLoanExecutor is
     /// @param amount     Amount to borrow (used for fee calculation).
     /// @return cheaper   Address of the provider with the lower fee for this amount.
     /// @return fee       Fee charged by the cheaper provider (in asset units).
-    function selectCheapestProvider(
-        address providerA,
-        address providerB,
-        address asset,
-        uint256 amount
-    ) external view returns (address cheaper, uint256 fee) {
+    function selectCheapestProvider(address providerA, address providerB, address asset, uint256 amount)
+        external
+        view
+        returns (address cheaper, uint256 fee)
+    {
         // Check liquidity availability for both providers
         bool aSupports = providerA != address(0) && IFlashLoanProvider(providerA).maxFlashLoan(asset) >= amount;
         bool bSupports = providerB != address(0) && IFlashLoanProvider(providerB).maxFlashLoan(asset) >= amount;
 
         if (!aSupports && !bSupports) {
-            // Neither provider can service this amount — return zero address
+            // Neither provider can service this amount - return zero address
             return (address(0), 0);
         }
 
@@ -245,7 +236,7 @@ contract FlashLoanExecutor is
             return (providerA, IFlashLoanProvider(providerA).flashLoanFee(amount));
         }
 
-        // Both support the amount — compare fees
+        // Both support the amount - compare fees
         uint256 feeA = IFlashLoanProvider(providerA).flashLoanFee(amount);
         uint256 feeB = IFlashLoanProvider(providerB).flashLoanFee(amount);
 
@@ -290,16 +281,13 @@ contract FlashLoanExecutor is
     /// @param asset      ERC-20 asset borrowed.
     /// @param amount     Loan amount.
     /// @param premium    Aave fee on the loan.
-    /// @param initiator  Must equal address(this) — set when requestFlashLoan is called.
+    /// @param initiator  Must equal address(this) - set when requestFlashLoan is called.
     /// @param params     Encoded calldata forwarded to ArbitrageExecutor.
     /// @return           True on successful completion.
-    function executeOperation(
-        address asset,
-        uint256 amount,
-        uint256 premium,
-        address initiator,
-        bytes calldata params
-    ) external returns (bool) {
+    function executeOperation(address asset, uint256 amount, uint256 premium, address initiator, bytes calldata params)
+        external
+        returns (bool)
+    {
         if (msg.sender != address(aavePool)) revert FL_UnauthorizedCaller();
         if (initiator != address(this)) revert FL_InvalidInitiator();
 
@@ -319,7 +307,7 @@ contract FlashLoanExecutor is
     ///      feeAmounts[0] is always 0 for Balancer V2 flash loans.
     /// @param tokens      Array of borrowed IERC20 tokens (length = 1 in single-asset use).
     /// @param amounts     Array of borrowed amounts (parallel with tokens).
-    /// @param feeAmounts  Array of fees (always 0 for Balancer — kept for interface compat).
+    /// @param feeAmounts  Array of fees (always 0 for Balancer - kept for interface compat).
     /// @param userData    Encoded calldata forwarded to ArbitrageExecutor.
     function receiveFlashLoan(
         IERC20[] calldata tokens,
@@ -348,7 +336,7 @@ contract FlashLoanExecutor is
         asset.forceApprove(arbitrageExecutor, amount);
 
         // 2. Call ArbitrageExecutor with the encoded payload
-        (bool success, ) = arbitrageExecutor.call(userData);
+        (bool success,) = arbitrageExecutor.call(userData);
         if (!success) revert FL_ArbitrageExecutionFailed();
 
         // 2b. Hygiene (defense-in-depth): clear any residual executor allowance the
@@ -371,17 +359,12 @@ contract FlashLoanExecutor is
     // -------------------------------------------------------------------------
 
     /// @dev Shared execution + repayment logic for Aave V3 callback path.
-    function _executeAndRepayAave(
-        address asset,
-        uint256 amount,
-        uint256 premium,
-        bytes calldata params
-    ) internal {
+    function _executeAndRepayAave(address asset, uint256 amount, uint256 premium, bytes calldata params) internal {
         // 1. Approve funds to ArbitrageExecutor
         IERC20(asset).forceApprove(arbitrageExecutor, amount);
 
         // 2. Call ArbitrageExecutor (the payload is encoded in `params`)
-        (bool success, ) = arbitrageExecutor.call(params);
+        (bool success,) = arbitrageExecutor.call(params);
         if (!success) revert FL_ArbitrageExecutionFailed();
 
         // 2b. Hygiene (defense-in-depth): clear any residual executor allowance the

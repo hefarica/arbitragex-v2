@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// WalletTopology.t.sol — coverage for src/core/WalletTopology (previously ZERO).
+// WalletTopology.t.sol - coverage for src/core/WalletTopology (previously ZERO).
 //
 // Covers constructor validation + role grants, the three view helpers,
 // admin-gated setColdTreasury (including role migration old->new), and the
@@ -11,12 +11,7 @@ pragma solidity ^0.8.20;
 // =============================================================================
 
 import "forge-std/Test.sol";
-import {
-    WalletTopology,
-    WT_ZeroAddress,
-    WT_DuplicateAddresses,
-    WT_ZeroTreasury
-} from "../src/core/WalletTopology.sol";
+import {WalletTopology, WT_ZeroAddress, WT_DuplicateAddresses, WT_ZeroTreasury} from "../src/core/WalletTopology.sol";
 
 contract WalletTopologyTest is Test {
     WalletTopology internal topo;
@@ -69,7 +64,7 @@ contract WalletTopologyTest is Test {
     }
 
     // I1 (documented): at construction the three operational roles are held by
-    // three distinct addresses — none overlaps another's role.
+    // three distinct addresses - none overlaps another's role.
     function test_RolesAreSegregatedAtConstruction() public view {
         assertFalse(topo.hasRole(EXECUTION_SIGNER_ROLE, gasSponsor));
         assertFalse(topo.hasRole(COLD_TREASURY_ROLE, gasSponsor));

@@ -2,23 +2,23 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// ExecutorInvariant.t.sol — 10,000 Ciclos Adversariales de Invariantes
+// ExecutorInvariant.t.sol - 10,000 Ciclos Adversariales de Invariantes
 // =============================================================================
 // Verifica R8 Fail-Honest On-Chain: "El balance del contrato nunca decrece
 // inexplicablemente tras una operacion."
 //
 // Invariantes verificadas:
-//   I1. BalanceNeverDecreases — El balance de token nunca decrece post-ejecucion.
-//   I2. OnlyExecutorCanExecute — Solo EXECUTOR_ROLE puede llamar executeArbitrage.
-//   I3. PausedBlocksExecution — Pausable detiene executeArbitrage.
-//   I4. RouterSelectorGate — Selector no aprobado siempre revierte.
-//   I5. TokenApprovalGate — Token no aprobado siempre revierte.
-//   I6. ReentrancyLock — No reentrance durante executeArbitrage.
-//   I7. AdminCannotExecuteWithoutRole — ADMIN_ROLE sin EXECUTOR_ROLE no ejecuta.
-//   I8. WithdrawETHOnlyAdmin — Solo admin puede retirar ETH.
-//   I9. EmergencyWithdrawIsolation — withdraw de un token no afecta otros.
-//   I10. GhostProfitAccumulates — Profit total nunca negativo.
-//   I11. StorageConsistency — Mappings de aprobacion consistentes.
+//   I1. BalanceNeverDecreases - El balance de token nunca decrece post-ejecucion.
+//   I2. OnlyExecutorCanExecute - Solo EXECUTOR_ROLE puede llamar executeArbitrage.
+//   I3. PausedBlocksExecution - Pausable detiene executeArbitrage.
+//   I4. RouterSelectorGate - Selector no aprobado siempre revierte.
+//   I5. TokenApprovalGate - Token no aprobado siempre revierte.
+//   I6. ReentrancyLock - No reentrance durante executeArbitrage.
+//   I7. AdminCannotExecuteWithoutRole - ADMIN_ROLE sin EXECUTOR_ROLE no ejecuta.
+//   I8. WithdrawETHOnlyAdmin - Solo admin puede retirar ETH.
+//   I9. EmergencyWithdrawIsolation - withdraw de un token no afecta otros.
+//   I10. GhostProfitAccumulates - Profit total nunca negativo.
+//   I11. StorageConsistency - Mappings de aprobacion consistentes.
 //
 // Ejecucion: forge test --match-path test/ExecutorInvariant.t.sol --fuzz-runs 10000
 // =============================================================================
@@ -49,7 +49,7 @@ contract InvariantMockERC20 is ERC20 {
     }
 }
 
-/// @dev Router que produce ganancia deterministica — simula un swap exitoso.
+/// @dev Router que produce ganancia deterministica - simula un swap exitoso.
 contract ProfitRouter {
     InvariantMockERC20 public token;
     address public executor;
@@ -82,7 +82,7 @@ contract ProfitRouter {
     }
 }
 
-/// @dev Router que no hace nada — simula swap sin ganancia.
+/// @dev Router que no hace nada - simula swap sin ganancia.
 contract NoopRouter {
     fallback() external {}
 }
@@ -99,13 +99,11 @@ contract ReentrantAttackerRouter {
     fallback() external {
         if (!attacked) {
             attacked = true;
-            // Intentar reentrar en executeArbitrage — debe fallar por ReentrancyGuard
+            // Intentar reentrar en executeArbitrage - debe fallar por ReentrancyGuard
             address[] memory routers = new address[](0);
             bytes[] memory payloads = new bytes[](0);
-            try target.executeArbitrage(
-                bytes32(0), address(0), address(0), 0, 0, routers, payloads
-            ) {
-                revert(unicode"REENTRANCY SUCCESS — INVARIANT VIOLATED");
+            try target.executeArbitrage(bytes32(0), address(0), address(0), 0, 0, routers, payloads) {
+                revert(unicode"REENTRANCY SUCCESS - INVARIANT VIOLATED");
             } catch {
                 // Reentrance bloqueado correctamente
             }
@@ -114,8 +112,8 @@ contract ReentrantAttackerRouter {
 }
 
 // ---------------------------------------------------------------------------
-// ExecutorHandler — contrato manejador para fuzzing de invariantes
-// @dev NO usa vm.* — es un contrato regular llamado por el fuzzer.
+// ExecutorHandler - contrato manejador para fuzzing de invariantes
+// @dev NO usa vm.* - es un contrato regular llamado por el fuzzer.
 // ---------------------------------------------------------------------------
 
 /// @title ExecutorHandler
@@ -170,7 +168,7 @@ contract ExecutorHandler {
         tokenA.mint(address(executor), amount);
     }
 
-    /// @notice Ejecutar arbitrage con router de profit — debe incrementar balance.
+    /// @notice Ejecutar arbitrage con router de profit - debe incrementar balance.
     function executeWithProfit(uint256 routerIdx, uint256 amountIn, uint256 minProfit) external {
         if (profitRouters.length == 0) return;
         routerIdx = _bound(routerIdx, 0, profitRouters.length - 1);
@@ -196,15 +194,12 @@ contract ExecutorHandler {
         address[] memory routers = new address[](1);
         routers[0] = address(router);
         bytes[] memory payloads = new bytes[](1);
-        payloads[0] = abi.encodeWithSelector(
-            sel, amountIn, 0, new address[](0), address(executor), block.timestamp
-        );
+        payloads[0] = abi.encodeWithSelector(sel, amountIn, 0, new address[](0), address(executor), block.timestamp);
 
         // Usar low-level call desde execRole (prank solo funciona en Test, no aqui)
-        // En el handler, llamamos directamente — el fuzzer prueba las invariantes
+        // En el handler, llamamos directamente - el fuzzer prueba las invariantes
         try executor.executeArbitrage(
-            bytes32(uint256(callCount)), address(tokenA), address(tokenA),
-            amountIn, minProfit, routers, payloads
+            bytes32(uint256(callCount)), address(tokenA), address(tokenA), amountIn, minProfit, routers, payloads
         ) {
             lastCallReverted = false;
             uint256 balanceAfter = tokenA.balanceOf(address(executor));
@@ -233,7 +228,7 @@ contract ExecutorHandler {
 }
 
 // ---------------------------------------------------------------------------
-// ExecutorInvariantTest — contrato principal de invariantes
+// ExecutorInvariantTest - contrato principal de invariantes
 // ---------------------------------------------------------------------------
 
 /// @title ExecutorInvariantTest
@@ -263,9 +258,7 @@ contract ExecutorInvariantTest is Test {
 
         // Desplegar implementation y proxy
         ArbitrageExecutor impl = new ArbitrageExecutor();
-        bytes memory initData = abi.encodeWithSelector(
-            ArbitrageExecutor.initialize.selector, admin
-        );
+        bytes memory initData = abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, admin);
         proxy = new ERC1967Proxy(address(impl), initData);
         executor = ArbitrageExecutor(payable(address(proxy)));
 
@@ -289,9 +282,8 @@ contract ExecutorInvariantTest is Test {
         // Configurar approved routers y selectors
         uint256 len = handler.profitRoutersLength();
         for (uint256 i = 0; i < len; i++) {
-            (bool ok, bytes memory data) = address(handler).staticcall(
-                abi.encodeWithSignature("profitRouters(uint256)", i)
-            );
+            (bool ok, bytes memory data) =
+                address(handler).staticcall(abi.encodeWithSignature("profitRouters(uint256)", i));
             if (ok && data.length >= 32) {
                 address routerAddr = abi.decode(data, (address));
                 executor.setRouterApproval(routerAddr, true);
@@ -322,7 +314,7 @@ contract ExecutorInvariantTest is Test {
     // =========================================================================
     // INVARIANT I1: BalanceNeverDecreases
     // =========================================================================
-    /// @notice INVARIANT I1 — El balance neto del executor (depositos - retiros)
+    /// @notice INVARIANT I1 - El balance neto del executor (depositos - retiros)
     ///         nunca es negativo.
     function invariant_I1_balanceNeverDecreases() public view {
         uint256 currentBalance = handler.tokenA().balanceOf(address(executor));
@@ -336,18 +328,15 @@ contract ExecutorInvariantTest is Test {
     // =========================================================================
     // INVARIANT I2: OnlyExecutorCanExecute
     // =========================================================================
-    /// @notice INVARIANT I2 — Solo direcciones con EXECUTOR_ROLE pueden ejecutar.
+    /// @notice INVARIANT I2 - Solo direcciones con EXECUTOR_ROLE pueden ejecutar.
     function invariant_I2_onlyExecutorCanExecute() public view {
-        assertTrue(
-            executor.hasRole(executor.EXECUTOR_ROLE(), execRole),
-            "I2 VIOLATED: execRole perdio EXECUTOR_ROLE"
-        );
+        assertTrue(executor.hasRole(executor.EXECUTOR_ROLE(), execRole), "I2 VIOLATED: execRole perdio EXECUTOR_ROLE");
     }
 
     // =========================================================================
     // INVARIANT I3: PausableBlocksExecution
     // =========================================================================
-    /// @notice INVARIANT I3 — Cuando esta pausado, executeArbitrage SIEMPRE revierte.
+    /// @notice INVARIANT I3 - Cuando esta pausado, executeArbitrage SIEMPRE revierte.
     function invariant_I3_pausableBlocksExecution() public {
         vm.prank(admin);
         executor.pause();
@@ -358,10 +347,7 @@ contract ExecutorInvariantTest is Test {
 
         vm.expectRevert();
         vm.prank(execRole);
-        executor.executeArbitrage(
-            bytes32(0), tokenAAddr, tokenAAddr,
-            0, 0, routers, payloads
-        );
+        executor.executeArbitrage(bytes32(0), tokenAAddr, tokenAAddr, 0, 0, routers, payloads);
 
         vm.prank(admin);
         executor.unpause();
@@ -370,13 +356,12 @@ contract ExecutorInvariantTest is Test {
     // =========================================================================
     // INVARIANT I4: RouterSelectorGate
     // =========================================================================
-    /// @notice INVARIANT I4 — Selector no aprobado para router aprobado SIEMPRE revierte.
+    /// @notice INVARIANT I4 - Selector no aprobado para router aprobado SIEMPRE revierte.
     function invariant_I4_routerSelectorGate() public {
         ProfitRouter router;
         // Obtener el primer profitRouter
-        (bool ok, bytes memory data) = address(handler).staticcall(
-            abi.encodeWithSignature("profitRouters(uint256)", uint256(0))
-        );
+        (bool ok, bytes memory data) =
+            address(handler).staticcall(abi.encodeWithSignature("profitRouters(uint256)", uint256(0)));
         if (!ok || data.length < 32) return;
         router = ProfitRouter(abi.decode(data, (address)));
 
@@ -398,29 +383,23 @@ contract ExecutorInvariantTest is Test {
         bytes[] memory payloads = new bytes[](1);
         payloads[0] = abi.encodeWithSelector(badSelector, address(0), address(0), 0);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(AE_RouterSelectorNotApproved.selector, address(router), badSelector)
-        );
+        vm.expectRevert(abi.encodeWithSelector(AE_RouterSelectorNotApproved.selector, address(router), badSelector));
         vm.prank(execRole);
-        executor.executeArbitrage(
-            bytes32(0), tokenAAddr, tokenAAddr,
-            100e18, 0, routers, payloads
-        );
+        executor.executeArbitrage(bytes32(0), tokenAAddr, tokenAAddr, 100e18, 0, routers, payloads);
     }
 
     // =========================================================================
     // INVARIANT I5: TokenApprovalGate
     // =========================================================================
-    /// @notice INVARIANT I5 — Token no aprobado SIEMPRE revierte con TokenNotApproved.
+    /// @notice INVARIANT I5 - Token no aprobado SIEMPRE revierte con TokenNotApproved.
     function invariant_I5_tokenApprovalGate() public {
         InvariantMockERC20 badToken = new InvariantMockERC20("BadToken", "BAD", 18);
         badToken.mint(address(executor), 1000e18);
         assertFalse(executor.approvedTokens(address(badToken)), "I5 SETUP");
 
         ProfitRouter router;
-        (bool ok, bytes memory data) = address(handler).staticcall(
-            abi.encodeWithSignature("profitRouters(uint256)", uint256(0))
-        );
+        (bool ok, bytes memory data) =
+            address(handler).staticcall(abi.encodeWithSignature("profitRouters(uint256)", uint256(0)));
         if (!ok || data.length < 32) return;
         router = ProfitRouter(abi.decode(data, (address)));
         vm.startPrank(admin);
@@ -437,16 +416,13 @@ contract ExecutorInvariantTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(TokenNotApproved.selector, address(badToken)));
         vm.prank(execRole);
-        executor.executeArbitrage(
-            bytes32(0), address(badToken), address(badToken),
-            100e18, 0, routers, payloads
-        );
+        executor.executeArbitrage(bytes32(0), address(badToken), address(badToken), 100e18, 0, routers, payloads);
     }
 
     // =========================================================================
     // INVARIANT I6: ReentrancyBlocked
     // =========================================================================
-    /// @notice INVARIANT I6 — Reentrar en executeArbitrage SIEMPRE es bloqueado.
+    /// @notice INVARIANT I6 - Reentrar en executeArbitrage SIEMPRE es bloqueado.
     function invariant_I6_reentrancyBlocked() public {
         ReentrantAttackerRouter reentrant = handler.reentrantRouter();
         vm.startPrank(admin);
@@ -469,12 +445,10 @@ contract ExecutorInvariantTest is Test {
         bytes[] memory payloads = new bytes[](1);
         payloads[0] = abi.encodeWithSelector(sel, 100e18, 0, new address[](0), address(executor), block.timestamp);
 
-        try executor.executeArbitrage(
-            bytes32(0), tokenAAddr, tokenAAddr,
-            100e18, 0, routers, payloads
-        ) {
-            // Puede tener exito si el router no llego a reentrar
-        } catch {
+        try executor.executeArbitrage(bytes32(0), tokenAAddr, tokenAAddr, 100e18, 0, routers, payloads) {
+        // Puede tener exito si el router no llego a reentrar
+        }
+            catch {
             // Revert esperado
         }
     }
@@ -482,7 +456,7 @@ contract ExecutorInvariantTest is Test {
     // =========================================================================
     // INVARIANT I7: AdminCannotExecuteWithoutRole
     // =========================================================================
-    /// @notice INVARIANT I7 — ADMIN_ROLE sin EXECUTOR_ROLE no puede ejecutar.
+    /// @notice INVARIANT I7 - ADMIN_ROLE sin EXECUTOR_ROLE no puede ejecutar.
     function invariant_I7_adminCannotExecuteWithoutRole() public {
         address newAdmin = makeAddr("newAdmin");
         bytes32 adminRole = executor.ADMIN_ROLE();
@@ -495,16 +469,13 @@ contract ExecutorInvariantTest is Test {
 
         vm.expectRevert(NotExecutor.selector);
         vm.prank(newAdmin);
-        executor.executeArbitrage(
-            bytes32(0), tokenAAddr, tokenAAddr,
-            0, 0, routers, payloads
-        );
+        executor.executeArbitrage(bytes32(0), tokenAAddr, tokenAAddr, 0, 0, routers, payloads);
     }
 
     // =========================================================================
     // INVARIANT I8: ETHWithdrawOnlyAdmin
     // =========================================================================
-    /// @notice INVARIANT I8 — Solo ADMIN_ROLE puede llamar withdrawETH.
+    /// @notice INVARIANT I8 - Solo ADMIN_ROLE puede llamar withdrawETH.
     function invariant_I8_ethWithdrawOnlyAdmin() public {
         vm.deal(address(executor), 1 ether);
         address nonAdmin = makeAddr("nonAdmin");
@@ -516,7 +487,7 @@ contract ExecutorInvariantTest is Test {
     // =========================================================================
     // INVARIANT I9: EmergencyWithdrawIsolation
     // =========================================================================
-    /// @notice INVARIANT I9 — emergencyWithdraw de un token no afecta otros.
+    /// @notice INVARIANT I9 - emergencyWithdraw de un token no afecta otros.
     function invariant_I9_emergencyWithdrawIsolation() public {
         handler.tokenA().mint(address(executor), 1000e18);
         handler.tokenB().mint(address(executor), 2000e18);
@@ -527,21 +498,15 @@ contract ExecutorInvariantTest is Test {
         executor.emergencyWithdraw(tokenAAddr);
 
         uint256 balanceBAfter = handler.tokenB().balanceOf(address(executor));
-        assertEq(
-            balanceBAfter, balanceBBefore,
-            "I9 VIOLATED: emergencyWithdraw de tokenA afecto balance de tokenB"
-        );
+        assertEq(balanceBAfter, balanceBBefore, "I9 VIOLATED: emergencyWithdraw de tokenA afecto balance de tokenB");
     }
 
     // =========================================================================
     // INVARIANT I10: GhostProfitAccumulates
     // =========================================================================
-    /// @notice INVARIANT I10 — El profit total acumulado nunca es negativo.
+    /// @notice INVARIANT I10 - El profit total acumulado nunca es negativo.
     function invariant_I10_ghostProfitAccumulates() public view {
-        assertGe(
-            handler.totalProfitGenerated(), 0,
-            "I10 VIOLATED: Profit total acumulado es negativo"
-        );
+        assertGe(handler.totalProfitGenerated(), 0, "I10 VIOLATED: Profit total acumulado es negativo");
     }
 
     // =========================================================================
@@ -552,10 +517,10 @@ contract ExecutorInvariantTest is Test {
     }
 
     // =========================================================================
-    // Fuzzing directo — 10,000 runs
+    // Fuzzing directo - 10,000 runs
     // =========================================================================
 
-    /// @notice Fuzz: Balance gate — balance < amountIn siempre revierte.
+    /// @notice Fuzz: Balance gate - balance < amountIn siempre revierte.
     function testFuzz_I_balanceGateReverts(uint256 balance, uint256 gap) public {
         balance = bound(balance, 0, type(uint128).max - 1);
         gap = bound(gap, 1, type(uint128).max - balance);
@@ -582,16 +547,11 @@ contract ExecutorInvariantTest is Test {
 
         vm.expectRevert(InsufficientBalance.selector);
         vm.prank(execRole);
-        executor.executeArbitrage(
-            bytes32(0), tokenAAddr, tokenAAddr,
-            amountIn, 0, routers, payloads
-        );
+        executor.executeArbitrage(bytes32(0), tokenAAddr, tokenAAddr, amountIn, 0, routers, payloads);
     }
 
-    /// @notice Fuzz: Profit threshold — grossProfit < minProfit siempre revierte.
-    function testFuzz_I_profitThresholdReverts(
-        uint256 amountIn, uint256 grossProfit, uint256 extraMinProfit
-    ) public {
+    /// @notice Fuzz: Profit threshold - grossProfit < minProfit siempre revierte.
+    function testFuzz_I_profitThresholdReverts(uint256 amountIn, uint256 grossProfit, uint256 extraMinProfit) public {
         amountIn = bound(amountIn, 1, type(uint128).max);
         grossProfit = bound(grossProfit, 1, type(uint128).max - 1);
         extraMinProfit = bound(extraMinProfit, 1, type(uint128).max - grossProfit);
@@ -599,9 +559,7 @@ contract ExecutorInvariantTest is Test {
 
         handler.tokenA().mint(address(executor), amountIn);
 
-        ProfitRouter router = new ProfitRouter(
-            tokenAAddr, address(executor), grossProfit
-        );
+        ProfitRouter router = new ProfitRouter(tokenAAddr, address(executor), grossProfit);
         vm.startPrank(admin);
         executor.setRouterApproval(address(router), true);
         bytes4 sel = bytes4(keccak256("swapExactTokensForTokens(uint256,uint256,address[],address,uint256)"));
@@ -611,19 +569,14 @@ contract ExecutorInvariantTest is Test {
         address[] memory routers = new address[](1);
         routers[0] = address(router);
         bytes[] memory payloads = new bytes[](1);
-        payloads[0] = abi.encodeWithSelector(
-            sel, amountIn, 0, new address[](0), address(executor), block.timestamp
-        );
+        payloads[0] = abi.encodeWithSelector(sel, amountIn, 0, new address[](0), address(executor), block.timestamp);
 
         vm.expectRevert(InsufficientProfit.selector);
         vm.prank(execRole);
-        executor.executeArbitrage(
-            bytes32(0), tokenAAddr, tokenAAddr,
-            amountIn, minProfit, routers, payloads
-        );
+        executor.executeArbitrage(bytes32(0), tokenAAddr, tokenAAddr, amountIn, minProfit, routers, payloads);
     }
 
-    /// @notice Fuzz: Access control — direccion aleatoria sin EXECUTOR_ROLE revierte.
+    /// @notice Fuzz: Access control - direccion aleatoria sin EXECUTOR_ROLE revierte.
     function testFuzz_I_accessControlReverts(address caller) public {
         vm.assume(caller != execRole);
         vm.assume(!executor.hasRole(executor.EXECUTOR_ROLE(), caller));
@@ -633,10 +586,7 @@ contract ExecutorInvariantTest is Test {
 
         vm.expectRevert(NotExecutor.selector);
         vm.prank(caller);
-        executor.executeArbitrage(
-            bytes32(0), tokenAAddr, tokenAAddr,
-            0, 0, routers, payloads
-        );
+        executor.executeArbitrage(bytes32(0), tokenAAddr, tokenAAddr, 0, 0, routers, payloads);
     }
 
     /// @notice Fuzz: Zero gross profit siempre revierte.
@@ -661,10 +611,7 @@ contract ExecutorInvariantTest is Test {
 
         vm.expectRevert(ZeroGrossProfit.selector);
         vm.prank(execRole);
-        executor.executeArbitrage(
-            bytes32(0), tokenAAddr, tokenAAddr,
-            amountIn, 0, routers, payloads
-        );
+        executor.executeArbitrage(bytes32(0), tokenAAddr, tokenAAddr, amountIn, 0, routers, payloads);
     }
 
     /// @notice Fuzz: Length mismatch siempre revierte.
@@ -680,10 +627,7 @@ contract ExecutorInvariantTest is Test {
         address tokenA = tokenAAddr;
         vm.prank(execRole);
         vm.expectRevert(LengthMismatch.selector);
-        executor.executeArbitrage(
-            bytes32(0), tokenA, tokenA,
-            0, 0, routers, payloads
-        );
+        executor.executeArbitrage(bytes32(0), tokenA, tokenA, 0, 0, routers, payloads);
     }
 
     /// @notice Fuzz: Router no aprobado siempre revierte.
@@ -704,10 +648,7 @@ contract ExecutorInvariantTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(RouterNotApproved.selector, randomRouter));
         vm.prank(execRole);
-        executor.executeArbitrage(
-            bytes32(0), tokenAAddr, tokenAAddr,
-            0, 0, routers, payloads
-        );
+        executor.executeArbitrage(bytes32(0), tokenAAddr, tokenAAddr, 0, 0, routers, payloads);
     }
 
     /// @notice Fuzz: Payload demasiado corto siempre revierte.
@@ -716,9 +657,8 @@ contract ExecutorInvariantTest is Test {
         handler.tokenA().mint(address(executor), amountIn);
 
         ProfitRouter router;
-        (bool ok, bytes memory data) = address(handler).staticcall(
-            abi.encodeWithSignature("profitRouters(uint256)", uint256(0))
-        );
+        (bool ok, bytes memory data) =
+            address(handler).staticcall(abi.encodeWithSignature("profitRouters(uint256)", uint256(0)));
         if (!ok || data.length < 32) {
             // Crear uno temporal
             router = new ProfitRouter(tokenAAddr, address(executor), 1e18);
@@ -747,10 +687,7 @@ contract ExecutorInvariantTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(AE_PayloadTooShort.selector, address(router)));
         vm.prank(execRole);
-        executor.executeArbitrage(
-            bytes32(0), tokenAAddr, tokenAAddr,
-            amountIn, 0, routers, payloads
-        );
+        executor.executeArbitrage(bytes32(0), tokenAAddr, tokenAAddr, amountIn, 0, routers, payloads);
     }
 
     /// @notice Fuzz: Unauthorized caller siempre revierte.
@@ -762,9 +699,6 @@ contract ExecutorInvariantTest is Test {
 
         vm.expectRevert(NotExecutor.selector);
         vm.prank(caller);
-        executor.executeArbitrage(
-            bytes32(0), tokenAAddr, tokenAAddr,
-            0, 0, routers, payloads
-        );
+        executor.executeArbitrage(bytes32(0), tokenAAddr, tokenAAddr, 0, 0, routers, payloads);
     }
 }

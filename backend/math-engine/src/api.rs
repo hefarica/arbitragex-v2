@@ -306,11 +306,7 @@ async fn compute_handler(State(st): State<ApiState>, Json(body): Json<ComputeReq
         }
     }
 
-    (
-        StatusCode::OK,
-        Json(ComputeResponse { results, skipped }),
-    )
-        .into_response()
+    (StatusCode::OK, Json(ComputeResponse { results, skipped })).into_response()
 }
 
 /// POST /api/compute/batch — alias for compute with explicit batch semantics.
@@ -355,7 +351,11 @@ async fn operators_matrix_handler(State(st): State<ApiState>) -> Response {
             })
         })
         .collect();
-    (StatusCode::OK, Json(serde_json::json!({ "operators": rows }))).into_response()
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "operators": rows })),
+    )
+        .into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -436,7 +436,8 @@ mod tests {
             .method(Method::POST)
             .uri("/api/compute")
             .header("content-type", "application/json")
-            .body(Body::from(r#"{
+            .body(Body::from(
+                r#"{
                 "market_state": {
                     "price_matrix": [[1.0, 2.0], [3.0, 4.0]],
                     "liquidity_reserves": [[100.0, 200.0], [300.0, 400.0]],
@@ -446,7 +447,8 @@ mod tests {
                     "features": {}
                 },
                 "operator_ids": [1]
-            }"#))
+            }"#,
+            ))
             .unwrap();
         let resp = app.oneshot(compute_req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);

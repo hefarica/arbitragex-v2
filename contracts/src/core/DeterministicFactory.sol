@@ -2,7 +2,7 @@
 pragma solidity ^0.8.19;
 
 // =============================================================================
-// DeterministicFactory — CREATE2 multi-chain deployment factory
+// DeterministicFactory - CREATE2 multi-chain deployment factory
 //
 // Purpose: Deploy contracts at identical addresses across all EVM-compatible
 //          chains using CREATE2 with a salt namespaceado por chainId.
@@ -67,12 +67,12 @@ contract DeterministicFactory {
     /// @notice Set of chain IDs supported by this factory.
     /// @dev These are the chains where OMEGA operates. New chains require
     ///      a factory upgrade (new deployment) since this is immutable.
-    uint256 public constant ETHEREUM  = 1;
-    uint256 public constant ARBITRUM  = 42161;
-    uint256 public constant OPTIMISM  = 10;
-    uint256 public constant BASE      = 8453;
-    uint256 public constant POLYGON   = 137;
-    uint256 public constant BSC       = 56;
+    uint256 public constant ETHEREUM = 1;
+    uint256 public constant ARBITRUM = 42161;
+    uint256 public constant OPTIMISM = 10;
+    uint256 public constant BASE = 8453;
+    uint256 public constant POLYGON = 137;
+    uint256 public constant BSC = 56;
 
     // -------------------------------------------------------------------------
     // Events
@@ -82,21 +82,13 @@ contract DeterministicFactory {
     /// @param salt        The CREATE2 salt used (namespaceado por chainId).
     /// @param deployedAt  The address where the contract was deployed.
     /// @param bytecodeHash keccak256 of the deployed bytecode (for verification).
-    event DeterministicDeploy(
-        bytes32 indexed salt,
-        address indexed deployedAt,
-        bytes32 indexed bytecodeHash
-    );
+    event DeterministicDeploy(bytes32 indexed salt, address indexed deployedAt, bytes32 indexed bytecodeHash);
 
     /// @notice Emitted when a deployment is predicted (no state change).
     /// @param salt        The CREATE2 salt that would be used.
     /// @param predicted   The predicted address.
     /// @param bytecodeHash keccak256 of the bytecode.
-    event DeploymentPredicted(
-        bytes32 indexed salt,
-        address indexed predicted,
-        bytes32 indexed bytecodeHash
-    );
+    event DeploymentPredicted(bytes32 indexed salt, address indexed predicted, bytes32 indexed bytecodeHash);
 
     // -------------------------------------------------------------------------
     // Internal helpers
@@ -106,19 +98,16 @@ contract DeterministicFactory {
     /// @param _chainId Chain ID to validate.
     /// @return valid True if the chain is supported.
     function _isSupportedChain(uint256 _chainId) internal pure returns (bool valid) {
-        valid = (_chainId == ETHEREUM || _chainId == ARBITRUM || _chainId == OPTIMISM
-                 || _chainId == BASE || _chainId == POLYGON || _chainId == BSC);
+        valid =
+        (_chainId == ETHEREUM || _chainId == ARBITRUM || _chainId == OPTIMISM || _chainId == BASE || _chainId == POLYGON
+                || _chainId == BSC);
     }
 
     /// @notice Build the CREATE2 salt from chainId and contract name.
     /// @param _chainId      Chain ID for namespace.
     /// @param _contractName Human-readable contract name.
     /// @return salt Deterministic salt.
-    function _buildSalt(uint256 _chainId, string memory _contractName)
-        internal
-        pure
-        returns (bytes32 salt)
-    {
+    function _buildSalt(uint256 _chainId, string memory _contractName) internal pure returns (bytes32 salt) {
         salt = keccak256(abi.encodePacked(_chainId, _contractName));
     }
 
@@ -127,8 +116,8 @@ contract DeterministicFactory {
     // -------------------------------------------------------------------------
 
     /// @notice Deploy a contract using CREATE2 with salt namespaceado por chainId.
-    /// @dev Flow: validate inputs → build salt → compute address → Create2.deploy
-    ///      → emit DeterministicDeploy.
+    /// @dev Flow: validate inputs -> build salt -> compute address -> Create2.deploy
+    ///      -> emit DeterministicDeploy.
     ///
     ///      Gas cost: ~50,000 base + target constructor gas.
     ///
@@ -142,16 +131,15 @@ contract DeterministicFactory {
     ///                      abi.encodePacked(type(Contract).creationCode,
     ///                                       abi.encode(arg1, arg2, ...))
     /// @param _chainId      Target chain ID. Must be in SUPPORTED_CHAIN_IDS.
-    ///                      The deployment happens on the CURRENT chain — this
+    ///                      The deployment happens on the CURRENT chain - this
     ///                      parameter is for salt namespacing only.
     /// @param _contractName Human-readable contract name for the salt.
     ///                      Examples: "ArbitrageExecutor", "WalletTopology".
     /// @return deployed     The address of the deployed contract.
-    function deploy(
-        bytes memory _bytecode,
-        uint256 _chainId,
-        string memory _contractName
-    ) external returns (address deployed) {
+    function deploy(bytes memory _bytecode, uint256 _chainId, string memory _contractName)
+        external
+        returns (address deployed)
+    {
         // Input validation
         if (_bytecode.length == 0) revert DF_EmptyBytecode();
         if (!_isSupportedChain(_chainId)) revert DF_UnsupportedChainId(_chainId);
@@ -175,7 +163,7 @@ contract DeterministicFactory {
     }
 
     /// @notice Predict the address of a contract before deploying it.
-    /// @dev Pure view function — no state change. Computes the CREATE2 address
+    /// @dev Pure view function - no state change. Computes the CREATE2 address
     ///      from the salt (chainId + contractName) and bytecode hash.
     ///
     ///      Gas cost: ~3,000 gas.
@@ -187,11 +175,11 @@ contract DeterministicFactory {
     /// @param _chainId      Target chain ID for salt namespacing.
     /// @param _contractName Contract name for salt namespacing.
     /// @return predicted    The deterministic address where the contract would deploy.
-    function predictAddress(
-        bytes memory _bytecode,
-        uint256 _chainId,
-        string memory _contractName
-    ) external view returns (address predicted) {
+    function predictAddress(bytes memory _bytecode, uint256 _chainId, string memory _contractName)
+        external
+        view
+        returns (address predicted)
+    {
         if (_bytecode.length == 0) revert DF_EmptyBytecode();
         if (!_isSupportedChain(_chainId)) revert DF_UnsupportedChainId(_chainId);
         if (bytes(_contractName).length == 0) revert DF_EmptyContractName();
@@ -207,11 +195,10 @@ contract DeterministicFactory {
     /// @param _chainId      Target chain ID for salt namespacing.
     /// @param _contractName Contract name for salt namespacing.
     /// @return predicted    The deterministic address where the contract would deploy.
-    function predictAndLog(
-        bytes memory _bytecode,
-        uint256 _chainId,
-        string memory _contractName
-    ) external returns (address predicted) {
+    function predictAndLog(bytes memory _bytecode, uint256 _chainId, string memory _contractName)
+        external
+        returns (address predicted)
+    {
         if (_bytecode.length == 0) revert DF_EmptyBytecode();
         if (!_isSupportedChain(_chainId)) revert DF_UnsupportedChainId(_chainId);
         if (bytes(_contractName).length == 0) revert DF_EmptyContractName();
@@ -237,11 +224,10 @@ contract DeterministicFactory {
     /// @param chainIds       Array of chain IDs (one per contract).
     /// @param contractNames  Array of contract names (one per contract).
     /// @return deployed      Array of deployed addresses (index-matched to inputs).
-    function batchDeploy(
-        bytes[] calldata bytecodes,
-        uint256[] calldata chainIds,
-        string[] calldata contractNames
-    ) external returns (address[] memory deployed) {
+    function batchDeploy(bytes[] calldata bytecodes, uint256[] calldata chainIds, string[] calldata contractNames)
+        external
+        returns (address[] memory deployed)
+    {
         uint256 n = bytecodes.length;
         if (n == 0 || n != chainIds.length || n != contractNames.length) {
             revert DF_EmptyBytecode();
@@ -250,12 +236,14 @@ contract DeterministicFactory {
         deployed = new address[](n);
         for (uint256 i = 0; i < n;) {
             deployed[i] = this.deploy(bytecodes[i], chainIds[i], contractNames[i]);
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
     }
 
     /// @notice Predict addresses for multiple contracts in a single call.
-    /// @dev View function — no state change. Useful for generating deployment
+    /// @dev View function - no state change. Useful for generating deployment
     ///      runbooks off-chain.
     ///
     ///      Gas cost: ~N * 3,000.
@@ -264,11 +252,11 @@ contract DeterministicFactory {
     /// @param chainIds       Array of chain IDs.
     /// @param contractNames  Array of contract names.
     /// @return predicted     Array of predicted addresses.
-    function batchPredict(
-        bytes[] calldata bytecodes,
-        uint256[] calldata chainIds,
-        string[] calldata contractNames
-    ) external view returns (address[] memory predicted) {
+    function batchPredict(bytes[] calldata bytecodes, uint256[] calldata chainIds, string[] calldata contractNames)
+        external
+        view
+        returns (address[] memory predicted)
+    {
         uint256 n = bytecodes.length;
         if (n == 0 || n != chainIds.length || n != contractNames.length) {
             revert DF_EmptyBytecode();
@@ -277,7 +265,9 @@ contract DeterministicFactory {
         predicted = new address[](n);
         for (uint256 i = 0; i < n;) {
             predicted[i] = this.predictAddress(bytecodes[i], chainIds[i], contractNames[i]);
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
     }
 }

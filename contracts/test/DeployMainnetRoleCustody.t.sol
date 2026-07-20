@@ -2,16 +2,16 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// DeployMainnetRoleCustody — P0 regression tests (mainnet-readiness audit 2026-07)
+// DeployMainnetRoleCustody - P0 regression tests (mainnet-readiness audit 2026-07)
 //
 // P0 under test: the "atomic handoff" block in script/DeployMainnet.s.sol used
 // to transfer ONLY DEFAULT_ADMIN_ROLE to the AdminTimelock.  UPGRADER_ROLE
 // stayed with the deployer EOA on all three UUPS proxies, and _authorizeUpgrade
-// is gated ONLY by UPGRADER_ROLE — so the deployer kept an instant
+// is gated ONLY by UPGRADER_ROLE - so the deployer kept an instant
 // upgradeToAndCall that bypassed multisig + 24h timelock (total-drain vector).
 //
-// These tests execute the REAL script (DeployMainnet.run()) in-test — the
-// handoff sequence exercised here is the script's own code, not a replica —
+// These tests execute the REAL script (DeployMainnet.run()) in-test - the
+// handoff sequence exercised here is the script's own code, not a replica -
 // and assert, for ArbitrageExecutor, AllowanceManager and FlashLoanExecutor:
 //
 //   1. hasRole(UPGRADER_ROLE, deployer)      == false   (the P0: pre-fix TRUE)
@@ -33,17 +33,15 @@ import "../script/DeployMainnet.s.sol";
 contract DeployMainnetRoleCustodyTest is Test {
     // ERC-1967 standard slots/events (eip-1967; same constants OZ ERC1967Utils uses).
     bytes32 internal constant UPGRADED_TOPIC = keccak256("Upgraded(address)");
-    bytes32 internal constant ERC1967_IMPL_SLOT =
-        bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1);
+    bytes32 internal constant ERC1967_IMPL_SLOT = bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1);
 
     // OZ 5.x AccessControl revert (same pattern as AllowanceManager.t.sol).
-    bytes4 internal constant ACL_UNAUTHORIZED =
-        bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)"));
+    bytes4 internal constant ACL_UNAUTHORIZED = bytes4(keccak256("AccessControlUnauthorizedAccount(address,bytes32)"));
 
     // Must match the minDelay hardcoded in DeployMainnet.run() (86_400 = 24h).
     uint256 internal constant MIN_DELAY = 86_400;
 
-    // Test-only key; any nonzero uint works — vm.addr() derives the deployer.
+    // Test-only key; any nonzero uint works - vm.addr() derives the deployer.
     uint256 internal constant DEPLOYER_KEY = uint256(keccak256("arbx.test.mainnet-deployer"));
 
     address internal deployer;
@@ -75,7 +73,7 @@ contract DeployMainnetRoleCustodyTest is Test {
 
         // Run the REAL deploy script.  It does not expose the proxy addresses,
         // so recover them from the ERC1967 Upgraded events each proxy emits at
-        // construction — in deploy order: AE, AM, FL, TL.
+        // construction - in deploy order: AE, AM, FL, TL.
         vm.recordLogs();
         new DeployMainnet().run();
         Vm.Log[] memory logs = vm.getRecordedLogs();
@@ -84,7 +82,7 @@ contract DeployMainnetRoleCustodyTest is Test {
         uint256 found;
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics[0] == UPGRADED_TOPIC) {
-                require(found < 4, unicode"more than 4 proxy deployments — script drifted, re-sync test");
+                require(found < 4, unicode"more than 4 proxy deployments - script drifted, re-sync test");
                 proxies[found] = logs[i].emitter;
                 found++;
             }
@@ -106,7 +104,7 @@ contract DeployMainnetRoleCustodyTest is Test {
 
     // -----------------------------------------------------------------------
     // P0 assertion 1: deployer must NOT hold UPGRADER_ROLE on any UUPS contract.
-    // Pre-fix this failed on all three — the drain vector.
+    // Pre-fix this failed on all three - the drain vector.
     // -----------------------------------------------------------------------
     function testP0_Deployer_HasNoUpgraderRole_AllThree() public view {
         assertFalse(ae.hasRole(ae.UPGRADER_ROLE(), deployer), "AE: deployer still holds UPGRADER_ROLE");
@@ -116,7 +114,7 @@ contract DeployMainnetRoleCustodyTest is Test {
 
     // -----------------------------------------------------------------------
     // P0 assertion 2: the timelock must hold UPGRADER_ROLE on all three, so
-    // upgrades remain possible — but only via multisig + 24h delay.
+    // upgrades remain possible - but only via multisig + 24h delay.
     // -----------------------------------------------------------------------
     function testP0_Timelock_HoldsUpgraderRole_AllThree() public view {
         assertTrue(ae.hasRole(ae.UPGRADER_ROLE(), address(tl)), "AE: timelock lacks UPGRADER_ROLE");
@@ -142,7 +140,7 @@ contract DeployMainnetRoleCustodyTest is Test {
 
     // -----------------------------------------------------------------------
     // P0 assertion 3: a post-handoff upgradeToAndCall from the deployer must
-    // REVERT on all three contracts.  Pre-fix this call SUCCEEDED instantly —
+    // REVERT on all three contracts.  Pre-fix this call SUCCEEDED instantly -
     // the exact bypass of multisig + timelock this suite exists to prevent.
     // -----------------------------------------------------------------------
     function testP0_DeployerUpgrade_Reverts_ArbitrageExecutor() public {

@@ -6,8 +6,8 @@
 //! - 264 vectores estrategicos MEV
 //! - Matriz de proyeccion 264x31
 
-pub mod operators;
 pub mod matrix;
+pub mod operators;
 pub mod strategies;
 
 #[cfg(feature = "api")]

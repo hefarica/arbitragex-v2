@@ -8,9 +8,9 @@
 //! - El frontend ensambla y edita los cartuchos
 //! - El backend las carga dinámicamente vía Rhai Engine
 
-pub mod strategy_trait;
-pub mod registry;
 pub mod classifier;
+pub mod registry;
+pub mod strategy_trait;
 
-pub use strategy_trait::{TopologicalStrategy, StrategyOutput, StrategyProfile};
 pub use registry::StrategyRegistry;
+pub use strategy_trait::{StrategyOutput, StrategyProfile, TopologicalStrategy};

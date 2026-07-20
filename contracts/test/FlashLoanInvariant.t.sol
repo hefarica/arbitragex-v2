@@ -2,21 +2,21 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// FlashLoanInvariant.t.sol — 10,000 Ciclos Adversariales de Invariantes
+// FlashLoanInvariant.t.sol - 10,000 Ciclos Adversariales de Invariantes
 // =============================================================================
 // Verifica que los flash loans se pagan SIEMPRE y no hay vectores de ataque.
 //
 // Invariantes verificadas:
-//   I1. flashloanAlwaysRepaid — El prestamo + fee se devuelve al provider.
-//   I2. noUnauthorizedCallback — Solo el provider autorizado puede llamar callbacks.
-//   I3. initiatorValidation — El callback de Aave verifica initiator == address(this).
-//   I4. reentrancyBlocked — No reentrance durante executeOperation/receiveFlashLoan.
-//   I5. providerSelectionConsistent — selectCheapestProvider es determinista.
-//   I6. zeroFeeProvidersReturnZero — Balancer/dYdX fee siempre 0.
-//   I7. balancerVaultMustBeSet — receiveFlashLoan revierte si vault == address(0).
-//   I8. unauthorizedBalancerCallbackReverts — Solo Balancer Vault autorizado.
-//   I9. noProviderConfiguredReverts — receiveFlashLoan sin provider revierte.
-//   I10. referralCodeUpdateable — setReferralCode actualiza el codigo.
+//   I1. flashloanAlwaysRepaid - El prestamo + fee se devuelve al provider.
+//   I2. noUnauthorizedCallback - Solo el provider autorizado puede llamar callbacks.
+//   I3. initiatorValidation - El callback de Aave verifica initiator == address(this).
+//   I4. reentrancyBlocked - No reentrance durante executeOperation/receiveFlashLoan.
+//   I5. providerSelectionConsistent - selectCheapestProvider es determinista.
+//   I6. zeroFeeProvidersReturnZero - Balancer/dYdX fee siempre 0.
+//   I7. balancerVaultMustBeSet - receiveFlashLoan revierte si vault == address(0).
+//   I8. unauthorizedBalancerCallbackReverts - Solo Balancer Vault autorizado.
+//   I9. noProviderConfiguredReverts - receiveFlashLoan sin provider revierte.
+//   I10. referralCodeUpdateable - setReferralCode actualiza el codigo.
 //
 // Ejecucion: forge test --match-path test/FlashLoanInvariant.t.sol --fuzz-runs 10000
 // =============================================================================
@@ -44,7 +44,7 @@ contract FLMockERC20 is ERC20 {
     }
 }
 
-/// @dev Mock Aave V3 Pool — simula el flujo completo de flash loan.
+/// @dev Mock Aave V3 Pool - simula el flujo completo de flash loan.
 ///      Transfiere tokens, llama executeOperation, y verifica repago.
 contract MockAavePool {
     FLMockERC20 public token;
@@ -76,13 +76,14 @@ contract MockAavePool {
 
         // 2. Llamar executeOperation
         uint256 premium = (amount * 9) / 10000; // 0.09% fee Aave
-        FlashLoanExecutor(receiverAddress).executeOperation(
-            asset,
-            amount,
-            premium,
-            receiverAddress, // initiator = receiver (correcto)
-            params
-        );
+        FlashLoanExecutor(receiverAddress)
+            .executeOperation(
+                asset,
+                amount,
+                premium,
+                receiverAddress, // initiator = receiver (correcto)
+                params
+            );
 
         // 3. Verificar que se repago
         uint256 amountOwed = amount + premium;
@@ -105,18 +106,12 @@ contract MockAavePool {
         lastReferralCode = referralCode;
 
         uint256 premium = (amount * 9) / 10000;
-        // Llamar desde address incorrecto — debe revertir
-        FlashLoanExecutor(receiverAddress).executeOperation(
-            asset,
-            amount,
-            premium,
-            receiverAddress,
-            params
-        );
+        // Llamar desde address incorrecto - debe revertir
+        FlashLoanExecutor(receiverAddress).executeOperation(asset, amount, premium, receiverAddress, params);
     }
 }
 
-/// @dev Mock Balancer Vault — simula flujo completo de flash loan de Balancer.
+/// @dev Mock Balancer Vault - simula flujo completo de flash loan de Balancer.
 contract MockBalancerVault {
     FLMockERC20 public token;
 
@@ -124,12 +119,7 @@ contract MockBalancerVault {
     address public lastAsset;
     uint256 public lastAmount;
 
-    function triggerFlashLoan(
-        address receiver,
-        IERC20 _token,
-        uint256 amount,
-        bytes calldata userData
-    ) external {
+    function triggerFlashLoan(address receiver, IERC20 _token, uint256 amount, bytes calldata userData) external {
         lastReceiver = receiver;
         lastAsset = address(_token);
         lastAmount = amount;
@@ -200,7 +190,7 @@ contract MockArbitrageExecutor {
 
 /// @dev Mock ArbitrageExecutor malicioso que intenta reentrar durante el callback.
 ///      `reentrySucceeded` stays false iff the re-entrant requestFlashLoan reverted
-///      (as it must — requestFlashLoan is EXECUTOR_ROLE-gated and this mock holds no
+///      (as it must - requestFlashLoan is EXECUTOR_ROLE-gated and this mock holds no
 ///      role). `mintBack` lets the outer loan still repay if needed. setTarget/setToken/
 ///      setMintBack break the constructor circular dependency (the executor needs this
 ///      mock's address at init, before this mock can know the executor's address).
@@ -216,9 +206,17 @@ contract MockReentrantArbitrageExecutor {
         target = FlashLoanExecutor(_target);
     }
 
-    function setTarget(address _t) external { target = FlashLoanExecutor(_t); }
-    function setToken(address _t) external { token = FLMockERC20(_t); }
-    function setMintBack(uint256 _m) external { mintBack = _m; }
+    function setTarget(address _t) external {
+        target = FlashLoanExecutor(_t);
+    }
+
+    function setToken(address _t) external {
+        token = FLMockERC20(_t);
+    }
+
+    function setMintBack(uint256 _m) external {
+        mintBack = _m;
+    }
 
     fallback() external {
         if (!attacked) {
@@ -228,7 +226,7 @@ contract MockReentrantArbitrageExecutor {
             // Attempt to re-enter the executor during the callback. MUST be blocked:
             // requestFlashLoan is EXECUTOR_ROLE-gated and this mock holds no role.
             try target.requestFlashLoan(address(token), 1000, "") {
-                reentrySucceeded = true; // would signal a missing guard — must NOT happen
+                reentrySucceeded = true; // would signal a missing guard - must NOT happen
             } catch {
                 // expected: re-entry blocked
             }
@@ -306,14 +304,14 @@ contract MockFeeProvider is IFlashLoanProvider {
 /// @dev Verifica que los flash loans se pagan SIEMPRE y no hay vectores de ataque.
 ///
 /// Invariantes verificadas:
-///   I1. flashloanAlwaysRepaid — El prestamo + fee se devuelve siempre.
-///   I2. unauthorizedCallerReverts — Solo aavePool/balancerVault pueden callbacks.
-///   I3. invalidInitiatorReverts — Aave callback verifica initiator.
-///   I4. balancerVaultNotSetReverts — receiveFlashLoan sin vault configurado revierte.
-///   I5. cheapestProviderIsCheaper — selectCheapestProvider elige el provider con menor fee.
-///   I6. zeroFeeProviderReturnsZero — MockZeroFeeProvider siempre cobra 0.
-///   I7. referralCodeIsSettable — setReferralCode actualiza el codigo.
-///   I8. flashLoanProviderIsConfigurable — setFlashLoanProvider cambia el provider.
+///   I1. flashloanAlwaysRepaid - El prestamo + fee se devuelve siempre.
+///   I2. unauthorizedCallerReverts - Solo aavePool/balancerVault pueden callbacks.
+///   I3. invalidInitiatorReverts - Aave callback verifica initiator.
+///   I4. balancerVaultNotSetReverts - receiveFlashLoan sin vault configurado revierte.
+///   I5. cheapestProviderIsCheaper - selectCheapestProvider elige el provider con menor fee.
+///   I6. zeroFeeProviderReturnsZero - MockZeroFeeProvider siempre cobra 0.
+///   I7. referralCodeIsSettable - setReferralCode actualiza el codigo.
+///   I8. flashLoanProviderIsConfigurable - setFlashLoanProvider cambia el provider.
 contract FlashLoanInvariantTest is Test {
     FlashLoanExecutor internal flashExec;
     ERC1967Proxy internal proxy;
@@ -353,16 +351,12 @@ contract FlashLoanInvariantTest is Test {
 
         // Deploy FlashLoanExecutor proxy
         FlashLoanExecutor impl = new FlashLoanExecutor();
-        bytes memory initData = abi.encodeWithSelector(
-            FlashLoanExecutor.initialize.selector,
-            admin,
-            address(aavePool),
-            address(arbExec)
-        );
+        bytes memory initData =
+            abi.encodeWithSelector(FlashLoanExecutor.initialize.selector, admin, address(aavePool), address(arbExec));
         proxy = new ERC1967Proxy(address(impl), initData);
         flashExec = FlashLoanExecutor(payable(address(proxy)));
 
-        // Grant roles. NB: hoist EXECUTOR_ROLE() out of the call — Foundry binds
+        // Grant roles. NB: hoist EXECUTOR_ROLE() out of the call - Foundry binds
         // vm.prank to the next external call, which would otherwise be EXECUTOR_ROLE(),
         // leaving grantRole to run as the test contract (no admin role).
         bytes32 execRoleId = flashExec.EXECUTOR_ROLE();
@@ -382,14 +376,14 @@ contract FlashLoanInvariantTest is Test {
         // this, Foundry fuzzes FLMockERC20.mint directly and drives totalSupply to
         // ~uint256.max, making the self-contained token.mint(...) inside each
         // invariant_* overflow (panic 0x11). Targeting the executor proxy instead is
-        // not viable — it exposes only fallback(), yielding "No contracts to fuzz".
+        // not viable - it exposes only fallback(), yielding "No contracts to fuzz".
         excludeContract(address(token));
     }
 
     // =========================================================================
     // Reentrancy: a malicious arbitrageExecutor that re-enters during the callback
     // is BLOCKED, and the outer loan still repays. This WIRES
-    // MockReentrantArbitrageExecutor as the LIVE executor — previously it was
+    // MockReentrantArbitrageExecutor as the LIVE executor - previously it was
     // constructed (with target=address(0)) but never used, so reentrancy was never
     // actually exercised (the prior invariant_I6 try/catch passed either way).
     // =========================================================================
@@ -405,8 +399,7 @@ contract FlashLoanInvariantTest is Test {
         bytes memory initData2 = abi.encodeWithSelector(
             FlashLoanExecutor.initialize.selector, admin, address(aavePool), address(reentrantArbExec)
         );
-        FlashLoanExecutor flashExec2 =
-            FlashLoanExecutor(payable(address(new ERC1967Proxy(address(impl2), initData2))));
+        FlashLoanExecutor flashExec2 = FlashLoanExecutor(payable(address(new ERC1967Proxy(address(impl2), initData2))));
 
         // Point the mock back at this executor (closes the constructor circular dep).
         // mintBack left 0: the 0-fee loan repays from the already-disbursed amount.
@@ -434,7 +427,7 @@ contract FlashLoanInvariantTest is Test {
     // =========================================================================
     // INVARIANT I1: flashloanAlwaysRepaid
     // =========================================================================
-    /// @notice INVARIANT I1 — Todo flash loan solicitado se repaga integramente
+    /// @notice INVARIANT I1 - Todo flash loan solicitado se repaga integramente
     ///         (amount + fee). Si no se repaga, la transaccion revierte.
     /// @dev Verificamos que el mock pool recibe el repago completo post-callback.
     function invariant_I1_flashloanAlwaysRepaid() public {
@@ -446,7 +439,16 @@ contract FlashLoanInvariantTest is Test {
         // Mintear tokens al mock arb exec para que pueda "pagar"
         token.mint(address(arbExec), 100e18);
 
-        bytes memory params = abi.encodeWithSelector(bytes4(keccak256("executeArbitrage(bytes32,address,address,uint256,uint256,address[],bytes[])")), bytes32(0), address(token), address(token), 0, 0, new address[](0), new bytes[](0));
+        bytes memory params = abi.encodeWithSelector(
+            bytes4(keccak256("executeArbitrage(bytes32,address,address,uint256,uint256,address[],bytes[])")),
+            bytes32(0),
+            address(token),
+            address(token),
+            0,
+            0,
+            new address[](0),
+            new bytes[](0)
+        );
 
         vm.prank(execRole);
         flashExec.requestFlashLoan(address(token), amount, params);
@@ -459,7 +461,7 @@ contract FlashLoanInvariantTest is Test {
     // =========================================================================
     // INVARIANT I2: unauthorizedCallerReverts
     // =========================================================================
-    /// @notice INVARIANT I2 — Solo el aavePool configurado puede llamar
+    /// @notice INVARIANT I2 - Solo el aavePool configurado puede llamar
     ///         executeOperation. Cualquier otra direccion revierte con
     ///         FL_UnauthorizedCaller.
     function invariant_I2_unauthorizedCallerReverts() public {
@@ -470,19 +472,13 @@ contract FlashLoanInvariantTest is Test {
 
         vm.expectRevert(FL_UnauthorizedCaller.selector);
         vm.prank(attacker);
-        flashExec.executeOperation(
-            address(token),
-            amount,
-            premium,
-            address(flashExec),
-            ""
-        );
+        flashExec.executeOperation(address(token), amount, premium, address(flashExec), "");
     }
 
     // =========================================================================
     // INVARIANT I3: invalidInitiatorReverts
     // =========================================================================
-    /// @notice INVARIANT I3 — executeOperation verifica que initiator == address(this).
+    /// @notice INVARIANT I3 - executeOperation verifica que initiator == address(this).
     ///         Un initiator invalido SIEMPRE revierte con FL_InvalidInitiator.
     function invariant_I3_invalidInitiatorReverts() public {
         uint256 amount = 1000e18;
@@ -505,17 +501,13 @@ contract FlashLoanInvariantTest is Test {
     // =========================================================================
     // INVARIANT I4: balancerVaultNotSetReverts
     // =========================================================================
-    /// @notice INVARIANT I4 — receiveFlashLoan revierte con FL_BalancerVaultNotSet
+    /// @notice INVARIANT I4 - receiveFlashLoan revierte con FL_BalancerVaultNotSet
     ///         si balancerVault == address(0).
     function invariant_I4_balancerVaultNotSetReverts() public {
         // Desplegar un nuevo executor sin balancer vault
         FlashLoanExecutor impl = new FlashLoanExecutor();
-        bytes memory initData = abi.encodeWithSelector(
-            FlashLoanExecutor.initialize.selector,
-            admin,
-            address(aavePool),
-            address(arbExec)
-        );
+        bytes memory initData =
+            abi.encodeWithSelector(FlashLoanExecutor.initialize.selector, admin, address(aavePool), address(arbExec));
         ERC1967Proxy newProxy = new ERC1967Proxy(address(impl), initData);
         FlashLoanExecutor newFlashExec = FlashLoanExecutor(payable(address(newProxy)));
 
@@ -536,17 +528,13 @@ contract FlashLoanInvariantTest is Test {
     // =========================================================================
     // INVARIANT I5: cheapestProviderIsCheaper
     // =========================================================================
-    /// @notice INVARIANT I5 — selectCheapestProvider siempre elige el provider
+    /// @notice INVARIANT I5 - selectCheapestProvider siempre elige el provider
     ///         con menor fee cuando ambos soportan el asset.
     function invariant_I5_cheapestProviderIsCheaper() public view {
         uint256 amount = 10000e18;
 
-        (address cheaper, uint256 fee) = flashExec.selectCheapestProvider(
-            address(zeroFeeProvider),
-            address(feeProvider),
-            address(token),
-            amount
-        );
+        (address cheaper, uint256 fee) =
+            flashExec.selectCheapestProvider(address(zeroFeeProvider), address(feeProvider), address(token), amount);
 
         assertEq(cheaper, address(zeroFeeProvider), "I5: Deberia elegir zeroFeeProvider");
         assertEq(fee, 0, "I5: Fee de zeroFeeProvider deberia ser 0");
@@ -555,7 +543,7 @@ contract FlashLoanInvariantTest is Test {
     // =========================================================================
     // INVARIANT I6: zeroFeeProviderAlwaysZero
     // =========================================================================
-    /// @notice INVARIANT I6 — MockZeroFeeProvider siempre retorna fee = 0
+    /// @notice INVARIANT I6 - MockZeroFeeProvider siempre retorna fee = 0
     ///         para cualquier monto.
     function invariant_I6_zeroFeeProviderAlwaysZero() public view {
         uint256 feeSmall = zeroFeeProvider.flashLoanFee(1e18);
@@ -568,7 +556,7 @@ contract FlashLoanInvariantTest is Test {
     // =========================================================================
     // INVARIANT I7: feeProviderReturnsCorrectFee
     // =========================================================================
-    /// @notice INVARIANT I7 — MockFeeProvider retorna el fee correcto (0.09%).
+    /// @notice INVARIANT I7 - MockFeeProvider retorna el fee correcto (0.09%).
     function invariant_I7_feeProviderReturnsCorrectFee() public view {
         uint256 amount = 10000e18;
         uint256 expectedFee = (amount * 9) / 10000;
@@ -580,7 +568,7 @@ contract FlashLoanInvariantTest is Test {
     // =========================================================================
     // INVARIANT I8: unauthorizedBalancerCallbackReverts
     // =========================================================================
-    /// @notice INVARIANT I8 — receiveFlashLoan solo acepta llamadas desde el
+    /// @notice INVARIANT I8 - receiveFlashLoan solo acepta llamadas desde el
     ///         balancerVault configurado. Llamadas desde otras direcciones
     ///         revierten con FL_UnauthorizedCaller.
     function invariant_I8_unauthorizedBalancerCallbackReverts() public {
@@ -605,17 +593,13 @@ contract FlashLoanInvariantTest is Test {
     // =========================================================================
     // INVARIANT I9: noProviderConfiguredReverts
     // =========================================================================
-    /// @notice INVARIANT I9 — Si flashLoanProvider == address(0) y se intenta
+    /// @notice INVARIANT I9 - Si flashLoanProvider == address(0) y se intenta
     ///         receiveFlashLoan desde Balancer, revierte con FL_NoProviderConfigured.
     function invariant_I9_noProviderConfiguredReverts() public {
         // Desplegar un nuevo FlashLoanExecutor con vault configurado pero provider en 0
         FlashLoanExecutor impl = new FlashLoanExecutor();
-        bytes memory initData = abi.encodeWithSelector(
-            FlashLoanExecutor.initialize.selector,
-            admin,
-            address(aavePool),
-            address(arbExec)
-        );
+        bytes memory initData =
+            abi.encodeWithSelector(FlashLoanExecutor.initialize.selector, admin, address(aavePool), address(arbExec));
         ERC1967Proxy newProxy = new ERC1967Proxy(address(impl), initData);
         FlashLoanExecutor newFlashExec = FlashLoanExecutor(payable(address(newProxy)));
 
@@ -639,7 +623,7 @@ contract FlashLoanInvariantTest is Test {
     // =========================================================================
     // INVARIANT I10: referralCodeUpdateable
     // =========================================================================
-    /// @notice INVARIANT I10 — setReferralCode actualiza el referralCode.
+    /// @notice INVARIANT I10 - setReferralCode actualiza el referralCode.
     function invariant_I10_referralCodeUpdateable() public {
         uint16 newCode = 42;
 
@@ -650,7 +634,7 @@ contract FlashLoanInvariantTest is Test {
     }
 
     // =========================================================================
-    // Fuzzing directo — 10,000 runs por funcion
+    // Fuzzing directo - 10,000 runs por funcion
     // =========================================================================
 
     /// @notice Fuzz: executeOperation desde caller no autorizado SIEMPRE revierte.
@@ -662,13 +646,7 @@ contract FlashLoanInvariantTest is Test {
 
         vm.expectRevert(FL_UnauthorizedCaller.selector);
         vm.prank(caller);
-        flashExec.executeOperation(
-            address(token),
-            amount,
-            premium,
-            address(flashExec),
-            ""
-        );
+        flashExec.executeOperation(address(token), amount, premium, address(flashExec), "");
     }
 
     /// @notice Fuzz: executeOperation con initiator invalido SIEMPRE revierte.
@@ -680,25 +658,15 @@ contract FlashLoanInvariantTest is Test {
 
         vm.expectRevert(FL_InvalidInitiator.selector);
         vm.prank(address(aavePool));
-        flashExec.executeOperation(
-            address(token),
-            amount,
-            premium,
-            initiator,
-            ""
-        );
+        flashExec.executeOperation(address(token), amount, premium, initiator, "");
     }
 
     /// @notice Fuzz: selectCheapestProvider elige el de menor fee.
     function testFuzz_FL_cheapestProvider(uint256 amount) public view {
         amount = bound(amount, 1, type(uint128).max);
 
-        (address cheaper, uint256 fee) = flashExec.selectCheapestProvider(
-            address(zeroFeeProvider),
-            address(feeProvider),
-            address(token),
-            amount
-        );
+        (address cheaper, uint256 fee) =
+            flashExec.selectCheapestProvider(address(zeroFeeProvider), address(feeProvider), address(token), amount);
 
         assertEq(cheaper, address(zeroFeeProvider), "Cheapest deberia ser zeroFeeProvider");
         assertEq(fee, 0, "Fee deberia ser 0");
@@ -787,7 +755,7 @@ contract FlashLoanInvariantTest is Test {
     }
 
     /// @notice INVARIANT E2E: Flash loan que falla en arbitrage NO deja fondos
-    ///         atorados — todo se revierte atomicamente.
+    ///         atorados - todo se revierte atomicamente.
     function testFuzz_FL_failedArbitrageRevertsAtomically(uint256 amount) public {
         amount = bound(amount, 1e18, 10_000_000e18);
 

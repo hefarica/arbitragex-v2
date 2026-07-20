@@ -2,12 +2,12 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// DeterministicFactory.t.sol — tests against the REAL src/core/DeterministicFactory.
+// DeterministicFactory.t.sol - tests against the REAL src/core/DeterministicFactory.
 //
 // History: the previous version of this file deployed an embedded STUB contract
 // (a throwaway `contract DeterministicFactory { ... }` defined inline) and never
 // imported src/core/DeterministicFactory.sol. Its fuzz/invariant runs validated
-// the stub, not the production contract — illusory coverage. Worse, the stub's
+// the stub, not the production contract - illusory coverage. Worse, the stub's
 // deploy() CREATE2'd arbitrary fuzzed bytes as if they were init code, so under
 // modern Foundry the suite was 15/24 RED (every "deploy failed"). CI's `|| true`
 // hid both facts. This rewrite exercises the real contract with valid init
@@ -26,6 +26,7 @@ import {
 ///      real init bytecode (creationCode ++ abi.encode(arg)) rather than a stub.
 contract FactoryTarget {
     uint256 public immutable value;
+
     constructor(uint256 _value) {
         value = _value;
     }
@@ -84,9 +85,7 @@ contract DeterministicFactoryTest is Test {
     function test_I3_SameInputSameAddress() public view {
         bytes memory bc = _code(7);
         assertEq(
-            factory.predictAddress(bc, BASE, "Y"),
-            factory.predictAddress(bc, BASE, "Y"),
-            "prediction not deterministic"
+            factory.predictAddress(bc, BASE, "Y"), factory.predictAddress(bc, BASE, "Y"), "prediction not deterministic"
         );
     }
 

@@ -2,22 +2,22 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// STORAGE LAYOUT — APPEND-ONLY RULE (SC-08, 2026-05-08)
+// STORAGE LAYOUT - APPEND-ONLY RULE (SC-08, 2026-05-08)
 // =============================================================================
 // UUPS preserves storage across upgrades by delegatecall into a new
 // implementation that reads the proxy's storage slots.  The parent contracts
 // (Initializable, AccessControlUpgradeable, PausableUpgradeable,
 // ReentrancyGuardUpgradeable, UUPSUpgradeable) all use ERC-7201 namespaced
-// storage slots — they do NOT occupy the linear slot space [0..N].
+// storage slots - they do NOT occupy the linear slot space [0..N].
 //
 // This contract's OWN variables start at linear slot 0:
 //   slot 0: approvedRouters    (mapping(address => bool))
 //   slot 1: approvedTokens     (mapping(address => bool))
-//   slot 2: allowanceManager   (IAllowanceManager — address, 20 bytes)  ← SC-5
-//   slot 3: approvedSelectors  (mapping(address => mapping(bytes4 => bool)))  ← A5
+//   slot 2: allowanceManager   (IAllowanceManager - address, 20 bytes)  <- SC-5
+//   slot 3: approvedSelectors  (mapping(address => mapping(bytes4 => bool)))  <- A5
 //
 // CRITICAL: When adding new state variables in V2, V3, etc., you MUST append
-// them AFTER slot 3.  NEVER insert variables between existing ones — that
+// them AFTER slot 3.  NEVER insert variables between existing ones - that
 // would corrupt the storage layout and brick all proxies pointing at this impl.
 // =============================================================================
 
@@ -56,7 +56,7 @@ error ZeroGrossProfit();
 ///      rejected fail-closed instead of silently leaking the executor's own balance.
 error FlashFundedPullMismatch();
 /// @dev SC-13 (independent adversarial review): thrown when the flash-funded round trip
-///      would NOT leave this contract holding exactly its pre-call working capital B —
+///      would NOT leave this contract holding exactly its pre-call working capital B -
 ///      i.e. the OUTBOUND return of (principal + profit) shorted the executor (e.g. an
 ///      outbound-lossy / rebasing tokenIn that skims the sender). Symmetric to
 ///      FlashFundedPullMismatch on the pull leg: makes the capital-retention identity
@@ -91,7 +91,7 @@ error ZeroIntermediate();
 ///      Fail-closed: refuse to dispatch a route shape whose spend safety is not modelled.
 error UnsupportedRouteLength(uint256 length);
 /// @dev (HIGH, execution-core audit 2026-06-29) Thrown when a cross-DEX 2-leg route ends with
-///      this contract holding LESS tokenOut than it held before the route — i.e. the route
+///      this contract holding LESS tokenOut than it held before the route - i.e. the route
 ///      drained pre-existing tokenOut working capital B_out. The tokenIn-only profit/retention
 ///      gate (ZeroGrossProfit/minProfit) does NOT see a tokenOut shortfall, and leg-1's
 ///      delta-approval alone does NOT stop a sender-surcharge / reflection / deflationary
@@ -107,9 +107,9 @@ error TokenOutRetentionViolation();
 ///      keeping the route-shape gate provably exhaustive.
 error AliasedTwoLegRoute();
 
-/// @title ArbitrageExecutor — UUPS-upgradeable on-chain arbitrage executor
+/// @title ArbitrageExecutor - UUPS-upgradeable on-chain arbitrage executor
 /// @notice Executes atomic multi-hop circular arbitrage routes.
-///         Atomic invariant: flash loan → sequential swaps → repay → profit.
+///         Atomic invariant: flash loan -> sequential swaps -> repay -> profit.
 ///         Reverts entirely if profit < minProfit (RULE §19).
 /// @dev Refactored to UUPS proxy pattern (SC-08). All constructor logic
 ///      moved to initialize(). Use ERC1967Proxy in deployment scripts.
@@ -125,7 +125,7 @@ contract ArbitrageExecutor is
 
     /// @notice Role required to call executeArbitrage.
     bytes32 public constant EXECUTOR_ROLE = keccak256("EXECUTOR_ROLE");
-    /// @notice Admin role — alias for DEFAULT_ADMIN_ROLE.
+    /// @notice Admin role - alias for DEFAULT_ADMIN_ROLE.
     bytes32 public constant ADMIN_ROLE = DEFAULT_ADMIN_ROLE;
     /// @notice Separate UPGRADER_ROLE allows key rotation independent of admin.
     ///         In production: admin key can be rotated without losing upgrade rights,
@@ -139,14 +139,14 @@ contract ArbitrageExecutor is
     // slot 1
     /// @notice Set of ERC-20 tokens approved as tokenIn for arbitrage routes.
     mapping(address => bool) public approvedTokens;
-    // slot 2 — SC-5: AllowanceManager reference (retained for storage layout).
+    // slot 2 - SC-5: AllowanceManager reference (retained for storage layout).
     /// @notice Optional AllowanceManager reference, kept for backward compatibility
     ///         and as an external approval REGISTRY only.
-    ///         SC-12 (2026-06-28): this is NO LONGER a spend gate — executeArbitrage
+    ///         SC-12 (2026-06-28): this is NO LONGER a spend gate - executeArbitrage
     ///         does not consult it. Spend control is enforced by the executor's own
     ///         exact, ephemeral per-router allowance. Slot retained (append-only UUPS).
     IAllowanceManager public allowanceManager;
-    // slot 3 — A5: per-router function-selector whitelist.
+    // slot 3 - A5: per-router function-selector whitelist.
     /// @notice Per-router whitelist of allowed 4-byte function selectors.
     /// SECURITY (audit A5, 2026-05-10): without selector gating, an EXECUTOR_ROLE
     /// compromise could invoke arbitrary functions on approved routers
@@ -198,7 +198,7 @@ contract ArbitrageExecutor is
         _disableInitializers();
     }
 
-    /// @notice Initializer — replaces constructor. Must be called exactly once via ERC1967Proxy.
+    /// @notice Initializer - replaces constructor. Must be called exactly once via ERC1967Proxy.
     /// @param admin Address granted DEFAULT_ADMIN_ROLE and UPGRADER_ROLE.
     function initialize(address admin) public initializer {
         __AccessControl_init();
@@ -227,18 +227,18 @@ contract ArbitrageExecutor is
     ///
     ///      SPEND CONTROL (SC-12, 2026-06-28): before each router call the executor
     ///      grants that router an exact, ephemeral tokenIn allowance of `amountIn`
-    ///      and resets it to zero immediately after — so an approved router can pull
+    ///      and resets it to zero immediately after - so an approved router can pull
     ///      at most `amountIn` of tokenIn PER HOP and no standing allowance survives.
     ///      This bounds spend per hop, NOT per route: an N-hop route authorizes up to
     ///      N*amountIn of gross tokenIn outflow. Route-level loss is bounded separately
-    ///      by the ZeroGrossProfit/minProfit balance gate below — the route must end in
+    ///      by the ZeroGrossProfit/minProfit balance gate below - the route must end in
     ///      a net tokenIn gain >= minProfit or the entire tx reverts atomically.
     ///      The AllowanceManager registry is no longer consulted as a spend gate.
     ///
     ///      BREAKING CHANGE NOTE (SC-05, 2026-05-08):
     ///      tokenOut was added to this signature. Any external caller (e.g. relays-client)
     ///      must pass the intermediate token explicitly. Current paper-trade deploy has no
-    ///      external callers — safe to change now. Wire this up in relays-client Sprint 4+.
+    ///      external callers - safe to change now. Wire this up in relays-client Sprint 4+.
     ///
     /// @param routeHash  Unique hash of the route for event indexing.
     /// @param tokenIn    Input token (also the output since this is a circular route).
@@ -269,7 +269,7 @@ contract ArbitrageExecutor is
     ///         call (e.g. a flash loan), returning principal + profit to the caller.
     /// @dev SC-13 (flash-loan fund-handoff, 2026-06-28). Closes the gap where a flash-
     ///      loan provider wrapper (FlashLoanExecutor) approved this contract for the
-    ///      borrowed amount but the funds were never pulled — so executeArbitrage saw a
+    ///      borrowed amount but the funds were never pulled - so executeArbitrage saw a
     ///      zero balance, reverted InsufficientBalance, and flash-funded arbitrage could
     ///      not execute on any provider path.
     ///
@@ -280,7 +280,7 @@ contract ArbitrageExecutor is
     ///      equals (balanceAfter - preCallBalance) by construction, so this contract's own
     ///      working capital B (in tokenIn) is provably retained. Retention is enforced by
     ///      the net-profit gate (ZeroGrossProfit/minProfit) plus the exact `amountIn +
-    ///      profit` return — NOT by the per-hop spend cap, which authorizes up to
+    ///      profit` return - NOT by the per-hop spend cap, which authorizes up to
     ///      N*amountIn of gross intra-route tokenIn outflow that is recovered-or-reverted.
     ///      A compromised EXECUTOR_ROLE key therefore cannot drain B here. The identity is
     ///      tokenIn-scoped: any OTHER token this contract happens to hold is protected only
@@ -289,7 +289,7 @@ contract ArbitrageExecutor is
     ///
     ///      Caller requirements: msg.sender holds EXECUTOR_ROLE and has approved >=
     ///      amountIn of tokenIn to this contract (FlashLoanExecutor already does the
-    ///      forceApprove). This contract is LOAN-AGNOSTIC — it never sees the flash-loan
+    ///      forceApprove). This contract is LOAN-AGNOSTIC - it never sees the flash-loan
     ///      premium; covering it is the CALLER's responsibility, so minProfit SHOULD be set
     ///      >= premium. If it is not, this contract still cannot lose money (B is retained);
     ///      the provider's own atomic repayment revert is the final backstop. Protection of
@@ -326,7 +326,7 @@ contract ArbitrageExecutor is
 
         // Return principal + profit to the caller. By construction this equals
         // balanceAfter - preCallBalance, so this contract's own working capital is never
-        // forwarded — only this call's pulled principal and the route profit.
+        // forwarded - only this call's pulled principal and the route profit.
         IERC20(tokenIn).safeTransfer(msg.sender, amountIn + profit);
 
         // Defense-in-depth (independent SC-13 review): make the capital-retention identity
@@ -334,8 +334,8 @@ contract ArbitrageExecutor is
         // (FlashFundedPullMismatch); here we assert that after returning principal + profit
         // this contract again holds EXACTLY its pre-call working capital B. For every
         // supported faithful 1:1 token this is a no-op (balance == balBeforePull by
-        // construction). It only reverts the unsupported outbound-lossy / rebasing case —
-        // where the return transfer shorted the executor — rather than silently leaking B.
+        // construction). It only reverts the unsupported outbound-lossy / rebasing case -
+        // where the return transfer shorted the executor - rather than silently leaking B.
         if (IERC20(tokenIn).balanceOf(address(this)) != balBeforePull) {
             revert FlashFundedCapitalRetentionViolation();
         }
@@ -347,7 +347,7 @@ contract ArbitrageExecutor is
     ///      flash-funded wrapper). Enforces token approval, the SC-12 per-router spend
     ///      cap, the A5 router/selector allowlist, and the net-profit gate; returns the
     ///      realised profit in tokenIn units. Moves no funds in/out of this contract
-    ///      beyond the per-hop router swaps — the caller decides custody of the profit.
+    ///      beyond the per-hop router swaps - the caller decides custody of the profit.
     function _runRoute(
         bytes32 routeHash,
         address tokenIn,
@@ -361,7 +361,7 @@ contract ArbitrageExecutor is
         if (!approvedTokens[tokenIn]) revert TokenNotApproved(tokenIn);
 
         // M8 (audit 2026-05-10): validate intermediate token when it differs from tokenIn.
-        // Circular arb (tokenOut == tokenIn) is approved by definition — no extra SLOAD needed.
+        // Circular arb (tokenOut == tokenIn) is approved by definition - no extra SLOAD needed.
         // Non-circular routes (tokenOut != tokenIn) must pass through the same approval registry.
         // Fail-closed: unapproved intermediate tokens revert before any state change.
         if (tokenOut != tokenIn && !approvedTokens[tokenOut]) revert TokenNotApproved(tokenOut);
@@ -379,7 +379,7 @@ contract ArbitrageExecutor is
         // two DISTINCT tokens, circular routes are a single leg. The 2-leg tokenOut-delta
         // accounting below (snapshot tokenOut, approve only the produced intermediate) is
         // undefined when tokenOut aliases tokenIn, so reject it fail-closed with a NAMED
-        // error here — making the route-shape gate provably exhaustive rather than relying
+        // error here - making the route-shape gate provably exhaustive rather than relying
         // on an incidental ZeroIntermediate revert from the aliased delta computation.
         if (routers.length == 2 && tokenOut == tokenIn) revert AliasedTwoLegRoute();
 
@@ -388,10 +388,10 @@ contract ArbitrageExecutor is
 
         // SC-12 (executor self-cap) + (1a) approve-per-hop. On-chain spend control is
         // enforced by an exact, ephemeral per-router allowance (forceApprove exactAmount
-        // → call → reset to 0) for EACH leg's correct INPUT token:
+        // -> call -> reset to 0) for EACH leg's correct INPUT token:
         //   - Leg 0 spends `tokenIn`, exactly `amountIn`.
         //   - Leg 1 (cross-DEX) spends `tokenOut`, exactly the INTERMEDIATE delta that
-        //     leg 0 produced — never the executor's full tokenOut balance. The delta-
+        //     leg 0 produced - never the executor's full tokenOut balance. The delta-
         //     approval BOUNDS what the router may pull, but it does NOT by itself preserve
         //     pre-existing tokenOut working capital B_out: a sender-surcharge / reflection /
         //     deflationary tokenOut can skim the executor on leg-1's outbound transferFrom,
@@ -406,8 +406,7 @@ contract ArbitrageExecutor is
             // Leg 0: input token is tokenIn, exact amount = amountIn.
             // When there is a second leg, snapshot tokenOut before leg 0 so we can
             // approve leg 1 EXACTLY the intermediate this route created.
-            uint256 tokenOutBefore =
-                routers.length == 2 ? IERC20(tokenOut).balanceOf(address(this)) : 0;
+            uint256 tokenOutBefore = routers.length == 2 ? IERC20(tokenOut).balanceOf(address(this)) : 0;
 
             _validateAndCall(tokenIn, routers[0], amountIn, payload[0]);
 
@@ -416,8 +415,7 @@ contract ArbitrageExecutor is
                 // delta lets the backward leg pull the tokenOut it needs while preserving
                 // any pre-existing tokenOut working capital. Fail-closed if leg 0 produced
                 // no intermediate.
-                uint256 intermediate =
-                    IERC20(tokenOut).balanceOf(address(this)) - tokenOutBefore;
+                uint256 intermediate = IERC20(tokenOut).balanceOf(address(this)) - tokenOutBefore;
                 if (intermediate == 0) revert ZeroIntermediate();
 
                 // Leg 1: input token is tokenOut, exact amount = the intermediate delta.
@@ -432,7 +430,7 @@ contract ArbitrageExecutor is
                 // revert). Assert the executor's tokenOut balance did not fall below its
                 // pre-route snapshot. Fail-closed exactly like FlashFundedCapitalRetentionViolation
                 // (tokenIn). A FAITHFUL leg-1 consumes at most `intermediate`, so balance ends
-                // >= tokenOutBefore (equality when fully consumed) — the guard fires ONLY on a
+                // >= tokenOutBefore (equality when fully consumed) - the guard fires ONLY on a
                 // real tokenOut shortfall, never on a supported route.
                 if (IERC20(tokenOut).balanceOf(address(this)) < tokenOutBefore) {
                     revert TokenOutRetentionViolation();
@@ -456,19 +454,14 @@ contract ArbitrageExecutor is
     ///        - approvedRouters[router]                       (RouterNotApproved)
     ///        - payload >= 4 bytes                            (AE_PayloadTooShort)
     ///        - approvedSelectors[router][selector]           (AE_RouterSelectorNotApproved)
-    ///      then calls _boundedRouterCall for the exact, ephemeral approve → call → reset.
+    ///      then calls _boundedRouterCall for the exact, ephemeral approve -> call -> reset.
     ///      Extracted to its own frame to keep _runRoute under the EVM stack limit.
     /// @param inputToken  The token this leg spends (tokenIn for leg 0, tokenOut for leg 1).
     /// @param router      Approved router to dispatch this leg to.
     /// @param exactAmount Exact, ephemeral allowance to grant for this leg (amountIn for
-    ///                    leg 0, the intermediate delta for leg 1) — never unbounded.
+    ///                    leg 0, the intermediate delta for leg 1) - never unbounded.
     /// @param pld         Calldata for the swap (must carry a whitelisted 4-byte selector).
-    function _validateAndCall(
-        address inputToken,
-        address router,
-        uint256 exactAmount,
-        bytes calldata pld
-    ) internal {
+    function _validateAndCall(address inputToken, address router, uint256 exactAmount, bytes calldata pld) internal {
         if (!approvedRouters[router]) revert RouterNotApproved(router);
 
         // A5: selector whitelist gate.
@@ -499,27 +492,22 @@ contract ArbitrageExecutor is
     ///        - no standing allowance survives the call (reset to 0 on success; the
     ///          whole tx reverts on failure, so nothing is left granted either way).
     ///      (1a) `inputToken`/`exactAmount` are the LEG's input token and exact amount:
-    ///      (tokenIn, amountIn) for leg 0; (tokenOut, intermediate-delta) for leg 1 — the
+    ///      (tokenIn, amountIn) for leg 0; (tokenOut, intermediate-delta) for leg 1 - the
     ///      backward leg therefore approves only the tokenOut this route produced, and never
     ///      an unbounded allowance. This delta-approval BOUNDS the router's pull but does NOT
     ///      by itself preserve pre-existing tokenOut working capital B_out: a sender-surcharge
     ///      / reflection / deflationary tokenOut can still skim the executor on leg-1's
     ///      outbound transferFrom. B_out retention is ENFORCED separately by the post-leg1
     ///      TokenOutRetentionViolation guard in _runRoute (HIGH, execution-core audit
-    ///      2026-06-29) — the tokenOut-scoped mirror of FlashFundedCapitalRetentionViolation.
+    ///      2026-06-29) - the tokenOut-scoped mirror of FlashFundedCapitalRetentionViolation.
     ///      forceApprove zeroes a non-zero current allowance first, so this is safe for
     ///      approve-race tokens (e.g. USDT). Extracted to its own frame purely to keep
     ///      executeArbitrage under the EVM stack limit; it performs no validation of its
-    ///      own — callers (via _validateAndCall) must have already enforced
+    ///      own - callers (via _validateAndCall) must have already enforced
     ///      router/selector allowlisting.
-    function _boundedRouterCall(
-        address inputToken,
-        address router,
-        uint256 exactAmount,
-        bytes calldata pld
-    ) internal {
+    function _boundedRouterCall(address inputToken, address router, uint256 exactAmount, bytes calldata pld) internal {
         IERC20(inputToken).forceApprove(router, exactAmount);
-        (bool success, ) = router.call(pld);
+        (bool success,) = router.call(pld);
         if (!success) revert SwapFailed();
         IERC20(inputToken).forceApprove(router, 0);
     }
@@ -547,7 +535,7 @@ contract ArbitrageExecutor is
     /// @notice Wire this executor to an AllowanceManager instance (external approval
     ///         REGISTRY only). Pass address(0) to clear it.
     /// @dev    SC-12 (2026-06-28): setting this NO LONGER affects executeArbitrage's
-    ///         spend safety — the executor enforces its own exact, ephemeral per-router
+    ///         spend safety - the executor enforces its own exact, ephemeral per-router
     ///         allowance regardless of this value. Retained for backward compatibility
     ///         and off-chain registry/observability use; it does not custody or move
     ///         this contract's funds and is not a spend gate.
@@ -572,11 +560,10 @@ contract ArbitrageExecutor is
     /// @param router    Router address whose selector whitelist is being modified.
     /// @param selector  4-byte function selector to approve or revoke.
     /// @param status    True to approve, false to revoke.
-    function setRouterSelectorApproval(
-        address router,
-        bytes4 selector,
-        bool status
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setRouterSelectorApproval(address router, bytes4 selector, bool status)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
         approvedSelectors[router][selector] = status;
         emit RouterSelectorApproved(router, selector, status);
     }
@@ -588,16 +575,17 @@ contract ArbitrageExecutor is
     /// @param router     Router address whose selector whitelist is being modified.
     /// @param selectors  Array of 4-byte function selectors to approve or revoke.
     /// @param status     True to approve all, false to revoke all.
-    function batchSetRouterSelectorApproval(
-        address router,
-        bytes4[] calldata selectors,
-        bool status
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function batchSetRouterSelectorApproval(address router, bytes4[] calldata selectors, bool status)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
         uint256 len = selectors.length;
         for (uint256 i = 0; i < len;) {
             approvedSelectors[router][selectors[i]] = status;
             emit RouterSelectorApproved(router, selectors[i], status);
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
     }
 
@@ -635,7 +623,7 @@ contract ArbitrageExecutor is
         if (to == address(0)) revert ZeroAddress();
         uint256 bal = address(this).balance;
         if (bal == 0) revert ZeroBalance();
-        (bool ok, ) = to.call{value: bal}("");
+        (bool ok,) = to.call{value: bal}("");
         require(ok, "ETH transfer failed");
         emit ETHWithdrawn(to, bal);
     }

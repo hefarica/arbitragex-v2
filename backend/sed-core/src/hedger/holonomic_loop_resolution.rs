@@ -178,6 +178,20 @@ pub struct LiquidityEdge {
     pub log_price: f64,
 }
 
+/// Contexto mutable para la búsqueda DFS de ciclos holonómicos.
+/// Agrupa los estados transitorios para reducir la aridad de la función recursiva.
+/// Must live at module scope: rustc/rustfmt reject nested `struct` inside `impl`.
+struct DfsContext<'a> {
+    /// Conjunto de tokens visitados en el camino actual
+    visited: &'a mut HashSet<String>,
+    /// Camino de aristas recorrido hasta el momento
+    path: &'a mut Vec<LiquidityEdge>,
+    /// Camino de precios acumulados
+    price_path: &'a mut Vec<f64>,
+    /// Resultados acumulados de ciclos encontrados
+    results: &'a mut Vec<ClosedContourTrajectory>,
+}
+
 impl Default for LiquidityGraph {
     fn default() -> Self {
         Self::new()
@@ -220,19 +234,6 @@ impl LiquidityGraph {
         self.manifolds.insert(addr.clone(), manifold.clone());
     }
 
-    /// Contexto mutable para la búsqueda DFS de ciclos holonómicos.
-    /// Agrupa los estados transitorios para reducir la aridad de la función recursiva.
-    struct DfsContext<'a> {
-        /// Conjunto de tokens visitados en el camino actual
-        visited: &'a mut HashSet<String>,
-        /// Camino de aristas recorrido hasta el momento
-        path: &'a mut Vec<LiquidityEdge>,
-        /// Camino de precios acumulados
-        price_path: &'a mut Vec<f64>,
-        /// Resultados acumulados de ciclos encontrados
-        results: &'a mut Vec<ClosedContourTrajectory>,
-    }
-
     /// Búsqueda de ciclos holonómicos mediante DFS con límite de profundidad.
     pub fn find_holonomic_cycles(
         &self,
@@ -252,13 +253,7 @@ impl LiquidityGraph {
             results: &mut results,
         };
 
-        self.dfs_cycles(
-            start_token,
-            start_token,
-            max_depth,
-            min_holonomy,
-            &mut ctx,
-        );
+        self.dfs_cycles(start_token, start_token, max_depth, min_holonomy, &mut ctx);
         results
     }
 

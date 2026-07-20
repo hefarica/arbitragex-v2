@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// SC-13: FlashLoanRoundTrip — end-to-end proof that the flash-loan fund-handoff
+// SC-13: FlashLoanRoundTrip - end-to-end proof that the flash-loan fund-handoff
 // gap (§7) is closed.
 //
 // Before SC-13, FlashLoanExecutor `forceApprove`d ArbitrageExecutor for the
@@ -31,24 +31,31 @@ import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 contract RTToken is ERC20 {
     constructor() ERC20("RoundTrip", "RT") {}
-    function mint(address to, uint256 amount) external { _mint(to, amount); }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
 }
 
-/// @dev Router that mints `profit` of RTToken to the executor on call — simulates a
+/// @dev Router that mints `profit` of RTToken to the executor on call - simulates a
 ///      swap that nets positive output back into the executor's balance.
 contract RTProfitRouter {
     RTToken public token;
     address public executor;
     uint256 public profit;
+
     constructor(address _token, address _executor, uint256 _profit) {
         token = RTToken(_token);
         executor = _executor;
         profit = _profit;
     }
-    fallback() external { token.mint(executor, profit); }
+
+    fallback() external {
+        token.mint(executor, profit);
+    }
 }
 
-/// @dev Router that does nothing — produces no gross profit (drives the revert path).
+/// @dev Router that does nothing - produces no gross profit (drives the revert path).
 contract RTZeroRouter {
     fallback() external {}
 }
@@ -75,18 +82,27 @@ contract RTBalancerProvider is IFlashLoanProvider {
         // Provider must be made whole (loan fully repaid) by the end of the callback.
         require(IERC20(asset).balanceOf(address(this)) >= balBefore, "loan not repaid");
     }
-    function flashLoanFee(uint256) external pure override returns (uint256) { return 0; }
-    function maxFlashLoan(address) external pure override returns (uint256) { return type(uint256).max; }
+
+    function flashLoanFee(uint256) external pure override returns (uint256) {
+        return 0;
+    }
+
+    function maxFlashLoan(address) external pure override returns (uint256) {
+        return type(uint256).max;
+    }
 }
 
 /// @dev Aave-V3-style pool that charges a premium (e.g. 0.05% = 5 bps). Disburses the
 ///      loan, invokes executeOperation, then PULLS amount+premium back (the receiver
-///      forceApproves it). Exercises the legacy Aave path with a non-zero premium —
+///      forceApproves it). Exercises the legacy Aave path with a non-zero premium -
 ///      proving the flash-funded round trip leaves the borrower able to repay principal
 ///      + premium and keep profit - premium.
 contract RTAavePool {
     uint256 public immutable premiumBps;
-    constructor(uint256 _premiumBps) { premiumBps = _premiumBps; }
+
+    constructor(uint256 _premiumBps) {
+        premiumBps = _premiumBps;
+    }
 
     function flashLoanSimple(address receiver, address asset, uint256 amount, bytes calldata params, uint16) external {
         uint256 premium = (amount * premiumBps) / 10_000;
@@ -121,18 +137,27 @@ contract FlashLoanRoundTripTest is Test {
 
         // Real ArbitrageExecutor (UUPS proxy).
         ArbitrageExecutor aeImpl = new ArbitrageExecutor();
-        executor = ArbitrageExecutor(payable(address(new ERC1967Proxy(
-            address(aeImpl),
-            abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, admin)
-        ))));
+        executor = ArbitrageExecutor(
+            payable(address(
+                    new ERC1967Proxy(
+                        address(aeImpl), abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, admin)
+                    )
+                ))
+        );
 
         // Real FlashLoanExecutor (UUPS proxy) pointing at the real executor.
         // aavePool is unused on the provider path; pass a throwaway non-zero address.
         FlashLoanExecutor flImpl = new FlashLoanExecutor();
-        flashExec = FlashLoanExecutor(address(new ERC1967Proxy(
-            address(flImpl),
-            abi.encodeWithSelector(FlashLoanExecutor.initialize.selector, admin, makeAddr("aavePool"), address(executor))
-        )));
+        flashExec = FlashLoanExecutor(
+            address(
+                new ERC1967Proxy(
+                    address(flImpl),
+                    abi.encodeWithSelector(
+                        FlashLoanExecutor.initialize.selector, admin, makeAddr("aavePool"), address(executor)
+                    )
+                )
+            )
+        );
 
         provider = new RTBalancerProvider();
         token.mint(address(provider), LIQUIDITY); // seed provider liquidity
@@ -159,12 +184,11 @@ contract FlashLoanRoundTripTest is Test {
         payloads[0] = abi.encodePacked(MOCK_SELECTOR);
     }
 
-    function _flashParams(
-        uint256 amountIn,
-        uint256 minProfit,
-        address[] memory routers,
-        bytes[] memory payloads
-    ) internal view returns (bytes memory) {
+    function _flashParams(uint256 amountIn, uint256 minProfit, address[] memory routers, bytes[] memory payloads)
+        internal
+        view
+        returns (bytes memory)
+    {
         return abi.encodeWithSelector(
             ArbitrageExecutor.executeArbitrageFlashFunded.selector,
             bytes32("route"),
@@ -195,7 +219,7 @@ contract FlashLoanRoundTripTest is Test {
         assertEq(token.balanceOf(address(flashExec)), profit, "net profit retained by the borrower");
     }
 
-    // An unprofitable route must revert the WHOLE flash loan atomically — nothing moves.
+    // An unprofitable route must revert the WHOLE flash loan atomically - nothing moves.
     function testRoundTrip_UnprofitableFlashArb_RevertsAtomically() public {
         uint256 amount = 10_000e18;
 
@@ -221,7 +245,7 @@ contract FlashLoanRoundTripTest is Test {
 
     // Regression guard: the OLD broken behaviour. If params encode the SELF-funded
     // executeArbitrage (which never pulls), the executor sees a zero balance and the
-    // flash loan reverts — confirming the round trip specifically requires the new
+    // flash loan reverts - confirming the round trip specifically requires the new
     // flash-funded entrypoint, and that self-funded execution is unfunded here.
     function testRoundTrip_SelfFundedEntrypoint_StillRevertsUnfunded() public {
         uint256 amount = 10_000e18;
@@ -229,7 +253,13 @@ contract FlashLoanRoundTripTest is Test {
 
         bytes memory params = abi.encodeWithSelector(
             ArbitrageExecutor.executeArbitrage.selector,
-            bytes32("route"), address(token), address(token), amount, 1e18, routers, payloads
+            bytes32("route"),
+            address(token),
+            address(token),
+            amount,
+            1e18,
+            routers,
+            payloads
         );
 
         vm.prank(executorRole);
@@ -264,18 +294,24 @@ contract FlashLoanRoundTripTest is Test {
     // the Aave pool (flashLoanProvider unset -> legacy path).
     function testRoundTrip_Aave_PremiumPath_RepaysAndNets() public {
         uint256 amount = 10_000e18;
-        uint256 premiumBps = 5;                       // 0.05%
+        uint256 premiumBps = 5; // 0.05%
         uint256 premium = (amount * premiumBps) / 10_000; // 5e18
-        uint256 profit = 200e18;                      // must exceed premium
+        uint256 profit = 200e18; // must exceed premium
 
         RTAavePool aave = new RTAavePool(premiumBps);
         token.mint(address(aave), LIQUIDITY);
 
         FlashLoanExecutor flImpl = new FlashLoanExecutor();
-        FlashLoanExecutor fl = FlashLoanExecutor(address(new ERC1967Proxy(
-            address(flImpl),
-            abi.encodeWithSelector(FlashLoanExecutor.initialize.selector, admin, address(aave), address(executor))
-        )));
+        FlashLoanExecutor fl = FlashLoanExecutor(
+            address(
+                new ERC1967Proxy(
+                    address(flImpl),
+                    abi.encodeWithSelector(
+                        FlashLoanExecutor.initialize.selector, admin, address(aave), address(executor)
+                    )
+                )
+            )
+        );
         executor.grantRole(executor.EXECUTOR_ROLE(), address(fl));
         fl.grantRole(fl.EXECUTOR_ROLE(), executorRole);
 
@@ -292,11 +328,11 @@ contract FlashLoanRoundTripTest is Test {
 
     // Hygiene: when the encoded route deploys LESS than the full borrowed amount, the
     // FlashLoanExecutor->ArbitrageExecutor allowance granted in the callback is only
-    // partially consumed — and must be cleared to zero before the callback returns.
+    // partially consumed - and must be cleared to zero before the callback returns.
     function testRoundTrip_ResidualExecutorAllowanceCleared() public {
-        uint256 amount   = 10_000e18;
+        uint256 amount = 10_000e18;
         uint256 amountIn = 6_000e18; // route deploys less than the full loan
-        uint256 profit   = 100e18;
+        uint256 profit = 100e18;
 
         (address[] memory routers, bytes[] memory payloads) = _wireProfitRouter(profit);
         bytes memory params = _flashParams(amountIn, 1e18, routers, payloads); // amountIn < amount
@@ -315,18 +351,24 @@ contract FlashLoanRoundTripTest is Test {
     // failure), and the whole flash loan rolls back atomically.
     function testRoundTrip_Aave_RepaymentShortfall_RevertsNamed() public {
         uint256 amount = 10_000e18;
-        uint256 premiumBps = 50;                       // 0.5%
+        uint256 premiumBps = 50; // 0.5%
         uint256 premium = (amount * premiumBps) / 10_000; // 50e18
-        uint256 profit = 10e18;                        // LESS than premium -> shortfall
+        uint256 profit = 10e18; // LESS than premium -> shortfall
 
         RTAavePool aave = new RTAavePool(premiumBps);
         token.mint(address(aave), LIQUIDITY);
 
         FlashLoanExecutor flImpl = new FlashLoanExecutor();
-        FlashLoanExecutor fl = FlashLoanExecutor(address(new ERC1967Proxy(
-            address(flImpl),
-            abi.encodeWithSelector(FlashLoanExecutor.initialize.selector, admin, address(aave), address(executor))
-        )));
+        FlashLoanExecutor fl = FlashLoanExecutor(
+            address(
+                new ERC1967Proxy(
+                    address(flImpl),
+                    abi.encodeWithSelector(
+                        FlashLoanExecutor.initialize.selector, admin, address(aave), address(executor)
+                    )
+                )
+            )
+        );
         executor.grantRole(executor.EXECUTOR_ROLE(), address(fl));
         fl.grantRole(fl.EXECUTOR_ROLE(), executorRole);
 
@@ -346,7 +388,7 @@ contract FlashLoanRoundTripTest is Test {
 // token's transfer semantics (mainnet WETH). Self-skips when MAINNET_RPC_URL is
 // unset (local / non-fork CI); runs in the dedicated `test-fork` CI job. Proves
 // the pull + atomic refund work with a production ERC20, not just a mock.
-// Real-DEX swap fork tests (the F1–F6 matrix) belong to the typed-adapter PR.
+// Real-DEX swap fork tests (the F1-F6 matrix) belong to the typed-adapter PR.
 // =============================================================================
 contract FlashFundedForkTest is Test {
     address internal constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
@@ -364,13 +406,20 @@ contract FlashFundedForkTest is Test {
     }
 
     function testFork_FlashFunded_RealWETH_PullsAndRefundsOnUnprofitable() public {
-        if (!forkActive) { vm.skip(true); return; }
+        if (!forkActive) {
+            vm.skip(true);
+            return;
+        }
 
         address admin = address(this);
-        ArbitrageExecutor executor = ArbitrageExecutor(payable(address(new ERC1967Proxy(
-            address(new ArbitrageExecutor()),
-            abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, admin)
-        ))));
+        ArbitrageExecutor executor = ArbitrageExecutor(
+            payable(address(
+                    new ERC1967Proxy(
+                        address(new ArbitrageExecutor()),
+                        abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, admin)
+                    )
+                ))
+        );
         executor.setTokenApproval(WETH, true);
 
         // A zero-profit router so the route reverts ZeroGrossProfit after the real pull.
@@ -389,7 +438,7 @@ contract FlashFundedForkTest is Test {
 
         vm.startPrank(funder);
         IERC20(WETH).approve(address(executor), amount);
-        vm.expectRevert(); // ZeroGrossProfit — real WETH pulled then atomically refunded
+        vm.expectRevert(); // ZeroGrossProfit - real WETH pulled then atomically refunded
         executor.executeArbitrageFlashFunded(bytes32(0), WETH, WETH, amount, 0, routers, payloads);
         vm.stopPrank();
 

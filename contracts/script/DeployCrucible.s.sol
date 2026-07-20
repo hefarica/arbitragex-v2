@@ -2,17 +2,17 @@
 pragma solidity ^0.8.19;
 
 // =============================================================================
-// OMEGA CRUCIBLE — Testnet Deployment Script
+// OMEGA CRUCIBLE - Testnet Deployment Script
 // Fase: Validacion antes de Mainnet
 // Redes: Holesky (17000) | Arbitrum Sepolia (421614) | Polygon Amoy (80002)
 //
 // Este script despliega el core del protocolo en testnets para validacion
 // completa antes del despliegue en mainnet. Incluye:
-//   1. DeterministicFactory — factory CREATE2 (deploy directo en testnet)
-//   2. WalletTopology       — segregacion de fondos y roles
-//   3. UniswapV2Adapter     — adapter para DEX V2
-//   4. UniswapV3Adapter     — adapter para DEX V3
-//   5. BalancerVaultAdapter — adapter para Balancer (si existe vault)
+//   1. DeterministicFactory - factory CREATE2 (deploy directo en testnet)
+//   2. WalletTopology       - segregacion de fondos y roles
+//   3. UniswapV2Adapter     - adapter para DEX V2
+//   4. UniswapV3Adapter     - adapter para DEX V3
+//   5. BalancerVaultAdapter - adapter para Balancer (si existe vault)
 //
 // PRE-DEPLOY:
 //   1. source .env.crucible
@@ -152,11 +152,7 @@ contract DeployCrucible is Script {
     // Los adapters se despliegan solo si las direcciones de router/vault
     // estan configuradas (diferentes de address(0)).
     // -------------------------------------------------------------------------
-    function _deployHolesky(
-        address _gasSponsor,
-        address _executionSigner,
-        address _coldTreasury
-    ) internal {
+    function _deployHolesky(address _gasSponsor, address _executionSigner, address _coldTreasury) internal {
         console2.log("--- Deploying on Holesky ---");
 
         // 1. DeterministicFactory (deploy directo, no via CREATE2)
@@ -165,11 +161,7 @@ contract DeployCrucible is Script {
         console2.log("[OK] DeterministicFactory:", address(factory));
 
         // 2. WalletTopology
-        WalletTopology walletTopology = new WalletTopology(
-            _gasSponsor,
-            _executionSigner,
-            _coldTreasury
-        );
+        WalletTopology walletTopology = new WalletTopology(_gasSponsor, _executionSigner, _coldTreasury);
         deployment.walletTopology = address(walletTopology);
         console2.log("[OK] WalletTopology      :", address(walletTopology));
 
@@ -216,11 +208,7 @@ contract DeployCrucible is Script {
     // -------------------------------------------------------------------------
     // Deploy en Arbitrum Sepolia (421614)
     // -------------------------------------------------------------------------
-    function _deployArbitrumSepolia(
-        address _gasSponsor,
-        address _executionSigner,
-        address _coldTreasury
-    ) internal {
+    function _deployArbitrumSepolia(address _gasSponsor, address _executionSigner, address _coldTreasury) internal {
         console2.log("--- Deploying on Arbitrum Sepolia ---");
 
         // 1. DeterministicFactory
@@ -229,11 +217,7 @@ contract DeployCrucible is Script {
         console2.log("[OK] DeterministicFactory:", address(factory));
 
         // 2. WalletTopology
-        WalletTopology walletTopology = new WalletTopology(
-            _gasSponsor,
-            _executionSigner,
-            _coldTreasury
-        );
+        WalletTopology walletTopology = new WalletTopology(_gasSponsor, _executionSigner, _coldTreasury);
         deployment.walletTopology = address(walletTopology);
         console2.log("[OK] WalletTopology      :", address(walletTopology));
 
@@ -280,11 +264,7 @@ contract DeployCrucible is Script {
     // -------------------------------------------------------------------------
     // Deploy en Polygon Amoy (80002)
     // -------------------------------------------------------------------------
-    function _deployPolygonAmoy(
-        address _gasSponsor,
-        address _executionSigner,
-        address _coldTreasury
-    ) internal {
+    function _deployPolygonAmoy(address _gasSponsor, address _executionSigner, address _coldTreasury) internal {
         console2.log("--- Deploying on Polygon Amoy ---");
 
         // 1. DeterministicFactory
@@ -293,11 +273,7 @@ contract DeployCrucible is Script {
         console2.log("[OK] DeterministicFactory:", address(factory));
 
         // 2. WalletTopology
-        WalletTopology walletTopology = new WalletTopology(
-            _gasSponsor,
-            _executionSigner,
-            _coldTreasury
-        );
+        WalletTopology walletTopology = new WalletTopology(_gasSponsor, _executionSigner, _coldTreasury);
         deployment.walletTopology = address(walletTopology);
         console2.log("[OK] WalletTopology      :", address(walletTopology));
 
@@ -394,11 +370,7 @@ contract DeployCrucible is Script {
         json = string.concat(json, "}");
 
         string memory filename = string.concat(
-            "out/deployment_crucible_",
-            vm.toString(deployment.chainId),
-            "_",
-            vm.toString(block.timestamp),
-            ".json"
+            "out/deployment_crucible_", vm.toString(deployment.chainId), "_", vm.toString(block.timestamp), ".json"
         );
 
         vm.writeFile(filename, json);

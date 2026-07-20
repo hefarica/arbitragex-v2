@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// SC-12: Mainnet deploy script — Ethereum L1
+// SC-12: Mainnet deploy script - Ethereum L1
 //
 // Deploys all three contracts as UUPS proxies (ERC1967Proxy) with the deployer
 // as the initial admin.  Includes multiple safety guards to prevent accidental
@@ -55,13 +55,10 @@ contract DeployMainnet is Script {
         // Safety gate 1: explicit opt-in environment variable.
         // Prevents accidental execution in CI, local fork runs, or staging.
         // ----------------------------------------------------------------
-        require(
-            vm.envBool("CONFIRM_MAINNET_DEPLOY"),
-            "DeployMainnet: set CONFIRM_MAINNET_DEPLOY=true to proceed"
-        );
+        require(vm.envBool("CONFIRM_MAINNET_DEPLOY"), "DeployMainnet: set CONFIRM_MAINNET_DEPLOY=true to proceed");
 
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address deployer    = vm.addr(deployerKey);
+        address deployer = vm.addr(deployerKey);
 
         // ----------------------------------------------------------------
         // Safety gate 2: chain ID must be Ethereum mainnet (1).
@@ -101,10 +98,7 @@ contract DeployMainnet is Script {
         // Deploying 3 proxies + 3 implementations ≈ 0.05-0.15 ETH at 50 gwei.
         // 0.5 ETH gives 3-10x headroom.
         // ----------------------------------------------------------------
-        require(
-            deployer.balance >= 0.5 ether,
-            "DeployMainnet: deployer balance < 0.5 ETH -- top up before deploying"
-        );
+        require(deployer.balance >= 0.5 ether, "DeployMainnet: deployer balance < 0.5 ETH -- top up before deploying");
 
         console2.log("=== ArbitrageX v2 Mainnet Deploy ===");
         console2.log("Deployer        :", deployer);
@@ -116,11 +110,11 @@ contract DeployMainnet is Script {
         vm.startBroadcast(deployerKey);
 
         // ----------------------------------------------------------------
-        // 1. ArbitrageExecutor — UUPS proxy
+        // 1. ArbitrageExecutor - UUPS proxy
         //    Admin = deployer. Grant EXECUTOR_ROLE post-deploy to signer.
         // ----------------------------------------------------------------
         // Each implementation local is scoped in its own block so it is freed
-        // before the next deploy — this keeps run() under the EVM stack limit
+        // before the next deploy - this keeps run() under the EVM stack limit
         // (it previously hit "stack too deep") without enabling project-wide
         // via_ir, which would change src/ codegen and gas. Behavior is identical.
         ERC1967Proxy proxyAE;
@@ -128,13 +122,12 @@ contract DeployMainnet is Script {
             ArbitrageExecutor implAE = new ArbitrageExecutor();
             console2.log("ArbitrageExecutor impl  :", address(implAE));
             proxyAE = new ERC1967Proxy(
-                address(implAE),
-                abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, deployer)
+                address(implAE), abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, deployer)
             );
         }
 
         // ----------------------------------------------------------------
-        // 2. AllowanceManager — UUPS proxy
+        // 2. AllowanceManager - UUPS proxy
         //    Admin = deployer. Wire to ArbitrageExecutor post-deploy.
         // ----------------------------------------------------------------
         ERC1967Proxy proxyAM;
@@ -142,13 +135,12 @@ contract DeployMainnet is Script {
             AllowanceManager implAM = new AllowanceManager();
             console2.log("AllowanceManager impl   :", address(implAM));
             proxyAM = new ERC1967Proxy(
-                address(implAM),
-                abi.encodeWithSelector(AllowanceManager.initialize.selector, deployer)
+                address(implAM), abi.encodeWithSelector(AllowanceManager.initialize.selector, deployer)
             );
         }
 
         // ----------------------------------------------------------------
-        // 3. FlashLoanExecutor — UUPS proxy
+        // 3. FlashLoanExecutor - UUPS proxy
         //    Points to: Aave V3 mainnet pool + ArbitrageExecutor proxy.
         // ----------------------------------------------------------------
         ERC1967Proxy proxyFL;
@@ -157,17 +149,12 @@ contract DeployMainnet is Script {
             console2.log("FlashLoanExecutor impl  :", address(implFL));
             proxyFL = new ERC1967Proxy(
                 address(implFL),
-                abi.encodeWithSelector(
-                    FlashLoanExecutor.initialize.selector,
-                    deployer,
-                    aavePool,
-                    address(proxyAE)
-                )
+                abi.encodeWithSelector(FlashLoanExecutor.initialize.selector, deployer, aavePool, address(proxyAE))
             );
         }
 
         // ----------------------------------------------------------------
-        // 4. AdminTimelock — SC-10
+        // 4. AdminTimelock - SC-10
         //    24h minDelay on mainnet.
         //    M2 (audit 2026-05-10): proposer/executor = multisig (validated above).
         //    The deployer EOA is the initial TimelockController admin only so it
@@ -189,7 +176,7 @@ contract DeployMainnet is Script {
                 address(implTL),
                 abi.encodeWithSelector(
                     AdminTimelock.initialize.selector,
-                    uint256(86_400), // 24h — mainnet standard
+                    uint256(86_400), // 24h - mainnet standard
                     proposers,
                     executors,
                     deployer
@@ -203,7 +190,7 @@ contract DeployMainnet is Script {
         //
         // BOTH roles move: DEFAULT_ADMIN_ROLE and UPGRADER_ROLE.
         // _authorizeUpgrade on all three UUPS contracts is gated ONLY by
-        // UPGRADER_ROLE, and initialize() grants it to the deployer — so
+        // UPGRADER_ROLE, and initialize() grants it to the deployer - so
         // transferring admin alone (the pre-fix behavior) left the deployer
         // EOA with an instant upgradeToAndCall that bypassed multisig +
         // 24h timelock entirely.
@@ -213,7 +200,7 @@ contract DeployMainnet is Script {
         // completion and a separate manual transfer where the deployer EOA
         // holds either role.
         //
-        // Order per contract (CRITICAL — do not reorder):
+        // Order per contract (CRITICAL - do not reorder):
         //   1. grant  UPGRADER_ROLE      -> timelock  \ both need the caller to
         //   2. revoke UPGRADER_ROLE      <- deployer  / hold DEFAULT_ADMIN_ROLE
         //   3. grant  DEFAULT_ADMIN_ROLE -> timelock    (UPGRADER's role-admin)
@@ -221,12 +208,12 @@ contract DeployMainnet is Script {
         //      deployer can no longer grant/revoke anything on the contract)
         // Granting to the timelock before revoking the deployer ensures the
         // contract is never left without an admin or an upgrader (plain
-        // AccessControl allows revoking the last holder — that would brick it).
+        // AccessControl allows revoking the last holder - that would brick it).
         // ----------------------------------------------------------------
         address timelockProxy = address(proxyTL);
 
         // Scoped so the executor/manager casts are freed before the output
-        // section below — keeps run() under the EVM stack limit.
+        // section below - keeps run() under the EVM stack limit.
         {
             // --- ArbitrageExecutor ---
             ArbitrageExecutor ae = ArbitrageExecutor(payable(address(proxyAE)));
@@ -234,7 +221,7 @@ contract DeployMainnet is Script {
             // ArbitrageExecutor.executeArbitrageFlashFunded (onlyExecutor) with
             // FlashLoanExecutor as msg.sender, so the wrapper itself MUST hold
             // EXECUTOR_ROLE. Grant it now, while the deployer still holds
-            // DEFAULT_ADMIN_ROLE — after the atomic handoff just below, this grant
+            // DEFAULT_ADMIN_ROLE - after the atomic handoff just below, this grant
             // could only be made via a multisig + 24h-timelock action.
             ae.grantRole(ae.EXECUTOR_ROLE(), address(proxyFL));
             ae.grantRole(ae.UPGRADER_ROLE(), timelockProxy);
@@ -262,11 +249,11 @@ contract DeployMainnet is Script {
             // own self-administration (address(this)). Without this renounce the
             // deployer EOA would keep DEFAULT_ADMIN_ROLE over the timelock itself and
             // could grantRole(PROPOSER/EXECUTOR, deployer) instantly (a direct
-            // AccessControl call — it does NOT pass through the delay), defeating the
+            // AccessControl call - it does NOT pass through the delay), defeating the
             // multisig separation of duties. renounceRole drops the caller's own role;
             // during broadcast msg.sender == deployer. The timelock's self-admin
             // (address(this)) is untouched, so the multisig can still manage roles via
-            // schedule+execute targeting the timelock — it does not brick.
+            // schedule+execute targeting the timelock - it does not brick.
             AdminTimelock tl = AdminTimelock(payable(timelockProxy));
             tl.renounceRole(tl.DEFAULT_ADMIN_ROLE(), deployer);
         }
@@ -277,7 +264,7 @@ contract DeployMainnet is Script {
         vm.stopBroadcast();
 
         // ----------------------------------------------------------------
-        // Output — copy these to your .env / ops runbook immediately.
+        // Output - copy these to your .env / ops runbook immediately.
         // ----------------------------------------------------------------
         console2.log("");
         console2.log("=== Deployed Proxies ===");

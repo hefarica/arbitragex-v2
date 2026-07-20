@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// SC-11: ArbitrageExecutor — Foundry fuzz tests
+// SC-11: ArbitrageExecutor - Foundry fuzz tests
 //
 // Properties under test:
 //   F1. Access control: arbitrary non-executor caller always reverts.
@@ -52,7 +52,7 @@ contract FuzzProfitRouter {
     }
 }
 
-/// @dev Router that does nothing — gross profit stays zero.
+/// @dev Router that does nothing - gross profit stays zero.
 ///      Used in F3 balance gate (balance check fires before router call).
 contract FuzzNoopRouter {
     fallback() external {}
@@ -74,14 +74,11 @@ contract ArbitrageExecutorFuzzTest is Test {
     uint256 internal constant MAX_AMOUNT = type(uint128).max; // ~340T of 18-dec token
 
     function setUp() public {
-        admin    = address(this);
+        admin = address(this);
         execRole = makeAddr("execRole");
 
         ArbitrageExecutor impl = new ArbitrageExecutor();
-        bytes memory initData  = abi.encodeWithSelector(
-            ArbitrageExecutor.initialize.selector,
-            admin
-        );
+        bytes memory initData = abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, admin);
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         executor = ArbitrageExecutor(payable(address(proxy)));
 
@@ -92,7 +89,7 @@ contract ArbitrageExecutorFuzzTest is Test {
     }
 
     // -----------------------------------------------------------------------
-    // F1: Access control — arbitrary non-executor always reverts NotExecutor
+    // F1: Access control - arbitrary non-executor always reverts NotExecutor
     // -----------------------------------------------------------------------
     /// @dev Any address that does not hold EXECUTOR_ROLE must be rejected.
     ///      We explicitly exclude the execRole address from the fuzzer domain.
@@ -100,8 +97,8 @@ contract ArbitrageExecutorFuzzTest is Test {
         vm.assume(caller != execRole);
         vm.assume(!executor.hasRole(executor.EXECUTOR_ROLE(), caller));
 
-        address[] memory routers  = new address[](0);
-        bytes[]   memory payloads = new bytes[](0);
+        address[] memory routers = new address[](0);
+        bytes[] memory payloads = new bytes[](0);
 
         vm.expectRevert(NotExecutor.selector);
         vm.prank(caller);
@@ -109,17 +106,15 @@ contract ArbitrageExecutorFuzzTest is Test {
     }
 
     // -----------------------------------------------------------------------
-    // F2: Profit threshold — gross profit < minProfit always reverts
+    // F2: Profit threshold - gross profit < minProfit always reverts
     // -----------------------------------------------------------------------
     /// @dev The router produces exactly `grossProfit` tokens of gain.
     ///      If minProfit > grossProfit the call must revert InsufficientProfit.
-    function testFuzz_AE_F2_InsufficientProfitReverts(
-        uint256 amountIn,
-        uint256 grossProfit,
-        uint256 extraMinProfit
-    ) public {
-        amountIn      = bound(amountIn,      MIN_AMOUNT, MAX_AMOUNT);
-        grossProfit   = bound(grossProfit,   1,          MAX_AMOUNT - 1);
+    function testFuzz_AE_F2_InsufficientProfitReverts(uint256 amountIn, uint256 grossProfit, uint256 extraMinProfit)
+        public
+    {
+        amountIn = bound(amountIn, MIN_AMOUNT, MAX_AMOUNT);
+        grossProfit = bound(grossProfit, 1, MAX_AMOUNT - 1);
         // minProfit is strictly greater than grossProfit
         extraMinProfit = bound(extraMinProfit, 1, MAX_AMOUNT - grossProfit);
         uint256 minProfit = grossProfit + extraMinProfit;
@@ -132,7 +127,7 @@ contract ArbitrageExecutorFuzzTest is Test {
         // is whitelisted per router. The mock router routes any selector to fallback().
         executor.setRouterSelectorApproval(address(router), bytes4(0x12345678), true);
 
-        address[] memory routers  = new address[](1);
+        address[] memory routers = new address[](1);
         routers[0] = address(router);
         bytes[] memory payloads = new bytes[](1);
         payloads[0] = hex"12345678";
@@ -143,16 +138,13 @@ contract ArbitrageExecutorFuzzTest is Test {
     }
 
     // -----------------------------------------------------------------------
-    // F3: Balance gate — balance < amountIn always reverts InsufficientBalance
+    // F3: Balance gate - balance < amountIn always reverts InsufficientBalance
     // -----------------------------------------------------------------------
     /// @dev The executor holds `balance` tokens.  We request `balance + gap`
     ///      which always exceeds the actual balance.
-    function testFuzz_AE_F3_InsufficientBalanceReverts(
-        uint256 balance,
-        uint256 gap
-    ) public {
-        balance = bound(balance, 0,          MAX_AMOUNT - 1);
-        gap     = bound(gap,     1,          MAX_AMOUNT - balance);
+    function testFuzz_AE_F3_InsufficientBalanceReverts(uint256 balance, uint256 gap) public {
+        balance = bound(balance, 0, MAX_AMOUNT - 1);
+        gap = bound(gap, 1, MAX_AMOUNT - balance);
         uint256 amountIn = balance + gap;
 
         if (balance > 0) {
@@ -162,7 +154,7 @@ contract ArbitrageExecutorFuzzTest is Test {
         FuzzNoopRouter router = new FuzzNoopRouter();
         executor.setRouterApproval(address(router), true);
 
-        address[] memory routers  = new address[](1);
+        address[] memory routers = new address[](1);
         routers[0] = address(router);
         bytes[] memory payloads = new bytes[](1);
         payloads[0] = hex"12345678";
@@ -173,19 +165,15 @@ contract ArbitrageExecutorFuzzTest is Test {
     }
 
     // -----------------------------------------------------------------------
-    // F4: Profit correctness — event and balance reflect exact gross profit
+    // F4: Profit correctness - event and balance reflect exact gross profit
     // -----------------------------------------------------------------------
     /// @dev When grossProfit >= minProfit, the call succeeds and the executor's
     ///      net balance gain equals grossProfit exactly.
-    function testFuzz_AE_F4_ProfitCorrect(
-        uint256 amountIn,
-        uint256 grossProfit,
-        uint256 minProfit
-    ) public {
-        amountIn    = bound(amountIn,    MIN_AMOUNT, MAX_AMOUNT);
-        grossProfit = bound(grossProfit, 1,          MAX_AMOUNT);
+    function testFuzz_AE_F4_ProfitCorrect(uint256 amountIn, uint256 grossProfit, uint256 minProfit) public {
+        amountIn = bound(amountIn, MIN_AMOUNT, MAX_AMOUNT);
+        grossProfit = bound(grossProfit, 1, MAX_AMOUNT);
         // minProfit is at most grossProfit (so the call succeeds)
-        minProfit   = bound(minProfit,   0,          grossProfit);
+        minProfit = bound(minProfit, 0, grossProfit);
 
         token.mint(address(executor), amountIn);
         uint256 balanceBefore = token.balanceOf(address(executor));
@@ -196,7 +184,7 @@ contract ArbitrageExecutorFuzzTest is Test {
         // is whitelisted per router. The mock router routes any selector to fallback().
         executor.setRouterSelectorApproval(address(router), bytes4(0x12345678), true);
 
-        address[] memory routers  = new address[](1);
+        address[] memory routers = new address[](1);
         routers[0] = address(router);
         bytes[] memory payloads = new bytes[](1);
         payloads[0] = hex"12345678";
@@ -213,12 +201,9 @@ contract ArbitrageExecutorFuzzTest is Test {
     // -----------------------------------------------------------------------
     /// @dev minProfit = 0 is the weakest acceptable guard.  Any positive
     ///      gross profit must pass it.
-    function testFuzz_AE_F5_ZeroMinProfitAcceptsAnyPositiveProfit(
-        uint256 amountIn,
-        uint256 grossProfit
-    ) public {
-        amountIn    = bound(amountIn,    MIN_AMOUNT, MAX_AMOUNT);
-        grossProfit = bound(grossProfit, 1,          MAX_AMOUNT);
+    function testFuzz_AE_F5_ZeroMinProfitAcceptsAnyPositiveProfit(uint256 amountIn, uint256 grossProfit) public {
+        amountIn = bound(amountIn, MIN_AMOUNT, MAX_AMOUNT);
+        grossProfit = bound(grossProfit, 1, MAX_AMOUNT);
 
         token.mint(address(executor), amountIn);
 
@@ -228,7 +213,7 @@ contract ArbitrageExecutorFuzzTest is Test {
         // is whitelisted per router. The mock router routes any selector to fallback().
         executor.setRouterSelectorApproval(address(router), bytes4(0x12345678), true);
 
-        address[] memory routers  = new address[](1);
+        address[] memory routers = new address[](1);
         routers[0] = address(router);
         bytes[] memory payloads = new bytes[](1);
         payloads[0] = hex"12345678";
@@ -239,7 +224,7 @@ contract ArbitrageExecutorFuzzTest is Test {
     }
 
     // -----------------------------------------------------------------------
-    // F6: Token not approved — arbitrary unapproved token always reverts
+    // F6: Token not approved - arbitrary unapproved token always reverts
     // -----------------------------------------------------------------------
     /// @dev We deploy a fresh ERC20 and never call setTokenApproval on it.
     ///      Any call with that token must revert TokenNotApproved.
@@ -249,8 +234,8 @@ contract ArbitrageExecutorFuzzTest is Test {
         FuzzMockERC20 unapproved = new FuzzMockERC20();
         unapproved.mint(address(executor), amountIn);
 
-        address[] memory routers  = new address[](0);
-        bytes[]   memory payloads = new bytes[](0);
+        address[] memory routers = new address[](0);
+        bytes[] memory payloads = new bytes[](0);
 
         vm.expectRevert(abi.encodeWithSelector(TokenNotApproved.selector, address(unapproved)));
         vm.prank(execRole);

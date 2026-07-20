@@ -11,7 +11,7 @@ pragma solidity ^0.8.20;
 //   SC-2: CurveAdapter, PancakeV3Adapter (full impl)
 //         GMXAdapter, SynthetixAdapter (skeleton, vm.skip)
 //
-// Skeletons use vm.skip(true) — they document the architecture is ready
+// Skeletons use vm.skip(true) - they document the architecture is ready
 // but the underlying integration is non-trivial (see each adapter's header).
 // =============================================================================
 
@@ -44,7 +44,7 @@ contract MockERC20Adapter is ERC20 {
 }
 
 // =============================================================================
-// Mock Aave V3 Pool (minimal — records calls only)
+// Mock Aave V3 Pool (minimal - records calls only)
 // =============================================================================
 
 contract MockAaveV3PoolSC1 {
@@ -52,13 +52,7 @@ contract MockAaveV3PoolSC1 {
     address public lastAsset;
     uint256 public lastAmount;
 
-    function flashLoanSimple(
-        address receiverAddress,
-        address asset,
-        uint256 amount,
-        bytes calldata,
-        uint16
-    ) external {
+    function flashLoanSimple(address receiverAddress, address asset, uint256 amount, bytes calldata, uint16) external {
         lastReceiver = receiverAddress;
         lastAsset = asset;
         lastAmount = amount;
@@ -85,12 +79,14 @@ contract MockBalancerVault {
         address[] calldata tokens,
         uint256[] calldata amounts,
         bytes calldata /*userData*/
-    ) external {
+    )
+        external
+    {
         lastRecipient = recipient;
         lastToken = tokens[0];
         lastAmount = amounts[0];
         // In a real Balancer, tokens would be transferred and receiveFlashLoan called.
-        // Not simulated here — tested separately via direct receiveFlashLoan call.
+        // Not simulated here - tested separately via direct receiveFlashLoan call.
     }
 }
 
@@ -150,9 +146,10 @@ contract MockPancakeV3Router {
         _tokenOut = MockERC20Adapter(tokenOut);
     }
 
-    function exactInputSingle(
-        ISwapRouterTest.ExactInputSingleParams calldata params
-    ) external returns (uint256 amountOut) {
+    function exactInputSingle(ISwapRouterTest.ExactInputSingleParams calldata params)
+        external
+        returns (uint256 amountOut)
+    {
         amountOut = (params.amountIn * MOCK_RATE) / 1000;
         require(amountOut >= params.amountOutMinimum, "MockPancakeRouter: slippage");
         // Mint tokenOut directly to recipient (simulates router swap)
@@ -160,7 +157,7 @@ contract MockPancakeV3Router {
     }
 }
 
-/// @dev Minimal interface for test — matches PancakeV3Adapter's internal ISwapRouter.
+/// @dev Minimal interface for test - matches PancakeV3Adapter's internal ISwapRouter.
 interface ISwapRouterTest {
     struct ExactInputSingleParams {
         address tokenIn;
@@ -189,9 +186,9 @@ contract MockFlashLoanExecutorHelper is Test {
         FlashLoanExecutor impl = new FlashLoanExecutor();
         bytes memory initData = abi.encodeWithSelector(
             FlashLoanExecutor.initialize.selector,
-            address(this),        // admin
-            address(mockAave),    // aavePool
-            address(0xBEEF)       // arbitrageExecutor (stub)
+            address(this), // admin
+            address(mockAave), // aavePool
+            address(0xBEEF) // arbitrageExecutor (stub)
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         executor = FlashLoanExecutor(address(proxy));
@@ -375,10 +372,7 @@ contract FlashLoanExecutorProviderTest is Test {
 
         FlashLoanExecutor impl = new FlashLoanExecutor();
         bytes memory initData = abi.encodeWithSelector(
-            FlashLoanExecutor.initialize.selector,
-            admin,
-            address(mockAavePool),
-            address(0xBEEF)
+            FlashLoanExecutor.initialize.selector, admin, address(mockAavePool), address(0xBEEF)
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         executor = FlashLoanExecutor(address(proxy));
@@ -413,12 +407,8 @@ contract FlashLoanExecutorProviderTest is Test {
         token.setBalanceFor(address(mockVault), 1_000_000e18);
         uint256 amount = 100_000e18;
 
-        (address cheaper, uint256 fee) = executor.selectCheapestProvider(
-            address(aaveAdapter),
-            address(balancerAdapter),
-            address(token),
-            amount
-        );
+        (address cheaper, uint256 fee) =
+            executor.selectCheapestProvider(address(aaveAdapter), address(balancerAdapter), address(token), amount);
 
         assertEq(cheaper, address(balancerAdapter), "Balancer (0%) must be preferred");
         assertEq(fee, 0, "Balancer fee must be 0");
@@ -426,15 +416,11 @@ contract FlashLoanExecutorProviderTest is Test {
 
     /// @notice selectCheapestProvider falls back to Aave when Balancer has no liquidity.
     function testSelectCheapestProvider_FallsBackToAave() public {
-        // Vault is empty — Balancer cannot service the loan
+        // Vault is empty - Balancer cannot service the loan
         uint256 amount = 100_000e18;
 
-        (address cheaper, uint256 fee) = executor.selectCheapestProvider(
-            address(aaveAdapter),
-            address(balancerAdapter),
-            address(token),
-            amount
-        );
+        (address cheaper, uint256 fee) =
+            executor.selectCheapestProvider(address(aaveAdapter), address(balancerAdapter), address(token), amount);
 
         assertEq(cheaper, address(aaveAdapter), "Aave must be returned when Balancer is empty");
         // Aave fee: 100_000e18 * 9 / 10_000 = 90e18
@@ -443,13 +429,8 @@ contract FlashLoanExecutorProviderTest is Test {
 
     /// @notice selectCheapestProvider returns (address(0), 0) when neither can service.
     function testSelectCheapestProvider_NeitherAvailable() public {
-        // Both address(0) — neither provider configured
-        (address cheaper, uint256 fee) = executor.selectCheapestProvider(
-            address(0),
-            address(0),
-            address(token),
-            1e18
-        );
+        // Both address(0) - neither provider configured
+        (address cheaper, uint256 fee) = executor.selectCheapestProvider(address(0), address(0), address(token), 1e18);
 
         assertEq(cheaper, address(0), "must return zero when no provider available");
         assertEq(fee, 0);
@@ -606,7 +587,7 @@ contract PancakeV3AdapterTest is Test {
         tokenIn.approve(address(adapter), amountIn);
 
         bytes memory extraData = abi.encode(uint24(500), uint160(0));
-        // minAmountOut > 990e18 — should trigger slippage revert in mock router
+        // minAmountOut > 990e18 - should trigger slippage revert in mock router
         vm.expectRevert("MockPancakeRouter: slippage");
         adapter.swap(address(tokenIn), address(tokenOut), amountIn, 995e18, extraData);
         vm.stopPrank();
@@ -646,12 +627,12 @@ contract GMXAdapterTest is Test {
 // =============================================================================
 
 contract SynthetixAdapterTest is Test {
-    /// @notice SC-2 follow-up: Synthetix V2 has settlement delay — incompatible with
+    /// @notice SC-2 follow-up: Synthetix V2 has settlement delay - incompatible with
     ///         flash loan atomicity. Evaluate V3 instant settlement viability.
     function testTODO_SynthetixAdapter_NotImplemented() public {
         vm.skip(true);
         // Evaluation criteria:
-        // - V2: ~3 min settlement delay → NOT atomic → cannot use in flash arb
+        // - V2: ~3 min settlement delay -> NOT atomic -> cannot use in flash arb
         // - V3: assess if instant settlement is available for the relevant synths
         // - If V3 atomic: implement ISynthetix.exchange(srcKey, amount, destKey)
         // - If not: remove from adapter roadmap permanently

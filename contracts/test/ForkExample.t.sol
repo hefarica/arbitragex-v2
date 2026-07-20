@@ -2,15 +2,15 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// SC-14: Fork test marker — demonstrates mainnet-fork capability.
+// SC-14: Fork test marker - demonstrates mainnet-fork capability.
 //
 // These tests run ONLY when FORK_RPC_URL (or MAINNET_RPC_URL) is set in
 // the environment.  When the variable is absent (local dev, non-fork CI),
-// tests self-skip via vm.skip(true) — no failure, no mock.
+// tests self-skip via vm.skip(true) - no failure, no mock.
 //
 // CI behaviour:
-//   Non-fork job (test): MAINNET_RPC_URL is empty → all tests skip.
-//   Fork job (test-fork): MAINNET_RPC_URL provided via GitHub secret → tests run.
+//   Non-fork job (test): MAINNET_RPC_URL is empty -> all tests skip.
+//   Fork job (test-fork): MAINNET_RPC_URL provided via GitHub secret -> tests run.
 //
 // Naming convention: every test in this file MUST start with "testFork_" so
 // the CI fork job can target them with --match-test "testFork_".
@@ -25,15 +25,15 @@ import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 contract ForkExampleTest is Test {
     // Well-known mainnet addresses (all verified on Etherscan 2026-05-08).
-    address constant USDC    = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-    address constant WETH    = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+    address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     address constant AAVE_V3 = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
 
     // Fork block: left at 0 = latest.  Pin to a specific block for reproducibility
     // in long-running CI environments.  Operator can override by setting
     // FORK_BLOCK_NUMBER env var.
     uint256 internal forkId;
-    bool    internal forkActive;
+    bool internal forkActive;
 
     function setUp() public {
         string memory rpc = vm.envOr("MAINNET_RPC_URL", string(""));
@@ -55,14 +55,17 @@ contract ForkExampleTest is Test {
     // testFork_USDC_TotalSupply_SanityCheck
     //
     // Verifies that USDC on-chain total supply > $1 billion (1e9 USDC = 1e15
-    // with 6 decimals).  This is a pure sanity check — if it fails, the fork
+    // with 6 decimals).  This is a pure sanity check - if it fails, the fork
     // is pointing at a wrong chain or the RPC is stale.
     // -----------------------------------------------------------------------
     function testFork_USDC_TotalSupply_SanityCheck() public {
-        if (!forkActive) { vm.skip(true); return; }
+        if (!forkActive) {
+            vm.skip(true);
+            return;
+        }
 
         uint256 totalSupply = IERC20Metadata(USDC).totalSupply();
-        uint8   decimals    = IERC20Metadata(USDC).decimals();
+        uint8 decimals = IERC20Metadata(USDC).decimals();
 
         // USDC has 6 decimals; $1B = 1_000_000_000 * 10**6 = 1e15
         assertEq(decimals, 6, "USDC decimals must be 6");
@@ -76,7 +79,10 @@ contract ForkExampleTest is Test {
     // WETH is the primary tokenIn for most ArbitrageX routes.
     // -----------------------------------------------------------------------
     function testFork_WETH_TotalSupply_SanityCheck() public {
-        if (!forkActive) { vm.skip(true); return; }
+        if (!forkActive) {
+            vm.skip(true);
+            return;
+        }
 
         uint256 totalSupply = IERC20(WETH).totalSupply();
         assertGt(totalSupply, 1e18, "WETH total supply must be > 1 WETH");
@@ -91,15 +97,15 @@ contract ForkExampleTest is Test {
     // initializer signature).
     // -----------------------------------------------------------------------
     function testFork_ArbitrageExecutor_DeployAndApproveWETH() public {
-        if (!forkActive) { vm.skip(true); return; }
+        if (!forkActive) {
+            vm.skip(true);
+            return;
+        }
 
         address admin = address(this);
 
         ArbitrageExecutor impl = new ArbitrageExecutor();
-        bytes memory initData = abi.encodeWithSelector(
-            ArbitrageExecutor.initialize.selector,
-            admin
-        );
+        bytes memory initData = abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, admin);
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         ArbitrageExecutor executor = ArbitrageExecutor(payable(address(proxy)));
 
@@ -122,7 +128,10 @@ contract ForkExampleTest is Test {
     // If this fails, AAVE_V3 constant is wrong or the fork is on wrong chain.
     // -----------------------------------------------------------------------
     function testFork_AaveV3Pool_HasCode() public {
-        if (!forkActive) { vm.skip(true); return; }
+        if (!forkActive) {
+            vm.skip(true);
+            return;
+        }
 
         uint256 codeSize;
         address pool = AAVE_V3;

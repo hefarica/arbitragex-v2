@@ -20,17 +20,12 @@ contract MockERC20FL is ERC20 {
 }
 
 /// @dev Mock Balancer Vault: simulates the minimal Balancer V2 flash loan
-///      callback sequence (transfer tokens → call receiveFlashLoan → collect repay).
+///      callback sequence (transfer tokens -> call receiveFlashLoan -> collect repay).
 ///      Used in A4 tests to verify the vault-sender check works end-to-end.
 contract MockBalancerVault {
     /// @notice Calls receiveFlashLoan on `receiver` with the given params,
     ///         mimicking the real Balancer V2 Vault callback.
-    function triggerFlashLoan(
-        address receiver,
-        IERC20 token,
-        uint256 amount,
-        bytes calldata userData
-    ) external {
+    function triggerFlashLoan(address receiver, IERC20 token, uint256 amount, bytes calldata userData) external {
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = token;
         uint256[] memory amounts = new uint256[](1);
@@ -63,7 +58,7 @@ contract MockAavePool {
         lastParams = params;
         lastReferralCode = _referralCode;
         // In a real Aave, the pool would call executeOperation.
-        // We do NOT simulate the callback here — tested separately.
+        // We do NOT simulate the callback here - tested separately.
     }
 }
 
@@ -111,12 +106,8 @@ contract FlashLoanExecutorTest is Test {
         // SC-08: deploy via ERC1967Proxy with initialize() call
         // FlashLoanExecutor.initialize takes (admin, aavePool, arbitrageExecutor)
         FlashLoanExecutor impl = new FlashLoanExecutor();
-        bytes memory initData = abi.encodeWithSelector(
-            FlashLoanExecutor.initialize.selector,
-            admin,
-            address(pool),
-            address(arbExec)
-        );
+        bytes memory initData =
+            abi.encodeWithSelector(FlashLoanExecutor.initialize.selector, admin, address(pool), address(arbExec));
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         flashExec = FlashLoanExecutor(address(proxy));
 
@@ -202,7 +193,7 @@ contract FlashLoanExecutorTest is Test {
             address(token),
             loanAmount,
             premium,
-            address(flashExec), // even with correct initiator — caller is wrong
+            address(flashExec), // even with correct initiator - caller is wrong
             params
         );
     }
@@ -223,7 +214,7 @@ contract FlashLoanExecutorTest is Test {
             address(token),
             loanAmount,
             premium,
-            attacker,  // wrong initiator
+            attacker, // wrong initiator
             params
         );
     }
@@ -265,13 +256,7 @@ contract FlashLoanExecutorTest is Test {
         emit FlashLoanExecutor.FlashLoanExecuted(address(token), loanAmount, premium, true);
 
         vm.prank(address(pool));
-        bool result = flashExec.executeOperation(
-            address(token),
-            loanAmount,
-            premium,
-            address(flashExec),
-            params
-        );
+        bool result = flashExec.executeOperation(address(token), loanAmount, premium, address(flashExec), params);
 
         assertTrue(result, "executeOperation must return true");
     }
@@ -337,7 +322,7 @@ contract FlashLoanExecutorTest is Test {
     // receiveFlashLoan array edges. The callback reads tokens[0]/amounts[0]/
     // feeAmounts[0] after authenticating the Vault. Empty or shorter arrays
     // therefore revert on out-of-bounds access; a multi-element array is silently
-    // TRUNCATED to element 0 (length is not validated — a length==1 guard is a
+    // TRUNCATED to element 0 (length is not validated - a length==1 guard is a
     // deferred src hardening, documented here so the truncation is not mistaken
     // for multi-asset support).
     // -----------------------------------------------------------------------
@@ -394,7 +379,7 @@ contract FlashLoanExecutorTest is Test {
     function testUpgrade_OnlyUpgrader_CanUpgrade() public {
         FlashLoanExecutorV2 newImpl = new FlashLoanExecutorV2();
 
-        // attacker has no UPGRADER_ROLE — upgradeToAndCall must revert
+        // attacker has no UPGRADER_ROLE - upgradeToAndCall must revert
         vm.expectRevert();
         vm.prank(attacker);
         flashExec.upgradeToAndCall(address(newImpl), "");
@@ -419,7 +404,7 @@ contract FlashLoanExecutorTest is Test {
         // Deploy V2 implementation
         FlashLoanExecutorV2 newImpl = new FlashLoanExecutorV2();
 
-        // Admin (address(this)) has UPGRADER_ROLE — upgrade must succeed
+        // Admin (address(this)) has UPGRADER_ROLE - upgrade must succeed
         flashExec.upgradeToAndCall(address(newImpl), "");
 
         // Cast proxy to V2 to verify new function accessible
@@ -440,7 +425,7 @@ contract FlashLoanExecutorTest is Test {
     // the operator has configured a trusted vault.
     // -----------------------------------------------------------------------
     function testReceiveFlashLoan_RevertsWhenVaultNotSet() public {
-        // Clear the vault set in setUp — simulate unconfigured state
+        // Clear the vault set in setUp - simulate unconfigured state
         flashExec.setBalancerVault(address(0));
 
         IERC20[] memory tokens = new IERC20[](1);
@@ -451,7 +436,7 @@ contract FlashLoanExecutorTest is Test {
         feeAmounts[0] = 0;
 
         vm.expectRevert(FL_BalancerVaultNotSet.selector);
-        // Call from attacker — irrelevant, vault-not-set is checked first
+        // Call from attacker - irrelevant, vault-not-set is checked first
         vm.prank(attacker);
         flashExec.receiveFlashLoan(tokens, amounts, feeAmounts, "");
     }
@@ -465,7 +450,7 @@ contract FlashLoanExecutorTest is Test {
     // -----------------------------------------------------------------------
     function testReceiveFlashLoan_RevertsOnUnauthorizedSender() public {
         // balancerVault is already set to address(mockVault) in setUp.
-        // Call from attacker — must be rejected regardless of token/amount.
+        // Call from attacker - must be rejected regardless of token/amount.
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(address(token));
         uint256[] memory amounts = new uint256[](1);
@@ -509,12 +494,12 @@ contract FlashLoanExecutorTest is Test {
     // A9: Flash-loan callback authorization regression tests (audit 2026-05-10)
     // =========================================================================
     //
-    // Tag prefix: testA9_* — grep-able by future audit re-runs.
+    // Tag prefix: testA9_* - grep-able by future audit re-runs.
     //
     // A4 tests cover the same logical invariants. A9 tests add:
     //   1. Explicit A9 tag for traceability in future audit matrices.
     //   2. A distinct angle: Layer 3 guard (flashLoanProvider unset while vault
-    //      IS set) — not covered by any existing test.  An attacker who can set
+    //      IS set) - not covered by any existing test.  An attacker who can set
     //      balancerVault but cannot set flashLoanProvider is still blocked.
 
     // -----------------------------------------------------------------------
@@ -538,7 +523,7 @@ contract FlashLoanExecutorTest is Test {
         feeAmounts[0] = 0;
 
         vm.expectRevert(FL_BalancerVaultNotSet.selector);
-        // Caller identity is irrelevant — Layer 1 fires before the sender check.
+        // Caller identity is irrelevant - Layer 1 fires before the sender check.
         vm.prank(attacker);
         flashExec.receiveFlashLoan(tokens, amounts, feeAmounts, "");
     }
@@ -572,7 +557,7 @@ contract FlashLoanExecutorTest is Test {
     // -----------------------------------------------------------------------
     // testA9_ReceiveFlashLoan_RejectsWhenFlashLoanProviderUnset
     //
-    // A9 — UNIQUE ANGLE not covered by A4 tests (Layer 3 guard):
+    // A9 - UNIQUE ANGLE not covered by A4 tests (Layer 3 guard):
     // receiveFlashLoan has a three-layer auth check.  Layer 3 verifies that
     // flashLoanProvider != address(0), confirming the Balancer path was
     // intentionally activated.  This guards against a state where the vault IS
@@ -588,7 +573,7 @@ contract FlashLoanExecutorTest is Test {
         assertEq(flashExec.flashLoanProvider(), address(0), "flashLoanProvider must be unset for this test");
         assertNotEq(flashExec.balancerVault(), address(0), "balancerVault must be set for Layer 2 to pass");
 
-        // The MockBalancerVault sends the callback as itself — passes Layer 2.
+        // The MockBalancerVault sends the callback as itself - passes Layer 2.
         // Layer 3 (flashLoanProvider == address(0)) must fire FL_NoProviderConfigured.
         vm.expectRevert(FL_NoProviderConfigured.selector);
         mockVault.triggerFlashLoan(address(flashExec), IERC20(address(token)), 1_000e18, "");
@@ -598,11 +583,11 @@ contract FlashLoanExecutorTest is Test {
     // Decision-free hardening (re-discovered post-burst): the requestFlashLoan
     // EXECUTOR_ROLE gate + revoke lifecycle + referralCode max boundary. The
     // access gate had ZERO explicit revert coverage (only an invariant try/catch
-    // swallow). Tests only — no src change.
+    // swallow). Tests only - no src change.
     // =========================================================================
 
     // requestFlashLoan is onlyRole(EXECUTOR_ROLE): an attacker without the role
-    // cannot trigger a flash loan — the gate rejects before any pool call.
+    // cannot trigger a flash loan - the gate rejects before any pool call.
     function testRequestFlashLoan_RevertsForNonExecutor() public {
         vm.expectRevert(); // AccessControlUnauthorizedAccount (missing EXECUTOR_ROLE)
         vm.prank(attacker);
@@ -613,7 +598,7 @@ contract FlashLoanExecutorTest is Test {
     // EXECUTOR_ROLE revoke lifecycle: a holder can request, but once admin revokes
     // the role the same caller is blocked and the request never reaches the pool.
     function testExecutorRole_RevokeBlocksRequestFlashLoan() public {
-        // executorRole (granted in setUp) can request — legacy pool path records it.
+        // executorRole (granted in setUp) can request - legacy pool path records it.
         vm.prank(executorRole);
         flashExec.requestFlashLoan(address(token), 100e18, "");
         assertEq(pool.lastAmount(), 100e18, "executor request must reach the pool");

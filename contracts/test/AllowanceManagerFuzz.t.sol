@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// SC-11: AllowanceManager — Foundry fuzz tests
+// SC-11: AllowanceManager - Foundry fuzz tests
 //
 // Properties under test:
 //   F1. Bounded grant: any amount within cap succeeds and sets exact allowance.
@@ -41,20 +41,17 @@ contract FuzzMockERC20AM is ERC20 {
 
 contract AllowanceManagerFuzzTest is Test {
     AllowanceManager internal manager;
-    FuzzMockERC20AM  internal token;
+    FuzzMockERC20AM internal token;
 
     address internal admin;
     address internal spender;
 
     function setUp() public {
-        admin   = address(this);
+        admin = address(this);
         spender = makeAddr("spender");
 
         AllowanceManager impl = new AllowanceManager();
-        bytes memory initData = abi.encodeWithSelector(
-            AllowanceManager.initialize.selector,
-            admin
-        );
+        bytes memory initData = abi.encodeWithSelector(AllowanceManager.initialize.selector, admin);
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         manager = AllowanceManager(address(proxy));
 
@@ -66,7 +63,7 @@ contract AllowanceManagerFuzzTest is Test {
     }
 
     // -----------------------------------------------------------------------
-    // F1: Bounded grant — any valid amount sets exact allowance
+    // F1: Bounded grant - any valid amount sets exact allowance
     // -----------------------------------------------------------------------
     /// @dev For any amount in [1, MAX_SAFE_ALLOWANCE], the on-chain allowance
     ///      after grantAllowance must equal that exact amount.
@@ -75,11 +72,7 @@ contract AllowanceManagerFuzzTest is Test {
 
         manager.grantAllowance(address(token), spender, amount);
 
-        assertEq(
-            token.allowance(address(manager), spender),
-            amount,
-            "allowance must equal granted amount"
-        );
+        assertEq(token.allowance(address(manager), spender), amount, "allowance must equal granted amount");
     }
 
     // -----------------------------------------------------------------------
@@ -108,7 +101,7 @@ contract AllowanceManagerFuzzTest is Test {
     }
 
     // -----------------------------------------------------------------------
-    // F4: Revoke idempotency — always zeros the allowance
+    // F4: Revoke idempotency - always zeros the allowance
     // -----------------------------------------------------------------------
     /// @dev After revokeAllowance, the allowance is always 0, regardless of
     ///      what amount was granted beforehand (or if nothing was granted).
@@ -121,11 +114,7 @@ contract AllowanceManagerFuzzTest is Test {
 
         manager.revokeAllowance(address(token), spender);
 
-        assertEq(
-            token.allowance(address(manager), spender),
-            0,
-            "allowance must be 0 after revoke"
-        );
+        assertEq(token.allowance(address(manager), spender), 0, "allowance must be 0 after revoke");
     }
 
     // -----------------------------------------------------------------------

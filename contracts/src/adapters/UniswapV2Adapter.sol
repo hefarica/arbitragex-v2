@@ -2,7 +2,7 @@
 pragma solidity ^0.8.19;
 
 // =============================================================================
-// SC-2: UniswapV2Adapter — IDEXAdapter for Uniswap V2 and forks
+// SC-2: UniswapV2Adapter - IDEXAdapter for Uniswap V2 and forks
 //
 // Supports any DEX that implements the Uniswap V2 router interface:
 //   - Uniswap V2 (Ethereum mainnet)
@@ -18,7 +18,7 @@ pragma solidity ^0.8.19;
 //           path[0] = tokenIn, path[path.length-1] = tokenOut.
 //           Intermediate hops are supported (e.g. WETH -> DAI -> USDC).
 //
-// Router address is injected via constructor — zero hardcoded addresses.
+// Router address is injected via constructor - zero hardcoded addresses.
 // This guarantees identical adapter bytecode across all chains.
 //
 // Gas profile (optimizer_runs = 200):
@@ -34,7 +34,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 // Minimal Uniswap V2 interfaces (no hardcoded addresses)
 // -------------------------------------------------------------------------
 
-/// @dev Uniswap V2 Router interface — swapExactTokensForTokens path.
+/// @dev Uniswap V2 Router interface - swapExactTokensForTokens path.
 ///      Implemented by Uniswap V2, SushiSwap, PancakeSwap V2, and all forks.
 interface IUniswapV2Router02 {
     /// @notice Return the factory address associated with this router.
@@ -62,13 +62,10 @@ interface IUniswapV2Router02 {
     /// @param amountIn Amount of input token.
     /// @param path     Array of token addresses defining the swap route.
     /// @return amounts Array of maximum output amounts for each hop.
-    function getAmountsOut(
-        uint256 amountIn,
-        address[] calldata path
-    ) external view returns (uint256[] memory amounts);
+    function getAmountsOut(uint256 amountIn, address[] calldata path) external view returns (uint256[] memory amounts);
 }
 
-/// @dev Uniswap V2 Factory interface — for pair lookup and validation.
+/// @dev Uniswap V2 Factory interface - for pair lookup and validation.
 interface IUniswapV2Factory {
     /// @notice Return the pair address for tokenA/tokenB. address(0) if nonexistent.
     /// @param tokenA First token of the pair.
@@ -77,17 +74,14 @@ interface IUniswapV2Factory {
     function getPair(address tokenA, address tokenB) external view returns (address pair);
 }
 
-/// @dev Uniswap V2 Pair interface — for reserve queries.
+/// @dev Uniswap V2 Pair interface - for reserve queries.
 interface IUniswapV2Pair {
     /// @notice Return the current reserves of token0 and token1, plus the block
     ///         timestamp of the last reserve update.
     /// @return reserve0   Reserve of token0.
     /// @return reserve1   Reserve of token1.
     /// @return blockTimestampLast Block timestamp of last reserve update.
-    function getReserves()
-        external
-        view
-        returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
+    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
 }
 
 // -------------------------------------------------------------------------
@@ -106,7 +100,7 @@ error UV2_SlippageExceeded(uint256 amountOut, uint256 minAmountOut);
 error UV2_QuoteFailed();
 
 // =============================================================================
-/// @title UniswapV2Adapter — IDEXAdapter for Uniswap V2 and all forks
+/// @title UniswapV2Adapter - IDEXAdapter for Uniswap V2 and all forks
 /// @notice Executes swapExactTokensForTokens through any V2-compatible router.
 ///         Supports multi-hop routes via intermediate tokens in the path.
 /// @dev SC-2 (2026-05-15). Router injected via constructor. Zero hardcoded
@@ -129,7 +123,7 @@ contract UniswapV2Adapter is IDEXAdapter {
 
     /// @param _router  Uniswap V2-compatible router address. Must be a deployed
     ///                 contract implementing IUniswapV2Router02.
-    ///                 Examples per chain (for reference only — NOT hardcoded):
+    ///                 Examples per chain (for reference only - NOT hardcoded):
     ///                 Ethereum: 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D (UniV2)
     ///                 Arbitrum: 0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506 (Sushi)
     ///                 BSC:      0x10ED43C718714eb63d5aA57B78B54704E256024E (PancakeV2)
@@ -145,8 +139,8 @@ contract UniswapV2Adapter is IDEXAdapter {
     /// @inheritdoc IDEXAdapter
     /// @dev extraData = abi.encode(address[] path)
     ///      path[0] must equal tokenIn, path[path.length-1] must equal tokenOut.
-    ///      Flow: transferFrom caller → forceApprove router → swapExactTokensForTokens
-    ///      → router sends tokenOut directly to recipient (msg.sender).
+    ///      Flow: transferFrom caller -> forceApprove router -> swapExactTokensForTokens
+    ///      -> router sends tokenOut directly to recipient (msg.sender).
     ///
     ///      Gas cost: ~82k (single hop) / ~115k (two hops) at optimizer_runs=200.
     ///
@@ -154,15 +148,13 @@ contract UniswapV2Adapter is IDEXAdapter {
     /// @param tokenOut     ERC-20 token to receive (must equal path[last]).
     /// @param amountIn     Amount of tokenIn to spend.
     /// @param minAmountOut Minimum acceptable output (slippage guard). Reverts if not met.
-    /// @param extraData    abi.encode(address[] path) — ordered token route.
+    /// @param extraData    abi.encode(address[] path) - ordered token route.
     /// @return amountOut   Actual output amount (last element of returned amounts[]).
-    function swap(
-        address tokenIn,
-        address tokenOut,
-        uint256 amountIn,
-        uint256 minAmountOut,
-        bytes calldata extraData
-    ) external override returns (uint256 amountOut) {
+    function swap(address tokenIn, address tokenOut, uint256 amountIn, uint256 minAmountOut, bytes calldata extraData)
+        external
+        override
+        returns (uint256 amountOut)
+    {
         // Decode the swap path from extraData
         address[] memory path = abi.decode(extraData, (address[]));
 
@@ -181,13 +173,13 @@ contract UniswapV2Adapter is IDEXAdapter {
         // 2. Approve the router to spend tokenIn
         IERC20(tokenIn).forceApprove(address(router), amountIn);
 
-        // 3. Execute swap — router sends tokenOut directly to msg.sender
+        // 3. Execute swap - router sends tokenOut directly to msg.sender
         uint256[] memory amounts = router.swapExactTokensForTokens(
             amountIn,
             minAmountOut,
             path,
             msg.sender, // recipient receives output directly
-            block.timestamp // atomic — no expiry needed
+            block.timestamp // atomic - no expiry needed
         );
 
         // amounts[0] = amountIn, amounts[last] = actual output
@@ -203,21 +195,21 @@ contract UniswapV2Adapter is IDEXAdapter {
     /// @inheritdoc IDEXAdapter
     /// @dev extraData = abi.encode(address[] path)
     ///      Uses router.getAmountsOut() for a gas-free price preview.
-    ///      This is a view function — does not modify state.
+    ///      This is a view function - does not modify state.
     ///
     ///      Gas cost: ~12k at optimizer_runs=200.
     ///
     /// @param tokenIn    ERC-20 token to sell (must equal path[0]).
     /// @param tokenOut   ERC-20 token to receive (must equal path[last]).
     /// @param amountIn   Amount of tokenIn to price.
-    /// @param extraData  abi.encode(address[] path) — ordered token route.
+    /// @param extraData  abi.encode(address[] path) - ordered token route.
     /// @return amountOut Estimated output amount (last element of returned amounts[]).
-    function quoteOut(
-        address tokenIn,
-        address tokenOut,
-        uint256 amountIn,
-        bytes calldata extraData
-    ) external view override returns (uint256 amountOut) {
+    function quoteOut(address tokenIn, address tokenOut, uint256 amountIn, bytes calldata extraData)
+        external
+        view
+        override
+        returns (uint256 amountOut)
+    {
         address[] memory path = abi.decode(extraData, (address[]));
 
         if (path.length == 0) revert UV2_EmptyPath();

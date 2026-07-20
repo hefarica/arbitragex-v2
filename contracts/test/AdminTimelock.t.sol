@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// SC-10 tests — AdminTimelock
+// SC-10 tests - AdminTimelock
 //
 // Three properties under test:
 //   1. Clean deployment: proxy initializes with correct minDelay + roles.
@@ -136,25 +136,25 @@ contract AdminTimelockTest is Test {
         vm.prank(executor);
         tl.execute(address(target), 0, callData, predecessor, salt);
 
-        // Counter must remain 0 — no execution happened
-        assertEq(target.counter(), 0, unicode"target.counter must be 0 — execution must not have happened");
+        // Counter must remain 0 - no execution happened
+        assertEq(target.counter(), 0, unicode"target.counter must be 0 - execution must not have happened");
     }
 
     // =========================================================================
     // A9: Timelock minDelay regression tests (audit 2026-05-10)
     // =========================================================================
     //
-    // Tag prefix: testA9_* — grep-able by future audit re-runs.
+    // Tag prefix: testA9_* - grep-able by future audit re-runs.
     //
     // The existing SC-10 tests verify that the delay is enforced when the
     // correct executor role holder tries to execute early.  The A9 test adds
     // a distinct, security-critical angle: the deployer address (DEFAULT_ADMIN_ROLE)
     // CANNOT bypass the timelock by calling execute() directly.  Admin role is
-    // completely separate from EXECUTOR_ROLE inside TimelockController — holding
+    // completely separate from EXECUTOR_ROLE inside TimelockController - holding
     // DEFAULT_ADMIN_ROLE gives no ability to execute operations immediately.
     //
     // This is the regression guard for "admin EOA compromise = immediate execution"
-    // — the finding that motivates AdminTimelock existing in the first place.
+    // - the finding that motivates AdminTimelock existing in the first place.
 
     // -----------------------------------------------------------------------
     // testA9_Timelock_AdminCannotBypassDelay
@@ -164,13 +164,13 @@ contract AdminTimelockTest is Test {
     //   (a) DEFAULT_ADMIN_ROLE != EXECUTOR_ROLE, so the access control check
     //       inside TimelockController.execute() reverts.
     //   (b) Even if the admin were granted EXECUTOR_ROLE, the minDelay window
-    //       would still apply — this test verifies (a) specifically.
+    //       would still apply - this test verifies (a) specifically.
     //
     // Distinction from testTimelock_ScheduledAction_RequiresDelay:
     //   That test uses the legitimate executor address (holds EXECUTOR_ROLE)
     //   and verifies the time check.  This test uses the deployer address (holds
     //   only DEFAULT_ADMIN_ROLE) and verifies the role check fires before
-    //   anything else — even before the time check would fire.
+    //   anything else - even before the time check would fire.
     // -----------------------------------------------------------------------
     function testA9_Timelock_AdminCannotBypassDelay() public {
         bytes memory callData = abi.encodeWithSelector(TimelockTarget.increment.selector);
@@ -183,7 +183,7 @@ contract AdminTimelockTest is Test {
         tl.schedule(address(target), 0, callData, predecessor, salt, MIN_DELAY);
 
         // Deployer (DEFAULT_ADMIN_ROLE, no EXECUTOR_ROLE) tries to execute
-        // immediately — must revert.  The revert is an AccessControl error
+        // immediately - must revert.  The revert is an AccessControl error
         // (missing EXECUTOR_ROLE), NOT a timing error.  We use a bare
         // vm.expectRevert() because OZ TimelockController uses a dynamic
         // AccessControl string that includes the role hash.
@@ -192,7 +192,7 @@ contract AdminTimelockTest is Test {
         tl.execute(address(target), 0, callData, predecessor, salt);
 
         // Confirm no side-effect: target counter must still be 0.
-        assertEq(target.counter(), 0, unicode"target.counter must be 0 — admin execution must have been blocked");
+        assertEq(target.counter(), 0, unicode"target.counter must be 0 - admin execution must have been blocked");
     }
 
     // -----------------------------------------------------------------------
@@ -237,7 +237,7 @@ contract AdminTimelockTest is Test {
 
     // =========================================================================
     // Decision-free hardening: init takeover guards + proposer gate + delay floor
-    // + cancel path (tests only — no src change). These pin the defensive contract
+    // + cancel path (tests only - no src change). These pin the defensive contract
     // the timelock exists to provide; none were covered by the SC-10/A9 tests above.
     // =========================================================================
 
@@ -279,7 +279,7 @@ contract AdminTimelockTest is Test {
 
     // -----------------------------------------------------------------------
     // testSchedule_RevertWhen_DelayBelowMin
-    // schedule() must reject a delay below minDelay — the floor cannot be bypassed
+    // schedule() must reject a delay below minDelay - the floor cannot be bypassed
     // at schedule time even by a legitimate proposer.
     // -----------------------------------------------------------------------
     function testSchedule_RevertWhen_DelayBelowMin() public {
@@ -313,7 +313,7 @@ contract AdminTimelockTest is Test {
         vm.prank(makeAddr("stranger"));
         tl.cancel(opId);
 
-        // The proposer (holds CANCELLER_ROLE) cancels → operation returns to Unset.
+        // The proposer (holds CANCELLER_ROLE) cancels -> operation returns to Unset.
         vm.prank(proposer);
         tl.cancel(opId);
         assertEq(

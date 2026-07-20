@@ -2,7 +2,7 @@
 pragma solidity ^0.8.19;
 
 // =============================================================================
-// SC-16: DeployMultichain — Multi-chain CREATE2 deployment script
+// SC-16: DeployMultichain - Multi-chain CREATE2 deployment script
 //
 // Deploys the full OMEGA suite deterministically across 6 chains using
 // DeterministicFactory with CREATE2. All contract addresses are identical
@@ -12,12 +12,12 @@ pragma solidity ^0.8.19;
 //   Ethereum (1), Arbitrum (42161), Optimism (10), Base (8453), Polygon (137), BSC (56)
 //
 // Contracts deployed per chain:
-//   1. ArbitrageExecutor     — UUPS proxy + implementation
-//   2. FlashLoanExecutor     — UUPS proxy + implementation
-//   3. WalletTopology        — immutable (non-upgradeable)
-//   4. UniswapV2Adapter      — immutable (router via constructor)
-//   5. UniswapV3Adapter      — immutable (router via constructor)
-//   6. BalancerVaultAdapter  — immutable (vault via constructor)
+//   1. ArbitrageExecutor     - UUPS proxy + implementation
+//   2. FlashLoanExecutor     - UUPS proxy + implementation
+//   3. WalletTopology        - immutable (non-upgradeable)
+//   4. UniswapV2Adapter      - immutable (router via constructor)
+//   5. UniswapV3Adapter      - immutable (router via constructor)
+//   6. BalancerVaultAdapter  - immutable (vault via constructor)
 //
 // Pre-deploy requirements:
 //   - Set DEPLOYER_PRIVATE_KEY environment variable
@@ -67,12 +67,12 @@ contract DeployMultichain is Script {
     // Chain configuration
     // -------------------------------------------------------------------------
 
-    uint256 public constant ETHEREUM  = 1;
-    uint256 public constant ARBITRUM  = 42161;
-    uint256 public constant OPTIMISM  = 10;
-    uint256 public constant BASE      = 8453;
-    uint256 public constant POLYGON   = 137;
-    uint256 public constant BSC       = 56;
+    uint256 public constant ETHEREUM = 1;
+    uint256 public constant ARBITRUM = 42161;
+    uint256 public constant OPTIMISM = 10;
+    uint256 public constant BASE = 8453;
+    uint256 public constant POLYGON = 137;
+    uint256 public constant BSC = 56;
 
     /// @notice All supported chain IDs for iteration.
     uint256[] public SUPPORTED_CHAINS;
@@ -86,7 +86,7 @@ contract DeployMultichain is Script {
         SUPPORTED_CHAINS.push(BSC);
     }
 
-    /// @notice Default entrypoint — predicts all addresses without deploying.
+    /// @notice Default entrypoint - predicts all addresses without deploying.
     /// @dev Override of Script.run(). Safe to call without --broadcast.
     function run() external view {
         predictAll();
@@ -131,7 +131,7 @@ contract DeployMultichain is Script {
     address public executionSigner;
     address public coldTreasury;
 
-    // Router addresses per chain (NOT hardcoded — set via environment)
+    // Router addresses per chain (NOT hardcoded - set via environment)
     // These are validated at runtime.
 
     // -------------------------------------------------------------------------
@@ -147,8 +147,8 @@ contract DeployMultichain is Script {
 
     /// @notice Validate that chainId is supported.
     function _isSupported(uint256 chainId) internal pure returns (bool) {
-        return (chainId == ETHEREUM || chainId == ARBITRUM || chainId == OPTIMISM
-                || chainId == BASE || chainId == POLYGON || chainId == BSC);
+        return (chainId == ETHEREUM || chainId == ARBITRUM || chainId == OPTIMISM || chainId == BASE
+                || chainId == POLYGON || chainId == BSC);
     }
 
     /// @notice Get the DeterministicFactory instance.
@@ -158,10 +158,11 @@ contract DeployMultichain is Script {
     }
 
     /// @notice Build the full init bytecode for a contract with its constructor args.
-    function _buildBytecode(
-        bytes memory creationCode,
-        bytes memory constructorArgs
-    ) internal pure returns (bytes memory) {
+    function _buildBytecode(bytes memory creationCode, bytes memory constructorArgs)
+        internal
+        pure
+        returns (bytes memory)
+    {
         return abi.encodePacked(creationCode, constructorArgs);
     }
 
@@ -173,14 +174,10 @@ contract DeployMultichain is Script {
         uint256 _chainId,
         string memory _name
     ) internal view returns (address) {
-        return _factoryInstance.predictAddress(
-            _buildBytecode(_creationCode, _ctorArgs),
-            _chainId,
-            _name
-        );
+        return _factoryInstance.predictAddress(_buildBytecode(_creationCode, _ctorArgs), _chainId, _name);
     }
 
-    /// @notice AdminTimelock constructor args — the SINGLE SOURCE shared by
+    /// @notice AdminTimelock constructor args - the SINGLE SOURCE shared by
     ///         predictChain (CREATE2 prediction) and deployOnChain (actual deploy),
     ///         so the predicted address matches the deployed one byte-for-byte
     ///         (SC-16 determinism fix). minDelay=86400, proposers & executors =
@@ -198,11 +195,11 @@ contract DeployMultichain is Script {
     }
 
     // -------------------------------------------------------------------------
-    // Prediction functions (view — no state change, no gas cost)
+    // Prediction functions (view - no state change, no gas cost)
     // -------------------------------------------------------------------------
 
     /// @notice Predict all contract addresses for a single chain.
-    /// @dev View function — no transaction, no gas cost. Run this before
+    /// @dev View function - no transaction, no gas cost. Run this before
     ///      deploying to generate the deployment runbook.
     /// @param _chainId      Chain ID to predict for.
     /// @param _factoryAddr  DeterministicFactory address on that chain.
@@ -232,14 +229,18 @@ contract DeployMultichain is Script {
         d.factory = _factoryAddr;
 
         // Use _predict helper to reduce stack depth
-        d.walletTopology      = _predict(f, type(WalletTopology).creationCode,       abi.encode(_gs, _es, _ct),       c, "WalletTopology");
-        d.uniswapV2Adapter    = _predict(f, type(UniswapV2Adapter).creationCode,     abi.encode(_v2Router),           c, "UniswapV2Adapter");
-        d.uniswapV3Adapter    = _predict(f, type(UniswapV3Adapter).creationCode,     abi.encode(_v3Router),           c, "UniswapV3Adapter");
-        d.balancerVaultAdapter= _predict(f, type(BalancerVaultAdapter).creationCode, abi.encode(_vault),              c, "BalancerVaultAdapter");
-        d.arbitrageExecutor   = _predict(f, type(ArbitrageExecutor).creationCode,    "",                              c, "ArbitrageExecutor");
-        d.flashLoanExecutor   = _predict(f, type(FlashLoanExecutor).creationCode,    "",                              c, "FlashLoanExecutor");
-        d.allowanceManager    = _predict(f, type(AllowanceManager).creationCode,     "",                              c, "AllowanceManager");
-        d.adminTimelock       = _predict(f, type(AdminTimelock).creationCode, _adminTimelockCtorArgs(), c, "AdminTimelock");
+        d.walletTopology =
+            _predict(f, type(WalletTopology).creationCode, abi.encode(_gs, _es, _ct), c, "WalletTopology");
+        d.uniswapV2Adapter =
+            _predict(f, type(UniswapV2Adapter).creationCode, abi.encode(_v2Router), c, "UniswapV2Adapter");
+        d.uniswapV3Adapter =
+            _predict(f, type(UniswapV3Adapter).creationCode, abi.encode(_v3Router), c, "UniswapV3Adapter");
+        d.balancerVaultAdapter =
+            _predict(f, type(BalancerVaultAdapter).creationCode, abi.encode(_vault), c, "BalancerVaultAdapter");
+        d.arbitrageExecutor = _predict(f, type(ArbitrageExecutor).creationCode, "", c, "ArbitrageExecutor");
+        d.flashLoanExecutor = _predict(f, type(FlashLoanExecutor).creationCode, "", c, "FlashLoanExecutor");
+        d.allowanceManager = _predict(f, type(AllowanceManager).creationCode, "", c, "AllowanceManager");
+        d.adminTimelock = _predict(f, type(AdminTimelock).creationCode, _adminTimelockCtorArgs(), c, "AdminTimelock");
     }
 
     /// @notice Helper: wrap a single address into a 1-element array.
@@ -250,12 +251,8 @@ contract DeployMultichain is Script {
 
     /// @notice Predict addresses for all 6 chains and log to console.
     /// @dev Usage: forge script script/DeployMultichain.s.sol --sig "predictAll()" --rpc-url $MAINNET_RPC_URL -vvvv
-    ///      This is a PURE VIEW function — it costs zero gas.
-    function predictAll()
-        public
-        view
-        returns (Deployment[6] memory predictions)
-    {
+    ///      This is a PURE VIEW function - it costs zero gas.
+    function predictAll() public view returns (Deployment[6] memory predictions) {
         address _factoryAddr = vm.envOr("FACTORY_ADDRESS", address(0));
         require(_factoryAddr != address(0), "Set FACTORY_ADDRESS env var");
 
@@ -267,7 +264,7 @@ contract DeployMultichain is Script {
         console2.log("Factory:", _factoryAddr);
         console2.log("");
 
-        // Router addresses per chain (examples — override with env vars)
+        // Router addresses per chain (examples - override with env vars)
         // These are validated to be non-zero at runtime.
         address[6] memory v2Routers = [
             vm.envOr("MAINNET_V2_ROUTER", address(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D)),
@@ -331,7 +328,7 @@ contract DeployMultichain is Script {
     }
 
     // -------------------------------------------------------------------------
-    // Deployment functions (state-changing — require broadcast)
+    // Deployment functions (state-changing - require broadcast)
     // -------------------------------------------------------------------------
 
     /// @notice Deploy all OMEGA contracts on a single chain via CREATE2.
@@ -396,50 +393,40 @@ contract DeployMultichain is Script {
         d.factory = factoryAddress;
 
         // ------------------------------------------------------------------
-        // 1. Deploy WalletTopology (immutable — CREATE2 deterministic)
+        // 1. Deploy WalletTopology (immutable - CREATE2 deterministic)
         // ------------------------------------------------------------------
         {
             bytes memory code = _buildBytecode(
-                type(WalletTopology).creationCode,
-                abi.encode(gasSponsor, executionSigner, coldTreasury)
+                type(WalletTopology).creationCode, abi.encode(gasSponsor, executionSigner, coldTreasury)
             );
             d.walletTopology = factory.deploy(code, _chainId, "WalletTopology");
             console2.log("WalletTopology      :", d.walletTopology);
         }
 
         // ------------------------------------------------------------------
-        // 2. Deploy UniswapV2Adapter (immutable — CREATE2 deterministic)
+        // 2. Deploy UniswapV2Adapter (immutable - CREATE2 deterministic)
         // ------------------------------------------------------------------
         {
-            bytes memory code = _buildBytecode(
-                type(UniswapV2Adapter).creationCode,
-                abi.encode(v2Router)
-            );
+            bytes memory code = _buildBytecode(type(UniswapV2Adapter).creationCode, abi.encode(v2Router));
             d.uniswapV2Adapter = factory.deploy(code, _chainId, "UniswapV2Adapter");
             console2.log("UniswapV2Adapter    :", d.uniswapV2Adapter);
         }
 
         // ------------------------------------------------------------------
-        // 3. Deploy UniswapV3Adapter (immutable — CREATE2 deterministic)
+        // 3. Deploy UniswapV3Adapter (immutable - CREATE2 deterministic)
         // ------------------------------------------------------------------
         {
-            bytes memory code = _buildBytecode(
-                type(UniswapV3Adapter).creationCode,
-                abi.encode(v3Router)
-            );
+            bytes memory code = _buildBytecode(type(UniswapV3Adapter).creationCode, abi.encode(v3Router));
             d.uniswapV3Adapter = factory.deploy(code, _chainId, "UniswapV3Adapter");
             console2.log("UniswapV3Adapter    :", d.uniswapV3Adapter);
         }
 
         // ------------------------------------------------------------------
-        // 4. Deploy BalancerVaultAdapter (immutable — CREATE2 deterministic)
+        // 4. Deploy BalancerVaultAdapter (immutable - CREATE2 deterministic)
         //      Skip if no Balancer Vault on this chain (e.g. BSC).
         // ------------------------------------------------------------------
         if (vault != address(0)) {
-            bytes memory code = _buildBytecode(
-                type(BalancerVaultAdapter).creationCode,
-                abi.encode(vault)
-            );
+            bytes memory code = _buildBytecode(type(BalancerVaultAdapter).creationCode, abi.encode(vault));
             d.balancerVaultAdapter = factory.deploy(code, _chainId, "BalancerVaultAdapter");
             console2.log("BalancerVaultAdapter:", d.balancerVaultAdapter);
         } else {
@@ -461,8 +448,7 @@ contract DeployMultichain is Script {
 
             // Deploy proxy pointing to implementation
             ERC1967Proxy proxy = new ERC1967Proxy(
-                d.arbitrageExecutor,
-                abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, deployer)
+                d.arbitrageExecutor, abi.encodeWithSelector(ArbitrageExecutor.initialize.selector, deployer)
             );
             aeProxy = address(proxy);
             console2.log("ArbitrageExecutor proxy:", aeProxy);
@@ -477,18 +463,13 @@ contract DeployMultichain is Script {
             d.flashLoanExecutor = factory.deploy(implCode, _chainId, "FlashLoanExecutor");
             console2.log("FlashLoanExecutor impl:", d.flashLoanExecutor);
 
-            // Deploy proxy — initialized with the AE PROXY address (captured in
+            // Deploy proxy - initialized with the AE PROXY address (captured in
             // block 5), so the flash-loan -> ArbitrageExecutor handoff targets the
             // proxy (with state), NOT the stateless implementation. No post-deploy
             // re-point needed.
             ERC1967Proxy proxy = new ERC1967Proxy(
                 d.flashLoanExecutor,
-                abi.encodeWithSelector(
-                    FlashLoanExecutor.initialize.selector,
-                    deployer,
-                    aavePool,
-                    aeProxy
-                )
+                abi.encodeWithSelector(FlashLoanExecutor.initialize.selector, deployer, aavePool, aeProxy)
             );
             console2.log("FlashLoanExecutor proxy:", address(proxy));
         }
@@ -503,23 +484,19 @@ contract DeployMultichain is Script {
             console2.log("AllowanceManager impl:", d.allowanceManager);
 
             ERC1967Proxy proxy = new ERC1967Proxy(
-                d.allowanceManager,
-                abi.encodeWithSelector(AllowanceManager.initialize.selector, deployer)
+                d.allowanceManager, abi.encodeWithSelector(AllowanceManager.initialize.selector, deployer)
             );
             console2.log("AllowanceManager proxy:", address(proxy));
         }
 
         // ------------------------------------------------------------------
-        // 8. Deploy AdminTimelock (non-UUPS — CREATE2 deterministic)
+        // 8. Deploy AdminTimelock (non-UUPS - CREATE2 deterministic)
         // ------------------------------------------------------------------
         {
             // SC-16: ctor args come from the shared _adminTimelockCtorArgs() helper
             // so the deployed address matches predictChain's CREATE2 prediction
             // byte-for-byte (proposers/executors=[multisig], admin=deployer).
-            bytes memory code = _buildBytecode(
-                type(AdminTimelock).creationCode,
-                _adminTimelockCtorArgs()
-            );
+            bytes memory code = _buildBytecode(type(AdminTimelock).creationCode, _adminTimelockCtorArgs());
             d.adminTimelock = factory.deploy(code, _chainId, "AdminTimelock");
             console2.log("AdminTimelock       :", d.adminTimelock);
         }
@@ -554,32 +531,58 @@ contract DeployMultichain is Script {
     // -------------------------------------------------------------------------
 
     function _getV2Router(uint256 chainId) internal view returns (address) {
-        if (chainId == ETHEREUM)  return vm.envOr("MAINNET_V2_ROUTER", address(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D));
-        if (chainId == ARBITRUM)  return vm.envOr("ARBITRUM_V2_ROUTER", address(0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506));
-        if (chainId == OPTIMISM)  return vm.envOr("OPTIMISM_V2_ROUTER", address(0x4A7b5Da61326A6379179b40d00F57E5bbDC962c2));
-        if (chainId == BASE)      return vm.envOr("BASE_V2_ROUTER", address(0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24));
-        if (chainId == POLYGON)   return vm.envOr("POLYGON_V2_ROUTER", address(0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff));
-        if (chainId == BSC)       return vm.envOr("BSC_V2_ROUTER", address(0x10ED43C718714eb63d5aA57B78B54704E256024E));
+        if (chainId == ETHEREUM) {
+            return vm.envOr("MAINNET_V2_ROUTER", address(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D));
+        }
+        if (chainId == ARBITRUM) {
+            return vm.envOr("ARBITRUM_V2_ROUTER", address(0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506));
+        }
+        if (chainId == OPTIMISM) {
+            return vm.envOr("OPTIMISM_V2_ROUTER", address(0x4A7b5Da61326A6379179b40d00F57E5bbDC962c2));
+        }
+        if (chainId == BASE) return vm.envOr("BASE_V2_ROUTER", address(0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24));
+        if (chainId == POLYGON) {
+            return vm.envOr("POLYGON_V2_ROUTER", address(0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff));
+        }
+        if (chainId == BSC) return vm.envOr("BSC_V2_ROUTER", address(0x10ED43C718714eb63d5aA57B78B54704E256024E));
         revert("DeployMultichain: no V2 router for chain");
     }
 
     function _getV3Router(uint256 chainId) internal view returns (address) {
-        if (chainId == ETHEREUM)  return vm.envOr("MAINNET_V3_ROUTER", address(0xE592427A0AEce92De3Edee1F18E0157C05861564));
-        if (chainId == ARBITRUM)  return vm.envOr("ARBITRUM_V3_ROUTER", address(0xE592427A0AEce92De3Edee1F18E0157C05861564));
-        if (chainId == OPTIMISM)  return vm.envOr("OPTIMISM_V3_ROUTER", address(0xE592427A0AEce92De3Edee1F18E0157C05861564));
-        if (chainId == BASE)      return vm.envOr("BASE_V3_ROUTER", address(0x2626664c2603336E57B271c5C0b26F421741e481));
-        if (chainId == POLYGON)   return vm.envOr("POLYGON_V3_ROUTER", address(0xE592427A0AEce92De3Edee1F18E0157C05861564));
-        if (chainId == BSC)       return vm.envOr("BSC_V3_ROUTER", address(0x1b81D678ffb9C0263b24A97847620C99d213eB14));
+        if (chainId == ETHEREUM) {
+            return vm.envOr("MAINNET_V3_ROUTER", address(0xE592427A0AEce92De3Edee1F18E0157C05861564));
+        }
+        if (chainId == ARBITRUM) {
+            return vm.envOr("ARBITRUM_V3_ROUTER", address(0xE592427A0AEce92De3Edee1F18E0157C05861564));
+        }
+        if (chainId == OPTIMISM) {
+            return vm.envOr("OPTIMISM_V3_ROUTER", address(0xE592427A0AEce92De3Edee1F18E0157C05861564));
+        }
+        if (chainId == BASE) return vm.envOr("BASE_V3_ROUTER", address(0x2626664c2603336E57B271c5C0b26F421741e481));
+        if (chainId == POLYGON) {
+            return vm.envOr("POLYGON_V3_ROUTER", address(0xE592427A0AEce92De3Edee1F18E0157C05861564));
+        }
+        if (chainId == BSC) return vm.envOr("BSC_V3_ROUTER", address(0x1b81D678ffb9C0263b24A97847620C99d213eB14));
         revert("DeployMultichain: no V3 router for chain");
     }
 
     function _getBalancerVault(uint256 chainId) internal view returns (address) {
-        if (chainId == ETHEREUM)  return vm.envOr("MAINNET_BALANCER_VAULT", address(0xBA12222222228d8Ba445958a75a0704d566BF2C8));
-        if (chainId == ARBITRUM)  return vm.envOr("ARBITRUM_BALANCER_VAULT", address(0xBA12222222228d8Ba445958a75a0704d566BF2C8));
-        if (chainId == OPTIMISM)  return vm.envOr("OPTIMISM_BALANCER_VAULT", address(0xBA12222222228d8Ba445958a75a0704d566BF2C8));
-        if (chainId == BASE)      return vm.envOr("BASE_BALANCER_VAULT", address(0xBA12222222228d8Ba445958a75a0704d566BF2C8));
-        if (chainId == POLYGON)   return vm.envOr("POLYGON_BALANCER_VAULT", address(0xBA12222222228d8Ba445958a75a0704d566BF2C8));
-        if (chainId == BSC)       return vm.envOr("BSC_BALANCER_VAULT", address(0)); // No Balancer on BSC
+        if (chainId == ETHEREUM) {
+            return vm.envOr("MAINNET_BALANCER_VAULT", address(0xBA12222222228d8Ba445958a75a0704d566BF2C8));
+        }
+        if (chainId == ARBITRUM) {
+            return vm.envOr("ARBITRUM_BALANCER_VAULT", address(0xBA12222222228d8Ba445958a75a0704d566BF2C8));
+        }
+        if (chainId == OPTIMISM) {
+            return vm.envOr("OPTIMISM_BALANCER_VAULT", address(0xBA12222222228d8Ba445958a75a0704d566BF2C8));
+        }
+        if (chainId == BASE) {
+            return vm.envOr("BASE_BALANCER_VAULT", address(0xBA12222222228d8Ba445958a75a0704d566BF2C8));
+        }
+        if (chainId == POLYGON) {
+            return vm.envOr("POLYGON_BALANCER_VAULT", address(0xBA12222222228d8Ba445958a75a0704d566BF2C8));
+        }
+        if (chainId == BSC) return vm.envOr("BSC_BALANCER_VAULT", address(0)); // No Balancer on BSC
         revert("DeployMultichain: no Balancer vault for chain");
     }
 
@@ -602,13 +605,8 @@ contract DeployMultichain is Script {
         json = string.concat(json, '"adminTimelock":"', vm.toString(d.adminTimelock), '"');
         json = string.concat(json, "}");
 
-        string memory filename = string.concat(
-            "out/deployment_",
-            vm.toString(d.chainId),
-            "_",
-            vm.toString(block.timestamp),
-            ".json"
-        );
+        string memory filename =
+            string.concat("out/deployment_", vm.toString(d.chainId), "_", vm.toString(block.timestamp), ".json");
 
         vm.writeFile(filename, json);
         console2.log("Deployment JSON written to:", filename);

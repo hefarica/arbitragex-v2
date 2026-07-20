@@ -2,9 +2,9 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// SC-1: UniV3FlashAdapter — SKELETON — IFlashLoanProvider for Uniswap V3 Pool flash
+// SC-1: UniV3FlashAdapter - SKELETON - IFlashLoanProvider for Uniswap V3 Pool flash
 //
-// STATUS: SKELETON — vm.skip(true) in tests. Full implementation deferred.
+// STATUS: SKELETON - vm.skip(true) in tests. Full implementation deferred.
 //
 // Why deferred:
 //   Uniswap V3 flash loans are issued at the POOL level, not a central vault.
@@ -27,7 +27,7 @@ pragma solidity ^0.8.20;
 
 import "../interfaces/IFlashLoanProvider.sol";
 
-/// @title UniV3FlashAdapter — Skeleton IFlashLoanProvider for Uniswap V3 pool flash
+/// @title UniV3FlashAdapter - Skeleton IFlashLoanProvider for Uniswap V3 pool flash
 /// @notice NOT YET IMPLEMENTED. Deploying this contract will revert on all calls.
 /// @dev SC-1 (2026-05-08). Full implementation requires pool-level callback wiring.
 ///      See file header for the full rationale.
@@ -43,18 +43,36 @@ contract UniV3FlashAdapter is IFlashLoanProvider {
         address, /*asset*/
         uint256, /*amount*/
         bytes calldata /*params*/
-    ) external pure override {
+    )
+        external
+        pure
+        override
+    {
         revert NotImplemented();
     }
 
     /// @dev TODO: return (amount * feeTier) / 1_000_000 + 1 (per Uniswap V3 math).
     ///      feeTier is pool-specific: 100, 500, 3000, or 10000.
-    function flashLoanFee(uint256 /*amount*/) external pure override returns (uint256) {
+    function flashLoanFee(
+        uint256 /*amount*/
+    )
+        external
+        pure
+        override
+        returns (uint256)
+    {
         revert NotImplemented();
     }
 
     /// @dev TODO: return IUniswapV3Pool.token0/token1 balance for the chosen pool.
-    function maxFlashLoan(address /*asset*/) external pure override returns (uint256) {
+    function maxFlashLoan(
+        address /*asset*/
+    )
+        external
+        pure
+        override
+        returns (uint256)
+    {
         revert NotImplemented();
     }
 }

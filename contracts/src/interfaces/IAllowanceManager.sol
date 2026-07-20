@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// SC-5: IAllowanceManager — view interface for AllowanceManager integration
+// SC-5: IAllowanceManager - view interface for AllowanceManager integration
 //
 // Purpose: Allow ArbitrageExecutor (and other consumers) to verify that a
 // (token, spender) pair has a live allowance managed by AllowanceManager
@@ -12,7 +12,7 @@ pragma solidity ^0.8.20;
 //   AllowanceManager holds ERC-20 allowances FROM ITSELF to router spenders,
 //   via forceApprove(). The actual allowance lives on each ERC-20 token contract
 //   at: IERC20(token).allowance(address(AllowanceManager), spender).
-//   Therefore isApproved() and getAllowance() delegate to the token contract —
+//   Therefore isApproved() and getAllowance() delegate to the token contract -
 //   they do NOT store additional state on AllowanceManager.
 //
 // This interface is intentionally minimal (read-only). Write functions
@@ -20,7 +20,7 @@ pragma solidity ^0.8.20;
 // consumers of this interface should never need them.
 // =============================================================================
 
-/// @title IAllowanceManager — read interface for AllowanceManager
+/// @title IAllowanceManager - read interface for AllowanceManager
 /// @notice Exposes allowance query functions used by ArbitrageExecutor
 ///         to verify router approvals before executing swap routes.
 interface IAllowanceManager {

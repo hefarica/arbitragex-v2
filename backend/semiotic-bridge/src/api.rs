@@ -1,10 +1,9 @@
-use axum::{routing::get, Router, Json, extract::Query};
+use crate::types::{FormulaType, InputSanitizer, TranslationResponse};
+use axum::{extract::Query, routing::get, Json, Router};
 use std::collections::HashMap;
-use crate::types::{TranslationResponse, FormulaType, InputSanitizer};
 
 pub fn create_router() -> Router {
-    Router::new()
-        .route("/api/translate", get(handle_translate))
+    Router::new().route("/api/translate", get(handle_translate))
 }
 
 async fn handle_translate(
@@ -24,7 +23,9 @@ async fn handle_translate(
                 source_word: sanitized,
                 translation_type: FormulaType::DCL,
                 mathematical_expression: "\\text{UNKNOWN}".to_string(),
-                semantic_explanation: "Term not in precomputed dictionary. Extend formulas.rs to add mapping.".to_string(),
+                semantic_explanation:
+                    "Term not in precomputed dictionary. Extend formulas.rs to add mapping."
+                        .to_string(),
             });
         }
     };

@@ -49,6 +49,11 @@ impl StrategyRegistry {
         reg
     }
 
+    /// Root path used for cartridge discovery (kept for reload / diagnostics).
+    pub fn cartridge_path(&self) -> &Path {
+        &self.cartridge_path
+    }
+
     fn discover_cartridges(&mut self, path: &Path) {
         if let Ok(entries) = std::fs::read_dir(path) {
             for entry in entries.flatten() {
@@ -80,40 +85,49 @@ impl StrategyRegistry {
         let ops = Self::extract_operators(&content).unwrap_or_default();
 
         Some(CartridgeMeta {
-            mev_id, name, family, math_domain, version, author,
-            description, category, target_chains: vec![],
+            mev_id,
+            name,
+            family,
+            math_domain,
+            version,
+            author,
+            description,
+            category,
+            target_chains: vec![],
             min_eval_interval_ms: interval,
-            atomic_possible: atomic, nonatomic_possible: nonatomic,
-            min_legs, max_legs,
+            atomic_possible: atomic,
+            nonatomic_possible: nonatomic,
+            min_legs,
+            max_legs,
             applicable_operators: ops,
             source_path: path.to_path_buf(),
         })
     }
 
     fn extract_field(content: &str, key: &str) -> Option<String> {
-        content.lines()
-            .find(|l| l.contains(key))
-            .and_then(|l| {
-                let start = l.find('"')? + 1;
-                let end = l.rfind('"')?;
-                Some(l[start..end].to_string())
-            })
+        content.lines().find(|l| l.contains(key)).and_then(|l| {
+            let start = l.find('"')? + 1;
+            let end = l.rfind('"')?;
+            Some(l[start..end].to_string())
+        })
     }
 
     fn extract_bool(content: &str, key: &str) -> Option<bool> {
-        content.lines()
+        content
+            .lines()
             .find(|l| l.contains(key))
             .map(|l| l.contains("true"))
     }
 
     fn extract_u32(content: &str, key: &str) -> Option<u32> {
-        content.lines()
-            .find(|l| l.contains(key))
-            .and_then(|l| {
-                let num: String = l.chars().skip_while(|c| !c.is_ascii_digit())
-                    .take_while(|c| c.is_ascii_digit()).collect();
-                num.parse().ok()
-            })
+        content.lines().find(|l| l.contains(key)).and_then(|l| {
+            let num: String = l
+                .chars()
+                .skip_while(|c| !c.is_ascii_digit())
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            num.parse().ok()
+        })
     }
 
     fn extract_u64(content: &str, key: &str) -> Option<u64> {
@@ -121,10 +135,13 @@ impl StrategyRegistry {
     }
 
     fn extract_operators(content: &str) -> Option<Vec<u8>> {
-        content.lines()
+        content
+            .lines()
             .find(|l| l.contains("applicable_operators:"))
             .map(|l| {
-                l.split(':').nth(1).unwrap_or("")
+                l.split(':')
+                    .nth(1)
+                    .unwrap_or("")
                     .trim()
                     .trim_matches(|c| c == '[' || c == ']' || c == ',')
                     .split(',')
@@ -143,10 +160,16 @@ impl StrategyRegistry {
         v
     }
 
-    pub fn len(&self) -> usize { self.cartridges.len() }
-    pub fn is_empty(&self) -> bool { self.cartridges.is_empty() }
+    pub fn len(&self) -> usize {
+        self.cartridges.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.cartridges.is_empty()
+    }
 }
 
 impl Default for StrategyRegistry {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

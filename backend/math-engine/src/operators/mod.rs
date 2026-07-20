@@ -168,7 +168,10 @@ impl OperatorRegistry {
     }
 
     pub fn available(&self) -> Vec<&dyn TopologicalOperator> {
-        self.all().into_iter().filter(|o| o.is_available()).collect()
+        self.all()
+            .into_iter()
+            .filter(|o| o.is_available())
+            .collect()
     }
 
     pub fn dispatch(&self, id: u8, state: &MarketState) -> Option<OperatorOutput> {

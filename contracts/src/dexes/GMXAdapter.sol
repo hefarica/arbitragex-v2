@@ -2,9 +2,9 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// SC-2: GMXAdapter — SKELETON — IDEXAdapter for GMX V1 Router
+// SC-2: GMXAdapter - SKELETON - IDEXAdapter for GMX V1 Router
 //
-// STATUS: SKELETON — vm.skip(true) in tests. Full implementation deferred.
+// STATUS: SKELETON - vm.skip(true) in tests. Full implementation deferred.
 //
 // Why deferred:
 //   GMX V1 (Arbitrum + Avalanche) uses a Router.swap() that routes through
@@ -12,9 +12,9 @@ pragma solidity ^0.8.20;
 //     a) Swap path is an address[] array (intermediate tokens), not a pair.
 //     b) GMX charges a fee that varies by token (spread-based, not bps).
 //     c) GMX V2 (GMX Synthetics / "GM pools") uses a completely different
-//        interface: ExchangeRouter + order creation — not atomic.
+//        interface: ExchangeRouter + order creation - not atomic.
 //     d) V1 Router.swap() requires WETH wrapping for ETH paths.
-//     e) Price impact depends on GLP composition — no simple view quote.
+//     e) Price impact depends on GLP composition - no simple view quote.
 //     f) V2 is replacing V1; assessing whether V1 liquidity is still viable
 //        for arbitrage purposes before investing implementation time.
 //
@@ -28,7 +28,7 @@ pragma solidity ^0.8.20;
 
 import "../interfaces/IDEXAdapter.sol";
 
-/// @title GMXAdapter — Skeleton IDEXAdapter for GMX Router
+/// @title GMXAdapter - Skeleton IDEXAdapter for GMX Router
 /// @notice NOT YET IMPLEMENTED. All calls revert.
 /// @dev SC-2 (2026-05-08). Full implementation requires GMX V1/V2 decision.
 ///      See file header for the full rationale.
@@ -45,7 +45,12 @@ contract GMXAdapter is IDEXAdapter {
         uint256, /*amountIn*/
         uint256, /*minAmountOut*/
         bytes calldata /*extraData*/
-    ) external pure override returns (uint256) {
+    )
+        external
+        pure
+        override
+        returns (uint256)
+    {
         revert NotImplemented();
     }
 
@@ -55,7 +60,12 @@ contract GMXAdapter is IDEXAdapter {
         address, /*tokenOut*/
         uint256, /*amountIn*/
         bytes calldata /*extraData*/
-    ) external pure override returns (uint256) {
+    )
+        external
+        pure
+        override
+        returns (uint256)
+    {
         revert NotImplemented();
     }
 }

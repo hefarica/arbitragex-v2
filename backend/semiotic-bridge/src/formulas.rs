@@ -1,5 +1,5 @@
-use crate::types::{FormulaType, CalcInputs};
 use crate::errors::SemioticError;
+use crate::types::{CalcInputs, FormulaType};
 
 pub fn singular_value_extraction(_inputs: &CalcInputs) -> Result<f64, SemioticError> {
     let duration = _inputs.volume * _inputs.threshold;

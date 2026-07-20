@@ -31,12 +31,7 @@ contract CurveStableSwapAdapter {
     error CurveAdapter__InvalidCoinIndex();
 
     event ExchangeExecuted(
-        address indexed pool,
-        int128 i,
-        int128 j,
-        uint256 amountIn,
-        uint256 amountOut,
-        address indexed recipient
+        address indexed pool, int128 i, int128 j, uint256 amountIn, uint256 amountOut, address indexed recipient
     );
 
     /**
@@ -49,14 +44,10 @@ contract CurveStableSwapAdapter {
      * @param  recipient Destino del coin de salida (Cold Treasury).
      * @return amountOut Recibido efectivo.
      */
-    function exchangeOnCurve(
-        address pool,
-        int128 i,
-        int128 j,
-        uint256 amountIn,
-        uint256 minOut,
-        address recipient
-    ) external returns (uint256 amountOut) {
+    function exchangeOnCurve(address pool, int128 i, int128 j, uint256 amountIn, uint256 minOut, address recipient)
+        external
+        returns (uint256 amountOut)
+    {
         if (amountIn == 0) revert CurveAdapter__ZeroAmount();
 
         ICurveStableSwap c = ICurveStableSwap(pool);

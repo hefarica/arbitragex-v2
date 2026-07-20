@@ -2,7 +2,7 @@
 pragma solidity ^0.8.19;
 
 // =============================================================================
-// WalletTopology — Segregacion de fondos y autorizacion de roles
+// WalletTopology - Segregacion de fondos y autorizacion de roles
 //
 // Purpose: Separate operational concerns across three distinct wallet roles
 //          to minimize blast radius of key compromise:
@@ -14,7 +14,7 @@ pragma solidity ^0.8.19;
 //   COLD_TREASURY     | Receives yield/profits           | Large (kept offline)
 //
 // This contract is NOT upgradeable by design. Wallet topology is foundational
-// security infrastructure — upgrading it would create a key-management bypass.
+// security infrastructure - upgrading it would create a key-management bypass.
 // If the topology needs to change, deploy a new instance and migrate funds.
 //
 // Invariantes de estado:
@@ -49,16 +49,16 @@ error WT_NotAdmin();
 /// @notice Segregacion de fondos y autorizacion de roles.
 /// @dev Tres roles: GAS_SPONSOR (paga gas), EXECUTION_SIGNER (firma, cero
 ///      balance), COLD_TREASURY (recibe yield).
-///      SC-15 (2026-05-15). NOT upgradeable — wallet topology is security
+///      SC-15 (2026-05-15). NOT upgradeable - wallet topology is security
 ///      infrastructure. Uses OpenZeppelin AccessControl (non-upgradeable).
 ///
 ///      Invariantes de estado documentadas:
 ///        I1: GAS_SPONSOR_ROLE, EXECUTION_SIGNER_ROLE, COLD_TREASURY_ROLE son
-///            mutuamente exclusivos — una direccion solo puede tener un rol.
+///            mutuamente exclusivos - una direccion solo puede tener un rol.
 ///        I2: coldTreasury es siempre una direccion no-cero (no se puede quemar
 ///            fondos enviando a address(0)).
 ///        I3: Solo DEFAULT_ADMIN_ROLE puede cambiar coldTreasury.
-///        I4: EXECUTION_SIGNER nunca debe tener balance — es un rol de firma
+///        I4: EXECUTION_SIGNER nunca debe tener balance - es un rol de firma
 ///            puramente off-chain.
 // =============================================================================
 
@@ -72,7 +72,7 @@ contract WalletTopology is AccessControl {
     bytes32 public constant GAS_SPONSOR_ROLE = keccak256("GAS_SPONSOR_ROLE");
 
     /// @notice Role for addresses that sign execution transactions.
-    ///         Execution signers hold ZERO balance — they are pure signing keys.
+    ///         Execution signers hold ZERO balance - they are pure signing keys.
     ///         SECURITY: Never send funds to an execution signer address.
     bytes32 public constant EXECUTION_SIGNER_ROLE = keccak256("EXECUTION_SIGNER_ROLE");
 
@@ -104,19 +104,12 @@ contract WalletTopology is AccessControl {
     /// @param gasSponsor      Address with GAS_SPONSOR_ROLE.
     /// @param executionSigner Address with EXECUTION_SIGNER_ROLE.
     /// @param coldTreasury    Address with COLD_TREASURY_ROLE.
-    event WalletConfigured(
-        address indexed gasSponsor,
-        address indexed executionSigner,
-        address indexed coldTreasury
-    );
+    event WalletConfigured(address indexed gasSponsor, address indexed executionSigner, address indexed coldTreasury);
 
     /// @notice Emitted when the cold treasury is updated by admin.
     /// @param previousTreasury The old treasury address.
     /// @param newTreasury      The new treasury address.
-    event ColdTreasuryUpdated(
-        address indexed previousTreasury,
-        address indexed newTreasury
-    );
+    event ColdTreasuryUpdated(address indexed previousTreasury, address indexed newTreasury);
 
     /// @notice Emitted when a role is granted. Used for off-chain indexing.
     /// @param role    The role that was granted.
@@ -150,8 +143,7 @@ contract WalletTopology is AccessControl {
         if (_coldTreasury == address(0)) revert WT_ZeroAddress();
 
         // Invariant I1: all three addresses must be distinct
-        if (_gasSponsor == _executionSigner || _gasSponsor == _coldTreasury
-            || _executionSigner == _coldTreasury) {
+        if (_gasSponsor == _executionSigner || _gasSponsor == _coldTreasury || _executionSigner == _coldTreasury) {
             revert WT_DuplicateAddresses();
         }
 

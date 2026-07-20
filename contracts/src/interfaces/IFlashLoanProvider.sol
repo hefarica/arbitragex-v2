@@ -2,22 +2,22 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// SC-9: IFlashLoanProvider — provider-agnostic flash loan abstraction
+// SC-9: IFlashLoanProvider - provider-agnostic flash loan abstraction
 //
 // Purpose: Decouple FlashLoanExecutor from a concrete Aave V3 interface so that
 // SC-1 (multi-provider flash loans: Balancer 0%, dYdX 0%, Aave 0.05%) can be
 // implemented by swapping the concrete adapter without touching the executor logic.
 //
 // Adapters to implement (SC-1, deferred):
-//   - BalancerFlashLoanAdapter  — IBalancerVault.flashLoan() (0% fee)
-//   - DyDxFlashLoanAdapter      — ISoloMargin.operate() (0% fee)
-//   - AaveV3FlashLoanAdapter     — IAaveV3Pool.flashLoanSimple() (0.05% fee)
+//   - BalancerFlashLoanAdapter  - IBalancerVault.flashLoan() (0% fee)
+//   - DyDxFlashLoanAdapter      - ISoloMargin.operate() (0% fee)
+//   - AaveV3FlashLoanAdapter     - IAaveV3Pool.flashLoanSimple() (0.05% fee)
 //
 // Provider selection priority per §19 / §29 gas optimization:
 //   Balancer (0%) > dYdX (0%) > Aave (0.05%)
 // =============================================================================
 
-/// @title IFlashLoanProvider — abstract flash loan provider interface
+/// @title IFlashLoanProvider - abstract flash loan provider interface
 /// @notice Standard interface for borrowing tokens atomically, repaying in the
 ///         same transaction. Implementations adapt different protocols
 ///         (Aave V3, Balancer, dYdX) to this common interface.
@@ -34,12 +34,7 @@ interface IFlashLoanProvider {
     /// @param asset     ERC-20 token to borrow.
     /// @param amount    Amount to borrow.
     /// @param params    Arbitrary calldata forwarded to the receiver callback.
-    function flashLoan(
-        address receiver,
-        address asset,
-        uint256 amount,
-        bytes calldata params
-    ) external;
+    function flashLoan(address receiver, address asset, uint256 amount, bytes calldata params) external;
 
     /// @notice Compute the fee charged by this provider for a given loan amount.
     /// @dev Returns 0 for zero-fee providers (Balancer, dYdX).

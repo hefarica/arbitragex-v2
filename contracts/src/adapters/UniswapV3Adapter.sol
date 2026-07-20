@@ -2,7 +2,7 @@
 pragma solidity ^0.8.19;
 
 // =============================================================================
-// SC-2: UniswapV3Adapter — IDEXAdapter for Uniswap V3 and forks
+// SC-2: UniswapV3Adapter - IDEXAdapter for Uniswap V3 and forks
 //
 // Supports any DEX that implements the Uniswap V3 SwapRouter interface:
 //   - Uniswap V3 (Ethereum, Arbitrum, Optimism, Base, Polygon, BSC)
@@ -26,11 +26,11 @@ pragma solidity ^0.8.19;
 //                        The swap will push the price up to this limit and stop.
 //                        Setting 0 disables the price limit entirely.
 //
-// Router address is injected via constructor — zero hardcoded addresses.
+// Router address is injected via constructor - zero hardcoded addresses.
 //
 // Gas profile (optimizer_runs = 200):
 //   - swap()     : ~95,000 gas (single hop exactInputSingle)
-//   - quoteOut() : reverts — use QuoterV2 off-chain (see NatSpec below)
+//   - quoteOut() : reverts - use QuoterV2 off-chain (see NatSpec below)
 // =============================================================================
 
 import "../interfaces/IDEXAdapter.sol";
@@ -41,7 +41,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 // Minimal Uniswap V3 SwapRouter interface
 // -------------------------------------------------------------------------
 
-/// @dev Uniswap V3 ISwapRouter — exactInputSingle for single-hop swaps.
+/// @dev Uniswap V3 ISwapRouter - exactInputSingle for single-hop swaps.
 ///      Implemented by Uniswap V3, PancakeSwap V3, and all forks.
 interface ISwapRouter {
     /// @notice Parameters for exactInputSingle swap.
@@ -65,10 +65,7 @@ interface ISwapRouter {
     /// @notice Swap `amountIn` of one token for as much as possible of another token.
     /// @param params  The parameters necessary for the swap.
     /// @return amountOut  The amount of the received token.
-    function exactInputSingle(ExactInputSingleParams calldata params)
-        external
-        payable
-        returns (uint256 amountOut);
+    function exactInputSingle(ExactInputSingleParams calldata params) external payable returns (uint256 amountOut);
 
     /// @notice Call multiple swaps sequentially, where the output of one is the input of the next.
     /// @param params  Parameters for the multi-hop swap.
@@ -80,10 +77,7 @@ interface ISwapRouter {
         uint256 amountOutMinimum;
     }
 
-    function exactInput(ExactInputParams calldata params)
-        external
-        payable
-        returns (uint256 amountOut);
+    function exactInput(ExactInputParams calldata params) external payable returns (uint256 amountOut);
 }
 
 // -------------------------------------------------------------------------
@@ -102,7 +96,7 @@ error UV3_SlippageExceeded(uint256 amountOut, uint256 minAmountOut);
 error UV3_UnauthorizedCallback(address caller);
 
 // =============================================================================
-/// @title UniswapV3Adapter — IDEXAdapter for Uniswap V3 and forks
+/// @title UniswapV3Adapter - IDEXAdapter for Uniswap V3 and forks
 /// @notice Executes exactInputSingle through any V3-compatible router.
 ///         Single-hop only. Multi-hop is supported by composing routes in
 ///         the ArbitrageExecutor.
@@ -127,7 +121,7 @@ contract UniswapV3Adapter is IDEXAdapter {
 
     /// @param _router  Uniswap V3-compatible SwapRouter address. Must be a
     ///                 deployed contract implementing ISwapRouter.
-    ///                 Examples per chain (for reference only — NOT hardcoded):
+    ///                 Examples per chain (for reference only - NOT hardcoded):
     ///                 Ethereum: 0xE592427A0AEce92De3Edee1F18E0157C05861564 (UniV3)
     ///                 Arbitrum: 0xE592427A0AEce92De3Edee1F18E0157C05861564 (UniV3)
     ///                 BSC:      0x1b81D678ffb9C0263b24A97847620C99d213eB14 (PancakeV3)
@@ -142,8 +136,8 @@ contract UniswapV3Adapter is IDEXAdapter {
 
     /// @inheritdoc IDEXAdapter
     /// @dev extraData = abi.encode(uint24 fee, uint160 sqrtPriceLimitX96)
-    ///      Flow: transferFrom caller → forceApprove router → exactInputSingle
-    ///      → router sends tokenOut directly to msg.sender.
+    ///      Flow: transferFrom caller -> forceApprove router -> exactInputSingle
+    ///      -> router sends tokenOut directly to msg.sender.
     ///
     ///      Gas cost: ~95k gas at optimizer_runs=200 (single hop).
     ///
@@ -153,13 +147,11 @@ contract UniswapV3Adapter is IDEXAdapter {
     /// @param minAmountOut Minimum acceptable output (slippage guard). Reverts if not met.
     /// @param extraData    abi.encode(uint24 fee, uint160 sqrtPriceLimitX96)
     /// @return amountOut   Actual output amount received.
-    function swap(
-        address tokenIn,
-        address tokenOut,
-        uint256 amountIn,
-        uint256 minAmountOut,
-        bytes calldata extraData
-    ) external override returns (uint256 amountOut) {
+    function swap(address tokenIn, address tokenOut, uint256 amountIn, uint256 minAmountOut, bytes calldata extraData)
+        external
+        override
+        returns (uint256 amountOut)
+    {
         if (amountIn == 0) revert UV3_ZeroAmountIn();
         if (tokenIn == tokenOut) revert UV3_SameToken();
 
@@ -172,7 +164,7 @@ contract UniswapV3Adapter is IDEXAdapter {
         // 2. Approve the router to spend tokenIn
         IERC20(tokenIn).forceApprove(address(router), amountIn);
 
-        // 3. Execute exactInputSingle — recipient is msg.sender (direct transfer)
+        // 3. Execute exactInputSingle - recipient is msg.sender (direct transfer)
         amountOut = router.exactInputSingle(
             ISwapRouter.ExactInputSingleParams({
                 tokenIn: tokenIn,
@@ -196,7 +188,7 @@ contract UniswapV3Adapter is IDEXAdapter {
     ///      The router can only quote via state-changing operations.
     ///      Off-chain callers should use the QuoterV2 contract:
     ///        Ethereum: 0x61fFE014bA17989E743c5F6cB21bF969dc0bB65B (QuoterV2)
-    ///      This function always reverts — use QuoterV2 for off-chain quotes.
+    ///      This function always reverts - use QuoterV2 for off-chain quotes.
     ///
     ///      Invariant: this function never modifies state. It reverts immediately.
     function quoteOut(
@@ -204,7 +196,12 @@ contract UniswapV3Adapter is IDEXAdapter {
         address, /*tokenOut*/
         uint256, /*amountIn*/
         bytes calldata /*extraData*/
-    ) external pure override returns (uint256) {
+    )
+        external
+        pure
+        override
+        returns (uint256)
+    {
         revert("UniswapV3Adapter: use QuoterV2 contract for off-chain quotes");
     }
 }

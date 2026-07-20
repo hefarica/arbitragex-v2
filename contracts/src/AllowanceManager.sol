@@ -2,15 +2,15 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// STORAGE LAYOUT — APPEND-ONLY RULE (SC-08, 2026-05-08)
+// STORAGE LAYOUT - APPEND-ONLY RULE (SC-08, 2026-05-08)
 // =============================================================================
 // Parent contracts (Initializable, AccessControlUpgradeable, PausableUpgradeable,
-// UUPSUpgradeable) all use ERC-7201 namespaced slots — they do NOT occupy linear
+// UUPSUpgradeable) all use ERC-7201 namespaced slots - they do NOT occupy linear
 // slot space.
 //
 // This contract has NO additional state variables of its own.
 // If state variables are added in future upgrades, they start at slot 0
-// and must only be appended — never inserted.
+// and must only be appended - never inserted.
 // =============================================================================
 
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
@@ -34,7 +34,7 @@ error AM_AboveSafeCap();
 /// @dev Thrown when batch arrays differ in length.
 error AM_LengthMismatch();
 
-/// @title AllowanceManager — UUPS-upgradeable centralized token allowance manager
+/// @title AllowanceManager - UUPS-upgradeable centralized token allowance manager
 /// @notice Centralizes and audits ERC-20 approve() calls to DeFi routers from
 ///         operational contracts. Supports Pausable circuit-breaker and batch
 ///         grant/revoke operations (SC-4).
@@ -51,9 +51,9 @@ contract AllowanceManager is
 {
     using SafeERC20 for IERC20;
 
-    /// @notice Admin role — alias for DEFAULT_ADMIN_ROLE.
+    /// @notice Admin role - alias for DEFAULT_ADMIN_ROLE.
     bytes32 public constant ADMIN_ROLE = DEFAULT_ADMIN_ROLE;
-    // SC-6: EXECUTOR_ROLE removed — it was declared but never granted or checked anywhere.
+    // SC-6: EXECUTOR_ROLE removed - it was declared but never granted or checked anywhere.
     /// @notice Separate UPGRADER_ROLE allows key rotation independent of admin.
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
 
@@ -79,7 +79,7 @@ contract AllowanceManager is
         _disableInitializers();
     }
 
-    /// @notice Initializer — replaces constructor. Must be called exactly once via ERC1967Proxy.
+    /// @notice Initializer - replaces constructor. Must be called exactly once via ERC1967Proxy.
     /// @param admin  Address granted DEFAULT_ADMIN_ROLE and UPGRADER_ROLE.
     function initialize(address admin) public initializer {
         __AccessControl_init();
@@ -114,11 +114,11 @@ contract AllowanceManager is
     /// @param token      ERC-20 token to approve.
     /// @param spender    Address receiving the allowance (e.g. a DeFi router).
     /// @param maxAmount  Allowance amount. Must be > 0 and <= MAX_SAFE_ALLOWANCE.
-    function grantAllowance(
-        address token,
-        address spender,
-        uint256 maxAmount
-    ) external onlyRole(ADMIN_ROLE) whenNotPaused {
+    function grantAllowance(address token, address spender, uint256 maxAmount)
+        external
+        onlyRole(ADMIN_ROLE)
+        whenNotPaused
+    {
         if (token == address(0)) revert AM_ZeroAddress();
         if (spender == address(0)) revert AM_ZeroAddress();
         if (maxAmount == 0) revert AM_ZeroAmount();
@@ -147,11 +147,11 @@ contract AllowanceManager is
     /// @param tokens    ERC-20 token addresses, one per tuple.
     /// @param spenders  Spender addresses, one per tuple.
     /// @param amounts   Allowance amounts, one per tuple. Each must be > 0 and <= MAX_SAFE_ALLOWANCE.
-    function batchGrantAllowance(
-        address[] calldata tokens,
-        address[] calldata spenders,
-        uint256[] calldata amounts
-    ) external onlyRole(ADMIN_ROLE) whenNotPaused {
+    function batchGrantAllowance(address[] calldata tokens, address[] calldata spenders, uint256[] calldata amounts)
+        external
+        onlyRole(ADMIN_ROLE)
+        whenNotPaused
+    {
         if (tokens.length != spenders.length || tokens.length != amounts.length) revert AM_LengthMismatch();
         for (uint256 i = 0; i < tokens.length;) {
             if (tokens[i] == address(0)) revert AM_ZeroAddress();
@@ -160,7 +160,9 @@ contract AllowanceManager is
             if (amounts[i] > MAX_SAFE_ALLOWANCE) revert AM_AboveSafeCap();
             IERC20(tokens[i]).forceApprove(spenders[i], amounts[i]);
             emit AllowanceGranted(tokens[i], spenders[i], amounts[i]);
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
     }
 
@@ -169,15 +171,18 @@ contract AllowanceManager is
     ///      SC-4: reverts when paused.
     /// @param tokens    ERC-20 token addresses, one per pair.
     /// @param spenders  Spender addresses to revoke, one per pair.
-    function batchRevokeAllowance(
-        address[] calldata tokens,
-        address[] calldata spenders
-    ) external onlyRole(ADMIN_ROLE) whenNotPaused {
+    function batchRevokeAllowance(address[] calldata tokens, address[] calldata spenders)
+        external
+        onlyRole(ADMIN_ROLE)
+        whenNotPaused
+    {
         if (tokens.length != spenders.length) revert AM_LengthMismatch();
         for (uint256 i = 0; i < tokens.length;) {
             IERC20(tokens[i]).forceApprove(spenders[i], 0);
             emit AllowanceRevoked(tokens[i], spenders[i]);
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
     }
 
@@ -186,13 +191,13 @@ contract AllowanceManager is
     // -------------------------------------------------------------------------
 
     /// @inheritdoc IAllowanceManager
-    /// @dev Reads IERC20(token).allowance(address(this), spender) — no extra storage.
+    /// @dev Reads IERC20(token).allowance(address(this), spender) - no extra storage.
     function isApproved(address token, address spender) external view override returns (bool) {
         return IERC20(token).allowance(address(this), spender) > 0;
     }
 
     /// @inheritdoc IAllowanceManager
-    /// @dev Reads IERC20(token).allowance(address(this), spender) — no extra storage.
+    /// @dev Reads IERC20(token).allowance(address(this), spender) - no extra storage.
     function getAllowance(address token, address spender) external view override returns (uint256) {
         return IERC20(token).allowance(address(this), spender);
     }

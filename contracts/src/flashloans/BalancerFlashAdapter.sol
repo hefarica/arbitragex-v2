@@ -2,13 +2,13 @@
 pragma solidity ^0.8.20;
 
 // =============================================================================
-// SC-1: BalancerFlashAdapter — concrete IFlashLoanProvider for Balancer V2 Vault
+// SC-1: BalancerFlashAdapter - concrete IFlashLoanProvider for Balancer V2 Vault
 //
-// Fee: 0% (Balancer flash loans are free as of V2 — the protocol does not
+// Fee: 0% (Balancer flash loans are free as of V2 - the protocol does not
 //      charge a fee for flash loans; only LP swaps accrue fees).
 // Callback: Balancer calls receiveFlashLoan(tokens, amounts, feeAmounts, userData)
 //           on the `recipient` address. The recipient must repay before returning.
-// Priority: HIGHEST — use this provider first (0% fee, deep liquidity for blue chips).
+// Priority: HIGHEST - use this provider first (0% fee, deep liquidity for blue chips).
 //
 // Reference: https://docs.balancer.fi/reference/contracts/flash-loans.html
 // =============================================================================
@@ -30,11 +30,11 @@ interface IBalancerVault {
     ) external;
 }
 
-/// @title BalancerFlashAdapter — IFlashLoanProvider adapter for Balancer V2 Vault
+/// @title BalancerFlashAdapter - IFlashLoanProvider adapter for Balancer V2 Vault
 /// @notice Full implementation. Fee = 0%. Preferred provider in the selection hierarchy.
 /// @dev SC-1 (2026-05-08). Part of multi-provider flash loan architecture.
 ///
-///      IMPORTANT — callback difference from Aave:
+///      IMPORTANT - callback difference from Aave:
 ///      Balancer calls `receiveFlashLoan(tokens, amounts, feeAmounts, userData)`
 ///      on the receiver, NOT `executeOperation`. FlashLoanExecutor must implement
 ///      this callback to repay Balancer loans. This is handled in FlashLoanExecutor
@@ -57,12 +57,7 @@ contract BalancerFlashAdapter is IFlashLoanProvider {
     /// @dev Wraps the single-asset request into Balancer's array-based interface.
     ///      tokens[0] = asset, amounts[0] = amount.
     ///      userData is forwarded unchanged to recipient.receiveFlashLoan().
-    function flashLoan(
-        address receiver,
-        address asset,
-        uint256 amount,
-        bytes calldata params
-    ) external override {
+    function flashLoan(address receiver, address asset, uint256 amount, bytes calldata params) external override {
         address[] memory tokens = new address[](1);
         tokens[0] = asset;
         uint256[] memory amounts = new uint256[](1);
@@ -71,8 +66,15 @@ contract BalancerFlashAdapter is IFlashLoanProvider {
     }
 
     /// @inheritdoc IFlashLoanProvider
-    /// @dev Balancer V2 flash loans are free — always returns 0.
-    function flashLoanFee(uint256 /*amount*/) external pure override returns (uint256) {
+    /// @dev Balancer V2 flash loans are free - always returns 0.
+    function flashLoanFee(
+        uint256 /*amount*/
+    )
+        external
+        pure
+        override
+        returns (uint256)
+    {
         return 0;
     }
 

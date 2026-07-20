@@ -10,11 +10,11 @@ import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 // ---------------------------------------------------------------------------
 // ROOT-CAUSE REPRO (systematic-debugging Phase 4.1): the deployed
 // ArbitrageExecutor._runRoute can ONLY execute routes where every hop spends
-// `tokenIn` (it grants each router an ephemeral allowance for `tokenIn` only —
+// `tokenIn` (it grants each router an ephemeral allowance for `tokenIn` only -
 // ArbitrageExecutor.sol:377 `_boundedRouterCall(tokenIn, router, amountIn, pld)`).
 // The off-chain system, however, detects and encodes CROSS-DEX 2-router arbs
 // (forward leg on DEX A: tokenIn->tokenOut; backward leg on DEX B:
-// tokenOut->tokenIn — sim_encoder.rs:462-463 resolves two distinct routers).
+// tokenOut->tokenIn - sim_encoder.rs:462-463 resolves two distinct routers).
 // The backward leg spends `tokenOut`, which the executor never approves, so the
 // backward router's transferFrom(tokenOut) reverts -> low-level call fails ->
 // SwapFailed. This test proves that mismatch empirically, with NO contract change.
@@ -33,11 +33,11 @@ contract ReproToken is ERC20 {
 }
 
 /// @dev A FAITHFUL DEX router: pulls `inputAmount` of `inputToken` from the caller
-///      (the ArbitrageExecutor) via transferFrom — exercising the executor's ephemeral
-///      per-router ERC20 allowance — then delivers `outputAmount` of `outputToken` back.
+///      (the ArbitrageExecutor) via transferFrom - exercising the executor's ephemeral
+///      per-router ERC20 allowance - then delivers `outputAmount` of `outputToken` back.
 ///      This is what a real Uniswap-style swap does: the router pulls the token it was
 ///      approved for and returns the other token. Unlike the existing single-token mocks,
-///      input and output tokens DIFFER — the essence of a 2-leg cross-DEX arbitrage.
+///      input and output tokens DIFFER - the essence of a 2-leg cross-DEX arbitrage.
 contract ReproCrossDexRouter {
     IERC20 public immutable inputToken;
     IERC20 public immutable outputToken;
@@ -64,7 +64,7 @@ contract ReproCrossDexRouter {
 ///      EXTRA `feeBps` is skimmed from it on top of the main move. Mirrors MockOutboundFeeERC20
 ///      in ArbitrageExecutor.t.sol. As a cross-DEX tokenOut this is the HIGH-finding token:
 ///      leg-1's outbound transferFrom(executor -> router) of the intermediate delivers the
-///      router its full amount, but additionally debits the executor `feeBps` — draining
+///      router its full amount, but additionally debits the executor `feeBps` - draining
 ///      pre-existing tokenOut working capital B_out with NO revert in the faithful accounting.
 contract ReproSenderSurchargeToken is ERC20 {
     address private constant SINK = address(0xdead);
@@ -204,8 +204,8 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
         assertEq(tokenOut.balanceOf(address(executor)), 0);
     }
 
-    /// POSITIVE CONTROL: the ONLY shape `_runRoute` supports — a single hop that spends
-    /// tokenIn and returns more tokenIn — succeeds. Proves the revert above is specifically
+    /// POSITIVE CONTROL: the ONLY shape `_runRoute` supports - a single hop that spends
+    /// tokenIn and returns more tokenIn - succeeds. Proves the revert above is specifically
     /// the cross-token (tokenOut) approval gap, not a harness artifact.
     function test_Control_SingleHopSpendsTokenIn_Succeeds() public {
         ReproToken tokenIn = new ReproToken("IN");
@@ -258,7 +258,7 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
             new ReproCrossDexRouter(address(tokenOut), address(tokenIn), intermediate, finalOut);
 
         tokenIn.mint(address(executor), amountIn);
-        tokenOut.mint(address(executor), preExistingTokenOut); // B_out — must be retained
+        tokenOut.mint(address(executor), preExistingTokenOut); // B_out - must be retained
         tokenOut.mint(address(routerA), intermediate);
         tokenIn.mint(address(routerB), finalOut);
 
@@ -293,7 +293,7 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
         tokenIn.mint(address(executor), 1_000e18);
         executor.setTokenApproval(address(tokenIn), true);
 
-        // 3 routers (approved as tokenIn would be irrelevant — length gate fires first).
+        // 3 routers (approved as tokenIn would be irrelevant - length gate fires first).
         ReproCircularRouter r = new ReproCircularRouter(address(tokenIn), 1, 1);
         executor.setRouterApproval(address(r), true);
         executor.setRouterSelectorApproval(address(r), SWAP_SELECTOR, true);
@@ -313,7 +313,7 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
     }
 
     /// SC-12 (leg-1 exact ephemeral allowance reset): after a cross-DEX route the executor's
-    /// tokenOut allowance to the backward router is 0 — even when the router UNDERSPENDS its
+    /// tokenOut allowance to the backward router is 0 - even when the router UNDERSPENDS its
     /// approval. Proves the executor itself resets the leg-1 allowance (not just consumption).
     function test_Security_Leg1EphemeralAllowanceResetToZero() public {
         ReproToken tokenIn = new ReproToken("IN");
@@ -358,7 +358,7 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
     }
 
     /// Profit gate (no silent loss): a cross-DEX route that nets a LOSS (finalOut < amountIn)
-    /// reverts ZeroGrossProfit — the round trip cannot complete at a loss.
+    /// reverts ZeroGrossProfit - the round trip cannot complete at a loss.
     function test_Security_CrossDexNetLossReverts() public {
         ReproToken tokenIn = new ReproToken("IN");
         ReproToken tokenOut = new ReproToken("OUT");
@@ -402,13 +402,13 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
     // =========================================================================
 
     /// HIGH repro: the cross-DEX 2-leg path measured profit + capital retention ONLY in
-    /// tokenIn. Leg 1 approves the tokenOut delta the route produced — which preserves a
+    /// tokenIn. Leg 1 approves the tokenOut delta the route produced - which preserves a
     /// FAITHFUL tokenOut's pre-existing B_out. But a SENDER-SURCHARGE tokenOut makes leg-1's
     /// outbound transferFrom(executor -> router) of `intermediate` additionally debit the
     /// executor a fee, draining B_out with NO revert in the tokenIn-only accounting. This
     /// asserts the route now REVERTS TokenOutRetentionViolation and B_out is fully retained.
     ///
-    /// Red→green: before the post-leg1 guard this route did NOT revert and the executor lost
+    /// Red->green: before the post-leg1 guard this route did NOT revert and the executor lost
     /// `fee` of its pre-existing tokenOut B_out; with the guard it fail-closes and rolls back.
     function test_Security_TokenOutSenderSurchargeReverts() public {
         ReproToken tokenIn = new ReproToken("IN");
@@ -419,7 +419,7 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
         uint256 amountIn = 1_000e18;
         uint256 intermediate = 900e18; // tokenOut produced by leg 0
         uint256 finalOut = 1_100e18; // tokenIn from leg 1 (+100 tokenIn profit)
-        uint256 B_out = 500e18; // executor's OWN tokenOut working capital — must be retained
+        uint256 B_out = 500e18; // executor's OWN tokenOut working capital - must be retained
 
         ReproCrossDexRouter routerA =
             new ReproCrossDexRouter(address(tokenIn), address(tokenOut), amountIn, intermediate);
@@ -427,7 +427,7 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
             new ReproCrossDexRouter(address(tokenOut), address(tokenIn), intermediate, finalOut);
 
         tokenIn.mint(address(executor), amountIn);
-        tokenOut.mint(address(executor), B_out); // B_out — must be retained on revert
+        tokenOut.mint(address(executor), B_out); // B_out - must be retained on revert
         tokenOut.mint(address(routerA), intermediate);
         tokenIn.mint(address(routerB), finalOut);
 
@@ -451,7 +451,7 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
         vm.expectRevert(TokenOutRetentionViolation.selector);
         executor.executeArbitrage(bytes32(0), address(tokenIn), address(tokenOut), amountIn, 0, routers, payloads);
 
-        // Atomic revert: B_out retained EXACTLY — no silent leak of pre-existing tokenOut.
+        // Atomic revert: B_out retained EXACTLY - no silent leak of pre-existing tokenOut.
         assertEq(tokenOut.balanceOf(address(executor)), B_out, "tokenOut working capital B_out leaked");
         // tokenIn principal untouched (route rolled back).
         assertEq(tokenIn.balanceOf(address(executor)), amountIn, "tokenIn principal not restored on revert");
@@ -460,7 +460,7 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
     /// (LOW) Aliased 2-leg shape: a 2-router route declared with tokenIn == tokenOut is a
     /// shape the off-chain never emits (cross-DEX routes have distinct tokens; circular routes
     /// are 1 leg). The 2-leg tokenOut-delta accounting is undefined for an aliased token, so it
-    /// is rejected fail-closed with a named revert — making the route-shape gate exhaustive.
+    /// is rejected fail-closed with a named revert - making the route-shape gate exhaustive.
     function test_Security_AliasedTwoLegSameTokenReverts() public {
         ReproToken tokenIn = new ReproToken("IN");
 
@@ -491,7 +491,7 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
     /// (1a) Zero-intermediate gate: a 2-leg cross-DEX route whose FORWARD router delivers
     /// ZERO tokenOut (the leg-0 delta == 0) reverts ZeroIntermediate BEFORE leg-1 dispatch.
     /// Closes the one route-shape gate branch (`_runRoute`: `if (intermediate == 0) revert
-    /// ZeroIntermediate()`) that lacked a direct red->green assertion — the aliased test above
+    /// ZeroIntermediate()`) that lacked a direct red->green assertion - the aliased test above
     /// hits AliasedTwoLegRoute first, so it never exercises this guard. Here tokenIn != tokenOut
     /// and the route is well-formed up to the forward leg producing no output.
     function test_Security_ZeroIntermediateReverts() public {
