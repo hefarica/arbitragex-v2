@@ -51,11 +51,18 @@ jobs:
       - name: cargo fmt (blocking)
         run: cargo fmt -- --check
         working-directory: backend
-      - name: cargo clippy (blocking)
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      # Align with rust.yml: do NOT pass --all-features. math-engine's optional
+      # `ml` feature pulls candle-core 0.4 which fails to compile against current
+      # half/rand on stable (SampleUniform/SampleBorrow bounds). Default features
+      # are the production graph; ml stays opt-in until candle is upgraded.
+      - name: cargo clippy (gating — searcher-rs + relays-client)
+        run: cargo clippy -p searcher-rs -p relays-client --locked --all-targets -- -D warnings
         working-directory: backend
-      - name: cargo test (blocking)
-        run: cargo test --all
+      - name: cargo clippy (blocking — workspace, default features)
+        run: cargo clippy --workspace --locked -- -D warnings
+        working-directory: backend
+      - name: cargo test --lib (workspace)
+        run: cargo test --workspace --locked --lib
         working-directory: backend
 
   lint-and-test-frontend:

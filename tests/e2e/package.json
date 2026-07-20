@@ -18,9 +18,11 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.48.0",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "@types/pg": "^8.20.0"
   },
   "dependencies": {
-    "socket.io-client": "^4.8.3"
+    "socket.io-client": "^4.8.3",
+    "pg": "^8.11.5"
   }
 }
