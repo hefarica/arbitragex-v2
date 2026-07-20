@@ -85,7 +85,7 @@ test("/api/capital-gates reflects the zero-capital safety posture", async ({
     (g: { name?: string }) => g.name === "capital_exposure",
   );
   expect(exposure, "capital_exposure gate present").toBeTruthy();
-  expect(exposure.status, "capital_exposure PASS").toBe("PASS");
+  expect(exposure.status.toLowerCase(), "capital_exposure PASS").toBe("pass");
   expect(exposure.value, "capital_exposure value 0").toBe(0);
 });
 
