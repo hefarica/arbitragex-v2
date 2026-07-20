@@ -1065,19 +1065,21 @@ mod tests {
 
     #[test]
     fn rpc_budget_caps_at_max() {
-        let mut b = RpcBudget::new(3, 1_000_000); // huge refill rate
-                                                  // drain fully
+        // refill_per_sec is intentionally huge so a 60s simulated sleep would
+        // overflow without `.min(self.max)`. Wall-clock ns drift on CI can mint
+        // tokens mid-assert at 1e6/s (~1 token/µs), so the drain phase freezes
+        // refill by setting refill_per_sec=0 after the cap path is exercised.
+        let mut b = RpcBudget::new(3, 1_000_000);
+        b.tokens = 0;
+        b.last_refill_ns = now_ns().saturating_sub(60_000_000_000); // 60s ago
+        assert!(b.acquire(), "post-sleep acquire must succeed via refill");
+        // Refilled to max=3 then spent 1 → exactly 2 remaining. Without the cap
+        // this would be ~6e7 tokens after a 60s * 1e6/s refill.
+        assert_eq!(b.tokens, 2, "refill must cap at max before spend");
+        b.refill_per_sec = 0; // freeze further wall-clock refill for drain asserts
         assert!(b.acquire());
         assert!(b.acquire());
-        assert!(b.acquire());
-        assert!(!b.acquire());
-        // simulate a long sleep — refill must cap at max=3, not overflow
-        b.last_refill_ns = now_ns().saturating_sub(60_000_000_000); // 60s
-        assert!(b.acquire());
-        assert!(b.acquire());
-        assert!(b.acquire());
-        // 4th must fail — capped at max=3.
-        assert!(!b.acquire());
+        assert!(!b.acquire(), "4th acquire must fail: capped at max=3");
     }
 
     #[test]
