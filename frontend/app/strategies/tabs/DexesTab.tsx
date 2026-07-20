@@ -225,7 +225,7 @@ export function DexesTab({ config, onSaved, adminToken, actor }: Props) {
 
           <Select
             value={String(selectedChainId)}
-            onValueChange={(v) => setSelectedChainId(Number(v))}
+            onValueChange={(v: string) => setSelectedChainId(Number(v))}
           >
             <SelectTrigger size="sm" className="w-48">
               <SelectValue />
