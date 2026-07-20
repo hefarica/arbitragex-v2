@@ -1,15 +1,30 @@
-//! ArbitrageX DeFi Math Engine
+//! ArbitrageX Math-Physics Engine
 //!
-//! Pure, deterministic mathematical functions for DeFi arbitrage.
-//! Zero side-effects, zero hardcoded values. All inputs are provided by the caller.
+//! Doctrina de Aislamiento Topologico:
+//! - 31 operadores matematicos, cada uno en su propio archivo
+//! - Acoplamiento exclusivo via trait TopologicalOperator
+//! - 264 vectores estrategicos MEV
+//! - Matriz de proyeccion 264x31
 
+pub mod operators;
+pub mod matrix;
+pub mod strategies;
+
+#[cfg(feature = "api")]
+pub mod api;
+
+// Legacy modules preserved for backward compatibility
 pub mod amm_math;
 pub mod risk_engine;
 pub mod roi_engine;
 pub mod route_math;
 pub mod subgraph_client;
 
-/// Represents a DeFi arbitrage financial outcome.
+// Re-export core types
+pub use operators::{MarketState, OperatorOutput, OperatorRegistry, TopologicalOperator};
+pub use strategies::{StrategyOutput, StrategyProfile, StrategyRegistry, TopologicalStrategy};
+
+/// Arbirtage outcome type (legacy, preserved for consumers)
 #[derive(Debug, Clone, PartialEq)]
 pub struct DefiArbitrageOutcome {
     pub is_viable: bool,

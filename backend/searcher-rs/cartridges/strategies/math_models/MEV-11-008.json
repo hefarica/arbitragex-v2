@@ -1,0 +1,62 @@
+{
+  "version": "2.0.0",
+  "frontend_toggle": {
+    "key": "strategy.11.008.enabled",
+    "default": null,
+    "gate_live": "Sim PASS + net_profit>0 + risk_score>=70"
+  },
+  "applicable_operators": [
+    6,
+    11,
+    13,
+    22,
+    5,
+    7,
+    10,
+    12,
+    14,
+    20
+  ],
+  "classification": null,
+  "safety_gates": [
+    "arbx-simulation-mandatory",
+    "arbx-paper-trade-first",
+    "arbx-risk-limits-enforcement"
+  ],
+  "mode": null,
+  "operator_weights": {
+    "6": 1.0,
+    "11": 1.0,
+    "13": 1.0,
+    "22": 1.0,
+    "5": 0.7,
+    "7": 0.7,
+    "10": 0.7,
+    "12": 0.7,
+    "14": 0.7,
+    "20": 0.7,
+    "29": 0.33,
+    "28": 0.32,
+    "27": 0.31,
+    "26": 0.3,
+    "25": 0.29
+  },
+  "math_concepts": [
+    {
+      "domain": null,
+      "application_point": "Execution",
+      "formula": "f(x) = x",
+      "module": "math_engine",
+      "purpose": "Placeholder - customize per strategy",
+      "concept": "Deterministic concept for MEV-11-008"
+    }
+  ],
+  "leg_type": null,
+  "atomicity": "TX_ATOMIC",
+  "verdict": "ALLOW",
+  "strategy_id": "MEV-11-008",
+  "family": null,
+  "math_domain": null,
+  "liquidity_type": "COMPLETE_SET",
+  "liquidity_provider": null
+}

@@ -1,0 +1,74 @@
+{
+  "version": "2.0.0",
+  "frontend_toggle": {
+    "key": "strategy.8.008.enabled",
+    "default": null,
+    "gate_live": "Sim PASS + net_profit>0 + risk_score>=70"
+  },
+  "applicable_operators": [
+    11,
+    12,
+    16,
+    19,
+    13,
+    15,
+    20,
+    21,
+    26,
+    28
+  ],
+  "classification": null,
+  "safety_gates": [
+    "arbx-simulation-mandatory",
+    "arbx-paper-trade-first",
+    "arbx-risk-limits-enforcement"
+  ],
+  "mode": null,
+  "operator_weights": {
+    "11": 1.0,
+    "12": 1.0,
+    "16": 1.0,
+    "19": 1.0,
+    "13": 0.7,
+    "15": 0.7,
+    "20": 0.7,
+    "21": 0.7,
+    "26": 0.7,
+    "28": 0.7,
+    "2": 0.34,
+    "1": 0.33,
+    "10": 0.33,
+    "29": 0.33,
+    "27": 0.31
+  },
+  "math_concepts": [
+    {
+      "domain": null,
+      "application_point": "Execution",
+      "formula": "f(x) = x",
+      "module": "math_engine",
+      "purpose": "Placeholder - customize per strategy",
+      "concept": "Deterministic concept for MEV-08-008"
+    }
+  ],
+  "leg_type": null,
+  "atomicity": "TX_ATOMIC",
+  "verdict": "ALLOW",
+  "strategy_id": "MEV-08-008",
+  "family": null,
+  "math_domain": null,
+  "liquidity_type": "FLASH_LOAN",
+  "liquidity_provider": "AaveV3",
+  "flash_loan_conditions": {
+    "provider": "AaveV3",
+    "fee_basis_points": 9,
+    "min_amount_eth": 0.1,
+    "max_amount_eth": 10000.0,
+    "requires_approval": false,
+    "callback_required": true,
+    "fallback_providers": [
+      "BalancerV2",
+      "UniswapV3"
+    ]
+  }
+}
