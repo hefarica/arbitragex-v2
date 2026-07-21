@@ -88,6 +88,19 @@ jobs:
             fi
             sleep 1
           done
+          echo "waiting for initdb to finish"
+          for i in $(seq 1 60); do
+            if PGPASSWORD=postgres psql -h localhost -U postgres -d arbitragex -c "SELECT 1" >/dev/null 2>&1; then
+              echo "initdb done after ${i}s"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "initdb did not finish after 60s"
+              docker compose --env-file .env -f docker/compose.dev.yml logs --tail=50 postgres
+              exit 1
+            fi
+            sleep 1
+          done
           bash ./automation/scripts/migrate.sh
           docker compose --env-file .env -f docker/compose.dev.yml up -d --build \
             frontend edge api-server
@@ -156,6 +169,8 @@ jobs:
       - name: Dump service logs on failure
         if: failure()
         run: |
+          echo "=== postgres ==="
+          docker compose -f docker/compose.dev.yml logs --tail=200 postgres || true
           echo "=== api-server ==="
           docker compose -f docker/compose.dev.yml logs --tail=200 api-server || true
           echo "=== edge ==="
