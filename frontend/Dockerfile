@@ -33,20 +33,21 @@ RUN npm ci --no-audit --no-fund
 
 # App sources after install so dependency layer stays cacheable.
 COPY frontend ./frontend
-# Build, then force-hoist the next package to /build/node_modules/next so the
-# runtime CMD path is stable regardless of whether npm nested it under
-# frontend/node_modules (workspace install) or the root hoist.
 RUN npm run -w @arbx/frontend build \
- && NEXT_PKG="$(find /build -type d -path '*/node_modules/next' ! -path '*/next/node_modules/*' | head -n1)" \
- && echo "resolved next package: ${NEXT_PKG}" \
- && test -n "${NEXT_PKG}" \
- && test -f "${NEXT_PKG}/dist/bin/next" \
- && mkdir -p /build/node_modules \
- && if [ "${NEXT_PKG}" != "/build/node_modules/next" ]; then \
-      rm -rf /build/node_modules/next; \
-      cp -a "${NEXT_PKG}" /build/node_modules/next; \
+ && NEXT_BIN="$(find /build/frontend/node_modules /build/node_modules -path '*/next/dist/bin/next' -type f 2>/dev/null | head -n1)" \
+ && echo "resolved next binary: ${NEXT_BIN}" \
+ && test -n "${NEXT_BIN}" \
+ # Guarantee a stable layout for the runtime stage:
+ #   /build/frontend/node_modules/next  → full package + peer graph siblings
+ # so Node can resolve '../server/require-hook' and '@swc/helpers/*'.
+ && if [ ! -e /build/frontend/node_modules/next ]; then \
+      mkdir -p /build/frontend/node_modules; \
+      NEXT_PKG="$(dirname "$(dirname "$(dirname "${NEXT_BIN}")")")"; \
+      cp -a "${NEXT_PKG}" /build/frontend/node_modules/next; \
     fi \
- && test -f /build/node_modules/next/dist/bin/next
+ && test -f /build/frontend/node_modules/next/dist/bin/next \
+ && printf '%s\n' '#!/bin/sh' 'exec node /app/frontend/node_modules/next/dist/bin/next "$@"' > /build/frontend-next-entrypoint.sh \
+ && chmod 755 /build/frontend-next-entrypoint.sh
 
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
@@ -54,13 +55,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends tini ca-certifi
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r arbx && useradd -r -g arbx arbx
 ENV NODE_ENV=production
+# Root hoist (shared deps) + workspace-local node_modules (next + @swc/helpers…).
 COPY --from=builder /build/node_modules /app/node_modules
+COPY --from=builder /build/frontend/node_modules /app/frontend/node_modules
 COPY --from=builder /build/frontend/.next /app/frontend/.next
 COPY --from=builder /build/frontend/package.json /app/frontend/package.json
 COPY --from=builder /build/frontend/next.config.js /app/frontend/next.config.js
 COPY --from=builder /build/frontend/public /app/frontend/public
+COPY --from=builder /build/frontend-next-entrypoint.sh /app/frontend-next-entrypoint.sh
 USER arbx
 WORKDIR /app/frontend
 EXPOSE 5173
+# NODE_PATH lets nested next see root-hoisted packages when needed.
+ENV NODE_PATH=/app/node_modules
 ENTRYPOINT ["/usr/bin/tini","--"]
-CMD ["node","/app/node_modules/next/dist/bin/next","start","-p","5173"]
+CMD ["/app/frontend-next-entrypoint.sh","start","-p","5173"]
