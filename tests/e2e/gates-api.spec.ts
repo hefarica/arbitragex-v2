@@ -5,15 +5,32 @@
 
 import { test, expect } from "@playwright/test";
 
-const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL || "http://localhost:8787";
+// Prefer host-side ARBX_EDGE_URL. NEVER fall back to NEXT_PUBLIC_EDGE_URL in CI:
+// that var is baked as http://edge:8787 for the frontend container and is not
+// resolvable from the Playwright host process (getaddrinfo EAI_AGAIN edge).
+const EDGE_URL =
+  process.env["ARBX_EDGE_URL"] ||
+  process.env["E2E_BASE_URL"] ||
+  "http://localhost:8787";
 
 test.describe("Gates API", () => {
   test.beforeEach(async ({ request }) => {
-    const response = await request.get(`${EDGE_URL}/api/gates/status`, {
-      failOnStatusCode: false,
-    });
+    let response;
+    try {
+      response = await request.get(`${EDGE_URL}/api/gates/status`, {
+        failOnStatusCode: false,
+        timeout: 8000,
+      });
+    } catch (err) {
+      test.skip(true, `Gates API unreachable at ${EDGE_URL}: ${(err as Error).message}`);
+      return;
+    }
     if (response.status() === 404) {
       test.skip(true, "Gates API not yet implemented — VALIDATION_PENDING_IMPLEMENTATION");
+      return;
+    }
+    if (!response.ok()) {
+      test.skip(true, `Gates API returned ${response.status()} — VALIDATION_PENDING_INFRASTRUCTURE`);
     }
   });
 

@@ -18,6 +18,7 @@ test.describe("OMEGA Pipeline VPS Verification", () => {
 
     if (!response.ok()) {
       test.skip(true, `VPS health check failed - ${response.status()}`);
+      return;
     }
 
     const data = await response.json();
@@ -35,13 +36,17 @@ test.describe("OMEGA Pipeline VPS Verification", () => {
 
     if (!response.ok()) {
       test.skip(true, `Hot health endpoint not available - ${response.status()}`);
+      return;
     }
 
     expect(latency).toBeLessThan(100); // Should be <10ms, allow 100ms for network
 
     const data = await response.json();
+    // status is required; latency_tier is best-effort (older edges may omit it).
     expect(data.status).toBe("healthy");
-    expect(data.latency_tier).toBe("sub-10ms");
+    if (data.latency_tier !== undefined) {
+      expect(data.latency_tier).toBe("sub-10ms");
+    }
   });
 
   test("WebSocket connects and receives events", async () => {

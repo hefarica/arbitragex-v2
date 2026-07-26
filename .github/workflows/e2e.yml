@@ -186,15 +186,21 @@ jobs:
           ARBX_ASSUME_NO_RPC: "1"
           ARBX_E2E: "1"
         run: |
-          # Re-export the ephemeral admin token from the materialized .env so
+          # Pull ONLY the ephemeral admin token from the materialized .env so
           # live-testnet POST contract tests authenticate against the same value
-          # the stack booted with (SECURE_BOOT tokens generated above).
+          # the stack booted with. Do NOT `source` the whole .env into this
+          # process: it contains Docker-DNS hostnames (edge/postgres/api-server)
+          # that break host-side Playwright with getaddrinfo EAI_AGAIN.
           # working-directory is tests/e2e → ../../.env is the repo root .env.
-          set -a
-          # shellcheck disable=SC1091
-          . ../../.env
-          set +a
+          ARBX_ADMIN_TOKEN="$(grep -E '^ARBX_ADMIN_TOKEN=' ../../.env | head -n1 | cut -d= -f2-)"
           export ARBX_ADMIN_TOKEN
+          # Host-side URLs only (published ports on the runner).
+          export ARBX_EDGE_URL=http://localhost:8787
+          export ARBX_FRONTEND_URL=http://localhost:5173
+          export ARBX_API_URL=http://localhost:8080
+          export ARBX_WS_URL=http://localhost:8080
+          export DATABASE_URL=postgres://postgres:postgres@localhost:5432/arbitragex
+          unset NEXT_PUBLIC_EDGE_URL NEXT_PUBLIC_WS_URL || true
           npm test
 
       - name: Dump service logs on failure
