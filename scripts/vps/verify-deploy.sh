@@ -266,12 +266,76 @@ else
   observation "L7" "Trade mode is NOT paper/shadow: ${TRADE_MODE}" "critical"
 fi
 
+LIVE_EXEC=$(grep '^ARBX_LIVE_EXEC_ENABLED=' "$DEPLOY_PATH/.env" 2>/dev/null | cut -d= -f2 || echo "")
+if [ "$LIVE_EXEC" = "true" ]; then
+  fail "ARBX_LIVE_EXEC_ENABLED=true — live barrier disarmed in env (unexpected for paper posture)"
+  observation "L7" "ARBX_LIVE_EXEC_ENABLED=true" "critical"
+else
+  ok "ARBX_LIVE_EXEC_ENABLED is not true (default-deny intact)"
+fi
+
 # Kill-switch: verify killswitch.json exists and is readable
 if [ -f "${DEPLOY_PATH}/killswitch.json" ]; then
   ok "killswitch.json exists"
 else
   warn "killswitch.json not found at repo root"
   observation "L7" "killswitch.json missing" "warning"
+fi
+
+# ---------------------------------------------------------------------------
+# 8b. Layer 7b — Paper-path R7 (detect → validate → sim → paper)
+# Fail-honest: report exact stream lengths; never fabricate green.
+# detected>0 && validated=0 is the known "selector starve" failure mode.
+# ---------------------------------------------------------------------------
+log "--- L7b: Paper-path R7 (streams + paper freshness) ---"
+xlen() {
+  docker exec arbitragex-v2-redis-1 redis-cli XLEN "$1" 2>/dev/null || echo "ERR"
+}
+DET_N=$(xlen arbx:opps:detected)
+VAL_N=$(xlen arbx:opps:validated)
+SIM_N=$(xlen arbx:opps:simulated)
+EXE_N=$(xlen arbx:opps:executed)
+ok "streams detected=${DET_N} validated=${VAL_N} simulated=${SIM_N} executed=${EXE_N}"
+observation "L7b" "streams detected=${DET_N} validated=${VAL_N} simulated=${SIM_N} executed=${EXE_N}" "info"
+
+if [ "$DET_N" != "ERR" ] && [ "$DET_N" != "?" ] && [ "${DET_N:-0}" -gt 0 ] 2>/dev/null; then
+  if [ "$VAL_N" = "0" ]; then
+    warn "arbx:opps:validated=0 while detected=${DET_N} — selector not publishing accepts (paper-path broken upstream of sim)"
+    observation "L7b" "validated=0 with detected>0" "warning"
+  else
+    ok "arbx:opps:validated has ${VAL_N} entries"
+  fi
+  if [ "$SIM_N" = "0" ] && [ "$VAL_N" = "0" ]; then
+    warn "arbx:opps:simulated=0 (sim-ctl has nothing to consume or is idle)"
+    observation "L7b" "simulated=0" "warning"
+  elif [ "$SIM_N" != "ERR" ] && [ "$SIM_N" != "0" ]; then
+    ok "arbx:opps:simulated has ${SIM_N} entries"
+  fi
+fi
+
+# paper_trade_runs freshness (stale > 48h while detected flowing = warn)
+PAPER_LAST=$(docker exec arbitragex-v2-postgres-1 psql -U postgres -d arbitragex -tAc \
+  "SELECT COALESCE(MAX(created_at)::text,'null') FROM paper_trade_runs;" 2>/dev/null || echo "ERR")
+if [ "$PAPER_LAST" = "ERR" ] || [ "$PAPER_LAST" = "null" ] || [ -z "$PAPER_LAST" ]; then
+  warn "paper_trade_runs empty or unreadable (last=${PAPER_LAST})"
+  observation "L7b" "paper_trade_runs empty/unreadable" "warning"
+else
+  ok "paper_trade_runs last row: ${PAPER_LAST}"
+  # Age in hours via postgres
+  PAPER_AGE_H=$(docker exec arbitragex-v2-postgres-1 psql -U postgres -d arbitragex -tAc \
+    "SELECT FLOOR(EXTRACT(EPOCH FROM (NOW() - MAX(created_at)))/3600)::int FROM paper_trade_runs;" 2>/dev/null || echo "ERR")
+  if [ "$PAPER_AGE_H" != "ERR" ] && [ "${PAPER_AGE_H:-0}" -gt 48 ] 2>/dev/null; then
+    warn "paper_trade_runs stale: last row ${PAPER_AGE_H}h ago (paper sink idle)"
+    observation "L7b" "paper_trade_runs stale_hours=${PAPER_AGE_H}" "warning"
+  fi
+fi
+
+# relays consumer posture (log hint only — no secret)
+if docker logs arbitragex-v2-relays-client-1 2>&1 | tail -n 5000 | grep -q 'relays_consumer.skipped'; then
+  warn "relays_client booted with relays_consumer.skipped (signer/rpc/db gate) — paper path may not consume simulated"
+  observation "L7b" "relays_consumer.skipped observed in logs" "warning"
+elif docker logs arbitragex-v2-relays-client-1 2>&1 | tail -n 5000 | grep -q 'relays_consumer.spawned'; then
+  ok "relays_consumer.spawned observed in logs"
 fi
 
 # ---------------------------------------------------------------------------
