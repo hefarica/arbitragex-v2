@@ -192,8 +192,17 @@ jobs:
           # process: it contains Docker-DNS hostnames (edge/postgres/api-server)
           # that break host-side Playwright with getaddrinfo EAI_AGAIN.
           # working-directory is tests/e2e → ../../.env is the repo root .env.
-          ARBX_ADMIN_TOKEN="$(grep -E '^ARBX_ADMIN_TOKEN=' ../../.env | head -n1 | cut -d= -f2-)"
+          #
+          # IMPORTANT: .env.example is copied first and sed'd to ARBX_ADMIN_TOKEN=
+          # (empty). The real SECURE_BOOT token is APPENDED later. Take the LAST
+          # non-empty assignment, not head -n1 (that was the empty placeholder → 401).
+          ARBX_ADMIN_TOKEN="$(grep -E '^ARBX_ADMIN_TOKEN=.' ../../.env | tail -n1 | cut -d= -f2-)"
+          if [ -z "$ARBX_ADMIN_TOKEN" ]; then
+            echo "::error::ARBX_ADMIN_TOKEN empty after .env parse — cannot run admin-gated e2e"
+            exit 1
+          fi
           export ARBX_ADMIN_TOKEN
+          echo "::notice::ARBX_ADMIN_TOKEN loaded (len=${#ARBX_ADMIN_TOKEN})"
           # Host-side URLs only (published ports on the runner).
           export ARBX_EDGE_URL=http://localhost:8787
           export ARBX_FRONTEND_URL=http://localhost:5173
