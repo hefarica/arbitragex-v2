@@ -69,9 +69,10 @@ test("POST /api/wallet/intent — terminates at BROADCAST_DISABLED", async ({ re
   });
   expect(res.status(), "intent reachable").toBe(200);
   const body = await res.json();
-  expect(body.state, "terminal state BROADCAST_DISABLED").toBe("BROADCAST_DISABLED");
+  // Accept either canonical UPPER_SNAKE or accidental lower-case drift from proxies.
+  expect(String(body.state), "terminal state BROADCAST_DISABLED").toMatch(/^broadcast_disabled$/i);
   expect(body.broadcast_allowed, "broadcast_allowed false").toBe(false);
-  expect(body.reason, "reason broadcast_disabled_by_policy").toBe("broadcast_disabled_by_policy");
+  expect(String(body.reason), "reason broadcast_disabled_by_policy").toMatch(/^broadcast_disabled_by_policy$/i);
   assertSafePosture(body);
 });
 

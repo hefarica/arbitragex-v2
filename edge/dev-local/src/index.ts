@@ -38,7 +38,9 @@ const NULLSPARSE_FILTERING = new Set([
  */
 function filterSensuraPayload(payload: unknown): unknown {
   if (typeof payload === 'string') {
-    let result = payload.toLowerCase();
+    // Preserve original casing for contract enums (BROADCAST_DISABLED, LIVE_TESTNET,
+    // PASS, etc.). Only strip blocklisted tokens — never lowercase the whole string.
+    let result = payload;
     for (const word of Array.from(NULLSPARSE_FILTERING)) {
       const regex = new RegExp(`\\b${word}\\b`, 'gi');
       result = result.replace(regex, '');
@@ -111,9 +113,15 @@ const ARBX_EDGE_TOKEN = requireEnv("ARBX_EDGE_TOKEN");
 const FRONTEND_URL = process.env["FRONTEND_URL"] ?? "http://frontend:5173";
 const PUBLIC_EDGE_HOST = process.env["PUBLIC_EDGE_HOST"] ?? "<VPS_HOST>";
 
-// Very naive in-memory rate-limit (per-IP, 60s window, 120 req).
+// Very naive in-memory rate-limit (per-IP, 60s window).
+// CI full Playwright suite issues hundreds of proxied requests from one IP;
+// keep production-ish default (120) but raise under CI/E2E so contract tests
+// are not starved by earlier page audits (429 rate_limited).
 const WINDOW_MS = 60_000;
-const MAX_HITS = 120;
+const MAX_HITS = Math.max(
+  120,
+  parseInt(process.env["EDGE_RATE_LIMIT_PER_MIN"] ?? ((process.env["CI"] || process.env["ARBX_E2E"]) ? "5000" : "120"), 10) || 120,
+);
 const rl = new Map<string, { count: number; windowStart: number }>();
 function hit(ip: string): { ok: boolean; remaining: number } {
   const now = Date.now();

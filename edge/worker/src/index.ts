@@ -154,7 +154,9 @@ function filterSensuraResponse(body: string): string {
 
 function filterSensuraObject(value: unknown): unknown {
   if (typeof value === 'string') {
-    let result = value.toLowerCase();
+    // Preserve original casing for contract enums (BROADCAST_DISABLED, LIVE_TESTNET,
+    // PASS, etc.). Only strip blocklisted tokens — never lowercase the whole string.
+    let result = value;
     for (const word of Array.from(NULLSPARSE_FILTERING)) {
       const regex = new RegExp(`\\b${word}\\b`, 'gi');
       result = result.replace(regex, '');

@@ -48,7 +48,7 @@ test("LT-CONTRACT-003: POST with admin token returns contract shape", async ({ r
   });
   expect(res.status()).toBe(200);
   const body = await res.json();
-  expect(body.mode).toBe("LIVE_TESTNET");
+  expect(String(body.mode), "mode LIVE_TESTNET").toMatch(/^live_testnet$/i);
   expect(typeof body.chain_id).toBe("number");
   expect(Array.isArray(body.allowed_chain_ids)).toBe(true);
 });

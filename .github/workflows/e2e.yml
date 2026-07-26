@@ -54,6 +54,14 @@ jobs:
             echo "ARBX_ADMIN_TOKEN=$(openssl rand -base64 48 | tr -d '\n')"
             echo "ARBX_EDGE_TOKEN=$(openssl rand -base64 48 | tr -d '\n')"
             echo "ARBX_SERVICE_TOKEN=$(openssl rand -base64 48 | tr -d '\n')"
+            # Raise edge + admin per-IP rate limits so the full Playwright suite
+            # (hundreds of proxied requests from one runner IP) does not trip
+            # 429 mid-run on either edge or api-server /admin/*.
+            echo "EDGE_RATE_LIMIT_PER_MIN=5000"
+            echo "ADMIN_RATE_LIMIT_PER_MIN=600"
+            echo "API_RATE_LIMIT_PER_MIN=6000"
+            echo "ARBX_E2E=1"
+            echo "CI=true"
           } >> .env
           # PLAYWRIGHT-FIX: .env.example has <run: openssl rand -base64 48> placeholders
           # (lines 198/200/204) that break `bash . .env` sourcing in migrate.sh (bash
@@ -155,8 +163,11 @@ jobs:
         working-directory: tests/e2e
         env:
           ARBX_EDGE_URL: http://localhost:8787
-          ARBX_WS_URL: http://localhost:3000
+          # api-server Socket.IO is published on host :8080 (compose.dev.yml).
+          ARBX_WS_URL: http://localhost:8080
+          ARBX_API_URL: http://localhost:8080
           ARBX_ASSUME_NO_RPC: "1"
+          ARBX_E2E: "1"
         run: npm run test:hotpath || echo "Hot path tests skipped — VALIDATION_PENDING_INFRASTRUCTURE"
 
       - name: Run full suite (may skip killswitch if no admin token)
@@ -164,8 +175,21 @@ jobs:
         env:
           ARBX_FRONTEND_URL: http://localhost:5173
           ARBX_EDGE_URL: http://localhost:8787
+          ARBX_API_URL: http://localhost:8080
+          ARBX_WS_URL: http://localhost:8080
           ARBX_ASSUME_NO_RPC: "1"
-        run: npm test
+          ARBX_E2E: "1"
+        run: |
+          # Re-export the ephemeral admin token from the materialized .env so
+          # live-testnet POST contract tests authenticate against the same value
+          # the stack booted with (SECURE_BOOT tokens generated above).
+          # working-directory is tests/e2e → ../../.env is the repo root .env.
+          set -a
+          # shellcheck disable=SC1091
+          . ../../.env
+          set +a
+          export ARBX_ADMIN_TOKEN
+          npm test
 
       - name: Dump service logs on failure
         if: failure()

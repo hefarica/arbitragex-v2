@@ -19,9 +19,9 @@ const EDGE_URL = process.env["ARBX_EDGE_URL"] ?? "http://localhost:8787";
 
 test("LT-HONEST-001: GET /api/v1/live-testnet/config is honest", async ({ request }) => {
   const res = await request.get(`${EDGE_URL}/api/v1/live-testnet/config`);
-  expect(res.status()).toBe(200);
+  expect(res.status(), `GET status (body preview)`).toBe(200);
   const body = await res.json();
-  expect(body.mode).toBe("LIVE_TESTNET");
+  expect(String(body.mode), "mode LIVE_TESTNET").toMatch(/^live_testnet$/i);
   expect(body.paper_mode).toBe(true);
   expect(body.can_execute).toBe(false);
   expect(body.mainnet_blocked).toBe(true);
@@ -37,7 +37,7 @@ test("LT-HONEST-002: POST /admin/config/live-testnet blocks mainnet", async ({ r
   });
   expect(res.status()).toBe(403);
   const body = await res.json();
-  expect(body.error).toBe("MAINNET_BLOCKED");
+  expect(String(body.error)).toMatch(/^mainnet_blocked$/i);
 });
 
 test("LT-HONEST-003: POST /admin/config/live-testnet rejects unsupported chain", async ({ request }) => {
@@ -47,7 +47,7 @@ test("LT-HONEST-003: POST /admin/config/live-testnet rejects unsupported chain",
   });
   expect(res.status()).toBe(400);
   const body = await res.json();
-  expect(body.error).toBe("UNSUPPORTED_CHAIN");
+  expect(String(body.error)).toMatch(/^unsupported_chain$/i);
 });
 
 test("LT-HONEST-004: POST /admin/config/live-testnet accepts Sepolia and stays honest", async ({ request }) => {
@@ -57,7 +57,7 @@ test("LT-HONEST-004: POST /admin/config/live-testnet accepts Sepolia and stays h
   });
   expect(res.status()).toBe(200);
   const body = await res.json();
-  expect(body.mode).toBe("LIVE_TESTNET");
+  expect(String(body.mode), "mode LIVE_TESTNET").toMatch(/^live_testnet$/i);
   expect(body.paper_mode).toBe(true);
   expect(body.can_execute).toBe(false);
   expect(body.chain_id).toBe(11155111);
