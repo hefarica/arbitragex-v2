@@ -33,17 +33,20 @@ RUN npm ci --no-audit --no-fund
 
 # App sources after install so dependency layer stays cacheable.
 COPY frontend ./frontend
+# Build, then force-hoist the next package to /build/node_modules/next so the
+# runtime CMD path is stable regardless of whether npm nested it under
+# frontend/node_modules (workspace install) or the root hoist.
 RUN npm run -w @arbx/frontend build \
- && NEXT_BIN="$(find /build -path '*/node_modules/next/dist/bin/next' -type f | head -n1)" \
- && echo "resolved next binary: ${NEXT_BIN}" \
- && test -n "${NEXT_BIN}" \
- && mkdir -p /build/runtime-bin \
- && cp -a "${NEXT_BIN}" /build/runtime-bin/next \
- && chmod 755 /build/runtime-bin/next \
- # Ensure the next package tree is available at a stable path for node requires.
- && NEXT_PKG="$(dirname "$(dirname "$(dirname "${NEXT_BIN}")")")" \
- && mkdir -p /build/runtime-node_modules \
- && cp -a "${NEXT_PKG}" /build/runtime-node_modules/next
+ && NEXT_PKG="$(find /build -type d -path '*/node_modules/next' ! -path '*/next/node_modules/*' | head -n1)" \
+ && echo "resolved next package: ${NEXT_PKG}" \
+ && test -n "${NEXT_PKG}" \
+ && test -f "${NEXT_PKG}/dist/bin/next" \
+ && mkdir -p /build/node_modules \
+ && if [ "${NEXT_PKG}" != "/build/node_modules/next" ]; then \
+      rm -rf /build/node_modules/next; \
+      cp -a "${NEXT_PKG}" /build/node_modules/next; \
+    fi \
+ && test -f /build/node_modules/next/dist/bin/next
 
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
@@ -51,10 +54,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends tini ca-certifi
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r arbx && useradd -r -g arbx arbx
 ENV NODE_ENV=production
-# Full hoisted graph (shared deps) + guaranteed next package at stable path.
 COPY --from=builder /build/node_modules /app/node_modules
-COPY --from=builder /build/runtime-node_modules/next /app/node_modules/next
-COPY --from=builder /build/runtime-bin/next /app/bin/next
 COPY --from=builder /build/frontend/.next /app/frontend/.next
 COPY --from=builder /build/frontend/package.json /app/frontend/package.json
 COPY --from=builder /build/frontend/next.config.js /app/frontend/next.config.js
@@ -63,6 +63,4 @@ USER arbx
 WORKDIR /app/frontend
 EXPOSE 5173
 ENTRYPOINT ["/usr/bin/tini","--"]
-# Use the resolved next CLI copied to a stable absolute path (works whether npm
-# hoisted next to root or nested it under frontend/node_modules).
-CMD ["node","/app/bin/next","start","-p","5173"]
+CMD ["node","/app/node_modules/next/dist/bin/next","start","-p","5173"]
