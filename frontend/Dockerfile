@@ -12,6 +12,8 @@ ARG NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=
 ENV NEXT_PUBLIC_EDGE_URL=$NEXT_PUBLIC_EDGE_URL
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 ENV NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=$NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
+# Prevent Corepack from mis-reading packageManager and trying yarn.
+ENV COREPACK_ENABLE_STRICT=0
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -26,13 +28,17 @@ COPY edge/worker/package.json ./edge/worker/
 COPY edge/dev-local/package.json ./edge/dev-local/
 COPY frontend/package.json ./frontend/
 
-# Deterministic install of the frontend workspace graph. No --silent: CI must
-# surface ERESOLVE/ENOENT/OOM instead of a blank exit 1.
-RUN npm ci --workspace=@arbx/frontend --include-workspace-root --no-audit --no-fund
+# Full lockfile install so next (and other hoisted runtime bins) land in
+# /build/node_modules — required by the runtime CMD path below. Do NOT use
+# --workspace=@arbx/frontend alone: it can nest next under frontend/node_modules
+# and break `/app/node_modules/next/dist/bin/next`.
+# No --silent: CI must surface ERESOLVE/ENOENT/OOM instead of a blank exit 1.
+RUN npm ci --no-audit --no-fund
 
 # App sources after install so dependency layer stays cacheable.
 COPY frontend ./frontend
-RUN npm run -w @arbx/frontend build
+RUN npm run -w @arbx/frontend build \
+ && test -f /build/node_modules/next/dist/bin/next
 
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
