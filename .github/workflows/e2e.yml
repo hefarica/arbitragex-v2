@@ -110,7 +110,13 @@ jobs:
             sleep 1
           done
           bash ./automation/scripts/migrate.sh
-          docker compose --env-file .env -f docker/compose.dev.yml up -d --build \
+          # Build sequentially to avoid triple parallel `npm ci` OOMing the
+          # runner (frontend wallet deps are heavy). api-server → edge →
+          # frontend matches depends_on order and keeps peak RSS lower.
+          docker compose --env-file .env -f docker/compose.dev.yml build api-server
+          docker compose --env-file .env -f docker/compose.dev.yml build edge
+          docker compose --env-file .env -f docker/compose.dev.yml build frontend
+          docker compose --env-file .env -f docker/compose.dev.yml up -d \
             frontend edge api-server
           echo "stack up; waiting for frontend"
           for i in $(seq 1 60); do

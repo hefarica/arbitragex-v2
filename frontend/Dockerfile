@@ -14,9 +14,24 @@ ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 ENV NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=$NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY package.json ./
+
+# Root lockfile + every workspace package.json must be present before `npm ci`.
+# The root package.json lists all workspaces; if any path is missing, npm exits 1
+# (previously hidden by `--silent`, and masked on Docker Build by GHA layer cache).
+COPY package.json package-lock.json ./
+COPY shared-ts/package.json ./shared-ts/
+COPY backend/selector-api/package.json ./backend/selector-api/
+COPY backend/api-server/package.json ./backend/api-server/
+COPY edge/worker/package.json ./edge/worker/
+COPY edge/dev-local/package.json ./edge/dev-local/
+COPY frontend/package.json ./frontend/
+
+# Deterministic install of the frontend workspace graph. No --silent: CI must
+# surface ERESOLVE/ENOENT/OOM instead of a blank exit 1.
+RUN npm ci --workspace=@arbx/frontend --include-workspace-root --no-audit --no-fund
+
+# App sources after install so dependency layer stays cacheable.
 COPY frontend ./frontend
-RUN npm install --workspaces --include-workspace-root --silent
 RUN npm run -w @arbx/frontend build
 
 FROM node:20-bookworm-slim AS runtime
