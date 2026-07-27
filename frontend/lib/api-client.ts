@@ -44,7 +44,15 @@ export function getApiBaseUrl(): string {
   
   const isProd = process.env.NODE_ENV === "production";
 
-  if (isProd && envUrl && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(envUrl)) {
+  // H1 fix: honor the same escape hatch next.config.js uses so a local
+  // production build (docker compose dev / sandbox) does not 500 every SSR
+  // page that fetches from a localhost edge.
+  if (
+    isProd &&
+    process.env.ARBX_ALLOW_LOCALHOST_PROD !== "true" &&
+    envUrl &&
+    /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(envUrl)
+  ) {
     throw new Error("Production API base URL cannot point to localhost");
   }
 
@@ -59,7 +67,13 @@ export function getWsBaseUrl(): string {
   const envUrl = process.env.NEXT_PUBLIC_WS_URL;
   const isProd = process.env.NODE_ENV === "production";
 
-  if (isProd && envUrl && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(envUrl)) {
+  // H1 fix: same ARBX_ALLOW_LOCALHOST_PROD escape hatch as getApiBaseUrl().
+  if (
+    isProd &&
+    process.env.ARBX_ALLOW_LOCALHOST_PROD !== "true" &&
+    envUrl &&
+    /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(envUrl)
+  ) {
     throw new Error("Production WS base URL cannot point to localhost");
   }
 

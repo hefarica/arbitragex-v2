@@ -11,7 +11,7 @@
  * client immediately retries with credentials:"include" so a logged-in
  * operator never has to refresh manually.
  */
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 
 import { REGISTRY_KEYS, type RegistryKey } from '@/lib/operator/types';
 import { getApiBaseUrl } from '@/lib/api-client';
@@ -26,9 +26,21 @@ interface PageProps {
   params: Promise<{ entity: string }>;
 }
 
+// H7 fix: docs historically referenced plural registry URLs (e.g.
+// /omega-s5/registry/pools) but the canonical entities are singular
+// (chain|rpc|dex|token|pool|wallet|strategy|contract). Redirect a trailing-s
+// plural to its singular form instead of a bare 404.
+function pluralToSingular(entity: string): string | null {
+  if (!entity.endsWith('s')) return null;
+  const candidate = entity.slice(0, -1);
+  return REGISTRY_KEYS.includes(candidate as RegistryKey) ? candidate : null;
+}
+
 export default async function RegistryPage(props: PageProps): Promise<JSX.Element> {
   const { entity } = await props.params;
   if (!REGISTRY_KEYS.includes(entity as RegistryKey)) {
+    const singular = pluralToSingular(entity);
+    if (singular) redirect(`/omega-s5/registry/${singular}`);
     notFound();
   }
   const registryKey = entity as RegistryKey;

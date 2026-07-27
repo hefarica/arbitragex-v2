@@ -82,6 +82,14 @@ const nextConfig = {
         source: "/socket.io/:path*",
         destination: `${INTERNAL_EDGE}/socket.io/:path*`,
       },
+      {
+        // H2 fix: proxy /admin/* (killswitch toggle, trading-config PUT,
+        // onboarding complete, admin session) to the edge. Without this,
+        // direct browser access to the frontend origin (:3000/:5173) 404s on
+        // every admin mutation — only /api/* and /socket.io/* were proxied.
+        source: "/admin/:path*",
+        destination: `${INTERNAL_EDGE}/admin/:path*`,
+      },
     ];
   },
   async headers() {

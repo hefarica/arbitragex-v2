@@ -1595,7 +1595,8 @@ if (pool && outcomeSinkEnabled()) {
 const hotOpportunityStreamer = new OpportunityHotStreamer({
   io,
   redisUrl: REDIS_URL,
-  logger: logger as unknown as { log: (...args: unknown[]) => void; error: (...args: unknown[]) => void; warn: (...args: unknown[]) => void },
+  // H4 fix: the streamer's logger type is now pino-shaped (.info/.warn/.error).
+  logger: logger as unknown as { info: (...args: unknown[]) => void; error: (...args: unknown[]) => void; warn: (...args: unknown[]) => void },
 });
 hotOpportunityStreamer.start().catch((e) =>
   logger.error({ event: "hot_streamer.start_err", err: (e as Error).message },
@@ -1646,7 +1647,13 @@ httpServer.listen(PORT, () => {
     upstreams: Object.keys(UPSTREAMS) }, `${SERVICE} listening`);
 });
 
+// H6 hardening (security-auditor FAIL-2): guard against concurrent shutdown().
+// A second SIGINT/SIGTERM during the drain window would re-enter shutdown() and
+// race redis.quit()/pool.end(). Idempotence guard makes re-entry a no-op.
+let shutdownStarted = false;
 const shutdown = async (sig: string) => {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
   logger.info({ event: "service.shutdown", signal: sig }, "shutting down");
   await killSwitch.close().catch(() => {});
   // Stop the passive paper-trade archiver (closes its dedicated Redis conn).
@@ -1663,6 +1670,20 @@ const shutdown = async (sig: string) => {
   await cartridgeTelemetrySubscriber.quit().catch(() => {});
   await routeDiscoveryTelemetrySubscriber.quit().catch(() => {});
   await redis.quit().catch(() => {});
+  // H6 fix: stop accepting new connections and drain in-flight requests BEFORE
+  // ending the PG pool. Previously pool.end() ran while httpServer was still
+  // serving, so any in-flight query threw `Cannot use a pool after calling
+  // end` as an uncaught exception and the process died with an ugly stack.
+  await new Promise<void>((resolve) => {
+    const drainTimeout = setTimeout(() => resolve(), 5_000);
+    // Stop accepting new connections; callback fires once existing ones close.
+    httpServer.close(() => {
+      clearTimeout(drainTimeout);
+      resolve();
+    });
+    // If there are no active connections close() may never call back on some
+    // Node versions — the timeout above guarantees we still proceed.
+  });
   if (pool) await pool.end().catch(() => {});
   process.exit(0);
 };

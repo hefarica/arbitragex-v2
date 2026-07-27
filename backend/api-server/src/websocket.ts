@@ -679,7 +679,10 @@ const HOT_SIMULATED_STREAM = 'arbx:hot:simulated';
 export interface HotOpportunityStreamerOptions {
     io: Server;
     redisUrl: string;
-    logger?: { log: (...args: unknown[]) => void; error: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
+    // H4 fix: the injected logger is pino (index.ts), which exposes .info()/
+    // .warn()/.error() — NOT .log(). Declaring .log() here masked the runtime
+    // TypeError that silently killed the hot streamer on boot.
+    logger?: { info: (...args: unknown[]) => void; error: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
 }
 
 export interface HotOpportunity {
@@ -717,23 +720,23 @@ export class OpportunityHotStreamer {
         // Create consumer groups if not exist (ignore BUSYGROUP error)
         try {
             await this.redis.xgroup('CREATE', HOT_DETECTED_STREAM, HOT_OPPORTUNITIES_GROUP, '$', 'MKSTREAM');
-            this.logger.log(`[HotStreamer] Created consumer group for ${HOT_DETECTED_STREAM}`);
+            this.logger.info(`[HotStreamer] Created consumer group for ${HOT_DETECTED_STREAM}`);
         } catch (e: unknown) {
             const err = e as Error;
             if (!err.message?.includes('BUSYGROUP')) throw e;
-            this.logger.log(`[HotStreamer] Consumer group already exists for ${HOT_DETECTED_STREAM}`);
+            this.logger.info(`[HotStreamer] Consumer group already exists for ${HOT_DETECTED_STREAM}`);
         }
         try {
             await this.redis.xgroup('CREATE', HOT_SIMULATED_STREAM, HOT_OPPORTUNITIES_GROUP, '$', 'MKSTREAM');
-            this.logger.log(`[HotStreamer] Created consumer group for ${HOT_SIMULATED_STREAM}`);
+            this.logger.info(`[HotStreamer] Created consumer group for ${HOT_SIMULATED_STREAM}`);
         } catch (e: unknown) {
             const err = e as Error;
             if (!err.message?.includes('BUSYGROUP')) throw e;
-            this.logger.log(`[HotStreamer] Consumer group already exists for ${HOT_SIMULATED_STREAM}`);
+            this.logger.info(`[HotStreamer] Consumer group already exists for ${HOT_SIMULATED_STREAM}`);
         }
 
         this.running = true;
-        this.logger.log('[HotStreamer] Starting poll loops');
+        this.logger.info('[HotStreamer] Starting poll loops');
 
         // Start polling loops (non-blocking)
         this.pollLoop(HOT_DETECTED_STREAM, 'opportunity:detected');

@@ -1,50 +1,93 @@
 import { XRayCard } from "@/components/XRayCard";
 import { StatCard } from "@/components/StatCard";
 import { GateSection } from "@/components/GateSection";
+import { getApiBaseUrl } from "@/lib/api-client";
+import type { OpportunityRow } from "@/lib/schemas";
 
-const opportunities = [
-  {
-    pair: "WETH/USDC",
-    yield: "+0.42%",
-    confidence: 87,
-    legs: 2,
-    ago: "4s ago",
-    route: "UNI-V3 → SUSHI-V2",
-    fees: "pool 0.30% + gas 0.018%",
-    tlsAmount: "12.4 WETH",
-    simVerdict: "revm-pass · 3ms",
-    safetyA: 92,
-    safetyB: 88,
-  },
-  {
-    pair: "ARB/WETH",
-    yield: "+0.18%",
-    confidence: 74,
-    legs: 3,
-    ago: "7s ago",
-    route: "CAMELOT → UNI-V3",
-    fees: "pool 0.25% + gas 0.021%",
-    tlsAmount: "— (no TLS)",
-    simVerdict: "revm-pass · 4ms",
-    safetyA: 88,
-    safetyB: 90,
-  },
-  {
-    pair: "WBTC/USDC",
-    yield: "+0.31%",
-    confidence: 91,
-    legs: 2,
-    ago: "9s ago",
-    route: "UNI-V3 → BAL-V2",
-    fees: "pool 0.30% + gas 0.019%",
-    tlsAmount: "3.1 WBTC",
-    simVerdict: "revm-pass · 3ms",
-    safetyA: 95,
-    safetyB: 84,
-  },
-];
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-export default function HomePage() {
+// RULE 00 (Zero Mocks): the home page previously rendered a hardcoded array of
+// 3 fake opportunities + 4 fabricated StatCards. That is a direct doctrine
+// violation. This Server Component now fetches the REAL live feed from the
+// edge and renders exactly what the API returns — an empty array renders an
+// honest empty state, never invented data (R8 fail-honest).
+
+interface HomeData {
+  opportunities: OpportunityRow[];
+  source: "server-snapshot" | "server-fetch-failed";
+}
+
+async function getHomeData(): Promise<HomeData> {
+  const EDGE_URL = process.env.INTERNAL_EDGE_URL || getApiBaseUrl();
+  try {
+    const res = await fetch(`${EDGE_URL}/api/opportunities/live?limit=50`, {
+      cache: "no-store",
+      headers: { accept: "application/json" },
+    });
+    if (!res.ok) {
+      return { opportunities: [], source: "server-fetch-failed" };
+    }
+    const data = await res.json();
+    const items: OpportunityRow[] = Array.isArray(data?.items)
+      ? data.items
+      : Array.isArray(data)
+        ? data
+        : [];
+    return { opportunities: items, source: "server-snapshot" };
+  } catch {
+    return { opportunities: [], source: "server-fetch-failed" };
+  }
+}
+
+// Map a real OpportunityRow onto the XRayCard props. Every field derives from
+// the API payload; anything the API leaves null renders as an honest "—".
+function toXRayProps(opp: OpportunityRow) {
+  const net = opp.net_expected_profit_usd ?? opp.simulated_net_profit_usd ?? null;
+  const gross = opp.expected_profit_usd;
+  const pair = opp.pair_symbol ?? `${opp.token_in.slice(0, 6)}…/${opp.token_out.slice(0, 6)}…`;
+  const legs = (opp.dexes_used?.length ?? (opp.dex_b ? 2 : 1));
+  return {
+    pair,
+    yield:
+      net != null
+        ? `${net >= 0 ? "+" : ""}${(opp.roi_pct ?? 0).toFixed(2)}%`
+        : gross != null
+          ? `${gross >= 0 ? "+" : ""}${(opp.roi_pct ?? 0).toFixed(2)}%`
+          : "—",
+    confidence:
+      opp.confidence_score_bps != null
+        ? Math.round(opp.confidence_score_bps / 100)
+        : 0,
+    legs,
+    ago: opp.detected_at,
+    route: `${opp.dex_a}${opp.dex_b ? ` → ${opp.dex_b}` : ""}`,
+    fees:
+      opp.roi_pct != null
+        ? `convergence ${opp.roi_pct.toFixed(2)}%`
+        : "—",
+    tlsAmount: "—",
+    simVerdict: opp.sim_classification ?? opp.simulation_status ?? "pendiente",
+    safetyA: 0,
+    safetyB: 0,
+  };
+}
+
+export default async function HomePage() {
+  const { opportunities, source } = await getHomeData();
+  const failed = source === "server-fetch-failed";
+
+  // Derived honest stats — computed from the real payload, never fabricated.
+  const detectedCount = opportunities.length;
+  const nets = opportunities
+    .map((o) => o.net_expected_profit_usd ?? o.simulated_net_profit_usd ?? null)
+    .filter((v): v is number => v != null);
+  const avgRoi =
+    opportunities.length > 0
+      ? opportunities.reduce((acc, o) => acc + (o.roi_pct ?? 0), 0) / opportunities.length
+      : null;
+  const bestNet = nets.length > 0 ? Math.max(...nets) : null;
+
   return (
     <div className="space-y-12">
       {/* Hero Section */}
@@ -60,31 +103,33 @@ export default function HomePage() {
         </h1>
 
         <p className="text-base leading-relaxed text-[var(--muted)] max-w-[64ch]">
-          El motor observa <b className="text-[var(--foreground)] font-medium">50 rutas de Liquidity Manifolds</b> en paralelo,
+          El motor observa <b className="text-[var(--foreground)] font-medium">rutas de Liquidity Manifolds</b> en paralelo,
           resuelve <b className="text-[var(--foreground)] font-medium">Asimetría Topológica</b> bajo
-          <b className="text-[var(--foreground)] font-medium">Temporal Liquidity Superposition</b>,
+          <b className="text-[var(--foreground)] font-medium"> Temporal Liquidity Superposition</b>,
           y mantiene el capital expuesto en <b className="text-[var(--foreground)] font-medium">$0.00</b> hasta que cada gate
           institucional esté en verde. Doctrina OMEGA: honestidad antes que teatro.
         </p>
       </section>
 
-      {/* Stats Grid */}
+      {/* Stats Grid — values derived from the real API payload. A metric the
+          API cannot supply renders "—" (R8), never an invented number. */}
       <section className="stats-grid">
         <StatCard
-          label="Topological Yield · 24h"
-          value={0.42}
-          subtext="proyectado · REVM verified"
+          label="Mejor Topological Yield · neto"
+          value={bestNet != null ? bestNet.toFixed(4) : "—"}
+          subtext={bestNet != null ? "neto · USD (spine/sim)" : "sin datos — feed vacío"}
           variant="success"
-          decimals={2}
-          suffix="%"
+          animate={bestNet != null}
+          prefix={bestNet != null ? "$" : ""}
         />
 
         <StatCard
           label="Asimetrías detectadas"
-          value={1284}
+          value={detectedCount}
           subtext="stream arbx:opps:detected"
           variant="accent"
           decimals={0}
+          animate={detectedCount > 0}
         />
 
         <StatCard
@@ -94,14 +139,15 @@ export default function HomePage() {
           decimals={0}
           prefix="$"
           suffix=".00"
+          animate={false}
         />
 
         <StatCard
-          label="Decoherencia media"
-          value={0.21}
-          subtext="slippage proyectado"
-          decimals={2}
-          suffix="%"
+          label="Decoherencia media (Convergence Ratio)"
+          value={avgRoi != null ? avgRoi.toFixed(2) : "—"}
+          subtext={avgRoi != null ? "roi_pct medio del feed" : "sin datos — feed vacío"}
+          animate={avgRoi != null}
+          suffix={avgRoi != null ? "%" : ""}
         />
       </section>
 
@@ -116,11 +162,26 @@ export default function HomePage() {
           </h2>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-[18px]">
-          {opportunities.map((opp) => (
-            <XRayCard key={opp.pair} {...opp} />
-          ))}
-        </div>
+        {opportunities.length === 0 ? (
+          <div className="rounded-2xl border border-[var(--border)] bg-[color-mix(in_oklab,var(--foreground)_4%,transparent)] p-8 text-center">
+            <p className="font-mono text-[11px] tracking-widest uppercase text-[var(--muted)]">
+              {failed
+                ? "Feed no disponible — snapshot del servidor falló (R8 fail-honest)"
+                : "0 asimetrías activas — searcher escaneando el mempool"}
+            </p>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              {failed
+                ? "El servidor no pudo obtener /api/opportunities/live. La UI no fabrica datos para ocultar el silencio operacional."
+                : "El feed en vivo no devolvió oportunidades. Doctrina Zero-Mocks: se muestra el vacío real, no datos de demostración."}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-[18px]">
+            {opportunities.map((opp) => (
+              <XRayCard key={opp.id} {...toXRayProps(opp)} />
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Gate Section */}
