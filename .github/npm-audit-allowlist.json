@@ -25,6 +25,7 @@
     "@safe-global/safe-apps-provider": "Safe apps provider (wallet tree). Plan: resolved with wagmi-3 (dependabot #181).",
     "@safe-global/safe-apps-sdk": "Safe apps SDK (wallet tree). Plan: resolved with wagmi-3 (dependabot #181).",
     "porto": "Porto wallet connector (wallet tree). Plan: resolved with wagmi-3 (dependabot #181).",
-    "next": "Downgrade temporal a Next.js 14.2.28 para compatibilidad React 18 (frontend estabilidad). Plan: upgrade a Next.js 15 cuando se estabilice cadena de dependencias (wagmi-3 unlock). Expires: 2026-08-31."
+    "next": "Downgrade temporal a Next.js 14.2.28 para compatibilidad React 18 (frontend estabilidad). Plan: upgrade a Next.js 15 cuando se estabilice cadena de dependencias (wagmi-3 unlock). Expires: 2026-08-31.",
+    "axios": "Vulnerable copy is axios@1.16.0 EXACT-pinned by nested @coinbase/cdp-sdk (Coinbase CDP wallet SDK) under frontend — same wallet tree already allowlisted above (read-only browser wallet surface, no signer/broadcast/funds). Not directly upgradable without breaking the exact pin; top-level axios-retry accepts 0.x||1.x so a future CDP SDK bump or wagmi-3 upgrade retires it. Plan: resolved with wagmi-3 / @coinbase/cdp-sdk upgrade (dependabot #181). Same shared expiry as the wallet tree."
   }
 }

@@ -169,38 +169,61 @@ jobs:
           echo "[3/7] Stopping current stack (best-effort)..."
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down --remove-orphans || true
 
-          echo "[4/7] Building core services (sequential — lower peak disk/RAM)..."
+          echo "[4/7] Building core + hot-path services (sequential — lower peak disk/RAM)..."
           # Full --no-cache of the entire stack OOMs/fills the 150GB disk (was 82% full).
-          # Build the operator-facing plane first; remaining services come up with cache.
+          # Build the operator-facing plane + the REAL data hot-path so the pipeline
+          # (searcher → redis → postgres → api → dashboard) flows end-to-end (R7).
+          # The hot-path was previously NEVER deployed, leaving the dashboard empty.
+          # Rust images (searcher-rs, sim-ctl, relays-client) are heavy — build them
+          # explicitly; they are capital-$0 (paper/shadow, BROADCAST stays disabled).
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build \
+            api-server edge frontend \
+            searcher-rs sim-ctl relays-client recon selector-api anvil
+
+          echo "[5/7] Starting stack (infra + hot-path + operator plane)..."
+          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans \
+            postgres redis anvil \
+            searcher-rs sim-ctl relays-client recon selector-api \
             api-server edge frontend
 
-          echo "[5/7] Starting stack..."
-          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans \
-            postgres redis api-server edge frontend
-
-          echo "[6/7] Waiting for health..."
-          for i in $(seq 1 60); do
+          echo "[6/7] Waiting for health (operator plane via localhost; hot-path via compose healthy)..."
+          # searcher-rs 9001 is container-internal only (no host port), so we check the
+          # operator plane via localhost curl and the hot-path via `docker compose ps`
+          # healthy status (its internal healthcheck probes 9001 inside the container).
+          for i in $(seq 1 90); do
+            PLANE_OK=0
             if curl -sf http://127.0.0.1:8080/api/health >/dev/null 2>&1 \
                && curl -sf http://127.0.0.1:8787/health >/dev/null 2>&1; then
-              echo "healthy after ${i}s"
+              PLANE_OK=1
+            fi
+            # searcher-rs healthy (or at least running) per compose, not host curl.
+            SEARCHER_STATUS=$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps --format json searcher-rs 2>/dev/null | grep -o '"Health":"[a-z]*"' | head -1 || true)
+            if [ "$PLANE_OK" = "1" ] && echo "$SEARCHER_STATUS" | grep -q healthy; then
+              echo "healthy after ${i}s (api-server + edge via localhost; searcher-rs=$SEARCHER_STATUS)"
               break
             fi
-            if [ "$i" -eq 60 ]; then
-              echo "WARNING: health not ready after 60s — dumping status"
+            if [ "$i" -eq 90 ]; then
+              echo "WARNING: health not ready after 90s (plane_ok=$PLANE_OK searcher=$SEARCHER_STATUS) — dumping status"
+              echo "NOTE: searcher-rs requires RPC_WS_1/RPC_HTTP_1 in .env; without them the"
+              echo "hot-path stays down (fail-honest) and the dashboard shows the empty state."
               docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps || true
-              docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --tail=80 api-server edge frontend || true
+              docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --tail=80 api-server edge frontend searcher-rs sim-ctl || true
               exit 1
             fi
             sleep 1
           done
 
-          echo "[7/7] Final status..."
+          echo "[7/7] Final status (operator plane + hot-path)..."
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
           curl -sf http://127.0.0.1:8080/api/health | head -c 400 || true
           echo
           curl -sf http://127.0.0.1:8787/health | head -c 400 || true
           echo
+          # R7 traceability: confirm the data hot-path is producing (searcher → redis).
+          # Empty stream is honest while RPC is absent; non-empty = pipeline alive.
+          echo "hot-path trace (arbx:opps:detected XLEN):"
+          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T redis \
+            redis-cli XLEN arbx:opps:detected 2>/dev/null || echo "redis stream not yet available"
           echo "✅ Deploy completed at $(git rev-parse --short HEAD)"
           EOF
 
