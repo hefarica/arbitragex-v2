@@ -370,6 +370,24 @@ app.get("/api/route-discovery/metrics", (req, res) => proxy("/api/route-discover
 app.get("/api/route-discovery/routes", (req, res) => proxy("/api/route-discovery/routes", req, res));
 app.get("/api/cartridges/status", (req, res) => proxy("/api/cartridges/status", req, res));
 app.get("/api/cartridges/telemetry/latest", (req, res) => proxy("/api/cartridges/telemetry/latest", req, res));
+// Runtime cartridge registry (searcher-rs loaded .rhai set — the 264-strategy
+// library). api-server serves /api/cartridges/runtime from the searcher Redis
+// snapshot. Read-only GET; observe-only.
+app.get("/api/cartridges/runtime", (req, res) => {
+  const chain = String(req.query["chain_id"] ?? "1");
+  proxy(`/api/cartridges/runtime?chain_id=${encodeURIComponent(chain)}`, req, res);
+});
+// Runtime cartridge toggle (pause/resume) — admin-gated upstream; adminProxy
+// translates the httpOnly session cookie into the upstream admin token so an
+// unauthenticated browser cannot silence a detection cartridge.
+app.post("/api/cartridges/runtime/:id/pause", (req, res) => {
+  const id = String(req.params.id ?? "");
+  adminProxy(`/api/cartridges/runtime/${encodeURIComponent(id)}/pause`, req, res, "POST");
+});
+app.post("/api/cartridges/runtime/:id/resume", (req, res) => {
+  const id = String(req.params.id ?? "");
+  adminProxy(`/api/cartridges/runtime/${encodeURIComponent(id)}/resume`, req, res, "POST");
+});
 
 // FE-CRIT — system manifest read surface. api-server mounts these at
 // /api/system/* (system-manifest.ts, no /v1/ prefix). proxy() forwards the
