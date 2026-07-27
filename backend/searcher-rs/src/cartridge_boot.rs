@@ -182,6 +182,29 @@ pub fn spawn_cartridge_runtime(
         // key expires and the API fails honest instead of serving stale rows.
         publish_cartridge_registry(&mut registry_redis, &runner_for_task, chain_id).await;
 
+        // Registry REFRESH loop — the snapshot TTL is 600s but the searcher
+        // runs for days; without a periodic re-publish the key expires and
+        // GET /api/cartridges/runtime falls back to "registry_unavailable"
+        // even though cartridges are loaded. Re-publish every REFRESH_SECS
+        // (< TTL) so the registry stays live AND reflects pause/resume toggles
+        // in near-real-time. Fire-and-forget; failures are logged, never fatal.
+        {
+            let mut refresh_redis = registry_redis.clone();
+            let runner_for_refresh = runner_for_task.clone();
+            let refresh_cancel = cancel.clone();
+            tokio::spawn(async move {
+                const REFRESH_SECS: u64 = 240; // < 600s TTL with margin
+                loop {
+                    tokio::select! {
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(REFRESH_SECS)) => {
+                            publish_cartridge_registry(&mut refresh_redis, &runner_for_refresh, chain_id).await;
+                        }
+                        _ = refresh_cancel.cancelled() => break,
+                    }
+                }
+            });
+        }
+
         // Run the hot-reload subscriber (long-running; returns on cancellation).
         let subscriber = CartridgeSubscriber::new(redis_url, runner_for_task, cancel);
         subscriber.run().await;
