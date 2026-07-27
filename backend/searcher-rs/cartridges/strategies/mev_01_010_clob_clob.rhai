@@ -54,8 +54,8 @@ fn evaluate_opportunity(pool_data) {
         if reserves_a > 0.0 && reserves_b > 0.0 {
             let price = reserves_b / reserves_a;
             // Deterministic pseudo-random confidence
-            let seed = chain_id + math_abs(price * 1000.0) as i64;
-            conf = (seed % 100) as f64 / 100.0;
+            let seed = chain_id + math_abs(price * 1000.0).to_int();
+            conf = (seed % 100).to_float() / 100.0;
             if conf > 0.3 {
                 is_opp = true;
                 profit_est = conf * (reserves_a + reserves_b) / 10000.0;
