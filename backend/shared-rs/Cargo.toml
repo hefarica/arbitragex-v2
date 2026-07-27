@@ -29,7 +29,14 @@ jsonschema.workspace = true
 ethers.workspace = true
 alloy.workspace = true
 alloy-sol-types.workspace = true
+# T3 config-bundle importer: hybrid-decrypt + schema-validate.
+rsa.workspace = true
+aes-gcm.workspace = true
+sha2.workspace = true
+base64.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros","rt-multi-thread","test-util","time"] }
 tempfile = "3"
+# config_bundle roundtrip tests generate an RSA keypair + AES-GCM encrypt in-process.
+rand = { workspace = true }

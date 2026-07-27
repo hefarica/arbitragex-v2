@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState, useCallback, useRef } from "react";
-import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, EyeOff, Eye, AlertTriangle, Clock } from "lucide-react";
+import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, EyeOff, Eye, AlertTriangle, Clock, TrendingUp } from "lucide-react";
 import { sanitizeForDisplay } from "@/lib/omega-lexicon";
 import { toast } from "sonner";
 import { OpportunityDetailDialog, type OpportunityDetail } from "@/components/OpportunityDetailDialog";
@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from "framer-motion";
 
 // ─── Omni-Store Integration ───────────────────────────────────────────────────
 import { useOmniOpportunities } from "@/lib/store/useOmniOpportunities";
-import { useOmniStore } from "@/lib/store/omni-store";
+import { useOmniStore, routeKey } from "@/lib/store/omni-store";
 import { mapToOmniOpportunity, type OmniOpportunity } from "@/lib/store/types";
 
 // Re-export types for backward compatibility with OpportunityDetailDialog
@@ -25,15 +25,12 @@ export type {
 // ─── Component imports (Tasks 10 / 11) ───────────────────────────────────────
 import { TokenChip } from "@/components/TokenChip";
 import { ChainBadge } from "@/components/ChainBadge";
-import { DexPath } from "@/components/DexPath";
 import { StrategyBadge } from "@/components/StrategyBadge";
 import { StatusPill } from "@/components/StatusPill";
-import { CrossChainSlot } from "@/components/CrossChainSlot";
 import { DegradedBanner } from "@/components/DegradedBanner";
 import {
   formatProfitUSD,
   formatPctOrDash,
-  formatRiskOrDash,
 } from "@/lib/format";
 import { useUserPrefs } from "@/lib/user-prefs";
 
@@ -58,6 +55,29 @@ function formatUsdShort(value: number): string {
   if (abs >= 1_000)     return `$${(value / 1_000).toFixed(1)}k`;
   if (abs >= 1)         return `$${value.toFixed(2)}`;
   return `$${value.toFixed(4)}`;
+}
+
+/**
+ * PR 6 — formats a raw amount_in_wei string into a human-readable token amount
+ * for the Trade block's "Buy qty" cell. DISPLAY ONLY (rounded, never used for
+ * profit math). When decimals are unknown, falls back to raw wei so the cell
+ * never fabricates a unit count. R8: "—" when amount is missing/zero.
+ */
+function formatTokenAmount(
+  wei: string | null | undefined,
+  decimals: number | null | undefined,
+  symbol: string | null | undefined,
+): string {
+  if (!wei || wei === "0") return "—";
+  const sym = symbol ?? "";
+  const d = decimals ?? null;
+  if (d == null) return sym ? `${wei} ${sym} (raw)` : `${wei} wei`;
+  // Number is acceptable for DISPLAY (the wei's low-order digits are
+  // insignificant after dividing by 10^decimals). Not used for any calc.
+  const units = Number(wei) / Math.pow(10, d);
+  if (!Number.isFinite(units)) return "—";
+  const str = units >= 1000 ? units.toFixed(2) : units >= 1 ? units.toFixed(4) : units.toPrecision(3);
+  return sym ? `${str} ${sym}` : str;
 }
 
 // FE-1: WS statuses. "LIVE" = WS connected. "STALE" = WS disconnected.
@@ -92,8 +112,7 @@ export default function OpportunitiesClient({
   // Selectors from Omni-Store (SSOT)
   const opportunities = useOmniStore((state) => state.opportunities);
   const wsStatus = useOmniStore((state) => state.wsStatus);
-  const clearOpportunities = useOmniStore((state) => state.clearOpportunities);
-  const addOpportunity = useOmniStore((state) => state.addOpportunity);
+  const mergeSnapshot = useOmniStore((state) => state.mergeSnapshot);
 
   // ─── UI State (local, not in store) ───────────────────────────────────────
   const [isMounted, setIsMounted] = useState(false);
@@ -172,17 +191,14 @@ export default function OpportunitiesClient({
       }
       const data = await res.json();
       const items = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
-      // Clear and repopulate store via mapper
-      clearOpportunities();
-      items.forEach((raw: Record<string, unknown>) => {
-        addOpportunity(mapToOmniOpportunity(raw));
-      });
+      // Merge snapshot (dedup by route key, preserve age, no flash) via mapper.
+      mergeSnapshot(items.map((raw: Record<string, unknown>) => mapToOmniOpportunity(raw)));
       setLastRefresh(new Date());
       setErrorMsg(null);
     } catch (e) {
       setErrorMsg((e as Error).message);
     }
-  }, [EDGE_URL, viableOnly, clearOpportunities, addOpportunity]);
+  }, [EDGE_URL, viableOnly, mergeSnapshot]);
 
   // R1: localStorage read happens here — never during render (SSR has no localStorage).
   // 2026-05-10: bumped the storage key from "arbx-opps-viable-only" to "-v2" so
@@ -235,11 +251,30 @@ export default function OpportunitiesClient({
   // FE-1: Opportunities come from Omni-Store (SSOT).
   const viableCount = opportunities.filter((o) => o.status !== "rejected" && o.status !== "failed").length;
   const rejectedCount = opportunities.filter((o) => o.status === "rejected").length;
+  // DEV-ONLY preview-seed marker — true when the store holds SAMPLE fixtures
+  // (trace_id="preview" from preview-fixtures.ts, seeded by the dev auto-seed
+  // in useOmniOpportunities when no edge backend is reachable locally). Drives
+  // the "DESIGN PREVIEW" banner so the operator never confuses them with live
+  // data. Never true in production (the seed is NODE_ENV-gated dead code).
+  const isPreviewMode = opportunities.some((o) => o.trace_id === "preview");
 
   const isError = feedStatus === 'STALE';
 
   return (
     <div className={`p-8 min-h-screen transition-colors duration-500 text-foreground ${isError ? 'bg-destructive/5' : ''}`}>
+      {isPreviewMode && (
+        <div className="mb-6 p-4 bg-info/10 border border-info/40 rounded-xl flex items-center gap-3 text-info">
+          <span className="text-xs font-bold uppercase tracking-widest px-2 py-1 rounded bg-info/20 border border-info/50 whitespace-nowrap">
+            Design Preview
+          </span>
+          <div className="text-sm leading-relaxed">
+            <span className="font-bold">Sample fixtures shown</span> — no edge backend is reachable
+            locally, so populated SAMPLE opportunities are rendered for layout review only
+            (<span className="font-mono">trace_id&nbsp;=&nbsp;preview</span>). These are not live
+            detections. The instant real data arrives from the edge it replaces these.
+          </div>
+        </div>
+      )}
       <div className="flex justify-between items-center border-b border-border pb-4 mb-8">
         <div>
           <h1 className={`text-4xl font-extrabold tracking-tight bg-clip-text text-transparent ${isError ? 'bg-gradient-to-r from-destructive to-destructive/70' : 'bg-gradient-to-r from-primary to-success'}`}>
@@ -369,485 +404,309 @@ export default function OpportunitiesClient({
         </div>
       )}
 
-      <div data-slot="card" className="bg-card text-card-foreground border border-border rounded-2xl shadow-2xl overflow-hidden">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-muted text-muted-foreground text-sm uppercase tracking-wider">
-              <th className="p-4 border-b border-border">Age / Time</th>
-              <th className="p-4 border-b border-border">Route</th>
-              <th className="p-4 border-b border-border">Status</th>
-              {/* C5 (audit 2026-05-10): split Gross vs Net columns. Net is the
-                  honest after-cost number; Gross is the AMM-quoted swap delta. */}
-              <th className="p-4 border-b border-border text-right" title="Gross yield before gas/slippage/relay fees (AMM quote)">Gross (USD)</th>
-              <th className="p-4 border-b border-border text-right" title="Net yield after gas, slippage, relay fee, flash convergence fee, failure buffer">Net Yield (USD)</th>
-              <th className="p-4 border-b border-border text-right">Net Convergence Ratio</th>
-              <th className="p-4 border-b border-border text-center">Score</th>
-              <th className="p-4 border-b border-border text-center">Confidence</th>
-              <th className="p-4 border-b border-border text-right">Gas Used</th>
-              <th className="p-4 border-b border-border text-center">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            <AnimatePresence>
-              {opportunities.map((opp) => {
-                const detectedTime = new Date(opp.detected_at).getTime();
-                const ageSecs = isMounted ? Math.floor((now - detectedTime) / 1000) : 0;
-                const isStale = ageSecs > 12;
-                // R8: risk_score is nullable. Use 0 as fail-safe for triage logic only
-                // (null → not critical triage, which is the safe direction).
-                const scorePercent = Number(opp.risk_score ?? 0) * 100;
-                const isCriticalTriage = scorePercent > 95;
+      {/* ── Card grid (2026-07-05 operator request: styled trading-dashboard
+            panels, supremely clear). Replaces the dense 10-column table.
+            R8 fail-honest preserved: gross/net/convergence/score/status/age all
+            surface here; the deep 9-component cost breakdown + target sizing
+            remain available via the hover popover on the Net metric and the
+            Inspect dialog. Key fix: list key is the STABLE routeKey (not
+            opp.id), so re-detecting the same route updates the card in place
+            instead of remounting it — no more enter-animation flash every
+            poll cycle (see omni-store mergeSnapshot + systematic-debugging). */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <AnimatePresence>
+          {opportunities.map((opp) => {
+            const detectedTime = new Date(opp.detected_at).getTime();
+            const ageSecs = isMounted ? Math.max(0, Math.floor((now - detectedTime) / 1000)) : 0;
+            const isStale = ageSecs > 12;
+            // R8: risk_score nullable; 0 as fail-safe for triage logic only.
+            const scorePercent = Number(opp.risk_score ?? 0) * 100;
+            const isCriticalTriage = scorePercent > 95;
 
-                // C5 fix (audit 2026-05-10): split GROSS vs NET cells. Gross
-                // is the AMM-quoted swap delta (expected_profit_usd); Net is
-                // post-cost (net_expected_profit_usd). R8: both can be null.
-                //
-                // 2026-05-10 target-driven simulation extension: when the
-                // canonical Rust spine has not yet written net (cold-start,
-                // gate-rejected before math), the api-server's TS forward
-                // simulator may have emitted `simulated_net_profit_usd`.
-                // Display priority for the Net column:
-                //   1. canonical net (spine output, plain rendering)
-                //   2. simulated net (with [SIM] info pill + tilde prefix)
-                //   3. "—" (truly unknown)
-                // The simulated number is honestly labelled — never confused
-                // with the canonical truth.
-                const gross = formatProfitUSD(opp.expected_profit_usd);
-                const canonicalNet = opp.net_expected_profit_usd ?? null;
-                const simulatedNet = opp.simulated_net_profit_usd ?? null;
-                const netSource: "canonical" | "simulated" | "none" =
-                  canonicalNet != null ? "canonical"
-                    : simulatedNet != null ? "simulated"
-                    : "none";
-                const netValue = canonicalNet ?? simulatedNet;
-                const net = formatProfitUSD(netValue);
+            // Net priority: canonical spine → TS simulated (with SIM pill) → "—".
+            const gross = formatProfitUSD(opp.expected_profit_usd);
+            const canonicalNet = opp.net_expected_profit_usd ?? null;
+            const simulatedNet = opp.simulated_net_profit_usd ?? null;
+            const netSource: "canonical" | "simulated" | "none" =
+              canonicalNet != null ? "canonical"
+                : simulatedNet != null ? "simulated"
+                : "none";
+            const net = formatProfitUSD(canonicalNet ?? simulatedNet);
 
-                return (
-                  <motion.tr
-                    key={opp.id}
-                    initial={{ opacity: 0, x: -20, backgroundColor: "oklch(0.78 0.13 215 / 0.2)" }}
-                    animate={{ opacity: 1, x: 0, backgroundColor: isCriticalTriage ? "oklch(0.82 0.14 75 / 0.05)" : "transparent" }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.5 }}
-                    onClick={() => setSelectedOpp(opp)}
-                    className={`border-b hover:bg-muted/40 transition-all cursor-pointer ${isCriticalTriage ? 'border-warning/30 relative' : 'border-border/50'}`}
-                  >
-                    {/* ── AGE / TIME column ── */}
-                    <td className="p-4 font-mono text-xs">
-                      {isCriticalTriage && (
-                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-warning to-success animate-pulse"></div>
-                      )}
-                      <div className="flex flex-col gap-1">
-                        <div className={`flex items-center gap-1.5 font-bold ${isStale ? 'text-destructive' : 'text-success'}`}>
-                          {isStale ? <AlertTriangle size={12} className="animate-pulse" /> : <Clock size={12} />}
-                          <span suppressHydrationWarning>{isMounted ? `${ageSecs}s ago` : '--'}</span>
-                        </div>
-                        <div className="text-muted-foreground" suppressHydrationWarning>
-                          {isMounted ? new Date(opp.detected_at).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--:--'}
-                        </div>
-                      </div>
-                    </td>
+            const roi = opp.roi_pct;
+            const roiTone: "pos" | "neg" | "muted" =
+              roi == null ? "muted" : roi > 0 ? "pos" : roi < 0 ? "neg" : "muted";
 
-                    {/* ── ROUTE column ──
-                          New layout (2026-05-10 operator request):
-                            Row 1: ChainBadge(s) — single chain or in→out badges for cross-chain
-                            Row 2: TokenChip in  → TokenChip out  (symbol stacked on truncated addr)
-                            Row 3: StrategyBadge + DEX path
-                            Row 4: CrossChainSlot (extra metadata for bridges — null for single chain)
-                       */}
-                    <td className="p-4 align-top" data-status={opp.status}>
-                      <div className="flex flex-col gap-2">
-                        {/* Chain identity row.
-                            2026-05-10 operator request: discreet base-token
-                            badge ("WETH", "USDC", "MATIC", ...) sits next to
-                            the chain pill so the operator can see at a glance
-                            which token funds the leg on this chain.
-                            chain_base_token_symbol is null when no
-                            trading_config snapshot is available — we hide the
-                            badge in that case (no fabricated default). */}
-                        {/* 2026-05-11 operator request: StrategyBadge moves
-                            to the chain-identity line so the strategy name
-                            sits next to the chain + base-token badges,
-                            mirroring how the operator reads the row top-down
-                            (what chain + what base token + what strategy). */}
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <ChainBadge chain_id={opp.chain_id} withId />
-                          {opp.chain_base_token_symbol && (
-                            <span
-                              className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground/90 border border-border/60 font-mono uppercase tracking-wide"
-                              title={`Base token for chain ${opp.chain_id} — starts/ends in ${opp.chain_base_token_symbol} (operator-configured)`}
-                            >
-                              base: {opp.chain_base_token_symbol}
-                            </span>
-                          )}
-                          {opp.chain_id_out != null && opp.chain_id_out !== opp.chain_id && (
-                            <>
-                              <span className="text-muted-foreground/50 text-xs" aria-hidden="true">→</span>
-                              <ChainBadge chain_id={opp.chain_id_out} withId />
-                            </>
-                          )}
-                          <StrategyBadge strategy_kind={opp.strategy_kind} />
-                        </div>
-                        {/* Token pair: symbol (bold) + truncated address (mono, muted) per side */}
-                        <div className="flex items-start gap-2 min-w-0">
-                          <div className="min-w-0 flex-1">
-                            <TokenChip
-                              token_address={opp.token_in}
-                              info={opp.token_in_info}
-                              chain_id={opp.chain_id}
-                            />
-                          </div>
-                          <span
-                            className="text-muted-foreground/60 text-base leading-6 shrink-0 px-1"
-                            aria-hidden="true"
-                          >
-                            →
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <TokenChip
-                              token_address={opp.token_out}
-                              info={opp.token_out_info}
-                              chain_id={opp.chain_id_out ?? opp.chain_id}
-                            />
-                          </div>
-                        </div>
-                        {/* DEX route with BUY/SELL/VIA/TARGET semantics.
-                            StrategyBadge moved up to the chain-identity line
-                            on 2026-05-11; this row now carries only the
-                            BUY/SELL/VIA path. */}
-                        <div className="flex items-center gap-2 flex-wrap pt-0.5">
-                          <DexPath
-                            strategy_kind={opp.strategy_kind}
-                            dex_a={opp.dex_a}
-                            dex_b={opp.dex_b}
-                          />
-                        </div>
-                        {/* Cross-chain slot — renders null for single-chain opps */}
-                        <CrossChainSlot opp={opp} />
-                      </div>
-                    </td>
+            // ── PR 6 trade-math cells. Honest: many stay "—" until PR 4/5 land. ──
+            const buyQty = formatTokenAmount(
+              opp.amount_in_wei,
+              opp.token_in_info?.decimals,
+              opp.token_in_info?.symbol,
+            );
+            // Final out: honest ONLY on the SIM path (both legs same forward-sim).
+            // Verifier caveat: never mix canonical net with simulated amount_in.
+            const simInUsd = opp.simulated_amount_in_usd ?? null;
+            const simNetUsd = opp.simulated_net_profit_usd ?? null;
+            const endValueUsd: number | null =
+              simInUsd != null && simNetUsd != null ? simInUsd + simNetUsd : null;
 
-                    {/* ── STATUS column — StatusPill with rejection_reason tooltip + visible badge ── */}
-                    <td className="p-4">
-                      <StatusPill
-                        status={opp.status}
-                        rejection_reason={opp.rejection_reason}
-                      />
-                      {/* R8 fail-honest: show rejection reason as visible badge in show-all mode */}
-                      {!viableOnly && opp.rejection_reason && (
-                        <span className="mt-1 flex items-center gap-1 text-xs text-destructive font-mono">
-                          <span className="inline-block w-1 h-1 rounded-full bg-destructive flex-shrink-0" aria-hidden="true" />
-                          {sanitizeForDisplay(opp.rejection_reason)}
-                        </span>
-                      )}
-                    </td>
+            // Target PASS/FAIL against the /strategies-applied target.
+            const tgt = opp.simulated_target;
+            const targetVerdict: { label: string; tone: "pass" | "fail" | "na" } = (() => {
+              if (tgt == null) return { label: "no target", tone: "na" as const };
+              const infeasible =
+                tgt.binding_floor === "roi-unreachable" ||
+                tgt.binding_floor === "net-per-usd-nonpositive";
+              return tgt.meets_target_at_cap && !infeasible
+                ? { label: "PASS", tone: "pass" as const }
+                : { label: "FAIL", tone: "fail" as const };
+            })();
 
-                    {/* ── GROSS column (audit 2026-05-10 C5 fix) — pre-cost AMM quote */}
-                    <td className="p-4 text-right" data-col="gross">
-                      <span
-                        className="font-mono text-sm text-muted-foreground"
-                        title="Gross yield = expected_amount_out − amount_in (USD). Pre-gas, pre-slippage, pre-relay-fee. R8: '—' when not yet computed."
-                      >
-                        {gross.display}
+            return (
+              <motion.div
+                key={routeKey(opp)}
+                initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+                transition={{ duration: 0.25 }}
+                onClick={() => setSelectedOpp(opp)}
+                className={`relative bg-card text-card-foreground border rounded-2xl p-4 shadow-lg hover:shadow-xl transition-all cursor-pointer overflow-hidden ${
+                  isCriticalTriage ? "border-warning/40" : "border-border hover:border-primary/40"
+                }`}
+              >
+                {isCriticalTriage && (
+                  <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-warning to-success animate-pulse" />
+                )}
+
+                {/* ── HEADER: chain + strategy + status + age | ROI% ── */}
+                <div className="flex items-center justify-between gap-2 mb-2.5 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                    <ChainBadge chain_id={opp.chain_id} />
+                    <StrategyBadge strategy_kind={opp.strategy_kind} />
+                    <StatusPill status={opp.status} rejection_reason={opp.rejection_reason} />
+                    {opp.chain_base_token_symbol && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground/90 border border-border/60 font-mono uppercase tracking-wide">
+                        {opp.chain_base_token_symbol}
                       </span>
-                    </td>
+                    )}
+                  </div>
+                  <div
+                    className={`flex items-center gap-1 text-xs font-mono flex-shrink-0 ${isStale ? "text-destructive" : "text-muted-foreground"}`}
+                    title={`Snapshot ${new Date(opp.detected_at).toISOString()}`}
+                  >
+                    {isStale ? <AlertTriangle size={11} className="animate-pulse" /> : <Clock size={11} />}
+                    <span suppressHydrationWarning>{isMounted ? `${ageSecs}s` : "--"}</span>
+                  </div>
+                </div>
 
-                    {/* ── NET YIELD column — R8 fail-honest, post-cost truth.
-                          Priority: canonical spine net → TS simulated net (with
-                          [SIM] info pill) → "—". Sub-line: target-driven
-                          inverse sizing hint when the operator has configured
-                          a target via /strategies card or the Simulación tab. */}
-                    <td className="p-4 text-right" data-col="yield">
-                      <div className="group relative inline-block cursor-help">
-                        <div className="flex flex-col items-end gap-0.5">
-                          <div className="flex items-center gap-1.5 justify-end">
-                            <span
-                              className={`font-mono font-bold text-base drop-shadow-md border-b border-dashed border-current/30 ${TONE_CLASS[net.tone] ?? 'text-muted-foreground'}`}
-                              title={
-                                netSource === "canonical"
-                                  ? "Net yield (canonical spine output) = gross − gas − slippage − relay fee − flash convergence fee − failure buffer."
-                                  : netSource === "simulated"
-                                  ? "Net yield (TS forward simulation) — operator's trading_config applied at the row's recorded amount_in. Canonical spine value not yet available."
-                                  : "Net yield not yet computed — neither spine output nor simulator could produce a number. R8 fail-honest: '—'."
-                              }
-                            >
-                              {netSource === "simulated" ? `~${net.display}` : net.display}
-                            </span>
-                            {netSource === "simulated" && (
-                              <span
-                                className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-info/15 text-info border border-info/40 uppercase tracking-wider"
-                                title="Forward simulation — canonical spine net pending"
-                              >
-                                SIM
-                              </span>
-                            )}
-                          </div>
-                          {/* Target-driven sizing hint — operator-configured
-                              floors (USD min_profit and/or Convergence Ratio min_pct).
-                              AND semantics: the smallest amount that
-                              satisfies BOTH floors is suggested.
-                              Visual tone:
-                                green  → meets target within cap, finite size
-                                yellow → cap-bound or infeasible (Convergence Ratio
-                                         unreachable / net-per-usd-nonpositive). */}
-                          {opp.simulated_target && (() => {
-                            const t = opp.simulated_target;
-                            const infeasible =
-                              t.binding_floor === "roi-unreachable"
-                              || t.binding_floor === "net-per-usd-nonpositive";
-                            const ok = t.meets_target_at_cap && !infeasible;
-                            const titleParts: string[] = [];
-                            if (t.target_net_usd != null) titleParts.push(`min $${t.target_net_usd.toFixed(2)} net`);
-                            if (t.target_roi_pct != null) titleParts.push(`min ${t.target_roi_pct.toFixed(2)}% Convergence Ratio`);
-                            const src = t.target_source === "strategy_config" ? "/strategies card" : "Simulación tab";
-                            const basis = t.estimation_basis === "roi-assumed" ? " · Convergence Ratio-assumed (no gross recorded)" : "";
-                            return (
-                              <div
-                                className={`text-[10px] font-mono flex items-center gap-1 ${ok ? "text-success/90" : "text-warning"}`}
-                                title={`Floors: ${titleParts.join(" AND ")} from ${src}${basis}`}
-                              >
-                                <span aria-hidden="true">{ok ? "→" : "⚠"}</span>
-                                {t.binding_floor === "roi-unreachable" ? (
-                                  <span>Convergence Ratio {t.target_roi_pct?.toFixed(1)}% inalcanzable</span>
-                                ) : t.binding_floor === "net-per-usd-nonpositive" ? (
-                                  <span>costos &gt; gross</span>
-                                ) : ok ? (
-                                  <span>
-                                    {t.target_net_usd != null && `$${t.target_net_usd.toFixed(0)}`}
-                                    {t.target_net_usd != null && t.target_roi_pct != null && " · "}
-                                    {t.target_roi_pct != null && `${t.target_roi_pct.toFixed(1)}%`}
-                                    {" @ borrow "}{formatUsdShort(t.required_amount_in_usd)}
-                                  </span>
-                                ) : (
-                                  <span>cap {formatUsdShort(t.cap_amount_in_usd)} → max ${t.suggested_net_usd.toFixed(2)}</span>
-                                )}
-                                {t.estimation_basis === "roi-assumed" && (
-                                  <span className="ml-1 px-1 rounded text-[8px] bg-warning/15 text-warning border border-warning/30 uppercase">est</span>
-                                )}
-                              </div>
-                            );
-                          })()}
+                {/* Token pair + ROI% */}
+                <div className="flex items-center justify-between gap-2 mb-3 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="min-w-0 flex-1">
+                      <TokenChip token_address={opp.token_in} info={opp.token_in_info} chain_id={opp.chain_id} />
+                    </div>
+                    <span className="text-muted-foreground/60 shrink-0" aria-hidden="true">→</span>
+                    <div className="min-w-0 flex-1">
+                      <TokenChip token_address={opp.token_out} info={opp.token_out_info} chain_id={opp.chain_id_out ?? opp.chain_id} />
+                    </div>
+                  </div>
+                  <div
+                    className={`flex items-center gap-1 font-bold text-base whitespace-nowrap ${roiTone === "pos" ? "text-success" : roiTone === "neg" ? "text-destructive" : "text-muted-foreground"}`}
+                    title="Net Convergence Ratio (ROI %) — fail-honest '—' when not computed"
+                  >
+                    {roiTone === "pos" && <TrendingUp size={14} />}
+                    {formatPctOrDash(opp.roi_pct)}
+                  </div>
+                </div>
+
+                {/* ── BLOQUE 1: RESULTADO (executive) ── */}
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  <div className="rounded-lg bg-muted/40 p-2">
+                    <div className="text-[9px] uppercase tracking-wide text-muted-foreground">Net yield</div>
+                    <div className="flex items-center gap-1">
+                      <span
+                        className={`font-mono text-lg font-bold ${TONE_CLASS[net.tone] ?? "text-muted-foreground"}`}
+                        title={netSource === "canonical" ? "Canonical spine net = gross − all costs" : netSource === "simulated" ? "TS forward-sim net (canonical pending)" : "Not yet computed (R8: '—')"}
+                      >
+                        {netSource === "simulated" ? `~${net.display}` : net.display}
+                      </span>
+                      {netSource === "simulated" && (
+                        <span className="text-[9px] font-bold px-1 rounded bg-info/15 text-info border border-info/40">SIM</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-muted/40 p-2">
+                    <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
+                      Target · {tgt?.target_source === "strategy_config" ? "/strategies" : tgt?.target_source === "simulation_tab" ? "Sim tab" : "none"}
+                    </div>
+                    <div className={`font-mono text-lg font-bold ${targetVerdict.tone === "pass" ? "text-success" : targetVerdict.tone === "fail" ? "text-destructive" : "text-muted-foreground"}`}>
+                      {targetVerdict.label}
+                    </div>
+                    {tgt && (
+                      <div className="text-[9px] text-muted-foreground font-mono">
+                        {tgt.target_net_usd != null && `$${tgt.target_net_usd.toFixed(0)}`}
+                        {tgt.target_net_usd != null && tgt.target_roi_pct != null && " · "}
+                        {tgt.target_roi_pct != null && `${tgt.target_roi_pct.toFixed(1)}%`}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* ── BLOQUE 2: TRADE (capital in · buy · sell · final out) ── */}
+                <div className="grid grid-cols-4 gap-1.5 mb-2 text-center">
+                  <div className="rounded-md bg-muted/30 p-1.5 min-w-0">
+                    <div className="text-[8px] uppercase tracking-wide text-muted-foreground">Capital in</div>
+                    <div className="font-mono text-[11px] text-foreground truncate" title="simulated_amount_in_usd">
+                      {simInUsd != null ? formatUsdShort(simInUsd) : "—"}
+                    </div>
+                  </div>
+                  <div className="rounded-md bg-success/5 border border-success/20 p-1.5 min-w-0">
+                    <div className="text-[8px] uppercase tracking-wide text-success truncate" title={opp.dex_a || "—"}>Buy · {opp.dex_a || "—"}</div>
+                    <div className="font-mono text-[11px] text-foreground truncate" title={`amount_in: ${buyQty}`}>{buyQty}</div>
+                    <div className="font-mono text-[9px] text-muted-foreground italic" title="buy_price_usd pending PR 4 backend wiring">px —</div>
+                  </div>
+                  <div className="rounded-md bg-destructive/5 border border-destructive/20 p-1.5 min-w-0">
+                    <div className="text-[8px] uppercase tracking-wide text-destructive truncate" title={opp.dex_b ?? "single-DEX"}>Sell · {opp.dex_b || "1-leg"}</div>
+                    <div className="font-mono text-[11px] text-muted-foreground italic" title="amount_out pending PR 4 backend wiring">qty —</div>
+                    <div className="font-mono text-[9px] text-muted-foreground italic" title="sell_price_usd pending PR 4">px —</div>
+                  </div>
+                  <div className="rounded-md bg-muted/30 p-1.5 min-w-0">
+                    <div className="text-[8px] uppercase tracking-wide text-muted-foreground">Final out</div>
+                    <div className="font-mono text-[11px] text-foreground truncate" title="capital_in + net (SIM path only; honest when both non-null)">
+                      {endValueUsd != null ? `${formatUsdShort(endValueUsd)}` : "—"}
+                      {endValueUsd != null && <span className="text-[8px] text-info ml-0.5">sim</span>}
+                    </div>
+                  </div>
+                </div>
+
+                {/* ── BLOQUE 3: PRECIO REAL (token_in · token_out · source · age) ── */}
+                <div className="grid grid-cols-2 gap-1.5 mb-2">
+                  <div className="rounded-md bg-muted/30 p-1.5 flex items-center justify-between min-w-0">
+                    <span className="text-[9px] text-muted-foreground uppercase truncate">{opp.token_in_info?.symbol ?? "token_in"}</span>
+                    <span className="font-mono text-[11px] text-muted-foreground italic flex-shrink-0" title="Real price pending PR 5 (Redis arbx:token_prices:&lt;chain&gt;)">—</span>
+                  </div>
+                  <div className="rounded-md bg-muted/30 p-1.5 flex items-center justify-between min-w-0">
+                    <span className="text-[9px] text-muted-foreground uppercase truncate">{opp.token_out_info?.symbol ?? "token_out"}</span>
+                    <span className="font-mono text-[11px] text-muted-foreground italic flex-shrink-0" title="Real price pending PR 5">—</span>
+                  </div>
+                </div>
+                <div className="text-[9px] text-muted-foreground/70 italic mb-3 leading-relaxed">
+                  Real token prices · buy/sell px · amount_out · final out = <span className="font-mono">pending backend wiring (PR 4/5)</span>. Shown honestly as "—" — never fabricated (RULE 00).
+                </div>
+
+                {/* ── EXPANDIBLE: derivation · applied config · route ── */}
+                <details
+                  className="mb-3 rounded-lg border border-border bg-muted/20"
+                  onClick={(e) => e.stopPropagation()}
+                  onToggle={(e) => e.stopPropagation()}
+                >
+                  <summary className="cursor-pointer p-2 text-xs font-semibold text-muted-foreground select-none hover:text-foreground">
+                    ▾ How net yield is derived · applied config · route
+                  </summary>
+                  <div className="p-2 pt-0 space-y-2.5 text-xs">
+
+                    {/* Derivation chain */}
+                    <div>
+                      <div className="text-[9px] uppercase tracking-wide text-muted-foreground mb-1">How net yield is derived</div>
+                      <div className="font-mono space-y-0.5">
+                        <div className="flex justify-between">
+                          <span>Gross (AMM spread)</span>
+                          <span className={TONE_CLASS[gross.tone] ?? "text-muted-foreground"}>{gross.display}</span>
                         </div>
-                        {/* Tooltip popover: extended cost breakdown when
-                            simulated values are present + target attribution.
-                            Also shows for Path-B rows (no forward but
-                            simulated_target exists) so the operator can see
-                            target-source attribution even on opportunities
-                            without a recorded gross. */}
-                        {(opp.expected_profit_usd != null
-                          || opp.net_expected_profit_usd != null
-                          || opp.simulated_net_profit_usd != null
-                          || opp.simulated_target != null) && (
-                          <div data-slot="popover-content" className="absolute bottom-full right-0 mb-2 w-80 p-3 bg-popover text-popover-foreground border border-border rounded-lg shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 text-left">
-                            <div className="text-xs font-sans space-y-1">
-                              <div className="flex justify-between">
-                                <span>Gross (AMM quote):</span>
-                                <span className={`font-mono ${TONE_CLASS[gross.tone] ?? 'text-muted-foreground'}`}>{gross.display}</span>
-                              </div>
-                              <div className="flex justify-between border-b border-border pb-1 mb-1 font-bold">
-                                <span>
-                                  Net ({netSource === "simulated" ? "simulated" : netSource === "canonical" ? "spine" : "—"}):
-                                </span>
-                                <span className={`font-mono ${TONE_CLASS[net.tone] ?? 'text-muted-foreground'}`}>
-                                  {netSource === "simulated" ? `~${net.display}` : net.display}
-                                </span>
-                              </div>
-                              {opp.bridge_fee_usd != null && (
-                                <div className="flex justify-between text-muted-foreground">
-                                  <span>Bridge Fee:</span>
-                                  <span className="font-mono">${opp.bridge_fee_usd.toFixed(4)}</span>
-                                </div>
-                              )}
-                              {/* 8-component simulated cost breakdown */}
-                              {opp.simulated_cost_breakdown && (
-                                <div className="pt-1 border-t border-border/50 space-y-0.5">
-                                  <div className="text-muted-foreground uppercase tracking-wider text-[9px] mb-1">
-                                    SIM cost breakdown (USD)
-                                  </div>
-                                  {[
-                                    ["Gas", opp.simulated_cost_breakdown.gas_usd],
-                                    ["Flash Convergence fee", opp.simulated_cost_breakdown.flashloan_fee_usd],
-                                    ["LP fees", opp.simulated_cost_breakdown.lp_fees_usd],
-                                    ["Slippage", opp.simulated_cost_breakdown.slippage_usd],
-                                    ["Failure buffer", opp.simulated_cost_breakdown.failure_buffer_usd],
-                                    ["Copied buffer", opp.simulated_cost_breakdown.copied_buffer_usd],
-                                    ["Capital cost", opp.simulated_cost_breakdown.capital_cost_usd],
-                                    ["Ops overhead", opp.simulated_cost_breakdown.ops_overhead_usd],
-                                    ["Relay fee", opp.simulated_cost_breakdown.relay_fee_usd],
-                                  ].map(([label, value]) => (
-                                    <div key={String(label)} className="flex justify-between text-muted-foreground/80">
-                                      <span>{label}:</span>
-                                      <span className="font-mono">${(value as number).toFixed(4)}</span>
-                                    </div>
-                                  ))}
-                                  {opp.simulated_amount_in_usd != null && (
-                                    <div className="flex justify-between text-muted-foreground/80 pt-1 border-t border-border/30">
-                                      <span>Amount_in (USD):</span>
-                                      <span className="font-mono">{formatUsdShort(opp.simulated_amount_in_usd)}</span>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                              {/* Target sizing attribution */}
-                              {opp.simulated_target && (
-                                <div className="pt-1 border-t border-border/50 space-y-0.5">
-                                  <div className="text-muted-foreground uppercase tracking-wider text-[9px] mb-1">
-                                    Target sizing — AND semantics (both floors must hold)
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span>Source:</span>
-                                    <span className="font-mono">
-                                      {opp.simulated_target.target_source === "strategy_config"
-                                        ? "/strategies card"
-                                        : "Simulación tab"}
-                                    </span>
-                                  </div>
-                                  {opp.simulated_target.target_net_usd != null && (
-                                    <div className="flex justify-between">
-                                      <span>USD floor (min yield):</span>
-                                      <span className="font-mono">${opp.simulated_target.target_net_usd.toFixed(2)}</span>
-                                    </div>
-                                  )}
-                                  {opp.simulated_target.target_roi_pct != null && (
-                                    <div className="flex justify-between">
-                                      <span>Convergence Ratio floor (min %):</span>
-                                      <span className="font-mono">{opp.simulated_target.target_roi_pct.toFixed(2)}%</span>
-                                    </div>
-                                  )}
-                                  <div className="flex justify-between">
-                                    <span>Binding floor:</span>
-                                    <span className={`font-mono ${
-                                      opp.simulated_target.binding_floor === "roi-unreachable"
-                                      || opp.simulated_target.binding_floor === "net-per-usd-nonpositive"
-                                        ? "text-destructive"
-                                        : "text-foreground"
-                                    }`}>
-                                      {opp.simulated_target.binding_floor}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span>Estimation basis:</span>
-                                    <span className={`font-mono ${opp.simulated_target.estimation_basis === "roi-assumed" ? "text-warning" : "text-foreground"}`}>
-                                      {opp.simulated_target.estimation_basis}
-                                    </span>
-                                  </div>
-                                  {opp.simulated_target.estimation_basis === "roi-assumed" && (
-                                    <div className="text-[10px] text-warning/80 italic pt-0.5">
-                                      No gross recorded — sizing assumes route delivers your min convergence ratio floor as its gross rate.
-                                    </div>
-                                  )}
-                                  <div className="flex justify-between pt-1 border-t border-border/30">
-                                    <span>Required amount_in:</span>
-                                    <span className="font-mono">
-                                      {Number.isFinite(opp.simulated_target.required_amount_in_usd)
-                                        ? formatUsdShort(opp.simulated_target.required_amount_in_usd)
-                                        : "∞"}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span>Effective cap:</span>
-                                    <span className="font-mono">{formatUsdShort(opp.simulated_target.cap_amount_in_usd)}</span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span>Suggested:</span>
-                                    <span className={`font-mono ${opp.simulated_target.meets_target_at_cap ? 'text-success' : 'text-warning'}`}>
-                                      {formatUsdShort(opp.simulated_target.suggested_amount_in_usd)}
-                                      {!opp.simulated_target.meets_target_at_cap && " (cap-bound)"}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between">
-                                    <span>Suggested net:</span>
-                                    <span className="font-mono">${opp.simulated_target.suggested_net_usd.toFixed(2)}</span>
-                                  </div>
-                                </div>
-                              )}
-                              {/* Notes (linear-extrap, cap-bound, etc.) */}
-                              {opp.simulated_notes && opp.simulated_notes.length > 0 && (
-                                <div className="pt-1 border-t border-border/50 text-muted-foreground/70 italic">
-                                  Notes: {opp.simulated_notes.join(", ")}
-                                </div>
-                              )}
-                              {!opp.simulated_cost_breakdown && netSource !== "simulated" && (
-                                <div className="flex justify-between text-muted-foreground/70">
-                                  <span>Gas / Bribe / Slippage breakdown:</span>
-                                  <span className="italic">Pendiente revm sim</span>
-                                </div>
-                              )}
-                              {opp.paper_status && (
-                                <div className="flex justify-between text-muted-foreground/70 pt-1 border-t border-border/50">
-                                  <span>Paper status:</span>
-                                  <span className="font-mono">{opp.paper_status}</span>
-                                </div>
-                              )}
+                        {opp.simulated_cost_breakdown ? (
+                          ([
+                            ["− Gas", opp.simulated_cost_breakdown.gas_usd],
+                            ["− LP fees (30bps proxy)", opp.simulated_cost_breakdown.lp_fees_usd],
+                            ["− Slippage", opp.simulated_cost_breakdown.slippage_usd],
+                            ["− Flash convergence fee", opp.simulated_cost_breakdown.flashloan_fee_usd],
+                            ["− Relay fee", opp.simulated_cost_breakdown.relay_fee_usd],
+                            ["− Capital cost", opp.simulated_cost_breakdown.capital_cost_usd],
+                            ["− Failure buffer", opp.simulated_cost_breakdown.failure_buffer_usd],
+                            ["− Copied buffer", opp.simulated_cost_breakdown.copied_buffer_usd],
+                            ["− Ops overhead", opp.simulated_cost_breakdown.ops_overhead_usd],
+                          ] as Array<[string, number]>).map(([label, value]) => (
+                            <div key={label} className="flex justify-between text-muted-foreground">
+                              <span>{label}</span>
+                              <span>−${value.toFixed(4)}</span>
                             </div>
+                          ))
+                        ) : (
+                          <div className="text-muted-foreground/60 italic">
+                            Fee breakdown: pending revm sim (canonical spine persists aggregate net only — mig 049).
                           </div>
                         )}
+                        <div className="flex justify-between border-t border-border pt-0.5 font-bold">
+                          <span>= Net yield{netSource === "simulated" ? " (SIM)" : ""}</span>
+                          <span className={TONE_CLASS[net.tone] ?? "text-muted-foreground"}>
+                            {netSource === "simulated" ? `~${net.display}` : net.display}
+                          </span>
+                        </div>
                       </div>
-                    </td>
+                    </div>
 
-                    {/* ── NET Convergence Ratio column — R8 fail-honest via formatPctOrDash ── */}
-                    <td className="p-4 text-right font-mono text-foreground" data-col="convergence-ratio">
-                      <span className="bg-muted/50 px-2 py-1 rounded border border-border">
-                        {formatPctOrDash(opp.roi_pct)}
-                      </span>
-                    </td>
+                    {/* Applied config */}
+                    <div>
+                      <div className="text-[9px] uppercase tracking-wide text-muted-foreground mb-1">Applied config (from /strategies)</div>
+                      {tgt ? (
+                        <div className="font-mono space-y-0.5">
+                          <div className="flex justify-between"><span>source</span><span>{tgt.target_source === "strategy_config" ? "/strategies" : "Sim tab"}</span></div>
+                          {tgt.target_net_usd != null && (
+                            <div className="flex justify-between"><span>min net USD</span><span>${tgt.target_net_usd.toFixed(2)}</span></div>
+                          )}
+                          {tgt.target_roi_pct != null && (
+                            <div className="flex justify-between"><span>min ROI %</span><span>{tgt.target_roi_pct.toFixed(2)}%</span></div>
+                          )}
+                          <div className="flex justify-between">
+                            <span>binding floor</span>
+                            <span className={tgt.binding_floor === "roi-unreachable" || tgt.binding_floor === "net-per-usd-nonpositive" ? "text-destructive" : "text-foreground"}>
+                              {tgt.binding_floor}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>suggested borrow</span>
+                            <span>{Number.isFinite(tgt.suggested_amount_in_usd) ? formatUsdShort(tgt.suggested_amount_in_usd) : "—"}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-muted-foreground/60 italic">No target applied (inverse-sizing not run for this row).</div>
+                      )}
+                    </div>
 
-                    {/* ── SCORE column — R8 fail-honest via formatRiskOrDash ── */}
-                    <td className="p-4 text-center" data-col="risk">
-                      <span className={`px-3 py-1 rounded-full text-xs font-bold border ${scorePercent > 95 ? 'bg-warning/20 text-warning border-warning/50 animate-pulse' : scorePercent > 70 ? 'bg-success/10 text-success border-success/30' : 'bg-info/10 text-info border-info/30'}`}>
-                        {formatRiskOrDash(opp.risk_score)}
-                      </span>
-                    </td>
+                    {/* Technical route */}
+                    <div>
+                      <div className="text-[9px] uppercase tracking-wide text-muted-foreground mb-1">Technical route</div>
+                      <div className="font-mono space-y-0.5 break-all">
+                        <div>
+                          chain {opp.chain_id}
+                          {opp.chain_id_out != null && opp.chain_id_out !== opp.chain_id ? ` → ${opp.chain_id_out}` : ""} · block {opp.block_number ?? "—"}
+                        </div>
+                        <div className="text-muted-foreground">in&nbsp; {opp.token_in}</div>
+                        <div className="text-muted-foreground">out {opp.token_out}</div>
+                        <div>{opp.dex_a}{opp.dex_b ? ` → ${opp.dex_b}` : " · single-DEX"}</div>
+                        <div className="text-muted-foreground">trace {opp.trace_id || "—"}</div>
+                      </div>
+                    </div>
+                  </div>
+                </details>
 
-                    {/* ── CONFIDENCE column — R8: null → "—" ── */}
-                    <td className="p-4 text-center" data-col="confidence">
-                      <span className="font-mono text-sm">
-                        {opp.confidence_score_bps != null
-                          ? `${(opp.confidence_score_bps / 100).toFixed(2)}%`
-                          : "—"}
-                      </span>
-                    </td>
+                {/* ── ACTION ── */}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setSelectedOpp(opp); }}
+                  className="w-full py-2 rounded-lg bg-primary text-primary-foreground text-xs font-bold uppercase tracking-wide hover:bg-primary/90 active:scale-[0.99] transition-all"
+                >
+                  Inspect details
+                </button>
+              </motion.div>
+            );
+          })}
 
-                    {/* ── GAS USED column — R8: null → "—" ── */}
-                    <td className="p-4 text-right font-mono text-sm" data-col="gas-used">
-                      {opp.gas_used != null
-                        ? opp.gas_used.toLocaleString()
-                        : "—"}
-                    </td>
-
-                    {/* ── ACTION column ── */}
-                    {/*
-                      C6 fix (audit 2026-05-10): the SIMULATE button calls
-                      POST /api/opportunities/:id/simulate, an endpoint the
-                      backend doesn't expose yet. Until the spine wires the
-                      revm shadow-sim to a public route, the button is
-                      visibly disabled with a "backend pending" tooltip and
-                      reduced styling — never promising live action it
-                      cannot deliver. Click is allowed only as a no-op
-                      diagnostic that surfaces the 404 toast. */}
-                    <td className="p-4 text-center">
-                      <button
-                        type="button"
-                        disabled
-                        aria-disabled="true"
-                        onClick={(e) => { e.stopPropagation(); handleSimulate(opp.id); }}
-                        className="px-3 py-1 rounded text-[10px] font-bold uppercase tracking-wide border border-dashed border-muted-foreground/40 bg-muted/30 text-muted-foreground cursor-not-allowed"
-                        title="Backend pending — POST /api/opportunities/:id/simulate is not yet implemented (spine revm shadow-sim ticket open)"
-                      >
-                        {simLoading === opp.id ? "…" : "SIM (pending)"}
-                      </button>
-                    </td>
-                  </motion.tr>
-                );
-              })}
-            </AnimatePresence>
-            {opportunities.length === 0 && (
-              <tr>
-                <td colSpan={9} className="p-8 text-center text-muted-foreground italic">No opportunities detected. Searcher scanning mempool...</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+        </AnimatePresence>
+        {opportunities.length === 0 && (
+          <div className="col-span-full p-8 text-center text-muted-foreground italic border border-dashed border-border rounded-2xl">
+            No opportunities detected. Searcher scanning mempool…
+          </div>
+        )}
       </div>
 
       {/* FE-10: Opportunity detail sheet — click any row to open */}

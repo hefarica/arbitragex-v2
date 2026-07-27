@@ -74,6 +74,12 @@ futures-util  = "0.3"
 async-trait   = "0.1"
 lru           = "0.12"
 hex           = "0.4"
+# Config-bundle crypto (T3 importer): RSA-OAEP-4096 unwrap + AES-256-GCM
+# payload decrypt — mirrors scripts/arbx-env-deploy/encrypt_and_ship_bundle.py
+# hybrid_encrypt() byte-for-byte (magic ARBX1 || u32 len || wrapped || nonce12 || ct).
+rsa           = { version = "0.9", features = ["sha2"] }
+aes-gcm       = "0.10"
+base64        = "0.22"
 # B1.e V1.2 (2026-05-13) — Linear algebra for SED closed-contour typestate.
 # Required by sed-core ClosedContourTrajectory (DVector<f64> transition points
 # + norm computation). Pinned at 0.32; downstream crates that need it should

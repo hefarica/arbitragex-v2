@@ -212,10 +212,16 @@ export function TradingConfigForm({
         failure_risk_buffer_pct: form.failure_risk_buffer_pct,
         flashloan_fee_pct: form.flashloan_fee_pct,
         enabled_strategies: Array.from(form.enabled_strategies),
-        // Migration 056 — legacy form does not edit per-strategy configs.
-        // Empty map preserves chain-level governance; the dedicated /strategies
-        // editor is the way to mutate fine-grained per-strategy fields.
-        strategy_configs: {},
+        // PR 3 (duplicity fix 2026-07-05) — this legacy form edits CHAIN-LEVEL
+        // fields only. It must NOT wipe the per-strategy overrides set via the
+        // /strategies "Engine Catalog" tab (migration 056). The previous
+        // `strategy_configs: {}` was DESTRUCTIVE: the backend writes
+        // EXCLUDED.strategy_configs unconditionally (trading-config.ts:549), so
+        // every Save here silently erased every per-strategy override the
+        // operator had configured. Forward the EXISTING map when the row already
+        // exists; only seed-path (!configured) sends {} (a brand-new row).
+        // /strategies remains the sole editor of per-strategy fields.
+        strategy_configs: initial.configured ? (initial.strategy_configs ?? {}) : {},
         enabled: form.enabled,
       };
       const r = await putTradingConfig(chainId, body, token, actor.trim());

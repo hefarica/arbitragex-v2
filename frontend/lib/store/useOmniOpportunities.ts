@@ -67,7 +67,7 @@ export function useOmniOpportunities({
   // Store actions (stable references)
   const addOpportunity = useOmniStore((state) => state.addOpportunity);
   const setWsStatus = useOmniStore((state) => state.setWsStatus);
-  const clearOpportunities = useOmniStore((state) => state.clearOpportunities);
+  const mergeSnapshot = useOmniStore((state) => state.mergeSnapshot);
 
   // Refs for stable closure access
   const errorCountRef = useRef(0);
@@ -81,19 +81,45 @@ export function useOmniOpportunities({
     viableOnlyRef.current = viableOnly;
   }, [viableOnly]);
 
-  // Initialize store with initial opportunities (once)
+  // Initialize store with initial opportunities (once).
+  // mergeSnapshot on an empty store is a plain populate; using it here keeps the
+  // initial paint on the same code path as the live poll (no clear+wipe ever).
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
 
     if (initialOpportunities.length > 0) {
-      // Clear and populate store with initial data
-      clearOpportunities();
-      initialOpportunities.forEach((opp) => {
-        addOpportunity(opp);
-      });
+      mergeSnapshot(initialOpportunities);
     }
-  }, [initialOpportunities, addOpportunity, clearOpportunities]);
+  }, [initialOpportunities, mergeSnapshot]);
+
+  // DEV-ONLY auto-preview seed. Locally (Windows dev box) no edge backend is
+  // reachable → SSR snapshot empty + polling fails → panel would render blank,
+  // blocking card-layout review. In dev, ~2.5s after mount, if the store is
+  // still empty, seed clearly-labelled SAMPLE fixtures (trace_id="preview") so
+  // the operator sees populated cards. NEVER runs in production: the NODE_ENV
+  // guard makes this dead code (tree-shaken) and the dynamic import is excluded
+  // from the prod bundle. Real edge data always wins — the seed only fires when
+  // the store is genuinely empty. See preview-fixtures.ts + the "DESIGN PREVIEW"
+  // banner in OpportunitiesClient. REMOVE this effect + preview-fixtures.ts
+  // before opening the deploy PR.
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    if (initialOpportunities.length > 0) return; // real SSR snapshot present
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      if (cancelled) return;
+      if (useOmniStore.getState().opportunities.length > 0) return; // got real data
+      const { buildPreviewOpportunities } = await import("./preview-fixtures");
+      if (cancelled) return;
+      if (useOmniStore.getState().opportunities.length > 0) return; // re-check post-await
+      mergeSnapshot(buildPreviewOpportunities());
+    }, 2500);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [initialOpportunities, mergeSnapshot]);
 
   // HTTP polling fallback
   const startPolling = useCallback(() => {
@@ -120,11 +146,14 @@ export function useOmniOpportunities({
           ? (data as unknown[])
           : [];
 
-        // Clear and repopulate store (with mapper transformation)
-        clearOpportunities();
-        rawItems.forEach((raw) => {
-          addOpportunity(mapToOmniOpportunity(raw as Record<string, unknown>));
-        });
+        // Merge the fresh snapshot into the store: dedup by stable route key,
+        // preserve each row's detected_at + id (no flash, continuous age), and
+        // prepend genuinely-new routes. Replaces the old clear+re-add which
+        // wiped the store every cycle and made every row look "new" again.
+        const mapped = rawItems.map((raw) =>
+          mapToOmniOpportunity(raw as Record<string, unknown>),
+        );
+        mergeSnapshot(mapped);
       } catch {
         // Swallow — status badge already shows "POLLING" (degraded)
       }
@@ -132,7 +161,7 @@ export function useOmniOpportunities({
 
     poll();
     pollingTimerRef.current = setInterval(poll, POLL_INTERVAL_MS);
-  }, [edgeUrl, setWsStatus, addOpportunity, clearOpportunities]);
+  }, [edgeUrl, setWsStatus, mergeSnapshot]);
 
   // WebSocket lifecycle
   useEffect(() => {
