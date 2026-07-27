@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { adminTokenExpiresInMs, fmtRemaining, getAdminToken, setAdminToken } from "@/lib/admin-token";
 import { getStrategyCatalog, putTradingConfig } from "@/lib/api-client";
+import { RuntimeCartridgesSummary } from "@/components/runtime-cartridges-summary";
 import type {
   GasPriceStrategy,
   StrategyCatalogEntry,
@@ -526,6 +527,11 @@ export function TradingConfigForm({
           </div>
         </CardContent>
       </Card>
+
+      {/* Runtime cartridges summary — the REAL loaded .rhai strategy set on the
+          searcher hot-path (264 library + core), with link to the full toggle
+          management view in /strategies → Runtime Cartridges. */}
+      <RuntimeCartridgesSummary chainId={chainId} />
 
       <Card>
         <CardHeader>

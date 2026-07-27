@@ -611,7 +611,7 @@ app.use(buildTopologyVaultRouter({
 const routeDiscoveryCache = new TelemetryCache(200);
 const cartridgeTelemetryCache = new TelemetryCache(200);
 app.use(buildRouteDiscoveryRouter(routeDiscoveryCache));
-app.use(buildCartridgesRouter(cartridgeTelemetryCache));
+app.use(buildCartridgesRouter(cartridgeTelemetryCache, { redis, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN }));
 
 // FASE B Gate-C — read-only analytics over the durable route_discovery_outcomes
 // table (the shadow outcomes the sink persists, incl. the Paso 9 `reason`). This is

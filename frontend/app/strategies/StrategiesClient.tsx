@@ -22,6 +22,7 @@ import type { StrategyCatalogEntry, TradingConfigConfigured, TradingConfigRespon
 
 import { CapitalRiskTab } from "./tabs/CapitalRiskTab";
 import { StrategyCatalogTab } from "./tabs/StrategyCatalogTab";
+import { RuntimeCartridgesTab } from "./tabs/RuntimeCartridgesTab";
 import { DexesTab } from "./tabs/DexesTab";
 import { PoolsTab } from "./tabs/PoolsTab";
 import { MevRelaysTab } from "./tabs/MevRelaysTab";
@@ -78,6 +79,7 @@ export function StrategiesClient({ initialConfig, initialCatalog, initialError }
       <TabsList>
         <TabsTrigger value="capital-risk">Capital &amp; Entropy</TabsTrigger>
         <TabsTrigger value="catalog">Engine Catalog</TabsTrigger>
+        <TabsTrigger value="runtime">Runtime Cartridges</TabsTrigger>
         <TabsTrigger value="dexes">Exchanges</TabsTrigger>
         <TabsTrigger value="pools">Pools</TabsTrigger>
         <TabsTrigger value="relays">Resolution Relays</TabsTrigger>
@@ -98,6 +100,10 @@ export function StrategiesClient({ initialConfig, initialCatalog, initialError }
           adminToken={adminToken}
           actor={actor}
         />
+      </TabsContent>
+
+      <TabsContent value="runtime" className="mt-4">
+        <RuntimeCartridgesTab chainId={config.chain_id} adminToken={adminToken} actor={actor} />
       </TabsContent>
 
       <TabsContent value="dexes" className="mt-4">

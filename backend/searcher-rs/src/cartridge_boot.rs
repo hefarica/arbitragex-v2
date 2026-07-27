@@ -128,6 +128,11 @@ pub fn spawn_cartridge_runtime(
         }
     };
 
+    // Clone the ConnectionManager BEFORE it is moved into HostContext, so the
+    // registry publisher can write the loaded-cartridge snapshot to Redis.
+    // ConnectionManager is an internally-multiplexed handle — clone is cheap.
+    let mut registry_redis = redis.clone();
+
     let host_ctx = HostContext {
         redis: Arc::new(RwLock::new(redis)),
         chain_id,
@@ -170,6 +175,12 @@ pub fn spawn_cartridge_runtime(
             total = results.len(),
             "cartridge runtime booted; filesystem cartridges loaded"
         );
+
+        // Publish the loaded-cartridge registry snapshot to Redis so the
+        // api-server can serve GET /api/cartridges with the REAL loaded set
+        // (not telemetry-gated). TTL is a safety net: if the searcher dies the
+        // key expires and the API fails honest instead of serving stale rows.
+        publish_cartridge_registry(&mut registry_redis, &runner_for_task, chain_id).await;
 
         // Run the hot-reload subscriber (long-running; returns on cancellation).
         let subscriber = CartridgeSubscriber::new(redis_url, runner_for_task, cancel);
@@ -728,6 +739,80 @@ pub async fn shadow_evaluate_intent(
                 );
             }
         }
+    }
+}
+
+/// Redis key the searcher publishes its loaded-cartridge registry snapshot to.
+/// Read by api-server `GET /api/cartridges`. One key per chain.
+pub fn cartridge_registry_redis_key(chain_id: u64) -> String {
+    format!("arbx:cartridges:registry:{chain_id}")
+}
+
+/// Publishes the current loaded-cartridge registry to Redis as JSON so the
+/// api-server can serve the REAL loaded set on `GET /api/cartridges` (instead
+/// of the telemetry-gated empty-until-first-evaluation cache).
+///
+/// R8 fail-honest: TTL = 10 min. The boot path re-publishes on every restart;
+/// if the searcher dies the key expires and the API returns an honest
+/// "registry unavailable" rather than stale rows. Best-effort — a Redis hiccup
+/// is logged and never fatal to the scanner.
+async fn publish_cartridge_registry(
+    redis: &mut redis::aio::ConnectionManager,
+    runner: &Arc<CartridgeRunner>,
+    chain_id: u64,
+) {
+    use redis::AsyncCommands;
+
+    let cartridges = runner.list_cartridges().await;
+    let active = runner.active_count().await;
+    let entries: Vec<serde_json::Value> = cartridges
+        .iter()
+        .map(|(id, meta, state)| {
+            serde_json::json!({
+                "id": id,
+                "name": meta.name,
+                "version": meta.version,
+                "author": meta.author,
+                "description": meta.description,
+                "category": meta.category,
+                "target_chains": meta.target_chains,
+                "state": format!("{:?}", state),
+            })
+        })
+        .collect();
+
+    let payload = serde_json::json!({
+        "chain_id": chain_id,
+        "total": entries.len(),
+        "active": active,
+        "updated_at": chrono::Utc::now().to_rfc3339(),
+        "cartridges": entries,
+    });
+
+    let key = cartridge_registry_redis_key(chain_id);
+    let json = match serde_json::to_string(&payload) {
+        Ok(j) => j,
+        Err(e) => {
+            warn!(event = "cartridge.registry_serialize_failed", chain_id, error = %e);
+            return;
+        }
+    };
+    // TTL 600s — refreshed at every boot; expires if the searcher is gone.
+    let res: redis::RedisResult<()> = redis.set_ex(&key, json, 600).await;
+    match res {
+        Ok(()) => info!(
+            event = "cartridge.registry_published",
+            chain_id,
+            total = entries.len(),
+            active,
+            "cartridge registry snapshot published to Redis"
+        ),
+        Err(e) => warn!(
+            event = "cartridge.registry_publish_failed",
+            chain_id,
+            error = %e,
+            "failed to publish cartridge registry to Redis (non-fatal)"
+        ),
     }
 }
 

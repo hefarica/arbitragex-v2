@@ -1,0 +1,281 @@
+/**
+ * Runtime Cartridges tab — the REAL set of .rhai strategy cartridges loaded on
+ * the searcher hot-path (the 264-strategy library + core pack).
+ *
+ * Data source: GET /api/cartridges/runtime (searcher-rs registry snapshot via
+ * Redis). NOT the curated strategy_catalog table — this is what the searcher
+ * actually compiled at boot, with live state (Active/Paused).
+ *
+ * Toggle: POST /api/cartridges/runtime/:id/pause|resume publishes a hot-reload
+ * event to the searcher (Redis `arbx:cartridge:injection`), which pauses /
+ * resumes the cartridge WITHOUT a restart. Admin-gated; optimistic state is
+ * reconciled against the next registry poll.
+ *
+ * R8 fail-honest: empty/unavailable registry → explicit empty state, never
+ * fabricated cartridges. R1: non-deterministic state (poll, toggles) lives in
+ * this client component; SSR snapshot passed as prop.
+ */
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { getRuntimeCartridges, toggleRuntimeCartridge } from "@/lib/api-client";
+import { hasAdminSession } from "@/lib/admin-token";
+import type { RuntimeCartridge } from "@/lib/schemas";
+
+const POLL_MS = 4000;
+
+interface Props {
+  chainId: number;
+  adminToken: string;
+  actor: string;
+}
+
+export function RuntimeCartridgesTab({ chainId, adminToken, actor }: Props) {
+  const [cartridges, setCartridges] = useState<RuntimeCartridge[]>([]);
+  const [registryOk, setRegistryOk] = useState<boolean | null>(null);
+  const [registryReason, setRegistryReason] = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [groupFilter, setGroupFilter] = useState<string>("all");
+  const [toggling, setToggling] = useState<string | null>(null);
+  const [hasSession, setHasSession] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    setHasSession(hasAdminSession());
+    const id = setInterval(() => setHasSession(hasAdminSession()), 30_000);
+    return () => {
+      mountedRef.current = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  const load = useCallback(async () => {
+    const r = await getRuntimeCartridges(chainId);
+    if (!mountedRef.current) return;
+    if (r.ok && r.data.ok && r.data.data) {
+      setCartridges(r.data.data.cartridges);
+      setRegistryOk(true);
+      setRegistryReason(null);
+      setUpdatedAt(r.data.data.updated_at ?? r.data.updated_at ?? null);
+    } else {
+      setCartridges([]);
+      setRegistryOk(false);
+      setRegistryReason(
+        r.ok ? r.data.reason ?? "registry_unavailable" : r.error,
+      );
+      setUpdatedAt(null);
+    }
+  }, [chainId]);
+
+  useEffect(() => {
+    void load();
+    const id = setInterval(() => void load(), POLL_MS);
+    return () => clearInterval(id);
+  }, [load]);
+
+  // Derive family groups from cartridge id prefix (mev_<group>_...) or category.
+  const groups = useMemo(() => {
+    const g = new Map<string, number>();
+    for (const c of cartridges) {
+      const fam = familyOf(c);
+      g.set(fam, (g.get(fam) ?? 0) + 1);
+    }
+    return Array.from(g.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [cartridges]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return cartridges.filter((c) => {
+      if (groupFilter !== "all" && familyOf(c) !== groupFilter) return false;
+      if (!q) return true;
+      return (
+        c.id.toLowerCase().includes(q) ||
+        (c.name ?? "").toLowerCase().includes(q) ||
+        (c.category ?? "").toLowerCase().includes(q) ||
+        (c.description ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [cartridges, query, groupFilter]);
+
+  const activeCount = useMemo(
+    () => cartridges.filter((c) => isActive(c.state)).length,
+    [cartridges],
+  );
+
+  const onToggle = useCallback(
+    async (c: RuntimeCartridge, next: boolean) => {
+      if (!hasAdminSession()) {
+        setHasSession(false);
+        setNotice("Login required: unlock an admin session at /killswitch first.");
+        return;
+      }
+      setToggling(c.id);
+      setNotice(null);
+      const res = await toggleRuntimeCartridge(c.id, next ? "resume" : "pause", adminToken, actor);
+      setToggling(null);
+      if (res.ok) {
+        // Optimistic update; reconciled on next poll.
+        setCartridges((prev) =>
+          prev.map((x) =>
+            x.id === c.id ? { ...x, state: next ? "Active" : "Paused" } : x,
+          ),
+        );
+        setNotice(`${next ? "Resumed" : "Paused"} ${c.id} — hot-reload published`);
+      } else {
+        setNotice(`Toggle failed for ${c.id}: ${res.error}`);
+      }
+    },
+    [adminToken, actor],
+  );
+
+  return (
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          {registryOk
+            ? `${activeCount} active · ${cartridges.length} loaded on searcher (chain ${chainId})`
+            : "Searcher cartridge registry unavailable"}
+          {updatedAt && (
+            <span className="ml-2 font-mono text-xs">· updated {updatedAt}</span>
+          )}
+        </p>
+        <div className="flex items-center gap-2">
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search id / name / category…"
+            className="h-8 w-64 text-xs"
+          />
+          <select
+            value={groupFilter}
+            onChange={(e) => setGroupFilter(e.target.value)}
+            className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+          >
+            <option value="all">All families ({cartridges.length})</option>
+            {groups.map(([g, n]) => (
+              <option key={g} value={g}>
+                {g} ({n})
+              </option>
+            ))}
+          </select>
+          <Button variant="outline" size="sm" onClick={() => void load()}>
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      {notice && (
+        <p className="text-xs font-mono text-muted-foreground">{notice}</p>
+      )}
+      {!hasSession && (
+        <p className="text-xs font-mono text-warning">
+          No admin session — toggles disabled. <a href="/killswitch" className="underline">Unlock at /killswitch</a>
+        </p>
+      )}
+
+      {registryOk === false && (
+        <Card>
+          <CardContent className="py-8 text-center">
+            <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
+              Registry unavailable — {registryReason}
+            </p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              The searcher has not published its cartridge registry (down, boot
+              pending, or TTL expired). R8 fail-honest: no cartridges fabricated.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {registryOk && filtered.length === 0 && (
+        <p className="py-8 text-center text-sm text-muted-foreground italic">
+          No cartridges match the current filter.
+        </p>
+      )}
+
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+        {filtered.map((c) => {
+          const active = isActive(c.state);
+          return (
+            <Card key={c.id}>
+              <CardContent className="space-y-2 py-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium" title={c.name ?? c.id}>
+                      {c.name ?? c.id}
+                    </div>
+                    <div className="truncate font-mono text-xs text-muted-foreground" title={c.id}>
+                      {c.id}
+                    </div>
+                  </div>
+                  <Switch
+                    checked={active}
+                    disabled={!hasSession || toggling === c.id}
+                    onCheckedChange={(next) => void onToggle(c, next)}
+                    title={
+                      !hasSession
+                        ? "Admin session required"
+                        : active
+                          ? "Pause this cartridge on the searcher (hot-reload)"
+                          : "Resume this cartridge on the searcher (hot-reload)"
+                    }
+                  />
+                </div>
+                {c.description && (
+                  <p className="line-clamp-2 text-xs text-muted-foreground">{c.description}</p>
+                )}
+                <div className="flex flex-wrap gap-1 pt-1">
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] font-bold ${
+                      active
+                        ? "bg-success/15 text-success border-success/40"
+                        : "bg-muted text-muted-foreground border-border"
+                    }`}
+                  >
+                    {c.state ?? "unknown"}
+                  </Badge>
+                  <Badge variant="outline" className="text-[10px]">
+                    {familyOf(c)}
+                  </Badge>
+                  {c.category && (
+                    <Badge variant="outline" className="text-[10px]">
+                      {c.category}
+                    </Badge>
+                  )}
+                  {c.version && (
+                    <Badge variant="outline" className="text-[10px]">
+                      v{c.version}
+                    </Badge>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function isActive(state: string | null | undefined): boolean {
+  return (state ?? "").toLowerCase() === "active";
+}
+
+// Family group derived from the cartridge id (mev_<group>_... → "MEV-<group>")
+// or falls back to the declared category / "core".
+function familyOf(c: RuntimeCartridge): string {
+  const m = /^mev_(\d+)_/i.exec(c.id);
+  if (m) return `MEV-${m[1]}`;
+  if (c.category) return c.category;
+  return "core";
+}

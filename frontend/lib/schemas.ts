@@ -575,6 +575,39 @@ export type TradingConfigResponse = z.infer<typeof TradingConfigResponseSchema>;
 export type TradingConfigPutResult = z.infer<typeof TradingConfigPutResultSchema>;
 export type StrategyCatalogEntry = z.infer<typeof StrategyCatalogEntrySchema>;
 export type StrategyCatalogResponse = z.infer<typeof StrategyCatalogResponseSchema>;
+
+// ── Runtime Cartridges (searcher-rs loaded .rhai registry) ─────────────────
+// Served by GET /api/cartridges/runtime (api-server reads the searcher-rs
+// registry snapshot from Redis `arbx:cartridges:registry:<chain>`). This is
+// the REAL set of compiled strategy cartridges (the 264-strategy library +
+// core pack), independent of the curated strategy_catalog table.
+export const RuntimeCartridgeSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  version: z.string().nullable().optional(),
+  author: z.string().nullable().optional(),
+  description: z.string().nullable().optional(),
+  category: z.string().nullable().optional(),
+  target_chains: z.array(z.number()).nullable().optional(),
+  state: z.string().nullable().optional(),
+});
+export const RuntimeCartridgesDataSchema = z.object({
+  chain_id: z.number(),
+  total: z.number(),
+  active: z.number(),
+  updated_at: z.string().nullable().optional(),
+  cartridges: z.array(RuntimeCartridgeSchema),
+});
+export const RuntimeCartridgesResponseSchema = z.object({
+  ok: z.boolean(),
+  source: z.string().optional(),
+  reason: z.string().optional(),
+  detail: z.string().optional(),
+  updated_at: z.string().nullable().optional(),
+  data: RuntimeCartridgesDataSchema.nullable().optional(),
+});
+export type RuntimeCartridge = z.infer<typeof RuntimeCartridgeSchema>;
+export type RuntimeCartridgesResponse = z.infer<typeof RuntimeCartridgesResponseSchema>;
 export type ReadinessGroup = z.infer<typeof ReadinessGroupSchema>;
 export type ReadinessItem = z.infer<typeof ReadinessItemSchema>;
 export type ReadinessReport = z.infer<typeof ReadinessReportSchema>;

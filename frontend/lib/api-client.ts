@@ -702,6 +702,39 @@ export function getScannerHeartbeat(chainId = 1): Promise<Result<ScannerHeartbea
   return getValidated(`/api/scanner/heartbeat?chain_id=${chainId}`, ScannerHeartbeatResponseSchema);
 }
 
+// ── Runtime Cartridges (searcher-rs loaded .rhai registry) ─────────────────
+// The REAL set of compiled strategy cartridges on the searcher hot-path.
+export function getRuntimeCartridges(chainId = 1): Promise<Result<S.RuntimeCartridgesResponse>> {
+  return getValidated(`/api/cartridges/runtime?chain_id=${chainId}`, S.RuntimeCartridgesResponseSchema);
+}
+
+// Toggle a loaded cartridge (pause/resume) via Redis hot-reload. Admin-gated.
+// The searcher applies the event asynchronously; we surface the published event.
+export async function toggleRuntimeCartridge(
+  id: string,
+  action: "pause" | "resume",
+  adminToken: string,
+  actor: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const url = `${getApiBaseUrl()}/api/cartridges/runtime/${encodeURIComponent(id)}/${action}`;
+  try {
+    const r = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: { "x-arbx-admin-token": adminToken, "x-omega-actor": actor },
+        credentials: "include",
+      },
+      DEFAULT_TIMEOUT_MS,
+    );
+    const text = await r.text();
+    if (!r.ok) return { ok: false, error: `HTTP ${r.status}: ${text.slice(0, MAX_ERROR_PREVIEW)}` };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
 // ── Strategy Catalog (Sprint 2) ─────────────────────────────────────────
 // Public-read universal MEV strategy library — surfaces the dropdown for
 // "+ Add strategy from catalog" in the /strategies page.

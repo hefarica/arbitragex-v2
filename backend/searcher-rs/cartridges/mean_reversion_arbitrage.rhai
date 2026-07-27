@@ -267,7 +267,7 @@ fn calculate_ema(prices, period) {
     }
     
     let alpha = 2.0 / (period + 1);
-    let mut ema = prices[0];
+    let ema = prices[0];
     
     for i in 1..prices.len() {
         ema = prices[i] * alpha + ema * (1.0 - alpha);
@@ -282,7 +282,7 @@ fn calculate_std_dev(prices, mean) {
         return 0.0;
     }
     
-    let mut sum_sq_diff = 0.0;
+    let sum_sq_diff = 0.0;
     for price in prices {
         let diff = price - mean;
         sum_sq_diff = sum_sq_diff + (diff * diff);

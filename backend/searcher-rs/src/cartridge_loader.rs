@@ -38,6 +38,30 @@ pub struct LoadResult {
     pub error: Option<String>,
 }
 
+/// Recursively collects every `.rhai` file under `dir` into `out`.
+/// Depth-first, deterministic (entries visited in fs order; caller sorts).
+/// Symlinks are NOT followed (a symlinked dir could loop); regular dirs only.
+fn collect_rhai_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return, // unreadable subdir — skip, top-level error already logged
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // file_type() does not follow symlinks; skip anything that is not a
+        // plain dir or plain file.
+        let ft = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+        if ft.is_dir() {
+            collect_rhai_recursive(&path, out);
+        } else if ft.is_file() && path.extension().map(|e| e == "rhai").unwrap_or(false) {
+            out.push(path);
+        }
+    }
+}
+
 /// Scans the cartridges directory and loads all `.rhai` files.
 ///
 /// Returns a vector of `LoadResult` for operator visibility.
@@ -69,13 +93,14 @@ pub async fn load_cartridges_from_dir(
         }
     };
 
+    // Recursive scan: the 264-strategy library lives in `cartridges/strategies/`
+    // (one `.rhai` per strategy), while the top-level `cartridges/*.rhai` are the
+    // core pack. `read_dir` alone is single-level and silently missed the whole
+    // strategies/ subtree — only the ~7 root cartridges ever loaded. Walk the
+    // tree so every strategy cartridge is discovered. `.rhai`-only filter keeps
+    // the `math_models/*.json` metadata out (they are not standalone cartridges).
     let mut rhai_files: Vec<PathBuf> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().map(|e| e == "rhai").unwrap_or(false) {
-            rhai_files.push(path);
-        }
-    }
+    collect_rhai_recursive(dir, &mut rhai_files);
 
     // Sort for deterministic load order
     rhai_files.sort();

@@ -13,7 +13,8 @@
  * never touch `arbx:opps:detected`, never trigger execution, never mutate state.
  */
 
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
+import type { Redis } from "ioredis";
 
 /** A single observational telemetry event. Open shape — `event` is the
  *  discriminator the Rust producer always sets; other fields vary per type. */
@@ -231,8 +232,24 @@ export function buildRouteDiscoveryRouter(cache: TelemetryCache): Router {
  * Read-only router for cartridge telemetry (the `arbx:cartridge:telemetry`
  * channel — the primary path is the WS room `telemetry`; this is a REST
  * snapshot for polling/health UIs).
+ *
+ * `redis` (optional) enables GET /api/cartridges/runtime — the searcher-rs
+ * loaded-cartridge registry snapshot (`arbx:cartridges:registry:<chain>`),
+ * which reflects the REAL set of .rhai cartridges the searcher compiled at
+ * boot (the 264-strategy library + core pack), independent of whether any
+ * evaluation has emitted telemetry yet. R8 fail-honest: absent key →
+ * `registry_unavailable` (searcher down or registry TTL expired).
  */
-export function buildCartridgesRouter(cache: TelemetryCache): Router {
+export interface CartridgesRouterDeps {
+  redis?: Redis;
+  /** Admin-token middleware factory (from @arbx/shared) — gates the toggle
+   *  endpoints so only an authenticated operator can pause/resume a cartridge. */
+  requireAdminToken?: (expected: string) => RequestHandler;
+  adminToken?: string;
+}
+
+export function buildCartridgesRouter(cache: TelemetryCache, deps: CartridgesRouterDeps = {}): Router {
+  const { redis, requireAdminToken, adminToken } = deps;
   const router = Router();
 
   const ok = (data: unknown) => ({
@@ -276,6 +293,106 @@ export function buildCartridgesRouter(cache: TelemetryCache): Router {
     const limit = Number.isFinite(raw) ? Math.min(Math.max(raw, 1), 200) : 50;
     res.json(ok({ messages: cache.recent(undefined, limit) }));
   });
+
+  // GET /api/cartridges/runtime?chain_id=1 — the REAL loaded-cartridge registry
+  // published by searcher-rs to `arbx:cartridges:registry:<chain>`. This is the
+  // authoritative set of compiled .rhai strategy cartridges (264-strategy
+  // library + core pack), NOT telemetry-gated. Read-only, never fabricated.
+  router.get("/api/cartridges/runtime", async (req, res) => {
+    if (!redis) {
+      res.status(503).json({ ok: false, reason: "redis_unavailable", data: null });
+      return;
+    }
+    const chainId = Number(req.query["chain_id"] ?? 1);
+    if (!Number.isInteger(chainId) || chainId < 1) {
+      res.status(400).json({ ok: false, reason: "invalid_chain_id", data: null });
+      return;
+    }
+    try {
+      const raw = await redis.get(`arbx:cartridges:registry:${chainId}`);
+      if (!raw) {
+        res.json({
+          ok: false,
+          reason: "registry_unavailable",
+          detail:
+            "searcher-rs has not published its cartridge registry (down, boot pending, or TTL expired)",
+          source: "searcher_registry",
+          updated_at: null,
+          data: null,
+        });
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      res.json({
+        ok: true,
+        source: "searcher_registry",
+        updated_at: parsed.updated_at ?? null,
+        data: parsed,
+      });
+    } catch (e) {
+      res.status(503).json({
+        ok: false,
+        reason: "registry_read_failed",
+        detail: (e as Error).message,
+        data: null,
+      });
+    }
+  });
+
+  // POST /api/cartridges/runtime/:id/pause|resume — toggle a LOADED cartridge
+  // on the searcher hot-path via Redis hot-reload (`arbx:cartridge:injection`).
+  // Unlike cartridge-forge, this does NOT require a cartridge_registry PG row —
+  // it targets the searcher's live runtime registry (the 264-strategy library),
+  // so any cartridge the searcher compiled at boot can be paused/resumed.
+  // Admin-gated: an unauthenticated toggle would let anyone silence detection.
+  // R8 fail-honest: we publish the event; the searcher applies it (or logs why
+  // not). We do NOT pretend the state changed before the searcher acks it.
+  const toggleHandler = (eventType: "pause" | "resume"): RequestHandler => {
+    return async (req, res) => {
+      if (!redis) {
+        res.status(503).json({ ok: false, reason: "redis_unavailable" });
+        return;
+      }
+      const id = String(req.params["id"] ?? "");
+      // cartridge ids are file-stem slugs (mev_01_001_..., dex_arb, ...) — bounded charset.
+      if (!/^[\w.-]{1,128}$/.test(id)) {
+        res.status(400).json({ ok: false, reason: "invalid_cartridge_id" });
+        return;
+      }
+      const event = {
+        cartridge_id: id,
+        event_type: eventType,
+        content_hash: "", // pause/resume don't need source; subscriber ignores it here
+        chain_id: 0,
+        timestamp: new Date().toISOString(),
+        actor: (req.headers["x-omega-actor"] as string) || "operator",
+      };
+      try {
+        await redis.publish("arbx:cartridge:injection", JSON.stringify(event));
+        res.json({
+          ok: true,
+          cartridge_id: id,
+          event_type: eventType,
+          note: "event published to searcher hot-reload; the searcher applies it asynchronously",
+        });
+      } catch (e) {
+        res.status(503).json({ ok: false, reason: "publish_failed", detail: (e as Error).message });
+      }
+    };
+  };
+
+  if (requireAdminToken && adminToken) {
+    router.post(
+      "/api/cartridges/runtime/:id/pause",
+      requireAdminToken(adminToken),
+      toggleHandler("pause"),
+    );
+    router.post(
+      "/api/cartridges/runtime/:id/resume",
+      requireAdminToken(adminToken),
+      toggleHandler("resume"),
+    );
+  }
 
   return router;
 }
