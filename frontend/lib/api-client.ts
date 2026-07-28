@@ -735,6 +735,44 @@ export async function toggleRuntimeCartridge(
   }
 }
 
+// ── Math-engine operators (31 topological concepts) ────────────────────────
+// The 31 mathematical operators served by the math-engine service.
+export function getMathOperators(): Promise<Result<S.MathOperatorsResponse>> {
+  return getValidated("/api/math/operators", S.MathOperatorsResponseSchema);
+}
+
+// Toggle an operator enable/disable. Admin-gated; math-engine applies it to
+// its runtime registry (soft disable — compute endpoints skip it).
+export async function toggleMathOperator(
+  id: number,
+  enabled: boolean,
+  adminToken: string,
+  actor: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const url = `${getApiBaseUrl()}/api/math/operators/${id}/toggle`;
+  try {
+    const r = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-arbx-admin-token": adminToken,
+          "x-omega-actor": actor,
+        },
+        credentials: "include",
+        body: JSON.stringify({ enabled }),
+      },
+      DEFAULT_TIMEOUT_MS,
+    );
+    const text = await r.text();
+    if (!r.ok) return { ok: false, error: `HTTP ${r.status}: ${text.slice(0, MAX_ERROR_PREVIEW)}` };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
 // ── Strategy Catalog (Sprint 2) ─────────────────────────────────────────
 // Public-read universal MEV strategy library — surfaces the dropdown for
 // "+ Add strategy from catalog" in the /strategies page.

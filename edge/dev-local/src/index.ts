@@ -361,6 +361,18 @@ app.get("/api/paper-mode/state", (req, res) => proxy("/api/paper-mode/state", re
 app.get("/api/risk/circuit-breakers/status", (req, res) => proxy("/api/v1/risk/circuit-breakers/status", req, res));
 app.get("/api/risk/circuit-breakers/events", (req, res) => proxy("/api/v1/risk/circuit-breakers/events", req, res));
 
+// Math-engine — the 31 topological operators (list/toggle/compute/matrix).
+// api-server mounts the math-engine proxy at /api/math/* (no /v1/ prefix).
+app.get("/api/math/operators", (req, res) => proxy("/api/math/operators", req, res));
+app.get("/api/math/matrix/projection", (req, res) => proxy("/api/math/matrix/projection", req, res));
+app.get("/api/math/matrix/operators", (req, res) => proxy("/api/math/matrix/operators", req, res));
+app.get("/api/math/operators/:id", (req, res) =>
+  proxy(`/api/math/operators/${encodeURIComponent(String(req.params.id ?? ""))}`, req, res));
+// Operator toggle — admin-gated upstream; adminProxy translates the httpOnly
+// session cookie into the upstream admin token.
+app.post("/api/math/operators/:id/toggle", (req, res) =>
+  adminProxy(`/api/math/operators/${encodeURIComponent(String(req.params.id ?? ""))}/toggle`, req, res, "POST"));
+
 // QUANTUM FULLSTACK SYMMETRY — OMEGA Route Discovery radar + cartridge telemetry
 // read-only snapshots. api-server mounts these at the SAME paths (no /v1/ prefix),
 // fed by its Redis pub/sub cache. Observe-only; never touches opportunities.

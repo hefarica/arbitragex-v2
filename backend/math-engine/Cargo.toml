@@ -11,6 +11,8 @@ serde = { workspace = true }
 serde_json.workspace = true
 reqwest = { workspace = true }
 tokio = { workspace = true }
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 # HTTP API (gated by `api` feature)
 axum = { workspace = true, optional = true }
@@ -30,3 +32,8 @@ candle-nn = { version = "0.4", optional = true }
 default = []
 api = ["dep:axum", "dep:tower"]
 ml = ["dep:candle-core", "dep:candle-nn"]
+
+[[bin]]
+name = "math-engine"
+path = "src/main.rs"
+required-features = ["api"]

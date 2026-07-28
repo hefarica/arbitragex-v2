@@ -65,6 +65,7 @@ const UPSTREAMS = {
   "recon":        process.env["RECON_URL"]     ?? "http://recon:3004",
   "relays-client":process.env["RELAYS_URL"]    ?? "http://relays-client:3005",
   "searcher-rs":  process.env["SEARCHER_URL"]  ?? "http://searcher-rs:9001",
+  "math-engine":  process.env["MATH_ENGINE_URL"] ?? "http://math-engine:3006",
 } as const;
 
 async function pingUpstream(name: string, url: string): Promise<{ ok: boolean; status?: number; detail?: string }> {
@@ -108,6 +109,7 @@ import { mountPaperShadowMetrics } from "./routes/paper-shadow-metrics.js";
 import { mountForkStatus } from "./routes/fork-status.js";
 import { mountRpcRegistry } from "./routes/rpc-registry.js";
 import { mountOpportunitySimulate } from "./routes/opportunity-simulate.js";
+import { buildMathEngineRouter } from "./routes/math-engine-proxy.js";
 import { mountAlertmanagerWebhook } from "./routes/alertmanager-webhook.js";
 import { mountRiskCircuitBreakers } from "./routes/risk-circuit-breakers.js";
 import { mountAdminChains } from "./routes/admin-chains.js";
@@ -562,6 +564,10 @@ mountAdminChains(app, {
 mountPaperShadowMetrics(app, { pool, logger });
 mountForkStatus(app, { logger });
 mountOpportunitySimulate(app, { logger });
+
+// Math-engine proxy — the 31 topological operators (list/toggle/compute/matrix
+// projection) served by the math-engine service. Mounted at /api/math/*.
+app.use(buildMathEngineRouter({ logger, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN }));
 mountLiveTestnet(app, {
   logger,
   requireAdminToken,

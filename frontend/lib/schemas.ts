@@ -608,6 +608,19 @@ export const RuntimeCartridgesResponseSchema = z.object({
 });
 export type RuntimeCartridge = z.infer<typeof RuntimeCartridgeSchema>;
 export type RuntimeCartridgesResponse = z.infer<typeof RuntimeCartridgesResponseSchema>;
+
+// ── Math-engine operators (31 topological concepts) ────────────────────────
+// Served by the math-engine service via api-server proxy at /api/math/*.
+export const MathOperatorSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  category: z.string(),
+  available: z.boolean(),
+});
+// GET /api/math/operators returns a bare array (Json(ops)), not a wrapper.
+export const MathOperatorsResponseSchema = z.array(MathOperatorSchema);
+export type MathOperator = z.infer<typeof MathOperatorSchema>;
+export type MathOperatorsResponse = z.infer<typeof MathOperatorsResponseSchema>;
 export type ReadinessGroup = z.infer<typeof ReadinessGroupSchema>;
 export type ReadinessItem = z.infer<typeof ReadinessItemSchema>;
 export type ReadinessReport = z.infer<typeof ReadinessReportSchema>;

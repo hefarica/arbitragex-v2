@@ -176,6 +176,39 @@ services:
           cpus: '1.5'
         reservations:
           memory: 256M
+  math-engine:
+    logging: *id001
+    build:
+      context: ../backend
+      dockerfile: math-engine/Dockerfile
+    env_file:
+    - ../.env
+    environment:
+      MATH_ENGINE_PORT: '3006'
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+    - 127.0.0.1:3006:3006
+    # Pure compute service — no DB/Redis dependency. Serves the 31 topological
+    # operators (list/toggle/compute/264×31 matrix projection) over HTTP.
+    # Read-only / paper-shadow: transforms MarketState, never signs/broadcasts.
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - wget -q -O- http://localhost:3006/health >/dev/null 2>&1 || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+    - arbx-net
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.5'
+        reservations:
+          memory: 256M
   relays-client:
     logging: *id001
     build:

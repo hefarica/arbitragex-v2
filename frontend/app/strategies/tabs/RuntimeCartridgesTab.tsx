@@ -27,6 +27,7 @@ import { Switch } from "@/components/ui/switch";
 import { getRuntimeCartridges, toggleRuntimeCartridge } from "@/lib/api-client";
 import { hasAdminSession } from "@/lib/admin-token";
 import type { RuntimeCartridge } from "@/lib/schemas";
+import { STRATEGY_MAPPING, strategyOperators } from "@/lib/math-operator-mapping";
 
 const POLL_MS = 4000;
 
@@ -257,6 +258,21 @@ export function RuntimeCartridgesTab({ chainId, adminToken, actor }: Props) {
                       v{c.version}
                     </Badge>
                   )}
+                  {/* 264×31 mapping — the math operators this cartridge applies.
+                      Derived from the cartridge id → MEV-XX-YYY canonical id. */}
+                  {(() => {
+                    const ops = strategyOperators(cartridgeToMevId(c.id), STRATEGY_MAPPING);
+                    if (ops.length === 0) return null;
+                    return (
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] bg-info/10 text-info border-info/30"
+                        title={`Math operators applied by this strategy (264×31 matrix): ${ops.map((o) => `#${o}`).join(", ")}`}
+                      >
+                        {ops.length} ops
+                      </Badge>
+                    );
+                  })()}
                 </div>
               </CardContent>
             </Card>
@@ -278,4 +294,13 @@ function familyOf(c: RuntimeCartridge): string {
   if (m) return `MEV-${m[1]}`;
   if (c.category) return c.category;
   return "core";
+}
+
+// Convert a cartridge id (mev_01_001_dex_dex) to the canonical MEV id used by
+// the 264×31 mapping (MEV-01-001). Non-mev cartridges (core pack: dex_arb,
+// backrun, …) return "" → no operator badge (mapping only covers the library).
+function cartridgeToMevId(id: string): string {
+  const m = /^mev_(\d+)_(\d+)_/i.exec(id);
+  if (!m) return "";
+  return `MEV-${m[1]}-${m[2]}`;
 }
