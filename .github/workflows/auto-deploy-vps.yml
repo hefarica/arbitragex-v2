@@ -178,12 +178,12 @@ jobs:
           # explicitly; they are capital-$0 (paper/shadow, BROADCAST stays disabled).
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build \
             api-server edge frontend \
-            searcher-rs sim-ctl relays-client recon selector-api anvil
+            searcher-rs sim-ctl relays-client recon selector-api anvil math-engine
 
           echo "[5/7] Starting stack (infra + hot-path + operator plane)..."
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans \
             postgres redis anvil \
-            searcher-rs sim-ctl relays-client recon selector-api \
+            searcher-rs sim-ctl relays-client recon selector-api math-engine \
             api-server edge frontend
 
           echo "[6/7] Waiting for health (operator plane via localhost; hot-path via compose healthy)..."
