@@ -16,7 +16,10 @@ tracing-subscriber.workspace = true
 
 # HTTP API (gated by `api` feature)
 axum = { workspace = true, optional = true }
-tower = { workspace = true, optional = true }
+# `util` feature exposes tower::util::ServiceExt (.oneshot) used by the api.rs
+# test module. Without it the lib tests fail to compile (E0432/E0599) — a
+# latent break that cargo test --workspace --lib would hit in CI.
+tower = { workspace = true, optional = true, features = ["util"] }
 
 # Math-physics engine core
 nalgebra = { version = "0.33", features = ["serde-serialize"] }

@@ -32,7 +32,7 @@ impl TopologicalOperator for GradientDescentOperator {
         OperatorOutput {
             operator_id: self.id(),
             operator_name: self.name().to_string(),
-            scalar_value: Some(0.0),
+            scalar_value: None, // fail-honest: stub does not compute (was a fabricated Some(0.0))
             vector_result: None,
             matrix_result: None,
             metadata,

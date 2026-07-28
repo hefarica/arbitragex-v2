@@ -96,10 +96,25 @@ impl TopologyMap {
                 continue;
             }
             let output = op.evaluate(state);
-            let scalar = output.scalar_value.unwrap_or(0.0);
-            result[col] = scalar;
-            self.projections[(row_index, col)] = scalar;
-            self.metadata.insert((row_index, col), output.metadata);
+            // R8 fail-honest: a stub / not-computed operator now returns
+            // scalar_value: None. Do NOT collapse that into a fabricated 0.0 —
+            // mark the cell as not-computed in metadata and leave the numeric
+            // projection at the honest zero-with-flag. Downstream readers MUST
+            // consult the "computed" metadata flag, not the bare scalar.
+            let mut md = output.metadata.clone();
+            match output.scalar_value {
+                Some(scalar) => {
+                    md.insert("computed".to_string(), 1.0);
+                    result[col] = scalar;
+                    self.projections[(row_index, col)] = scalar;
+                }
+                None => {
+                    // Not computed — explicit flag, numeric cell stays 0.0 but
+                    // is now distinguishable from a real computed zero.
+                    md.insert("computed".to_string(), 0.0);
+                }
+            }
+            self.metadata.insert((row_index, col), md);
         }
 
         result
