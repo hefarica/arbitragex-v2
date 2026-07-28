@@ -37,15 +37,12 @@ async function forward(
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
     const headers: Record<string, string> = { accept: "application/json" };
+    const init: RequestInit = { method, headers, signal: ctrl.signal };
     if (method === "POST") {
       headers["content-type"] = "application/json";
+      init.body = JSON.stringify(req.body ?? {});
     }
-    const upstream = await fetch(`${MATH_BASE}${upstreamPath}`, {
-      method,
-      headers,
-      body: method === "POST" ? JSON.stringify(req.body ?? {}) : undefined,
-      signal: ctrl.signal,
-    });
+    const upstream = await fetch(`${MATH_BASE}${upstreamPath}`, init);
     const text = await upstream.text();
     let parsed: unknown;
     try {
