@@ -20,6 +20,7 @@ COPY sim-core ./sim-core
 COPY token-enricher ./token-enricher
 COPY mcp-sim-engine ./mcp-sim-engine
 COPY sed-core ./sed-core
+COPY semiotic-bridge ./semiotic-bridge
 # Build ONLY the math-engine binary (feature `api` exposes the axum router).
 # --locked (not --frozen) so the registry index may refresh inside the build.
 RUN cargo build --release --locked -p math-engine --features api --bin math-engine
