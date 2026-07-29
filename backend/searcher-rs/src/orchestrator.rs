@@ -112,11 +112,17 @@ pub struct OrchestratorContext {
     pub pool_discovery: Arc<crate::pool_discovery::PoolDiscoveryService>,
     /// EVM chain ID for this orchestrator instance.
     pub chain_id: u64,
-    /// FASE OMEGA — cartridge runtime for shadow evaluation. `Some` only when
+    /// FASE OMEGA — cartridge runtime for shadow/active evaluation. `Some` only when
     /// `ARBX_CARTRIDGE_MODE` is enabled AND the runtime booted. When present, each
-    /// route intent is shadow-evaluated against active cartridges OFF the hot path
-    /// (observe-only: logs/telemetry, never a StrategyCandidate, never execution).
+    /// route intent is evaluated against active cartridges OFF the hot path.
+    /// In `Shadow` mode: observe-only (logs/telemetry, never a StrategyCandidate).
+    /// In `Active` mode: full wiring — CartridgeEvalResult → StrategyCandidate →
+    /// process_candidate → OpportunityEmitter (Redis/Postgres/API).
     pub cartridge_runner: Option<Arc<CartridgeRunner>>,
+    /// Cartridge runtime mode (shadow/active) resolved from ARBX_CARTRIDGE_MODE.
+    /// Controls whether cartridge evaluation produces StrategyCandidates (active)
+    /// or only telemetry (shadow).
+    pub cartridge_mode: crate::cartridge_boot::CartridgeMode,
     /// Fix B — math evidence (observe-only). The 31-operator registry and the
     /// regime decision tree. Used to evaluate route intents against the math
     /// operators recommended for the detected market regime; outputs are
@@ -263,19 +269,46 @@ impl Orchestrator {
             impacted_protocols = impact.impacted_protocols.len(),
         );
 
-        // ── FASE OMEGA — cartridge shadow evaluation (observe-only) ──────────
+        // ── FASE OMEGA — cartridge evaluation (shadow or active) ─────────────
         // When the cartridge runtime is present (ARBX_CARTRIDGE_MODE enabled),
-        // shadow-evaluate active cartridges against this live intent on a DETACHED
-        // task — zero added latency to the hot path. Results go to logs/telemetry
-        // only: this never builds a StrategyCandidate, never calls process_candidate,
-        // and never reaches the execution pipeline. The evaluation→execution wiring
-        // (active mode) is a follow-up gated by paper-trade evidence.
+        // evaluate active cartridges against this live intent on a DETACHED task.
+        //
+        // MODE SEMANTICS:
+        //   shadow — observe-only. Results go to logs/telemetry. Never builds a
+        //            StrategyCandidate, never calls process_candidate, never reaches
+        //            the execution pipeline. Zero risk to the hot path.
+        //   active — FULL WIRING. CartridgeEvalResult.is_opportunity=true is
+        //            transformed into a StrategyCandidate and passed to
+        //            process_candidate (same pipeline as native engines). The
+        //            candidate flows through ConfigAwareEvaluator → OpportunityEmitter
+        //            → Redis/Postgres → /api/opportunities/live.
+        //
+        // The mode is resolved from ARBX_CARTRIDGE_MODE at boot time (scanner.rs).
         if let Some(runner) = &self.ctx.cartridge_runner {
             let runner = runner.clone();
-            let intent_for_shadow = intent.clone();
+            let intent_for_cart = intent.clone();
+            let cartridge_mode = self.ctx.cartridge_mode;
+            let emitter = self.ctx.emitter.clone();
+            let cfg_provider = self.ctx.config_provider.clone();
+            let ctx_chain_id = self.ctx.chain_id;
+
             tokio::spawn(async move {
-                crate::cartridge_boot::shadow_evaluate_intent(runner, intent_for_shadow, chain_id)
+                if cartridge_mode == crate::cartridge_boot::CartridgeMode::Active {
+                    // ACTIVE MODE: evaluate and emit real candidates through the full pipeline
+                    crate::cartridge_boot::active_evaluate_and_emit(
+                        runner,
+                        intent_for_cart,
+                        chain_id,
+                        emitter,
+                        cfg_provider,
+                        ctx_chain_id,
+                    )
                     .await;
+                } else {
+                    // SHADOW MODE: observe-only telemetry (legacy behavior)
+                    crate::cartridge_boot::shadow_evaluate_intent(runner, intent_for_cart, chain_id)
+                        .await;
+                }
             });
         }
 

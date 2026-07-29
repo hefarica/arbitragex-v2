@@ -454,6 +454,7 @@ async fn build_orchestrator(
         config_provider,
         chain_id,
         cartridge_runner,
+        cartridge_mode: crate::cartridge_boot::CartridgeMode::from_env(),
         // Fix B — math evidence (observe-only): operator registry + regime router.
         math_registry: Arc::new(math_engine::OperatorRegistry::new()),
         regime_router: math_engine::RegimeRouter::default(),
