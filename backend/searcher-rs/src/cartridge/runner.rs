@@ -463,6 +463,14 @@ impl CartridgeRunner {
             .await
     }
 
+    /// Returns a cheap multiplexed clone of the runner's Redis connection.
+    /// `ConnectionManager` is internally multiplexed, so cloning is cheap and
+    /// safe for concurrent use. Used by the ACTIVE evaluation path to fetch the
+    /// live token-price snapshot (review V2 #9) without exposing `host_ctx`.
+    pub async fn redis_connection(&self) -> redis::aio::ConnectionManager {
+        self.host_ctx.redis.read().await.clone()
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // Private helpers
     // ─────────────────────────────────────────────────────────────────────

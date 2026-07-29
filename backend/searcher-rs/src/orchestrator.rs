@@ -56,11 +56,12 @@ use crate::metrics::{
     OPPORTUNITIES_PUBLISHED_TOTAL, REJECTED_CONFIG_TOTAL, REJECTED_NO_PROFIT_TOTAL,
     SIMULATION_FAILED_TOTAL,
 };
-use crate::opportunity_emitter::OpportunityEmitter;
+use crate::opportunity_emitter::{EmitOutcome, OpportunityEmitter};
 use crate::route_intent::RouteIntent;
 use crate::size_optimizer::{OptimizeOutcome, OptimizeRejectReason, SizeOptimizer};
 use crate::state_projector::StateProjector;
 use crate::strategy_label::StrategyLabel;
+use shared_rs::price_oracle::RedisCachedPriceOracle;
 use shared_rs::trading_config::TradingConfigState;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -212,6 +213,20 @@ impl Orchestrator {
         let chain_id = self.ctx.chain_id;
         let chain_str = chain_id.to_string();
         let source_str = detection_source_as_str(intent.source_event);
+
+        // ── FIX (review V2 #10): chain_id validation — a cross-chain intent
+        // must NEVER be processed by this orchestrator instance. Reject loudly
+        // and count; silently processing would poison per-chain metrics/DB.
+        if intent.chain_id != chain_id {
+            warn!(
+                event = "v2.orchestrator.chain_id_mismatch",
+                ctx_chain_id = chain_id,
+                intent_chain_id = intent.chain_id,
+                tx_hash = %intent.tx_hash,
+                "rejecting intent: chain_id mismatch (cross-chain leak)"
+            );
+            return Ok(());
+        }
 
         // ── TASK 1 log #2: v2.orchestrator.intent_received ───────────────
         // FIRST line of the function per spec §TASK-1/event-2.
@@ -367,7 +382,14 @@ impl Orchestrator {
         }
 
         let mut impact = impact;
-        if impact.impacted_pools.is_empty() && impact.impacted_cycles.is_empty() {
+        // FIX (review V2 #7): include impacted_lending_positions in the zero-impact
+        // check. A lending-only intent (impacted_lending_positions > 0 but no pools/
+        // cycles) must reach the LiquidationEngine — previously it was discarded as
+        // impact_zero before ever reaching the engine fan-out.
+        let has_impact = !impact.impacted_pools.is_empty()
+            || !impact.impacted_cycles.is_empty()
+            || !impact.impacted_lending_positions.is_empty();
+        if !has_impact {
             // No pools impacted. This is an unmapped pair.
             // Dispatch synchronously to the PoolDiscoveryService.
             self.ctx
@@ -410,7 +432,11 @@ impl Orchestrator {
                 }
             }
 
-            if impact.impacted_pools.is_empty() && impact.impacted_cycles.is_empty() {
+            // Re-check WITH lending positions after discovery retry.
+            let has_impact_after = !impact.impacted_pools.is_empty()
+                || !impact.impacted_cycles.is_empty()
+                || !impact.impacted_lending_positions.is_empty();
+            if !has_impact_after {
                 debug!(
                     event = "orchestrator.impact_zero",
                     chain_id,
@@ -733,6 +759,13 @@ impl Orchestrator {
                     let mut c = s.candidate;
                     c.gross_profit_usd = Some(s.gross_profit_usd);
                     c.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
+                    // FIX (review V2 #8): synchronize the Opportunity row that
+                    // process_candidate actually evaluates/emits. Without this,
+                    // the DB/API records pre-sizing figures while the optimizer's
+                    // post-sizing numbers only live on the StrategyCandidate —
+                    // an inconsistent audit trail (RULE 00 violation surface).
+                    c.opportunity.expected_profit_usd = Some(s.gross_profit_usd);
+                    c.opportunity.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
                     c
                 }
                 OptimizeOutcome::Rejected(reason) => {
@@ -803,33 +836,63 @@ impl Orchestrator {
             return Ok(());
         }
 
-        // Evaluator not available → observe-only path (same as scanner's no_trading_config).
+        // FIX (review V2 #1): NO config → explicit rejection, NEVER emit_accepted.
+        // The previous fail-open path published an opportunity that skipped the
+        // allowlist, pricing, strategy-enable and risk gates — classified as
+        // accepted in the live emitter. RULE 00 / R8 violation: an ungated
+        // opportunity must surface as rejected with the precise reason so the
+        // operator sees the gate gap in the dashboard instead of a fake viable.
         let Some(state) = cfg else {
-            // Persist + publish without scoring (observe-only).
-            // ── TASK 1 log #9: v2.emitter.input ─────────────────────────
+            let reason = "NoTradingConfig".to_string();
+            let opp_with_reason = {
+                let mut o = sc.opportunity.clone();
+                o.rejection_reason = Some(reason.clone());
+                o
+            };
+            REJECTED_CONFIG_TOTAL
+                .with_label_values(&[&chain_str, label_str, "no_trading_config"])
+                .inc();
             info!(
                 event = "v2.emitter.input",
                 chain_id,
                 tx_hash = %sc.source_intent_hash,
                 strategy = label_str,
                 dry_run = self.ctx.emitter.is_dry_run(),
-                rejection_reason = ?sc.opportunity.rejection_reason,
-                expected_profit_usd = ?sc.opportunity.expected_profit_usd,
-                net_expected_profit_usd = ?sc.opportunity.net_expected_profit_usd,
+                rejection_reason = ?opp_with_reason.rejection_reason,
+                expected_profit_usd = ?opp_with_reason.expected_profit_usd,
+                net_expected_profit_usd = ?opp_with_reason.net_expected_profit_usd,
             );
-            OPPORTUNITIES_PUBLISHED_TOTAL
-                .with_label_values(&[&chain_str, label_str])
-                .inc();
             self.ctx
                 .emitter
-                .emit_accepted(&sc.opportunity, label)
+                .emit_rejected(&opp_with_reason, label, &reason)
                 .await?;
             return Ok(());
         };
 
+        // FIX (review V2 #9): load the REAL live price snapshot from Redis instead
+        // of an empty map, so the evaluator's pricing cascade has real data.
+        // `snapshot_from_redis` never errors — on Redis failure it returns an
+        // EMPTY snapshot (R8 fail-honest), degrading the evaluator to its tier-2
+        // ConfigPriceOracle fallback. Never fabricated prices.
+        let price_snapshot: HashMap<String, f64> = {
+            let mut redis_conn = self.ctx.math_redis.clone();
+            let oracle =
+                RedisCachedPriceOracle::snapshot_from_redis(&mut redis_conn, chain_id).await;
+            let n = oracle.len();
+            if n == 0 {
+                debug!(
+                    event = "v2.price_snapshot_empty",
+                    chain_id,
+                    "price snapshot empty; evaluator falls back to config oracle"
+                );
+            }
+            let _ = n;
+            oracle.into_snapshot()
+        };
+
         // Build the evaluator borrowing the owned config snapshot.
         let signals = NetworkSignals::unknown(sc.opportunity.block_number.unwrap_or(0));
-        let ev = ConfigAwareEvaluator::with_cache(state, signals, HashMap::new());
+        let ev = ConfigAwareEvaluator::with_cache(state, signals, price_snapshot);
 
         // Run the spine gate.
         let spine_gate_outcome = ev.evaluate_with_route_plan(
@@ -841,110 +904,16 @@ impl Orchestrator {
             60_000,
         );
 
-        // NEW: Energy-based gate evaluation (MacroMevGate)
-        // This provides the "closed-loop" control: E_state determines pass/fail
-        #[cfg(feature = "searcher-rs")]
-        {
-            let gate_config = MacroMevGateConfig {
-                enabled: std::env::var("ARBX_GATE_MACRO_MEV_ENABLED")
-                    .ok()
-                    .and_then(|v| {
-                        matches!(
-                            v.trim().to_ascii_lowercase().as_str(),
-                            "1" | "true" | "yes" | "on"
-                        )
-                    })
-                    .unwrap_or(false),
-                confiscation_threshold: std::env::var("ARBX_MACRO_MEV_THRESHOLD")
-                    .ok()
-                    .and_then(|v| v.trim().parse::<f64>().ok())
-                    .filter(|v| v.is_finite() && v >= 1.0)
-                    .unwrap_or(1.1),
-                confiscation_epsilon: std::env::var("ARBX_MACRO_MEV_EPSILON")
-                    .ok()
-                    .and_then(|v| v.trim().parse::<f64>().ok())
-                    .filter(|v| v.is_finite() && v >= 0.0)
-                    .unwrap_or(0.01),
-                log_hits: std::env::var("ARBX_MACRO_MEV_LOG_HITS")
-                    .ok()
-                    .and_then(|v| {
-                        matches!(
-                            v.trim().to_ascii_lowercase().as_str(),
-                            "1" | "true" | "yes" | "on"
-                        )
-                    })
-                    .unwrap_or(true),
-            };
-
-            let gate = MacroMevGate;
-            let energy_state = gate.evaluate_energy(&sc.opportunity, &gate_config);
-
-            // Emit energy state to Redis for telemetry
-            if let Some(energy) = energy_state {
-                if let Err(e) = self.ctx.emitter.emit_gate_commit_from_state(&energy).await {
-                    warn!(
-                        event = "orchestrator.gate_commit_fail",
-                        chain_id,
-                        tx_hash = %sc.source_intent_hash,
-                        strategy = label_str,
-                        error = %e,
-                        "Failed to emit gate commit to Redis"
-                    );
-                }
-
-                // Load threshold from environment
-                let gate_threshold = std::env::var("ARBX_GATE_THRESHOLD_ENERGY")
-                    .ok()
-                    .and_then(|v| v.trim().parse::<f64>().ok())
-                    .unwrap_or(10.0); // Default threshold: 10 hedonic units
-
-                // Apply orbital condition: E_state < threshold → pass
-                // E_state >= threshold → block
-                let passes_orbital = orbital_condition(energy.energy, gate_threshold);
-
-                if !passes_orbital {
-                    // Energy exceeds threshold — block opportunity
-                    let energy_formatted = format!("{:.4}", energy.energy);
-                    let mut opp = sc.opportunity.clone();
-                    opp.rejection_reason = Some(format!(
-                        "E_{}_pass:{}",
-                        energy.gauntlet_id, energy_formatted
-                    ));
-                    opp.roi_pct = Some(0.0);
-                    opp.risk_score = Some(0.0);
-                    REJECTED_NO_PROFIT_TOTAL
-                        .with_label_values(&[&chain_str, label_str, &energy_formatted])
-                        .inc();
-                    info!(
-                        event = "orchestrator.gate_blocked_orbital",
-                        chain_id,
-                        tx_hash = %sc.source_intent_hash,
-                        strategy = label_str,
-                        energy = energy.energy,
-                        hamiltonian = energy.hamiltonian,
-                        perturbation = energy.perturbation,
-                        threshold = gate_threshold,
-                        reason = ?energy.energy_reason,
-                        "Energy-based gate orbital condition: E_state >= threshold"
-                    );
-                    self.ctx
-                        .emitter
-                        .emit_rejected(&opp, label, &energy_formatted)
-                        .await?;
-                    return Ok(());
-                }
-
-                info!(
-                    event = "orchestrator.gate_passed_orbital",
-                    chain_id,
-                    tx_hash = %sc.source_intent_hash,
-                    strategy = label_str,
-                    energy = energy.energy,
-                    threshold = gate_threshold,
-                    "Energy-based gate orbital condition satisfied"
-                );
-            }
-        }
+        // FIX (review V2 #4/#5/#6): dead energy-gate block REMOVED.
+        // The block was gated behind `#[cfg(feature = "searcher-rs")]` — a feature
+        // that does NOT exist in Cargo.toml (real features: v2-simulator,
+        // paper-shadow, experimental-engines) — so it never compiled. Worse, it
+        // referenced symbols that don't exist in this crate (`MacroMevGate`,
+        // `orbital_condition`, `emit_gate_commit_from_state`, `energy.gauntlet_id`
+        // — the real field is `gate_identifier`). If the gate is ever wired for
+        // real, it must be re-implemented against `crate::gates::MacroMevGate` with
+        // a real emitter contract — not this orphaned copy. Removing dead code
+        // per surgical-changes doctrine.
 
         // Continue with spine gate outcome (if evaluator available)
 
@@ -1078,10 +1047,37 @@ impl Orchestrator {
                         expected_profit_usd = ?opp.expected_profit_usd,
                         net_expected_profit_usd = ?opp.net_expected_profit_usd,
                     );
-                    OPPORTUNITIES_PUBLISHED_TOTAL
-                        .with_label_values(&[&chain_str, label_str])
-                        .inc();
-                    self.ctx.emitter.emit_accepted(&opp, label).await?;
+                    // FIX (review V2 #11): increment the published metric ONLY when
+                    // the emitter actually published. Previously it incremented
+                    // BEFORE the emit call — a dedup hit or PG failure still counted
+                    // as "published", inflating the dashboard counter vs reality.
+                    let emit_outcome = self.ctx.emitter.emit_accepted(&opp, label).await?;
+                    match emit_outcome {
+                        EmitOutcome::Published
+                        | EmitOutcome::PersistedAndPublished
+                        | EmitOutcome::Persisted => {
+                            OPPORTUNITIES_PUBLISHED_TOTAL
+                                .with_label_values(&[&chain_str, label_str])
+                                .inc();
+                        }
+                        EmitOutcome::Deduped => {
+                            debug!(
+                                event = "v2.emitter.deduped",
+                                chain_id,
+                                tx_hash = %sc.source_intent_hash,
+                                strategy = label_str,
+                                "opportunity deduped by emitter; not counted as published"
+                            );
+                        }
+                        _ => {
+                            // PgWriteFailedRedisPublished and any future variants:
+                            // data reached the Redis stream (the dashboard's source)
+                            // so count it as published for observability parity.
+                            OPPORTUNITIES_PUBLISHED_TOTAL
+                                .with_label_values(&[&chain_str, label_str])
+                                .inc();
+                        }
+                    }
                 }
             }
         }

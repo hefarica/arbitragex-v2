@@ -874,6 +874,19 @@ pub async fn active_evaluate_and_emit(
     // Snapshot config once for all candidates (same as orchestrator)
     let cfg_snapshot = cfg_provider.snapshot(chain_id).await;
 
+    // FIX (review V2 #9): fetch the live price snapshot ONCE per intent (not per
+    // cartridge) and thread it into every candidate evaluation. Empty snapshot
+    // degrades to the evaluator's ConfigPriceOracle fallback — never fabricated.
+    let price_snapshot: std::collections::HashMap<String, f64> = {
+        let mut redis_conn = runner.redis_connection().await;
+        let oracle = shared_rs::price_oracle::RedisCachedPriceOracle::snapshot_from_redis(
+            &mut redis_conn,
+            chain_id,
+        )
+        .await;
+        oracle.into_snapshot()
+    };
+
     for (cartridge_id, category) in pertinent {
         match runner.evaluate(&cartridge_id, pool_data.clone()).await {
             Ok(eval_result) => {
@@ -1004,12 +1017,14 @@ pub async fn active_evaluate_and_emit(
                     base_strategy: None,
                 };
 
-                // Process through the same pipeline as native engines
+                // Process through the same pipeline as native engines (price
+                // snapshot threaded from the per-intent fetch above — FIX #9).
                 if let Err(e) = process_cartridge_candidate(
                     strategy_candidate,
                     cfg_snapshot.as_ref(),
                     ctx_chain_id,
                     emitter.clone(),
+                    price_snapshot.clone(),
                 ).await {
                     warn!(
                         event = "cartridge.active_process_failed",
@@ -1036,11 +1051,13 @@ pub async fn active_evaluate_and_emit(
 
 /// Process a cartridge-generated candidate through the full evaluation + emission pipeline.
 /// Mirrors `Orchestrator::process_candidate` but accessible from cartridge_boot context.
+/// `price_snapshot` is the live Redis price map fetched once per intent by the caller.
 async fn process_cartridge_candidate(
     sc: crate::engines::StrategyCandidate,
     cfg: Option<&shared_rs::trading_config::TradingConfigState>,
     chain_id: u64,
     emitter: Arc<crate::opportunity_emitter::OpportunityEmitter>,
+    price_snapshot: std::collections::HashMap<String, f64>,
 ) -> anyhow::Result<()> {
     use crate::strategy_label::StrategyLabel;
     use prioritization_spine::config_aware::{ConfigAwareEvaluator, NetworkSignals};
@@ -1057,15 +1074,24 @@ async fn process_cartridge_candidate(
         return Ok(());
     }
 
-    // No config → observe-only path (emit accepted without gates)
+    // FIX (review V2 #1, applied to cartridge path): NO config → explicit
+    // rejection, NEVER emit_accepted. A cartridge opportunity that skips the
+    // allowlist/pricing/strategy-enable/risk gates must NOT be classified as
+    // accepted in the live emitter — that is the same fail-open the reviewer
+    // flagged on the orchestrator path. Surface as rejected with the reason.
     let Some(state) = cfg else {
-        emitter.emit_accepted(&sc.opportunity, label).await?;
+        let reason = "NoTradingConfig".to_string();
+        let mut opp = sc.opportunity.clone();
+        opp.rejection_reason = Some(reason.clone());
+        emitter.emit_rejected(&opp, label, &reason).await?;
         return Ok(());
     };
 
-    // Build evaluator and run spine gate
+    // Build evaluator and run spine gate. The live price snapshot is threaded in
+    // from the caller (active_evaluate_and_emit), which fetches it once per intent
+    // from Redis — see price_snapshot param (FIX review V2 #9).
     let signals = NetworkSignals::unknown(sc.opportunity.block_number.unwrap_or(0));
-    let ev = ConfigAwareEvaluator::with_cache(state, signals, HashMap::new());
+    let ev = ConfigAwareEvaluator::with_cache(state, signals, price_snapshot);
 
     let spine_gate_outcome = ev.evaluate_with_route_plan(
         &sc.candidate,
