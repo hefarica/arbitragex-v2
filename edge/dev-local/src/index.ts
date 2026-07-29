@@ -368,6 +368,22 @@ app.get("/api/math/matrix/projection", (req, res) => proxy("/api/math/matrix/pro
 app.get("/api/math/matrix/operators", (req, res) => proxy("/api/math/matrix/operators", req, res));
 app.get("/api/math/operators/:id", (req, res) =>
   proxy(`/api/math/operators/${encodeURIComponent(String(req.params.id ?? ""))}`, req, res));
+// Math evidence — LIVE regime + operator values persisted by the searcher.
+// Specific routes BEFORE the :id wildcard so /api/math/evidence isn't
+// swallowed by /api/math/operators/:id.
+app.get("/api/math/evidence/all", (req, res) => {
+  const chain = String(req.query["chain_id"] ?? "1");
+  proxy(`/api/math/evidence/all?chain_id=${encodeURIComponent(chain)}`, req, res);
+});
+app.get("/api/math/evidence", (req, res) => {
+  const chain = String(req.query["chain_id"] ?? "1");
+  const strat = String(req.query["strategy_kind"] ?? "");
+  proxy(
+    `/api/math/evidence?chain_id=${encodeURIComponent(chain)}&strategy_kind=${encodeURIComponent(strat)}`,
+    req,
+    res,
+  );
+});
 // Operator toggle — admin-gated upstream; adminProxy translates the httpOnly
 // session cookie into the upstream admin token.
 app.post("/api/math/operators/:id/toggle", (req, res) =>

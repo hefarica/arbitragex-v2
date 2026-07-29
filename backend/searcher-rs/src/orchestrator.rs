@@ -124,6 +124,10 @@ pub struct OrchestratorContext {
     pub math_registry: Arc<math_engine::OperatorRegistry>,
     /// Fix B — regime decision tree for operator selection.
     pub regime_router: math_engine::RegimeRouter,
+    /// Fix B — Redis handle for persisting math-evidence snapshots (regime +
+    /// operator values per strategy) so the api-server can serve them to the
+    /// dashboard in real time. Cheap multiplexed clone.
+    pub math_redis: redis::aio::ConnectionManager,
     /// SED Bridge — connects to sed-core math pipeline (paper-shadow only).
     /// When `Some`, feeds gas observations and enriches candidates with
     /// stochastic convergence metrics. When `None`, orchestrator runs
@@ -284,6 +288,7 @@ impl Orchestrator {
             let reserves_cache = self.ctx.dex_engine.reserves_cache.clone();
             let registry = self.ctx.math_registry.clone();
             let router = self.ctx.regime_router;
+            let mut math_redis = self.ctx.math_redis.clone();
             let strategy_kind = format!("{:?}", intent.router_kind);
             let pools: Vec<Address> = intent
                 .legs
@@ -296,6 +301,7 @@ impl Orchestrator {
                         &reserves_cache,
                         &registry,
                         &router,
+                        &mut math_redis,
                         &pools,
                         chain_id,
                         0.0, // gas_price_gwei — not carried in RouteIntent yet (observe-only)

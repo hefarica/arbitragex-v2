@@ -89,6 +89,7 @@ pub async fn evaluate_math_evidence(
     reserves_cache: &Arc<ReservesCache>,
     registry: &OperatorRegistry,
     router: &RegimeRouter,
+    redis: &mut redis::aio::ConnectionManager,
     pool_addresses: &[Address],
     chain_id: u64,
     gas_price_gwei: f64,
@@ -158,6 +159,42 @@ pub async fn evaluate_math_evidence(
         op_values = %serde_json::to_string(&op_values).unwrap_or_default(),
         "math evidence evaluated (observe-only)"
     );
+
+    // Persist the snapshot to Redis so the api-server can serve the LIVE regime
+    // + per-operator values to the dashboard. Key per (chain, strategy_kind).
+    // TTL 120s: refreshed on every intent; expires if the searcher goes quiet
+    // (R8 fail-honest — the API then reports "no recent evidence").
+    let snapshot = serde_json::json!({
+        "chain_id": chain_id,
+        "strategy_kind": strategy_kind,
+        "regimes": regime_names,
+        "metrics": {
+            "volatility": metrics.volatility,
+            "arbitrage_gap": metrics.arbitrage_gap,
+            "health_factor": metrics.health_factor,
+            "oracle_bias": metrics.oracle_bias,
+            "parity_deviation": metrics.parity_deviation,
+        },
+        "operators": op_values,
+        "operators_computed": computed,
+        "updated_at_ms": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+    });
+    if let Ok(json) = serde_json::to_string(&snapshot) {
+        use redis::AsyncCommands;
+        let key = format!("arbx:math_evidence:{}:{}", chain_id, strategy_kind);
+        if let Err(e) = redis.set_ex::<_, _, ()>(&key, json, 120).await {
+            debug!(
+                event = "math_evidence.persist_failed",
+                chain_id,
+                strategy_kind,
+                error = %e,
+                "failed to persist math evidence snapshot (non-fatal)"
+            );
+        }
+    }
 
     computed
 }

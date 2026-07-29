@@ -110,6 +110,7 @@ import { mountForkStatus } from "./routes/fork-status.js";
 import { mountRpcRegistry } from "./routes/rpc-registry.js";
 import { mountOpportunitySimulate } from "./routes/opportunity-simulate.js";
 import { buildMathEngineRouter } from "./routes/math-engine-proxy.js";
+import { buildMathEvidenceRouter } from "./routes/math-evidence.js";
 import { mountAlertmanagerWebhook } from "./routes/alertmanager-webhook.js";
 import { mountRiskCircuitBreakers } from "./routes/risk-circuit-breakers.js";
 import { mountAdminChains } from "./routes/admin-chains.js";
@@ -568,6 +569,10 @@ mountOpportunitySimulate(app, { logger });
 // Math-engine proxy — the 31 topological operators (list/toggle/compute/matrix
 // projection) served by the math-engine service. Mounted at /api/math/*.
 app.use(buildMathEngineRouter({ logger, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN }));
+
+// Math evidence — LIVE regime + per-operator values persisted by the searcher
+// (Fix B) at arbx:math_evidence:<chain>:<strategy>. Read-only.
+app.use(buildMathEvidenceRouter({ redis, logger }));
 mountLiveTestnet(app, {
   logger,
   requireAdminToken,

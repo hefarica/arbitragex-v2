@@ -457,6 +457,7 @@ async fn build_orchestrator(
         // Fix B — math evidence (observe-only): operator registry + regime router.
         math_registry: Arc::new(math_engine::OperatorRegistry::new()),
         regime_router: math_engine::RegimeRouter::default(),
+        math_redis: redis.clone(),
         spanning_tree_engine: None,
         cross_chain_engine: None,
         liquidation_snipe_engine: None,
