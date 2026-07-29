@@ -39,6 +39,9 @@ pub mod op_29_shapley;
 pub mod op_30_gnn_encoder;
 pub mod op_31_drl_agent;
 
+#[cfg(test)]
+mod real_ops_tests;
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
