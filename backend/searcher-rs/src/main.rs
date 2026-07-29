@@ -126,6 +126,13 @@ mod engines;
 // Fix B — math evidence (observe-only): builds MarketState from reserves and
 // evaluates RegimeRouter-recommended operators. Called from orchestrator.
 mod math_evidence;
+// FASE OMEGA: Gate subsystem (MacroMevGate / Operador Energético). The binary
+// compiles orchestrator.rs as part of THIS crate (crate root = main.rs), so it
+// must declare `shared` + `gates` itself — the lib (lib.rs) declares them too,
+// but each crate root owns its own `crate::` namespace. Without these two lines
+// the binary fails with E0432/E0433 unresolved import on crate::gates / crate::shared.
+mod shared;
+mod gates;
 mod orchestrator;
 // Phase 11: LendingPositionIndexer — Redis-backed watchlist + position cache.
 // Dead-code allowed: the indexer is Arc-constructed and passed to the
