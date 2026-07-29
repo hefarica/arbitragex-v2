@@ -796,6 +796,13 @@ pub async fn active_evaluate_and_emit(
     use shared_rs::contracts::{Opportunity, StrategyKind};
     use uuid::Uuid;
 
+    info!(
+        event = "cartridge.active_eval_enter",
+        chain_id,
+        tx_hash = %intent.tx_hash,
+        "ACTIVE evaluation entered"
+    );
+
     // Bound global active-eval concurrency; drop (don't queue) when at capacity.
     let _permit = match shadow_semaphore().clone().try_acquire_owned() {
         Ok(p) => p,
@@ -819,6 +826,14 @@ pub async fn active_evaluate_and_emit(
         .map(|(id, meta, _)| (id, meta.category))
         .collect();
 
+    info!(
+        event = "cartridge.active_eval_actives",
+        chain_id,
+        tx_hash = %intent.tx_hash,
+        active_count = actives.len(),
+        "active cartridges counted"
+    );
+
     if actives.is_empty() {
         return;
     }
@@ -828,6 +843,15 @@ pub async fn active_evaluate_and_emit(
         .into_iter()
         .filter(|(_, category)| cartridge_matches_intent(category, &intent))
         .collect();
+
+    info!(
+        event = "cartridge.active_eval_pertinent",
+        chain_id,
+        tx_hash = %intent.tx_hash,
+        pertinent_count = pertinent.len(),
+        source_event = %intent.source_event.as_str(),
+        "pertinent cartridges for this intent"
+    );
 
     if pertinent.is_empty() {
         debug!(

@@ -284,6 +284,18 @@ impl Orchestrator {
         //            → Redis/Postgres → /api/opportunities/live.
         //
         // The mode is resolved from ARBX_CARTRIDGE_MODE at boot time (scanner.rs).
+        // DIAGNOSTIC: log why cartridge evaluation is or isn't happening.
+        let has_runner = self.ctx.cartridge_runner.is_some();
+        let mode = self.ctx.cartridge_mode;
+        debug!(
+            event = "v2.cartridge.dispatch_check",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            has_runner,
+            mode = mode.as_str(),
+            "cartridge dispatch check"
+        );
+
         if let Some(runner) = &self.ctx.cartridge_runner {
             let runner = runner.clone();
             let intent_for_cart = intent.clone();
@@ -293,6 +305,12 @@ impl Orchestrator {
             let ctx_chain_id = self.ctx.chain_id;
 
             tokio::spawn(async move {
+                debug!(
+                    event = "v2.cartridge.spawned_task",
+                    chain_id,
+                    mode = cartridge_mode.as_str(),
+                    "cartridge evaluation task spawned"
+                );
                 if cartridge_mode == crate::cartridge_boot::CartridgeMode::Active {
                     // ACTIVE MODE: evaluate and emit real candidates through the full pipeline
                     crate::cartridge_boot::active_evaluate_and_emit(
