@@ -27,6 +27,8 @@ pub enum Regime {
     LiquidationProximity,
     /// Sesgo de oracle — divergencia oracle vs precio on-chain.
     OracleBias,
+    /// Depeg — desviación de paridad de un activo anclado (stablecoin/LST).
+    DepegDeviation,
     /// Régimen neutral / sin señal dominante.
     Neutral,
 }
@@ -42,6 +44,8 @@ pub struct RegimeMetrics {
     pub health_factor: Option<f64>,
     /// Sesgo absoluto oracle vs on-chain (de `features`).
     pub oracle_bias: Option<f64>,
+    /// Desviación de paridad de un activo anclado (de `features["parity_deviation"]`).
+    pub parity_deviation: Option<f64>,
 }
 
 /// Umbrales de régimen (configurables; defaults conservadores).
@@ -55,6 +59,8 @@ pub struct RegimeThresholds {
     pub health_factor: f64,
     /// Sesgo mínimo de oracle para considerar bias.
     pub oracle_bias: f64,
+    /// Desviación mínima de paridad para considerar depeg.
+    pub parity_deviation: f64,
 }
 
 impl Default for RegimeThresholds {
@@ -64,6 +70,7 @@ impl Default for RegimeThresholds {
             arbitrage_gap: 0.003, // 0.3% gap entre venues
             health_factor: 1.1,   // por debajo de 1.1 hay riesgo de liquidación
             oracle_bias: 0.002,   // 0.2% divergencia oracle vs on-chain
+            parity_deviation: 0.005, // 0.5% desviación de paridad (depeg)
         }
     }
 }
@@ -136,6 +143,15 @@ impl RegimeRouter {
             }
         }
 
+        // Desviación de paridad (depeg) — de features["parity_deviation"]. Un
+        // activo anclado (stablecoin/LST) que pierde su ancla abre una captura
+        // de paridad (redimir al valor anclado). Fail-honest: None si ausente.
+        if let Some(&pd) = state.features.get("parity_deviation") {
+            if pd.is_finite() && pd >= 0.0 {
+                m.parity_deviation = Some(pd);
+            }
+        }
+
         m
     }
 
@@ -162,6 +178,11 @@ impl RegimeRouter {
                 regimes.push(Regime::OracleBias);
             }
         }
+        if let Some(pd) = metrics.parity_deviation {
+            if pd >= self.thresholds.parity_deviation {
+                regimes.push(Regime::DepegDeviation);
+            }
+        }
         if regimes.is_empty() {
             regimes.push(Regime::Neutral);
         }
@@ -175,6 +196,8 @@ impl RegimeRouter {
     /// - ArbitrageGap → SVD (1, extracción), Regression (13, fair value), PCA (2)
     /// - LiquidationProximity → Kelly (16), MonteCarlo (22), BundleRecon (25)
     /// - OracleBias → Regression (13), KlDivergence (14), Eigen (3)
+    /// - DepegDeviation → Kelly (16), MonteCarlo (22), Regression (13) — captura
+    ///   de paridad rota (redimir al valor anclado) con sizing + predicción.
     /// - Neutral → Welford (10), Regression (13) — observación ligera
     pub fn recommend(&self, regimes: &[Regime]) -> Vec<u8> {
         let mut ops: Vec<u8> = Vec::new();
@@ -191,6 +214,7 @@ impl RegimeRouter {
                 Regime::ArbitrageGap => push(&[1, 13, 2]),
                 Regime::LiquidationProximity => push(&[16, 22, 25]),
                 Regime::OracleBias => push(&[13, 14, 3]),
+                Regime::DepegDeviation => push(&[16, 22, 13]),
                 Regime::Neutral => push(&[10, 13]),
             }
         }
@@ -266,6 +290,16 @@ mod tests {
         let (regimes, _m, ops) = RegimeRouter::default().route(&st);
         assert!(regimes.contains(&Regime::Neutral));
         assert!(ops.contains(&13)); // Regression (light observation)
+    }
+
+    #[test]
+    fn detects_depeg_deviation() {
+        let mut st = state(&[100.0, 100.2, 100.1]);
+        st.features.insert("parity_deviation".to_string(), 0.008); // 0.8% depeg
+        let (regimes, _m, ops) = RegimeRouter::default().route(&st);
+        assert!(regimes.contains(&Regime::DepegDeviation));
+        assert!(ops.contains(&16)); // Kelly (sizing on broken parity)
+        assert!(ops.contains(&13)); // Regression (fair value estimate)
     }
 
     #[test]
