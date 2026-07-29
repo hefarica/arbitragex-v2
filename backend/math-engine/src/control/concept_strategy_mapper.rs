@@ -1,4 +1,4 @@
-! Maps mathematical concepts to actionable strategy profiles.
+//! Maps mathematical concepts to actionable strategy profiles.
 //!
 //! A `ConceptStrategyMapper` answers the question: "Given a set of activated
 //! math-physics concepts, what strategy should the system adopt?" The mapping
@@ -147,6 +147,12 @@ impl StrategyProfile {
             explore_multi_hop: false,
             model_adversaries: false,
         }
+    }
+}
+
+impl Default for StrategyProfile {
+    fn default() -> Self {
+        Self::none()
     }
 }
 

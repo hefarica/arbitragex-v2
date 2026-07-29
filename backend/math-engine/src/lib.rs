@@ -6,6 +6,7 @@
 //! - 264 vectores estrategicos MEV
 //! - Matriz de proyeccion 264x31
 
+pub mod control;
 pub mod matrix;
 pub mod operators;
 pub mod strategies;
@@ -21,6 +22,7 @@ pub mod route_math;
 pub mod subgraph_client;
 
 // Re-export core types
+pub use control::regime_router::{Regime, RegimeMetrics, RegimeRouter, RegimeThresholds};
 pub use operators::{MarketState, OperatorOutput, OperatorRegistry, TopologicalOperator};
 pub use strategies::{StrategyOutput, StrategyProfile, StrategyRegistry, TopologicalStrategy};
 
