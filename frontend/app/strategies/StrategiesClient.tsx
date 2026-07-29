@@ -105,7 +105,13 @@ export function StrategiesClient({ initialConfig, initialCatalog, initialError }
       </TabsContent>
 
       <TabsContent value="runtime" className="mt-4">
-        <RuntimeCartridgesTab chainId={config.chain_id} adminToken={adminToken} actor={actor} />
+        <RuntimeCartridgesTab
+          chainId={config.chain_id}
+          config={config}
+          onSaved={setConfig}
+          adminToken={adminToken}
+          actor={actor}
+        />
       </TabsContent>
 
       <TabsContent value="math" className="mt-4">

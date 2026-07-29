@@ -26,18 +26,21 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { getRuntimeCartridges, toggleRuntimeCartridge } from "@/lib/api-client";
 import { hasAdminSession } from "@/lib/admin-token";
-import type { RuntimeCartridge } from "@/lib/schemas";
+import type { RuntimeCartridge, TradingConfigConfigured } from "@/lib/schemas";
 import { STRATEGY_MAPPING, strategyOperators } from "@/lib/math-operator-mapping";
+import { StrategySettingsSheet } from "@/components/strategy-settings-sheet";
 
 const POLL_MS = 4000;
 
 interface Props {
   chainId: number;
+  config: TradingConfigConfigured;
+  onSaved: (next: TradingConfigConfigured) => void;
   adminToken: string;
   actor: string;
 }
 
-export function RuntimeCartridgesTab({ chainId, adminToken, actor }: Props) {
+export function RuntimeCartridgesTab({ chainId, config, onSaved, adminToken, actor }: Props) {
   const [cartridges, setCartridges] = useState<RuntimeCartridge[]>([]);
   const [registryOk, setRegistryOk] = useState<boolean | null>(null);
   const [registryReason, setRegistryReason] = useState<string | null>(null);
@@ -47,6 +50,8 @@ export function RuntimeCartridgesTab({ chainId, adminToken, actor }: Props) {
   const [toggling, setToggling] = useState<string | null>(null);
   const [hasSession, setHasSession] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // Strategy settings sheet — opened on click on a cartridge card.
+  const [settingsFor, setSettingsFor] = useState<RuntimeCartridge | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -206,8 +211,16 @@ export function RuntimeCartridgesTab({ chainId, adminToken, actor }: Props) {
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
         {filtered.map((c) => {
           const active = isActive(c.state);
+          const hasOverride = config.strategy_configs?.[c.id] != null;
           return (
-            <Card key={c.id}>
+            <Card
+              key={c.id}
+              className={`cursor-pointer transition-colors hover:border-primary/50 ${
+                hasOverride ? "border-info/40" : undefined
+              }`}
+              onClick={() => setSettingsFor(c)}
+              title="Click to configure this strategy's parameters"
+            >
               <CardContent className="space-y-2 py-4">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -218,18 +231,20 @@ export function RuntimeCartridgesTab({ chainId, adminToken, actor }: Props) {
                       {c.id}
                     </div>
                   </div>
-                  <Switch
-                    checked={active}
-                    disabled={!hasSession || toggling === c.id}
-                    onCheckedChange={(next) => void onToggle(c, next)}
-                    title={
-                      !hasSession
-                        ? "Admin session required"
-                        : active
-                          ? "Pause this cartridge on the searcher (hot-reload)"
-                          : "Resume this cartridge on the searcher (hot-reload)"
-                    }
-                  />
+                  <span onClick={(e) => e.stopPropagation()}>
+                    <Switch
+                      checked={active}
+                      disabled={!hasSession || toggling === c.id}
+                      onCheckedChange={(next) => void onToggle(c, next)}
+                      title={
+                        !hasSession
+                          ? "Admin session required"
+                          : active
+                            ? "Pause this cartridge on the searcher (hot-reload)"
+                            : "Resume this cartridge on the searcher (hot-reload)"
+                      }
+                    />
+                  </span>
                 </div>
                 {c.description && (
                   <p className="line-clamp-2 text-xs text-muted-foreground">{c.description}</p>
@@ -273,12 +288,40 @@ export function RuntimeCartridgesTab({ chainId, adminToken, actor }: Props) {
                       </Badge>
                     );
                   })()}
+                  {hasOverride && (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] bg-warning/10 text-warning border-warning/40"
+                      title="This strategy has a per-strategy settings override (click to edit)"
+                    >
+                      ⚙ settings
+                    </Badge>
+                  )}
                 </div>
               </CardContent>
             </Card>
           );
         })}
       </div>
+
+      {/* Per-strategy settings sheet — click on a cartridge card opens this.
+          Edits trading_config.strategy_configs[c.id] with the Excel-spec
+          parameters (yield gates, legs model, cost ceilings, pool constraints)
+          and round-trips via putTradingConfig (searcher hot-reloads ≤1s). */}
+      {settingsFor && (
+        <StrategySettingsSheet
+          open={settingsFor != null}
+          onOpenChange={(open) => {
+            if (!open) setSettingsFor(null);
+          }}
+          strategyKind={settingsFor.id}
+          displayName={settingsFor.name ?? settingsFor.id}
+          config={config}
+          onSaved={onSaved}
+          adminToken={adminToken}
+          actor={actor}
+        />
+      )}
     </div>
   );
 }
