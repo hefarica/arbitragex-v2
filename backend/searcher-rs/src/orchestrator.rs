@@ -56,6 +56,7 @@ use crate::metrics::{
     OPPORTUNITIES_PUBLISHED_TOTAL, REJECTED_CONFIG_TOTAL, REJECTED_NO_PROFIT_TOTAL,
     SIMULATION_FAILED_TOTAL,
 };
+use crate::gates::{MacroMevGate, MacroMevGateConfig};
 use crate::opportunity_emitter::{EmitOutcome, OpportunityEmitter};
 use crate::route_intent::RouteIntent;
 use crate::size_optimizer::{OptimizeOutcome, OptimizeRejectReason, SizeOptimizer};
@@ -1033,9 +1034,52 @@ impl Orchestrator {
                         .emit_rejected(&opp, label, &reason_str)
                         .await?;
                 } else {
-                    // Passed all gates.
+                    // Passed all spine gates.
                     opp.roi_pct = Some(outcome.net_roi_pct);
                     opp.net_expected_profit_usd = Some(outcome.net_profit_usd);
+
+                    // ── MacroMevGate (Operador Energético) ─────────────────────
+                    // Real gate from crate::gates — compiles ALWAYS (no dead feature
+                    // flag); the gate self-disables via ARBX_GATE_MACRO_MEV_ENABLED.
+                    // Evaluates the Hamiltonian of the system: when the margin
+                    // (net_yield + epsilon) cannot cover gas × confiscation_threshold,
+                    // the trajectory diverges (E_state ≥ τ) → reject with the gate's
+                    // reason. Runs on the fully-populated `opp` (net profit + ROI
+                    // already set by the spine evaluator above).
+                    {
+                        use crate::shared::gates::GateLogic;
+                        let gate_config = MacroMevGateConfig::from_env();
+                        let gate = MacroMevGate;
+                        if let Some(gate_outcome) = gate.evaluate(&opp, &gate_config) {
+                            if gate_outcome.reject {
+                                let reason_str = format!("{:?}", gate_outcome.reason);
+                                opp.rejection_reason = Some(reason_str.clone());
+                                opp.roi_pct = Some(0.0);
+                                opp.risk_score = Some(0.0);
+                                REJECTED_CONFIG_TOTAL
+                                    .with_label_values(&[&chain_str, label_str, "macro_mev_gate"])
+                                    .inc();
+                                info!(
+                                    event = "v2.emitter.input",
+                                    chain_id,
+                                    tx_hash = %sc.source_intent_hash,
+                                    strategy = label_str,
+                                    dry_run = self.ctx.emitter.is_dry_run(),
+                                    rejection_reason = ?opp.rejection_reason,
+                                    expected_profit_usd = ?opp.expected_profit_usd,
+                                    net_expected_profit_usd = ?opp.net_expected_profit_usd,
+                                    mitigation = %gate_outcome.mitigation,
+                                    can_override = gate_outcome.can_override,
+                                    "MacroMevGate: orbital divergence — E_state >= threshold"
+                                );
+                                self.ctx
+                                    .emitter
+                                    .emit_rejected(&opp, label, &reason_str)
+                                    .await?;
+                                return Ok(());
+                            }
+                        }
+                    }
                     // ── TASK 1 log #9: v2.emitter.input ──────────────────
                     info!(
                         event = "v2.emitter.input",
