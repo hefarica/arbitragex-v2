@@ -129,6 +129,9 @@ pub mod cartridge_loader;
 pub mod cartridge_boot;
 // FASE OMEGA — Block/log backrunning scanner (ARBX_MEMPOOL_MODE=block).
 pub mod block_scanner;
+// Fix B — math evidence (observe-only): builds MarketState from reserves and
+// evaluates RegimeRouter-recommended operators, logging their outputs.
+pub mod math_evidence;
 // Carnot Orchestrator v2 — thermodynamic control plane.
 pub mod thermodynamics;
 

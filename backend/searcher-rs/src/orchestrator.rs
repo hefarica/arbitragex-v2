@@ -64,6 +64,7 @@ use crate::strategy_label::StrategyLabel;
 use shared_rs::trading_config::TradingConfigState;
 use std::collections::HashMap;
 use std::sync::Arc;
+use ethers::types::Address;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -116,6 +117,13 @@ pub struct OrchestratorContext {
     /// route intent is shadow-evaluated against active cartridges OFF the hot path
     /// (observe-only: logs/telemetry, never a StrategyCandidate, never execution).
     pub cartridge_runner: Option<Arc<CartridgeRunner>>,
+    /// Fix B — math evidence (observe-only). The 31-operator registry and the
+    /// regime decision tree. Used to evaluate route intents against the math
+    /// operators recommended for the detected market regime; outputs are
+    /// logged as telemetry only (never alter scoring in this phase).
+    pub math_registry: Arc<math_engine::OperatorRegistry>,
+    /// Fix B — regime decision tree for operator selection.
+    pub regime_router: math_engine::RegimeRouter,
     /// SED Bridge — connects to sed-core math pipeline (paper-shadow only).
     /// When `Some`, feeds gas observations and enriches candidates with
     /// stochastic convergence metrics. When `None`, orchestrator runs
@@ -265,6 +273,40 @@ impl Orchestrator {
                 crate::cartridge_boot::shadow_evaluate_intent(runner, intent_for_shadow, chain_id)
                     .await;
             });
+        }
+
+        // ── Fix B — math evidence (observe-only, detached) ───────────────────
+        // Evaluate the RegimeRouter-recommended operators against the pools in
+        // this intent. Detached task — zero added latency to the hot path. The
+        // outputs are logged as telemetry (regime + operator values); they do
+        // NOT alter scoring in this phase. strategy_kind from the router kind.
+        {
+            let reserves_cache = self.ctx.dex_engine.reserves_cache.clone();
+            let registry = self.ctx.math_registry.clone();
+            let router = self.ctx.regime_router;
+            let strategy_kind = format!("{:?}", intent.router_kind);
+            let pools: Vec<Address> = intent
+                .legs
+                .iter()
+                .filter_map(|leg| leg.pool_hint)
+                .collect();
+            if !pools.is_empty() {
+                tokio::spawn(async move {
+                    crate::math_evidence::evaluate_math_evidence(
+                        &reserves_cache,
+                        &registry,
+                        &router,
+                        &pools,
+                        chain_id,
+                        0.0, // gas_price_gwei — not carried in RouteIntent yet (observe-only)
+                        0,   // block_number — not carried in RouteIntent yet
+                        0,   // block_timestamp — not carried in RouteIntent yet
+                        std::collections::HashMap::new(),
+                        &strategy_kind,
+                    )
+                    .await;
+                });
+            }
         }
 
         let mut impact = impact;

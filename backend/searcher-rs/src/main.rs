@@ -123,6 +123,9 @@ mod strategy_label;
 // by the binary yet. Allow dead_code on the module; they ARE used in lib tests.
 #[allow(dead_code)]
 mod engines;
+// Fix B — math evidence (observe-only): builds MarketState from reserves and
+// evaluates RegimeRouter-recommended operators. Called from orchestrator.
+mod math_evidence;
 mod orchestrator;
 // Phase 11: LendingPositionIndexer — Redis-backed watchlist + position cache.
 // Dead-code allowed: the indexer is Arc-constructed and passed to the
