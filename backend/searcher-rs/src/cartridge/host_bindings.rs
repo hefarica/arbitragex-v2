@@ -416,6 +416,43 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
         }
     });
 
+    // get_math_evidence(strategy_kind: String) -> Map
+    // Returns the LIVE math-evidence snapshot computed by math_evidence.rs for this
+    // (chain, strategy_kind): the detected market regime + the per-operator scalar
+    // values from the 31-operator registry (op_01_svd … op_31_drl_agent). This is
+    // the "anabolic" that lets each cartridge decide with full mathematical context
+    // (regime, volatility, arbitrage_gap, health_factor, oracle_bias, parity_deviation
+    // + each operator's scalar) instead of spot math alone.
+    //
+    // Source: `arbx:math_evidence:<chain>:<strategy_kind>` (TTL 120s, refreshed per
+    // intent). Fail-honest (R8): returns UNIT when no recent snapshot exists (the
+    // cartridge must then treat operator context as unavailable, never fabricate it).
+    let ctx_math = ctx.clone();
+    engine.register_fn("get_math_evidence", move |strategy_kind: &str| -> Dynamic {
+        let ctx = ctx_math.clone();
+        let key = format!("arbx:math_evidence:{}:{}", ctx.chain_id, strategy_kind);
+        let raw: Option<String> = ctx.rt_handle.block_on(async {
+            let mut redis = ctx.redis.write().await;
+            redis::AsyncCommands::get(&mut *redis, &key).await.ok()?
+        });
+        match raw {
+            Some(json_str) => match serde_json::from_str::<serde_json::Value>(&json_str) {
+                Ok(val) => {
+                    debug!(event = "cartridge.math_evidence_lookup", chain_id = ctx.chain_id, strategy = %strategy_kind, hit = true);
+                    json_value_to_dynamic(&val)
+                }
+                Err(e) => {
+                    warn!(event = "cartridge.math_evidence_decode_failed", chain_id = ctx.chain_id, strategy = %strategy_kind, error = %e);
+                    Dynamic::UNIT
+                }
+            },
+            None => {
+                debug!(event = "cartridge.math_evidence_lookup", chain_id = ctx.chain_id, strategy = %strategy_kind, hit = false);
+                Dynamic::UNIT
+            }
+        }
+    });
+
     // v3_arb_enabled() -> bool
     // Gate for the cross-pool round-trip arb emission (is_opportunity:true path). Reads
     // ARBX_V3_ARB_MODE; ONLY "on" enables it. Default OFF (any other/unset value -> false), so the
