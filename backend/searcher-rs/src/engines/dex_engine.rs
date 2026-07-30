@@ -268,7 +268,11 @@ impl DexEngine {
 
                     // USD pricing: V2 cascade first, then V3 projector result.
                     let gross_profit_usd: Option<f64> = if can_price_v2 {
-                        compute_gross_usd(&gross_spread_units, pool_a, pool_b, &cfg_opt)
+                        compute_gross_usd(
+                            &gross_spread_units,
+                            &cfg_opt,
+                            intent.legs.first().map(|l| l.token_out),
+                        )
                     } else {
                         v3_gross_usd
                     };
@@ -508,11 +512,20 @@ fn orient_reserves(reserves: (U256, U256), pool: &PoolRef, intent: &RouteIntent)
 /// pre-filter and is corrected by the spine evaluator's cascade oracle. The
 /// goal is to produce a non-zero fast-filter signal for WETH pairs so the
 /// gate does not default-reject them before the oracle runs.
+/// UNIT-SCALE (Bug $69M): the spread is in RAW units of the swapped token,
+/// scaled by probe_amount (1e18). In an arb loop token_in == token_out, so the
+/// spread is denominated in that token's raw units. The previous code divided
+/// by a hardcoded 1e18 (18-dec assumption) — for a 6-dec token (USDC/USDT) that
+/// inflates USD by ~1e12 (observed: expected_profit_usd = $69,074,653 for a
+/// sub-dollar real arb). Correct scale: divide by 10^(token_decimals).
+///
+/// Decimals come from `canonical_token_decimals` — immutable contract properties
+/// of canonical mainnet tokens (NOT market data, NOT a mock). Unknown token →
+/// 18 (the dominant ERC-20 case; correct for WETH/DAI/most tokens).
 fn compute_gross_usd(
     spread_units: &U256,
-    _pool_a: &PoolRef,
-    _pool_b: &PoolRef,
     cfg_opt: &Option<TradingConfigState>,
+    token_out: Option<Address>,
 ) -> Option<f64> {
     // No config → oracle gap — R8 None.
     let cfg = cfg_opt.as_ref()?;
@@ -522,10 +535,14 @@ fn compute_gross_usd(
         return None;
     }
 
-    // Spread in f64 (lossy; acceptable — scoring path only).
-    // Divide by 1e18 to convert from wei to token units (assumes 18-decimal
-    // token_out — the evaluator corrects this with real TokenMeta decimals).
-    let spread_f64 = u256_to_f64_lossy(*spread_units) / 1e18_f64;
+    // The spread is denominated in the token RECEIVED by the swap (token_out of
+    // the leg), since out_a/out_b = v2_amount_out(token_in → token_out). Scale by
+    // THAT token's decimals.
+    let decimals: u32 = canonical_token_decimals(token_out);
+
+    // spread (raw) / 10^decimals → real token units of the swapped token.
+    let scale = 10f64.powi(decimals as i32);
+    let spread_f64 = u256_to_f64_lossy(*spread_units) / scale;
 
     // Fast-filter: use base_token_price_usd as a proxy.
     // R8: only return Some when price > 0 (fabricating a zero-price USD is
@@ -534,6 +551,24 @@ fn compute_gross_usd(
         Some(spread_f64 * cfg.base_token_price_usd)
     } else {
         None
+    }
+}
+
+/// Canonical mainnet (chain_id=1) token decimals. These are IMMUTABLE contract
+/// properties set at deploy time (e.g. USDC is permanently 6-dec) — protocol
+/// constants, not market data, so a static lookup is honest and matches the
+/// standard MEV-searcher practice (Flashbots/Artemis use the same canonical
+/// tables). Anything not listed defaults to 18 (the dominant ERC-20 case).
+fn canonical_token_decimals(token: Option<Address>) -> u32 {
+    let Some(addr) = token else { return 18 };
+    match format!("0x{:040x}", addr).as_str() {
+        // USDC (6), USDT (6)
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" => 6,
+        "0xdac17f958d2ee523a2206206994597c13d831ec7" => 6,
+        // WBTC (8)
+        "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599" => 8,
+        // Everything else (WETH, DAI, and the ERC-20 majority) → 18.
+        _ => 18,
     }
 }
 
