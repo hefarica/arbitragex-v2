@@ -439,6 +439,34 @@ app.get("/status", (c) => {
 // onError. NEVER a fabricated 200. Observe-only.
 app.get("/api/system/drift", (c) => proxy(c, "/api/system/drift", "arbx:cache:sys-drift", 5));
 app.get("/api/system/feature_manifest", (c) => proxy(c, "/api/system/feature_manifest", "arbx:cache:sys-manifest", 30));
+// Mirror Fidelity (config-hashes) + runtime-ack. api-server mounts at
+// /api/system/*. config-hashes is observe-only; runtime-ack is the searcher-rs
+// ack sink (POST, service-token gated upstream — edge is a transparent
+// pass-through, no cache on the ack path, never a fabricated 200).
+app.get("/api/system/config-hashes", (c) => proxy(c, "/api/system/config-hashes", "arbx:cache:sys-config-hashes", 30));
+// runtime-ack POST: the generic proxy() is GET-only and drops the body, so this
+// forwards method + JSON body + service token verbatim, surfaces the upstream
+// status as-is (never a fabricated 2xx), and does not cache the ack path.
+app.post("/api/system/runtime-ack", async (c) => {
+  const serviceToken = c.req.header("x-arbx-service-token");
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/system/runtime-ack`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+      ...(serviceToken ? { "x-arbx-service-token": serviceToken } : {}),
+    },
+    body: await c.req.text(),
+    cf: { cacheTtl: 0, cacheEverything: false },
+  });
+  c.header("x-arbx-cache", "PASS");
+  return new Response(upstream.body, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },
+  });
+});
 // FE-CRIT-03/04 — honest contract / capital / crucible read surface (api-server
 // /api/*, no /v1/). proxy() forwards upstream status verbatim, never a fake 200.
 app.get("/api/contracts", (c) => proxy(c, "/api/contracts", "arbx:cache:contracts", 5));

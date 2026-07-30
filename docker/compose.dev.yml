@@ -284,6 +284,11 @@ services:
       - ..:/repo:ro
     depends_on:
       redis: { condition: service_healthy }
+      # R6: api-server mounts system-manifest (config-hashes / runtime-ack) ONLY if
+      # the PG pool is non-null at boot. Without postgres in depends_on, api-server
+      # can boot before postgres is healthy → pool null → those routes 404 until a
+      # manual restart (mount is one-shot at startup). Require healthy postgres.
+      postgres: { condition: service_healthy }
     networks: [arbx-net]
     <<: *common-logging
 

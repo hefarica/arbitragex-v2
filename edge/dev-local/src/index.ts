@@ -424,6 +424,42 @@ app.post("/api/cartridges/runtime/:id/resume", (req, res) => {
 // {error:"upstream_unreachable"}. NEVER a fabricated 200. Observe-only.
 app.get("/api/system/drift", (req, res) => proxy("/api/system/drift", req, res));
 app.get("/api/system/feature_manifest", (req, res) => proxy("/api/system/feature_manifest", req, res));
+// Mirror Fidelity read surface (config-hashes) + runtime-ack write surface.
+// api-server mounts these at /api/system/* (system-manifest.ts). config-hashes
+// is observe-only (per-resource hashes); runtime-ack is the searcher-rs ack
+// sink (POST, service-token gated upstream — the edge is a transparent
+// pass-through and never fabricates a 200). Without these proxy lines the edge
+// 404s them even though the api-server serves them (observed post-deploy).
+app.get("/api/system/config-hashes", (req, res) => proxy("/api/system/config-hashes", req, res));
+// runtime-ack is a POST (searcher-rs ack sink). The generic proxy() is GET-only
+// and drops the body, so this handler forwards method + JSON body verbatim and
+// surfaces the upstream status as-is (never a fabricated 2xx). Service-token
+// enforcement happens upstream in api-server; the edge is a transparent relay.
+app.post("/api/system/runtime-ack", async (req, res) => {
+  try {
+    const upstream = await fetch(`${API_SERVER_URL}/api/system/runtime-ack`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-arbx-edge-token": ARBX_EDGE_TOKEN,
+        "x-arbx-trace-id": (req as express.Request & { traceId?: string }).traceId ?? "",
+        // Forward the service token if the caller supplied one (header name used
+        // by requireServiceToken upstream).
+        ...(req.headers["x-arbx-service-token"]
+          ? { "x-arbx-service-token": String(req.headers["x-arbx-service-token"]) }
+          : {}),
+      },
+      body: JSON.stringify(req.body ?? {}),
+    });
+    const body = await upstream.text();
+    res.status(upstream.status);
+    res.setHeader("content-type", upstream.headers.get("content-type") ?? "application/json");
+    res.send(body);
+  } catch (e) {
+    logger.error({ err: (e as Error).message, path: "/api/system/runtime-ack" }, "proxy error");
+    res.status(502).json({ error: "upstream_unreachable" });
+  }
+});
 // SED Convergence Status — backend mounts at /api/v1/sed/status (sed-status.ts).
 // Observe-only; never writes capital or triggers execution. Query string
 // (chain_id, window_minutes) forwarded verbatim by proxy() mode-1.
