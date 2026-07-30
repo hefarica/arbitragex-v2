@@ -273,19 +273,33 @@ export function RuntimeCartridgesTab({ chainId, config, onSaved, adminToken, act
                       v{c.version}
                     </Badge>
                   )}
-                  {/* 264×31 mapping — the math operators this cartridge applies.
+                  {/* 264×31 operator LED strip — one dot per applicable math
+                      operator. LIT (strategy color) when the cartridge is Active
+                      (operators are live on the searcher); DIM when paused.
                       Derived from the cartridge id → MEV-XX-YYY canonical id. */}
                   {(() => {
                     const ops = strategyOperators(cartridgeToMevId(c.id), STRATEGY_MAPPING);
                     if (ops.length === 0) return null;
                     return (
-                      <Badge
-                        variant="outline"
-                        className="text-[10px] bg-info/10 text-info border-info/30"
-                        title={`Math operators applied by this strategy (264×31 matrix): ${ops.map((o) => `#${o}`).join(", ")}`}
+                      <span
+                        className="flex items-center gap-[3px] flex-wrap"
+                        title={`${ops.length} math operators applied by this strategy (264×31 matrix): ${ops.map((o) => `#${o}`).join(", ")}. ${active ? "LIVE on searcher" : "paused"}`}
                       >
-                        {ops.length} ops
-                      </Badge>
+                        {ops.map((op) => (
+                          <span
+                            key={op}
+                            title={`Operator #${op}${active ? " — live" : " — paused"}`}
+                            className={`inline-block h-2 w-2 rounded-full transition-colors ${
+                              active
+                                ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]"
+                                : "bg-muted-foreground/25"
+                            }`}
+                          />
+                        ))}
+                        <span className="ml-1 text-[10px] text-muted-foreground">
+                          {ops.length} ops
+                        </span>
+                      </span>
                     );
                   })()}
                   {hasOverride && (
