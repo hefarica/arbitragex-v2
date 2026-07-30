@@ -929,7 +929,12 @@ impl PoolSyncWorker {
         // decimals must NOT crash the whole worker at boot (that bug left every reserves/
         // slot0 cache empty). Fail-honest: skip the unusable token + count it, never
         // fabricate a symbol/decimals for a token that can't be priced or matched.
-        let rows = sqlx::query_as::<_, (String, Option<String>, Option<i32>, Option<bool>)>(
+        // `decimals` is SMALLINT (INT2) in the tokens table — sqlx maps INT2 to i16,
+        // NOT i32. Decoding as Option<i32> crashes the whole worker at boot with
+        // "mismatched types; Rust Option<i32> (INT4) not compatible with SQL INT2",
+        // which left every reserves/slot0/token cache empty (cascade: no_price_oracle,
+        // reserves_cache_miss, math_evidence dead, 0 viable opportunities).
+        let rows = sqlx::query_as::<_, (String, Option<String>, Option<i16>, Option<bool>)>(
             r#"SELECT address, symbol, decimals, is_stablecoin
                FROM tokens WHERE chain_id = $1 AND is_active = TRUE"#,
         )
