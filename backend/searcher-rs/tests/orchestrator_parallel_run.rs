@@ -200,6 +200,11 @@ async fn build_test_orchestrator() -> Option<std::sync::Arc<searcher_rs::orchest
         pool_discovery,
         chain_id: CHAIN_ID,
         cartridge_runner: None,
+        // Fix B math-evidence sensors — mirror scanner.rs production wiring.
+        cartridge_mode: searcher_rs::cartridge_boot::CartridgeMode::from_env(),
+        math_registry: Arc::new(math_engine::OperatorRegistry::new()),
+        regime_router: math_engine::RegimeRouter::default(),
+        math_redis: redis_conn.clone(),
         #[cfg(feature = "paper-shadow")]
         sed_bridge: None,
     };
