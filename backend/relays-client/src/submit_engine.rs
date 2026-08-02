@@ -107,6 +107,43 @@ impl SubmitEngine {
         let paper_dynamic = self.paper_mode.is_enabled_for_chain(opp.chain_id).await;
         let paper = paper_dynamic || paper_env;
 
+        // Paper-only sink without a capital signer (Slice 1 / SSH-CI/CD paper path).
+        // The checklist branch below also returns PaperModeActive → paper_trade_runs,
+        // but only after building PreExecuteContext. If paper is armed and there is
+        // no signer, we must never reach build_and_sign / broadcast. Record the run
+        // and exit here so the simulated-stream consumer stays useful on paper VPS
+        // nodes that intentionally omit FLASHBOTS_SIGNER_KEY.
+        if paper && self.signer.is_none() {
+            info!(
+                event = "paper_mode.no_signer_short_circuit",
+                opp_id = %opp.id,
+                chain_id = opp.chain_id,
+                "paper mode + no signer — recording paper_trade_run, no broadcast"
+            );
+            if let Some(ref pg_pool) = self.pg {
+                if let Err(e) = insert_paper_trade_run(pg_pool, opp).await {
+                    warn!(
+                        event = "paper_trade.insert_failed",
+                        opp_id = %opp.id,
+                        error = %e,
+                        "failed to insert paper_trade_run (no-signer paper path) — non-fatal"
+                    );
+                }
+            }
+            return ExecutionResult {
+                opportunity_id: opp.id,
+                status: ExecutionStatus::NotSubmitted,
+                tx_hash: None,
+                relay_used: Some("paper_mode".into()),
+                block_included: None,
+                gas_used_wei: None,
+                actual_profit_usd: None,
+                error_message: Some("paper_mode_enabled".into()),
+                submitted_at: Utc::now(),
+                trace_id: opp.trace_id,
+            };
+        }
+
         // -----------------------------------------------------------------------
         // Pre-execute checklist (BE-03) — canonical 12-step safety gate.
         //
@@ -867,6 +904,7 @@ mod tests {
             risk_score: None,
             block_number: Some(12_000_000),
             rejection_reason: None,
+            cartridge_id: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
         }

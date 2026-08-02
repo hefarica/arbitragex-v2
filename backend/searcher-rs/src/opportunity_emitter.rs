@@ -574,6 +574,7 @@ mod tests {
             risk_score: Some(0.8),
             block_number: Some(12_345_678),
             rejection_reason: rejection,
+            cartridge_id: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
         }
