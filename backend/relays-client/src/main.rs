@@ -6,14 +6,17 @@
 //!
 //! Boots:
 //!   - Axum HTTP /health /metrics /execute (hot-path invocation).
-//!   - Redis Streams consumer on arbx:opps:simulated (if signer+RPC present).
+//!   - Redis Streams consumer on arbx:opps:simulated when DB+RPC are present
+//!     AND (signer is loaded **or** paper mode is armed).
 //!
-//! Without FLASHBOTS_SIGNER_KEY or RPC_HTTP_1: /execute returns 501,
-//! consumer doesn't spawn. paper_mode=true by default; only builds+signs
-//! (no submit).
+//! Paper mode does **not** require `FLASHBOTS_SIGNER_KEY`: the engine records
+//! `paper_trade_runs` and never broadcasts. Live / broadcast still requires a
+//! signer inside `SubmitEngine` (fail-closed). Without RPC_HTTP_<chain> or DB,
+//! the consumer stays down (nothing useful to persist).
 
 mod bundle_builder;
 mod consumer;
+mod consumer_spawn;
 mod live_exec_policy;
 mod multi_relay;
 mod nonce_manager;
@@ -55,6 +58,9 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 struct AppState {
     engine: Arc<SubmitEngine>,
     has_signer: bool,
+    /// Boot-time paper default from config; runtime Redis papermode is re-read
+    /// per request so a flip after boot still opens the paper /execute path.
+    paper_mode: PaperModeClient,
     env: String,
 }
 
@@ -62,12 +68,15 @@ async fn execute_handler(
     State(st): State<Arc<AppState>>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    if !st.has_signer {
+    // Live without signer stays 501. Paper may run without signer — engine
+    // short-circuits to paper_trade_runs and never broadcasts.
+    let paper_now = st.paper_mode.is_enabled().await;
+    if !st.has_signer && !consumer_spawn::allow_execute_without_signer(paper_now) {
         let payload = NotImplementedPayload::new(
             vec!["FLASHBOTS_SIGNER_KEY", "RPC_HTTP_1"],
             "S5",
             format!(
-                "relays-client up but signer not configured (env={})",
+                "relays-client up but signer not configured and paper_mode off (env={})",
                 st.env
             ),
         );
@@ -434,6 +443,7 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         engine: engine.clone(),
         has_signer: signer.is_some() && rpc_pool.is_some(),
+        paper_mode: paper_mode.clone(),
         env: cfg.system.env.clone(),
     });
 
@@ -446,55 +456,84 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state);
     let app = build_health_router(ServiceInfo::new(SERVICE, VERSION)).merge(exec_router);
 
+    // Paper armed if Redis papermode says so OR config default is paper.
+    // Matches SubmitEngine's paper_env || paper_dynamic posture for spawn.
+    let paper_at_boot = paper_mode.is_enabled().await || cfg.execution.paper_mode;
+    let has_db = db_pool_opt.is_some();
+    let has_rpc = rpc_pool.is_some();
+    let has_signer = signer.is_some();
+    let spawn_consumer =
+        consumer_spawn::should_spawn_consumer(has_db, has_rpc, has_signer, paper_at_boot);
+
     info!(
         event = "service.boot",
         service = SERVICE, env = %cfg.system.env, port,
-        has_signer = signer.is_some(),
+        has_signer,
         has_multi_relay = multi_relay.is_some(),
         relay_backends = multi_relay.as_ref().map(|mr| mr.backend_names()).unwrap_or_else(|| "none".to_string()),
-        paper_mode = cfg.execution.paper_mode,
+        paper_mode = paper_at_boot,
+        spawn_consumer,
         max_value_eth = cfg.execution.max_value_eth,
         "relays-client listening"
     );
 
-    // Consumer spawns only when signer + rpc_pool + DB pool are all present.
-    // We reuse the pool opened above for the relay catalog lookup, so we don't
-    // double up connections.
-    if let (Some(pg_pool), true, true) = (db_pool_opt.clone(), signer.is_some(), rpc_pool.is_some())
-    {
-        let redis_client = redis::Client::open(redis_url.clone())?;
-        let redis_conn = redis_client.get_connection_manager().await?;
-        let consumer = consumer::Consumer {
-            redis: redis_conn,
-            pool: pg_pool.clone(),
-            engine: SubmitEngine {
-                signer: signer.clone(),
-                rpc_pool: rpc_pool.clone(),
-                nonce,
-                multi_relay,
-                flashbots_for_callbundle,
-                kill_switch: killswitch.clone(),
-                paper_mode: paper_mode.clone(),
-                cfg: cfg.clone(),
-                pg: Some(pg_pool),
-                redis: redis_mgr_for_engine,
-            },
-            consumer_name: std::env::var("HOSTNAME").unwrap_or_else(|_| "relay-1".into()),
-            dlq: consumer::DlqConfig::from_env(),
-        };
-        tokio::spawn(async move {
-            if let Err(e) = consumer.run().await {
-                tracing::error!(event = "relays_consumer.fatal", error = %e);
+    // Consumer: DB + RPC required. Signer required only when NOT in paper mode.
+    // Paper-only spawn still never broadcasts (SubmitEngine paper short-circuit).
+    if spawn_consumer {
+        if let Some(pg_pool) = db_pool_opt.clone() {
+            let redis_client = redis::Client::open(redis_url.clone())?;
+            let redis_conn = redis_client.get_connection_manager().await?;
+            let consumer = consumer::Consumer {
+                redis: redis_conn,
+                pool: pg_pool.clone(),
+                engine: SubmitEngine {
+                    signer: signer.clone(),
+                    rpc_pool: rpc_pool.clone(),
+                    nonce,
+                    multi_relay,
+                    flashbots_for_callbundle,
+                    kill_switch: killswitch.clone(),
+                    paper_mode: paper_mode.clone(),
+                    cfg: cfg.clone(),
+                    pg: Some(pg_pool),
+                    redis: redis_mgr_for_engine,
+                },
+                consumer_name: std::env::var("HOSTNAME").unwrap_or_else(|_| "relay-1".into()),
+                dlq: consumer::DlqConfig::from_env(),
+            };
+            tokio::spawn(async move {
+                if let Err(e) = consumer.run().await {
+                    tracing::error!(event = "relays_consumer.fatal", error = %e);
+                }
+            });
+            if has_signer {
+                info!(event = "relays_consumer.spawned", paper_mode = paper_at_boot);
+            } else {
+                info!(
+                    event = "relays_consumer.spawned_paper_only",
+                    paper_mode = paper_at_boot,
+                    "consumer spawned without signer — paper_trade_runs only, no broadcast"
+                );
             }
-        });
-        info!(event = "relays_consumer.spawned");
+        } else {
+            // should_spawn_consumer requires has_db; this branch is defensive.
+            info!(
+                event = "relays_consumer.skipped",
+                has_signer,
+                has_rpc_pool = has_rpc,
+                has_db,
+                paper_mode = paper_at_boot,
+                "consumer not spawned — DB pool missing after spawn gate"
+            );
+        }
     } else {
         info!(
             event = "relays_consumer.skipped",
-            has_signer = signer.is_some(),
-            has_rpc_pool = rpc_pool.is_some(),
-            has_db = db_pool_opt.is_some(),
-            "consumer not spawned — prerequisites missing (service stays up, /execute 501)"
+            has_signer,
+            has_rpc_pool = has_rpc,
+            has_db,
+            paper_mode = paper_at_boot,
+            "consumer not spawned — need DB+RPC and (signer or paper_mode)"
         );
     }
 
