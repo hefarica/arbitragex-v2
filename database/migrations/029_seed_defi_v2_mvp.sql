@@ -30,13 +30,29 @@ SELECT id, 1, '0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac' FROM dexes WHERE name
 ON CONFLICT (chain_id, address) DO NOTHING;
 
 -- 4) Tokens (5 blue-chip Ethereum). decimals are mainnet ground truth.
-INSERT INTO tokens (chain_id, address, symbol, decimals, is_stablecoin) VALUES
-  (1, '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', 'WETH', 18, FALSE),
-  (1, '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', 'USDC',  6, TRUE),
-  (1, '0xdac17f958d2ee523a2206206994597c13d831ec7', 'USDT',  6, TRUE),
-  (1, '0x6b175474e89094c44da98b954eedeac495271d0f', 'DAI',  18, TRUE),
-  (1, '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599', 'WBTC',  8, FALSE)
-ON CONFLICT (chain_id, address) DO NOTHING;
+-- Idempotent insert that works whether or not resolved_via column exists yet
+-- (034 adds it with NOT NULL, 072 backfills). We include it if present.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_name = 'tokens' AND column_name = 'resolved_via') THEN
+    INSERT INTO tokens (chain_id, address, symbol, decimals, is_stablecoin, resolved_via) VALUES
+      (1, '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', 'WETH', 18, FALSE, 'onchain_full'),
+      (1, '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', 'USDC',  6, TRUE,  'onchain_full'),
+      (1, '0xdac17f958d2ee523a2206206994597c13d831ec7', 'USDT',  6, TRUE,  'onchain_full'),
+      (1, '0x6b175474e89094c44da98b954eedeac495271d0f', 'DAI',  18, TRUE,  'onchain_full'),
+      (1, '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599', 'WBTC',  8, FALSE, 'onchain_full')
+    ON CONFLICT (chain_id, address) DO NOTHING;
+  ELSE
+    INSERT INTO tokens (chain_id, address, symbol, decimals, is_stablecoin) VALUES
+      (1, '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', 'WETH', 18, FALSE),
+      (1, '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', 'USDC',  6, TRUE),
+      (1, '0xdac17f958d2ee523a2206206994597c13d831ec7', 'USDT',  6, TRUE),
+      (1, '0x6b175474e89094c44da98b954eedeac495271d0f', 'DAI',  18, TRUE),
+      (1, '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599', 'WBTC',  8, FALSE)
+    ON CONFLICT (chain_id, address) DO NOTHING;
+  END IF;
+END $$;
 
 -- 5) Pools — UniswapV2
 INSERT INTO pools (chain_id, factory_id, address, token0_id, token1_id, fee_tier)
