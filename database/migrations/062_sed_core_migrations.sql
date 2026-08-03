@@ -80,6 +80,7 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
+DROP TRIGGER IF EXISTS trigger_sed_filtrations_updated_at ON sed_filtrations;
 CREATE TRIGGER trigger_sed_filtrations_updated_at
     BEFORE UPDATE ON sed_filtrations
     FOR EACH ROW
@@ -156,6 +157,7 @@ CREATE INDEX IF NOT EXISTS idx_sed_eigenstates_filtration
     ON sed_eigenstates(filtration_id) 
     WHERE filtration_id IS NOT NULL;
 
+DROP TRIGGER IF EXISTS trigger_sed_eigenstates_updated_at ON sed_eigenstates;
 CREATE TRIGGER trigger_sed_eigenstates_updated_at
     BEFORE UPDATE ON sed_eigenstates
     FOR EACH ROW
@@ -247,6 +249,7 @@ CREATE INDEX IF NOT EXISTS idx_sed_allocations_bundle
     ON sed_allocations(bundle_hash) 
     WHERE bundle_hash IS NOT NULL;
 
+DROP TRIGGER IF EXISTS trigger_sed_allocations_updated_at ON sed_allocations;
 CREATE TRIGGER trigger_sed_allocations_updated_at
     BEFORE UPDATE ON sed_allocations
     FOR EACH ROW
@@ -341,6 +344,7 @@ CREATE INDEX IF NOT EXISTS idx_sed_hedges_allocation_b
     ON sed_hedges(allocation_b_id) 
     WHERE allocation_b_id IS NOT NULL;
 
+DROP TRIGGER IF EXISTS trigger_sed_hedges_updated_at ON sed_hedges;
 CREATE TRIGGER trigger_sed_hedges_updated_at
     BEFORE UPDATE ON sed_hedges
     FOR EACH ROW
