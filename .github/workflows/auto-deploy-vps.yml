@@ -211,13 +211,15 @@ jobs:
           # explicitly; they are capital-$0 (paper/shadow, BROADCAST stays disabled).
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build \
             api-server edge frontend \
-            searcher-rs sim-ctl relays-client recon selector-api anvil math-engine
+            searcher-rs sim-ctl relays-client recon selector-api anvil math-engine \
+            token-enricher
 
-          echo "[7/9] Starting stack (infra + hot-path + operator plane)..."
+          echo "[7/9] Starting stack (infra + hot-path + operator plane + observability)..."
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans \
             postgres redis anvil \
             searcher-rs sim-ctl relays-client recon selector-api math-engine \
-            api-server edge frontend
+            api-server edge frontend \
+            token-enricher prometheus loki promtail grafana alertmanager
 
           echo "[8/9] Waiting for health (operator plane via localhost; hot-path via compose healthy)..."
           # searcher-rs 9001 is container-internal only (no host port), so we check the

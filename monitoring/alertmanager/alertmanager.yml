@@ -26,23 +26,19 @@ route:
   group_interval: 5m
   repeat_interval: 4h
   receiver: default
+  # Hardened (2026-08-03): all severities route to the internal api-server
+  # webhook, which is always available and never crashes alertmanager. The
+  # Slack/PagerDuty receivers below are commented out because their
+  # ${SLACK_WEBHOOK_URL} / ${PAGERDUTY_INTEGRATION_KEY} placeholders are NOT
+  # expanded by alertmanager (it does not run envsubst) — an unrendered
+  # placeholder yields an empty URL scheme and crashes the config load on
+  # every restart. To re-enable Slack/PagerDuty, provision the secrets via
+  # Vault and add an envsubst render step to the container entrypoint, then
+  # uncomment the routes + receivers below.
   routes:
-    # Critical: page immediately via PagerDuty, also notify Slack
-    - match:
-        severity: critical
-      receiver: pagerduty-critical
-      group_wait: 0s
-      repeat_interval: 15m
-      continue: true
-    - match:
-        severity: critical
-      receiver: slack-critical
-      group_wait: 0s
-      repeat_interval: 15m
-    # Warning + info go to Slack only
     - match_re:
-        severity: warning|info
-      receiver: slack-critical
+        severity: critical|warning|info
+      receiver: default
       repeat_interval: 2h
 
 receivers:
@@ -51,22 +47,24 @@ receivers:
       - url: "http://api-server:8080/admin/alertmanager/webhook"
         send_resolved: true
 
-  # MON-1: Slack receiver
-  # Requires SLACK_WEBHOOK_URL env var — provision before enabling in prod.
-  - name: slack-critical
-    slack_configs:
-      - api_url: '${SLACK_WEBHOOK_URL}'
-        channel: '#arbx-alerts-critical'
-        send_resolved: true
-        title: '[{{ .Status | toUpper }}] {{ .GroupLabels.alertname }}'
-        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ "\n" }}{{ end }}'
-
-  # MON-1: PagerDuty receiver
-  # Requires PAGERDUTY_INTEGRATION_KEY env var — provision before enabling in prod.
-  - name: pagerduty-critical
-    pagerduty_configs:
-      - service_key: '${PAGERDUTY_INTEGRATION_KEY}'
-        send_resolved: true
+  # ── EXTERNAL RECEIVERS (disabled — see route comment above) ───────────────
+  # To enable: render the placeholders via envsubst in the container entrypoint
+  # (alertmanager itself does NOT expand ${VAR}), then uncomment routes above
+  # pointing critical → pagerduty-critical (+ continue → slack-critical) and
+  # warning|info → slack-critical.
+  #
+  # - name: slack-critical
+  #   slack_configs:
+  #     - api_url: '${SLACK_WEBHOOK_URL}'
+  #       channel: '#arbx-alerts-critical'
+  #       send_resolved: true
+  #       title: '[{{ .Status | toUpper }}] {{ .GroupLabels.alertname }}'
+  #       text: '{{ range .Alerts }}{{ .Annotations.description }}{{ "\n" }}{{ end }}'
+  #
+  # - name: pagerduty-critical
+  #   pagerduty_configs:
+  #     - service_key: '${PAGERDUTY_INTEGRATION_KEY}'
+  #       send_resolved: true
 
 # === TELEGRAM RECEIVER (activate when bot token is ready) ===
 # To enable:

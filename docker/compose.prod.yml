@@ -476,11 +476,9 @@ services:
     ports:
     - 127.0.0.1:3000:3000
     environment:
-      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-grafana_operator_change_me}
       GF_USERS_ALLOW_SIGN_UP: 'false'
       GF_AUTH_ANONYMOUS_ENABLED: 'false'
-    secrets:
-    - grafana_admin_password
     volumes:
     - ../monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
     - ../monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
