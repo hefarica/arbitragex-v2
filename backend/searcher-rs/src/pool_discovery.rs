@@ -724,17 +724,32 @@ impl PoolDiscoveryService {
                 return Ok(id);
             }
 
-            // is_active set from the caller's activate verdict so an UNRATED token
-            // (enumeration) lands is_active=false rather than the migration-021
-            // default TRUE — it isn't allowlist-active until actually rated. The
-            // reactive path passes true. Monotonic on conflict: never deactivate.
+            // Hardened (2026-08-03, anti-corruption): include resolved_via (column is
+            // NOT NULL since 034/072; omitting it produced NULL-crashes and ghost rows).
+            // Anti-symbol-contamination: if a DIFFERENT address already owns this symbol
+            // in defi_registry (the operator-curated Single Source of Truth), NULL the
+            // discovered symbol so it cannot poison bare-symbol lookups. This is exactly
+            // how the bogus duplicate DAI (0x446480cd…, decimals=9), PEPE and SHIB rows
+            // were created — a fake/scam token squatting a blue-chip symbol. The natural
+            // key stays (chain_id, address); only the symbol label is neutralized.
+            // ON CONFLICT no longer overwrites good symbol/decimals with possibly-stale
+            // discovery data (COALESCE keeps the existing value).
             let q_ins = r#"
-                INSERT INTO tokens (chain_id, address, symbol, decimals, is_active, created_at)
-                VALUES ($1, $2, $3, $4, $5, NOW())
+                INSERT INTO tokens (chain_id, address, symbol, decimals, is_active, resolved_via, created_at)
+                SELECT $1, $2,
+                       CASE WHEN EXISTS (
+                              SELECT 1 FROM defi_registry
+                              WHERE chain_id = $1 AND symbol = $3 AND is_active
+                                AND address <> $2
+                            )
+                            THEN NULL
+                            ELSE $3
+                       END,
+                       $4, $5, 'onchain_full', NOW()
                 ON CONFLICT (chain_id, address) DO UPDATE SET
-                    symbol = EXCLUDED.symbol,
-                    decimals = EXCLUDED.decimals,
-                    is_active = tokens.is_active OR EXCLUDED.is_active
+                    decimals = COALESCE(tokens.decimals, EXCLUDED.decimals),
+                    is_active = tokens.is_active OR EXCLUDED.is_active,
+                    last_seen_at = NOW()
                 RETURNING id
             "#;
             if let Ok((id,)) = sqlx::query_as::<_, (Uuid,)>(q_ins)
