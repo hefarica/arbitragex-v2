@@ -25,33 +25,70 @@
 BEGIN;
 
 -- ── Tokens (25 more — operator's allowlist already covers symbols) ──────────
-INSERT INTO tokens (chain_id, address, symbol, decimals, is_stablecoin) VALUES
-  (1, '0x514910771af9ca656af840dff83e8264ecf986ca', 'LINK',  18, FALSE),
-  (1, '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984', 'UNI',   18, FALSE),
-  (1, '0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9', 'AAVE',  18, FALSE),
-  (1, '0x9f8f72aa9304c8b593d555f12ef6589cc3a579a2', 'MKR',   18, FALSE),
-  (1, '0xc00e94cb662c3520282e6f5717214004a7f26888', 'COMP',  18, FALSE),
-  (1, '0x6b3595068778dd592e39a122f4f5a5cf09c90fe2', 'SUSHI', 18, FALSE),
-  (1, '0xd533a949740bb3306d119cc777fa900ba034cd52', 'CRV',   18, FALSE),
-  (1, '0x5a98fcbea516cf06857215779fd812ca3bef1b32', 'LDO',   18, FALSE),
-  (1, '0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0', 'MATIC', 18, FALSE),
-  (1, '0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce', 'SHIB',  18, FALSE),
-  (1, '0x6982508145454ce325ddbe47a25d4ec3d2311933', 'PEPE',  18, FALSE),
-  (1, '0x3845badade8e6dff049820680d1f14bd3903a5d0', 'SAND',  18, FALSE),
-  (1, '0x0f5d2fb29fb7d3cfee444a200298f468908cc942', 'MANA',  18, FALSE),
-  (1, '0x4d224452801aced8b2f0aebe155379bb5d594381', 'APE',   18, FALSE),
-  (1, '0xc944e90c64b2c07662a292be6244bdf05cda44a7', 'GRT',   18, FALSE),
-  (1, '0x0d8775f648430679a709e98d2b0cb6250d2887ef', 'BAT',   18, FALSE),
-  (1, '0xe41d2489571d322189246dafa5ebde1f4699f498', 'ZRX',   18, FALSE),
-  (1, '0xc18360217d8f7ab5e7c516566761ea12ce7f9d72', 'ENS',   18, FALSE),
-  (1, '0x3432b6a60d23ca0dfca7761b7ab56459d9c964d0', 'FXS',   18, FALSE),
-  (1, '0xae7ab96520de3a18e5e111b5eaab095312d7fe84', 'STETH', 18, FALSE),
-  (1, '0xae78736cd615f374d3085123a210448e74fc6393', 'RETH',  18, FALSE),
-  (1, '0xb50721bcf8d664c30412cfbc6cf7a15145234ad1', 'ARB',   18, FALSE),
-  (1, '0x4e3fbd56cd56c3e72c1403e103b45db9da5b9d2b', 'CVX',   18, FALSE),
-  (1, '0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0', 'WSTETH',18, FALSE),
-  (1, '0xb8c77482e45f1f44de1745f52c74426c631bdd52', 'BNB',   18, FALSE)
-ON CONFLICT (chain_id, address) DO NOTHING;
+-- Tolerant insert: include resolved_via only when the column exists (034 adds it
+-- NOT NULL, 072 backfills). Prevents 'null value in column resolved_via' on re-runs
+-- against an already-hardened DB while staying valid on a fresh install.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_name = 'tokens' AND column_name = 'resolved_via') THEN
+    INSERT INTO tokens (chain_id, address, symbol, decimals, is_stablecoin, resolved_via) VALUES
+      (1, '0x514910771af9ca656af840dff83e8264ecf986ca', 'LINK',  18, FALSE, 'onchain_full'),
+      (1, '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984', 'UNI',   18, FALSE, 'onchain_full'),
+      (1, '0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9', 'AAVE',  18, FALSE, 'onchain_full'),
+      (1, '0x9f8f72aa9304c8b593d555f12ef6589cc3a579a2', 'MKR',   18, FALSE, 'onchain_full'),
+      (1, '0xc00e94cb662c3520282e6f5717214004a7f26888', 'COMP',  18, FALSE, 'onchain_full'),
+      (1, '0x6b3595068778dd592e39a122f4f5a5cf09c90fe2', 'SUSHI', 18, FALSE, 'onchain_full'),
+      (1, '0xd533a949740bb3306d119cc777fa900ba034cd52', 'CRV',   18, FALSE, 'onchain_full'),
+      (1, '0x5a98fcbea516cf06857215779fd812ca3bef1b32', 'LDO',   18, FALSE, 'onchain_full'),
+      (1, '0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0', 'MATIC', 18, FALSE, 'onchain_full'),
+      (1, '0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce', 'SHIB',  18, FALSE, 'onchain_full'),
+      (1, '0x6982508145454ce325ddbe47a25d4ec3d2311933', 'PEPE',  18, FALSE, 'onchain_full'),
+      (1, '0x3845badade8e6dff049820680d1f14bd3903a5d0', 'SAND',  18, FALSE, 'onchain_full'),
+      (1, '0x0f5d2fb29fb7d3cfee444a200298f468908cc942', 'MANA',  18, FALSE, 'onchain_full'),
+      (1, '0x4d224452801aced8b2f0aebe155379bb5d594381', 'APE',   18, FALSE, 'onchain_full'),
+      (1, '0xc944e90c64b2c07662a292be6244bdf05cda44a7', 'GRT',   18, FALSE, 'onchain_full'),
+      (1, '0x0d8775f648430679a709e98d2b0cb6250d2887ef', 'BAT',   18, FALSE, 'onchain_full'),
+      (1, '0xe41d2489571d322189246dafa5ebde1f4699f498', 'ZRX',   18, FALSE, 'onchain_full'),
+      (1, '0xc18360217d8f7ab5e7c516566761ea12ce7f9d72', 'ENS',   18, FALSE, 'onchain_full'),
+      (1, '0x3432b6a60d23ca0dfca7761b7ab56459d9c964d0', 'FXS',   18, FALSE, 'onchain_full'),
+      (1, '0xae7ab96520de3a18e5e111b5eaab095312d7fe84', 'STETH', 18, FALSE, 'onchain_full'),
+      (1, '0xae78736cd615f374d3085123a210448e74fc6393', 'RETH',  18, FALSE, 'onchain_full'),
+      (1, '0xb50721bcf8d664c30412cfbc6cf7a15145234ad1', 'ARB',   18, FALSE, 'onchain_full'),
+      (1, '0x4e3fbd56cd56c3e72c1403e103b45db9da5b9d2b', 'CVX',   18, FALSE, 'onchain_full'),
+      (1, '0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0', 'WSTETH',18, FALSE, 'onchain_full'),
+      (1, '0xb8c77482e45f1f44de1745f52c74426c631bdd52', 'BNB',   18, FALSE, 'onchain_full')
+    ON CONFLICT (chain_id, address) DO NOTHING;
+  ELSE
+    INSERT INTO tokens (chain_id, address, symbol, decimals, is_stablecoin) VALUES
+      (1, '0x514910771af9ca656af840dff83e8264ecf986ca', 'LINK',  18, FALSE),
+      (1, '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984', 'UNI',   18, FALSE),
+      (1, '0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9', 'AAVE',  18, FALSE),
+      (1, '0x9f8f72aa9304c8b593d555f12ef6589cc3a579a2', 'MKR',   18, FALSE),
+      (1, '0xc00e94cb662c3520282e6f5717214004a7f26888', 'COMP',  18, FALSE),
+      (1, '0x6b3595068778dd592e39a122f4f5a5cf09c90fe2', 'SUSHI', 18, FALSE),
+      (1, '0xd533a949740bb3306d119cc777fa900ba034cd52', 'CRV',   18, FALSE),
+      (1, '0x5a98fcbea516cf06857215779fd812ca3bef1b32', 'LDO',   18, FALSE),
+      (1, '0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0', 'MATIC', 18, FALSE),
+      (1, '0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce', 'SHIB',  18, FALSE),
+      (1, '0x6982508145454ce325ddbe47a25d4ec3d2311933', 'PEPE',  18, FALSE),
+      (1, '0x3845badade8e6dff049820680d1f14bd3903a5d0', 'SAND',  18, FALSE),
+      (1, '0x0f5d2fb29fb7d3cfee444a200298f468908cc942', 'MANA',  18, FALSE),
+      (1, '0x4d224452801aced8b2f0aebe155379bb5d594381', 'APE',   18, FALSE),
+      (1, '0xc944e90c64b2c07662a292be6244bdf05cda44a7', 'GRT',   18, FALSE),
+      (1, '0x0d8775f648430679a709e98d2b0cb6250d2887ef', 'BAT',   18, FALSE),
+      (1, '0xe41d2489571d322189246dafa5ebde1f4699f498', 'ZRX',   18, FALSE),
+      (1, '0xc18360217d8f7ab5e7c516566761ea12ce7f9d72', 'ENS',   18, FALSE),
+      (1, '0x3432b6a60d23ca0dfca7761b7ab56459d9c964d0', 'FXS',   18, FALSE),
+      (1, '0xae7ab96520de3a18e5e111b5eaab095312d7fe84', 'STETH', 18, FALSE),
+      (1, '0xae78736cd615f374d3085123a210448e74fc6393', 'RETH',  18, FALSE),
+      (1, '0xb50721bcf8d664c30412cfbc6cf7a15145234ad1', 'ARB',   18, FALSE),
+      (1, '0x4e3fbd56cd56c3e72c1403e103b45db9da5b9d2b', 'CVX',   18, FALSE),
+      (1, '0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0', 'WSTETH',18, FALSE),
+      (1, '0xb8c77482e45f1f44de1745f52c74426c631bdd52', 'BNB',   18, FALSE)
+    ON CONFLICT (chain_id, address) DO NOTHING;
+  END IF;
+END $$;
 
 -- ── UniswapV2 Pools (8 more popular WETH-pairs + 2 stable-pairs) ────────────
 
