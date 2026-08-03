@@ -166,6 +166,29 @@ jobs:
             exit 1
           fi
 
+          echo "[2.5/9] Rendering Thanos objstore.yml from .env + Vault TLS (before any down)..."
+          # Placed BEFORE [5/9] down so a render/TLS failure aborts with the
+          # running stack still intact (R8 fail-honest; the 18 keep serving).
+          # git reset --hard above DELETED the gitignored objstore.yml (it was
+          # tracked in old HEAD); this recreates it from the committed .tpl.
+          # Targeted grep extraction: passwords may contain shell metacharacters,
+          # and `docker compose --env-file` does NOT export vars into the shell.
+          export MINIO_ROOT_USER="$(grep -E '^MINIO_ROOT_USER=' .env | head -1 | cut -d= -f2-)"
+          export MINIO_ROOT_PASSWORD="$(grep -E '^MINIO_ROOT_PASSWORD=' .env | head -1 | cut -d= -f2-)"
+          if [ -z "$MINIO_ROOT_USER" ] || [ -z "$MINIO_ROOT_PASSWORD" ]; then
+            echo "::error::MINIO_ROOT_USER/MINIO_ROOT_PASSWORD missing from .env — cannot render objstore.yml"
+            exit 1
+          fi
+          # envsubst EXPLICIT allowlist: only these two vars expand, so any stray
+          # '$' elsewhere in the template (comments etc.) is never mangled.
+          envsubst '${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}' \
+            < monitoring/thanos/objstore.yml.tpl \
+            > monitoring/thanos/objstore.yml
+          grep -q 'access_key: .' monitoring/thanos/objstore.yml || {
+            echo "::error::objstore.yml render produced empty access_key"; exit 1; }
+          # Vault TLS (idempotent — exits 0 if certs already exist). Gitignored dir.
+          bash monitoring/vault/generate-tls.sh
+
           echo "[3/9] Ensuring Postgres is UP (migrations need a live DB)..."
           # Start ONLY postgres (+ redis, cheap) so migrations can run against it.
           # We do NOT down the full stack yet — that happens after the schema is
@@ -214,12 +237,34 @@ jobs:
             searcher-rs sim-ctl relays-client recon selector-api anvil math-engine \
             token-enricher
 
-          echo "[7/9] Starting stack (infra + hot-path + operator plane + observability)..."
+          echo "[7/9] Starting stack (infra + hot-path + operator plane + observability + minio/vault)..."
+          # Thanos is started separately at [7c] AFTER the arbx-metrics bucket
+          # exists — the sidecar's first-boot upload fails if the bucket is absent.
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans \
             postgres redis anvil \
             searcher-rs sim-ctl relays-client recon selector-api math-engine \
             api-server edge frontend \
-            token-enricher prometheus loki promtail grafana alertmanager
+            token-enricher prometheus loki promtail grafana alertmanager minio vault
+
+          echo "[7b/9] Waiting for Minio healthy, then creating arbx-metrics bucket..."
+          for i in $(seq 1 45); do
+            docker inspect --format '{{.State.Health.Status}}' arbitragex-v2-minio-1 2>/dev/null | grep -q healthy && break
+            [ "$i" -eq 45 ] && echo "WARNING: minio not healthy in 45s — skipping bucket + thanos"
+            sleep 1
+          done
+          if docker inspect --format '{{.State.Health.Status}}' arbitragex-v2-minio-1 2>/dev/null | grep -q healthy; then
+            NET=$(docker inspect arbitragex-v2-minio-1 --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}')
+            # creds via -e env (not argv); --ignore-existing makes it idempotent.
+            docker run --rm --network "$NET" --entrypoint /bin/sh \
+              -e MINIO_ROOT_USER -e MINIO_ROOT_PASSWORD \
+              minio/mc:RELEASE.2025-08-13T08-35-41Z \
+              -c 'mc alias set arbx http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1 && mc mb --ignore-existing arbx/arbx-metrics' \
+              || echo "WARNING: bucket creation failed (observability-only, non-blocking)"
+          fi
+
+          echo "[7c/9] Starting Thanos (sidecar + store + query)..."
+          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d thanos-sidecar thanos-store thanos-query \
+            || echo "WARNING: thanos up failed (observability-only, non-blocking)"
 
           echo "[8/9] Waiting for health (operator plane via localhost; hot-path via compose healthy)..."
           # searcher-rs 9001 is container-internal only (no host port), so we check the
@@ -247,6 +292,12 @@ jobs:
             fi
             sleep 1
           done
+
+          # Non-blocking observability health: Thanos is observability-only, so
+          # an unhealthy thanos must NOT fail a feature deploy (warning only).
+          curl -sf http://127.0.0.1:10904/-/healthy >/dev/null 2>&1 \
+            && echo "thanos-query healthy (long-term metrics retention active)" \
+            || echo "::warning:: thanos-query unhealthy (observability-only, non-blocking)"
 
           echo "[9/9] Final status (operator plane + hot-path)..."
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps

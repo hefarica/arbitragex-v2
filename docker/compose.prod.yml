@@ -683,6 +683,11 @@ services:
     logging: *id001
     image: quay.io/thanos/thanos:v0.36.1
     container_name: arbitragex-v2-thanos-sidecar-1
+    # Run as nobody (65534) to match the prometheus container that owns
+    # prometheus_data — the Thanos shipper must write /prometheus/thanos/
+    # (upload bookkeeping). Without this, mkdir fails with EACCES and no
+    # blocks ever upload to Minio (Thanos is "healthy" but functionally dead).
+    user: "65534:65534"
     command:
     - sidecar
     - --tsdb.path=/prometheus
@@ -691,7 +696,9 @@ services:
     - --grpc-address=0.0.0.0:10901
     - --http-address=0.0.0.0:10902
     volumes:
-    - prometheus_data:/prometheus:ro
+    # RW (not :ro): the shipper writes thanos.shipper.json + an upload/ staging
+    # dir here. Prometheus writes only its own block dirs; no collision.
+    - prometheus_data:/prometheus
     - ../monitoring/thanos/objstore.yml:/etc/thanos/objstore.yml:ro
     depends_on:
       prometheus:

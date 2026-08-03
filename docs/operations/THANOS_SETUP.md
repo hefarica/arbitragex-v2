@@ -55,23 +55,31 @@ Create the bucket:
 
 ---
 
-## Step 2: Update objstore.yml credentials (production only)
+## Step 2: objstore.yml credentials (auto-rendered)
 
-For development, `monitoring/thanos/objstore.yml` uses the dev defaults
-matching the `MINIO_ROOT_USER=arbx_dev` and
-`MINIO_ROOT_PASSWORD=changeme_dev_only_123` fallbacks in compose.dev.yml.
+`monitoring/thanos/objstore.yml` is **NOT tracked by git** — it holds real S3
+credentials and is rendered at deploy time from the committed template
+`monitoring/thanos/objstore.yml.tpl`:
 
-For production, replace the `access_key` and `secret_key` values in
-`monitoring/thanos/objstore.yml` with the values set in your `.env` file,
-then rebuild or restart the Thanos services:
+- **CI** (`auto-deploy-vps.yml` step `[2.5/9]`) renders it with `envsubst` from
+  the `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` in the gitignored VPS `.env`.
+  No operator action is needed on deploy — the render is fail-fast (aborts if
+  the creds are missing or the output is empty; R8 fail-honest).
+- **Local dev**: render manually before starting Thanos:
+  ```bash
+  export MINIO_ROOT_USER=arbx_dev MINIO_ROOT_PASSWORD=changeme_dev_only_123
+  envsubst '${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}' \
+    < monitoring/thanos/objstore.yml.tpl > monitoring/thanos/objstore.yml
+  ```
 
-```bash
-# Edit monitoring/thanos/objstore.yml:
-#   access_key: <your MINIO_ROOT_USER>
-#   secret_key: <your MINIO_ROOT_PASSWORD>
+The `arbx-metrics` bucket is also created automatically by the deploy (via a
+one-shot `minio/mc` container at `[7b/9]`), so the manual bucket step below is
+only needed for a first-time, non-CI bootstrap.
 
-docker compose -f docker/compose.prod.yml up -d thanos-sidecar thanos-store thanos-query
-```
+> **Note:** the Thanos sidecar must run as the same UID as Prometheus
+> (`user: "65534:65534"`, already set in `compose.*.yml`) and mount
+> `prometheus_data` read-write (not `:ro`) — otherwise its shipper cannot write
+> `thanos.shipper.json` and no blocks ever upload to Minio.
 
 ---
 

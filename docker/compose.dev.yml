@@ -559,6 +559,7 @@ services:
   thanos-sidecar:
     image: quay.io/thanos/thanos:v0.36.1
     container_name: arbitragex-v2-thanos-sidecar-1
+    user: "65534:65534"  # match prometheus (nobody) — shipper writes /prometheus/thanos
     command:
       - sidecar
       - --tsdb.path=/prometheus
@@ -567,7 +568,7 @@ services:
       - --grpc-address=0.0.0.0:10901
       - --http-address=0.0.0.0:10902
     volumes:
-      - prometheus_data:/prometheus:ro
+      - prometheus_data:/prometheus  # RW: shipper writes thanos.shipper.json here
       - ../monitoring/thanos/objstore.yml:/etc/thanos/objstore.yml:ro
     depends_on:
       prometheus:
