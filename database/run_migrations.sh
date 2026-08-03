@@ -22,7 +22,19 @@ run_sql() {
 
 run_file() {
   # -v ON_ERROR_STOP=1 makes any SQL error abort the script (fail-fast).
-  docker exec -i "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" -v ON_ERROR_STOP=1 \
+  # Inject the psql variables that 001b_role_passwords.sql expects (:'arbx_*_pw')
+  # so password-setting migrations resolve without a literal in the SQL file
+  # (arbx-no-hardcode-doctrine). Migrations that don't use :'var' ignore them.
+  # In production these should come from Vault/docker secrets; here we use the
+  # same dev defaults the script sets via ALTER ROLE above.
+  local MIG_PW="${ARBX_MIGRATOR_PW:-arbx_migrator_dev_only}"
+  local RW_PW="${ARBX_RW_PW:-arbx_rw_dev_only}"
+  local RO_PW="${ARBX_RO_PW:-arbx_ro_dev_only}"
+  docker exec -i "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" \
+    -v ON_ERROR_STOP=1 \
+    -v arbx_migrator_pw="$MIG_PW" \
+    -v arbx_rw_pw="$RW_PW" \
+    -v arbx_ro_pw="$RO_PW" \
     < "$MIG_DIR/$1"
 }
 
