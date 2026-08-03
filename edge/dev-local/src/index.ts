@@ -1182,6 +1182,19 @@ app.use((req, res, next) => {
   return frontendProxy(req, res, next);
 });
 
+// Final JSON 404 for unmatched /api/* + /socket.io/*. Without this, an unknown API
+// path falls through to Express's default HTML "Cannot GET" page; the frontend's
+// getValidated() then JSON.parses that HTML → "edge returned invalid JSON:
+// Unexpected token '<'" (a confusing error that hides the real 404). Non-/api
+// paths keep Express's default (HTML) 404, which is correct for browser nav.
+// Mirrors the Hono worker's app.notFound (already JSON).
+app.use((req, res, next) => {
+  if (req.path.startsWith("/api/") || req.path.startsWith("/socket.io")) {
+    return res.status(404).json({ error: "not_found", path: req.path });
+  }
+  return next();
+});
+
 const PORT = Number(process.env["EDGE_PORT"] ?? 8787);
 const server = app.listen(PORT, "0.0.0.0", () => {
   logger.info({ event: "service.boot", port: PORT, api_server: API_SERVER_URL, frontend: FRONTEND_URL, env: cfg.system.env }, "edge-dev-local listening");
