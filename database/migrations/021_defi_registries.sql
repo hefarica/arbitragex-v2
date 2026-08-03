@@ -1,7 +1,7 @@
 -- DeFi Registries for 100% On-Chain Configuration
 -- Zero hardcoding allowed.
 
-CREATE TABLE chains (
+CREATE TABLE IF NOT EXISTS chains (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     chain_id INTEGER UNIQUE NOT NULL,
     name VARCHAR(100) NOT NULL,
@@ -12,7 +12,7 @@ CREATE TABLE chains (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE rpcs (
+CREATE TABLE IF NOT EXISTS rpcs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     chain_id INTEGER REFERENCES chains(chain_id),
     url VARCHAR(500) NOT NULL,
@@ -25,7 +25,7 @@ CREATE TABLE rpcs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE dexes (
+CREATE TABLE IF NOT EXISTS dexes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(100) UNIQUE NOT NULL,
     protocol_type VARCHAR(50) CHECK (protocol_type IN ('UNISWAP_V2', 'UNISWAP_V3', 'CURVE', 'BALANCER')),
@@ -33,7 +33,7 @@ CREATE TABLE dexes (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE routers (
+CREATE TABLE IF NOT EXISTS routers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     dex_id UUID REFERENCES dexes(id),
     chain_id INTEGER REFERENCES chains(chain_id),
@@ -44,7 +44,7 @@ CREATE TABLE routers (
     UNIQUE (chain_id, address)
 );
 
-CREATE TABLE factories (
+CREATE TABLE IF NOT EXISTS factories (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     dex_id UUID REFERENCES dexes(id),
     chain_id INTEGER REFERENCES chains(chain_id),
@@ -53,7 +53,7 @@ CREATE TABLE factories (
     UNIQUE (chain_id, address)
 );
 
-CREATE TABLE tokens (
+CREATE TABLE IF NOT EXISTS tokens (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     chain_id INTEGER REFERENCES chains(chain_id),
     address VARCHAR(42) NOT NULL,

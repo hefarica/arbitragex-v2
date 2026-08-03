@@ -123,7 +123,7 @@ jobs:
             "export DEPLOY_PATH=$(printf %q "$REMOTE_PATH"); export TARGET_SHA=$(printf %q "$TARGET_SHA"); bash -s" <<'EOF'
           set -euo pipefail
 
-          echo "[0/7] Entering deploy path: ${DEPLOY_PATH}"
+          echo "[0/9] Entering deploy path: ${DEPLOY_PATH}"
           if [ ! -d "$DEPLOY_PATH" ]; then
             echo "ERROR: DEPLOY_PATH does not exist: $DEPLOY_PATH"
             exit 1
@@ -133,7 +133,7 @@ jobs:
           COMPOSE_FILE="docker/compose.prod.yml"
           ENV_FILE=".env"
 
-          echo "[1/7] Ensuring env file exists (never overwrite a real .env)..."
+          echo "[1/9] Ensuring env file exists (never overwrite a real .env)..."
           if [ ! -f "$ENV_FILE" ]; then
             if [ -f ".env.example" ]; then
               echo "Creating .env from .env.example"
@@ -144,7 +144,7 @@ jobs:
             fi
           fi
 
-          echo "[2/7] Fetching + anchoring to target SHA (BEFORE compose ops)..."
+          echo "[2/9] Fetching + anchoring to target SHA (BEFORE compose ops)..."
           # Must land compose.prod.yml on disk before any `docker compose -f` call.
           # Prefer `github` remote if present (origin may be a stale VPS bare mirror).
           if git remote get-url github >/dev/null 2>&1; then
@@ -166,10 +166,43 @@ jobs:
             exit 1
           fi
 
-          echo "[3/7] Stopping current stack (best-effort)..."
+          echo "[3/9] Ensuring Postgres is UP (migrations need a live DB)..."
+          # Start ONLY postgres (+ redis, cheap) so migrations can run against it.
+          # We do NOT down the full stack yet — that happens after the schema is
+          # verified, so a migration failure leaves the running stack intact.
+          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans postgres redis
+          # Wait for postgres to accept connections (max 60s).
+          for i in $(seq 1 60); do
+            if docker exec arbitragex-v2-postgres-1 pg_isready -U postgres -d arbitragex >/dev/null 2>&1; then
+              echo "postgres ready after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "ERROR: postgres did not become ready in 60s — aborting deploy (migration gate)"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          echo "[4/9] PRE-DEPLOYMENT STATE CHECK — running migrations (Fail-fast gate)..."
+          # The repo is the source of truth for schema. run_migrations.sh auto-discovers
+          # every database/migrations/*.sql in numeric order and applies it idempotently.
+          # If ANY migration fails, the deploy ABORTS here — code and DB must never
+          # desync. This closes the gap where migration 102 (cartridge_id) existed in
+          # the repo but the pipeline never applied it (it was manual on the VPS).
+          MIGRATIONS_DIR="$(pwd)/database/migrations"
+          export MIGRATIONS_DIR
+          if ! bash database/run_migrations.sh; then
+            echo "::error::MIGRATION GATE FAILED — deploy aborted to prevent code/DB desync"
+            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --tail=40 postgres || true
+            exit 1
+          fi
+          echo "schema synchronized with HEAD — safe to proceed"
+
+          echo "[5/9] Stopping current stack (best-effort)..."
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down --remove-orphans || true
 
-          echo "[4/7] Building core + hot-path services (sequential — lower peak disk/RAM)..."
+          echo "[6/9] Building core + hot-path services (sequential — lower peak disk/RAM)..."
           # Full --no-cache of the entire stack OOMs/fills the 150GB disk (was 82% full).
           # Build the operator-facing plane + the REAL data hot-path so the pipeline
           # (searcher → redis → postgres → api → dashboard) flows end-to-end (R7).
@@ -180,13 +213,13 @@ jobs:
             api-server edge frontend \
             searcher-rs sim-ctl relays-client recon selector-api anvil math-engine
 
-          echo "[5/7] Starting stack (infra + hot-path + operator plane)..."
+          echo "[7/9] Starting stack (infra + hot-path + operator plane)..."
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans \
             postgres redis anvil \
             searcher-rs sim-ctl relays-client recon selector-api math-engine \
             api-server edge frontend
 
-          echo "[6/7] Waiting for health (operator plane via localhost; hot-path via compose healthy)..."
+          echo "[8/9] Waiting for health (operator plane via localhost; hot-path via compose healthy)..."
           # searcher-rs 9001 is container-internal only (no host port), so we check the
           # operator plane via localhost curl and the hot-path via `docker compose ps`
           # healthy status (its internal healthcheck probes 9001 inside the container).
@@ -213,7 +246,7 @@ jobs:
             sleep 1
           done
 
-          echo "[7/7] Final status (operator plane + hot-path)..."
+          echo "[9/9] Final status (operator plane + hot-path)..."
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
           curl -sf http://127.0.0.1:8080/api/health | head -c 400 || true
           echo

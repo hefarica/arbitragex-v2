@@ -1,7 +1,7 @@
 -- Profit Reconciliation Table
 -- The ultimate source of truth for realized PnL on-chain.
 
-CREATE TABLE profit_reconciliation (
+CREATE TABLE IF NOT EXISTS profit_reconciliation (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     opportunity_id UUID, -- References opportunities(id)
     execution_id UUID, -- References execution_receipts(id)

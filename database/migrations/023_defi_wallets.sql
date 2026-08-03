@@ -1,7 +1,7 @@
 -- DeFi Wallets Registry
 -- Strict requirement: Private keys MUST be encrypted at rest.
 
-CREATE TABLE wallets (
+CREATE TABLE IF NOT EXISTS wallets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     address VARCHAR(42) UNIQUE NOT NULL,
     label VARCHAR(100),
@@ -13,7 +13,7 @@ CREATE TABLE wallets (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE wallet_allowances (
+CREATE TABLE IF NOT EXISTS wallet_allowances (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     wallet_id UUID REFERENCES wallets(id),
     token_id UUID REFERENCES tokens(id),

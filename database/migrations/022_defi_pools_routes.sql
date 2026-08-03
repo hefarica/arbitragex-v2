@@ -1,7 +1,7 @@
 -- DeFi Pools, Reserves and Routes
 -- Strict on-chain state mirroring
 
-CREATE TABLE pools (
+CREATE TABLE IF NOT EXISTS pools (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     chain_id INTEGER REFERENCES chains(chain_id),
     factory_id UUID REFERENCES factories(id),
@@ -14,7 +14,7 @@ CREATE TABLE pools (
     UNIQUE (chain_id, address)
 );
 
-CREATE TABLE pool_reserves (
+CREATE TABLE IF NOT EXISTS pool_reserves (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     pool_id UUID REFERENCES pools(id),
     block_number BIGINT NOT NULL,
@@ -24,7 +24,7 @@ CREATE TABLE pool_reserves (
 );
 
 -- Para UniV3
-CREATE TABLE pool_ticks (
+CREATE TABLE IF NOT EXISTS pool_ticks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     pool_id UUID REFERENCES pools(id),
     block_number BIGINT NOT NULL,
@@ -34,7 +34,7 @@ CREATE TABLE pool_ticks (
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE routes (
+CREATE TABLE IF NOT EXISTS routes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     chain_id INTEGER REFERENCES chains(chain_id),
     hash VARCHAR(64) UNIQUE NOT NULL, -- SHA256 of ordered pool addresses
@@ -44,7 +44,7 @@ CREATE TABLE routes (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE route_legs (
+CREATE TABLE IF NOT EXISTS route_legs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     route_id UUID REFERENCES routes(id) ON DELETE CASCADE,
     step_index INTEGER NOT NULL,
