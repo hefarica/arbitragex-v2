@@ -8,35 +8,18 @@
 -- This migration archives the polluted rows defensively (forensic reference, NOT used by app)
 -- and truncates the live table so Sprint 3 starts from clean state.
 --
--- Idempotent (2026-08-03): the original `INSERT INTO archive SELECT * FROM opportunities`
--- aborted re-runs with "INSERT has more expressions than target columns" because the archive
--- table was created with an older column set (fewer cols) and later migrations added columns
--- to `opportunities` — `SELECT *` then returned more cols than the archive had. Since the
--- TRUNCATE already ran on the first application, `opportunities` is empty on every re-run,
--- so the archive+truncate is now guarded behind a non-empty check. This preserves the
--- existing forensic archive (no DROP) and makes re-runs a true no-op.
+-- RETIRED to no-op (2026-08-03): the pre-Sprint-3 archive+TRUNCATE cleanup ALREADY ran.
+-- `opportunities` now holds ~12.7M legitimate live rows (actively populated by the searcher),
+-- so the historical archive+TRUNCATE logic MUST NOT re-execute — it would TRUNCATE live data.
+-- The prior guard `IF EXISTS (SELECT 1 FROM opportunities LIMIT 1)` is ALWAYS TRUE on a live
+-- DB, re-entering the failing INSERT every run. This migration is now a pure no-op: it only
+-- preserves the forensic archive table (CREATE IF NOT EXISTS) and writes NOTHING to
+-- `opportunities`.
 
 BEGIN;
 
 CREATE TABLE IF NOT EXISTS opportunities_archive_pre_sprint3 (
   LIKE opportunities INCLUDING ALL
 );
-
--- Only archive+truncate when there are rows to archive. After the first run,
--- opportunities is empty (truncated), so this block is skipped — no column-
--- count mismatch can occur because the INSERT never executes.
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM opportunities LIMIT 1) THEN
-    INSERT INTO opportunities_archive_pre_sprint3
-      SELECT * FROM opportunities
-      ON CONFLICT DO NOTHING;
-    TRUNCATE opportunities RESTART IDENTITY CASCADE;
-    RAISE NOTICE 'Migration 027: archived polluted rows and truncated opportunities.';
-  ELSE
-    RAISE NOTICE 'Migration 027: opportunities already empty — no-op (idempotent).';
-  END IF;
-END
-$$;
 
 COMMIT;
