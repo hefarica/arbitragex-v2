@@ -43,7 +43,7 @@ ON CONFLICT (chain_id, address) DO NOTHING;
 -- on Uniswap V2 (verifiable on Etherscan).
 INSERT INTO pools (chain_id, factory_id, address, token0_id, token1_id, fee_tier)
 SELECT 1, f.id, '0xb20bd5d04be54f870d5c0d3ca85d82b34b836405',
-       (SELECT id FROM tokens WHERE chain_id=1 AND symbol='DAI'),
+       (SELECT id FROM tokens WHERE chain_id=1 AND symbol='DAI' AND address='0x6b175474e89094c44da98b954eedeac495271d0f'),
        (SELECT id FROM tokens WHERE chain_id=1 AND symbol='USDT'),
        30
 FROM factories f JOIN dexes d ON d.id=f.dex_id WHERE d.name='UniswapV2' AND f.chain_id=1

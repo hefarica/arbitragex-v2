@@ -58,7 +58,7 @@ ON CONFLICT (chain_id, address) DO NOTHING;
 -- WETH/DAI on UniV2
 INSERT INTO pools (chain_id, factory_id, address, token0_id, token1_id, fee_tier)
 SELECT 1, f.id, '0xa478c2975ab1ea89e8196811f51a7b7ade33eb11',
-       (SELECT id FROM tokens WHERE chain_id=1 AND symbol='DAI'),
+       (SELECT id FROM tokens WHERE chain_id=1 AND symbol='DAI' AND address='0x6b175474e89094c44da98b954eedeac495271d0f'),
        (SELECT id FROM tokens WHERE chain_id=1 AND symbol='WETH'),
        30
 FROM factories f JOIN dexes d ON d.id=f.dex_id WHERE d.name='UniswapV2' AND f.chain_id=1
@@ -121,7 +121,7 @@ ON CONFLICT (chain_id, address) DO NOTHING;
 -- WETH/SHIB on UniV2
 INSERT INTO pools (chain_id, factory_id, address, token0_id, token1_id, fee_tier)
 SELECT 1, f.id, '0x811beed0119b4afce20d2583eb608c6f7af1954f',
-       (SELECT id FROM tokens WHERE chain_id=1 AND symbol='SHIB'),
+       (SELECT id FROM tokens WHERE chain_id=1 AND symbol='SHIB' AND address='0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce'),
        (SELECT id FROM tokens WHERE chain_id=1 AND symbol='WETH'),
        30
 FROM factories f JOIN dexes d ON d.id=f.dex_id WHERE d.name='UniswapV2' AND f.chain_id=1
@@ -130,7 +130,7 @@ ON CONFLICT (chain_id, address) DO NOTHING;
 -- WETH/PEPE on UniV2
 INSERT INTO pools (chain_id, factory_id, address, token0_id, token1_id, fee_tier)
 SELECT 1, f.id, '0xa43fe16908251ee70ef74718545e4fe6c5ccec9f',
-       (SELECT id FROM tokens WHERE chain_id=1 AND symbol='PEPE'),
+       (SELECT id FROM tokens WHERE chain_id=1 AND symbol='PEPE' AND address='0x6982508145454ce325ddbe47a25d4ec3d2311933'),
        (SELECT id FROM tokens WHERE chain_id=1 AND symbol='WETH'),
        30
 FROM factories f JOIN dexes d ON d.id=f.dex_id WHERE d.name='UniswapV2' AND f.chain_id=1
@@ -150,7 +150,7 @@ ON CONFLICT (chain_id, address) DO NOTHING;
 -- WETH/DAI on Sushi
 INSERT INTO pools (chain_id, factory_id, address, token0_id, token1_id, fee_tier)
 SELECT 1, f.id, '0xc3d03e4f041fd4cd388c549ee2a29a9e5075882f',
-       (SELECT id FROM tokens WHERE chain_id=1 AND symbol='DAI'),
+       (SELECT id FROM tokens WHERE chain_id=1 AND symbol='DAI' AND address='0x6b175474e89094c44da98b954eedeac495271d0f'),
        (SELECT id FROM tokens WHERE chain_id=1 AND symbol='WETH'),
        30
 FROM factories f JOIN dexes d ON d.id=f.dex_id WHERE d.name='SushiSwap' AND f.chain_id=1
