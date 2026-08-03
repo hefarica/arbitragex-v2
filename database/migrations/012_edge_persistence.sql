@@ -44,10 +44,10 @@ CREATE TABLE IF NOT EXISTS sed_opportunities (
     edge_node_id    TEXT NOT NULL DEFAULT 'edge-001'
 );
 
-CREATE INDEX idx_sed_opportunities_status ON sed_opportunities(status);
-CREATE INDEX idx_sed_opportunities_phase ON sed_opportunities(phase);
-CREATE INDEX idx_sed_opportunities_detected_at ON sed_opportunities(detected_at DESC);
-CREATE INDEX idx_sed_opportunities_block ON sed_opportunities(block_number DESC);
+CREATE INDEX IF NOT EXISTS idx_sed_opportunities_status ON sed_opportunities(status);
+CREATE INDEX IF NOT EXISTS idx_sed_opportunities_phase ON sed_opportunities(phase);
+CREATE INDEX IF NOT EXISTS idx_sed_opportunities_detected_at ON sed_opportunities(detected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sed_opportunities_block ON sed_opportunities(block_number DESC);
 
 -- Tabla de métricas de entropía (series temporales)
 CREATE TABLE IF NOT EXISTS sed_entropy_metrics (
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS sed_entropy_metrics (
     network_io_mbps     DOUBLE PRECISION
 );
 
-CREATE INDEX idx_entropy_sampled_at ON sed_entropy_metrics(sampled_at DESC);
+CREATE INDEX IF NOT EXISTS idx_entropy_sampled_at ON sed_entropy_metrics(sampled_at DESC);
 
 -- Tabla de auditoría de kill-switch
 CREATE TABLE IF NOT EXISTS kill_switch_audit (
@@ -97,6 +97,7 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
+DROP TRIGGER IF EXISTS update_sed_opportunities_updated_at ON sed_opportunities;
 CREATE TRIGGER update_sed_opportunities_updated_at
     BEFORE UPDATE ON sed_opportunities
     FOR EACH ROW

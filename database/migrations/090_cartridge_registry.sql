@@ -65,13 +65,13 @@ CREATE TABLE IF NOT EXISTS cartridge_registry (
 );
 
 -- Index for fast lookup by state (active cartridges)
-CREATE INDEX idx_cartridge_registry_state ON cartridge_registry(state);
+CREATE INDEX IF NOT EXISTS idx_cartridge_registry_state ON cartridge_registry(state);
 
 -- Index for chain-specific queries
-CREATE INDEX idx_cartridge_registry_chains ON cartridge_registry USING GIN(target_chains);
+CREATE INDEX IF NOT EXISTS idx_cartridge_registry_chains ON cartridge_registry USING GIN(target_chains);
 
 -- Index for content hash dedup
-CREATE UNIQUE INDEX idx_cartridge_registry_hash ON cartridge_registry(content_hash)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cartridge_registry_hash ON cartridge_registry(content_hash)
     WHERE state != 'archived';
 
 -- Cartridge audit log (every injection/update/state change)
@@ -84,8 +84,8 @@ CREATE TABLE IF NOT EXISTS cartridge_audit_log (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_cartridge_audit_cartridge ON cartridge_audit_log(cartridge_id, created_at DESC);
-CREATE INDEX idx_cartridge_audit_time ON cartridge_audit_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cartridge_audit_cartridge ON cartridge_audit_log(cartridge_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cartridge_audit_time ON cartridge_audit_log(created_at DESC);
 
 -- Cartridge evaluation metrics (aggregated per hour)
 CREATE TABLE IF NOT EXISTS cartridge_metrics_hourly (
@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS cartridge_metrics_hourly (
     UNIQUE(cartridge_id, chain_id, hour)
 );
 
-CREATE INDEX idx_cartridge_metrics_time ON cartridge_metrics_hourly(hour DESC);
+CREATE INDEX IF NOT EXISTS idx_cartridge_metrics_time ON cartridge_metrics_hourly(hour DESC);
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Seed: Register the built-in cartridges
