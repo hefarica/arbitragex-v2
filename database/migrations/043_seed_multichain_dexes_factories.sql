@@ -41,10 +41,12 @@ ALTER TABLE dexes ADD CONSTRAINT dexes_protocol_type_check
   CHECK (protocol_type IN (
     'UNISWAP_V2',
     'UNISWAP_V3',
+    'UNISWAP_V4',
     'CURVE',
     'BALANCER',
     'SOLIDLY',
-    'TRADERJOE_LB'
+    'TRADERJOE_LB',
+    'FLUID_VAULT'
   ));
 
 -- ─────────────────────────────────────────────────────────────────────────────
