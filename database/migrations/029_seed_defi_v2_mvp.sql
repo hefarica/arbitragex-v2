@@ -69,7 +69,7 @@ FROM factories f JOIN dexes d ON d.id=f.dex_id WHERE d.name='UniswapV2' AND f.ch
 ON CONFLICT (chain_id, address) DO NOTHING;
 INSERT INTO pools (chain_id, factory_id, address, token0_id, token1_id, fee_tier)
 SELECT 1, f.id, '0xae461ca67b15dc8dc81ce7615e0320da1a9ab8d5',
-       (SELECT id FROM tokens WHERE chain_id=1 AND symbol='DAI'),
+       (SELECT id FROM tokens WHERE chain_id=1 AND symbol='DAI' AND address='0x6b175474e89094c44da98b954eedeac495271d0f'),
        (SELECT id FROM tokens WHERE chain_id=1 AND symbol='USDC'),
        30
 FROM factories f JOIN dexes d ON d.id=f.dex_id WHERE d.name='UniswapV2' AND f.chain_id=1
@@ -99,7 +99,7 @@ FROM factories f JOIN dexes d ON d.id=f.dex_id WHERE d.name='SushiSwap' AND f.ch
 ON CONFLICT (chain_id, address) DO NOTHING;
 INSERT INTO pools (chain_id, factory_id, address, token0_id, token1_id, fee_tier)
 SELECT 1, f.id, '0xaaf5110db6e744ff70fb339de037b990a20bdace',
-       (SELECT id FROM tokens WHERE chain_id=1 AND symbol='DAI'),
+       (SELECT id FROM tokens WHERE chain_id=1 AND symbol='DAI' AND address='0x6b175474e89094c44da98b954eedeac495271d0f'),
        (SELECT id FROM tokens WHERE chain_id=1 AND symbol='USDC'),
        30
 FROM factories f JOIN dexes d ON d.id=f.dex_id WHERE d.name='SushiSwap' AND f.chain_id=1
