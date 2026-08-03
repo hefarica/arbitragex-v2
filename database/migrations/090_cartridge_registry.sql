@@ -22,13 +22,18 @@
 -- new chain added to the system.
 -- ═══════════════════════════════════════════════════════════════════════════════
 
--- Cartridge lifecycle states
-CREATE TYPE cartridge_state AS ENUM (
-    'active',
-    'paused',
-    'failed',
-    'archived'
-);
+-- Cartridge lifecycle states (idempotent: skip if type already exists)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'cartridge_state') THEN
+        CREATE TYPE cartridge_state AS ENUM (
+            'active',
+            'paused',
+            'failed',
+            'archived'
+        );
+    END IF;
+END $$;
 
 -- Main cartridge registry table
 CREATE TABLE IF NOT EXISTS cartridge_registry (
