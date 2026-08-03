@@ -1149,6 +1149,27 @@ app.get("/status", (req, res, next) => {
   return frontendProxy(req, res, next);
 });
 
+// /api/status — alias of /status for the browser StatusClient poll. The poll
+// uses /api/status (Next.js rewrites /api/* to the edge); the bare /status
+// collides with the Next.js /status PAGE route in the browser, so the client
+// cannot poll /status directly. Always proxy to api-server /status (no SPA
+// fallback for /api/*). Mirrors edge/worker/src/index.ts (Cloudflare Hono).
+app.get("/api/status", (req, res) => proxy("/status", req, res));
+
+// POST /api/v1/admin/services/:name/:action — start/stop a managed service.
+// Parametric; :action validated here (start|stop). Admin-token gated via
+// adminProxy; the api-server further restricts via allowlist + the
+// ARBX_SERVICE_CONTROL flag and audit-logs every action. Mirrors the Hono worker.
+app.post("/api/v1/admin/services/:name/:action", (req, res) => {
+  const action: string = req.params["action"];
+  if (action !== "start" && action !== "stop") {
+    res.status(400).json({ error: "invalid_action", valid_actions: ["start", "stop"] });
+    return;
+  }
+  const name = encodeURIComponent(String(req.params["name"]));
+  void adminProxy(`/api/v1/admin/services/${name}/${action}`, req, res, "POST");
+});
+
 app.use((req, res, next) => {
   // /api and /socket.io are owned by the explicit routes above (or 404 if an
   // unknown /api path) — never fall through to the frontend. /_next/* MUST fall
