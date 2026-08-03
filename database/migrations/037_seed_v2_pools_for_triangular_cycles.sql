@@ -26,13 +26,13 @@
 BEGIN;
 
 -- ── WBTC/USDC on Uniswap V2 ──────────────────────────────────────────────
--- token0 (lower address) = USDC (0xa0b8...), token1 = WBTC (0x2260...).
--- Pool 0x004375dff511095cc5a197a54140a24efef3a416 is the USDC/WBTC pair
+-- token0 (lower address) = WBTC (0x2260...), token1 = USDC (0xa0b8...).
+-- Pool 0x004375dff511095cc5a197a54140a24efef3a416 is the WBTC/USDC pair
 -- on Uniswap V2 (verifiable on Etherscan).
 INSERT INTO pools (chain_id, factory_id, address, token0_id, token1_id, fee_tier)
 SELECT 1, f.id, '0x004375dff511095cc5a197a54140a24efef3a416',
-       (SELECT id FROM tokens WHERE chain_id=1 AND symbol='USDC'),
        (SELECT id FROM tokens WHERE chain_id=1 AND symbol='WBTC'),
+       (SELECT id FROM tokens WHERE chain_id=1 AND symbol='USDC'),
        30
 FROM factories f JOIN dexes d ON d.id=f.dex_id WHERE d.name='UniswapV2' AND f.chain_id=1
 ON CONFLICT (chain_id, address) DO NOTHING;
