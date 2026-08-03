@@ -36,6 +36,9 @@ ALTER TABLE trading_config
   ADD COLUMN IF NOT EXISTS strategy_configs JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 ALTER TABLE trading_config
+  DROP CONSTRAINT IF EXISTS chk_strategy_configs_is_object;
+
+ALTER TABLE trading_config
   ADD CONSTRAINT chk_strategy_configs_is_object
   CHECK (jsonb_typeof(strategy_configs) = 'object');
 
