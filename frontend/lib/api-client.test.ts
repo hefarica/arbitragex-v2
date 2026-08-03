@@ -28,6 +28,9 @@ describe("api-client — GET happy path", () => {
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data.env).toBe("dev");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // Lock the routing fix: the poll MUST hit /api/status (rewritten to the edge
+    // by Next.js), NOT /status (which collides with the Next.js page → HTML).
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toMatch(/\/api\/status$/);
   });
 });
 

@@ -254,7 +254,12 @@ export type {
 // ─────── GET endpoints ───────
 
 export function getStatus() {
-  return getValidated("/status", S.StatusResponseSchema);
+  // /api/status (not /status): the browser poll is proxied to the edge by
+  // Next.js's /api/* rewrite. A bare /status collides with the Next.js /status
+  // page route → the poll would fetch the page HTML → JSON.parse fails
+  // ("edge returned invalid JSON: Unexpected token '<'"). SSR is unaffected
+  // (server uses INTERNAL_EDGE_URL + /status directly).
+  return getValidated("/api/status", S.StatusResponseSchema);
 }
 
 export function getOpportunitiesLive(limit = 50) {

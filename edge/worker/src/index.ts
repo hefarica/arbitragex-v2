@@ -433,6 +433,14 @@ app.get("/status", (c) => {
   if (statusWantsJson(c)) return proxy(c, "/status", "arbx:cache:status", 2);
   return c.json({ error: "not_found", detail: "html_served_by_spa" }, 404);
 });
+// Alias under /api/* so the browser StatusClient poll reaches the edge via
+// Next.js's /api/* rewrite. The bare /status collides with the Next.js /status
+// page route, so the client polls /api/status. Upstream target unchanged
+// (api-server /status); SSR keeps using INTERNAL_EDGE_URL/status directly.
+app.get("/api/status", (c) => {
+  if (statusWantsJson(c)) return proxy(c, "/status", "arbx:cache:status", 2);
+  return c.json({ error: "not_found", detail: "html_served_by_spa" }, 404);
+});
 // FE-CRIT — system manifest read surface. api-server mounts these at /api/system/*
 // (no /v1/ prefix). proxy() forwards the upstream status verbatim — a non-2xx from
 // api-server is surfaced as-is; a transport failure throws and is handled by Hono's
