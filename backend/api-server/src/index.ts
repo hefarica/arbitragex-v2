@@ -97,6 +97,7 @@ import { mountOpportunitiesLive } from "./routes/opportunities-live.js";
 import { mountDexes } from "./routes/dexes.js";
 import { mountPools } from "./routes/pools.js";
 import { mountStubs } from "./routes/stubs.js";
+import { buildServiceControlRouter } from "./routes/service-control.js";
 import { mountWallets } from "./routes/wallets.js";
 import { CarnotStore } from "./services/carnotStore.js";
 import { mountCarnotCycles } from "./routes/carnot-cycles.js";
@@ -569,6 +570,21 @@ mountOpportunitySimulate(app, { logger });
 // Math-engine proxy — the 31 topological operators (list/toggle/compute/matrix
 // projection) served by the math-engine service. Mounted at /api/math/*.
 app.use(buildMathEngineRouter({ logger, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN }));
+
+// Service control plane (start/stop managed containers). Replaces the A8 501
+// stubs (stubs.ts) — mounted here, before mountStubs, so these real handlers
+// take precedence. Admin-gated + allowlisted + audit-logged (writeAudit); OFF
+// by default (ARBX_SERVICE_CONTROL). Talks to the least-privilege socket-proxy
+// sidecar — the api-server never mounts the raw docker socket.
+app.use(
+  buildServiceControlRouter({
+    requireAdminToken,
+    adminToken: ARBX_ADMIN_TOKEN,
+    writeAudit,
+    reqUA,
+    logger,
+  }),
+);
 
 // Math evidence — LIVE regime + per-operator values persisted by the searcher
 // (Fix B) at arbx:math_evidence:<chain>:<strategy>. Read-only.

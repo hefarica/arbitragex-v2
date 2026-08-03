@@ -235,13 +235,14 @@ jobs:
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build \
             api-server edge frontend \
             searcher-rs sim-ctl relays-client recon selector-api anvil math-engine \
-            token-enricher
+            token-enricher socket-proxy
 
           echo "[7/9] Starting stack (infra + hot-path + operator plane + observability + minio/vault)..."
           # Thanos is started separately at [7c] AFTER the arbx-metrics bucket
           # exists — the sidecar's first-boot upload fails if the bucket is absent.
+          # socket-proxy (api-server dependency) is started here explicitly.
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans \
-            postgres redis anvil \
+            postgres redis anvil socket-proxy \
             searcher-rs sim-ctl relays-client recon selector-api math-engine \
             api-server edge frontend \
             token-enricher prometheus loki promtail grafana alertmanager minio vault

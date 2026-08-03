@@ -95,27 +95,9 @@ describe("A8 stubs (audit 2026-05-10)", () => {
   });
 
   describe("admin-gated stubs", () => {
-    it("POST /api/v1/admin/services/:name/start → 401 without token", async () => {
-      const res = await request(app).post("/api/v1/admin/services/searcher-rs/start");
-      expect(res.status).toBe(401);
-      expect(res.body).toEqual({ error: "unauthorized", source: "admin_token" });
-    });
-
-    it("POST /api/v1/admin/services/:name/start → 501 with valid token", async () => {
-      const res = await request(app)
-        .post("/api/v1/admin/services/searcher-rs/start")
-        .set("x-arbx-admin-token", ADMIN_TOKEN);
-      expect(res.status).toBe(501);
-      expectStubBody(res.body);
-    });
-
-    it("POST /api/v1/admin/services/:name/stop → 501 with valid token", async () => {
-      const res = await request(app)
-        .post("/api/v1/admin/services/searcher-rs/stop")
-        .set("x-arbx-admin-token", ADMIN_TOKEN);
-      expect(res.status).toBe(501);
-      expectStubBody(res.body);
-    });
+    // NOTE: /api/v1/admin/services/:name/{start,stop} were stubs tested here —
+    // they are now a REAL handler (routes/service-control.ts) with their own
+    // tests in service-control.test.ts. Admin-gating (401) is covered there too.
 
     it("POST /admin/alertmanager/webhook → 401 without token", async () => {
       const res = await request(app).post("/admin/alertmanager/webhook").send({});

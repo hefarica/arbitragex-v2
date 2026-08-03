@@ -97,9 +97,12 @@ interface ServiceControlPanelProps {
    * live status badge. Unknown services show "UNKNOWN".
    */
   liveStatus?: Record<string, { ok: boolean }>;
+  /** Called after a successful dispatch so the parent can refetch /status and
+   * flip the badge immediately (otherwise it waits for the next poll). */
+  onAfterControl?: () => void;
 }
 
-export function ServiceControlPanel({ liveStatus = {} }: ServiceControlPanelProps) {
+export function ServiceControlPanel({ liveStatus = {}, onAfterControl }: ServiceControlPanelProps) {
   const [pending, setPending] = useState<Set<PendingKey>>(new Set());
 
   const edgeUrl =
@@ -107,6 +110,14 @@ export function ServiceControlPanel({ liveStatus = {} }: ServiceControlPanelProp
 
   const handleControl = useCallback(
     async (service: ServiceName, action: ControlAction) => {
+      // Stop can interrupt the live pipeline (e.g. searcher-rs) — require an
+      // explicit confirm. Start is safe/beneficial and needs no confirm.
+      if (action === "stop") {
+        const ok = window.confirm(
+          `Detener ${service} puede interrumpir el pipeline. ¿Continuar?`,
+        );
+        if (!ok) return;
+      }
       const key: PendingKey = `${service}:${action}`;
       setPending((prev) => new Set(prev).add(key));
       try {
@@ -114,6 +125,7 @@ export function ServiceControlPanel({ liveStatus = {} }: ServiceControlPanelProp
         toast.success(`${service} ${action} dispatched`, {
           description: `The ${action} signal was accepted by the edge.`,
         });
+        onAfterControl?.();
       } catch (e) {
         const err = e as Error;
         if (err.name === "AbortError") {
@@ -133,7 +145,7 @@ export function ServiceControlPanel({ liveStatus = {} }: ServiceControlPanelProp
         });
       }
     },
-    [edgeUrl],
+    [edgeUrl, onAfterControl],
   );
 
   return (
@@ -141,9 +153,11 @@ export function ServiceControlPanel({ liveStatus = {} }: ServiceControlPanelProp
       <CardHeader className="pb-3">
         <h2 className="text-base font-semibold">Service Controls</h2>
         <p className="text-xs text-muted-foreground">
-          Start/stop managed ArbX services via the edge control plane.{" "}
+          Start/stop managed ArbX services via the edge control plane. Actions are
+          admin-gated, allowlist-restricted, and audit-logged.{" "}
           <span className="text-warning font-medium">
-            Backend endpoint not yet implemented — actions surface an honest toast (404/501).
+            Requires <code>ARBX_SERVICE_CONTROL=on</code> — returns 501 while the
+            flag is off, 404 if the edge route is absent.
           </span>
         </p>
       </CardHeader>

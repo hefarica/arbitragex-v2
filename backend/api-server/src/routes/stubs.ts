@@ -21,8 +21,8 @@
  *   - GET   /api/v1/wallets/:addr/balances           → 501 (FE-2 balances)
  *   - GET   /api/v1/wallets/:addr/allowances         → 501 (FE-2 allowances)
  *   - POST  /api/v1/opportunities/:id/simulate       → 501 (sim-ctl wiring)
- *   - POST  /api/v1/admin/services/:name/start       → 501 (control-plane TBD)
- *   - POST  /api/v1/admin/services/:name/stop        → 501 (control-plane TBD)
+ *   - POST  /api/v1/admin/services/:name/start       → REAL (routes/service-control.ts)
+ *   - POST  /api/v1/admin/services/:name/stop        → REAL (routes/service-control.ts)
  *   - POST  /admin/alertmanager/webhook              → 501 (alertmanager handler)
  *   - PUT   /api/v1/dexes/:id/active                 → 501 (DEX toggle persistence)
  *
@@ -109,32 +109,10 @@ export function mountStubs(app: Express, deps: StubDeps): void {
     }),
   );
 
-  // ── Service control plane (admin-gated) ──────────────────────────────────
-  // start/stop is admin-token gated even as a stub so that probing the
-  // surface area does not leak which services exist.
-  app.post(
-    "/api/v1/admin/services/:name/start",
-    requireAdminToken(adminToken),
-    notImplemented({
-      message:
-        "POST /api/v1/admin/services/:name/start is scaffolded; control-plane (docker / systemd) not wired",
-      feature: "FE service control panel",
-      roadmap:
-        "Sprint 5+ — operator decides control-plane (docker socket vs systemd unit vs k8s)",
-    }),
-  );
-
-  app.post(
-    "/api/v1/admin/services/:name/stop",
-    requireAdminToken(adminToken),
-    notImplemented({
-      message:
-        "POST /api/v1/admin/services/:name/stop is scaffolded; control-plane (docker / systemd) not wired",
-      feature: "FE service control panel",
-      roadmap:
-        "Sprint 5+ — operator decides control-plane (docker socket vs systemd unit vs k8s)",
-    }),
-  );
+  // NOTE: /api/v1/admin/services/:name/{start,stop} previously lived here as a
+  // 501 stub. It now has a REAL handler in routes/service-control.ts (admin-gated
+  // + allowlisted + audit-logged, via the least-privilege socket-proxy sidecar),
+  // mounted in index.ts before this file. See service-control.ts.
 
   // ── Alertmanager webhook ─────────────────────────────────────────────────
   // Receives Prometheus Alertmanager POSTs (silenced/firing). Currently no

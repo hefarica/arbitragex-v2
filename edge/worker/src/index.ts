@@ -1155,6 +1155,35 @@ app.post("/api/admin/chains/:chain_id/probe", async (c) => {
   return c.body(t, upstream.status as 200 | 404 | 503);
 });
 
+// POST /api/v1/admin/services/:name/:action — start/stop a managed service.
+// Parametric; :action is validated here (start|stop). Proxies to the api-server,
+// which gates on admin token + an allowlist + the ARBX_SERVICE_CONTROL flag and
+// audit-logs every action. Mirrors the /admin/killswitch proxy pattern (L688).
+app.post("/api/v1/admin/services/:name/:action", async (c) => {
+  const action = c.req.param("action");
+  if (action !== "start" && action !== "stop") {
+    return c.json({ error: "invalid_action", valid_actions: ["start", "stop"] }, 400);
+  }
+  const name = c.req.param("name");
+  const adminToken = resolveAdminToken(c);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const upstream = await fetch(
+    `${c.env.API_SERVER_URL}/api/v1/admin/services/${encodeURIComponent(name)}/${action}`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+        "x-arbx-admin-token": adminToken,
+        "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+      },
+    },
+  );
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 401 | 403 | 404 | 500 | 501 | 502);
+});
+
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError((err, c) => {
   console.error(JSON.stringify({ event: "edge.error", err: err.message }));

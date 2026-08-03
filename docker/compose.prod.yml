@@ -342,10 +342,17 @@ services:
       RECON_URL: http://recon:3004
       RELAYS_URL: http://relays-client:3005
       SEARCHER_URL: http://searcher-rs:9001
+      # Service control-plane (start/stop managed containers via the socket-proxy
+      # sidecar). OFF by default — shadow/paper systems stay safe until opted in.
+      ARBX_SERVICE_CONTROL: ${ARBX_SERVICE_CONTROL:-off}
+      ARBX_SERVICE_CONTROL_ALLOWLIST: ${ARBX_SERVICE_CONTROL_ALLOWLIST:-searcher-rs,sim-ctl,relays-client,recon,token-enricher}
+      DOCKER_PROXY_URL: http://socket-proxy:2375
     ports:
     - 127.0.0.1:8080:8080
     depends_on:
       redis:
+        condition: service_healthy
+      socket-proxy:
         condition: service_healthy
     healthcheck:
       test:
@@ -607,6 +614,48 @@ services:
     restart: unless-stopped
     networks:
     - arbx-net
+  # ───────── Service control-plane: least-privilege docker socket proxy ─────────
+  # Network-internal ONLY (no host port). The api-server is the sole caller; it
+  # restricts controllable service names via an allowlist + audit-logs every
+  # start/stop. The proxy allows ONLY list/inspect/start/stop (see
+  # docker/socket-proxy/server.js); create/delete/exec/prune → 403.
+  socket-proxy:
+    logging: *id001
+    build:
+      context: ./socket-proxy
+    restart: unless-stopped
+    networks:
+    - arbx-net
+    read_only: true
+    tmpfs:
+    - /tmp
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    user: "65532:65532"
+    # Host docker group gid — run `getent group docker | cut -d: -f3` on the VPS
+    # and set DOCKER_GID in .env. Required so the nonroot proxy can read the socket.
+    group_add:
+    - "${DOCKER_GID:-998}"
+    volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      LISTEN_PORT: "2375"
+    healthcheck:
+      # /_ping is NOT allowlisted → proxy returns 403. 403 proves the process is
+      # alive AND the filter is active (a permissive proxy would return 200).
+      # distroless has no wget/curl → drive the check with node.
+      test:
+      - CMD
+      - /nodejs/bin/node
+      - -e
+      - "require('http').get('http://127.0.0.1:2375/_ping',r=>process.exit(r.statusCode===403?0:1)).on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   vault:
     logging: *id001
     image: hashicorp/vault:1.18.1
