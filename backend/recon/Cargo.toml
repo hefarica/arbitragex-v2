@@ -27,3 +27,4 @@ ethers.workspace = true
 alloy.workspace = true
 futures-util.workspace = true
 hex.workspace = true
+reqwest.workspace = true

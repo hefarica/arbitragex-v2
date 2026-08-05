@@ -12,6 +12,7 @@
 mod aggregator;
 mod anomaly;
 mod consumer;
+mod drift_tracker;
 mod persistence;
 mod pnl_engine;
 mod variance;
@@ -315,12 +316,45 @@ async fn main() -> anyhow::Result<()> {
                         }
                     };
 
+                // Clones for the Stage 2a drift-tracker (Y-oracle). The aggregator
+                // spawn below MOVES the originals, so clone first. All handles are
+                // Arc-internal → cheap to clone.
+                let db_for_drift = db_for_aggregator.clone();
+                let redis_drift = redis_agg.clone();
+                let ks_drift = killswitch.clone();
+
                 let cfg_agg = recon_cfg.clone();
                 tokio::spawn(async move {
                     aggregator::run_periodic(db_for_aggregator, cfg_agg, killswitch, redis_agg)
                         .await;
                 });
                 info!(event = "aggregator.spawned");
+
+                // Stage 2a: drift-tracker — resolves paper_trade_runs.actual_* via
+                // sim-ctl re-execution at the settled block (the §IV Y-label). OFF by
+                // default; the operator enables it once sim-ctl + the settled-block
+                // fork are confirmed working.
+                let drift_mode = std::env::var("ARBX_DRIFT_TRACKER_MODE").unwrap_or_default();
+                if drift_mode == "on" {
+                    let simctl_url = std::env::var("SIMCTL_URL")
+                        .unwrap_or_else(|_| "http://sim-ctl:3003".into());
+                    let drift_cfg = drift_tracker::DriftConfig::from_env();
+                    let http = reqwest::Client::new();
+                    tokio::spawn(async move {
+                        drift_tracker::run_periodic(
+                            db_for_drift,
+                            simctl_url,
+                            drift_cfg,
+                            ks_drift,
+                            redis_drift,
+                            http,
+                        )
+                        .await;
+                    });
+                    info!(event = "drift_tracker.spawned");
+                } else {
+                    info!(event = "drift_tracker.dormant", mode = %drift_mode);
+                }
             } else {
                 warn!(
                     event = "recon.consumer_not_spawned",
