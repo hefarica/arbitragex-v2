@@ -57,6 +57,13 @@ pub struct Opportunity {
     /// canonical set of values.
     #[serde(default)]
     pub rejection_reason: Option<String>,
+    /// Real strategy cartridge id (e.g. `mev_08_018_liquidation_auction`) when the
+    /// opportunity came from a Rhai cartridge. None for the core engines. Lets the
+    /// dashboard show the REAL strategy name/family instead of flattening every
+    /// cartridge to a generic `strategy_kind`, and lets the card grid key on the
+    /// true strategy so rows never collapse into gaps.
+    #[serde(default)]
+    pub cartridge_id: Option<String>,
     pub detected_at: DateTime<Utc>,
     pub trace_id: Uuid,
 }
