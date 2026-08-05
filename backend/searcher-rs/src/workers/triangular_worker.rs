@@ -53,6 +53,7 @@ use chrono::Utc;
 use ethers::types::{Address, U256};
 use redis::aio::ConnectionManager;
 use shared_rs::contracts::{Opportunity, StrategyKind};
+use shared_rs::candidates::RouteMetadata;
 use shared_rs::rpc_failover::HttpRpcPool;
 use shared_rs::tokens;
 use shared_rs::trading_config::TradingConfigClient;
@@ -1482,6 +1483,7 @@ impl TriangularWorker {
             risk_score: None,
             block_number: Some(cycle_block),
             rejection_reason: None,
+            cartridge_id: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
         };
@@ -1498,9 +1500,31 @@ impl TriangularWorker {
             pool_c = %hop3.pool_addr,
         );
 
+        // §IV Gap 1 fix: build RouteMetadata so sim-ctl can resolve the route.
+        // Triangular: 3 hops (A→B→C→A). Uses hop token_in/token_out addresses.
+        let route_metadata = RouteMetadata {
+            pool_addresses: vec![
+                hop1.pool_addr.to_string(),
+                hop2.pool_addr.to_string(),
+                hop3.pool_addr.to_string(),
+            ],
+            token_addresses: vec![
+                hop1.entry.token0_addr.clone().unwrap_or_default(),
+                hop2.entry.token0_addr.clone().unwrap_or_default(),
+                hop3.entry.token0_addr.clone().unwrap_or_default(),
+                hop1.entry.token0_addr.clone().unwrap_or_default(),
+            ],
+            dex_adapters: vec![
+                "uniswap_v2_router".to_string(),
+                "uniswap_v2_router".to_string(),
+                "uniswap_v2_router".to_string(),
+            ],
+            decimals: Default::default(),
+        };
+
         // Persist + publish (best-effort, mirror scanner.rs pattern).
         if let Some(pool) = db {
-            if let Err(e) = persistence::insert_opportunity(pool, &opp).await {
+            if let Err(e) = persistence::insert_opportunity_with_route(pool, &opp, Some(&route_metadata)).await {
                 counters().db_errors.fetch_add(1, Ordering::Relaxed);
                 warn!(event = "triangular_worker.db_error", error = %e);
             } else {
@@ -1887,6 +1911,7 @@ impl TriangularWorker {
                 risk_score: None,
                 block_number: Some(cycle_block),
                 rejection_reason: None,
+                cartridge_id: None,
                 detected_at: Utc::now(),
                 trace_id: Uuid::new_v4(),
             };

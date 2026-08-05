@@ -68,6 +68,7 @@ use chrono::Utc;
 use ethers::types::U256;
 use redis::aio::ConnectionManager;
 use shared_rs::contracts::{Opportunity, StrategyKind};
+use shared_rs::candidates::RouteMetadata;
 use shared_rs::tokens;
 use shared_rs::trading_config::TradingConfigClient;
 use sqlx::postgres::PgPool;
@@ -895,7 +896,7 @@ impl FlashloanArbWorker {
                     return None;
                 }
             };
-        let (_addr_b, _, _) = match resolve_token(redis, self.chain_id, sym_b).await {
+        let (addr_b, _, _) = match resolve_token(redis, self.chain_id, sym_b).await {
             Some(t) => t,
             None => {
                 stats.skip_unknown_token += 1;
@@ -1060,6 +1061,7 @@ impl FlashloanArbWorker {
                     risk_score: None,
                     block_number: Some(block),
                     rejection_reason: None,
+                    cartridge_id: None,
                     detected_at: Utc::now(),
                     trace_id: Uuid::new_v4(),
                 };
@@ -1078,8 +1080,26 @@ impl FlashloanArbWorker {
                     strategy = STRATEGY_KIND,
                 );
 
+                // §IV Gap 1 fix: build RouteMetadata so sim-ctl can resolve the route
+                // (A→B on buy pool, B→A on sell pool). 2 hops, 3 tokens.
+                let route_metadata = RouteMetadata {
+                    pool_addresses: vec![
+                        buy_pd.pool_addr.to_string(),
+                        sell_pd.pool_addr.to_string(),
+                    ],
+                    token_addresses: vec![
+                        addr_a.clone(),
+                        addr_b.clone(),
+                        addr_a.clone(),
+                    ],
+                    dex_adapters: vec![
+                        "uniswap_v2_router".to_string(),
+                        "uniswap_v2_router".to_string(),
+                    ],
+                    decimals: Default::default(),
+                };
                 if let Some(pool) = db {
-                    if let Err(e) = persistence::insert_opportunity(pool, &opp).await {
+                    if let Err(e) = persistence::insert_opportunity_with_route(pool, &opp, Some(&route_metadata)).await {
                         counters().db_errors.fetch_add(1, Ordering::Relaxed);
                         warn!(event = "flashloan_arb_worker.db_error", error = %e);
                     } else {
