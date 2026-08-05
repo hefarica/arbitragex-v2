@@ -198,3 +198,97 @@ pub async fn evaluate_math_evidence(
 
     computed
 }
+
+// ─── §IV: primitivas puras para el posterior calibrado (Stage 1) ──────────────
+//
+// Base del cableado math-evidence → scoring (dictamen §IV). PURAS (sin I/O),
+// unit-testeables, fundamento de la calibración Stage 2. El cableado al hot-path
+// de emisión (snapshot per-oportunidad + aplicación en evaluate_paper_opportunity)
+// es el paso siguiente enfocado — estas primitivas son lo que ese paso requiere.
+
+/// Construye el vector de evidencia per-oportunidad e = (O_1, …, O_31) sobre un
+/// `MarketState`, despachando los 31 operadores. None → 0.0 (token "no computado";
+/// su LR_k calibra a ~1). Índice = operator_id − 1 (0..30). Devuelve Vec<f64>
+/// de largo 31. Observe-only: el llamador decide si persiste / alimenta el posterior.
+pub fn build_evidence_vector(state: &MarketState, registry: &OperatorRegistry) -> Vec<f64> {
+    let mut e = vec![0.0_f64; 31];
+    for id in 1u8..=31u8 {
+        if let Some(out) = registry.dispatch(id, state) {
+            let idx = usize::from(id).wrapping_sub(1);
+            if idx < 31 {
+                e[idx] = out.scalar_value.unwrap_or(0.0);
+            }
+        }
+    }
+    e
+}
+
+/// §IV posterior: log-odds = prior_log_odds + Σ_k (log_lr_k · e_k), con la
+/// convención de que un log_lr_k ≈ 0 (no calibrado, LR = e^0 = 1) NO contribuye.
+/// `calibration` = slice de log-LR por operador (índice id−1, largo ≤ 31).
+/// Devuelve (posterior_log_odds, source_context) donde source_context =
+/// "calibrated" si algún |log_lr_k| > ε, sino "flat_prior" (honesto: sin
+/// calibración el posterior colapsa al prior — el motor está cableado pero OFF).
+/// P(yield) = sigmoid(posterior_log_odds); f* = (b·p̂−q)/b (Kelly) downstream.
+pub fn evidence_posterior_log_odds(
+    prior_log_odds: f64,
+    evidence: &[f64],
+    calibration: &[f64],
+) -> (f64, &'static str) {
+    let n = evidence.len().min(calibration.len()).min(31);
+    let mut sum = 0.0_f64;
+    let mut calibrated = false;
+    for k in 0..n {
+        let lr_k = calibration[k];
+        if lr_k.abs() > 1e-12 {
+            calibrated = true;
+            sum += lr_k * evidence[k];
+        }
+    }
+    let log_odds = prior_log_odds + sum;
+    let ctx: &'static str = if calibrated { "calibrated" } else { "flat_prior" };
+    (log_odds, ctx)
+}
+
+#[cfg(test)]
+mod evidence_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn build_evidence_vector_has_31_slots_and_none_to_zero() {
+        // Estado degenerado (sin reservas ⇒ operadores devuelven None) ⇒ 31 ceros.
+        let state = MarketState {
+            price_matrix: vec![],
+            liquidity_reserves: vec![],
+            gas_price_gwei: 0.0,
+            block_timestamp: 0,
+            block_number: 0,
+            features: HashMap::new(),
+        };
+        let registry = OperatorRegistry::new();
+        let e = build_evidence_vector(&state, &registry);
+        assert_eq!(e.len(), 31, "evidence vector must have 31 slots");
+        assert!(e.iter().all(|&v| v == 0.0), "degenerate state → all zeros");
+    }
+
+    #[test]
+    fn posterior_is_flat_prior_with_empty_calibration() {
+        let evidence = vec![0.5; 31];
+        let empty_cal = vec![0.0; 31]; // sin calibrar
+        let (lo, ctx) = evidence_posterior_log_odds(0.1, &evidence, &empty_cal);
+        assert!((lo - 0.1).abs() < 1e-12, "empty calibration ⇒ posterior = prior");
+        assert_eq!(ctx, "flat_prior");
+    }
+
+    #[test]
+    fn posterior_applies_calibrated_log_odds() {
+        // log_lr[0] = 1.0, evidence = [0.5;31] ⇒ Σ = 1.0·0.5 = 0.5; +prior 0.1 ⇒ 0.6.
+        let evidence = vec![0.5; 31];
+        let mut cal = vec![0.0; 31];
+        cal[0] = 1.0; // operator 1 (idx 0) calibrado
+        let (lo, ctx) = evidence_posterior_log_odds(0.1, &evidence, &cal);
+        assert!((lo - 0.6).abs() < 1e-9, "posterior = prior + lr·e = 0.1+0.5 = 0.6: {lo}");
+        assert_eq!(ctx, "calibrated");
+    }
+}
