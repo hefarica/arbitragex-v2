@@ -375,6 +375,24 @@ impl OpportunityEmitter {
             }
         };
 
+        // §IV capture: read the per-(chain,strategy) math-evidence snapshot from
+        // Redis (written by math_evidence::evaluate_math_evidence, TTL 120s — covers
+        // the emit→score latency). Missing ⇒ null (honest, non-blocking).
+        let evidence_key = format!(
+            "arbx:math_evidence:{}:{}",
+            opp.chain_id,
+            format!("{:?}", opp.strategy_kind)
+        );
+        let evidence_vector: Option<serde_json::Value> = {
+            let mut r = self.redis.clone();
+            let json: Option<String> = redis::cmd("GET")
+                .arg(&evidence_key)
+                .query_async(&mut r)
+                .await
+                .unwrap_or(None);
+            json.as_deref().and_then(|s| serde_json::from_str(s).ok())
+        };
+
         // XADD the score (non-fatal) — twin of `publisher::publish`.
         let record = serde_json::json!({
             "opportunity_id": opp.id.to_string(),
@@ -388,6 +406,7 @@ impl OpportunityEmitter {
             "chain_id": chain_id_i64,
             "source_context": score.source_context,
             "scoring_mode": "paper",
+            "evidence_vector": evidence_vector,
         });
         match serde_json::to_string(&record) {
             Ok(json) => {

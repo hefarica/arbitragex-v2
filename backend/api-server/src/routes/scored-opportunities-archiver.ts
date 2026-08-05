@@ -57,6 +57,7 @@ const ScoredRecordSchema = z.object({
   chain_id: z.number().int().nullable().optional(),
   source_context: z.string().nullable().optional(),
   scoring_mode: z.string().default("paper"),
+  evidence_vector: z.unknown().nullable().optional(),
 });
 type ScoredRecord = z.infer<typeof ScoredRecordSchema>;
 
@@ -149,8 +150,8 @@ export class ScoredOpportunitiesArchiver {
         `INSERT INTO scored_opportunities
            (stream_id, opportunity_id, token_pair, posterior_prob, kelly_fraction,
             recommended_usd, net_profit_usd, bayesian_accepted, prior_log_odds,
-            chain_id, source_context, scoring_mode)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            chain_id, source_context, scoring_mode, evidence_vector)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          ON CONFLICT (stream_id) DO NOTHING`,
         [
           id,
@@ -165,6 +166,7 @@ export class ScoredOpportunitiesArchiver {
           rec.chain_id ?? null,
           rec.source_context ?? null,
           rec.scoring_mode,
+          rec.evidence_vector ? JSON.stringify(rec.evidence_vector) : null,
         ],
       );
       await this.redis.xack(STREAM_IN, GROUP, id);
