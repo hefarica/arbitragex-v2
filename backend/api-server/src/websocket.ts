@@ -240,16 +240,20 @@ export function setupWebSocketGateway(server: HttpServer, carnotStore?: CarnotSt
     // clients. Tested in `websocket.test.ts`.
     const expectedAdminToken = process.env['ARBX_ADMIN_TOKEN'] ?? '';
     io.use((socket, next) => {
+        // The opportunities stream is PUBLIC — the dashboard shows live data
+        // without requiring login. Admin-only rooms (runtime_ack) are gated by
+        // the capability flag below. Execution endpoints (killswitch, service
+        // control) remain behind HTTP requireAdminToken — NOT affected here.
         const got = extractHandshakeToken(socket.handshake);
-        if (!got || !safeTokenEqual(got, expectedAdminToken)) {
-            return next(new Error('unauthorized: invalid or missing admin token'));
+        if (got && expectedAdminToken && safeTokenEqual(got, expectedAdminToken)) {
+            // Admin: full access including sensitive rooms.
+            (socket as unknown as { data: Record<string, unknown> }).data = {
+                ...((socket as unknown as { data?: Record<string, unknown> }).data ?? {}),
+                runtimeAckAllowed: true,
+            };
         }
-        // Mark this socket as having operator/admin privilege. Used by
-        // sensitive rooms (currently `runtime_ack`) for defense-in-depth.
-        (socket as unknown as { data: Record<string, unknown> }).data = {
-            ...((socket as unknown as { data?: Record<string, unknown> }).data ?? {}),
-            runtimeAckAllowed: true,
-        };
+        // Public: allow connection without token. Can subscribe to public rooms
+        // (arbx:opps:detected, metrics, etc.) but NOT runtime_ack.
         next();
     });
 
