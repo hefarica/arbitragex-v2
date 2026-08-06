@@ -1,40 +1,40 @@
 // Cartucho: MEV-06-009 — Cross-consensus arbitrage
-// Operador: op_01 | Modulo: cross_domain_engine | Modo: PAPER
-// FIX v2: uses INJECTED reserves_source (r0/r1 from detected swap) instead of empty pool_a.
-// Compares pool_price vs USD oracle → detects real mispricing.
+// Operador: op_01 | Modulo: cross_domain_engine
 
 let is_opp = false;
 let conf = 0.0;
 let profit_est = 0.0;
-let threshold = 0.001;  // 10 bps (lowered from 30 to catch more)
+let threshold = 0.001;
 
-    // op_01: reads the INJECTED swap data (reserves_source) + compares pool price vs USD oracle
-    let asymmetry = 0.0;
-    let conf = 0.0;
-    let profit_est = 0.0;
+// Read INJECTED swap data
+if reserves_source != () {
+    let r0 = reserves_source.r0;
+    let r1 = reserves_source.r1;
+    if r0 > 0.0 && r1 > 0.0 {
+        let pool_price = r1 / r0;
 
-    // reserves_source is INJECTED by the orchestrator (from the detected swap)
-    if reserves_source != () {
-        let r0 = reserves_source.r0;
-        let r1 = reserves_source.r1;
-        if r0 > 0.0 && r1 > 0.0 {
-            let pool_price = r1 / r0;
-            // Compare with USD oracle price
-            let oracle_price = get_token_price_usd(token_in);
-            if oracle_price > 0.0 && pool_price > 0.0 {
-                let price_diff = (pool_price - oracle_price).abs() / oracle_price;
-                if price_diff > threshold {
-                    is_opp = true;
-                    let evidence = get_math_evidence("06_009");
-                    let kelly = 0.5;
-                    if evidence != () && evidence.kelly_fraction > 0.0 { kelly = evidence.kelly_fraction; }
-                    conf = kelly * (1.0 - math_exp(-price_diff * 50.0));
-                    if conf > 1.0 { conf = 1.0; }
-                    profit_est = price_diff * amount_in * conf;
-                }
+        // Primary: USD oracle
+        let oracle_price = get_token_price_usd(token_in);
+        // Fallback: swap effective price (always available from intent)
+        let swap_price = 0.0;
+        if amount_in != () {
+            let amt = parse_float(amount_in);
+            if amt > 0.0 {
+                swap_price = pool_price;  // pool_price IS the swap's post-trade price
+            }
+        }
+        let ref_price = if oracle_price > 0.0 { oracle_price } else { swap_price };
+
+        if ref_price > 0.0 {
+            let mispricing = (pool_price - ref_price).abs() / ref_price;
+            if mispricing > threshold {
+                is_opp = true;
+                conf = if mispricing > 0.05 { 0.9 } else if mispricing > 0.01 { 0.7 } else { 0.5 };
+                profit_est = mispricing * 1000.0;
             }
         }
     }
+}
 
 # {
     is_opportunity: is_opp,
