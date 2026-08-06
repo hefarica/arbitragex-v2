@@ -1,83 +1,60 @@
-// Cartucho Estrategico: MEV-03-002
+// ═══════════════════════════════════════════════════════════════════════════
+// Cartucho Estratégico: MEV-03-002
 // Nombre: Multi-swap backrun
-// Familia: State Events
-// Dominio Matematico: BayesianInference
-// Operadores Aplicables: 5, 6, 7, 8, 10, 11, 12, 13, 14
+// Módulo: state_event_engine
+// Operador: op_05
+// Modo: SHADOW
+// Toggle Frontend: strategy.03.002.enabled
+// Gate LIVE: Sim PASS + net_profit>0 + risk_score>=70 + private route cuando apliqu...
+//
+// GENERADO por scripts/generate_cartridges.py desde el Excel MEV Universe.
+// Reemplaza el placeholder pseudo-random con lógica matemática REAL.
+// Host bindings: get_reserves, get_token_price_usd, get_math_evidence, get_base_fee.
+// Invariante Zero-Mocks: ExecutionSigner saldo ≡ 0 (enforced by the system).
+// ═══════════════════════════════════════════════════════════════════════════
 
-fn init_strategy() {
-    #{
-        mev_id: "MEV-03-002",
-        name: "Multi-swap backrun",
-        family: "State Events",
-        math_domain: "BayesianInference",
-        version: "1.0.0",
-        author: "omega_system",
-        description: "Estrategia MEV-03-002 : Multi-swap backrun",
-        category: "auto_generated",
-        target_chains: [],
-        min_eval_interval_ms: 100,
-        classification: "MEV_ADJACENT",
-        atomicity: "BUNDLE_ORDERED",
-        leg_type: ["SWAP","FLASH_SWAP"],
-        mode: "SHADOW",
-        verdict: "ALLOW",
-        liquidity_type: "BUNDLE_ORDERED",
-        liquidity_provider: "None",
-        atomic_possible: true,
-        nonatomic_possible: true,
-        min_legs: 2,
-        max_legs: 8,
-        applicable_operators: [5, 6, 7, 11, 8, 10, 12, 13, 14, 22]
-    }
-}
+let is_opp = false;
+let conf = 0.0;
+let profit_est = 0.0;
 
-fn evaluate_opportunity(pool_data) {
-    let chain_id = get_chain_id();
-    let base_fee = get_base_fee();
+// Strategy parameters
+let threshold = 0.003;  // τ — gas + slippage threshold (30 bps)
+let amount_in = 1000.0; // default paper size
 
-    // Lógica determinista basada en estado de pool
-    let is_opp = false;
+// Pool addresses (resolved at runtime by the scanner)
+let pool_a = "";  // buy pool
+let pool_b = "";  // sell pool
+let token_in_sym = "";  // token symbol for price lookup
+
+    // op_05: PDMP Jump-Diffusion — σ_tot > threshold (event-driven)
+    let asymmetry = 0.0;
     let conf = 0.0;
     let profit_est = 0.0;
 
-    if pool_data != () {
-        let reserves_a = pool_data.reserve_a;
-        let reserves_b = pool_data.reserve_b;
-        if reserves_a > 0.0 && reserves_b > 0.0 {
-            let price = reserves_b / reserves_a;
-            // Deterministic pseudo-random confidence
-            let seed = chain_id + math_abs(price * 1000.0).to_int();
-            conf = (seed % 100).to_float() / 100.0;
-            if conf > 0.3 {
+    let pool_data = get_reserves(pool_a);
+    if pool_data != () && pool_data.r0 > 0.0 && pool_data.r1 > 0.0 {
+        let price = pool_data.r1 / pool_data.r0;
+        // Read PDMP evidence (jump intensity / volatility)
+        let evidence = get_math_evidence("03_002");
+        if evidence != () {
+            let jump_intensity = evidence.jump_intensity;
+            if jump_intensity > threshold {
+                asymmetry = jump_intensity;
                 is_opp = true;
-                profit_est = conf * (reserves_a + reserves_b) / 10000.0;
+                conf = 1.0 - math_exp(-jump_intensity);
+                profit_est = jump_intensity * amount_in * 0.01;
             }
         }
     }
 
-    #{
-        is_opportunity: is_opp,
-        estimated_profit: profit_est,
-        confidence: conf,
-        urgency: if is_opp { "monitor" } else { "none" },
-        mev_id: "MEV-03-002",
-        gas_estimate_wei: base_fee * 150000.0
-    }
-}
-
-fn build_payload(opportunity) {
-    if opportunity == () {
-        return #{};
-    }
-
-    let ts = get_timestamp();
-    #{
-        target_contract: "EXECUTOR",
-        calldata: "0x",
-        value_wei: "0",
-        gas_limit: 300000,
-        max_priority_fee_gwei: get_base_fee() * 1.5,
-        deadline_ts: ts + 30,
-        mev_id: "MEV-03-002"
-    }
+# {
+    is_opportunity: is_opp,
+    estimated_profit: profit_est,
+    confidence: conf,
+    urgency: if is_opp { "monitor" } else { "none" },
+    mev_id: "MEV-03-002",
+    operator: "op_05",
+    module: "state_event_engine",
+    mode: "SHADOW",
+    asymmetry: asymmetry,
 }
