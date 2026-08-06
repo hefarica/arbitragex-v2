@@ -225,6 +225,36 @@ jobs:
           echo "[5/9] Stopping current stack (best-effort)..."
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down --remove-orphans || true
 
+          # ═══ SELF-HEALING EXIT TRAP ═════════════════════════════════════════
+          # HARDENING: if ANY step after `down` fails (build error, up error,
+          # health timeout, migration failure, OOM, disk full, network glitch),
+          # this trap fires on script exit and RESTORES the full stack from
+          # cached images. Prevents the recurring "down → failed up → stack dead"
+          # outage pattern. If the deploy SUCCEEDED (api-server running), the
+          # trap is a no-op.
+          deploy_self_heal() {
+            local rc=$?
+            if [ $rc -ne 0 ]; then
+              echo "::warning::Deploy FAILED (rc=$rc) after docker compose down. Auto-restoring stack..."
+            fi
+            # Check if core services are alive. If not, RESTORE.
+            if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q 'arbitragex-v2-api-server-1'; then
+              echo "::warning::api-server is DOWN — bringing full stack back up (cached images)..."
+              docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d \
+                postgres redis anvil socket-proxy \
+                searcher-rs sim-ctl relays-client recon selector-api math-engine \
+                api-server edge frontend \
+                token-enricher prometheus loki promtail grafana alertmanager minio vault \
+                thanos-sidecar thanos-store thanos-query \
+                2>/dev/null || echo "::error::Auto-restore FAILED — MANUAL INTERVENTION REQUIRED"
+              echo "Auto-restore attempted. Verify: docker ps | grep arbitragex"
+            else
+              echo "Stack is UP (api-server running) — no restore needed."
+            fi
+            return $rc
+          }
+          trap deploy_self_heal EXIT
+
           echo "[6/9] Building core + hot-path services (sequential — lower peak disk/RAM)..."
           # Full --no-cache of the entire stack OOMs/fills the 150GB disk (was 82% full).
           # Build the operator-facing plane + the REAL data hot-path so the pipeline
