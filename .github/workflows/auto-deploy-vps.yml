@@ -222,8 +222,12 @@ jobs:
           fi
           echo "schema synchronized with HEAD — safe to proceed"
 
-          echo "[5/9] Stopping current stack (best-effort)..."
-          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down --remove-orphans || true
+          echo "[5/9] Rolling deploy — NO full 'down' (stack stays UP during deploy)..."
+          # HARDENING: the old 'docker compose down --remove-orphans' left the
+          # stack DEAD if any subsequent step failed. Instead, we build new
+          # images FIRST (old containers still serve), then force-recreate per
+          # service at step [7/9]. The stack is NEVER fully down during deploy.
+          # The EXIT trap + watchdog are the safety net if anything still fails.
 
           # ═══ SELF-HEALING EXIT TRAP ═════════════════════════════════════════
           # HARDENING: if ANY step after `down` fails (build error, up error,
@@ -271,7 +275,7 @@ jobs:
           # Thanos is started separately at [7c] AFTER the arbx-metrics bucket
           # exists — the sidecar's first-boot upload fails if the bucket is absent.
           # socket-proxy (api-server dependency) is started here explicitly.
-          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans \
+          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --force-recreate --remove-orphans \
             postgres redis anvil socket-proxy \
             searcher-rs sim-ctl relays-client recon selector-api math-engine \
             api-server edge frontend \
