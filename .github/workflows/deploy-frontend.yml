@@ -147,7 +147,7 @@ jobs:
           REMOTE
 
       - name: "[F5a] Checkout target SHA en el runner"
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.TARGET_SHA }}
           path: arbx-checkout
