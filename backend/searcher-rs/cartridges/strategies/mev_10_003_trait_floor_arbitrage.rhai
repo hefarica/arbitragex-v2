@@ -1,44 +1,31 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// Cartucho Estratégico: MEV-10-003
-// Nombre: Trait-floor arbitrage
-// Módulo: nft_engine
-// Operador: op_04
-// Modo: PAPER
-// Toggle Frontend: strategy.10.003.enabled
-// Gate LIVE: Sim PASS + net_profit>0 + risk_score>=70 + private route cuando apliqu...
-//
-// GENERADO por scripts/generate_cartridges.py desde el Excel MEV Universe.
-// Reemplaza el placeholder pseudo-random con lógica matemática REAL.
-// Host bindings: get_reserves, get_token_price_usd, get_math_evidence, get_base_fee.
-// Invariante Zero-Mocks: ExecutionSigner saldo ≡ 0 (enforced by the system).
-// ═══════════════════════════════════════════════════════════════════════════
+// Cartucho: MEV-10-003 — Trait-floor arbitrage
+// Operador: op_04 | Modulo: nft_engine | Modo: PAPER
+// FIX v2: uses INJECTED reserves_source (r0/r1 from detected swap) instead of empty pool_a.
+// Compares pool_price vs USD oracle → detects real mispricing.
 
 let is_opp = false;
 let conf = 0.0;
 let profit_est = 0.0;
+let threshold = 0.001;  // 10 bps (lowered from 30 to catch more)
 
-// Strategy parameters
-let threshold = 0.003;  // τ — gas + slippage threshold (30 bps)
-let amount_in = 1000.0; // default paper size
-
-// Pool addresses (resolved at runtime by the scanner)
-let pool_a = "";  // buy pool
-let pool_b = "";  // sell pool
-let token_in_sym = "";  // token symbol for price lookup
-
-    // op_04: Von Neumann — S(ρ) < ε (pure/coherent state)
+    // op_04: reads injected reserves + operator evidence
     let asymmetry = 0.0;
     let conf = 0.0;
     let profit_est = 0.0;
 
-    let evidence = get_math_evidence("10_003");
-    if evidence != () {
-        let entropy = evidence.entropy_nats;
-        if entropy < threshold {
-            asymmetry = 1.0 - entropy;
-            is_opp = true;
-            conf = 1.0 - entropy;
-            profit_est = asymmetry * amount_in * 0.001;
+    if reserves_source != () && reserves_source.r0 > 0.0 {
+        let r0 = reserves_source.r0;
+        let r1 = reserves_source.r1;
+        let pool_price = r1 / r0;
+        let oracle_price = get_token_price_usd(token_in);
+        if oracle_price > 0.0 && pool_price > 0.0 {
+            let mispricing = (pool_price - oracle_price).abs() / oracle_price;
+            if mispricing > threshold {
+                is_opp = true;
+                conf = 1.0 - math_exp(-mispricing * 30.0);
+                if conf > 1.0 { conf = 1.0; }
+                profit_est = mispricing * amount_in * 0.01;
+            }
         }
     }
 
@@ -49,7 +36,4 @@ let token_in_sym = "";  // token symbol for price lookup
     urgency: if is_opp { "monitor" } else { "none" },
     mev_id: "MEV-10-003",
     operator: "op_04",
-    module: "nft_engine",
-    mode: "PAPER",
-    asymmetry: asymmetry,
 }

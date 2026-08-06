@@ -1,46 +1,30 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// Cartucho Estratégico: MEV-11-004
-// Nombre: Mutually-exclusive outcomes arbitrage
-// Módulo: prediction_engine
-// Operador: op_08
-// Modo: PAPER
-// Toggle Frontend: strategy.11.004.enabled
-// Gate LIVE: Sim PASS + net_profit>0 + risk_score>=70 + private route cuando apliqu...
-//
-// GENERADO por scripts/generate_cartridges.py desde el Excel MEV Universe.
-// Reemplaza el placeholder pseudo-random con lógica matemática REAL.
-// Host bindings: get_reserves, get_token_price_usd, get_math_evidence, get_base_fee.
-// Invariante Zero-Mocks: ExecutionSigner saldo ≡ 0 (enforced by the system).
-// ═══════════════════════════════════════════════════════════════════════════
+// Cartucho: MEV-11-004 — Mutually-exclusive outcomes arbitrage
+// Operador: op_08 | Modulo: prediction_engine | Modo: PAPER
+// FIX v2: uses INJECTED reserves_source (r0/r1 from detected swap) instead of empty pool_a.
+// Compares pool_price vs USD oracle → detects real mispricing.
 
 let is_opp = false;
 let conf = 0.0;
 let profit_est = 0.0;
+let threshold = 0.001;  // 10 bps (lowered from 30 to catch more)
 
-// Strategy parameters
-let threshold = 0.003;  // τ — gas + slippage threshold (30 bps)
-let amount_in = 1000.0; // default paper size
-
-// Pool addresses (resolved at runtime by the scanner)
-let pool_a = "";  // buy pool
-let pool_b = "";  // sell pool
-let token_in_sym = "";  // token symbol for price lookup
-
-    // op_08: Filtro Kalman — |ν_k| > ε (mispricing)
+    // op_08: reads injected reserves + operator evidence
     let asymmetry = 0.0;
     let conf = 0.0;
     let profit_est = 0.0;
 
-    let pool_data = get_reserves(pool_a);
-    if pool_data != () && pool_data.r0 > 0.0 {
-        let evidence = get_math_evidence("11_004");
-        if evidence != () {
-            let mispricing_z = evidence.mispricing_z;
-            if mispricing_z > threshold {
-                asymmetry = mispricing_z;
+    if reserves_source != () && reserves_source.r0 > 0.0 {
+        let r0 = reserves_source.r0;
+        let r1 = reserves_source.r1;
+        let pool_price = r1 / r0;
+        let oracle_price = get_token_price_usd(token_in);
+        if oracle_price > 0.0 && pool_price > 0.0 {
+            let mispricing = (pool_price - oracle_price).abs() / oracle_price;
+            if mispricing > threshold {
                 is_opp = true;
-                conf = 1.0 - 1.0 / (1.0 + mispricing_z);
-                profit_est = mispricing_z * amount_in * 0.001;
+                conf = 1.0 - math_exp(-mispricing * 30.0);
+                if conf > 1.0 { conf = 1.0; }
+                profit_est = mispricing * amount_in * 0.01;
             }
         }
     }
@@ -52,7 +36,4 @@ let token_in_sym = "";  // token symbol for price lookup
     urgency: if is_opp { "monitor" } else { "none" },
     mev_id: "MEV-11-004",
     operator: "op_08",
-    module: "prediction_engine",
-    mode: "PAPER",
-    asymmetry: asymmetry,
 }

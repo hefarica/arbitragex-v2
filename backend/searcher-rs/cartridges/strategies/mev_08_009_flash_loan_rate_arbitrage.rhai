@@ -1,49 +1,37 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// Cartucho Estratégico: MEV-08-009
-// Nombre: Flash-loan rate arbitrage
-// Módulo: credit_liquidation_engine
-// Operador: op_29
-// Modo: SHADOW
-// Toggle Frontend: strategy.08.009.enabled
-// Gate LIVE: Sim PASS + net_profit>0 + risk_score>=70 + private route cuando apliqu...
-//
-// GENERADO por scripts/generate_cartridges.py desde el Excel MEV Universe.
-// Reemplaza el placeholder pseudo-random con lógica matemática REAL.
-// Host bindings: get_reserves, get_token_price_usd, get_math_evidence, get_base_fee.
-// Invariante Zero-Mocks: ExecutionSigner saldo ≡ 0 (enforced by the system).
-// ═══════════════════════════════════════════════════════════════════════════
+// Cartucho: MEV-08-009 — Flash-loan rate arbitrage
+// Operador: op_01 | Modulo: credit_liquidation_engine | Modo: SHADOW
+// FIX v2: uses INJECTED reserves_source (r0/r1 from detected swap) instead of empty pool_a.
+// Compares pool_price vs USD oracle → detects real mispricing.
 
 let is_opp = false;
 let conf = 0.0;
 let profit_est = 0.0;
+let threshold = 0.001;  // 10 bps (lowered from 30 to catch more)
 
-// Strategy parameters
-let threshold = 0.003;  // τ — gas + slippage threshold (30 bps)
-let amount_in = 1000.0; // default paper size
-
-// Pool addresses (resolved at runtime by the scanner)
-let pool_a = "";  // buy pool
-let pool_b = "";  // sell pool
-let token_in_sym = "";  // token symbol for price lookup
-
-    // op_29: Shapley Value — max φ_i > GasCost
+    // op_01: reads the INJECTED swap data (reserves_source) + compares pool price vs USD oracle
     let asymmetry = 0.0;
     let conf = 0.0;
     let profit_est = 0.0;
 
-    let pool_a_data = get_reserves(pool_a);
-    let pool_b_data = get_reserves(pool_b);
-    if pool_a_data != () && pool_b_data != () {
-        let pa = pool_a_data.r1 / pool_a_data.r0;
-        let pb = pool_b_data.r1 / pool_b_data.r0;
-        if pa > 0.0 && pb > 0.0 {
-            let spread = (pa - pb).abs();
-            let gas = get_base_fee();
-            if spread > gas {
-                asymmetry = spread;
-                is_opp = true;
-                conf = 0.7;
-                profit_est = spread - gas;
+    // reserves_source is INJECTED by the orchestrator (from the detected swap)
+    if reserves_source != () {
+        let r0 = reserves_source.r0;
+        let r1 = reserves_source.r1;
+        if r0 > 0.0 && r1 > 0.0 {
+            let pool_price = r1 / r0;
+            // Compare with USD oracle price
+            let oracle_price = get_token_price_usd(token_in);
+            if oracle_price > 0.0 && pool_price > 0.0 {
+                let price_diff = (pool_price - oracle_price).abs() / oracle_price;
+                if price_diff > threshold {
+                    is_opp = true;
+                    let evidence = get_math_evidence("08_009");
+                    let kelly = 0.5;
+                    if evidence != () && evidence.kelly_fraction > 0.0 { kelly = evidence.kelly_fraction; }
+                    conf = kelly * (1.0 - math_exp(-price_diff * 50.0));
+                    if conf > 1.0 { conf = 1.0; }
+                    profit_est = price_diff * amount_in * conf;
+                }
             }
         }
     }
@@ -54,8 +42,5 @@ let token_in_sym = "";  // token symbol for price lookup
     confidence: conf,
     urgency: if is_opp { "monitor" } else { "none" },
     mev_id: "MEV-08-009",
-    operator: "op_29",
-    module: "credit_liquidation_engine",
-    mode: "SHADOW",
-    asymmetry: asymmetry,
+    operator: "op_01",
 }

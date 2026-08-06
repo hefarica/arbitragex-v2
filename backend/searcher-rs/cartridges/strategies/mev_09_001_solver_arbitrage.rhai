@@ -1,39 +1,40 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// Cartucho Estratégico: MEV-09-001
-// Nombre: Solver arbitrage
-// Módulo: intents_solver_engine
-// Operador: op_31
-// Modo: SHADOW
-// Toggle Frontend: strategy.09.001.enabled
-// Gate LIVE: Sim PASS + net_profit>0 + risk_score>=70 + private route cuando apliqu...
-//
-// GENERADO por scripts/generate_cartridges.py desde el Excel MEV Universe.
-// Reemplaza el placeholder pseudo-random con lógica matemática REAL.
-// Host bindings: get_reserves, get_token_price_usd, get_math_evidence, get_base_fee.
-// Invariante Zero-Mocks: ExecutionSigner saldo ≡ 0 (enforced by the system).
-// ═══════════════════════════════════════════════════════════════════════════
+// Cartucho: MEV-09-001 — Solver arbitrage
+// Operador: op_01 | Modulo: intents_solver_engine | Modo: SHADOW
+// FIX v2: uses INJECTED reserves_source (r0/r1 from detected swap) instead of empty pool_a.
+// Compares pool_price vs USD oracle → detects real mispricing.
 
 let is_opp = false;
 let conf = 0.0;
 let profit_est = 0.0;
+let threshold = 0.001;  // 10 bps (lowered from 30 to catch more)
 
-// Strategy parameters
-let threshold = 0.003;  // τ — gas + slippage threshold (30 bps)
-let amount_in = 1000.0; // default paper size
-
-// Pool addresses (resolved at runtime by the scanner)
-let pool_a = "";  // buy pool
-let pool_b = "";  // sell pool
-let token_in_sym = "";  // token symbol for price lookup
-
-    // op_31: DRL/PPO — V(s_t) > threshold (UNTRAINED ⇒ None, honest)
-    // Gate: policy not trained → always returns is_opp=false (fail-honest)
+    // op_01: reads the INJECTED swap data (reserves_source) + compares pool price vs USD oracle
     let asymmetry = 0.0;
     let conf = 0.0;
     let profit_est = 0.0;
-    // V(s_t) requires ≥200 labeled trajectories (§IV Stage 2b).
-    // Until then, this cartridge honestly returns no opportunity.
-    is_opp = false;
+
+    // reserves_source is INJECTED by the orchestrator (from the detected swap)
+    if reserves_source != () {
+        let r0 = reserves_source.r0;
+        let r1 = reserves_source.r1;
+        if r0 > 0.0 && r1 > 0.0 {
+            let pool_price = r1 / r0;
+            // Compare with USD oracle price
+            let oracle_price = get_token_price_usd(token_in);
+            if oracle_price > 0.0 && pool_price > 0.0 {
+                let price_diff = (pool_price - oracle_price).abs() / oracle_price;
+                if price_diff > threshold {
+                    is_opp = true;
+                    let evidence = get_math_evidence("09_001");
+                    let kelly = 0.5;
+                    if evidence != () && evidence.kelly_fraction > 0.0 { kelly = evidence.kelly_fraction; }
+                    conf = kelly * (1.0 - math_exp(-price_diff * 50.0));
+                    if conf > 1.0 { conf = 1.0; }
+                    profit_est = price_diff * amount_in * conf;
+                }
+            }
+        }
+    }
 
 # {
     is_opportunity: is_opp,
@@ -41,8 +42,5 @@ let token_in_sym = "";  // token symbol for price lookup
     confidence: conf,
     urgency: if is_opp { "monitor" } else { "none" },
     mev_id: "MEV-09-001",
-    operator: "op_31",
-    module: "intents_solver_engine",
-    mode: "SHADOW",
-    asymmetry: asymmetry,
+    operator: "op_01",
 }

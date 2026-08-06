@@ -1,48 +1,37 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// Cartucho Estratégico: MEV-05-010
-// Nombre: DEX price-lead arbitrage
-// Módulo: cex_external_engine
-// Operador: op_05
-// Modo: PAPER
-// Toggle Frontend: strategy.05.010.enabled
-// Gate LIVE: Sim PASS + net_profit>0 + risk_score>=70 + private route cuando apliqu...
-//
-// GENERADO por scripts/generate_cartridges.py desde el Excel MEV Universe.
-// Reemplaza el placeholder pseudo-random con lógica matemática REAL.
-// Host bindings: get_reserves, get_token_price_usd, get_math_evidence, get_base_fee.
-// Invariante Zero-Mocks: ExecutionSigner saldo ≡ 0 (enforced by the system).
-// ═══════════════════════════════════════════════════════════════════════════
+// Cartucho: MEV-05-010 — DEX price-lead arbitrage
+// Operador: op_01 | Modulo: cex_external_engine | Modo: PAPER
+// FIX v2: uses INJECTED reserves_source (r0/r1 from detected swap) instead of empty pool_a.
+// Compares pool_price vs USD oracle → detects real mispricing.
 
 let is_opp = false;
 let conf = 0.0;
 let profit_est = 0.0;
+let threshold = 0.001;  // 10 bps (lowered from 30 to catch more)
 
-// Strategy parameters
-let threshold = 0.003;  // τ — gas + slippage threshold (30 bps)
-let amount_in = 1000.0; // default paper size
-
-// Pool addresses (resolved at runtime by the scanner)
-let pool_a = "";  // buy pool
-let pool_b = "";  // sell pool
-let token_in_sym = "";  // token symbol for price lookup
-
-    // op_05: PDMP Jump-Diffusion — σ_tot > threshold (event-driven)
+    // op_01: reads the INJECTED swap data (reserves_source) + compares pool price vs USD oracle
     let asymmetry = 0.0;
     let conf = 0.0;
     let profit_est = 0.0;
 
-    let pool_data = get_reserves(pool_a);
-    if pool_data != () && pool_data.r0 > 0.0 && pool_data.r1 > 0.0 {
-        let price = pool_data.r1 / pool_data.r0;
-        // Read PDMP evidence (jump intensity / volatility)
-        let evidence = get_math_evidence("05_010");
-        if evidence != () {
-            let jump_intensity = evidence.jump_intensity;
-            if jump_intensity > threshold {
-                asymmetry = jump_intensity;
-                is_opp = true;
-                conf = 1.0 - math_exp(-jump_intensity);
-                profit_est = jump_intensity * amount_in * 0.01;
+    // reserves_source is INJECTED by the orchestrator (from the detected swap)
+    if reserves_source != () {
+        let r0 = reserves_source.r0;
+        let r1 = reserves_source.r1;
+        if r0 > 0.0 && r1 > 0.0 {
+            let pool_price = r1 / r0;
+            // Compare with USD oracle price
+            let oracle_price = get_token_price_usd(token_in);
+            if oracle_price > 0.0 && pool_price > 0.0 {
+                let price_diff = (pool_price - oracle_price).abs() / oracle_price;
+                if price_diff > threshold {
+                    is_opp = true;
+                    let evidence = get_math_evidence("05_010");
+                    let kelly = 0.5;
+                    if evidence != () && evidence.kelly_fraction > 0.0 { kelly = evidence.kelly_fraction; }
+                    conf = kelly * (1.0 - math_exp(-price_diff * 50.0));
+                    if conf > 1.0 { conf = 1.0; }
+                    profit_est = price_diff * amount_in * conf;
+                }
             }
         }
     }
@@ -53,8 +42,5 @@ let token_in_sym = "";  // token symbol for price lookup
     confidence: conf,
     urgency: if is_opp { "monitor" } else { "none" },
     mev_id: "MEV-05-010",
-    operator: "op_05",
-    module: "cex_external_engine",
-    mode: "PAPER",
-    asymmetry: asymmetry,
+    operator: "op_01",
 }

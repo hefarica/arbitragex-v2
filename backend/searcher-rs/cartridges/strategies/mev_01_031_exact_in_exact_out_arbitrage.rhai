@@ -1,5 +1,5 @@
-// Cartucho: MEV-06-002 — L1–L2 arbitrage
-// Operador: op_01 | Modulo: cross_domain_engine | Modo: PAPER
+// Cartucho: MEV-01-031 — Exact-in/exact-out arbitrage
+// Operador: op_01 | Modulo: route_graph_engine | Modo: SHADOW
 // FIX v2: uses INJECTED reserves_source (r0/r1 from detected swap) instead of empty pool_a.
 // Compares pool_price vs USD oracle → detects real mispricing.
 
@@ -25,7 +25,7 @@ let threshold = 0.001;  // 10 bps (lowered from 30 to catch more)
                 let price_diff = (pool_price - oracle_price).abs() / oracle_price;
                 if price_diff > threshold {
                     is_opp = true;
-                    let evidence = get_math_evidence("06_002");
+                    let evidence = get_math_evidence("01_031");
                     let kelly = 0.5;
                     if evidence != () && evidence.kelly_fraction > 0.0 { kelly = evidence.kelly_fraction; }
                     conf = kelly * (1.0 - math_exp(-price_diff * 50.0));
@@ -41,6 +41,6 @@ let threshold = 0.001;  // 10 bps (lowered from 30 to catch more)
     estimated_profit: profit_est,
     confidence: conf,
     urgency: if is_opp { "monitor" } else { "none" },
-    mev_id: "MEV-06-002",
+    mev_id: "MEV-01-031",
     operator: "op_01",
 }
