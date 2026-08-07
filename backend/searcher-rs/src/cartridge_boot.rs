@@ -271,6 +271,32 @@ pub fn build_cartridge_pool_data(
             .unwrap_or_default();
         m.insert("source_pool".into(), Dynamic::from(pool));
     }
+
+    // CartridgeContextV3: pass the FULL route (all legs) so multi-leg cartridges
+    // (triangular, N-leg, cross-pool, cross-DEX) can see the complete cycle — not
+    // just the first pool. Each leg: { pool, token_in, token_out, protocol_type,
+    // fee_bps }. The cartridge calls get_reserves(pool) per leg to compose
+    // executable quotes Q_R(x) = depth-aware detection. Read-only — no signer,
+    // no broadcast, pure math.
+    let mut route_arr: Vec<Dynamic> = Vec::with_capacity(intent.legs.len());
+    for leg in &intent.legs {
+        let mut lm = rhai::Map::new();
+        let pool = leg.pool_hint.map(|p| format!("{:#x}", p)).unwrap_or_default();
+        lm.insert("pool".into(), Dynamic::from(pool));
+        lm.insert("token_in".into(), Dynamic::from(format!("{:#x}", leg.token_in)));
+        lm.insert("token_out".into(), Dynamic::from(format!("{:#x}", leg.token_out)));
+        lm.insert("protocol_type".into(), Dynamic::from(protocol_type_str(leg.protocol_type).to_string()));
+        if let Some(fee) = leg.fee_bps {
+            lm.insert("fee_bps".into(), Dynamic::from(fee as i64));
+        }
+        route_arr.push(Dynamic::from(lm));
+    }
+    m.insert("route".into(), Dynamic::from(route_arr));
+    m.insert("route_legs_count".into(), Dynamic::from(intent.legs.len() as i64));
+    let route_closed = intent.legs.len() >= 2
+        && intent.legs.last().map(|l| l.token_out) == intent.legs.first().map(|l| l.token_in);
+    m.insert("route_closed".into(), Dynamic::from(route_closed));
+
     if let Some(rs) = reserves_source {
         let mut rmap = rhai::Map::new();
         rmap.insert("r0".into(), Dynamic::from(rs.r0.clone()));
