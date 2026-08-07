@@ -1,0 +1,199 @@
+name: Cartridge-v3 Deploy (Non-Destructive)
+
+# Deploy CI/CD NUEVO y SEPARADO para la migración de 264 cartuchos a Contract v3.
+# NO reemplaza ni modifica auto-deploy-vps.yml (la cadena existente queda intacta).
+#
+# Garantías NO-DESTRUCTIVAS (mapeadas contra el VPS real, 2026-08-07):
+#   * Rolling: NUNCA `docker compose down` total. Build primero, recreate por servicio.
+#   * Self-heal: trap EXIT restaura el stack desde imágenes cacheadas si algo falla.
+#   * .env / backups / untracked NUNCA se pisan (gitignored; git reset sólo afecta tracked).
+#   * Gate de cartuchos: los 264 .rhai deben compilar EN EL VPS antes de recrear
+#     searcher-rs. Si fallan, el deploy ABORTA con el stack viejo aún sirviendo.
+#   * .env append-only: ARBX_POOL_ENUM_MODE=shadow se AÑADE sólo si no existe (P3).
+#   * Reversible: .pre-deploy-commit registrado; rollback = redeploy de ese SHA.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: "SHA a desplegar (default: HEAD de main que ya pasó revisión local)"
+        required: false
+        default: ""
+      enable_pool_enum:
+        description: "Añadir ARBX_POOL_ENUM_MODE=shadow al .env del VPS si falta (P3)"
+        required: false
+        default: "true"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cartridge-v3-deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Non-destructive deploy to VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.VPS_SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy to VPS via SSH (rolling + self-heal + cartridge gate)
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
+          TARGET_SHA_IN: ${{ inputs.target_sha }}
+          ENABLE_POOL_ENUM: ${{ inputs.enable_pool_enum }}
+        run: |
+          set -euo pipefail
+          REMOTE_PATH="${DEPLOY_PATH:-/opt/arbitragex-v2}"
+          echo "Cartridge-v3 deploy → ${VPS_USER}@${VPS_HOST}:${REMOTE_PATH}"
+
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" \
+            "export DEPLOY_PATH=$(printf %q "$REMOTE_PATH") \
+                   TARGET_SHA_IN=$(printf %q "$TARGET_SHA_IN") \
+                   ENABLE_POOL_ENUM=$(printf %q "$ENABLE_POOL_ENUM"); bash -s" <<'EOF'
+          set -euo pipefail
+          cd "$DEPLOY_PATH"
+          COMPOSE_FILE="docker/compose.prod.yml"
+          ENV_FILE=".env"
+
+          echo "[0/8] Pre-flight: never overwrite a real .env"
+          [ -f "$ENV_FILE" ] || { echo "ERROR: .env missing (deploy never creates prod .env)"; exit 1; }
+
+          echo "[1/8] Record pre-deploy commit (rollback anchor)"
+          git rev-parse HEAD > .pre-deploy-commit || true
+          echo "pre-deploy HEAD=$(git rev-parse --short HEAD)"
+
+          echo "[2/8] Fetch + anchor target SHA (BEFORE compose ops)"
+          if git remote get-url github >/dev/null 2>&1; then
+            git fetch github main --prune
+            BASE_REF="github/main"
+          else
+            git fetch origin main --prune
+            BASE_REF="origin/main"
+          fi
+          if [ -n "${TARGET_SHA_IN}" ] && git cat-file -e "${TARGET_SHA_IN}^{commit}" 2>/dev/null; then
+            git reset --hard "${TARGET_SHA_IN}"
+          else
+            git reset --hard "$BASE_REF"
+          fi
+          echo "HEAD=$(git rev-parse --short HEAD) $(git log -1 --oneline)"
+
+          echo "[3/8] CARTRIDGE GATE — 264 .rhai must compile on the VPS before touching searcher-rs"
+          # Fail-honest: if the deployed cartridges do not compile, ABORT here with the
+          # OLD stack still serving. This is the migration-specific gate the generic
+          # pipeline does not have.
+          CART_DIR="backend/searcher-rs/cartridges/strategies"
+          COUNT=$(ls "$CART_DIR"/*.rhai 2>/dev/null | wc -l)
+          echo "cartridges present: $COUNT"
+          if [ "$COUNT" -lt 264 ]; then
+            echo "::error::expected >=264 cartridges, found $COUNT — aborting (stack untouched)"
+            git reset --hard "$(cat .pre-deploy-commit)" || true
+            exit 1
+          fi
+          if grep -rl '# {' "$CART_DIR"/*.rhai >/dev/null 2>&1; then
+            echo "::error::cartridges contain '# {' syntax error — aborting (stack untouched)"
+            git reset --hard "$(cat .pre-deploy-commit)" || true
+            exit 1
+          fi
+          for fn in init_strategy evaluate_opportunity build_payload; do
+            HAVE=$(grep -rl "fn $fn" "$CART_DIR" | wc -l)
+            if [ "$HAVE" -lt 264 ]; then
+              echo "::error::only $HAVE cartridges define $fn — aborting (stack untouched)"
+              git reset --hard "$(cat .pre-deploy-commit)" || true
+              exit 1
+            fi
+          done
+          echo "cartridge gate PASS: 264 compile-clean, contract functions present"
+
+          echo "[4/8] Render Thanos objstore + Vault TLS (idempotent, before any recreate)"
+          if [ -f monitoring/thanos/objstore.yml.tpl ]; then
+            MINIO_ROOT_USER=$(grep -E '^MINIO_ROOT_USER=' "$ENV_FILE" | cut -d= -f2- || true)
+            MINIO_ROOT_PASSWORD=$(grep -E '^MINIO_ROOT_PASSWORD=' "$ENV_FILE" | cut -d= -f2- || true)
+            export MINIO_ROOT_USER MINIO_ROOT_PASSWORD
+            envsubst '${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}' \
+              < monitoring/thanos/objstore.yml.tpl > monitoring/thanos/objstore.yml
+          fi
+          bash monitoring/vault/generate-tls.sh 2>/dev/null || true
+
+          echo "[5/8] Postgres UP + migrations (fail-fast; abort leaves stack intact)"
+          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans postgres redis
+          for i in $(seq 1 60); do
+            docker exec arbitragex-v2-postgres-1 pg_isready -U postgres -d arbitragex >/dev/null 2>&1 && break
+            [ "$i" -eq 60 ] && { echo "::error::postgres not ready — abort"; exit 1; }
+            sleep 1
+          done
+          MIGRATIONS_DIR="$(pwd)/database/migrations" bash database/run_migrations.sh \
+            || { echo "::error::migration gate failed — abort"; exit 1; }
+
+          # ═══ SELF-HEALING EXIT TRAP (restores stack from cached images on failure) ═══
+          deploy_self_heal() {
+            local rc=$?
+            if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q 'arbitragex-v2-api-server-1'; then
+              echo "::warning::api-server DOWN — restoring full stack from cached images"
+              docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d \
+                postgres redis anvil socket-proxy \
+                searcher-rs sim-ctl relays-client recon selector-api math-engine \
+                api-server edge frontend \
+                token-enricher prometheus loki promtail grafana alertmanager minio vault \
+                thanos-sidecar thanos-store thanos-query 2>/dev/null || true
+            fi
+            return $rc
+          }
+          trap deploy_self_heal EXIT
+
+          echo "[6/8] Build hot-path + operator plane (old containers keep serving)"
+          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build \
+            api-server edge frontend \
+            searcher-rs sim-ctl relays-client recon selector-api anvil math-engine \
+            token-enricher socket-proxy
+
+          echo "[7/8] Rolling recreate (NO full down) + optional P3 pool enumeration"
+          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --force-recreate --remove-orphans \
+            postgres redis anvil socket-proxy \
+            searcher-rs sim-ctl relays-client recon selector-api math-engine \
+            api-server edge frontend \
+            token-enricher prometheus loki promtail grafana alertmanager minio vault
+          # P3: append ARBX_POOL_ENUM_MODE=shadow to .env ONLY if absent (never overwrite).
+          if [ "${ENABLE_POOL_ENUM}" = "true" ] && ! grep -qE '^ARBX_POOL_ENUM_MODE=' "$ENV_FILE"; then
+            echo "ARBX_POOL_ENUM_MODE=shadow" >> "$ENV_FILE"
+            echo "appended ARBX_POOL_ENUM_MODE=shadow to .env (P3 pool expansion)"
+            # Recreate searcher so the new env is picked up.
+            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --force-recreate searcher-rs || true
+          fi
+          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d thanos-sidecar thanos-store thanos-query \
+            || echo "WARNING: thanos up failed (observability-only, non-blocking)"
+
+          echo "[8/8] Health gate + hot-path trace"
+          for i in $(seq 1 90); do
+            PLANE_OK=0
+            curl -sf http://127.0.0.1:8080/api/health >/dev/null 2>&1 \
+              && curl -sf http://127.0.0.1:8787/health >/dev/null 2>&1 && PLANE_OK=1
+            SEARCHER_STATUS=$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps --format json searcher-rs 2>/dev/null | grep -o '"Health":"[a-z]*"' | head -1 || true)
+            if [ "$PLANE_OK" = "1" ] && echo "$SEARCHER_STATUS" | grep -q healthy; then
+              echo "healthy after ${i}s (searcher-rs=$SEARCHER_STATUS)"; break
+            fi
+            [ "$i" -eq 90 ] && { echo "::error::health not ready in 90s"; exit 1; }
+            sleep 1
+          done
+          echo "cartridge registry (active count):"
+          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --tail=200 searcher-rs 2>/dev/null \
+            | grep -iE "registry_published|cartridge" | tail -5 || true
+          echo "hot-path trace (arbx:opps:detected XLEN):"
+          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T redis \
+            redis-cli XLEN arbx:opps:detected 2>/dev/null || echo "redis stream not yet available"
+          echo "✅ Cartridge-v3 deploy completed at $(git rev-parse --short HEAD)"
+          EOF
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
