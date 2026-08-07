@@ -9,6 +9,9 @@ fn init_strategy() {
     #{
         mev_id: "MEV-01-016",
         name: "Triangular arbitrage",
+        version: "1.0.0",
+        author: "ArbitrageX",
+        description: "Triangular arbitrage (R_CLOSED_CYCLE, 3-leg, depth-aware V2 CPMM)",
         detector_id: "R_CLOSED_CYCLE",
         min_legs: 3,
         max_legs: 3,
