@@ -260,6 +260,56 @@ async fn build_orchestrator(
         }
     }
 
+    // P0 — keep the ReservesCache LIVE. `PoolSyncWorker` refreshes Redis every
+    // tick, but the in-memory cache the engines (Dex/Triangular) + SizeOptimizer
+    // read was hydrated ONCE at boot — so a few blocks later engines valued
+    // candidates against boot-stale reserves (reserves_cache_miss / stale
+    // pricing). This task re-hydrates from Redis on a timer so the cache tracks
+    // live state. Best-effort + non-fatal: the cache is only ever enriched with
+    // REAL Redis data (R8 — never fabricated); a failed refresh leaves the prior
+    // snapshot in place. This makes the cache LIVE (lag ≤ refresh interval);
+    // block-strict coherence is a future StateSnapshotStore concern, not this P0.
+    let refresh_ms = std::env::var("ARBX_RESERVES_CACHE_REFRESH_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|&ms| ms >= 1_000)
+        .unwrap_or(12_000);
+    {
+        let cache = reserves_cache.clone();
+        let mut refresh_redis = redis.clone();
+        let cid = chain_id;
+        info!(
+            event = "v2.reserves.refresh_scheduled",
+            chain_id,
+            interval_ms = refresh_ms,
+            "ReservesCache periodic refresh from Redis enabled"
+        );
+        tokio::spawn(async move {
+            // Discard the immediate first tick: the boot hydration above already
+            // loaded the current snapshot — the first real refresh is one interval in.
+            let mut ticker =
+                tokio::time::interval(std::time::Duration::from_millis(refresh_ms));
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                match cache.hydrate_from_redis(&mut refresh_redis, cid).await {
+                    Ok(n) => debug!(
+                        event = "v2.reserves.refresh",
+                        chain_id = cid,
+                        entries = n,
+                        "ReservesCache periodic refresh"
+                    ),
+                    Err(e) => warn!(
+                        event = "v2.reserves.refresh_failed",
+                        chain_id = cid,
+                        error = %e,
+                        "ReservesCache refresh failed (non-fatal; prior snapshot retained)"
+                    ),
+                }
+            }
+        });
+    }
+
     // V3 oracle (read-only): build the on-chain QuoterV2 provider from the
     // failover RPC pool so DexEngine can value V3 pools via
     // `state_projector.project_v3_quote` — eliminates `no_price_oracle`.
@@ -365,25 +415,16 @@ async fn build_orchestrator(
     )));
     let liq_engine = Arc::new(LiquidationEngine::new(liq_indexer, chain_id));
 
-    let emitter = Arc::new(if mode == OrchestratorMode::Shadow {
-        OpportunityEmitter::new_dry_run(opp_dedup, redis.clone())
-    } else {
-        OpportunityEmitter::new(db.clone(), redis.clone(), opp_dedup)
-    });
-
-    // ── OMEGA SEAL — Shadow "capital_exposed == 0" invariant ───────────────────
-    // In Shadow mode the orchestrator is observe-only: the emitter MUST be
-    // dry-run so it writes NOTHING to PG/Redis and can therefore never feed the
-    // downstream execution path (relays-client). This is searcher-rs's honest
-    // analog of `executor.capital_exposed() == 0` (searcher-rs holds no executor
-    // or capital). Asserted as a hard, always-on invariant so any future edit
-    // that swaps in a writing emitter under Shadow fails loudly at boot.
-    if mode == OrchestratorMode::Shadow {
-        assert!(
-            emitter.is_dry_run(),
-            "FATAL: Capital exposure detected in SHADOW mode — orchestrator emitter is not dry_run"
-        );
-    }
+    // Detection + recording are UNIFIED across all modes (paper/testnet/mainnet):
+    // every mode writes detected opportunities to PG + `arbx:opps:detected` so the
+    // dashboard and the paper dataset populate identically. The ONLY difference
+    // between modes is execution FUNDING, gated DOWNSTREAM — not here. searcher-rs
+    // holds no executor and no capital; the real capital gate is `relays-client`'s
+    // `live_exec_policy` (observer-only in ALL modes unless a capital-bearing key is
+    // configured AND paper_mode is off) plus the pre-execute checklist + kill
+    // switch. Those remain intact, so writing `opps:detected` here cannot reach
+    // on-chain broadcast on its own.
+    let emitter = Arc::new(OpportunityEmitter::new(db.clone(), redis.clone(), opp_dedup));
 
     let config_provider = Arc::new(ConfigProvider { trading_config });
 
