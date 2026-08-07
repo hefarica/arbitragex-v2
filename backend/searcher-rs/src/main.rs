@@ -378,20 +378,45 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(8);
     let pool_cfg = shared_rs::db_pool::PoolConfig::from_env(db_pool_max);
     let db_pool = match std::env::var("DATABASE_URL") {
-        Ok(url) if !url.is_empty() => match shared_rs::db_pool::options_with_timeouts(&pool_cfg)
-            .connect(&url)
-            .await
-        {
-            Ok(p) => {
-                info!(event = "db.connected", "postgres pool up");
-                Some(p)
+        Ok(url) if !url.is_empty() => {
+            // Boot-race fix (P0): `depends_on: service_healthy` is not always
+            // honoured at the moment the searcher process starts connecting, and
+            // a single fast-fail connect permanently disables pool_sync +
+            // persistence for the whole process lifetime. Bounded-retry the
+            // initial connect with exponential backoff so a Postgres that is
+            // merely *slow to become ready* is awaited, while a genuinely absent
+            // DB still fails honest (None) after the retries are exhausted.
+            let opts = shared_rs::db_pool::options_with_timeouts(&pool_cfg);
+            let mut attempt = 0u32;
+            let max_attempts = std::env::var("DATABASE_CONNECT_RETRIES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(5u32);
+            let mut connected = None;
+            loop {
+                attempt += 1;
+                match opts.clone().connect(&url).await {
+                    Ok(p) => {
+                        info!(event = "db.connected", attempt, "postgres pool up");
+                        connected = Some(p);
+                        break;
+                    }
+                    Err(e) if attempt < max_attempts => {
+                        let backoff_ms = 500u64 << attempt; // 1s, 2s, 4s, 8s, ...
+                        warn!(event = "db.connect_retry", attempt, max_attempts,
+                              backoff_ms, error = %e,
+                              "postgres not ready — retrying initial connect");
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                    }
+                    Err(e) => {
+                        warn!(event = "db.connect_failed", attempts = attempt, error = %e,
+                              "continuing without DB persistence (opportunities only published to stream)");
+                        break;
+                    }
+                }
             }
-            Err(e) => {
-                warn!(event = "db.connect_failed", error = %e,
-                      "continuing without DB persistence (opportunities only published to stream)");
-                None
-            }
-        },
+            connected
+        }
         _ => {
             warn!(
                 event = "db.not_configured",
