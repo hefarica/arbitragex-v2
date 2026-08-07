@@ -55,6 +55,7 @@ pub fn build_dex_arb_candidate(ctx: &TxContext, swap: &DecodedSwap) -> Opportuni
         risk_score: None,
         block_number: ctx.block_number,
         rejection_reason: None, // Populated by scanner.rs at each gate decision point.
+        cartridge_id: None,
         detected_at: Utc::now(),
         trace_id: Uuid::new_v4(),
     }

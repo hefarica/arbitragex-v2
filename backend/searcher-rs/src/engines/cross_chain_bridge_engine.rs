@@ -320,6 +320,7 @@ impl CrossChainBridgeEngine {
             risk_score: Some(0.3), // Cross-chain carries bridge risk
             block_number: None,
             rejection_reason: None,
+            cartridge_id: None,
             detected_at: Utc::now(),
             trace_id,
         };

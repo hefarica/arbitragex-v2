@@ -614,6 +614,7 @@ fn build_accepted_opportunity(
         risk_score: None,
         block_number: None,
         rejection_reason: None,
+        cartridge_id: None,
         detected_at: Utc::now(),
         trace_id,
     };

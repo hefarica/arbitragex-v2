@@ -948,6 +948,7 @@ pub async fn active_evaluate_and_emit(
                     risk_score: None,
                     block_number: None,
                     rejection_reason: None,
+                    cartridge_id: Some(cartridge_id.clone()),
                     detected_at: chrono::Utc::now(),
                     trace_id: Uuid::new_v4(), // Generate new trace ID for cartridge path
                 };

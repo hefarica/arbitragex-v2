@@ -284,6 +284,7 @@ impl LiquidationEngine {
             risk_score: None,
             block_number: Some(pos_ref.last_checked_block),
             rejection_reason: None,
+            cartridge_id: None,
             detected_at: Utc::now(),
             trace_id,
         };

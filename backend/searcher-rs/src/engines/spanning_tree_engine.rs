@@ -470,6 +470,7 @@ impl SpanningTreeEngine {
             risk_score: None,
             block_number: None,
             rejection_reason: rejection_reason.clone(),
+            cartridge_id: None,
             detected_at: Utc::now(),
             trace_id,
         };

@@ -355,6 +355,7 @@ impl LiquidationSnipeEngine {
             risk_score: Some(0.2), // Liquidations have execution risk
             block_number: None,
             rejection_reason: rejection_reason.clone(),
+            cartridge_id: None,
             detected_at: Utc::now(),
             trace_id,
         };
