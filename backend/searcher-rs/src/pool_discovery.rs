@@ -99,6 +99,13 @@ impl PoolDiscoveryService {
         }
     }
 
+    /// Shared RPC pool accessor for read-only enumerators (e.g. the Alchemy
+    /// on-chain pool source). Returns `None` when no RPC is configured (the
+    /// enumerator then fails honest — it never fabricates pools without RPC).
+    pub fn rpc_pool(&self) -> Option<Arc<HttpRpcPool>> {
+        self.rpc_pool.clone()
+    }
+
     async fn get_factories(
         &self,
     ) -> Vec<(Uuid, Address, crate::route_intent::ProtocolType, String)> {

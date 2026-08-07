@@ -12,16 +12,25 @@
 /// Which live data source produced a candidate (for provenance / `enum_source`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PoolEnumSource {
+    /// On-chain truth anchor — pools enumerated from factory creation events via
+    /// the searcher's own RPC (Alchemy). Never depends on a third-party indexer.
+    Alchemy,
     TheGraph,
     DeFiLlama,
+    /// High-fidelity free (no-key) indexer: on-chain pair addresses with
+    /// liquidity + 24h volume. Enumerates via pivot tokens and enriches anchor
+    /// pools whose TVL is otherwise unknown.
+    DexScreener,
     GeckoTerminal,
 }
 
 impl PoolEnumSource {
     pub fn as_str(self) -> &'static str {
         match self {
+            PoolEnumSource::Alchemy => "alchemy",
             PoolEnumSource::TheGraph => "thegraph",
             PoolEnumSource::DeFiLlama => "defillama",
+            PoolEnumSource::DexScreener => "dexscreener",
             PoolEnumSource::GeckoTerminal => "geckoterminal",
         }
     }
@@ -30,8 +39,10 @@ impl PoolEnumSource {
     #[allow(clippy::should_implement_trait)] // returns Option, not the std FromStr contract
     pub fn from_str(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
+            "alchemy" | "onchain" | "on_chain" | "rpc" => Some(PoolEnumSource::Alchemy),
             "thegraph" | "the_graph" | "graph" => Some(PoolEnumSource::TheGraph),
             "defillama" | "llama" => Some(PoolEnumSource::DeFiLlama),
+            "dexscreener" | "dexs" => Some(PoolEnumSource::DexScreener),
             "geckoterminal" | "gecko" => Some(PoolEnumSource::GeckoTerminal),
             _ => None,
         }
@@ -78,8 +89,10 @@ mod tests {
     #[test]
     fn source_roundtrip() {
         for s in [
+            PoolEnumSource::Alchemy,
             PoolEnumSource::TheGraph,
             PoolEnumSource::DeFiLlama,
+            PoolEnumSource::DexScreener,
             PoolEnumSource::GeckoTerminal,
         ] {
             assert_eq!(PoolEnumSource::from_str(s.as_str()), Some(s));
@@ -88,6 +101,8 @@ mod tests {
             PoolEnumSource::from_str("GECKO"),
             Some(PoolEnumSource::GeckoTerminal)
         );
+        assert_eq!(PoolEnumSource::from_str("onchain"), Some(PoolEnumSource::Alchemy));
+        assert_eq!(PoolEnumSource::from_str("dexs"), Some(PoolEnumSource::DexScreener));
         assert_eq!(PoolEnumSource::from_str("nope"), None);
     }
 

@@ -99,22 +99,45 @@ impl EnumConfig {
     }
 }
 
-/// Parse `ARBX_POOL_ENUM_SOURCES` (CSV). Empty/absent → all three sources.
+/// Parse `ARBX_POOL_ENUM_SOURCES` (CSV). Empty/absent → all sources.
 /// Unknown tokens are ignored. De-duplicated, order preserved.
+///
+/// **Truth anchor (operator directive, 2026-08-07):** the on-chain Alchemy source
+/// is ALWAYS injected first, even when the operator explicitly lists other
+/// sources or omits it. The fallback cycle must never run dry 24/7/365, and the
+/// RPC the searcher already trusts is the one source that cannot rate-limit or
+/// de-list pools — it is the chain itself. Operators can opt OUT of the anchor
+/// only by setting `ARBX_POOL_ENUM_NO_ANCHOR=1` (for emergency/disable).
 fn parse_sources(key: &str) -> Vec<PoolEnumSource> {
+    let no_anchor = std::env::var("ARBX_POOL_ENUM_NO_ANCHOR")
+        .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false);
+    let mut out: Vec<PoolEnumSource> = Vec::new();
+    let mut seen = HashSet::new();
+    // Anchor first — highest fidelity, never third-party-dependent.
+    if !no_anchor {
+        out.push(PoolEnumSource::Alchemy);
+        seen.insert(PoolEnumSource::Alchemy);
+    }
     let raw = std::env::var(key).unwrap_or_default();
-    if raw.trim().is_empty() {
-        return vec![
+    let listed: Vec<PoolEnumSource> = if raw.trim().is_empty() {
+        vec![
             PoolEnumSource::TheGraph,
+            PoolEnumSource::DexScreener,
             PoolEnumSource::DeFiLlama,
             PoolEnumSource::GeckoTerminal,
-        ];
+        ]
+    } else {
+        raw.split(',')
+            .filter_map(PoolEnumSource::from_str)
+            .collect()
+    };
+    for s in listed {
+        if seen.insert(s) {
+            out.push(s);
+        }
     }
-    let mut seen = HashSet::new();
-    raw.split(',')
-        .filter_map(PoolEnumSource::from_str)
-        .filter(|s| seen.insert(*s))
-        .collect()
+    out
 }
 
 fn env_u64(key: &str, default: u64) -> u64 {
@@ -207,8 +230,10 @@ pub fn spawn_if_enabled(chain_id: u64, discovery: Arc<PoolDiscoveryService>, db:
         chain_id,
         discovery,
         db,
+        cb_alchemy: cb("alchemy"),
         cb_thegraph: cb("thegraph"),
         cb_defillama: cb("defillama"),
+        cb_dexscreener: cb("dexscreener"),
         cb_gecko: cb("geckoterminal"),
         cfg,
     };
@@ -226,8 +251,10 @@ struct PoolEnumerationWorker {
     discovery: Arc<PoolDiscoveryService>,
     db: PgPool,
     cfg: EnumConfig,
+    cb_alchemy: Arc<SourceCircuit>,
     cb_thegraph: Arc<SourceCircuit>,
     cb_defillama: Arc<SourceCircuit>,
+    cb_dexscreener: Arc<SourceCircuit>,
     cb_gecko: Arc<SourceCircuit>,
 }
 
@@ -376,6 +403,24 @@ impl PoolEnumerationWorker {
         );
         for src in &self.cfg.sources {
             let fetched = match src {
+                // On-chain truth anchor: uses the searcher's own RPC (multi-vendor
+                // failover already inside HttpRpcPool), NOT a third-party HTTP API.
+                // Skipped fail-honestly when no RPC is configured (count=0).
+                PoolEnumSource::Alchemy => match self.discovery.rpc_pool() {
+                    Some(rpc) => {
+                        guarded_fetch(&self.cb_alchemy, to, || {
+                            pool_sources::alchemy::fetch_onchain(&rpc, chain, top_n, min_tvl)
+                        })
+                        .await
+                    }
+                    None => {
+                        info!(
+                            event = "poolenum.alchemy.skipped_no_rpc",
+                            chain_id = self.chain_id
+                        );
+                        None
+                    }
+                },
                 PoolEnumSource::TheGraph => {
                     guarded_fetch(&self.cb_thegraph, to, || {
                         pool_sources::thegraph::fetch(chain, top_n, min_tvl)
@@ -385,6 +430,12 @@ impl PoolEnumerationWorker {
                 PoolEnumSource::DeFiLlama => {
                     guarded_fetch(&self.cb_defillama, to, || {
                         pool_sources::defillama::fetch(chain, top_n, min_tvl)
+                    })
+                    .await
+                }
+                PoolEnumSource::DexScreener => {
+                    guarded_fetch(&self.cb_dexscreener, to, || {
+                        pool_sources::dexscreener::fetch(chain, top_n, min_tvl)
                     })
                     .await
                 }
@@ -464,7 +515,28 @@ impl PoolEnumerationWorker {
     /// that `enumerate_and_persist_pool` just upserted. Only runs post-persist for
     /// a new/reactivated pool (never an already-active seed), so it can't relabel
     /// seed provenance. Float binds are cast to NUMERIC. Fail-honest on error.
+    ///
+    /// **Enrichment (operator directive 2026-08-07):** when the candidate carries
+    /// no USD estimate (tvl=0 — typical for the on-chain anchor, which proposes a
+    /// pool's existence without a price feed), DexScreener fills `liquidity.usd`
+    /// + `volume.h24` so the row ranks correctly. The on-chain `enum_source`
+    /// provenance is preserved; only the missing TVL/volume numbers are borrowed.
     async fn stamp_metadata(&self, addr_lc: &str, c: &PoolCandidate) {
+        let (mut tvl, mut vol) = (c.tvl_usd, c.volume_usd_24h);
+        if tvl <= 0.0 {
+            // On-chain truth exists but no price feed — enrich from DexScreener.
+            // Fail-honest: a lookup miss/429 leaves tvl=0; provenance unchanged.
+            if let Ok(Some((t, v))) =
+                pool_sources::dexscreener::enrich_pool(self.chain_id, addr_lc).await
+            {
+                if t > 0.0 {
+                    tvl = t;
+                }
+                if vol.is_none() {
+                    vol = v;
+                }
+            }
+        }
         let r = sqlx::query(
             r#"UPDATE pools
                SET tvl_usd = $1::double precision::numeric,
@@ -473,8 +545,8 @@ impl PoolEnumerationWorker {
                    enum_source = $3
                WHERE chain_id = $4 AND LOWER(address) = $5"#,
         )
-        .bind(c.tvl_usd)
-        .bind(c.volume_usd_24h)
+        .bind(tvl)
+        .bind(vol)
         .bind(c.source.as_str())
         .bind(self.chain_id as i64)
         .bind(addr_lc)
@@ -557,8 +629,13 @@ mod tests {
 
     #[test]
     fn parse_sources_default_and_dedup() {
-        // Empty → all three (env not set in test → default).
-        assert_eq!(parse_sources("ARBX_POOL_ENUM_SOURCES__unset_test").len(), 3);
+        // Empty → anchor (Alchemy) + all indexers (TheGraph, DexScreener,
+        // DeFiLlama, GeckoTerminal) = 5 (env not set in test → default). The
+        // on-chain anchor is always injected first so the cycle never runs dry
+        // 24/7/365 (operator directive 2026-08-07).
+        let v = parse_sources("ARBX_POOL_ENUM_SOURCES__unset_test");
+        assert_eq!(v.len(), 5);
+        assert_eq!(v[0], PoolEnumSource::Alchemy, "anchor must be first");
         // The pure CSV parse path (de-dup + unknown filtered) via from_str.
         let v: Vec<_> = "gecko, gecko, thegraph, bogus"
             .split(',')
