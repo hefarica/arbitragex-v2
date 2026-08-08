@@ -75,10 +75,19 @@ fn ds_chain(chain_id: u64) -> Option<&'static str> {
 }
 
 /// DexScreener pair shape (subset — only fields we consume).
+/// DexScreener returns camelCase JSON (`pairAddress`, `chainId`, `baseToken`),
+/// so the struct must rename_all camelCase or every field deserializes empty.
 #[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 struct DsPair {
     #[serde(default)]
     pair_address: String,
+    /// `/latest/dex/tokens/{token}` returns pairs from EVERY chain that lists the
+    /// token (e.g. WETH → 8 ethereum + 22 pulsechain). We must filter to the
+    /// target chain or foreign pools (with addresses/TVL from another network)
+    /// pollute and exhaust the candidate set.
+    #[serde(default)]
+    chain_id: String,
     #[serde(default)]
     base_token: DsToken,
     #[serde(default)]
@@ -173,6 +182,11 @@ pub async fn fetch(
         for p in parsed.pairs {
             if out.len() >= top_n {
                 break;
+            }
+            // Keep only pairs on the TARGET chain — /latest/dex/tokens returns the
+            // token's pairs across every indexed network.
+            if !p.chain_id.eq_ignore_ascii_case(net) {
+                continue;
             }
             let addr = p.pair_address.trim().to_ascii_lowercase();
             if !addr.starts_with("0x") || addr.len() != 42 || !seen.insert(addr.clone()) {
@@ -271,5 +285,36 @@ mod tests {
     fn norm_token_trims_and_lowercases() {
         assert_eq!(norm_token("  0xABC  "), Some("0xabc".into()));
         assert_eq!(norm_token(""), None);
+    }
+
+    #[test]
+    fn dspair_deserializes_chain_id_and_filters_foreign_chains() {
+        // /latest/dex/tokens returns pairs from EVERY chain; only the target
+        // chain's pairs must survive. This guards the chain-filter fix.
+        let json = r#"{"pairs":[
+            {"chainId":"ethereum","pairAddress":"0x0000000000000000000000000000000000000001",
+             "baseToken":{"address":"0xaaa"},"quoteToken":{"address":"0xbbb"},
+             "liquidity":{"usd":100000.0},"volume":{"h24":5000.0}},
+            {"chainId":"pulsechain","pairAddress":"0x0000000000000000000000000000000000000002",
+             "baseToken":{"address":"0xccc"},"quoteToken":{"address":"0xddd"},
+             "liquidity":{"usd":999999.0},"volume":{"h24":1.0}}
+        ]}"#;
+        #[derive(Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            pairs: Vec<DsPair>,
+        }
+        let parsed: Wrap = serde_json::from_str(json).unwrap();
+        let net = ds_chain(1).unwrap(); // "ethereum"
+        let kept: Vec<&DsPair> = parsed
+            .pairs
+            .iter()
+            .filter(|p| p.chain_id.eq_ignore_ascii_case(net))
+            .collect();
+        assert_eq!(kept.len(), 1, "only the ethereum pair must survive");
+        assert_eq!(
+            kept[0].pair_address,
+            "0x0000000000000000000000000000000000000001"
+        );
     }
 }
