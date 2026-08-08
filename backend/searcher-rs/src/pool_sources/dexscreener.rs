@@ -125,15 +125,18 @@ pub async fn fetch(
         if out.len() >= top_n {
             break;
         }
-        // /token-pairs/v1/{chainId}/{tokenAddress} — returns a bare JSON array.
-        let url = format!("{base}/token-pairs/v1/{net}/{tok}");
+        // /latest/dex/tokens/{tokenAddress} — returns `{"pairs": [...]}` with
+        // pairAddress/baseToken/quoteToken/liquidity/volume per pair. (The
+        // `/token-pairs/v1/{chain}/{token}` path 404s for these pivots; the
+        // tokens endpoint is the reliable, documented one.)
+        let url = format!("{base}/latest/dex/tokens/{tok}");
         let resp = match client.get(&url).header("accept", "application/json").send().await {
             Ok(r) => r,
             Err(e) => {
                 warn!(
                     event = "poolenum.dexscreener.fetch_err",
                     chain_id, pivot = tok, error = %e,
-                    "DexScreener token-pairs GET failed — skipping pivot (fail-honest)"
+                    "DexScreener tokens GET failed — skipping pivot (fail-honest)"
                 );
                 continue;
             }
@@ -149,14 +152,19 @@ pub async fn fetch(
             // Surface the HTTP error so the per-source circuit breaker can count it.
             anyhow::bail!("dexscreener HTTP {}", resp.status());
         }
-        let pairs: Vec<DsPair> = match resp.json().await {
+        #[derive(Deserialize)]
+        struct TokenResp {
+            #[serde(default)]
+            pairs: Vec<DsPair>,
+        }
+        let parsed: TokenResp = match resp.json().await {
             Ok(v) => v,
             Err(e) => {
                 warn!(event = "poolenum.dexscreener.parse_err", chain_id, pivot = tok, error = %e);
                 continue;
             }
         };
-        for p in pairs {
+        for p in parsed.pairs {
             if out.len() >= top_n {
                 break;
             }
