@@ -32,6 +32,12 @@ use std::time::Duration;
 use tracing::warn;
 
 /// Default DexScreener API base.
+///
+/// **Config env var is `ARBX_POOL_ENUM_DEXSCREENER_BASE`** (host root, e.g.
+/// `https://api.dexscreener.com`) — NOT `DEXSCREENER_BASE_URL`. The latter is
+/// already used by the token *price oracle* feature with a full path
+/// (`.../latest/dex/tokens`), so reusing it here would double the path and 404.
+/// This adapter appends its own `/latest/dex/...` segments to the host root.
 const DEFAULT_BASE: &str = "https://api.dexscreener.com";
 
 /// Pivot tokens used for enumeration — the deepest, most-traded base/quote
@@ -111,7 +117,7 @@ pub async fn fetch(
     let Some(net) = ds_chain(chain_id) else {
         return Ok(Vec::new()); // unsupported chain → contribute nothing
     };
-    let base = std::env::var("DEXSCREENER_BASE_URL")
+    let base = std::env::var("ARBX_POOL_ENUM_DEXSCREENER_BASE")
         .unwrap_or_else(|_| DEFAULT_BASE.to_string());
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
@@ -202,7 +208,7 @@ pub async fn enrich_pool(
     let Some(net) = ds_chain(chain_id) else {
         return Ok(None);
     };
-    let base = std::env::var("DEXSCREENER_BASE_URL")
+    let base = std::env::var("ARBX_POOL_ENUM_DEXSCREENER_BASE")
         .unwrap_or_else(|_| DEFAULT_BASE.to_string());
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
