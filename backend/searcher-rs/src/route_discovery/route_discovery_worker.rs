@@ -14,6 +14,7 @@
 use crate::cartridge::runner::CartridgeRunner;
 use crate::cartridge_boot::shadow_evaluate_intent;
 use crate::impact_index::ImpactIndex;
+use crate::orchestrator::Orchestrator;
 use crate::route_discovery::graph_builder::{build_graph, GraphBuildConfig, GraphBuildOutcome};
 use crate::route_discovery::route_intent_dispatcher::plan_dispatch;
 use crate::route_discovery::strategy_applicability::StrategyApplicabilityEngine;
@@ -278,6 +279,7 @@ async fn run_loop(
     engine: StrategyApplicabilityEngine,
     cfg: WorkerConfig,
     runner: Option<Arc<CartridgeRunner>>,
+    orchestrator: Option<Arc<Orchestrator>>,
     cancel: CancellationToken,
 ) {
     let dispatch_enabled = runner.is_some();
@@ -334,10 +336,18 @@ async fn run_loop(
         let routes_dispatched = tick.routes_dispatched;
         let telemetry_emitted = tick.telemetry_emitted;
 
-        // Execute the planned shadow evaluations. THE ONLY downstream is
-        // shadow_evaluate_intent (observe-only); spawned fire-and-forget exactly
-        // like the orchestrator's shadow fan-out. It never writes opps:detected.
-        if let Some(r) = &runner {
+        // Execute the planned evaluations. When an ACTIVE orchestrator is wired
+        // (cartridge_mode=Active), route closed-cycle candidates DIRECTLY to the
+        // canonical cartridge runtime via Orchestrator::spawn_cartridge_eval —
+        // each cartridge evaluates the cycle and emits its OWN strategy_kind (its
+        // .rhai stem), with no native-engine duplicate. Falls back to
+        // shadow_evaluate_intent (observe-only, never writes opps:detected) when
+        // no active orchestrator is present.
+        if let Some(orch) = &orchestrator {
+            for intent in tick.dispatch_intents {
+                orch.spawn_cartridge_eval(intent);
+            }
+        } else if let Some(r) = &runner {
             for intent in tick.dispatch_intents {
                 tokio::spawn(shadow_evaluate_intent(r.clone(), intent, chain_id));
             }
@@ -367,6 +377,7 @@ pub fn spawn_route_discovery(
     redis: ConnectionManager,
     impact_index: Option<Arc<RwLock<ImpactIndex>>>,
     runner: Option<Arc<CartridgeRunner>>,
+    orchestrator: Option<Arc<Orchestrator>>,
     cancel: CancellationToken,
 ) {
     let mode = RouteDiscoveryMode::from_env();
@@ -407,7 +418,7 @@ pub fn spawn_route_discovery(
     );
 
     tokio::spawn(async move {
-        run_loop(redis, chain_id, impact_index, engine, cfg, runner, cancel).await;
+        run_loop(redis, chain_id, impact_index, engine, cfg, runner, orchestrator, cancel).await;
     });
 }
 

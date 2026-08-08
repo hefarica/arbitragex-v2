@@ -210,6 +210,38 @@ impl Orchestrator {
     /// Returns `Err` only when a Redis publish fails (the emitter propagates
     /// it so the caller can reconnect). Evaluation / gate / PG errors are
     /// swallowed per-candidate with a logged counter increment.
+    /// Feed a RouteIntent to the ACTIVE cartridge runtime ONLY (no native engines).
+    /// Used by route_discovery to route closed-cycle candidates directly to the
+    /// canonical cartridge path — each cartridge evaluates the cycle and emits its
+    /// OWN `strategy_kind` (its .rhai stem). Deliberately bypasses the native
+    /// engines so cartridges are the sole canonical detector for discovered cycles
+    /// (no duplicate rows, no native spread path). No-op when cartridge_mode !=
+    /// Active or no runner loaded. Paper mode, capital=0.
+    pub fn spawn_cartridge_eval(&self, intent: RouteIntent) {
+        let chain_id = self.ctx.chain_id;
+        let runner = match self.ctx.cartridge_runner.clone() {
+            Some(r) => r,
+            None => return,
+        };
+        if self.ctx.cartridge_mode != crate::cartridge_boot::CartridgeMode::Active {
+            return;
+        }
+        let emitter = self.ctx.emitter.clone();
+        let cfg_provider = self.ctx.config_provider.clone();
+        let ctx_chain_id = self.ctx.chain_id;
+        tokio::spawn(async move {
+            crate::cartridge_boot::active_evaluate_and_emit(
+                runner,
+                intent,
+                chain_id,
+                emitter,
+                cfg_provider,
+                ctx_chain_id,
+            )
+            .await;
+        });
+    }
+
     pub async fn on_route_intent(&self, intent: RouteIntent) -> anyhow::Result<()> {
         let chain_id = self.ctx.chain_id;
         let chain_str = chain_id.to_string();

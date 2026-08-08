@@ -824,6 +824,7 @@ pub async fn run_chain(
         redis.clone(),
         impact_index_opt.clone(),
         cartridge_runner.clone(),
+        orchestrator.clone(),
         cancel.clone(),
     );
 
