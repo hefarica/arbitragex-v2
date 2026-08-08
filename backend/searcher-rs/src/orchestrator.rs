@@ -509,7 +509,7 @@ impl Orchestrator {
         // no stored Arc<RwLock<Option<...>>> on each engine struct.
         // When config is None: continue in observe-only mode (engines receive
         // None, fall back to conservative/no-USD-pricing defaults, R8 honest).
-        let cfg_snapshot: Option<TradingConfigState> =
+        let mut cfg_snapshot: Option<TradingConfigState> =
             self.ctx.config_provider.snapshot(chain_id).await;
 
         // ── TASK 1 log #4: v2.config.snapshot ────────────────────────────
@@ -724,6 +724,26 @@ impl Orchestrator {
             .chain(flash_candidates)
             .collect();
 
+        // Root-2B: merge live Redis per-token prices into the config snapshot so
+        // the SizeOptimizer's `resolve_token_price` can price canonical
+        // non-stable tokens (PEPE/LINK/UNI/…) absent from the operator's manual
+        // `token_prices_usd` map. Without this, V2 dex_arb pairs involving such
+        // tokens reach the optimizer unpriced and reject. Mirrors what the
+        // ConfigAwareEvaluator already receives via `with_cache`. Engines (Step
+        // 4) already ran with the un-merged snapshot, so this only affects
+        // sizing onward. R8: empty snapshot → no-op (no fabrication).
+        {
+            let mut redis_conn = self.ctx.math_redis.clone();
+            let redis_prices = RedisCachedPriceOracle::snapshot_from_redis(&mut redis_conn, chain_id)
+                .await
+                .into_snapshot();
+            if let Some(ref mut cfg) = cfg_snapshot {
+                for (sym, price) in &redis_prices {
+                    cfg.token_prices_usd.insert(sym.clone(), *price);
+                }
+            }
+        }
+
         for candidate in all_candidates {
             // Skip sizing for already-rejected candidates (engine rejection).
             if candidate.rejection_reason.is_some() {
@@ -810,6 +830,12 @@ impl Orchestrator {
                         .inc();
                     let mut c = candidate;
                     c.rejection_reason = Some(reason_str);
+                    // R8: the SizeOptimizer's rejection supersedes the
+                    // dex_engine's pre-sizing heuristic (e.g. the token-mispriced
+                    // gross). Clear it so the published Opportunity never carries
+                    // a contradictory `expected_profit_usd` (was the $10.7M
+                    // flashloan display bug: huge gross + non_positive reject).
+                    c.opportunity.expected_profit_usd = None;
                     c
                 }
             };

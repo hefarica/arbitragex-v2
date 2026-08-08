@@ -544,14 +544,32 @@ fn compute_gross_usd(
     let scale = 10f64.powi(decimals as i32);
     let spread_f64 = u256_to_f64_lossy(*spread_units) / scale;
 
-    // Fast-filter: use base_token_price_usd as a proxy.
-    // R8: only return Some when price > 0 (fabricating a zero-price USD is
-    // indistinguishable from "not computed"). If price == 0 → None.
-    if cfg.base_token_price_usd > 0.0 {
-        Some(spread_f64 * cfg.base_token_price_usd)
-    } else {
-        None
-    }
+    // Price by the ACTUAL denomination token (token_out), NOT a blanket
+    // base_token_price_usd. The prior code multiplied EVERY token's spread by
+    // the WETH price (~$3000), inflating stablecoin spreads ~3000× (e.g. a
+    // 3578 USDC spread → $10.7M). Stables ≈ $1; WETH = operator base price;
+    // any other token → None (R8) so the SizeOptimizer/evaluator re-prices it
+    // from live Redis downstream. This is a fast-filter proxy only.
+    let price_usd = canonical_token_price_usd(token_out, cfg.base_token_price_usd)?;
+    Some(spread_f64 * price_usd)
+}
+
+/// Canonical verified USD price for a known mainnet token, for the
+/// `compute_gross_usd` fast-filter. Immutable contract knowledge only: stables
+/// ≈ $1 (depeg-aware pricing is the SizeOptimizer/evaluator's job), WETH uses
+/// the operator's base price. Any other token → `None` (R8: let the downstream
+/// live-Redis pricer compute it; NEVER apply the WETH price to a non-WETH
+/// token — that was the $10.7M flashloan unit-scale bug).
+fn canonical_token_price_usd(token: Option<Address>, base_token_price_usd: f64) -> Option<f64> {
+    let Some(addr) = token else { return None };
+    let price = match format!("0x{:040x}", addr).as_str() {
+        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" => base_token_price_usd, // WETH
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" => 1.0, // USDC
+        "0xdac17f958d2ee523a2206206994597c13d831ec7" => 1.0, // USDT
+        "0x6b175474e89094c44da98b954eedeac495271d0f" => 1.0, // DAI
+        _ => return None, // R8: unknown token — downstream pricer handles it.
+    };
+    if price > 0.0 { Some(price) } else { None }
 }
 
 /// Canonical mainnet (chain_id=1) token decimals. These are IMMUTABLE contract
