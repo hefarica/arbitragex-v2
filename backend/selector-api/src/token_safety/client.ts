@@ -19,7 +19,7 @@ import {
   getCached, upsertCached, type TokenSafetyRecord,
 } from "./cache.js";
 import { fetchGoPlus } from "./goplus.js";
-import { scoreInternal } from "./internal_heuristic.js";
+import { scoreInternal, canonicalSafetyRecord } from "./internal_heuristic.js";
 
 export async function checkToken(
   pool: pg.Pool,
@@ -28,6 +28,19 @@ export async function checkToken(
   chainId: number,
   address: string,
 ): Promise<TokenSafetyRecord> {
+  // 0. Canonical-verified mainnet token. The verdict is pure/deterministic, so
+  //    it is checked BEFORE the cache read: it must take effect immediately on
+  //    deploy and override any stale sub-floor entry the old neutral heuristic
+  //    (50) wrote (which would otherwise persist up to ttl_seconds_ok and keep
+  //    rejecting canonical tokens). Upserted so the Rust readers of
+  //    token_safety_cache (pool-enumeration activation, pre-execute checklist)
+  //    also observe the verified score.
+  const canon = canonicalSafetyRecord(chainId, address, cfg.token_safety.ttl_seconds_ok, cfg.token_safety.min_acceptable_score);
+  if (canon) {
+    await upsertCached(pool, canon);
+    return { ...canon, updated_at: new Date() };
+  }
+
   // 1. Cache hit
   const cached = await getCached(pool, chainId, address);
   if (cached) return cached;
@@ -73,6 +86,7 @@ export async function checkToken(
     chainId, address,
     cfg.token_safety.ttl_seconds_ok,
     cfg.token_safety.ttl_seconds_bad,
+    cfg.token_safety.min_acceptable_score,
   );
   await upsertCached(pool, internal);
   return { ...internal, updated_at: new Date() };

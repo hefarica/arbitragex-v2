@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { decide } from "./engine.js";
+import { scoreInternal } from "../token_safety/internal_heuristic.js";
 import type { AppConfig, SimulationResult } from "@arbx/shared";
 import type { TokenSafetyRecord } from "../token_safety/cache.js";
 
@@ -23,6 +24,21 @@ describe("decide", () => {
     });
     expect(d.kind).toBe("accept");
     expect(d.score).toBe(80);
+  });
+  it("accepts a canonical-verified mainnet token end-to-end (regression: 0-opportunities)", () => {
+    // In internal_only mode the heuristic once capped every token at 50 < 70,
+    // so decide() rejected everything as safety_below_threshold. USDC is now
+    // canonical-verified → scoreInternal must clear the floor → decide accepts.
+    const safety: TokenSafetyRecord = {
+      ...scoreInternal(1, "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", 3600, 86400, cfg.token_safety.min_acceptable_score),
+      updated_at: new Date(),
+    };
+    expect(safety.safety_score).toBeGreaterThanOrEqual(cfg.token_safety.min_acceptable_score);
+    const d = decide({
+      scored: { opportunity_id: "x", score: 80, factors: {} as any },
+      safety, sim: null, cfg,
+    });
+    expect(d.kind).toBe("accept");
   });
   it("rejects when safety below threshold", () => {
     const d = decide({
