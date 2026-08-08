@@ -920,10 +920,11 @@ pub async fn active_evaluate_and_emit(
         match runner.evaluate(&cartridge_id, pool_data.clone()).await {
             Ok(eval_result) => {
                 if !eval_result.is_opportunity {
-                    debug!(
+                    info!(
                         event = "cartridge.active_eval_negative",
                         chain_id,
                         cartridge_id = %cartridge_id,
+                        reason = ?eval_result.reason,
                         "cartridge active eval: no opportunity"
                     );
                     continue;
