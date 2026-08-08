@@ -1048,7 +1048,7 @@ impl FlashloanArbWorker {
                 let opp = Opportunity {
                     id: Uuid::new_v4(),
                     chain_id: self.chain_id,
-                    strategy_kind: StrategyKind::FlashloanArb,
+                    strategy_kind: StrategyKind::flashloan_arb(),
                     dex_a: format!("v2:{}", buy_pd.pool_addr),
                     dex_b: Some(format!("v2:{}", sell_pd.pool_addr)),
                     pair_symbol: format!("{}/{}", sym_a, sym_b),

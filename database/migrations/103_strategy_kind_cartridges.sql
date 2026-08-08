@@ -1,0 +1,13 @@
+-- ArbitrageX v2 — Migration 103: strategy_kind accepts cartridge stems
+--
+-- Each cartridge is now a CANONICAL strategy_kind. The searcher persists the
+-- cartridge .rhai stem (e.g. 'mev_01_001_dex_dex_arbitrage') as `strategy_kind`
+-- via `Opportunity::canonical_strategy_kind()` (cartridge_id preferred, else the
+-- 5 base families). The static 5-value CHECK from migration 003 can no longer
+-- hold the dynamic 264+ set (auto-generated in shared-ts/contracts/strategy-kinds.ts
+-- from backend/searcher-rs/cartridges/strategies/*.rhai), so the CHECK is dropped.
+-- Canonical strategy_kinds are validated at the application layer (the canonical
+-- TS enum + the Rust cartridge registry). The 5 base families remain valid.
+--
+-- Idempotent: safe to re-run.
+ALTER TABLE opportunities DROP CONSTRAINT IF EXISTS opportunities_strategy_kind_check;

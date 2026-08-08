@@ -111,7 +111,7 @@ pub async fn build_and_sign(
         .assert_broadcast_allowed(opp.chain_id)
         .map_err(|e| BuildError::LiveExecDenied(e.to_string()))?;
 
-    if !matches!(opp.strategy_kind, StrategyKind::DexArb) {
+    if opp.strategy_kind != StrategyKind::dex_arb() {
         return Err(BuildError::UnsupportedStrategy(opp.strategy_kind.clone()));
     }
 

@@ -571,7 +571,7 @@ mod tests {
         assert_eq!(StrategyLabel::Liquidation.as_str(), "liquidation");
         assert_eq!(
             StrategyLabel::Liquidation.to_contract_strategy_kind(),
-            shared_rs::contracts::StrategyKind::Liquidation
+            shared_rs::contracts::StrategyKind::liquidation()
         );
     }
 

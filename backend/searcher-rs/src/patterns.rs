@@ -42,7 +42,7 @@ pub fn build_dex_arb_candidate(ctx: &TxContext, swap: &DecodedSwap) -> Opportuni
     Opportunity {
         id: Uuid::new_v4(),
         chain_id: ctx.chain_id,
-        strategy_kind: StrategyKind::DexArb,
+        strategy_kind: StrategyKind::dex_arb(),
         dex_a: swap.router.to_string(),
         dex_b: None,
         pair_symbol,

@@ -117,7 +117,7 @@ impl TriangularAtomicEngine {
         let opp = Opportunity {
             id: uuid::Uuid::new_v4().to_string(),
             chain_id,
-            strategy_kind: StrategyKind::DexArb,
+            strategy_kind: StrategyKind::dex_arb(),
             tokens: vec![
                 hops[0].token_in.clone(),
                 hops[1].token_in.clone(),
@@ -125,6 +125,7 @@ impl TriangularAtomicEngine {
             ],
             amounts: vec![],
             expected_profit_usd: gross_profit,
+            cartridge_id: None,
             detected_at: chrono::Utc::now(),
             status: "detected".to_string(),
             tx_hash: None,

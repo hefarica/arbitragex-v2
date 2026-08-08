@@ -81,10 +81,11 @@ impl SpatialEngine {
         let opp = Opportunity {
             id: uuid::Uuid::new_v4().to_string(),
             chain_id,
-            strategy_kind: StrategyKind::DexArb,
+            strategy_kind: StrategyKind::dex_arb(),
             tokens: vec![], // To be filled
             amounts: vec![],
             expected_profit_usd: theoretical_profit,
+            cartridge_id: None,
             detected_at: chrono::Utc::now(),
             status: "detected".to_string(),
             tx_hash: None,

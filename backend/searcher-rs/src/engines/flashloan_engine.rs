@@ -809,7 +809,7 @@ mod tests {
     fn contract_strategy_kind_collapses_to_flashloan_arb() {
         assert_eq!(
             StrategyLabel::FlashloanArb.to_contract_strategy_kind(),
-            StrategyKind::FlashloanArb,
+            StrategyKind::flashloan_arb(),
             "FlashloanArb.to_contract_strategy_kind() must be FlashloanArb"
         );
     }

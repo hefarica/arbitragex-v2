@@ -1,9 +1,10 @@
 import { z } from "zod";
 
-export const StrategyKind = z.enum([
-  "dex_arb", "triangular", "backrun", "liquidation", "flashloan_arb",
-]);
-export type StrategyKind = z.infer<typeof StrategyKind>;
+// Canonical strategy_kinds are generated from the cartridge registry
+// (5 base families + every .rhai cartridge stem). Regenerate via
+// `python scripts/gen_strategy_kinds.py`. See strategy-kinds.ts.
+import { StrategyKind, STRATEGY_KINDS } from "./strategy-kinds.js";
+export { StrategyKind, STRATEGY_KINDS };
 
 const HexAddr = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const HexTx   = z.string().regex(/^0x[0-9a-fA-F]{64}$/);

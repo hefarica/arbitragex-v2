@@ -964,7 +964,7 @@ pub async fn active_evaluate_and_emit(
                 let opportunity = Opportunity {
                     id: Uuid::new_v4(),
                     chain_id,
-                    strategy_kind: StrategyKind::DexArb, // Cartridges default to dex_arb
+                    strategy_kind: StrategyKind::cartridge(cartridge_id.clone()),
                     dex_a: first_leg.and_then(|l| l.dex_hint.clone()).unwrap_or_else(|| "unknown".to_string()),
                     dex_b: last_leg.and_then(|l| l.dex_hint.clone()),
                     pair_symbol: format!("{}/{}", token_in, token_out),

@@ -1000,7 +1000,7 @@ impl LiquidationWorker {
                 let opp = Opportunity {
                     id: Uuid::new_v4(),
                     chain_id: self.chain_id,
-                    strategy_kind: StrategyKind::Liquidation,
+                    strategy_kind: StrategyKind::liquidation(),
                     dex_a: format!("aave-v3:{}", AAVE_V3_POOL_MAINNET.to_ascii_lowercase()),
                     dex_b: Some(format!("user:{}", &user_lc)),
                     pair_symbol,

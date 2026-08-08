@@ -42,7 +42,7 @@ pub fn build_probe(opp: &Opportunity, signer_from: Address) -> Result<ProbeTx, B
     if opp.chain_id != 1 {
         return Err(BuildError::UnsupportedChain(opp.chain_id));
     }
-    if !matches!(opp.strategy_kind, StrategyKind::DexArb) {
+    if opp.strategy_kind != StrategyKind::dex_arb() {
         return Err(BuildError::UnsupportedStrategy(opp.strategy_kind.clone()));
     }
     let token_in = parse_addr(&opp.token_in)?;
@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn v2_dex_arb_builds() {
         let signer: Address = [0xab; 20].into();
-        let o = opp(StrategyKind::DexArb, 1, "uniswap-v2");
+        let o = opp(StrategyKind::dex_arb(), 1, "uniswap-v2");
         let tx = build_probe(&o, signer).expect("build v2");
         assert_eq!(tx.data.as_ref()[0..4], [0x38, 0xed, 0x17, 0x39]);
         assert_eq!(tx.value, U256::zero());
@@ -204,7 +204,7 @@ mod tests {
     #[test]
     fn v3_dex_arb_builds() {
         let signer: Address = [0xcd; 20].into();
-        let o = opp(StrategyKind::DexArb, 1, "uniswap-v3");
+        let o = opp(StrategyKind::dex_arb(), 1, "uniswap-v3");
         let tx = build_probe(&o, signer).expect("build v3");
         assert_eq!(tx.data.as_ref()[0..4], [0x41, 0x4b, 0xf3, 0x89]);
     }
@@ -213,10 +213,10 @@ mod tests {
     fn non_dex_arb_rejected() {
         let signer: Address = [0; 20].into();
         for kind in [
-            StrategyKind::Triangular,
-            StrategyKind::Backrun,
-            StrategyKind::Liquidation,
-            StrategyKind::FlashloanArb,
+            StrategyKind::triangular(),
+            StrategyKind::backrun(),
+            StrategyKind::liquidation(),
+            StrategyKind::flashloan_arb(),
         ] {
             let o = opp(kind.clone(), 1, "uniswap-v2");
             assert!(matches!(
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn non_mainnet_rejected() {
-        let o = opp(StrategyKind::DexArb, 137, "uniswap-v2");
+        let o = opp(StrategyKind::dex_arb(), 137, "uniswap-v2");
         assert!(matches!(
             build_probe(&o, [0; 20].into()),
             Err(BuildError::UnsupportedChain(137))
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn unknown_dex_rejected() {
-        let o = opp(StrategyKind::DexArb, 1, "some-unknown-dex");
+        let o = opp(StrategyKind::dex_arb(), 1, "some-unknown-dex");
         assert!(matches!(
             build_probe(&o, [0; 20].into()),
             Err(BuildError::UnknownRouter { .. })

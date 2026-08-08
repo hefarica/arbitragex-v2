@@ -1465,7 +1465,7 @@ impl TriangularWorker {
         let opp = Opportunity {
             id: Uuid::new_v4(),
             chain_id: self.chain_id,
-            strategy_kind: StrategyKind::Triangular,
+            strategy_kind: StrategyKind::triangular(),
             dex_a: "uniswap-v2".to_string(),
             dex_b: Some(format!(
                 "cycle:{}>{}>{}",
@@ -1890,7 +1890,7 @@ impl TriangularWorker {
             let opp = Opportunity {
                 id: Uuid::new_v4(),
                 chain_id: self.chain_id,
-                strategy_kind: StrategyKind::Triangular,
+                strategy_kind: StrategyKind::triangular(),
                 dex_a: "uniswap-v3".to_string(),
                 dex_b: Some(format!(
                     "cycle:{}>{}>{}",

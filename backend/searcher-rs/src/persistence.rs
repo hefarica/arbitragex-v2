@@ -6,19 +6,9 @@
 use anyhow::Context;
 use prioritization_spine::route_plan::RoutePlan;
 use shared_rs::candidates::{DecimalsMap, RouteMetadata};
-use shared_rs::contracts::{Opportunity, StrategyKind};
+use shared_rs::contracts::Opportunity;
 use sqlx::{postgres::PgPool, types::BigDecimal};
 use std::str::FromStr;
-
-fn strategy_kind_str(k: &StrategyKind) -> &'static str {
-    match k {
-        StrategyKind::DexArb => "dex_arb",
-        StrategyKind::Triangular => "triangular",
-        StrategyKind::Backrun => "backrun",
-        StrategyKind::Liquidation => "liquidation",
-        StrategyKind::FlashloanArb => "flashloan_arb",
-    }
-}
 
 /// Insert an opportunity WITHOUT route metadata (legacy path).
 ///
@@ -74,20 +64,20 @@ pub async fn insert_opportunity_with_route(
             token_in, token_out, amount_in_wei,
             expected_profit_usd, net_expected_profit_usd, roi_pct, risk_score,
             block_number, status, rejection_reason, trace_id, detected_at,
-            route_metadata
+            route_metadata, cartridge_id
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9,
             $10, $11, $12, $13,
             $14, 'detected', $15, $16, $17,
-            $18
+            $18, $19
         )
         ON CONFLICT (id) DO NOTHING
         "#,
     )
     .bind(o.id)
     .bind(o.chain_id as i64)
-    .bind(strategy_kind_str(&o.strategy_kind))
+    .bind(o.strategy_kind.as_str())
     .bind(&o.dex_a)
     .bind(o.dex_b.as_deref())
     .bind(&o.pair_symbol)
@@ -103,6 +93,7 @@ pub async fn insert_opportunity_with_route(
     .bind(o.trace_id)
     .bind(o.detected_at)
     .bind(route_json)
+    .bind(o.cartridge_id.as_deref())
     .execute(pool)
     .await
     .context("insert opportunity")?;

@@ -253,7 +253,7 @@ async fn simple_v2_swap_v1_and_v2_classify_same() {
 
     // V1 always produces StrategyKind::DexArb (the 5-variant persisted enum).
     // This is what the legacy scanner hardcodes regardless of pool type.
-    let v1_strategy_kind = shared_rs::contracts::StrategyKind::DexArb;
+    let v1_strategy_kind = shared_rs::contracts::StrategyKind::dex_arb();
 
     // ── V2 path ──────────────────────────────────────────────────────────────
     let router = find_router(CHAIN_ID, &addr(UNIV2_ROUTER_ADDR).into())

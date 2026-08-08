@@ -74,7 +74,7 @@ impl HotPathEmitter {
             .arg("chain_id")
             .arg(opp.chain_id)
             .arg("strategy_kind")
-            .arg(strategy_kind_to_str(&opp.strategy_kind))
+            .arg(opp.strategy_kind.as_str())
             .arg("detected_at_ms")
             .arg(timestamp_ms)
             .query_async(&mut self.redis.clone())
@@ -205,43 +205,7 @@ impl HotPathEmitter {
     }
 }
 
-/// Converts StrategyKind to canonical snake_case string.
-fn strategy_kind_to_str(kind: &shared_rs::contracts::StrategyKind) -> &'static str {
-    match kind {
-        shared_rs::contracts::StrategyKind::DexArb => "dex_arb",
-        shared_rs::contracts::StrategyKind::Triangular => "triangular",
-        shared_rs::contracts::StrategyKind::Backrun => "backrun",
-        shared_rs::contracts::StrategyKind::Liquidation => "liquidation",
-        shared_rs::contracts::StrategyKind::FlashloanArb => "flashloan_arb",
-        _ => "unknown",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_strategy_kind_mapping() {
-        assert_eq!(
-            strategy_kind_to_str(&shared_rs::contracts::StrategyKind::DexArb),
-            "dex_arb"
-        );
-        assert_eq!(
-            strategy_kind_to_str(&shared_rs::contracts::StrategyKind::Triangular),
-            "triangular"
-        );
-        assert_eq!(
-            strategy_kind_to_str(&shared_rs::contracts::StrategyKind::Backrun),
-            "backrun"
-        );
-        assert_eq!(
-            strategy_kind_to_str(&shared_rs::contracts::StrategyKind::Liquidation),
-            "liquidation"
-        );
-        assert_eq!(
-            strategy_kind_to_str(&shared_rs::contracts::StrategyKind::FlashloanArb),
-            "flashloan_arb"
-        );
-    }
-}
+// strategy_kind canonicalization is now inherent: `Opportunity::strategy_kind`
+// is itself the canonical identity (cartridge stem, or one of the 5 base
+// families). The local strategy_kind_to_str + its mapping test were removed
+// because that logic moved to shared-rs (StrategyKind::as_str).

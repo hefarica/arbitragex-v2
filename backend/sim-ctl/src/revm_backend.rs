@@ -276,7 +276,7 @@ mod tests {
         shared_rs::contracts::Opportunity {
             id: Uuid::new_v4(),
             chain_id: 1,
-            strategy_kind: StrategyKind::DexArb,
+            strategy_kind: StrategyKind::dex_arb(),
             dex_a: "uniswap-v2".into(),
             dex_b: None,
             pair_symbol: "WETH/USDC".into(),

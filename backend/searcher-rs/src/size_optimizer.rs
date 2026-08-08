@@ -1511,7 +1511,7 @@ mod tests {
         let opp = Opportunity {
             id,
             chain_id: 1,
-            strategy_kind: StrategyKind::DexArb,
+            strategy_kind: StrategyKind::dex_arb(),
             dex_a: "uniswap-v2".to_string(),
             dex_b: Some("sushi".to_string()),
             pair_symbol: "WETH/USDC".to_string(),
@@ -1524,6 +1524,7 @@ mod tests {
             risk_score: None,
             block_number: None,
             rejection_reason: None,
+            cartridge_id: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
         };
@@ -1921,7 +1922,7 @@ mod tests {
         let opp = Opportunity {
             id,
             chain_id: 1,
-            strategy_kind: StrategyKind::Triangular,
+            strategy_kind: StrategyKind::triangular(),
             dex_a: "uniswap-v2".to_string(),
             dex_b: None,
             pair_symbol: "WETH(triangular)".to_string(),
@@ -1934,6 +1935,7 @@ mod tests {
             risk_score: None,
             block_number: None,
             rejection_reason: None,
+            cartridge_id: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
         };

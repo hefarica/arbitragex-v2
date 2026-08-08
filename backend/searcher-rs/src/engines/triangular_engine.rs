@@ -1367,7 +1367,7 @@ mod tests {
     fn contract_strategy_kind_collapses_to_triangular() {
         assert_eq!(
             StrategyLabel::TriangularArb.to_contract_strategy_kind(),
-            StrategyKind::Triangular,
+            StrategyKind::triangular(),
             "TriangularArb.to_contract_strategy_kind() must be Triangular"
         );
     }

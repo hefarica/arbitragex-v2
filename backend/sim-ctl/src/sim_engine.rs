@@ -11,7 +11,7 @@ use chrono::Utc;
 use ethers::abi::{decode as abi_decode, ParamType};
 use ethers::core::types::transaction::eip2718::TypedTransaction;
 use ethers::prelude::*;
-use shared_rs::contracts::{Opportunity, SimulationResult, SimulatorKind, StrategyKind};
+use shared_rs::contracts::{Opportunity, SimulationResult, SimulatorKind};
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing::{debug, warn};
@@ -155,8 +155,8 @@ impl SimEngine {
 /// the return is uint[] with one element per hop; last element is the final out.
 /// For V3 exactInputSingle, return is a single uint256 = amountOut.
 fn decode_amount_out(output: &Bytes, opp: &Opportunity) -> Option<U256> {
-    match opp.strategy_kind {
-        StrategyKind::DexArb => {
+    match opp.strategy_kind.as_str() {
+        "dex_arb" => {
             if let Ok(toks) = abi_decode(&[ParamType::Uint(256)], output) {
                 if let Some(t) = toks.first() {
                     return t.clone().into_uint();

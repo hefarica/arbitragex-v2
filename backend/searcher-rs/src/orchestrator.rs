@@ -1590,7 +1590,7 @@ mod tests {
         );
         assert_eq!(
             liq.label.to_contract_strategy_kind(),
-            shared_rs::contracts::StrategyKind::Liquidation,
+            shared_rs::contracts::StrategyKind::liquidation(),
             "Liquidation label must map to StrategyKind::Liquidation"
         );
         assert_eq!(liq.label.as_str(), "liquidation");

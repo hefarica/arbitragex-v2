@@ -171,13 +171,13 @@ impl StrategyLabel {
             | StrategyLabel::DexArbV2V3
             | StrategyLabel::DexArbV3V2
             | StrategyLabel::DexArbV3V3
-            | StrategyLabel::CrossChainArb => shared_rs::contracts::StrategyKind::DexArb,
+            | StrategyLabel::CrossChainArb => shared_rs::contracts::StrategyKind::dex_arb(),
             StrategyLabel::TriangularArb | StrategyLabel::SpanningTreeArb => {
-                shared_rs::contracts::StrategyKind::Triangular
+                shared_rs::contracts::StrategyKind::triangular()
             }
-            StrategyLabel::FlashloanArb => shared_rs::contracts::StrategyKind::FlashloanArb,
+            StrategyLabel::FlashloanArb => shared_rs::contracts::StrategyKind::flashloan_arb(),
             StrategyLabel::Liquidation | StrategyLabel::LiquidationSnipe => {
-                shared_rs::contracts::StrategyKind::Liquidation
+                shared_rs::contracts::StrategyKind::liquidation()
             }
         }
     }
@@ -325,7 +325,7 @@ mod tests {
         for v in dex_arb_variants {
             assert_eq!(
                 v.to_contract_strategy_kind(),
-                Persisted::DexArb,
+                Persisted::dex_arb(),
                 "{v:?}.to_contract_strategy_kind() must be DexArb (DB string = 'dex_arb')"
             );
         }
@@ -338,15 +338,15 @@ mod tests {
         use shared_rs::contracts::StrategyKind as Persisted;
         assert_eq!(
             StrategyLabel::TriangularArb.to_contract_strategy_kind(),
-            Persisted::Triangular
+            Persisted::triangular()
         );
         assert_eq!(
             StrategyLabel::FlashloanArb.to_contract_strategy_kind(),
-            Persisted::FlashloanArb
+            Persisted::flashloan_arb()
         );
         assert_eq!(
             StrategyLabel::Liquidation.to_contract_strategy_kind(),
-            Persisted::Liquidation
+            Persisted::liquidation()
         );
     }
 

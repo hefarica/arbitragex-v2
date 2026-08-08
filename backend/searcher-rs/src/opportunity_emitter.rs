@@ -580,7 +580,7 @@ mod tests {
         Opportunity {
             id,
             chain_id: 1,
-            strategy_kind: StrategyKind::DexArb,
+            strategy_kind: StrategyKind::dex_arb(),
             dex_a: "uniswap_v2".to_owned(),
             dex_b: None,
             pair_symbol: "WETH/USDC".to_owned(),

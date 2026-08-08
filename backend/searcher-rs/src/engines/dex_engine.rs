@@ -1185,7 +1185,7 @@ mod tests {
         for label in variants {
             assert_eq!(
                 label.to_contract_strategy_kind(),
-                StrategyKind::DexArb,
+                StrategyKind::dex_arb(),
                 "{label:?}.to_contract_strategy_kind() must be DexArb"
             );
         }

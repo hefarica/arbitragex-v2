@@ -177,6 +177,7 @@ interface OpportunityLiveRow extends QueryResultRow {
   id: string;
   chain_id: number;
   strategy_kind: string;
+  cartridge_id: string | null;
   dex_a: string;
   dex_b: string | null;
   pair_symbol: string | null;
@@ -241,6 +242,7 @@ SELECT
   o.status,
   o.detected_at,
   o.trace_id,
+  o.cartridge_id,
   o.chain_id_out,
   o.bridge,
   o.bridge_fee_usd::float               AS bridge_fee_usd
@@ -485,6 +487,7 @@ function rowToOpportunity(
     // the operator inferring it from the chain id.
     chain_base_token_symbol:  chainBaseTokenSymbol,
     strategy_kind:            row.strategy_kind,
+    cartridge_id:             row.cartridge_id,
     dex_a:                    row.dex_a,
     dex_b:                    row.dex_b,
     pair_symbol:              row.pair_symbol,

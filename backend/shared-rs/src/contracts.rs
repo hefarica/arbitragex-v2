@@ -4,14 +4,41 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Canonical strategy identity. The 5 base families PLUS every cartridge `.rhai`
+/// filename stem (e.g. `mev_01_001_dex_dex_arbitrage`) — **each cartridge IS a
+/// canonical `strategy_kind`**. Backed by a `String` because the 264-cartridge set
+/// is dynamic (auto-generated in `shared-ts/contracts/strategy-kinds.ts`); an enum
+/// of 264 variants is impractical. Serializes as the inner snake_case string,
+/// matching the canonical TS `StrategyKind` zod enum (5 base + 264 cartridges).
+/// Construct base families via the associated functions; cartridge identities via
+/// [`StrategyKind::cartridge`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum StrategyKind {
-    DexArb,
-    Triangular,
-    Backrun,
-    Liquidation,
-    FlashloanArb,
+pub struct StrategyKind(pub String);
+
+impl StrategyKind {
+    pub fn dex_arb() -> Self {
+        Self("dex_arb".to_string())
+    }
+    pub fn triangular() -> Self {
+        Self("triangular".to_string())
+    }
+    pub fn backrun() -> Self {
+        Self("backrun".to_string())
+    }
+    pub fn liquidation() -> Self {
+        Self("liquidation".to_string())
+    }
+    pub fn flashloan_arb() -> Self {
+        Self("flashloan_arb".to_string())
+    }
+    /// A cartridge identity — the `.rhai` filename stem (a canonical strategy_kind).
+    pub fn cartridge(stem: impl Into<String>) -> Self {
+        Self(stem.into())
+    }
+    /// The canonical snake_case string (persisted to Postgres, emitted to streams).
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +94,11 @@ pub struct Opportunity {
     pub detected_at: DateTime<Utc>,
     pub trace_id: Uuid,
 }
+
+// `StrategyKind` is the newtype above (each cartridge IS a canonical
+// strategy_kind via `StrategyKind::cartridge(stem)`). No separate
+// "canonical_strategy_kind" mapping is needed — the field itself carries the
+// cartridge identity; persistence binds `strategy_kind.as_str()`.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
