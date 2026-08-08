@@ -46,13 +46,16 @@ export function mountStrategyRuntimeStatus(
           heartbeat = JSON.parse(heartbeatRaw);
         }
 
-        // We use SCAN to count safely without blocking the event loop:
-        const poolIndexKeysCount = await countKeysScan(deps.redis, `arbx:pool_index:${chainId}:*`);
-        const poolIndexV3KeysCount = await countKeysScan(deps.redis, `arbx:pool_index_v3:${chainId}:*`);
+        // SCAN counts the whole keyspace per pattern; run the 4 independent
+        // patterns concurrently (Promise.all) instead of 4 serial awaits.
+        const [poolIndexKeysCount, poolIndexV3KeysCount, reservesV2KeysCount, reservesV3KeysCount] =
+          await Promise.all([
+            countKeysScan(deps.redis, `arbx:pool_index:${chainId}:*`),
+            countKeysScan(deps.redis, `arbx:pool_index_v3:${chainId}:*`),
+            countKeysScan(deps.redis, `arbx:pool_reserves:${chainId}:*`),
+            countKeysScan(deps.redis, `arbx:v3_slot0:${chainId}:*`),
+          ]);
         poolIndexEntries = poolIndexKeysCount + poolIndexV3KeysCount;
-
-        const reservesV2KeysCount = await countKeysScan(deps.redis, `arbx:pool_reserves:${chainId}:*`);
-        const reservesV3KeysCount = await countKeysScan(deps.redis, `arbx:v3_slot0:${chainId}:*`);
         reservesCacheEntries = reservesV2KeysCount + reservesV3KeysCount;
 
         redisOk = true;
@@ -79,43 +82,47 @@ export function mountStrategyRuntimeStatus(
 
       let flashloanNoProviderRejections: number | null = 0;
       try {
+        // GROUP BY in PG: ~4 rows (one per family) cross the wire instead of
+        // ~15k. The all-statuses time-range scan is still index-free (no covering
+        // index exists — see 054 partial index excludes rejected/failed), but
+        // aggregation + 4-row transfer is ~100x cheaper than 15k-row transfer +
+        // node-postgres parse + JS loop.
         const query = `
-          SELECT 
-            strategy_kind,
-            status,
-            rejection_reason,
-            detected_at
+          SELECT
+            CASE
+              WHEN strategy_kind LIKE 'dex_arb%' THEN 'dex_arb'
+              WHEN strategy_kind = 'triangular'  THEN 'triangular_arb'
+              ELSE strategy_kind
+            END AS family,
+            COUNT(*) AS candidates_1h,
+            COUNT(*) FILTER (WHERE rejection_reason IS NOT NULL OR status = 'rejected') AS rejections_1h,
+            MAX(detected_at) FILTER (WHERE rejection_reason IS NULL AND status <> 'rejected') AS last_candidate_at,
+            (ARRAY_AGG(rejection_reason ORDER BY detected_at DESC)
+               FILTER (WHERE rejection_reason IS NOT NULL OR status = 'rejected'))[1] AS last_rejection_reason,
+            ARRAY_AGG(DISTINCT strategy_kind) AS variants,
+            COUNT(*) FILTER (WHERE strategy_kind = 'flashloan_arb'
+                                 AND rejection_reason = 'flashloan_no_provider') AS fl_no_provider
           FROM opportunities
           WHERE detected_at >= NOW() - ($2::int * INTERVAL '1 second')
             AND chain_id = $1
+          GROUP BY 1
         `;
         const q = await deps.pool.query(query, [chainId, windowSeconds]);
 
         for (const row of q.rows) {
-          let family = row.strategy_kind;
-          if (family.startsWith("dex_arb")) {
-            dbStats.dex_arb.active_variants.add(family);
-            family = "dex_arb";
-          } else if (family === "triangular") {
-            family = "triangular_arb";
+          const fam = row.family;
+          if (!dbStats[fam]) continue; // backrun not surfaced in this view
+          dbStats[fam].candidates_1h = Number(row.candidates_1h);
+          dbStats[fam].rejections_1h = Number(row.rejections_1h);
+          dbStats[fam].last_candidate_at = row.last_candidate_at
+            ? new Date(row.last_candidate_at).toISOString()
+            : null;
+          dbStats[fam].last_rejection_reason = row.last_rejection_reason ?? null;
+          if (fam === "dex_arb" && Array.isArray(row.variants)) {
+            for (const v of row.variants) dbStats.dex_arb.active_variants.add(v);
           }
-
-          if (dbStats[family]) {
-            dbStats[family].candidates_1h++;
-            if (row.rejection_reason || row.status === "rejected") {
-              dbStats[family].rejections_1h++;
-              if (family === "flashloan_arb" && row.rejection_reason === "flashloan_no_provider") {
-                flashloanNoProviderRejections = (flashloanNoProviderRejections ?? 0) + 1;
-              }
-              // Keep the latest rejection reason
-              if (!dbStats[family].last_rejection_reason) {
-                dbStats[family].last_rejection_reason = row.rejection_reason;
-              }
-            } else {
-              if (!dbStats[family].last_candidate_at) {
-                dbStats[family].last_candidate_at = row.detected_at.toISOString();
-              }
-            }
+          if (fam === "flashloan_arb") {
+            flashloanNoProviderRejections = Number(row.fl_no_provider);
           }
         }
       } catch (e) {
@@ -273,13 +280,17 @@ export function mountStrategyRuntimeStatus(
     let heartbeatReason: string | null = "no_per_strategy_heartbeat_source";
 
     try {
-      // SCAN is used to safely count keys
-      poolIndexEntries = await countKeysScan(deps.redis, `arbx:pool_index:${chainId}:*`);
-      poolIndexV3Entries = await countKeysScan(deps.redis, `arbx:pool_index_v3:${chainId}:*`);
-
-      const reservesV2Count = await countKeysScan(deps.redis, `arbx:pool_reserves:${chainId}:*`);
-      const reservesV3Count = await countKeysScan(deps.redis, `arbx:v3_slot0:${chainId}:*`);
-      reservesCacheEntries = reservesV2Count + reservesV3Count;
+      // SCAN counts the whole keyspace per pattern; run the 4 independent
+      // patterns concurrently instead of 4 serial awaits.
+      const scanCounts = await Promise.all([
+        countKeysScan(deps.redis, `arbx:pool_index:${chainId}:*`),
+        countKeysScan(deps.redis, `arbx:pool_index_v3:${chainId}:*`),
+        countKeysScan(deps.redis, `arbx:pool_reserves:${chainId}:*`),
+        countKeysScan(deps.redis, `arbx:v3_slot0:${chainId}:*`),
+      ]);
+      poolIndexEntries = scanCounts[0];
+      poolIndexV3Entries = scanCounts[1];
+      reservesCacheEntries = scanCounts[2] + scanCounts[3];
 
       const heartbeatKey = `arbx:heartbeat:scanner:${chainId}:latest`;
       const heartbeatRaw = await deps.redis.get(heartbeatKey);

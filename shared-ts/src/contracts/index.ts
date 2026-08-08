@@ -37,6 +37,14 @@ export const OpportunitySchema = z.object({
   // 'included' (on-chain). Populated by searcher; mutated downstream.
   status: z.string().nullable().optional(),
   rejection_reason: z.string().nullable().optional(),
+  // Real cartridge id (e.g. 'mev_08_018_liquidation_auction') for Rhai-cartridge
+  // opportunities; null for the core engines. Mirrors the Rust Opportunity field
+  // (shared-rs/src/contracts.rs). MUST be declared in the strict schema: the Rust
+  // producer always serializes this key (#[serde(default)] without
+  // skip_serializing_if emits it as null when None), so omitting it here makes
+  // OpportunitySchema.parse reject every published Opportunity
+  // (paper_archiver.invalid_message flood).
+  cartridge_id: z.string().nullable().optional(),
   // Cross-chain bridging fields (added in BE-01 Sprint A migration 047).
   // Null for single-chain opportunities; populated for cex_dex / cross_chain.
   chain_id_out: z.number().int().positive().nullable().optional(),

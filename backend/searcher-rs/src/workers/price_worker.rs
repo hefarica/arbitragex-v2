@@ -76,6 +76,16 @@ pub const MAX_BATCH_SIZE: usize = 30;
 /// Per-request HTTP timeout. Prices are best-effort; we never want a hung
 /// upstream to delay the next worker tick.
 pub const HTTP_TIMEOUT_SECS: u64 = 8;
+/// Hard cap on the total pricing universe per tick. Allowlist tokens are
+/// always included first; pool-resident tokens (recovered from
+/// `arbx:pool_index[:_v3]:<chain>:<sym0>:<sym1>` key names) fill the
+/// remainder up to this bound. Protects Alchemy (shared RPC key budget) and
+/// Coingecko (free-tier rate limit) from a blowout when pool discovery
+/// enumerates a long tail. At MAX_BATCH_SIZE=30 this is <= 10 Alchemy +
+/// <= 10 Coingecko batched calls per tick — within provider budgets. Lower
+/// this if `price_worker.coingecko_failed` rises under sustained Alchemy
+/// outage; the allowlist always survives the cut.
+pub const MAX_PRICED_TOKENS: usize = 300;
 
 // -------- Alchemy request/response types --------
 
@@ -563,18 +573,108 @@ impl PriceWorker {
             }
         }
 
-        // Step 3: filter to allowlist intersection.
+        // Step 3: build the pricing universe. Allowlist first (operator's
+        // curated high-confidence set — always fully priced), THEN symbols
+        // recovered from `arbx:pool_index[:_v3]:<chain>:<sym0>:<sym1>` key
+        // names (tokens that appear in at least one detected pool), deduped
+        // against the allowlist and capped to protect Alchemy/Coingecko rate
+        // limits. Closes the `no_price_oracle` gap for pool-resident tokens
+        // the allowlist doesn't name, without pricing every one of the 1,000+
+        // discovered tokens indiscriminately. Tokens with no `arbx:tokens`
+        // meta (no resolvable address) are skipped fail-honestly (R8).
         let mut out: Vec<TokenRef> = Vec::new();
-        for sym in allowlist {
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for sym in &allowlist {
+            if out.len() >= MAX_PRICED_TOKENS {
+                break;
+            }
             let upper = sym.to_ascii_uppercase();
-            if let Some(addr) = sym_to_addr.get(&upper) {
-                out.push(TokenRef {
-                    symbol: upper,
-                    address_lower: addr.clone(),
-                });
+            if seen.insert(upper.clone()) {
+                if let Some(addr) = sym_to_addr.get(&upper) {
+                    out.push(TokenRef {
+                        symbol: upper,
+                        address_lower: addr.clone(),
+                    });
+                }
+            }
+        }
+        // Pool-resident tokens beyond the allowlist. `seen` dedupes against
+        // allowlist symbols already added, so only NEW pool tokens are priced.
+        if out.len() < MAX_PRICED_TOKENS {
+            for sym in self.scan_pool_resident_symbols(redis).await {
+                if out.len() >= MAX_PRICED_TOKENS {
+                    break;
+                }
+                if seen.insert(sym.clone()) {
+                    if let Some(addr) = sym_to_addr.get(&sym) {
+                        out.push(TokenRef {
+                            symbol: sym,
+                            address_lower: addr.clone(),
+                        });
+                    }
+                }
             }
         }
         Ok(out)
+    }
+
+    /// Scan `arbx:pool_index:<chain>:*` and `arbx:pool_index_v3:<chain>:*` key
+    /// names and return the set of UPPERCASE token symbols that appear in at
+    /// least one detected pool. Key names encode both symbols
+    /// (`arbx:pool_index:<chain>:<sym0>:<sym1>`); we take the last two
+    /// colon-separated segments and uppercase them to match the `sym_to_addr`
+    /// map (writers use mixed case: `pool_discovery` lowercases,
+    /// `pool_sync_worker` boot preserves the PG symbol). Returns an empty set
+    /// on SCAN failure — the pricing universe then falls back to allowlist
+    /// only (R8 fail-honest: no fabricated symbols).
+    async fn scan_pool_resident_symbols(
+        &self,
+        redis: &mut ConnectionManager,
+    ) -> std::collections::HashSet<String> {
+        let mut out = std::collections::HashSet::new();
+        for pattern in [
+            format!("arbx:pool_index:{}:*", self.cfg.chain_id),
+            format!("arbx:pool_index_v3:{}:*", self.cfg.chain_id),
+        ] {
+            let mut iter: redis::AsyncIter<String> = match redis::cmd("SCAN")
+                .cursor_arg(0)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(500)
+                .clone()
+                .iter_async(redis)
+                .await
+            {
+                Ok(it) => it,
+                Err(e) => {
+                    warn!(
+                        event = "price_worker.pool_index_scan_failed",
+                        chain_id = self.cfg.chain_id,
+                        pattern = %pattern,
+                        error = %e,
+                        "pool_index SCAN failed; universe falls back to allowlist"
+                    );
+                    continue;
+                }
+            };
+            while let Some(k) = iter.next_item().await {
+                // arbx:pool_index[:_v3]:<chain>:<sym0>:<sym1> — last two
+                // colon-separated segments are the pair's symbols.
+                let parts: Vec<&str> = k.rsplitn(3, ':').collect();
+                if parts.len() < 2 {
+                    continue;
+                }
+                for sym in &parts[0..2] {
+                    let upper = sym.to_ascii_uppercase();
+                    if !upper.is_empty() {
+                        out.insert(upper);
+                    }
+                }
+            }
+            drop(iter);
+        }
+        out
     }
 
     /// POST one batch to Alchemy. Returns `symbol → price` for tokens that

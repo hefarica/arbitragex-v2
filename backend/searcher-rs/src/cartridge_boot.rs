@@ -578,7 +578,10 @@ fn build_rd_outcome_v2(
         // ── Net-profit waterfall — FAIL-HONEST (R8) ──
         // Only the cartridge's own estimate is known at the discovery layer; the
         // itemized costs and the simulated net are NOT computed here → null, not 0.
-        "estimated_profit_usd": res.estimated_profit,
+        // RC-2: estimated_profit is token-units, not USD (types.rs:45). Only emit a USD
+        // figure when the cartridge self-priced (profit_usd_hint); else null (R8),
+        // consistent with the null waterfall below (net_computed=false).
+        "estimated_profit_usd": res.metadata.get("profit_usd_hint").and_then(|v| v.as_f64()).filter(|p| *p > 0.0),
         "gross_profit_usd": serde_json::Value::Null,
         "gas_cost_usd": serde_json::Value::Null,
         "dex_fees_usd": serde_json::Value::Null,
@@ -968,7 +971,16 @@ pub async fn active_evaluate_and_emit(
                     token_in,
                     token_out,
                     amount_in_wei: intent.amount_in.to_string(),
-                    expected_profit_usd: Some(eval_result.estimated_profit),
+                    // RC-2 unit-scale fix: `estimated_profit` is TOKEN UNITS, not USD
+                    // (types.rs:45 doc; runner.rs:564 passes it raw). dex_engine.rs
+                    // compute_gross_usd (5e9d222) does the units->USD step this path skipped.
+                    // The cartridge already did wei/10^dec, so do NOT divide again.
+                    // Prefer its priced `profit_usd_hint`; else None (R8) -- NEVER token-as-USD.
+                    expected_profit_usd: eval_result
+                        .metadata
+                        .get("profit_usd_hint")
+                        .and_then(|v| v.as_f64())
+                        .filter(|p| *p > 0.0),
                     net_expected_profit_usd: None, // Filled by spine evaluator
                     roi_pct: None,
                     risk_score: None,
@@ -988,7 +1000,12 @@ pub async fn active_evaluate_and_emit(
                     dex_adapters: intent.legs.iter().filter_map(|l| l.dex_hint.clone()).collect(),
                     amount_in: intent.amount_in.as_u128() as f64,
                     expected_amount_out: 0.0, // Unknown at this layer; spine evaluator computes
-                    gross_profit: eval_result.estimated_profit,
+                    gross_profit: eval_result
+                        .metadata
+                        .get("profit_usd_hint")
+                        .and_then(|v| v.as_f64())
+                        .filter(|p| *p > 0.0)
+                        .unwrap_or(0.0),
                 };
 
                 // Build minimal RoutePlan for the evaluator
@@ -1037,7 +1054,11 @@ pub async fn active_evaluate_and_emit(
                     opportunity,
                     candidate,
                     route_plan,
-                    gross_profit_usd: Some(eval_result.estimated_profit),
+                    gross_profit_usd: eval_result
+                        .metadata
+                        .get("profit_usd_hint")
+                        .and_then(|v| v.as_f64())
+                        .filter(|p| *p > 0.0),
                     net_expected_profit_usd: None,
                     rejection_reason: None,
                     source_intent_hash: intent.tx_hash,

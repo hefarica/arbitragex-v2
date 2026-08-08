@@ -46,6 +46,20 @@ const VALID_KINDS = new Set([
   "flashloan_arb",
 ]);
 
+/**
+ * Canonical `strategy_kind` for a shadow rd_outcome. The v1 payload carries
+ * `cartridge_id` (a cartridge FILENAME, e.g. `mev_01_001_dex_dex`) but NO
+ * strategy_kind field, and a filename is never one of the 5 persisted kinds. The
+ * active cartridge path defaults every cartridge to DexArb (searcher-rs
+ * cartridge_boot.rs `StrategyKind::DexArb`); mirror that default so the row
+ * satisfies the opportunities.strategy_kind CHECK constraint without inventing
+ * a finer classification the discovery layer does not have (R8). The
+ * cartridge_id is preserved as row identity via trace_id/pair provenance.
+ */
+function deriveStrategyKind(_cartridgeId: string): string {
+  return "dex_arb";
+}
+
 export interface BridgeLogger {
   info(obj: object, msg?: string): void;
   warn(obj: object, msg?: string): void;
@@ -114,7 +128,33 @@ export class OpportunitiesBridgeArchiver {
   private running = false;
   private stopPromise: Promise<void> | null = null;
 
+  // Aggregated skip counters — flushed as ONE summary warn per interval. A
+  // per-message skip warn at 2k/min was the dominant api-server event-loop
+  // saturator (opps_bridge.skip_unknown_strategy_kind, 2026-08-08 live diag).
+  private readonly skipCounts = new Map<string, number>();
+  private readonly skipDetails = new Map<string, string>();
+  private lastSkipFlushMs = 0;
+  private static readonly SKIP_FLUSH_MS = 5000;
+
   constructor(private readonly deps: OpportunitiesBridgeDeps) {}
+
+  /** Record a non-actionable skip; emit one aggregated summary per interval so a
+   * high-rate skip cause can never flood the event loop. */
+  private recordSkip(event: string, detail?: string): void {
+    this.skipCounts.set(event, (this.skipCounts.get(event) ?? 0) + 1);
+    if (detail !== undefined) this.skipDetails.set(event, detail);
+    const now = Date.now();
+    if (now - this.lastSkipFlushMs >= OpportunitiesBridgeArchiver.SKIP_FLUSH_MS) {
+      this.lastSkipFlushMs = now;
+      this.deps.logger.warn({
+        event: "opps_bridge.skip_summary",
+        counts: Object.fromEntries(this.skipCounts),
+        details: Object.fromEntries(this.skipDetails),
+      });
+      this.skipCounts.clear();
+      this.skipDetails.clear();
+    }
+  }
 
   async start(): Promise<void> {
     if (this.running) return;
@@ -178,19 +218,24 @@ export class OpportunitiesBridgeArchiver {
       o = parseOutcome(json);
     } catch (err) {
       // Unparseable → SKIP + XACK (never invent a row, never stall the group).
-      this.deps.logger.warn({ event: "opps_bridge.invalid_message", id, err: (err as Error).message });
+      this.recordSkip("invalid_message", (err as Error).message);
       await this.redis.xack(STREAM_IN, GROUP, id).catch(() => {});
       return;
     }
 
-    // NOT NULL / CHECK guards — SKIP + XACK rather than fabricate (RULE 00).
+    // NOT NULL guard — SKIP + XACK rather than fabricate (RULE 00).
     if (!o.token_in || !o.token_out) {
-      this.deps.logger.warn({ event: "opps_bridge.skip_missing_token", id });
+      this.recordSkip("skip_missing_token");
       await this.redis.xack(STREAM_IN, GROUP, id).catch(() => {});
       return;
     }
-    if (!VALID_KINDS.has(o.cartridge_id)) {
-      this.deps.logger.warn({ event: "opps_bridge.skip_unknown_strategy_kind", id, kind: o.cartridge_id });
+
+    // strategy_kind: the v1 payload has cartridge_id (a filename) but no canonical
+    // kind — derive the default (dex_arb, matching the active cartridge path) and
+    // fail-honest-assert it satisfies the opportunities.strategy_kind CHECK.
+    const strategyKind = deriveStrategyKind(o.cartridge_id);
+    if (!VALID_KINDS.has(strategyKind)) {
+      this.recordSkip("skip_unmapped_strategy_kind", strategyKind);
       await this.redis.xack(STREAM_IN, GROUP, id).catch(() => {});
       return;
     }
@@ -215,7 +260,7 @@ export class OpportunitiesBridgeArchiver {
         [
           id,                       // md5(id)::uuid → deterministic opp id
           o.chain_id,
-          o.cartridge_id,           // strategy_kind (validated above)
+          strategyKind,             // strategy_kind (derived + validated above)
           pair,                     // pair_symbol
           o.token_in,
           o.token_out,
