@@ -76,7 +76,10 @@ pub async fn run_periodic(
 ) {
     let mut ticker = tokio::time::interval(Duration::from_secs(cfg.interval_secs));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    info!(event = "drift_tracker.spawned", interval_s = cfg.interval_secs);
+    info!(
+        event = "drift_tracker.spawned",
+        interval_s = cfg.interval_secs
+    );
 
     loop {
         ticker.tick().await;
@@ -199,8 +202,18 @@ async fn resolve_one(
 
     // Best-effort USD valuation via the Redis token price
     // (arbx:token_prices:<chain>:<SYMBOL> — the enricher's canonical key).
-    let sym = r.token_in.split('/').next().unwrap_or("").trim().to_uppercase();
-    let actual_profit_usd = match (redis.as_mut(), &outcome.simulated_profit_token_in, sym.as_str()) {
+    let sym = r
+        .token_in
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_uppercase();
+    let actual_profit_usd = match (
+        redis.as_mut(),
+        &outcome.simulated_profit_token_in,
+        sym.as_str(),
+    ) {
         (Some(rc), Some(token_profit_str), s) if !s.is_empty() => {
             let price = token_price_usd(rc, r.chain_id, s).await;
             match (price, token_profit_str.parse::<f64>().ok()) {
@@ -253,7 +266,8 @@ async fn token_price_usd(
 ) -> Option<f64> {
     let key = format!("arbx:token_prices:{}", chain_id);
     let v: Option<String> = redis.hget(&key, symbol_upper).await.ok().flatten();
-    v.and_then(|s| s.parse().ok()).filter(|p: &f64| p.is_finite() && *p > 0.0)
+    v.and_then(|s| s.parse().ok())
+        .filter(|p: &f64| p.is_finite() && *p > 0.0)
 }
 
 /// Gas cost in USD from the sim outcome (gas_used × gas_price_wei → ETH → USD).

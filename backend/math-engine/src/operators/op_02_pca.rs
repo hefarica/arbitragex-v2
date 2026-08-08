@@ -9,7 +9,7 @@
 //!                 o entradas no finitas. Nunca un Some fabricado.
 
 use super::{MarketState, OperatorOutput, TopologicalOperator};
-use nalgebra::{DMatrix, linalg::SymmetricEigen};
+use nalgebra::{linalg::SymmetricEigen, DMatrix};
 use std::collections::HashMap;
 
 #[derive(Default)]

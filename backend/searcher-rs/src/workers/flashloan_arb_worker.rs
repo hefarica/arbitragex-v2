@@ -67,8 +67,8 @@ use crate::reserves::{get_pools_for_pair, get_reserves, get_token_meta, Reserves
 use chrono::Utc;
 use ethers::types::U256;
 use redis::aio::ConnectionManager;
-use shared_rs::contracts::{Opportunity, StrategyKind};
 use shared_rs::candidates::RouteMetadata;
+use shared_rs::contracts::{Opportunity, StrategyKind};
 use shared_rs::tokens;
 use shared_rs::trading_config::TradingConfigClient;
 use sqlx::postgres::PgPool;
@@ -1087,11 +1087,7 @@ impl FlashloanArbWorker {
                         buy_pd.pool_addr.to_string(),
                         sell_pd.pool_addr.to_string(),
                     ],
-                    token_addresses: vec![
-                        addr_a.clone(),
-                        addr_b.clone(),
-                        addr_a.clone(),
-                    ],
+                    token_addresses: vec![addr_a.clone(), addr_b.clone(), addr_a.clone()],
                     dex_adapters: vec![
                         "uniswap_v2_router".to_string(),
                         "uniswap_v2_router".to_string(),
@@ -1099,7 +1095,13 @@ impl FlashloanArbWorker {
                     decimals: Default::default(),
                 };
                 if let Some(pool) = db {
-                    if let Err(e) = persistence::insert_opportunity_with_route(pool, &opp, Some(&route_metadata)).await {
+                    if let Err(e) = persistence::insert_opportunity_with_route(
+                        pool,
+                        &opp,
+                        Some(&route_metadata),
+                    )
+                    .await
+                    {
                         counters().db_errors.fetch_add(1, Ordering::Relaxed);
                         warn!(event = "flashloan_arb_worker.db_error", error = %e);
                     } else {

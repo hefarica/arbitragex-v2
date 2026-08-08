@@ -281,18 +281,33 @@ pub fn build_cartridge_pool_data(
     let mut route_arr: Vec<Dynamic> = Vec::with_capacity(intent.legs.len());
     for leg in &intent.legs {
         let mut lm = rhai::Map::new();
-        let pool = leg.pool_hint.map(|p| format!("{:#x}", p)).unwrap_or_default();
+        let pool = leg
+            .pool_hint
+            .map(|p| format!("{:#x}", p))
+            .unwrap_or_default();
         lm.insert("pool".into(), Dynamic::from(pool));
-        lm.insert("token_in".into(), Dynamic::from(format!("{:#x}", leg.token_in)));
-        lm.insert("token_out".into(), Dynamic::from(format!("{:#x}", leg.token_out)));
-        lm.insert("protocol_type".into(), Dynamic::from(protocol_type_str(leg.protocol_type).to_string()));
+        lm.insert(
+            "token_in".into(),
+            Dynamic::from(format!("{:#x}", leg.token_in)),
+        );
+        lm.insert(
+            "token_out".into(),
+            Dynamic::from(format!("{:#x}", leg.token_out)),
+        );
+        lm.insert(
+            "protocol_type".into(),
+            Dynamic::from(protocol_type_str(leg.protocol_type).to_string()),
+        );
         if let Some(fee) = leg.fee_bps {
             lm.insert("fee_bps".into(), Dynamic::from(fee as i64));
         }
         route_arr.push(Dynamic::from(lm));
     }
     m.insert("route".into(), Dynamic::from(route_arr));
-    m.insert("route_legs_count".into(), Dynamic::from(intent.legs.len() as i64));
+    m.insert(
+        "route_legs_count".into(),
+        Dynamic::from(intent.legs.len() as i64),
+    );
     let route_closed = intent.legs.len() >= 2
         && intent.legs.last().map(|l| l.token_out) == intent.legs.first().map(|l| l.token_in);
     m.insert("route_closed".into(), Dynamic::from(route_closed));
@@ -947,10 +962,9 @@ pub async fn active_evaluate_and_emit(
                 let first_leg = intent.legs.first();
                 let last_leg = intent.legs.last();
                 let (token_in, token_out) = match (first_leg, last_leg) {
-                    (Some(f), Some(l)) => (
-                        format!("{:#x}", f.token_in),
-                        format!("{:#x}", l.token_out),
-                    ),
+                    (Some(f), Some(l)) => {
+                        (format!("{:#x}", f.token_in), format!("{:#x}", l.token_out))
+                    }
                     _ => {
                         warn!(
                             event = "cartridge.active_rejected_no_legs",
@@ -966,7 +980,9 @@ pub async fn active_evaluate_and_emit(
                     id: Uuid::new_v4(),
                     chain_id,
                     strategy_kind: StrategyKind::cartridge(cartridge_id.clone()),
-                    dex_a: first_leg.and_then(|l| l.dex_hint.clone()).unwrap_or_else(|| "unknown".to_string()),
+                    dex_a: first_leg
+                        .and_then(|l| l.dex_hint.clone())
+                        .unwrap_or_else(|| "unknown".to_string()),
                     dex_b: last_leg.and_then(|l| l.dex_hint.clone()),
                     pair_symbol: format!("{}/{}", token_in, token_out),
                     token_in,
@@ -996,9 +1012,23 @@ pub async fn active_evaluate_and_emit(
                 // Uses the real prioritization_spine::types::OpportunityCandidate shape
                 let candidate = prioritization_spine::types::OpportunityCandidate {
                     route_fingerprint: format!("{}:{}", cartridge_id, intent.tx_hash),
-                    pool_addresses: intent.legs.iter().filter_map(|l| l.pool_hint.map(|p| format!("{:#x}", p))).collect(),
-                    token_addresses: intent.legs.iter().flat_map(|l| vec![format!("{:#x}", l.token_in), format!("{:#x}", l.token_out)]).collect(),
-                    dex_adapters: intent.legs.iter().filter_map(|l| l.dex_hint.clone()).collect(),
+                    pool_addresses: intent
+                        .legs
+                        .iter()
+                        .filter_map(|l| l.pool_hint.map(|p| format!("{:#x}", p)))
+                        .collect(),
+                    token_addresses: intent
+                        .legs
+                        .iter()
+                        .flat_map(|l| {
+                            vec![format!("{:#x}", l.token_in), format!("{:#x}", l.token_out)]
+                        })
+                        .collect(),
+                    dex_adapters: intent
+                        .legs
+                        .iter()
+                        .filter_map(|l| l.dex_hint.clone())
+                        .collect(),
                     amount_in: intent.amount_in.as_u128() as f64,
                     expected_amount_out: 0.0, // Unknown at this layer; spine evaluator computes
                     gross_profit: eval_result
@@ -1015,24 +1045,35 @@ pub async fn active_evaluate_and_emit(
                     route_id: Some(format!("{}-{}", cartridge_id, uuid::Uuid::new_v4())),
                     strategy_kind: format!("cartridge_{}", category),
                     chain_id,
-                    legs: intent.legs.iter().map(|leg| {
-                        prioritization_spine::route_plan::RouteLeg {
-                            dex_id: leg.dex_hint.clone().unwrap_or_else(|| "unknown".to_string()),
-                            dex_name: leg.dex_hint.clone().unwrap_or_else(|| "unknown".to_string()),
-                            protocol_type: format!("{:?}", leg.protocol_type),
-                            factory_address: "0x0000000000000000000000000000000000000000".to_string(), // Unknown at cartridge layer
-                            pool_id: None,
-                            pool_address: leg.pool_hint.map(|p| format!("{:#x}", p)),
-                            token_in: format!("{:#x}", leg.token_in),
-                            token_out: format!("{:#x}", leg.token_out),
-                            fee_bps: leg.fee_bps,
-                            amount_in: Some(intent.amount_in.as_u128() as f64),
-                            amount_out: None,
-                            tvl_usd: None,
-                            volume_24h_usd: None,
-                            pool_is_active: true,
-                        }
-                    }).collect(),
+                    legs: intent
+                        .legs
+                        .iter()
+                        .map(|leg| {
+                            prioritization_spine::route_plan::RouteLeg {
+                                dex_id: leg
+                                    .dex_hint
+                                    .clone()
+                                    .unwrap_or_else(|| "unknown".to_string()),
+                                dex_name: leg
+                                    .dex_hint
+                                    .clone()
+                                    .unwrap_or_else(|| "unknown".to_string()),
+                                protocol_type: format!("{:?}", leg.protocol_type),
+                                factory_address: "0x0000000000000000000000000000000000000000"
+                                    .to_string(), // Unknown at cartridge layer
+                                pool_id: None,
+                                pool_address: leg.pool_hint.map(|p| format!("{:#x}", p)),
+                                token_in: format!("{:#x}", leg.token_in),
+                                token_out: format!("{:#x}", leg.token_out),
+                                fee_bps: leg.fee_bps,
+                                amount_in: Some(intent.amount_in.as_u128() as f64),
+                                amount_out: None,
+                                tvl_usd: None,
+                                volume_24h_usd: None,
+                                pool_is_active: true,
+                            }
+                        })
+                        .collect(),
                     atomic: true,
                     estimated_slippage_pct: None,
                     price_impact_pct: None,
@@ -1074,7 +1115,9 @@ pub async fn active_evaluate_and_emit(
                     ctx_chain_id,
                     emitter.clone(),
                     price_snapshot.clone(),
-                ).await {
+                )
+                .await
+                {
                     warn!(
                         event = "cartridge.active_process_failed",
                         chain_id,
@@ -1153,7 +1196,9 @@ async fn process_cartridge_candidate(
 
     use prioritization_spine::config_aware::ConfigGateOutcome;
     match spine_gate_outcome {
-        ConfigGateOutcome::Evaluated { outcome, rejection, .. } => {
+        ConfigGateOutcome::Evaluated {
+            outcome, rejection, ..
+        } => {
             match rejection {
                 Some(reject_reason) => {
                     let reason = format!("{:?}", reject_reason);
@@ -1170,7 +1215,9 @@ async fn process_cartridge_candidate(
                 }
             }
         }
-        ConfigGateOutcome::TokenNotAllowed { token_symbol_or_addr } => {
+        ConfigGateOutcome::TokenNotAllowed {
+            token_symbol_or_addr,
+        } => {
             let reason = format!("TokenNotAllowed:{}", token_symbol_or_addr);
             let mut opp = sc.opportunity.clone();
             opp.rejection_reason = Some(reason.clone());
@@ -1182,7 +1229,9 @@ async fn process_cartridge_candidate(
             opp.rejection_reason = Some(reason.clone());
             emitter.emit_rejected(&opp, label, &reason).await?;
         }
-        ConfigGateOutcome::StrategyConfigGateBlocked { reason: reject_reason } => {
+        ConfigGateOutcome::StrategyConfigGateBlocked {
+            reason: reject_reason,
+        } => {
             let reason = format!("StrategyConfigGateBlocked:{:?}", reject_reason);
             let mut opp = sc.opportunity.clone();
             opp.rejection_reason = Some(reason.clone());

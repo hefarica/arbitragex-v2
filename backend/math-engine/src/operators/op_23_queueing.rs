@@ -81,7 +81,11 @@ impl TopologicalOperator for QueueingOperator {
         // E[S²] = Var(S) + E[S]². Si se provee varianza finita ≥ 0, se usa;
         // si no, servicio exponencial (M/M/1): Var = E[S]² ⇒ E[S²] = 2·E[S]².
         let var_s = Self::feat(state, "block_time_variance_sec2", -1.0);
-        let es2 = if var_s >= 0.0 { var_s + es * es } else { 2.0 * es * es };
+        let es2 = if var_s >= 0.0 {
+            var_s + es * es
+        } else {
+            2.0 * es * es
+        };
 
         let rho = lambda * es;
         metadata.insert("lambda_per_sec".to_string(), lambda);

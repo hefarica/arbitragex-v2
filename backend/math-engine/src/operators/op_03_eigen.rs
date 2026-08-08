@@ -10,7 +10,7 @@
 //!                 λ_max de una PSD está bien definido aunque rango < m.
 
 use super::{MarketState, OperatorOutput, TopologicalOperator};
-use nalgebra::{DMatrix, linalg::SymmetricEigen};
+use nalgebra::{linalg::SymmetricEigen, DMatrix};
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -46,7 +46,10 @@ impl TopologicalOperator for EigenOperator {
                         metadata.insert("condition_number".to_string(), eigs[0] / lam_min);
                     }
                 }
-                metadata.insert("numerical_rank".to_string(), eigs.iter().filter(|&&e| e > 1e-10).count() as f64);
+                metadata.insert(
+                    "numerical_rank".to_string(),
+                    eigs.iter().filter(|&&e| e > 1e-10).count() as f64,
+                );
                 OperatorOutput {
                     operator_id: self.id(),
                     operator_name: self.name().to_string(),

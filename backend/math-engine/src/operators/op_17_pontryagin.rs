@@ -70,11 +70,8 @@ impl TopologicalOperator for PontryaginOperator {
         }
 
         let mu = returns.iter().sum::<f64>() / returns.len() as f64;
-        let impact = returns
-            .iter()
-            .map(|r| (r - mu).powi(2))
-            .sum::<f64>()
-            / (returns.len() - 1) as f64;
+        let impact =
+            returns.iter().map(|r| (r - mu).powi(2)).sum::<f64>() / (returns.len() - 1) as f64;
         let lambda = mu; // myopic costate prior = drift
         let h_star = mu * lambda - 0.5 * impact;
 

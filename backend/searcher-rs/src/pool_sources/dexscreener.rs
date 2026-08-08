@@ -145,7 +145,12 @@ pub async fn fetch(
         // `/token-pairs/v1/{chain}/{token}` path 404s for these pivots; the
         // tokens endpoint is the reliable, documented one.)
         let url = format!("{base}/latest/dex/tokens/{tok}");
-        let resp = match client.get(&url).header("accept", "application/json").send().await {
+        let resp = match client
+            .get(&url)
+            .header("accept", "application/json")
+            .send()
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 warn!(

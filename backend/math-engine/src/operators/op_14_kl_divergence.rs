@@ -133,7 +133,9 @@ mod tests {
     fn uniform_distribution_low_divergence() {
         let op = KlDivergenceOperator::new();
         // Spread uniforme → D_KL baja vs uniforme.
-        let out = op.evaluate(&st(&[100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0]));
+        let out = op.evaluate(&st(&[
+            100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0,
+        ]));
         let d = out.scalar_value.unwrap();
         assert!(d >= 0.0, "KL divergence must be non-negative");
         assert_eq!(out.metadata.get("computed"), Some(&1.0));
@@ -143,8 +145,12 @@ mod tests {
     fn concentrated_distribution_high_divergence() {
         let op = KlDivergenceOperator::new();
         // Casi todos iguales + un outlier → alta divergencia vs uniforme.
-        let uniform = op.evaluate(&st(&[100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0]));
-        let skewed = op.evaluate(&st(&[100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 200.0]));
+        let uniform = op.evaluate(&st(&[
+            100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0,
+        ]));
+        let skewed = op.evaluate(&st(&[
+            100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 200.0,
+        ]));
         assert!(
             skewed.scalar_value.unwrap() > uniform.scalar_value.unwrap(),
             "concentrated dist should diverge more than uniform"

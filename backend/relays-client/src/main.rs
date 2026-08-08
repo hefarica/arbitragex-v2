@@ -507,7 +507,10 @@ async fn main() -> anyhow::Result<()> {
                 }
             });
             if has_signer {
-                info!(event = "relays_consumer.spawned", paper_mode = paper_at_boot);
+                info!(
+                    event = "relays_consumer.spawned",
+                    paper_mode = paper_at_boot
+                );
             } else {
                 info!(
                     event = "relays_consumer.spawned_paper_only",

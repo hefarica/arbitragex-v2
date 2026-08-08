@@ -131,9 +131,9 @@ mod math_evidence;
 // must declare `shared` + `gates` itself — the lib (lib.rs) declares them too,
 // but each crate root owns its own `crate::` namespace. Without these two lines
 // the binary fails with E0432/E0433 unresolved import on crate::gates / crate::shared.
-mod shared;
 mod gates;
 mod orchestrator;
+mod shared;
 // Phase 11: LendingPositionIndexer — Redis-backed watchlist + position cache.
 // Dead-code allowed: the indexer is Arc-constructed and passed to the
 // LiquidationEngine; individual methods are called through the engine.

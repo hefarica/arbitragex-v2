@@ -82,7 +82,7 @@ impl BackrunEngine {
             id: uuid::Uuid::new_v4().to_string(),
             chain_id,
             strategy_kind: StrategyKind::dex_arb(), // Will be mapped to a specific label
-            tokens: vec![],                      // To be filled by the route decoder
+            tokens: vec![],                         // To be filled by the route decoder
             amounts: vec![],
             expected_profit_usd: gross_profit,
             cartridge_id: None,

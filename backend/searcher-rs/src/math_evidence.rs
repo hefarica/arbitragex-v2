@@ -16,9 +16,7 @@
 use std::sync::Arc;
 
 use ethers::types::Address;
-use math_engine::{
-    MarketState, OperatorRegistry, Regime, RegimeRouter,
-};
+use math_engine::{MarketState, OperatorRegistry, Regime, RegimeRouter};
 use tracing::{debug, info};
 
 use crate::engines::triangular_engine::ReservesCache;
@@ -124,10 +122,7 @@ pub async fn evaluate_math_evidence(
 
     let (regimes, metrics, op_ids) = router.route(&state);
 
-    let regime_names: Vec<String> = regimes
-        .iter()
-        .map(|r| format!("{:?}", r))
-        .collect();
+    let regime_names: Vec<String> = regimes.iter().map(|r| format!("{:?}", r)).collect();
 
     let mut computed = 0usize;
     let mut op_values: Vec<serde_json::Value> = Vec::new();
@@ -247,7 +242,11 @@ pub fn evidence_posterior_log_odds(
         }
     }
     let log_odds = prior_log_odds + sum;
-    let ctx: &'static str = if calibrated { "calibrated" } else { "flat_prior" };
+    let ctx: &'static str = if calibrated {
+        "calibrated"
+    } else {
+        "flat_prior"
+    };
     (log_odds, ctx)
 }
 
@@ -278,7 +277,10 @@ mod evidence_tests {
         let evidence = vec![0.5; 31];
         let empty_cal = vec![0.0; 31]; // sin calibrar
         let (lo, ctx) = evidence_posterior_log_odds(0.1, &evidence, &empty_cal);
-        assert!((lo - 0.1).abs() < 1e-12, "empty calibration ⇒ posterior = prior");
+        assert!(
+            (lo - 0.1).abs() < 1e-12,
+            "empty calibration ⇒ posterior = prior"
+        );
         assert_eq!(ctx, "flat_prior");
     }
 
@@ -289,7 +291,10 @@ mod evidence_tests {
         let mut cal = vec![0.0; 31];
         cal[0] = 1.0; // operator 1 (idx 0) calibrado
         let (lo, ctx) = evidence_posterior_log_odds(0.1, &evidence, &cal);
-        assert!((lo - 0.6).abs() < 1e-9, "posterior = prior + lr·e = 0.1+0.5 = 0.6: {lo}");
+        assert!(
+            (lo - 0.6).abs() < 1e-9,
+            "posterior = prior + lr·e = 0.1+0.5 = 0.6: {lo}"
+        );
         assert_eq!(ctx, "calibrated");
     }
 }

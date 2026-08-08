@@ -419,7 +419,17 @@ pub fn spawn_route_discovery(
     );
 
     tokio::spawn(async move {
-        run_loop(redis, chain_id, impact_index, engine, cfg, runner, orchestrator, cancel).await;
+        run_loop(
+            redis,
+            chain_id,
+            impact_index,
+            engine,
+            cfg,
+            runner,
+            orchestrator,
+            cancel,
+        )
+        .await;
     });
 }
 

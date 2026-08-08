@@ -50,23 +50,23 @@ use crate::engines::cross_chain_bridge_engine::CrossChainBridgeEngine;
 use crate::engines::liquidation_snipe_engine::LiquidationSnipeEngine;
 use crate::engines::spanning_tree_engine::SpanningTreeEngine;
 use crate::engines::StrategyCandidate;
+use crate::gates::{MacroMevGate, MacroMevGateConfig};
 use crate::impact_index::ImpactIndex;
 use crate::metrics::{
     CANDIDATES_TOTAL, DECODED_INTENTS_TOTAL, ENGINE_ERRORS_TOTAL, IMPACTED_ROUTES_TOTAL,
     OPPORTUNITIES_PUBLISHED_TOTAL, REJECTED_CONFIG_TOTAL, REJECTED_NO_PROFIT_TOTAL,
     SIMULATION_FAILED_TOTAL,
 };
-use crate::gates::{MacroMevGate, MacroMevGateConfig};
 use crate::opportunity_emitter::{EmitOutcome, OpportunityEmitter};
 use crate::route_intent::RouteIntent;
 use crate::size_optimizer::{OptimizeOutcome, OptimizeRejectReason, SizeOptimizer};
 use crate::state_projector::StateProjector;
 use crate::strategy_label::StrategyLabel;
+use ethers::types::Address;
 use shared_rs::price_oracle::RedisCachedPriceOracle;
 use shared_rs::trading_config::TradingConfigState;
 use std::collections::HashMap;
 use std::sync::Arc;
-use ethers::types::Address;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -372,8 +372,12 @@ impl Orchestrator {
                     .await;
                 } else {
                     // SHADOW MODE: observe-only telemetry (legacy behavior)
-                    crate::cartridge_boot::shadow_evaluate_intent(runner, intent_for_cart, chain_id)
-                        .await;
+                    crate::cartridge_boot::shadow_evaluate_intent(
+                        runner,
+                        intent_for_cart,
+                        chain_id,
+                    )
+                    .await;
                 }
             });
         }
@@ -389,11 +393,7 @@ impl Orchestrator {
             let router = self.ctx.regime_router;
             let mut math_redis = self.ctx.math_redis.clone();
             let strategy_kind = format!("{:?}", intent.router_kind);
-            let pools: Vec<Address> = intent
-                .legs
-                .iter()
-                .filter_map(|leg| leg.pool_hint)
-                .collect();
+            let pools: Vec<Address> = intent.legs.iter().filter_map(|leg| leg.pool_hint).collect();
             if !pools.is_empty() {
                 tokio::spawn(async move {
                     crate::math_evidence::evaluate_math_evidence(
@@ -915,8 +915,7 @@ impl Orchestrator {
             if n == 0 {
                 debug!(
                     event = "v2.price_snapshot_empty",
-                    chain_id,
-                    "price snapshot empty; evaluator falls back to config oracle"
+                    chain_id, "price snapshot empty; evaluator falls back to config oracle"
                 );
             }
             let _ = n;

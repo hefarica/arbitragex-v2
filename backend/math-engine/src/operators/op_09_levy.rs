@@ -78,16 +78,8 @@ impl TopologicalOperator for LevyOperator {
         }
 
         let mean = returns.iter().sum::<f64>() / n as f64;
-        let m2 = returns
-            .iter()
-            .map(|r| (r - mean).powi(2))
-            .sum::<f64>()
-            / n as f64;
-        let m4 = returns
-            .iter()
-            .map(|r| (r - mean).powi(4))
-            .sum::<f64>()
-            / n as f64;
+        let m2 = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / n as f64;
+        let m4 = returns.iter().map(|r| (r - mean).powi(4)).sum::<f64>() / n as f64;
 
         // σ²≈0 ⇒ kurtosis κ = μ₄/σ⁴ indefinida (retornos degenerados/constantes).
         if !mean.is_finite() || !m2.is_finite() || !m4.is_finite() || m2 < 1e-18 {

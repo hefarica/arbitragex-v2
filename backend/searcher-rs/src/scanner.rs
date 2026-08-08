@@ -287,8 +287,7 @@ async fn build_orchestrator(
         tokio::spawn(async move {
             // Discard the immediate first tick: the boot hydration above already
             // loaded the current snapshot — the first real refresh is one interval in.
-            let mut ticker =
-                tokio::time::interval(std::time::Duration::from_millis(refresh_ms));
+            let mut ticker = tokio::time::interval(std::time::Duration::from_millis(refresh_ms));
             ticker.tick().await;
             loop {
                 ticker.tick().await;
@@ -424,7 +423,11 @@ async fn build_orchestrator(
     // configured AND paper_mode is off) plus the pre-execute checklist + kill
     // switch. Those remain intact, so writing `opps:detected` here cannot reach
     // on-chain broadcast on its own.
-    let emitter = Arc::new(OpportunityEmitter::new(db.clone(), redis.clone(), opp_dedup));
+    let emitter = Arc::new(OpportunityEmitter::new(
+        db.clone(),
+        redis.clone(),
+        opp_dedup,
+    ));
 
     let config_provider = Arc::new(ConfigProvider { trading_config });
 

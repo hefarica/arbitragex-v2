@@ -95,11 +95,7 @@ impl TopologicalOperator for HMMOperator {
         }
 
         let mean = returns.iter().sum::<f64>() / n as f64;
-        let var = returns
-            .iter()
-            .map(|r| (r - mean).powi(2))
-            .sum::<f64>()
-            / n as f64;
+        let var = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / n as f64;
         let std = var.max(0.0).sqrt();
 
         // var≈0 ⇒ emisión degenerada, la log-verosimilitud es indefinida.

@@ -16,8 +16,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, Duration};
 
-use nonce_manager::NonceManager;
 use idempotency::IdempotencyChecker;
+use nonce_manager::NonceManager;
 
 pub struct LiveTestnetExecutor {
     provider: Arc<Provider<Http>>,

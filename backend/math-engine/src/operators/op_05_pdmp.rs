@@ -81,11 +81,7 @@ impl TopologicalOperator for PDMPOperator {
 
         let mean = returns.iter().sum::<f64>() / n as f64;
         // Varianza muestral (denominador n-1, consistente con op_08 Kalman).
-        let var = returns
-            .iter()
-            .map(|r| (r - mean).powi(2))
-            .sum::<f64>()
-            / (n - 1) as f64;
+        let var = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (n - 1) as f64;
         let sigma = var.max(0.0).sqrt();
 
         // σ²≈0 ⇒ retornos degenerados/constantes: el umbral 2σ colapsa y la
@@ -106,7 +102,10 @@ impl TopologicalOperator for PDMPOperator {
         // Umbral μ ± 2σ: |r_t - μ| > 2σ marca una realización de salto
         // (la contribución impulsiva que genera la kurtosis excesiva).
         let thresh = 2.0 * sigma;
-        let jump_count = returns.iter().filter(|r| (*r - mean).abs() > thresh).count() as f64;
+        let jump_count = returns
+            .iter()
+            .filter(|r| (*r - mean).abs() > thresh)
+            .count() as f64;
         let lambda_j = jump_count / n as f64; // intensidad de salto por muestra
 
         metadata.insert("computed".to_string(), 1.0);

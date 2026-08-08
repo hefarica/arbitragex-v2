@@ -6,13 +6,12 @@
 #[cfg(test)]
 mod tests {
     use crate::operators::{
-        MarketState, OperatorRegistry, TopologicalOperator,
-        op_02_pca::PCAOperator, op_03_eigen::EigenOperator,
-        op_04_von_neumann::VonNeumannOperator, op_08_kalman::KalmanOperator,
-        op_10_welford::WelfordOperator, op_13_regression::RegressionOperator,
-        op_15_golden_section::GoldenSectionOperator,
+        op_02_pca::PCAOperator, op_03_eigen::EigenOperator, op_04_von_neumann::VonNeumannOperator,
+        op_08_kalman::KalmanOperator, op_10_welford::WelfordOperator,
+        op_13_regression::RegressionOperator, op_15_golden_section::GoldenSectionOperator,
         op_16_kelly::KellyOperator, op_20_gradient_descent::GradientDescentOperator,
-        op_21_newton::NewtonOperator, op_22_monte_carlo::MonteCarloOperator,
+        op_21_newton::NewtonOperator, op_22_monte_carlo::MonteCarloOperator, MarketState,
+        OperatorRegistry, TopologicalOperator,
     };
     use std::collections::HashMap;
 
@@ -29,12 +28,16 @@ mod tests {
 
     fn trending_up_state() -> MarketState {
         // Clear uptrend: 100 → 110 in unit steps.
-        state_from_prices(&[100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0])
+        state_from_prices(&[
+            100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0,
+        ])
     }
 
     fn volatile_state() -> MarketState {
         // Mixed wins/losses for Kelly.
-        state_from_prices(&[100.0, 102.0, 99.0, 103.0, 98.0, 104.0, 100.0, 105.0, 101.0, 106.0])
+        state_from_prices(&[
+            100.0, 102.0, 99.0, 103.0, 98.0, 104.0, 100.0, 105.0, 101.0, 106.0,
+        ])
     }
 
     // ── op_22 Monte Carlo (GBM) ─────────────────────────────────────────────
@@ -149,11 +152,18 @@ mod tests {
         let op = PCAOperator::new();
         let out = op.evaluate(&multi_asset_state());
         assert_eq!(out.operator_id, 2);
-        assert!(out.scalar_value.is_some(), "PCA must compute on multi-asset state");
+        assert!(
+            out.scalar_value.is_some(),
+            "PCA must compute on multi-asset state"
+        );
         let rho1 = out.scalar_value.unwrap();
         assert!(rho1 > 0.0 && rho1 <= 1.0 + 1e-9, "rho1 in (0,1]: {rho1}");
         assert_eq!(out.metadata.get("computed"), Some(&1.0));
-        assert_eq!(out.vector_result.as_ref().unwrap().len(), 3, "3 eigenvalues");
+        assert_eq!(
+            out.vector_result.as_ref().unwrap().len(),
+            3,
+            "3 eigenvalues"
+        );
     }
     #[test]
     fn pca_none_on_insufficient_data() {
@@ -209,7 +219,10 @@ mod tests {
         let op = KalmanOperator::new();
         let out = op.evaluate(&volatile_state()); // n=10 single-asset
         assert_eq!(out.operator_id, 8);
-        assert!(out.scalar_value.is_some(), "Kalman must compute on n>=3 series");
+        assert!(
+            out.scalar_value.is_some(),
+            "Kalman must compute on n>=3 series"
+        );
         let z = out.scalar_value.unwrap();
         assert!(z >= 0.0, "mispricing z-score non-negative: {z}");
         assert_eq!(out.metadata.get("computed"), Some(&1.0));
@@ -243,7 +256,10 @@ mod tests {
         let op = WelfordOperator::new();
         let out = op.evaluate(&volatile_state());
         assert_eq!(out.operator_id, 10);
-        assert!(out.scalar_value.is_some(), "Welford must compute σ on n>=2 returns");
+        assert!(
+            out.scalar_value.is_some(),
+            "Welford must compute σ on n>=2 returns"
+        );
         let sigma = out.scalar_value.unwrap();
         assert!(sigma >= 0.0, "std_dev non-negative: {sigma}");
         assert!(sigma.is_finite());
@@ -268,13 +284,19 @@ mod tests {
         let op = GoldenSectionOperator::new();
         let out = op.evaluate(&pool_state());
         assert_eq!(out.operator_id, 15);
-        assert!(out.scalar_value.is_some(), "golden-section must find x* on edge pool");
+        assert!(
+            out.scalar_value.is_some(),
+            "golden-section must find x* on edge pool"
+        );
         let f_star = out.scalar_value.unwrap();
         assert!(f_star.is_finite());
         // vector_result = [x*, f*, r0]; x* ∈ (0, r0].
         let v = out.vector_result.as_ref().unwrap();
         let x_star = v[0];
-        assert!(x_star > 0.0 && x_star <= 1_000_000.0, "x* in (0, r0]: {x_star}");
+        assert!(
+            x_star > 0.0 && x_star <= 1_000_000.0,
+            "x* in (0, r0]: {x_star}"
+        );
         assert_eq!(out.metadata.get("computed"), Some(&1.0));
     }
     #[test]
@@ -291,14 +313,27 @@ mod tests {
         let op = GradientDescentOperator::new();
         let out = op.evaluate(&trending_up_state());
         assert_eq!(out.operator_id, 20);
-        assert!(out.scalar_value.is_some(), "GD must converge on n>=2 returns");
+        assert!(
+            out.scalar_value.is_some(),
+            "GD must converge on n>=2 returns"
+        );
         let theta = out.scalar_value.unwrap();
         // θ* converge al mean(returns) reportado por el propio operador.
-        let mean = out.metadata.get("mean").copied().expect("metadata.mean present");
-        assert!((theta - mean).abs() < 1e-6, "θ* ≈ mean(returns)={mean}: {theta}");
+        let mean = out
+            .metadata
+            .get("mean")
+            .copied()
+            .expect("metadata.mean present");
+        assert!(
+            (theta - mean).abs() < 1e-6,
+            "θ* ≈ mean(returns)={mean}: {theta}"
+        );
         assert_eq!(out.metadata.get("computed"), Some(&1.0));
         let grad_norm = out.metadata.get("grad_norm").copied().unwrap_or(1.0);
-        assert!(grad_norm < 1e-4, "grad_norm ≈ 0 at convergence: {grad_norm}");
+        assert!(
+            grad_norm < 1e-4,
+            "grad_norm ≈ 0 at convergence: {grad_norm}"
+        );
     }
     #[test]
     fn gradient_descent_none_on_insufficient_data() {
@@ -314,7 +349,10 @@ mod tests {
         let op = NewtonOperator::new();
         let out = op.evaluate(&pool_state());
         assert_eq!(out.operator_id, 21);
-        assert!(out.scalar_value.is_some(), "Newton must find break-even root on edge pool");
+        assert!(
+            out.scalar_value.is_some(),
+            "Newton must find break-even root on edge pool"
+        );
         let x = out.scalar_value.unwrap();
         assert!(x > 0.0 && x <= 1_000_000.0, "break-even x* in (0, r0]: {x}");
         // residual f(x*) ≈ 0.

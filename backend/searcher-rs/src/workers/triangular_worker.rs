@@ -52,8 +52,8 @@ use crate::reserves::{
 use chrono::Utc;
 use ethers::types::{Address, U256};
 use redis::aio::ConnectionManager;
-use shared_rs::contracts::{Opportunity, StrategyKind};
 use shared_rs::candidates::RouteMetadata;
+use shared_rs::contracts::{Opportunity, StrategyKind};
 use shared_rs::rpc_failover::HttpRpcPool;
 use shared_rs::tokens;
 use shared_rs::trading_config::TradingConfigClient;
@@ -1524,7 +1524,9 @@ impl TriangularWorker {
 
         // Persist + publish (best-effort, mirror scanner.rs pattern).
         if let Some(pool) = db {
-            if let Err(e) = persistence::insert_opportunity_with_route(pool, &opp, Some(&route_metadata)).await {
+            if let Err(e) =
+                persistence::insert_opportunity_with_route(pool, &opp, Some(&route_metadata)).await
+            {
                 counters().db_errors.fetch_add(1, Ordering::Relaxed);
                 warn!(event = "triangular_worker.db_error", error = %e);
             } else {

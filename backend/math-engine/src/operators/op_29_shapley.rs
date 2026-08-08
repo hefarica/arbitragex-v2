@@ -132,10 +132,7 @@ impl TopologicalOperator for ShapleyOperator {
             }
         }
 
-        let phi_max = phi
-            .iter()
-            .copied()
-            .fold(f64::NEG_INFINITY, f64::max);
+        let phi_max = phi.iter().copied().fold(f64::NEG_INFINITY, f64::max);
 
         if !phi_max.is_finite() {
             metadata.insert("computed".to_string(), 0.0);

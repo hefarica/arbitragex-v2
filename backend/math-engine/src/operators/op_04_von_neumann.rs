@@ -11,7 +11,7 @@
 //!                 Σ no PSD (algún λ_k < -ε ⇒ ln indefinido), o entradas no finitas.
 
 use super::{MarketState, OperatorOutput, TopologicalOperator};
-use nalgebra::{DMatrix, linalg::SymmetricEigen};
+use nalgebra::{linalg::SymmetricEigen, DMatrix};
 use std::collections::HashMap;
 
 #[derive(Default)]

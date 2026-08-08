@@ -1,8 +1,8 @@
 use ethers::types::{Address, U256};
+use ethers_providers::{Http, Middleware, Provider};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use ethers_providers::{Http, Middleware, Provider};
 
 pub struct NonceManager {
     provider: Arc<Provider<Http>>,

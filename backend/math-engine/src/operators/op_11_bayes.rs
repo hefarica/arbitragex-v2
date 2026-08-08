@@ -34,8 +34,16 @@ impl TopologicalOperator for BayesOperator {
     fn evaluate(&self, state: &MarketState) -> OperatorOutput {
         let wins = state.features.get("bayes_wins").copied().unwrap_or(0.0);
         let losses = state.features.get("bayes_losses").copied().unwrap_or(0.0);
-        let alpha0 = state.features.get("bayes_prior_alpha").copied().unwrap_or(1.0);
-        let beta0 = state.features.get("bayes_prior_beta").copied().unwrap_or(1.0);
+        let alpha0 = state
+            .features
+            .get("bayes_prior_alpha")
+            .copied()
+            .unwrap_or(1.0);
+        let beta0 = state
+            .features
+            .get("bayes_prior_beta")
+            .copied()
+            .unwrap_or(1.0);
 
         if wins + losses < 1.0 {
             return OperatorOutput {
@@ -99,7 +107,10 @@ mod tests {
         let op = BayesOperator::new();
         let out = op.evaluate(&st(&[("bayes_wins", 8.0), ("bayes_losses", 2.0)]));
         let mean = out.scalar_value.unwrap();
-        assert!((mean - 0.75).abs() < 1e-9, "posterior mean should be 0.75 (got {mean})");
+        assert!(
+            (mean - 0.75).abs() < 1e-9,
+            "posterior mean should be 0.75 (got {mean})"
+        );
         assert_eq!(out.metadata.get("computed"), Some(&1.0));
     }
 

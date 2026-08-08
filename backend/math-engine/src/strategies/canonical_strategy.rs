@@ -140,7 +140,11 @@ impl CanonicalStrategy {
             _ => 100_000.0,
         };
         // gwei * gas_units * 1e-9 ETH * price_ETH_USD
-        let eth_price = state.features.get("eth_price_usd").copied().unwrap_or(2000.0);
+        let eth_price = state
+            .features
+            .get("eth_price_usd")
+            .copied()
+            .unwrap_or(2000.0);
         let gas_units = base_gas * (1.0 + self.max_legs as f64 * 0.1);
         let gas_eth = state.gas_price_gwei * gas_units * 1e-9;
         Some(gas_eth * eth_price)
@@ -170,7 +174,10 @@ impl TopologicalStrategy for CanonicalStrategy {
         metadata.insert("group".to_string(), self.group as f64);
         metadata.insert("min_legs".to_string(), self.min_legs as f64);
         metadata.insert("max_legs".to_string(), self.max_legs as f64);
-        metadata.insert("atomic_possible".to_string(), if self.atomic_possible { 1.0 } else { 0.0 });
+        metadata.insert(
+            "atomic_possible".to_string(),
+            if self.atomic_possible { 1.0 } else { 0.0 },
+        );
         metadata.insert(
             "nonatomic_possible".to_string(),
             if self.nonatomic_possible { 1.0 } else { 0.0 },

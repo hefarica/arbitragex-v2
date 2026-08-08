@@ -22,7 +22,11 @@ impl SimplexOperator {
 
     /// Resuelve max cᵀx s.t. A x ≤ b, x ≥ 0 por el método Simplex (tableau).
     /// Devuelve (valor_objetivo, x*) o None si infactible/no acotado.
-    pub fn simplex(c: &DVector<f64>, a: &DMatrix<f64>, b: &DVector<f64>) -> Option<(f64, DVector<f64>)> {
+    pub fn simplex(
+        c: &DVector<f64>,
+        a: &DMatrix<f64>,
+        b: &DVector<f64>,
+    ) -> Option<(f64, DVector<f64>)> {
         let (m, n) = a.shape();
         if m == 0 || n == 0 || b.len() != m || c.len() != n {
             return None;
@@ -73,7 +77,7 @@ impl SimplexOperator {
                 }
             }
             let pr = pivot_row?; // no acotado
-            // Pivoteo (Gauss-Jordan).
+                                 // Pivoteo (Gauss-Jordan).
             let pv = t[(pr, pc)];
             for j in 0..=n + m {
                 t[(pr, j)] /= pv;

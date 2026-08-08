@@ -41,7 +41,11 @@ fn all_cartridge_rhai_compile() {
     let mut files = Vec::new();
     collect(&dir, &mut files);
     files.sort();
-    assert!(!files.is_empty(), "no .rhai cartridges found under {}", dir.display());
+    assert!(
+        !files.is_empty(),
+        "no .rhai cartridges found under {}",
+        dir.display()
+    );
 
     let mut failures: Vec<String> = Vec::new();
     for path in &files {
@@ -56,7 +60,11 @@ fn all_cartridge_rhai_compile() {
         for f in &failures {
             eprintln!("COMPILE FAIL: {f}");
         }
-        panic!("{} of {} cartridges failed to compile", failures.len(), files.len());
+        panic!(
+            "{} of {} cartridges failed to compile",
+            failures.len(),
+            files.len()
+        );
     }
     println!("OK: all {} cartridges compiled", files.len());
 }

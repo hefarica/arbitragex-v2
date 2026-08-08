@@ -43,7 +43,12 @@ impl TopologicalOperator for PathOrderingOperator {
             .price_matrix
             .iter()
             .enumerate()
-            .filter_map(|(i, row)| row.first().copied().filter(|p| p.is_finite()).map(|p| (i, p)))
+            .filter_map(|(i, row)| {
+                row.first()
+                    .copied()
+                    .filter(|p| p.is_finite())
+                    .map(|p| (i, p))
+            })
             .collect();
         metadata.insert("valid_venues".to_string(), prices.len() as f64);
 

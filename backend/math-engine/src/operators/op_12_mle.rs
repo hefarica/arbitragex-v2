@@ -68,9 +68,12 @@ impl TopologicalOperator for MLEOperator {
 
         // Log-verosimilitud de la Normal evaluada en (μ̂, σ̂) — medida de ajuste.
         let ll: f64 = if sigma > 1e-12 {
-            rets
-                .iter()
-                .map(|r| -0.5 * ((r - mu) / sigma).powi(2) - sigma.ln() - 0.5 * (2.0 * std::f64::consts::PI).ln())
+            rets.iter()
+                .map(|r| {
+                    -0.5 * ((r - mu) / sigma).powi(2)
+                        - sigma.ln()
+                        - 0.5 * (2.0 * std::f64::consts::PI).ln()
+                })
                 .sum()
         } else {
             f64::NEG_INFINITY

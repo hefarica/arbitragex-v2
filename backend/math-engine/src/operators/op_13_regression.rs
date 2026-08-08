@@ -121,7 +121,13 @@ impl TopologicalOperator for RegressionOperator {
             0.0
         };
 
-        let direction = if slope > 0.0 { "UP" } else if slope < 0.0 { "DOWN" } else { "FLAT" };
+        let direction = if slope > 0.0 {
+            "UP"
+        } else if slope < 0.0 {
+            "DOWN"
+        } else {
+            "FLAT"
+        };
 
         let mut metadata = HashMap::new();
         metadata.insert("computed".to_string(), 1.0);

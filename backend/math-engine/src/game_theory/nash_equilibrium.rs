@@ -57,8 +57,7 @@ pub struct BimatrixGame {
 impl BimatrixGame {
     /// Build a game from row-player and column-player payoff matrices.
     pub fn new(row_payoffs: DMatrix<f64>, col_payoffs: DMatrix<f64>) -> Result<Self, NashError> {
-        if row_payoffs.nrows() != col_payoffs.nrows()
-            || row_payoffs.ncols() != col_payoffs.ncols()
+        if row_payoffs.nrows() != col_payoffs.nrows() || row_payoffs.ncols() != col_payoffs.ncols()
         {
             return Err(NashError::DimensionMismatch {
                 rows_a: row_payoffs.nrows(),

@@ -65,10 +65,10 @@ pub struct RegimeThresholds {
 impl Default for RegimeThresholds {
     fn default() -> Self {
         Self {
-            volatility: 0.02,     // 2% std dev de retornos
-            arbitrage_gap: 0.003, // 0.3% gap entre venues
-            health_factor: 1.1,   // por debajo de 1.1 hay riesgo de liquidación
-            oracle_bias: 0.002,   // 0.2% divergencia oracle vs on-chain
+            volatility: 0.02,        // 2% std dev de retornos
+            arbitrage_gap: 0.003,    // 0.3% gap entre venues
+            health_factor: 1.1,      // por debajo de 1.1 hay riesgo de liquidación
+            oracle_bias: 0.002,      // 0.2% divergencia oracle vs on-chain
             parity_deviation: 0.005, // 0.5% desviación de paridad (depeg)
         }
     }
@@ -118,7 +118,10 @@ impl RegimeRouter {
             .filter(|p| p.is_finite() && *p > 0.0)
             .collect();
         if venue_prices.len() >= 2 {
-            let max = venue_prices.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let max = venue_prices
+                .iter()
+                .cloned()
+                .fold(f64::NEG_INFINITY, f64::max);
             let min = venue_prices.iter().cloned().fold(f64::INFINITY, f64::min);
             if min > 0.0 {
                 m.arbitrage_gap = Some(max / min - 1.0);

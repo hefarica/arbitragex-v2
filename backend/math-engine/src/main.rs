@@ -30,13 +30,16 @@ async fn main() -> anyhow::Result<()> {
 
     let app = api::create_router();
 
-    let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
-        anyhow::anyhow!("failed to bind math-engine listener on {addr}: {e}")
-    })?;
-    info!(event = "service.boot", port, "math-engine listening (31 operators)");
-    axum::serve(listener, app).await.map_err(|e| {
-        anyhow::anyhow!("math-engine server error: {e}")
-    })?;
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to bind math-engine listener on {addr}: {e}"))?;
+    info!(
+        event = "service.boot",
+        port, "math-engine listening (31 operators)"
+    );
+    axum::serve(listener, app)
+        .await
+        .map_err(|e| anyhow::anyhow!("math-engine server error: {e}"))?;
     Ok(())
 }
 
@@ -49,5 +52,8 @@ fn init_tracing() {
         warn!(event = "logging.bad_filter", filter = %filter, "invalid RUST_LOG; falling back to info");
         EnvFilter::new("info")
     });
-    let _ = fmt().with_env_filter(env_filter).with_target(true).try_init();
+    let _ = fmt()
+        .with_env_filter(env_filter)
+        .with_target(true)
+        .try_init();
 }

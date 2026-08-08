@@ -101,8 +101,14 @@ mod tests {
             PoolEnumSource::from_str("GECKO"),
             Some(PoolEnumSource::GeckoTerminal)
         );
-        assert_eq!(PoolEnumSource::from_str("onchain"), Some(PoolEnumSource::Alchemy));
-        assert_eq!(PoolEnumSource::from_str("dexs"), Some(PoolEnumSource::DexScreener));
+        assert_eq!(
+            PoolEnumSource::from_str("onchain"),
+            Some(PoolEnumSource::Alchemy)
+        );
+        assert_eq!(
+            PoolEnumSource::from_str("dexs"),
+            Some(PoolEnumSource::DexScreener)
+        );
         assert_eq!(PoolEnumSource::from_str("nope"), None);
     }
 

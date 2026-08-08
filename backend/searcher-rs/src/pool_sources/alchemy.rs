@@ -116,7 +116,10 @@ const MAX_LOGS_PER_FACTORY: usize = 200;
 /// and V3 `PoolCreated`, the newly created pool is the LAST (non-indexed) 32-byte
 /// word's low 20 bytes of the log data. token0/token1 are the first two indexed
 /// topics.
-fn parse_creation_log(log: &alloy::rpc::types::Log, is_v3: bool) -> Option<(String, String, String)> {
+fn parse_creation_log(
+    log: &alloy::rpc::types::Log,
+    is_v3: bool,
+) -> Option<(String, String, String)> {
     let topics = log.topics();
     if topics.len() < 3 {
         return None;
@@ -185,7 +188,11 @@ pub async fn fetch_onchain(
         let logs = match rpc_pool
             .with_retry(|p| {
                 let f = filter.clone();
-                async move { p.get_logs(&f).await.map_err(|e| anyhow::anyhow!(e.to_string())) }
+                async move {
+                    p.get_logs(&f)
+                        .await
+                        .map_err(|e| anyhow::anyhow!(e.to_string()))
+                }
             })
             .await
         {
@@ -221,7 +228,9 @@ pub async fn fetch_onchain(
             // yet" — the candidate is still proposed (its existence is exact) and
             // the worker re-verifies + ranks it. min_tvl filter applies only when
             // we DO have an estimate.
-            let tvl = estimate_tvl_usd(rpc_pool, &pool, fac.is_v3).await.unwrap_or(0.0);
+            let tvl = estimate_tvl_usd(rpc_pool, &pool, fac.is_v3)
+                .await
+                .unwrap_or(0.0);
             if tvl > 0.0 && tvl < min_tvl_usd {
                 continue; // known-below-floor pool — skip
             }
@@ -250,11 +259,7 @@ pub async fn fetch_onchain(
 /// Estimate pool TVL in USD from on-chain reserves × the existing token price
 /// snapshot (Redis `arbx:token_prices:<chain>`), when both are available.
 /// Returns `None` when reserves or prices are unavailable (fail-honest).
-async fn estimate_tvl_usd(
-    _rpc_pool: &Arc<HttpRpcPool>,
-    _pool: &str,
-    _is_v3: bool,
-) -> Option<f64> {
+async fn estimate_tvl_usd(_rpc_pool: &Arc<HttpRpcPool>, _pool: &str, _is_v3: bool) -> Option<f64> {
     // Phase-1: reserve reads for TVL are expensive per candidate and the price
     // snapshot key layout differs per chain. The on-chain *existence* of the pool
     // is already the highest-value signal (the worker re-verifies factory/token
