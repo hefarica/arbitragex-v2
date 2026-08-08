@@ -519,7 +519,7 @@ impl PoolEnumerationWorker {
     /// **Enrichment (operator directive 2026-08-07):** when the candidate carries
     /// no USD estimate (tvl=0 — typical for the on-chain anchor, which proposes a
     /// pool's existence without a price feed), DexScreener fills `liquidity.usd`
-    /// + `volume.h24` so the row ranks correctly. The on-chain `enum_source`
+    /// and `volume.h24` so the row ranks correctly. The on-chain `enum_source`
     /// provenance is preserved; only the missing TVL/volume numbers are borrowed.
     async fn stamp_metadata(&self, addr_lc: &str, c: &PoolCandidate) {
         let (mut tvl, mut vol) = (c.tvl_usd, c.volume_usd_24h);

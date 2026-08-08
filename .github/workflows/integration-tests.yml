@@ -79,9 +79,10 @@ jobs:
             -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
           bash automation/scripts/migrate.sh
 
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.91.0
         with:
-          toolchain: stable
+          # 1.91.0 — see rust.yml; rust-toolchain.toml (repo root) overrides this.
+          toolchain: 1.91.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: backend

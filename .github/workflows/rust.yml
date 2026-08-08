@@ -29,14 +29,15 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.91.0
         with:
-          # `stable` follows the current Rust release. Alloy ecosystem moves
-          # fast: deps in lockfile require up to rustc 1.90 (ruint@1.18). Pinning
-          # to a specific minor would require rebumping every few months.
-          # If determinism is needed later, pin to a specific rustc and run
-          # `cargo update --precise` to downgrade deps that outgrow it.
-          toolchain: stable
+          # Toolchain pin: 1.91.0. The repo-root `rust-toolchain.toml` is the
+          # single source of truth — it overrides this input for every cargo
+          # invocation, so CI builds with the exact Rust the `FROM rust:1.91`
+          # Docker images (backend/*/Dockerfile) ship. Bump the toolchain file,
+          # the Docker tags, and this value together. (Was `stable`, silently
+          # overridden by the toolchain file — corrected on audit 2026-08-08.)
+          toolchain: 1.91.0
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2

@@ -272,6 +272,7 @@ pub fn evaluate_tick(
 }
 
 /// The async loop: tick on an interval until `cancel` fires.
+#[allow(clippy::too_many_arguments)] // per-tick coordinator wiring
 async fn run_loop(
     mut redis: ConnectionManager,
     chain_id: u64,

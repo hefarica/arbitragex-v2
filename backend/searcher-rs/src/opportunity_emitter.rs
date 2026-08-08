@@ -379,9 +379,9 @@ impl OpportunityEmitter {
         // Redis (written by math_evidence::evaluate_math_evidence, TTL 120s — covers
         // the emit→score latency). Missing ⇒ null (honest, non-blocking).
         let evidence_key = format!(
-            "arbx:math_evidence:{}:{}",
+            "arbx:math_evidence:{}:{:?}",
             opp.chain_id,
-            format!("{:?}", opp.strategy_kind)
+            opp.strategy_kind
         );
         let evidence_vector: Option<serde_json::Value> = {
             let mut r = self.redis.clone();

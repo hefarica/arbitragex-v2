@@ -324,8 +324,8 @@ mod tests {
     #[test]
     fn test_set_and_get() {
         let mut map = TopologyMap::new();
-        map.set(0, 0, 3.14);
-        assert_eq!(map.get(0, 0), Some(3.14));
+        map.set(0, 0, std::f64::consts::PI);
+        assert_eq!(map.get(0, 0), Some(std::f64::consts::PI));
     }
 
     #[test]

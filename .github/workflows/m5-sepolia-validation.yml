@@ -49,6 +49,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          # 1.91.0 — see rust.yml; rust-toolchain.toml (repo root) overrides this.
+          toolchain: 1.91.0
       - name: Run A.4 fork validation (reuses scripts/run_a4_fork_validation.sh)
         env:
           RPC_HTTP_1: ${{ secrets.RPC_HTTP_1_ARCHIVE }}

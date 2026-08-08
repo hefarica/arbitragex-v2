@@ -66,8 +66,8 @@ impl TopologicalOperator for PCAOperator {
     }
 }
 
-/// Covarianza muestral (m×m, simétrica PSD) de price_matrix centrada por columna
-/// + sus autovalores ordenados desc. Devuelve (autovalores, traza). None si
+/// Covarianza muestral (m×m, simétrica PSD) de price_matrix centrada por columna,
+/// con autovalores ordenados desc. Devuelve (autovalores, traza). None si
 /// n<2, m<1, filas inconsistentes, entradas no finitas, o traza ≈ 0.
 fn covariance_eigenvalues(state: &MarketState) -> Option<(Vec<f64>, f64)> {
     let n = state.price_matrix.len();

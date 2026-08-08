@@ -53,6 +53,9 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          # 1.91.0 — see rust.yml; rust-toolchain.toml (repo root) overrides this.
+          toolchain: 1.91.0
 
       - name: Validate Rhai syntax
         run: |

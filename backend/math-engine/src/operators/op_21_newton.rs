@@ -140,7 +140,7 @@ impl TopologicalOperator for NewtonOperator {
         }
         // (3) f(0) = −(gas+target) < 0; si no, la raíz está en el origen o antes.
         let offset = gas + break_even_target;
-        if !(offset > 0.0) {
+        if offset.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             return none_out("root_at_origin");
         }
 

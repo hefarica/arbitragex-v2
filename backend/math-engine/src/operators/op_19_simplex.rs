@@ -72,10 +72,7 @@ impl SimplexOperator {
                     }
                 }
             }
-            let pr = match pivot_row {
-                Some(r) => r,
-                None => return None, // no acotado
-            };
+            let pr = pivot_row?; // no acotado
             // Pivoteo (Gauss-Jordan).
             let pv = t[(pr, pc)];
             for j in 0..=n + m {

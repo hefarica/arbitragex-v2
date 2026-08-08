@@ -87,9 +87,8 @@ impl TopologicalOperator for ShapleyOperator {
             let mut mx = f64::NEG_INFINITY;
             let mut mn = f64::INFINITY;
             let mut cnt = 0u32;
-            for i in 0..n {
+            for (i, &p) in prices.iter().enumerate() {
                 if mask & (1u32 << i) != 0 {
-                    let p = prices[i];
                     if p > mx {
                         mx = p;
                     }
@@ -122,14 +121,14 @@ impl TopologicalOperator for ShapleyOperator {
         for mask in 0..total_masks {
             let s = mask.count_ones() as usize; // |S|
             let v_s = coalition_value(mask);
-            for i in 0..n {
+            for (i, phi_i) in phi.iter_mut().enumerate() {
                 if mask & (1u32 << i) != 0 {
                     continue; // i ∈ S ⇒ no es coalition subset de N\{i}
                 }
                 let v_si = coalition_value(mask | (1u32 << i));
                 let marginal = v_si - v_s;
                 let weight = fact[s] * fact[n - s - 1] / n_fact;
-                phi[i] += weight * marginal;
+                *phi_i += weight * marginal;
             }
         }
 

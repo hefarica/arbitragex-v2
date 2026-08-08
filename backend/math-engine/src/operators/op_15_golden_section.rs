@@ -113,7 +113,7 @@ impl TopologicalOperator for GoldenSectionOperator {
         // Maximización por sección áurea sobre [a, b] = [0, r0].
         let mut a = 0.0_f64;
         let mut b = r0;
-        if !(b > a) {
+        if b.partial_cmp(&a) != Some(std::cmp::Ordering::Greater) {
             return none_out("degenerate_bracket");
         }
         let tau = ((5.0_f64).sqrt() - 1.0) / 2.0;

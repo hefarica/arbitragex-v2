@@ -14,7 +14,6 @@
 //!   por toggle y (b) los `applicable_operators` de la estrategia (264×31).
 
 use crate::operators::MarketState;
-use std::collections::HashMap;
 
 /// Régimen de mercado observable derivado del MarketState.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -234,6 +233,7 @@ impl RegimeRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     fn state(prices: &[f64]) -> MarketState {
         MarketState {

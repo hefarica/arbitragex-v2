@@ -125,8 +125,7 @@ impl TopologicalOperator for HMMOperator {
         // Forward escalado.
         let mut log_lik = 0.0_f64;
         let mut alpha = [0.0f64; S];
-        for t in 0..n {
-            let o = returns[t];
+        for (t, &o) in returns.iter().enumerate() {
             let mut nxt = [0.0f64; S];
             for j in 0..S {
                 let b = Self::gaussian_pdf(o, means[j], vars[j]);

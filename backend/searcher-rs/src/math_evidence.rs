@@ -85,6 +85,7 @@ pub async fn build_market_state(
 /// Evalúa el régimen y los operadores recomendados sobre un candidato, y emite
 /// evidencia estructurada (observe-only). Devuelve el número de operadores que
 /// computaron un valor (para el log).
+#[allow(clippy::too_many_arguments)] // market-state inputs; bundle into a struct if it grows
 pub async fn evaluate_math_evidence(
     reserves_cache: &Arc<ReservesCache>,
     registry: &OperatorRegistry,

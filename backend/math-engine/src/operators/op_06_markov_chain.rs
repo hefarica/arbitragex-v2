@@ -112,8 +112,8 @@ impl TopologicalOperator for MarkovChainOperator {
                     p[i][j] = c[i][j] as f64 / row_sum as f64;
                 }
             } else {
-                for j in 0..K {
-                    p[i][j] = 1.0 / K as f64;
+                for val in p[i].iter_mut() {
+                    *val = 1.0 / K as f64;
                 }
             }
         }
