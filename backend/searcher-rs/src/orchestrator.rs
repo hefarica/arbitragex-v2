@@ -228,6 +228,7 @@ impl Orchestrator {
         }
         let emitter = self.ctx.emitter.clone();
         let cfg_provider = self.ctx.config_provider.clone();
+        let size_optimizer = self.ctx.size_optimizer.clone();
         let ctx_chain_id = self.ctx.chain_id;
         tokio::spawn(async move {
             crate::cartridge_boot::active_evaluate_and_emit(
@@ -236,6 +237,7 @@ impl Orchestrator {
                 chain_id,
                 emitter,
                 cfg_provider,
+                size_optimizer,
                 ctx_chain_id,
             )
             .await;
@@ -350,6 +352,7 @@ impl Orchestrator {
             let cartridge_mode = self.ctx.cartridge_mode;
             let emitter = self.ctx.emitter.clone();
             let cfg_provider = self.ctx.config_provider.clone();
+            let size_optimizer = self.ctx.size_optimizer.clone();
             let ctx_chain_id = self.ctx.chain_id;
 
             tokio::spawn(async move {
@@ -367,6 +370,7 @@ impl Orchestrator {
                         chain_id,
                         emitter,
                         cfg_provider,
+                        size_optimizer,
                         ctx_chain_id,
                     )
                     .await;

@@ -832,9 +832,12 @@ pub async fn active_evaluate_and_emit(
     chain_id: u64,
     emitter: Arc<crate::opportunity_emitter::OpportunityEmitter>,
     cfg_provider: Arc<crate::orchestrator::ConfigProvider>,
+    size_optimizer: Arc<crate::size_optimizer::SizeOptimizer>,
     ctx_chain_id: u64,
 ) {
     use crate::engines::StrategyCandidate;
+    use crate::metrics::REJECTED_NO_PROFIT_TOTAL;
+    use crate::size_optimizer::{OptimizeOutcome, OptimizeRejectReason};
     use crate::strategy_label::StrategyLabel;
     use ethers::types::{Address, U256};
     use shared_rs::contracts::{Opportunity, StrategyKind};
@@ -1079,16 +1082,57 @@ pub async fn active_evaluate_and_emit(
                     price_impact_pct: None,
                 };
 
-                // Determine StrategyLabel from cartridge category.
-                // NOTE: We use the cartridge_id (not the category) as the strategy label
-                // so each of the 264 auto-generated cartridges gets its own identity
-                // in the dashboard and metrics. The RoutePlan.strategy_kind field
-                // preserves the cartridge_id for granular tracking.
+                // Map the cartridge category to its canonical StrategyLabel so the
+                // downstream evaluator (config_aware.rs) branches on the TRUE strategy
+                // family (capital caps, flash detection, etc.).
+                //
+                // C.5 FIX: the prior `_ => DexArbV2V2` arm collapsed ~250/264
+                // auto-generated cartridges into the v2v2 family and the comment above
+                // it claimed the opposite (that each cartridge got its own identity).
+                // R8 fail-honest: an unmapped category is REJECTED with an explicit
+                // reason rather than silently mis-gated. The dex_arb family cannot be
+                // disambiguated into v2v2/v2v3/v3v2/v3v3 from the category string
+                // alone; the granular variant is preserved in RoutePlan.strategy_kind.
                 let label = match category.as_str() {
-                    "dex_arb" => StrategyLabel::DexArbV2V2,
+                    "dex_arb" | "dex_arb_v2v2" => StrategyLabel::DexArbV2V2,
+                    "dex_arb_v2v3" => StrategyLabel::DexArbV2V3,
+                    "dex_arb_v3v2" => StrategyLabel::DexArbV3V2,
+                    "dex_arb_v3v3" => StrategyLabel::DexArbV3V3,
                     "triangular_arb" => StrategyLabel::TriangularArb,
+                    "flashloan_arb" => StrategyLabel::FlashloanArb,
                     "liquidation" => StrategyLabel::Liquidation,
-                    _ => StrategyLabel::DexArbV2V2, // Default for auto-generated cartridges
+                    "spanning_tree_arb" => StrategyLabel::SpanningTreeArb,
+                    "cross_chain_arb" => StrategyLabel::CrossChainArb,
+                    "liquidation_snipe" => StrategyLabel::LiquidationSnipe,
+                    other => {
+                        // R8: unknown category → reject, never silently collapse.
+                        // The label passed to emit_rejected is a required-by-API
+                        // placeholder (StrategyLabel has no Unknown variant); the
+                        // rejection_reason carries the true category for diagnostics.
+                        let reason = format!("cartridge_unmapped_strategy_label:{other}");
+                        warn!(
+                            event = "cartridge.unmapped_strategy_label",
+                            chain_id,
+                            cartridge_id = %cartridge_id,
+                            category = %other,
+                            "rejecting cartridge with unmapped strategy category"
+                        );
+                        let mut opp = opportunity.clone();
+                        opp.rejection_reason = Some(reason.clone());
+                        if let Err(e) = emitter
+                            .emit_rejected(&opp, StrategyLabel::DexArbV2V2, &reason)
+                            .await
+                        {
+                            warn!(
+                                event = "cartridge.emit_rejected_failed",
+                                chain_id,
+                                cartridge_id = %cartridge_id,
+                                error = %e,
+                                "failed to emit unmapped-label rejection"
+                            );
+                        }
+                        continue;
+                    }
                 };
 
                 let strategy_candidate = StrategyCandidate {
@@ -1105,6 +1149,76 @@ pub async fn active_evaluate_and_emit(
                     rejection_reason: None,
                     source_intent_hash: intent.tx_hash,
                     base_strategy: None,
+                };
+
+                // ── C.1: run SizeOptimizer BEFORE the gates ───────────────────
+                // The cartridge path previously bypassed GATE 1 (SizeOptimizer),
+                // emitting candidates sized at the raw mempool `amount_in` with only
+                // a Rhai `$5` precheck — where native would reject
+                // (NonPositiveNetUsd / GasFloorBreach). Mirror the native path
+                // (orchestrator.rs on_route_intent ~773-841): size first, then gate.
+                let chain_str = chain_id.to_string();
+                let strategy_candidate = {
+                    let outcome = match size_optimizer
+                        .optimize_with_reason(
+                            strategy_candidate.clone(),
+                            &intent,
+                            cfg_snapshot.as_ref(),
+                        )
+                        .await
+                    {
+                        Ok(o) => o,
+                        Err(e) => {
+                            warn!(
+                                event = "cartridge.size_optimizer_error",
+                                chain_id,
+                                tx_hash = %intent.tx_hash,
+                                cartridge_id = %cartridge_id,
+                                error = %e,
+                                "size_optimizer returned Err — treating as no profit"
+                            );
+                            OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit)
+                        }
+                    };
+
+                    match outcome {
+                        OptimizeOutcome::Sized(sized) => {
+                            // Update the candidate with optimal sizing data (mirrors
+                            // native: gross/net on both candidate + opportunity row).
+                            let s = *sized;
+                            let mut c = s.candidate;
+                            c.gross_profit_usd = Some(s.gross_profit_usd);
+                            c.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
+                            c.opportunity.expected_profit_usd = Some(s.gross_profit_usd);
+                            c.opportunity.net_expected_profit_usd =
+                                Some(s.estimated_net_profit_usd);
+                            c
+                        }
+                        OptimizeOutcome::Rejected(reason) => {
+                            let reason_str = reason.as_str().to_owned();
+                            REJECTED_NO_PROFIT_TOTAL
+                                .with_label_values(&[&chain_str, label.as_str(), &reason_str])
+                                .inc();
+                            // R8: expected_profit_usd=None — never a fabricated figure
+                            // on a rejected candidate.
+                            let mut opp = strategy_candidate.opportunity.clone();
+                            opp.rejection_reason = Some(reason_str.clone());
+                            opp.expected_profit_usd = None;
+                            if let Err(e) = emitter
+                                .emit_rejected(&opp, label, &reason_str)
+                                .await
+                            {
+                                warn!(
+                                    event = "cartridge.emit_rejected_failed",
+                                    chain_id,
+                                    cartridge_id = %cartridge_id,
+                                    error = %e,
+                                    "failed to emit optimizer-rejected cartridge candidate"
+                                );
+                            }
+                            continue;
+                        }
+                    }
                 };
 
                 // Process through the same pipeline as native engines (price
