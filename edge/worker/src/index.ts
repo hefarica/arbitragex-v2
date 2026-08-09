@@ -548,6 +548,16 @@ app.get("/api/recon/summary",    (c) => proxy(c, "/api/v1/recon/summary",    "ar
 app.get("/api/recon/timeseries", (c) => proxy(c, "/api/v1/recon/timeseries", "arbx:cache:recon-ts", 15));
 app.get("/api/config/current",   (c) => proxy(c, "/api/v1/config/current",   "arbx:cache:config", 30));
 app.get("/api/readiness",        (c) => proxy(c, "/api/v1/readiness",        "arbx:cache:readiness", 15));
+// Token-icon resolver — proxies api-server's cascade (Redis → Registry → PG
+// tokens.logo_url → DexScreener → jazzicon). Per-token KV cache (path-keyed) so
+// repeated card renders don't re-hit api-server. THIS ROUTE IS REQUIRED: without
+// it the frontend's useTokenIcon tier-3 fetch 404s at the edge and every token
+// not in the in-browser known-tokens map degrades to a jazzicon (logos "disappear").
+app.get("/api/v1/token-icon/:chainId/:address", (c) => {
+  const { chainId, address } = c.req.param();
+  const path = `/api/v1/token-icon/${chainId}/${address}`;
+  return proxy(c, path, `arbx:cache:token-icon:${chainId}:${address}`, 60);
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // LATENCY-OPTIMIZED ROUTES (<30ms target) - PASS-THROUGH PROXY
