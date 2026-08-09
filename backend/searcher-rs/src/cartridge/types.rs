@@ -21,6 +21,13 @@ pub struct CartridgeMetadata {
     pub category: String,
     /// Minimum interval between evaluations in milliseconds.
     pub min_eval_interval_ms: u64,
+    /// Primary math operators (by ID 1-31) this strategy uses — from
+    /// `init_strategy().primary_operators`. Captured at load (264×31 matrix
+    /// wiring foundation) so the runtime can compute strategy-keyed operator
+    /// evidence, not only regime-keyed. Empty if undeclared (backward-compatible).
+    pub primary_operators: Vec<u32>,
+    /// Secondary math operators (supporting role, lower weight).
+    pub secondary_operators: Vec<u32>,
 }
 
 /// Lifecycle state of a loaded cartridge.

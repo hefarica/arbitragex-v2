@@ -535,6 +535,23 @@ impl CartridgeRunner {
             .map(|c| c as u64)
             .collect();
 
+        // 264×31 matrix wiring: capture the strategy's operator mapping (previously
+        // dropped at load). These IDs (1-31) drive strategy-keyed operator evidence.
+        let primary_operators: Vec<u32> = map
+            .get("primary_operators")
+            .and_then(|v| v.clone().into_typed_array::<i64>().ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|op| op as u32)
+            .collect();
+        let secondary_operators: Vec<u32> = map
+            .get("secondary_operators")
+            .and_then(|v| v.clone().into_typed_array::<i64>().ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|op| op as u32)
+            .collect();
+
         Ok(CartridgeMetadata {
             name,
             version,
@@ -543,6 +560,8 @@ impl CartridgeRunner {
             target_chains,
             category,
             min_eval_interval_ms,
+            primary_operators,
+            secondary_operators,
         })
     }
 
