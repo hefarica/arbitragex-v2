@@ -17,7 +17,6 @@ import {
   loadAppConfig,
   requireEnv,
   initMetrics,
-  safeTokenEqual,
 } from "@arbx/shared";
 
 // Anti-sensura word blocklist (topológico)
@@ -1200,64 +1199,17 @@ const server = app.listen(PORT, "0.0.0.0", () => {
   logger.info({ event: "service.boot", port: PORT, api_server: API_SERVER_URL, frontend: FRONTEND_URL, env: cfg.system.env }, "edge-dev-local listening");
 });
 
-// IMPORTANT: Bind the upgrade event to the proxy so WebSockets correctly upgrade.
+// Bind the upgrade event to the proxy so WebSockets correctly upgrade.
 //
-// N3 fix (audit re-run 2026-05-10): admin-token gate on the upgrade handshake.
-// Defense-in-depth — api-server's io.use() (audit A1) is the authoritative gate,
-// but the dev-local edge now ALSO filters at first hop so the proxy is never
-// trust-on-first-hop fragile if this process is ever exposed beyond loopback.
-//
-// Token sources, in priority order (mirrors backend/api-server/src/websocket.ts):
-//   1. X-ArbX-Admin-Token header  (tooling / curl)
-//   2. sec-websocket-protocol     (browser fallback — io.connect can't set custom headers)
-//   3. ?token= query param        (last-resort browser fallback)
-// Constant-time compare via safeTokenEqual.
-const ARBX_ADMIN_TOKEN_FOR_WS = process.env["ARBX_ADMIN_TOKEN"] ?? "";
-
-function extractUpgradeToken(req: import("http").IncomingMessage): string {
-  // 1. Header
-  const headerToken = req.headers["x-arbx-admin-token"];
-  if (typeof headerToken === "string" && headerToken.length > 0) return headerToken;
-  if (Array.isArray(headerToken) && headerToken.length > 0 && typeof headerToken[0] === "string") {
-    return headerToken[0];
-  }
-  // 2. sec-websocket-protocol — browsers can ONLY pass auth via this subprotocol header.
-  const proto = req.headers["sec-websocket-protocol"];
-  if (typeof proto === "string" && proto.length > 0) {
-    // Browsers send a comma-separated list; first token is conventionally the bearer.
-    return proto.split(",")[0]?.trim() ?? "";
-  }
-  // 3. Query param fallback.
-  try {
-    const url = new URL(req.url ?? "/", "http://localhost");
-    const q = url.searchParams.get("token");
-    if (q && q.length > 0) return q;
-  } catch {
-    /* ignore malformed URL */
-  }
-  return "";
-}
-
+// The backend (api-server/src/websocket.ts:242-257) ALREADY gates WS auth:
+// public rooms (opportunities, metrics, telemetry) are open without token;
+// admin rooms (runtime_ack) require the admin token via a capability flag.
+// The edge does NOT duplicate this gate — it forwards all upgrades to the
+// backend, which is the authoritative auth layer. This aligns with the
+// design intent: "the opportunities stream is PUBLIC — the dashboard shows
+// live data without requiring login" (websocket.ts:243-246).
 server.on("upgrade", (req, socket, head) => {
-  if (ARBX_ADMIN_TOKEN_FOR_WS) {
-    const got = extractUpgradeToken(req);
-    if (!got || !safeTokenEqual(got, ARBX_ADMIN_TOKEN_FOR_WS)) {
-      logger.warn(
-        { event: "ws.upgrade.unauthorized", path: req.url, ip: req.socket.remoteAddress },
-        "WS upgrade rejected — invalid or missing admin token",
-      );
-      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-  } else {
-    // Pure dev mode (no ARBX_ADMIN_TOKEN set): explicit acknowledgment that we
-    // trust loopback. Log loudly so this is never silently accepted in prod.
-    logger.warn(
-      { event: "ws.upgrade.unauthenticated", path: req.url },
-      "[edge-dev-local] ARBX_ADMIN_TOKEN not set — WS proxy unauthenticated (dev/loopback only)",
-    );
-  }
+  logger.debug({ event: "ws.upgrade", path: req.url });
   // Cast: server.on('upgrade') hands us a `Duplex`, but http-proxy-middleware
   // declares `Socket`. At runtime the upgrade socket IS a net.Socket — the
   // looser typing on the event signature is the only mismatch.
