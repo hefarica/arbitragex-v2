@@ -30,10 +30,18 @@ function makeFakeRedis(seed: Record<string, string> = {}): FakeRedis {
   };
 }
 
-function appWith(redis: FakeRedis): Express {
+// Minimal fake pg pool: `query` returns the configured rows (default: none).
+interface FakePool {
+  query: (text: string, params: unknown[]) => Promise<{ rows: { logo_url?: string }[] }>;
+}
+function makeFakePool(rows: { logo_url?: string }[] = []): FakePool {
+  return { query: async () => ({ rows }) };
+}
+
+function appWith(redis: FakeRedis, pool?: FakePool): Express {
   const app = express();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  mountTokenIconRoutes(app, { redis: redis as any });
+  mountTokenIconRoutes(app, { redis: redis as any, pool: (pool ?? null) as any });
   return app;
 }
 
@@ -87,6 +95,44 @@ describe("GET /api/v1/token-icon/:chainId/:address", () => {
     expect(res.body.iconUrl).toMatch(/^https?:\/\//);
     // best-effort cache population for next time
     expect(redis._store.get(tokenIconKey(1, WETH))).toBe(res.body.iconUrl);
+  });
+
+  it("falls back to the durable PG tokens.logo_url tier (source=db) before DexScreener", async () => {
+    // PG is tier 3 — it must resolve a registry-absent token WITHOUT hitting the
+    // rate-limited DexScreener tier. This is the hardening that stops logos from
+    // disappearing when Redis is empty and external APIs are rate-limited.
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    const dbUrl =
+      "https://raw.githubusercontent.com/trustwallet/assets/master/blockchain/ethereum/assets/0xABC/logo.png";
+    const redis = makeFakeRedis();
+    const res = await request(appWith(redis, makeFakePool([{ logo_url: dbUrl }]))).get(
+      `/api/v1/token-icon/1/${UNKNOWN}`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ source: "db", iconUrl: dbUrl });
+    // cached into Redis for the long TTL so the next read is instant
+    expect(redis._store.get(tokenIconKey(1, UNKNOWN))).toBe(dbUrl);
+    // DexScreener must NOT have been hit — PG resolved first
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("never 500s when the PG tier throws (degrades past it)", async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockRejectedValue(new Error("dex down")) as unknown as typeof fetch;
+    const throwingPool: FakePool = {
+      query: async () => {
+        throw new Error("pg down");
+      },
+    };
+    const res = await request(appWith(makeFakeRedis(), throwingPool)).get(
+      `/api/v1/token-icon/1/${UNKNOWN}`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    // PG threw + DexScreener threw → jazzicon, never a 500
+    expect(res.body.source).toBe("jazzicon");
   });
 
   it("falls back to DexScreener (source=dexscreener) for a registry-absent token", async () => {

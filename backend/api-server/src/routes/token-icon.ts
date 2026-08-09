@@ -3,23 +3,32 @@
 //   GET /api/v1/token-icon/:chainId/:address   → public read
 //
 // Cascade (Redis is the hot path; everything else is fallback):
-//   1. Redis  arbx:token-icons:{chainId}:{address}  — populated by the
-//      GeckoTerminal/token-enricher icon producer (SETEX raw imageUrl, TTL 3600).
-//      This route is the READER side of that contract.
+//   1. Redis  arbx:token-icons:{chainId}:{address}  — hot cache. Populated by
+//      the GeckoTerminal producer (SETEX) AND by tiers 2-4 caching their hits
+//      back into this key at the long ICON_TTL_SECS (default 30d — logos are
+//      near-immutable; a resolved icon must NOT evaporate when a rate-limited
+//      upstream (GeckoTerminal 429 / DexScreener) can't be re-queried).
 //   2. Registry (known) — `tokenRegistry.logo_uri` (curated Uniswap+CoinGecko
 //      snapshot, ~1.4k tokens). Instant, no network. Result is cached into (1).
-//   3. DexScreener — env-gated outbound fallback for the long tail. Picks the
+//   3. PostgreSQL `tokens.logo_url` — DURABLE backstop populated by the
+//      token-enricher (TrustWallet-verified, re-resolved every 7d). Survives a
+//      Redis flush/restart and outlives every rate-limited external tier. This
+//      is the tier that stops logos from "disappearing": even with Redis empty
+//      and GeckoTerminal 429'd, any token the enricher resolved still resolves.
+//      Result is cached into (1).
+//   4. DexScreener — env-gated outbound fallback for the long tail. Picks the
 //      highest-liquidity pair carrying an image for our token. Cached into (1);
 //      a miss is negatively cached (short TTL) to avoid hammering the API.
-//   4. Jazzicon — iconUrl=null, source="jazzicon"; the frontend renders a
+//   5. Jazzicon — iconUrl=null, source="jazzicon"; the frontend renders a
 //      deterministic SVG avatar. ALWAYS available.
 //
 // Doctrine: this is a read/observe + cache-population layer only — no capital,
 // no signer, no broadcast. It NEVER returns 500 for a missing icon (R8): a down
-// Redis or a failing DexScreener degrades the cascade, it does not error.
+// Redis or PG or a failing DexScreener degrades the cascade, it does not error.
 
 import { Router, type Express, type Request, type Response } from "express";
 import type { Redis } from "ioredis";
+import type { Pool } from "pg";
 
 import { lookupRegistry } from "../services/tokenRegistry.js";
 import { chainSlug } from "../services/tokenValidation/liquidityReality.js";
@@ -40,7 +49,10 @@ const DEXSCREENER_BASE_URL =
   "https://api.dexscreener.com/latest/dex/tokens";
 const DEXSCREENER_ENABLED =
   (process.env["ARBX_TOKEN_ICON_DEXSCREENER"] ?? "on").toLowerCase() !== "off";
-const ICON_TTL_SECS = positiveInt(process.env["ARBX_TOKEN_ICON_TTL_SECS"], 3600, 60);
+// Resolved icons are cached for 30d (logos are near-immutable). The short-lived
+// external tiers (GeckoTerminal/DexScreener) are rate-limited, so a 1h TTL made
+// icons evaporate the moment they expired and the upstream couldn't be re-hit.
+const ICON_TTL_SECS = positiveInt(process.env["ARBX_TOKEN_ICON_TTL_SECS"], 2592000, 60);
 const NEG_TTL_SECS = positiveInt(process.env["ARBX_TOKEN_ICON_NEG_TTL_SECS"], 60, 15);
 const DEX_TIMEOUT_MS = positiveInt(process.env["ARBX_TOKEN_ICON_DEX_TIMEOUT_MS"], 4000, 1000);
 const CACHE_MAX_AGE_SECS = 240;
@@ -57,10 +69,12 @@ type Logger = {
 
 export interface TokenIconDeps {
   redis: Redis;
+  /** PostgreSQL pool for the durable `tokens.logo_url` tier. Null/absent = skip. */
+  pool?: Pool | null;
   logger?: Logger;
 }
 
-type IconSource = "redis" | "known" | "dexscreener" | "jazzicon";
+type IconSource = "redis" | "known" | "db" | "dexscreener" | "jazzicon";
 
 interface IconPayload {
   ok: true;
@@ -159,7 +173,7 @@ async function fetchDexScreenerIcon(
  * spec's `mountTokenIconRoutes(app, redis)` is honored via `deps.redis`.
  */
 export function mountTokenIconRoutes(app: Express, deps: TokenIconDeps): void {
-  const { redis, logger } = deps;
+  const { redis, pool, logger } = deps;
   const r = Router();
 
   r.get(
@@ -234,7 +248,31 @@ export function mountTokenIconRoutes(app: Express, deps: TokenIconDeps): void {
         return;
       }
 
-      // (3) DexScreener fallback — env-gated, timeout-bounded, negative-cached.
+      // (3) PostgreSQL `tokens.logo_url` — durable backstop. Survives a Redis
+      // flush/restart and outlives the rate-limited external tiers, so a logo
+      // the enricher already resolved never "disappears". Cached into (1). A
+      // null pool (no DATABASE_URL) or a query failure degrades, never 500 (R8).
+      if (pool) {
+        try {
+          const result = await pool.query(
+            "SELECT logo_url FROM tokens WHERE chain_id = $1 AND address = $2 AND logo_url IS NOT NULL",
+            [chainId, address],
+          );
+          const dbUrl = result.rows[0]?.logo_url;
+          if (typeof dbUrl === "string" && isHttpUrl(dbUrl)) {
+            void safeSetex(redis, tokenIconKey(chainId, address), ICON_TTL_SECS, dbUrl, logger);
+            send({ iconUrl: dbUrl, source: "db", cached: false }, CACHE_MAX_AGE_SECS);
+            return;
+          }
+        } catch (e) {
+          logger?.warn(
+            { event: "token_icon.db_error", chain_id: chainId, err: (e as Error).message },
+            "token-icon db read failed (degrading to dexscreener/jazzicon)",
+          );
+        }
+      }
+
+      // (4) DexScreener fallback — env-gated, timeout-bounded, negative-cached.
       if (DEXSCREENER_ENABLED) {
         let negCached = false;
         try {
@@ -261,7 +299,7 @@ export function mountTokenIconRoutes(app: Express, deps: TokenIconDeps): void {
         }
       }
 
-      // (4) Jazzicon — deterministic client-side fallback. NEVER a 500.
+      // (5) Jazzicon — deterministic client-side fallback. NEVER a 500.
       send({ iconUrl: null, source: "jazzicon", cached: false }, NEG_TTL_SECS);
     },
   );

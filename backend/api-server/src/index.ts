@@ -1331,7 +1331,7 @@ app.use(buildCartridgeFiltersRouter({
 // GET /api/v1/token-icon/:chainId/:address — Redis(producer cache) → curated
 // tokenRegistry → DexScreener(env-gated) → jazzicon fallback. Read-only +
 // best-effort cache population; never 500s for a missing icon (R8).
-mountTokenIconRoutes(app, { redis, logger });
+mountTokenIconRoutes(app, { pool, redis, logger });
 
 // ── Operations PnL (Sprint 3 — PMI/EVM KPI surface) ────────────────────
 app.use(buildOperationsRouter({
