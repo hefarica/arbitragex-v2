@@ -697,7 +697,7 @@ discovery:
   base_tokens: []
   min_liquidity_hint: 0.0
   max_pools_per_pair: 8
-  max_depth: 5
+  max_depth: 3
 strategies:
   dex_arb: { enabled: true, shadow_only: true, route_based: true, accepts: [v2v2, v2v3, v3v2, v3v3], has_cartridge: true }
   triangular_arb: { enabled: true, shadow_only: true, route_based: true, accepts: [triangular], has_cartridge: true }
