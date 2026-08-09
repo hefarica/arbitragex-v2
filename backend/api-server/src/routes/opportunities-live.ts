@@ -550,27 +550,6 @@ export function mountOpportunitiesLive(
   redis: Redis | null,
   log: { warn: (obj: object, msg?: string) => void },
 ): void {
-  // Hardening: alias /api/opportunities/live (without /v1/) so verify-deploy.sh
-  // and other direct-api checks don't 404. The canonical route remains /api/v1/.
-  app.get("/api/opportunities/live", async (req: Request, res: Response) => {
-    if (!pool) {
-      res.status(503).json({ error: "db_unavailable", detail: "DATABASE_URL not configured" });
-      return;
-    }
-
-    const limit = Math.max(1, Math.min(200, Number(req.query["limit"] ?? 50)));
-    const viable_only = String(req.query["viable_only"] ?? "false") === "true";
-    const max_age_seconds = Math.max(5, Number(req.query["max_age_seconds"] ?? 300));
-    try {
-      const result = await queryLiveOpportunities(pool, redis, limit, viable_only, max_age_seconds);
-      res.json(result);
-    } catch (err) {
-      log.warn({ event: "opportunities.live.query_failed", err: (err as Error).message });
-      res.status(503).json({ error: "query_failed", detail: (err as Error).message });
-    }
-  });
-
-  // Canonical route with /v1/ prefix.
   app.get("/api/v1/opportunities/live", async (req: Request, res: Response) => {
     if (!pool) {
       res.status(503).json({ error: "db_unavailable", detail: "DATABASE_URL not configured" });
