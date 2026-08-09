@@ -394,13 +394,14 @@ impl DexEngine {
             return None;
         }
 
-        // USD conversion: spread / 1e18 * base_token_price_usd.
+        // Price by the ACTUAL denomination token (token_out), NOT a blanket
+        // base_token_price_usd — same fix as compute_gross_usd (root 1A). The
+        // prior code returned None for ALL V3 pairs when base_token_price_usd=0,
+        // causing the no_price_oracle pre-rejection flood (45/62 pools are V3).
         let spread_f64 = u256_to_f64_lossy(spread) / 1e18_f64;
-        if cfg.base_token_price_usd > 0.0 {
-            Some(spread_f64 * cfg.base_token_price_usd)
-        } else {
-            None
-        }
+        let token_out = intent.legs.first().map(|l| l.token_out);
+        let price_usd = canonical_token_price_usd(token_out, cfg.base_token_price_usd)?;
+        Some(spread_f64 * price_usd)
     }
 
     /// Get amount_out for `probe_amount` of token_in from a V3 pool using
