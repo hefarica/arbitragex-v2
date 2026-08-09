@@ -111,3 +111,5 @@ scripts/extract-skills.js
 .claude/skills/arbitragex-omega-supreme-agent/references/567-skills-catalog.md
 .env.enc
 ArbitrageX_Secrets_Config.xlsx
+.claude/settings.local.json
+.claude/settings.local.json.bak
