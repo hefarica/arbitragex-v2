@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { headers } from "next/headers";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 
@@ -10,7 +9,6 @@ import { PageBreadcrumb } from "@/components/PageBreadcrumb";
 import { HeroSphere } from "@/components/HeroSphere";
 import { ThemeScript } from "@/components/theme-toggle";
 import { SystemGuardBanner } from "@/components/SystemGuardBanner";
-import { Web3Provider } from "@/app/providers/Web3Provider";
 import { Toaster } from "sonner";
 
 import { OpportunityTicker } from "@/components/OpportunityTicker";
@@ -72,11 +70,6 @@ async function getCredsNeedingAttention(): Promise<number> {
 }
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
-  // Forward the request Cookie header to the Web3Provider so wagmi can hydrate
-  // its initial connection state on the server (cookieToInitialState), keeping
-  // server + client paint in agreement (avoids React #418). headers() is async
-  // in Next 15.
-  const requestCookie = (await headers()).get("cookie");
   const [paperMode, credsNeedsAttention] = await Promise.all([
     getPaperMode(),
     getCredsNeedingAttention(),
@@ -104,13 +97,12 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         >
           Skip to main content
         </a>
-        {/*
-          Web3Provider (wagmi + react-query + RainbowKit) wraps the whole app so
-          the read-only /wallet surface can connect a browser wallet. It exposes
-          ONLY read-only connectivity — no signer, no capital, no broadcast.
-        */}
-        <Web3Provider cookie={requestCookie}>
-          <div className="flex min-h-dvh flex-col">
+        {/* B-01: Web3Provider (wagmi/RainbowKit) was removed from the root layout.
+            It previously loaded WalletConnect on ALL 56 pages (hydration lag +
+            walletconnect.org calls on every route). It now mounts ONLY in
+            app/wallet/layout.tsx — the sole surface that connects a wallet. The
+            95% observe-only dapp no longer boots Web3. */}
+        <div className="flex min-h-dvh flex-col">
             <SiteHeader paperMode={paperMode} />
             {/* Layout: Sidebar starts at top-0, banner is inside main content area */}
             <div className="flex flex-1 relative">
@@ -133,7 +125,6 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
               </main>
             </div>
           </div>
-        </Web3Provider>
         <OpportunityTicker />
 
         <Toaster richColors position="top-right" />
