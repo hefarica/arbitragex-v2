@@ -1641,7 +1641,11 @@ mod tests {
         assert!(v["slippage_cost_usd"].is_null());
         assert!(v["net_profit_usd"].is_null());
         assert!(!v["net_computed"].as_bool().unwrap());
-        assert_eq!(v["estimated_profit_usd"].as_f64().unwrap(), 9.64);
+        // R8 fail-honest: the fixture's eval_result carries no `profit_usd_hint`
+        // (only the token-units `estimated_profit` field), so build_rd_outcome_v2
+        // emits null — never token-units-as-USD (the RC-2 unit-scale fix). This
+        // matches the adjacent gas/slippage/net nulls above.
+        assert!(v["estimated_profit_usd"].is_null());
 
         // Gates: simulation disabled here, live blocked, ethics permitted.
         assert_eq!(v["simulation"]["status"].as_str().unwrap(), "disabled");
