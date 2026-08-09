@@ -106,6 +106,7 @@ pub fn evaluate_strategy_operators(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)] // 11 params: the full math-evidence pipeline context (reserves, registry, router, redis, pools, chain, gas, block, features, strategy). Refactoring to a struct would obscure the data flow.
 pub async fn evaluate_math_evidence(
     reserves_cache: &Arc<ReservesCache>,
     registry: &OperatorRegistry,
