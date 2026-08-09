@@ -100,7 +100,7 @@ pub fn evaluate_strategy_operators(
     operator_ids
         .iter()
         .filter_map(|&id| {
-            let out = registry.dispatch(id, state)?;
+            let out = registry.dispatch(id as u8, state)?;
             Some((id, out.scalar_value, out.operator_name))
         })
         .collect()
