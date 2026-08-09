@@ -1,5 +1,6 @@
 import React from "react";
 import { DeterministicAvatar } from "@/components/DeterministicAvatar";
+import { TokenIcon } from "@/components/ui/TokenIcon";
 import { shortAddr } from "@/lib/format";
 
 /**
@@ -20,11 +21,15 @@ import { shortAddr } from "@/lib/format";
  *   - No Date.now(), no Math.random(), no window/document, no hooks.
  *   - SSR render === CSR render. Zero hydration risk.
  *
- * R8 fail-honest branching (4 cases):
- *   A. info.logo_url present         → <img> + symbol + address.
- *   B. info present, no logo, symbol → DeterministicAvatar + symbol + address.
- *   C. info.resolved_via = "failed"  → DeterministicAvatar + "—" + address.
- *   D. info = null                   → DeterministicAvatar + "—" + address.
+ * R8 fail-honest branching:
+ *   A. info.logo_url present  → <img> layered OVER a DeterministicAvatar base.
+ *      The logo shows when the external URL loads; if it ever fails (network
+ *      hiccup, ad-blocker, 404, transient) the avatar is revealed underneath —
+ *      a logo/avatar ALWAYS renders, never a blank gap (logos never "disappear").
+ *   B. no payload logo        → <TokenIcon> resolves via the token-icon route
+ *      cascade (edge → api-server: Redis → Registry → PG logo_url → DexScreener
+ *      → avatar), filling the long-tail gap the payload's TrustWallet-only logos
+ *      leave. TokenIcon owns its own R1-safe client resolution + avatar fallback.
  */
 
 /**
@@ -275,65 +280,60 @@ function SymbolPlusAddress({
   );
 }
 
-export function TokenChip({ token_address, info }: TokenChipProps) {
-  // Case D: enricher pending OR missing field (old API shape) — info not available.
-  if (info == null) {
-    return (
-      <SymbolPlusAddress
-        avatar={
-          <DeterministicAvatar
-            seed={token_address}
-            className="size-6 rounded-full shrink-0"
-          />
-        }
-        symbol={null}
-        token_address={token_address}
-        info={null}
-      />
-    );
-  }
+export function TokenChip({ token_address, chain_id, info }: TokenChipProps) {
+  const hasLogo = info?.logo_url != null && info.logo_url.length > 0;
+  const hasSymbol = info?.symbol != null && info.symbol.length > 0;
+  const symbol = hasSymbol ? info!.symbol : null;
 
-  const hasLogo = info.logo_url !== null && info.logo_url.length > 0;
-  const hasSymbol = info.symbol !== null && info.symbol.length > 0;
-
-  // Case A: logo available — render img with graceful onError fallback (browser-only).
+  // Case A: payload logo — <img> layered over a DeterministicAvatar base. The
+  // logo shows when the external URL loads; onError hides only the <img>,
+  // revealing the avatar beneath. A logo/avatar ALWAYS renders — never blank.
   if (hasLogo) {
-    const altLabel = hasSymbol ? info.symbol! : shortAddr(token_address);
+    const altLabel = hasSymbol ? info!.symbol! : shortAddr(token_address);
     return (
       <SymbolPlusAddress
         avatar={
-          <img
-            src={info.logo_url!}
-            alt={altLabel}
-            width={24}
-            height={24}
-            className="size-6 rounded-full shrink-0 object-cover"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = "none";
-            }}
-          />
+          <span className="relative inline-block size-6 shrink-0">
+            <DeterministicAvatar
+              seed={token_address}
+              className="absolute inset-0 size-6 rounded-full"
+            />
+            <img
+              src={info!.logo_url!}
+              alt={altLabel}
+              width={24}
+              height={24}
+              className="absolute inset-0 size-6 rounded-full object-cover"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+          </span>
         }
-        symbol={hasSymbol ? info.symbol : null}
+        symbol={symbol}
         token_address={token_address}
         info={info}
       />
     );
   }
 
-  // Case C: explicit failure OR Case B: symbol-only OR fallback.
-  // All three share the same avatar+symbol+address layout; the only
-  // difference is whether `symbol` is non-null.
+  // Case B/C/D: no payload logo → resolve via the token-icon route cascade
+  // (edge → api-server Redis→Registry→PG logo_url→DexScreener→avatar). TokenIcon
+  // owns its R1-safe client resolution + avatar fallback, so this also never
+  // renders blank. chain_id now drives the per-chain route lookup.
   return (
     <SymbolPlusAddress
       avatar={
-        <DeterministicAvatar
-          seed={token_address}
-          className="size-6 rounded-full shrink-0"
+        <TokenIcon
+          address={token_address}
+          chainId={chain_id}
+          symbol={symbol ?? undefined}
+          size={24}
         />
       }
-      symbol={hasSymbol ? info.symbol : null}
+      symbol={symbol}
       token_address={token_address}
-      info={info}
+      info={info ?? null}
     />
   );
 }
