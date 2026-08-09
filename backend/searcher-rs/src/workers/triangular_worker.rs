@@ -59,6 +59,8 @@ use shared_rs::tokens;
 use shared_rs::trading_config::TradingConfigClient;
 use sqlx::postgres::PgPool;
 use std::collections::HashSet;
+use std::future::Future;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -185,14 +187,16 @@ pub const MVP_CYCLES: &[(&str, &str, &str)] = &[
 /// against both WETH (high-volume V3 pools) and USDC (lower volume but
 /// real on mainnet) but no canonical V2 USDC pool.
 ///
-/// **MVP single-point evaluation (decision C in the design brief):** V3
-/// concentrated liquidity makes amount_out non-linear in amount_in, so we
-/// cannot reuse the cached "spot rate" trick that V2 affords. Running
-/// golden-section over QuoterV2 would cost ~25 RPC × 2 V3 hops × 4 cycles
-/// × 2 dirs ≈ 400 RPC/tick — breaks Alchemy rate limits. We accept the
-/// known limitation that V3 cycles use a single fixed amount_in
-/// (`cap_usd / token_a_price` floored to wei) and follow up with golden-
-/// section once V3 tick math is implemented in Rust.
+/// **Bounded geometric-grid sizing (Plan B.2; supersedes the decision-C
+/// single-point evaluation):** V3 concentrated liquidity makes amount_out
+/// non-linear in amount_in, so we cannot reuse the cached "spot rate" trick
+/// that V2 affords, and a single fixed amount_in can sit on the wrong side of
+/// break-even. `scan_v3_bearing_cycles` now samples `V3_GRID_PROBES` log-spaced
+/// input sizes over `[1, cap_wei]` (mirroring `size_optimizer`'s native 2-leg
+/// V3 bracket) and keeps the highest-gross probe — see
+/// `size_v3_cycle_over_grid`. A full golden-section (~25 points) was ruled out:
+/// 25 × 2 V3 hops × 4 cycles × 2 dirs ≈ 400 RPC/tick breaks Alchemy rate limits;
+/// the bracket is batched via Multicall3 so 5 probes → ~16 multicalls/tick.
 ///
 /// V3 fee tier selection: the V3 pool index can list multiple tiers per
 /// pair (typically 0.05% + 0.30% for blue-chip pairs). MVP picks the FIRST
@@ -266,6 +270,42 @@ pub fn cycle_profit(x: U256, hop_reserves: &[(U256, U256)], fee_bps: u32) -> (U2
 fn u256_to_i128_clamped(v: U256) -> i128 {
     let s = v.to_string();
     s.parse::<i128>().unwrap_or(i128::MAX)
+}
+
+/// Number of log-spaced probes for V3-bearing triangular cycle sizing.
+///
+/// Bounds the QuoterV2 RPC budget: at most `V3_GRID_PROBES × V3-hops-per-cycle`
+/// quote requests per cycle-direction per tick, batched into ≤ `hops.len()`
+/// Multicall3 `eth_call`s per cycle-direction (one batched multicall per
+/// resolution phase). For the current `V3_CYCLES` topology (2 V3 hops): 5 probes
+/// × 2 hops × 4 cycles × 2 dirs = 80 requests/tick → 16 batched multicalls/tick,
+/// well within Alchemy limits. A degenerate range (cap ≤ 1 wei) collapses to a
+/// single point. Mirrors `size_optimizer::V3_BRACKET_POINTS` but tuned DOWN from
+/// 8 → 5 because the 3-leg case quotes ~50% more legs per probe than the 2-leg
+/// native V3 path; raising toward 8 is a follow-up if rate-limit headroom allows.
+const V3_GRID_PROBES: usize = 5;
+
+/// `n` log-spaced sizes spanning `[lo, hi]` inclusive (`n ≥ 2`). Geometric
+/// spacing covers many orders of magnitude with few probes — a V3 concentrated-
+/// liquidity cycle's profit-maximising input can sit anywhere below the capital
+/// cap, and (unlike V2) the curve is NOT closed-form so we must sample. Mirrors
+/// `size_optimizer::geom_probes` (the native 2-leg V3 grid); kept local because
+/// that function is crate-private there. Degenerate range → a single clamped
+/// point.
+fn geom_probes(lo: U256, hi: U256, n: usize) -> Vec<U256> {
+    if n < 2 || hi <= lo {
+        return vec![if hi.is_zero() { U256::one() } else { hi }];
+    }
+    let lo_f = u256_to_f64_lossy(lo).max(1.0);
+    let hi_f = u256_to_f64_lossy(hi).max(lo_f);
+    let ln_lo = lo_f.ln();
+    let ln_hi = hi_f.ln();
+    (0..n)
+        .map(|i| {
+            let t = i as f64 / (n as f64 - 1.0);
+            f64_to_u256_clamped((ln_lo + t * (ln_hi - ln_lo)).exp())
+        })
+        .collect()
 }
 
 /// **Golden-section search** for the input that maximises cycle profit.
@@ -831,13 +871,13 @@ fn chain_consistent_with_predecessor(predecessor_out: U256, hop_in: U256) -> boo
     diff <= U256::from(1u64)
 }
 
-/// **Pure-function kernel for V3-bearing cycles** — single-point evaluation.
+/// **Pure-function kernel for V3-bearing cycles** — evaluates ONE `amount_in`.
 ///
 /// Inputs:
-///   - `amount_in_wei`: the candidate input size in token-a wei. The caller
-///     computes this as `floor(cap_usd / token_a_price_usd × 10^decimals)` —
-///     i.e. the operator's capital cap mapped to wei. **No optimal-search
-///     for V3 is performed in MVP** (decision C in the design brief).
+///   - `amount_in_wei`: the candidate input size in token-a wei for THIS probe.
+///     The caller (`size_v3_cycle_over_grid`) feeds it one of the log-spaced
+///     grid probes over `[1, cap_wei]`; the highest-gross probe wins. (The grid
+///     replaces the legacy decision-C single point at `cap_usd/price`.)
 ///   - `hop_outs`: per-hop amount_out, in cycle order. Length must equal 3.
 ///   - `token_a_price_usd`: needed to translate the integer profit to USD.
 ///   - `token_a_decimals`: scales the integer profit to f64 token units.
@@ -946,6 +986,13 @@ pub fn cap_amount_in_wei(cap_usd: f64, price_a: f64, decimals_a: u8) -> Option<U
 /// in this function that fabricates or carries-over a stale `amount_in_used`.
 /// Combined with `evaluate_v3_cycle`'s explicit chain check, this rules out
 /// the original failure mode (PEPE→V2 fed wrong-token wei → fake positive).
+///
+/// Production sizing now runs through `size_v3_cycle_over_grid` (Plan B.2),
+/// which resolves each probe's chain in its OWN per-probe state. This helper
+/// is retained because its tests document the chain-consistency invariant the
+/// grid search preserves structurally; `#[allow(dead_code)]` covers the
+/// non-test build where it has no production caller.
+#[allow(dead_code)]
 fn try_progress_plan(
     plan: &mut V3CyclePlan,
     phase_requests: &mut Vec<V3QuoteRequest>,
@@ -1014,6 +1061,323 @@ fn try_progress_plan(
         }
     }
     progressed
+}
+
+/// Batched V3 quoter seam for the triangular grid search.
+///
+/// Production impl (`RpcV3LegQuoter`) wraps the existing
+/// `amm_math::v3_quote_exact_in_multicall` kernel through Multicall3 — the
+/// SAME read-only QuoterV2 path the scanner + `size_optimizer` use (no signer,
+/// no broadcast, capital = 0). Tests inject `MockV3QuoteProvider` (deterministic,
+/// zero-RPC, RULE 00).
+///
+/// The BATCHED signature is deliberate: it lets the grid search fold ALL probe
+/// legs of ONE resolution phase into a single Multicall3 `eth_call` (1 RPC per
+/// phase per cycle-direction), preserving the rate-limit budget that a naive
+/// per-quote `quote_exact_input_single` loop would blow (5 probes × 2 V3 legs ×
+/// 8 cycle-dirs = 80 individual eth_calls/tick vs 16 batched multicalls/tick).
+trait V3LegQuoter: Send + Sync {
+    /// Quote a batch of V3 hops. Returns one entry per request, in order:
+    /// `Some(amount_out)` on success, `None` on quote failure / revert / RPC
+    /// error (R8 fail-honest — the caller drops the affected probe, never
+    /// fabricates an amount_out).
+    fn quote_v3_batch<'a>(
+        &'a self,
+        requests: Vec<V3QuoteRequest>,
+    ) -> Pin<Box<dyn Future<Output = Vec<Option<U256>>> + Send + 'a>>;
+}
+
+/// Production `V3LegQuoter` backed by the failover RPC pool + on-chain
+/// QuoterV2/Multicall3. One `eth_call` per batch (all requests multicall'd
+/// together), engaging the circuit-breaker + failover via `with_retry`.
+struct RpcV3LegQuoter {
+    rpc_pool: Arc<HttpRpcPool>,
+    quoter: Address,
+    multicall: Address,
+}
+
+impl V3LegQuoter for RpcV3LegQuoter {
+    fn quote_v3_batch<'a>(
+        &'a self,
+        requests: Vec<V3QuoteRequest>,
+    ) -> Pin<Box<dyn Future<Output = Vec<Option<U256>>> + Send + 'a>> {
+        let rpc_pool = self.rpc_pool.clone();
+        let quoter = self.quoter;
+        let multicall = self.multicall;
+        Box::pin(async move {
+            let n = requests.len();
+            let results = match rpc_pool
+                .with_retry(|provider| {
+                    let reqs = requests.clone();
+                    async move {
+                        v3_quote_exact_in_multicall(provider, quoter, multicall, reqs).await
+                    }
+                })
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    // Whole-batch RPC failure → every request counts as a failed
+                    // quote. The caller's grid search drops the affected probes
+                    // (R8); it NEVER fabricates an amount_out to keep going.
+                    warn!(
+                        event = "triangular_worker.v3_grid_multicall_failed",
+                        batch_size = n,
+                        error = %e,
+                    );
+                    return vec![None; n];
+                }
+            };
+            results
+                .into_iter()
+                .map(|r| {
+                    if r.success && !r.amount_out.is_zero() {
+                        Some(r.amount_out)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+    }
+}
+
+/// Best result of a grid search over one V3-bearing cycle direction.
+struct GridSearchBest {
+    /// Probe amount_in (token-a wei) that produced the highest gross profit.
+    amount_in_wei: U256,
+    /// Chain-consistent per-hop amounts at the winning probe (diagnostics).
+    hop_outs: Vec<HopAmountOut>,
+    /// Pure-kernel evaluation at the winning probe.
+    result: EvalResult,
+    /// Number of V3 quote requests actually issued to the provider across all
+    /// phases (for the per-tick RPC-budget log). Bounded by
+    /// `V3_GRID_PROBES × hops.len()`.
+    rpc_count: u64,
+}
+
+/// Bounded geometric-grid sizing for a V3-bearing triangular cycle.
+///
+/// Replaces the legacy single-point `amount_in = cap_usd/price` evaluation
+/// (decision C in the original design brief) with a SMALL log-spaced bracket
+/// over `[1, cap_wei]`, mirroring `size_optimizer::size_two_leg_v3_with_reason`
+/// but extended to 3 legs. V3 concentrated liquidity makes `amount_out`
+/// non-linear in `amount_in`, so a single fixed point can sit arbitrarily far
+/// from the profit-maximising size (or on the wrong side of break-even); the
+/// grid samples the curve instead.
+///
+/// Resolution is a generalised multi-phase chain fold (handles ANY hop layout,
+/// not just the current `X→WETH→USDC→X` topology):
+///   1. Generate `V3_GRID_PROBES` log-spaced probes over `[1, cap_wei]`.
+///   2. Per probe, walk hops in order. A hop whose `amount_in` is known (hop 0
+///      = the probe; hop i = predecessor's amount_out once known) is resolved:
+///      V2 inline via `v2_amount_out`, V3 queued for the current phase's batch.
+///   3. Batch ALL queued V3 requests across ALL probes into ONE
+///      `V3LegQuoter::quote_v3_batch` call (1 Multicall3 RPC per phase).
+///   4. Fill results, propagate each output to its downstream hop's input,
+///      repeat until no hop makes progress (bounded at `MAX_PHASES`).
+///   5. For each fully-resolved probe, build the chain-consistent `HopAmountOut`
+///      vec and evaluate via `evaluate_v3_cycle`. Track the highest gross USD
+///      profit.
+///
+/// **R8 fail-honest:** if every probe is non-positive (or unresolvable), returns
+/// `None` — the caller logs `v3_no_profit` and skips. A failed V3 quote drops
+/// ONLY the affected probe from the bracket; the rest are still evaluated.
+/// NEVER fabricates an amount_out.
+///
+/// Chain consistency is preserved structurally: each hop's `amount_in_used` is
+/// set EXACTLY to the value that was quoted for it (hop 0 = the probe; hop i =
+/// predecessor's quoted/computed output), so `evaluate_v3_cycle`'s chain check
+/// passes by construction (math-validator CRITICAL fix 2026-05-06 stays intact).
+/// [needless_range_loop]: `hi` indexes the parallel `hops`, `hop_ins`, and
+/// `hop_outs` arrays together — a range loop is clearer than juggling three
+/// iterators, so the lint is allowed on this function.
+#[allow(clippy::needless_range_loop)]
+async fn size_v3_cycle_over_grid(
+    hops: &[HopKind],
+    cap_wei: U256,
+    token_a_price_usd: f64,
+    token_a_decimals: u8,
+    quoter: &dyn V3LegQuoter,
+) -> Option<GridSearchBest> {
+    if hops.is_empty() || cap_wei.is_zero() {
+        return None;
+    }
+    let probes = geom_probes(min_search_input(), cap_wei, V3_GRID_PROBES);
+    let nhops = hops.len();
+
+    // Per-probe chain state. hop_ins[0] is seeded with the probe; every other
+    // hop_in is filled from its predecessor's amount_out as resolution proceeds.
+    struct ProbeState {
+        amount_in: U256,
+        hop_ins: Vec<Option<U256>>,
+        hop_outs: Vec<Option<U256>>,
+    }
+    let mut states: Vec<ProbeState> = probes
+        .into_iter()
+        .map(|p| {
+            let mut hop_ins = vec![None; nhops];
+            hop_ins[0] = Some(p);
+            ProbeState {
+                amount_in: p,
+                hop_ins,
+                hop_outs: vec![None; nhops],
+            }
+        })
+        .collect();
+
+    let mut rpc_count: u64 = 0;
+    // ≥ any realistic hop count (3 for triangular); bounds the phase loop. A
+    // pure-V3 chain needs up to nhops phases (one V3 dependency unlock each);
+    // the current V3-V2-V3 topology resolves in 2.
+    const MAX_PHASES: usize = 4;
+
+    for _phase in 0..MAX_PHASES {
+        let mut requests: Vec<V3QuoteRequest> = Vec::new();
+        // (probe_idx, hop_idx) so batched results route back to the right slot.
+        let mut routing: Vec<(usize, usize)> = Vec::new();
+        let mut progressed = false;
+
+        for (pi, st) in states.iter_mut().enumerate() {
+            for hi in 0..nhops {
+                let Some(ain) = st.hop_ins[hi] else {
+                    continue;
+                };
+                if let Some(out) = st.hop_outs[hi] {
+                    // Already resolved — propagate to next hop's input if pending.
+                    let next = hi + 1;
+                    if next < nhops && st.hop_ins[next].is_none() {
+                        st.hop_ins[next] = Some(out);
+                        progressed = true;
+                    }
+                    continue;
+                }
+                match &hops[hi] {
+                    HopKind::V2(hd) => {
+                        if let Some((r_in, r_out)) = hd.reserves_oriented() {
+                            let out = v2_amount_out(ain, r_in, r_out, V2_FEE_BPS);
+                            st.hop_outs[hi] = Some(out);
+                            progressed = true;
+                            let next = hi + 1;
+                            if next < nhops && st.hop_ins[next].is_none() {
+                                st.hop_ins[next] = Some(out);
+                            }
+                        }
+                        // else: malformed reserves → hop_outs[hi] stays None;
+                        // this probe is dropped at evaluation (R8 fail-honest).
+                    }
+                    HopKind::V3 {
+                        pool_addr,
+                        fee_bps,
+                        token_in_addr,
+                        token_out_addr,
+                    } => {
+                        let pool_a = match Address::from_str(pool_addr) {
+                            Ok(a) => a,
+                            Err(_) => continue,
+                        };
+                        let tin = match Address::from_str(token_in_addr) {
+                            Ok(a) => a,
+                            Err(_) => continue,
+                        };
+                        let tout = match Address::from_str(token_out_addr) {
+                            Ok(a) => a,
+                            Err(_) => continue,
+                        };
+                        requests.push(V3QuoteRequest {
+                            pool_addr: pool_a,
+                            token_in: tin,
+                            token_out: tout,
+                            amount_in: ain,
+                            fee_bps: *fee_bps,
+                        });
+                        routing.push((pi, hi));
+                        progressed = true;
+                    }
+                }
+            }
+        }
+
+        if !progressed {
+            // Nothing left to resolve — either fully done or quote failures left
+            // holes (handled below). Stop iterating phases.
+            break;
+        }
+        if requests.is_empty() {
+            // V2-only progress this phase (no RPC); loop to propagate further.
+            continue;
+        }
+
+        rpc_count += requests.len() as u64;
+        let outs = quoter.quote_v3_batch(requests).await;
+        for (i, o) in outs.into_iter().enumerate() {
+            if i >= routing.len() {
+                break; // defensive: malformed provider returning extra entries
+            }
+            let (pi, hi) = routing[i];
+            if let Some(out) = o {
+                if let Some(st) = states.get_mut(pi) {
+                    st.hop_outs[hi] = Some(out);
+                    let next = hi + 1;
+                    if next < nhops && st.hop_ins[next].is_none() {
+                        st.hop_ins[next] = Some(out);
+                    }
+                }
+            }
+            // None → quote failure; hop_outs[hi] stays None → probe dropped at eval.
+        }
+    }
+
+    // Evaluate every fully-resolved probe; track the highest gross USD profit.
+    // Ties keep the earliest probe (stable). A probe with any unfilled hop_in or
+    // hop_out is dropped (R8 — never evaluate a partial chain).
+    let mut best: Option<(U256, Vec<HopAmountOut>, EvalResult)> = None;
+    for st in states.into_iter() {
+        let mut hop_outs: Vec<HopAmountOut> = Vec::with_capacity(nhops);
+        let mut ok = true;
+        for hi in 0..nhops {
+            let (Some(amount_in_used), Some(amount_out)) = (st.hop_ins[hi], st.hop_outs[hi])
+            else {
+                ok = false;
+                break;
+            };
+            let source = match &hops[hi] {
+                HopKind::V2(_) => HopAmountSource::V2,
+                HopKind::V3 { .. } => HopAmountSource::V3,
+            };
+            hop_outs.push(HopAmountOut {
+                amount_in_used,
+                amount_out,
+                source,
+            });
+        }
+        if !ok {
+            continue;
+        }
+        let result = match evaluate_v3_cycle(
+            st.amount_in,
+            &hop_outs,
+            Some(token_a_price_usd),
+            token_a_decimals,
+        ) {
+            Some(r) => r,
+            None => continue, // non-positive at this probe
+        };
+        let cur_profit = result.expected_profit_usd.unwrap_or(0.0);
+        let better = best.as_ref().is_none_or(|(_, _, br)| {
+            cur_profit > br.expected_profit_usd.unwrap_or(0.0)
+        });
+        if better {
+            best = Some((st.amount_in, hop_outs, result));
+        }
+    }
+
+    best.map(|(amount_in_wei, hop_outs, result)| GridSearchBest {
+        amount_in_wei,
+        hop_outs,
+        result,
+        rpc_count,
+    })
 }
 
 /// In-memory dedup state: set of `(cycle_hash, block_number)` pairs.
@@ -1546,7 +1910,8 @@ impl TriangularWorker {
     }
 
     /// Scan all V3-bearing cycles (currently `V3_CYCLES`) in both directions
-    /// with **two-phase quoting** (math-validator CRITICAL fix 2026-05-06).
+    /// with **bounded geometric-grid sizing** (Plan B.2; replaces the legacy
+    /// decision-C single-point evaluation). See `size_v3_cycle_over_grid`.
     ///
     /// **Why two phases?** A V3 hop's amount_in equals its predecessor's
     /// amount_out. For V3 hops whose predecessor is V2, amount_in is known
@@ -1559,43 +1924,37 @@ impl TriangularWorker {
     /// bound. Two-phase quoting + chain consistency check eliminates the
     /// failure mode at its root.
     ///
-    /// **Cost:** at most 2 multicalls per tick instead of 1 — well within the
-    /// per-block RPC budget. For the current `V3_CYCLES` topology (X-WETH-USDC
-    /// with the V2 hop in the middle), Phase 2 is typically empty because
-    /// every V3 hop has a V2 (or cap) predecessor. The infrastructure is in
-    /// place for future cycles where two consecutive V3 hops appear.
+    /// **Cost:** ≤ `V3_GRID_PROBES × V3-hops × cycles × dirs` QuoterV2 requests
+    /// per tick, batched into ≤ 2 Multicall3 `eth_call`s per cycle-direction.
+    /// For the current `V3_CYCLES` topology (2 V3 hops, X-WETH-USDC with the V2
+    /// hop in the middle): 5 × 2 × 4 × 2 = 80 requests → 16 multicalls/tick,
+    /// well within the per-block RPC budget. The per-tick request total is
+    /// logged via `triangular_worker.v3_grid_rpc_budget`.
     ///
-    /// Strategy (decision C in the design brief — single-point evaluation):
+    /// Strategy:
     ///   1. For each cycle, both directions, resolve every hop via
-    ///      `resolve_hop_any` (V2 cached path first, V3 pool index fallback).
-    ///   2. Compute amount_in for the cycle from the operator's capital cap
-    ///      (`cap_usd / price_a → wei`). If the cap math fails, skip cycle.
-    ///   3. Walk hops with `try_progress_plan`: when a hop's amount_in is
-    ///      known (hop 0 or predecessor's amount_out is now known), compute
-    ///      its amount_out — V2 inline, V3 queued for the current phase batch.
-    ///   4. Phase 1 multicall — every V3 hop whose amount_in was known on the
-    ///      first walk (≥ 1 batched Multicall3 RPC per tick).
-    ///   5. Walk hops again. V2 hops that follow a Phase 1 V3 hop now have a
-    ///      known amount_in → compute their amount_out. V3 hops that follow
-    ///      another V3 hop now have a known amount_in → queue for Phase 2.
-    ///   6. Phase 2 multicall (if non-empty). For the current `V3_CYCLES`
-    ///      topology (`X → WETH → USDC → X` with V2 in the middle hop),
-    ///      Phase 2 is empty because every V3 hop has a V2 or cap predecessor.
-    ///      Infrastructure is in place for future cycles with consecutive
-    ///      V3 hops.
-    ///   7. Build chain-consistent `HopAmountOut` (carrying both
-    ///      `amount_in_used` and `amount_out`); evaluate via
-    ///      `evaluate_v3_cycle` which verifies that for i > 0 each hop's
-    ///      amount_in_used matches the predecessor's amount_out. Apply the
-    ///      same 5x sanity bound + dedup as the V2 path.
+    ///      `resolve_hop_any` (V2 cached path first, V3 pool index fallback)
+    ///      and build a `V3CyclePlan` whose `amount_in_wei` is the capital cap
+    ///      in wei (the grid upper bound).
+    ///   2. Per plan, check staleness + dedup BEFORE quoting so stale /
+    ///      already-emitted cycles don't burn the V3 RPC budget.
+    ///   3. `size_v3_cycle_over_grid` samples `V3_GRID_PROBES` log-spaced input
+    ///      sizes over `[1, cap_wei]`, resolves each probe's chain (V2 inline +
+    ///      batched V3 QuoterV2 multicall via `RpcV3LegQuoter`), and returns
+    ///      the highest-gross probe's `EvalResult` (or None → R8 fail-honest
+    ///      skip). Chain consistency is preserved structurally: each hop's
+    ///      `amount_in_used` is exactly its predecessor's `amount_out` / the
+    ///      value quoted for it.
+    ///   4. Apply the same 5x sanity bound + dedup + emit as the V2 path.
     ///
-    /// **Anti-Incidente #9 (math-validator CRITICAL fix 2026-05-06):** the
-    /// previous single-phase implementation left `current_in` unchanged after
-    /// V3 hops, feeding V2 with wrong-token wei → saturated CPMM →
-    /// downstream V3 quote inflated → profit_cap_ratio ≈ 2.5x slipped past
-    /// the 5x sanity bound, emitting fake positives. Two-phase quoting +
-    /// chain consistency check at the kernel boundary eliminates the failure
-    /// mode at its root.
+    /// **Anti-Incidente #9 (math-validator CRITICAL fix 2026-05-06, preserved):**
+    /// the previous single-phase implementation left `current_in` unchanged
+    /// after V3 hops, feeding V2 with wrong-token wei → saturated CPMM →
+    /// downstream V3 quote inflated → profit_cap_ratio ≈ 2.5x slipped past the
+    /// 5x sanity bound, emitting fake positives. The grid search resolves each
+    /// probe's chain so hop i's input is its predecessor's real output, and
+    /// `evaluate_v3_cycle` re-verifies the chain at the kernel boundary — the
+    /// same defence, extended from one fixed point to the whole probe bracket.
     ///
     /// Returns the latest cycle block observed (for dedup pruning).
     #[allow(clippy::too_many_arguments)]
@@ -1636,15 +1995,8 @@ impl TriangularWorker {
         }
 
         // ---------------------------------------------------------------
-        // Two-phase quoting (math-validator CRITICAL fix 2026-05-06).
-        //
-        // Phase loop: progress every plan synchronously (V2 inline math,
-        // queue V3 hops whose amount_in is now known). Run ONE multicall
-        // for the queued V3 hops. Repeat until no plan made progress in
-        // an iteration. Bounded at HOPS_PER_CYCLE phases (3 hops × 1 V3
-        // dependency-chain each = at most 3 phases for any 3-hop cycle).
+        // QuoterV2 + Multicall3 addresses for the grid-search leg quoter.
         // ---------------------------------------------------------------
-        const MAX_PHASES: usize = 3;
         let quoter = match Address::from_str(V3_QUOTER_V2_MAINNET) {
             Ok(a) => a,
             Err(e) => {
@@ -1659,125 +2011,26 @@ impl TriangularWorker {
                 return None;
             }
         };
-
-        for phase in 0..MAX_PHASES {
-            let mut phase_requests: Vec<V3QuoteRequest> = Vec::new();
-            // Index from request slot → (plan_idx, hop_idx) so results route
-            // back into the right plan slot.
-            let mut routing: Vec<(usize, usize)> = Vec::new();
-            let mut any_progress = false;
-
-            for (plan_idx, plan) in plans.iter_mut().enumerate() {
-                let progressed =
-                    try_progress_plan(plan, &mut phase_requests, &mut routing, plan_idx);
-                if progressed {
-                    any_progress = true;
-                }
-            }
-
-            if !any_progress {
-                // Nothing left to do — either the cycle is fully resolved or
-                // quote failures left holes (handled below in evaluation).
-                break;
-            }
-
-            if phase_requests.is_empty() {
-                // V2-only progress this phase (no RPC); continue to next phase
-                // in case a later V3 hop is now resolvable.
-                continue;
-            }
-
-            // Run Phase N multicall — via with_retry so the circuit breaker
-            // and failover are engaged on RPC failure.
-            let phase_results = match rpc_pool
-                .with_retry(|provider| {
-                    let reqs = phase_requests.clone();
-                    async move {
-                        v3_quote_exact_in_multicall(provider, quoter, multicall_addr, reqs).await
-                    }
-                })
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    // Whole-batch RPC failure → all V3 hops in THIS phase
-                    // counted as failures. Plans whose unresolved V3 hops
-                    // were in this batch will be skipped during evaluation
-                    // (their hop_amount_outs stay None).
-                    let n = phase_requests.len() as u64;
-                    counters()
-                        .triangular_v3_quote_failures
-                        .fetch_add(n, Ordering::Relaxed);
-                    stats.skip_v3_quote_failed += n as u32;
-                    warn!(
-                        event = "triangular_worker.v3_multicall_rpc_failed",
-                        chain_id = self.chain_id,
-                        phase = phase,
-                        batch_size = phase_requests.len(),
-                        error = %e,
-                    );
-                    // Don't return early — V2-only plans may still be valid.
-                    // Break out of the phase loop and proceed to evaluation;
-                    // partial-progress plans naturally fail the chain check.
-                    break;
-                }
-            };
-
-            for (i, res) in phase_results.iter().enumerate() {
-                let (plan_idx, hop_idx) = routing[i];
-                if res.success && !res.amount_out.is_zero() {
-                    plans[plan_idx].hop_amount_outs[hop_idx] = Some(res.amount_out);
-                } else {
-                    counters()
-                        .triangular_v3_quote_failures
-                        .fetch_add(1, Ordering::Relaxed);
-                    // Leave amount_out as None — caller skips during eval.
-                }
-            }
-        }
+        // Batched QuoterV2 seam: one Multicall3 eth_call per resolution phase
+        // per cycle-direction (see `RpcV3LegQuoter` / `size_v3_cycle_over_grid`).
+        let leg_quoter = RpcV3LegQuoter {
+            rpc_pool,
+            quoter,
+            multicall: multicall_addr,
+        };
 
         // ---------------------------------------------------------------
-        // Evaluate every plan with its now-complete amount_outs.
+        // Per-plan bounded geometric-grid sizing + emit.
+        //
+        // Staleness + dedup are checked BEFORE quoting so stale / already-
+        // emitted cycles do not burn the V3 RPC budget. The grid search then
+        // samples V3_GRID_PROBES log-spaced input sizes, resolves each probe's
+        // 3-leg chain (V2 inline + batched V3 multicall), and returns the best
+        // probe; this loop applies the 5× sanity bound + emit (unchanged).
         // ---------------------------------------------------------------
         let mut latest_block: u64 = 0;
+        let mut tick_rpc_count: u64 = 0;
         for plan in plans.into_iter() {
-            // Drop plans that had any hop come back without an amount_out OR
-            // an amount_in (= V3 quote failed before downstream chain could
-            // be established). R8 fail-honest — never fabricate a substitute.
-            let mut hop_outs: Vec<HopAmountOut> = Vec::with_capacity(plan.hops.len());
-            let mut missing = false;
-            for (hop_idx, hop) in plan.hops.iter().enumerate() {
-                let amount_in_used = match plan.hop_amount_ins[hop_idx] {
-                    Some(v) => v,
-                    None => {
-                        missing = true;
-                        break;
-                    }
-                };
-                let (amount_out, source) = match (hop, plan.hop_amount_outs[hop_idx]) {
-                    (HopKind::V2(_), Some(o)) => (o, HopAmountSource::V2),
-                    (HopKind::V3 { .. }, Some(o)) => (o, HopAmountSource::V3),
-                    _ => {
-                        missing = true;
-                        break;
-                    }
-                };
-                hop_outs.push(HopAmountOut {
-                    amount_in_used,
-                    amount_out,
-                    source,
-                });
-            }
-            if missing {
-                stats.skip_v3_quote_failed += 1;
-                debug!(
-                    event = "triangular_worker.v3_cycle_quote_missing",
-                    chain_id = self.chain_id,
-                    cycle = %plan.cycle_key,
-                );
-                continue;
-            }
-
             // Block attribution: take the max V2-hop block in the plan (or
             // 0 if pure V3, which V3_CYCLES never hits because the WETH↔USDC
             // middle hop is always V2-resolvable).
@@ -1786,7 +2039,8 @@ impl TriangularWorker {
                 latest_block = cycle_block;
             }
 
-            // Staleness check (V2 hops only — V3 is "current state").
+            // Staleness check (V2 hops only — V3 is "current state"). Done
+            // before quoting to avoid wasting RPC on stale cycles.
             if cycle_has_stale_reserves_mixed(&plan.hops) {
                 stats.skip_stale_reserves += 1;
                 debug!(
@@ -1797,38 +2051,46 @@ impl TriangularWorker {
                 continue;
             }
 
-            // Dedup BEFORE evaluation/persistence.
+            // Dedup before quoting (same rationale — don't burn RPC on a cycle
+            // already emitted for this block).
             if !dedup.check_and_mark(&plan.cycle_key, cycle_block) {
                 stats.skip_dedup_hit += 1;
                 continue;
             }
 
-            // Pure-function evaluation.
-            let result = match evaluate_v3_cycle(
+            // Bounded geometric-grid sizing. `plan.amount_in_wei` is the capital
+            // cap in wei (grid upper bound); the search spans [1, cap_wei] over
+            // V3_GRID_PROBES log-spaced probes instead of evaluating only the
+            // single cap point (the legacy decision-C limitation).
+            let best = match size_v3_cycle_over_grid(
+                &plan.hops,
                 plan.amount_in_wei,
-                &hop_outs,
-                Some(plan.price_a),
+                plan.price_a,
                 plan.decimals_a,
-            ) {
-                Some(r) => r,
+                &leg_quoter,
+            )
+            .await
+            {
+                Some(b) => b,
                 None => {
                     stats.skip_no_profit += 1;
                     debug!(
                         event = "triangular_worker.v3_no_profit",
                         chain_id = self.chain_id,
                         cycle = %plan.cycle_key,
-                        amount_in_wei = %plan.amount_in_wei,
-                        final_out_wei = %hop_outs.last().map(|h| h.amount_out).unwrap_or(U256::zero()),
+                        cap_wei = %plan.amount_in_wei,
+                        probes = V3_GRID_PROBES,
                     );
                     continue;
                 }
             };
+            tick_rpc_count += best.rpc_count;
 
             // Worker-level sanity bound (mirrors V2 path) — V3 tick math is
             // MORE complex than V2 CPMM, so bugs are MORE likely. Same
             // SANITY_PROFIT_MULT_OF_CAP=5× threshold the V2 path uses.
             const SANITY_PROFIT_MULT_OF_CAP: f64 = 5.0;
-            let profit_usd = match result.expected_profit_usd {
+            let profit_usd = match best.result.expected_profit_usd {
                 Some(v) if v.is_finite() && v >= 0.0 => v,
                 _ => {
                     stats.skip_no_profit += 1;
@@ -1836,7 +2098,7 @@ impl TriangularWorker {
                         event = "triangular_worker.v3_malformed_profit",
                         chain_id = self.chain_id,
                         cycle = %plan.cycle_key,
-                        raw = ?result.expected_profit_usd,
+                        raw = ?best.result.expected_profit_usd,
                     );
                     continue;
                 }
@@ -1847,7 +2109,8 @@ impl TriangularWorker {
                     .triangular_v3_sanity_reject
                     .fetch_add(1, Ordering::Relaxed);
                 stats.skip_no_profit += 1;
-                // Diagnostic dump: per-hop pool / kind / amount_in / amount_out.
+                // Diagnostic dump: per-hop pool / kind / amount_in / amount_out
+                // at the winning probe.
                 let dump_hops: Vec<String> = plan
                     .hops
                     .iter()
@@ -1857,12 +2120,13 @@ impl TriangularWorker {
                             HopKind::V2(_) => "V2",
                             HopKind::V3 { .. } => "V3",
                         };
+                        let ho = best.hop_outs.get(i);
                         format!(
                             "{}:{}:in={}:out={}",
                             kind,
                             h.pool_addr(),
-                            plan.hop_amount_ins[i].unwrap_or(U256::zero()),
-                            plan.hop_amount_outs[i].unwrap_or(U256::zero()),
+                            ho.map(|o| o.amount_in_used).unwrap_or(U256::zero()),
+                            ho.map(|o| o.amount_out).unwrap_or(U256::zero()),
                         )
                     })
                     .collect();
@@ -1874,8 +2138,8 @@ impl TriangularWorker {
                     cap_usd = plan.cap_usd,
                     profit_cap_ratio = profit_cap_ratio,
                     threshold = SANITY_PROFIT_MULT_OF_CAP,
-                    amount_in_wei = %result.amount_in_wei,
-                    amount_out_wei = %result.amount_out_wei,
+                    amount_in_wei = %best.result.amount_in_wei,
+                    amount_out_wei = %best.result.amount_out_wei,
                     hops = ?dump_hops,
                     hint = "diagnostic dump for root-cause analysis — V3-bearing cycle returned profit > 5x cap",
                 );
@@ -1886,7 +2150,7 @@ impl TriangularWorker {
             // H2 landmine fix: populate net_expected_profit_usd inline.
             // See V2 emit site for full rationale.
             let net_expected_profit_usd_v3: Option<f64> = cfg.as_ref().and_then(|c| {
-                let gross = result.expected_profit_usd?;
+                let gross = best.result.expected_profit_usd?;
                 Some(gross - c.gas_cost_usd())
             });
             let opp = Opportunity {
@@ -1906,8 +2170,8 @@ impl TriangularWorker {
                 ),
                 token_in: plan.addr_a.clone(),
                 token_out: plan.addr_a.clone(),
-                amount_in_wei: result.amount_in_wei.to_string(),
-                expected_profit_usd: result.expected_profit_usd,
+                amount_in_wei: best.result.amount_in_wei.to_string(),
+                expected_profit_usd: best.result.expected_profit_usd,
                 net_expected_profit_usd: net_expected_profit_usd_v3,
                 roi_pct: None,
                 risk_score: None,
@@ -1948,17 +2212,29 @@ impl TriangularWorker {
             }
         }
 
+        // Per-tick RPC budget log: total QuoterV2 quote requests issued across
+        // every V3-bearing cycle/direction this tick (batched into ≤ 2 multicalls
+        // per cycle-direction). Surfaces rate-limit pressure without adding a
+        // counter (counters.rs is out of scope for this change).
+        debug!(
+            event = "triangular_worker.v3_grid_rpc_budget",
+            chain_id = self.chain_id,
+            rpc_count = tick_rpc_count,
+            probes_per_cycle = V3_GRID_PROBES,
+        );
+
         Some(latest_block)
     }
 
     /// Build a `V3CyclePlan` for one V3-bearing cycle direction.
     ///
-    /// Resolves token metadata + all 3 hops + the capital cap. Initialises
-    /// `hop_amount_ins[0] = amount_in_wei`; **does NOT chain through V3 hops**
-    /// (math-validator CRITICAL fix 2026-05-06). Chaining happens iteratively
-    /// in `scan_v3_bearing_cycles` via `try_progress_plan`, which only fills
-    /// each hop's amount_in/amount_out when the predecessor is fully known.
-    /// V3 hops with unknown amount_in are deferred to the next phase.
+    /// Resolves token metadata + all 3 hops + the capital cap (`amount_in_wei`
+    /// = capital cap in wei = the grid upper bound for `size_v3_cycle_over_grid`).
+    /// The grid search resolves each probe's 3-leg chain in its OWN per-probe
+    /// state and never reads `hop_amount_ins`/`hop_amount_outs`; those fields are
+    /// retained (and `hop_amount_ins[0]` seeded here) only for the test-only
+    /// two-phase helper `try_progress_plan`, which documents the chain-consistency
+    /// invariant the grid search preserves structurally.
     ///
     /// Returns None on any of:
     ///   - unknown token (one of sym_a/b/c not in `known_token_address`)
@@ -2078,15 +2354,16 @@ impl TriangularWorker {
 /// Plan returned by `build_v3_cycle_plan` and consumed by `scan_v3_bearing_cycles`.
 /// Externalised so the inner function can construct it without a giant tuple.
 ///
-/// **Two-phase invariants** (math-validator CRITICAL fix 2026-05-06):
-///   - `hop_amount_ins[0]` is always `Some(amount_in_wei)` from construction.
-///   - `hop_amount_ins[i]` for `i > 0` is filled by `try_progress_plan` once
-///     the previous hop's `amount_out` is known. NEVER filled with a stale
-///     or pre-V3 value.
-///   - `hop_amount_outs[i]` is filled either inline by V2 math (when its
-///     amount_in becomes known) or by Phase N multicall results (V3).
-///   - A hop's amount_out being `None` after all phases run = quote failure
-///     → cycle skipped (R8 fail-honest).
+/// `scan_v3_bearing_cycles` feeds `amount_in_wei` (the grid upper bound), `hops`,
+/// `price_a`, and `decimals_a` to `size_v3_cycle_over_grid`, which resolves each
+/// probe's chain in its OWN per-probe state. The `hop_amount_ins`/`hop_amount_outs`
+/// fields below are therefore NOT used by the production grid path; they remain
+/// for the test-only two-phase helper `try_progress_plan`, which exercises the
+/// same chain-consistency invariant (hop `i`'s amount_in == predecessor's
+/// amount_out) the grid search preserves structurally (math-validator CRITICAL
+/// fix 2026-05-06). `hop_amount_ins[0]` is seeded to `Some(amount_in_wei)` by
+/// `build_v3_cycle_plan`; a hop's amount_out being `None` after all phases run =
+/// quote failure → probe dropped (R8 fail-honest).
 struct V3CyclePlan {
     cycle_key: String,
     sym_a: &'static str,
@@ -3056,6 +3333,226 @@ mod tests {
         ]);
         let r = evaluate_v3_cycle(amount_in, &outs, Some(2_000.0), 18).unwrap();
         assert!(r.profit_token_a_wei > 0);
+    }
+
+    // ===================================================================
+    // V3 grid sizing — Plan B.2 (bounded geometric grid over QuoterV2)
+    // ===================================================================
+
+    /// Pure check: `geom_probes` mirrors `size_optimizer`'s grid. `n` log-spaced
+    /// points span `[lo, hi]` inclusive; degenerate range collapses to one point.
+    #[test]
+    fn geom_probes_v3_grid_spans_range_monotonic() {
+        let probes = geom_probes(
+            U256::one(),
+            U256::from(10u128).pow(U256::from(18)),
+            V3_GRID_PROBES,
+        );
+        assert_eq!(probes.len(), V3_GRID_PROBES);
+        // Both bracket endpoints are present and positive.
+        assert!(*probes.first().unwrap() >= U256::one());
+        assert!(*probes.last().unwrap() >= U256::one());
+        // Log-spaced → monotonically non-decreasing.
+        for w in probes.windows(2) {
+            assert!(w[0] <= w[1], "probes must be non-decreasing: {w:?}");
+        }
+    }
+
+    #[test]
+    fn geom_probes_degenerate_range_collapses_to_one_point() {
+        // lo >= hi → single clamped point (the cap itself).
+        let p = geom_probes(U256::from(100u64), U256::from(100u64), V3_GRID_PROBES);
+        assert_eq!(p, vec![U256::from(100u64)]);
+        // n < 2 → single point.
+        let p2 = geom_probes(U256::one(), U256::from(1_000u64), 1);
+        assert_eq!(p2.len(), 1);
+    }
+
+    /// Test-only `V3LegQuoter`: maps each pool address → a deterministic curve
+    /// (amount_in → amount_out). Zero RPC (RULE 00 — no real QuoterV2 calls).
+    /// Simulates a V3 concentrated-liquidity curve so the grid search can be
+    /// exercised end-to-end without a chain.
+    type V3Curve = Box<dyn Fn(U256) -> Option<U256> + Send + Sync>;
+
+    struct MockV3QuoteProvider {
+        by_pool: std::collections::HashMap<Address, V3Curve>,
+    }
+
+    impl V3LegQuoter for MockV3QuoteProvider {
+        fn quote_v3_batch<'a>(
+            &'a self,
+            requests: Vec<V3QuoteRequest>,
+        ) -> Pin<Box<dyn Future<Output = Vec<Option<U256>>> + Send + 'a>> {
+            let outs: Vec<Option<U256>> = requests
+                .into_iter()
+                .map(|r| self.by_pool.get(&r.pool_addr).and_then(|f| f(r.amount_in)))
+                .collect();
+            Box::pin(async move { outs })
+        }
+    }
+
+    fn doubler_curve() -> V3Curve {
+        // Constant 2× output (no slippage) — a linear, always-profitable leg
+        // when composed with two more doublers (net 8×).
+        Box::new(|ain: U256| Some(ain * U256::from(2u32)))
+    }
+
+    fn halver_curve() -> V3Curve {
+        // Constant 0.5× output — always a loss when composed (net 0.125×).
+        // Integer division yields 0 for ain < 2 (R8 zero-hop collapse).
+        Box::new(|ain: U256| Some(ain / U256::from(2u32)))
+    }
+
+    /// Build a V3 hop from address values. The address is stringified via
+    /// `Display` (`0x` lowercase hex) — the same parseable form production stores
+    /// — so `Address::from_str` inside `size_v3_cycle_over_grid` round-trips it.
+    fn v3_hop(pool: Address, tin: Address, tout: Address, fee_bps: u32) -> HopKind {
+        HopKind::V3 {
+            pool_addr: pool.to_string(),
+            fee_bps,
+            token_in_addr: tin.to_string(),
+            token_out_addr: tout.to_string(),
+        }
+    }
+
+    /// Build a near-1:1 V2 hop with huge balanced reserves (only the 0.3% V2
+    /// fee applies; slippage is negligible at test sizes).
+    fn v2_hop_passthrough(pool: Address) -> HopKind {
+        let huge = "1000000000000000000000000000000"; // 1e30
+        HopKind::V2(HopData {
+            pool_addr: pool.to_string(),
+            entry: ReservesEntry {
+                r0: huge.to_string(),
+                r1: huge.to_string(),
+                token0_addr: Some(pool.to_string()),
+                blk: 100,
+                ts: 1000,
+            },
+            swap_in_is_token0: true,
+        })
+    }
+
+    fn mock_with_pools(curves: Vec<(Address, V3Curve)>) -> MockV3QuoteProvider {
+        let mut by_pool = std::collections::HashMap::new();
+        for (p, f) in curves {
+            by_pool.insert(p, f);
+        }
+        MockV3QuoteProvider { by_pool }
+    }
+
+    /// Profitable V3 curve: every hop returns 2× its input → the cycle nets 8×
+    /// at every probe. The grid must return `Some` with strictly positive profit
+    /// and a winning probe within `[1, cap_wei]`.
+    #[tokio::test]
+    async fn size_v3_cycle_over_grid_profitable_curve_returns_some() {
+        let pool0 = Address::from_low_u64_be(0xA);
+        let pool1 = Address::from_low_u64_be(0xB);
+        let pool2 = Address::from_low_u64_be(0xC);
+        let hops = vec![
+            v3_hop(pool0, Address::from_low_u64_be(0x1), Address::from_low_u64_be(0x2), 500),
+            v3_hop(pool1, Address::from_low_u64_be(0x2), Address::from_low_u64_be(0x3), 500),
+            v3_hop(pool2, Address::from_low_u64_be(0x3), Address::from_low_u64_be(0x1), 500),
+        ];
+        let mock = mock_with_pools(vec![
+            (pool0, doubler_curve()),
+            (pool1, doubler_curve()),
+            (pool2, doubler_curve()),
+        ]);
+
+        let cap_wei = U256::from(10u128).pow(U256::from(18));
+        let best = size_v3_cycle_over_grid(&hops, cap_wei, 2_000.0, 18, &mock)
+            .await
+            .expect("profitable curve must yield a sized probe");
+        assert!(best.result.profit_token_a_wei > 0, "profit must be > 0");
+        assert!(best.amount_in_wei > U256::zero());
+        assert!(best.amount_in_wei <= cap_wei, "winning probe must not exceed cap");
+        // 3 V3 hops × V3_GRID_PROBES quotes total (no V2 to skip). Bounded.
+        assert!(best.rpc_count > 0);
+        assert!(best.rpc_count <= (V3_GRID_PROBES * hops.len()) as u64);
+        // Chain consistency: every hop's amount_in_used traces to its predecessor.
+        assert_eq!(best.hop_outs.len(), hops.len());
+        assert_eq!(best.hop_outs[0].amount_in_used, best.amount_in_wei);
+        for w in best.hop_outs.windows(2) {
+            assert_eq!(w[1].amount_in_used, w[0].amount_out, "chain must be consistent");
+        }
+    }
+
+    /// Negative V3 curve: every hop returns half its input → the cycle nets
+    /// 0.125× at every probe (always a loss). Grid must return `None` (R8).
+    #[tokio::test]
+    async fn size_v3_cycle_over_grid_negative_curve_returns_none() {
+        let pool0 = Address::from_low_u64_be(0xA);
+        let pool1 = Address::from_low_u64_be(0xB);
+        let pool2 = Address::from_low_u64_be(0xC);
+        let hops = vec![
+            v3_hop(pool0, Address::from_low_u64_be(0x1), Address::from_low_u64_be(0x2), 500),
+            v3_hop(pool1, Address::from_low_u64_be(0x2), Address::from_low_u64_be(0x3), 500),
+            v3_hop(pool2, Address::from_low_u64_be(0x3), Address::from_low_u64_be(0x1), 500),
+        ];
+        let mock = mock_with_pools(vec![
+            (pool0, halver_curve()),
+            (pool1, halver_curve()),
+            (pool2, halver_curve()),
+        ]);
+
+        let cap_wei = U256::from(10u128).pow(U256::from(18));
+        let res = size_v3_cycle_over_grid(&hops, cap_wei, 2_000.0, 18, &mock).await;
+        assert!(res.is_none(), "all-loss curve must reject (R8 NonPositiveProfit)");
+    }
+
+    /// REGRESSION for Plan B.2: the legacy single-point path sized at
+    /// `amount_in = cap_wei` and would emit NOTHING when the cap point itself
+    /// is unprofitable even though a smaller probe is profitable. The grid must
+    /// find the smaller profitable probe and NOT pick the cap point.
+    ///
+    /// Topology V3→V2→V3 (the canonical X→WETH→USDC→X shape):
+    ///   hop0 (V3): 1:1 identity
+    ///   hop1 (V2): ~1:1 (huge balanced reserves, fee-only)
+    ///   hop2 (V3): 2× for inputs below 1e18, 0.4× at/above 1e18 — a large swap
+    ///              eats through V3 liquidity (slippage dominates) → net loss
+    /// `cap_wei = 1e21` (1000 WETH). The largest probe lands in the lossy region;
+    /// smaller probes (~1e15) are profitable. The grid must return a probe
+    /// STRICTLY below cap_wei with positive profit — exactly the case the old
+    /// fixed-amount_in path got wrong.
+    #[tokio::test]
+    async fn size_v3_cycle_over_grid_finds_profit_when_cap_point_loses() {
+        let pool0 = Address::from_low_u64_be(0xA); // hop0 V3 (identity)
+        let pool1 = Address::from_low_u64_be(0xB); // hop1 V2 (passthrough)
+        let pool2 = Address::from_low_u64_be(0xC); // hop2 V3 (size-dependent)
+        let hops = vec![
+            v3_hop(pool0, Address::from_low_u64_be(0x1), Address::from_low_u64_be(0x2), 500),
+            v2_hop_passthrough(pool1),
+            v3_hop(pool2, Address::from_low_u64_be(0x3), Address::from_low_u64_be(0x1), 500),
+        ];
+        let threshold = U256::from(10u128).pow(U256::from(18)); // 1 WETH
+        let hop2_curve: V3Curve = Box::new(move |ain: U256| {
+            if ain < threshold {
+                Some(ain * U256::from(2u32)) // profitable region (small swaps)
+            } else {
+                // 0.4× → net < input → loss (large swap exhausts V3 liquidity)
+                Some(ain * U256::from(4u32) / U256::from(10u32))
+            }
+        });
+        let identity: V3Curve = Box::new(|ain: U256| Some(ain));
+        let mock = mock_with_pools(vec![(pool0, identity), (pool2, hop2_curve)]);
+
+        let cap_wei = U256::from(10u128).pow(U256::from(21)); // 1000 WETH
+        let best = size_v3_cycle_over_grid(&hops, cap_wei, 2_000.0, 18, &mock)
+            .await
+            .expect("grid must find a profitable probe below the lossy cap point");
+        assert!(best.result.profit_token_a_wei > 0, "winning probe must be profitable");
+        assert!(
+            best.amount_in_wei < cap_wei,
+            "winning probe ({}) must be STRICTLY below cap ({}) — the cap point itself loses",
+            best.amount_in_wei,
+            cap_wei
+        );
+        // hop1 is V2 (no quote) → only hop0 + hop2 consume RPC (2 V3 hops).
+        assert!(best.rpc_count <= (V3_GRID_PROBES * 2) as u64);
+        // hop2 V3 source at the winning probe (proves the mixed V3-V2-V3 fold).
+        assert_eq!(best.hop_outs[0].source, HopAmountSource::V3);
+        assert_eq!(best.hop_outs[1].source, HopAmountSource::V2);
+        assert_eq!(best.hop_outs[2].source, HopAmountSource::V3);
     }
 
     // ---- cap_amount_in_wei ----
