@@ -45,10 +45,10 @@ Zero-Mocks is implemented through three mechanisms:
 
 ### 1. REVM State Forking
 
-The Ghost Protocol creates an in-memory REVM instance at every simulation:
+The REVM fork simulator creates an in-memory REVM instance at every simulation (`backend/simulator-v2/src/revm_runner.rs`, orchestrated by `backend/sim-ctl/`):
 
 ```rust
-// crates/ax-ghost-protocol/src/simulator.rs
+// backend/simulator-v2/src/revm_runner.rs
 use revm::{
     db::{CacheDB, EmptyDB, ForkDB},
     primitives::{Address, U256},
@@ -86,13 +86,13 @@ async fn test_real_swap_simulation() {
 
 ### 3. End-to-End Integration
 
-The E2E suite runs against a full 21-container stack, not stubbed services:
+The E2E suite runs against the full service stack (24 services per the README; verify in `docker-compose.yml`), not stubbed services:
 
 ```mermaid
 graph LR
     E2E["Playwright Tests"] --> REST["Real REST API"]
     REST --> SE["Real Strategy Eval"]
-    SE --> GP["Real Ghost Protocol"]
+    SE --> GP["Real REVM Fork (simulator-v2/sim-ctl)"]
     GP --> EVM["Real REVM Fork"]
     EVM --> RPC["Real RPC Endpoint"]
 ```
@@ -134,4 +134,4 @@ Every test in the pipeline executes against real contract bytecode and state. Th
 
 ### Monitoring
 
-The Zero-Mocks compliance is verified by the `ax_simulation_fork_block_lag` metric. If this metric exceeds 3 blocks, the system is operating on stale state and alerts fire.
+Zero-Mocks compliance is intended to be verified by an `ax_simulation_fork_block_lag`-style metric (fork block lag): if it exceeded 3 blocks, the system would be on stale state and alerts would fire. **Note:** this metric is not yet wired in the codebase (Phase 3 item); until then, state staleness is bounded by `MAX_RESERVE_LAG_BLOCKS` and the R8 fail-honest skip path.

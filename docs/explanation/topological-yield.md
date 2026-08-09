@@ -75,43 +75,19 @@ graph TB
 
 ## Cycle Detection
 
-The Topological Yield engine detects profitable cycles using a modified Bellman-Ford algorithm:
+The Topological Yield engine detects profitable cycles using a bounded DFS over the live token graph (Phase 1); a Modified Moore–Bellman–Ford (MMBF) line-graph pass is roadmap Phase 2. The canonical execution flow lives in `backend/searcher-rs`:
 
-```rust
-// crates/ax-strategy-eval/src/graph/cycles.rs
-pub fn find_arbitrage_cycles(
-    graph: &PoolGraph,
-    start_token: Token,
-    max_hops: usize,
-) -> Vec<ArbitrageCycle> {
-    let mut cycles = Vec::new();
-
-    for depth in 2..=max_hops {
-        let paths = graph.find_cycles(start_token, depth);
-        for path in paths {
-            let output = simulate_path(&path, input_amount);
-            if output > input_amount {
-                cycles.push(ArbitrageCycle {
-                    path,
-                    input: input_amount,
-                    output,
-                    profit: output - input_amount,
-                });
-            }
-        }
-    }
-
-    cycles.sort_by(|a, b| b.profit.cmp(&a.profit));
-    cycles
-}
-```
+1. **Discovery** — `route_discovery/unique_route_finder.rs` runs a bounded DFS over the live token graph (cycles of 2–3 hops), canonicalizing each route.
+2. **Evaluation** — `workers/triangular_worker.rs` applies the `spot_product` pre-filter (S = γ³·∏(R_out/R_in)), then computes `cycle_profit` via sequential V2 `v2_amount_out` across the 3 hops.
+3. **Sizing** — golden-section search over `[1 wei, x_max]` finds the profit-maximizing input x* (cap-bounded by operator capital).
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `max_hops` | 4 | Maximum pool hops per cycle |
-| `min_profit_bps` | 10 | Minimum profit in basis points |
-| `timeout_ms` | 50 | Cycle detection timeout per evaluation |
-| `cache_ttl_ms` | 500 | Pool state cache lifetime |
+| `max_depth` | 3 | Maximum cycle hops (2–3) per bounded DFS |
+| `max_routes_per_tick` | 500 | Anti-explosion cap on routes per tick |
+| `max_pools_per_pair` | 8 | Branching cap between two tokens |
+| `tick_interval` | 12000 ms | Discovery/evaluation tick (~1 block) |
+| `MAX_RESERVE_LAG_BLOCKS` | 5 | Max acceptable reserve staleness (R8 fail-honest) |
 
 ---
 
@@ -135,12 +111,12 @@ This approach ensures that:
 
 ## Yield Calculation
 
-For each detected cycle, the engine calculates:
+For each detected cycle, the Topological Yield is:
 
 ```
-Gross Profit = Output Amount - Input Amount
-Net Profit = Gross Profit - Gas Cost - DEX Fees
-Confidence = min(pool_liquidity_ratio, price_stability_score)
+𝒴 = 𝒜_gross − γ_gas − δ_slip
 ```
 
-Only cycles with positive net profit and confidence above the strategy threshold are forwarded to the Ghost Protocol.
+where `𝒜_gross` is the gross no-arbitrage violation, `γ_gas` the gas cost, and `δ_slip` the slippage (Decoherencia de Estado). The 3-hop fee compounding is γ³_fee = (1 − fee)³ (≈ 0.991 for V2's 30 bps); the optimal trade size is found by golden-section search, not a fixed input.
+
+Only cycles with positive net Topological Yield are forwarded through the prioritization spine to the Redis stream `arbx:opps:detected` and simulated via sim-ctl (REVM fork, capital $0). ("Ghost Protocol" is the doctrinal name for this stealth-routing/simulation stage, not a separate code module.)

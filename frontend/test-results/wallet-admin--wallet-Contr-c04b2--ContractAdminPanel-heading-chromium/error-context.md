@@ -7,17 +7,243 @@
 # Test info
 
 - Name: wallet-admin.spec.ts >> /wallet ContractAdminPanel >> renders ContractAdminPanel heading
-- Location: e2e\wallet-admin.spec.ts:8:7
+- Location: e2e\wallet-admin.spec.ts:6:7
 
 # Error details
 
 ```
-Test timeout of 60000ms exceeded while running "beforeEach" hook.
-```
+Error: expect(locator).toBeVisible() failed
 
-```
-Error: page.goto: net::ERR_ABORTED; maybe frame was detached?
+Locator: getByRole('heading', { name: 'Contract Administration' })
+Expected: visible
+Timeout: 15000ms
+Error: element(s) not found
+
 Call log:
-  - navigating to "http://localhost:3000/wallet", waiting until "load"
+  - Expect "toBeVisible" with timeout 15000ms
+  - waiting for getByRole('heading', { name: 'Contract Administration' })
 
+```
+
+```yaml
+- link "Skip to main content":
+  - /url: "#main"
+- banner:
+  - link "ARBITRAGEX":
+    - /url: /
+  - text: Quantum Research Terminal · Topological Yield Engine PAPER · TLS SHADOW KILL-SWITCH <10MS IDLE
+  - code
+  - button "Switch to light mode"
+- complementary:
+  - button "Collapse sidebar"
+  - text: Pipeline
+  - list:
+    - listitem:
+      - link "Home":
+        - /url: /
+    - listitem:
+      - link "System status":
+        - /url: /status
+    - listitem:
+      - link "Opportunities":
+        - /url: /opportunities
+    - listitem:
+      - link "By strategy":
+        - /url: /opportunities/by-strategy
+    - listitem:
+      - link "Executions":
+        - /url: /executions
+    - listitem:
+      - link "Paper history":
+        - /url: /paper/history
+    - listitem:
+      - link "Recon & yield":
+        - /url: /recon
+    - listitem:
+      - link "Operations metrics":
+        - /url: /operations
+    - listitem:
+      - link "Route outcomes":
+        - /url: /route-outcomes
+    - listitem:
+      - link "Route discovery":
+        - /url: /routes/discovery
+    - listitem:
+      - link "SED Pipeline":
+        - /url: /sed
+    - listitem:
+      - link "Agent insights":
+        - /url: /agent-insights
+    - listitem:
+      - link "Worker health":
+        - /url: /worker-health
+  - text: Risk & Control
+  - list:
+    - listitem:
+      - link "Entropy & alerts":
+        - /url: /risk
+    - listitem:
+      - link "Kill-switch":
+        - /url: /killswitch
+    - listitem:
+      - link "Live readiness":
+        - /url: /live-readiness
+    - listitem:
+      - link "Operator panel":
+        - /url: /operator
+    - listitem:
+      - link "Self-test center":
+        - /url: /operator/self-test
+    - listitem:
+      - link "Audit logs":
+        - /url: /audit-logs
+    - listitem:
+      - link "Apex allocator":
+        - /url: /apex/allocator
+  - text: Configuration
+  - list:
+    - listitem:
+      - link "Credentials":
+        - /url: /settings/credentials
+    - listitem:
+      - link "Config":
+        - /url: /config
+    - listitem:
+      - link "Trading config":
+        - /url: /config/trading
+    - listitem:
+      - link "Strategies":
+        - /url: /strategies
+    - listitem:
+      - link "Cartridge Forge":
+        - /url: /strategies/forge
+    - listitem:
+      - link "Onboarding":
+        - /url: /onboarding
+    - listitem:
+      - link "Chain registry":
+        - /url: /chains
+    - listitem:
+      - link "RPC health":
+        - /url: /rpcs
+    - listitem:
+      - link "Pool registry":
+        - /url: /pools
+    - listitem:
+      - link "Exchange registry":
+        - /url: /dex-registry
+    - listitem:
+      - link "Wallets":
+        - /url: /wallets
+    - listitem:
+      - link "Wallet overview":
+        - /url: /wallet
+    - listitem:
+      - link "Deploy pipeline":
+        - /url: /deploy-pipeline
+    - listitem:
+      - link "Topology Vault":
+        - /url: /admin/topology
+    - listitem:
+      - link "Admin chains":
+        - /url: /admin/chains
+    - listitem:
+      - link "Admin sign-in":
+        - /url: /admin/signin
+    - listitem:
+      - link "Settings":
+        - /url: /settings
+  - text: Omega S5
+  - list:
+    - listitem:
+      - link "Ω Core decoder":
+        - /url: /omega-s5/core
+    - listitem:
+      - link "Ω Crucible tracker":
+        - /url: /omega-s5/crucible
+    - listitem:
+      - link "Ω Factory deployments":
+        - /url: /omega-s5/factory
+    - listitem:
+      - link "Ω DEX adapters":
+        - /url: /omega-s5/adapters
+    - listitem:
+      - link "Ω Drift detection":
+        - /url: /omega-s5/drift
+    - listitem:
+      - link "Ω Operator params":
+        - /url: /omega-s5/operator
+    - listitem:
+      - link "Ω Entity registries":
+        - /url: /omega-s5/registry
+    - listitem:
+      - link "Ω Wallet topology":
+        - /url: /omega-s5/wallets
+  - text: PAPER
+  - paragraph: Simulated execution
+- main:
+  - status: "System guard Live: OFF Private relay: OFF Submit: OFF Broadcast: OFF Paper: ON · DEFAULT_SAFE DEGRADED Capital: $0 Readiness: 4/4 LIVE lock: REVIEW GO live: NO-GO A.4 fork: BLOCKED A.5 paper-shadow: BLOCKED PG edge_error · Redis edge_error · HB stale/absent · Engine ? · Flip ?"
+  - navigation "Breadcrumb":
+    - link "Home":
+      - /url: /
+    - text: Wallet overview
+  - heading "Wallet (read-only)" [level=1]
+  - paragraph: Connect a browser wallet to expose your address read-only, authenticate via Sign-In With Ethereum (identity only), and record transaction intents. No keys are held server-side; nothing is ever broadcast.
+  - text: "Conéctate desde el panel de acceso (abajo) WalletConnect unavailable: walletconnect_project_id_missing"
+  - note "Wallet safety posture":
+    - paragraph: Read-only / Paper mode — this wallet surface cannot move capital.
+    - text: Read-only mode Paper mode Live disabled Capital exposure 0 Broadcast disabled Simulation required
+    - paragraph:
+      - text: No private keys are held server-side. No transaction is ever broadcast. Every intent terminates at
+      - code: BROADCAST_DISABLED
+      - text: . Connecting a wallet only exposes your address read-only.
+    - paragraph:
+      - text: "session mode:"
+      - code: wallet_identity_only
+  - text: Mode READ_ONLY AUTOMATION LOCKED posture not open — read-only Conectar una wallet
+  - button "MetaMask"
+  - button "Rabby Wallet"
+  - button "Coinbase Wallet"
+  - button "Phantom"
+  - button "Rainbow"
+  - button "WalletConnect"
+  - text: Wallet status Disconnected Read-only mode Paper mode Live disabled Capital exposure 0 Broadcast disabled
+  - term: Address
+  - definition: —
+  - term: Network
+  - definition: —
+  - term: Balance (read-only)
+  - definition: —
+  - term: Runtime
+  - definition: runtime unreachable
+  - text: Account & network No account connected Connect a wallet to switch networks. Sign-In With Ethereum (identity only) No capital · No broadcast
+  - paragraph:
+    - text: SIWE proves you control this address. It is a session for identity only —
+    - code: "session_mode: wallet_identity_only"
+    - text: . It signs a human-readable message (never a transaction, never blind), and grants no capital authority.
+  - text: Not authenticated
+  - button "Sign in with Ethereum" [disabled]
+  - text: Connect a wallet first. Transaction intent (read-only) Broadcast disabled
+  - paragraph:
+    - text: Describe a transaction to record an INTENT for review. Nothing is signed or sent. Every intent terminates at
+    - code: BROADCAST_DISABLED
+    - text: .
+  - text: Kind
+  - textbox "Kind":
+    - /placeholder: swap
+    - text: swap
+  - text: To (review only)
+  - textbox "To (review only)":
+    - /placeholder: 0x…
+  - text: Note
+  - textbox "Note":
+    - /placeholder: optional
+  - button "Simulate (required)"
+  - button "Register intent"
+  - button "Broadcast disabled by policy" [disabled]
+  - text: Contract admin
+  - paragraph: Wallet disconnected. Admin controls require a Sepolia connection.
+- text: "Observation: edge HTTP 429: {\"error\":\"rate_limited\"}"
+- region "Notifications alt+T"
+- alert
 ```

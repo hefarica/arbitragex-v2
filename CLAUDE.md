@@ -330,3 +330,68 @@ relacionada con cualquiera de estos disparadores:
 - Inventario y salud: `claude mcp list`; detalle: `claude mcp get <name>`; en sesión: `/mcp`.
 - Si una ruta exige violar §33.2 → DETENERSE y reportar el bloqueo (igual que §32).
 <!-- END: mcp-policy -->
+
+<!-- BEGIN: execution-modes-doctrine -->
+---
+
+# 34. POLÍTICA PERMANENTE — EXECUTION MODES (LIVE_MAINNET CANÓNICO, HOT-PATH MODE-INVARIANT)
+
+> Anexado de forma NO destructiva. **Autoridad para cualquier decisión sobre
+> cartuchos, operadores, rutas, sizing, gates, flags de modo y terminus de
+> ejecución.** Doctrina del operador (2026-08-07). Fuente de verdad detallada:
+> `docs/EXECUTION_MODES_DOCTRINE.md`.
+
+## 34.1 Doctrina
+
+1. **Hot-path mode-invariant.** Descubrimiento, 264 cartuchos, 31 operadores
+   matemáticos, rutas, `SizeOptimizer`, simulación y risk/evidence gates son
+   **idénticos** en todos los modos de trading. La matemática NO cambia por modo.
+   La Master Matrix 264×31 es mode-invariant: las 8.184 relaciones
+   estrategia↔operador tienen el mismo rol en `LIVE_MAINNET`, `TESTNET` y
+   `PAPER_SHADOW`.
+2. **`LIVE_MAINNET` es canónico.** Todo se diseña y juzga contra: *"¿esto
+   funcionaría correctamente con capital real en LIVE MAINNET?"*. Testnet y
+   Paper/Shadow reproducen esa misma lógica hasta la frontera capital/broadcast/settlement.
+3. **Los modos difieren SÓLO en el terminus de ejecución:**
+   - `LIVE_MAINNET` → capital real → broadcast mainnet → settlement on-chain real.
+   - `TESTNET` → fondos propios de la testnet → broadcast testnet → settlement on-chain (no real).
+   - `PAPER_SHADOW` → capital simulado (definido desde el frontend) → **SIN broadcast** → ledger simulado.
+4. **`OFF` / Kill-switch NO es un modo de trading** — es un estado de control
+   independiente (detiene todo sin importar el modo).
+
+## 34.2 Consecuencia sobre flags actuales
+
+`ARBX_ORCHESTRATOR_MODE` (`v1`/`v2`/`shadow`/`off`) y `ARBX_CARTRIDGE_MODE`
+(`off`/`shadow`/`active`) existen **sólo como flags temporales de migración**.
+**Dejan de definir la semántica económica del sistema.** No hay "cartuchos
+diferentes en shadow", ni "operadores diferentes en paper", ni "sin emisión por
+modo". Detección y grabación son idénticas en los tres modos de trading.
+
+## 34.3 El terminus de capital y sus gates (relays-client)
+
+El switch real de modo vive en el terminus de ejecución: `relays-client`
+(`backend/relays-client/src/live_exec_policy.rs`), el ÚNICO binario que puede
+firmar y broadcast. Implementación de la doctrina:
+- `PAPER_SHADOW` → no broadcast (sin signer / ledger simulado).
+- `TESTNET` → broadcast sólo a `ARBX_LIVE_EXEC_CHAINS` (default Sepolia `11155111`).
+- `LIVE_MAINNET` → broadcast a mainnet.
+
+**FLIP A `LIVE_MAINNET` CON CAPITAL REAL = acción irreversible, gated.**
+`live_exec_policy` actualmente PHYSICALLY REFUSES mainnet (chain_id=1) y es
+default-deny (`ARBX_LIVE_EXEC_ENABLED != "true"`). Habilitar broadcast mainnet
+real requiere, SIN EXCEPCIÓN:
+1. §32/§33 satisfechos (política permanent audit/scaffold → promotion explícita).
+2. `arbx-paper-trade-first`, `arbx-simulation-mandatory`, `arbx-risk-limits-enforcement`,
+   `arbx-pre-execute-checklist` PASS.
+3. Autorización operativa explícita del operador (no inferida de flags ni de chat).
+
+NUNCA remover el default-deny ni el `MainnetRefused` sin los tres puntos arriba.
+Esto NO contradice §34.1: ES el terminus donde el modo se diferencia (§34.1.3).
+
+## 34.4 Pregunta canónica de revisión
+
+Antes de aceptar cualquier cambio a cartuchos, operadores, rutas, reserves,
+sizing, gates o frontend: *"¿Esto funcionaría correctamente con capital real en
+LIVE_MAINNET?"*. Si la respuesta implica "depende del modo" para la matemática →
+viola §34.1 y se rechaza.
+<!-- END: execution-modes-doctrine -->

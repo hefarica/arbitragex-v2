@@ -7,17 +7,304 @@
 # Test info
 
 - Name: readiness-smoke.spec.ts >> /live-readiness G-SIM-1 smoke card >> renders GSimSmokeTestCard with initial RED badge
-- Location: e2e\readiness-smoke.spec.ts:8:7
+- Location: e2e\readiness-smoke.spec.ts:6:7
 
 # Error details
 
 ```
-Test timeout of 60000ms exceeded while running "beforeEach" hook.
-```
+Error: expect(locator).toBeVisible() failed
 
-```
-Error: page.goto: net::ERR_ABORTED; maybe frame was detached?
+Locator: locator('[data-testid="run-smoke-test"]').locator('xpath=ancestor::div[contains(@class, "Card")][1]').getByText('G-SIM-1 (Simulator V2)')
+Expected: visible
+Timeout: 15000ms
+Error: element(s) not found
+
 Call log:
-  - navigating to "http://localhost:3000/live-readiness", waiting until "load"
+  - Expect "toBeVisible" with timeout 15000ms
+  - waiting for locator('[data-testid="run-smoke-test"]').locator('xpath=ancestor::div[contains(@class, "Card")][1]').getByText('G-SIM-1 (Simulator V2)')
 
+```
+
+```yaml
+- link "Skip to main content":
+  - /url: "#main"
+- banner:
+  - link "ARBITRAGEX":
+    - /url: /
+  - text: Quantum Research Terminal · Topological Yield Engine PAPER · TLS SHADOW KILL-SWITCH <10MS IDLE
+  - code
+  - button "Switch to light mode"
+- complementary:
+  - button "Collapse sidebar"
+  - text: Pipeline
+  - list:
+    - listitem:
+      - link "Home":
+        - /url: /
+    - listitem:
+      - link "System status":
+        - /url: /status
+    - listitem:
+      - link "Opportunities":
+        - /url: /opportunities
+    - listitem:
+      - link "By strategy":
+        - /url: /opportunities/by-strategy
+    - listitem:
+      - link "Executions":
+        - /url: /executions
+    - listitem:
+      - link "Paper history":
+        - /url: /paper/history
+    - listitem:
+      - link "Recon & yield":
+        - /url: /recon
+    - listitem:
+      - link "Operations metrics":
+        - /url: /operations
+    - listitem:
+      - link "Route outcomes":
+        - /url: /route-outcomes
+    - listitem:
+      - link "Route discovery":
+        - /url: /routes/discovery
+    - listitem:
+      - link "SED Pipeline":
+        - /url: /sed
+    - listitem:
+      - link "Agent insights":
+        - /url: /agent-insights
+    - listitem:
+      - link "Worker health":
+        - /url: /worker-health
+  - text: Risk & Control
+  - list:
+    - listitem:
+      - link "Entropy & alerts":
+        - /url: /risk
+    - listitem:
+      - link "Kill-switch":
+        - /url: /killswitch
+    - listitem:
+      - link "Live readiness":
+        - /url: /live-readiness
+    - listitem:
+      - link "Operator panel":
+        - /url: /operator
+    - listitem:
+      - link "Self-test center":
+        - /url: /operator/self-test
+    - listitem:
+      - link "Audit logs":
+        - /url: /audit-logs
+    - listitem:
+      - link "Apex allocator":
+        - /url: /apex/allocator
+  - text: Configuration
+  - list:
+    - listitem:
+      - link "Credentials":
+        - /url: /settings/credentials
+    - listitem:
+      - link "Config":
+        - /url: /config
+    - listitem:
+      - link "Trading config":
+        - /url: /config/trading
+    - listitem:
+      - link "Strategies":
+        - /url: /strategies
+    - listitem:
+      - link "Cartridge Forge":
+        - /url: /strategies/forge
+    - listitem:
+      - link "Onboarding":
+        - /url: /onboarding
+    - listitem:
+      - link "Chain registry":
+        - /url: /chains
+    - listitem:
+      - link "RPC health":
+        - /url: /rpcs
+    - listitem:
+      - link "Pool registry":
+        - /url: /pools
+    - listitem:
+      - link "Exchange registry":
+        - /url: /dex-registry
+    - listitem:
+      - link "Wallets":
+        - /url: /wallets
+    - listitem:
+      - link "Wallet overview":
+        - /url: /wallet
+    - listitem:
+      - link "Deploy pipeline":
+        - /url: /deploy-pipeline
+    - listitem:
+      - link "Topology Vault":
+        - /url: /admin/topology
+    - listitem:
+      - link "Admin chains":
+        - /url: /admin/chains
+    - listitem:
+      - link "Admin sign-in":
+        - /url: /admin/signin
+    - listitem:
+      - link "Settings":
+        - /url: /settings
+  - text: Omega S5
+  - list:
+    - listitem:
+      - link "Ω Core decoder":
+        - /url: /omega-s5/core
+    - listitem:
+      - link "Ω Crucible tracker":
+        - /url: /omega-s5/crucible
+    - listitem:
+      - link "Ω Factory deployments":
+        - /url: /omega-s5/factory
+    - listitem:
+      - link "Ω DEX adapters":
+        - /url: /omega-s5/adapters
+    - listitem:
+      - link "Ω Drift detection":
+        - /url: /omega-s5/drift
+    - listitem:
+      - link "Ω Operator params":
+        - /url: /omega-s5/operator
+    - listitem:
+      - link "Ω Entity registries":
+        - /url: /omega-s5/registry
+    - listitem:
+      - link "Ω Wallet topology":
+        - /url: /omega-s5/wallets
+  - text: PAPER
+  - paragraph: Simulated execution
+- main:
+  - status: "System guard Live: OFF Private relay: OFF Submit: OFF Broadcast: OFF Paper: ON · DEFAULT_SAFE DEGRADED Capital: $0 Readiness: 4/4 LIVE lock: REVIEW GO live: NO-GO A.4 fork: BLOCKED A.5 paper-shadow: BLOCKED PG ok · Redis ok · HB fresh · Engine loaded · Flip blocked"
+  - navigation "Breadcrumb":
+    - link "Home":
+      - /url: /
+    - text: Live readiness
+  - heading "Live readiness" [level=1]
+  - paragraph: Doctrinal gate between paper_mode and any future flip to live capital. Each item is verified dynamically by the api-server — no false greens.
+  - button "refresh"
+  - paragraph: Live Readiness Tracker
+  - heading "Secuencia de Ignición Operativa" [level=2]
+  - paragraph: El estado se deriva de comprobaciones server-side. Ningún paso futuro se marca verde por simulación; permanece bloqueado hasta existir un endpoint de validación real.
+  - text: "Progreso 0/4 Verificador de readiness no disponible:"
+  - code: "edge HTTP 429: {\"error\":\"rate_limited\"}"
+  - 'link "Paso 1: Manifolds de Ingesta. Estado: Pendiente"':
+    - /url: /admin/topology
+    - text: Paso 1 Pendiente
+    - heading "Manifolds de Ingesta" [level=3]
+    - paragraph: Topology Vault
+    - paragraph: ≥1 proveedor RPC + ≥1 WSS activos en el Topology Vault (verificado server-side).
+    - paragraph: —
+  - 'link "Paso 2: Firmas Cuánticas. Estado: Bloqueado"':
+    - /url: /settings/credentials
+    - text: Paso 2 Bloqueado
+    - heading "Firmas Cuánticas" [level=3]
+    - paragraph: Credentials / Wallets
+    - paragraph: "Presencia server-side de signer/clave autorizada (redactado: present|null)."
+    - paragraph: —
+  - 'link "Paso 3: Topología de Mercados. Estado: Bloqueado"':
+    - /url: /dex-registry
+    - text: Paso 3 Bloqueado
+    - heading "Topología de Mercados" [level=3]
+    - paragraph: Chains & DEXes
+    - paragraph: Chains, DEXes y pools registrados en el backend (conteos reales).
+    - paragraph: —
+  - 'link "Paso 4: Motores de Resolución. Estado: Bloqueado"':
+    - /url: /strategies
+    - text: Paso 4 Bloqueado
+    - heading "Motores de Resolución" [level=3]
+    - paragraph: SVS / DLP / Backrun
+    - paragraph: ≥1 motor de resolución habilitado (paper/shadow; live deshabilitado).
+    - paragraph: —
+  - paragraph:
+    - strong: "Guardrail LIVE:"
+    - text: el modo LIVE permanece visualmente bloqueado hasta que los cuatro pasos del pipeline estén en verde.
+  - text: "LIVE bloqueado verifier error edge HTTP 429: {\"error\":\"rate_limited\"} The page never synthesizes data — this is the verbatim error from the verifier. Fix the underlying issue and click refresh. GO / NO-GO decision Live trading: OFF Verdict derived from"
+  - code: /api/readiness/decision
+  - text: .There is no UI control to flip Live to ON.
+  - button "Decision detail"
+  - text: updated 11s ago A.5 paper-shadow NO-GO Live trading NO-GO Capital $0 Paper mode ON Private relay OFF Submit OFF Top reasons (critical)
+  - list:
+    - listitem: Prometheus + Grafana healthcheck reachable
+    - listitem: Simulation mandatory (revm or eth_call+stateOverride)
+    - listitem: A.4 fork validation has not executed against real RPC
+    - listitem: A.5 paper-shadow runtime has not executed
+  - text: Next action
+  - paragraph: Provide RPC_HTTP_1 + EXECUTOR_1, verify ERC20 storage layouts, then run multistep_fork ignored test.
+  - text: Readiness blockers Concrete obstacles between the current paper state and any live flip. Sourced from
+  - code: /api/readiness/blockers
+  - text: . Env values are redacted to
+  - code: "\"present\""
+  - text: or
+  - code: "null"
+  - text: "— raw values never reach the UI. 5 critical 6 high 1 medium blocks: A.4, A.5, LIVE updated 11s ago"
+  - heading "critical Prometheus + Grafana healthcheck reachable blocked LIVE" [level=3]:
+    - button "critical Prometheus + Grafana healthcheck reachable blocked LIVE": Prometheus + Grafana healthcheck reachable blocked LIVE
+  - heading "critical Simulation mandatory (revm or eth_call+stateOverride) blocked LIVE" [level=3]:
+    - button "critical Simulation mandatory (revm or eth_call+stateOverride) blocked LIVE": Simulation mandatory (revm or eth_call+stateOverride) blocked LIVE
+  - heading "critical A.4 fork validation has not executed against real RPC blocked A.4 A.5 LIVE" [level=3]:
+    - button "critical A.4 fork validation has not executed against real RPC blocked A.4 A.5 LIVE": A.4 fork validation has not executed against real RPC blocked A.4 A.5 LIVE
+  - heading "critical A.5 paper-shadow runtime has not executed blocked A.5 LIVE" [level=3]:
+    - button "critical A.5 paper-shadow runtime has not executed blocked A.5 LIVE": A.5 paper-shadow runtime has not executed blocked A.5 LIVE
+  - heading "critical A.9 GO/NO-GO formal sign-off pending pending LIVE" [level=3]:
+    - button "critical A.9 GO/NO-GO formal sign-off pending pending LIVE": A.9 GO/NO-GO formal sign-off pending pending LIVE
+  - heading "high Admin token via httpOnly cookie (no localStorage) blocked LIVE" [level=3]:
+    - button "high Admin token via httpOnly cookie (no localStorage) blocked LIVE": Admin token via httpOnly cookie (no localStorage) blocked LIVE
+  - heading "high RPC failover ≥3 providers + health scoring blocked LIVE" [level=3]:
+    - button "high RPC failover ≥3 providers + health scoring blocked LIVE": RPC failover ≥3 providers + health scoring blocked LIVE
+  - heading "high Paper trading ≥7 days continuous + report blocked LIVE" [level=3]:
+    - button "high Paper trading ≥7 days continuous + report blocked LIVE": Paper trading ≥7 days continuous + report blocked LIVE
+  - heading "high Alert rules wired (rules.yml + Prometheus + Alertmanager) blocked LIVE" [level=3]:
+    - button "high Alert rules wired (rules.yml + Prometheus + Alertmanager) blocked LIVE": Alert rules wired (rules.yml + Prometheus + Alertmanager) blocked LIVE
+  - heading "high A.6 circuit breakers comprehensive — partial partial LIVE" [level=3]:
+    - button "high A.6 circuit breakers comprehensive — partial partial LIVE": A.6 circuit breakers comprehensive — partial partial LIVE
+  - heading "high A.7 private relay no-submit simulation not implemented pending LIVE" [level=3]:
+    - button "high A.7 private relay no-submit simulation not implemented pending LIVE": A.7 private relay no-submit simulation not implemented pending LIVE
+  - heading "medium A.8 confidence scoring (Bayesian/VPIN) not wired pending LIVE" [level=3]:
+    - button "medium A.8 confidence scoring (Bayesian/VPIN) not wired pending LIVE": A.8 confidence scoring (Bayesian/VPIN) not wired pending LIVE
+  - text: Fork Validation ERROR
+  - paragraph: "HTTP 429: {\"error\":\"rate_limited\"}"
+  - heading "Paper Shadow" [level=3]
+  - text: COMPLETED Progress 8 / 7 days (100%)
+  - progressbar
+  - text: P&L Today
+  - paragraph: +883286389304.73 USD
+  - text: Accumulated
+  - paragraph: +2551897761637.80 USD
+  - text: "Trades:"
+  - strong: "115371"
+  - text: "Green:"
+  - strong: "60834"
+  - text: "Red:"
+  - strong: "54537"
+  - paragraph: "Updated: 7:32:58 PM"
+  - text: G-SIM-1 (Simulator V2) RED
+  - paragraph: Validates the REVM multi-step simulation path against Sepolia contracts. A passing smoke test enables the simulator-v2 readiness gate.
+  - button "Run Sepolia Smoke Test"
+  - text: Agent Teams workspace-verified · 17 agents Verdicts of the build/audit/deploy agent cycle. Source
+  - code: workspace_verified
+  - text: reflects the most recent operator pass;
+  - code: runtime
+  - text: appears when the backend demotes a verdict on a failing prerequisite.
+  - alert: "Cannot fetch agent teams status edge HTTP 429: {\"error\":\"rate_limited\"}"
+  - text: "Confidence scoring (A.8) paper-only · live OFF Honest wire status of Bayesian + Kelly + VPIN primitives in the paper pipeline. Schema:"
+  - code: /api/scoring/status
+  - text: . Scoring NEVER enables live trading.
+  - alert: "Cannot fetch scoring status edge HTTP 429: {\"error\":\"rate_limited\"}"
+  - text: "Risk circuit breakers (A.6) live OFF 10 comprehensive breakers. Source:"
+  - code: /api/risk/circuit-breakers/status
+  - text: . Missing data sources render
+  - code: NOT_AVAILABLE
+  - text: — never fabricated PASS.
+  - alert: "Cannot fetch circuit breakers edge HTTP 429: {\"error\":\"rate_limited\"}"
+- text: "Observation: edge HTTP 429: {\"error\":\"rate_limited\"}"
+- region "Notifications alt+T"
+- alert
 ```

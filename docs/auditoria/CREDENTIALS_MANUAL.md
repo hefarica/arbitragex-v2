@@ -155,6 +155,27 @@ RPC_HTTP_1=https://eth-mainnet.g.alchemy.com/v2/<KEY>
 | `SLACK_WEBHOOK_URL` | No | URL webhook | Alertas Slack |
 | `PAGERDUTY_INTEGRATION_KEY` | No | String key | PagerDuty alerts |
 
+### 4.7 Pool Enumeration + TheGraph (enumeracion de pools 24/7/365)
+
+> Config read-only (T2/T3): no toca capital, signer ni broadcast. La ancla on-chain
+> (Alchemy) se inyecta siempre; estas variables configuran las fuentes indexadoras.
+> Ver `docs/reference/secret-flow.md`.
+
+| Variable | Requerida | Formato | Uso |
+|----------|-----------|---------|-----|
+| `ARBX_POOL_ENUM_MODE` | **Si (prod)** | `shadow` | Spawnea el worker. **Debe ser `shadow`** (read-only). Nunca `live`/`on`. |
+| `ARBX_POOL_ENUM_SOURCES` | No | CSV | Fuentes indexadoras (`thegraph,dexscreener,defillama,geckoterminal`). La ancla Alchemy se añade siempre. |
+| `ARBX_POOL_ENUM_TOP_N` | No | int | Top-N pools por TVL (default 500). |
+| `ARBX_POOL_ENUM_MIN_TVL_USD` | No | number | TVL mínimo (default 50000). |
+| `ARBX_POOL_ENUM_MAX_NEW_PER_TICK` | No | int | Nuevos pools por tick (default 50). |
+| `ARBX_POOL_ENUM_ONCHAIN_LOOKBACK` | No | int (blocks) | Ventana de scan de eventos factory de la ancla on-chain (default 7200, ~1 día mainnet). |
+| `ARBX_POOL_ENUM_DEXSCREENER_BASE` | **Si (si dexscreener activo)** | URL host-root | **HOST ROOT solo** (`https://api.dexscreener.com`). NUNCA el path del oracle `DEXSCREENER_BASE_URL` (duplica el path → 404). |
+| `ARBX_SUBGRAPH_URL_<chain>` | No | URL (key inline) | Endpoint TheGraph por chain. `subgraph_client.rs:54` la lee **literal** (sin sustituir `<KEY>`): pega la API key real inline. Free: `thegraph.com/studio` (100k queries/mes). |
+| `THEGRAPH_API_KEY` | No | String | Referencia/documentación (el código lee la URL, no esta var). Tier T2. |
+| `DEFILLAMA_BASE_URL` | No | URL | `https://yields.llama.fi` (la API yields usa IDs no-on-chain; aporta pocos). |
+| `GECKOTERMINAL_BASE_URL` | No | URL | `https://api.geckoterminal.com/api/v2`. |
+
+
 ---
 
 ## 5. Credenciales Frontend
@@ -163,6 +184,10 @@ RPC_HTTP_1=https://eth-mainnet.g.alchemy.com/v2/<KEY>
 |----------|---------|-------------|-----|
 | `NEXT_PUBLIC_EDGE_URL` | URL HTTP | **Si** | URL del edge server (REST API) |
 | `NEXT_PUBLIC_WS_URL` | URL WS/WSS | **Si** | URL del WebSocket server |
+| `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | String (hex) | No (degrada fail-honest) | ProjectId de WalletConnect/Reown (`cloud.walletconnect.com`). Si ausente, WalletConnect degrada (`walletconnect_project_id_missing`); MetaMask/EIP-6963 siguen funcionando. **Vive en `frontend/.env`, NO en el vault VPS** (build-time). |
+| `NEXT_PUBLIC_DEFAULT_CHAIN_ID` | int | Si | Chain por defecto (p.ej. 1) |
+| `NEXT_PUBLIC_SUPPORTED_CHAINS` | CSV int | Si | Chains soportadas |
+| `NEXT_PUBLIC_WALLET_CONNECT_ENABLED` | bool | No | Habilita WalletConnect |
 
 **Valores tipicos:**
 ```bash

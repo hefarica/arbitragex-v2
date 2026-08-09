@@ -211,7 +211,11 @@ impl Orchestrator {
             } else {
                 "DISABLED — ONLY cartridge candidates will flow"
             },
-            if ctx.native_engines_enabled { "on" } else { "off" }
+            if ctx.native_engines_enabled {
+                "on"
+            } else {
+                "off"
+            }
         );
         Self { ctx }
     }
