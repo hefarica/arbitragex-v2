@@ -485,6 +485,15 @@ async fn build_orchestrator(
         db.clone(),
     );
 
+    // Plan C.3: ARBX_NATIVE_ENGINES (default "on"). When "off", the orchestrator
+    // skips the native Dex/Triangular/Liquidation/Flashloan fan-out so ONLY
+    // cartridge candidates flow. Case-insensitive; any value other than "off"
+    // (incl. unset) → on (backward-compatible, no behavior change).
+    let native_engines_enabled = {
+        let raw = std::env::var("ARBX_NATIVE_ENGINES").unwrap_or_else(|_| "on".to_string());
+        !raw.trim().eq_ignore_ascii_case("off")
+    };
+
     let ctx = OrchestratorContext {
         impact_index: impact_index.clone(),
         pool_discovery,
@@ -497,6 +506,7 @@ async fn build_orchestrator(
         emitter,
         config_provider,
         chain_id,
+        native_engines_enabled,
         cartridge_runner,
         cartridge_mode: crate::cartridge_boot::CartridgeMode::from_env(),
         // Fix B — math evidence (observe-only): operator registry + regime router.

@@ -171,6 +171,7 @@ async fn build_orchestrator_with_emitter(
         config_provider,
         pool_discovery,
         chain_id: CHAIN_ID,
+        native_engines_enabled: true,
         cartridge_runner: None,
         // Fix B math-evidence sensors — mirror scanner.rs production wiring.
         cartridge_mode: searcher_rs::cartridge_boot::CartridgeMode::from_env(),

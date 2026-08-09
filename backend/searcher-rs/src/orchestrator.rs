@@ -114,6 +114,12 @@ pub struct OrchestratorContext {
     pub pool_discovery: Arc<crate::pool_discovery::PoolDiscoveryService>,
     /// EVM chain ID for this orchestrator instance.
     pub chain_id: u64,
+    /// `ARBX_NATIVE_ENGINES` gate (default `on`). When `off`, the orchestrator
+    /// skips the Dex/Triangular/Liquidation/Flashloan fan-out so ONLY cartridge
+    /// candidates flow (Plan C.3 — avoids duplicate/ghost opportunities when
+    /// cartridges are the intended source). Backward-compatible: unset/on = the
+    /// native engines run exactly as before. R8: off = empty vecs, never fakes.
+    pub native_engines_enabled: bool,
     /// FASE OMEGA — cartridge runtime for shadow/active evaluation. `Some` only when
     /// `ARBX_CARTRIDGE_MODE` is enabled AND the runtime booted. When present, each
     /// route intent is evaluated against active cartridges OFF the hot path.
@@ -187,6 +193,26 @@ pub struct Orchestrator {
 impl Orchestrator {
     /// Constructs a new `Orchestrator` from a fully-initialised context.
     pub fn new(ctx: OrchestratorContext) -> Self {
+        // Plan C.3: log once at startup which native-engine mode is active so the
+        // operator can confirm cartridges-only vs. full fan-out. Logged here
+        // (constructed once per chain) rather than per intent.
+        info!(
+            event = "orchestrator.native_engines",
+            chain_id = ctx.chain_id,
+            mode = if ctx.native_engines_enabled {
+                "native_on"
+            } else {
+                "native_off_cartridges_only"
+            },
+            enabled = ctx.native_engines_enabled,
+            "native strategy engines {} (ARBX_NATIVE_ENGINES={})",
+            if ctx.native_engines_enabled {
+                "ENABLED — dex/triangular/liquidation/flashloan fan-out active"
+            } else {
+                "DISABLED — ONLY cartridge candidates will flow"
+            },
+            if ctx.native_engines_enabled { "on" } else { "off" }
+        );
         Self { ctx }
     }
 
@@ -542,14 +568,22 @@ impl Orchestrator {
         }
 
         // ── Step 5: fan out to engines ───────────────────────────────────
+        // Plan C.3: ARBX_NATIVE_ENGINES=off → skip the native Dex/Triangular/
+        // Liquidation/Flashloan fan-out entirely so ONLY cartridge candidates
+        // flow. The cartridge spawn path (Step 3, above) is unaffected.
+        // R8: off = empty candidate vecs, never fabricated candidates.
+        let native_on = self.ctx.native_engines_enabled;
 
-        // DexEngine (Phase 8 — live).
-        let dex_candidates = match self
-            .ctx
-            .dex_engine
-            .build_from_impacted_pairs(&intent, &impact, cfg_snapshot.as_ref())
-            .await
-        {
+        // DexEngine (Phase 8 — live). Skipped when ARBX_NATIVE_ENGINES=off.
+        let dex_result = if native_on {
+            self.ctx
+                .dex_engine
+                .build_from_impacted_pairs(&intent, &impact, cfg_snapshot.as_ref())
+                .await
+        } else {
+            Ok(vec![])
+        };
+        let dex_candidates = match dex_result {
             Ok(v) => {
                 // Count candidates produced by the engine — label comes from the
                 // candidate itself (never a hardcoded string).
@@ -585,13 +619,16 @@ impl Orchestrator {
             }
         };
 
-        // TriangularEngine (Phase 9 — live).
-        let tri_candidates = match self
-            .ctx
-            .triangular_engine
-            .build_from_impacted_cycles(&intent, &impact, cfg_snapshot.as_ref())
-            .await
-        {
+        // TriangularEngine (Phase 9 — live). Skipped when ARBX_NATIVE_ENGINES=off.
+        let tri_result = if native_on {
+            self.ctx
+                .triangular_engine
+                .build_from_impacted_cycles(&intent, &impact, cfg_snapshot.as_ref())
+                .await
+        } else {
+            Ok(vec![])
+        };
+        let tri_candidates = match tri_result {
             Ok(v) => {
                 for c in &v {
                     CANDIDATES_TOTAL
@@ -627,13 +664,16 @@ impl Orchestrator {
 
         // LiquidationEngine (Phase 11 — live): event-driven liquidation.
         // Only evaluates positions in `impact.impacted_lending_positions`;
-        // never polls the full lending universe.
-        let liq_candidates = match self
-            .ctx
-            .liquidation_engine
-            .build_from_lending_impact(&intent, &impact, cfg_snapshot.as_ref())
-            .await
-        {
+        // never polls the full lending universe. Skipped when ARBX_NATIVE_ENGINES=off.
+        let liq_result = if native_on {
+            self.ctx
+                .liquidation_engine
+                .build_from_lending_impact(&intent, &impact, cfg_snapshot.as_ref())
+                .await
+        } else {
+            Ok(vec![])
+        };
+        let liq_candidates = match liq_result {
             Ok(v) => {
                 for c in &v {
                     CANDIDATES_TOTAL
@@ -677,12 +717,18 @@ impl Orchestrator {
         base_candidates.extend(liq_candidates);
 
         // FlashloanEngine (Phase 10 — live): wrap net-positive base candidates.
+        // Skipped when ARBX_NATIVE_ENGINES=off (base_candidates is already empty
+        // in that mode, so wrapping is a no-op anyway — guarded to avoid the call).
         let flash_candidates = {
-            let wrapped = self.ctx.flashloan_engine.wrap_profitable_routes(
-                &base_candidates,
-                chain_id,
-                cfg_snapshot.as_ref(),
-            );
+            let wrapped = if native_on {
+                self.ctx.flashloan_engine.wrap_profitable_routes(
+                    &base_candidates,
+                    chain_id,
+                    cfg_snapshot.as_ref(),
+                )
+            } else {
+                Vec::new()
+            };
             // Count flashloan candidates — label comes from the candidate itself.
             for c in &wrapped {
                 CANDIDATES_TOTAL
