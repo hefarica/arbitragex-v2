@@ -84,6 +84,28 @@ pub async fn build_market_state(
 /// evidencia estructurada (observe-only). Devuelve el número de operadores que
 /// computaron un valor (para el log).
 #[allow(clippy::too_many_arguments)] // market-state inputs; bundle into a struct if it grows
+/// Evaluate a specific set of operators (by ID 1-31) against a MarketState —
+/// **strategy-keyed** evidence (Plan 264×31 matrix wiring step 2). Unlike
+/// `evaluate_math_evidence` (regime-keyed via `RegimeRouter`), this evaluates the
+/// operators a specific cartridge declares (`CartridgeMetadata.primary_operators`
+/// / `secondary_operators`), enabling per-strategy math evidence. R8 fail-honest:
+/// an operator that can't compute returns `None` (never fabricated).
+///
+/// Returns `(op_id, scalar_value, operator_name)` per requested operator.
+pub fn evaluate_strategy_operators(
+    state: &MarketState,
+    registry: &OperatorRegistry,
+    operator_ids: &[u32],
+) -> Vec<(u32, Option<f64>, String)> {
+    operator_ids
+        .iter()
+        .filter_map(|&id| {
+            let out = registry.dispatch(id, state)?;
+            Some((id, out.scalar_value, out.operator_name))
+        })
+        .collect()
+}
+
 pub async fn evaluate_math_evidence(
     reserves_cache: &Arc<ReservesCache>,
     registry: &OperatorRegistry,
