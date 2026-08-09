@@ -32,7 +32,7 @@
 use crate::amm_math::v2_amount_out;
 use crate::engines::StrategyCandidate;
 use crate::route_intent::RouteIntent;
-use crate::state_projector::{PoolRef, StateProjector};
+use crate::state_projector::{LegEval, LegQuote, PoolRef, RouteQuoteProvider, StateProjector};
 use crate::strategy_label::StrategyLabel;
 use crate::workers::triangular_worker::{clamp_to_cap_wei, evaluate_cycle, EvalInput};
 use ethers::types::{Address, U256};
@@ -1087,29 +1087,10 @@ impl SizeOptimizer {
     /// `Priced(0)` (real zero-yield) — never a fabricated number, and the caller
     /// classifies `V3QuoteUnavailable` vs `NonPositiveProfit` precisely.
     async fn eval_leg_out(&self, leg: &LegEval, amount_in: U256) -> LegQuote {
-        if amount_in.is_zero() {
-            return LegQuote::Priced(U256::zero());
-        }
-        match leg {
-            LegEval::V2 {
-                reserve_in,
-                reserve_out,
-                fee_bps,
-            } => LegQuote::Priced(v2_amount_out(
-                amount_in,
-                *reserve_in,
-                *reserve_out,
-                *fee_bps,
-            )),
-            LegEval::V3 { pool, zero_for_one } => match self
-                .state_projector
-                .project_v3_quote(pool, amount_in, *zero_for_one)
-                .await
-            {
-                Some(q) => LegQuote::Priced(q.amount_out),
-                None => LegQuote::Unavailable,
-            },
-        }
+        // Root 2C Phase 1: delegate to the protocol-agnostic RouteQuoteProvider
+        // (impl'd by StateProjector). V2 byte-identical (same `v2_amount_out`);
+        // V3 unchanged. The optimizer no longer inlines either protocol's math.
+        self.state_projector.quote_leg(leg, amount_in).await
     }
 
     // -----------------------------------------------------------------------
@@ -1277,31 +1258,9 @@ fn f64_to_u256_clamped(x: f64) -> U256 {
 /// V3 leg, so this directly bounds RPC per V3 candidate.
 const V3_BRACKET_POINTS: usize = 8;
 
-/// Per-leg evaluator resolved once before the sizing search, so the bracket
-/// loop never re-reads the cache / re-parses addresses.
-enum LegEval {
-    /// V2 CPMM leg — oriented cached reserves + fee (local, no RPC).
-    V2 {
-        reserve_in: U256,
-        reserve_out: U256,
-        fee_bps: u32,
-    },
-    /// V3 concentrated-liquidity leg — priced on-chain via QuoterV2.
-    V3 { pool: PoolRef, zero_for_one: bool },
-}
-
-/// Outcome of pricing one leg. R8 fail-honest: a real zero-yield (`Priced(0)`)
-/// is kept DISTINCT from a pricing failure (`Unavailable`) so the optimizer can
-/// emit `NonPositiveProfit` vs `V3QuoteUnavailable` accurately — never
-/// conflating "the quoter answered with 0" with "the quoter could not answer".
-enum LegQuote {
-    /// The leg was priced. V2 is always priced (local CPMM); V3 is `Priced`
-    /// when the on-chain quoter answered — the value may legitimately be 0.
-    Priced(U256),
-    /// A V3 leg could not be priced: provider absent, RPC failure, or pool
-    /// revert. V2 legs never produce this (local arithmetic always succeeds).
-    Unavailable,
-}
+// `LegEval` / `LegQuote` live in `state_projector.rs` (Root 2C Phase 1): they
+// are the protocol-neutral input/output of `RouteQuoteProvider::quote_leg`,
+// shared by the sizing kernels and (future) cartridges / the triangular V3 path.
 
 /// True when a route leg is a Uniswap-V3-style concentrated-liquidity pool.
 /// Matches the codebase's `protocol_type` spellings ("uniswap-v3",
@@ -1726,6 +1685,82 @@ mod tests {
         assert!(
             result.is_none(),
             "symmetric pools produce no profit — must return None"
+        );
+    }
+
+    // ── Root 2C Phase 1: RouteQuoteProvider V2 byte-identical regression ─────
+    //
+    // The V2 path behind StateProjector::quote_leg MUST equal amm_math::v2_amount_out
+    // exactly — this is the safety net for the protocol-agnostic quoting refactor.
+    // If a future change drifts the V2 quote, this fails before the optimizer does.
+    #[tokio::test]
+    async fn route_quote_v2_leg_matches_v2_amount_out() {
+        let cache = Arc::new(ReservesCache::new());
+        let projector = StateProjector::new(cache, None);
+        let rin = U256::from(1_000_000u64);
+        let rout = U256::from(2_000_000u64);
+        let leg = LegEval::V2 {
+            reserve_in: rin,
+            reserve_out: rout,
+            fee_bps: 30,
+        };
+        for amt in [
+            U256::from(1u64),
+            U256::from(1_000u64),
+            U256::from(1_000_000_000u64),
+            U256::from(10u128.pow(18)),
+        ] {
+            let direct = v2_amount_out(amt, rin, rout, 30);
+            assert_eq!(
+                projector.quote_leg(&leg, amt).await,
+                LegQuote::Priced(direct),
+                "V2 quote_leg must equal v2_amount_out for amt {amt}"
+            );
+        }
+        // zero amount → Priced(0), no reserves/RPC consulted.
+        assert_eq!(
+            projector.quote_leg(&leg, U256::zero()).await,
+            LegQuote::Priced(U256::zero())
+        );
+    }
+
+    // ── Root 2C Phase 1: quote_route folds legs; V3 Unavailable propagates ──
+    #[tokio::test]
+    async fn route_quote_route_folds_and_propagates_unavailable() {
+        let cache = Arc::new(ReservesCache::new());
+        let projector = StateProjector::new(cache, None);
+        // V2 → V2 route: out of leg0 feeds leg1. Compose by hand, compare exactly.
+        let legs = [
+            LegEval::V2 {
+                reserve_in: U256::from(1_000_000u64),
+                reserve_out: U256::from(2_000_000u64),
+                fee_bps: 30,
+            },
+            LegEval::V2 {
+                reserve_in: U256::from(2_000_000u64),
+                reserve_out: U256::from(1_000_000u64),
+                fee_bps: 30,
+            },
+        ];
+        let amt = U256::from(10u128.pow(18));
+        let mid = v2_amount_out(amt, U256::from(1_000_000u64), U256::from(2_000_000u64), 30);
+        let end = v2_amount_out(mid, U256::from(2_000_000u64), U256::from(1_000_000u64), 30);
+        assert_eq!(projector.quote_route(&legs, amt).await, Some(end));
+
+        // A V3 leg with no provider → Unavailable → route returns None (R8, no fabrication).
+        let v3_leg = LegEval::V3 {
+            pool: PoolRef {
+                address: Address::zero(),
+                token0: Address::zero(),
+                token1: Address::from_low_u64_be(1),
+                fee_bps: Some(500),
+            },
+            zero_for_one: true,
+        };
+        assert_eq!(
+            projector.quote_route(&[legs[0].clone(), v3_leg], amt).await,
+            None,
+            "V3 leg with no provider must propagate Unavailable, not fabricate"
         );
     }
 

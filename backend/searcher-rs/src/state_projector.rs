@@ -39,6 +39,7 @@
 //! Edge cases handled: zero reserves → None; zero amount_in → current reserves;
 //! token orientation (intent.token_in == pool.token1) → swap reserves before math.
 
+use crate::amm_math::v2_amount_out;
 use crate::engines::triangular_engine::ReservesCache;
 use crate::route_intent::RouteIntent;
 use ethers::types::{Address, U256};
@@ -467,6 +468,116 @@ impl StateProjector {
         Some(TriangularVirtualState {
             hops: projected_hops,
             all_hops_projected: all_projected,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RouteQuoteProvider — protocol-agnostic per-leg / per-route quoting
+// (Root 2C Phase 1). The SizeOptimizer searches a profit function built from
+// `quote_leg`; it never implements V2 CPMM or V3 tick math itself. V2 legs are
+// priced locally (reserves pre-fetched into `LegEval` + `amm_math::v2_amount_out`);
+// V3 legs via the existing `V3QuoteProvider` (QuoterV2). Future protocols add
+// variants/impls, not optimizer changes.
+// ---------------------------------------------------------------------------
+
+/// Per-leg quote descriptor — protocol-tagged. Resolved once before a sizing
+/// search so the per-probe quote never re-reads the cache / re-parses addresses.
+/// V2 carries oriented cached reserves (local CPMM); V3 carries the pool ref +
+/// direction (on-chain QuoterV2). This is the protocol-neutral input to
+/// `RouteQuoteProvider::quote_leg`.
+#[derive(Debug, Clone)]
+pub enum LegEval {
+    /// V2 CPMM leg — oriented cached reserves + fee (local, no RPC).
+    V2 {
+        reserve_in: U256,
+        reserve_out: U256,
+        fee_bps: u32,
+    },
+    /// V3 concentrated-liquidity leg — priced on-chain via QuoterV2.
+    V3 {
+        pool: PoolRef,
+        zero_for_one: bool,
+    },
+}
+
+/// Outcome of pricing one leg. R8 fail-honest: a real zero-yield (`Priced(0)`)
+/// stays DISTINCT from a pricing failure (`Unavailable`) so the optimizer can
+/// emit `NonPositiveProfit` vs `V3QuoteUnavailable` accurately — never
+/// conflating "the quoter answered with 0" with "the quoter could not answer".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegQuote {
+    /// The leg was priced. V2 is always priced (local CPMM); V3 is `Priced`
+    /// when the on-chain quoter answered — the value may legitimately be 0.
+    Priced(U256),
+    /// A V3 leg could not be priced: provider absent, RPC failure, or pool
+    /// revert. V2 legs never produce this (local arithmetic always succeeds).
+    Unavailable,
+}
+
+/// Protocol-agnostic quoting for sizing. The SizeOptimizer consumes this; it
+/// does NOT know V2 constant-product or V3 tick math. `quote_leg` prices one
+/// leg; `quote_route` composes a route (leg[i].out → leg[i+1].in). Uses
+/// `Pin<Box<dyn Future>>` for dyn-compatibility (same reason as `V3QuoteProvider`:
+/// RPITIT is not dyn-compatible).
+pub trait RouteQuoteProvider: Send + Sync {
+    /// Price one leg's output for `amount_in`. Returns `Priced(0)` for
+    /// `amount_in == 0` (no RPC for V3). R8: `Unavailable` ≠ `Priced(0)`.
+    fn quote_leg<'a>(
+        &'a self,
+        leg: &'a LegEval,
+        amount_in: U256,
+    ) -> Pin<Box<dyn Future<Output = LegQuote> + Send + 'a>>;
+
+    /// Compose a route: fold `quote_leg` across `legs` (leg[i].out → leg[i+1].in).
+    /// Returns the final `amount_out`, or `None` if any leg was `Unavailable`.
+    fn quote_route<'a>(
+        &'a self,
+        legs: &'a [LegEval],
+        amount_in: U256,
+    ) -> Pin<Box<dyn Future<Output = Option<U256>> + Send + 'a>> {
+        Box::pin(async move {
+            let mut amount = amount_in;
+            for leg in legs {
+                match self.quote_leg(leg, amount).await {
+                    LegQuote::Priced(out) => amount = out,
+                    LegQuote::Unavailable => return None,
+                }
+            }
+            Some(amount)
+        })
+    }
+}
+
+impl RouteQuoteProvider for StateProjector {
+    fn quote_leg<'a>(
+        &'a self,
+        leg: &'a LegEval,
+        amount_in: U256,
+    ) -> Pin<Box<dyn Future<Output = LegQuote> + Send + 'a>> {
+        Box::pin(async move {
+            if amount_in.is_zero() {
+                return LegQuote::Priced(U256::zero());
+            }
+            match leg {
+                LegEval::V2 {
+                    reserve_in,
+                    reserve_out,
+                    fee_bps,
+                } => LegQuote::Priced(v2_amount_out(
+                    amount_in,
+                    *reserve_in,
+                    *reserve_out,
+                    *fee_bps,
+                )),
+                LegEval::V3 { pool, zero_for_one } => match self
+                    .project_v3_quote(pool, amount_in, *zero_for_one)
+                    .await
+                {
+                    Some(q) => LegQuote::Priced(q.amount_out),
+                    None => LegQuote::Unavailable,
+                },
+            }
         })
     }
 }
