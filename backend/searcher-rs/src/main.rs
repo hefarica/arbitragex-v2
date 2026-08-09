@@ -669,6 +669,11 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(workers::price_worker::DEFAULT_PERIOD_SECS);
     let price_alchemy_key = workers::price_worker::alchemy_key_from_env(primary_chain);
+    // Coingecko Demo/Pro key (optional). When set, fetch_coingecko attaches the
+    // x-cg-demo-api-key header (free tier now 400s unauth). Plan A.2 code-gap.
+    let price_coingecko_key = std::env::var("COINGECKO_API_KEY")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
     let price_redis = redis_conn.clone();
     let price_chain = primary_chain;
     // Tier-0 Chainlink on-chain feeds: needs the PG pool (reads operator-seeded
@@ -686,6 +691,7 @@ async fn main() -> anyhow::Result<()> {
         if let (Some(db), Some(url)) = (price_db, price_rpc_url) {
             cfg = cfg.with_chainlink(db, url);
         }
+        cfg.coingecko_api_key = price_coingecko_key;
         match workers::price_worker::PriceWorker::new(cfg) {
             Ok(worker) => worker.run(price_redis).await,
             Err(e) => warn!(event = "price_worker.boot_failed", chain_id = price_chain, error = %e),

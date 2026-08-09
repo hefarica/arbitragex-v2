@@ -271,6 +271,10 @@ pub struct PriceWorkerConfig {
     pub alchemy_api_key: Option<String>,
     /// Override for the Coingecko base URL (tests inject wiremock URL here).
     pub coingecko_base_url_override: Option<String>,
+    /// Optional Coingecko Demo/Pro API key. When set, `fetch_coingecko` attaches
+    /// the `x-cg-demo-api-key` header so the call is authenticated (the free
+    /// tier now 400s unauthenticated calls). `None` → current unauth behavior.
+    pub coingecko_api_key: Option<String>,
     /// Tier-0 Chainlink source. `db_pool` reads operator-seeded `price_oracles`
     /// (kind='chainlink', enabled); `rpc_http_url` is the chain's HTTP RPC for
     /// `eth_call latestRoundData()`. Both must be present to enable the tier;
@@ -287,6 +291,7 @@ impl PriceWorkerConfig {
             alchemy_base_url_override: None,
             alchemy_api_key,
             coingecko_base_url_override: None,
+            coingecko_api_key: None,
             db_pool: None,
             rpc_http_url: None,
         }
@@ -756,16 +761,16 @@ impl PriceWorker {
             None => coingecko_prices_url(platform),
         };
         let addresses: Vec<String> = tokens.iter().map(|t| t.address_lower.clone()).collect();
-        let resp = self
-            .http
-            .get(&base)
-            .query(&[
-                ("contract_addresses", addresses.join(",")),
-                ("vs_currencies", "usd".to_string()),
-            ])
-            .send()
-            .await?
-            .error_for_status()?;
+        let mut request = self.http.get(&base).query(&[
+            ("contract_addresses", addresses.join(",")),
+            ("vs_currencies", "usd".to_string()),
+        ]);
+        // Coingecko's free tier now 400s unauthenticated calls. Attach the Demo
+        // key header when configured (Plan A.2 code-gap). No key → unchanged.
+        if let Some(key) = &self.cfg.coingecko_api_key {
+            request = request.header("x-cg-demo-api-key", key);
+        }
+        let resp = request.send().await?.error_for_status()?;
         // Coingecko response: {"0xabc...": {"usd": 1234.5}, ...}
         let parsed: HashMap<String, HashMap<String, f64>> = resp.json().await?;
 
