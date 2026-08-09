@@ -3028,7 +3028,11 @@ mod tests {
             // For V3 legs `fee_bps` holds the fee tier in MILLIONTHS (500 =
             // 0.05%), which is exactly the `fee_pips` the within-tick math wants.
             let out = crate::amm_math::v3_amount_out_single_tick(
-                amount_in, sp, liq, fee_bps, zero_for_one,
+                amount_in,
+                sp,
+                liq,
+                fee_bps,
+                zero_for_one,
             );
             Box::pin(async move { Ok(out) })
         }
@@ -3160,7 +3164,10 @@ mod tests {
                 assert!(s.estimated_net_profit_usd > 0.0, "net must be positive");
             }
             OptimizeOutcome::Rejected(r) => {
-                panic!("expected Sized for spA>spB profitable curve, got {}", r.as_str())
+                panic!(
+                    "expected Sized for spA>spB profitable curve, got {}",
+                    r.as_str()
+                )
             }
         }
     }
@@ -3271,9 +3278,7 @@ mod tests {
         );
         // The grid was SKIPPED: the QuoterV2 mock was never called.
         assert_eq!(
-            provider
-                .calls
-                .load(std::sync::atomic::Ordering::Relaxed),
+            provider.calls.load(std::sync::atomic::Ordering::Relaxed),
             0,
             "early-reject must skip all QuoterV2 probes (0 mock calls)"
         );
