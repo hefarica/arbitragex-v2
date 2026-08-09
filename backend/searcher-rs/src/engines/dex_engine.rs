@@ -400,7 +400,8 @@ impl DexEngine {
         // causing the no_price_oracle pre-rejection flood (45/62 pools are V3).
         let spread_f64 = u256_to_f64_lossy(spread) / 1e18_f64;
         let token_out = intent.legs.first().map(|l| l.token_out);
-        let price_usd = canonical_token_price_usd(token_out, cfg.base_token_price_usd)?;
+        let price_usd =
+            canonical_token_price_usd(token_out, cfg.base_token_price_usd, &cfg.token_prices_usd)?;
         Some(spread_f64 * price_usd)
     }
 
@@ -551,29 +552,76 @@ fn compute_gross_usd(
     // 3578 USDC spread → $10.7M). Stables ≈ $1; WETH = operator base price;
     // any other token → None (R8) so the SizeOptimizer/evaluator re-prices it
     // from live Redis downstream. This is a fast-filter proxy only.
-    let price_usd = canonical_token_price_usd(token_out, cfg.base_token_price_usd)?;
+    let price_usd =
+        canonical_token_price_usd(token_out, cfg.base_token_price_usd, &cfg.token_prices_usd)?;
     Some(spread_f64 * price_usd)
 }
 
 /// Canonical verified USD price for a known mainnet token, for the
-/// `compute_gross_usd` fast-filter. Immutable contract knowledge only: stables
-/// ≈ $1 (depeg-aware pricing is the SizeOptimizer/evaluator's job), WETH uses
-/// the operator's base price. Any other token → `None` (R8: let the downstream
-/// live-Redis pricer compute it; NEVER apply the WETH price to a non-WETH
-/// token — that was the $10.7M flashloan unit-scale bug).
-fn canonical_token_price_usd(token: Option<Address>, base_token_price_usd: f64) -> Option<f64> {
+/// `compute_gross_usd` / `compute_v3_gross_usd` fast-filter. Checks:
+/// 1. Stables (USDC/USDT/DAI) → $1 (canonical, no lookup).
+/// 2. Canonical tokens → LIVE Redis price (DexScreener/Chainlink/GeckoTerminal)
+///    from `token_prices_usd` (merged by the orchestrator before engine fan-out).
+/// 3. WETH fallback → `base_token_price_usd` if configured.
+/// 4. Else → None (R8: unpriced, NEVER fabricate).
+fn canonical_token_price_usd(
+    token: Option<Address>,
+    base_token_price_usd: f64,
+    token_prices_usd: &std::collections::HashMap<String, f64>,
+) -> Option<f64> {
     let addr = token?;
-    let price = match format!("0x{:040x}", addr).as_str() {
-        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" => base_token_price_usd, // WETH
-        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" => 1.0,                  // USDC
-        "0xdac17f958d2ee523a2206206994597c13d831ec7" => 1.0,                  // USDT
-        "0x6b175474e89094c44da98b954eedeac495271d0f" => 1.0,                  // DAI
-        _ => return None, // R8: unknown token — downstream pricer handles it.
-    };
-    if price > 0.0 {
-        Some(price)
-    } else {
-        None
+    let addr_str = format!("0x{:040x}", addr);
+    // Stables = $1 (canonical, no lookup needed).
+    match addr_str.as_str() {
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" | // USDC
+        "0xdac17f958d2ee523a2206206994597c13d831ec7" | // USDT
+        "0x6b175474e89094c44da98b954eedeac495271d0f" => return Some(1.0), // DAI
+        _ => {}
+    }
+    // Canonical tokens: look up the LIVE Redis price (DexScreener/Chainlink/
+    // GeckoTerminal) merged into token_prices_usd. Uses REAL market price.
+    if let Some(sym) = canonical_token_symbol(&addr_str) {
+        let sym_upper = sym.to_uppercase();
+        if let Some(&p) = token_prices_usd.get(&sym_upper) {
+            if p > 0.0 {
+                return Some(p);
+            }
+        }
+    }
+    // WETH fallback: base_token_price_usd if configured (>0).
+    if addr_str == "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" && base_token_price_usd > 0.0 {
+        return Some(base_token_price_usd);
+    }
+    None // R8: unpriced (no stable, no Redis price, no config)
+}
+
+/// Map a canonical mainnet token address → its symbol (for Redis price lookup).
+fn canonical_token_symbol(addr: &str) -> Option<&'static str> {
+    match addr {
+        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" => Some("WETH"),
+        "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599" => Some("WBTC"),
+        "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984" => Some("UNI"),
+        "0x514910771af9ca656af840dff83e8264ecf986ca" => Some("LINK"),
+        "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9" => Some("AAVE"),
+        "0x6982508145454ce325ddbe47a25d4ec3d2311933" => Some("PEPE"),
+        "0x4d224452801aced8b2f0aebe155379bb5d594381" => Some("APE"),
+        "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce" => Some("SHIB"),
+        "0x9f8f72aa9304c8b593d555f12ef6589cc3a579a2" => Some("MKR"),
+        "0xd533a949740bb3306d119cc777fa900ba034cd52" => Some("CRV"),
+        "0xc18360217d8f7ab5e7c516566761ea12ce7f9d72" => Some("ENS"),
+        "0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0" => Some("MATIC"),
+        "0x853d955acef822db058eb8505911ed77f175b99e" => Some("FRAX"),
+        "0xc00e94cb662c3520282e6f5717214004a7f26888" => Some("COMP"),
+        "0x5a98fcbea516cf06857215779fd812ca3bef1b32" => Some("LDO"),
+        "0x6b3595068778dd592e39a122f4f5a5cf09c90fe2" => Some("SUSHI"),
+        "0xba100000625a3754423978a60c9317c58a424e3d" => Some("BAL"),
+        "0x0bc529c00c6401aef6d220be8c6ea1667f6ad93e" => Some("YFI"),
+        "0x111111111117dc0aa78b770fa6a738034120c302" => Some("1INCH"),
+        "0x4e3fbd56cd56c3e72c1403e103b45db9da5b9d2b" => Some("CVX"),
+        "0x3432b6a60d23ca0dfca7761b7ab56459d9c964d0" => Some("FXS"),
+        "0xc011a73ee8576fb46f5e1c5751ca3b9fe0af2a6f" => Some("SNX"),
+        "0xc944e90c64b2c07662a292be6244bdf05cda44a7" => Some("GRT"),
+        _ => None,
     }
 }
 

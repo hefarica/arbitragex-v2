@@ -546,6 +546,24 @@ impl Orchestrator {
         let mut cfg_snapshot: Option<TradingConfigState> =
             self.ctx.config_provider.snapshot(chain_id).await;
 
+        // Root-2B (moved BEFORE engine fan-out): merge live Redis per-token prices
+        // (DexScreener/Chainlink/GeckoTerminal — 297 entries) into the config
+        // snapshot so the dex_engine can price tokens via canonical_token_price_usd.
+        // Without this, base_token_price_usd=0 → all V3 pairs pre-rejected as
+        // no_price_oracle regardless of available DexScreener prices.
+        {
+            let mut redis_conn = self.ctx.math_redis.clone();
+            let redis_prices =
+                RedisCachedPriceOracle::snapshot_from_redis(&mut redis_conn, chain_id)
+                    .await
+                    .into_snapshot();
+            if let Some(ref mut cfg) = cfg_snapshot {
+                for (sym, price) in &redis_prices {
+                    cfg.token_prices_usd.insert(sym.clone(), *price);
+                }
+            }
+        }
+
         // ── TASK 1 log #4: v2.config.snapshot ────────────────────────────
         info!(
             event = "v2.config.snapshot",
