@@ -1,24 +1,24 @@
 import React from "react";
+import { familyOf, familyColour, isBaseStrategy } from "@/lib/strategy-kinds";
 
 /**
- * StrategyBadge.tsx — Pure display component for resolution engine kind labels.
+ * StrategyKind is now `string` — accepts any strategy_kind value from the
+ * backend (5 base + 264 cartridge IDs). Kept as a named export for backward
+ * compat with files that import `{ StrategyKind }` from this module.
+ */
+export type StrategyKind = string;
+
+/**
+ * StrategyBadge.tsx — Pure display component for strategy kind labels.
  *
- * OMEGA Lexicón: All labels use the QuantumX academic terminology.
- * Backend field names (strategy_kind values) are preserved in props/state
- * but NEVER displayed raw to the operator.
+ * Renders ALL 269 strategy kinds (5 base + 264 cartridges). Base kinds get
+ * their canonical label/colour; cartridge kinds get their MEV family prefix
+ * (e.g., "MEV-01") with a family-coloured badge.
  *
  * R1 Mounted Snapshot compliance:
  *   - No Date.now(), no Math.random(), no window/document, no hooks.
  *   - SSR render === CSR render. Zero hydration risk.
  */
-
-/** Mirrors StrategyKind from shared-ts/src/contracts/index.ts — no cross-package import. */
-export type StrategyKind =
-  | "dex_arb"
-  | "triangular"
-  | "backrun"
-  | "liquidation"
-  | "flashloan_arb";
 
 interface StrategyMeta {
   label: string;
@@ -27,60 +27,67 @@ interface StrategyMeta {
 }
 
 /**
- * Exhaustive map: Record<StrategyKind, StrategyMeta>.
- * TypeScript enforces all 5 keys are present.
- * OMEGA Lexicón applied to all display labels.
+ * Base 5 strategies — exhaustive map with canonical OMEGA labels.
  */
-const STRATEGY_MAP: Record<StrategyKind, StrategyMeta> = {
+const STRATEGY_MAP: Record<string, StrategyMeta> = {
   dex_arb: {
     label: "DEX CONVERGENCE",
-    className:
-      "bg-primary/10 text-primary border border-primary/30",
+    className: "bg-primary/10 text-primary border border-primary/30",
   },
   triangular: {
     label: "TRIANGULAR RESOLUTION",
-    className:
-      "bg-accent text-accent-foreground border border-border",
+    className: "bg-accent text-accent-foreground border border-border",
   },
   backrun: {
     label: "TEMPORAL BACKRUN",
-    className:
-      "bg-warning/10 text-warning border border-warning/30",
+    className: "bg-warning/10 text-warning border border-warning/30",
   },
   liquidation: {
     label: "ENTROPY LIQUIDATION",
-    className:
-      "bg-destructive/10 text-destructive border border-destructive/30",
+    className: "bg-destructive/10 text-destructive border border-destructive/30",
   },
   flashloan_arb: {
     label: "FLASH CONVERGENCE",
-    className:
-      "bg-info/10 text-info border border-info/30",
+    className: "bg-info/10 text-info border border-info/30",
   },
 };
 
 export interface StrategyBadgeProps {
-  strategy_kind: StrategyKind;
+  /** Accepts any strategy_kind string — base families + 264 cartridge IDs. */
+  strategy_kind: string;
 }
 
 export function StrategyBadge({ strategy_kind }: StrategyBadgeProps) {
-  const meta = STRATEGY_MAP[strategy_kind];
+  // Base 5: use canonical label/colour.
+  if (isBaseStrategy(strategy_kind)) {
+    const meta = STRATEGY_MAP[strategy_kind];
+    if (meta) {
+      return (
+        <span
+          className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wide ${meta.className}`}
+        >
+          {meta.label}
+        </span>
+      );
+    }
+  }
 
-  // meta can only be undefined at runtime if an unknown string slips past TypeScript.
-  // Defensive fallback per R8 fail-honest: surface the raw value, never hide it.
-  if (!meta) {
+  // Cartridge (264): show MEV family prefix with family-coloured badge.
+  if (strategy_kind.startsWith("mev_") || strategy_kind.startsWith("cartridge_")) {
+    const fam = familyOf(strategy_kind);
     return (
-      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wide bg-muted/60 text-muted-foreground border border-border">
-        {String(strategy_kind)}
+      <span
+        className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wide ${familyColour(strategy_kind)}`}
+      >
+        {fam}
       </span>
     );
   }
 
+  // R8 fail-honest: unknown kind — surface the raw value, never hide it.
   return (
-    <span
-      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wide ${meta.className}`}
-    >
-      {meta.label}
+    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wide bg-muted/60 text-muted-foreground border border-border">
+      {String(strategy_kind)}
     </span>
   );
 }

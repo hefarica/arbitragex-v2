@@ -14,12 +14,8 @@ interface TokenInfo {
   resolved_via: "onchain_full" | "onchain_partial" | "trustwallet_only" | "failed";
 }
 
-type StrategyKind =
-  | "dex_arb"
-  | "triangular"
-  | "backrun"
-  | "liquidation"
-  | "flashloan_arb";
+/** Accepts any strategy_kind (5 base + 264 cartridge IDs). */
+type StrategyKind = string;
 
 type OpportunityStatus =
   | "detected"
