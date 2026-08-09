@@ -738,9 +738,10 @@ impl Orchestrator {
         // sizing onward. R8: empty snapshot → no-op (no fabrication).
         {
             let mut redis_conn = self.ctx.math_redis.clone();
-            let redis_prices = RedisCachedPriceOracle::snapshot_from_redis(&mut redis_conn, chain_id)
-                .await
-                .into_snapshot();
+            let redis_prices =
+                RedisCachedPriceOracle::snapshot_from_redis(&mut redis_conn, chain_id)
+                    .await
+                    .into_snapshot();
             if let Some(ref mut cfg) = cfg_snapshot {
                 for (sym, price) in &redis_prices {
                     cfg.token_prices_usd.insert(sym.clone(), *price);

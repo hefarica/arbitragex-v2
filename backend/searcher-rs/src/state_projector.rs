@@ -495,10 +495,7 @@ pub enum LegEval {
         fee_bps: u32,
     },
     /// V3 concentrated-liquidity leg — priced on-chain via QuoterV2.
-    V3 {
-        pool: PoolRef,
-        zero_for_one: bool,
-    },
+    V3 { pool: PoolRef, zero_for_one: bool },
 }
 
 /// Outcome of pricing one leg. R8 fail-honest: a real zero-yield (`Priced(0)`)
@@ -570,13 +567,12 @@ impl RouteQuoteProvider for StateProjector {
                     *reserve_out,
                     *fee_bps,
                 )),
-                LegEval::V3 { pool, zero_for_one } => match self
-                    .project_v3_quote(pool, amount_in, *zero_for_one)
-                    .await
-                {
-                    Some(q) => LegQuote::Priced(q.amount_out),
-                    None => LegQuote::Unavailable,
-                },
+                LegEval::V3 { pool, zero_for_one } => {
+                    match self.project_v3_quote(pool, amount_in, *zero_for_one).await {
+                        Some(q) => LegQuote::Priced(q.amount_out),
+                        None => LegQuote::Unavailable,
+                    }
+                }
             }
         })
     }

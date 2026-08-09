@@ -564,12 +564,16 @@ fn canonical_token_price_usd(token: Option<Address>, base_token_price_usd: f64) 
     let addr = token?;
     let price = match format!("0x{:040x}", addr).as_str() {
         "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" => base_token_price_usd, // WETH
-        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" => 1.0, // USDC
-        "0xdac17f958d2ee523a2206206994597c13d831ec7" => 1.0, // USDT
-        "0x6b175474e89094c44da98b954eedeac495271d0f" => 1.0, // DAI
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" => 1.0,                  // USDC
+        "0xdac17f958d2ee523a2206206994597c13d831ec7" => 1.0,                  // USDT
+        "0x6b175474e89094c44da98b954eedeac495271d0f" => 1.0,                  // DAI
         _ => return None, // R8: unknown token — downstream pricer handles it.
     };
-    if price > 0.0 { Some(price) } else { None }
+    if price > 0.0 {
+        Some(price)
+    } else {
+        None
+    }
 }
 
 /// Canonical mainnet (chain_id=1) token decimals. These are IMMUTABLE contract

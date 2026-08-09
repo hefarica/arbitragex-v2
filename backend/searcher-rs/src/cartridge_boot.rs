@@ -1204,10 +1204,7 @@ pub async fn active_evaluate_and_emit(
                             let mut opp = strategy_candidate.opportunity.clone();
                             opp.rejection_reason = Some(reason_str.clone());
                             opp.expected_profit_usd = None;
-                            if let Err(e) = emitter
-                                .emit_rejected(&opp, label, &reason_str)
-                                .await
-                            {
+                            if let Err(e) = emitter.emit_rejected(&opp, label, &reason_str).await {
                                 warn!(
                                     event = "cartridge.emit_rejected_failed",
                                     chain_id,
