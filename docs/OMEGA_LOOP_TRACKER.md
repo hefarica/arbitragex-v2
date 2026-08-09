@@ -1,16 +1,15 @@
 # OMEGA LOOP — Tracker de Corrección Total (ArbitrageX v2)
 
-Fuente de verdad: `Auditoria_Frontend_ArbitrageX_v2.md` (19 anomalías). Regla: solo el agente mueve un ID a CLOSED con evidencia.
+Fuente de verdad: `Auditoria_Frontend_ArbitrageX_v2.md` (19 anomalías: A-01…A-03, B-01…B-04, C-01…C-07, D-01…D-05).
+Regla: solo el agente mueve un ID a CLOSED, y solo con evidencia pegada (curl / log / screenshot).
 
-> Ramas: el loop avanza por fases en ramas separadas que se mergean a `main`. A-01=`fix/omega-loop-a01` (634e414c); FASE0+A-03=`fix/omega-loop-fase0-a03` (f0319a58); B-01=`fix/omega-loop-b01` (este commit). Reconciliar este archivo al mergear.
-
-| ID | Estado | Commit / Rama | Evidencia de cierre | Fecha |
+| ID | Estado | Commit | Evidencia de cierre | Fecha |
 |---|---|---|---|---|
-| A-01 | CLOSED | `634e414c` `fix/omega-loop-a01` | SSR token removido; client-side + gate; edge redacción IP/48 + SHA-256 actor. Anónimo → gate, 0 emails/IPs (playwright). Edge worker tsc 0 errores. Deploy worker pendiente para vista con sesión. | 2026-08-09 |
-| FASE0 | CLOSED | `f0319a58` `fix/omega-loop-fase0-a03` | Contract test `lib/schemas.defi-contract.test.ts` (6/6): acepta payload real, rechaza drift `dex/active`. Zod endurecido. | 2026-08-09 |
-| A-03 | CLOSED | `f0319a58` `fix/omega-loop-fase0-a03` | `/pools` contrato alineado (`dex_name`/`is_active`); en vivo → 61 pools, 61 ACTIVE, 0 DISABLED, DEX real. `/chains` sin `rpc_url` → columna RPC removida. tsc/eslint limpio. | 2026-08-09 |
-| B-01 | CLOSED | _(este commit)_ `fix/omega-loop-b01` | Web3Provider removido del layout raíz; montado solo en `app/wallet/layout.tsx`. En vivo: STATUS_WC_COUNT=0, HOME_WC_COUNT=0 (0 calls walletconnect.org en páginas no-wallet); /wallet renderiza. tsc/eslint limpio. | 2026-08-09 |
+| A-01 | WIP | _pendiente commit (rama `fix/omega-loop-a01`)_ | tsc frontend limpio (solo ssh2 ambient pre-existente) + eslint limpio + edge worker `tsc --noEmit` **0 errores**; gate anónimo verificado in-vivo (ver abajo). Deploy del edge pendiente confirmación operador. | 2026-08-09 |
 | A-02 | OPEN | — | — | — |
+| A-03 | OPEN | — | — | — |
+| FASE0 | OPEN | — | — | — |
+| B-01 | OPEN | — | — | — |
 | B-02 | OPEN | — | — | — |
 | B-03 | OPEN | — | — | — |
 | B-04 | OPEN | — | — | — |
@@ -19,22 +18,24 @@ Fuente de verdad: `Auditoria_Frontend_ArbitrageX_v2.md` (19 anomalías). Regla: 
 
 ---
 
-## B-01 — WalletConnect placeholder degrada las 56 páginas (🔴 P1)
+## A-01 — `/audit-logs` expone el registro administrativo sin autenticación (🔴 P0)
 
-**Causa raíz (confirmada en código):** el layout raíz (`app/layout.tsx`) envolvía TODA la app en `<Web3Provider>` (wagmi + react-query + RainbowKit). `getWagmiConfig()` usa `walletConnectProjectId() ?? "walletconnect_project_id_missing"` → con el projectId ausente, el conector WalletConnect llama a `walletconnect.org` en CADA página (2 requests → `ERR_CONNECTION_RESET`), retardando la hidratación 7-12s y causando el falso `0/4 LOCKED`.
+**Causa raíz (confirmada en código):** `frontend/app/audit-logs/page.tsx` era un Server Component SSR que llamaba `getAuditLogs()`, la cual en SSR inyectaba `process.env.ARBX_ADMIN_TOKEN` como header `x-arbx-admin-token` (`frontend/lib/api-client.ts:546-559` versión previa). El edge `/admin/audit` **sí** exige admin (401 sin token/cookie — `edge/worker/src/index.ts:764-766`), pero el SSR se autenticaba con el token del servidor y servía las filas a cualquier visitante.
 
-**Corrección (audit opción 2 — aislar Web3):**
-- `app/layout.tsx`: removido `Web3Provider` + el plumbing de cookie/`headers()` (solo wagmi lo necesitaba).
-- `app/wallet/layout.tsx` (nuevo): monta `Web3Provider` solo en la ruta `/wallet` (la única superficie que conecta wallet), con la hidratación SSR via cookie.
-- Blast radius verificado: SiteHeader/AppSidebar/nav-items/SystemGuardBanner/OpportunityTicker **no** usan wagmi/wallet; omega-s5 tampoco. Solo `app/wallet/*`.
+**Corrección aplicada (rama `fix/omega-loop-a01`):**
+1. `getAuditLogs()` ahora autentica **solo** vía cookie httpOnly (`credentials: "include"` que ya envía `getValidated`); se eliminó el fallback de token SSR.
+2. `/audit-logs` → Server Component fino que reenvía `searchParams` a `AuditLogsClient` (client). Sin sesión → **gate admin** (nunca filas); con sesión → filas.
+3. Edge `/admin/audit` (worker) → redacción PII en la **respuesta** (el store append-only queda intacto): `ip_address` → `/48` (v6) o `/24` (v4); `actor` → SHA-256 (12 hex). `dev-local` dejado intacto (usa `adminProxy` compartido; no es producción).
 
 **Verificación:**
-- L1: `tsc --noEmit` 0 errores en B-01 (sin errores en layout/wallet/Web3Provider); `eslint` limpio.
-- L3 (en vivo, python playwright): `STATUS_WC_COUNT=0`, `HOME_WC_COUNT=0` (cero requests a walletconnect.org en /status y /); `WALLET_BODY_LEN=2658` (/wallet sigue renderizando con Web3).
+- L1 (unidad/compilación): frontend `tsc --noEmit` — 0 errores en archivos tocados (solo el ambient `ssh2` pre-existente del `node_modules` roto); `eslint` limpio. Edge worker `tsc --noEmit -p tsconfig.json` — **0 errores**.
+- L3 (en vivo, anónimo, verificado 2026-08-09): `python playwright` contra dev local (edge real) → `STATE=[data-testid="audit-logs-gate"]`, `GATE_VISIBLE=True`, `EMAILS_FOUND=[]`, `IPV6_FOUND=[]`. Sin sesión → gate, cero filas/IPs/emails.
+- L4 (regresión): pendiente barrido de 10 páginas.
 
-**Criterio de aceptación (§4 B-01):**
-- [x] Ninguna página carga walletconnect.org excepto /wallet (y omega-s5 que conecten wallet — ninguna lo hace hoy).
-- [x] Sin `ERR_CONNECTION_RESET` en consola de páginas no-wallet.
-- [ ] Provisionar `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` real queda como follow-up del operador (el self-test ya lo flaggea); el fix estructural (aislar Web3) cura la degradación global aunque el ID siga ausente.
+**Criterio de aceptación (§4):**
+- [x] Anónimo → sin filas/IPs/emails (gate).
+- [ ] Con sesión admin → filas con IP `/48` y actor hasheado — **requiere deploy del worker** (la redacción corre en el edge; el worker desplegado aún es el viejo). Pendiente confirmación de deploy.
 
-**NO se tocó:** wagmiConfig (sigue fail-honest con placeholder), el hot-path, kill-switch, radar de rutas, doctrina honesta.
+**Riesgo residual:** `hashActor` es SHA-256 **sin salt** (pseudónimo de renderizado consistente). Para redacción irreversible de identificadores de baja entropía (emails), usar HMAC con clave en la fuente de escritura (follow-up).
+
+**NO se tocó:** el store append-only, el kill-switch, el radar de rutas, `pmiCalculator.ts`, la doctrina de estados honestos.

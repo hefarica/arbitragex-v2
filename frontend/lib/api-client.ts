@@ -550,12 +550,13 @@ export function getAuditLogs(limit = 50, cursor?: string, action?: string, actor
   if (action) url.searchParams.set("action", action);
   if (actor) url.searchParams.set("actor", actor);
   if (targetKind) url.searchParams.set("target_kind", targetKind);
-  // V-AT-2: SSR server components cannot rely on the httpOnly cookie (no browser
-  // session). Pass the admin token from the server-side env var so the edge
-  // adminProxy authenticates via x-arbx-admin-token header.
-  const adminToken = typeof window === "undefined" ? process.env.ARBX_ADMIN_TOKEN : undefined;
-  const extraHeaders: Record<string, string> = adminToken ? { "x-arbx-admin-token": adminToken } : {};
-  return getValidated(url.pathname + url.search, S.AuditLogsResponseSchema, { extraHeaders });
+  // A-01 (security): admin-gated reads authenticate ONLY via the
+  // arbx_admin_session httpOnly cookie — getValidated sends
+  // credentials: "include", so the browser attaches the cookie automatically.
+  // The previous SSR fallback injected process.env.ARBX_ADMIN_TOKEN as
+  // x-arbx-admin-token, which made /audit-logs serve admin rows (IPs + emails)
+  // to anonymous visitors. That path is removed; callers must run client-side.
+  return getValidated(url.pathname + url.search, S.AuditLogsResponseSchema);
 }
 
 // ─────── DeFi data (via edge proxy → api-server defiRouter) ───────
