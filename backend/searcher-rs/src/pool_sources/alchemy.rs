@@ -112,10 +112,13 @@ const DEFAULT_LOOKBACK_BLOCKS: u64 = 7_200;
 /// Hard cap on creation logs processed per factory per tick (anti-hammer).
 const MAX_LOGS_PER_FACTORY: usize = 200;
 
-/// Extract the pool/pair address from a creation log. For both V2 `PairCreated`
-/// and V3 `PoolCreated`, the newly created pool is the LAST (non-indexed) 32-byte
-/// word's low 20 bytes of the log data. token0/token1 are the first two indexed
-/// topics.
+/// Extract the pool/pair address from a creation log. token0/token1 are the
+/// first two indexed topics. The pool address word differs by protocol:
+///   - V2 `PairCreated(address indexed token0, address indexed token1, address pair, uint256 allPairsLength)`:
+///     `pair` is the FIRST non-indexed data word; the LAST word is `allPairsLength`
+///     (a counter) — reading it yields garbage counter-as-address (Plan C.2 bug).
+///   - V3 `PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)`:
+///     `pool` is the LAST non-indexed data word.
 fn parse_creation_log(
     log: &alloy::rpc::types::Log,
     is_v3: bool,
@@ -130,10 +133,13 @@ fn parse_creation_log(
     if data.len() < 32 {
         return None;
     }
-    // The created pool address is the low 20 bytes of the LAST 32-byte word.
-    let pool_word = &data[data.len() - 32..];
+    // V2: pool is the FIRST data word; V3: pool is the LAST data word.
+    let pool_word = if is_v3 {
+        &data[data.len() - 32..]
+    } else {
+        &data[0..32]
+    };
     let pool = format!("{:#x}", Address::from_slice(&pool_word[12..]));
-    let _ = is_v3;
     Some((pool, token0, token1))
 }
 
