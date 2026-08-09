@@ -417,7 +417,7 @@ impl DexEngine {
         projector: &StateProjector,
         intent: &RouteIntent,
     ) -> Option<U256> {
-        // Only called for V3 pools. V2 uses real reserves in the caller.
+        // V3 pools: virtual quote via state_projector.
         if matches!(pool.protocol_type, ProtocolType::V3) {
             let intent_token_in = intent.legs.first().map(|l| l.token_in).unwrap_or_default();
             let zero_for_one = intent_token_in == pool.token0 || intent_token_in == Address::zero();
@@ -432,9 +432,17 @@ impl DexEngine {
                 .await
                 .map(|q| q.amount_out)
         } else {
-            // V2 pools should never reach here — handled via ReservesCache in caller.
-            // Return None (R8: no fabrication).
-            None
+            // V2 / Curve / Balancer: quote via REAL reserves from the cache.
+            // J-5 fix (2026-08-09): `compute_v3_gross_usd` calls this on BOTH
+            // pools of a mixed V2-V3 pair. The prior `None` return for non-V3
+            // pools made the `out_a?`/`out_b?` short-circuit reject EVERY
+            // mixed V2-V3 pair as `no_price_oracle` (the V2 leg never quoted).
+            // Reserves miss → None (R8: no fabrication), same as the pure-V2
+            // path which already emits `reserves_cache_miss` upstream.
+            let (r0, r1) = self.reserves_cache.get(&pool.address).await?;
+            let (r_in, r_out) = orient_reserves((r0, r1), pool, intent);
+            let fee = pool.fee_bps.unwrap_or(30);
+            Some(amm_math::v2_amount_out(probe_amount, r_in, r_out, fee))
         }
     }
 }
