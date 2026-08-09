@@ -29,7 +29,7 @@
 //!   are always strictly positive.
 //! - Never inflates profit by more than available reserves allow.
 
-use crate::amm_math::v2_amount_out;
+use crate::amm_math::{v2_amount_out, v3_amount_out_single_tick};
 use crate::engines::StrategyCandidate;
 use crate::route_intent::RouteIntent;
 use crate::state_projector::{LegEval, LegQuote, PoolRef, RouteQuoteProvider, StateProjector};
@@ -38,7 +38,9 @@ use crate::workers::triangular_worker::{clamp_to_cap_wei, evaluate_cycle, EvalIn
 use ethers::types::{Address, U256};
 use prioritization_spine::route_plan::RouteLeg;
 use shared_rs::trading_config::TradingConfigState;
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::debug;
 
 // ---------------------------------------------------------------------------
@@ -199,6 +201,61 @@ pub struct SizedCandidate {
 }
 
 // ---------------------------------------------------------------------------
+// V3 slot0 cache — local within-tick upper bound for the 0-RPC early-reject
+// (Plan B.1). Optional: when absent the optimizer falls through to the grid.
+// ---------------------------------------------------------------------------
+
+/// Local V3 slot0 snapshot — `sqrtPriceX96` + active liquidity — parsed to
+/// native `U256` for direct use by `amm_math::v3_amount_out_single_tick`.
+/// Mirrors `reserves::V3Slot0Entry` (which holds decimal strings for JSON) but
+/// in the numeric form the within-tick math consumes.
+#[derive(Debug, Clone, Copy)]
+pub struct V3Slot0Snapshot {
+    /// sqrtPriceX96 from `slot0()` (uint160).
+    pub sqrt_price_x96: U256,
+    /// Active liquidity at the current tick from `liquidity()` (uint128).
+    pub liquidity: U256,
+}
+
+/// In-memory V3 slot0 cache keyed by pool address. Mirrors `ReservesCache`
+/// (`tokio::sync::RwLock<HashMap<..>>`). Populated by an external sync path
+/// (e.g. a future `pool_sync_worker` hook reading `reserves::get_v3_slot0`);
+/// the within-tick early-reject treats a missing entry as "fall through to the
+/// grid", so an unpopulated cache NEVER changes sizing behaviour.
+///
+/// NOTE: `StateProjector` does not yet expose slot0; until a read accessor is
+/// wired there, the cache is attached directly to `SizeOptimizer` via
+/// `with_slot0_cache` (tests populate it; prod wiring is a follow-up).
+pub struct Slot0Cache {
+    inner: RwLock<HashMap<Address, V3Slot0Snapshot>>,
+}
+
+impl Slot0Cache {
+    /// Construct an empty cache.
+    pub fn new() -> Self {
+        Self {
+            inner: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Insert or update a slot0 snapshot for a pool.
+    pub async fn insert(&self, pool: Address, snap: V3Slot0Snapshot) {
+        self.inner.write().await.insert(pool, snap);
+    }
+
+    /// Fetch the slot0 snapshot for a pool (`None` on cache miss).
+    pub async fn get(&self, pool: &Address) -> Option<V3Slot0Snapshot> {
+        self.inner.read().await.get(pool).copied()
+    }
+}
+
+impl Default for Slot0Cache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SizeOptimizer
 // ---------------------------------------------------------------------------
 
@@ -208,6 +265,10 @@ pub struct SizedCandidate {
 /// `Arc`-wrapped or stateless.
 pub struct SizeOptimizer {
     state_projector: Arc<StateProjector>,
+    /// Optional V3 slot0 cache enabling the 0-RPC within-tick early-reject in
+    /// `size_two_leg_v3_with_reason`. `None` (default) → always fall through to
+    /// the QuoterV2 grid. Attached via `with_slot0_cache`.
+    slot0_cache: Option<Arc<Slot0Cache>>,
 }
 
 impl SizeOptimizer {
@@ -215,8 +276,23 @@ impl SizeOptimizer {
     ///
     /// - `state_projector`: used to read current reserves for the optimization
     ///   search range bounds.
+    ///
+    /// No slot0 cache is attached; the V3 within-tick early-reject stays
+    /// disabled (falls through to the QuoterV2 grid). Use `with_slot0_cache`
+    /// to enable it.
     pub fn new(state_projector: Arc<StateProjector>) -> Self {
-        Self { state_projector }
+        Self {
+            state_projector,
+            slot0_cache: None,
+        }
+    }
+
+    /// Attach an in-memory V3 slot0 cache, enabling the 0-RPC within-tick
+    /// early-reject in `size_two_leg_v3_with_reason`. Builder-style; existing
+    /// callers of `new()` are unchanged (cache defaults to `None`).
+    pub fn with_slot0_cache(mut self, cache: Arc<Slot0Cache>) -> Self {
+        self.slot0_cache = Some(cache);
+        self
     }
 
     // -----------------------------------------------------------------------
@@ -901,6 +977,26 @@ impl SizeOptimizer {
         // Log-spaced probe bracket over [1, cap_wei].
         let probes = geom_probes(U256::one(), cap_wei, V3_BRACKET_POINTS);
 
+        // Plan B.1 — 0-RPC within-tick early-reject. When slot0 is cached for
+        // every V3 leg, the within-tick model is a provable upper bound on the
+        // real QuoterV2 output at every probe size. If even that optimistic
+        // bound shows ≤ 0 profit across the grid, the real grid cannot find a
+        // profit either → honest reject `NonPositiveProfit`, skipping all ≤ 8
+        // QuoterV2 probes (R8). A missing slot0 entry → None → fall through to
+        // the grid unchanged. Do NOT alter the grid below when it runs.
+        if let Some(true) = self
+            .v3_within_tick_upper_bound_nonpositive(&eval0, &eval1, &probes)
+            .await
+        {
+            debug!(
+                event = "size_optimizer.v3_early_reject_within_tick",
+                label = candidate.label.as_str(),
+                probe_count = probes.len(),
+                "within-tick upper bound ≤ 0 across probes — skipping QuoterV2 grid"
+            );
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit);
+        }
+
         let mut best: Option<(U256, U256, i128)> = None; // (amount_in, out_b, profit_wei)
                                                          // Per-V3-leg pricing telemetry (R8): `priced` = the quoter answered at
                                                          // least once (value may be 0); `leg1_reached` = leg 1 was quoted at all
@@ -1015,6 +1111,107 @@ impl SizeOptimizer {
             gross_profit_usd: gross_usd,
             estimated_net_profit_usd: net_usd,
         }))
+    }
+
+    /// 0-RPC within-tick upper bound for the 2-leg V3 profit curve (Plan B.1).
+    ///
+    /// For each probe size, computes leg outputs LOCALLY (no QuoterV2): V3 legs
+    /// via `amm_math::v3_amount_out_single_tick` — the within-tick model, which
+    /// OVERESTIMATES real output at sizes that cross a tick boundary — and V2
+    /// legs via exact `v2_amount_out`. Because within-tick ≥ real QuoterV2
+    /// output at every size (`wta(x) ≥ ra(x)` and `wtb(y) ≥ rb(y)` with `rb`
+    /// monotone ⇒ `wtb(wta(x)) ≥ rb(ra(x))`), the optimistic max profit over
+    /// the probe grid is a provable upper bound on the real grid's max.
+    ///
+    /// Returns `Some(true)` when that upper bound is ≤ 0 → the real grid cannot
+    /// find a profit either, so the caller early-rejects `NonPositiveProfit`
+    /// and skips all QuoterV2 probes (saves ≤ 8 RPC). Returns `Some(false)`
+    /// when the optimistic bound shows possible profit → fall through to the
+    /// grid. Returns `None` (→ fall through) whenever a V3 leg lacks a slot0
+    /// snapshot or no probe could be priced — a missing cache NEVER fabricates
+    /// a rejection (R8 fail-safe).
+    async fn v3_within_tick_upper_bound_nonpositive(
+        &self,
+        eval0: &LegEval,
+        eval1: &LegEval,
+        probes: &[U256],
+    ) -> Option<bool> {
+        let cache = self.slot0_cache.as_ref()?;
+
+        // Resolve slot0 once per V3 leg up front. A cache miss on any V3 leg
+        // → return None (fall through to the QuoterV2 grid).
+        let sp0 = match eval0 {
+            LegEval::V3 { pool, .. } => Some(cache.get(&pool.address).await?),
+            LegEval::V2 { .. } => None,
+        };
+        let sp1 = match eval1 {
+            LegEval::V3 { pool, .. } => Some(cache.get(&pool.address).await?),
+            LegEval::V2 { .. } => None,
+        };
+
+        // Local optimistic output for one leg (no RPC). V3 → within-tick upper
+        // bound (slot0 resolved by the caller); V2 → exact CPMM with the leg's
+        // cached oriented reserves. The V3 branch's `None` slot0 arm is dead
+        // here (a V3 miss already returned None above) but kept defensive.
+        fn leg_out_optimistic(
+            leg: &LegEval,
+            amount_in: U256,
+            slot0: Option<V3Slot0Snapshot>,
+        ) -> U256 {
+            match leg {
+                LegEval::V2 {
+                    reserve_in,
+                    reserve_out,
+                    fee_bps,
+                } => v2_amount_out(amount_in, *reserve_in, *reserve_out, *fee_bps),
+                LegEval::V3 { pool, zero_for_one } => {
+                    // V3 fee tier lives in the misnamed `fee_bps` field in
+                    // MILLIONTHS (e.g. 500 = 0.05% tier) — exactly the
+                    // `fee_pips` v3_amount_out_single_tick expects. Default 500.
+                    let fee_pips = pool.fee_bps.unwrap_or(500);
+                    let Some(sp) = slot0 else {
+                        return U256::zero();
+                    };
+                    v3_amount_out_single_tick(
+                        amount_in,
+                        sp.sqrt_price_x96,
+                        sp.liquidity,
+                        fee_pips,
+                        *zero_for_one,
+                    )
+                }
+            }
+        }
+
+        let mut best_profit: i128 = i128::MIN;
+        let mut any_priced = false;
+        for &x in probes {
+            if x.is_zero() {
+                continue;
+            }
+            let out_a = leg_out_optimistic(eval0, x, sp0);
+            if out_a.is_zero() {
+                continue;
+            }
+            let out_b = leg_out_optimistic(eval1, out_a, sp1);
+            if out_b.is_zero() {
+                continue;
+            }
+            any_priced = true;
+            let profit = clamped_to_i128(out_b).saturating_sub(clamped_to_i128(x));
+            if profit > best_profit {
+                best_profit = profit;
+            }
+        }
+        // Reject only when ≥1 probe priced AND the optimistic max is ≤ 0.
+        // No probe priced (degenerate slot0 / all-zero output) → fall through.
+        if !any_priced {
+            None
+        } else if best_profit <= 0 {
+            Some(true)
+        } else {
+            Some(false)
+        }
     }
 
     /// Build a per-leg evaluator. V2 → oriented cached reserves + fee. V3 →
@@ -1397,6 +1594,7 @@ mod tests {
     use shared_rs::contracts::{Opportunity, StrategyKind};
     use shared_rs::trading_config::{GasPriceStrategy, TradingConfigState};
     use std::collections::HashMap;
+    use std::sync::atomic::AtomicU64;
     use std::sync::Arc;
     use uuid::Uuid;
 
@@ -2792,6 +2990,292 @@ mod tests {
             ),
             "quoter-answered-zero must be NonPositiveProfit (not V3QuoteUnavailable), got {:?}",
             outcome.reason_str()
+        );
+    }
+
+    // ── Plan B.1: V3 within-tick curve mock + early-reject regression ────────
+    //
+    // A mock V3 quoter that answers each pool with its REAL within-tick V3
+    // curve via `amm_math::v3_amount_out_single_tick` — the same local model
+    // the early-reject uses. Because for swaps that stay within the active tick
+    // QuoterV2 == within-tick, the mock is a faithful, deterministic stand-in
+    // for a concentrated-liquidity pool — no RPC (RULE 00). A call counter
+    // proves the early-reject skips the grid when it fires.
+    struct CurveV3Mock {
+        // pool address → (sqrt_price_x96, liquidity)
+        curves: HashMap<Address, (U256, U256)>,
+        calls: AtomicU64,
+    }
+
+    impl crate::state_projector::V3QuoteProvider for CurveV3Mock {
+        fn quote_exact_input_single(
+            &self,
+            pool: Address,
+            token_in: Address,
+            token_out: Address,
+            amount_in: U256,
+            fee_bps: u32,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<U256>> + Send + '_>>
+        {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let Some(&(sp, liq)) = self.curves.get(&pool) else {
+                return Box::pin(async move { Ok(U256::zero()) });
+            };
+            // Uniswap V3 token ordering: token0 < token1. zero_for_one iff the
+            // leg's input is token0. Matches build_leg_eval's orientation.
+            let zero_for_one = token_in < token_out;
+            // For V3 legs `fee_bps` holds the fee tier in MILLIONTHS (500 =
+            // 0.05%), which is exactly the `fee_pips` the within-tick math wants.
+            let out = crate::amm_math::v3_amount_out_single_tick(
+                amount_in, sp, liq, fee_bps, zero_for_one,
+            );
+            Box::pin(async move { Ok(out) })
+        }
+    }
+
+    /// A 2-leg V3 candidate with explicit token0/token1 ordering (token0 <
+    /// token1) so the swap directions are deterministic. Leg0 = token0→token1
+    /// (pool A, zero_for_one); leg1 = token1→token0 (pool B, one_for_zero).
+    /// The round-trip factor is ≈ (spA/spB)²: spA > spB → profitable.
+    fn make_v3_curve_candidate(
+        pool_a: Address,
+        pool_b: Address,
+        token0: Address,
+        token1: Address,
+    ) -> StrategyCandidate {
+        let t0 = format!("0x{:040x}", token0);
+        let t1 = format!("0x{:040x}", token1);
+        let pa = format!("0x{:040x}", pool_a);
+        let pb = format!("0x{:040x}", pool_b);
+        let id = Uuid::new_v4();
+        let opp = Opportunity {
+            id,
+            chain_id: 1,
+            strategy_kind: StrategyKind::dex_arb(),
+            dex_a: "uniswap-v3".to_string(),
+            dex_b: Some("uniswap-v3".to_string()),
+            pair_symbol: "T0/T1".to_string(),
+            token_in: t0.clone(),
+            token_out: t1.clone(),
+            amount_in_wei: unit(1).to_string(),
+            expected_profit_usd: Some(1.0),
+            net_expected_profit_usd: None,
+            roi_pct: None,
+            risk_score: None,
+            block_number: None,
+            rejection_reason: None,
+            cartridge_id: None,
+            detected_at: Utc::now(),
+            trace_id: Uuid::new_v4(),
+        };
+        let candidate_inner = OpportunityCandidate {
+            route_fingerprint: "test-curve".to_string(),
+            pool_addresses: vec![pa.clone(), pb.clone()],
+            token_addresses: vec![t0.clone(), t1.clone()],
+            dex_adapters: vec!["uniswap-v3".to_string(), "uniswap-v3".to_string()],
+            amount_in: 1.0,
+            expected_amount_out: 1.001,
+            gross_profit: 1.0,
+        };
+        let v3_leg = |pool: String, tin: String, tout: String| RouteLeg {
+            dex_id: "uniswap-v3".to_string(),
+            dex_name: "uniswap-v3".to_string(),
+            protocol_type: "uniswap-v3".to_string(),
+            factory_address: String::new(),
+            pool_id: None,
+            pool_address: Some(pool),
+            token_in: tin,
+            token_out: tout,
+            fee_bps: Some(500), // V3 0.05% tier, stored in millionths
+            amount_in: Some(1.0),
+            amount_out: None,
+            tvl_usd: None,
+            volume_24h_usd: None,
+            pool_is_active: true,
+        };
+        let route_plan = RoutePlan {
+            route_id: Some("test-curve".to_string()),
+            strategy_kind: StrategyLabel::DexArbV3V3.as_str().to_string(),
+            chain_id: 1,
+            legs: vec![
+                v3_leg(pa, t0.clone(), t1.clone()),
+                v3_leg(pb, t1.clone(), t0.clone()),
+            ],
+            atomic: true,
+            estimated_slippage_pct: None,
+            price_impact_pct: None,
+        };
+        StrategyCandidate {
+            label: StrategyLabel::DexArbV3V3,
+            opportunity: opp,
+            candidate: candidate_inner,
+            route_plan,
+            gross_profit_usd: Some(1.0),
+            net_expected_profit_usd: None,
+            rejection_reason: None,
+            source_intent_hash: H256::zero(),
+            base_strategy: None,
+        }
+    }
+
+    // Profitable within-tick V3 curve (spA > spB) → Sized with a sensible
+    // optimum (amount_in > 0, gross > 0, net > 0). No slot0 cache attached →
+    // the early-reject falls through and the grid runs against the curve mock.
+    #[tokio::test]
+    async fn v3_curve_sizing_finds_profitable_optimum() {
+        let token0 = addr(0xAAAA); // < token1 ⇒ canonical token0
+        let token1 = addr(0xBBBB);
+        let pool_a = addr(0x10);
+        let pool_b = addr(0x11);
+        let q96 = U256::one() << 96;
+        // spA/spB = 1.2 ⇒ round-trip factor ≈ 1.44 (minus fees) ⇒ profitable.
+        let sp_a = q96 * U256::from(12u32) / U256::from(10u32);
+        let sp_b = q96;
+        let liq = U256::one() << 100; // deep pool ⇒ within-tick is exact over the probes
+
+        let cache = Arc::new(ReservesCache::new());
+        let curves = HashMap::from([(pool_a, (sp_a, liq)), (pool_b, (sp_b, liq))]);
+        let provider = Arc::new(CurveV3Mock {
+            curves,
+            calls: AtomicU64::new(0),
+        });
+        let projector = Arc::new(StateProjector::new(cache, Some(provider)));
+        let optimizer = SizeOptimizer::new(projector); // no slot0 cache ⇒ grid runs
+
+        let candidate = make_v3_curve_candidate(pool_a, pool_b, token0, token1);
+        let intent = make_intent(token0, token1);
+        let mut cfg = make_cfg(10_000.0);
+        cfg.min_landing_probability = 0.9; // positive Kelly edge so Sized survives Step 8
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        match outcome {
+            OptimizeOutcome::Sized(s) => {
+                assert!(s.optimal_amount_in > U256::zero(), "amount_in must be > 0");
+                assert!(s.gross_profit_usd > 0.0, "gross must be positive");
+                assert!(s.estimated_net_profit_usd > 0.0, "net must be positive");
+            }
+            OptimizeOutcome::Rejected(r) => {
+                panic!("expected Sized for spA>spB profitable curve, got {}", r.as_str())
+            }
+        }
+    }
+
+    // Negative spread (spA < spB ⇒ round-trip factor < 1) → NonPositiveProfit.
+    // No slot0 cache ⇒ the grid runs and the real curve confirms the loss.
+    #[tokio::test]
+    async fn v3_curve_negative_spread_is_non_positive_profit() {
+        let token0 = addr(0xAAAA);
+        let token1 = addr(0xBBBB);
+        let pool_a = addr(0x10);
+        let pool_b = addr(0x11);
+        let q96 = U256::one() << 96;
+        // spA/spB = 1/1.2 ⇒ round-trip factor ≈ 0.69 ⇒ always a loss.
+        let sp_a = q96;
+        let sp_b = q96 * U256::from(12u32) / U256::from(10u32);
+        let liq = U256::one() << 100;
+
+        let cache = Arc::new(ReservesCache::new());
+        let curves = HashMap::from([(pool_a, (sp_a, liq)), (pool_b, (sp_b, liq))]);
+        let provider = Arc::new(CurveV3Mock {
+            curves,
+            calls: AtomicU64::new(0),
+        });
+        let projector = Arc::new(StateProjector::new(cache, Some(provider)));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_v3_curve_candidate(pool_a, pool_b, token0, token1);
+        let intent = make_intent(token0, token1);
+        let cfg = make_cfg(10_000.0);
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        assert!(
+            matches!(
+                outcome,
+                OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit)
+            ),
+            "negative-spread V3 curve must be NonPositiveProfit, got {:?}",
+            outcome.reason_str()
+        );
+    }
+
+    // The new 0-RPC early-reject: with slot0 cached for both V3 legs and a
+    // loss curve, the within-tick upper bound is ≤ 0 across the probe grid, so
+    // the optimizer rejects NonPositiveProfit WITHOUT calling the QuoterV2
+    // mock at all (calls == 0 ⇒ the ≤ 8 RPC grid was skipped).
+    #[tokio::test]
+    async fn v3_within_tick_early_reject_skips_quoter_grid() {
+        let token0 = addr(0xAAAA);
+        let token1 = addr(0xBBBB);
+        let pool_a = addr(0x10);
+        let pool_b = addr(0x11);
+        let q96 = U256::one() << 96;
+        let sp_a = q96; // spA < spB ⇒ loss
+        let sp_b = q96 * U256::from(12u32) / U256::from(10u32);
+        let liq = U256::one() << 100;
+
+        // Populate slot0 for BOTH V3 legs — this arms the 0-RPC early-reject.
+        let slot0 = Arc::new(Slot0Cache::new());
+        slot0
+            .insert(
+                pool_a,
+                V3Slot0Snapshot {
+                    sqrt_price_x96: sp_a,
+                    liquidity: liq,
+                },
+            )
+            .await;
+        slot0
+            .insert(
+                pool_b,
+                V3Slot0Snapshot {
+                    sqrt_price_x96: sp_b,
+                    liquidity: liq,
+                },
+            )
+            .await;
+
+        let cache = Arc::new(ReservesCache::new());
+        let curves = HashMap::from([(pool_a, (sp_a, liq)), (pool_b, (sp_b, liq))]);
+        let provider = Arc::new(CurveV3Mock {
+            curves,
+            calls: AtomicU64::new(0),
+        });
+        let projector = Arc::new(StateProjector::new(cache, Some(provider.clone())));
+        let optimizer = SizeOptimizer::new(projector).with_slot0_cache(slot0);
+
+        let candidate = make_v3_curve_candidate(pool_a, pool_b, token0, token1);
+        let intent = make_intent(token0, token1);
+        let cfg = make_cfg(10_000.0);
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        assert!(
+            matches!(
+                outcome,
+                OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit)
+            ),
+            "within-tick early-reject must yield NonPositiveProfit, got {:?}",
+            outcome.reason_str()
+        );
+        // The grid was SKIPPED: the QuoterV2 mock was never called.
+        assert_eq!(
+            provider
+                .calls
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "early-reject must skip all QuoterV2 probes (0 mock calls)"
         );
     }
 }
