@@ -66,6 +66,7 @@ const UPSTREAMS = {
   "relays-client":process.env["RELAYS_URL"]    ?? "http://relays-client:3005",
   "searcher-rs":  process.env["SEARCHER_URL"]  ?? "http://searcher-rs:9001",
   "math-engine":  process.env["MATH_ENGINE_URL"] ?? "http://math-engine:3006",
+  "token-enricher": process.env["ENRICHER_URL"] ?? "http://token-enricher:9004",
 } as const;
 
 async function pingUpstream(name: string, url: string): Promise<{ ok: boolean; status?: number; detail?: string }> {
