@@ -319,6 +319,18 @@ app.get("/api/v1/carnot/snapshot", (req, res) => proxy("/api/v1/carnot/snapshot"
 app.get("/api/v1/live-testnet/config", (req, res) => proxy("/api/v1/live-testnet/config", req, res));
 
 app.get("/api/opportunities/live", (req, res) => proxy("/api/v1/opportunities/live", req, res));
+// Token-icon resolver — proxies api-server's cascade (Redis → Registry → PG
+// tokens.logo_url → DexScreener → jazzicon). REQUIRED by the frontend's
+// useTokenIcon network tier: without this route it 404s at the edge and every
+// token not in the in-browser known-tokens map degrades to a jazzicon
+// (logos "disappear"). THIS is the edge that actually runs in docker
+// (compose builds edge/dev-local, not edge/worker).
+app.get("/api/v1/token-icon/:chainId/:address", (req, res) =>
+  proxy(
+    `/api/v1/token-icon/${encodeURIComponent(String(req.params.chainId ?? ""))}/${encodeURIComponent(String(req.params.address ?? ""))}`,
+    req,
+    res,
+  ));
 app.get("/api/scanner/heartbeat", (req, res) => {
   const chain = String(req.query["chain_id"] ?? 1);
   proxy(`/api/v1/scanner/heartbeat?chain_id=${encodeURIComponent(chain)}`, req, res);
