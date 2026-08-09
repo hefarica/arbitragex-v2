@@ -49,13 +49,13 @@ export interface TokenInfo {
   validation?: TokenValidationBlock | null;
 }
 
-/** Strategy kinds supported by the MEV engine */
-export type StrategyKind =
-  | "dex_arb"
-  | "triangular"
-  | "backrun"
-  | "liquidation"
-  | "flashloan_arb";
+/**
+ * Strategy kinds supported by the MEV engine. The backend sends 269 canonical
+ * values (5 base families + 264 cartridge IDs — see shared-ts strategy-kinds.ts
+ * and frontend lib/strategy-kinds.ts). `string` mirrors the permissive Zod in
+ * schemas.ts and keeps every comparison (`=== "dex_arb"`) working.
+ */
+export type StrategyKind = string;
 
 /** Opportunity lifecycle status */
 export type OpportunityStatus =

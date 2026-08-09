@@ -44,7 +44,29 @@ pub async fn insert_simulation(pool: &PgPool, r: &SimulationResult) -> Result<()
     .await
     .context("insert simulation")?;
 
-    // Advance opportunity state. 'simulated' if passed, else 'rejected'.
+    // Advance opportunity state. 'simulated' if passed, else 'rejected' —
+    // UNLESS the failure is a sim-capability gap (unsupported strategy/chain,
+    // no fork configured). A capability gap means our sim engine can't verify
+    // this strategy yet; it is NOT an opportunity-quality rejection. Per
+    // EXECUTION_MODES_DOCTRINE §34, the live terminus (relays-client) gates
+    // execution independently (default-deny mainnet), so paper/shadow may
+    // surface detection without requiring the sim terminus. Keeping the
+    // opportunity at its pre-sim status leaves it viable (rejection_reason
+    // stays NULL) so the dashboard shows real detections; the simulation row
+    // inserted above still records the SIM_SKIP outcome honestly.
+    let sim_capability_gap = r
+        .fail_reason
+        .as_deref()
+        .map(is_sim_capability_gap)
+        .unwrap_or(false);
+
+    if !r.passed && sim_capability_gap {
+        // Commit the simulation row (already inserted) but do NOT flip the
+        // opportunity to 'rejected'. The opp stays 'detected'/'validated'.
+        tx.commit().await.context("commit tx (sim capability gap)")?;
+        return Ok(());
+    }
+
     let next_status = if r.passed { "simulated" } else { "rejected" };
     let reject_reason = if r.passed {
         None
@@ -80,4 +102,15 @@ fn simulator_str(k: &SimulatorKind) -> &'static str {
         SimulatorKind::Revm => "revm",
         SimulatorKind::NotImplemented => "not_implemented",
     }
+}
+
+/// Classify a sim `fail_reason` as a *capability gap* (the sim engine cannot
+/// run this strategy/chain/fork) rather than a genuine opportunity-quality
+/// failure (revert, gas exceeded, etc.). Capability gaps must NOT reject the
+/// opportunity — see `insert_simulation`. The strings mirror the
+/// `not_implemented` outcomes produced in `sim_engine.rs`.
+fn is_sim_capability_gap(fail_reason: &str) -> bool {
+    fail_reason.starts_with("strategy_not_simulatable")
+        || fail_reason.starts_with("anvil_fork_not_configured")
+        || fail_reason.contains("_not_supported_in_s4")
 }
