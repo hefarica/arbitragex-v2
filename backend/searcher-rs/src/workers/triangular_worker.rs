@@ -1106,28 +1106,29 @@ impl V3LegQuoter for RpcV3LegQuoter {
         let multicall = self.multicall;
         Box::pin(async move {
             let n = requests.len();
-            let results = match rpc_pool
-                .with_retry(|provider| {
-                    let reqs = requests.clone();
-                    async move {
-                        v3_quote_exact_in_multicall(provider, quoter, multicall, reqs).await
+            let results =
+                match rpc_pool
+                    .with_retry(|provider| {
+                        let reqs = requests.clone();
+                        async move {
+                            v3_quote_exact_in_multicall(provider, quoter, multicall, reqs).await
+                        }
+                    })
+                    .await
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        // Whole-batch RPC failure → every request counts as a failed
+                        // quote. The caller's grid search drops the affected probes
+                        // (R8); it NEVER fabricates an amount_out to keep going.
+                        warn!(
+                            event = "triangular_worker.v3_grid_multicall_failed",
+                            batch_size = n,
+                            error = %e,
+                        );
+                        return vec![None; n];
                     }
-                })
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    // Whole-batch RPC failure → every request counts as a failed
-                    // quote. The caller's grid search drops the affected probes
-                    // (R8); it NEVER fabricates an amount_out to keep going.
-                    warn!(
-                        event = "triangular_worker.v3_grid_multicall_failed",
-                        batch_size = n,
-                        error = %e,
-                    );
-                    return vec![None; n];
-                }
-            };
+                };
             results
                 .into_iter()
                 .map(|r| {
@@ -1336,8 +1337,7 @@ async fn size_v3_cycle_over_grid(
         let mut hop_outs: Vec<HopAmountOut> = Vec::with_capacity(nhops);
         let mut ok = true;
         for hi in 0..nhops {
-            let (Some(amount_in_used), Some(amount_out)) = (st.hop_ins[hi], st.hop_outs[hi])
-            else {
+            let (Some(amount_in_used), Some(amount_out)) = (st.hop_ins[hi], st.hop_outs[hi]) else {
                 ok = false;
                 break;
             };
@@ -1364,9 +1364,9 @@ async fn size_v3_cycle_over_grid(
             None => continue, // non-positive at this probe
         };
         let cur_profit = result.expected_profit_usd.unwrap_or(0.0);
-        let better = best.as_ref().is_none_or(|(_, _, br)| {
-            cur_profit > br.expected_profit_usd.unwrap_or(0.0)
-        });
+        let better = best
+            .as_ref()
+            .is_none_or(|(_, _, br)| cur_profit > br.expected_profit_usd.unwrap_or(0.0));
         if better {
             best = Some((st.amount_in, hop_outs, result));
         }
@@ -3449,9 +3449,24 @@ mod tests {
         let pool1 = Address::from_low_u64_be(0xB);
         let pool2 = Address::from_low_u64_be(0xC);
         let hops = vec![
-            v3_hop(pool0, Address::from_low_u64_be(0x1), Address::from_low_u64_be(0x2), 500),
-            v3_hop(pool1, Address::from_low_u64_be(0x2), Address::from_low_u64_be(0x3), 500),
-            v3_hop(pool2, Address::from_low_u64_be(0x3), Address::from_low_u64_be(0x1), 500),
+            v3_hop(
+                pool0,
+                Address::from_low_u64_be(0x1),
+                Address::from_low_u64_be(0x2),
+                500,
+            ),
+            v3_hop(
+                pool1,
+                Address::from_low_u64_be(0x2),
+                Address::from_low_u64_be(0x3),
+                500,
+            ),
+            v3_hop(
+                pool2,
+                Address::from_low_u64_be(0x3),
+                Address::from_low_u64_be(0x1),
+                500,
+            ),
         ];
         let mock = mock_with_pools(vec![
             (pool0, doubler_curve()),
@@ -3465,7 +3480,10 @@ mod tests {
             .expect("profitable curve must yield a sized probe");
         assert!(best.result.profit_token_a_wei > 0, "profit must be > 0");
         assert!(best.amount_in_wei > U256::zero());
-        assert!(best.amount_in_wei <= cap_wei, "winning probe must not exceed cap");
+        assert!(
+            best.amount_in_wei <= cap_wei,
+            "winning probe must not exceed cap"
+        );
         // 3 V3 hops × V3_GRID_PROBES quotes total (no V2 to skip). Bounded.
         assert!(best.rpc_count > 0);
         assert!(best.rpc_count <= (V3_GRID_PROBES * hops.len()) as u64);
@@ -3473,7 +3491,10 @@ mod tests {
         assert_eq!(best.hop_outs.len(), hops.len());
         assert_eq!(best.hop_outs[0].amount_in_used, best.amount_in_wei);
         for w in best.hop_outs.windows(2) {
-            assert_eq!(w[1].amount_in_used, w[0].amount_out, "chain must be consistent");
+            assert_eq!(
+                w[1].amount_in_used, w[0].amount_out,
+                "chain must be consistent"
+            );
         }
     }
 
@@ -3485,9 +3506,24 @@ mod tests {
         let pool1 = Address::from_low_u64_be(0xB);
         let pool2 = Address::from_low_u64_be(0xC);
         let hops = vec![
-            v3_hop(pool0, Address::from_low_u64_be(0x1), Address::from_low_u64_be(0x2), 500),
-            v3_hop(pool1, Address::from_low_u64_be(0x2), Address::from_low_u64_be(0x3), 500),
-            v3_hop(pool2, Address::from_low_u64_be(0x3), Address::from_low_u64_be(0x1), 500),
+            v3_hop(
+                pool0,
+                Address::from_low_u64_be(0x1),
+                Address::from_low_u64_be(0x2),
+                500,
+            ),
+            v3_hop(
+                pool1,
+                Address::from_low_u64_be(0x2),
+                Address::from_low_u64_be(0x3),
+                500,
+            ),
+            v3_hop(
+                pool2,
+                Address::from_low_u64_be(0x3),
+                Address::from_low_u64_be(0x1),
+                500,
+            ),
         ];
         let mock = mock_with_pools(vec![
             (pool0, halver_curve()),
@@ -3497,7 +3533,10 @@ mod tests {
 
         let cap_wei = U256::from(10u128).pow(U256::from(18));
         let res = size_v3_cycle_over_grid(&hops, cap_wei, 2_000.0, 18, &mock).await;
-        assert!(res.is_none(), "all-loss curve must reject (R8 NonPositiveProfit)");
+        assert!(
+            res.is_none(),
+            "all-loss curve must reject (R8 NonPositiveProfit)"
+        );
     }
 
     /// REGRESSION for Plan B.2: the legacy single-point path sized at
@@ -3520,9 +3559,19 @@ mod tests {
         let pool1 = Address::from_low_u64_be(0xB); // hop1 V2 (passthrough)
         let pool2 = Address::from_low_u64_be(0xC); // hop2 V3 (size-dependent)
         let hops = vec![
-            v3_hop(pool0, Address::from_low_u64_be(0x1), Address::from_low_u64_be(0x2), 500),
+            v3_hop(
+                pool0,
+                Address::from_low_u64_be(0x1),
+                Address::from_low_u64_be(0x2),
+                500,
+            ),
             v2_hop_passthrough(pool1),
-            v3_hop(pool2, Address::from_low_u64_be(0x3), Address::from_low_u64_be(0x1), 500),
+            v3_hop(
+                pool2,
+                Address::from_low_u64_be(0x3),
+                Address::from_low_u64_be(0x1),
+                500,
+            ),
         ];
         let threshold = U256::from(10u128).pow(U256::from(18)); // 1 WETH
         let hop2_curve: V3Curve = Box::new(move |ain: U256| {
@@ -3540,7 +3589,10 @@ mod tests {
         let best = size_v3_cycle_over_grid(&hops, cap_wei, 2_000.0, 18, &mock)
             .await
             .expect("grid must find a profitable probe below the lossy cap point");
-        assert!(best.result.profit_token_a_wei > 0, "winning probe must be profitable");
+        assert!(
+            best.result.profit_token_a_wei > 0,
+            "winning probe must be profitable"
+        );
         assert!(
             best.amount_in_wei < cap_wei,
             "winning probe ({}) must be STRICTLY below cap ({}) — the cap point itself loses",
