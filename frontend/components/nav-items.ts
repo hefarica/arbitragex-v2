@@ -55,6 +55,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/",                     label: "Home",                   icon: HouseIcon,              group: "pipeline", exact: true },
   { href: "/status",               label: "System status",          icon: ActivityIcon,           group: "pipeline" },
   { href: "/opportunities",        label: "Opportunities",          icon: SatelliteDishIcon,      group: "pipeline" },
+  { href: "/opportunities/exchange", label: "Exchange feed",       icon: TrendingUpIcon,         group: "pipeline" },
   { href: "/opportunities/by-strategy", label: "By strategy",      icon: LayersIcon,             group: "pipeline" },
   { href: "/executions",           label: "Executions",             icon: ZapIcon,                group: "pipeline" },
   { href: "/paper/history",        label: "Paper history",          icon: FlaskConicalIcon,       group: "pipeline" },

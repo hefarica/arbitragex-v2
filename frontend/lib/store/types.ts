@@ -104,6 +104,46 @@ export interface SimulatedTarget {
 }
 
 // =============================================================================
+// Route Metadata — multi-hop topology (migration 099, G-SIM-1 B2b)
+// =============================================================================
+
+/**
+ * Persistent route topology stored as JSONB in `opportunities.route_metadata`.
+ * Mirrors `shared_rs::candidates::RouteMetadata`. Null when the column is empty
+ * (`'{}'`) — legacy rows or detection-time failures (R8 fail-honest).
+ *
+ * All arrays are parallel and ordered by hop:
+ *   - `token_addresses`   length = hops + 1 (A → … → close)
+ *   - `dex_adapters`      length = hops     (router/DEX label per leg)
+ *   - `pool_addresses`    length = hops     (pool per leg; may contain "" when
+ *                                           only the factory was known at scan)
+ *   - `decimals`          address → uint8   (may be partial/empty)
+ */
+export interface RouteMetadataWire {
+  token_addresses: string[];
+  pool_addresses: string[];
+  dex_adapters: string[];
+  decimals?: Record<string, number>;
+}
+
+/**
+ * A single resolved leg of the A→B cycle for UI rendering.
+ * Honest: `pool` is "" when the scanner only knew the factory (R8).
+ */
+export interface RouteLeg {
+  /** Hop index, 0-based. */
+  index: number;
+  /** Input token address for this leg. */
+  token_in: string;
+  /** Output token address for this leg (next token in the path). */
+  token_out: string;
+  /** DEX/router label (uniswap_v2_router, sushiswap, …). Honest "" when unknown. */
+  dex: string;
+  /** Pool address for this leg. Honest "" when only the factory was known. */
+  pool: string;
+}
+
+// =============================================================================
 // OmniOpportunity — The Canonical ViewModel
 // =============================================================================
 
@@ -154,6 +194,11 @@ export interface OmniOpportunity {
   bridge_fee_usd: number | null;
   chains_used: number[];
   dexes_used: string[];
+
+  // === Multi-hop Route Topology (migration 099) ===
+  // Full A→B cycle (2..N legs). Null for legacy rows / detection failures —
+  // callers fall back to dex_a/dex_b. Drives the per-leg route ledger.
+  route_metadata: RouteMetadataWire | null;
 
   // === Simulation Results (Rust spine) ===
   simulated_net_profit_usd: number | null;
@@ -230,6 +275,10 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
     dexes_used: Array.isArray(raw.dexes_used)
       ? (raw.dexes_used as string[])
       : [],
+    // Multi-hop route topology (migration 099). Coerce the wire JSONB into the
+    // typed shape; null when absent/empty (R8 fail-honest). Arrays default to []
+    // so downstream renderers never hit `undefined`.
+    route_metadata: parseRouteMetadata(raw.route_metadata),
 
     // Simulation Results
     simulated_net_profit_usd:
@@ -256,3 +305,93 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
     gas_used: raw.gas_used != null ? Number(raw.gas_used) : null,
   };
 }
+
+// =============================================================================
+// Route helpers — topology → UI legs
+// =============================================================================
+
+/**
+ * Coerces the raw `route_metadata` JSONB into the typed wire shape.
+ * Returns null when absent, non-object, or an empty object (R8 fail-honest:
+ * no topology = no topology; never a half-fabricated `RouteMetadataWire`).
+ */
+export function parseRouteMetadata(
+  raw: unknown,
+): RouteMetadataWire | null {
+  if (raw == null || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const tokenAddresses = Array.isArray(obj.token_addresses)
+    ? (obj.token_addresses as unknown[]).filter((s): s is string => typeof s === "string")
+    : [];
+  const dexAdapters = Array.isArray(obj.dex_adapters)
+    ? (obj.dex_adapters as unknown[]).filter((s): s is string => typeof s === "string")
+    : [];
+  const poolAddresses = Array.isArray(obj.pool_addresses)
+    ? (obj.pool_addresses as unknown[]).filter((s): s is string => typeof s === "string")
+    : [];
+  // Require at least one hop + a closing token to be meaningful.
+  if (dexAdapters.length === 0 || tokenAddresses.length < 2) return null;
+  const decimals =
+    obj.decimals != null && typeof obj.decimals === "object"
+      ? (obj.decimals as Record<string, number>)
+      : undefined;
+  return {
+    token_addresses: tokenAddresses,
+    dex_adapters: dexAdapters,
+    pool_addresses: poolAddresses,
+    decimals,
+  };
+}
+
+/**
+ * Resolves the ordered legs of the A→B cycle for UI rendering.
+ *
+ * Priority:
+ *   1. `route_metadata` — the full persisted topology (2..N legs).
+ *   2. Fallback from `dex_a`/`dex_b` + `token_in`/`token_out` — a synthetic
+ *      2-leg BUY→SELL cycle so the operator always sees the route shape even
+ *      for legacy rows. Honest "—" dex labels when both are blank.
+ *
+ * R8: returns an empty array only when there is genuinely no route to show.
+ */
+export function deriveLegs(opp: OmniOpportunity): RouteLeg[] {
+  const rm = opp.route_metadata;
+  if (rm && rm.dex_adapters.length > 0 && rm.token_addresses.length >= 2) {
+    const legs: RouteLeg[] = [];
+    const hops = rm.dex_adapters.length;
+    for (let i = 0; i < hops; i++) {
+      const tokenIn = rm.token_addresses[i] ?? "";
+      const tokenOut = rm.token_addresses[i + 1] ?? "";
+      legs.push({
+        index: i,
+        token_in: tokenIn,
+        token_out: tokenOut,
+        dex: rm.dex_adapters[i] ?? "",
+        pool: rm.pool_addresses[i] ?? "",
+      });
+    }
+    return legs;
+  }
+
+  // Fallback: synthetic 2-leg BUY→SELL cycle from the minimal Opportunity.
+  const dexA = opp.dex_a ?? "";
+  const dexB = opp.dex_b ?? "";
+  if (!dexA && !dexB) return [];
+  return [
+    {
+      index: 0,
+      token_in: opp.token_in,
+      token_out: opp.token_out,
+      dex: dexA,
+      pool: "",
+    },
+    {
+      index: 1,
+      token_in: opp.token_out,
+      token_out: opp.token_in,
+      dex: dexB || dexA, // single-DEX 2-pool cycle
+      pool: "",
+    },
+  ];
+}
+

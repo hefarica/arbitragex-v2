@@ -200,6 +200,13 @@ interface OpportunityLiveRow extends QueryResultRow {
   chain_id_out: number | null;
   bridge: string | null;
   bridge_fee_usd: number | null;
+  // G-SIM-1 B2b / migration 099: complete multi-hop route topology stored as
+  // JSONB. Shape: { pool_addresses[], token_addresses[], dex_adapters[],
+  // decimals{} }. NOT NULL DEFAULT '{}' — empty object for legacy rows or
+  // detection-time failures. Surfaced so the exchange dashboard can render the
+  // full A→B cycle (2..N legs) per opportunity (R8: empty {} = no topology,
+  // caller falls back to dex_a/dex_b).
+  route_metadata: Record<string, unknown> | null;
   // LEFT JOIN tokens ti (token_in side)
   token_in_symbol: string | null;
   token_in_decimals: number | null;
@@ -245,7 +252,8 @@ SELECT
   o.cartridge_id,
   o.chain_id_out,
   o.bridge,
-  o.bridge_fee_usd::float               AS bridge_fee_usd
+  o.bridge_fee_usd::float               AS bridge_fee_usd,
+  o.route_metadata                       AS route_metadata
 FROM opportunities o
 LEFT JOIN tokens ti
   ON  ti.chain_id = o.chain_id
@@ -516,6 +524,15 @@ function rowToOpportunity(
     chain_id_out:             row.chain_id_out,
     bridge:                   row.bridge,
     bridge_fee_usd:           row.bridge_fee_usd,
+    // Multi-hop route topology (migration 099). Empty object → null so the
+    // frontend treats absence uniformly (R8). Passed through verbatim; never
+    // fabricated.
+    route_metadata:
+      row.route_metadata &&
+      typeof row.route_metadata === "object" &&
+      Object.keys(row.route_metadata).length > 0
+        ? row.route_metadata
+        : null,
     // Target-driven simulation (R8 fail-honest: all nullable, source-labeled).
     // Computed only when net_expected_profit_usd is null (the canonical Rust
     // spine output wins when present).
