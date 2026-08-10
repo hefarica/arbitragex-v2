@@ -107,7 +107,7 @@ export interface OpportunityTradeCardProps {
   onInspect: (opp: OmniOpportunity) => void;
 }
 
-export function OpportunityTradeCard({
+function OpportunityTradeCardImpl({
   opp,
   now,
   isMounted,
@@ -448,6 +448,28 @@ export function OpportunityTradeCard({
     </motion.div>
   );
 }
+
+// PERF (2026-08-09): memoize the card so the parent re-renders do NOT re-render
+// every card. The parent used to push a fresh `now` every second → all ~200
+// motion.div cards re-rendered each second. The comparator re-renders a card
+// only when its own data changed OR its displayed age (seconds) ticked over.
+// The store emits a stable `opp` reference per id, so an unchanged opp is skipped.
+export const OpportunityTradeCard = React.memo(
+  OpportunityTradeCardImpl,
+  (
+    prev: OpportunityTradeCardProps,
+    next: OpportunityTradeCardProps,
+  ): boolean =>
+    prev.opp.id === next.opp.id &&
+    prev.opp === next.opp &&
+    prev.isMounted === next.isMounted &&
+    prev.simLoading === next.simLoading &&
+    prev.strategyConfig === next.strategyConfig &&
+    prev.onExecute === next.onExecute &&
+    prev.onInspect === next.onInspect &&
+    Math.floor((prev.now - new Date(prev.opp.detected_at).getTime()) / 1000) ===
+      Math.floor((next.now - new Date(next.opp.detected_at).getTime()) / 1000),
+);
 
 // ─── Ledger row (capital path) ───────────────────────────────────────────────
 function LedgerRow({

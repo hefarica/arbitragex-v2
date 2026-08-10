@@ -256,8 +256,14 @@ export default function OpportunitiesClient({
     setNow(Date.now());
   }, []);
 
+  // PERF (2026-08-09): the age ticker previously ran every 1000ms, re-rendering
+  // all ~200 OpportunityTradeCards every second — a real CPU/memory churner on a
+  // live feed. The "Last refresh" label already ticks off `lastRefresh` (independent
+  // state), so `now` only feeds each card's relative-age text. 30s is plenty for a
+  // human-readable age; combined with the card's React.memo this collapses the
+  // per-second full-list re-render to near zero.
   useEffect(() => {
-    const ticker = setInterval(() => setNow(Date.now()), 1000);
+    const ticker = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(ticker);
   }, []);
 
