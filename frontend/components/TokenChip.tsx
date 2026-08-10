@@ -305,7 +305,12 @@ export function TokenChip({ token_address, chain_id, info }: TokenChipProps) {
               height={24}
               className="absolute inset-0 size-6 rounded-full object-cover"
               onError={(e) => {
-                (e.currentTarget as HTMLImageElement).style.display = "none";
+                const img = e.currentTarget as HTMLImageElement;
+                img.style.display = "none";
+                // PERF (2026-08-10): remove the failed image node from the DOM
+                // so the browser can release the network/bitmap resources instead
+                // of retaining a hidden <img> for every token logo that 404s.
+                img.remove();
               }}
             />
           </span>

@@ -93,7 +93,20 @@ export default function OpportunitiesClient({
 
   // FE-6: Track IDs already notified to avoid duplicate toasts across polls.
   // R1: useRef is SSR-safe — no access to window or localStorage.
+  // PERF (2026-08-10): prune IDs that are no longer in the live list so this
+  // Set does not grow unbounded as the mempool churns through unique detections.
   const seenNotifiedIds = useRef<Set<string>>(new Set());
+  const opportunityIds = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const currentIds = new Set(opportunities.map((o) => o.id));
+    opportunityIds.current = currentIds;
+    for (const id of seenNotifiedIds.current) {
+      if (!currentIds.has(id)) {
+        seenNotifiedIds.current.delete(id);
+      }
+    }
+  }, [opportunities]);
 
   // FE-13: Read notification threshold from user prefs (localStorage, R1 compliant).
   const { prefs } = useUserPrefs();

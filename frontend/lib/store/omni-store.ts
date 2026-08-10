@@ -16,7 +16,7 @@
  * R8 Fail-Honest: Status fields surface errors; never fabricate data.
  */
 
-import { create } from "zustand";
+import { create, type StoreApi } from "zustand";
 import { devtools } from "zustand/middleware";
 
 // =============================================================================
@@ -130,14 +130,25 @@ const MAX_OPPORTUNITIES = 200;
 // =============================================================================
 
 export const useOmniStore = create<OmniStoreState>()(
-  devtools(
-    (set, get) => ({
-      // =========================================================================
-      // Registry Slice
-      // =========================================================================
-      chains: new Map(),
-      dexes: new Map(),
-      pools: new Map(),
+  process.env.NODE_ENV === "development"
+    ? devtools(
+        (set, get) => storeFactory(set, get),
+        { name: "OmniStore", maxAge: 50 },
+      )
+    : storeFactory,
+);
+
+function storeFactory(
+  set: StoreApi<OmniStoreState>["setState"],
+  get: () => OmniStoreState,
+): OmniStoreState {
+  return {
+    // =========================================================================
+    // Registry Slice
+    // =========================================================================
+    chains: new Map(),
+    dexes: new Map(),
+    pools: new Map(),
       registryStatus: "idle",
       registryError: null,
 
@@ -299,10 +310,8 @@ export const useOmniStore = create<OmniStoreState>()(
           console.error("Failed to fetch wallets:", error);
         }
       },
-    }),
-    { name: "arbx-omni-store" }
-  )
-);
+    };
+}
 
 // =============================================================================
 // Selector Hooks (Performance-optimized)

@@ -123,7 +123,8 @@ const NAME_TO_SHORT: Record<string, string> = {
 
 function chainShortFromName(name: string): string {
   const lower = name.toLowerCase();
-  if (NAME_TO_SHORT[lower]) return NAME_TO_SHORT[lower];
+  const short = (NAME_TO_SHORT as Record<string, string>)[lower];
+  if (short) return short;
   // Fallback: first 4 chars uppercased.
   return name.slice(0, 4).toUpperCase();
 }
